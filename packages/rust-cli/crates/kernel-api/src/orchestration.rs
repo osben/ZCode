@@ -133,6 +133,12 @@ pub enum QueryEvent {
         input: Value,
         running: bool,
     },
+    /// Fork: the ACP agent's options changed: the turn reconcile applied the session's choices, or the agent changed a
+    /// value itself (specs/fork-rust-agent-parity.md rule 13; Node `config_options`).
+    ExternalAgentConfig {
+        agent: String,
+        options: Vec<crate::external_agent_config::ExternalAgentConfigOption>,
+    },
     /// 模型端口的通知（重试、停顿、恢复），只供显示（docs/specs/rust-cli/stall-visibility.md §1）。
     ModelNotice { notice: crate::model::ModelNotice },
     /// Fork: the hook runs of one dispatch, for the App's `hookInvocation` row (specs/fork-rust-agent-parity.md
@@ -217,6 +223,9 @@ impl QueryEvent {
                 input,
                 running,
             },
+            Self::ExternalAgentConfig { agent, options } => {
+                KernelEvent::ExternalAgentConfig { agent, options }
+            }
             // 模型通知只供显示，不落库（stall-visibility.md §1）。
             Self::ModelNotice { notice } => KernelEvent::ModelNotice { notice },
             Self::HookInvocation { invocation } => KernelEvent::HookInvocation { turn, invocation },

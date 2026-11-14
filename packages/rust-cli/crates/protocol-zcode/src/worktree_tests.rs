@@ -1978,7 +1978,11 @@ async fn commands_missing_from_the_inbound_schema_reach_the_command_path() {
     )
     .await
     .unwrap();
-    assert_eq!(ack["reasonCode"], "proto.unsupportedCommand", "{ack}");
+    // Ported since: it reaches its handler, which this server gives no ACP config port.
+    assert_eq!(
+        ack["reasonCode"], "fault.command.capabilityUnsupported",
+        "{ack}"
+    );
 
     // The CAS rule (Node `parseCommandEnvelope`): setRowPinned needs baseRevision and baseLogEpoch.
     let ack = inbound(

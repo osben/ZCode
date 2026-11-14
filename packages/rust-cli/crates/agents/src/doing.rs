@@ -35,7 +35,8 @@ impl Doing {
             | QueryEvent::ToolInputStarted { .. }
             | QueryEvent::ToolStarted { .. }
             | QueryEvent::ToolFinished { .. }
-            | QueryEvent::ExternalToolRow { .. } => None,
+            | QueryEvent::ExternalToolRow { .. }
+            | QueryEvent::ExternalAgentConfig { .. } => None,
             // Fork: hook rows and ACP status events are display only and change no activity.
             QueryEvent::ToolProgress { .. }
             | QueryEvent::HookInvocation { .. }

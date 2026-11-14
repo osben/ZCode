@@ -6,6 +6,7 @@ mod background_task;
 mod background_work;
 mod child_processes;
 pub(crate) mod commands;
+pub(crate) mod external_agent_config;
 mod file_summary;
 // Fork: specs/fork-rust-node-helper.md F3, "Helper → Rust requests".
 mod helper_answers;

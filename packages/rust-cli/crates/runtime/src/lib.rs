@@ -166,6 +166,9 @@ pub struct LocalKernel {
     error_holds_queue: bool,
     /// Fork: a SessionStart `session_title` and `initial_user_message` apply only outside the Node desktop agent, which reads neither.
     session_start_extras: bool,
+    /// Fork: the ACP agents' session config (`setExternalAgentConfigOption`), when the entry runs ACP agents.
+    external_agent_configs:
+        Option<Arc<dyn rust_cli_kernel_api::external_agent_config::ExternalAgentConfigs>>,
     /// Fork: a typed `/compact [instructions]` runs the manual compaction, like the Node desktop agent ([`Extensions::node_desktop`]).
     typed_compact: bool,
     /// Fork: hook run rows and the blocked-prompt banner, like the Node desktop agent ([`Extensions::node_desktop`]).
@@ -308,7 +311,7 @@ impl LocalKernel {
             Arc::new(acp::AcpHost::new(
                 setup,
                 ports.store.clone(),
-                ports.ids.clone(),
+                (ports.clock.clone(), ports.ids.clone()),
                 agents.task_plan_writer(),
                 scope.spawner(),
             ))
@@ -361,6 +364,11 @@ impl LocalKernel {
             None => main_loop,
         };
         // Fork: ACP selections run on the agent process (specs/fork-rust-agent-parity.md "ACP external agents").
+        let external_agent_configs = acp_host.clone().map(
+            |host| -> Arc<dyn rust_cli_kernel_api::external_agent_config::ExternalAgentConfigs> {
+                host
+            },
+        );
         let main_loop: Arc<dyn QueryRunner> = match acp_host {
             Some(host) => Arc::new(acp::ExternalAgentRunner {
                 inner: main_loop,
@@ -403,10 +411,18 @@ impl LocalKernel {
             fork_while_running: extensions.node_desktop,
             error_holds_queue: extensions.node_desktop,
             session_start_extras: !extensions.node_desktop,
+            external_agent_configs,
             typed_compact: extensions.node_desktop,
             hook_rows: extensions.node_desktop,
             pipeline,
         }
+    }
+
+    /// Fork: the ACP agents' session config, when the entry runs ACP agents.
+    pub fn external_agent_configs(
+        &self,
+    ) -> Option<Arc<dyn rust_cli_kernel_api::external_agent_config::ExternalAgentConfigs>> {
+        self.external_agent_configs.clone()
     }
 
     /// 加载插件、开始连接 MCP 服务器（不等待连接完成，ext.md §3.3）。插件的 agent 文件交给 agent

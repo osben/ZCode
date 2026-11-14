@@ -222,6 +222,12 @@ pub enum KernelEvent {
         input: Value,
         running: bool,
     },
+    /// Fork: the selects of the session's ACP agent (Node `external_agent_config_updated`; a turn's
+    /// [`crate::orchestration::QueryEvent::ExternalAgentConfig`] or [`super::Command::PublishExternalAgentConfig`]).
+    ExternalAgentConfig {
+        agent: String,
+        options: Vec<crate::external_agent_config::ExternalAgentConfigOption>,
+    },
     /// Fork: a new ACP session replaced one that could not be loaded
     /// ([`crate::orchestration::QueryEvent::ExternalAgentContextReset`]); the timeline divider.
     ExternalAgentContextReset {

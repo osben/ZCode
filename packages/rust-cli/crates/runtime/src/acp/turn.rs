@@ -31,6 +31,7 @@ use rust_cli_kernel_api::user_input::INTERRUPT_TEXTS;
 use serde_json::{Value, json};
 
 use super::AcpHost;
+use super::config::ReconcileError;
 
 pub(super) async fn run(
     host: &Arc<AcpHost>,
@@ -94,6 +95,30 @@ pub(super) async fn run(
                 agent: agent_id.clone(),
             })
             .await;
+    }
+    if abort.is_aborted() {
+        return turn.aborted(&abort).await;
+    }
+    // Chosen values reach the agent before the prompt; a change made during a running turn waits here.
+    match host
+        .reconcile_config(
+            &runtime,
+            &request.session,
+            &agent_id,
+            turn.sink.as_ref(),
+            &abort,
+        )
+        .await
+    {
+        Ok(()) => {}
+        // Node `isTurnCancellationError`: once Stop aborted the turn, any failure of the reconcile is a cancellation.
+        Err(_) if abort.is_aborted() => return turn.aborted(&abort).await,
+        Err(ReconcileError::Aborted) => return turn.aborted(&abort).await,
+        Err(ReconcileError::Refused(message)) => {
+            tracing::warn!(event = "acp.config_failed", agent = %agent_id, "ACP agent refused a chosen config value");
+            return Ok(QueryStop::ApiError { message });
+        }
+        Err(ReconcileError::Store(error)) => return Err(error.into()),
     }
     if abort.is_aborted() {
         return turn.aborted(&abort).await;
@@ -423,7 +448,8 @@ enum Kind {
 struct Turn<'a> {
     host: &'a AcpHost,
     sink: Arc<dyn RunSink>,
-    /// The ACP agent id (the status events and the divider name it).
+    /// The ACP agent id (the selection's provider without `acp:`): the status events, the divider and the config
+    /// events name it.
     agent: String,
     session: SessionId,
     model: String,
@@ -476,8 +502,12 @@ impl Turn<'_> {
                 self.status(ExternalAgentStatus::Stalled { silent_ms })
                     .await;
             }
+            RuntimeEvent::ConfigOptions(options) => {
+                self.host
+                    .agent_config_changed(&self.session, &self.agent, &options, self.sink.as_ref())
+                    .await;
+            }
             RuntimeEvent::Resumed => self.status(ExternalAgentStatus::Resumed).await,
-            RuntimeEvent::ConfigOptions(_) => {}
         }
         None
     }

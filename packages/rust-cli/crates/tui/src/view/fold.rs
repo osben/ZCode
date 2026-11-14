@@ -281,6 +281,7 @@ impl Transcript {
             KernelEvent::FileChanges { turn, files, .. } => self.file_changes(turn, files),
             // Fork: ACP agent rows are a desktop projection (specs/fork-rust-agent-parity.md "ACP external agents").
             KernelEvent::ExternalToolRow { .. }
+            | KernelEvent::ExternalAgentConfig { .. }
             | KernelEvent::ExternalAgentContextReset { .. }
             | KernelEvent::ExternalAgentStatus { .. } => {}
             // Fork: the App's per-turn summary rewind flips the turn header's state; the TUI's own

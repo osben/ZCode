@@ -94,6 +94,7 @@ impl AgentActivity {
             | QueryEvent::ToolInputStarted { .. }
             | QueryEvent::ToolProgress { .. }
             | QueryEvent::ExternalToolRow { .. }
+            | QueryEvent::ExternalAgentConfig { .. }
             | QueryEvent::HookInvocation { .. }
             | QueryEvent::PromptBlocked { .. }
             | QueryEvent::ExternalAgentContextReset { .. }

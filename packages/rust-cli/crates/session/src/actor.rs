@@ -830,6 +830,12 @@ impl Actor {
             Command::ChangeDirectory { root } => self.change_directory(id, root, None).await,
             Command::SetExecutionRoot { root } => self.set_execution_root(root).await,
             Command::SetIncognito { profile } => self.set_incognito(profile),
+            // Fork: the options a config command stored; the agent applies them before its next prompt (rule 13).
+            Command::PublishExternalAgentConfig { agent, options } => {
+                self.log
+                    .append(KernelEvent::ExternalAgentConfig { agent, options });
+                accepted()
+            }
             Command::ChangeDirectoryRecorded { root, record } => {
                 self.change_directory(id, root, Some(record)).await
             }

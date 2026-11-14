@@ -1581,85 +1581,85 @@ failure    ─▶ rows closed "The agent turn failed before this tool finished" 
 
 ### Rules
 
-1. **Selection.** An `acp:<agentId>` provider with model id `<agentId>` is an ACP agent. `zcode-rs`
-   never asks the model catalog (`Platform::endpoint`) for it. The record is re-read from
-   `fork_acp_agents.json` at the start of every turn; a missing record fails the turn with
-   "X is no longer configured…", a disabled one with "X is turned off…" (Node driver text).
-2. **Platform.** ACP runs on macOS only, like Node's `acpAgentPlatformSupported`. `zcode-rs`
-   reports `externalAgentTurns: true` in `runtime/capabilities` only on macOS.
-3. **Dispatch.** `ExternalAgentRunner` wraps the main `QueryLoop` (`runtime/src/lib.rs`). Every
-   other path keeps its own runner. `transcript` delegates to the loop.
-4. **Prompt.** The prompt is the newest human input's text and its images from this turn, like Node.
-   Prompt hook messages are committed first, as in `QueryLoop`.
-5. **Rows are record-only.** An ACP tool or plan row is `ContentBlock::ExternalTool` (id, name,
-   title, input, output text, error flag), never `ToolUse`. It is stored as Node's `tool` part
-   (`ExternalAgentToolRows.#persist`/`#finish`): part `metadata: {externalAgent: true}`, toolName
-   `acp:<kind|other>` (fixed at first sight) or `TodoWrite` for a plan, and a settled state:
-   `completed` with `output`, `title` (the title, else the tool name), `metadata.externalAgent` and
-   `time`, or `error` with `error` (the output, else "<toolName> failed"), `metadata` and `time`.
-   Node's error state has no title (Node's cold view takes it from its event log, which zcode-rs
-   does not write), so a Rust-written error part with a title also carries it in the part's
-   `metadata.rustCli.title`: the fork's namespace inside Node's open `ToolPart.metadata`
-   (`Record<string, unknown>`), like the pending, artifact, notice and compaction markers. Node
-   never reads it; a cold Rust read takes the title from `state.title`, else from this marker.
-   The settle path for tool results is not used. Hydration maps every part with
-   `metadata.externalAgent` to `ExternalTool` in part order, including a Node-written session. Such
-   a part is never a `tool_use`; an unsettled one (a Node turn killed mid-tool) becomes an error row
-   with its stored error or no text, never a synthetic interrupted `tool_result`. Model
-   normalization drops `ExternalTool`, and an assistant message left without blocks is not sent
-   (nor does it stop attachments from hoisting). A row reaching a model adapter anyway is a bug:
-   the Anthropic and OpenAI adapters both refuse it (`InvalidRequest`), never skip it.
-   Text and reasoning of an ACP turn stay in model history (Node `selectToolPartsForHistory`).
-6. **Segments.** A tool or plan event closes the open text/reasoning segment, which is committed as
-   one assistant message. A row is committed, as an assistant message of its own, when it settles:
-   completed, failed, or closed at the turn end. The row id is a `ToolUseId` minted per ACP
-   `toolCallId`. Live rows come from `QueryEvent::ExternalToolRow` (name, title, input, running;
-   emitted at first sight and on every update before the row settles: Node's
-   `ToolCallScheduled`/`Started`/`Progress`) and `QueryEvent::ToolFinished` (output, error flag).
-   An update after the row settled is ignored; a blank title keeps the previous one; `rawInput`
-   replaces the input (Node `toInput`: an object as is, `null` or missing as `{}`, anything else as
-   `{value}`). Output is capped at 32768 UTF-16 units (Node's string length, never splitting a
-   character) plus "\n… [truncated]". A permission ask for an unseen `toolCallId` opens its row
-   (`acp:other`) first, so the ask has a row to land on (Node `rowFor`). Rows still open at the
-   turn end are closed as errors with Node's texts: "Cancelled" (Stop), "The agent turn failed
-   before this tool finished" (prompt failure), "The agent turn ended before this tool finished"
-   (completion). They are committed after the last segment and before the interrupt marker. When
-   the last segment cannot be committed the turn fails like a mid-turn commit failure: open rows
-   settle on screen with the failed-turn text and nothing more is committed. After Stop any
-   failure (a lost segment or row, a failed plan write) still ends the turn interrupted, because
-   Node's `isTurnCancellationError` counts every error of an aborted turn as a cancellation: open
-   rows settle "Cancelled" on screen and the interrupt marker follows. A
-   process killed mid-turn loses only the open segment and open rows, like a regular Rust turn.
-7. **Plan.** An ACP `plan` is a `TodoWrite` row (title "Plan", input `{todos}`) that settles at
-   once with Node's output `{oldTodos, todos, summary}` (`summarizeTodos`). Each todo is Node's
-   `toTodoItem`: trimmed content or "Untitled step", status `pending`/`in_progress`/`completed`
-   (else `pending`), priority `high`/`medium`/`low` (else `medium`). The todos replace the session
-   task list through the agents task board (the one writer of the Task v2 file, which also
-   projects Node's `todo` table and announces `TasksChanged`); the turn never writes the store
-   itself. The board numbers the plan's tasks after the list's high-water mark, because task IDs
-   are never reused: a model `TaskUpdate` of an earlier ID cannot reach a plan step. The same steps
-   sent again (subject, status and priority, in ID order; other Task v2 fields do not count) change
-   nothing and keep the list and its IDs. The whole
-   list is replaced, including tasks a ZCode model created earlier in the session (a session may
-   switch between an ACP agent and a ZCode model): Node's native `TodoWrite` and `applyPlan` share
-   the one `todo` table and `applyPlan` replaces it, so Node shows only the plan's steps too. Task
-   v2 fields Node's todo has no column for (description, owner, blocks, blockedBy) go with the
-   replaced tasks; the plan row's `oldTodos` lists them as Node's todos. A failed write fails the turn like a failed commit. The projection sets `state.plan`
-   (`{items: [{id, content, status}], updatedAt}`, Node `todoPlanDeltas` over
-   `extractPlanStepsFromToolInput`) from a `TodoWrite` row's input, live and cold. A patch
-   follows a row that opens or whose input changes before it settles; a repeated event or an
-   update after the row settled sends none, and a new row with the same steps sends one. An empty
-   plan keeps the last one. (Node's emission differs; see "Plan patches" under the divergences.)
-8. **Title.** An agent `session_info_update` title (trimmed, non-empty) is a generated title
-   (`Fact::TitleGenerated` without a message, `Source::Generated`; Node
-   `setExternalAgentSessionTitle`). A custom title is kept, an unchanged one is skipped, and a
-   store that refuses the write (another writer set a custom title) drops it. The runner hands it
-   to the session actor through `RunSink::external_title`, never the hook title path (which marks
-   the title custom). Title generation by a model is skipped for an ACP session.
-9. **Permissions.** `session/request_permission` goes through `sink.ask` as a user-once permission
-   (`once: true`), never through the permission policy, so no mode answers it. `allow` →
-   `allow_once`, `deny` → `reject_once`; a cancelled or dropped ask answers `cancelled`. Asks that
-   are not live (another generation or session) answer `cancelled` and are never shown.
+1.  **Selection.** An `acp:<agentId>` provider with model id `<agentId>` is an ACP agent. `zcode-rs`
+    never asks the model catalog (`Platform::endpoint`) for it. The record is re-read from
+    `fork_acp_agents.json` at the start of every turn; a missing record fails the turn with
+    "X is no longer configured…", a disabled one with "X is turned off…" (Node driver text).
+2.  **Platform.** ACP runs on macOS only, like Node's `acpAgentPlatformSupported`. `zcode-rs`
+    reports `externalAgentTurns: true` in `runtime/capabilities` only on macOS.
+3.  **Dispatch.** `ExternalAgentRunner` wraps the main `QueryLoop` (`runtime/src/lib.rs`). Every
+    other path keeps its own runner. `transcript` delegates to the loop.
+4.  **Prompt.** The prompt is the newest human input's text and its images from this turn, like Node.
+    Prompt hook messages are committed first, as in `QueryLoop`.
+5.  **Rows are record-only.** An ACP tool or plan row is `ContentBlock::ExternalTool` (id, name,
+    title, input, output text, error flag), never `ToolUse`. It is stored as Node's `tool` part
+    (`ExternalAgentToolRows.#persist`/`#finish`): part `metadata: {externalAgent: true}`, toolName
+    `acp:<kind|other>` (fixed at first sight) or `TodoWrite` for a plan, and a settled state:
+    `completed` with `output`, `title` (the title, else the tool name), `metadata.externalAgent` and
+    `time`, or `error` with `error` (the output, else "<toolName> failed"), `metadata` and `time`.
+    Node's error state has no title (Node's cold view takes it from its event log, which zcode-rs
+    does not write), so a Rust-written error part with a title also carries it in the part's
+    `metadata.rustCli.title`: the fork's namespace inside Node's open `ToolPart.metadata`
+    (`Record<string, unknown>`), like the pending, artifact, notice and compaction markers. Node
+    never reads it; a cold Rust read takes the title from `state.title`, else from this marker.
+    The settle path for tool results is not used. Hydration maps every part with
+    `metadata.externalAgent` to `ExternalTool` in part order, including a Node-written session. Such
+    a part is never a `tool_use`; an unsettled one (a Node turn killed mid-tool) becomes an error row
+    with its stored error or no text, never a synthetic interrupted `tool_result`. Model
+    normalization drops `ExternalTool`, and an assistant message left without blocks is not sent
+    (nor does it stop attachments from hoisting). A row reaching a model adapter anyway is a bug:
+    the Anthropic and OpenAI adapters both refuse it (`InvalidRequest`), never skip it.
+    Text and reasoning of an ACP turn stay in model history (Node `selectToolPartsForHistory`).
+6.  **Segments.** A tool or plan event closes the open text/reasoning segment, which is committed as
+    one assistant message. A row is committed, as an assistant message of its own, when it settles:
+    completed, failed, or closed at the turn end. The row id is a `ToolUseId` minted per ACP
+    `toolCallId`. Live rows come from `QueryEvent::ExternalToolRow` (name, title, input, running;
+    emitted at first sight and on every update before the row settles: Node's
+    `ToolCallScheduled`/`Started`/`Progress`) and `QueryEvent::ToolFinished` (output, error flag).
+    An update after the row settled is ignored; a blank title keeps the previous one; `rawInput`
+    replaces the input (Node `toInput`: an object as is, `null` or missing as `{}`, anything else as
+    `{value}`). Output is capped at 32768 UTF-16 units (Node's string length, never splitting a
+    character) plus "\n… [truncated]". A permission ask for an unseen `toolCallId` opens its row
+    (`acp:other`) first, so the ask has a row to land on (Node `rowFor`). Rows still open at the
+    turn end are closed as errors with Node's texts: "Cancelled" (Stop), "The agent turn failed
+    before this tool finished" (prompt failure), "The agent turn ended before this tool finished"
+    (completion). They are committed after the last segment and before the interrupt marker. When
+    the last segment cannot be committed the turn fails like a mid-turn commit failure: open rows
+    settle on screen with the failed-turn text and nothing more is committed. After Stop any
+    failure (a lost segment or row, a failed plan write) still ends the turn interrupted, because
+    Node's `isTurnCancellationError` counts every error of an aborted turn as a cancellation: open
+    rows settle "Cancelled" on screen and the interrupt marker follows. A
+    process killed mid-turn loses only the open segment and open rows, like a regular Rust turn.
+7.  **Plan.** An ACP `plan` is a `TodoWrite` row (title "Plan", input `{todos}`) that settles at
+    once with Node's output `{oldTodos, todos, summary}` (`summarizeTodos`). Each todo is Node's
+    `toTodoItem`: trimmed content or "Untitled step", status `pending`/`in_progress`/`completed`
+    (else `pending`), priority `high`/`medium`/`low` (else `medium`). The todos replace the session
+    task list through the agents task board (the one writer of the Task v2 file, which also
+    projects Node's `todo` table and announces `TasksChanged`); the turn never writes the store
+    itself. The board numbers the plan's tasks after the list's high-water mark, because task IDs
+    are never reused: a model `TaskUpdate` of an earlier ID cannot reach a plan step. The same steps
+    sent again (subject, status and priority, in ID order; other Task v2 fields do not count) change
+    nothing and keep the list and its IDs. The whole
+    list is replaced, including tasks a ZCode model created earlier in the session (a session may
+    switch between an ACP agent and a ZCode model): Node's native `TodoWrite` and `applyPlan` share
+    the one `todo` table and `applyPlan` replaces it, so Node shows only the plan's steps too. Task
+    v2 fields Node's todo has no column for (description, owner, blocks, blockedBy) go with the
+    replaced tasks; the plan row's `oldTodos` lists them as Node's todos. A failed write fails the turn like a failed commit. The projection sets `state.plan`
+    (`{items: [{id, content, status}], updatedAt}`, Node `todoPlanDeltas` over
+    `extractPlanStepsFromToolInput`) from a `TodoWrite` row's input, live and cold. A patch
+    follows a row that opens or whose input changes before it settles; a repeated event or an
+    update after the row settled sends none, and a new row with the same steps sends one. An empty
+    plan keeps the last one. (Node's emission differs; see "Plan patches" under the divergences.)
+8.  **Title.** An agent `session_info_update` title (trimmed, non-empty) is a generated title
+    (`Fact::TitleGenerated` without a message, `Source::Generated`; Node
+    `setExternalAgentSessionTitle`). A custom title is kept, an unchanged one is skipped, and a
+    store that refuses the write (another writer set a custom title) drops it. The runner hands it
+    to the session actor through `RunSink::external_title`, never the hook title path (which marks
+    the title custom). Title generation by a model is skipped for an ACP session.
+9.  **Permissions.** `session/request_permission` goes through `sink.ask` as a user-once permission
+    (`once: true`), never through the permission policy, so no mode answers it. `allow` →
+    `allow_once`, `deny` → `reject_once`; a cancelled or dropped ask answers `cancelled`. Asks that
+    are not live (another generation or session) answer `cancelled` and are never shown.
 10. **Failures.** Start failure, sign-in, agent died and other errors use Node's four texts
     (`acp-external-agent-host.ts`). They end the turn as `Failed`.
 11. **Side callers.** Compaction, the goal verifier, goal continuation, cron/loop, notice turns and
@@ -1673,7 +1673,53 @@ failure    ─▶ rows closed "The agent turn failed before this tool finished" 
     `ExternalAgentConfig` event. The projection writes `config.externalAgentConfig` (Node
     `externalAgentConfigStateSchema`), seeded from the binding's `config_options` on subscribe (the
     stall status, `control.externalAgentStall`, is rule 14). Error codes are Node's `config.invalid`, `config.notExternalAgent`,
-    `config.notAvailable`, `config.unchanged`.
+    `config.notAvailable`, `config.unchanged`. - **Handler.** Checks in Node's order (`external-agent-config.ts`), each a `failed` ack with
+    Node's message unless noted: 1. `sessionId` differs from the envelope's session: `config.invalid`. 2. The entry gave no config port: `fault.command.capabilityUnsupported`. 3. The session's model (the actor's held selection) is not `acp:<agentId>`:
+    `config.notExternalAgent`. 4. The stored config names another agent: `config.notAvailable`. 5. The offered options are the stored display copy, or else the agent's catalog entry.
+    Neither exists: `config.notAvailable`. 6. The id is not offered, or the value is not one of its values: `config.invalid`. 7. The choice is already stored **and** the shown `currentValue` equals it: a `noop` ack
+    `config.unchanged`. A shown agent value that differs from the stored choice is pinned
+    again.
+
+          The command then:
+          - stores the choice (pending before the first turn, in the binding after it);
+          - overlays the offered options: a pending session with every stored choice plus this one,
+            a bound session with this choice only;
+          - writes that copy as the display copy, which a pending session has none of, so nothing is
+            written;
+          - has the session actor append `KernelEvent::ExternalAgentConfig {agent, options}`.
+
+          The agent process is never touched; the next turn applies the choice. The command takes
+          the session's switch turn (`Live::config_switch`), so two choices are applied in arrival
+          order. Without the Node tables (rule 15), the choice write answers `config.notAvailable`.
+
+        - **Turn reconcile** runs after the acquire and the reset divider, before the prompt (Node
+          `reconcileAcpSessionConfig`):
+          - The choices are applied in id order. Each is checked against the agent's options as they
+            are after the previous answer, as Node reads `runtime.configOptions` for every choice: an
+            answer can replace the whole snapshot (a mode that picks its own model).
+          - A stored choice the agent no longer offers is skipped (debug log, values never logged).
+          - A choice equal to the agent's current value is skipped.
+          - Any other choice is sent with `session/set_config_option`. A failure fails the turn with
+            `Could not set <option name> to <value name>: <error>`.
+          - Stop ends the turn as stopped at once (Node `isTurnCancellationError`). Difference kept:
+            the pending call is dropped and no later choice is sent, nor is anything stored. Node
+            waits for the call's answer or its 30 s timeout, applies the remaining choices, and only
+            then ends the turn cancelled.
+          - The handshake's offered options, never the values applied for this session, are written to
+            the catalog when there are any. A failed catalog write is a warning, and the turn goes on.
+          - With no stored copy and no options, nothing more happens. Otherwise, when the agent's
+            options differ from the stored copy (canonical JSON), they become the display copy and
+            the turn emits `QueryEvent::ExternalAgentConfig`.
+          - An agent-initiated `config_option_update` during the prompt also emits the event and
+            writes the display copy (a failed write is a warning). The choices stay as they are.
+        - **Projection.** `KernelEvent::ExternalAgentConfig` sets `config.externalAgentConfig:
+
+    {agentId, options}`with a`state.updated`patch, and an identical state patches nothing.
+    - A cold open of a session whose model is`acp:<agentId>`seeds it, without a delta, from
+      the stored display copy when the stored agent matches (Node
+      `getSessionExternalAgentConfigSeed`). - An event-set value always wins over the seed. - The field is absent until a seed or an event sets it. - The event is not stored (Node keeps it in its in-memory event log only). A reopen gets
+      the selects from the seed.
+
 14. **Resume (S5).** The binding is written after every acquire. A cold start resumes only when the
     agent, the cwd and the launch key all match. `launch_key` is
     `sha256(JSON.stringify({agentId, command, args, env, cwd}))` with `env` as sorted `[k, v]` pairs,
@@ -1729,9 +1775,16 @@ failure    ─▶ rows closed "The agent turn failed before this tool finished" 
       the rebuilt snapshot has none, like Node's cold merge, which drops a settled turn's stall.
 15. **No migrations.** `zcode-rs` checks that the tables and columns exist (Node's storage
     preparation creates them). Without them there is no binding and no resume, and a config write
-    answers `config.notAvailable`.
-16. **Catalog.** Writes take the Node-compatible directory lock (`fs::with_file_lock`), reread under
-    it, skip when equal, and write the file atomically with private permissions.
+    answers `config.notAvailable`. A turn whose agent offers options still runs: the reconcile shows
+    the options without storing them, as the binding write lets the turn go on (Node always has the
+    tables, so its `writeOffered` never meets this case).
+16. **Catalog.** `fork_acp_agent_catalog.json` next to `provider_config.json` (Node
+    `NodeForkAcpAgentCatalogStore`, `acp-agent-derivation.ts`) holds `{schemaVersion: 1, agents:
+[{agentId, capturedAt, options}]}`. - **Reads** take no lock and are tolerant: a missing, unparsable or non-version-1 file reads
+    as empty, and an invalid entry or a later duplicate agent is dropped. - **Writes** take the Node-compatible directory lock (`fs::with_file_lock`) and reread under
+    it. They skip the write when the agent's normalized options are equal (`capturedAt` is not
+    compared). - Otherwise a write replaces the agent's entry, appended last. It writes `JSON.stringify(_,
+null, 2)` bytes, with the schema's key order, atomically and with private permissions.
 17. **Child process.** Launch rules, the child env filter (credential-like keys dropped, loader keys
     refused in overrides) and the timeouts are Node's (`packages/shared/src/acp-launch-rules`,
     `acp-agent-runtime`). The process is spawned through `rust_cli_proc` as its own group and killed
@@ -1744,13 +1797,8 @@ failure    ─▶ rows closed "The agent turn failed before this tool finished" 
 
 Delivered: rules 1–10, 12, 17, 18 (rows, plan and agent title in S3); rule 14 (S5): the binding,
 resume when agent, cwd and launch key match, a second process resuming with `session/load`, the
-context-reset divider and the stall status.
-
-Not yet ported, tracked as follow-ups:
-
-- **Config (S6), rules 13, 15, 16.** No `setExternalAgentConfigOption` handler, no pending-choice
-  reconcile, no catalog write and no `config.externalAgentConfig` projection. The Host gate admits
-  the command for a runtime with `externalAgentTurns`; `zcode-rs` answers it as an unknown command.
+context-reset divider and the stall status; rules 13, 15, 16 (S6): the config command, the turn
+reconcile, the catalog and `config.externalAgentConfig`.
 
 Divergences from Node, by design of `zcode-rs`:
 
@@ -1856,7 +1904,7 @@ Known small gaps and follow-ups:
   them otherwise.
 - Live check (macOS, headless `zcode-rs app-server --stdio` with a temporary data dir): opencode and
   cursor-agent answer a prompt (2026-11-13: both complete; opencode also ran a shell tool). Setting a
-  config option waits for S6.
+  config option is covered by the mock-agent app-server test (S6), not yet by a live agent check.
 - Desktop E2E: the ACP desktop specs run only on macOS (`acp-agent-e2e.ts` skips elsewhere), so the
   Linux E2E box does not cover them.
 

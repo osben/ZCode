@@ -876,3 +876,135 @@ fn a_relaunch_the_agent_cannot_load_shows_a_context_reset_divider() {
     );
     server.stop();
 }
+
+fn set_option(session: &str, command: &str, config_id: &str, value: &str) -> Value {
+    json!({
+        "commandId": command, "clientId": "k", "sessionId": session, "type": "setExternalAgentConfigOption",
+        "issuedAt": 1, "payload": {"sessionId": session, "configId": config_id, "value": value},
+    })
+}
+
+/// The mock agent's handshake options as the Host's Settings test stores them in `fork_acp_agent_catalog.json`.
+fn write_catalog(home: &Path) {
+    let value = |value: &str, name: &str| json!({"value": value, "name": name, "description": null, "group": null});
+    let file = json!({"schemaVersion": 1, "agents": [{"agentId": "mock", "capturedAt": 1, "options": [
+        {"id": "mode", "name": "Mode", "description": null, "category": "mode", "currentValue": "agent",
+         "options": [value("agent", "Agent"), value("plan", "Plan"), value("ask", "Ask")]},
+        {"id": "model", "name": "Model", "description": null, "category": "model", "currentValue": "m1",
+         "options": [value("m1", "Model 1"), value("m2", "Model 2")]},
+    ]}]});
+    std::fs::write(
+        home.join(".zcode/v2/fork_acp_agent_catalog.json"),
+        file.to_string(),
+    )
+    .unwrap();
+}
+
+/// Rule 13 end to end: `setExternalAgentConfigOption` refuses in Node's order, keeps a choice made before the first
+/// turn (offered from the agent's catalog), shows it, and the first turn applies it before the prompt. The applied
+/// value is then unchanged, and a fresh app-server seeds the display copy into the subscribe snapshot.
+#[test]
+fn an_agent_option_chosen_before_the_first_turn_is_applied_by_it() {
+    let (dir, home, work) = dirs();
+    let state = dir.path().join("agent-state.json");
+    write_agents(
+        &home,
+        &mock_agent(),
+        true,
+        &["--state", state.to_str().unwrap(), "--config", "options"],
+    );
+    let model = ModelStub::start();
+    let mut server = Server::start(&home, &work, &model);
+    let session = open_session(&mut server, &work);
+    node_acp_tables(&home);
+    let refused = |ack: &Value, code: &str| {
+        assert_eq!(ack["status"], "failed", "{ack}");
+        assert_eq!(ack["reasonCode"], code, "{ack}");
+    };
+
+    let ack = server.command(set_option(&session, "o1", "model", "m2"));
+    refused(&ack, "config.notExternalAgent");
+    let ack = server.command(json!({
+        "commandId": "c-switch", "clientId": "k", "sessionId": session, "type": "switchModelConfig",
+        "issuedAt": 1, "baseRevision": 0, "baseLogEpoch": "e",
+        "payload": {"provider": "acp:mock", "model": "mock", "thought": ""},
+    }));
+    assert_eq!(ack["status"], "accepted", "{ack}");
+    let ack = server.command(set_option(&session, "o2", "model", "m2"));
+    refused(&ack, "config.notAvailable");
+    write_catalog(&home);
+    let ack = server.command(set_option(&session, "o3", "model", "m9"));
+    refused(&ack, "config.invalid");
+    let ack = server.command(set_option(&session, "o4", "model", "m2"));
+    assert_eq!(ack["status"], "accepted", "{ack}");
+    server.wait_for(|frame| {
+        frame["method"] == "v4/conversation/frame"
+            && contains(frame, "\"externalAgentConfig\"")
+            && contains(frame, "\"currentValue\":\"m2\"")
+    });
+
+    let finished = finish_turn(&mut server, &session, "c-hello", "hello");
+    assert!(
+        contains(&finished, "\"phase\":\"completedSuccess\""),
+        "{finished}"
+    );
+    let methods = agent_methods(&state);
+    let set = methods
+        .iter()
+        .position(|method| method == "session/set_config_option model=m2");
+    let prompt = methods.iter().position(|method| method == "session/prompt");
+    assert!(set.is_some() && set < prompt, "{methods:?}");
+    let ack = server.command(set_option(&session, "o5", "model", "m2"));
+    assert_eq!(ack["status"], "noop", "{ack}");
+    assert_eq!(ack["reasonCode"], "config.unchanged", "{ack}");
+    server.stop();
+
+    let mut server = Server::start(&home, &work, &model);
+    server.request(
+        "v4/conversation/subscribe",
+        json!({"topic": format!("conversation/{session}"), "connectionId": "k2", "clientMode": "desktop-continuous"}),
+    );
+    let snapshot = server.wait_for(|frame| {
+        frame["method"] == "v4/conversation/frame" && contains(frame, "\"kind\":\"snapshot\"")
+    });
+    let config = snapshot.to_string();
+    assert!(
+        config.contains(r#""externalAgentConfig":{"agentId":"mock""#),
+        "{config}"
+    );
+    assert!(
+        config.contains(r#""id":"model","name":"Model","description":null,"category":"model","currentValue":"m2""#),
+        "{config}"
+    );
+    server.stop();
+}
+
+/// Rule 15: on a home without Node's fork ACP tables an agent that offers options still answers. The display copy
+/// cannot be stored, so the turn shows the options without storing them and goes on, as the binding write does.
+#[test]
+fn an_agent_with_options_answers_without_the_node_tables() {
+    let (dir, home, work) = dirs();
+    let state = dir.path().join("agent-state.json");
+    write_agents(
+        &home,
+        &mock_agent(),
+        true,
+        &["--state", state.to_str().unwrap(), "--config", "options"],
+    );
+    let model = ModelStub::start();
+    let mut server = Server::start(&home, &work, &model);
+    let session = open_session(&mut server, &work);
+    let finished = finish_turn(&mut server, &session, "c-hello", "hello");
+    assert!(
+        contains(&finished, "\"phase\":\"completedSuccess\""),
+        "{finished}"
+    );
+    assert!(
+        server
+            .seen
+            .iter()
+            .any(|frame| frame.contains("\"externalAgentConfig\":{\"agentId\":\"mock\"")),
+        "the options were not shown"
+    );
+    server.stop();
+}

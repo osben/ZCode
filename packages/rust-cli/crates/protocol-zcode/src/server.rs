@@ -230,6 +230,8 @@ impl Server {
             })
             .await?;
         if made.load(std::sync::atomic::Ordering::Relaxed) {
+            // Fork: the stored display copy of the session's ACP agent (Node `seedExternalAgentConfig`).
+            crate::fork::external_agent_config::seed(self, &live, session).await;
             // Fork: a store draft (an app-server prewarm) stays out of the sessions index (crate::live).
             let queries = self.kernel.queries();
             let draft = queries.is_draft(session).await.unwrap_or(false);

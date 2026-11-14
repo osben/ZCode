@@ -49,6 +49,10 @@ pub(crate) async fn decide(
         | "toggleWorkspaceHookReviewItem" => {
             super::hook_review::decide(server, live, envelope, revision).await
         }
+        // Fork: the selects of the session's ACP agent (fork/external_agent_config.rs).
+        "setExternalAgentConfigOption" => {
+            super::external_agent_config::set_option(server, live, envelope, revision).await
+        }
         "cancelBackgroundWork" => background_work::cancel(live, envelope, revision).await,
         "stopSubagent" => background_work::stop_subagent(live, envelope, revision).await,
         // Fork: the prepared worktree's compare-and-set update (crate::worktree).
