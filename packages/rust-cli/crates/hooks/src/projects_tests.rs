@@ -295,3 +295,19 @@ async fn the_later_started_load_wins_when_the_earlier_finishes_first() {
         started(&env)
     );
 }
+
+#[tokio::test]
+async fn paths_that_differ_only_in_whitespace_are_two_workspaces() {
+    // `workspaceIdentity?.trim() || workspacePath`: only an explicit identity is trimmed, never the path fallback.
+    assert_ne!(project_key("/work/repo "), project_key("/work/repo"));
+    assert_ne!(project_key(" /work/repo"), project_key("/work/repo"));
+    let env = Arc::new(ScriptedEnv::default());
+    let hooks = engine(env.clone(), &json!({}));
+    hooks.put_project(
+        &project_key("/work/repo"),
+        project("UserPromptSubmit", "a.sh"),
+    );
+    hooks.put_project(&project_key("/work/repo "), ProjectEntry::Invalid);
+    run(&hooks, prompt_in("/work/repo")).await;
+    assert_eq!(started(&env), ["a.sh"]);
+}
