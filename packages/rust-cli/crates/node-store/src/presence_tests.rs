@@ -484,3 +484,70 @@ fn a_register_dropped_before_its_insert_ran_leaves_no_row() {
     assert!(presence(&store).is_empty(), "{:?}", presence(&store));
     assert!(store.store.presence.lock().unwrap().is_empty());
 }
+
+/// Waits until the release of `owner` ran and its delete failed on the locked database.
+async fn release_failed(store: &TestStore, owner: &str) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !store.store.presence.lock().unwrap()[owner].released {
+        assert!(Instant::now() < deadline, "the release never ran");
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    // Past the 20 ms busy timeout: the delete has failed.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(
+        presence(store).iter().filter(|row| row.1 == owner).count(),
+        1,
+        "the locked delete left the row"
+    );
+}
+
+/// A release that fails while Node holds `begin immediate` is retried by the store's own backoff timer: a long-lived
+/// process that opens nothing else must not keep a live-pid row for a closed session.
+#[tokio::test]
+async fn a_failed_release_is_retried_without_another_register() {
+    let store = migrated().await;
+    let guard = store.store.register_runtime(&sid()).await.unwrap();
+    let owner = presence(&store)[0].1.clone();
+    fail_fast_when_locked(&store);
+    let node = store.connection();
+    node.execute_batch("begin immediate").unwrap();
+    drop(guard);
+    release_failed(&store, &owner).await;
+    node.execute_batch("commit").unwrap();
+    eventually(&store, <[_]>::is_empty).await;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !store.store.presence.lock().unwrap().is_empty() {
+        assert!(
+            Instant::now() < deadline,
+            "the held entry was never forgotten"
+        );
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+}
+
+/// A release that succeeds retries the earlier failed ones.
+#[tokio::test]
+async fn a_release_retries_the_earlier_failed_releases() {
+    let store = migrated().await;
+    store
+        .store
+        .create(meta("sess_other", "/w", "t"))
+        .await
+        .unwrap();
+    let first = store.store.register_runtime(&sid()).await.unwrap();
+    let owner = presence(&store)[0].1.clone();
+    let second = store
+        .store
+        .register_runtime(&SessionId::new("sess_other"))
+        .await
+        .unwrap();
+    fail_fast_when_locked(&store);
+    let node = store.connection();
+    node.execute_batch("begin immediate").unwrap();
+    drop(first);
+    release_failed(&store, &owner).await;
+    node.execute_batch("commit").unwrap();
+    // Outside a runtime the release runs inline: both rows are gone when it returns.
+    std::thread::spawn(move || drop(second)).join().unwrap();
+    assert!(presence(&store).is_empty(), "{:?}", presence(&store));
+}

@@ -7,8 +7,9 @@
 //! Node's `beginSessionDeletion` refuses a purge while a foreign row with a live pid exists. There is no heartbeat:
 //! Node's `kill(pid, 0)` probe deletes the rows of a process that is gone.
 //!
-//! A row stays in [`Held`] until its delete succeeds: a release that fails (the database locked past the busy timeout)
-//! is retried by the next presence operation and by the shutdown sweep, as Node's `close()` deletes every row of its
+//! A row stays in [`Held`] until its delete succeeds: a release that fails (the database locked past the busy timeout,
+//! which is when Node holds `begin immediate`) is retried by every later release and register, by a backoff timer the
+//! store owns while failed releases remain, and by the shutdown sweep, as Node's `close()` deletes every row of its
 //! owner whatever an earlier `unregisterSessionRuntime` did.
 //!
 //! The entry, and the guard that releases it, exist before the insert is queued: an open or a create dropped while
@@ -18,7 +19,9 @@
 //! Lock order: the connection, then [`Held`]. Every function here except [`pending`] and [`Release::run`] runs on the
 //! store's blocking thread.
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use rusqlite::{Connection, ErrorCode, params};
 use rust_cli_base::sync::LockUnpoisoned;
@@ -40,6 +43,10 @@ pub(crate) struct Entry {
 
 /// The presence rows this process holds: owner id to entry.
 pub(crate) type Held = Arc<Mutex<HashMap<String, Entry>>>;
+
+/// The first wait of the retry timer, doubled after each try that leaves rows, up to [`RETRY_MAX`].
+const RETRY_FIRST: Duration = Duration::from_millis(50);
+const RETRY_MAX: Duration = Duration::from_secs(2);
 
 /// A fresh owner id in Node's format (`${process.pid}:${randomUUID()}`). One per open, so the late release of a
 /// closed runtime can never delete the row of a reopen of the same session.
@@ -159,6 +166,49 @@ fn retry_released(conn: &Connection, held: &Held) {
     }
 }
 
+fn any_released(held: &Held) -> bool {
+    held.lock_unpoisoned().values().any(|entry| entry.released)
+}
+
+/// Starts the store's retry timer unless it runs: while failed releases remain it retries them on a bounded backoff,
+/// and it stops once none is left. It is a runtime task, so it never keeps the process alive; what it has not deleted
+/// by the runtime shutdown goes to the exit sweep.
+fn schedule_retry(
+    runtime: &tokio::runtime::Handle,
+    connection: Arc<Mutex<Option<Connection>>>,
+    held: Held,
+    retrying: Arc<AtomicBool>,
+) {
+    if retrying.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let blocking = runtime.clone();
+    drop(runtime.spawn(async move {
+        let mut wait = RETRY_FIRST;
+        loop {
+            tokio::time::sleep(wait).await;
+            let (slot, rows) = (connection.clone(), held.clone());
+            let swept = blocking
+                .spawn_blocking(move || {
+                    if let Some(conn) = slot.lock_unpoisoned().as_ref() {
+                        retry_released(conn, &rows);
+                    }
+                })
+                .await;
+            if swept.is_err() || !any_released(&held) {
+                retrying.store(false, Ordering::Release);
+                // A release that failed after the check found the timer still running: take it over.
+                if !any_released(&held) || retrying.swap(true, Ordering::AcqRel) {
+                    return;
+                }
+                wait = RETRY_FIRST;
+            } else {
+                wait = (wait * 2).min(RETRY_MAX);
+            }
+        }
+    }));
+}
+
 /// Node `close()`: deletes every row this process still holds. A row whose delete fails stays held.
 pub(crate) fn release_all(conn: &Connection, held: &Held) -> Result<(), StoreError> {
     sweep(conn, held, |_| true).map_err(crate::storage)
@@ -201,6 +251,8 @@ pub(crate) fn assert_not_deleting(
 pub(crate) struct Release {
     pub(crate) connection: Arc<Mutex<Option<Connection>>>,
     pub(crate) held: Held,
+    /// Whether the store's retry timer runs ([`schedule_retry`]).
+    pub(crate) retrying: Arc<AtomicBool>,
     pub(crate) session: String,
     pub(crate) owner: String,
 }
@@ -214,7 +266,8 @@ impl Release {
         }
         match tokio::runtime::Handle::try_current() {
             Ok(runtime) => {
-                let task = runtime.spawn_blocking(move || self.delete());
+                let timer = runtime.clone();
+                let task = runtime.spawn_blocking(move || self.delete(Some(&timer)));
                 // A panicked delete is reported; one the runtime shutdown skipped leaves its entry held for the exit
                 // sweep.
                 drop(runtime.spawn(async move {
@@ -227,11 +280,12 @@ impl Release {
                     }
                 }));
             }
-            Err(_) => self.delete(),
+            Err(_) => self.delete(None),
         }
     }
 
-    fn delete(&self) {
+    /// `runtime` runs the retry timer when rows are left held; inline (no runtime) they wait for the exit sweep.
+    fn delete(&self, runtime: Option<&tokio::runtime::Handle>) {
         let slot = self.connection.lock_unpoisoned();
         match self.held.lock_unpoisoned().get_mut(&self.owner) {
             // Released at shutdown already (`release_all`): nothing left to delete.
@@ -244,14 +298,26 @@ impl Release {
         match delete(conn, &self.session, &self.owner) {
             Ok(()) => {
                 self.held.lock_unpoisoned().remove(&self.owner);
+                retry_released(conn, &self.held);
             }
-            // The row stays held: the next presence operation or the shutdown sweep deletes it.
+            // The row stays held: a later release or register, the retry timer or the shutdown sweep deletes it.
             Err(error) => tracing::warn!(
                 event = "session_presence.release_failed",
                 session = %self.session,
                 error = %error,
                 "releasing the session runtime presence failed; it is retried"
             ),
+        }
+        drop(slot);
+        if let Some(runtime) = runtime
+            && any_released(&self.held)
+        {
+            schedule_retry(
+                runtime,
+                self.connection.clone(),
+                self.held.clone(),
+                self.retrying.clone(),
+            );
         }
     }
 }

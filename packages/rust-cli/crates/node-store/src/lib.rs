@@ -94,6 +94,8 @@ pub struct NodeStore {
     drafts: Option<Arc<Mutex<drafts::Drafts>>>,
     /// Fork: the session runtime presence rows this process holds ([`presence`]).
     presence: presence::Held,
+    /// Fork: whether the retry timer of failed presence releases runs ([`presence`]).
+    presence_retry: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl NodeStore {
@@ -106,6 +108,7 @@ impl NodeStore {
             version: String::new(),
             drafts: None,
             presence: presence::Held::default(),
+            presence_retry: Arc::default(),
         }
     }
 
@@ -114,13 +117,14 @@ impl NodeStore {
     /// on the calling thread. The process entry calls it once the async runtime has shut down, so no session work is
     /// left to write after the rows are gone. A row whose delete fails is logged and left to Node's pid probe.
     pub fn release_presence_blocking(&self) {
-        if self.presence.lock_unpoisoned().is_empty() {
-            return;
-        }
+        // The connection first (the module's lock order): a release running now settles before the held rows are read.
         let slot = self.connection.lock_unpoisoned();
         let Some(conn) = slot.as_ref() else {
             return;
         };
+        if self.presence.lock_unpoisoned().is_empty() {
+            return;
+        }
         if let Err(error) = presence::release_all(conn, &self.presence) {
             tracing::warn!(
                 event = "session_presence.release_all_failed",
@@ -579,6 +583,7 @@ impl StoreQueries for NodeStore {
         let release = presence::Release {
             connection: self.connection.clone(),
             held: self.presence.clone(),
+            retrying: self.presence_retry.clone(),
             session: session.as_str().to_owned(),
             owner: owner.clone(),
         };
