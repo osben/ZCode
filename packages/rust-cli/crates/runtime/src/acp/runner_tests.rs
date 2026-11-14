@@ -470,6 +470,7 @@ async fn a_plan_replaces_the_task_list_as_a_todo_write_row() {
     assert!(row.output.starts_with(
         r#"{"oldTodos":[{"content":"Old step","status":"completed","priority":"medium"}],"todos":"#
     ));
+    // The turn sends no IDs: the task board numbers the plan after its high-water mark.
     let tasks = harness.plans.0.lock().unwrap().clone();
     let shape: Vec<(String, String, TaskStatus, Option<serde_json::Value>)> = tasks
         .into_iter()
@@ -484,19 +485,19 @@ async fn a_plan_replaces_the_task_list_as_a_todo_write_row() {
         shape,
         vec![
             (
-                "1".into(),
+                String::new(),
                 "Read the spec".into(),
                 TaskStatus::Completed,
                 Some(json!("high"))
             ),
             (
-                "2".into(),
+                String::new(),
                 "Write the tests".into(),
                 TaskStatus::InProgress,
                 None
             ),
             (
-                "3".into(),
+                String::new(),
                 "Ship the change".into(),
                 TaskStatus::Pending,
                 Some(json!("low"))

@@ -329,11 +329,12 @@ fn todo_item(entry: &PlanEntry) -> Value {
 }
 
 /// A todo as a Task v2 task (node-store `task_lists`: the `medium` priority is the placeholder, kept as no metadata).
-fn task_of(index: usize, todo: &Value) -> TaskRecord {
+/// It has no ID: the task board numbers the plan (`TaskPlanWriter::replace`).
+fn task_of(todo: &Value) -> TaskRecord {
     let text = |key: &str| todo[key].as_str().unwrap_or_default().to_owned();
     let priority = text("priority");
     TaskRecord {
-        id: (index + 1).to_string(),
+        id: String::new(),
         subject: text("content"),
         description: String::new(),
         active_form: None,
@@ -581,11 +582,7 @@ impl Turn<'_> {
             row.started = true;
         }
         self.show(&key).await;
-        let tasks = todos
-            .iter()
-            .enumerate()
-            .map(|(at, todo)| task_of(at, todo))
-            .collect();
+        let tasks = todos.iter().map(task_of).collect();
         let old = match self.host.plans.replace(&self.session, tasks).await {
             Ok(old) => old,
             Err(error) => {

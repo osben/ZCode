@@ -344,14 +344,21 @@ impl rust_cli_kernel_api::agents::TaskPlanWriter for TaskLists {
         let list = self.0.live.root_of(session);
         let replaced = Arc::new(std::sync::Mutex::new(Vec::new()));
         let slot = replaced.clone();
-        let count = tasks.len() as u64;
         let change: tasks::Change = Box::new(move |current| {
-            let old = std::mem::replace(&mut current.tasks, tasks);
-            // IDs are never reused: the mark keeps the highest ID ever issued.
-            current.high_water_mark = current.high_water_mark.max(count);
-            let changed = old != current.tasks;
-            *slot.lock_unpoisoned() = old;
-            (String::new(), changed)
+            // A plan sent again unchanged keeps the list and its IDs, so an agent repeating its plan writes nothing.
+            if same_steps(&current.tasks, &tasks) {
+                *slot.lock_unpoisoned() = current.tasks.clone();
+                return (String::new(), false);
+            }
+            // IDs are never reused (`TaskList::high_water_mark`): the plan is numbered after the highest ID ever
+            // issued, so a model's `TaskUpdate` of an older ID cannot reach a plan step.
+            let mut tasks = tasks;
+            for task in &mut tasks {
+                current.high_water_mark += 1;
+                task.id = current.high_water_mark.to_string();
+            }
+            *slot.lock_unpoisoned() = std::mem::replace(&mut current.tasks, tasks);
+            (String::new(), true)
         });
         let (_, written) = self.0.board.update(&list, change).await?;
         if let Some(written) = written {
@@ -362,6 +369,22 @@ impl rust_cli_kernel_api::agents::TaskPlanWriter for TaskLists {
         old.sort_by_key(|task| task.id.parse::<u64>().unwrap_or(u64::MAX));
         Ok(old)
     }
+}
+
+/// Whether `plan` lists the same steps as `tasks` in the same order, IDs aside.
+fn same_steps(
+    tasks: &[rust_cli_kernel_api::agents::TaskRecord],
+    plan: &[rust_cli_kernel_api::agents::TaskRecord],
+) -> bool {
+    let mut ordered: Vec<_> = tasks.iter().collect();
+    ordered.sort_by_key(|task| task.id.parse::<u64>().unwrap_or(u64::MAX));
+    ordered.len() == plan.len()
+        && ordered.iter().zip(plan).all(|(task, step)| {
+            rust_cli_kernel_api::agents::TaskRecord {
+                id: step.id.clone(),
+                ..(*task).clone()
+            } == *step
+        })
 }
 
 struct TaskLists(Arc<Core>);

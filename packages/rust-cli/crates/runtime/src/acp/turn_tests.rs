@@ -112,7 +112,10 @@ fn tool_output_is_capped_like_node() {
     assert_eq!(cap_output(fits.clone()), fits);
     let over = format!("{fits}b");
     assert_eq!(cap_output(over), format!("{fits}{TRUNCATION_MARKER}"));
-    // A non-BMP character is two units: one unit short of the cap, it no longer fits.
+    // A non-BMP character is two units: ending exactly on the cap it fits, one unit short it no longer does (Node's
+    // `slice` would keep its lone high surrogate there; Rust strings cannot hold one).
+    let exact = format!("{}😀", "a".repeat(OUTPUT_MAX_UNITS - 2));
+    assert_eq!(cap_output(exact.clone()), exact);
     let wide = format!("{}😀", "a".repeat(OUTPUT_MAX_UNITS - 1));
     assert_eq!(
         cap_output(wide),

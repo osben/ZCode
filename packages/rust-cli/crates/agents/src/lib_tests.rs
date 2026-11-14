@@ -307,7 +307,10 @@ async fn an_acp_plan_replaces_the_root_list_and_signals_it() {
             json!("high"),
         )])),
     };
-    let plan = vec![task("1", "Read", TaskStatus::InProgress)];
+    // The writer numbers the plan from the high-water mark: IDs are never reused (kernel-api `TaskList`), so a later
+    // `TaskUpdate "1"` cannot reach a plan step. The IDs it is given are ignored.
+    let plan = vec![task("", "Read", TaskStatus::InProgress)];
+    let numbered = vec![task("4", "Read", TaskStatus::InProgress)];
     let writer = harness.agents.task_plan_writer();
     let old = writer.replace(&root, plan.clone()).await.unwrap();
     let subjects: Vec<&str> = old.iter().map(|task| task.subject.as_str()).collect();
@@ -315,11 +318,29 @@ async fn an_acp_plan_replaces_the_root_list_and_signals_it() {
     let Some(AgentSignal::TasksChanged { tasks }) = stream.next().await else {
         panic!("expected tasks");
     };
-    assert_eq!(tasks, serde_json::to_value(&plan).unwrap());
+    assert_eq!(tasks, serde_json::to_value(&numbered).unwrap());
     let stored = harness.tasks.load(&root).await.unwrap();
-    assert_eq!((stored.tasks, stored.high_water_mark), (plan.clone(), 3));
-    // The same plan again writes nothing and signals nothing; the old list is still answered.
-    assert_eq!(writer.replace(&root, plan.clone()).await.unwrap(), plan);
+    assert_eq!(
+        (stored.tasks, stored.high_water_mark),
+        (numbered.clone(), 4)
+    );
+    // The same plan again writes nothing and keeps its IDs; the old list is still answered.
+    assert_eq!(writer.replace(&root, plan.clone()).await.unwrap(), numbered);
+    let stored = harness.tasks.load(&root).await.unwrap();
+    assert_eq!(
+        (stored.tasks, stored.high_water_mark),
+        (numbered.clone(), 4)
+    );
+    // A task the model creates next takes the next ID.
+    harness
+        .call(
+            "sess_parent",
+            "TaskCreate",
+            json!({"subject": "After", "description": ""}),
+        )
+        .await;
+    let stored = harness.tasks.load(&root).await.unwrap();
+    assert_eq!(stored.tasks.last().map(|task| task.id.as_str()), Some("5"));
 }
 
 /// 子会话的当前轮随每个批次交给存储（node-store.md §4，修复线 F6）；续跑的输入开新的一轮。以前都不带锚点。

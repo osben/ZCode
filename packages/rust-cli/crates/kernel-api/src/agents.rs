@@ -324,7 +324,8 @@ pub trait TaskReader: Send + Sync {
 #[async_trait]
 pub trait TaskPlanWriter: Send + Sync {
     /// Replaces the list of this session (a subagent's is its top-level session's) with `tasks`; returns the tasks it
-    /// replaced, by ID ascending.
+    /// replaced, by ID ascending. The writer numbers `tasks` after the list's high-water mark (their own IDs are
+    /// ignored); the same steps again leave the list and its IDs as they are.
     async fn replace(
         &self,
         session: &SessionId,

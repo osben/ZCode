@@ -1375,6 +1375,11 @@ failure    ─▶ rows closed "The agent turn failed before this tool finished" 
    `acp:<kind|other>` (fixed at first sight) or `TodoWrite` for a plan, and a settled state:
    `completed` with `output`, `title` (the title, else the tool name), `metadata.externalAgent` and
    `time`, or `error` with `error` (the output, else "<toolName> failed"), `metadata` and `time`.
+   Node's error state has no title (Node's cold view takes it from its event log, which zcode-rs
+   does not write), so a Rust-written error part with a title also carries it in the part's
+   `metadata.rustCli.title`: the fork's namespace inside Node's open `ToolPart.metadata`
+   (`Record<string, unknown>`), like the pending, artifact, notice and compaction markers. Node
+   never reads it; a cold Rust read takes the title from `state.title`, else from this marker.
    The settle path for tool results is not used. Hydration maps every part with
    `metadata.externalAgent` to `ExternalTool` in part order, including a Node-written session. Such
    a part is never a `tool_use`; an unsettled one (a Node turn killed mid-tool) becomes an error row
@@ -1402,7 +1407,14 @@ failure    ─▶ rows closed "The agent turn failed before this tool finished" 
    (else `pending`), priority `high`/`medium`/`low` (else `medium`). The todos replace the session
    task list through the agents task board (the one writer of the Task v2 file, which also
    projects Node's `todo` table and announces `TasksChanged`); the turn never writes the store
-   itself. A failed write fails the turn like a failed commit. The projection sets `state.plan`
+   itself. The board numbers the plan's tasks after the list's high-water mark, because task IDs
+   are never reused: a model `TaskUpdate` of an earlier ID cannot reach a plan step. The same steps
+   sent again (subject, status, priority, in order) change nothing and keep their IDs. The whole
+   list is replaced, including tasks a ZCode model created earlier in the session (a session may
+   switch between an ACP agent and a ZCode model): Node's native `TodoWrite` and `applyPlan` share
+   the one `todo` table and `applyPlan` replaces it, so Node shows only the plan's steps too. Task
+   v2 fields Node's todo has no column for (description, owner, blocks, blockedBy) go with the
+   replaced tasks; the plan row's `oldTodos` lists them as Node's todos. A failed write fails the turn like a failed commit. The projection sets `state.plan`
    (`{items: [{id, content, status}], updatedAt}`, Node `todoPlanDeltas` over
    `extractPlanStepsFromToolInput`) from a `TodoWrite` row's input, live and cold.
 8. **Title.** An agent `session_info_update` title (trimmed, non-empty) is a generated title
