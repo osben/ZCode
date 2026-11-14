@@ -176,6 +176,8 @@ pub(crate) fn limits(env: &EnvSnapshot, max_output_tokens: Option<u32>) -> Limit
             max_output_tokens,
             thinking: thinking(env),
             tool_search: tool_search(env),
+            // The runtime sets the Stop continuation rule from its surface.
+            ..RequestLimits::default()
         },
         bash: bash(env),
         fork_subagent: fork_subagent(env),

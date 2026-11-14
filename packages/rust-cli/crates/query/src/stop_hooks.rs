@@ -7,11 +7,8 @@ use rust_cli_kernel_api::model::{ModelSelection, QuerySource};
 use rust_cli_kernel_api::orchestration::QueryError;
 use serde_json::{Map, Value, json};
 
-use crate::RunScope;
 use crate::respond::commit;
-
-/// 连续阻塞的上限（缺省值）。
-const BLOCK_CAP: u32 = 8;
+use crate::{RunScope, StopContinuations};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum StopHook {
@@ -89,6 +86,7 @@ pub(crate) async fn stop_hooks(
             run: Some(scope.run.clone()),
             // 会话当前的主模型（owner 是会话 actor，model.md §6.1）。
             selection: view.selection,
+            session_mode: None,
         },
         ..HookEvent::new(
             name,
@@ -113,7 +111,12 @@ pub(crate) async fn stop_hooks(
     };
     let prevent = outcome.prevent_continuation;
     let mut block = !prevent && !outcome.messages.is_empty();
-    for message in outcome.messages {
+    let rule = scope.parts.limits.stop_continuations;
+    let over_cap = blocked + 1 > rule.cap();
+    // Fork: Node writes the Stop context only when the turn continues (`turn-stop.ts`); at its cap the feedback is
+    // dropped. zcode-rs commits it before the cap check.
+    let keep = prevent || !over_cap || rule == StopContinuations::Consecutive;
+    for message in outcome.messages.into_iter().filter(|_| keep) {
         commit(scope, history, message).await?;
     }
     // 中止时不报告判定（直接返回）。
@@ -129,7 +132,7 @@ pub(crate) async fn stop_hooks(
     if !block {
         return Ok(StopHook::End);
     }
-    if blocked + 1 > BLOCK_CAP {
+    if over_cap {
         // 应另外显示一条警告（`A hook blocked the turn from ending N consecutive times …`）；
         // 这里还没有只供显示的提示消息，先记日志（query.md §6）。
         tracing::warn!(

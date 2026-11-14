@@ -228,6 +228,7 @@ fn engine_with(
     crate::HookEngine::with_config(
         crate::HookPorts {
             artifacts,
+            transcripts: None,
             ..crate::test_support::ports(env)
         },
         crate::test_support::config(&command_settings(name.as_str(), matcher, "big.sh")),

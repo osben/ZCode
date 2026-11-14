@@ -47,6 +47,10 @@ pub struct Pipeline {
     /// Fork: the incognito tool gate; a tool the session's profile removes is not called even when the model names
     /// it (specs/fork-rust-agent-parity.md, "Incognito sessions").
     incognito: Option<Arc<dyn rust_cli_kernel_api::incognito::IncognitoToolGate>>,
+    /// Fork (node_desktop): Node's hook semantics. PreToolUse messages follow the tool result, as Node's post-batch
+    /// reminders, and the PermissionRequest input names the call (specs/fork-rust-agent-parity.md "Tool hook context
+    /// after the tool result", "Command hook stdin").
+    node_hooks: bool,
 }
 
 /// 子代理里的询问被拒时的结果文字（主线程是 [`REJECT_MESSAGE`]，docs/specs/rust-cli/agents.md §4.1.1）。
@@ -126,7 +130,16 @@ impl Pipeline {
             hooks,
             machines: Machines::default(),
             incognito: None,
+            node_hooks: false,
         }
+    }
+
+    /// Fork: Node's hook semantics (the Node desktop agent): PreToolUse messages after the tool result, before the
+    /// PostToolUse ones, and `tool_use_id` in the PermissionRequest input.
+    #[must_use]
+    pub fn with_node_hooks(mut self, node_hooks: bool) -> Self {
+        self.node_hooks = node_hooks;
+        self
     }
 
     /// Fork: check every call against the session's incognito profile.
@@ -177,10 +190,12 @@ impl Pipeline {
         // 不跑 PermissionRequest hooks，hook 不能替用户批准；没有“总是允许”（判决链不给建议规则）。工作线 F137：这个事实
         // 随判决给出（`Ask.once`），不再另问判决链（以前的 `ask_once` 又取一次执行环境的路径风格）。
         if !once {
-            let payload = tag(
-                hooks::permission_request(tool.name(), input, &suggestions),
-                &call.machine,
-            );
+            let mut payload = hooks::permission_request(tool.name(), input, &suggestions);
+            // Node's PermissionRequest input carries the call id (`toolCallId`, alias `tool_use_id`).
+            if self.node_hooks {
+                payload["tool_use_id"] = Value::from(context.tool_use.as_str());
+            }
+            let payload = tag(payload, &call.machine);
             let event = hooks::event(HookEventName::PermissionRequest, &call.hooks, payload).await;
             let request = self.hooks.run(event, context.cancel.clone()).await;
             match request.decision {
@@ -520,7 +535,10 @@ impl ToolExecutor for Pipeline {
         if hidden {
             return ToolExecution::output(no_such_tool(tool.name()));
         }
-        let mut messages = HookMessages::default();
+        let mut messages = HookMessages {
+            pre_after_result: self.node_hooks,
+            ..HookMessages::default()
+        };
         let (input, call) = match self
             .admit(tool.as_ref(), input, context, &mut messages)
             .await

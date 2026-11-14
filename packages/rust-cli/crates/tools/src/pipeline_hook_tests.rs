@@ -145,12 +145,20 @@ struct Ran {
 }
 
 async fn run(gate: Arc<Gate>, outcomes: &[(HookEventName, HookOutcome)]) -> Ran {
+    run_ordered(gate, outcomes, false).await
+}
+
+async fn run_ordered(
+    gate: Arc<Gate>,
+    outcomes: &[(HookEventName, HookOutcome)],
+    node_hooks: bool,
+) -> Ran {
     let hooks = Arc::new(Hooks {
         outcomes: outcomes.iter().cloned().collect(),
         ..Hooks::default()
     });
     let asked = Arc::new(ScriptedInteractions::allowing());
-    let pipeline = Pipeline::new(gate.clone(), hooks.clone());
+    let pipeline = Pipeline::new(gate.clone(), hooks.clone()).with_node_hooks(node_hooks);
     let (progress, _updates) = mpsc::channel(4);
     let execution = pipeline
         .execute(
@@ -351,6 +359,92 @@ async fn hook_messages_and_stops_surround_the_result() {
     );
 }
 
+fn ids(messages: &[Message]) -> Vec<String> {
+    messages
+        .iter()
+        .map(|m| m.id().as_str().to_owned())
+        .collect()
+}
+
+fn context_outcome(text: &str) -> HookOutcome {
+    HookOutcome {
+        messages: vec![note("hook_additional_context", text)],
+        ..HookOutcome::default()
+    }
+}
+
+/// Fork: Node delivers tool hook contexts after the tool result, PreToolUse before PostToolUse
+/// (specs/fork-rust-agent-parity.md "Tool hook context after the tool result").
+#[tokio::test]
+async fn under_node_hooks_the_pre_tool_context_follows_the_result() {
+    let allow_gate = Gate::new(
+        PermissionDecision::Allow {
+            updated_input: None,
+        },
+        None,
+    );
+    let pre_outcome = HookOutcome {
+        after_result: vec![note("hook_stopped_continuation", "pre stop")],
+        prevent_continuation: true,
+        ..context_outcome("pre ctx")
+    };
+    let ran = run_ordered(
+        allow_gate,
+        &[
+            (HookEventName::PreToolUse, pre_outcome),
+            (HookEventName::PostToolUse, context_outcome("post ctx")),
+        ],
+        true,
+    )
+    .await;
+    assert_eq!(text(&ran.execution.output), "ran ls");
+    assert!(ran.execution.before.is_empty());
+    assert_eq!(
+        ids(&ran.execution.after),
+        ["pre ctx", "post ctx", "pre stop"]
+    );
+}
+
+/// Fork: a refused call keeps its PreToolUse context after the refusal: a hook deny, an `updatedInput` that fails the
+/// schema, and a permission deny (E2E HK-EF-01).
+#[tokio::test]
+async fn under_node_hooks_a_refused_call_keeps_its_pre_tool_context_after_the_result() {
+    let allow_gate = || {
+        Gate::new(
+            PermissionDecision::Allow {
+                updated_input: None,
+            },
+            None,
+        )
+    };
+    let denied = HookOutcome {
+        decision: Some(PermissionDecision::Deny {
+            message: "hook says no".to_owned(),
+        }),
+        ..context_outcome("deny ctx")
+    };
+    let invalid = HookOutcome {
+        updated_input: Some(json!({"command": 7})),
+        ..context_outcome("invalid ctx")
+    };
+    let chain_deny = Gate::new(
+        PermissionDecision::Deny {
+            message: "chain says no".to_owned(),
+        },
+        None,
+    );
+    for (gate, outcome, context) in [
+        (allow_gate(), denied, "deny ctx"),
+        (allow_gate(), invalid, "invalid ctx"),
+        (chain_deny, context_outcome("chain ctx"), "chain ctx"),
+    ] {
+        let ran = run_ordered(gate, &[(HookEventName::PreToolUse, outcome)], true).await;
+        assert!(ran.execution.output.is_error, "{context}");
+        assert!(ran.execution.before.is_empty(), "{context}");
+        assert_eq!(ids(&ran.execution.after), [context]);
+    }
+}
+
 #[tokio::test]
 async fn non_hook_rejections_drop_the_pre_tool_stop() {
     let deny_gate = Gate::new(
@@ -533,4 +627,24 @@ async fn a_stopped_call_is_an_interrupted_failure_that_keeps_its_display() {
         .expect("the failure hook ran");
     assert_eq!(failure.payload["is_interrupt"], true);
     assert_eq!(failure.payload["error"], "Subagent was stopped by user");
+}
+
+/// Fork: under Node hooks the PermissionRequest input names the call (Node `toolCallId` / `tool_use_id`); the
+/// Claude Code input keeps it out (`permission_request_hooks_answer_before_the_user`).
+#[tokio::test]
+async fn under_node_hooks_the_permission_request_names_the_tool_call() {
+    let deny = (
+        HookEventName::PermissionRequest,
+        HookOutcome {
+            decision: Some(PermissionDecision::Deny {
+                message: "Permission denied by hook".to_owned(),
+            }),
+            ..HookOutcome::default()
+        },
+    );
+    let ran = run_ordered(ask_gate(), &[deny], true).await;
+    assert_eq!(ran.events[1].name, HookEventName::PermissionRequest);
+    let id = &ran.events[0].payload["tool_use_id"];
+    assert!(id.is_string(), "{id:?}");
+    assert_eq!(&ran.events[1].payload["tool_use_id"], id);
 }

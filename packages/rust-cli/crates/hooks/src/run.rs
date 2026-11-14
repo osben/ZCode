@@ -7,7 +7,7 @@ use std::sync::Arc;
 use futures_util::stream::{FuturesUnordered, StreamExt};
 use rust_cli_kernel_api::clock::Ids;
 use rust_cli_kernel_api::env::{OperationContext, Operations, Origin, WorkspaceRef};
-use rust_cli_kernel_api::hooks::{HookContext, HookEventName, HookHttp};
+use rust_cli_kernel_api::hooks::{HookContext, HookEventName, HookHttp, HookTranscripts};
 use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::machine::{Commands, Shell};
 use rust_cli_kernel_api::model::{ModelPort, ModelSelection, small_fast_model};
@@ -20,6 +20,7 @@ use crate::config::HookCommand;
 use crate::http::{self, HttpPolicy};
 use crate::prompt::{self, PromptRun};
 use crate::result::{Executed, HookResult};
+use crate::transcript::{self, NodeStdin};
 
 /// 执行 hook 需要的端口。
 #[derive(Clone)]
@@ -37,6 +38,9 @@ pub struct HookPorts {
     pub operations: Operations,
     /// 超过 10000 字符的 hook 输出落在这里（与工具结果同一个存储，hooks.md §4.5）。
     pub artifacts: Arc<dyn ArtifactStore>,
+    /// Fork: command hooks get Node's stdin and a transcript file when set (the app-server sets it;
+    /// specs/fork-rust-agent-parity.md "Command hook stdin").
+    pub transcripts: Option<Arc<dyn HookTranscripts>>,
 }
 
 /// 一次事件的执行参数。
@@ -49,6 +53,8 @@ pub(crate) struct Batch<'a> {
     pub default_timeout_ms: u64,
     pub http: HttpPolicy<'a>,
     pub prompt_model: Option<&'a ModelSelection>,
+    /// Fork: the Node stdin for command hooks; set with [`HookPorts::transcripts`].
+    pub node: Option<NodeStdin>,
 }
 
 pub(crate) fn timeout_ms(hook: &HookCommand, default: u64) -> u64 {
@@ -88,15 +94,27 @@ async fn execute(
     let timeout = timeout_ms(hook, batch.default_timeout_ms);
     match hook {
         HookCommand::Command(command) => {
+            let staged = match (&ports.transcripts, &batch.node) {
+                (Some(transcripts), Some(node)) => {
+                    Some(transcript::stage(ports, transcripts, node, command.background).await)
+                }
+                _ => None,
+            };
             let run = CommandRun {
                 commands: ports.commands.as_ref(),
                 workspace: batch.workspace,
                 operation: operation(ports, batch),
                 hook: command,
-                input: &batch.input,
+                input: staged
+                    .as_ref()
+                    .map_or(batch.input.as_str(), |staged| staged.text.as_str()),
                 timeout_ms: timeout,
             };
-            Executed::Raw(command::run(run, cancel).await)
+            let raw = command::run(run, cancel).await;
+            if let Some(staged) = staged {
+                staged.remove().await;
+            }
+            Executed::Raw(raw)
         }
         HookCommand::Http(hook) => Executed::Raw(
             http::run(

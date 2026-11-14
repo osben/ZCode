@@ -30,6 +30,34 @@ pub struct RequestLimits {
     pub thinking: ThinkingTokens,
     /// `ENABLE_TOOL_SEARCH`：主循环与子代理的每一步按它判断 ToolSearch 开不开（[`crate::step_tool_search`]）。
     pub tool_search: ToolSearchSetting,
+    /// Fork: how far Stop hooks may continue a run (specs/fork-rust-agent-parity.md "Stop continuation cap").
+    pub stop_continuations: StopContinuations,
+}
+
+/// Fork: the Stop hook continuation rule of a run.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum StopContinuations {
+    /// zcode-rs: up to [`CONSECUTIVE_STOP_BLOCKS`] consecutive blocks; a tool round resets the count.
+    #[default]
+    Consecutive,
+    /// The Node desktop agent (`MAX_STOP_HOOK_CONTINUATIONS`): at most [`NODE_STOP_CONTINUATIONS`] per run, never
+    /// reset; a blocking outcome past the cap is not committed.
+    NodeTurn,
+}
+
+/// zcode-rs: consecutive Stop blocks before the turn ends anyway.
+pub(crate) const CONSECUTIVE_STOP_BLOCKS: u32 = 8;
+/// Node `MAX_STOP_HOOK_CONTINUATIONS` (core `runtime/methods/hooks.ts`).
+pub(crate) const NODE_STOP_CONTINUATIONS: u32 = 3;
+
+impl StopContinuations {
+    /// Continuations allowed before the turn ends anyway.
+    pub(crate) fn cap(self) -> u32 {
+        match self {
+            Self::Consecutive => CONSECUTIVE_STOP_BLOCKS,
+            Self::NodeTurn => NODE_STOP_CONTINUATIONS,
+        }
+    }
 }
 
 impl RequestLimits {

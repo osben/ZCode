@@ -21,6 +21,7 @@ use rust_cli_kernel_api::orchestration::{Absorbed, QueryError, QueryRequest, Que
 use serde_json::json;
 
 use crate::RunScope;
+use crate::StopContinuations;
 use crate::compaction::Compaction;
 use crate::recovery::{Fate, Guards, Outcome};
 use crate::request::{Prepared, orchestration, prepare};
@@ -52,20 +53,23 @@ struct LoopState {
     guards: Guards,
     /// 这一轮已经因 Stop hook 续过（`stop_hook_active`）。
     stop_hook_active: bool,
-    /// 连续被 Stop hook 阻塞的次数。
+    /// 连续被 Stop hook 阻塞的次数。Fork: under [`StopContinuations::NodeTurn`] the count of the whole run.
     stop_blocks: u32,
+    /// Fork: whether a tool round resets `stop_blocks` (specs/fork-rust-agent-parity.md "Stop continuation cap").
+    stop_continuations: StopContinuations,
     /// 自动压缩的跟踪与是否试过反应式压缩。
     compaction: Compaction,
 }
 
 impl LoopState {
-    fn new() -> Self {
+    fn new(stop_continuations: StopContinuations) -> Self {
         Self {
             responses: 0,
             turn_count: 1,
             guards: Guards::default(),
             stop_hook_active: false,
             stop_blocks: 0,
+            stop_continuations,
             compaction: Compaction::default(),
         }
     }
@@ -74,7 +78,10 @@ impl LoopState {
     fn next_turn(&mut self) {
         self.turn_count += 1;
         self.guards.next_turn();
-        self.stop_blocks = 0;
+        // Fork: Node counts Stop continuations per turn and never resets them (`stopHookContinuationCount`).
+        if self.stop_continuations == StopContinuations::Consecutive {
+            self.stop_blocks = 0;
+        }
         self.compaction.next_turn();
     }
 
@@ -314,7 +321,7 @@ pub(crate) async fn run(
     // 这一步的工具快照（query.md §1.3）：运行开始与每个工具批之后各取一次，附件与请求共用。
     let mut step = StepTools::refresh(&scope, &inputs.selection).await;
     start(&scope, &mut history, &inputs, &step, prompt_hook_messages).await?;
-    let mut state = LoopState::new();
+    let mut state = LoopState::new(scope.parts.limits.stop_continuations);
     loop {
         // 自动压缩排在上下文宣布之前：压缩后按“边界之后”重新宣布规则文件与日期，
         // 环境段与模型身份在压缩附件里。已中止时不压缩（不为要被取消的回合发摘要请求，query.md §1.2）。

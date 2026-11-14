@@ -15,6 +15,9 @@ use tokio_util::sync::CancellationToken;
 
 use crate::run::tests::{parts, request, scope};
 
+type Events =
+    Vec<Result<rust_cli_kernel_api::model::ModelEvent, rust_cli_kernel_api::model::ModelError>>;
+
 /// 按顺序返回给定的结果，并记下收到的事件。
 #[derive(Default)]
 struct ScriptedHooks {
@@ -151,4 +154,68 @@ async fn blocking_stops_at_max_turns_and_at_the_block_cap() {
     assert_eq!(stop, QueryStop::Completed);
     assert_eq!(requests, 9);
     assert_eq!(events.len(), 9);
+}
+
+/// Fork: Node's cap (`MAX_STOP_HOOK_CONTINUATIONS`, specs/fork-rust-agent-parity.md "Stop continuation cap").
+async fn run_node(
+    responses: Vec<Events>,
+    outcomes: Vec<HookOutcome>,
+) -> (QueryStop, Vec<Message>, Vec<HookEvent>, usize) {
+    let model = Arc::new(ScriptedModel::new(responses));
+    let hooks = Arc::new(ScriptedHooks {
+        outcomes: Mutex::new(outcomes.into()),
+        events: Mutex::default(),
+    });
+    let mut parts = parts(model.clone(), Vec::new());
+    parts.hooks = hooks.clone();
+    parts.limits.stop_continuations = crate::StopContinuations::NodeTurn;
+    let request = request("go");
+    let (scope, sink) = scope(parts, &request, Abort::new());
+    let stop = crate::run::run(scope, request).await.unwrap();
+    let events = hooks.events.lock().unwrap().clone();
+    (stop, sink.messages(), events, model.requests().len())
+}
+
+fn replies(count: usize) -> Vec<Events> {
+    (0..count)
+        .map(|index| text_response(&[&format!("reply {index}")]))
+        .collect()
+}
+
+#[tokio::test]
+async fn under_node_the_turn_ends_after_three_continuations_without_the_fourth_feedback() {
+    let outcomes = (1..=5)
+        .map(|index| blocking(&format!("Stop hook feedback:\nstep {index}")))
+        .collect();
+    let (stop, messages, events, requests) = run_node(replies(6), outcomes).await;
+    assert_eq!(stop, QueryStop::Completed);
+    assert_eq!(requests, 4);
+    assert_eq!(events.len(), 4);
+    for index in 1..=3 {
+        assert!(messages.contains(&feedback(&format!("Stop hook feedback:\nstep {index}"))));
+    }
+    // Node writes the Stop context only when it continues.
+    assert!(!messages.contains(&feedback("Stop hook feedback:\nstep 4")));
+}
+
+#[tokio::test]
+async fn under_node_a_tool_round_does_not_reset_the_continuation_count() {
+    use rust_cli_kernel_api::testing::tool_use_response;
+    let responses = vec![
+        text_response(&["reply 0"]),
+        text_response(&["reply 1"]),
+        tool_use_response("toolu_1", "Read", &json!({"file_path": "a"})),
+        text_response(&["reply 3"]),
+        text_response(&["reply 4"]),
+        text_response(&["reply 5"]),
+    ];
+    let outcomes = (1..=5)
+        .map(|index| blocking(&format!("Stop hook feedback:\nstep {index}")))
+        .collect();
+    let (stop, messages, events, requests) = run_node(responses, outcomes).await;
+    assert_eq!(stop, QueryStop::Completed);
+    // Blocks after replies 0, 1 and 3; the fourth Stop run (after reply 4) ends the turn.
+    assert_eq!(requests, 5);
+    assert_eq!(events.len(), 4);
+    assert!(!messages.contains(&feedback("Stop hook feedback:\nstep 4")));
 }

@@ -277,6 +277,7 @@ pub fn ports<E: Commands + Shell + 'static>(env: Arc<E>) -> HookPorts {
         http: None,
         operations: rust_cli_kernel_api::env::Operations::new(Generation::new("g1"), ids),
         artifacts: Arc::new(MemoryArtifacts::default()),
+        transcripts: None,
     }
 }
 
