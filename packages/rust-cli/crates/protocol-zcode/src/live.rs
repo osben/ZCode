@@ -699,25 +699,11 @@ impl Live {
             let mut state = self.state();
             // Fork: the child watches follow the table before the rows do: a parked agent's wake changes the table
             // but no row (crate::child_runs). A child session's own `Live` (a side tab) reports no telemetry.
-            let seq = state.log.seq();
-            let provider = provider_of(&state.projection);
-            let mut facts = Vec::new();
             let plan = if state.telemetry.is_none() {
                 crate::child_runs::Plan::default()
             } else {
-                state.child_runs.table(
-                    &entries,
-                    &Observed {
-                        scope: "table-",
-                        seq,
-                        now,
-                        provider: &provider,
-                        automation: None,
-                    },
-                    &mut facts,
-                )
+                state.child_runs.table(&entries)
             };
-            state.facts.extend(facts);
             let deltas = state.projection.subagent_table(&entries, now);
             let spawned = if deltas.is_empty() {
                 Vec::new()
