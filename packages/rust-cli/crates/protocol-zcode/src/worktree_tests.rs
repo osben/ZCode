@@ -846,6 +846,45 @@ async fn a_stored_worktree_that_is_gone_is_reported_missing() {
     assert_eq!(summary["executionWorktreeMissing"], true);
 }
 
+/// A helper session of a worktree session opens in its worktree while it exists, and in its workspace once it is gone
+/// (Node create-app.ts:200-208; specs/fork-rust-node-helper.md F3 "Session open and close").
+#[tokio::test]
+async fn a_helper_session_runs_in_the_worktree_only_while_it_exists() {
+    use crate::fork::node_helper::HelperRequests;
+    let (_scope, server, kernel) = server();
+    let worktree = tempfile::tempdir().unwrap();
+    let path = worktree.path().to_str().unwrap().to_owned();
+    let ack = create(
+        &server,
+        "c1",
+        json!({"workspaceId": "/w", "sessionId": "s-wt", "executionWorktree": {"path": path}}),
+    )
+    .await;
+    assert_eq!(ack.status, Status::Accepted, "{ack:?}");
+    let ack = create(
+        &server,
+        "c2",
+        json!({"workspaceId": "/w", "sessionId": "s-plain"}),
+    )
+    .await;
+    assert_eq!(ack.status, Status::Accepted, "{ack:?}");
+    assert_eq!(
+        server.session_execution_directory("s-wt").await.as_deref(),
+        Some(path.as_str())
+    );
+    assert_eq!(server.session_execution_directory("s-plain").await, None);
+    assert!(
+        kernel
+            .store
+            .execution_worktree(&SessionId::new("s-wt"))
+            .await
+            .unwrap()
+            .is_some()
+    );
+    drop(worktree);
+    assert_eq!(server.session_execution_directory("s-wt").await, None);
+}
+
 async fn run(server: &Server, params: Value) -> Value {
     crate::commands::command(server, params).await.unwrap()
 }

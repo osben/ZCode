@@ -59,6 +59,10 @@ pub struct ContextConfig {
     /// Fork: Node's "ZCode Desktop Context" system section. Some only for the app-server started with
     /// `--surface desktop` (the Host's rollout decision, specs/fork-rust-agent-parity.md); None everywhere else.
     pub desktop: Option<DesktopContext>,
+    /// Fork: whether a subagent gets the git status. The app-server turns it off: Node's child context builder
+    /// (core `runtime/methods/context.ts`, `createSubagentContextBuilder`) has no project context
+    /// (specs/fork-rust-subagent-runtime-config.md rule 15).
+    pub subagent_git_status: bool,
 }
 
 /// Fork: the facts behind Node's "ZCode Desktop Context" section (core `context/sections/desktop.ts`).
@@ -80,6 +84,7 @@ impl ContextConfig {
             additional_directories: Vec::new(),
             token_budget: true,
             desktop: None,
+            subagent_git_status: true,
         }
     }
 }

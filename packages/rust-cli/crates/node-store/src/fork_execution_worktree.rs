@@ -38,6 +38,25 @@ pub(crate) fn workspace_key(
     .storage()
 }
 
+/// The row's workspace: its `directory` and non-empty `workspace_id`; `None` for an unknown session.
+pub(crate) fn workspace(
+    conn: &Connection,
+    session: &str,
+) -> Result<Option<rust_cli_kernel_api::store::SessionWorkspace>, StoreError> {
+    conn.query_row(
+        "select directory, nullif(workspace_id, '') from session where id = ?",
+        [session],
+        |row| {
+            Ok(rust_cli_kernel_api::store::SessionWorkspace {
+                directory: row.get(0)?,
+                identity: row.get(1)?,
+            })
+        },
+    )
+    .optional()
+    .storage()
+}
+
 /// The stored worktree; `None` for an ordinary session, an unknown one, or a database without the columns.
 pub(crate) fn read(
     conn: &Connection,

@@ -77,6 +77,11 @@ const MCP_APP_CONCURRENT_METHODS = new Set<string>([
 
 interface ZCodeProtocolNdjsonConnectionOptions {
   signal?: AbortSignal;
+  /**
+   * Fork: messages handled as soon as they arrive, outside the serial queue (the Rust agent's Node
+   * helper routes MCP pipe traffic and its session control here, specs/fork-rust-node-helper.md F3).
+   */
+  isConcurrent?: (message: ZCodeProtocolMessage) => boolean;
   clearPostResponseMessages?: () => void;
   handleMessage: ZCodeProtocolMessageHandler;
   input: NodeJS.ReadableStream;
@@ -245,6 +250,14 @@ export class ZCodeProtocolNdjsonConnection {
       // Fork: the Host's attach acknowledgement gates reverse requests in agents that wait for it
       // (specs/fork-rust-credential-cipher.md F1). Node fails an early cipher call fast instead, so drop it here
       // rather than queue it behind ordinary requests.
+      return;
+    }
+    if (this.options.isConcurrent?.(message)) {
+      // Fork: a queued notification would wait for the handler before it to complete, so a tool
+      // call's cancel would never overtake the call it cancels.
+      void this.handleMessage(message).catch((error: unknown) => {
+        this.fail(error instanceof Error ? error : new Error(String(error)));
+      });
       return;
     }
     if ("id" in message && ("result" in message || "error" in message)) {

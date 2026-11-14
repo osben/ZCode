@@ -775,6 +775,34 @@ pub trait Kernel: Send + Sync {
         })
     }
 
+    /// Fork: runs the admission part of the tool pipeline on an MCP App tool call of a helper-hosted server
+    /// (specs/fork-rust-node-helper.md F3, `helper/authorizeAppTool`): validation, PreToolUse hooks, the rules and the
+    /// gate, with a session-scoped prompt when it asks. Answers the approved input; never runs the tool. The session
+    /// must be open: a stored session that is not is `NotFound` (the protocol server opens it first,
+    /// `helper_answers.rs`). A kernel without it refuses.
+    async fn authorize_app_tool(
+        &self,
+        _call: crate::app_tool::AppToolCall,
+    ) -> Result<serde_json::Value, crate::app_tool::AppToolError> {
+        Err(KernelError::Unsupported {
+            what: "MCP App tool authorization".to_owned(),
+        }
+        .into())
+    }
+
+    /// Fork: one model call of an MCP App panel on the session's model, outside any turn
+    /// (specs/fork-rust-node-helper.md F3, `helper/sampleModel`): stores the call's usage row and nothing else. The
+    /// session must be open. A kernel without it refuses.
+    async fn sample_model(
+        &self,
+        _call: crate::sampling::SamplingCall,
+    ) -> Result<crate::sampling::SamplingReply, crate::sampling::SamplingError> {
+        Err(KernelError::Unsupported {
+            what: "MCP App sampling".to_owned(),
+        }
+        .into())
+    }
+
     /// Fork: opens a stored session whose prepared execution worktree is not active yet (an agent restart before the
     /// activation): SessionStart waits for `Command::SetExecutionRoot`, as after [`Kernel::create_prepared_session`],
     /// so the hook never runs in the parent checkout. A session already open keeps its state. A kernel without it

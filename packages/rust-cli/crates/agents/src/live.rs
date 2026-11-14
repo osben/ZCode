@@ -56,6 +56,14 @@ pub(crate) enum AgentState {
     Finished(Ending),
 }
 
+/// Fork: what a desktop SendMessage resume takes from the agent's current profile (rule 13 of
+/// specs/fork-rust-subagent-runtime-config.md).
+pub(crate) struct Refreshed {
+    pub(crate) definition: Arc<AgentDefinition>,
+    pub(crate) selection: ModelSelection,
+    pub(crate) mode: PermissionMode,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct LiveAgent {
     pub(crate) agent: AgentId,
@@ -525,17 +533,30 @@ impl Live {
     /// Fork: the restart makes the agent live again, so in the same section it claims a notice forwarder for its child
     /// session when none exists (after `/clear` its entry left once the agent finished): `Some(Some(started))` asks the
     /// caller to start it (specs/fork-rust-agent-parity.md, "After a restart, and on a remote executor").
+    /// Fork: `refreshed` replaces the definition, model and mode the run uses (a desktop SendMessage resume from the
+    /// current profile, specs/fork-rust-subagent-runtime-config.md rule 13); None keeps them.
     pub(crate) fn restart(
         &self,
         agent: &AgentId,
         abort: Abort,
         tool_use: Option<ToolUseId>,
         execution_id: String,
+        refreshed: Option<Refreshed>,
     ) -> Option<Option<Started>> {
         self.change_routed(|agents, routes| {
             let entry = agents.get_mut(agent)?;
             if matches!(entry.state, AgentState::Running { .. }) {
                 return None;
+            }
+            if let Some(Refreshed {
+                definition,
+                selection,
+                mode,
+            }) = refreshed
+            {
+                entry.definition = definition;
+                entry.selection = selection;
+                entry.mode = mode;
             }
             entry.background = true;
             entry.tool_use = tool_use;

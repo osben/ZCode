@@ -28,6 +28,16 @@ fn rejects_unsupported_keywords_at_compile_time() {
     assert!(Node::compile(&json!({"type":"string","format":"email"})).is_err());
 }
 
+/// Fork: zod's `.readonly()` arrays carry `readOnly`, an annotation that does not constrain the value
+/// (specs/fork-rust-subagent-runtime-config.md, the `subagents/readRuntimeConfig` reply).
+#[test]
+fn read_only_is_an_annotation() {
+    let node =
+        Node::compile(&json!({"readOnly":true,"type":"array","items":{"type":"string"}})).unwrap();
+    assert!(node.validate(&json!(["a"]), "").is_ok());
+    assert!(node.validate(&json!([1]), "").is_err());
+}
+
 #[test]
 fn validates_zod_subset_semantics() {
     let node = Node::compile(&json!({

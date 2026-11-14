@@ -59,6 +59,8 @@
 
 pub mod abort;
 pub mod agents;
+// Fork: specs/fork-rust-node-helper.md F3.
+pub mod app_tool;
 pub mod automation;
 pub mod background_origin;
 pub mod catalog;
@@ -119,11 +121,13 @@ pub mod reminder_fold;
 // Fork: remote workspace identities (Node packages/shared remote-workspace-identity.ts).
 pub mod remote_identity;
 pub mod run_ledger;
+pub mod sampling;
 pub mod session_api;
 pub mod session_follow;
 pub mod session_ops;
 pub mod side_request;
 pub mod store;
+pub mod subagent_config;
 pub mod title;
 pub mod tool;
 pub mod tool_names;

@@ -75,11 +75,12 @@ impl AgentTool {
         if self.core.fork && wanted == crate::fork::FORK {
             return Ok(crate::fork::definition());
         }
+        // Fork: a failed Host read is the tool's error (specs/fork-rust-subagent-runtime-config.md, rule 4).
         let definitions = self
             .core
             .catalog
-            .definitions_in(&context.workspace, Some(&context.session))
-            .await;
+            .prepared_definitions(&context.workspace, &context.session, Some(&context.run))
+            .await?;
         if let Some(found) = definitions.iter().find(|agent| agent.agent_type == wanted) {
             return Ok(found.clone());
         }
@@ -191,6 +192,11 @@ impl Tool for AgentTool {
                 message: "the parent run is not registered".to_owned(),
             });
         };
+        // Fork (node_desktop, rule 9): Node refuses an unservable own selection before the child exists, in the
+        // foreground and in the background.
+        if let Some(message) = core.catalog.selection_refusal(&definition).await {
+            return Err(ToolError::Failed { message });
+        }
         // 子代理里派生时同样按参数（以前总在前台：子会话没有 actor 接收通知）。嵌套的后台子代理的
         // 通知送给派生它的子代理（owner），由 `routing` 投递（agents.md §5.1）。fork 打开时一律在后台（对照实现
         // 同样，修复线 L-A）。
@@ -249,6 +255,7 @@ impl Tool for AgentTool {
             } else {
                 spawn::selection(
                     &parent.selection,
+                    definition.selection.as_ref(),
                     definition.model.as_deref(),
                     input.effort.clone().or_else(|| definition.effort.clone()),
                 )

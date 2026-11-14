@@ -78,6 +78,7 @@ impl Inner {
 impl McpManager {
     /// 同一把锁里取出的 MCP 工具与连接状态（query.md §1.3：工具与 `mcp_instructions_delta`、连接中的服务器同一时点）。
     pub fn snapshot(&self) -> (Vec<Arc<dyn Tool>>, McpView) {
+        self.0.wake_deferred();
         let servers = self.0.servers();
         (tools_of(&self.0, &servers), view_of(&servers))
     }
@@ -89,6 +90,7 @@ impl McpManager {
         &self,
         keep: impl Fn(crate::mcp::McpScope) -> bool,
     ) -> (Vec<Arc<dyn Tool>>, McpView) {
+        self.0.wake_deferred();
         let servers = self.0.servers();
         let kept = |name: &str| {
             servers

@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use rust_cli_base::js::string::utf16_prefix;
+use rust_cli_kernel_api::app_tool::AppToolRefusal;
 use rust_cli_kernel_api::message::ToolResultContent;
 use rust_cli_kernel_api::orchestration::{
     HookEventName, HookRunner, InteractionRequest, PermissionAnswer, PermissionGate, ToolExecution,
@@ -80,6 +81,8 @@ fn rejection(context: &ToolUseContext, feedback: Option<&str>) -> String {
 enum Rejection {
     ByHook(ToolOutput),
     Other(ToolOutput),
+    /// Fork: an MCP App call's refusal in Node's terms (`messages.app_call` only; pipeline_authorize.rs).
+    App(AppToolRefusal),
 }
 
 fn error(text: String) -> ToolOutput {
@@ -368,8 +371,17 @@ impl Pipeline {
         let event = hooks::event(HookEventName::PreToolUse, &call.hooks, payload).await;
         let mut pre = self.hooks.run(event, context.cancel.clone()).await;
         hooks::take_pre(messages, &mut pre);
+        // Fork: an MCP App call follows Node's `authorizeAppTool` from here (pipeline_authorize.rs).
+        if messages.app_call
+            && let Some(refusal) = authorize::app_hook_refusal(messages, &pre)
+        {
+            return Err(Rejection::App(refusal));
+        }
         if let Some(updated) = pre.updated_input.take() {
             if let Some(message) = validate(tool.name(), &schema, &updated) {
+                if messages.app_call {
+                    return Err(Rejection::App(AppToolRefusal::InvalidInput(message)));
+                }
                 return Err(Rejection::ByHook(error(format!(
                     "PreToolUse hook for {} returned updatedInput that failed schema validation: {message}",
                     tool.name()
@@ -532,6 +544,26 @@ impl Pipeline {
     }
 }
 
+impl Pipeline {
+    /// A tool the session does not offer: the incognito gate removed it (the session never had it), or the running
+    /// turn hides it (Fork: an automation turn's mutation tools, the Host's disallowlist, CronPauseSelf outside an
+    /// automation turn; specs/fork-rust-automations.md). Without a session view the turn's limits are unknown: the
+    /// automation tools fail closed.
+    async fn hidden(&self, tool: &dyn Tool, context: &ToolUseContext) -> bool {
+        if self
+            .incognito
+            .as_ref()
+            .is_some_and(|gate| gate.hides(&context.session, tool))
+        {
+            return true;
+        }
+        match context.session_ops.view().await {
+            Some(view) => view.turn.hides(tool.name()),
+            None => rust_cli_kernel_api::turn_limits::TurnLimits::hides_without_view(tool.name()),
+        }
+    }
+}
+
 /// The answer to a tool the session does not offer (the incognito gate and the turn limits), the text an unregistered
 /// tool gets.
 fn no_such_tool(name: &str) -> ToolOutput {
@@ -549,23 +581,7 @@ impl ToolExecutor for Pipeline {
         context: ToolUseContext,
         progress: mpsc::Sender<ToolProgress>,
     ) -> ToolExecution {
-        if self
-            .incognito
-            .as_ref()
-            .is_some_and(|gate| gate.hides(&context.session, tool.as_ref()))
-        {
-            // Same answer as a tool that is not registered: the session never had it.
-            return ToolExecution::output(no_such_tool(tool.name()));
-        }
-        // Fork: a tool the running turn hides (an automation turn's mutation tools, the Host's disallowlist,
-        // CronPauseSelf outside an automation turn) answers like an unregistered one when the model names it anyway
-        // (specs/fork-rust-automations.md). Without a session view the turn's limits are unknown: the automation
-        // tools fail closed.
-        let hidden = match context.session_ops.view().await {
-            Some(view) => view.turn.hides(tool.name()),
-            None => rust_cli_kernel_api::turn_limits::TurnLimits::hides_without_view(tool.name()),
-        };
-        if hidden {
+        if self.hidden(tool.as_ref(), &context).await {
             return ToolExecution::output(no_such_tool(tool.name()));
         }
         let mut messages = HookMessages {
@@ -579,6 +595,10 @@ impl ToolExecutor for Pipeline {
             Ok(admitted) => admitted,
             Err(Rejection::ByHook(output)) => return messages.finish(output, true),
             Err(Rejection::Other(output)) => return messages.finish(output, false),
+            // `execute` never sets `app_call`, so it never sees an App refusal; answer it as a refusal all the same.
+            Err(Rejection::App(refusal)) => {
+                return messages.finish(wrapped(refusal.message()), false);
+            }
         };
         let output = self
             .call(tool.as_ref(), input, call, progress, &mut messages)
@@ -586,6 +606,10 @@ impl ToolExecutor for Pipeline {
         messages.finish(output, true)
     }
 }
+
+// Fork: specs/fork-rust-node-helper.md F3, `helper/authorizeAppTool`.
+#[path = "pipeline_authorize.rs"]
+mod authorize;
 
 #[cfg(test)]
 #[path = "pipeline_tests.rs"]

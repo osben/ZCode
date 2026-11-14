@@ -26,17 +26,30 @@ use crate::toolset::{FilteredTools, ToolRule};
 
 /// 子代理的模型：定义里的模型 ID（`inherit` 与缺省继承父运行），`effort` 参数优先于定义。provider 与账号连接
 /// （Team Plan 的团队项目，工作线 F49）都跟父运行：同一个团队项目、换一个模型。
+///
+/// Fork: a full selection (a Host profile or a Settings override, specs/fork-rust-subagent-runtime-config.md rule 9)
+/// wins over `model`: its provider, model and reasoning level; the connection follows the parent only on the same
+/// provider, otherwise the platform picks it as for an App selection.
 pub(crate) fn selection(
     parent: &ModelSelection,
+    full: Option<&ModelSelection>,
     model: Option<&str>,
     effort: Option<String>,
 ) -> ModelSelection {
-    let mut selection = match model.filter(|model| *model != "inherit") {
-        Some(model) => ModelSelection {
+    let mut selection = match (full, model.filter(|model| *model != "inherit")) {
+        (Some(full), _) => ModelSelection {
+            provider: full.provider.clone(),
+            model: full.model.clone(),
+            reasoning: full.reasoning.clone(),
+            connection: (full.provider == parent.provider)
+                .then(|| parent.connection.clone())
+                .flatten(),
+        },
+        (None, Some(model)) => ModelSelection {
             connection: parent.connection.clone(),
             ..ModelSelection::new(parent.provider.clone(), model.to_owned())
         },
-        None => parent.clone(),
+        (None, None) => parent.clone(),
     };
     if effort.is_some() {
         selection.reasoning = effort;
@@ -169,18 +182,24 @@ pub(crate) async fn resume(
     origin: UserOrigin,
 ) -> Result<Opening, StoreError> {
     let loaded = core.ports.store.load(&agent.child).await?;
+    // Fork: the run's model and mode are stored when they changed (a desktop resume from the current profile, rule
+    // 13), so reopening the child shows what it ran with; Node's `persistRuntimeModelSelection` does the same.
+    let mut facts = Vec::new();
+    if loaded.model.as_ref() != Some(&agent.selection) {
+        facts.push(Fact::ModelSelected {
+            selection: agent.selection.clone(),
+        });
+    }
+    if loaded.mode != Some(agent.mode) {
+        facts.push(Fact::ModeChanged { mode: agent.mode });
+    }
     let mut messages = with_prefix(agent, loaded.messages);
     let next = user(core, message, origin);
     let mut ledger = RunLedger::new(loaded.turn);
-    commit(
-        core,
-        &agent.child,
-        &mut ledger,
-        vec![Fact::MessageAppended {
-            message: next.clone(),
-        }],
-    )
-    .await?;
+    facts.push(Fact::MessageAppended {
+        message: next.clone(),
+    });
+    commit(core, &agent.child, &mut ledger, facts).await?;
     messages.push(next);
     Ok(Opening { messages, ledger })
 }
@@ -393,6 +412,7 @@ async fn run_loop(
                     &agent.definition.prompt,
                     core.ports.incognito.get(&agent.child).as_ref(),
                 ),
+                inject_agents_md: agent.definition.inject_agents_md,
             }),
         )
     };
@@ -405,6 +425,8 @@ async fn run_loop(
         max_turns: agent.definition.max_turns,
         // 子代理的缺省机器（R3，remote-exec.md §20.6）：派生时 Agent 的 `machine`。
         default_machine: agent.machine.clone(),
+        // Fork: the run carries the definition's `injectAgentsMd` into its compaction too (rule 15).
+        inject_agents_md: agent.definition.inject_agents_md,
         ..QueryRequest::new(
             agent.child.clone(),
             core.ports.ids.run(),

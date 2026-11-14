@@ -1364,7 +1364,7 @@ modules:
       - apps/zcode-cli/packages/bootstrap/src/fork-rust-helper
       - apps/zcode-cli/packages/bootstrap/tests/fork-rust-helper
     managed: true
-    requires: [shared, zcode-cli, plugin-host-queries]
+    requires: [shared, zcode-cli, plugin-host-queries, mcp-ui]
     publicEntrypoints: [apps/zcode-cli/packages/bootstrap/src/fork-rust-helper/contract.ts]
     layers:
       adapters: .

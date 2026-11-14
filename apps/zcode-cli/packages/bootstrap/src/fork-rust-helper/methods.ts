@@ -2,12 +2,13 @@ import { zcodeProtocolMethods } from "@zcode/shared";
 import { V4_METHODS } from "@zcode/shared/zcode-protocol-v4";
 
 /** Version of the Rust ↔ helper protocol (`helper/initialize`). */
-export const FORK_RUST_HELPER_PROTOCOL_VERSION = 1;
+export const FORK_RUST_HELPER_PROTOCOL_VERSION = 2;
 
 export const FORK_RUST_HELPER_INITIALIZE = "helper/initialize";
 
 /**
- * The F1+F2 methods the helper serves (specs/fork-rust-node-helper.md, "F1+F2 forwarded methods").
+ * The methods the helper serves (specs/fork-rust-node-helper.md, "F1+F2 forwarded methods" and F3's
+ * "Session-scoped forwarded methods").
  * Rust forwards a method only if it is in its own static allowlist and in this list.
  */
 export const FORK_RUST_HELPER_METHODS = [
@@ -46,4 +47,22 @@ export const FORK_RUST_HELPER_METHODS = [
   V4_METHODS.conversationWorkflowRunArtifactRead,
   V4_METHODS.conversationWorkflowRunWorkspace,
   V4_METHODS.conversationWorkflowRunNodeResult,
+  zcodeProtocolMethods.pluginsMentionItems,
+  zcodeProtocolMethods.mcpReadResource,
+  zcodeProtocolMethods.mcpUiOpenInstance,
+  zcodeProtocolMethods.mcpUiValidateInstance,
+  zcodeProtocolMethods.mcpUiCloseInstance,
+  zcodeProtocolMethods.mcpUiSampling,
+  zcodeProtocolMethods.mcpUiCancelSampling,
+  zcodeProtocolMethods.mcpUiCallTool,
+  zcodeProtocolMethods.mcpUiCancelCall,
+  zcodeProtocolMethods.mcpUiReadResource,
+  zcodeProtocolMethods.mcpUiListResources,
+  zcodeProtocolMethods.mcpUiListResourceTemplates,
+  zcodeProtocolMethods.mcpUiSubscribeResource,
+  zcodeProtocolMethods.mcpUiUnsubscribeResource,
+  zcodeProtocolMethods.mcpUiRegisterAppTools,
+  zcodeProtocolMethods.mcpUiUnregisterAppTools,
+  zcodeProtocolMethods.mcpUiClaimAppToolCall,
+  zcodeProtocolMethods.mcpUiResolveAppToolCall,
 ] as const;

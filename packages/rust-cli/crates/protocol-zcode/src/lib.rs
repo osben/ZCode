@@ -32,6 +32,7 @@ mod presence_gate;
 mod projection;
 mod reservations;
 mod server;
+mod subagent_config;
 mod subscribe;
 mod telemetry;
 // Fork: specs/fork-rust-topic-resource.md.
@@ -53,8 +54,8 @@ pub use cipher::HostCredentialCipher;
 pub use context::Context;
 pub use fork::hook_review::codes as hook_review_codes;
 pub use fork::node_helper::{
-    NODE_HELPER_UNAVAILABLE, NodeHelper, NodeHelperLauncher, NodeHelperProcess,
-    Timing as NodeHelperTiming,
+    HelperCatalog, HelperRoutedMcp, NODE_HELPER_UNAVAILABLE, NodeHelper, NodeHelperLauncher,
+    NodeHelperProcess, Timing as NodeHelperTiming,
 };
 pub use fork::{
     Admission, ReviewBundle, ReviewItem, ReviewLookup, ReviewSource, StoredTrust, ToggleError,
@@ -63,6 +64,7 @@ pub use fork::{
 pub use headers::HostHeaders;
 pub use network_capture::{NetworkCapture, with_network_capture};
 pub use server::Defaults;
+pub use subagent_config::HostSubagentConfig;
 pub use topic_resource::HostTopicResources;
 
 /// 存储的启动状态（`startup/storageState`，`zcodeStorageStartupStateSchema`）：checking → ready / failed。迁移与备份只由
@@ -131,6 +133,12 @@ pub fn handler(
     spawner: Spawner,
 ) -> Arc<dyn connection::Service> {
     let server = Arc::new(server::Server::new(context, kernel, spawner, defaults));
+    // Fork: the Node helper's requests are answered by this server (specs/fork-rust-node-helper.md F3).
+    if let Some(helper) = server.context.node_helper() {
+        let answers: std::sync::Weak<dyn fork::node_helper::HelperRequests> =
+            Arc::downgrade(&server) as _;
+        helper.set_requests(answers);
+    }
     Arc::new(server::Handler(server))
 }
 

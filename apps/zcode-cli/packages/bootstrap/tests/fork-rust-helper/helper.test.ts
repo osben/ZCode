@@ -103,15 +103,16 @@ describe("fork: Node helper for the Rust agent", () => {
   it("answers helper/initialize with its protocol version and the forwarded methods", async () => {
     const home = await tempHome();
     const helper = startHelper(home.env, home.workspace);
-    const reply = await helper.request("helper/initialize", { protocolVersion: 1 });
+    const reply = await helper.request("helper/initialize", {
+      protocolVersion: FORK_RUST_HELPER_PROTOCOL_VERSION,
+    });
     expect(reply.error).toBeUndefined();
     expect(reply.result).toEqual({
       protocolVersion: FORK_RUST_HELPER_PROTOCOL_VERSION,
       methods: [...FORK_RUST_HELPER_METHODS],
     });
-    // F1+F2 only: nothing session-bound is served yet.
-    expect(FORK_RUST_HELPER_METHODS.some((method) => method.startsWith("mcp/ui"))).toBe(false);
-    expect(FORK_RUST_HELPER_METHODS).not.toContain("plugins/mentionItems");
+    // Conversations stay in the Rust agent: no session lifecycle or turn method is served.
+    expect(FORK_RUST_HELPER_METHODS.some((method) => method.startsWith("session/"))).toBe(false);
     helper.close();
     await helper.done;
   });
@@ -119,7 +120,9 @@ describe("fork: Node helper for the Rust agent", () => {
   it("refuses an initialize with another protocol version", async () => {
     const home = await tempHome();
     const helper = startHelper(home.env, home.workspace);
-    const reply = await helper.request("helper/initialize", { protocolVersion: 2 });
+    const reply = await helper.request("helper/initialize", {
+      protocolVersion: FORK_RUST_HELPER_PROTOCOL_VERSION + 1,
+    });
     expect(reply.error?.message).toMatch(/protocol version/i);
     helper.close();
     await helper.done;
@@ -255,7 +258,7 @@ describe("fork: Node helper for the Rust agent", () => {
     await helper.done;
   }, 60_000);
 
-  it("refuses a session-authority plugin reference catalog: the conversation belongs to the Rust agent", async () => {
+  it("answers a session-authority plugin reference catalog only for a session Rust opened (F3)", async () => {
     const home = await tempHome();
     const helper = startHelper(home.env, home.workspace);
     const workspace = { workspacePath: home.workspace, workspaceKey: home.workspace };
@@ -266,10 +269,9 @@ describe("fork: Node helper for the Rust agent", () => {
 
     for (const method of ["plugins/referenceCatalog", "plugins/referenceCatalogWithCategory"]) {
       const session = await helper.request(method, { workspace, sessionId: "session-rust-owned" });
+      // Node's answer for a session that is not active; F3 Rust opens it first (f3-office.test.ts).
       expect(session.result).toBeUndefined();
-      expect(session.error?.data).toEqual({
-        reasonCode: "proto.forkRustAgent.sessionPluginCatalogUnavailable",
-      });
+      expect(session.error?.code).toBe(-32004);
     }
     helper.close();
     await helper.done;
@@ -279,7 +281,9 @@ describe("fork: Node helper for the Rust agent", () => {
     const home = await tempHome();
     const controller = new AbortController();
     const helper = startHelper(home.env, home.workspace, controller.signal);
-    const reply = await helper.request("helper/initialize", { protocolVersion: 1 });
+    const reply = await helper.request("helper/initialize", {
+      protocolVersion: FORK_RUST_HELPER_PROTOCOL_VERSION,
+    });
     expect(reply.error).toBeUndefined();
     controller.abort(new Error("Protocol received SIGTERM"));
     await expect(helper.done).resolves.toBeUndefined();

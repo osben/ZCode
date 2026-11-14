@@ -89,6 +89,7 @@ fn request() -> CompactRequest {
         mode: None,
         agent: None,
         initial_token_gap: None,
+        inject_agents_md: true,
     }
 }
 

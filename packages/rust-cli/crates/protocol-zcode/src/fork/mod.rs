@@ -8,6 +8,10 @@ mod child_processes;
 pub(crate) mod commands;
 pub(crate) mod external_agent_config;
 mod file_summary;
+// Fork: specs/fork-rust-node-helper.md F3, "Helper → Rust requests".
+mod helper_answers;
+mod helper_sampling;
+mod helper_session_admit;
 pub(crate) mod hook_review;
 pub(crate) mod legacy_session;
 mod lsp;

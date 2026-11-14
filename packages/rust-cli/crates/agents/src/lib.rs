@@ -28,6 +28,7 @@ mod report;
 mod routes;
 mod routing;
 mod runs;
+mod selection_check;
 mod shell_notices;
 mod signals;
 mod spawn;
@@ -265,6 +266,17 @@ pub struct Agents {
 impl Agents {
     pub fn new(ports: AgentsPorts, base: Arc<dyn ToolRegistry>, config: AgentsConfig) -> Self {
         let live = Arc::new(Live::new(ports.clock.clone()));
+        // Fork: a subagent's catalog lookups use its root session's Host snapshot.
+        let tree = Arc::downgrade(&live);
+        ports
+            .catalog
+            .set_roots(Arc::new(move |session: &SessionId| {
+                tree.upgrade()
+                    .map_or_else(|| session.clone(), |live| live.root_of(session))
+            }));
+        if config.node_desktop {
+            ports.catalog.set_node_desktop();
+        }
         let registry = Arc::new_cyclic(|registry: &Weak<AgentRegistry>| {
             let core = Arc::new(Core {
                 catalog: ports.catalog.clone(),

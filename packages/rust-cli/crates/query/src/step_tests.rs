@@ -204,3 +204,50 @@ async fn wait_for_mcp_servers_is_sent_and_declared_without_tool_search() {
     assert!(wire_names(&requests[0]).contains(&"WaitForMcpServers".to_owned()));
     assert!(registry.mcp.declared.lock().unwrap().is_empty());
 }
+
+/// Records every context request's `inject_agents_md`.
+#[derive(Default)]
+struct Injected(Mutex<Vec<bool>>);
+
+#[async_trait]
+impl ContextBuilder for Injected {
+    async fn build(
+        &self,
+        request: ContextRequest,
+        _history: &[Message],
+    ) -> Result<BuiltContext, OrchestrationError> {
+        self.0.lock().unwrap().push(request.inject_agents_md);
+        Ok(BuiltContext {
+            system: Vec::new(),
+            attachments: Vec::new(),
+        })
+    }
+
+    async fn turn_attachments(
+        &self,
+        request: ContextRequest,
+        _history: &[Message],
+    ) -> Result<Vec<AttachmentMessage>, OrchestrationError> {
+        self.0.lock().unwrap().push(request.inject_agents_md);
+        Ok(Vec::new())
+    }
+}
+
+/// Fork (specs/fork-rust-subagent-runtime-config.md rule 15): the run's `injectAgentsMd` reaches every context
+/// request of the run, so a child's summary run (whose context is the shared assembler) follows it too.
+#[tokio::test]
+async fn the_runs_inject_agents_md_reaches_its_context_requests() {
+    let model = Arc::new(ScriptedModel::new(vec![text_response(&["done"])]));
+    let context = Arc::new(Injected::default());
+    let mut parts = parts(model, Vec::new());
+    parts.context = context.clone();
+    let request = rust_cli_kernel_api::orchestration::QueryRequest {
+        inject_agents_md: false,
+        ..request("go")
+    };
+    let (scope, _) = scope(parts, &request, Abort::new());
+    crate::run::run(scope, request).await.unwrap();
+    let seen = context.0.lock().unwrap().clone();
+    assert!(!seen.is_empty());
+    assert!(seen.iter().all(|inject| !inject), "{seen:?}");
+}

@@ -1017,6 +1017,72 @@ fn only_a_normal_ask_offers_always_allow() {
     assert!(!always(ask(false, true)));
 }
 
+/// An ask without suggestions (an MCP tool) remembers Node's default rule on `allowAlways`
+/// (`permission-options.ts` `defaultPermissionUpdates`); before this nothing was remembered and the next call asked
+/// again. Suggestions, when there are any, win.
+#[test]
+fn allow_always_without_suggestions_remembers_nodes_default_rule() {
+    use rust_cli_kernel_api::ids::ToolUseId;
+    use rust_cli_kernel_api::interaction::PermissionAnswer;
+    use rust_cli_kernel_api::orchestration::InteractionRequest;
+    use rust_cli_kernel_api::permission::PermissionRule;
+    const TOOL: &str = "mcp__plugin_e2e-mcp-mention_mention__mention_search";
+    let ask = |input: serde_json::Value, suggestions: Vec<PermissionRule>| {
+        InteractionRequest::Permission {
+            origin: None,
+            tool_use: ToolUseId::new("toolu_1"),
+            tool: TOOL.into(),
+            input,
+            message: "ask".into(),
+            suggestions,
+            rule_seed: None,
+            asked_by: None,
+            machine: Default::default(),
+            once: false,
+            independent: false,
+        }
+    };
+    let remembered = |request: InteractionRequest| {
+        let (offered, _) = Offered::of(&request).unwrap();
+        match permission_answer(Some("allowAlways"), offered, None) {
+            PermissionAnswer::Allow { remember } => remember,
+            other => panic!("{other:?}"),
+        }
+    };
+    let rule = |content: Option<&str>| PermissionRule {
+        tool: TOOL.to_owned(),
+        content: content.map(str::to_owned),
+    };
+    assert_eq!(
+        remembered(ask(json!({"query": "a"}), Vec::new())),
+        [rule(None)]
+    );
+    assert_eq!(
+        remembered(ask(
+            json!({"query": "a", "path": "/docs", "url": " "}),
+            Vec::new()
+        )),
+        [rule(Some("/docs"))]
+    );
+    assert_eq!(
+        remembered(ask(json!({"path": "  ", "pattern": "*.md"}), Vec::new())),
+        [rule(Some("*.md"))]
+    );
+    assert_eq!(
+        remembered(ask(json!("hello"), Vec::new())),
+        [rule(Some("hello"))]
+    );
+    assert_eq!(remembered(ask(json!("  "), Vec::new())), [rule(None)]);
+    let suggested = PermissionRule {
+        tool: "Bash".to_owned(),
+        content: Some("ls:*".to_owned()),
+    };
+    assert_eq!(
+        remembered(ask(json!({"path": "/docs"}), vec![suggested.clone()])),
+        [suggested]
+    );
+}
+
 #[test]
 fn the_remembered_input_keeps_the_host_automation_for_the_telemetry_facts() {
     let envelope: Envelope = serde_json::from_value(json!({

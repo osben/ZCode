@@ -4,8 +4,8 @@
 //! - 运行开始：进入子循环前的那几项——延迟工具、环境、模型、skill。这里只有这一组是子代理独有的；
 //! - 每个工具轮结束：与主线程同一组当步 attachment（[`crate::PromptAssembler`] 的 `turn_group`），没有主线程独有的
 //!   静默提醒，剩余 token 不重新锚定；
-//! - 每一步：上下文宣布（规则文件、会话上下文、日期、署名）。Explore / Plan 不带规则文件与 git 状态（按
-//!   类型名省略）。
+//! - 每一步：上下文宣布（规则文件、会话上下文、日期、署名）。Fork: a definition with `injectAgentsMd: false` (the
+//!   built-in Explore and Plan) gets no rule files and no git status (`ContextRequest::inject_agents_md`).
 //!
 //! 各段的增量逻辑与主线程相同，只看子会话自己的历史。
 
@@ -16,11 +16,6 @@ use rust_cli_kernel_api::orchestration::ContextRequest;
 
 use crate::system::SKILL_TOOL;
 use crate::{PromptAssembler, announce, environment, listings};
-
-/// 不带规则文件与 git 状态的内置 agent（也不发 nested memory，同 F16 之前）。
-pub(crate) fn omits_context(agent_type: &str) -> bool {
-    agent_type == "Explore" || agent_type == "Plan"
-}
 
 impl PromptAssembler {
     /// 子代理一次运行开始时的 attachment。`session` 是全部历史（skill

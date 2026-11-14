@@ -42,6 +42,10 @@ fn assembler() -> PromptAssembler {
 
 /// `shell_cwd`：子会话 shell 的当前目录（agents 派生时设成父会话当时的目录，tools-files.md §3.3）。
 fn assembler_in(shell_cwd: Option<&str>) -> PromptAssembler {
+    assembler_with(shell_cwd, ContextConfig::new(Surface::Print))
+}
+
+fn assembler_with(shell_cwd: Option<&str>, config: ContextConfig) -> PromptAssembler {
     let facts = EnvFacts {
         cwd: EnvPath::new("/Users/dev/w"),
         platform: "linux".to_owned(),
@@ -74,7 +78,7 @@ fn assembler_in(shell_cwd: Option<&str>) -> PromptAssembler {
             ids: Arc::new(SequentialIds::default()),
             listings: Arc::new(Fixed),
         },
-        ContextConfig::new(Surface::Print),
+        config,
     )
 }
 
@@ -193,11 +197,17 @@ async fn general_purpose_starts_with_the_runsubagent_group_then_the_announcement
     );
 }
 
+/// Fork (specs/fork-rust-subagent-runtime-config.md rule 15): a child whose definition says `injectAgentsMd: false`
+/// (the built-in Explore) gets no rule files and no git status; the agent's name plays no part, so a profile named
+/// `Explore` that keeps the flag gets them.
 #[tokio::test]
-async fn explore_and_plan_omit_the_rule_files_and_the_git_status() {
-    for agent_type in ["Explore", "Plan"] {
+async fn inject_agents_md_false_omits_the_rule_files_and_the_git_status() {
+    for agent_type in ["Explore", "Plan", "reviewer"] {
         let assembler = assembler();
-        let request = request(agent_type);
+        let request = ContextRequest {
+            inject_agents_md: false,
+            ..request(agent_type)
+        };
         let (opening, announced, _) = start(&assembler, &request, vec![user("p", "Go.")]).await;
         assert_eq!(
             sources(&opening),
@@ -210,6 +220,52 @@ async fn explore_and_plan_omit_the_rule_files_and_the_git_status() {
         );
         assert_eq!(sources(&announced), ["date", "remote_session_change"]);
     }
+    let assembler = assembler();
+    let (_, announced, _) = start(&assembler, &request("Explore"), vec![user("p", "Go.")]).await;
+    assert_eq!(
+        sources(&announced),
+        [
+            "instructions",
+            "session_context",
+            "date",
+            "remote_session_change"
+        ]
+    );
+}
+
+/// Fork (node_desktop, specs/fork-rust-subagent-runtime-config.md rule 15): Node's child context builder has no
+/// project context, so with `subagent_git_status` off no subagent gets the git status; the rule files still follow
+/// `injectAgentsMd`, and the main thread keeps the git status.
+#[tokio::test]
+async fn without_subagent_git_status_no_child_gets_the_git_status() {
+    let config = ContextConfig {
+        subagent_git_status: false,
+        ..ContextConfig::new(Surface::Print)
+    };
+    let assembler = assembler_with(None, config.clone());
+    let (_, announced, _) = start(
+        &assembler,
+        &request("general-purpose"),
+        vec![user("p", "Go.")],
+    )
+    .await;
+    assert_eq!(
+        sources(&announced),
+        ["instructions", "date", "remote_session_change"]
+    );
+    let assembler = assembler_with(None, config);
+    let main = ContextRequest {
+        agent: None,
+        source: QuerySource::MainThread,
+        session: SessionId::new("sess_main"),
+        ..request("general-purpose")
+    };
+    let built = assembler.build(main, &[user("p", "Go.")]).await.unwrap();
+    assert!(
+        sources(&built.attachments).contains(&"session_context"),
+        "{:?}",
+        sources(&built.attachments)
+    );
 }
 
 /// 每个工具轮结束时产生当步的 attachment（agentId 是子代理）：第一次

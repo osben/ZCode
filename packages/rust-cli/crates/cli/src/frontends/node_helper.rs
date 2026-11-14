@@ -225,24 +225,26 @@ async fn read_lines(mut reader: impl AsyncBufRead + Unpin, mut line: impl FnMut(
     }
 }
 
-/// Reads the Host's command from `raw` and, when there is one, installs the helper on `context`. A refused command
-/// logs one warning and leaves the families unavailable, as without a helper.
+/// Reads the Host's command from `raw` and, when there is one, installs the helper on `context` and returns it. A
+/// refused command logs one warning and leaves the families unavailable, as without a helper. Runs before the kernel
+/// is assembled: the same helper serves the MCP transport's helper-hosted servers (specs/fork-rust-node-helper.md F3),
+/// so plugin selection and routing agree on whether there is one.
 pub(crate) fn install(
     context: &Context,
     raw: Option<&str>,
     temp: &std::path::Path,
     spawner: &Spawner,
-) {
+) -> Option<Arc<NodeHelper>> {
     let command = match parse(raw) {
         Ok(Some(command)) => command,
-        Ok(None) => return,
+        Ok(None) => return None,
         Err(reason) => {
             tracing::warn!(
                 event = "helper.command.invalid",
                 reason,
                 "the node helper command is refused; its methods stay unavailable"
             );
-            return;
+            return None;
         }
     };
     let launcher = ProcessLauncher {
@@ -250,12 +252,14 @@ pub(crate) fn install(
         ledger: Ledger::open(rust_cli_proc::private::user_dir(temp)),
         spawner: spawner.clone(),
     };
-    context.set_node_helper(NodeHelper::new(
+    let helper = NodeHelper::new(
         Arc::new(launcher),
         spawner.clone(),
         context.peer.clone(),
         NodeHelperTiming::default(),
-    ));
+    );
+    context.set_node_helper(helper.clone());
+    Some(helper)
 }
 
 #[cfg(test)]
