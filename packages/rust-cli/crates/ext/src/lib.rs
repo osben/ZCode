@@ -13,6 +13,7 @@
 #[cfg(test)]
 mod clock_tests;
 mod incognito;
+pub mod workspace_layer;
 pub mod mcp;
 pub mod plugins;
 pub mod skills;
@@ -43,6 +44,7 @@ pub use plugins::{Plugin, PluginAgentFile, PluginSources, Plugins};
 use rust_cli_kernel_api::incognito::{IncognitoKey, IncognitoProfiles, IncognitoToolGate};
 use rust_cli_kernel_api::tool_names;
 pub use skills::{Skill, SkillCatalog, SkillCommands, SkillSource, SkillTool};
+pub use workspace_layer::{WorkspaceConfig, WorkspaceConfigLoader, WorkspaceLayer};
 
 /// ext 用到的端口，由 runtime 注入。
 #[derive(Clone)]
@@ -64,6 +66,9 @@ pub struct ExtPorts {
     pub clock: Arc<dyn Clock>,
     /// Fork: the sessions' incognito profiles (the runtime's one owner).
     pub incognito: IncognitoProfiles,
+    /// Fork: the sessions' workspaces (specs/fork-rust-workspace-plugins-mcp.md): the per-workspace
+    /// MCP views resolve a session's group through it.
+    pub sessions: rust_cli_kernel_api::workspace_key::SessionWorkspaces,
 }
 
 /// 入口层给出的配置快照。
@@ -90,6 +95,9 @@ pub struct Ext {
     skills: Arc<SkillCatalog>,
     commands: Arc<SkillCommands>,
     mcp: Arc<McpManager>,
+    workspace_mcp: Arc<crate::mcp::workspaces::WorkspaceMcp>,
+    layer: Arc<WorkspaceLayer>,
+    sessions: rust_cli_kernel_api::workspace_key::SessionWorkspaces,
     registry: Arc<ExtRegistry>,
     incognito: IncognitoTools,
     /// 插件目录（`--plugin-dir` 与入口给的候选，都在本机）。
@@ -120,6 +128,22 @@ impl Ext {
         if let Some(machines) = ports.machines.clone() {
             mcp.set_machines(machines);
         }
+        // Fork: one MCP group per workspace of the shared task runtime; the process group is the
+        // manager above (specs/fork-rust-workspace-plugins-mcp.md).
+        let workspace_mcp = Arc::new(crate::mcp::workspaces::WorkspaceMcp::new(
+            ports.mcp.clone(),
+            ports.spawner.clone(),
+            config.mcp.clone(),
+            ports.clock.clone(),
+            ports.machines.clone(),
+            mcp.clone(),
+        ));
+        let layer = Arc::new(WorkspaceLayer::new(
+            ports.files.clone(),
+            workspace_mcp.clone(),
+            config.plugin_dirs.clone(),
+            config.mcp.servers.clone(),
+        ));
         skills.set_incognito(ports.incognito.clone());
         let incognito = IncognitoTools::new(ports.incognito, mcp.clone());
         let registry = Arc::new(ExtRegistry {
@@ -127,17 +151,28 @@ impl Ext {
             skill: skill_tool,
             wait: Arc::new(mcp::WaitForMcpServers::new(Arc::downgrade(&mcp))),
             mcp: mcp.clone(),
+            workspace_mcp: workspace_mcp.clone(),
+            sessions: ports.sessions.clone(),
             incognito: incognito.clone(),
         });
         Self {
             skills,
             commands,
             mcp,
+            workspace_mcp,
+            layer,
+            sessions: ports.sessions.clone(),
             registry,
             incognito,
             files: ports.files,
             config,
         }
+    }
+
+    /// Fork: the per-workspace plugin/MCP layer (specs/fork-rust-workspace-plugins-mcp.md); the
+    /// runtime wires the cli loader and hands the layer to the kernel's session opens.
+    pub fn workspace_layer(&self) -> &Arc<WorkspaceLayer> {
+        &self.layer
     }
 
     /// 主线程的工具注册表：基础工具、Skill、MCP 工具（ext.md §1）。
@@ -215,10 +250,25 @@ struct ExtRegistry {
     /// 时由主循环去掉（tools-more.md §3.3 第 4 条）。
     wait: Arc<dyn Tool>,
     mcp: Arc<McpManager>,
+    workspace_mcp: Arc<crate::mcp::workspaces::WorkspaceMcp>,
+    sessions: rust_cli_kernel_api::workspace_key::SessionWorkspaces,
     incognito: IncognitoTools,
 }
 
 impl ExtRegistry {
+    /// Fork: the MCP group a session reads (specs/fork-rust-workspace-plugins-mcp.md): its
+    /// workspace's group when a loaded layer started one, else the process group (the TUI, `-p`,
+    /// a session without a workspace, or a fail-closed Invalid slot).
+    fn session_mcp(&self, session: &SessionId) -> Arc<McpManager> {
+        self.sessions
+            .get(session)
+            .map(|workspace| {
+                rust_cli_kernel_api::workspace_key::project_key(workspace.root.as_str())
+            })
+            .and_then(|key| self.workspace_mcp.group(&key))
+            .unwrap_or_else(|| self.mcp.clone())
+    }
+
     fn assemble(&self, wait: bool, mcp: Vec<Arc<dyn Tool>>) -> Vec<Arc<dyn Tool>> {
         let mut tools = self.base.tools();
         tools.push(self.skill.clone());
@@ -252,14 +302,15 @@ impl ToolRegistry for ExtRegistry {
         let Some(profile) = self.incognito.profile(session) else {
             return self.find(name);
         };
+        let mcp = self.session_mcp(session);
         if name == self.skill.name() {
             return Some(self.skill.clone());
         }
-        if name == WAIT_FOR_MCP_SERVERS && self.mcp.has_servers() {
+        if name == WAIT_FOR_MCP_SERVERS && mcp.has_servers() {
             return Some(self.wait.clone());
         }
         self.base.find_for(session, name).or_else(|| {
-            self.mcp
+            mcp
                 .snapshot_where(|scope| incognito::keeps_scope(&profile, scope))
                 .0
                 .into_iter()
@@ -283,13 +334,14 @@ impl ToolRegistry for ExtRegistry {
 
     /// MCP 工具、连接中的服务器与 instructions 在同一把锁里取（query.md §1.3，修复线 F36）。
     fn snapshot(&self, session: &SessionId) -> ToolSnapshot {
+        // Fork: the session reads its workspace's MCP group, not the process's
+        // (specs/fork-rust-workspace-plugins-mcp.md).
+        let mcp = self.session_mcp(session);
         if let Some(profile) = self.incognito.profile(session) {
             // Fork: an incognito session sees only the servers and tools its profile keeps.
-            let (tools, view) = self
-                .mcp
-                .snapshot_where(|scope| incognito::keeps_scope(&profile, scope));
+            let (tools, view) = mcp.snapshot_where(|scope| incognito::keeps_scope(&profile, scope));
             let wait = !view.pending().is_empty()
-                || (self.mcp.declared(session) && !view.servers.is_empty());
+                || (mcp.declared(session) && !view.servers.is_empty());
             let mut tools = self.assemble(wait, tools);
             tools.retain(|tool| !self.incognito.hides(session, tool.as_ref()));
             return ToolSnapshot {
@@ -297,8 +349,8 @@ impl ToolRegistry for ExtRegistry {
                 mcp: Some(view),
             };
         }
-        let (tools, view) = self.mcp.snapshot();
-        let wait = !view.pending().is_empty() || self.mcp.declared(session);
+        let (tools, view) = mcp.snapshot();
+        let wait = !view.pending().is_empty() || mcp.declared(session);
         ToolSnapshot {
             tools: self.assemble(wait, tools),
             mcp: Some(view),

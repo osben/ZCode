@@ -4,6 +4,7 @@
 mod config;
 mod connection;
 mod manager;
+pub(crate) mod workspaces;
 mod node_config;
 mod notices;
 mod parse;
