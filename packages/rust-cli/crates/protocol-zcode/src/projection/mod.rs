@@ -960,10 +960,9 @@ impl Projection {
                     patch.insert("inputRouting".into(), self.input_routing());
                 }
                 patch.insert("usage".into(), state::usage(self.context, &self.total));
-                if !self.pending.is_empty() {
-                    self.pending.clear();
-                    patch.insert("pendingInteractions".into(), json!([]));
-                }
+                // Fork: the kernel resolves the turn's own asks before this event (`cancel_turn_asks`); what is still
+                // pending is session-level (an MCP App authorization, a background subagent's ask) and outlives the
+                // turn. Clearing it here hid a prompt Rust still waited for.
             }
             KernelEvent::ContextUsage {
                 used_tokens,

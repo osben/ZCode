@@ -279,6 +279,7 @@ Rust forwards one only when the session is one of its own (open or resumable in 
   - Rust runs the admission part of its tool pipeline on it, named `mcp__<server>__<tool>`: schema validation, `validate_input`, PreToolUse hooks, the rules and the gate, with a session-scoped prompt when it asks. It does not run the tool or PostToolUse hooks.
   - The answer is `{input}` (the approved, possibly hook-updated input), or an error whose `data.type` is Node's `CoreErrorType` (`permission_denied`, `invalid_input`).
   - "Always allow" lands in Rust's rules, so later model calls of that tool are allowed too.
+  - The prompt is session-level: a turn that ends while it waits neither cancels it nor hides it. The kernel resolves a turn's own asks before `TurnFinished`, so the projection keeps every ask still pending then (before, it cleared them all; `plugin-extension-mention` lost a mention prompt asked during a turn).
 - `helper/sampleModel {sessionId, request}`
   - `mcp/uiSampling`: Rust runs one side request on the session's current model selection (source `mcpSampling`) and records the call's usage on the session as a `model_usage` row.
   - The answer is Node's `sampleModel` result shape.
