@@ -796,7 +796,7 @@ pub(crate) async fn kernel(
     // 开始连接 MCP 服务器、加载插件；等不等由前端决定（`-p` 短等，TUI 与 App 不等，ext.md §3.3.1）。
     let plugins = kernel.start_extensions().await;
     if let Some(helper) = &spec.node_helper {
-        helper.set_catalog(helper_catalog(&plugins, &opened.workspace));
+        helper.set_catalog(helper_catalog(&plugins));
     }
     Ok(Built {
         opened,
@@ -814,9 +814,8 @@ pub(crate) async fn kernel(
 /// Fork (specs/fork-rust-node-helper.md F3): what this process admitted, sent with every helper session open.
 fn helper_catalog(
     plugins: &rust_cli_ext::plugins::Plugins,
-    workspace: &WorkspaceRef,
 ) -> rust_cli_protocol_zcode::HelperCatalog {
-    let mut catalog = rust_cli_protocol_zcode::HelperCatalog::new(workspace);
+    let mut catalog = rust_cli_protocol_zcode::HelperCatalog::default();
     for plugin in &plugins.0 {
         let hosted = plugin
             .mcp_servers

@@ -37,6 +37,10 @@ impl HelperRequests for Deltas {
     fn session_delta(&self, session: &str, delta: Value) {
         self.0.lock().unwrap().push((session.to_owned(), delta));
     }
+
+    async fn session_workspace(&self, _session: &str) -> Option<Value> {
+        Some(json!({"workspacePath": "/w"}))
+    }
 }
 
 const OPEN: &str = "mcp/uiOpenInstance";
@@ -85,7 +89,6 @@ fn panels() -> Arc<Behaviour> {
 fn panels_rig() -> (Rig, Arc<Deltas>) {
     let rig = rig(fake(&[OPEN, CLOSE, CALL], panels()), timing());
     rig.helper.set_catalog(HelperCatalog {
-        workspace: json!({"workspacePath": "/w"}),
         plugin_ids: vec!["viewer@inline".to_owned()],
         helper_plugins: vec!["viewer@inline".to_owned()],
         servers: vec!["plugin:viewer:view".to_owned()],

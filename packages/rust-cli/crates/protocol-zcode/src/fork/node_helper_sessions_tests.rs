@@ -8,9 +8,11 @@ use super::*;
 
 const SESSION_METHOD: &str = "mcp/uiCallTool";
 
+/// Where the test sessions live; the agent itself runs in `<home>/.zcode` (the Host's shared local task runtime).
+const PROJECT: &str = "/home/ZCodeProject";
+
 fn catalog() -> HelperCatalog {
     HelperCatalog {
-        workspace: json!({"workspacePath": "/w"}),
         plugin_ids: vec!["viewer@inline".to_owned(), "skills-only@inline".to_owned()],
         helper_plugins: vec!["viewer@inline".to_owned()],
         servers: vec!["plugin:viewer:view".to_owned()],
@@ -40,12 +42,51 @@ fn opened() -> Act {
     }
 }
 
+/// The agent's session rows: `id-*` sessions carry a workspace identity, `gone` has no row, every other one lives in
+/// [`PROJECT`] with no identity (as Rust's local rows).
+struct Rows;
+
+#[async_trait]
+impl HelperRequests for Rows {
+    async fn authorize_app_tool(
+        &self,
+        _params: Value,
+        _cancel: tokio_util::sync::CancellationToken,
+    ) -> Result<Value, RpcError> {
+        Err(RpcError::internal("not used"))
+    }
+
+    async fn sample_model(
+        &self,
+        _params: Value,
+        _cancel: tokio_util::sync::CancellationToken,
+    ) -> Result<Value, RpcError> {
+        Err(RpcError::internal("not used"))
+    }
+
+    fn session_delta(&self, _session: &str, _delta: Value) {}
+
+    async fn session_workspace(&self, session: &str) -> Option<Value> {
+        match session {
+            "gone" => None,
+            identified if identified.starts_with("id-") => {
+                Some(json!({"workspacePath": PROJECT, "workspaceIdentity": "remote-1"}))
+            }
+            _ => Some(json!({"workspacePath": PROJECT})),
+        }
+    }
+}
+
+static ROWS: std::sync::LazyLock<Arc<Rows>> = std::sync::LazyLock::new(|| Arc::new(Rows));
+
 fn session_rig(behaviour: Arc<Behaviour>) -> Rig {
     let rig = rig(
         fake(&[SESSION_METHOD, "plugins/referenceCatalog"], behaviour),
         timing(),
     );
     rig.helper.set_catalog(catalog());
+    let rows: std::sync::Weak<dyn HelperRequests> = Arc::downgrade(&*ROWS) as _;
+    rig.helper.set_requests(rows);
     rig
 }
 
@@ -98,7 +139,7 @@ async fn a_session_call_opens_the_session_once_per_generation() {
         received(&rig.fake, "helper/session/open"),
         [json!({
             "sessionId": "s1",
-            "workspace": {"workspacePath": "/w"},
+            "workspace": {"workspacePath": PROJECT},
             "pluginIds": ["viewer@inline", "skills-only@inline"],
             "servers": ["plugin:viewer:view"],
         })]
@@ -267,18 +308,12 @@ async fn a_failed_session_open_answers_the_tool_call_with_an_error() {
 
 #[test]
 fn the_catalog_lists_every_admitted_plugin_and_the_helper_hosted_ones() {
-    use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
-    use rust_cli_kernel_api::ids::EnvironmentId;
-    let mut catalog = HelperCatalog::new(&WorkspaceRef {
-        environment: EnvironmentId::new("local"),
-        root: EnvPath::new("/w"),
-    });
+    let mut catalog = HelperCatalog::default();
     catalog.admit("skills-only@inline", Vec::new());
     catalog.admit("viewer@inline", vec!["plugin:viewer:view".to_owned()]);
     assert_eq!(
         catalog,
         HelperCatalog {
-            workspace: json!({"workspacePath": "/w"}),
             plugin_ids: vec!["skills-only@inline".to_owned(), "viewer@inline".to_owned()],
             helper_plugins: vec!["viewer@inline".to_owned()],
             servers: vec!["plugin:viewer:view".to_owned()],
@@ -316,6 +351,8 @@ async fn an_abandoned_panel_call_is_cancelled_in_the_helper_by_its_own_cancel() 
         timing(),
     );
     rig.helper.set_catalog(catalog());
+    let rows: std::sync::Weak<dyn HelperRequests> = Arc::downgrade(&*ROWS) as _;
+    rig.helper.set_requests(rows);
     let mut call = ui_scope();
     call.insert("toolName".into(), json!("search"));
     call.insert("arguments".into(), json!({"query": "q"}));
@@ -398,4 +435,47 @@ async fn a_late_open_leaves_a_session_reopened_after_its_close() {
     rig.helper.session_closed("s1");
     tokio::time::sleep(Duration::from_secs(1)).await;
     assert_eq!(received(&rig.fake, "helper/session/close").len(), 1);
+}
+
+/// A session opens with its own workspace, as its row holds it, never the agent's cwd: the Host's shared local task
+/// runtime runs one agent in `<home>/.zcode` for every local workspace.
+#[tokio::test]
+async fn a_session_opens_with_its_own_workspace_not_the_agents_cwd() {
+    let rig = session_rig(sessions(|_| opened()));
+    for session in ["s1", "id-2"] {
+        forward_ok(
+            &rig.helper,
+            SESSION_METHOD,
+            json!({"sessionId": session, "serverName": "plugin:viewer:view"}),
+        )
+        .await;
+    }
+    let workspaces: Vec<Value> = received(&rig.fake, "helper/session/open")
+        .into_iter()
+        .map(|open| open["workspace"].clone())
+        .collect();
+    assert_eq!(
+        workspaces,
+        [
+            json!({"workspacePath": PROJECT}),
+            json!({"workspacePath": PROJECT, "workspaceIdentity": "remote-1"}),
+        ]
+    );
+}
+
+/// A session whose row Rust cannot read is not opened with a guessed workspace: the call is unavailable.
+#[tokio::test]
+async fn a_session_without_a_row_is_not_opened() {
+    let rig = session_rig(sessions(|_| opened()));
+    let error = rig
+        .helper
+        .forward(
+            SESSION_METHOD,
+            &json!({"sessionId": "gone", "serverName": "plugin:viewer:view"}),
+        )
+        .await
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(error.data.unwrap()["reasonCode"], NODE_HELPER_UNAVAILABLE);
+    assert!(received(&rig.fake, "helper/session/open").is_empty());
 }

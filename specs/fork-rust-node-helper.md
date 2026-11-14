@@ -247,7 +247,14 @@ A connect that Rust gives up on is closed in the helper too:
 - Rust sends `helper/mcp/close` and drops the pipe whenever its connect does not succeed: an error answer, its timeout, or the caller dropping it.
 - A close that reaches the helper while that connection is still connecting makes the connect release its lease and answer an error once it finishes. Otherwise a late connect would keep a lease and an MCP child that nothing closes, and the helper would never be idle.
 
-`workspace` is `{workspacePath, workspaceIdentity?}`. A helper serves one workspace (its Rust process's); a second workspace is refused. The helper protocol version is 2 from F3 on: a Rust build and a helper of different versions refuse each other at `initialize`.
+`workspace` is `{workspacePath, workspaceIdentity?}`, keyed `workspaceIdentity?.trim() || workspacePath`. A Rust process may serve several workspaces, so the helper is never bound to one:
+
+- The Host's shared local task runtime is one agent process for every local workspace, run in the data root (`<home>/.zcode`, `SHARED_TASK_RUNTIME_KEY` in `zcodeAgentProcessManager.ts`).
+- The helper resolves plugins once per workspace key, and forgets a failed resolution so the next call of that key retries.
+- A pipe keeps the workspace its connect named, for its server config and its lease's working directory. Rust's pipes name the workspace its MCP manager runs in.
+- A session keeps the workspace its open named: its server configs, its lease's working directory, its panel tool calls, and its model tool calls on that lease.
+
+The helper protocol version is 2 from F3 on: a Rust build and a helper of different versions refuse each other at `initialize`.
 
 The helper answers Rust's MCP messages as a small MCP server facade over Node's port:
 
@@ -263,6 +270,9 @@ The helper answers Rust's MCP messages as a small MCP server facade over Node's 
 helper/session/open {sessionId, rootSessionId?, workspace, pluginIds: [...], servers: [...]}
 ```
 
+- `workspace` is the session's own, as its row holds it: `workspacePath` is the row's `directory` (a draft's too), and `workspaceIdentity` is its non-empty `workspace_id`. Rust's local rows have none.
+  - Never the agent's cwd: the desktop E2E runs the agent in `<home>/.zcode` while its sessions live in `<home>/ZCodeProject`.
+  - A session whose row Rust cannot read is not opened; the call fails as `nodeHelperUnavailable`.
 - `pluginIds` are the plugins Rust admitted in this process. The helper freezes the session's reference catalog from its plugin resolution; an entry is enabled only when Rust admitted it, so the picker and Rust agree on one plugin set.
 - `servers` are the helper-hosted server names. The helper acquires a session lease from its MCP pool (`sessionId` isolation) and connects them before answering. A failed server is logged and left out; the session still opens.
 - `rootSessionId` is the root of a subagent session when Rust knows it (a foreground subagent chain); otherwise absent. It goes into the session trace, so Node's adapter sends it to the server as `root_session_id` in `_meta["com.zcode/request-context"]`, next to `session_id` and `turn_id`.

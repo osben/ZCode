@@ -38,6 +38,10 @@ impl HelperRequests for Answers {
     }
 
     fn session_delta(&self, _session: &str, _delta: Value) {}
+
+    async fn session_workspace(&self, _session: &str) -> Option<Value> {
+        Some(json!({"workspacePath": "/w"}))
+    }
 }
 
 /// A started helper (its generation is `1`) whose requests [`Answers`] answers.

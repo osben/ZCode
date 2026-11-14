@@ -43,6 +43,10 @@ pub(crate) trait HelperRequests: Send + Sync {
     /// `helper/session/delta`: a live plugin UI delta for `session`'s stream (one of Node's four `pluginUi.*` ops).
     /// Called in the helper connection's read loop, so it must not block.
     fn session_delta(&self, session: &str, delta: Value);
+
+    /// The workspace `helper/session/open` names for `session`, as its row holds it: `{workspacePath: directory,
+    /// workspaceIdentity?: workspace_id}` (F3 "Session open and close"). `None` when the store has no row or draft.
+    async fn session_workspace(&self, session: &str) -> Option<Value>;
 }
 
 #[derive(Default)]

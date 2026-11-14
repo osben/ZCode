@@ -23,6 +23,8 @@ import { toNodeError, type ForkRustHelperClient } from "./rust-client.js";
 /** One helper session: a Rust session opened in this helper generation (spec F3 "Session open and close"). */
 export interface HelperSession {
   sessionId: string;
+  /** The workspace its open named, the session's own (never the Rust agent's cwd). */
+  workspace: HelperWorkspace;
   port: McpPort;
   catalog: ReturnType<typeof buildPluginReferenceCatalog>;
   traceContext: TraceContext;
@@ -32,7 +34,6 @@ export interface HelperSession {
 
 export interface HelperSessionRecordDeps {
   client: ForkRustHelperClient;
-  workspace: HelperWorkspace;
   logger?: Logger;
 }
 
@@ -46,7 +47,7 @@ session: HelperSession,
 deps: HelperSessionRecordDeps,
 ): ZCodeProtocolSessionRecord {
   const { port, sessionId } = session;
-  const workspace = deps.workspace;
+  const workspace = session.workspace;
   const app: Partial<ZCodeApp> = {
     getPluginReferenceCatalog: () => session.catalog,
     listMcpServers: async () => port.status(),

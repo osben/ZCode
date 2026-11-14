@@ -59,11 +59,10 @@ pub(crate) fn session_of<'a>(method: &str, params: &'a Value) -> Option<&'a str>
     None
 }
 
-/// What Rust admitted in this process, sent with every session open.
+/// What Rust admitted in this process, sent with every session open. It names no workspace: a session opens with its
+/// own, never the agent's cwd.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct HelperCatalog {
-    /// `{workspacePath, workspaceIdentity?}`, the same value the pipes send.
-    pub workspace: Value,
     /// Every plugin Rust admitted (the helper enables only these in the session's reference catalog).
     pub plugin_ids: Vec<String>,
     /// The admitted plugins whose servers are helper-hosted.
@@ -73,14 +72,6 @@ pub struct HelperCatalog {
 }
 
 impl HelperCatalog {
-    /// An empty catalog of `workspace`, which the helper sessions name as the pipes do.
-    pub fn new(workspace: &rust_cli_kernel_api::env::WorkspaceRef) -> Self {
-        Self {
-            workspace: super::mcp::helper_workspace(workspace),
-            ..Self::default()
-        }
-    }
-
     /// Adds one admitted plugin with its helper-hosted servers (none for a plugin whose servers Rust runs).
     pub fn admit(&mut self, plugin_id: &str, helper_servers: Vec<String>) {
         self.plugin_ids.push(plugin_id.to_owned());
@@ -160,9 +151,16 @@ impl NodeHelper {
         let Some(catalog) = self.catalog() else {
             return Err(unavailable("the helper has no plugin catalog yet"));
         };
+        let Some(answers) = self.answers() else {
+            return Err(unavailable("the agent does not answer helper requests yet"));
+        };
+        // The session's own workspace: one agent may serve several (the Host's shared local task runtime).
+        let Some(workspace) = answers.session_workspace(session).await else {
+            return Err(unavailable("the session's workspace is unknown"));
+        };
         let params = json!({
             "sessionId": session,
-            "workspace": catalog.workspace,
+            "workspace": workspace,
             "pluginIds": catalog.plugin_ids,
             "servers": catalog.servers,
         });

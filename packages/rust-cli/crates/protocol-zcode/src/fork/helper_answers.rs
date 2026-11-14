@@ -17,6 +17,21 @@ use crate::server::Server;
 
 #[async_trait]
 impl HelperRequests for Server {
+    async fn session_workspace(&self, session: &str) -> Option<Value> {
+        let workspace = self
+            .kernel
+            .queries()
+            .session_workspace(&rust_cli_kernel_api::ids::SessionId::new(session))
+            .await
+            .ok()
+            .flatten()?;
+        let mut value = serde_json::json!({"workspacePath": workspace.directory});
+        if let Some(identity) = workspace.identity {
+            value["workspaceIdentity"] = Value::String(identity);
+        }
+        Some(value)
+    }
+
     async fn authorize_app_tool(
         &self,
         params: Value,

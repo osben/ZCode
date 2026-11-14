@@ -2,7 +2,7 @@
 // panels"): the MCP pipe facade, helper sessions, mention items through the Rust authorization round
 // trip, and the session's frozen reference catalog. The plugin is an inline MCP App plugin served
 // by a raw stdio MCP server, the same kind as the desktop E2E fixtures.
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -61,6 +61,10 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       return;
     }
     const context = params._meta?.["com.zcode/request-context"] ?? {};
+    if (params.arguments?.query === "cwd") {
+      send({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: process.cwd() }] } });
+      return;
+    }
     send({ jsonrpc: "2.0", id, result: { content: [{ type: "text",
       text: "called " + params.name + " for " + (context.session_id ?? "none") }] } });
   } else if (method === "resources/list") {
@@ -310,6 +314,52 @@ describe("fork: Node helper F3 (Office tools and panels)", () => {
     helper.close();
     await helper.done;
   }, 60_000);
+
+  // The Host's shared local task runtime is one Rust agent for every local workspace, run in the data root: its
+  // pipes name `<home>/.zcode` while its sessions live in their own workspaces (spec F3 "Session open and close").
+  for (const order of ["pipe first", "session first"] as const)
+    it(`keeps each pipe's and each session's own workspace (${order})`, async () => {
+      const home = await tempHome();
+      const agentCwd = home.env.ZCODE_STORAGE_DIR!;
+      const helper = await initialized(home.env, agentCwd);
+      const connectPipe = () =>
+        helper.request("helper/mcp/connect", {
+          connection: "c1",
+          server: SERVER,
+          workspace: { workspacePath: agentCwd },
+        });
+      const openSession = () =>
+        helper.request("helper/session/open", {
+          sessionId: SESSION,
+          workspace: { workspacePath: home.workspace },
+          pluginIds: [PLUGIN_ID],
+          servers: [SERVER],
+        });
+      const [first, second] =
+        order === "pipe first" ? [connectPipe, openSession] : [openSession, connectPipe];
+      expect((await first()).error).toBeUndefined();
+      expect((await second()).error).toBeUndefined();
+      await helper.mcp("c1", {
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "rs" } },
+      });
+      // A model tool call runs on the session's lease, in the session's workspace.
+      const called = await helper.mcp("c1", {
+        id: 2,
+        method: "tools/call",
+        params: {
+          name: "open_doc",
+          arguments: { query: "cwd" },
+          _meta: { "zcode/helperContext": { sessionId: SESSION, runtimeScope: "main" } },
+        },
+      });
+      expect(called.result).toEqual({
+        content: [{ type: "text", text: await realpath(home.workspace) }],
+      });
+      helper.close();
+      await helper.done;
+    }, 60_000);
 
   it("releases a pipe that Rust closed while it was still connecting", async () => {
     const home = await tempHome();

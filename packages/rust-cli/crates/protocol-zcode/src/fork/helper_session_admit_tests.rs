@@ -8,7 +8,6 @@ use crate::fork::node_helper::HelperCatalog;
 
 fn catalog() -> HelperCatalog {
     HelperCatalog {
-        workspace: json!({"workspacePath": "/w"}),
         plugin_ids: vec!["viewer@inline".to_owned(), "skills@inline".to_owned()],
         helper_plugins: vec!["viewer@inline".to_owned()],
         servers: vec!["plugin:viewer:view".to_owned()],

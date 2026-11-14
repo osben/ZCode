@@ -81,8 +81,8 @@ const SESSION_NOT_OPEN = -32602;
  * reach the same pool entry.
  */
 export class ForkRustHelperMcpHost {
-  private workspace: HelperWorkspace | undefined;
-  private plugins: Promise<PluginLoadOutcome> | undefined;
+  /** Plugin resolutions by workspace key: one Rust agent may serve several workspaces (spec F3 pipe messages). */
+  private readonly plugins = new Map<string, Promise<PluginLoadOutcome>>();
   private readonly pipes = new Map<string, PipeConnection>();
   /** Pipe connects in flight; `true` once Rust closed the connection meanwhile (spec F3 pipe messages). */
   private readonly connecting = new Map<string, boolean>();
@@ -98,26 +98,26 @@ export class ForkRustHelperMcpHost {
 
   // ── Plugin resolution and workspace ──
 
-  private outcome(rawWorkspace: unknown): Promise<PluginLoadOutcome> {
-    const workspace = parseWorkspace(rawWorkspace);
-    if (this.workspace && workspaceKeyOf(this.workspace) !== workspaceKeyOf(workspace))
-      throw new ProtocolRequestError(-32602, "The helper serves one workspace per Rust process");
-    this.workspace ??= workspace;
-    this.plugins ??= this.deps.resolvePlugins(workspace).catch((error: unknown) => {
-      this.plugins = undefined;
-      throw error;
-    });
-    return this.plugins;
+  private outcome(workspace: HelperWorkspace): Promise<PluginLoadOutcome> {
+    const key = workspaceKeyOf(workspace);
+    let outcome = this.plugins.get(key);
+    if (!outcome) {
+      outcome = this.deps.resolvePlugins(workspace).catch((error: unknown) => {
+        if (this.plugins.get(key) === outcome) this.plugins.delete(key);
+        throw error;
+      });
+      this.plugins.set(key, outcome);
+    }
+    return outcome;
   }
 
-  private async serverConfig(server: string, rawWorkspace: unknown): Promise<McpServerConfig> {
-    const config = (await this.outcome(rawWorkspace)).mcpServers[server];
+  private async serverConfig(server: string, workspace: HelperWorkspace): Promise<McpServerConfig> {
+    const config = (await this.outcome(workspace)).mcpServers[server];
     if (!config) throw new ProtocolRequestError(-32602, `MCP server is not a helper plugin server: ${server}`);
     return config;
   }
 
-  private connectOptions() {
-    const workspace = this.workspace!;
+  private connectOptions(workspace: HelperWorkspace) {
     return {
       workingDirectory: workspace.workspacePath,
       ...(workspace.workspaceIdentity ? { workspaceIdentity: workspace.workspaceIdentity } : {}),
@@ -134,7 +134,7 @@ export class ForkRustHelperMcpHost {
       throw new ProtocolRequestError(-32602, `Connection already open: ${connection}`);
     this.connecting.set(connection, false);
     try {
-      return await this.connectPipe(connection, server, params?.workspace);
+      return await this.connectPipe(connection, server, parseWorkspace(params?.workspace));
     } finally {
       this.connecting.delete(connection);
     }
@@ -148,13 +148,13 @@ export class ForkRustHelperMcpHost {
   private async connectPipe(
     connection: string,
     server: string,
-    workspace: unknown,
+    workspace: HelperWorkspace,
   ): Promise<Record<string, never>> {
     const config = await this.serverConfig(server, workspace);
     this.assertStillWanted(connection);
     const port = this.deps.pool.acquireLease({ leaseId: `fork-rust-pipe:${connection}` });
     try {
-      const status = await port.connectServer(server, config, this.connectOptions());
+      const status = await port.connectServer(server, config, this.connectOptions(workspace));
       if (status.status !== "connected")
         throw new Error(status.error ?? `MCP server ${server} is ${status.status}`);
       this.assertStillWanted(connection);
@@ -280,7 +280,7 @@ export class ForkRustHelperMcpHost {
         SESSION_NOT_OPEN,
         `Session is not open in the Node helper: ${String(sessionId)}`,
       );
-    const workspace = this.workspace!;
+    const workspace = session.workspace;
     const turnId = helperContext?.turnId;
     return session.port.callTool(
       {
@@ -330,8 +330,8 @@ export class ForkRustHelperMcpHost {
   }
 
   private async doOpenSession(sessionId: string, params: Record<string, unknown>): Promise<void> {
-    const outcome = await this.outcome(params.workspace);
-    const workspace = this.workspace!;
+    const workspace = parseWorkspace(params.workspace);
+    const outcome = await this.outcome(workspace);
     const admitted = new Set(Array.isArray(params.pluginIds) ? (params.pluginIds as string[]) : []);
     const requested = Array.isArray(params.servers) ? (params.servers as string[]) : [];
     const servers: Record<string, McpServerConfig> = {};
@@ -354,7 +354,7 @@ export class ForkRustHelperMcpHost {
     };
     const port = this.deps.pool.acquireLease({ leaseId: sessionId, sessionId });
     const snapshot = await port.connectConfiguredServers(servers, {
-      ...this.connectOptions(),
+      ...this.connectOptions(workspace),
       trace: traceContext,
     });
     for (const [name, status] of Object.entries(snapshot.statuses))
@@ -374,6 +374,7 @@ export class ForkRustHelperMcpHost {
     );
     const session: HelperSession = {
       sessionId,
+      workspace,
       port,
       catalog,
       traceContext,
@@ -383,7 +384,6 @@ export class ForkRustHelperMcpHost {
     this.sessions.set(sessionId, session);
     this.deps.context.sessions.set(sessionId, createHelperSessionRecord(session, {
         client: this.deps.client,
-        workspace,
         logger: this.deps.logger,
       }));
   }

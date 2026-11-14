@@ -607,6 +607,16 @@ pub struct SessionTreeCounts {
 }
 
 /// Fork: a session's execution worktree, stored in the Node `session` row (`execution_directory`,
+/// Fork (specs/fork-rust-node-helper.md F3 "Session open and close"): where a session's row says it lives, the
+/// workspace its Node helper session opens with.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionWorkspace {
+    /// The row's (or the draft's) `directory`: the workspace path, never the directory an execution worktree runs in.
+    pub directory: String,
+    /// The row's non-empty `workspace_id`, a workspace identity; Rust's local rows have none.
+    pub identity: Option<String>,
+}
+
 /// `execution_branch`, fork migration `9002_fork_session_execution_worktree`). `directory` is the row's
 /// `directory`: the parent workspace the session is listed under; `path` is where the session runs.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -986,6 +996,17 @@ pub trait StoreQueries: Send + Sync {
     ) -> Result<Option<String>, StoreError> {
         Err(StoreError::Unsupported {
             what: "session workspace key".to_owned(),
+        })
+    }
+
+    /// Fork: the session's workspace as its row (or draft) holds it; `None` for an unknown session. Stores without
+    /// that read answer `Unsupported`.
+    async fn session_workspace(
+        &self,
+        _session: &SessionId,
+    ) -> Result<Option<SessionWorkspace>, StoreError> {
+        Err(StoreError::Unsupported {
+            what: "session workspace".to_owned(),
         })
     }
 
