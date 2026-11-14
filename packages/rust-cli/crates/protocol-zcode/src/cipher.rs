@@ -75,7 +75,7 @@ impl HostCredentialCipher {
             }
             _ => {}
         }
-        let request_id = request_id();
+        let request_id = uuid_v4();
         let params = json!({
             "requestId": request_id,
             "operation": operation.name(),
@@ -155,7 +155,7 @@ fn utf16_len(value: &str) -> usize {
 
 /// 随机 v4 uuid（zod `.uuid()` 要求）。`uuid::Uuid::new_v4` 被 clippy 禁用（统一经随机源），这里用 crate 的随机源
 /// 拼出 v4：版本位与变体位照 RFC 4122 设置。请求 ID 只用来对回复，不是秘密。
-fn request_id() -> String {
+pub(crate) fn uuid_v4() -> String {
     let mut bytes = [0u8; 16];
     bytes[..8].copy_from_slice(&rust_cli_base::random::u64().to_be_bytes());
     bytes[8..].copy_from_slice(&rust_cli_base::random::u64().to_be_bytes());

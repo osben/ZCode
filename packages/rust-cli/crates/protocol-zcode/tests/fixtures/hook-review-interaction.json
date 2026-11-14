@@ -1,0 +1,64 @@
+{
+  "interactionId": "workspace-hook-interaction:fixture",
+  "kind": "workspaceHookReview",
+  "anchorRowId": null,
+  "createdAt": 5,
+  "payload": {
+    "kind": "workspaceHookReview",
+    "reviewFlowId": "workspace-hook-review:fixture",
+    "generation": 1,
+    "interactionId": "workspace-hook-interaction:fixture",
+    "sessionId": "s1",
+    "taskId": "s1",
+    "runId": "workspace-hook-run:s1:fixture",
+    "workspaceIdentity": "/fixture/repo",
+    "workspaceLabel": "repo",
+    "bundleDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "createdAt": 5,
+    "deadlineAt": 600005,
+    "sourceFiles": [
+      {
+        "path": "/fixture/repo/.zcode/config.json",
+        "displayPath": ".zcode/config.json",
+        "editable": true
+      }
+    ],
+    "summary": {
+      "eventCount": 2,
+      "hookCount": 2,
+      "pendingCount": 2
+    },
+    "items": [
+      {
+        "reviewItemId": "r1",
+        "event": "UserPromptSubmit",
+        "type": "command",
+        "displayName": "UserPromptSubmit",
+        "displayCommand": "echo r1",
+        "sourcePath": ".zcode/config.json",
+        "resolvedTimeoutMs": 60000,
+        "resolvedMaxOutputBytes": 1048576,
+        "executionMode": "foreground",
+        "configuredEnabled": true,
+        "editable": true,
+        "trustState": "pending_trust"
+      },
+      {
+        "reviewItemId": "r2",
+        "event": "PreToolUse",
+        "matcher": "Bash",
+        "type": "process",
+        "displayName": "PreToolUse · Bash",
+        "displayCommand": "node hook.js --check",
+        "sourcePath": ".zcode/config.json",
+        "resolvedTimeoutMs": 60000,
+        "resolvedMaxOutputBytes": 1048576,
+        "executionMode": "foreground",
+        "configuredEnabled": true,
+        "editable": true,
+        "trustState": "pending_trust"
+      }
+    ],
+    "warningCode": "workspace_hooks_execute_code"
+  }
+}

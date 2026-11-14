@@ -7,6 +7,7 @@ mod background_work;
 mod child_processes;
 pub(crate) mod commands;
 mod file_summary;
+pub(crate) mod hook_review;
 pub(crate) mod legacy_session;
 mod lsp;
 pub(crate) mod methods;
@@ -24,4 +25,7 @@ mod usage;
 mod workspace_model;
 pub(crate) use workspace_model::Operations as WorkspaceOperations;
 pub(crate) mod workspace_trust;
-pub use workspace_trust::{Admission, WorkspaceAdmin, WorkspaceTarget};
+pub use workspace_trust::{
+    Admission, ReviewBundle, ReviewItem, ReviewSource, StoredTrust, ToggleError, WorkspaceAdmin,
+    WorkspaceTarget,
+};

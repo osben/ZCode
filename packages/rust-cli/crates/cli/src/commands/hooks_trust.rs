@@ -187,6 +187,26 @@ async fn inspect_read(
     path: String,
     identity: Option<String>,
 ) -> (WorkspaceHooks, bool) {
+    let (hooks, unreadable, _) = inspect_review(context, path, identity).await;
+    (hooks, unreadable)
+}
+
+/// A project file that declares hooks, in the order of the digest's `source_index`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct HookSourceFile {
+    pub(crate) path: String,
+    /// `zcode.json` or `.zcode/config.json`.
+    pub(crate) kind: &'static str,
+    pub(crate) order: usize,
+    pub(crate) editable: bool,
+}
+
+/// [`inspect_read`] with the project files that declare hooks (the App's hook review).
+pub(crate) async fn inspect_review(
+    context: &TrustContext<'_>,
+    path: String,
+    identity: Option<String>,
+) -> (WorkspaceHooks, bool, Vec<HookSourceFile>) {
     let workspace = WorkspaceRef {
         environment: EnvironmentId::new(rust_cli_node_store::LOCAL_ENVIRONMENT),
         root: EnvPath::new(path.clone()),
@@ -219,7 +239,16 @@ async fn inspect_read(
     if let Some(identity) = identity {
         hooks.identity = identity;
     }
-    (hooks, unreadable)
+    let sources = crate::config::trust::candidates(&files.projects, &mut warnings)
+        .into_iter()
+        .map(|(file, _)| HookSourceFile {
+            path: file.path.clone(),
+            kind: file.kind.as_str(),
+            order: file.order,
+            editable: file.editable,
+        })
+        .collect();
+    (hooks, unreadable, sources)
 }
 
 #[path = "hooks_trust_status.rs"]
@@ -232,7 +261,7 @@ pub(crate) use status::run;
 mod tests;
 
 /// grant 的记录（Node `grantWorkspaceHookTrust` 的对象字面量）。
-fn records(
+pub(crate) fn records(
     hooks: &WorkspaceHooks,
     selected: &[usize],
     context: &TrustContext<'_>,
