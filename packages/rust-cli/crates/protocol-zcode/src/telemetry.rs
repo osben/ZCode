@@ -379,7 +379,7 @@ impl Telemetry {
                 fact.insert("agentType".into(), json!(agent_type));
             }
             fact.insert("childSessionId".into(), json!(link.child));
-            // The schema requires a non-empty call ID when present; a nested agent has none.
+            // The schema requires a non-empty call ID when present; a row whose call ID is unknown has none.
             if !link.parent_tool.is_empty() {
                 fact.insert("parentToolCallId".into(), json!(link.parent_tool));
             }

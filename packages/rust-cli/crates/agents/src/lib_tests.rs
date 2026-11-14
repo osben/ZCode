@@ -579,3 +579,22 @@ async fn a_desktop_task_stop_returns_after_the_agent_notice() {
         notice.text
     );
 }
+
+/// Fork (node_desktop, specs/fork-rust-agent-parity.md "Subagents launch no subagents"): a desktop subagent's tools
+/// have no Agent, SendMessage or ListAgents (Node child runtimes run with `subagents.enabled: false`); TaskStop stays.
+#[tokio::test]
+async fn a_desktop_subagent_gets_no_subagent_tools() {
+    let harness = desktop_harness();
+    harness
+        .call(
+            "sess_parent",
+            "Agent",
+            json!({"description": "Look around", "prompt": "Look around.", "subagent_type": "general-purpose"}),
+        )
+        .await;
+    let tools = &harness.started(1).await[0].tools;
+    for name in ["Agent", "SendMessage", "ListAgents"] {
+        assert!(!tools.iter().any(|tool| tool == name), "{name}: {tools:?}");
+    }
+    assert!(tools.iter().any(|tool| tool == "TaskStop"), "{tools:?}");
+}
