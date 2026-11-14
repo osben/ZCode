@@ -167,6 +167,10 @@ pub struct SessionDeps {
     /// reads only `additionalContext`), so the app-server turns this off: the prewarm keeps no conversation and the
     /// first input titles it.
     pub session_start_extras: bool,
+    /// Fork: a typed `/compact [instructions]` human text input runs the manual compaction instead of a model turn,
+    /// like the Node desktop agent (`parseCompactCommand`, specs/fork-rust-agent-parity.md HK-UP-01 item 2). The
+    /// app-server turns it on; the TUI runs `/compact` as its own slash command and `-p` sends the text as typed.
+    pub typed_compact: bool,
 }
 
 /// 会话关闭的收尾（docs/specs/rust-cli/session-lifecycle.md §3.3、§3.3.1）：每个会话的关闭任务各调用一次。

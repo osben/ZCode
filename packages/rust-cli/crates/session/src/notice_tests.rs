@@ -139,6 +139,7 @@ async fn session_as(
             fork_while_running: false,
             error_holds_queue: false,
             session_start_extras: true,
+            typed_compact: false,
         },
         SessionState {
             commands: Default::default(),
