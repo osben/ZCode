@@ -57,6 +57,10 @@ pub struct ScriptedEnv {
     cancelled: Mutex<Vec<OperationId>>,
     shell_cwd: Option<String>,
     fail_start: bool,
+    /// `start_command` takes this long before the command is registered.
+    start_ms: u64,
+    /// A command that does not end when it is cancelled (the cancel is still recorded).
+    ignores_cancel: bool,
 }
 
 impl ScriptedEnv {
@@ -75,6 +79,18 @@ impl ScriptedEnv {
     #[must_use]
     pub fn cwd(mut self, cwd: &str) -> Self {
         self.shell_cwd = Some(cwd.to_owned());
+        self
+    }
+
+    #[must_use]
+    pub fn starting_in(mut self, start_ms: u64) -> Self {
+        self.start_ms = start_ms;
+        self
+    }
+
+    #[must_use]
+    pub fn ignoring_cancel(mut self) -> Self {
+        self.ignores_cancel = true;
         self
     }
 
@@ -111,6 +127,9 @@ impl Commands for ScriptedEnv {
         request: StartCommand,
     ) -> Result<BoxStream<'static, Result<CommandEvent, EnvError>>, EnvError> {
         let operation = context.operation.clone();
+        if self.start_ms > 0 {
+            tokio::time::sleep(Duration::from_millis(self.start_ms)).await;
+        }
         if self.fail_start {
             return Err(EnvError::Io {
                 message: "spawn failed".to_owned(),
@@ -156,6 +175,11 @@ impl Commands for ScriptedEnv {
                 cancel: cancel.clone(),
             },
         );
+        let cancel = if self.ignores_cancel {
+            CancellationToken::new()
+        } else {
+            cancel
+        };
         let run = async move {
             let wait = Duration::from_millis(script.delay_ms.min(timeout_ms));
             let cancelled = tokio::select! {

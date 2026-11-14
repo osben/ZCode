@@ -24,6 +24,9 @@ struct MemoryTranscripts {
     order: Arc<Mutex<Vec<&'static str>>>,
     /// The write runs this long in its own task, which a dropped caller does not stop (as `spawn_blocking`).
     write_ms: u64,
+    /// The removal runs this long in its own task, which a dropped caller does not stop (as tokio's `remove_dir_all`
+    /// on `spawn_blocking`).
+    remove_ms: u64,
 }
 
 impl MemoryTranscripts {
@@ -67,7 +70,15 @@ impl HookTranscripts for MemoryTranscripts {
 
     async fn remove(&self, transcript: &HookTranscript) -> std::io::Result<()> {
         self.removed.lock_unpoisoned().push(transcript.clone());
-        self.order.lock_unpoisoned().push("remove");
+        let order = self.order.clone();
+        let remove_ms = self.remove_ms;
+        let removal = tokio::spawn(async move {
+            if remove_ms > 0 {
+                tokio::time::sleep(Duration::from_millis(remove_ms)).await;
+            }
+            order.lock_unpoisoned().push("remove");
+        });
+        let _ = removal.await;
         Ok(())
     }
 
@@ -290,6 +301,78 @@ async fn a_finished_run_sends_no_cancel() {
     engine.run(stop(), CancellationToken::new()).await;
     settle().await;
     assert!(env.cancelled().is_empty());
+}
+
+/// A run dropped while its command starts cancels it too: the operation id is known before the start.
+#[tokio::test(start_paused = true)]
+async fn a_run_dropped_while_its_command_starts_cancels_it() {
+    let env = Arc::new(ScriptedEnv::with(&[("stop.sh", slow(60_000))]).starting_in(50));
+    let transcripts = Arc::new(MemoryTranscripts::default());
+    let engine = engine(
+        env.clone(),
+        transcripts,
+        json!({"type": "command", "command": "stop.sh"}),
+    );
+    let ran = tokio::time::timeout(
+        Duration::from_millis(10),
+        engine.run(stop(), CancellationToken::new()),
+    )
+    .await;
+    assert!(ran.is_err(), "the run should still be starting");
+    settle().await;
+    assert!(env.started().is_empty());
+    assert_eq!(env.cancelled().len(), 1, "{:?}", env.cancelled());
+}
+
+/// A run dropped after the token's cancel was sent sends no second one.
+#[tokio::test(start_paused = true)]
+async fn a_run_dropped_after_its_cancel_sends_no_second_cancel() {
+    let env = Arc::new(ScriptedEnv::with(&[("stop.sh", slow(60_000))]).ignoring_cancel());
+    let transcripts = Arc::new(MemoryTranscripts::default());
+    let engine = engine(
+        env.clone(),
+        transcripts,
+        json!({"type": "command", "command": "stop.sh"}),
+    );
+    let cancel = CancellationToken::new();
+    let run = engine.run(stop(), cancel.clone());
+    let cancelling = async {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        cancel.cancel();
+    };
+    let ran = tokio::time::timeout(Duration::from_millis(10), async {
+        tokio::join!(run, cancelling)
+    })
+    .await;
+    assert!(ran.is_err(), "the command ignores the cancel");
+    settle().await;
+    assert_eq!(env.started().len(), 1);
+    assert_eq!(env.cancelled(), [env.started()[0].0.operation.clone()]);
+}
+
+/// A `remove` dropped mid-way removes the directory once: the removal it started goes on, and no second one runs
+/// beside it.
+#[tokio::test(start_paused = true)]
+async fn a_removal_dropped_mid_way_removes_once() {
+    let env = Arc::new(ScriptedEnv::with(&[("stop.sh", script("", "", 0))]));
+    let transcripts = Arc::new(MemoryTranscripts {
+        remove_ms: 50,
+        ..MemoryTranscripts::default()
+    });
+    let engine = engine(
+        env,
+        transcripts.clone(),
+        json!({"type": "command", "command": "stop.sh"}),
+    );
+    let ran = tokio::time::timeout(
+        Duration::from_millis(10),
+        engine.run(stop(), CancellationToken::new()),
+    )
+    .await;
+    assert!(ran.is_err(), "the run should still be removing");
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    settle().await;
+    assert_eq!(transcripts.order(), ["create", "remove"]);
 }
 
 /// N4: a run dropped while the runtime shuts down still removes its transcript (the spawned removal never runs, so

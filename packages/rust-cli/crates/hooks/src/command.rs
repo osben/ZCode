@@ -148,8 +148,8 @@ pub(crate) struct CommandRun<'a> {
     pub cancel_background: bool,
 }
 
-/// Cancels a started hook command whose run is dropped before its terminal event (dropping the event stream does not
-/// stop the command; Node aborts the callback's `signal`).
+/// Cancels a hook command whose run is dropped while it starts or before its terminal event, unless the run's token
+/// already sent the cancel (dropping the event stream does not stop the command; Node aborts the callback's `signal`).
 struct CancelOnDrop {
     commands: Arc<dyn Commands>,
     operation: Option<OperationId>,
@@ -217,15 +217,25 @@ async fn command(
             task_id(&operation),
         )
     };
+    // The operation id is ours, so a run dropped while its command starts cancels it too.
+    let mut stop = CancelOnDrop {
+        commands: run.commands.clone(),
+        operation: Some(operation.clone()),
+    };
     let mut events = match run
         .commands
         .start_command(run.workspace, run.operation, request)
         .await
     {
         Ok(events) => events,
-        Err(error) => return Raw::Failed(format!("Failed to run: {error}")),
+        Err(error) => {
+            stop.disarm();
+            return Raw::Failed(format!("Failed to run: {error}"));
+        }
     };
     if run.hook.background {
+        // The follower owns the process from here.
+        stop.disarm();
         // async：不等待，结果不回送（D6）；丢掉流不影响命令。
         // Fork: the transcript stays until the process ends (Node keeps it for the background run).
         let transcript = transcript.take();
@@ -246,11 +256,14 @@ async fn command(
         }
         return Raw::Backgrounded;
     }
-    let mut stop = CancelOnDrop {
-        commands: run.commands.clone(),
-        operation: Some(operation.clone()),
-    };
-    let raw = foreground(run.commands.as_ref(), &operation, &mut events, &cancel).await;
+    let raw = foreground(
+        run.commands.as_ref(),
+        &operation,
+        &mut events,
+        &cancel,
+        &mut stop,
+    )
+    .await;
     stop.disarm();
     raw
 }
@@ -290,6 +303,7 @@ async fn foreground(
     operation: &OperationId,
     events: &mut CommandEvents,
     cancel: &CancellationToken,
+    stop: &mut CancelOnDrop,
 ) -> Raw {
     let mut captured = Captured::default();
     let mut cancel_sent = false;
@@ -299,6 +313,8 @@ async fn foreground(
             () = cancel.cancelled(), if !cancel_sent => {
                 cancel_sent = true;
                 let _ = commands.cancel(operation.clone()).await;
+                // Sent: a drop from here sends no second cancel (a drop during the send above still does).
+                stop.disarm();
                 continue;
             }
         };

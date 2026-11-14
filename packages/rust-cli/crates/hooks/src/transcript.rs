@@ -24,7 +24,8 @@ pub(crate) struct Staged {
 
 /// Removes one transcript directory (Node removes it in the callback's `finally`). The owner awaits [`Self::remove`];
 /// a guard dropped without it (the run's future dropped, a panic) removes the directory in a spawned task, or
-/// synchronously where that task cannot run (no runtime, or the runtime shutting down).
+/// synchronously where that task cannot run (no runtime, or the runtime shutting down). Either way one task owns the
+/// removal.
 pub(crate) struct TranscriptGuard {
     removal: Option<Removal>,
 }
@@ -103,11 +104,13 @@ impl TranscriptGuard {
     }
 
     pub(crate) async fn remove(mut self) {
-        // The removal stays in the guard until it ends, so a drop mid-way still removes the directory.
-        if let Some(removal) = self.removal.as_mut() {
-            removal.run().await;
-        }
-        self.removal = None;
+        // One owner: the removal runs in its own task, so a drop of this future neither stops it nor starts a second
+        // removal beside it (the guard is empty from here). A runtime shutting down drops the task unpolled, and
+        // `Pending` then removes the directory synchronously.
+        let Some(removal) = self.removal.take() else {
+            return;
+        };
+        let _ = tokio::spawn(Pending(Some(removal)).run()).await;
     }
 }
 
