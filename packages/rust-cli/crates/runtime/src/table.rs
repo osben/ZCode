@@ -135,6 +135,9 @@ pub(crate) struct SessionScoped {
     pub(crate) agents: Arc<dyn rust_cli_kernel_api::agents::AgentSignals>,
     /// Fork: a session close releases its ACP agent process (specs/fork-rust-agent-parity.md "ACP external agents").
     pub(crate) acp: Option<crate::acp::AcpRelease>,
+    /// Fork: a session close drops its Host subagent snapshot and gate (specs/fork-rust-subagent-runtime-config.md
+    /// rule 11).
+    pub(crate) agent_catalog: Arc<rust_cli_agents::AgentCatalog>,
 }
 
 impl SessionScoped {
@@ -173,6 +176,7 @@ impl SessionScoped {
         if let Some(acp) = &self.acp {
             acp.released(session);
         }
+        self.agent_catalog.forget(session);
     }
 }
 
@@ -302,6 +306,8 @@ impl LocalKernel {
             fork_while_running: self.fork_while_running,
             error_holds_queue: self.error_holds_queue,
             session_start_extras: self.session_start_extras,
+            typed_compact: self.typed_compact,
+            hook_rows: self.hook_rows,
         };
         let session = Arc::new(Session::spawn(deps, state, opened));
         tracing::info!(event = "session.open", session = %id, opened = ?opened, "session opened");

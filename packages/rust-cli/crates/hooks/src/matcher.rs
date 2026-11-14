@@ -11,7 +11,7 @@ use rust_cli_kernel_api::permission::syntax::{
 use rust_cli_kernel_api::tool::{LEGACY_TOOL_NAMES as LEGACY, canonical_tool_name};
 use serde_json::Value;
 
-use crate::config::{HookCommand, HookMatcher, HookShell};
+use crate::config::{HookCommand, HookMatcher, HookOrigin, HookShell};
 use rust_cli_kernel_api::tool_names;
 
 /// matcher 精确列表允许 `,`、空格与 `-` 的事件。
@@ -191,18 +191,23 @@ fn group(hook: &HookCommand) -> usize {
     }
 }
 
-/// 组内去重：保留第一次出现的位置、用最后一次出现的定义（JS `new Map(entries)`）。
-fn dedup(hooks: Vec<HookCommand>) -> Vec<HookCommand> {
-    let mut groups: [Vec<(String, HookCommand)>; 4] = Default::default();
-    for hook in hooks {
-        let key = dedup_key(&hook);
-        let bucket = &mut groups[group(&hook)];
+/// 组内去重：保留第一次出现的位置、用最后一次出现的定义（JS `new Map(entries)`）。Fork: the kept definition keeps
+/// its origin.
+fn dedup(hooks: Vec<(HookCommand, HookOrigin)>) -> Vec<(HookCommand, HookOrigin)> {
+    let mut groups: [Vec<(String, (HookCommand, HookOrigin))>; 4] = Default::default();
+    for selected in hooks {
+        let key = dedup_key(&selected.0);
+        let bucket = &mut groups[group(&selected.0)];
         match bucket.iter_mut().find(|(known, _)| *known == key) {
-            Some(slot) => slot.1 = hook,
-            None => bucket.push((key, hook)),
+            Some(slot) => slot.1 = selected,
+            None => bucket.push((key, selected)),
         }
     }
-    groups.into_iter().flatten().map(|(_, hook)| hook).collect()
+    groups
+        .into_iter()
+        .flatten()
+        .map(|(_, selected)| selected)
+        .collect()
 }
 
 /// Bash 的 `command` 是否匹配条件的 content：前缀规则按前缀，其余按通配（`*`、`\*`、`git *` 也匹配 `git`、并空白），
@@ -237,34 +242,39 @@ fn condition_matches(condition: &str, tool: &str, input: &Value) -> bool {
     }
 }
 
-/// 一次事件要运行的 hook，按配置的顺序。
+/// 一次事件要运行的 hook，按配置的顺序；Fork: each with its matcher's origin.
 pub(crate) fn select(
     event: HookEventName,
     matchers: &[HookMatcher],
     payload: &Value,
-) -> Vec<HookCommand> {
+) -> Vec<(HookCommand, HookOrigin)> {
     let query = match_query(event, payload);
-    let hooks: Vec<HookCommand> = matchers
+    let hooks: Vec<(HookCommand, HookOrigin)> = matchers
         .iter()
         .filter(|matcher| {
             query
                 .as_deref()
                 .is_none_or(|query| matches(event, matcher.matcher.as_deref(), query))
         })
-        .flat_map(|matcher| matcher.hooks.iter().cloned())
+        .flat_map(|matcher| {
+            matcher
+                .hooks
+                .iter()
+                .map(|hook| (hook.clone(), matcher.origin.clone()))
+        })
         .collect();
     let tool = payload.get("tool_name").and_then(Value::as_str);
     let input = payload.get("tool_input").unwrap_or(&Value::Null);
     dedup(hooks)
         .into_iter()
-        .filter(|hook| match hook.condition() {
+        .filter(|(hook, _)| match hook.condition() {
             None => true,
             Some(condition) => match tool.filter(|_| TOOL_EVENTS.contains(&event)) {
                 Some(tool) => condition_matches(condition, tool, input),
                 None => false,
             },
         })
-        .filter(|hook| {
+        .filter(|(hook, _)| {
             !(matches!(hook, HookCommand::Http(_))
                 && matches!(event, HookEventName::SessionStart | HookEventName::Setup))
         })

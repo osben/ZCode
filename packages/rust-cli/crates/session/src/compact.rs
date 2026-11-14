@@ -59,6 +59,7 @@ impl Actor {
             mode: Some(self.mode()),
             agent: None,
             initial_token_gap: None,
+            inject_agents_md: true,
         };
         let opening = self.open_turn(turn, None, SINK_REQUESTS);
         let sink = opening.sink.clone();

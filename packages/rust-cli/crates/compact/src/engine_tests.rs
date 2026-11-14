@@ -317,3 +317,24 @@ async fn files_the_context_excludes_are_not_reread() {
         .collect();
     assert_eq!(restored, ["/Users/dev/project/a.rs"]);
 }
+
+/// Fork (specs/fork-rust-subagent-runtime-config.md rule 15): the summary run of a child whose definition says
+/// `injectAgentsMd: false` carries the opt-out, so its context leaves the project instructions out.
+#[tokio::test]
+async fn the_summary_run_carries_the_requests_inject_agents_md() {
+    for inject in [false, true] {
+        let runner = ScriptedRunner::new(vec![summary("S")]);
+        let ports = ports(runner.clone(), no_tools());
+        let history = vec![human("u1", "hello"), reply("a1", "hi", None)];
+        let compact = rust_cli_kernel_api::orchestration::CompactRequest {
+            agent: Some(rust_cli_kernel_api::ids::AgentId::new("agent_1")),
+            inject_agents_md: inject,
+            ..request(history, CompactTrigger::Auto)
+        };
+        Engine { ports: &ports }
+            .run(&compact, true, &CancellationToken::new(), None)
+            .await
+            .unwrap();
+        assert_eq!(runner.requests()[0].inject_agents_md, inject);
+    }
+}

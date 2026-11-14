@@ -3,6 +3,12 @@
 
 pub(crate) use rust_cli_base::frontmatter::{Value, split};
 
+/// Fork: `injectAgentsMd` (Node `optionalBoolean`): only `false` (any case) turns the project instructions off;
+/// absent or any other value keeps them (specs/fork-rust-subagent-runtime-config.md rule 15).
+pub(crate) fn inject_agents_md(value: Option<&str>) -> bool {
+    !value.is_some_and(|value| value.eq_ignore_ascii_case("false"))
+}
+
 /// 工具清单：缺省为 None（全部）；含 `*` 也是全部；逗号分隔或列表。嵌套块按没写。
 pub(crate) fn tools(value: Option<&Value>) -> Option<Vec<String>> {
     let items: Vec<String> = match value? {

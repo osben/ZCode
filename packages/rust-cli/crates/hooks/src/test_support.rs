@@ -309,6 +309,8 @@ pub fn ports<E: Commands + Shell + 'static>(env: Arc<E>) -> HookPorts {
         operations: rust_cli_kernel_api::env::Operations::new(Generation::new("g1"), ids),
         artifacts: Arc::new(MemoryArtifacts::default()),
         node_stdin: None,
+        // Follows the paused test time, so a run's duration is the time it took.
+        clock: Arc::new(rust_cli_kernel_api::testing::TokioClock::new(1_000)),
     }
 }
 

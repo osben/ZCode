@@ -137,11 +137,6 @@ impl<'a> Thread<'a> {
             QuerySource::Compact | QuerySource::Side(_) => None,
         }
     }
-
-    /// Explore / Plan 不带规则文件、git 状态与 nested memory。
-    fn omits_context(self) -> bool {
-        matches!(self, Thread::Subagent(agent_type) if subagent::omits_context(agent_type))
-    }
 }
 
 /// 最近一次压缩边界的 ID：规则缓存按它失效。
@@ -465,7 +460,7 @@ impl PromptAssembler {
         }
         // Fork: nested rules are project instructions too.
         let nested =
-            !thread.omits_context() && !self.excludes(request, IncognitoKey::ProjectInstructions);
+            request.inject_agents_md && !self.excludes(request, IncognitoKey::ProjectInstructions);
         if let Some(facts) = facts.as_ref().filter(|_| nested) {
             let (files, _) = self.rule_files(request, facts, boundary).await;
             let scope = self.scope(request, facts);
@@ -533,26 +528,30 @@ impl PromptAssembler {
     /// 每一步的上下文宣布，顺序是规则文件、会话上下文、日期，再是署名，在自动压缩之后。`history` 是最近一次
     /// 压缩边界之后的部分。
     ///
-    /// 子代理同样每一步宣布（子循环与主循环是同一个循环）；Explore / Plan 不宣布规则文件与会话上下文（F16 之前在
-    /// `subagent.rs` 里另写一份，现在共用）。
+    /// 子代理同样每一步宣布（子循环与主循环是同一个循环）；Fork: a subagent with `injectAgentsMd: false` announces
+    /// neither the rule files nor the session context.
     async fn announcements(
         &self,
-        (request, thread): (&ContextRequest, Thread<'_>),
+        request: &ContextRequest,
         history: &[Message],
         boundary: Option<MessageId>,
     ) -> Vec<AttachmentMessage> {
         let has_tool = |name: &str| request.tool_names.iter().any(|tool| tool == name);
         let mut out = Vec::new();
         let facts = self.facts(request).await;
-        if let Some(facts) = facts.as_ref().filter(|_| !thread.omits_context()) {
+        // Fork: a subagent with `injectAgentsMd: false` gets neither (rule 15 of the runtime-config spec).
+        if let Some(facts) = facts.as_ref().filter(|_| request.inject_agents_md) {
             let (files, reason) = self.rule_files(request, facts, boundary).await;
             out.extend(
                 instructions::announce(history, &files, reason)
                     .map(|found| self.attachment(instructions::SOURCE, found)),
             );
             // `--system-prompt` 时 systemContext 为空：不发 git 状态（cli-args.md §4.2）。Fork: nor without `environment`.
+            // Fork: on the desktop no subagent gets it (Node's child context has no project context, rule 15).
+            let child = matches!(request.source, QuerySource::Subagent(_));
             if self.prompt_overrides(request).0.is_none()
                 && !self.excludes(request, IncognitoKey::Environment)
+                && (self.config.subagent_git_status || !child)
             {
                 let git = self.ports.git.as_ref();
                 out.extend(
@@ -604,11 +603,10 @@ impl ContextBuilder for PromptAssembler {
         let system = system_blocks(&facts);
         // 当步的 attachment 在 `start_attachments` / `turn_attachments`（query.md §1.1；子代理同样，F16）；摘要请求见
         // `auxiliary.rs`（context.md §4.1）。
-        let attachments = if let Some(thread) = Thread::of(&request.source) {
+        let attachments = if Thread::of(&request.source).is_some() {
             let boundary = last_boundary(history);
             let window = since_boundary(history);
-            self.announcements((&request, thread), window, boundary)
-                .await
+            self.announcements(&request, window, boundary).await
         } else if request.source == QuerySource::Compact {
             self.auxiliary_announcements(&request, history).await
         } else {

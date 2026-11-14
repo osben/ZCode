@@ -34,7 +34,7 @@ mod texts;
 
 pub use deferred::step_tool_search;
 /// Fork (desktop App): the transcript the goal completion verifier reads (as the stop-time `/goal` evaluation).
-pub use limits::{RequestLimits, StopContinuations, ThinkingTokens};
+pub use limits::{RequestLimits, StopContinuations, ThinkingTokens, ToolHookContexts};
 
 /// `/context` 的消息估算（docs/specs/rust-cli/context-usage.md §3 i）：与主循环相同的规范化（对话中间的
 /// system 消息按生效配置保留或降级，`configured` 答不出时按模型卡片，model.md §11），不带每轮 effort。
@@ -109,6 +109,8 @@ pub(crate) struct RunScope {
     pub(crate) mode: PermissionMode,
     /// 这次运行的缺省机器（主 env 或子代理派生时的机器；R3，remote-exec.md §20.6）：取自请求，一次运行里不变。
     pub(crate) default_machine: rust_cli_kernel_api::ids::MachineName,
+    /// Fork: the request's `inject_agents_md`, for the run's context requests and its compaction.
+    pub(crate) inject_agents_md: bool,
     pub(crate) abort: Abort,
     pub(crate) sink: Arc<dyn RunSink>,
     pub(crate) parts: QueryParts,
@@ -131,6 +133,7 @@ impl RunScope {
             agent: request.agent.clone(),
             mode: request.mode,
             default_machine: request.default_machine.clone(),
+            inject_agents_md: request.inject_agents_md,
             abort,
             sink,
             parts,

@@ -72,7 +72,12 @@ pub(crate) fn agent_info(definition: &AgentDefinition) -> AgentInfo {
             AgentSource::Project => AgentOrigin::Project,
         },
         tools: definition.tools.clone(),
-        model: definition.model.clone().filter(|model| model != "inherit"),
+        // Fork: a full selection (Host profile, Settings override) names the model.
+        model: definition
+            .selection
+            .as_ref()
+            .map(|selection| selection.model.clone())
+            .or_else(|| definition.model.clone().filter(|model| model != "inherit")),
     }
 }
 

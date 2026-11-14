@@ -14,6 +14,7 @@ const ROOT: &str = "/Users/dev/plugins/kit";
 
 fn file(path: &str, namespace: &[&str]) -> PluginAgentFile {
     PluginAgentFile {
+        id: "kit@inline".to_owned(),
         plugin: "kit".to_owned(),
         root: ROOT.to_owned(),
         path: format!("{ROOT}/{path}"),
@@ -24,12 +25,14 @@ fn file(path: &str, namespace: &[&str]) -> PluginAgentFile {
 #[test]
 fn names_descriptions_and_variables_follow_the_plugin_rules() {
     let raw = "---\nname: lead\nwhen_to_use: Leads the team.\ntools: Read\npermissionMode: bypassPermissions\nmaxTurns: 3\n---\nRun ${CLAUDE_PLUGIN_ROOT}/bin/x in ${ZCODE_PROJECT_DIR}.\n";
-    let agent = parse(
+    let (agent, name) = parse(
         raw,
         &file("agents/team/lead.md", &["team"]),
         "/Users/dev/repo",
     );
     assert_eq!(agent.agent_type, "kit:team:lead");
+    // Fork: the bare name (the Host's override key) has no namespace segments.
+    assert_eq!(name, "lead");
     assert_eq!(agent.when_to_use, "Leads the team.");
     assert_eq!(agent.source, AgentSource::Plugin);
     assert_eq!(agent.tools, Some(vec!["Read".to_owned()]));
@@ -41,12 +44,13 @@ fn names_descriptions_and_variables_follow_the_plugin_rules() {
         "Run /Users/dev/plugins/kit/bin/x in /Users/dev/repo."
     );
     // 没有 frontmatter：名字取文件名，描述用缺省句。
-    let bare = parse(
+    let (bare, name) = parse(
         "Just do it.",
         &file("agents/helper.md", &[]),
         "/Users/dev/repo",
     );
     assert_eq!(bare.agent_type, "kit:helper");
+    assert_eq!(name, "helper");
     assert_eq!(bare.when_to_use, "Agent from kit plugin");
     assert_eq!(bare.prompt, "Just do it.");
 }

@@ -288,7 +288,15 @@ impl QueryRunner for ParentRunner {
                         display,
                     }
                 }
-                other => other.unwrap(),
+                // Any other failure: the bare message (the executor's `format_error` wraps it for the model).
+                Err(error) => ToolOutput {
+                    content: vec![ToolResultContent::Text {
+                        text: error.to_string(),
+                    }],
+                    is_error: true,
+                    display: Value::Null,
+                },
+                Ok(output) => output,
             },
         };
         *self.output.lock_unpoisoned() = Some(output);
@@ -409,7 +417,29 @@ pub(crate) struct Harness {
     pub(crate) compactor: Arc<ContextFake>,
     /// Fork: the top-level sessions a call opened (the kernel's open hook runs once per open, as `create_session_as`).
     pub(crate) opened: Arc<Mutex<std::collections::HashSet<SessionId>>>,
+    /// Fork: the agent catalog (a test installs a Host snapshot source on it).
+    pub(crate) catalog: Arc<crate::AgentCatalog>,
+    /// Fork: `ContextRequest::inject_agents_md` of every context build, in order.
+    pub(crate) injected: Arc<Mutex<Vec<bool>>>,
     pub(crate) _scope: TaskScope,
+}
+
+/// Fork: the harness's context (no attachments, no system) that records each build's `inject_agents_md`.
+struct RecordingContext(Arc<Mutex<Vec<bool>>>);
+
+#[async_trait]
+impl rust_cli_kernel_api::orchestration::ContextBuilder for RecordingContext {
+    async fn build(
+        &self,
+        request: ContextRequest,
+        history: &[Message],
+    ) -> Result<
+        rust_cli_kernel_api::orchestration::BuiltContext,
+        rust_cli_kernel_api::orchestration::OrchestrationError,
+    > {
+        self.0.lock_unpoisoned().push(request.inject_agents_md);
+        FixedContext(Vec::new()).build(request, history).await
+    }
 }
 
 /// 只读快照用的压缩器替身（修复线 F112，tui-panels.md §1.7）：上下文用量是“历史条数 × 1000 / 10000”，提示是
@@ -680,6 +710,11 @@ fn built_full(
         .map(|name| Arc::new(FakeTool::new(name, true, "")) as Arc<dyn Tool>)
         .collect();
     let compactor = Arc::new(ContextFake::default());
+    let injected: Arc<Mutex<Vec<bool>>> = Arc::default();
+    let catalog = Arc::new(crate::AgentCatalog::new(
+        Arc::new(UnusedEnvironment),
+        Arc::new(UnusedEnvironment),
+    ));
     // 操作上下文与别的 ID 同一个来源（ID 的顺序不变，工作线 F134）。
     let ids: Arc<dyn rust_cli_kernel_api::clock::Ids> = Arc::new(SequentialIds::default());
     let ports = AgentsPorts {
@@ -693,14 +728,11 @@ fn built_full(
                 rust_cli_kernel_api::testing::controller_services(Arc::new(UnusedEnvironment)),
             ))
         }),
-        catalog: Arc::new(crate::AgentCatalog::new(
-            Arc::new(UnusedEnvironment),
-            Arc::new(UnusedEnvironment),
-        )),
+        catalog: catalog.clone(),
         tasks: tasks.clone() as Arc<dyn TaskListStore>,
         store_queries: children.clone(),
         queries: Arc::new(queries),
-        context: Arc::new(FixedContext(Vec::new())),
+        context: Arc::new(RecordingContext(injected.clone())),
         spawner: scope.spawner(),
         peers,
         operations: rust_cli_kernel_api::env::Operations::new(
@@ -740,6 +772,8 @@ fn built_full(
         controller: controller_services(Arc::new(UnusedEnvironment)),
         compactor,
         opened: Arc::default(),
+        catalog,
+        injected,
         _scope: scope,
     }
 }

@@ -318,6 +318,8 @@ pub(super) async fn tool_session(
             fork_while_running: false,
             error_holds_queue: false,
             session_start_extras: true,
+            typed_compact: false,
+            hook_rows: false,
         },
         SessionState {
             commands: Default::default(),

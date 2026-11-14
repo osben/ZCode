@@ -12,6 +12,7 @@ pub mod elicitation;
 mod external_agent_status;
 mod external_tools;
 mod goal_verify;
+mod hook_rows;
 mod kinds;
 mod markers;
 mod model_change;
@@ -1108,6 +1109,14 @@ impl Projection {
                 self.goal_verification(verification, now, seq, &mut out);
                 self.phase_patch(&mut patch);
             }
+            // Fork: a blocked prompt's input row and its turn's hook rows and banner (specs/fork-rust-agent-parity.md
+            // HK-UP-01).
+            KernelEvent::PromptBlocked { message, .. } => self.message(message, now, seq, &mut out),
+            KernelEvent::HookInvocation { invocation, .. } => {
+                if self.hook_invocation(invocation, now, seq, &mut out) {
+                    self.phase_patch(&mut patch);
+                }
+            }
             KernelEvent::GoalChanged { goal } => {
                 self.goal.clone_from(goal);
                 patch.insert("goal".into(), self.goal_json());
@@ -1298,6 +1307,9 @@ impl Projection {
                     message: message.clone(),
                     code: code.clone(),
                     at: now,
+                    recoverable: true,
+                    detail: None,
+                    attribution: None,
                 });
                 ("failed", "failed", Phase::Error)
             }
@@ -1355,7 +1367,12 @@ impl Projection {
                         }
                     }
                     Some(RowKind::Subagent) => Self::settle_open_subagent(row, now),
-                    Some(RowKind::TurnHeader | RowKind::UserInput | RowKind::TimelineMarker)
+                    Some(
+                        RowKind::TurnHeader
+                        | RowKind::UserInput
+                        | RowKind::TimelineMarker
+                        | RowKind::HookInvocation,
+                    )
                     | None => {}
                 },
                 out,

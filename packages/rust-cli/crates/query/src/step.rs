@@ -65,6 +65,9 @@ impl StepTools {
             mcp: self.mcp.clone(),
             // 远端执行 F98（remote-exec.md §25.2.1）：机器清单提醒按这次运行的缺省机器写（子代理可能缺省在远端）。
             default_machine: scope.default_machine.clone(),
+            // Fork: the agent catalog reads the Host's subagent snapshot once per parent run.
+            run: Some(scope.run.clone()),
+            inject_agents_md: scope.inject_agents_md,
             ..ContextRequest::new(
                 scope.session.clone(),
                 view.workspace,

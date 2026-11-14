@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use rust_cli_kernel_api::hooks::HookEventName;
 
-use crate::config::{HookMatcher, HookSource, HooksConfig, HooksSettings};
+use crate::config::{HookMatcher, HookOrigin, HookSource, HooksConfig, HooksSettings};
 use crate::plugin::PluginHooks;
 
 /// 合并后实际生效的配置。
@@ -14,6 +14,14 @@ pub(crate) struct Effective {
     pub matchers: HashMap<HookEventName, Vec<HookMatcher>>,
     pub allowed_urls: Option<Vec<String>>,
     pub allowed_env_vars: Option<Vec<String>>,
+}
+
+/// Fork: Node's `descriptor.sourceKind` of a settings file (HK-UP-01).
+fn origin(source: HookSource) -> HookOrigin {
+    match source {
+        HookSource::User | HookSource::Policy => HookOrigin::User,
+        HookSource::Project | HookSource::Local => HookOrigin::Project,
+    }
 }
 
 fn concat(values: impl Iterator<Item = Option<Vec<String>>>) -> Option<Vec<String>> {
@@ -65,13 +73,24 @@ impl HooksConfig {
         let allowed = |source: HookSource| !managed_only || source == HookSource::Policy;
         let plugins: &[PluginHooks] = if managed_only { &[] } else { plugins };
         for event in HookEventName::ALL {
-            let matchers: Vec<HookMatcher> = sources
-                .iter()
-                .filter(|(source, _)| allowed(*source))
-                .map(|(_, settings)| settings)
-                .chain(plugins.iter().map(|plugin| &plugin.settings))
-                .flat_map(|settings| settings.matchers(*event).cloned())
-                .collect();
+            let matchers: Vec<HookMatcher> =
+                sources
+                    .iter()
+                    .filter(|(source, _)| allowed(*source))
+                    .map(|(source, settings)| (origin(*source), settings))
+                    .chain(plugins.iter().map(|plugin| {
+                        (HookOrigin::Plugin(plugin.plugin.clone()), &plugin.settings)
+                    }))
+                    .flat_map(|(origin, settings)| {
+                        settings
+                            .matchers(*event)
+                            .cloned()
+                            .map(move |matcher| HookMatcher {
+                                origin: origin.clone(),
+                                ..matcher
+                            })
+                    })
+                    .collect();
             if !matchers.is_empty() {
                 effective.matchers.insert(*event, matchers);
             }

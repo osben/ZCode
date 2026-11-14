@@ -37,6 +37,13 @@ pub struct CompactRequest {
     /// （docs/specs/rust-cli/compact.md §3.1）。其他触发为 None。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initial_token_gap: Option<u64>,
+    /// Fork: the compacted run's [`crate::orchestration::QueryRequest::inject_agents_md`]; the summary run carries it
+    /// (specs/fork-rust-subagent-runtime-config.md rule 15).
+    #[serde(
+        default = "crate::orchestration::inject_by_default",
+        skip_serializing_if = "crate::orchestration::is_injected"
+    )]
+    pub inject_agents_md: bool,
 }
 
 /// 上下文超限错误文本里的 token 差，认两种句式（docs/specs/rust-cli/compact.md §3.1）：

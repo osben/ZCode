@@ -102,6 +102,8 @@ async fn the_code_intelligence_sees_the_session_profiles() {
             acp: None,
             code_intelligence: Some(code.clone()),
             hook_transcripts: None,
+            subagent_config: None,
+            models: None,
         },
     );
     let workspace = WorkspaceRef {

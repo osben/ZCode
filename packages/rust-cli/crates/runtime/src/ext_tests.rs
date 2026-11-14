@@ -52,6 +52,7 @@ fn plugin_parts_carry_the_plugin_name_and_root() {
     assert_eq!(
         agents,
         [rust_cli_agents::PluginAgentFile {
+            id: "kit@inline".to_owned(),
             plugin: "kit".to_owned(),
             root: KIT.to_owned(),
             path: format!("{KIT}/agents/team/lead.md"),
@@ -115,6 +116,8 @@ async fn plugin_agents_reach_the_agent_listing() {
             topic_resources: None,
             acp: None,
             code_intelligence: None,
+            subagent_config: None,
+            models: None,
             hook_transcripts: None,
         },
     );
@@ -228,6 +231,8 @@ async fn the_session_catalog_follows_the_incognito_profile() {
             topic_resources: None,
             acp: None,
             code_intelligence: None,
+            subagent_config: None,
+            models: None,
             hook_transcripts: None,
         },
     );
