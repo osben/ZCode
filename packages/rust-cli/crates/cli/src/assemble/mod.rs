@@ -702,6 +702,12 @@ pub(crate) async fn kernel(
     if spec.node_desktop {
         extensions.models = opened.directory.clone();
     }
+    // Fork: Node's command hook stdin and transcript files under the process temp directory (Node `os.tmpdir()`).
+    if spec.node_desktop {
+        extensions.hook_transcripts = Some(Arc::new(rust_cli_runtime::LocalHookTranscripts::new(
+            facts.process.temp.clone(),
+        )));
+    }
     // The runtime derives `/loop` hiding and the storeless local cron from this port.
     extensions.automation = spec.automation.clone();
     extensions.topic_resources = spec.topic_resources.clone();

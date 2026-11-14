@@ -113,7 +113,11 @@ pub fn settled_state(
 
 /// Node `selectToolPartsForHistory`：同一调用只取最后的记录；都有声明序号时按序号排。
 pub fn selected(parts: &[Value]) -> Vec<&Value> {
-    let tools: Vec<&Value> = parts.iter().filter(|part| part["type"] == "tool").collect();
+    // Fork: ACP rows are display rows, read back by `external_tools`, never model tool calls.
+    let tools: Vec<&Value> = parts
+        .iter()
+        .filter(|part| part["type"] == "tool" && !crate::external_tools::is_external(part))
+        .collect();
     let call = |part: &Value| part["callID"].as_str().unwrap_or("").to_owned();
     let mut latest: Vec<&Value> = tools
         .iter()

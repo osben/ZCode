@@ -218,6 +218,13 @@ struct Fixture {
 const KIT: &str = "/Users/dev/kit";
 
 async fn fixture(project_files: &[(&str, serde_json::Value)]) -> Fixture {
+    fixture_with(project_files, None).await
+}
+
+async fn fixture_with(
+    project_files: &[(&str, serde_json::Value)],
+    store: Option<Arc<dyn StoreQueries>>,
+) -> Fixture {
     let home = tempfile::tempdir().unwrap();
     let official = home
         .path()
@@ -270,7 +277,7 @@ async fn fixture(project_files: &[(&str, serde_json::Value)]) -> Fixture {
         view_host: true,
         preferences: preferences.as_path().to_path_buf(),
         launcher,
-        store: None,
+        store,
     });
     Fixture {
         _home: home,
@@ -590,4 +597,435 @@ async fn the_host_runs_a_server_for_a_session_and_stops_it_when_disabled() {
     assert_eq!(fixture.host.edit_diagnostics(&session).await, None);
     assert!(fixture.launched.try_recv().is_err());
     fixture.host.session_closed(&session);
+}
+
+/// D2 "When the tool is offered": enabled and a declared server installed. Like Node (the runtime's construction and
+/// `applyLspPreferences`), the fact is computed once per session and workspace and again by each preference write; a
+/// later run only settles it.
+#[cfg(unix)]
+#[tokio::test]
+async fn the_tool_is_offered_while_enabled_with_an_installed_server() {
+    let fixture = fixture(&[]).await;
+    let session = SessionId::new("s1");
+    let root = reference("/Users/dev/a");
+    assert!(!fixture.host.tool_offered(&session), "never computed");
+    fixture.host.settle_tool(&session, &root).await;
+    assert!(!fixture.host.tool_offered(&session), "nothing installed");
+
+    install(&fixture.bin, "typescript-language-server");
+    fixture.host.settle_tool(&session, &root).await;
+    assert!(
+        !fixture.host.tool_offered(&session),
+        "a run does not probe the install again"
+    );
+
+    fixture
+        .host
+        .set_preferences(patch(Some(false), &[]))
+        .await
+        .unwrap();
+    assert!(!fixture.host.tool_offered(&session), "hidden at once");
+    fixture
+        .host
+        .set_preferences(patch(Some(true), &[]))
+        .await
+        .unwrap();
+    assert!(
+        fixture.host.tool_offered(&session),
+        "the write recomputed it"
+    );
+
+    fixture.host.session_closed(&session);
+    assert!(
+        !fixture.host.tool_offered(&session),
+        "dropped with the session"
+    );
+}
+
+/// A server uninstalled mid-session keeps the tool (Node computes availability only at construction and on a
+/// preference write); its queries answer `lsp_server_not_installed`. A move to another workspace computes it anew.
+#[cfg(unix)]
+#[tokio::test]
+async fn an_uninstall_mid_session_keeps_the_tool_and_queries_report_it() {
+    let fixture = fixture(&[]).await;
+    install(&fixture.bin, "typescript-language-server");
+    let session = SessionId::new("s1");
+    let root = reference("/Users/dev/a");
+    fixture.host.settle_tool(&session, &root).await;
+    assert!(fixture.host.tool_offered(&session));
+
+    std::fs::remove_file(fixture.bin.join("typescript-language-server")).unwrap();
+    fixture.host.settle_tool(&session, &root).await;
+    assert!(fixture.host.tool_offered(&session), "still offered");
+    let error = fixture
+        .host
+        .query(
+            &session,
+            &root,
+            hover("/Users/dev/a/x.ts"),
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "lsp_server_not_installed");
+
+    fixture
+        .host
+        .settle_tool(&session, &reference("/Users/dev/b"))
+        .await;
+    assert!(
+        !fixture.host.tool_offered(&session),
+        "another workspace is computed anew"
+    );
+}
+
+/// Answers the install state at the time of the call; the first call then waits until the test releases it.
+struct GatedProbe {
+    installed: std::sync::atomic::AtomicBool,
+    calls: std::sync::atomic::AtomicUsize,
+    /// The calls (0-based) that report on `entered` and wait for a `release` permit, in order.
+    gated: Vec<usize>,
+    entered: tokio::sync::mpsc::UnboundedSender<usize>,
+    release: tokio::sync::Semaphore,
+}
+
+fn gated_probe(
+    installed: bool,
+    gated: &[usize],
+) -> (Arc<GatedProbe>, tokio::sync::mpsc::UnboundedReceiver<usize>) {
+    let (entered, calls) = tokio::sync::mpsc::unbounded_channel();
+    let probe = GatedProbe {
+        installed: installed.into(),
+        calls: 0.into(),
+        gated: gated.to_vec(),
+        entered,
+        release: tokio::sync::Semaphore::new(0),
+    };
+    (Arc::new(probe), calls)
+}
+
+#[async_trait::async_trait]
+impl InstallProbe for GatedProbe {
+    async fn installed(&self, _server: &rust_cli_ext::plugins::lsp::ResolvedLspServer) -> bool {
+        use std::sync::atomic::Ordering;
+        let answer = self.installed.load(Ordering::SeqCst);
+        let call = self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.gated.contains(&call) {
+            self.entered.send(call).unwrap();
+            self.release.acquire().await.unwrap().forget();
+        }
+        answer
+    }
+}
+
+/// Node `lspPreferenceQueues`: a preference write that lands while a settle is probing wins over the settle's older
+/// answer. Here the server is installed and the preferences written while the first settle
+/// still holds its "not installed" answer.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_preference_write_during_the_first_settle_is_not_lost() {
+    use std::sync::atomic::Ordering;
+    let mut fixture = fixture(&[]).await;
+    let (probe, mut entered) = gated_probe(false, &[0]);
+    fixture.host.shared.probe = Arc::clone(&probe) as Arc<dyn InstallProbe>;
+    let session = SessionId::new("s1");
+    let root = reference("/Users/dev/a");
+    let host = &fixture.host;
+    let settle = host.settle_tool(&session, &root);
+    let write = async {
+        entered.recv().await;
+        probe.installed.store(true, Ordering::SeqCst);
+        host.set_preferences(patch(Some(true), &[])).await.unwrap();
+        probe.release.add_permits(1);
+    };
+    tokio::join!(settle, write);
+    assert!(
+        fixture.host.tool_offered(&session),
+        "the settle computed again after the write"
+    );
+}
+
+/// A session closed while its settle is probing gets no fact and no runtime back, even when a write during the probe
+/// makes the settle compute again.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_session_closed_during_its_settle_stays_closed() {
+    use std::sync::atomic::Ordering;
+    let mut fixture = fixture(&[]).await;
+    let (probe, mut entered) = gated_probe(true, &[0]);
+    fixture.host.shared.probe = Arc::clone(&probe) as Arc<dyn InstallProbe>;
+    let session = SessionId::new("s1");
+    let root = reference("/Users/dev/a");
+    let host = &fixture.host;
+    let close = async {
+        entered.recv().await;
+        host.session_closed(&session);
+        host.set_preferences(patch(Some(true), &[])).await.unwrap();
+        probe.release.add_permits(1);
+    };
+    tokio::join!(host.settle_tool(&session, &root), close);
+    assert!(!host.tool_offered(&session));
+    assert!(
+        !host.tool_facts.lock_unpoisoned().contains_key(&session),
+        "no fact"
+    );
+    assert!(
+        !host.sessions.lock_unpoisoned().contains_key(&session),
+        "no runtime slot"
+    );
+    assert_eq!(
+        probe.calls.load(Ordering::SeqCst),
+        1,
+        "no probe after the close"
+    );
+}
+
+/// Two settles for one session with different workspaces: the later run's workspace owns the fact, even when the
+/// earlier settle finishes last.
+#[cfg(unix)]
+#[tokio::test]
+async fn the_latest_workspace_settle_owns_the_fact() {
+    use std::sync::atomic::Ordering;
+    let mut fixture = fixture(&[]).await;
+    let (probe, mut entered) = gated_probe(true, &[0]);
+    fixture.host.shared.probe = Arc::clone(&probe) as Arc<dyn InstallProbe>;
+    let session = SessionId::new("s1");
+    let (first, second) = (reference("/Users/dev/a"), reference("/Users/dev/b"));
+    let host = &fixture.host;
+    let later = async {
+        entered.recv().await;
+        probe.installed.store(false, Ordering::SeqCst);
+        host.settle_tool(&session, &second).await;
+        probe.release.add_permits(1);
+    };
+    tokio::join!(host.settle_tool(&session, &first), later);
+    {
+        let facts = host.tool_facts.lock_unpoisoned();
+        let fact = facts.get(&session).unwrap();
+        assert_eq!(fact.workspace, second);
+        assert_eq!(fact.available, Some(false));
+    }
+    assert!(
+        !host.tool_offered(&session),
+        "the earlier settle's answer did not win"
+    );
+}
+
+/// A write answers only after its refresh stored a fact at least as new as the write, also when a later write lands
+/// while it probes (Node's queued `applyLspPreferences` resolves after its own recompute).
+#[cfg(unix)]
+#[tokio::test]
+async fn a_write_answers_after_its_facts_are_recomputed() {
+    use std::sync::atomic::Ordering;
+    let mut fixture = fixture(&[]).await;
+    let (probe, mut entered) = gated_probe(false, &[1, 2]);
+    fixture.host.shared.probe = Arc::clone(&probe) as Arc<dyn InstallProbe>;
+    let session = SessionId::new("s1");
+    let root = reference("/Users/dev/a");
+    let host = &fixture.host;
+    host.settle_tool(&session, &root).await;
+    assert!(!host.tool_offered(&session));
+    probe.installed.store(true, Ordering::SeqCst);
+    let first = async {
+        host.set_preferences(patch(Some(true), &[])).await.unwrap();
+        let offered = host.tool_offered(&session);
+        // Lets the second write's refresh go on.
+        probe.release.add_permits(1);
+        offered
+    };
+    let second = async {
+        assert_eq!(entered.recv().await, Some(1), "the first write probes");
+        let write = host.set_preferences(patch(Some(true), &[]));
+        let release_first = async {
+            assert_eq!(entered.recv().await, Some(2), "the second write probes");
+            probe.release.add_permits(1);
+        };
+        let (written, ()) = tokio::join!(write, release_first);
+        written.unwrap();
+    };
+    let (offered, ()) = tokio::join!(first, second);
+    assert!(
+        offered,
+        "the first write answered before its facts were recomputed"
+    );
+    assert!(host.tool_offered(&session));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_workspace_without_declared_servers_is_not_offered_and_has_no_server_for_a_file() {
+    let fixture = fixture(&[(
+        "/Users/dev/a/zcode.json",
+        json!({"plugins": {"enabledPlugins": {"typescript-lsp@zcode-plugins-official": false}}}),
+    )])
+    .await;
+    install(&fixture.bin, "typescript-language-server");
+    let session = SessionId::new("s1");
+    let root = reference("/Users/dev/a");
+    fixture.host.settle_tool(&session, &root).await;
+    assert!(!fixture.host.tool_offered(&session));
+    let error = fixture
+        .host
+        .query(
+            &session,
+            &root,
+            rust_cli_kernel_api::lsp::LspQuery {
+                operation: rust_cli_kernel_api::lsp::LspOperation::Hover,
+                file_path: "/Users/dev/a/x.ts".to_owned(),
+                line: Some(1.0),
+                character: Some(1.0),
+                symbol: None,
+                query: None,
+                include_declaration: None,
+            },
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(
+        (error.code.as_str(), error.message.as_str()),
+        (
+            "lsp_no_server_for_file",
+            "No language server is configured for hover on this file type"
+        )
+    );
+}
+
+/// A store whose every session is listed under one workspace key (Node `workspaceID ?? directory`).
+struct KeyStore(&'static str);
+
+#[async_trait::async_trait]
+impl StoreQueries for KeyStore {
+    async fn metering(
+        &self,
+        _session: &SessionId,
+    ) -> Result<
+        rust_cli_kernel_api::metering::SessionMetering,
+        rust_cli_kernel_api::store::StoreError,
+    > {
+        unreachable!()
+    }
+
+    async fn request_stats(
+        &self,
+        _session: &SessionId,
+    ) -> Result<rust_cli_kernel_api::metering::RequestStats, rust_cli_kernel_api::store::StoreError>
+    {
+        unreachable!()
+    }
+
+    async fn activity(
+        &self,
+        _query: rust_cli_kernel_api::metering::ActivityQuery,
+    ) -> Result<rust_cli_kernel_api::metering::ActivityStats, rust_cli_kernel_api::store::StoreError>
+    {
+        unreachable!()
+    }
+
+    async fn put_record(
+        &self,
+        _session: &SessionId,
+        _record: &rust_cli_kernel_api::store::FrontendRecord,
+    ) -> Result<(), rust_cli_kernel_api::store::StoreError> {
+        unreachable!()
+    }
+
+    async fn records(
+        &self,
+        _session: &SessionId,
+        _kind: &str,
+    ) -> Result<
+        Vec<rust_cli_kernel_api::store::FrontendRecord>,
+        rust_cli_kernel_api::store::StoreError,
+    > {
+        unreachable!()
+    }
+
+    async fn session_workspace_key(
+        &self,
+        _session: &SessionId,
+    ) -> Result<Option<String>, rust_cli_kernel_api::store::StoreError> {
+        Ok(Some(self.0.to_owned()))
+    }
+}
+
+fn hover(file_path: &str) -> rust_cli_kernel_api::lsp::LspQuery {
+    rust_cli_kernel_api::lsp::LspQuery {
+        operation: rust_cli_kernel_api::lsp::LspOperation::Hover,
+        file_path: file_path.to_owned(),
+        line: Some(1.0),
+        character: Some(1.0),
+        symbol: None,
+        query: None,
+        include_declaration: None,
+    }
+}
+
+/// Node `create-app.ts` passes no servers for a remote workspace identity, so its runtime has no `LspService`: the
+/// tool is not offered and a query finds no server, even with one installed on this machine.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_remote_workspace_identity_has_no_language_servers() {
+    for identity in [
+        "remote:ssh:host:22:dev:/Users/dev/a",
+        "remote:server:srv-1:/Users/dev/a",
+    ] {
+        let fixture = fixture_with(&[], Some(Arc::new(KeyStore(identity)))).await;
+        install(&fixture.bin, "typescript-language-server");
+        let session = SessionId::new("s1");
+        let root = reference("/Users/dev/a");
+        fixture.host.settle_tool(&session, &root).await;
+        assert!(!fixture.host.tool_offered(&session), "{identity}");
+        let error = fixture
+            .host
+            .query(
+                &session,
+                &root,
+                hover("/Users/dev/a/x.ts"),
+                &CancellationToken::new(),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "lsp_no_server_for_file", "{identity}");
+    }
+}
+
+/// A local identity (here a malformed remote one, which Node's parser rejects) keeps the servers.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_local_workspace_identity_keeps_its_language_servers() {
+    let fixture = fixture_with(&[], Some(Arc::new(KeyStore("remote:ssh:host:22:dev:rel")))).await;
+    install(&fixture.bin, "typescript-language-server");
+    let session = SessionId::new("s1");
+    fixture
+        .host
+        .settle_tool(&session, &reference("/Users/dev/a"))
+        .await;
+    assert!(fixture.host.tool_offered(&session));
+}
+
+/// The host serves its own machine only: a workspace in another environment gets no runtime.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_workspace_in_another_environment_has_no_language_servers() {
+    let fixture = fixture(&[]).await;
+    install(&fixture.bin, "typescript-language-server");
+    let session = SessionId::new("s1");
+    let root = WorkspaceRef {
+        environment: EnvironmentId::new("ssh:host"),
+        root: EnvPath::new("/Users/dev/a"),
+    };
+    fixture.host.settle_tool(&session, &root).await;
+    assert!(!fixture.host.tool_offered(&session));
+    let error = fixture
+        .host
+        .query(
+            &session,
+            &root,
+            hover("/Users/dev/a/x.ts"),
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "lsp_no_server_for_file");
 }

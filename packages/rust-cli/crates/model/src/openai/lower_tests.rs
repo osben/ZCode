@@ -274,3 +274,26 @@ pub(crate) fn video_turn() -> Vec<ApiMessage> {
         ],
     )]
 }
+
+/// Fork: `query::normalize` drops ACP rows; one reaching the adapter is refused, as the Anthropic writer does, on
+/// either side of the conversation.
+#[test]
+fn acp_rows_are_refused_like_the_anthropic_writer() {
+    let row = || {
+        ContentBlock::ExternalTool(Box::new(rust_cli_kernel_api::message::ExternalTool {
+            id: ToolUseId::new("acp_1"),
+            name: "acp:read".into(),
+            title: String::new(),
+            input: json!({}),
+            output: "A".into(),
+            is_error: false,
+        }))
+    };
+    for role in [ApiRole::Assistant, ApiRole::User] {
+        let refused = items(Vec::new(), vec![message(role, vec![text("x"), row()])]);
+        assert!(
+            matches!(&refused, Err(ModelError::InvalidRequest { message }) if message == "ACP rows never reach the model request"),
+            "{refused:?}"
+        );
+    }
+}

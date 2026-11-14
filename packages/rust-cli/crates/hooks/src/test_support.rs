@@ -54,8 +54,13 @@ pub struct ScriptedEnv {
     scripts: Mutex<HashMap<String, Script>>,
     started: Mutex<Vec<(OperationContext, StartCommand)>>,
     running: Mutex<HashMap<OperationId, Started>>,
+    cancelled: Mutex<Vec<OperationId>>,
     shell_cwd: Option<String>,
     fail_start: bool,
+    /// `start_command` takes this long before the command is registered.
+    start_ms: u64,
+    /// A command that does not end when it is cancelled (the cancel is still recorded).
+    ignores_cancel: bool,
 }
 
 impl ScriptedEnv {
@@ -78,6 +83,18 @@ impl ScriptedEnv {
     }
 
     #[must_use]
+    pub fn starting_in(mut self, start_ms: u64) -> Self {
+        self.start_ms = start_ms;
+        self
+    }
+
+    #[must_use]
+    pub fn ignoring_cancel(mut self) -> Self {
+        self.ignores_cancel = true;
+        self
+    }
+
+    #[must_use]
     pub fn failing() -> Self {
         Self {
             fail_start: true,
@@ -87,6 +104,11 @@ impl ScriptedEnv {
 
     pub fn started(&self) -> Vec<(OperationContext, StartCommand)> {
         self.started.lock_unpoisoned().clone()
+    }
+
+    /// The operations `cancel` was sent for, in order.
+    pub fn cancelled(&self) -> Vec<OperationId> {
+        self.cancelled.lock_unpoisoned().clone()
     }
 }
 
@@ -105,6 +127,9 @@ impl Commands for ScriptedEnv {
         request: StartCommand,
     ) -> Result<BoxStream<'static, Result<CommandEvent, EnvError>>, EnvError> {
         let operation = context.operation.clone();
+        if self.start_ms > 0 {
+            tokio::time::sleep(Duration::from_millis(self.start_ms)).await;
+        }
         if self.fail_start {
             return Err(EnvError::Io {
                 message: "spawn failed".to_owned(),
@@ -150,6 +175,11 @@ impl Commands for ScriptedEnv {
                 cancel: cancel.clone(),
             },
         );
+        let cancel = if self.ignores_cancel {
+            CancellationToken::new()
+        } else {
+            cancel
+        };
         let run = async move {
             let wait = Duration::from_millis(script.delay_ms.min(timeout_ms));
             let cancelled = tokio::select! {
@@ -199,6 +229,7 @@ impl Commands for ScriptedEnv {
     }
 
     async fn cancel(&self, operation: OperationId) -> Result<(), EnvError> {
+        self.cancelled.lock_unpoisoned().push(operation.clone());
         if let Some(started) = self.running.lock_unpoisoned().get(&operation) {
             started.cancel.cancel();
         }
@@ -277,6 +308,7 @@ pub fn ports<E: Commands + Shell + 'static>(env: Arc<E>) -> HookPorts {
         http: None,
         operations: rust_cli_kernel_api::env::Operations::new(Generation::new("g1"), ids),
         artifacts: Arc::new(MemoryArtifacts::default()),
+        node_stdin: None,
     }
 }
 

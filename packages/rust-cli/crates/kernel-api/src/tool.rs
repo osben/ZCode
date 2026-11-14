@@ -257,6 +257,13 @@ pub trait Tool: Send + Sync {
         false
     }
 
+    /// Fork: the message of a cancelled call under Node hooks (Node `cancellation.userVisibleMessage`): by default
+    /// Node's text for a built-in tool of this name ([`crate::tool_names::node_cancel_message`]); `None` sends Node's
+    /// fallback. MCP tools name themselves (specs/fork-rust-agent-parity.md "Command hook stdin").
+    fn cancel_message(&self) -> Option<std::borrow::Cow<'_, str>> {
+        crate::tool_names::node_cancel_message(self.name()).map(std::borrow::Cow::Borrowed)
+    }
+
     /// 只按名字宣布、经 ToolSearch 按需加载。是否真的延迟由
     /// [`crate::tool_search::is_deferred`] 统一判定（docs/specs/rust-cli/tools-more.md §3.1；MCP 工具看
     /// [`Tool::mcp_info`] 的 `always_load`，不看这个方法）。
@@ -291,6 +298,12 @@ pub trait Tool: Send + Sync {
 
     /// 结果超过这个字符数时落盘为 Artifact，只把预览交给模型。None 表示不落盘。
     fn max_result_size_chars(&self) -> Option<usize> {
+        None
+    }
+
+    /// Fork: a Node `resultBudget` with the artifact strategy: a result above this many UTF-8 bytes is persisted with
+    /// Node's generic envelope. It replaces [`Tool::max_result_size_chars`] and its shared 50 000 cap.
+    fn result_budget_bytes(&self) -> Option<usize> {
         None
     }
 

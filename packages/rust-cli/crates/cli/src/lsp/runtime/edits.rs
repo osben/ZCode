@@ -47,7 +47,7 @@ impl Severity {
         }
     }
 
-    fn reportable(self) -> bool {
+    pub(crate) fn reportable(self) -> bool {
         matches!(self, Self::Error | Self::Warning)
     }
 }
@@ -73,7 +73,7 @@ pub(crate) fn split_lines(text: &str) -> Vec<&str> {
 }
 
 /// Node `utf16ToCodePointColumn`: the UTF-16 index is clamped to the line.
-fn column(line: &str, utf16: f64) -> u32 {
+pub(crate) fn column(line: &str, utf16: f64) -> u32 {
     let utf16 = utf16.floor();
     let mut units = 0_f64;
     let mut points = 0_u32;

@@ -34,7 +34,7 @@ mod texts;
 
 pub use deferred::step_tool_search;
 /// Fork (desktop App): the transcript the goal completion verifier reads (as the stop-time `/goal` evaluation).
-pub use limits::{RequestLimits, ThinkingTokens};
+pub use limits::{RequestLimits, StopContinuations, ThinkingTokens};
 
 /// `/context` 的消息估算（docs/specs/rust-cli/context-usage.md §3 i）：与主循环相同的规范化（对话中间的
 /// system 消息按生效配置保留或降级，`configured` 答不出时按模型卡片，model.md §11），不带每轮 effort。

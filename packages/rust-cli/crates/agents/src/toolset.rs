@@ -23,6 +23,8 @@ const ALL_AGENT_DISALLOWED: &[&str] = &[
     tool_names::EXIT_PLAN_MODE,
     tool_names::ENTER_PLAN_MODE,
     tool_names::ASK_USER_QUESTION,
+    // Fork: Node builds subagent runtimes without the LSP service (specs/fork-rust-lsp.md "Tool (D2)").
+    tool_names::LSP,
 ];
 
 /// Fork: the desktop Cron tools (Node registers them for the main session only).
@@ -256,31 +258,43 @@ impl ToolRegistry for FilteredTools {
     }
 }
 
-/// Fork (node_desktop): a fork child keeps the main thread's registry without the tools no child of Node's desktop
-/// agent has ([`node_child_lacks`]).
-pub(crate) struct NodeChild {
+/// Fork: a fork child keeps the main thread's registry but loses the tools Node registers for the main session only:
+/// `LSP` always (a subagent runtime has no LSP service), and under the desktop agent the tools no child of Node's
+/// desktop agent has, fork or not ([`node_child_lacks`]).
+pub(crate) struct ForkChildTools {
     pub(crate) inner: Arc<dyn ToolRegistry>,
+    /// node_desktop: see [`node_child_lacks`].
+    pub(crate) node_child: bool,
 }
 
-fn kept(tool: &Arc<dyn Tool>) -> bool {
-    !node_child_lacks(tool.name())
+impl ForkChildTools {
+    fn keeps(&self, tool: &Arc<dyn Tool>) -> bool {
+        let name = tool.name();
+        name != tool_names::LSP && !(self.node_child && node_child_lacks(name))
+    }
 }
 
-impl ToolRegistry for NodeChild {
+impl ToolRegistry for ForkChildTools {
     fn tools(&self) -> Vec<Arc<dyn Tool>> {
-        self.inner.tools().into_iter().filter(kept).collect()
+        self.inner
+            .tools()
+            .into_iter()
+            .filter(|tool| self.keeps(tool))
+            .collect()
     }
 
     fn find(&self, name: &str) -> Option<Arc<dyn Tool>> {
-        self.inner.find(name).filter(kept)
+        self.inner.find(name).filter(|tool| self.keeps(tool))
     }
 
     fn find_for(&self, session: &SessionId, name: &str) -> Option<Arc<dyn Tool>> {
-        self.inner.find_for(session, name).filter(kept)
+        self.inner
+            .find_for(session, name)
+            .filter(|tool| self.keeps(tool))
     }
 
     fn withheld(&self, name: &str) -> Option<Arc<dyn Tool>> {
-        self.inner.withheld(name).filter(kept)
+        self.inner.withheld(name).filter(|tool| self.keeps(tool))
     }
 
     fn hides(&self, name: &str) -> bool {
@@ -294,7 +308,11 @@ impl ToolRegistry for NodeChild {
     fn snapshot(&self, session: &SessionId) -> ToolSnapshot {
         let snapshot = self.inner.snapshot(session);
         ToolSnapshot {
-            tools: snapshot.tools.into_iter().filter(kept).collect(),
+            tools: snapshot
+                .tools
+                .into_iter()
+                .filter(|tool| self.keeps(tool))
+                .collect(),
             mcp: snapshot.mcp,
         }
     }

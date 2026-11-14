@@ -118,6 +118,7 @@ async fn plugin_agents_reach_the_agent_listing() {
             code_intelligence: None,
             subagent_config: None,
             models: None,
+            hook_transcripts: None,
         },
     );
     kernel.start_extensions().await;
@@ -232,6 +233,7 @@ async fn the_session_catalog_follows_the_incognito_profile() {
             code_intelligence: None,
             subagent_config: None,
             models: None,
+            hook_transcripts: None,
         },
     );
     kernel.start_extensions().await;

@@ -52,6 +52,8 @@ pub(crate) struct AcpHost {
     records: AgentRecords,
     pub(crate) pool: AcpPool,
     ids: Arc<dyn Ids>,
+    /// The session task list an agent plan replaces (the agents task board).
+    plans: Arc<dyn rust_cli_kernel_api::agents::TaskPlanWriter>,
     /// The kernel scope: agent starts and stops run there, so a turn that stops early never drops one halfway.
     spawner: Spawner,
 }
@@ -61,6 +63,7 @@ impl AcpHost {
         setup: AcpSetup,
         store: Arc<dyn Store>,
         ids: Arc<dyn Ids>,
+        plans: Arc<dyn rust_cli_kernel_api::agents::TaskPlanWriter>,
         spawner: Spawner,
     ) -> Self {
         Self {
@@ -69,6 +72,7 @@ impl AcpHost {
             },
             pool: AcpPool::new(setup.env, setup.ledger, store),
             ids,
+            plans,
             spawner,
         }
     }

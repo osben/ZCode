@@ -1865,6 +1865,7 @@ dependencies = [
  "bytes",
  "flate2",
  "futures-util",
+ "idna",
  "libc",
  "mimalloc",
  "rcgen",

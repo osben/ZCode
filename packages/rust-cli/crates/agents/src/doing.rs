@@ -34,7 +34,8 @@ impl Doing {
             QueryEvent::Delta { .. }
             | QueryEvent::ToolInputStarted { .. }
             | QueryEvent::ToolStarted { .. }
-            | QueryEvent::ToolFinished { .. } => None,
+            | QueryEvent::ToolFinished { .. }
+            | QueryEvent::ExternalToolRow { .. } => None,
             QueryEvent::ToolProgress { .. } => return None,
             QueryEvent::ModelNotice { notice } => match notice {
                 ModelNotice::Retrying {

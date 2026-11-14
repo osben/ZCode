@@ -40,6 +40,7 @@ fn hook_event_round_trips_and_old_payloads_get_defaults() {
                 "anthropic".to_owned(),
                 rust_cli_base::models::GLM_5_3.to_owned(),
             )),
+            session_mode: Some(PermissionMode::Plan),
         },
         ..HookEvent::new(
             HookEventName::Stop,

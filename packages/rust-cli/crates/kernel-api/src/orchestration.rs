@@ -117,6 +117,16 @@ pub enum QueryEvent {
         tool_use: ToolUseId,
         output: ToolOutput,
     },
+    /// Fork: an ACP agent's tool or plan row before it settles (specs/fork-rust-agent-parity.md "ACP external agents",
+    /// rule 6; Node `ToolCallScheduled`/`Started`/`Progress`): its fixed name, latest title and input, and whether it
+    /// started. It settles with [`QueryEvent::ToolFinished`].
+    ExternalToolRow {
+        tool_use: ToolUseId,
+        name: String,
+        title: String,
+        input: Value,
+        running: bool,
+    },
     /// 模型端口的通知（重试、停顿、恢复），只供显示（docs/specs/rust-cli/stall-visibility.md §1）。
     ModelNotice { notice: crate::model::ModelNotice },
 }
@@ -162,6 +172,19 @@ impl QueryEvent {
                 KernelEvent::ToolProgress { tool_use, progress }
             }
             Self::ToolFinished { tool_use, output } => KernelEvent::ToolDone { tool_use, output },
+            Self::ExternalToolRow {
+                tool_use,
+                name,
+                title,
+                input,
+                running,
+            } => KernelEvent::ExternalToolRow {
+                tool_use,
+                name,
+                title,
+                input,
+                running,
+            },
             // 模型通知只供显示，不落库（stall-visibility.md §1）。
             Self::ModelNotice { notice } => KernelEvent::ModelNotice { notice },
         }
@@ -270,6 +293,11 @@ pub trait RunSink: Interactions + SessionOps {
     /// once per model step, each time the run sends a request to the model. Retries inside the provider adapter are
     /// not counted, as in Node. Default: nothing.
     async fn request_started(&self) {}
+
+    /// Fork: an ACP agent's `session_info_update` title (specs/fork-rust-agent-parity.md "ACP external agents", rule
+    /// 8; Node `setExternalAgentSessionTitle`): the session stores it as a generated title, keeping a custom one. Not
+    /// the hook title path, which marks the title custom. Default: nothing (sinks without a session).
+    async fn external_title(&self, _title: String) {}
 
     /// 工具边界并入的插话（`Delivery::Steer`，带各自 UserPromptSubmit 的消息）与发给这次运行的通知，按到达顺序
     /// （L18，docs/specs/rust-cli/query.md §4、§5）。取走即属于当前回合；本回合已中止时插话不取，继续排队。顶层会话的

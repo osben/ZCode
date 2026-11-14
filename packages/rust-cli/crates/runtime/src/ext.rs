@@ -54,6 +54,9 @@ pub struct Extensions {
     /// Fork: the platform's model catalog, which a desktop subagent's own selection is checked against before it
     /// starts (specs/fork-rust-subagent-runtime-config.md rule 9). Only the desktop app-server gives it.
     pub models: Option<Arc<dyn rust_cli_kernel_api::provider::ModelDirectory>>,
+    /// Fork: command hooks get Node's stdin and a transcript file (specs/fork-rust-agent-parity.md "Command hook
+    /// stdin"). Only the app-server gives it.
+    pub hook_transcripts: Option<Arc<dyn rust_cli_kernel_api::hooks::HookTranscripts>>,
 }
 
 impl Extensions {
@@ -72,6 +75,7 @@ impl Extensions {
             code_intelligence: None,
             subagent_config: None,
             models: None,
+            hook_transcripts: None,
         }
     }
 }

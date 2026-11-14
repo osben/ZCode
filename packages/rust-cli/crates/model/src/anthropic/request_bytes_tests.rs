@@ -203,6 +203,11 @@ mod reference {
                     message: "attached files must be expanded before the model request".to_owned(),
                 });
             }
+            ContentBlock::ExternalTool(_) => {
+                return Err(ModelError::InvalidRequest {
+                    message: "ACP rows never reach the model request".to_owned(),
+                });
+            }
             ContentBlock::WebSearchToolResult {
                 tool_use_id,
                 content,

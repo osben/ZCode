@@ -172,6 +172,34 @@ impl Actor {
         self.log.append(KernelEvent::TitleChanged { title, source });
     }
 
+    /// Fork: an ACP agent's title (Node `setExternalAgentSessionTitle`; specs/fork-rust-agent-parity.md "ACP external
+    /// agents", rule 8): trimmed, for a top-level interactive session only; a custom or unchanged title is kept. The
+    /// store writes it only over a generated-eligible source, so a rename another writer stored wins.
+    pub(crate) async fn external_title(&mut self, title: String) {
+        let title = title.trim();
+        if title.is_empty()
+            || self.meta.parent.is_some()
+            || self.meta.kind != rust_cli_kernel_api::store::SessionKind::Interactive
+            || self.titles.custom
+            || self.title_source == rust_cli_kernel_api::title::Source::Custom
+            || self.meta.title == title
+        {
+            return;
+        }
+        let fact = Fact::TitleGenerated {
+            title: title.to_owned(),
+            message: None,
+        };
+        if let Err(reason) = self.commit(None, vec![fact]).await {
+            tracing::debug!(%reason, "the ACP agent title was not stored");
+            return;
+        }
+        self.set_title(
+            title.to_owned(),
+            rust_cli_kernel_api::title::Source::Generated,
+        );
+    }
+
     /// Fork: the store's admission title ([`rust_cli_kernel_api::session_api::Command::AdoptTitle`]); the stored row
     /// already has it, so nothing is committed. A rename that won the race stays.
     pub(crate) fn adopt_title(&mut self, title: String) {

@@ -58,6 +58,7 @@ pub(crate) fn block_kind(block: &ContentBlock) -> &'static str {
         ContentBlock::ServerToolUse { .. } => "server_tool_use",
         ContentBlock::WebSearchToolResult { .. } => "web_search_tool_result",
         ContentBlock::File { .. } => "file",
+        ContentBlock::ExternalTool(_) => "external_tool",
     }
 }
 
@@ -217,7 +218,8 @@ fn append_assistant(ctx: &Commit<'_>, assistant: &AssistantMessage) -> Result<()
             ContentBlock::Text { .. }
             | ContentBlock::Thinking { .. }
             | ContentBlock::RedactedThinking { .. }
-            | ContentBlock::ToolUse { .. } => {}
+            | ContentBlock::ToolUse { .. }
+            | ContentBlock::ExternalTool(_) => {}
             other => {
                 return Err(unsupported(&format!(
                     "assistant {} block",
@@ -328,6 +330,15 @@ fn append_assistant(ctx: &Commit<'_>, assistant: &AssistantMessage) -> Result<()
     for (index, call) in calls.enumerate() {
         let part_id = part_id(ctx.now, &(ctx.uuid)());
         parts.push(tool_parts::pending(part_id, owner, index, call));
+    }
+    // Fork: ACP rows after the text, as Node persists them in the turn's assistant message.
+    for block in &assistant.content {
+        if let ContentBlock::ExternalTool(row) = block {
+            let part_id = part_id(ctx.now, &(ctx.uuid)());
+            parts.push(rust_cli_node_records::external_tools::part(
+                part_id, owner, row, span,
+            ));
+        }
     }
     parts.push(records::step_finish_part(
         part_id(ctx.now, &(ctx.uuid)()),

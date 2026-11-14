@@ -13,6 +13,7 @@ pub mod attached_file;
 pub mod branch;
 pub mod codecs;
 pub mod compaction;
+pub mod external_tools;
 pub mod hydrate;
 pub mod input_intent;
 pub mod keys;

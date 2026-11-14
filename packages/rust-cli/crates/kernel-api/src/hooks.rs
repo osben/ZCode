@@ -109,6 +109,11 @@ pub struct HookContext {
     /// model.md §6.1、hooks.md §5.3）。调用方没有填时 hook 引擎用配置的回退值。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selection: Option<crate::model::ModelSelection>,
+    /// Fork: the session's mode at an event whose Claude Code input has no `permission_mode` (SessionStart,
+    /// SessionEnd). Only the Node-compatible stdin reads it (Node always sends `mode`;
+    /// specs/fork-rust-agent-parity.md "Command hook stdin").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_mode: Option<PermissionMode>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -279,6 +284,35 @@ pub trait HookHttp: Send + Sync {
         request: HookHttpRequest,
         cancel: CancellationToken,
     ) -> Result<HookHttpResponse, HookHttpError>;
+}
+
+/// Fork: the temp transcript file of one command hook run (Node `createCompatibleHookStdin`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HookTranscript {
+    /// The `transcript.jsonl` file given to the hook as `transcript_path`.
+    pub path: String,
+    /// Its fresh directory, removed with the file.
+    pub dir: String,
+}
+
+/// Fork: writes the transcript file of a command hook on the agent's host (specs/fork-rust-agent-parity.md "Command
+/// hook stdin"). The hook engine gives command hooks the Node-compatible stdin only when it has this port.
+#[async_trait]
+pub trait HookTranscripts: Send + Sync {
+    /// Where the transcript `name` goes (`<root>/<name>/transcript.jsonl`), without touching the disk. Refuses a
+    /// `name` that is not one plain path component. The caller holds the result as its removal guard before it
+    /// creates the file, so a run dropped mid-way still removes the directory.
+    fn locate(&self, name: &str) -> std::io::Result<HookTranscript>;
+    /// Writes `text` as the transcript file in a new private directory (the file is created new, mode 0600).
+    /// Synchronous: the caller runs it as one job on the blocking pool, so a runtime shutting down waits for a write
+    /// already under way and the job can remove what it wrote.
+    fn create(&self, transcript: &HookTranscript, text: &str) -> std::io::Result<()>;
+    /// Removes the transcript's directory; a missing directory is not an error, a directory outside the root is
+    /// refused.
+    async fn remove(&self, transcript: &HookTranscript) -> std::io::Result<()>;
+    /// [`Self::remove`], synchronously: the last resort of a guard dropped where its spawned removal cannot run (no
+    /// runtime, or the runtime shutting down).
+    fn remove_blocking(&self, transcript: &HookTranscript) -> std::io::Result<()>;
 }
 
 /// 一条并入的插话：文本与排在它的 `queued_command` 之后提交的 hook 消息。
