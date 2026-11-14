@@ -1409,7 +1409,8 @@ failure    ─▶ rows closed "The agent turn failed before this tool finished" 
    projects Node's `todo` table and announces `TasksChanged`); the turn never writes the store
    itself. The board numbers the plan's tasks after the list's high-water mark, because task IDs
    are never reused: a model `TaskUpdate` of an earlier ID cannot reach a plan step. The same steps
-   sent again (subject, status, priority, in order) change nothing and keep their IDs. The whole
+   sent again (subject, status and priority, in ID order; other Task v2 fields do not count) change
+   nothing and keep the list and its IDs. The whole
    list is replaced, including tasks a ZCode model created earlier in the session (a session may
    switch between an ACP agent and a ZCode model): Node's native `TodoWrite` and `applyPlan` share
    the one `todo` table and `applyPlan` replaces it, so Node shows only the plan's steps too. Task

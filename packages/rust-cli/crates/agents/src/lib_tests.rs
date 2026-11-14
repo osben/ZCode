@@ -343,6 +343,43 @@ async fn an_acp_plan_replaces_the_root_list_and_signals_it() {
     assert_eq!(stored.tasks.last().map(|task| task.id.as_str()), Some("5"));
 }
 
+/// Rule 7: a plan is the same steps when subject, status and priority match in order; the fields a plan has no
+/// value for (here the description) do not count, so the list and its IDs stay.
+#[tokio::test]
+async fn an_acp_plan_with_the_same_steps_keeps_the_list() {
+    use rust_cli_kernel_api::agents::{TaskRecord, TaskStatus};
+    let harness = harness(None);
+    let root = SessionId::new("sess_parent");
+    for subject in ["One", "Two"] {
+        harness
+            .call(
+                "sess_parent",
+                "TaskCreate",
+                json!({"subject": subject, "description": "Details"}),
+            )
+            .await;
+    }
+    let before = harness.tasks.load(&root).await.unwrap();
+    let step = |subject: &str| TaskRecord {
+        id: String::new(),
+        subject: subject.into(),
+        description: String::new(),
+        active_form: None,
+        owner: None,
+        status: TaskStatus::Pending,
+        blocks: Vec::new(),
+        blocked_by: Vec::new(),
+        metadata: None,
+    };
+    let writer = harness.agents.task_plan_writer();
+    let old = writer
+        .replace(&root, vec![step("One"), step("Two")])
+        .await
+        .unwrap();
+    assert_eq!(old, before.tasks);
+    assert_eq!(harness.tasks.load(&root).await.unwrap(), before);
+}
+
 /// 子会话的当前轮随每个批次交给存储（node-store.md §4，修复线 F6）；续跑的输入开新的一轮。以前都不带锚点。
 #[tokio::test]
 async fn child_batches_name_the_prompt_of_their_run() {

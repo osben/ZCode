@@ -371,20 +371,28 @@ impl rust_cli_kernel_api::agents::TaskPlanWriter for TaskLists {
     }
 }
 
-/// Whether `plan` lists the same steps as `tasks` in the same order, IDs aside.
+/// Whether `plan` lists the same steps as `tasks` in ID order: subject, status and priority, the fields a plan
+/// carries (Node's todo). Other Task v2 fields do not count.
 fn same_steps(
     tasks: &[rust_cli_kernel_api::agents::TaskRecord],
     plan: &[rust_cli_kernel_api::agents::TaskRecord],
 ) -> bool {
+    use rust_cli_kernel_api::agents::TaskRecord;
+    // node-store `task_lists`: a missing or unknown priority is the `medium` placeholder.
+    fn priority(task: &TaskRecord) -> &str {
+        task.metadata
+            .as_ref()
+            .and_then(|metadata| metadata.get("priority"))
+            .and_then(serde_json::Value::as_str)
+            .filter(|priority| ["high", "medium", "low"].contains(priority))
+            .unwrap_or("medium")
+    }
+    fn step(task: &TaskRecord) -> (&str, rust_cli_kernel_api::agents::TaskStatus, &str) {
+        (task.subject.as_str(), task.status, priority(task))
+    }
     let mut ordered: Vec<_> = tasks.iter().collect();
     ordered.sort_by_key(|task| task.id.parse::<u64>().unwrap_or(u64::MAX));
-    ordered.len() == plan.len()
-        && ordered.iter().zip(plan).all(|(task, step)| {
-            rust_cli_kernel_api::agents::TaskRecord {
-                id: step.id.clone(),
-                ..(*task).clone()
-            } == *step
-        })
+    ordered.len() == plan.len() && ordered.into_iter().map(step).eq(plan.iter().map(step))
 }
 
 struct TaskLists(Arc<Core>);
