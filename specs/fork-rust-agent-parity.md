@@ -111,6 +111,8 @@ The PR gate is the curated spec list below, run one spec at a time (`pnpm test:e
 
 `hooks/conversation-session-hooks-lifecycle` (in the `hooks/` subfolder, which the list above does not cover) is not in the gate: HK-LC-01 and HK17 fail on Node too (container run on 6d9b41880), and three cases still fail only on Rust (see "Open gaps").
 
+`runtime/conversation-session-unbound-resume` is not in the gate either. DB109 fails on Rust at `fork` a7e2e0481, before the presence work (container run 2026-11-14): `unbound-resume.test.ts:245` expects `thought` `""` and reads `"high"`. It was not run on Node.
+
 Subagents follow Node under `node_desktop` (`AgentsConfig::node_desktop`): an `Agent` call runs in the foreground unless it passes `run_in_background: true` (Node `agent.ts` `run_in_background === true`), the fork subagent mode is off unless `fork_subagent` is set explicitly, and the Agent description and `run_in_background` parameter carry Node's text in place of the zcode-rs "background by default" guidance (`agents` `desktop_prompt.rs`). A foreground child is announced (`ToolProgress {agentId}`) before its first model response. The TUI keeps upstream zcode-rs behaviour (background by default, fork on in interactive sessions).
 
 Subagents launch no subagents under `node_desktop`. Node runs every child runtime with `subagents.enabled: false` (core `runtime/methods/subagent.ts`), so a child has no subagent port: no `Agent` tool (nor its `Task` alias) and no `SendMessage` (core `runtime/helpers/runtime-tools.ts` `includeAgent`, `includeSendMessage`), and so no `agent_listing_delta` (`helpers/agent-listing.ts` lists agents only beside the `Agent` tool). Its `TaskStop` stays.
@@ -1067,36 +1069,92 @@ Scope: the Rust kernel's queue (`session/src/inbox.rs`, `lane.rs`, `actor.rs`) o
 
 Acceptance cases (`fork/release_under_directory_tests.rs`): (1) an idle session under the directory is released and a session outside it is not; (2) a worktree session listed under the project is released by the worktree directory and not by the project directory; (3) a sibling prefix (`/x/repo2` for `/x/repo`) and a directory whose child is named differently are not matched, and a Windows directory matches a cwd written with the other separator and case (`C:\Repo\wt` and `c:/repo/WT`) but not `C:\Repo\wt2`; (4) one busy session makes the whole answer busy, closes nothing, and returns the lease the idle session took; (5) each busy fact on its own (the actor refusing the lease, a running background work, a preparing submission) is busy, and a projection that still shows an old busy state does not make an idle session busy; (6) no match answers empty success; (7) invalid params are refused, including an extra field; (8) the method is routed to the handler (not `-32601`). Kernel, `session/src/lane_tests.rs`: the lease is refused while a turn runs, an input is queued, an interaction is pending or a promotion holds the foreground; another owner can neither take it nor end it; a held lease refuses a submit with `session.releasing` and starts no queued notice; the owner's return restores commands and drains.
 
-### Shared database check (before any purge work)
+### Session runtime presence on the shared database
 
-Checked 2026-11-12 against `origin/fork` 8c622563a by reading the code; nothing was run against a live database. No purge logic is ported; this section records what any later purge work must account for.
+Implemented 2026-11-13. Before, Rust registered no presence, so a Node or upstream purge on the shared `~/.zcode/cli/db/db.sqlite` could delete an open Rust session and fail its next turn.
 
-Upstream adds session-store migration `0025_session_permanent_deletion` and tasks-index migration `0007_task_permanent_deletion`. 0025 creates `session_purge` (state `deleting` or `deleted`), `session_runtime_presence`, and triggers that raise `session-data.deleting` on writes for a session that has any `session_purge` row, in either state. The triggers cover inserts and updates of `session` (own id or parent; an update only for its own id, or for a parent that changes), `message`, `part`, `session_input`, `session_entry`, `todo`, `model_usage`, `session_target`, `turn_usage`, `tool_usage` and `input_history`, plus `dwf_run` and `workflow_run` through a non-null `parent_session_id`. Two are narrower: `session_runtime_presence` has an insert guard only, and a `session_task_link` update is guarded only when one of its ends changes and the new `parent_session_id` is not null (its insert is always guarded).
+**Upstream schema.** Session-store migration `0025_session_permanent_deletion` (Node `migrations.ts`) creates three things:
 
-Facts:
+- `session_purge`, with state `deleting` or `deleted`;
+- `session_runtime_presence(session_id, owner_id, process_id)`, primary key `(session_id, owner_id)`;
+- triggers that raise `session-data.deleting` on writes for a session that has any `session_purge` row, in either state.
 
-1. **The Rust store does not know 0025.** `node-store` embeds Node migrations up to `0024_session_database_identity` and ignores unknown ledger rows (`repo/open_tests.rs`). The Node storage preparation entry still migrates the database before zcode-rs starts (`fork-agent-runtime/command.ts`), so in practice the tables and triggers exist under a Rust session. Rust never reads or writes `session_purge` or `session_runtime_presence`.
-2. **Rust mode cannot start a purge.** In Rust mode every agent process, including the management process, is zcode-rs. It does not serve `v4/storage/sessionData/deletionPreview`, `deletionExecute`, `sessionDataPurge` or `sessionDataMeasure`; they answer `method_not_found` (`protocol-zcode/src/server.rs`). The Host does not gate these calls by runtime, so permanent deletion fails with that error in Rust mode. The Host's handling of that error, including the `reservePermanentDeletion` reservation, was not exercised.
-3. **A purge can still come from another process on the same database.** The upstream app, or this fork in Node mode, shares `~/.zcode/cli/db/db.sqlite`. Its `beginSessionDeletion` refuses with `session-data.running` only when it sees one of these:
-   - a foreign `session_runtime_presence` row with a live pid;
-   - an `admitted` `session_input` row;
-   - an `active` `session_target` row.
+The triggers cover inserts and updates of `session` (own id or parent; an update only for its own id, or for a parent that changes), `message`, `part`, `session_input`, `session_entry`, `todo`, `model_usage`, `session_target`, `turn_usage`, `tool_usage` and `input_history`, plus `dwf_run` and `workflow_run` through a non-null `parent_session_id`. Two are narrower:
 
-   Rust registers no presence. Its `admitted` rows exist only while an input waits in the queue: the running turn's own input is `promoted` when it starts (`node-store/src/session_inputs.rs`). So a Node purge does not see an idle Rust session, or a Rust session in a turn with an empty queue, as running. It does see Rust's queued inputs and an active goal.
+- `session_runtime_presence` has an insert guard only (`session_purge_runtime_guard`);
+- a `session_task_link` update is guarded only when one of its ends changes and the new `parent_session_id` is not null. Its insert is always guarded.
 
-4. **After such a purge starts, Rust writes fail.** Any `session_purge` row, in either state, aborts Rust's later inserts and updates for that session.
-   - A turn commit then fails with the storage error: the actor records `Running.failure`, the turn ends as failed, and later commits in that turn are refused (`session/src/actor.rs`, `commit.rs`).
-   - `session_input` writes are observations: they roll back only their own savepoint and log `session_input.write_failed` (`node-store/src/session_inputs.rs`).
-   - Because the triggers persist after state `deleted`, Rust cannot recreate the purged rows; the session in memory only fails.
-5. **The tasks index is outside Rust.** zcode-rs does not open `tasks-index.sqlite`, so `task_purge` does not concern it.
+Reference triggers also refuse rows that cite a `deleting` session's artifact. The tasks-index migration `0007_task_permanent_deletion` (`task_purge`) does not concern zcode-rs, which never opens `tasks-index.sqlite`.
 
-Consequence for any later purge work: before Rust serves the deletion methods, or before a mixed Node and Rust setup is supported for deletion, Rust must take part in the runtime presence protocol. That means:
+**Node's protocol** (`sqlite-session-store.ts`, `repositories/sessions.ts`, bootstrap `server-operations.ts`, `session-residency.ts`, `server.ts`, `create-app.ts`):
 
-- insert a `session_runtime_presence` row (`owner_id = <pid>:<uuid>`) when a session opens;
-- delete it on close;
-- treat `session-data.deleting` as "deleted elsewhere" instead of a generic storage failure.
+- **Owner.** One owner per store, `${process.pid}:${randomUUID()}`.
+- **Register.** `registerSessionRuntime` runs `insert or ignore` with `process_id = process.pid`. It runs before a record materializes (`materializeSessionRecord`), and the standalone CLI/TUI registers too (`create-app.ts`). A failed materialization unregisters.
+- **Release.** `unregisterSessionRuntime` deletes `(session_id, owner_id)` once when the runtime is released (`sqlite-session-store.ts:330-334`). `close()` deletes every row of the owner (`:361-364`), so a release that failed is still cleaned up at close.
+- **Liveness.** There is no heartbeat. Liveness is the pid probe in `inspectSessionDeletion` (`process.kill(pid, 0)`, `repositories/sessions.ts:634`; the pid alone, no start time):
+  - a foreign row whose pid is gone (`ESRCH`) is deleted there;
+  - any other foreign row counts as running, `EPERM` included. An unknown state refuses, by design (the comment at `:541`).
+  - On Windows, libuv 1.52.1 (the repo's Node) answers signal 0 with `GetExitCodeProcess` and then `WaitForSingleObject(handle, 0)`, so a process that exited with code 259 (`STILL_ACTIVE`) still reads as gone (`src/win/process.c:1335-1355`). Rust never probes liveness; it only writes rows, and Node probes them. `rust_cli_fs::process_alive`, including its Windows branch, is used here only by the node-store transcription test.
+- **Refusal.** `beginSessionDeletion` runs `inspectSessionDeletion` inside `begin immediate` over the session tree. It refuses with `session-data.running` on any of these:
+  - a foreign live presence row;
+  - an `admitted` `session_input` row;
+  - an `active` `session_target` row.
 
-Until then it is a known gap that a concurrent Node purge can delete an open Rust session, and that session's next turn fails. Upstream migration definitions stay untouched; any fork addition uses `9001_fork_*`.
+  Admitted inputs and active targets count only before a purge receipt exists.
+
+- **Request gate.** Every request except `v4/storage/sessionData/deletionPreview` and `deletionExecute` runs `assertSessionNotDeleting` first, for each session id it carries: `sessionId`, the conversation topic, and `commands[].sessionId`. A purge row throws a plain `Error("session-data.deleting")`. On the wire that is JSON-RPC `-32603` with the message `session-data.deleting` and no `data.code`. The Host only shows the message; it has no special handling.
+- **Lists and reads.** `listSessions` hides sessions that have a purge row (`repositories/sessions.ts:297`). The store's `getSession` returns null for them (`sqlite-session-store.ts:760-764`); the repository `getSession` that write paths use does not filter.
+
+**Rust contract.**
+
+1. **Read-only schema.** `node-store` does not embed 0025, and adds no migration for it. Embedding it would make Rust refuse (`backup_required`) databases that a Node build has not upgraded yet. Rust also does not own upstream migrations. Every presence or purge operation first checks `sqlite_master` for `session_runtime_presence` and `session_purge`. Without them the database has no deletion barrier, and the operations do nothing. Rust mode runs the Node storage preparation first (`fork-agent-runtime/command.ts`), so in practice the tables exist.
+2. **Owner.** Each open gets its own `RuntimePresence` with `owner_id = <pid>:<uuid v4>`, Node's format, and `process_id = std::process::id()`. The uuid comes from the store's injected `NodeIds`.
+   - Node keeps one owner per process. Every Rust row is foreign to Node either way, and Node's probe treats them the same. `apps/zcode-cli/packages/adapters/tests/fork-rust-runtime-presence.test.ts` runs Node's real `inspectSessionDeletion` and `beginSessionDeletion` against rows written with Rust's insert statement (`node-store/src/fixtures/runtime_presence_insert.sql`, which `presence.rs` includes). It checks four things: the purge refuses while the pid is alive; once the process is gone the row is deleted and the purge goes through; the next insert aborts with `session-data.deleting`; and a Rust row with Node's own pid but another owner is still foreign. The node-store test of the same refusal is a Rust transcription of Node's decision.
+   - A fresh owner per open means a late release can never delete the row of a reopen of the same session.
+3. **State owner: the runtime session table** (`runtime/src/table.rs`). The guard lives in the `Open` slot and stays through `Closing`. It drops when `Closer::released` removes the slot, after the actor has exited and SessionEnd has run.
+   - `open_in` registers after it claims `Loading` and before the cold load.
+   - `create_in` registers before `store.create`.
+
+   This is Node's "register before materialize". A failed load or create drops the guard, which deletes the row. Subagent child sessions are created through the agents crate, not the table, so they register nothing. Node registers only runtimes, and a root's presence covers its tree.
+
+4. **The insert is the barrier.** The register is a single `insert or ignore`. When a purge row exists, `session_purge_runtime_guard` aborts it, and the open fails with `StoreError::Deleting`. No actor starts, and the row is not written. The insert serializes with Node's `begin immediate` inspection, so no separate check can race it.
+5. **Release.** Dropping the guard deletes its own `(session_id, owner_id)` row on a blocking thread, or inline when no runtime is running.
+   - The guard exists before the insert is queued: NodeStore records the entry and builds the guard first, then queues the insert on its blocking thread. An open or a create dropped at that await (the blocking task still runs) drops the guard. The connection orders the two: an insert that finds its entry released or gone writes nothing, and a release that comes after the insert deletes the row. No row outlives a dropped call.
+   - NodeStore keeps each row it wrote until its delete succeeds. A delete that fails (the database locked past the busy timeout, for example while Node holds `begin immediate` for its inspection) marks the row released and logs `session_presence.release_failed`. A release task that panics is logged (`session_presence.release_task_failed`); one the runtime shutdown skips leaves its row held for the exit sweep. It is retried by every later release and register, and by a backoff timer the store owns: the timer starts on the failure, retries after 50 ms and doubles the wait up to 30 s while the database stays busy or locked. It stops once no failed release is left. On any other error it logs `session_presence.retry_stopped` once and stops, and the row waits for the next release, register or the exit sweep. It holds the store's connection and rows weakly, so it ends with the store. A guard clears its running flag also when the runtime shutdown drops it. It is a runtime task, so it never keeps the process alive. A long-lived app-server that opens nothing else thus still deletes the row soon after Node's `begin immediate` ends, and Node's next inspection no longer answers `session-data.running`. This keeps Node's guarantee that `close()` deletes by owner whatever an earlier release did.
+   - Shutdown is the process entry's (`cli/src/process/mod.rs` `main`). Every frontend (app-server, TUI, `-p`) hands its store to `release_presence_at_exit` when it opens it. After the async runtime has shut down, `main` deletes every row still held (`NodeStore::release_presence_blocking`), skipping past failed deletes. This is Node's order: it settles owned work, then closes the store (`session-facade.ts:304-319`, `:855`). No session task is left to write after the rows are gone, so a purge cannot start while a turn of this process still runs.
+   - A crash, SIGKILL or abort leaves rows whose pid is gone, and Node's probe deletes them at its next inspection. A row whose last delete failed at exit is left to the same probe.
+6. **Errors.** `StoreError::Deleting` displays as `session-data.deleting`. A node-store write that a purge trigger aborts maps to it: rusqlite `SQLITE_CONSTRAINT_TRIGGER` with that message, found in the error's source chain. It becomes `KernelError::Failed { message: "session-data.deleting" }`, which reaches JSON-RPC as `-32603 session-data.deleting`, as in Node.
+   - A turn commit that hits it fails the turn with that message.
+   - `session_input` observations still roll back only their savepoint and log.
+   - The triggers persist after state `deleted`, so Rust never recreates the purged rows.
+7. **Request gate** (`protocol-zcode` `Handler::request`, before inbound validation, in Node's order). It collects session ids as Node's `collectResidencySessionIds` does, skips the two deletion methods, and answers `-32603 session-data.deleting` when any id has a purge row.
+8. **Lists and reads.** `list` (`/resume`, `-c`) and `query_sessions` skip sessions with a purge row, as Node's `listSessions` does. The store-level `load` answers `NotFound` for them, as Node's store `getSession` returns null. The repository read that write paths use (`repo::sessions::get`, `facts::live_session`) does not filter, as in Node; a write there meets the triggers instead.
+9. **Out of scope.** zcode-rs still does not serve `deletionPreview`, `deletionExecute`, `sessionDataPurge` or `sessionDataMeasure`; they answer `method_not_found` (`protocol-zcode/src/server.rs`). Presence protects Rust sessions from a purge started elsewhere. It does not make Rust a purger. The Host does not gate these calls by runtime, so permanent deletion fails with that error in Rust mode. The Host's handling of that error, including the `reservePermanentDeletion` reservation, was not exercised.
+
+**Remaining gaps.**
+
+- A session opened before a Node build applied 0025 to the database has no row until it is reopened. Rust does not re-register lazily.
+
+Event order (owners in brackets):
+
+```
+open/create  [runtime table]  claim Loading
+             [node-store]     insert or ignore presence(session, <pid>:<uuid>, pid)
+                                -- purge row present -> trigger aborts -> StoreError::Deleting
+                                   -> no actor, no row (JSON-RPC -32603 session-data.deleting)
+             [node-store]     cold load / create row
+             [runtime table]  Open { session, presence }
+purge elsewhere [Node]        begin immediate; inspect sees foreign row, pid alive
+                                -> session-data.running (refused)
+close        [session actor]  SessionEnd, actor exits
+             [runtime table]  Closer::released removes slot -> presence drops
+             [node-store]     delete (session, owner) on a blocking thread
+                                -- delete fails -> row kept, retried by the store's timer (busy only, 50 ms .. 30 s),
+                                   every later release and the next open/create
+shutdown     [process main]   runtime shut down (no session task left)
+             [node-store]     release_presence_blocking: delete every row still held
+crash        [Node]           next inspect: kill(pid, 0) = ESRCH -> deletes the stale row
+```
 
 ### (b) Hidden because Rust reports the capability false
 

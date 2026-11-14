@@ -487,6 +487,9 @@ pub struct Handler(pub Arc<Server>);
 #[async_trait]
 impl Service for Handler {
     async fn request(&self, method: &str, params: Value) -> Result<Reply, RpcError> {
+        // Fork: Node asserts that no purge started for the request's sessions before it dispatches and validates
+        // (specs/fork-rust-agent-parity.md "Session runtime presence on the shared database").
+        crate::presence_gate::check(self.0.kernel.queries().as_ref(), method, &params).await?;
         Inbound::get().method(method, &params)?;
         self.0.dispatch(method, params).await
     }

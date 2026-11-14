@@ -407,3 +407,7 @@ mod closing_tests;
 #[cfg(test)]
 #[path = "adopt_tests.rs"]
 mod adopt_tests;
+
+#[cfg(test)]
+#[path = "presence_tests.rs"]
+mod presence_tests;

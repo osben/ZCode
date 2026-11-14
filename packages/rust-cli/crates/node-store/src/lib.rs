@@ -26,6 +26,7 @@ mod ids;
 mod load;
 mod node_checkpoints;
 mod notices;
+mod presence;
 mod project_mode;
 mod project_rules;
 mod query;
@@ -91,6 +92,10 @@ pub struct NodeStore {
     version: String,
     /// Fork: deferred drafts ([`drafts`]); `None` writes every session at create.
     drafts: Option<Arc<Mutex<drafts::Drafts>>>,
+    /// Fork: the session runtime presence rows this process holds ([`presence`]).
+    presence: presence::Held,
+    /// Fork: whether the retry timer of failed presence releases runs ([`presence`]).
+    presence_retry: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl NodeStore {
@@ -102,6 +107,30 @@ impl NodeStore {
             database_dir: AtomicBool::new(false),
             version: String::new(),
             drafts: None,
+            presence: presence::Held::default(),
+            presence_retry: Arc::default(),
+        }
+    }
+
+    /// Fork: Node `SqliteSessionStore.close()` for the session runtime presence (specs/fork-rust-agent-parity.md
+    /// "Session runtime presence on the shared database"): deletes every presence row this store still holds, inline
+    /// on the calling thread. The process entry calls it once the async runtime has shut down, so no session work is
+    /// left to write after the rows are gone. A row whose delete fails is logged and left to Node's pid probe.
+    pub fn release_presence_blocking(&self) {
+        // The connection first (the module's lock order): a release running now settles before the held rows are read.
+        let slot = self.connection.lock_unpoisoned();
+        let Some(conn) = slot.as_ref() else {
+            return;
+        };
+        if self.presence.lock_unpoisoned().is_empty() {
+            return;
+        }
+        if let Err(error) = presence::release_all(conn, &self.presence) {
+            tracing::warn!(
+                event = "session_presence.release_all_failed",
+                error = %error,
+                "releasing the session runtime presence rows failed"
+            );
         }
     }
 
@@ -200,7 +229,24 @@ fn open_database(path: &Path, now_ms: u64) -> Result<Connection, StoreError> {
     Ok(conn)
 }
 
-pub(crate) fn storage(error: impl Display) -> StoreError {
+pub(crate) fn storage<E: Display + 'static>(error: E) -> StoreError {
+    // Fork: a write that a 0025 purge trigger aborted is typed (specs/fork-rust-agent-parity.md "Session runtime
+    // presence on the shared database"). The rusqlite error may sit inside an anyhow chain whose display is a
+    // context line, so the error itself is inspected, never its text.
+    let any: &dyn std::any::Any = &error;
+    let deleting = any
+        .downcast_ref::<rusqlite::Error>()
+        .is_some_and(presence::is_deleting)
+        || any.downcast_ref::<anyhow::Error>().is_some_and(|error| {
+            error.chain().any(|cause| {
+                cause
+                    .downcast_ref::<rusqlite::Error>()
+                    .is_some_and(presence::is_deleting)
+            })
+        });
+    if deleting {
+        return StoreError::Deleting;
+    }
     StoreError::Storage {
         message: error.to_string(),
     }
@@ -211,7 +257,7 @@ pub(crate) trait OrStorage<T> {
     fn storage(self) -> Result<T, StoreError>;
 }
 
-impl<T, E: Display> OrStorage<T> for Result<T, E> {
+impl<T, E: Display + 'static> OrStorage<T> for Result<T, E> {
     fn storage(self) -> Result<T, StoreError> {
         self.map_err(storage)
     }
@@ -524,6 +570,47 @@ impl StoreQueries for NodeStore {
             session_tree::list_tree_ids_with_surviving_children(conn, &root_ids)
         })
         .await
+    }
+
+    async fn register_runtime(
+        &self,
+        session: &SessionId,
+    ) -> Result<rust_cli_kernel_api::store::RuntimePresence, StoreError> {
+        let owner = presence::owner(&self.ids);
+        // The guard exists before the insert is queued: a caller dropped at the await below releases the row, or
+        // the insert sees the released entry and is skipped ([`presence`]).
+        presence::pending(&self.presence, session.as_str(), &owner);
+        let release = presence::Release {
+            connection: self.connection.clone(),
+            held: self.presence.clone(),
+            retrying: self.presence_retry.clone(),
+            session: session.as_str().to_owned(),
+            owner: owner.clone(),
+        };
+        let guard = rust_cli_kernel_api::store::RuntimePresence::new(move || {
+            release.run();
+        });
+        let held = self.presence.clone();
+        let id = session.as_str().to_owned();
+        let registered = self
+            .with_db(move |conn, _| presence::register(conn, &held, &id, &owner))
+            .await?;
+        Ok(if registered {
+            guard
+        } else {
+            // The entry is forgotten: dropping the guard is a no-op.
+            drop(guard);
+            rust_cli_kernel_api::store::RuntimePresence::none()
+        })
+    }
+
+    async fn assert_not_deleting(&self, sessions: &[SessionId]) -> Result<(), StoreError> {
+        if sessions.is_empty() {
+            return Ok(());
+        }
+        let ids: Vec<String> = sessions.iter().map(|id| id.as_str().to_owned()).collect();
+        self.with_db(move |conn, _| presence::assert_not_deleting(conn, &ids))
+            .await
     }
 
     async fn erase_session_tree(

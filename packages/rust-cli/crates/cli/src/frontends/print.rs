@@ -49,6 +49,9 @@ async fn print(invocation: Invocation, run: &ControllerRun) -> Result<u8> {
     // 读到输入之后的校验（headless.md §1.1 第 5、6 条）：只有空白的输入、stream-json 输出没有 `--verbose`。
     print_format::check_input(format, &prompt).map_err(flags::Fatal)?;
     let opened = assemble::open(&spec, facts, (paths, clock)).await?;
+    // Fork: the process entry releases this store's session runtime presence after the runtime has shut down
+    // (specs/fork-rust-agent-parity.md "Session runtime presence on the shared database").
+    crate::process::release_presence_at_exit(opened.store.clone());
     // `--session-id`（cli-args.md §7）：会话 ID 用 Node 的写法 `sess_<uuid>`；已有这个会话时报错退出。
     let session_id = match session_id {
         Some(uuid) => Some(setup::fresh_session_id(opened.store.as_ref(), &uuid).await?),
