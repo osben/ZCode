@@ -231,7 +231,8 @@ fn scope<'a>(server: &'a Server, live: &'a Arc<Bridged<Live>>, session: &str) ->
 }
 
 /// The bundle a command works on, rediscovered now. `nothing` and `unreadable` are the command's codes for a
-/// workspace without declarations and for a config that cannot be read.
+/// workspace without declarations and for a config that cannot be read (for request, respond and revoke only the user
+/// config: the cli skips a project file that cannot be loaded, like Node's startup loader).
 ///
 /// Node decides request, respond and revoke against the session's startup snapshot and never rediscovers, so these
 /// codes are zcode-rs's fail-closed choice, not Node parity (zcode-rs keeps no startup snapshot). Only the toggle
