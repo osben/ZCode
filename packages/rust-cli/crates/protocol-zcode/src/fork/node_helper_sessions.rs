@@ -237,6 +237,13 @@ impl NodeHelper {
         if let Some(directory) = answers.session_execution_directory(session).await {
             params["executionDirectory"] = Value::String(directory);
         }
+        // Node's subagent runs carry the root session (subagent/runner.ts), and the Office server keeps one viewer per
+        // `root_session_id ?? session_id`: without it a subagent's documents land in a viewer of their own.
+        if let Some(root) = answers.session_root(session).await
+            && root != session
+        {
+            params["rootSessionId"] = Value::String(root);
+        }
         let mut abandoned = AbandonedOpen {
             helper: self,
             peer,

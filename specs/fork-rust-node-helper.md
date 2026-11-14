@@ -245,6 +245,7 @@ Why plugin-level MCP Apps go through the helper too: the panel and the model mus
 A connect that Rust gives up on is closed in the helper too:
 
 - Rust sends `helper/mcp/close` and drops the pipe whenever its connect does not succeed: an error answer, its timeout, or the caller dropping it.
+- A close without a non-empty string `connection` is refused and logged, like a malformed session close; it never closes a guessed connection.
 - A close that reaches the helper while that connection is still connecting makes the connect release its lease and answer an error once it finishes. Otherwise a late connect would keep a lease and an MCP child that nothing closes, and the helper would never be idle.
 
 `workspace` is `{workspacePath, workspaceIdentity?}`, keyed `workspaceIdentity?.trim() || workspacePath`. A Rust process may serve several workspaces, so the helper is never bound to one:
@@ -259,6 +260,7 @@ The helper protocol version is 2 from F3 on: a Rust build and a helper of differ
 The helper answers Rust's MCP messages as a small MCP server facade over Node's port:
 
 - `initialize` answers the protocol version Rust asked for and the `tools` capability with `listChanged: true`. The real server's `tools/list_changed` is forwarded to every pipe connection of that server.
+- Every notification of the helper's MCP pool also takes Node's route (`routeMcpServerNotification`, as Node's server does in `handleMcpNotification`): a server log goes to the helper's log, and `resources/updated` or `resources/list_changed` for a panel's subscription becomes that session's `pluginUi.resourceUpdated` or `pluginUi.resourceListChanged` delta. Resource notifications are not sent to the pipes.
 - `tools/list` lists only model-visible tools (Node's `resolveMcpToolVisibility` includes `"model"`), with `name`, `description`, `inputSchema`, `annotations`, and `_meta["zcode/alwaysLoad"]` when the descriptor is `alwaysLoad`. A `cursor` is accepted; there is no `nextCursor`.
 - `tools/call`: Rust adds `_meta["zcode/helperContext"] = {sessionId, turnId?, runtimeScope}` for helper-hosted servers only. The helper calls Node's `callTool` on **that session's lease** (see session open), with the trace, `runtimeScope`, `turnId` and workspace fields Node's own MCP tool entry sends. So a session-isolated server runs one instance per session, shared by the model and the panel, as in Node.
 - `notifications/cancelled` aborts the call. `ping` answers `{}`. Notifications are never answered. Any other request answers `-32601`.
@@ -280,7 +282,11 @@ helper/session/open {sessionId, openId, rootSessionId?, workspace, executionDire
 - `openId` names this open; it is unique per Rust process. The close of an open names its `openId`, so a close never ends a later open of the same session.
 - `pluginIds` are the plugins Rust admitted in this process. The helper freezes the session's reference catalog from its plugin resolution; an entry is enabled only when Rust admitted it, so the picker and Rust agree on one plugin set.
 - `servers` are the helper-hosted server names. The helper acquires a session lease from its MCP pool (`sessionId` isolation) and connects them before answering. A failed server is logged and left out; the session still opens.
-- `rootSessionId` is the root of a subagent session when Rust knows it (a foreground subagent chain); otherwise absent. It goes into the session trace, so Node's adapter sends it to the server as `root_session_id` in `_meta["com.zcode/request-context"]`, next to `session_id` and `turn_id`.
+- `rootSessionId` is the top-level session of a subagent session: Rust sends it for every subagent session. Rust follows the session's parents while they are subagent sessions; the first other session is the root (a fork session is a top-level session for the agents it spawns), and a parent it cannot read is taken as the root. An interactive or fork session is its own root and sends none. Node does the same: a subagent run's trace carries `rootSessionId ?? parent` (`core/src/subagent/runner.ts:1022,1074`).
+  - The stored `trace_id` is not used: Node writes the run's trace id there, not the root session.
+  - Each step reads the session's view: an open session answers from its actor, a closed one is loaded from the store. That happens once per helper open.
+  - It goes into the session trace, so Node's adapter sends it to the server as `root_session_id` in `_meta["com.zcode/request-context"]`, next to `session_id` and `turn_id`.
+  - The Office server keeps one viewer per `root_session_id ?? session_id` (`office-runtime/src/adapters/server.ts` `sessionOf`). Without the root, a subagent's documents would land in a viewer of their own.
 - The helper session has no Node session lifecycle: the helper sets a lifecycle that is always ready, because Rust owns the session and opened it before forwarding.
 - `helper/session/close {sessionId, openId}` (notification) is sent when Rust closes a session it opened in this generation. The helper does Node's close steps: abort the session's panel tool calls, clear its app tools, unsubscribe its resources, close its lease.
   - A session that Rust closes while its open is still in flight is closed once the open succeeds, with that open's `openId`.

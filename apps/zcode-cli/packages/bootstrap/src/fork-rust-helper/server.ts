@@ -67,7 +67,7 @@ import {
   FORK_RUST_HELPER_METHODS,
   FORK_RUST_HELPER_PROTOCOL_VERSION,
 } from "./methods.js";
-import { errorMessage, FORK_RUST_HELPER_F3 } from "./f3-protocol.js";
+import { errorMessage, FORK_RUST_HELPER_F3, requireString } from "./f3-protocol.js";
 import type { Logger } from "@zcode/contracts";
 import type { ForkRustHelperMcpHost } from "./mcp-host.js";
 import type { ForkRustHelperClient } from "./rust-client.js";
@@ -195,10 +195,8 @@ export class ForkRustHelperServer {
     ]);
     this.helperNotifications = new Map<string, HelperRequestHandler>([
       [FORK_RUST_HELPER_F3.mcpSend, (params) => host.send(params)],
-      [
-        FORK_RUST_HELPER_F3.mcpClose,
-        (params) => host.closePipe(typeof params?.connection === "string" ? params.connection : ""),
-      ],
+      // Async, so a malformed close is a rejection the dispatch logs rather than a throw.
+      [FORK_RUST_HELPER_F3.mcpClose, async (params) => host.closePipe(requireString(params, "connection"))],
       [FORK_RUST_HELPER_F3.sessionClose, (params) => host.closeSession(params)],
       [FORK_RUST_HELPER_F3.appToolsCancel, async (params) => host.cancelAppTool(params)],
     ]);

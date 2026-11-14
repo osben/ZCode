@@ -81,6 +81,10 @@ impl HelperRequests for Rows {
     async fn session_execution_directory(&self, session: &str) -> Option<String> {
         session.starts_with("wt-").then(|| WORKTREE.to_owned())
     }
+
+    async fn session_root(&self, session: &str) -> Option<String> {
+        session.strip_prefix("sub-").map(|_| "root-1".to_owned())
+    }
 }
 
 static ROWS: std::sync::LazyLock<Arc<Rows>> = std::sync::LazyLock::new(|| Arc::new(Rows));
@@ -555,6 +559,20 @@ async fn an_execution_worktree_session_opens_with_its_worktree() {
     assert_eq!(opens[0].get("executionDirectory"), None);
     assert_eq!(opens[1]["executionDirectory"], WORKTREE);
     assert_eq!(opens[1]["workspace"], json!({"workspacePath": PROJECT}));
+}
+
+/// A subagent's session opens under its root session, so the Office server keeps the subagent's documents in the
+/// root's viewer (Node subagent/runner.ts `rootSessionId`, office-runtime `root_session_id ?? session_id`).
+#[tokio::test]
+async fn a_subagent_session_opens_under_its_root_session() {
+    let rig = session_rig(sessions(|_| opened()));
+    for session in ["s1", "sub-1"] {
+        forward_ok(&rig.helper, SESSION_METHOD, json!({"sessionId": session})).await;
+    }
+    let opens = received(&rig.fake, "helper/session/open");
+    assert_eq!(opens[0].get("rootSessionId"), None);
+    assert_eq!(opens[1]["sessionId"], "sub-1");
+    assert_eq!(opens[1]["rootSessionId"], "root-1");
 }
 
 /// The cancels themselves are never cancelled: an abandoned `mcp/uiCancel*` sends nothing, not a plugin cancel.

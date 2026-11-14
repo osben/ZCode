@@ -23,6 +23,7 @@ import type { ZCodeApp } from "../app/types.js";
 import {
   abortMcpUiToolCallsForSession,
   clearMcpUiAppToolsForSession,
+  routeMcpServerNotification,
 } from "../zcode-protocol/mcp-ui/index.js";
 import {
   ProtocolRequestError,
@@ -306,8 +307,10 @@ export class ForkRustHelperMcpHost {
     );
   }
 
-  /** Node's pool notifications: the real server's tool list change reaches every pipe of it. */
+  /** Node's pool notifications take Node's route; a tool list change also reaches the server's pipes. */
   handleNotification(notification: McpServerNotification): void {
+    // Subscribed panels hear resource updates through their session's pluginUi deltas (server.ts:294).
+    routeMcpServerNotification(this.deps.context, notification);
     if (notification.kind !== "toolListChanged") return;
     for (const [connection, pipe] of this.pipes) {
       if (pipe.server !== notification.serverName) continue;

@@ -53,6 +53,12 @@ pub(crate) trait HelperRequests: Send + Sync {
     async fn session_execution_directory(&self, _session: &str) -> Option<String> {
         None
     }
+
+    /// The top-level session a subagent session runs under; `None` for a session that is its own root
+    /// (`helper/session/open` `rootSessionId`, F3 "Session open and close").
+    async fn session_root(&self, _session: &str) -> Option<String> {
+        None
+    }
 }
 
 #[derive(Default)]

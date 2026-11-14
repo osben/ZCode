@@ -149,14 +149,16 @@ async fn a_server_disabled_before_it_wakes_stays_disabled() {
 #[tokio::test]
 async fn a_wake_before_the_workspace_is_known_keeps_the_deferred_flag() {
     use std::sync::atomic::Ordering;
-    let scope = TaskScope::root("test", |_| {});
-    let manager = McpManager::new(
-        Arc::new(FakeMcp::default()),
-        scope.spawner(),
-        McpSettings::default(),
-        crate::clock_tests::clock(),
-    );
-    manager.0.deferred.store(true, Ordering::Release);
+    let (fake, _scope, manager) = rig();
+    settle(&manager, "files").await;
+    let known = manager.0.workspace.lock_unpoisoned().take();
     manager.0.wake_deferred();
+    tokio::task::yield_now().await;
     assert!(manager.0.deferred.load(Ordering::Acquire));
+    assert_eq!(connected_servers(&fake), ["files"]);
+
+    *manager.0.workspace.lock_unpoisoned() = known;
+    manager.0.wake_deferred();
+    settle(&manager, "plugin:docs:office").await;
+    assert_eq!(connected_servers(&fake), ["files", "plugin:docs:office"]);
 }

@@ -148,3 +148,49 @@ async fn a_plugin_ui_delta_reaches_the_sessions_subscribers_but_not_its_snapshot
     assert!(text.contains("\"subscriptionId\":\"sub-1\""), "{text}");
     assert!(text.contains("\"kind\":\"deltas\""), "{text}");
 }
+
+/// A subagent's helper session names its top-level session: its parents are followed while they are subagent
+/// sessions, as Node's `rootSessionId ?? parent`. The stored trace is ignored (Node writes a trace id there); an
+/// interactive or fork session is its own root (F3 "Session open and close").
+#[tokio::test]
+async fn a_subagent_session_names_the_session_above_its_subagent_chain() {
+    use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
+    use rust_cli_kernel_api::ids::{EnvironmentId, TraceId};
+    use rust_cli_kernel_api::store::{SessionKind, SessionMeta};
+    let meta = |id: &str, kind, parent: Option<&str>| SessionMeta {
+        id: SessionId::new(id),
+        kind,
+        parent: parent.map(SessionId::new),
+        workspace: WorkspaceRef {
+            environment: EnvironmentId::new("local"),
+            root: EnvPath::new("/w"),
+        },
+        title: String::new(),
+        trace: TraceId::new("trace-uuid"),
+        created_at_ms: 1,
+        incognito: None,
+    };
+    let rows: std::collections::HashMap<String, SessionMeta> = [
+        meta("s-root", SessionKind::Interactive, None),
+        meta("sub-1", SessionKind::Subagent, Some("s-root")),
+        meta("sub-2", SessionKind::Subagent, Some("sub-1")),
+        meta("s-fork", SessionKind::Fork, Some("s-root")),
+        meta("sub-f", SessionKind::Subagent, Some("s-fork")),
+        meta("sub-gone", SessionKind::Subagent, Some("s-unknown")),
+    ]
+    .into_iter()
+    .map(|meta| (meta.id.as_str().to_owned(), meta))
+    .collect();
+    let root = |session: &'static str| {
+        let rows = &rows;
+        async move { super::root_by(session, |id| async move { rows.get(&id).cloned() }).await }
+    };
+    assert_eq!(root("sub-1").await.as_deref(), Some("s-root"));
+    assert_eq!(root("sub-2").await.as_deref(), Some("s-root"));
+    // A fork session is a top-level session for the agents it spawns.
+    assert_eq!(root("sub-f").await.as_deref(), Some("s-fork"));
+    assert_eq!(root("sub-gone").await.as_deref(), Some("s-unknown"));
+    for own in ["s-root", "s-fork", "missing"] {
+        assert_eq!(root(own).await, None, "{own}");
+    }
+}

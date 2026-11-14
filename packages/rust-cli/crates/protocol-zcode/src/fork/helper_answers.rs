@@ -15,6 +15,35 @@ use super::helper_session_admit::not_hosted;
 use super::node_helper::HelperRequests;
 use crate::server::Server;
 
+/// The top-level session above a subagent session: its parents are followed while they are subagent sessions, as
+/// Node's subagent runs carry `rootSessionId ?? parent` (core subagent/runner.ts). The stored trace is not used: Node
+/// writes a trace id there, not the root. A parent that cannot be read is taken as the root; an interactive or fork
+/// session is its own root (`None`).
+pub(super) async fn root_by<F, Fut>(session: &str, meta: F) -> Option<String>
+where
+    F: Fn(String) -> Fut,
+    Fut: std::future::Future<Output = Option<rust_cli_kernel_api::store::SessionMeta>>,
+{
+    use rust_cli_kernel_api::store::SessionKind;
+    // Subagents nest at most a few levels; the bound only stops a corrupt parent cycle.
+    const MAX_DEPTH: usize = 16;
+    let mut current = session.to_owned();
+    let mut root = None;
+    for _ in 0..MAX_DEPTH {
+        let Some(found) = meta(current.clone()).await else {
+            break;
+        };
+        match (found.kind, found.parent) {
+            (SessionKind::Subagent, Some(parent)) => {
+                current = parent.as_str().to_owned();
+                root = Some(current.clone());
+            }
+            _ => break,
+        }
+    }
+    root
+}
+
 #[async_trait]
 impl HelperRequests for Server {
     async fn session_workspace(&self, session: &str) -> Option<Value> {
@@ -37,6 +66,18 @@ impl HelperRequests for Server {
         let execution = crate::worktree::stored_execution(self, &session).await?;
         let path = execution.path.as_str();
         (!crate::worktree::missing(self, path).await).then(|| path.to_owned())
+    }
+
+    async fn session_root(&self, session: &str) -> Option<String> {
+        root_by(session, |id| async move {
+            let id = rust_cli_kernel_api::ids::SessionId::new(id);
+            self.kernel
+                .session_snapshot(&id)
+                .await
+                .ok()
+                .map(|view| view.meta)
+        })
+        .await
     }
 
     async fn authorize_app_tool(

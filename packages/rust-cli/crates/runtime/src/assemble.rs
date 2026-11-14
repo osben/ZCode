@@ -294,8 +294,6 @@ pub(crate) fn context(
     Arc::new(assembler)
 }
 
-/// 主循环用到的能力。工具是 ext 的注册表外面去掉整个工具被 deny 的（tools-files.md §1.1.1，工作线 F69）：主线程、子代理、
-/// 延迟清单与压缩摘要都从这一层往外取；agents 建好后主线程换成它的注册表。压缩器先交出“稍后接上”的句柄（late.rs）。
 /// 管线直接拿判决链（F125：缺陷 D1 是以前包在外面的一层漏转发了“只批准这一次”）；按调用的 `machine` 选机器
 /// （R3，remote-exec.md §20.6）。Fork: the kernel keeps this instance for MCP App calls
 /// (specs/fork-rust-node-helper.md F3, `helper/authorizeAppTool`), so they pass the same checks as the model's.
@@ -306,8 +304,6 @@ pub(crate) fn pipeline(
     hooks: &Arc<HookEngine>,
     node_desktop: bool,
 ) -> Arc<Pipeline> {
-    // 管线直接拿判决链（F125：缺陷 D1 是以前包在外面的一层漏转发了“只批准这一次”）；按调用的 `machine` 选机器
-    // （R3，remote-exec.md §20.6）。
     Arc::new(
         Pipeline::new(gate.clone(), hooks.clone())
             .with_machines(ports.environments.clone())
@@ -317,6 +313,8 @@ pub(crate) fn pipeline(
     )
 }
 
+/// 主循环用到的能力。工具是 ext 的注册表外面去掉整个工具被 deny 的（tools-files.md §1.1.1，工作线 F69）：主线程、子代理、
+/// 延迟清单与压缩摘要都从这一层往外取；agents 建好后主线程换成它的注册表。压缩器先交出“稍后接上”的句柄（late.rs）。
 pub(crate) fn query_parts(
     ports: &Ports,
     (context, ext, gate, hooks): (
