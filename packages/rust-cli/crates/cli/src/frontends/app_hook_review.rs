@@ -51,6 +51,14 @@ impl AppWorkspace {
             );
             return;
         }
+        // Two trust mutations rebuild concurrently (grant, revoke, toggle, `trustGrant` from different sessions). The
+        // ticket is drawn after this mutation's write and before the read, so a newer ticket's read sees every write an
+        // older ticket's saw; a rebuild whose read predates a later mutation's must not install after that mutation's
+        // own rebuild and re-enable a revoked hook.
+        let ticket = self
+            .rebuilds_issued
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
+            + 1;
         let inputs = ConfigInputs {
             files: self.files.as_ref(),
             workspace: &self.process.workspace,
@@ -60,6 +68,15 @@ impl AppWorkspace {
             project_is_local: self.process.project_is_local,
         };
         let hooks = crate::config::assemble(&inputs).await.hooks;
+        let mut installed = self.rebuilds_installed.lock_unpoisoned();
+        if *installed > ticket {
+            tracing::info!(
+                event = "workspace.hooks.rebuild_superseded",
+                "a newer rebuild already installed the process hook snapshot"
+            );
+            return;
+        }
+        *installed = ticket;
         tracing::info!(
             event = "workspace.hooks.rebuilt",
             sources = hooks.sources.len(),
