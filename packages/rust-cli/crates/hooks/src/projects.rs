@@ -30,9 +30,8 @@ pub trait ProjectHookLoader: Send + Sync {
 }
 
 /// The entry key of a workspace root (`workspaceIdentity?.trim() || workspacePath` for a local workspace). A trailing
-/// separator does not make another workspace.
+/// separator does not make another workspace; whitespace does, because only an explicit identity is trimmed.
 pub fn project_key(root: &str) -> String {
-    let root = root.trim();
     let trimmed = root.trim_end_matches(['/', '\\']);
     if trimmed.is_empty() || trimmed.ends_with(':') {
         // `/` and `C:\` keep their separator: without it they name another path.

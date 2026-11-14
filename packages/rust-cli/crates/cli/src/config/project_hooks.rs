@@ -14,12 +14,11 @@ use rust_cli_platform::local::{ConfigFile, read_cli_config};
 use super::files;
 use super::trust::WorkspaceHooks;
 
-/// The entry of `workspace`; trust records are read under `identity` when given (a remote workspace's identity).
+/// The entry of `workspace`, with its trust records read under the workspace path (a known difference: no identity).
 pub(crate) async fn entry(
     files: &dyn Files,
     paths: &StoragePaths,
     workspace: &WorkspaceRef,
-    identity: Option<String>,
 ) -> ProjectEntry {
     let user = read_cli_config(paths).await;
     if matches!(user, ConfigFile::Invalid { .. }) {
@@ -36,7 +35,7 @@ pub(crate) async fn entry(
         );
     }
     let mut warnings = Vec::new();
-    let mut hooks = WorkspaceHooks::inspect(
+    let hooks = WorkspaceHooks::inspect(
         workspace.root.as_str(),
         user.object(),
         &projects,
@@ -46,9 +45,6 @@ pub(crate) async fn entry(
     .await;
     for warning in &warnings {
         tracing::warn!(warning, "project hooks");
-    }
-    if let Some(identity) = identity {
-        hooks.identity = identity;
     }
     ProjectEntry::Admitted(hooks.admitted())
 }
@@ -62,7 +58,7 @@ pub(crate) struct Loader {
 #[async_trait]
 impl ProjectHookLoader for Loader {
     async fn load(&self, workspace: &WorkspaceRef) -> ProjectEntry {
-        entry(self.files.as_ref(), &self.paths, workspace, None).await
+        entry(self.files.as_ref(), &self.paths, workspace).await
     }
 }
 

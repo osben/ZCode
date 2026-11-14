@@ -100,10 +100,10 @@ async fn the_entry_holds_the_trusted_and_enabled_project_declarations() {
             "PreCompact": [{"hooks": [command("compact.sh")]}]
         }}}),
     )]);
-    let before = entry(&env, &paths, &workspace(), None).await;
+    let before = entry(&env, &paths, &workspace()).await;
     assert!(admitted(&before).is_empty(), "nothing is trusted yet");
     grant_all(&env, &paths).await;
-    let after = entry(&env, &paths, &workspace(), None).await;
+    let after = entry(&env, &paths, &workspace()).await;
     assert_eq!(
         admitted(&after),
         [
@@ -131,7 +131,7 @@ async fn a_file_node_cannot_load_adds_nothing_and_the_others_still_count() {
         ),
     ]);
     grant_all(&env, &paths).await;
-    let entry = entry(&env, &paths, &workspace(), None).await;
+    let entry = entry(&env, &paths, &workspace()).await;
     assert_eq!(
         admitted(&entry),
         [(HookSource::Project, "Stop", "good.sh".to_owned())]
@@ -146,12 +146,9 @@ async fn a_corrupt_trust_store_admits_nothing() {
         json!({"hooks": {"enabled": true, "events": {"Stop": [{"hooks": [command("good.sh")]}]}}}),
     )]);
     grant_all(&env, &paths).await;
-    assert_eq!(
-        admitted(&entry(&env, &paths, &workspace(), None).await).len(),
-        1
-    );
+    assert_eq!(admitted(&entry(&env, &paths, &workspace()).await).len(), 1);
     std::fs::write(paths.hook_trust_store(None).as_path(), "{").unwrap();
-    assert!(admitted(&entry(&env, &paths, &workspace(), None).await).is_empty());
+    assert!(admitted(&entry(&env, &paths, &workspace()).await).is_empty());
 }
 
 #[tokio::test]
@@ -187,6 +184,6 @@ async fn the_process_snapshot_keeps_the_project_hooks_apart() {
     );
     assert_eq!(
         snapshot.project_hooks,
-        entry(&env, &paths, &workspace(), None).await
+        entry(&env, &paths, &workspace()).await
     );
 }
