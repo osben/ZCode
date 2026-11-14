@@ -32,6 +32,13 @@ impl HelperRequests for Server {
         Some(value)
     }
 
+    async fn session_execution_directory(&self, session: &str) -> Option<String> {
+        let session = rust_cli_kernel_api::ids::SessionId::new(session);
+        let execution = crate::worktree::stored_execution(self, &session).await?;
+        let path = execution.path.as_str();
+        (!crate::worktree::missing(self, path).await).then(|| path.to_owned())
+    }
+
     async fn authorize_app_tool(
         &self,
         params: Value,

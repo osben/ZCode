@@ -162,6 +162,7 @@ function startHelper(env: NodeJS.ProcessEnv, cwd: string, reverse: Record<string
   });
   const done = runForkRustHelper({ input, output, env, cwd });
   let next = 0;
+  let opens = 0;
   const workspace = { workspacePath: cwd, workspaceKey: cwd };
   const helper = {
     notifications,
@@ -197,8 +198,10 @@ function startHelper(env: NodeJS.ProcessEnv, cwd: string, reverse: Record<string
       return found!;
     },
     openSession(sessionId = SESSION, pluginIds = [PLUGIN_ID]) {
+      opens += 1;
       return helper.request("helper/session/open", {
         sessionId,
+        openId: opens,
         workspace,
         pluginIds,
         servers: [SERVER],
@@ -331,6 +334,7 @@ describe("fork: Node helper F3 (Office tools and panels)", () => {
       const openSession = () =>
         helper.request("helper/session/open", {
           sessionId: SESSION,
+          openId: 1,
           workspace: { workspacePath: home.workspace },
           pluginIds: [PLUGIN_ID],
           servers: [SERVER],
@@ -524,7 +528,7 @@ describe("fork: Node helper F3 (Office tools and panels)", () => {
     const home = await tempHome();
     const helper = await initialized(home.env, home.workspace);
     await helper.openSession();
-    helper.notify("helper/session/close", { sessionId: SESSION });
+    helper.notify("helper/session/close", { sessionId: SESSION, openId: 1 });
     await vi.waitFor(async () => {
       const reply = await helper.request("plugins/mentionItems", {
         sessionId: SESSION,

@@ -10,6 +10,8 @@ const SESSION_METHOD: &str = "mcp/uiCallTool";
 
 /// Where the test sessions live; the agent itself runs in `<home>/.zcode` (the Host's shared local task runtime).
 const PROJECT: &str = "/home/ZCodeProject";
+/// The execution worktree of the `wt-*` test sessions.
+const WORKTREE: &str = "/home/.zcode/worktrees/ZCodeProject/task-1";
 
 fn catalog() -> HelperCatalog {
     HelperCatalog {
@@ -75,6 +77,10 @@ impl HelperRequests for Rows {
             _ => Some(json!({"workspacePath": PROJECT})),
         }
     }
+
+    async fn session_execution_directory(&self, session: &str) -> Option<String> {
+        session.starts_with("wt-").then(|| WORKTREE.to_owned())
+    }
 }
 
 static ROWS: std::sync::LazyLock<Arc<Rows>> = std::sync::LazyLock::new(|| Arc::new(Rows));
@@ -139,6 +145,7 @@ async fn a_session_call_opens_the_session_once_per_generation() {
         received(&rig.fake, "helper/session/open"),
         [json!({
             "sessionId": "s1",
+            "openId": 1,
             "workspace": {"workspacePath": PROJECT},
             "pluginIds": ["viewer@inline", "skills-only@inline"],
             "servers": ["plugin:viewer:view"],
@@ -194,7 +201,7 @@ async fn an_open_session_keeps_the_helper_until_rust_closes_it() {
     tokio::time::sleep(Duration::from_secs(1)).await;
     assert_eq!(
         received(&rig.fake, "helper/session/close"),
-        [json!({"sessionId": "s1"})]
+        [json!({"sessionId": "s1", "openId": 1})]
     );
     tokio::time::sleep(Duration::from_secs(301)).await;
     assert_eq!(
@@ -399,7 +406,7 @@ async fn a_session_closed_while_opening_is_closed_once_its_open_succeeds() {
     tokio::time::sleep(Duration::from_secs(1)).await;
     assert_eq!(
         received(&rig.fake, "helper/session/close"),
-        [json!({"sessionId": "s1"})]
+        [json!({"sessionId": "s1", "openId": 1})]
     );
     // Nothing keeps the helper afterwards.
     tokio::time::sleep(Duration::from_secs(301)).await;
@@ -434,7 +441,11 @@ async fn a_late_open_leaves_a_session_reopened_after_its_close() {
     );
     rig.helper.session_closed("s1");
     tokio::time::sleep(Duration::from_secs(1)).await;
-    assert_eq!(received(&rig.fake, "helper/session/close").len(), 1);
+    // The close names the reopen, so the helper cannot apply it to another open of the session.
+    assert_eq!(
+        received(&rig.fake, "helper/session/close"),
+        [json!({"sessionId": "s1", "openId": 2})]
+    );
 }
 
 /// A session opens with its own workspace, as its row holds it, never the agent's cwd: the Host's shared local task
@@ -478,4 +489,80 @@ async fn a_session_without_a_row_is_not_opened() {
         .unwrap_err();
     assert_eq!(error.data.unwrap()["reasonCode"], NODE_HELPER_UNAVAILABLE);
     assert!(received(&rig.fake, "helper/session/open").is_empty());
+}
+
+/// An open Rust gives up on is closed with its own open id: the helper may still finish it, and nothing in Rust owns
+/// it (F3 "Session open and close").
+#[tokio::test(start_paused = true)]
+async fn an_open_that_times_out_is_closed_in_the_helper() {
+    let rig = session_rig(sessions(
+        |attempt| {
+            if attempt == 0 { Act::Hang } else { opened() }
+        },
+    ));
+    expect_unavailable(&forward_err(&rig.helper, SESSION_METHOD, json!({"sessionId": "s1"})).await);
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(
+        received(&rig.fake, "helper/session/close"),
+        [json!({"sessionId": "s1", "openId": 1})]
+    );
+    // The next call opens it again under a new open id.
+    forward_ok(&rig.helper, SESSION_METHOD, json!({"sessionId": "s1"})).await;
+    let opens = received(&rig.fake, "helper/session/open");
+    assert_eq!(opens.len(), 2);
+    assert_eq!(opens[1]["openId"], 2);
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_open_dropped_by_its_caller_is_closed_in_the_helper() {
+    let rig = session_rig(sessions(|_| Act::Delay {
+        after: Duration::from_secs(5),
+        result: json!({}),
+    }));
+    let call = forward_ok(&rig.helper, SESSION_METHOD, json!({"sessionId": "s1"}));
+    assert!(
+        tokio::time::timeout(Duration::from_secs(1), call)
+            .await
+            .is_err()
+    );
+    tokio::time::sleep(Duration::from_secs(10)).await;
+    assert_eq!(
+        received(&rig.fake, "helper/session/close"),
+        [json!({"sessionId": "s1", "openId": 1})]
+    );
+}
+
+#[tokio::test]
+async fn a_refused_open_sends_no_close() {
+    let rig = session_rig(sessions(|_| Act::Fail(RpcError::invalid_params("no"))));
+    forward_err(&rig.helper, SESSION_METHOD, json!({"sessionId": "s1"})).await;
+    tokio::task::yield_now().await;
+    assert!(received(&rig.fake, "helper/session/close").is_empty());
+}
+
+/// An execution worktree session runs in its worktree under its workspace's key, as Node's app (create-app.ts:200-208,
+/// core/src/mcp/index.ts:259-267).
+#[tokio::test]
+async fn an_execution_worktree_session_opens_with_its_worktree() {
+    let rig = session_rig(sessions(|_| opened()));
+    for session in ["s1", "wt-1"] {
+        forward_ok(&rig.helper, SESSION_METHOD, json!({"sessionId": session})).await;
+    }
+    let opens = received(&rig.fake, "helper/session/open");
+    assert_eq!(opens[0].get("executionDirectory"), None);
+    assert_eq!(opens[1]["executionDirectory"], WORKTREE);
+    assert_eq!(opens[1]["workspace"], json!({"workspacePath": PROJECT}));
+}
+
+/// The cancels themselves are never cancelled: an abandoned `mcp/uiCancel*` sends nothing, not a plugin cancel.
+#[test]
+fn an_abandoned_cancel_sends_no_cancel() {
+    for method in ["mcp/uiCancelCall", "mcp/uiCancelSampling"] {
+        let params = json!({"sessionId": "s1", "callId": "c", "operationId": "op"});
+        assert_eq!(
+            super::super::abandoned_cancel(method, &params),
+            None,
+            "{method}"
+        );
+    }
 }

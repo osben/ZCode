@@ -23,8 +23,12 @@ import { toNodeError, type ForkRustHelperClient } from "./rust-client.js";
 /** One helper session: a Rust session opened in this helper generation (spec F3 "Session open and close"). */
 export interface HelperSession {
   sessionId: string;
-  /** The workspace its open named, the session's own (never the Rust agent's cwd). */
+  /** The open that made it: Rust's close names it, so a stale close never ends a reopen. */
+  openId: number;
+  /** The workspace its open named, the session's own (never the Rust agent's cwd): its key. */
   workspace: HelperWorkspace;
+  /** Where it runs: its execution worktree, else the workspace path (Node create-app.ts:200-208). */
+  directory: string;
   port: McpPort;
   catalog: ReturnType<typeof buildPluginReferenceCatalog>;
   traceContext: TraceContext;
@@ -142,7 +146,7 @@ deps: HelperSessionRecordDeps,
           arguments: (input ?? {}) as Record<string, unknown>,
           trace: session.traceContext,
           runtimeScope: "main",
-          workspacePath: workspace.workspacePath,
+          workspacePath: session.directory,
           workspaceKey: workspaceKeyOf(workspace),
         },
         { ...(options?.signal ? { signal: options.signal } : {}), appConnection: snapshot },

@@ -360,8 +360,9 @@ fn is_helper(connection: &McpConnectionId) -> bool {
     connection.as_str().starts_with(HELPER_CONNECTION_PREFIX)
 }
 
-/// The helper's workspace for this process. Rust's app-server serves one local workspace, so its root is both the
-/// path and the identity key (`workspaceIdentity?.trim() || workspacePath`); helper sessions send the same value.
+/// The workspace a pipe connects in: the one Rust's MCP manager runs in, keyed by its root
+/// (`workspaceIdentity?.trim() || workspacePath`). A helper session opens with its own row's workspace instead
+/// (F3 "Session open and close"); in the Host's shared local task runtime the two differ.
 pub(crate) fn helper_workspace(workspace: &WorkspaceRef) -> Value {
     json!({"workspacePath": workspace.root.as_str()})
 }

@@ -6,7 +6,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::io;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, Weak};
 use std::time::Duration;
 
@@ -185,6 +185,8 @@ pub struct NodeHelper {
     catalog: StdMutex<Option<Arc<sessions::HelperCatalog>>>,
     /// F3: the helper's requests to Rust and who answers them.
     requests: StdMutex<requests::Requests>,
+    /// F3: the last `openId` of a `helper/session/open`; a close names its open's id.
+    last_open: AtomicU64,
 }
 
 struct State {
@@ -258,6 +260,7 @@ impl NodeHelper {
             warned: AtomicBool::new(false),
             catalog: StdMutex::new(None),
             requests: StdMutex::default(),
+            last_open: AtomicU64::new(0),
         })
     }
 
@@ -749,8 +752,6 @@ async fn reclaim(weak: Weak<NodeHelper>, generation: u64, idle: Duration) {
     }
 }
 
-/// The id a cancellable plugin operation registers under in the helper: trimmed and non-empty, as Node's
-/// `getPluginOperationId`.
 const UI_CALL_TOOL: &str = "mcp/uiCallTool";
 const UI_SAMPLING: &str = "mcp/uiSampling";
 /// The plugin scope of an `mcp/ui*` call (`zcodeMcpUiPluginScopeShape`). The cancel schemas are strict: a cancel carries
@@ -783,13 +784,16 @@ fn abandoned_cancel(method: &str, params: &Value) -> Option<(&'static str, Value
         Some((cancel, Value::Object(fields)))
     };
     match method {
-        CANCEL_OPERATION => None,
+        // A cancel is never cancelled: an abandoned one sends nothing.
+        CANCEL_OPERATION | "mcp/uiCancelCall" | "mcp/uiCancelSampling" => None,
         UI_CALL_TOOL => ui_cancel("mcp/uiCancelCall", "callId"),
         UI_SAMPLING => ui_cancel("mcp/uiCancelSampling", "operationId"),
         _ => operation_id(params).map(|id| (CANCEL_OPERATION, json!({"operationId": id}))),
     }
 }
 
+/// The id a cancellable plugin operation registers under in the helper: trimmed and non-empty, as Node's
+/// `getPluginOperationId`.
 fn operation_id(params: &Value) -> Option<String> {
     let id = params.get("operationId")?.as_str()?.trim();
     (!id.is_empty()).then(|| id.to_owned())

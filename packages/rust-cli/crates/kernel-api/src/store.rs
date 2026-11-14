@@ -606,7 +606,6 @@ pub struct SessionTreeCounts {
     pub workflow_runs: u64,
 }
 
-/// Fork: a session's execution worktree, stored in the Node `session` row (`execution_directory`,
 /// Fork (specs/fork-rust-node-helper.md F3 "Session open and close"): where a session's row says it lives, the
 /// workspace its Node helper session opens with.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -617,6 +616,7 @@ pub struct SessionWorkspace {
     pub identity: Option<String>,
 }
 
+/// Fork: a session's execution worktree, stored in the Node `session` row (`execution_directory`,
 /// `execution_branch`, fork migration `9002_fork_session_execution_worktree`). `directory` is the row's
 /// `directory`: the parent workspace the session is listed under; `path` is where the session runs.
 #[derive(Debug, Clone, PartialEq, Eq)]

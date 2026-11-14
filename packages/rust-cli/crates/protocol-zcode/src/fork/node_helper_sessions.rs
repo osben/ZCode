@@ -6,6 +6,7 @@
 //! the next generation opens it again lazily. An open session keeps the helper from idle reclaim.
 
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use rust_cli_base::sync::LockUnpoisoned;
 use rust_cli_protocol_core::connection::{CONNECTION_CLOSED, Peer};
@@ -82,8 +83,28 @@ impl HelperCatalog {
     }
 }
 
-/// One session's open in a generation: concurrent first calls share it; a failed open leaves it unset for a retry.
-pub(super) type Opening = Arc<tokio::sync::OnceCell<()>>;
+/// One session's open in a generation, holding its `openId`: concurrent first calls share it; a failed open leaves it
+/// unset for a retry.
+pub(super) type Opening = Arc<tokio::sync::OnceCell<u64>>;
+
+/// Closes an open that Rust gave up on (its timeout, or the caller dropping it): the helper may still finish it, and
+/// nothing in Rust would own that session. Disarmed once the helper answered.
+struct AbandonedOpen<'a> {
+    helper: &'a NodeHelper,
+    peer: &'a Peer,
+    session: &'a str,
+    open_id: Option<u64>,
+}
+
+impl Drop for AbandonedOpen<'_> {
+    fn drop(&mut self) {
+        if let Some(open_id) = self.open_id.take()
+            && !self.peer.is_closed()
+        {
+            self.helper.send_close(self.peer, self.session, open_id);
+        }
+    }
+}
 
 impl NodeHelper {
     /// Sets what Rust admitted, once its plugins are loaded. Session calls before it are unavailable.
@@ -123,23 +144,30 @@ impl NodeHelper {
             })
             .await
             .copied();
-        let mut forgotten = false;
+        let mut forgotten = None;
         self.with_running(generation, |running| {
             let current = running.sessions.get(session);
-            if result.is_err() {
-                if current.is_some_and(|known| Arc::ptr_eq(known, &cell)) {
-                    running.sessions.remove(session);
+            match result {
+                Err(_) => {
+                    if current.is_some_and(|known| Arc::ptr_eq(known, &cell)) {
+                        running.sessions.remove(session);
+                    }
                 }
-            } else if opened_here.load(std::sync::atomic::Ordering::Relaxed) {
                 // Closed while this open was in flight, and not opened again since: the helper has a session that
-                // nothing would close. A newer entry is a reopen, which a close would end.
-                forgotten = current.is_none();
+                // nothing would close. A newer entry is a reopen, which its own close ends.
+                Ok(open_id)
+                    if opened_here.load(std::sync::atomic::Ordering::Relaxed)
+                        && current.is_none() =>
+                {
+                    forgotten = Some(open_id);
+                }
+                Ok(_) => {}
             }
         });
-        if forgotten {
-            self.send_close(peer, session);
+        if let Some(open_id) = forgotten {
+            self.send_close(peer, session, open_id);
         }
-        result
+        result.map(|_| ())
     }
 
     async fn open_session(
@@ -147,7 +175,7 @@ impl NodeHelper {
         generation: u64,
         peer: &Peer,
         session: &str,
-    ) -> Result<(), RpcError> {
+    ) -> Result<u64, RpcError> {
         let Some(catalog) = self.catalog() else {
             return Err(unavailable("the helper has no plugin catalog yet"));
         };
@@ -158,17 +186,34 @@ impl NodeHelper {
         let Some(workspace) = answers.session_workspace(session).await else {
             return Err(unavailable("the session's workspace is unknown"));
         };
-        let params = json!({
+        let open_id = self.last_open.fetch_add(1, Ordering::Relaxed) + 1;
+        let mut params = json!({
             "sessionId": session,
+            "openId": open_id,
             "workspace": workspace,
             "pluginIds": catalog.plugin_ids,
             "servers": catalog.servers,
         });
+        // Node's app runs an execution worktree session in its worktree (create-app.ts:200-208).
+        if let Some(directory) = answers.session_execution_directory(session).await {
+            params["executionDirectory"] = Value::String(directory);
+        }
+        let mut abandoned = AbandonedOpen {
+            helper: self,
+            peer,
+            session,
+            open_id: Some(open_id),
+        };
         let deadline = self.timing.timeout_for(OPEN);
-        match tokio::time::timeout(deadline, peer.request(OPEN, &params)).await {
+        let answer = tokio::time::timeout(deadline, peer.request(OPEN, &params)).await;
+        if answer.is_ok() {
+            // The helper answered: it keeps nothing of a failed open.
+            abandoned.open_id = None;
+        }
+        match answer {
             Ok(Ok(_)) => {
                 self.heard(generation);
-                Ok(())
+                Ok(open_id)
             }
             Ok(Err(error)) if error.code == CONNECTION_CLOSED && peer.is_closed() => {
                 self.link_lost(generation);
@@ -194,19 +239,22 @@ impl NodeHelper {
                 Some(opening) => {
                     running.last_used = tokio::time::Instant::now();
                     // An open still in flight closes the session itself once it succeeds (`ensure_session`).
-                    opening.initialized().then(|| running.peer.clone())
+                    opening
+                        .get()
+                        .map(|open_id| (running.peer.clone(), *open_id))
                 }
                 None => None,
             }
         };
-        if let Some(peer) = peer {
-            self.send_close(&peer, session);
+        if let Some((peer, open_id)) = peer {
+            self.send_close(&peer, session, open_id);
         }
     }
 
-    fn send_close(&self, peer: &Peer, session: &str) {
+    /// Closes one open of `session`: the helper ignores a close whose `openId` is not the session's open one.
+    fn send_close(&self, peer: &Peer, session: &str, open_id: u64) {
         let peer = peer.clone();
-        let params = json!({"sessionId": session});
+        let params = json!({"sessionId": session, "openId": open_id});
         drop(self.spawner.spawn("node-helper-session-close", async move {
             peer.notify(CLOSE, &params).await;
         }));

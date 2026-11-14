@@ -41,6 +41,14 @@ export function parseWorkspace(raw: unknown): HelperWorkspace {
   };
 }
 
+/** The `openId` of a session open: a positive integer, unique per Rust process (spec F3 session open). */
+export function requireOpenId(params: Record<string, unknown> | undefined): number {
+  const value = params?.openId;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0)
+    throw new ProtocolRequestError(-32602, "openId must be a positive integer");
+  return value;
+}
+
 export function requireString(params: Record<string, unknown> | undefined, key: string): string {
   const value = params?.[key];
   if (typeof value !== "string" || !value)

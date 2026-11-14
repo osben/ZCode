@@ -250,7 +250,7 @@ A connect that Rust gives up on is closed in the helper too:
 `workspace` is `{workspacePath, workspaceIdentity?}`, keyed `workspaceIdentity?.trim() || workspacePath`. A Rust process may serve several workspaces, so the helper is never bound to one:
 
 - The Host's shared local task runtime is one agent process for every local workspace, run in the data root (`<home>/.zcode`, `SHARED_TASK_RUNTIME_KEY` in `zcodeAgentProcessManager.ts`).
-- The helper resolves plugins once per workspace key, and forgets a failed resolution so the next call of that key retries.
+- The helper resolves plugins once per workspace and directory (a session in an execution worktree resolves in its worktree), and forgets a failed resolution so the next call retries.
 - A pipe keeps the workspace its connect named, for its server config and its lease's working directory. Rust's pipes name the workspace its MCP manager runs in.
 - A session keeps the workspace its open named: its server configs, its lease's working directory, its panel tool calls, and its model tool calls on that lease.
 
@@ -267,19 +267,40 @@ The helper answers Rust's MCP messages as a small MCP server facade over Node's 
 **Session open and close.** Before the first forwarded session call, and before the first helper tool call of a session, in each helper generation, Rust sends and awaits:
 
 ```
-helper/session/open {sessionId, rootSessionId?, workspace, pluginIds: [...], servers: [...]}
+helper/session/open {sessionId, openId, rootSessionId?, workspace, executionDirectory?, pluginIds: [...], servers: [...]}
 ```
 
 - `workspace` is the session's own, as its row holds it: `workspacePath` is the row's `directory` (a draft's too), and `workspaceIdentity` is its non-empty `workspace_id`. Rust's local rows have none.
   - Never the agent's cwd: the desktop E2E runs the agent in `<home>/.zcode` while its sessions live in `<home>/ZCodeProject`.
   - A session whose row Rust cannot read is not opened; the call fails as `nodeHelperUnavailable`.
+- `executionDirectory` is the session's execution worktree path, sent when the session has one and its directory exists (Rust checks a local workspace only, as for the session's own cwd). As in Node, the session runs in the worktree while its key stays the parent workspace's:
+  - Node's app takes the worktree as its working directory unless it is missing (`create-app.ts:200-208`). Plugin and MCP config resolution (`:220-230`), the MCP lease and its stdio children (`:607-630`, adapter spawn cwd `adapters/src/mcp/index.ts:2016`) use it.
+  - The session's workspace key is the protocol workspace's, not the worktree (`create-app.ts:477-479`, `core/src/runtime/types.ts:302-307`). Node's MCP tool entry sends `workspacePath` = the working directory and `workspaceKey` = that key (`core/src/mcp/index.ts:259-267`); its session connect does the same (`core/src/runtime/methods/mcp.ts:89-97`).
+  - So the helper resolves the session's plugins and connects its lease in `executionDirectory`, and sends it as the tool call's `workspacePath`. `workspace` stays the key everywhere else.
+- `openId` names this open; it is unique per Rust process. The close of an open names its `openId`, so a close never ends a later open of the same session.
 - `pluginIds` are the plugins Rust admitted in this process. The helper freezes the session's reference catalog from its plugin resolution; an entry is enabled only when Rust admitted it, so the picker and Rust agree on one plugin set.
 - `servers` are the helper-hosted server names. The helper acquires a session lease from its MCP pool (`sessionId` isolation) and connects them before answering. A failed server is logged and left out; the session still opens.
 - `rootSessionId` is the root of a subagent session when Rust knows it (a foreground subagent chain); otherwise absent. It goes into the session trace, so Node's adapter sends it to the server as `root_session_id` in `_meta["com.zcode/request-context"]`, next to `session_id` and `turn_id`.
 - The helper session has no Node session lifecycle: the helper sets a lifecycle that is always ready, because Rust owns the session and opened it before forwarding.
-- `helper/session/close {sessionId}` (notification) is sent when Rust closes a session it opened in this generation. The helper does Node's close steps: abort the session's panel tool calls, clear its app tools, unsubscribe its resources, close its lease.
-  - A session that Rust closes while its open is still in flight is closed once the open succeeds. This applies only if nothing opened the session again meanwhile; a close would end that newer session.
+- `helper/session/close {sessionId, openId}` (notification) is sent when Rust closes a session it opened in this generation. The helper does Node's close steps: abort the session's panel tool calls, clear its app tools, unsubscribe its resources, close its lease.
+  - A session that Rust closes while its open is still in flight is closed once the open succeeds, with that open's `openId`.
+  - An open that Rust gives up on is closed with its `openId`: its timeout or the caller dropping it. The helper may still finish it, and nothing in Rust would own it. An error answer needs no close, because the helper keeps nothing of a failed open.
   - The close also forgets the session's panels, so a later crash sends no `pluginUi.instanceClosed` for them.
+- The helper runs the opens and closes of one session one at a time, in arrival order:
+  - A close ends the session only when its `openId` is the open one; a stale close is ignored.
+  - An open of a session that is already open replaces it: the old one gets the close steps, then the new open runs with its own params. Node's `openSession` used to answer `{}` and keep the old params.
+  - An open that fails after its lease is acquired closes that lease before it answers the error.
+
+```
+Rust (NodeHelper, Running slot)              helper (ForkRustHelperMcpHost, one lane per sessionId)
+ensure_session: OnceCell<openId> ──open(s,1)──► lane: [open 1] lease, connect, sessions[s]=1
+  timeout or drop before the answer ──close(s,1)──► lane: [close 1] ends s if sessions[s]=1
+session_closed (cell initialized) ──close(s,1)──► lane: [close 1]
+reopen: new cell ──open(s,2)──────────────────► lane: [open 2] replaces s, if still open
+late close(s,1) after open(s,2) ──────────────► lane: [close 1] ignored, sessions[s]=2
+```
+
+The plugin catalog and admission are still the Rust process's, not the session workspace's: `pluginIds` and `servers` come from the plugins Rust loaded for its own workspace (`cli/src/assemble/mod.rs` `helper_catalog`, checked in `helper_session_admit.rs` and `helper_answers.rs`). Per-workspace admission is the next change after F3 (per-workspace plugins and MCP in Rust's shared local task runtime).
 
 **Session-scoped forwarded methods.** Same params and result as Host ↔ Node:
 

@@ -47,6 +47,12 @@ pub(crate) trait HelperRequests: Send + Sync {
     /// The workspace `helper/session/open` names for `session`, as its row holds it: `{workspacePath: directory,
     /// workspaceIdentity?: workspace_id}` (F3 "Session open and close"). `None` when the store has no row or draft.
     async fn session_workspace(&self, session: &str) -> Option<Value>;
+
+    /// The execution worktree `session` runs in, when it has one whose directory exists; `None` otherwise
+    /// (`helper/session/open` `executionDirectory`, F3 "Session open and close").
+    async fn session_execution_directory(&self, _session: &str) -> Option<String> {
+        None
+    }
 }
 
 #[derive(Default)]
