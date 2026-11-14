@@ -9,6 +9,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use rust_cli_base::sync::RwLockUnpoisoned;
 use rust_cli_kernel_api::env::WorkspaceRef;
+use rust_cli_kernel_api::env_files::PathStyle;
 use rust_cli_kernel_api::hooks::{HookEvent, HookEventName};
 
 use crate::config::{HookSource, HooksSettings};
@@ -30,10 +31,12 @@ pub trait ProjectHookLoader: Send + Sync {
 }
 
 /// The entry key of a workspace root (`workspaceIdentity?.trim() || workspacePath` for a local workspace). A trailing
-/// separator does not make another workspace; whitespace does, because only an explicit identity is trimmed.
+/// separator of the path's own style does not make another workspace (on POSIX a backslash is a name character);
+/// whitespace does, because only an explicit identity is trimmed.
 pub fn project_key(root: &str) -> String {
-    let trimmed = root.trim_end_matches(['/', '\\']);
-    if trimmed.is_empty() || trimmed.ends_with(':') {
+    let style = PathStyle::infer(root);
+    let trimmed = root.trim_end_matches(|c| style.is_separator(c));
+    if trimmed.is_empty() || (style == PathStyle::Windows && trimmed.ends_with(':')) {
         // `/` and `C:\` keep their separator: without it they name another path.
         return root.to_owned();
     }
