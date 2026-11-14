@@ -11,7 +11,7 @@ use rust_cli_hooks::workspace_digest::{self, DigestEntry, DigestSource};
 use rust_cli_kernel_api::env::{EnvError, OperationContext, Origin, ReadFile, WritePrecondition};
 use rust_cli_kernel_api::env_files::PutFile;
 use rust_cli_kernel_api::ids::{Generation, OperationId};
-use rust_cli_platform::local::{TrustLoad, TrustRecord, node_pretty};
+use rust_cli_platform::local::{TrustError, TrustLoad, TrustRecord, node_pretty};
 use rust_cli_protocol_zcode::hook_review_codes as codes;
 use rust_cli_protocol_zcode::{
     ReviewBundle, ReviewItem, ReviewLookup, ReviewSource, StoredTrust, ToggleError,
@@ -134,7 +134,10 @@ impl AppWorkspace {
             .grant(hooks_trust::records(&hooks, &selected, &context))
             .await
             .map_err(|error| {
-                tracing::warn!(error = %error, "workspace hook review grant failed");
+                tracing::warn!(
+                    reason = trust_error_reason(&error),
+                    "workspace hook review grant failed"
+                );
                 codes::TRUST_STORE_CORRUPT
             })?;
         self.rebuild_own_hooks(&trust).await;
@@ -157,7 +160,10 @@ impl AppWorkspace {
             .revoke(&hooks.identity, Some(digests))
             .await
             .map_err(|error| {
-                tracing::warn!(error = %error, "workspace hook review revoke failed");
+                tracing::warn!(
+                    reason = trust_error_reason(&error),
+                    "workspace hook review revoke failed"
+                );
                 codes::TRUST_STORE_CORRUPT
             })?;
         self.rebuild_own_hooks(&trust).await;
@@ -245,6 +251,14 @@ impl AppWorkspace {
             );
             codes::CONFIG_UNREADABLE
         })?;
+        // The file may have changed since the review read it: Node's rebuild rejects what its strict schema rejects.
+        let schema = raw
+            .get("hooks")
+            .map_or(Ok(()), crate::config::workspace_schema::check);
+        if schema.is_err() {
+            tracing::warn!("the workspace hook config does not match the schema for a toggle");
+            return Err(codes::CONFIG_UNREADABLE);
+        }
         if !declared_as_reviewed(&raw, entry, source, hooks) {
             return Err(codes::SNAPSHOT_MISMATCH);
         }
@@ -274,7 +288,10 @@ impl AppWorkspace {
             Ok(_) => Ok(()),
             Err(EnvError::PreconditionFailed { .. }) => Err(codes::BUNDLE_CHANGED),
             Err(error) => {
-                tracing::warn!(error = %error, "workspace hook toggle write failed");
+                tracing::warn!(
+                    reason = env_error_reason(&error),
+                    "workspace hook toggle write failed"
+                );
                 Err(codes::CONFIG_WRITE_FAILED)
             }
         }
@@ -380,6 +397,16 @@ fn review_item(entry: &DigestEntry, max_output_bytes: f64, stored: StoredTrust) 
     }
 }
 
+// Like `env_error_reason`: an IO error or a record digest is not logged.
+fn trust_error_reason(error: &TrustError) -> &'static str {
+    match error {
+        TrustError::Corrupt => "corrupt",
+        TrustError::Invalid(_) => "invalid_record",
+        TrustError::Io(_) => "io",
+    }
+}
+
+// The messages carry paths: only the variant is logged.
 fn env_error_reason(error: &EnvError) -> &'static str {
     match error {
         EnvError::NotFound { .. } => "not_found",

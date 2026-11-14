@@ -364,27 +364,47 @@ async fn the_write_checks_the_declaration_it_rewrites() {
 /// (`workspace-hook-mutation.ts` `safeParse`), so its indices are raw positions. Rust's lenient parse skips the
 /// malformed matcher, which shifts the indices: the toggle must refuse rather than write onto another declaration.
 #[tokio::test]
-async fn a_toggle_refuses_a_config_whose_parse_skipped_an_entry() {
-    let text = r#"{"hooks": {"events": {"UserPromptSubmit": [
+async fn a_config_nodes_strict_schema_rejects_is_unreadable_and_never_toggled() {
+    // Node `readWorkspaceHookProjectSources` parses `hooks` with the strict `workspaceHooksConfigSchema` and reports
+    // a failure as a read error, so its toggle answers `workspace_hooks_config_unreadable`. The lenient parse would
+    // skip the bad entry, shift the indices and write onto another declaration.
+    let configs = [
+        // A matcher with an empty `hooks` list (`.min(1)`): toggling `y` would write onto `x`.
+        r#"{"hooks": {"events": {"UserPromptSubmit": [
+    {"matcher": "A", "hooks": []},
+    {"matcher": "B", "hooks": [{"type": "command", "command": "x"}]},
+    {"matcher": "C", "hooks": [{"type": "command", "command": "y"}, {"type": "command", "command": "z"}]}
+]}}}"#,
+        // A matcher that is not a non-empty string.
+        r#"{"hooks": {"events": {"UserPromptSubmit": [
     {"matcher": 5, "hooks": [{"type": "command", "command": "a"}]},
     {"matcher": "Bash", "hooks": [{"type": "command", "command": "b"}]}
-]}}}"#;
-    let fixture = fixture_text(text, json!({}));
-    let review = bundle(&fixture).await;
-    assert_eq!(review.items.len(), 1);
-    assert_eq!(review.items[0].display_command, "b");
-    let answer = fixture
-        .admin
-        .review_toggle(
-            &target(ROOT),
-            &review.bundle_digest,
-            &review.items[0].review_item_id,
-            false,
-        )
-        .await;
-    assert_eq!(answer, Err(ToggleError::Rejected(codes::SNAPSHOT_MISMATCH)));
-    assert_eq!(project(&fixture).await, text.as_bytes());
-    assert!(fixture.hooks.lock().unwrap().is_empty());
+]}}}"#,
+        // Unknown keys at the root, the matcher and the events (`.strict()`).
+        r#"{"hooks": {"extra": true, "events": {"UserPromptSubmit": [{"hooks": [{"type": "command", "command": "a"}]}]}}}"#,
+        r#"{"hooks": {"events": {"UserPromptSubmit": [{"hooks": [{"type": "command", "command": "a"}], "note": 1}]}}}"#,
+        r#"{"hooks": {"events": {"Notification": [{"hooks": [{"type": "command", "command": "a"}]}],
+    "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "b"}]}]}}}"#,
+    ];
+    for text in configs {
+        let fixture = fixture_text(text, json!({}));
+        assert_eq!(
+            fixture.admin.review_bundle(&target(ROOT)).await,
+            ReviewLookup::Unreadable,
+            "{text}"
+        );
+        let answer = fixture
+            .admin
+            .review_toggle(&target(ROOT), "any", "any", false)
+            .await;
+        assert_eq!(
+            answer,
+            Err(ToggleError::Rejected(codes::CONFIG_UNREADABLE)),
+            "{text}"
+        );
+        assert_eq!(project(&fixture).await, text.as_bytes());
+        assert!(fixture.hooks.lock().unwrap().is_empty());
+    }
 }
 
 #[test]

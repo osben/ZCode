@@ -221,8 +221,20 @@ pub(crate) async fn inspect_review(
         project_is_local: true,
     };
     let files = read_files(&inputs).await;
-    // Node `discoverSnapshot` throws on a config it cannot read or parse.
-    let unreadable = matches!(files.user, ConfigFile::Invalid { .. })
+    // Node `discoverSnapshot` throws on a config it cannot read or parse, and `readWorkspaceHookProjectSources`
+    // reports a `hooks` value its strict schema rejects as unreadable too.
+    let rejected = files.projects.iter().any(|project| {
+        project
+            .file
+            .object()
+            .and_then(|object| object.get("hooks"))
+            .is_some_and(|hooks| crate::config::workspace_schema::check(hooks).is_err())
+    });
+    if rejected {
+        tracing::warn!("a project hook config does not match the workspace hooks schema");
+    }
+    let unreadable = rejected
+        || matches!(files.user, ConfigFile::Invalid { .. })
         || files
             .projects
             .iter()
