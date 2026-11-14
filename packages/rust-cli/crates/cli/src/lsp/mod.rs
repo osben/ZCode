@@ -151,7 +151,9 @@ impl Host {
             .is_some_and(|fact| fact.workspace == *workspace)
     }
 
-    /// Node `applyLspPreferences` for every runtime: each session's fact is recomputed before the write answers.
+    /// Node `applyLspPreferences` for every runtime: each session's fact is recomputed before the write answers. A
+    /// later write that lands while probing makes it compute again, so the stored answer is never older than this
+    /// write.
     async fn refresh_tool_facts(&self) {
         let known: Vec<(SessionId, WorkspaceRef)> = self
             .tool_facts
@@ -162,17 +164,21 @@ impl Host {
             .map(|(session, fact)| (session.clone(), fact.workspace.clone()))
             .collect();
         for (session, workspace) in known {
-            let generation = self.tool_generation();
-            let available = self.tool_available(&session, &workspace).await;
-            let mut facts = self.tool_facts.lock_unpoisoned();
-            // A later write's refresh recomputes it; a settle for another workspace meanwhile owns the fact.
-            if self.tool_generation() != generation {
-                return;
-            }
-            if let Some(fact) = facts.get_mut(&session)
-                && fact.workspace == workspace
-            {
-                fact.available = Some(available);
+            loop {
+                let generation = self.tool_generation();
+                let available = self.tool_available(&session, &workspace).await;
+                let mut facts = self.tool_facts.lock_unpoisoned();
+                let Some(fact) = facts
+                    .get_mut(&session)
+                    .filter(|fact| fact.workspace == workspace && fact.available.is_some())
+                else {
+                    // Closed, or a settle for another workspace owns the fact now.
+                    break;
+                };
+                if self.tool_generation() == generation {
+                    fact.available = Some(available);
+                    break;
+                }
             }
         }
     }

@@ -683,8 +683,25 @@ async fn an_uninstall_mid_session_keeps_the_tool_and_queries_report_it() {
 struct GatedProbe {
     installed: std::sync::atomic::AtomicBool,
     calls: std::sync::atomic::AtomicUsize,
-    entered: tokio::sync::Notify,
-    release: tokio::sync::Notify,
+    /// The calls (0-based) that report on `entered` and wait for a `release` permit, in order.
+    gated: Vec<usize>,
+    entered: tokio::sync::mpsc::UnboundedSender<usize>,
+    release: tokio::sync::Semaphore,
+}
+
+fn gated_probe(
+    installed: bool,
+    gated: &[usize],
+) -> (Arc<GatedProbe>, tokio::sync::mpsc::UnboundedReceiver<usize>) {
+    let (entered, calls) = tokio::sync::mpsc::unbounded_channel();
+    let probe = GatedProbe {
+        installed: installed.into(),
+        calls: 0.into(),
+        gated: gated.to_vec(),
+        entered,
+        release: tokio::sync::Semaphore::new(0),
+    };
+    (Arc::new(probe), calls)
 }
 
 #[async_trait::async_trait]
@@ -692,9 +709,10 @@ impl InstallProbe for GatedProbe {
     async fn installed(&self, _server: &rust_cli_ext::plugins::lsp::ResolvedLspServer) -> bool {
         use std::sync::atomic::Ordering;
         let answer = self.installed.load(Ordering::SeqCst);
-        if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
-            self.entered.notify_one();
-            self.release.notified().await;
+        let call = self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.gated.contains(&call) {
+            self.entered.send(call).unwrap();
+            self.release.acquire().await.unwrap().forget();
         }
         answer
     }
@@ -708,22 +726,17 @@ impl InstallProbe for GatedProbe {
 async fn a_preference_write_during_the_first_settle_is_not_lost() {
     use std::sync::atomic::Ordering;
     let mut fixture = fixture(&[]).await;
-    let probe = Arc::new(GatedProbe {
-        installed: false.into(),
-        calls: 0.into(),
-        entered: tokio::sync::Notify::new(),
-        release: tokio::sync::Notify::new(),
-    });
+    let (probe, mut entered) = gated_probe(false, &[0]);
     fixture.host.shared.probe = Arc::clone(&probe) as Arc<dyn InstallProbe>;
     let session = SessionId::new("s1");
     let root = reference("/Users/dev/a");
     let host = &fixture.host;
     let settle = host.settle_tool(&session, &root);
     let write = async {
-        probe.entered.notified().await;
+        entered.recv().await;
         probe.installed.store(true, Ordering::SeqCst);
         host.set_preferences(patch(Some(true), &[])).await.unwrap();
-        probe.release.notify_one();
+        probe.release.add_permits(1);
     };
     tokio::join!(settle, write);
     assert!(
@@ -739,21 +752,16 @@ async fn a_preference_write_during_the_first_settle_is_not_lost() {
 async fn a_session_closed_during_its_settle_stays_closed() {
     use std::sync::atomic::Ordering;
     let mut fixture = fixture(&[]).await;
-    let probe = Arc::new(GatedProbe {
-        installed: true.into(),
-        calls: 0.into(),
-        entered: tokio::sync::Notify::new(),
-        release: tokio::sync::Notify::new(),
-    });
+    let (probe, mut entered) = gated_probe(true, &[0]);
     fixture.host.shared.probe = Arc::clone(&probe) as Arc<dyn InstallProbe>;
     let session = SessionId::new("s1");
     let root = reference("/Users/dev/a");
     let host = &fixture.host;
     let close = async {
-        probe.entered.notified().await;
+        entered.recv().await;
         host.session_closed(&session);
         host.set_preferences(patch(Some(true), &[])).await.unwrap();
-        probe.release.notify_one();
+        probe.release.add_permits(1);
     };
     tokio::join!(host.settle_tool(&session, &root), close);
     assert!(!host.tool_offered(&session));
@@ -770,6 +778,77 @@ async fn a_session_closed_during_its_settle_stays_closed() {
         1,
         "no probe after the close"
     );
+}
+
+/// Two settles for one session with different workspaces: the later run's workspace owns the fact, even when the
+/// earlier settle finishes last.
+#[cfg(unix)]
+#[tokio::test]
+async fn the_latest_workspace_settle_owns_the_fact() {
+    use std::sync::atomic::Ordering;
+    let mut fixture = fixture(&[]).await;
+    let (probe, mut entered) = gated_probe(true, &[0]);
+    fixture.host.shared.probe = Arc::clone(&probe) as Arc<dyn InstallProbe>;
+    let session = SessionId::new("s1");
+    let (first, second) = (reference("/Users/dev/a"), reference("/Users/dev/b"));
+    let host = &fixture.host;
+    let later = async {
+        entered.recv().await;
+        probe.installed.store(false, Ordering::SeqCst);
+        host.settle_tool(&session, &second).await;
+        probe.release.add_permits(1);
+    };
+    tokio::join!(host.settle_tool(&session, &first), later);
+    {
+        let facts = host.tool_facts.lock_unpoisoned();
+        let fact = facts.get(&session).unwrap();
+        assert_eq!(fact.workspace, second);
+        assert_eq!(fact.available, Some(false));
+    }
+    assert!(
+        !host.tool_offered(&session),
+        "the earlier settle's answer did not win"
+    );
+}
+
+/// A write answers only after its refresh stored a fact at least as new as the write, also when a later write lands
+/// while it probes (Node's queued `applyLspPreferences` resolves after its own recompute).
+#[cfg(unix)]
+#[tokio::test]
+async fn a_write_answers_after_its_facts_are_recomputed() {
+    use std::sync::atomic::Ordering;
+    let mut fixture = fixture(&[]).await;
+    let (probe, mut entered) = gated_probe(false, &[1, 2]);
+    fixture.host.shared.probe = Arc::clone(&probe) as Arc<dyn InstallProbe>;
+    let session = SessionId::new("s1");
+    let root = reference("/Users/dev/a");
+    let host = &fixture.host;
+    host.settle_tool(&session, &root).await;
+    assert!(!host.tool_offered(&session));
+    probe.installed.store(true, Ordering::SeqCst);
+    let first = async {
+        host.set_preferences(patch(Some(true), &[])).await.unwrap();
+        let offered = host.tool_offered(&session);
+        // Lets the second write's refresh go on.
+        probe.release.add_permits(1);
+        offered
+    };
+    let second = async {
+        assert_eq!(entered.recv().await, Some(1), "the first write probes");
+        let write = host.set_preferences(patch(Some(true), &[]));
+        let release_first = async {
+            assert_eq!(entered.recv().await, Some(2), "the second write probes");
+            probe.release.add_permits(1);
+        };
+        let (written, ()) = tokio::join!(write, release_first);
+        written.unwrap();
+    };
+    let (offered, ()) = tokio::join!(first, second);
+    assert!(
+        offered,
+        "the first write answered before its facts were recomputed"
+    );
+    assert!(host.tool_offered(&session));
 }
 
 #[cfg(unix)]
