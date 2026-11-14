@@ -229,9 +229,22 @@ impl AppWorkspace {
             .files
             .read_file(&workspace, ReadFile { path: path.clone() })
             .await
-            .map_err(|_| codes::CONFIG_UNREADABLE)?;
-        let mut raw: Value =
-            serde_json::from_slice(&read.bytes).map_err(|_| codes::CONFIG_UNREADABLE)?;
+            .map_err(|error| {
+                // The error messages carry paths, so only the variant is logged.
+                tracing::warn!(
+                    reason = env_error_reason(&error),
+                    "the workspace hook config could not be read for a toggle"
+                );
+                codes::CONFIG_UNREADABLE
+            })?;
+        let mut raw: Value = serde_json::from_slice(&read.bytes).map_err(|error| {
+            tracing::warn!(
+                line = error.line(),
+                column = error.column(),
+                "the workspace hook config could not be parsed for a toggle"
+            );
+            codes::CONFIG_UNREADABLE
+        })?;
         if !declared_as_reviewed(&raw, entry, source, hooks) {
             return Err(codes::SNAPSHOT_MISMATCH);
         }
@@ -357,8 +370,8 @@ fn review_item(entry: &DigestEntry, max_output_bytes: f64, stored: StoredTrust) 
         kind,
         display_command: entry.hook.display(),
         source_path: entry.source_relative_path.clone(),
-        resolved_timeout_ms: positive_ms(entry.resolved_timeout_ms),
-        resolved_max_output_bytes: positive_ms(max_output_bytes),
+        resolved_timeout_ms: positive_whole(entry.resolved_timeout_ms),
+        resolved_max_output_bytes: positive_whole(max_output_bytes),
         background,
         configured_enabled: entry.configured_enabled,
         editable: entry.editable,
@@ -367,8 +380,20 @@ fn review_item(entry: &DigestEntry, max_output_bytes: f64, stored: StoredTrust) 
     }
 }
 
+fn env_error_reason(error: &EnvError) -> &'static str {
+    match error {
+        EnvError::NotFound { .. } => "not_found",
+        EnvError::PreconditionFailed { .. } => "precondition_failed",
+        EnvError::PermissionDenied { .. } => "permission_denied",
+        EnvError::Stale { .. } => "stale",
+        EnvError::OperationConflict { .. } => "operation_conflict",
+        EnvError::Io { .. } => "io",
+        EnvError::Unsupported { .. } => "unsupported",
+    }
+}
+
 /// The resolved values are whole positive numbers (Node rounds them and keeps at least 1).
-fn positive_ms(value: f64) -> u64 {
+fn positive_whole(value: f64) -> u64 {
     if value.is_finite() && value >= 1.0 {
         value.round() as u64
     } else {

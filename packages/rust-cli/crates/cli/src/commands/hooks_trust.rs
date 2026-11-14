@@ -239,9 +239,16 @@ pub(crate) async fn inspect_review(
     if let Some(identity) = identity {
         hooks.identity = identity;
     }
-    let sources = crate::config::trust::candidates(&files.projects, &mut warnings)
-        .into_iter()
-        .map(|(file, _)| HookSourceFile {
+    // The same files `candidates` keeps: every project file with a `hooks` key.
+    let sources = files
+        .projects
+        .iter()
+        .filter(|file| {
+            file.file
+                .object()
+                .is_some_and(|object| object.contains_key("hooks"))
+        })
+        .map(|file| HookSourceFile {
             path: file.path.clone(),
             kind: file.kind.as_str(),
             order: file.order,

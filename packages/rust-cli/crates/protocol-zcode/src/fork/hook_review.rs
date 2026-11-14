@@ -532,7 +532,7 @@ fn open_or_reuse(
     }
     let flow_id = state
         .flow_id
-        .get_or_insert_with(|| format!("workspace-hook-review:{}", crate::cipher::uuid_v4()))
+        .get_or_insert_with(|| format!("workspace-hook-review:{}", crate::ids::uuid_v4()))
         .clone();
     let generation = state.generation + 1;
     let request = build_request(scope, state, bundle, &flow_id, generation);
@@ -606,7 +606,7 @@ fn build_request(
             format!(
                 "workspace-hook-run:{}:{}",
                 scope.session,
-                crate::cipher::uuid_v4()
+                crate::ids::uuid_v4()
             )
         })
         .clone();
@@ -667,7 +667,7 @@ fn build_request(
         "kind": "workspaceHookReview",
         "reviewFlowId": flow_id,
         "generation": generation,
-        "interactionId": format!("workspace-hook-interaction:{}", crate::cipher::uuid_v4()),
+        "interactionId": format!("workspace-hook-interaction:{}", crate::ids::uuid_v4()),
         "sessionId": scope.session,
         "taskId": scope.session,
         "runId": run_id,
