@@ -165,6 +165,21 @@ impl<H: StoreHooks> LocalSettings for StoreProxy<H> {
 
 #[async_trait]
 impl<H: StoreHooks> StoreQueries for StoreProxy<H> {
+    async fn register_runtime(
+        &self,
+        session: &SessionId,
+    ) -> Result<crate::store::RuntimePresence, StoreError> {
+        self.inner.register_runtime(session).await
+    }
+
+    async fn release_runtimes(&self) {
+        self.inner.release_runtimes().await;
+    }
+
+    async fn assert_not_deleting(&self, sessions: &[SessionId]) -> Result<(), StoreError> {
+        self.inner.assert_not_deleting(sessions).await
+    }
+
     async fn metering(&self, session: &SessionId) -> Result<SessionMetering, StoreError> {
         self.inner.metering(session).await
     }

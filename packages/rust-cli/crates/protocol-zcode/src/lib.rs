@@ -27,6 +27,7 @@ mod lifecycle;
 mod live;
 mod network_capture;
 mod preparation;
+mod presence_gate;
 mod projection;
 mod reservations;
 mod server;

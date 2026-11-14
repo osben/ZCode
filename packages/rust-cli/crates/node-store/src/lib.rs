@@ -26,6 +26,7 @@ mod ids;
 mod load;
 mod node_checkpoints;
 mod notices;
+mod presence;
 mod project_mode;
 mod project_rules;
 mod query;
@@ -91,6 +92,8 @@ pub struct NodeStore {
     version: String,
     /// Fork: deferred drafts ([`drafts`]); `None` writes every session at create.
     drafts: Option<Arc<Mutex<drafts::Drafts>>>,
+    /// Fork: the session runtime presence rows this process holds ([`presence`]).
+    presence: presence::Held,
 }
 
 impl NodeStore {
@@ -102,6 +105,7 @@ impl NodeStore {
             database_dir: AtomicBool::new(false),
             version: String::new(),
             drafts: None,
+            presence: presence::Held::default(),
         }
     }
 
@@ -200,7 +204,24 @@ fn open_database(path: &Path, now_ms: u64) -> Result<Connection, StoreError> {
     Ok(conn)
 }
 
-pub(crate) fn storage(error: impl Display) -> StoreError {
+pub(crate) fn storage<E: Display + 'static>(error: E) -> StoreError {
+    // Fork: a write that a 0025 purge trigger aborted is typed (specs/fork-rust-agent-parity.md "Session runtime
+    // presence on the shared database"). The rusqlite error may sit inside an anyhow chain whose display is a
+    // context line, so the error itself is inspected, never its text.
+    let any: &dyn std::any::Any = &error;
+    let deleting = any
+        .downcast_ref::<rusqlite::Error>()
+        .is_some_and(presence::is_deleting)
+        || any.downcast_ref::<anyhow::Error>().is_some_and(|error| {
+            error.chain().any(|cause| {
+                cause
+                    .downcast_ref::<rusqlite::Error>()
+                    .is_some_and(presence::is_deleting)
+            })
+        });
+    if deleting {
+        return StoreError::Deleting;
+    }
     StoreError::Storage {
         message: error.to_string(),
     }
@@ -211,7 +232,7 @@ pub(crate) trait OrStorage<T> {
     fn storage(self) -> Result<T, StoreError>;
 }
 
-impl<T, E: Display> OrStorage<T> for Result<T, E> {
+impl<T, E: Display + 'static> OrStorage<T> for Result<T, E> {
     fn storage(self) -> Result<T, StoreError> {
         self.map_err(storage)
     }
@@ -524,6 +545,58 @@ impl StoreQueries for NodeStore {
             session_tree::list_tree_ids_with_surviving_children(conn, &root_ids)
         })
         .await
+    }
+
+    async fn register_runtime(
+        &self,
+        session: &SessionId,
+    ) -> Result<rust_cli_kernel_api::store::RuntimePresence, StoreError> {
+        let owner = presence::owner();
+        let held = self.presence.clone();
+        let (id, key) = (session.as_str().to_owned(), owner.clone());
+        let registered = self
+            .with_db(move |conn, _| presence::register(conn, &held, &id, &key))
+            .await?;
+        if !registered {
+            return Ok(rust_cli_kernel_api::store::RuntimePresence::none());
+        }
+        let release = presence::Release {
+            connection: self.connection.clone(),
+            held: self.presence.clone(),
+            session: session.as_str().to_owned(),
+            owner,
+        };
+        Ok(rust_cli_kernel_api::store::RuntimePresence::new(
+            move || {
+                release.run();
+            },
+        ))
+    }
+
+    async fn release_runtimes(&self) {
+        let held = self.presence.clone();
+        if held.lock_unpoisoned().is_empty() {
+            return;
+        }
+        if let Err(error) = self
+            .with_db(move |conn, _| presence::release_all(conn, &held))
+            .await
+        {
+            tracing::warn!(
+                event = "session_presence.release_all_failed",
+                error = %error,
+                "releasing the session runtime presence rows failed"
+            );
+        }
+    }
+
+    async fn assert_not_deleting(&self, sessions: &[SessionId]) -> Result<(), StoreError> {
+        if sessions.is_empty() {
+            return Ok(());
+        }
+        let ids: Vec<String> = sessions.iter().map(|id| id.as_str().to_owned()).collect();
+        self.with_db(move |conn, _| presence::assert_not_deleting(conn, &ids))
+            .await
     }
 
     async fn erase_session_tree(

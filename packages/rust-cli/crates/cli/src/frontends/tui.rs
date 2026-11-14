@@ -5,6 +5,7 @@
 use std::sync::Arc;
 
 use rust_cli_base::secret::EnvSnapshot;
+use rust_cli_kernel_api::store::StoreQueries;
 use rust_cli_platform::local::Recorder;
 use rust_cli_tui::{Options, QuestionTimeout, Services, UiConfig};
 
@@ -294,6 +295,12 @@ async fn interactive(
     if let Some(peers) = built.peers {
         peers.shutdown().await;
     }
+    // Fork: Node `SqliteSessionStore.close()` (specs/fork-rust-agent-parity.md "Session runtime presence on the shared
+    // database"); a failed run releases here, a finished one after SessionEnd.
+    let store = built.opened.store.clone();
+    if exit.is_err() {
+        store.release_runtimes().await;
+    }
     let exit = exit?;
     // 退出的顺序（session-lifecycle.md §3.5、§6.2）：终端已在 `run` 返回前恢复，先打印恢复提示，再跑 SessionEnd，hook 的
     // 提示写 stderr。缺陷修复（F14）：以前 SessionEnd 在恢复终端之前跑，恢复提示排在 hook 的提示之后。
@@ -308,6 +315,7 @@ async fn interactive(
     for notice in exit.ending.run().await {
         write_lossy(std::io::stderr(), &notice);
     }
+    store.release_runtimes().await;
     Ok(0)
 }
 

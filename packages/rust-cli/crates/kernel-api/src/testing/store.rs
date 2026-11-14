@@ -115,9 +115,28 @@ pub struct MemoryStore {
     acp_bindings: Mutex<HashMap<SessionId, crate::store::AcpSessionBinding>>,
     /// Fork: the next `set_acp_binding` fails ([`Self::fail_next_acp_binding_write`]).
     fail_acp_binding: std::sync::atomic::AtomicBool,
+    /// Fork: live `register_runtime` guards per session ([`Self::presence`]).
+    presence: std::sync::Arc<Mutex<HashMap<SessionId, usize>>>,
+    /// Fork: sessions whose purge started elsewhere ([`Self::start_purge`]).
+    purging: Mutex<HashSet<SessionId>>,
 }
 
 impl MemoryStore {
+    /// Fork: how many runtime presence guards of `session` are alive (node-store's presence rows).
+    pub fn presence(&self, session: &SessionId) -> usize {
+        self.presence
+            .lock_unpoisoned()
+            .get(session)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    /// Fork: a purge of `session` started elsewhere: its presence registration and the request gate answer
+    /// `Deleting`, like node-store with a `session_purge` row.
+    pub fn start_purge(&self, session: &SessionId) {
+        self.purging.lock_unpoisoned().insert(session.clone());
+    }
+
     /// 下一个带 `TitleChanged` 的批次整批提交失败（`Storage` 错误），之后照常（titles.md §4：改名被拒绝时它的记录也不在）。
     pub fn fail_next_title_change(&self) {
         self.fail_title.store(true, Ordering::SeqCst);
@@ -637,6 +656,38 @@ impl LocalSettings for MemoryStore {
 
 #[async_trait]
 impl StoreQueries for MemoryStore {
+    async fn register_runtime(
+        &self,
+        session: &SessionId,
+    ) -> Result<crate::store::RuntimePresence, StoreError> {
+        if self.purging.lock_unpoisoned().contains(session) {
+            return Err(StoreError::Deleting);
+        }
+        *self
+            .presence
+            .lock_unpoisoned()
+            .entry(session.clone())
+            .or_default() += 1;
+        let (presence, session) = (self.presence.clone(), session.clone());
+        Ok(crate::store::RuntimePresence::new(move || {
+            let mut presence = presence.lock_unpoisoned();
+            if let Some(count) = presence.get_mut(&session) {
+                *count -= 1;
+                if *count == 0 {
+                    presence.remove(&session);
+                }
+            }
+        }))
+    }
+
+    async fn assert_not_deleting(&self, sessions: &[SessionId]) -> Result<(), StoreError> {
+        let purging = self.purging.lock_unpoisoned();
+        if sessions.iter().any(|session| purging.contains(session)) {
+            return Err(StoreError::Deleting);
+        }
+        Ok(())
+    }
+
     /// 会话与以它为祖先的会话里 `ModelCalled{status: completed}` 的耗时之和（node-store 的同一口径，usage.md §4）。
     async fn metering(
         &self,

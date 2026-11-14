@@ -287,6 +287,9 @@ pub fn update(conn: &Connection, input: &Update, now: i64) -> rusqlite::Result<u
     .execute(rusqlite::params_from_iter(values))
 }
 
+/// Fork: Node `listSessions`'s purge clause.
+const NOT_PURGING: &str = "not exists(select 1 from session_purge where session_id=session.id)";
+
 /// `/resume` 与 `-c` 的会话列表：本目录的顶层会话加 fork 出的会话（`task_type = 'fork'`），排序同
 /// Node `listSessions`（`order by time_updated desc, id desc`）。
 ///
@@ -300,6 +303,10 @@ pub fn list(
     limit: Option<i64>,
 ) -> rusqlite::Result<Vec<SessionRow>> {
     let mut clauses: Vec<&str> = vec!["time_deleted is null"];
+    // Fork: Node `listSessions` hides a session whose purge started (0025's `session_purge`, when it exists).
+    if crate::presence::has_purge_table(conn)? {
+        clauses.push(NOT_PURGING);
+    }
     let mut values: Vec<Sql> = vec![];
     if !directory.is_empty() {
         clauses.push("directory = ?");
@@ -334,6 +341,10 @@ pub fn query(
         "workspace_id is null",
         "task_type in ('interactive', 'fork', 'workflow_parent')",
     ];
+    // Fork: as `list`.
+    if crate::presence::has_purge_table(conn)? {
+        clauses.push(NOT_PURGING);
+    }
     let mut values: Vec<Sql> = vec![];
     if let Some(directory) = directory {
         clauses.push("directory = ?");

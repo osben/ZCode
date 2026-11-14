@@ -13,7 +13,7 @@ use std::time::Duration;
 use anyhow::Result;
 use rust_cli_base::TaskScope;
 use rust_cli_kernel_api::ids::EnvironmentId;
-use rust_cli_kernel_api::store::{SessionFilter, SessionStore};
+use rust_cli_kernel_api::store::{SessionFilter, SessionStore, StoreQueries};
 use rust_cli_node_store::LOCAL_ENVIRONMENT;
 use rust_cli_protocol_core::connection::{self, Options};
 use rust_cli_protocol_zcode::{
@@ -243,13 +243,18 @@ async fn serve(
         spawner,
     ));
     // 读到 Host 关掉输入或收到退出信号时结束（Host 回收整棵进程树）。
-    tokio::select! {
+    let ended = tokio::select! {
         result = reader => {
-            result.map_err(|error| anyhow::anyhow!("reading the protocol input: {error}"))??;
+            result
+                .map_err(|error| anyhow::anyhow!("reading the protocol input: {error}"))
+                .and_then(|read| read.map_err(anyhow::Error::from))
         }
-        () = stop.token.cancelled() => {}
-    }
-    Ok(())
+        () = stop.token.cancelled() => Ok(()),
+    };
+    // Fork: Node `SqliteSessionStore.close()`: this process's session runtime presence rows go before it exits
+    // (specs/fork-rust-agent-parity.md "Session runtime presence on the shared database").
+    built.opened.store.release_runtimes().await;
+    ended
 }
 
 /// Fork: the egress observer that feeds the Network panel capture.

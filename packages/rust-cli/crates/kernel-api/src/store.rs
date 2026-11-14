@@ -483,6 +483,53 @@ pub enum StoreError {
     Storage { message: String },
     #[error("not implemented: {what}")]
     Unsupported { what: String },
+    /// Fork: a purge of the session started elsewhere on the shared database (Node's `session_purge` row and its
+    /// triggers). Displays as Node's message, [`SESSION_DATA_DELETING`] (specs/fork-rust-agent-parity.md "Session
+    /// runtime presence on the shared database").
+    #[error("session-data.deleting")]
+    Deleting,
+}
+
+/// Fork: Node's error for a session whose purge started (`assertSessionNotDeleting` and the 0025 triggers).
+pub const SESSION_DATA_DELETING: &str = "session-data.deleting";
+
+/// Fork: this process's row for one open session in Node's `session_runtime_presence` (specs/fork-rust-agent-parity.md
+/// "Session runtime presence on the shared database"). Node's `beginSessionDeletion` refuses to purge a session while
+/// a foreign row with a live pid exists. Dropping the guard releases the row; [`RuntimePresence::none`] holds nothing
+/// (a store or database without the protocol).
+#[must_use = "dropping the guard releases the presence row"]
+pub struct RuntimePresence(Option<Box<dyn FnOnce() + Send>>);
+
+impl RuntimePresence {
+    pub fn none() -> Self {
+        Self(None)
+    }
+
+    /// A guard that runs `release` once, when it drops.
+    pub fn new(release: impl FnOnce() + Send + 'static) -> Self {
+        Self(Some(Box::new(release)))
+    }
+
+    /// Whether the guard holds a row.
+    pub fn holds(&self) -> bool {
+        self.0.is_some()
+    }
+}
+
+impl Drop for RuntimePresence {
+    fn drop(&mut self) {
+        if let Some(release) = self.0.take() {
+            release();
+        }
+    }
+}
+
+impl std::fmt::Debug for RuntimePresence {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("RuntimePresence")
+            .field(&self.holds())
+            .finish()
+    }
 }
 
 /// 存储的错误到内核 API（工作线 F130，审查 K8）：会话不存在与不支持原样保留，其余给出存储的原文。以前 runtime 与 agents
@@ -492,9 +539,11 @@ impl From<StoreError> for crate::session_api::KernelError {
         match error {
             StoreError::NotFound { session } => Self::NotFound { session },
             StoreError::Unsupported { what } => Self::Unsupported { what },
-            StoreError::StaleOwner { .. } | StoreError::Storage { .. } => Self::Failed {
-                message: error.to_string(),
-            },
+            StoreError::StaleOwner { .. } | StoreError::Storage { .. } | StoreError::Deleting => {
+                Self::Failed {
+                    message: error.to_string(),
+                }
+            }
         }
     }
 }
@@ -878,6 +927,22 @@ pub trait StoreQueries: Send + Sync {
         Err(StoreError::Unsupported {
             what: "session tree surviving children".to_owned(),
         })
+    }
+
+    /// Fork: registers this process's runtime of `session` in Node's `session_runtime_presence` before the session
+    /// loads or is created (Node `registerSessionRuntime`). `Deleting` when a purge of it started elsewhere: the
+    /// presence insert is the barrier. The default holds nothing (a store without the protocol).
+    async fn register_runtime(&self, _session: &SessionId) -> Result<RuntimePresence, StoreError> {
+        Ok(RuntimePresence::none())
+    }
+
+    /// Fork: deletes every presence row this process still holds (Node `SqliteSessionStore.close`). Frontends await
+    /// it at shutdown; guards dropped later find nothing to delete.
+    async fn release_runtimes(&self) {}
+
+    /// Fork: `Deleting` when any of `sessions` has a purge row (Node `assertSessionNotDeleting`, the request gate).
+    async fn assert_not_deleting(&self, _sessions: &[SessionId]) -> Result<(), StoreError> {
+        Ok(())
     }
 
     /// Fork: hard-delete the trees of the given roots in one `BEGIN IMMEDIATE` transaction (Node

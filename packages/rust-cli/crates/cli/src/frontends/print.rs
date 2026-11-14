@@ -4,6 +4,7 @@
 use anyhow::Result;
 use rust_cli_base::names::env;
 use rust_cli_headless::{InputFormat, Output, PrintOptions, Stamps};
+use rust_cli_kernel_api::store::StoreQueries;
 
 use crate::assemble::{self, CliInputs, Controller};
 use crate::commands::args::Invocation;
@@ -103,6 +104,9 @@ async fn print(invocation: Invocation, run: &ControllerRun) -> Result<u8> {
     if let Some(peers) = built.peers {
         peers.shutdown().await;
     }
+    // Fork: Node `SqliteSessionStore.close()` (specs/fork-rust-agent-parity.md "Session runtime presence on the shared
+    // database").
+    built.opened.store.release_runtimes().await;
     printed?;
     // 未信任的项目 hooks 被跳过：按 Node 写一段提示到 stderr（config.md §4.4）。
     if let Some(pending) = &built.opened.config.pending {
