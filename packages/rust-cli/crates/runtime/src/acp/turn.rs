@@ -23,7 +23,8 @@ use rust_cli_kernel_api::message::{
 };
 use rust_cli_kernel_api::model::BlockDelta;
 use rust_cli_kernel_api::orchestration::{
-    InteractionRequest, QueryError, QueryEvent, QueryRequest, QueryStop, RunSink,
+    ExternalAgentStatus, InteractionRequest, QueryError, QueryEvent, QueryRequest, QueryStop,
+    RunSink,
 };
 use rust_cli_kernel_api::tool::ToolOutput;
 use rust_cli_kernel_api::user_input::INTERRUPT_TEXTS;
@@ -47,8 +48,8 @@ pub(super) async fn run(
     let mut turn = Turn {
         host,
         sink,
-        session: request.session.clone(),
         agent: agent_id.clone(),
+        session: request.session.clone(),
         model: request.selection.model.clone(),
         response: 0,
         segment: Vec::new(),
@@ -81,8 +82,20 @@ pub(super) async fn run(
             });
         }
     };
-    // The session start is read once; the context-reset divider follows with the session events (S5).
-    let _ = runtime.take_session_start();
+    // Node checks Stop before it takes the session start, so a stopped turn leaves the reset to the next one.
+    if abort.is_aborted() {
+        return turn.aborted(&abort).await;
+    }
+    // The session start is read once. A new session that replaced one the agent could not load is a context reset,
+    // shown before the agent's first output (rule 14; Node `takeSessionStart() === "reset"`).
+    if runtime.take_session_start() == Some(rust_cli_acp::SessionStart::Reset) {
+        let _ = turn
+            .sink
+            .emit(QueryEvent::ExternalAgentContextReset {
+                agent: agent_id.clone(),
+            })
+            .await;
+    }
     if abort.is_aborted() {
         return turn.aborted(&abort).await;
     }
@@ -427,9 +440,10 @@ enum Kind {
 struct Turn<'a> {
     host: &'a AcpHost,
     sink: Arc<dyn RunSink>,
-    session: SessionId,
-    /// The ACP agent id (the selection's provider without `acp:`).
+    /// The ACP agent id (the selection's provider without `acp:`): the status events, the divider and the config
+    /// events name it.
     agent: String,
+    session: SessionId,
     model: String,
     /// The live rows of the open segment are keyed by this response number (the projection settles them by it).
     response: usize,
@@ -477,13 +491,15 @@ impl Turn<'_> {
                     silent_ms,
                     "ACP agent produced no output for a while"
                 );
+                self.status(ExternalAgentStatus::Stalled { silent_ms })
+                    .await;
             }
             RuntimeEvent::ConfigOptions(options) => {
                 self.host
                     .agent_config_changed(&self.session, &self.agent, &options, self.sink.as_ref())
                     .await;
             }
-            RuntimeEvent::Resumed => {}
+            RuntimeEvent::Resumed => self.status(ExternalAgentStatus::Resumed).await,
         }
         None
     }
@@ -540,6 +556,17 @@ impl Turn<'_> {
         }
         let row = &self.rows[tool_call_id];
         (row.id.clone(), row.name.clone())
+    }
+
+    /// The prompt's liveness for the stall status (rule 14; Node `appendExternalAgentStatus`).
+    async fn status(&self, status: ExternalAgentStatus) {
+        let _ = self
+            .sink
+            .emit(QueryEvent::ExternalAgentStatus {
+                agent: self.agent.clone(),
+                status,
+            })
+            .await;
     }
 
     /// The live row as it is now (`QueryEvent::ExternalToolRow`).

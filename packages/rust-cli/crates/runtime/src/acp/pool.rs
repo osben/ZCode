@@ -71,6 +71,12 @@ impl AcpPool {
         }
     }
 
+    /// A test's own windows (a short stall window), set before the first acquire.
+    #[cfg(test)]
+    pub(crate) fn set_timeouts(&mut self, timeouts: AcpTimeouts) {
+        self.timeouts = timeouts;
+    }
+
     #[cfg(test)]
     fn is_empty(&self) -> bool {
         self.slots.lock_unpoisoned().is_empty()

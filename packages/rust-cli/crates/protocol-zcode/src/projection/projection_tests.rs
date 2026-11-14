@@ -21,6 +21,8 @@ mod background_result;
 mod background_shells;
 #[path = "external_agent_config_tests.rs"]
 mod external_agent_config;
+#[path = "external_agent_status_tests.rs"]
+mod external_agent_status;
 #[path = "external_tools_tests.rs"]
 mod external_tools;
 #[path = "fork_notice_tests.rs"]

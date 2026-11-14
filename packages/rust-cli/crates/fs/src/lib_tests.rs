@@ -326,3 +326,41 @@ async fn an_executable_is_a_regular_file_this_process_may_run() {
     #[cfg(not(unix))]
     assert!(is_executable_file(&tool).await);
 }
+
+/// Fork: the synchronous write replaces the target owner-only and leaves no temp file; a failed rename removes it.
+#[cfg(unix)]
+#[test]
+fn the_blocking_write_matches_the_async_one() {
+    use std::os::unix::fs::PermissionsExt;
+    let directory = tempfile::tempdir().unwrap();
+    let private = directory.path().join("private");
+    create_private_dir_all_blocking(&private).unwrap();
+    let mode = std::fs::metadata(&private).unwrap().permissions().mode();
+    assert_eq!(mode & 0o777, 0o700);
+    let target = private.join("transcript.jsonl");
+    for text in ["first\n", "x\n"] {
+        atomic_write_blocking(
+            &target,
+            text.as_bytes(),
+            options(FileMode::Private, TempName::Hidden, ParentDir::Existing),
+        )
+        .unwrap();
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), text);
+        assert_eq!(entries(&private), vec!["transcript.jsonl".to_owned()]);
+    }
+    let mode = std::fs::metadata(&target).unwrap().permissions().mode();
+    assert_eq!(mode & 0o777, 0o600);
+    let occupied = directory.path().join("occupied");
+    std::fs::create_dir(&occupied).unwrap();
+    std::fs::write(occupied.join("keep"), "kept").unwrap();
+    let result = atomic_write_blocking(
+        &occupied,
+        b"new",
+        options(FileMode::Private, TempName::Hidden, ParentDir::Existing),
+    );
+    assert!(result.is_err());
+    assert_eq!(
+        entries(directory.path()),
+        vec!["occupied".to_owned(), "private".to_owned()]
+    );
+}

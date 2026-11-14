@@ -79,6 +79,7 @@ pub(crate) async fn session_start(
     let event = HookEvent {
         context: HookContext {
             agent: request.agent.clone(),
+            session_mode: request.mode,
             ..HookContext::default()
         },
         ..HookEvent::new(
