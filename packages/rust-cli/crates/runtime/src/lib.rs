@@ -262,6 +262,9 @@ impl LocalKernel {
             machine.files().clone(),
         ));
         agent_catalog.set_incognito(incognito.clone());
+        if let Some(code) = &extensions.code_intelligence {
+            code.set_incognito(incognito.clone());
+        }
         let assembler = assemble::context(
             &ports,
             context,

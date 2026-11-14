@@ -104,3 +104,7 @@ pub(crate) fn plugin_parts(plugins: &Plugins) -> (Vec<PluginAgentFile>, Vec<Plug
 #[cfg(test)]
 #[path = "ext_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "ext_lsp_tests.rs"]
+mod lsp_tests;
