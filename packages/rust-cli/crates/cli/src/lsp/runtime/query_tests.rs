@@ -29,11 +29,24 @@ fn disk(goldens: &Value) -> MemoryDisk {
 #[tokio::test]
 async fn operation_projections_and_texts_match_node() {
     let goldens = goldens();
-    let disk = disk(&goldens);
-    let workspace = goldens["workspace"].as_str().unwrap();
     let cases = goldens["operations"].as_array().unwrap();
-    assert!(cases.len() >= 17, "every case is generated");
-    for case in cases {
+    assert!(cases.len() >= 21, "every case is generated");
+    replay_operations(&goldens, false).await;
+}
+
+/// Node's projection with `path.win32` and `fileURLToPath(uri, {windows: true})`: drive letters, encoded colons,
+/// special characters, another drive, a UNC share and Windows URI errors.
+#[tokio::test]
+async fn windows_operation_projections_and_texts_match_node() {
+    let goldens = goldens();
+    assert_eq!(goldens["win32"]["operations"].as_array().unwrap().len(), 4);
+    replay_operations(&goldens["win32"], true).await;
+}
+
+async fn replay_operations(goldens: &Value, windows: bool) {
+    let disk = disk(goldens);
+    let workspace = goldens["workspace"].as_str().unwrap();
+    for case in goldens["operations"].as_array().unwrap() {
         let name = case["name"].as_str().unwrap();
         let status = match case.get("status").and_then(Value::as_str) {
             Some("pending") => LspResultStatus::Pending,
@@ -44,13 +57,17 @@ async fn operation_projections_and_texts_match_node() {
             server_id: "p/ts",
             document_uri: case["documentUri"].as_str().unwrap(),
             workspace,
-            windows: false,
+            windows,
             status,
         };
         let mut reader = LineReader::new(&disk);
         let result = project(&input, &case["raw"], &mut reader).await;
         match case.get("error").and_then(Value::as_str) {
-            Some(error) => assert_eq!(result.unwrap_err().message, error, "{name}"),
+            Some(error) => {
+                let failure = result.unwrap_err();
+                assert_eq!(failure.message, error, "{name}");
+                assert_eq!(failure.code, case["errorCode"], "{name}");
+            }
             None => {
                 let output = result.unwrap();
                 assert_eq!(
@@ -119,6 +136,29 @@ fn diagnostics_projections_and_texts_match_node() {
             "{name}"
         );
     }
+}
+
+#[test]
+fn windows_diagnostics_projection_and_text_match_node() {
+    let goldens = goldens();
+    let win32 = &goldens["win32"];
+    let case = &win32["diagnostics"];
+    let items: Vec<Diagnostic> = case["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(diagnostic)
+        .collect();
+    let output = project_diagnostics(
+        "p/ts",
+        case["path"].as_str().unwrap(),
+        &items,
+        win32["workspace"].as_str().unwrap(),
+        true,
+        LspResultStatus::Ok,
+    );
+    assert_eq!(serde_json::to_value(&output).unwrap(), case["output"]);
+    assert_eq!(output.model_text(), case["text"].as_str().unwrap());
 }
 
 #[test]

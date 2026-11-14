@@ -1,0 +1,149 @@
+{
+  "cwd": "/Users/dev/work",
+  "cases": [
+    {
+      "input": {
+        "operation": "hover",
+        "filePath": "src/a.ts",
+        "line": 1,
+        "character": 1
+      },
+      "filePath": "/Users/dev/work/src/a.ts"
+    },
+    {
+      "input": {
+        "operation": "hover",
+        "filePath": "/Users/dev/work/src/../lib//a.ts",
+        "line": 1,
+        "symbol": "x"
+      },
+      "filePath": "/Users/dev/work/lib/a.ts"
+    },
+    {
+      "input": {
+        "operation": "hover",
+        "filePath": "./a b/é #[x]@c.ts",
+        "line": 1,
+        "symbol": "x"
+      },
+      "filePath": "/Users/dev/work/a b/é #[x]@c.ts"
+    },
+    {
+      "input": {
+        "operation": "hover",
+        "filePath": "../other/x.ts",
+        "line": 1,
+        "symbol": "x"
+      },
+      "filePath": "/Users/dev/other/x.ts"
+    },
+    {
+      "input": {
+        "operation": "hover",
+        "filePath": "~/x.ts",
+        "line": 1,
+        "symbol": "x"
+      },
+      "filePath": "/Users/dev/work/~/x.ts"
+    },
+    {
+      "input": {
+        "operation": "hover",
+        "filePath": "/etc/hosts.ts",
+        "line": 1,
+        "symbol": "x"
+      },
+      "filePath": "/etc/hosts.ts"
+    },
+    {
+      "input": {
+        "operation": "documentSymbol",
+        "filePath": "src/a.ts"
+      },
+      "filePath": "/Users/dev/work/src/a.ts"
+    },
+    {
+      "input": {
+        "operation": "diagnostics",
+        "filePath": "src/a.ts",
+        "line": 1
+      },
+      "filePath": "/Users/dev/work/src/a.ts"
+    },
+    {
+      "input": {
+        "operation": "workspaceSymbol",
+        "filePath": "src/a.ts",
+        "query": "use"
+      },
+      "filePath": "/Users/dev/work/src/a.ts"
+    },
+    {
+      "input": {
+        "operation": "workspaceSymbol",
+        "filePath": "src/a.ts"
+      },
+      "error": "workspaceSymbol requires query"
+    },
+    {
+      "input": {
+        "operation": "workspaceSymbol",
+        "filePath": "src/a.ts",
+        "query": ""
+      },
+      "error": "workspaceSymbol requires query"
+    },
+    {
+      "input": {
+        "operation": "goToDefinition",
+        "filePath": "src/a.ts",
+        "character": 1
+      },
+      "error": "goToDefinition requires line"
+    },
+    {
+      "input": {
+        "operation": "goToDefinition",
+        "filePath": "src/a.ts",
+        "line": 1
+      },
+      "error": "goToDefinition requires exactly one of character or symbol"
+    },
+    {
+      "input": {
+        "operation": "goToDefinition",
+        "filePath": "src/a.ts",
+        "line": 1,
+        "character": 1,
+        "symbol": "x"
+      },
+      "error": "goToDefinition requires exactly one of character or symbol"
+    },
+    {
+      "input": {
+        "operation": "findReferences",
+        "filePath": "src/a.ts",
+        "line": 1,
+        "symbol": ""
+      },
+      "filePath": "/Users/dev/work/src/a.ts"
+    },
+    {
+      "input": {
+        "operation": "goToImplementation",
+        "filePath": "",
+        "line": 1,
+        "character": 1
+      },
+      "error": "Tool path must not be empty"
+    },
+    {
+      "input": {
+        "operation": "hover",
+        "filePath": "",
+        "line": 1
+      },
+      "error": "hover requires exactly one of character or symbol"
+    }
+  ]
+}

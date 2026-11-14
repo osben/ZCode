@@ -3,11 +3,16 @@
 //   `LspInputJsonSchema`);
 // - packages/rust-cli/crates/cli/src/lsp/fixtures/lsp_tool_goldens.json: results projected and formatted by Node's own
 //   code (`projectOperationResult`, `projectDiagnostics`, `formatLspModelContent`, `resolveModelPosition`), which the
-//   Rust tests replay.
+//   Rust tests replay. A Windows section runs the same Node modules with `node:path` as `path.win32` and `node:url`
+//   with `{windows: true}` (module hooks, `?win32` instances); a request-flow section drives Node's `runLspQuery` with a
+//   fake language-server port;
+// - packages/rust-cli/crates/tools/src/fixtures/lsp_tool_inputs.json: what Node's `lspHandler` passes on (the resolved
+//   `filePath`) or throws for each input.
 //
 //   pnpm rust-agent:lsp-tool:update   # regenerate both files
 //   pnpm rust-agent:lsp-tool:check    # fail when out of date (CI, pre-push)
 import { readFile, writeFile } from "node:fs/promises";
+import { registerHooks } from "node:module";
 import { fileURLToPath } from "node:url";
 
 import type { LspDiagnostic, LspOutput } from "@zcode/contracts";
@@ -20,11 +25,23 @@ import {
   resolveModelPosition,
   splitLines,
 } from "../../apps/zcode-cli/packages/core/src/lsp/position.ts";
-import { lspToolEntry } from "../../apps/zcode-cli/packages/core/src/tool/handlers/lsp.ts";
+import { runLspQuery } from "../../apps/zcode-cli/packages/core/src/lsp/query-runner.ts";
+import { LspServerRegistry } from "../../apps/zcode-cli/packages/core/src/lsp/registry.ts";
+import {
+  lspHandler,
+  lspToolEntry,
+} from "../../apps/zcode-cli/packages/core/src/tool/handlers/lsp.ts";
 import { formatLspModelContent } from "../../apps/zcode-cli/packages/core/src/tool/handlers/lsp-format.ts";
+import { FLOW_SOURCE, flowGoldens, HANDLER_CWD, handlerGoldens } from "./lsp-tool-flow.mts";
 
 const definitionPath = fileURLToPath(
   new URL("../../packages/rust-cli/prompts/tools/LSP.json", import.meta.url),
+);
+const inputsPath = fileURLToPath(
+  new URL(
+    "../../packages/rust-cli/crates/tools/src/fixtures/lsp_tool_inputs.json",
+    import.meta.url,
+  ),
 );
 const goldensPath = fileURLToPath(
   new URL(
@@ -40,6 +57,8 @@ const FILES: Record<string, string> = {
   "/w/src/b.ts": "export function use() {\n  return 1;\n}\n",
   "/w/src/long.ts": `${"x".repeat(250)}\n`,
   "/other/x.ts": "  outside the workspace  \n",
+  "/w/src/a b/\u00e9#[x].ts": "export const \u00e9 = 1;\n",
+  "/w/src/b@c.ts": "export const at = 2;\n",
 };
 
 function range(line: number, character: number, endLine = line, endCharacter = character + 1) {
@@ -179,6 +198,17 @@ const operationCases: OperationCase[] = [
     documentUri: "",
   },
   {
+    name: "definition_special_paths",
+    operation: "goToDefinition",
+    raw: [
+      { uri: "file:///w/src/a%20b/%C3%A9%23%5Bx%5D.ts", range: range(0, 13) },
+      { uri: "file:///w/src/b%40c.ts", range: range(0, 13) },
+      { uri: "file:///w/src/b@c.ts", range: range(0, 0) },
+      { uri: "file://localhost/w/src/a%20b/%C3%A9%23%5Bx%5D.ts", range: range(0, 0) },
+    ],
+    documentUri: "file:///w/src/a.ts",
+  },
+  {
     name: "definition_pending",
     operation: "goToDefinition",
     raw: [],
@@ -278,39 +308,178 @@ const positionCases: { line: number; character?: number; symbol?: string }[] = [
   { line: 1, symbol: "u.e" },
 ];
 
-async function operationGolden(entry: OperationCase) {
-  const reader = new SourceLineReader(fileSystem, {});
+interface ProjectionModules {
+  projectOperationResult: typeof projectOperationResult;
+  projectDiagnostics: typeof projectDiagnostics;
+  SourceLineReader: typeof SourceLineReader;
+  formatLspModelContent: typeof formatLspModelContent;
+}
+
+const posixModules: ProjectionModules = {
+  projectOperationResult,
+  projectDiagnostics,
+  SourceLineReader,
+  formatLspModelContent,
+};
+
+function failure(error: unknown) {
+  const thrown = error as Error & { code?: string };
+  return { error: thrown.message, errorCode: thrown.code ?? thrown.name };
+}
+
+function readerOver(files: Record<string, string>) {
+  return {
+    async readTextFile({ path }: { path: string }) {
+      const content = files[path];
+      if (content === undefined) throw new Error(`ENOENT: ${path}`);
+      return { content };
+    },
+  } as unknown as ConstructorParameters<typeof SourceLineReader>[0];
+}
+
+async function operationGolden(
+  entry: OperationCase,
+  modules = posixModules,
+  workspace = WORKSPACE,
+  files = FILES,
+) {
+  const reader = new modules.SourceLineReader(files === FILES ? fileSystem : readerOver(files), {});
   try {
-    const output = await projectOperationResult({
+    const output = await modules.projectOperationResult({
       operation: entry.operation,
       serverId: "p/ts",
       raw: entry.raw,
       documentUri: entry.documentUri,
-      workspacePath: WORKSPACE,
+      workspacePath: workspace,
       reader,
       ...(entry.status ? { status: entry.status } : {}),
     });
-    return { ...entry, output, text: formatLspModelContent(output) };
+    return { ...entry, output, text: modules.formatLspModelContent(output) };
   } catch (error) {
-    return { ...entry, error: (error as Error).message };
+    return { ...entry, ...failure(error) };
   }
 }
 
-const nonFile = await operationGolden({
-  name: "definition_non_file_uri",
-  operation: "goToDefinition",
-  raw: [{ uri: "untitled:Untitled-1", range: range(0, 0) }],
-  documentUri: "",
+// `fileURLToPath` rejections end the projection with Node's own error. A host is left out: its message names the
+// generating machine's platform (the Rust URI tests cover it).
+const uriFailures = [
+  ["definition_non_file_uri", "untitled:Untitled-1"],
+  ["definition_encoded_slash_uri", "file:///w/src%2Fa.ts"],
+  ["definition_malformed_uri", "file:///w/src/a%E0%A4%A.ts"],
+  ["definition_invalid_url", "notaurl"],
+].map(([name, uri]) =>
+  operationGolden({
+    name: name!,
+    operation: "goToDefinition",
+    raw: [{ uri, range: range(0, 0) }],
+    documentUri: "",
+  }),
+);
+
+// The same projection as on Windows: fresh `?win32` instances of the core modules see `path.win32` and a `node:url`
+// that passes `{windows: true}`.
+const WIN32_MARK = "?win32";
+const win32Url = new URL("./lsp-win32/url.mjs", import.meta.url).href;
+const coreUrl = new URL("../../apps/zcode-cli/packages/core/src/", import.meta.url).href;
+registerHooks({
+  resolve(specifier, context, nextResolve) {
+    if (!context.parentURL?.includes(WIN32_MARK)) return nextResolve(specifier, context);
+    if (specifier === "node:path" || specifier === "path") {
+      return { url: "node:path/win32", shortCircuit: true };
+    }
+    if (specifier === "node:url" || specifier === "url") {
+      return { url: win32Url, shortCircuit: true };
+    }
+    const resolved = nextResolve(specifier, context);
+    return resolved.url.startsWith(coreUrl)
+      ? { ...resolved, url: `${resolved.url}${WIN32_MARK}` }
+      : resolved;
+  },
 });
+const win32Import = (path: string) => import(`${new URL(path, coreUrl).href}${WIN32_MARK}`);
+const win32Modules: ProjectionModules = {
+  ...(await win32Import("lsp/operation-output.ts")),
+  ...(await win32Import("tool/handlers/lsp-format.ts")),
+};
+
+const WIN32_WORKSPACE = "C:\\w";
+const WIN32_FILES: Record<string, string> = {
+  "c:\\w\\src\\a.ts": "import { use } from './b';\nconst user = use();\n",
+  "C:\\w\\src\\a b\\\u00e9#[x].ts": "export const \u00e9 = 1;\n",
+  "D:\\other\\x.ts": "  outside  \n",
+  "\\\\srv\\share\\x.ts": "unc line\n",
+};
+const win32Cases: OperationCase[] = [
+  {
+    name: "win32_definition_paths",
+    operation: "goToDefinition",
+    raw: [
+      { uri: "file:///c%3A/w/src/a.ts", range: range(1, 6, 1, 10) },
+      { uri: "file:///C:/w/src/a%20b/%C3%A9%23%5Bx%5D.ts", range: range(0, 13) },
+      { uri: "file:///D:/other/x.ts", range: range(0, 2) },
+      { uri: "file://srv/share/x.ts", range: range(0, 0) },
+    ],
+    documentUri: "file:///c:/w/src/a.ts",
+  },
+  {
+    name: "win32_workspace_symbols",
+    operation: "workspaceSymbol",
+    raw: [{ name: "use", kind: 12, location: location("/C:/w/src/a.ts", 0, 9) }],
+    documentUri: "",
+  },
+  {
+    name: "win32_encoded_separator_uri",
+    operation: "goToDefinition",
+    raw: [{ uri: "file:///C:/w/a%5Cb.ts", range: range(0, 0) }],
+    documentUri: "",
+  },
+  {
+    name: "win32_relative_uri",
+    operation: "goToDefinition",
+    raw: [{ uri: "file:///w/a.ts", range: range(0, 0) }],
+    documentUri: "",
+  },
+];
+// One file, as a diagnostics answer is per document.
+const WIN32_DIAGNOSTICS_PATH = "C:\\w\\src\\a b\\\u00e9#[x].ts";
+const win32DiagnosticItems: LspDiagnostic[] = DIAGNOSTICS.map((item) => ({
+  ...item,
+  path: WIN32_DIAGNOSTICS_PATH,
+}));
 
 const goldens = {
   workspace: WORKSPACE,
   files: FILES,
-  operations: [...(await Promise.all(operationCases.map(operationGolden))), nonFile],
+  operations: [
+    ...(await Promise.all(operationCases.map((entry) => operationGolden(entry)))),
+    ...(await Promise.all(uriFailures)),
+  ],
   diagnostics: diagnosticsCases.map((entry) => {
     const output = projectDiagnostics("p/ts", entry.items, WORKSPACE, entry.status);
     return { ...entry, output, text: formatLspModelContent(output) };
   }),
+  win32: {
+    workspace: WIN32_WORKSPACE,
+    files: WIN32_FILES,
+    operations: await Promise.all(
+      win32Cases.map((entry) => operationGolden(entry, win32Modules, WIN32_WORKSPACE, WIN32_FILES)),
+    ),
+    diagnostics: (() => {
+      const output = win32Modules.projectDiagnostics(
+        "p/ts",
+        win32DiagnosticItems,
+        WIN32_WORKSPACE,
+        "ok",
+      );
+      return {
+        path: WIN32_DIAGNOSTICS_PATH,
+        items: win32DiagnosticItems,
+        output,
+        text: win32Modules.formatLspModelContent(output),
+      };
+    })(),
+  },
+  flow: { source: FLOW_SOURCE, cases: await flowGoldens() },
   positions: {
     text: POSITION_TEXT,
     lines: POSITION_LINES,
@@ -334,6 +503,7 @@ const definition = {
 const outputs: [string, string][] = [
   [definitionPath, `${JSON.stringify(definition, null, 2)}\n`],
   [goldensPath, `${JSON.stringify(goldens, null, 2)}\n`],
+  [inputsPath, `${JSON.stringify({ cwd: HANDLER_CWD, cases: await handlerGoldens() }, null, 2)}\n`],
 ];
 
 const check = process.argv.includes("--check");

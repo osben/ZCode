@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex, Weak};
 use async_trait::async_trait;
 use rust_cli_base::sync::LockUnpoisoned;
 use rust_cli_ext::plugins::lsp::ResolvedLspServer;
+use rust_cli_kernel_api::env_files::PathStyle;
 use rust_cli_kernel_api::lsp::{
     FileMutation, FileMutationKind, LspOperation, LspOutput, LspPreferences, LspQuery,
     LspResultStatus,
@@ -326,6 +327,18 @@ impl SessionLsp {
             return Err(disabled());
         }
         let operation = query.operation;
+        let style = if self.shared.documents.windows() {
+            PathStyle::Windows
+        } else {
+            PathStyle::Posix
+        };
+        // Node `matchFor`: the tool resolves `filePath`, so this guards other callers.
+        if !style.is_absolute(&query.file_path) {
+            return Err(LspError::new(
+                "lsp_invalid_position",
+                "filePath must be absolute",
+            ));
+        }
         let found = self.registry.for_file(&query.file_path).ok_or_else(|| {
             LspError::new(
                 "lsp_no_server_for_file",
