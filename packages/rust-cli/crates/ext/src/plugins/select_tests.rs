@@ -450,7 +450,10 @@ async fn plugin_host_plugins_load_with_a_node_helper() {
     assert_eq!(
         transports(&loaded, "documents"),
         [
-            ("plugin:documents:documents", &McpTransportConfig::NodeHelper),
+            (
+                "plugin:documents:documents",
+                &McpTransportConfig::NodeHelper
+            ),
             ("plugin:documents:extra", &McpTransportConfig::NodeHelper),
         ]
     );
@@ -477,7 +480,9 @@ async fn mcp_app_plugins_are_helper_hosted_with_a_node_helper() {
     let files = [
         manifest(
             "/Users/dev/viewer",
-            &format!(r#"{{"name": "viewer", {APP_SERVER}, "ui": {{"surfaces": [{{"id": "panel"}}]}}}}"#),
+            &format!(
+                r#"{{"name": "viewer", {APP_SERVER}, "ui": {{"surfaces": [{{"id": "panel"}}]}}}}"#
+            ),
         ),
         manifest(
             "/Users/dev/mention",
@@ -493,7 +498,9 @@ async fn mcp_app_plugins_are_helper_hosted_with_a_node_helper() {
         ),
         manifest(
             "/Users/dev/session-app",
-            &format!(r#"{{"name": "session-app", {APP_SERVER}, "ui": {{"surfaces": [{{"id": "s"}}]}}}}"#),
+            &format!(
+                r#"{{"name": "session-app", {APP_SERVER}, "ui": {{"surfaces": [{{"id": "s"}}]}}}}"#
+            ),
         ),
     ];
     let candidates = vec![
@@ -508,7 +515,10 @@ async fn mcp_app_plugins_are_helper_hosted_with_a_node_helper() {
         ..PluginSources::default()
     };
     let loaded = load_all(&env(&files), &workspace(), &session, &helper).await;
-    assert_eq!(names(&loaded), ["session-app", "viewer", "mention", "plain"]);
+    assert_eq!(
+        names(&loaded),
+        ["session-app", "viewer", "mention", "plain"]
+    );
     for plugin in ["session-app", "viewer", "mention"] {
         let found = transports(&loaded, plugin);
         assert_eq!(found.len(), 1, "{plugin}");
@@ -526,7 +536,10 @@ async fn mcp_app_plugins_are_helper_hosted_with_a_node_helper() {
     let loaded = load_all(&env(&files), &workspace(), &session, &without).await;
     for plugin in ["session-app", "viewer", "mention", "plain"] {
         assert!(
-            matches!(transports(&loaded, plugin)[0].1, McpTransportConfig::Stdio { .. }),
+            matches!(
+                transports(&loaded, plugin)[0].1,
+                McpTransportConfig::Stdio { .. }
+            ),
             "{plugin}"
         );
     }

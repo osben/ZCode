@@ -55,7 +55,10 @@ impl RemoteEnvironment {
     ) -> Result<Vec<String>, McpError> {
         let request = Request::McpDeclare {
             workspace: to_wire::workspace(workspace),
-            servers: servers.into_iter().filter_map(to_wire::mcp_declared).collect(),
+            servers: servers
+                .into_iter()
+                .filter_map(to_wire::mcp_declared)
+                .collect(),
         };
         match self.mcp_call(request).await {
             Ok(Reply::McpDeclare { closed }) => Ok(closed),

@@ -9,13 +9,13 @@ use std::sync::Arc;
 use anyhow::Result;
 use rust_cli_base::clock::SystemClock;
 use rust_cli_env_local::{LocalCronStore, LocalEnvironment};
-use rust_cli_kernel_api::mcp::McpTransport;
 use rust_cli_ext::PluginSources;
 use rust_cli_ext::plugins::PluginOrigin;
 use rust_cli_kernel_api::cron_store::CronStore;
 use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
 use rust_cli_kernel_api::env_registry::EnvironmentRegistry;
 use rust_cli_kernel_api::ids::EnvironmentId;
+use rust_cli_kernel_api::mcp::McpTransport;
 use rust_cli_node_store::LOCAL_ENVIRONMENT;
 use rust_cli_ssh_connect::ArtifactSource;
 

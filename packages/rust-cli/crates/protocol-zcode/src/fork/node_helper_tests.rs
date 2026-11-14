@@ -307,7 +307,7 @@ async fn forward_ok(helper: &NodeHelper, method: &str, params: Value) -> Value {
 
 #[test]
 fn forwarded_table_is_the_spec_list() {
-    assert_eq!(FORWARDED_METHODS.len(), 35);
+    assert_eq!(FORWARDED_METHODS.len(), 53);
     let plugins = FORWARDED_METHODS
         .iter()
         .filter(|method| method.starts_with("plugins/"))
@@ -320,9 +320,14 @@ fn forwarded_table_is_the_spec_list() {
         .iter()
         .filter(|method| method.starts_with("v4/conversation/workflowRun"))
         .count();
-    assert_eq!((plugins, workflows, runs), (20, 8, 7));
-    // F3 and F4 methods and the sessionless catalog that Rust answers itself stay out.
-    assert!(!FORWARDED_METHODS.contains(&"plugins/mentionItems"));
+    let session = FORWARDED_METHODS
+        .iter()
+        .filter(|method| method.starts_with("mcp/"))
+        .count();
+    assert_eq!((plugins, workflows, runs, session), (21, 8, 7, 17));
+    // F3 adds the session-scoped methods (`plugins/mentionItems` among them); the sessionless skills catalog that Rust
+    // answers itself stays out.
+    assert!(FORWARDED_METHODS.contains(&"plugins/mentionItems"));
     assert!(!FORWARDED_METHODS.contains(&"skills/referenceCatalog"));
     assert_eq!(RELAYED_NOTIFICATIONS, &["plugins/operationProgress"]);
 }
@@ -1246,3 +1251,6 @@ async fn a_timed_out_call_drops_a_process_that_misses_the_ping_deadline() {
     assert_eq!(rig.fake.stopped.load(Ordering::SeqCst), 1);
     assert_eq!(rig.helper.crash_count(), 0);
 }
+
+#[path = "node_helper_sessions_tests.rs"]
+mod sessions;

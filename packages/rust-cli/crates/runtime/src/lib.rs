@@ -369,11 +369,13 @@ impl LocalKernel {
 
     /// 加载插件、开始连接 MCP 服务器（不等待连接完成，ext.md §3.3）。插件的 agent 文件交给 agent
     /// 目录、hooks 登记到 hooks 引擎（ext.md §4，L12）；返回时两者都已生效，之后才开会话。
-    pub async fn start_extensions(&self) {
+    /// Fork: returns the loaded plugins, for the Node helper's catalog (specs/fork-rust-node-helper.md F3).
+    pub async fn start_extensions(&self) -> rust_cli_ext::plugins::Plugins {
         let plugins = self.ext.start().await;
         let (agents, hooks) = ext::plugin_parts(&plugins);
         self.agent_catalog.set_plugins(agents);
         self.hooks.register_plugins(hooks);
+        plugins
     }
 
     /// `-p` 在第一个请求前的 MCP 等待（ext.md §3.3.1，修复线 F36）：alwaysLoad 的服务器与 prewait，到期就开跑，

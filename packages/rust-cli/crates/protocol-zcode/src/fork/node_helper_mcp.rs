@@ -42,9 +42,11 @@ pub struct HelperMcpConnection {
     pub events: mpsc::UnboundedReceiver<McpTransportEvent>,
 }
 
-/// Rust's end of a pipe. Dropping it sends the final `Closed` event unless one was sent.
+/// Rust's end of a pipe. Dropping it sends the final `Closed` event unless one was sent, and ends its writer.
 pub(super) struct Pipe {
     sender: mpsc::UnboundedSender<McpTransportEvent>,
+    /// Rust's messages, in send order, to the pipe's writer task ([`pipe_writer`]).
+    outbound: mpsc::UnboundedSender<Value>,
     closed: bool,
 }
 
@@ -95,18 +97,30 @@ impl NodeHelper {
             NEXT.fetch_add(1, Ordering::Relaxed)
         );
         let (sender, events) = mpsc::unbounded_channel();
+        let (outbound, queue) = mpsc::unbounded_channel();
+        let writer = pipe_writer(
+            self.myself.clone(),
+            generation,
+            peer.clone(),
+            id.clone(),
+            queue,
+            sender.clone(),
+        );
         // Registered before the request: the helper may send the first message right after it answers.
         if !self.with_running(generation, |running| {
             running.pipes.insert(
                 id.clone(),
                 Pipe {
                     sender,
+                    outbound,
                     closed: false,
                 },
             );
         }) {
             return Err(closed("the helper exited"));
         }
+        // Ends when the pipe is dropped (its `outbound` closes).
+        drop(self.spawner.spawn("node-helper-pipe-writer", writer));
         let params = json!({"connection": id, "server": server, "workspace": workspace});
         let answer = tokio::time::timeout(
             self.timing.timeout_for(CONNECT),
@@ -133,13 +147,20 @@ impl NodeHelper {
         Err(McpError::Connect { message: failure })
     }
 
-    /// Sends one MCP JSON-RPC message on a helper connection.
+    /// Queues one MCP JSON-RPC message on a helper connection. It does not wait for the helper: Rust's MCP client
+    /// awaits `send` before it watches a call's cancel, so a tool call whose session is still opening must not hold
+    /// its own cancel back. The pipe's writer sends the messages in order.
     pub async fn mcp_send(&self, connection: &str, message: Value) -> Result<(), McpError> {
-        let Some(peer) = self.pipe_peer(connection) else {
-            return Err(closed("the helper connection is closed"));
+        let state = self.state.lock_unpoisoned();
+        let queued = match &state.slot {
+            Slot::Running(running) => running
+                .pipes
+                .get(connection)
+                .is_some_and(|pipe| pipe.outbound.send(message).is_ok()),
+            _ => false,
         };
-        let params = json!({"connection": connection, "message": message});
-        if peer.notify(SEND, &params).await {
+        drop(state);
+        if queued {
             Ok(())
         } else {
             Err(closed("the helper connection is closed"))
@@ -216,7 +237,11 @@ impl NodeHelper {
     }
 
     /// Runs `f` on the running slot of `generation`; false when that generation is gone.
-    fn with_running(&self, generation: u64, f: impl FnOnce(&mut super::Running)) -> bool {
+    pub(super) fn with_running(
+        &self,
+        generation: u64,
+        f: impl FnOnce(&mut super::Running),
+    ) -> bool {
         let mut state = self.state.lock_unpoisoned();
         match &mut state.slot {
             Slot::Running(running) if running.generation == generation => {
@@ -224,6 +249,51 @@ impl NodeHelper {
                 true
             }
             _ => false,
+        }
+    }
+}
+
+/// The session a helper tool call runs in (`_meta["zcode/helperContext"].sessionId` of a `tools/call`).
+fn call_session(message: &Value) -> Option<&str> {
+    if message.get("method").and_then(Value::as_str) != Some("tools/call") {
+        return None;
+    }
+    message
+        .pointer("/params/_meta/zcode~1helperContext/sessionId")
+        .and_then(Value::as_str)
+        .filter(|session| !session.is_empty())
+}
+
+/// Sends a pipe's messages to the helper in order. A tool call first opens its session in the generation (F3,
+/// "Session open and close"); when the open fails, the call is answered on the pipe with the open's error instead of
+/// reaching the helper.
+async fn pipe_writer(
+    helper: std::sync::Weak<NodeHelper>,
+    generation: u64,
+    peer: rust_cli_protocol_core::connection::Peer,
+    connection: String,
+    mut queue: mpsc::UnboundedReceiver<Value>,
+    events: mpsc::UnboundedSender<McpTransportEvent>,
+) {
+    while let Some(message) = queue.recv().await {
+        if let Some(session) = call_session(&message) {
+            let Some(owner) = helper.upgrade() else {
+                return;
+            };
+            let opened = owner.ensure_session(generation, &peer, session).await;
+            drop(owner);
+            if let Err(error) = opened {
+                if let Some(id) = message.get("id") {
+                    let answer = json!({"jsonrpc": "2.0", "id": id,
+                        "error": {"code": -32603, "message": error.message}});
+                    let _ = events.send(McpTransportEvent::Message { message: answer });
+                }
+                continue;
+            }
+        }
+        let params = json!({"connection": connection, "message": message});
+        if !peer.notify(SEND, &params).await {
+            return;
         }
     }
 }

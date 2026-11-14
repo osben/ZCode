@@ -293,7 +293,11 @@ impl Admission<'_> {
         if clash && takes_name(&plugin) {
             return reject(SkipReason::DuplicateName);
         }
-        Ok(if served { helper_hosted(plugin) } else { plugin })
+        Ok(if served {
+            helper_hosted(plugin)
+        } else {
+            plugin
+        })
     }
 }
 
@@ -320,9 +324,12 @@ fn declares_mcp_app(manifest: &Value) -> bool {
         .and_then(|slots| slots.get("composer.mention"))
         .and_then(Value::as_array)
         .is_some_and(|entries| {
-            entries
-                .iter()
-                .any(|entry| entry.pointer("/target/tool").and_then(Value::as_str).is_some())
+            entries.iter().any(|entry| {
+                entry
+                    .pointer("/target/tool")
+                    .and_then(Value::as_str)
+                    .is_some()
+            })
         });
     surfaces || mention
 }

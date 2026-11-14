@@ -28,8 +28,8 @@ pub const NODE_HELPER_UNAVAILABLE: &str = "proto.forkRustAgent.nodeHelperUnavail
 /// sessions, helper → Rust requests).
 pub(crate) const PROTOCOL_VERSION: u64 = 2;
 
-/// Methods Rust may forward (F1 plugin management, F2 saved workflows and run history). Forwarding also needs the
-/// method in the helper's advertised `methods`.
+/// Methods Rust may forward (F1 plugin management, F2 saved workflows and run history, F3 session-scoped MCP App
+/// methods). Forwarding also needs the method in the helper's advertised `methods`.
 pub(crate) const FORWARDED_METHODS: &[&str] = &[
     "plugins/list",
     "plugins/overview",
@@ -66,6 +66,25 @@ pub(crate) const FORWARDED_METHODS: &[&str] = &[
     "v4/conversation/workflowRunArtifactRead",
     "v4/conversation/workflowRunWorkspace",
     "v4/conversation/workflowRunNodeResult",
+    // F3: the session-scoped methods (`node_helper_sessions.rs`).
+    "mcp/uiOpenInstance",
+    "mcp/uiValidateInstance",
+    "mcp/uiCloseInstance",
+    "mcp/uiReadResource",
+    "mcp/uiListResources",
+    "mcp/uiListResourceTemplates",
+    "mcp/uiSubscribeResource",
+    "mcp/uiUnsubscribeResource",
+    "mcp/uiCallTool",
+    "mcp/uiCancelCall",
+    "mcp/uiSampling",
+    "mcp/uiCancelSampling",
+    "mcp/uiRegisterAppTools",
+    "mcp/uiUnregisterAppTools",
+    "mcp/uiClaimAppToolCall",
+    "mcp/uiResolveAppToolCall",
+    "mcp/readResource",
+    "plugins/mentionItems",
 ];
 
 /// Helper notifications relayed to the Host verbatim. Any other notification from the helper is dropped.
@@ -162,6 +181,8 @@ pub struct NodeHelper {
     state: StdMutex<State>,
     /// Set by the first launch or initialize failure, cleared by a successful start, so the warning is logged once.
     warned: AtomicBool,
+    /// F3: what Rust admitted, sent with every session open (set once plugins are loaded).
+    catalog: StdMutex<Option<Arc<sessions::HelperCatalog>>>,
 }
 
 struct State {
@@ -196,6 +217,8 @@ struct Running {
     /// F3: the helper MCP connections of this generation, by connection id. Dropped with the slot, each closes its
     /// connection's event stream (a crash, timeout or reclaim closes every pipe). An open pipe blocks idle reclaim.
     pipes: HashMap<String, mcp::Pipe>,
+    /// F3: the helper sessions opened (or opening) in this generation. An open session blocks idle reclaim.
+    sessions: HashMap<String, sessions::Opening>,
     /// Dropped with the slot: kills the process tree. Always dropped after the state lock is released, since it comes
     /// from an injected launcher.
     _guard: Box<dyn Send>,
@@ -204,7 +227,7 @@ struct Running {
 impl Running {
     /// Nothing keeps the process: no call in flight and no open helper resource (F3 "Open resources").
     fn idle(&self) -> bool {
-        self.in_flight == 0 && self.pipes.is_empty()
+        self.in_flight == 0 && self.pipes.is_empty() && self.sessions.is_empty()
     }
 }
 
@@ -228,6 +251,7 @@ impl NodeHelper {
                 retry_at: None,
             }),
             warned: AtomicBool::new(false),
+            catalog: StdMutex::new(None),
         })
     }
 
@@ -254,6 +278,12 @@ impl NodeHelper {
             helper: self,
             generation,
         };
+        // F3: a session-scoped call runs in its helper session, opened first in this generation.
+        if let Some(session) = sessions::session_of(method, params)
+            && let Err(error) = self.ensure_session(generation, &peer, session).await
+        {
+            return Some(Err(error));
+        }
         let started = self.heard_count(generation);
         let deadline = self.timing.timeout_for(method);
         let result = match tokio::time::timeout(deadline, peer.request(method, params)).await {
@@ -455,6 +485,7 @@ impl NodeHelper {
             last_used: now,
             heard: 0,
             pipes: HashMap::new(),
+            sessions: HashMap::new(),
             _guard: guard,
         });
         state.retry_at = None;
@@ -776,9 +807,13 @@ impl Service for Relay {
 
 #[path = "node_helper_mcp.rs"]
 mod mcp;
+#[path = "node_helper_sessions.rs"]
+mod sessions;
 #[cfg(test)]
 use mcp::HelperMcpConnection;
 pub use mcp::HelperRoutedMcp;
+pub use sessions::HelperCatalog;
+pub(crate) use sessions::{close_listener, session_of};
 
 #[cfg(test)]
 #[path = "node_helper_tests.rs"]
