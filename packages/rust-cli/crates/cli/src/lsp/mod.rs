@@ -24,6 +24,7 @@ use rust_cli_kernel_api::lsp::{
     LspPreferencesPatch, LspQuery, LspQueryError, LspServerStatus, LspStatus, LspWorkspace,
 };
 use rust_cli_kernel_api::machine::Files;
+use rust_cli_kernel_api::remote_identity::is_remote_workspace_identity;
 use rust_cli_kernel_api::store::StoreQueries;
 use rust_cli_paths::StoragePaths;
 use serde_json::{Map, Value};
@@ -182,6 +183,10 @@ impl Host {
             Arc::clone(&slot.1)
         };
         cell.get_or_init(|| async {
+            // The host serves its own machine only.
+            if workspace.environment != self.inputs.environment {
+                return None;
+            }
             let servers = self.servers(&root).await;
             if servers.is_empty() {
                 return None;
@@ -197,6 +202,10 @@ impl Host {
                 },
                 None => None,
             };
+            // Node `create-app.ts` declares no servers for a remote workspace identity (the raw value, untrimmed).
+            if identity.as_deref().is_some_and(is_remote_workspace_identity) {
+                return None;
+            }
             let key = ServerKey {
                 identity: identity
                     .map(|identity| identity.trim().to_owned())

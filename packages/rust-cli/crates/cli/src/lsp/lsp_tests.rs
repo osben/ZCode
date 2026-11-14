@@ -218,6 +218,13 @@ struct Fixture {
 const KIT: &str = "/Users/dev/kit";
 
 async fn fixture(project_files: &[(&str, serde_json::Value)]) -> Fixture {
+    fixture_with(project_files, None).await
+}
+
+async fn fixture_with(
+    project_files: &[(&str, serde_json::Value)],
+    store: Option<Arc<dyn StoreQueries>>,
+) -> Fixture {
     let home = tempfile::tempdir().unwrap();
     let official = home
         .path()
@@ -270,7 +277,7 @@ async fn fixture(project_files: &[(&str, serde_json::Value)]) -> Fixture {
         view_host: true,
         preferences: preferences.as_path().to_path_buf(),
         launcher,
-        store: None,
+        store,
     });
     Fixture {
         _home: home,
@@ -668,4 +675,143 @@ async fn a_workspace_without_declared_servers_is_not_offered_and_has_no_server_f
             "No language server is configured for hover on this file type"
         )
     );
+}
+
+/// A store whose every session is listed under one workspace key (Node `workspaceID ?? directory`).
+struct KeyStore(&'static str);
+
+#[async_trait::async_trait]
+impl StoreQueries for KeyStore {
+    async fn metering(
+        &self,
+        _session: &SessionId,
+    ) -> Result<
+        rust_cli_kernel_api::metering::SessionMetering,
+        rust_cli_kernel_api::store::StoreError,
+    > {
+        unreachable!()
+    }
+
+    async fn request_stats(
+        &self,
+        _session: &SessionId,
+    ) -> Result<rust_cli_kernel_api::metering::RequestStats, rust_cli_kernel_api::store::StoreError>
+    {
+        unreachable!()
+    }
+
+    async fn activity(
+        &self,
+        _query: rust_cli_kernel_api::metering::ActivityQuery,
+    ) -> Result<rust_cli_kernel_api::metering::ActivityStats, rust_cli_kernel_api::store::StoreError>
+    {
+        unreachable!()
+    }
+
+    async fn put_record(
+        &self,
+        _session: &SessionId,
+        _record: &rust_cli_kernel_api::store::FrontendRecord,
+    ) -> Result<(), rust_cli_kernel_api::store::StoreError> {
+        unreachable!()
+    }
+
+    async fn records(
+        &self,
+        _session: &SessionId,
+        _kind: &str,
+    ) -> Result<
+        Vec<rust_cli_kernel_api::store::FrontendRecord>,
+        rust_cli_kernel_api::store::StoreError,
+    > {
+        unreachable!()
+    }
+
+    async fn session_workspace_key(
+        &self,
+        _session: &SessionId,
+    ) -> Result<Option<String>, rust_cli_kernel_api::store::StoreError> {
+        Ok(Some(self.0.to_owned()))
+    }
+}
+
+fn hover(file_path: &str) -> rust_cli_kernel_api::lsp::LspQuery {
+    rust_cli_kernel_api::lsp::LspQuery {
+        operation: rust_cli_kernel_api::lsp::LspOperation::Hover,
+        file_path: file_path.to_owned(),
+        line: Some(1.0),
+        character: Some(1.0),
+        symbol: None,
+        query: None,
+        include_declaration: None,
+    }
+}
+
+/// Node `create-app.ts` passes no servers for a remote workspace identity, so its runtime has no `LspService`: the
+/// tool is not offered and a query finds no server, even with one installed on this machine.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_remote_workspace_identity_has_no_language_servers() {
+    for identity in [
+        "remote:ssh:host:22:dev:/Users/dev/a",
+        "remote:server:srv-1:/Users/dev/a",
+    ] {
+        let fixture = fixture_with(&[], Some(Arc::new(KeyStore(identity)))).await;
+        install(&fixture.bin, "typescript-language-server");
+        let session = SessionId::new("s1");
+        let root = reference("/Users/dev/a");
+        fixture.host.refresh_tool(&session, &root).await;
+        assert!(!fixture.host.tool_offered(&session), "{identity}");
+        let error = fixture
+            .host
+            .query(
+                &session,
+                &root,
+                hover("/Users/dev/a/x.ts"),
+                &CancellationToken::new(),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "lsp_no_server_for_file", "{identity}");
+    }
+}
+
+/// A local identity (here a malformed remote one, which Node's parser rejects) keeps the servers.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_local_workspace_identity_keeps_its_language_servers() {
+    let fixture = fixture_with(&[], Some(Arc::new(KeyStore("remote:ssh:host:22:dev:rel")))).await;
+    install(&fixture.bin, "typescript-language-server");
+    let session = SessionId::new("s1");
+    fixture
+        .host
+        .refresh_tool(&session, &reference("/Users/dev/a"))
+        .await;
+    assert!(fixture.host.tool_offered(&session));
+}
+
+/// The host serves its own machine only: a workspace in another environment gets no runtime.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_workspace_in_another_environment_has_no_language_servers() {
+    let fixture = fixture(&[]).await;
+    install(&fixture.bin, "typescript-language-server");
+    let session = SessionId::new("s1");
+    let root = WorkspaceRef {
+        environment: EnvironmentId::new("ssh:host"),
+        root: EnvPath::new("/Users/dev/a"),
+    };
+    fixture.host.refresh_tool(&session, &root).await;
+    assert!(!fixture.host.tool_offered(&session));
+    let error = fixture
+        .host
+        .query(
+            &session,
+            &root,
+            hover("/Users/dev/a/x.ts"),
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "lsp_no_server_for_file");
 }
