@@ -98,6 +98,11 @@ struct Turn {
     rejected: Vec<String>,
 }
 
+/// Fork: a pending interaction that is the session's workspace hook review (`fork/hook_review.rs`).
+fn is_hook_review(pending: &Value) -> bool {
+    pending["kind"] == "workspaceHookReview"
+}
+
 /// Fork: the workspace trust banners (`fork/workspace_trust.rs`): the last published payloads, so a snapshot shows
 /// what the deltas showed.
 #[derive(Debug, Clone, Default)]
@@ -270,6 +275,13 @@ impl Projection {
         projection.pause_reason = self.pause_reason;
         projection.plan_transition.clone_from(&self.plan_transition);
         projection.banners.clone_from(&self.banners);
+        // Fork: the workspace hook review is session-level protocol state, not history (`fork/hook_review.rs`).
+        projection.pending.extend(
+            self.pending
+                .iter()
+                .filter(|pending| is_hook_review(pending))
+                .cloned(),
+        );
         // Fork (B2): the runs going now were not spawned in this projection's sight, so they get no Stop.
         projection.subagents.recovering = true;
         projection
@@ -375,7 +387,11 @@ impl Projection {
     }
 
     pub fn pending_permissions(&self) -> usize {
-        self.pending.len()
+        // Node's index summary counts permission and question interactions only.
+        self.pending
+            .iter()
+            .filter(|pending| !is_hook_review(pending))
+            .count()
     }
 
     /// 用户拒绝了这个工具调用（resolveInteraction 的裁决在内核事件之前）：结果投成 cancelled（与 Node 相同）。
@@ -528,6 +544,26 @@ impl Projection {
             self.banners.hook = hook;
         }
         (!patch.is_empty()).then(|| json!({"op": "state.updated", "patch": patch}))
+    }
+
+    /// Fork: publishes the session's workspace hook review interaction (`fork/hook_review.rs`), replacing the previous
+    /// one: Node keeps one review per session and a newer generation of the flow replaces it
+    /// (`onWorkspaceHookReviewRequested`).
+    pub fn put_hook_review(&mut self, interaction: Value) -> Value {
+        self.pending.retain(|pending| !is_hook_review(pending));
+        self.pending.push(interaction);
+        json!({"op": "state.updated", "patch": {"pendingInteractions": self.pending}})
+    }
+
+    /// Fork: removes the workspace hook review `interaction_id` (Node `removeWorkspaceHookReview`): `None` when it is
+    /// not the current one.
+    pub fn remove_hook_review(&mut self, interaction_id: &str) -> Option<Value> {
+        let before = self.pending.len();
+        self.pending.retain(|pending| {
+            !(is_hook_review(pending) && pending["interactionId"] == interaction_id)
+        });
+        (self.pending.len() != before)
+            .then(|| json!({"op": "state.updated", "patch": {"pendingInteractions": self.pending}}))
     }
 
     /// Fork: the kernel's real admission of a remembered input (its `SubmitWith` answered `Queued` or started it), which
@@ -960,9 +996,12 @@ impl Projection {
                     patch.insert("inputRouting".into(), self.input_routing());
                 }
                 patch.insert("usage".into(), state::usage(self.context, &self.total));
-                if !self.pending.is_empty() {
-                    self.pending.clear();
-                    patch.insert("pendingInteractions".into(), json!([]));
+                // Fork: a turn's end drops the tool-bound interactions only; the session-level workspace hook review
+                // stays (Node `product-projection.ts` filters by toolCallId there).
+                let before = self.pending.len();
+                self.pending.retain(is_hook_review);
+                if self.pending.len() != before {
+                    patch.insert("pendingInteractions".into(), json!(self.pending));
                 }
             }
             KernelEvent::ContextUsage {
