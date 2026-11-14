@@ -198,10 +198,10 @@ impl Actor {
     ///
     /// SessionStart 给的首条输入单独一个回合（同对照实现的启动命令）。
     fn take_batch(&mut self, command: &CommandId, head: &str) -> Vec<crate::turn::MorePrompt> {
-        let screening = self
-            .deps
-            .hooks
-            .has_hooks(rust_cli_kernel_api::hooks::HookEventName::UserPromptSubmit);
+        let screening = self.deps.hooks.has_hooks(
+            rust_cli_kernel_api::hooks::HookEventName::UserPromptSubmit,
+            &self.meta.workspace,
+        );
         let startup = command
             .as_str()
             .starts_with(crate::hooks::SESSION_START_INPUT);

@@ -107,7 +107,7 @@ impl HookRunner for ScriptedHooks {
             .unwrap_or_default()
     }
 
-    fn has_hooks(&self, event: HookEventName) -> bool {
+    fn has_hooks(&self, event: HookEventName, _workspace: &WorkspaceRef) -> bool {
         self.outcomes.lock_unpoisoned().contains_key(&event)
     }
 }

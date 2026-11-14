@@ -62,13 +62,12 @@ impl AppWorkspace {
             flag: self.process.flag.as_ref(),
             project_is_local: self.process.project_is_local,
         };
-        let hooks = crate::config::assemble(&inputs).await.hooks;
+        let entry = crate::config::assemble(&inputs).await.project_hooks;
         tracing::info!(
             event = "workspace.hooks.rebuilt",
-            sources = hooks.sources.len(),
             "the process hook snapshot was rebuilt"
         );
-        (self.replace_hooks)(hooks);
+        (self.put_project_hooks)(rust_cli_hooks::project_key(&trust.working_directory), entry);
     }
 
     pub(super) async fn review_bundle(&self, target: &WorkspaceTarget) -> ReviewLookup {
@@ -451,3 +450,7 @@ fn display_path(path: &str) -> String {
 #[cfg(test)]
 #[path = "app_hook_review_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "app_hook_snapshot_tests.rs"]
+mod snapshot_tests;

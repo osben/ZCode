@@ -10,6 +10,7 @@ pub(crate) mod mcp_trust;
 mod mcp_trust_display;
 pub(crate) mod merge;
 mod plugins;
+pub(crate) mod project_hooks;
 mod storage;
 pub(crate) mod trust;
 pub(crate) mod workspace_schema;
@@ -58,6 +59,8 @@ const FLAG_LAYER: &str = "--settings";
 pub(crate) struct ConfigSnapshot {
     pub(crate) version: u64,
     pub(crate) hooks: HooksConfig,
+    /// Fork: the process root's own project hook entry (`project_hooks.rs`); never part of `hooks`.
+    pub(crate) project_hooks: rust_cli_hooks::ProjectEntry,
     /// 配置文件的 `allowedTools` / `disallowedTools`（来源是最后写它的层）。
     pub(crate) rules: Vec<SourcedRule>,
     /// 配置文件的 `permission.mode`。
@@ -373,6 +376,7 @@ pub(crate) async fn assemble(inputs: &ConfigInputs<'_>) -> ConfigSnapshot {
     ConfigSnapshot {
         version: 1,
         hooks,
+        project_hooks: rust_cli_hooks::ProjectEntry::Admitted(Vec::new()),
         rules,
         mode: permission.mode,
         mcp_servers,

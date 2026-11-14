@@ -20,6 +20,19 @@ impl LocalKernel {
         self.hooks.replace(config);
     }
 
+    /// Fork: swaps a workspace's project hook entry (specs/fork-rust-agent-parity.md, "Per-workspace hook snapshots").
+    pub fn put_project_hooks(&self, key: &str, entry: rust_cli_hooks::ProjectEntry) {
+        self.hooks.put_project(key, entry);
+    }
+
+    /// Fork: the loader that assembles a workspace's project hook entry at its first event and at a session start.
+    pub fn set_project_hook_loader(
+        &self,
+        loader: std::sync::Arc<dyn rust_cli_hooks::ProjectHookLoader>,
+    ) {
+        self.hooks.set_project_loader(loader);
+    }
+
     /// 换上入口层从命令行与配置组装的权限规则快照（shell-permissions.md §5）；之后的判决用新快照。
     pub fn replace_permission_rules(&self, rules: PermissionRules) {
         self.gate.replace_rules(rules);

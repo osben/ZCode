@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 use super::*;
 use crate::test_support::{
     Script, ScriptedEnv, ScriptedHttp, command_settings, config, engine, event, ports, script,
+    workspace,
 };
 
 fn stdin_of(env: &ScriptedEnv, index: usize) -> Value {
@@ -69,7 +70,7 @@ async fn untrusted_or_empty_configs_run_nothing() {
     let mut untrusted = config(&command_settings("Stop", "", "x"));
     untrusted.trusted = false;
     let engine = HookEngine::with_config(ports(env.clone()), untrusted);
-    assert!(!engine.has_hooks(HookEventName::Stop));
+    assert!(!engine.has_hooks(HookEventName::Stop, &workspace()));
     let stop = event(HookEventName::Stop, json!({"stop_hook_active": false}));
     assert_eq!(
         engine.run(stop.clone(), CancellationToken::new()).await,
@@ -82,8 +83,8 @@ async fn untrusted_or_empty_configs_run_nothing() {
     );
     // 换上快照后生效。
     engine.replace(config(&command_settings("Stop", "", "x")));
-    assert!(engine.has_hooks(HookEventName::Stop));
-    assert!(!engine.has_hooks(HookEventName::SessionStart));
+    assert!(engine.has_hooks(HookEventName::Stop, &workspace()));
+    assert!(!engine.has_hooks(HookEventName::SessionStart, &workspace()));
     let _ = engine.run(stop, CancellationToken::new()).await;
     assert_eq!(env.started().len(), 1);
 }

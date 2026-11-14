@@ -11,21 +11,21 @@ use super::super::tests::{Fixture, ROOT, fixture_text, target};
 use super::*;
 
 /// Key order, a float and a non-ASCII text, which the rewrite keeps as `JSON.stringify(raw, null, 2)` does.
-const PROJECT: &str = r#"{"zeta": 1.5, "hooks": {"enabled": true, "events": {"UserPromptSubmit": [{"hooks": [
+pub(super) const PROJECT: &str = r#"{"zeta": 1.5, "hooks": {"enabled": true, "events": {"UserPromptSubmit": [{"hooks": [
     {"type": "command", "command": "echo hi", "statusMessage": "héllo"},
     {"type": "process", "command": "node", "args": ["check.js", "--fast"]}
 ]}]}}, "alpha": {"2": "b", "1": "a"}}"#;
 
-const PROJECT_PATH: &str = "/Users/dev/repo/.zcode/config.json";
+pub(super) const PROJECT_PATH: &str = "/Users/dev/repo/.zcode/config.json";
 
-async fn bundle(fixture: &Fixture) -> ReviewBundle {
+pub(super) async fn bundle(fixture: &Fixture) -> ReviewBundle {
     match fixture.admin.review_bundle(&target(ROOT)).await {
         ReviewLookup::Bundle(bundle) => bundle,
         other => panic!("a reviewable bundle: {other:?}"),
     }
 }
 
-fn ids(bundle: &ReviewBundle) -> Vec<String> {
+pub(super) fn ids(bundle: &ReviewBundle) -> Vec<String> {
     bundle
         .items
         .iter()

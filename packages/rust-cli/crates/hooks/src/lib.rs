@@ -40,6 +40,7 @@ mod on_error;
 mod output;
 mod persist;
 mod plugin;
+mod projects;
 mod prompt;
 mod result;
 mod run;
@@ -55,6 +56,7 @@ use std::sync::{Arc, RwLock};
 
 use async_trait::async_trait;
 use rust_cli_base::units;
+use rust_cli_kernel_api::env::WorkspaceRef;
 use rust_cli_kernel_api::hooks::{
     HookEvent, HookEventName, HookOutcome, HookRunner, StopCondition, StopVerdict,
 };
@@ -64,6 +66,7 @@ use tokio_util::sync::CancellationToken;
 
 pub use config::{HookSource, HooksConfig, HooksSettings};
 pub use plugin::PluginHooks;
+pub use projects::{ProjectEntry, ProjectHookLoader, project_key};
 pub use run::{HookPorts, NodeStdinPorts};
 
 use crate::config::HookCommand;
@@ -343,7 +346,7 @@ impl HookRunner for HookEngine {
 
     /// 快照里有这个事件的 matcher（不看 match query）；会话据此决定要不要进入等待
     /// （docs/specs/rust-cli/session-lifecycle.md §3.2）。
-    fn has_hooks(&self, event: HookEventName) -> bool {
+    fn has_hooks(&self, event: HookEventName, _workspace: &WorkspaceRef) -> bool {
         let loaded = self.snapshot();
         loaded.config.trusted
             && loaded

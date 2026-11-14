@@ -227,7 +227,7 @@ async fn serve(
         },
         {
             let kernel = built.kernel.clone();
-            Box::new(move |hooks| kernel.replace_hooks(hooks))
+            Box::new(move |key, entry| kernel.put_project_hooks(&key, entry))
         },
         (opened.primary.mcp().clone(), spawner.clone(), clock.clone()),
     )));

@@ -103,7 +103,10 @@ pub(crate) async fn session_end(
     mode: PermissionMode,
     reason: EndReason,
 ) -> Vec<String> {
-    if !deps.hooks.has_hooks(HookEventName::SessionEnd) {
+    if !deps
+        .hooks
+        .has_hooks(HookEventName::SessionEnd, &meta.workspace)
+    {
         return Vec::new();
     }
     let payload = json!({"reason": reason_name(reason)});
@@ -135,7 +138,11 @@ fn attachment_text(message: &Message) -> Option<&str> {
 impl Actor {
     /// actor 启动时：有 SessionStart hook 才进入"启动"后台工作（没有时不改变行为，无竞态）。
     pub(crate) fn start_session(&mut self, source: StartSource) {
-        if !self.deps.hooks.has_hooks(HookEventName::SessionStart) {
+        if !self
+            .deps
+            .hooks
+            .has_hooks(HookEventName::SessionStart, &self.meta.workspace)
+        {
             return;
         }
         let event = session_start(&self.meta, source, &self.selection, self.mode());
@@ -260,7 +267,11 @@ impl Actor {
         let InteractionRequest::Permission { tool, .. } = request else {
             return None;
         };
-        if !self.deps.hooks.has_hooks(HookEventName::Notification) {
+        if !self
+            .deps
+            .hooks
+            .has_hooks(HookEventName::Notification, &self.meta.workspace)
+        {
             return None;
         }
         let hook = permission_notification(&self.meta, tool, self.mode());

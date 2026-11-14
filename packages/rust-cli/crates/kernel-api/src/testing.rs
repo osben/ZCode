@@ -261,7 +261,11 @@ impl HookRunner for NoHooks {
         HookOutcome::default()
     }
 
-    fn has_hooks(&self, _event: crate::hooks::HookEventName) -> bool {
+    fn has_hooks(
+        &self,
+        _event: crate::hooks::HookEventName,
+        _workspace: &crate::env::WorkspaceRef,
+    ) -> bool {
         false
     }
 }

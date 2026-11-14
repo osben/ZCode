@@ -200,7 +200,9 @@ pub trait HookRunner: Send + Sync {
 
     /// 当前配置里有没有这个事件的 hook（不看 matcher）。调用方用它决定要不要为 hook 进入等待状态
     /// （docs/specs/rust-cli/session-lifecycle.md §3.2）；默认按“有”处理，结果不变、只是多一次空跑。
-    fn has_hooks(&self, _event: HookEventName) -> bool {
+    /// Fork: `workspace` selects the workspace's project hooks (specs/fork-rust-agent-parity.md, "Per-workspace hook
+    /// snapshots").
+    fn has_hooks(&self, _event: HookEventName, _workspace: &WorkspaceRef) -> bool {
         true
     }
 
