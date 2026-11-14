@@ -364,7 +364,7 @@ async fn the_write_checks_the_declaration_it_rewrites() {
 /// (`workspace-hook-mutation.ts` `safeParse`), so its indices are raw positions. Rust's lenient parse skips the
 /// malformed matcher, which shifts the indices: the toggle must refuse rather than write onto another declaration.
 #[tokio::test]
-async fn a_config_nodes_strict_schema_rejects_is_unreadable_and_never_toggled() {
+async fn a_config_nodes_strict_schema_rejects_is_skipped_and_never_toggled() {
     // Node `readWorkspaceHookProjectSources` parses `hooks` with the strict `workspaceHooksConfigSchema` and reports
     // a failure as a read error, so its toggle answers `workspace_hooks_config_unreadable`. The lenient parse would
     // skip the bad entry, shift the indices and write onto another declaration.
