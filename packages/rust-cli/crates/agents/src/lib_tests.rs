@@ -579,3 +579,111 @@ async fn a_desktop_task_stop_returns_after_the_agent_notice() {
         notice.text
     );
 }
+
+/// Fork: a Host snapshot source whose answer the test changes between runs.
+struct ChangingHost(std::sync::Mutex<rust_cli_kernel_api::subagent_config::SubagentSnapshot>);
+
+#[async_trait::async_trait]
+impl rust_cli_kernel_api::subagent_config::SubagentConfigSource for ChangingHost {
+    async fn read(
+        &self,
+        _session: &rust_cli_kernel_api::ids::SessionId,
+    ) -> Result<Option<rust_cli_kernel_api::subagent_config::SubagentSnapshot>, String> {
+        use rust_cli_base::sync::LockUnpoisoned;
+        Ok(Some(self.0.lock_unpoisoned().clone()))
+    }
+}
+
+fn reviewer_snapshot(
+    prompt: Option<&str>,
+) -> rust_cli_kernel_api::subagent_config::SubagentSnapshot {
+    use rust_cli_kernel_api::subagent_config::{ProfileSource, SubagentProfile, SubagentSnapshot};
+    SubagentSnapshot::Ready {
+        profiles: prompt
+            .map(|prompt| SubagentProfile {
+                name: "reviewer".to_owned(),
+                description: "Reviews.".to_owned(),
+                source: ProfileSource::User,
+                system_prompt: format!("You are the {prompt} reviewer."),
+                selection: Some(rust_cli_kernel_api::model::ModelSelection::new(
+                    "e2e-provider",
+                    format!("{prompt}-model"),
+                )),
+                tools: None,
+                disallowed_tools: Vec::new(),
+                max_turns: None,
+                background: false,
+                permission_mode: None,
+            })
+            .into_iter()
+            .collect(),
+        explore: None,
+        general_purpose: None,
+        plugins: Default::default(),
+    }
+}
+
+/// Fork (node_desktop, specs/fork-rust-subagent-runtime-config.md rule 13): like Node's
+/// `resumeTerminalAgentInBackground`, a SendMessage resume runs with the agent's current profile, and a profile that
+/// is gone refuses the resume with Node's text.
+#[tokio::test]
+async fn a_desktop_resume_uses_the_current_profile_and_refuses_a_removed_one() {
+    use rust_cli_base::sync::LockUnpoisoned;
+    let harness = desktop_harness();
+    let host = Arc::new(ChangingHost(std::sync::Mutex::new(reviewer_snapshot(
+        Some("old"),
+    ))));
+    harness.catalog.set_host(host.clone());
+    let signals = harness.agents.signals();
+    let mut stream = signals.signals(&SessionId::new("sess_parent"));
+    let spawned = harness
+        .call(
+            "sess_parent",
+            "Agent",
+            json!({"description": "Review", "prompt": "Review.", "subagent_type": "reviewer"}),
+        )
+        .await;
+    assert!(!spawned.is_error, "{}", text(&spawned));
+    assert_eq!(
+        harness.started(1).await[0].request.selection.model,
+        "old-model"
+    );
+
+    *host.0.lock_unpoisoned() = reviewer_snapshot(Some("new"));
+    let resumed = harness
+        .call(
+            "sess_parent",
+            "SendMessage",
+            json!({"to": "agent_1", "message": "Go on."}),
+        )
+        .await;
+    assert!(!resumed.is_error, "{}", text(&resumed));
+    let seen = harness.started(2).await;
+    assert_eq!(seen[1].request.selection.model, "new-model");
+    let system = format!("{:?}", seen[1].system);
+    assert!(system.contains("You are the new reviewer."), "{system}");
+    assert!(!system.contains("You are the old reviewer."), "{system}");
+    // The resumed run ends before the next message.
+    while !matches!(stream.next().await, Some(AgentSignal::Notice(_))) {}
+
+    *host.0.lock_unpoisoned() = reviewer_snapshot(None);
+    // The harness names a parent run after its tool, so both SendMessage calls share one run: drop the cached
+    // snapshot as a new parent run would read again.
+    harness.catalog.forget(&SessionId::new("sess_parent"));
+    let refused = harness
+        .call(
+            "sess_parent",
+            "SendMessage",
+            json!({"to": "agent_1", "message": "Once more."}),
+        )
+        .await;
+    assert!(!refused.is_error, "{}", text(&refused));
+    assert_eq!(
+        text(&refused),
+        "Cannot resume local agent agent_1: profile reviewer is unavailable."
+    );
+    for _ in 0..100 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(harness.seen().len(), 2);
+}

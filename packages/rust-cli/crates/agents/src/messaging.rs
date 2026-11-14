@@ -70,6 +70,54 @@ impl Messaging {
         rust_cli_kernel_api::tool::text(crate::peer_send::listing(&self.core, context).await)
     }
 
+    /// Fork (node_desktop): the definition, model and mode a resume of `agent` runs with, from the parent's current
+    /// catalog. `Ok(Err(text))` is Node's refusal for a profile that is gone; `Err` is a failed Host read (rule 4).
+    async fn current_profile(
+        &self,
+        agent: &crate::live::LiveAgent,
+        context: &ToolUseContext,
+    ) -> Result<Result<crate::live::Refreshed, String>, ToolError> {
+        let wanted = &agent.definition.agent_type;
+        if self.core.fork && wanted == crate::fork::FORK {
+            // The fork agent is not in the catalog: it keeps its definition and the parent's model.
+            return Ok(Ok(crate::live::Refreshed {
+                definition: agent.definition.clone(),
+                selection: agent.selection.clone(),
+                mode: agent.mode,
+            }));
+        }
+        let definitions = self
+            .core
+            .catalog
+            .prepared_definitions(&context.workspace, &context.session, Some(&context.run))
+            .await
+            .map_err(|message| ToolError::Failed { message })?;
+        let Some(definition) = definitions
+            .into_iter()
+            .find(|definition| &definition.agent_type == wanted)
+        else {
+            return Ok(Err(format!(
+                "Cannot resume local agent {}: profile {wanted} is unavailable.",
+                agent.agent
+            )));
+        };
+        // The parent run's current model and mode, as Node reads the session's selection when the child starts.
+        let (parent_selection, parent_mode) = match self.core.runs.get(&context.run) {
+            Some(parent) => (parent.selection.clone(), parent.mode),
+            None => (agent.selection.clone(), agent.mode),
+        };
+        Ok(Ok(crate::live::Refreshed {
+            selection: spawn::selection(
+                &parent_selection,
+                definition.selection.as_ref(),
+                definition.model.as_deref(),
+                definition.effort.clone(),
+            ),
+            mode: spawn::mode(parent_mode, definition.permission_mode),
+            definition: Arc::new(definition),
+        }))
+    }
+
     async fn send(
         &self,
         input: SendInput,
@@ -129,11 +177,23 @@ impl Messaging {
         } else {
             agent.tool_use.clone()
         };
-        let Some(claimed) =
-            self.core
-                .live
-                .restart(&id, Abort::new(), tool_use, self.core.ports.ids.execution())
-        else {
+        // Fork (node_desktop): Node resumes from the current profile (rule 13 of
+        // specs/fork-rust-subagent-runtime-config.md); a profile that is gone refuses the resume.
+        let refreshed = if self.core.node_desktop {
+            match self.current_profile(&agent, context).await? {
+                Ok(refreshed) => Some(refreshed),
+                Err(refused) => return Ok(rust_cli_kernel_api::tool::text(refused)),
+            }
+        } else {
+            None
+        };
+        let Some(claimed) = self.core.live.restart(
+            &id,
+            Abort::new(),
+            tool_use,
+            self.core.ports.ids.execution(),
+            refreshed,
+        ) else {
             // 并发的另一条消息刚刚让它跑起来：排进邮箱。
             let text = match self
                 .core

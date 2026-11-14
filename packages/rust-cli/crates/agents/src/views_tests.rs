@@ -81,7 +81,8 @@ fn times_follow_the_state_and_restart_resets_the_clock() {
             &AgentId::new("agent_a"),
             Abort::new(),
             None,
-            "exec_test".to_owned()
+            "exec_test".to_owned(),
+            None
         )
         .is_some()
     );
@@ -399,7 +400,7 @@ fn the_current_activity_follows_the_child_events() {
     live.finish(&agent, Ending::Completed);
     assert_eq!(activity(), None);
     assert!(
-        live.restart(&agent, Abort::new(), None, "exec_test".to_owned())
+        live.restart(&agent, Abort::new(), None, "exec_test".to_owned(), None)
             .is_some()
     );
     assert_eq!(activity(), None);
