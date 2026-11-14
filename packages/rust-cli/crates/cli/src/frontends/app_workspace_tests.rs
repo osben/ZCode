@@ -70,6 +70,15 @@ fn fixture(project: Value, user: Value) -> Fixture {
 }
 
 pub(super) fn fixture_text(project: &str, user: Value) -> Fixture {
+    fixture_files(project, user, |env| env)
+}
+
+/// [`fixture_text`] with the project files seen through `wrap` (a seam for held or failing reads).
+pub(super) fn fixture_files(
+    project: &str,
+    user: Value,
+    wrap: impl FnOnce(Arc<dyn Files>) -> Arc<dyn Files>,
+) -> Fixture {
     let facts = EnvFacts {
         cwd: EnvPath::new(ROOT),
         platform: "linux".to_owned(),
@@ -92,7 +101,7 @@ pub(super) fn fixture_text(project: &str, user: Value) -> Fixture {
     let hooks = Arc::new(StdMutex::new(Vec::new()));
     let recorded = hooks.clone();
     let admin = AppWorkspace::new(
-        (Arc::new(env), paths),
+        (wrap(Arc::new(env)), paths),
         ProcessConfig {
             workspace: WorkspaceRef {
                 environment: EnvironmentId::new(LOCAL_ENVIRONMENT),
