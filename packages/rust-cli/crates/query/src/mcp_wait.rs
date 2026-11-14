@@ -60,7 +60,8 @@ pub(crate) async fn wait_for_tool(
     cancel: &CancellationToken,
 ) -> Option<Arc<dyn Tool>> {
     let registry = &scope.parts.tools;
-    let mcp = registry.mcp()?;
+    // Fork: the wait backend is the session's workspace group (specs/fork-rust-workspace-plugins-mcp.md).
+    let mcp = registry.mcp_for(&scope.session)?;
     let full = mcp.tool_wait_ms();
     let budget = full.saturating_sub(waited.load(Ordering::SeqCst));
     if budget == 0 {

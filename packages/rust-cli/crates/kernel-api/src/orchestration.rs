@@ -597,6 +597,13 @@ pub trait ToolRegistry: Send + Sync {
 
     /// MCP 连接（ToolSearch、WaitForMcpServers 与直接调用连接中服务器的工具时等待，ext.md §3.8，修复线 F36）。
     fn mcp(&self) -> Option<Arc<dyn McpConnections>>;
+
+    /// Fork (specs/fork-rust-workspace-plugins-mcp.md): the connections of the session's workspace
+    /// group when one is resolved; the default keeps the process connections (every other registry).
+    fn mcp_for(&self, session: &SessionId) -> Option<Arc<dyn McpConnections>> {
+        let _ = session;
+        self.mcp()
+    }
 }
 
 /// [`ToolRegistry::snapshot`] 的结果。

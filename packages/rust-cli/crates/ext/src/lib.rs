@@ -137,11 +137,21 @@ impl Ext {
             ports.machines.clone(),
             mcp.clone(),
         ));
+        // Only the user-scope servers belong in every workspace's group; the process's own project
+        // servers (a process started inside a project) stay in the process group alone
+        // (specs/fork-rust-workspace-plugins-mcp.md).
+        let user_servers = config
+            .mcp
+            .servers
+            .iter()
+            .filter(|server| server.scope != crate::mcp::McpScope::Project)
+            .cloned()
+            .collect();
         let layer = Arc::new(WorkspaceLayer::new(
             ports.files.clone(),
             workspace_mcp.clone(),
             config.plugin_dirs.clone(),
-            config.mcp.servers.clone(),
+            user_servers,
             config.workspace.clone(),
         ));
         skills.set_incognito(ports.incognito.clone());
@@ -374,6 +384,10 @@ impl ToolRegistry for ExtRegistry {
 
     fn mcp(&self) -> Option<Arc<dyn McpConnections>> {
         Some(self.mcp.clone())
+    }
+
+    fn mcp_for(&self, session: &SessionId) -> Option<Arc<dyn McpConnections>> {
+        Some(self.session_mcp(session))
     }
 }
 
