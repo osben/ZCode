@@ -9,6 +9,7 @@ mod background_shells;
 mod bash_progress;
 mod cold;
 pub mod elicitation;
+mod external_agent_status;
 mod external_tools;
 mod goal_verify;
 mod hook_rows;
@@ -175,6 +176,12 @@ pub struct Projection {
     goal_verifier: Option<u64>,
     /// Fork: the last verification request failed (Node's phase `error` with `sessionEnded: false`).
     goal_verifier_failed: bool,
+    /// Fork: `control.externalAgentStall` (projection/external_agent_status.rs): absent until the first ACP stall,
+    /// then the stall or `null` once cleared.
+    external_agent_stall: Option<Value>,
+    /// Fork: the ACP context-reset dividers this process drew, by the message that opened their turn → agent id
+    /// (projection/external_agent_status.rs). A history rebuild draws them again; a relaunch starts empty.
+    context_resets: HashMap<String, String>,
     /// Fork: the model directory; `thoughtLevels` are the selected model's levels in it (Node `listThoughtLevels`).
     catalog: std::sync::Arc<[rust_cli_kernel_api::provider::CatalogModel]>,
     /// Fork: file changes per turn (`KernelEvent::FileChanges`): feed the turn header's `fileChanges` summary and
@@ -265,14 +272,33 @@ fn tool_key(tool_use: &str) -> String {
 impl Projection {
     /// 从视图建投影（冷打开或第一次订阅）。`followup` 与 `levels` 是协议自己保存的配置（不在内核里）。
     pub fn from_view(view: &SessionView, followup: Followup, levels: Vec<String>) -> Self {
-        Self::from_view_at(view, followup, levels, 1)
+        Self::from_view_at(view, followup, levels, 1, HashMap::new())
     }
 
     /// Fork: the projection of a rewritten history (rewind, edit, retry). Keeps what the protocol remembers outside the
     /// kernel (follow-up mode, levels, input facts, denials) and keeps row ids increasing.
     pub fn rebuilt(&self, view: &SessionView) -> Self {
-        let mut projection =
-            Self::from_view_at(view, self.followup, self.levels.clone(), self.next_row);
+        let mut projection = Self::from_view_at(
+            view,
+            self.followup,
+            self.levels.clone(),
+            self.next_row,
+            self.context_resets.clone(),
+        );
+        // Fork: the stall of the running ACP prompt is not history; it is kept only while that same turn still runs.
+        let live_turn = self.turn.as_ref().map(|turn| turn.id.as_str());
+        if view.running
+            && live_turn.is_some()
+            && view
+                .running_turn
+                .as_ref()
+                .map(rust_cli_kernel_api::ids::TurnId::as_str)
+                == live_turn
+        {
+            projection
+                .external_agent_stall
+                .clone_from(&self.external_agent_stall);
+        }
         projection.inputs.clone_from(&self.inputs);
         projection.denied.clone_from(&self.denied);
         projection.catalog = self.catalog.clone();
@@ -297,6 +323,7 @@ impl Projection {
         followup: Followup,
         levels: Vec<String>,
         first_row: u64,
+        context_resets: HashMap<String, String>,
     ) -> Self {
         let mut projection = Self {
             banners: Banners::default(),
@@ -345,6 +372,8 @@ impl Projection {
             streaming_tools: HashMap::new(),
             goal_verifier: None,
             goal_verifier_failed: false,
+            external_agent_stall: None,
+            context_resets,
             catalog: std::sync::Arc::from(Vec::new()),
             auto_drain: true,
             pause_reason: None,
@@ -756,6 +785,9 @@ impl Projection {
         if self.goal_verifier_failed && self.phase == Phase::Error {
             control["sessionEnded"] = json!(false);
         }
+        if let Some(stall) = &self.external_agent_stall {
+            control["externalAgentStall"] = stall.clone();
+        }
         control
     }
 
@@ -798,6 +830,8 @@ impl Projection {
         let seq = event.seq;
         match &event.event {
             KernelEvent::TurnStarted { turn, command } => {
+                // Fork: a new turn clears an ACP stall still shown (Node `onTurnStarted`); the phase patch carries it.
+                self.clear_external_agent_stall();
                 self.goal_verifier_failed = false;
                 self.compact_turn = false;
                 let selection = Some(self.selection.clone());
@@ -876,6 +910,12 @@ impl Projection {
                 seq,
                 &mut out,
             ),
+            KernelEvent::ExternalAgentContextReset { agent } => {
+                self.external_agent_context_reset(agent, now, seq, &mut out);
+            }
+            KernelEvent::ExternalAgentStatus { agent, status } => {
+                self.external_agent_status(agent, *status, now, &mut patch);
+            }
             KernelEvent::ToolDone { tool_use, output } => {
                 let text = text_of_result(&output.content);
                 self.remember_shell_title(tool_use.as_str(), &text);
@@ -1251,6 +1291,8 @@ impl Projection {
         // A control turn made no request: the usage the kernel reports is an earlier response's.
         let control_only = self.turn.as_ref().is_some_and(|live| live.control_only);
         let usage = usage.filter(|_| !control_only);
+        // Fork: the turn's end clears its ACP stall (Node `clearedExternalAgentStall`); the phase patch carries it.
+        self.clear_external_agent_stall();
         if let Some(usage) = usage {
             self.total += *usage;
         }

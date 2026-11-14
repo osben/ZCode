@@ -727,3 +727,152 @@ fn a_first_turn_agent_title_wins_over_the_first_input_title() {
     );
     server.stop();
 }
+
+/// The ACP methods the mock agent has received so far, in order (its `--state` log).
+fn agent_methods(state: &Path) -> Vec<String> {
+    let text = std::fs::read_to_string(state).unwrap_or_default();
+    let state: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+    state["methods"]
+        .as_array()
+        .map(|methods| {
+            methods
+                .iter()
+                .filter_map(|method| method.as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Node's fork ACP migrations (9003-9005). zcode-rs adds no migration of its own (rule 15), so a
+/// home that only zcode-rs has opened lacks them; the shared `db.sqlite` of a real install has them.
+fn node_acp_tables(home: &Path) {
+    let conn = rusqlite::Connection::open(home.join(".zcode/cli/db/db.sqlite")).unwrap();
+    conn.execute_batch(
+        "create table if not exists fork_acp_session_binding (session_id text primary key, agent_id text not null, acp_session_id text not null, cwd text not null, launch_key text not null, updated_at integer not null);
+         alter table fork_acp_session_binding add column config_options text;
+         alter table fork_acp_session_binding add column config_choices text;
+         create table if not exists fork_acp_session_choice (session_id text primary key, agent_id text not null, config_choices text not null, updated_at integer not null);",
+    )
+    .unwrap();
+}
+
+/// Rule 14 end to end: a relaunched app-server resumes the bound ACP session with `session/load` and sends no
+/// `session/new`; the agent answers from the first process's turn, and the history it replays while loading is not
+/// shown (Node's S5 relaunch acceptance).
+#[test]
+fn a_second_app_server_resumes_the_agent_session_with_session_load() {
+    let (dir, home, work) = dirs();
+    let state = dir.path().join("agent-state.json");
+    write_agents(
+        &home,
+        &mock_agent(),
+        true,
+        &["--state", state.to_str().unwrap()],
+    );
+    let model = ModelStub::start();
+    let mut server = Server::start(&home, &work, &model);
+    let session = open_session(&mut server, &work);
+    node_acp_tables(&home);
+    let first = finish_turn(&mut server, &session, "c-remember", "remember kiwi");
+    assert!(
+        contains(&first, "\"phase\":\"completedSuccess\""),
+        "{first}"
+    );
+    server.stop();
+    let before = agent_methods(&state);
+    assert!(before.contains(&"session/new".to_owned()), "{before:?}");
+
+    let mut server = Server::start(&home, &work, &model);
+    server.request(
+        "v4/conversation/subscribe",
+        json!({"topic": format!("conversation/{session}"), "connectionId": "k2", "clientMode": "desktop-continuous"}),
+    );
+    let finished = finish_turn(&mut server, &session, "c-recall", "recall");
+    assert!(
+        contains(&finished, "\"phase\":\"completedSuccess\""),
+        "{finished}"
+    );
+    assert!(
+        server
+            .seen
+            .iter()
+            .any(|frame| frame.contains("recalled kiwi")),
+        "the agent did not answer"
+    );
+    assert!(
+        !server
+            .seen
+            .iter()
+            .any(|frame| frame.contains("replayed history")),
+        "the load replay was shown"
+    );
+    let relaunched = agent_methods(&state)[before.len()..].to_vec();
+    assert!(
+        relaunched.contains(&"session/load".to_owned()),
+        "{relaunched:?}"
+    );
+    assert!(
+        !relaunched.contains(&"session/new".to_owned()),
+        "{relaunched:?}"
+    );
+    server.stop();
+}
+
+/// Rule 14 end to end: when the relaunched process's agent cannot load the bound session, it starts a new one and
+/// the turn shows one `agentContextReset` divider for that agent.
+#[test]
+fn a_relaunch_the_agent_cannot_load_shows_a_context_reset_divider() {
+    let (dir, home, work) = dirs();
+    let state = dir.path().join("agent-state.json");
+    let state_arg = state.to_str().unwrap();
+    // The same arguments in both processes: a changed command line is a new launch key, which drops the binding.
+    write_agents(
+        &home,
+        &mock_agent(),
+        true,
+        &["--state", state_arg, "--refuse-load"],
+    );
+    let model = ModelStub::start();
+    let mut server = Server::start(&home, &work, &model);
+    let session = open_session(&mut server, &work);
+    node_acp_tables(&home);
+    finish_turn(&mut server, &session, "c-first", "hello");
+    assert!(
+        !server
+            .seen
+            .iter()
+            .any(|frame| frame.contains("agentContextReset")),
+        "a first session is no reset"
+    );
+    server.stop();
+
+    let mut server = Server::start(&home, &work, &model);
+    server.request(
+        "v4/conversation/subscribe",
+        json!({"topic": format!("conversation/{session}"), "connectionId": "k2", "clientMode": "desktop-continuous"}),
+    );
+    let finished = finish_turn(&mut server, &session, "c-second", "hello again");
+    assert!(
+        contains(&finished, "\"phase\":\"completedSuccess\""),
+        "{finished}"
+    );
+    let relaunched = agent_methods(&state);
+    assert!(
+        relaunched.contains(&"session/load".to_owned()),
+        "{relaunched:?}"
+    );
+    let dividers = server
+        .seen
+        .iter()
+        .filter(|frame| frame.contains("\"agentContextReset\""))
+        .count();
+    assert_eq!(dividers, 1, "one divider for the reset");
+    assert!(
+        server
+            .seen
+            .iter()
+            .any(|frame| frame.contains("\"lightBoundary\"")
+                && frame.contains("\"agentId\":\"mock\""))
+    );
+    server.stop();
+}

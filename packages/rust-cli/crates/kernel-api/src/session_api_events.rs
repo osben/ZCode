@@ -222,6 +222,17 @@ pub enum KernelEvent {
         input: Value,
         running: bool,
     },
+    /// Fork: a new ACP session replaced one that could not be loaded
+    /// ([`crate::orchestration::QueryEvent::ExternalAgentContextReset`]); the timeline divider.
+    ExternalAgentContextReset {
+        agent: String,
+    },
+    /// Fork: the running ACP prompt went silent or spoke again ([`crate::orchestration::QueryEvent::ExternalAgentStatus`]).
+    ExternalAgentStatus {
+        agent: String,
+        #[serde(flatten)]
+        status: crate::orchestration::ExternalAgentStatus,
+    },
     FileChanges {
         turn: TurnId,
         files: Vec<FileChange>,
