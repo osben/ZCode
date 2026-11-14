@@ -328,6 +328,48 @@ Rust already speaks stdio MCP, so it could spawn node_repl and the Office server
 
 On top of those, Rust would have to port the `mcp/ui*` lease protocol. With the helper as the MCP client, Node's own adapter and `mcp-ui` code run unchanged, and the panel and the model share one server instance. Rust keeps what it must own: the turn, permissions, the model and the stream. Rust's MCP client stays in use for ordinary plugin MCP servers.
 
+### MCP Apps on Rust-hosted servers (F7, after F5)
+
+A panel of an MCP server Rust runs itself (a user's `mcp.json` server, a plugin server without the plugin host) is refused today with `proto.forkRustAgent.mcpUiServerNotHelperHosted`. Full parity needs it. Node's rule: "the ownership truth is the session's MCP server table (plugin servers and ordinary MCP servers in one table); any configured server can render an MCP App" (`zcode-protocol/mcp-ui/sessionAccess.ts`).
+
+What Node does, read from the code:
+
+- **One connection per server per session.** The panel's calls (`callMcpToolForUi`, `readMcpResourceForUi`, `subscribeMcpResourceForUi`, the resource lists) go through the session's own `mcpPort`, on the same `record.client` the model's tool calls use (`adapters/src/mcp/index.ts` `callTool` with `appConnection`).
+- **The lease is tied to that connection.** `McpUiInstances` (`instances.ts`) is the only owner of the panel tokens. It binds each lease to `appConnectionSnapshot(server)`: a hash of the platform, the exec path, the workspace, the server name and its canonical config, plus the connection generation. Each guarded panel call validates the lease before and after the call. A reconnect bumps the generation, fires `onAppConnectionInvalidated`, and the panel's later calls fail with "MCP App connection changed".
+- **Sampling and app tools are per lease, not per connection.**
+  - `McpUiSamplingCalls` (`samplingCalls.ts`) owns the operation ledger and the caps: 4 per session, 8 per agent, 4096 operations per lease. It calls the runtime's `sampleModel`.
+  - The app-tool mailbox (`appToolsProtocol.ts`) owns claim and resolve.
+- **Resource updates come back on that connection.** `notifications/resources/updated` for a subscribed URI becomes `pluginUi.resourceUpdated`.
+
+Option 1: Rust ports the lease, the mailbox and the sampling ledger for its own MCP connections.
+
+```
+owners: Rust MCP client (connection, generation) · Rust McpUi registry (leases, sampling ledger, mailbox) · kernel (sample_model, app tools, permission)
+panel ─mcp/uiOpenInstance─► Rust registry: lease bound to (identity, generation) of Rust's connection
+panel ─mcp/uiCallTool─────► validate lease ─► authorize (kernel pipeline) ─► Rust client tools/call ─► validate lease ─► result
+model ─tools/call─────────► same Rust client, same server process
+server ─resources/updated─► Rust client ─► registry ─► pluginUi.resourceUpdated on the session stream
+Rust reconnect ───────────► generation+1 ─► registry revokes the server's leases (cancel first, then close)
+```
+
+Option 2: the helper becomes the MCP client of UI-declaring plugin servers.
+
+```
+owners: helper (connection, leases, ledger, mailbox) · Rust (model tool calls via helper/mcp/* pipes, kernel)
+Rust ─connect─► server: is it UI-declaring? Only known after connecting (ui:// resources, tool `_meta.ui`)
+    ├─ (2a) hand the whole server to the helper: Rust closes its client, the helper reconnects, model calls go through the pipes
+    └─ (2b) keep Rust's client for the model and add the helper's: two clients, two stdio processes
+```
+
+Verdict: Option 1, as the lean was. The Node code refutes Option 2 on four points:
+
+- **(2b) splits state.** A stateful server holds different state in each process; `appConnections.test.ts` checks that a panel call goes to the connection whose identity and generation the lease holds. Subscriptions would arrive on the helper's connection while the model's calls go to Rust's. OAuth tokens and trust prompts would happen twice.
+- **(2a) needs a connect before it can classify the server, then a second connect.** It moves the trust, OAuth, config and `timeoutMs` handling of the user's own servers from Rust's client into Node's. That duplicates the client Rust already owns, and the helper has no view of Rust's reconnects.
+- **The lease generation must follow the connection that serves the model.** Only the owner of that connection can bump it at the right moment (Node does it inside `nextConnectionGeneration`).
+- **Most of the F3 helper code is reusable as the reference, not as a runtime.** The protocol logic is small (`instances.ts` 151 lines, `samplingCalls.ts` 99, `appToolsProtocol.ts` 166), and `sample_model` and the app tools (F3b) are already kernel features in Rust.
+
+Plugin-host servers stay helper-hosted (the reasons above). Each server then has exactly one client: the helper for `__zcode-plugin-host` servers, Rust for every other server. The `mcp/ui*` router picks the owner by server, so one panel protocol has two implementations of the lease. A shared conformance test (the same request sequence against both owners) keeps them equal.
+
 ### Decisions (approved 2026-11-13)
 
 - **D1. Workflow execution (F5) is not a thin delegation.**
@@ -444,4 +486,4 @@ On top of those, Rust would have to port the `mcp/ui*` lease protocol. With the 
 
 ## Delivery
 
-One PR per family, in this order: F1+F2 (helper skeleton plus the sessionless families), then F3, then F4+F6, then F5 (after F1–F4 are merged). Each PR updates the "Out of scope" section of `specs/fork-rust-agent-parity.md` and its matrix rows.
+One PR per family, in this order: F1+F2 (helper skeleton plus the sessionless families), then F3, then F3b (session-scoped "always allow" and app-provided tools), then F4+F6, then F5 (after F1–F4 are merged), then F7 (MCP Apps on Rust-hosted servers, Option 1 of "MCP Apps on Rust-hosted servers"). Each PR updates the "Out of scope" section of `specs/fork-rust-agent-parity.md` and its matrix rows.
