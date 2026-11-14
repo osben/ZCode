@@ -34,6 +34,8 @@ pub(crate) const REJECT_MESSAGE: &str = rust_cli_kernel_api::tool::REJECT_MESSAG
 pub(crate) const REJECT_WITH_REASON: &str = "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed. To tell you how to proceed, the user said:\n";
 /// 工具使用被中断时的文字（kernel-api 的定义，F55）。
 const INTERRUPT_FOR_TOOL_USE: &str = rust_cli_kernel_api::user_input::INTERRUPT_TEXTS[1];
+/// Node's message of a cancelled call (`timeout.ts` `executeWithTimeout`, `CoreErrorType.ToolCancelled`).
+const NODE_TOOL_CANCELLED: &str = "Tool execution cancelled";
 const NO_OUTPUT: &str = "Command failed with no output";
 /// `formatError` 超过这个长度（UTF-16 单元）时保留首尾各一半。
 const ERROR_LIMIT: usize = 10_000;
@@ -488,11 +490,28 @@ impl Pipeline {
                     Ok(other) => format_error(&other.to_string()),
                     Err(message) => message.clone(),
                 };
-                let mut payload =
-                    hooks::post_tool_use_failure(tool.name(), &input, &text, interrupted, &context);
+                // Fork: Node's failure hook gets the raw `error.message` in `error` and `error_details`
+                // (`hook-flow.ts` `runPostToolUseFailureHooks`); only the model's text is trimmed and limited.
+                let hook_text = match &failure {
+                    _ if !self.node_hooks => text.clone(),
+                    Ok(ToolError::Cancelled) => NODE_TOOL_CANCELLED.to_owned(),
+                    Ok(ToolError::InvalidInput { message } | ToolError::Failed { message }) => {
+                        message.clone()
+                    }
+                    Ok(other) => other.to_string(),
+                    Err(message) => message.clone(),
+                };
+                let mut payload = hooks::post_tool_use_failure(
+                    tool.name(),
+                    &input,
+                    &hook_text,
+                    interrupted,
+                    &context,
+                );
                 // Node's failure input carries the error object next to its message (`error_details`).
                 if self.node_hooks {
-                    payload["error_details"] = serde_json::json!({"message": text, "type": kind});
+                    payload["error_details"] =
+                        serde_json::json!({"message": hook_text, "type": kind});
                 }
                 let payload = tag(payload, machine);
                 let event =

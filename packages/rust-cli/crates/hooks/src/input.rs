@@ -66,6 +66,12 @@ pub(crate) fn node_compatible(event: &HookEvent, cwd: &str, now_ms: u64) -> Map<
     input.insert("permission_mode".to_owned(), Value::from(mode));
     input.insert("sessionId".to_owned(), Value::from(event.session.as_str()));
     input.insert("timestamp".to_owned(), Value::from(iso_timestamp(now_ms)));
+    // Node always sends the Stop reply, `""` for one without text (`runtime/methods/hooks.ts`).
+    if event.name == HookEventName::Stop {
+        input
+            .entry("last_assistant_message")
+            .or_insert_with(|| Value::from(""));
+    }
     for (alias, camel) in [
         ("tool_name", "toolName"),
         ("tool_input", "toolInput"),

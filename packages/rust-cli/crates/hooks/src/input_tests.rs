@@ -265,3 +265,17 @@ fn node_input_always_has_a_mode() {
     assert_eq!(notification["mode"], "build");
     assert_eq!(notification["permission_mode"], "build");
 }
+
+/// Node always sends the Stop reply (`responseText: ""` for a reply without text); the Claude Code input omits
+/// `last_assistant_message` then.
+#[test]
+fn node_stop_input_without_reply_text_sends_empty_strings() {
+    let stop = node(
+        HookEventName::Stop,
+        HookContext::default(),
+        json!({"stop_hook_active": false}),
+    );
+    assert_eq!(stop["last_assistant_message"], "");
+    assert_eq!(stop["responseText"], "");
+    assert_eq!(stop["responsePreview"], "");
+}

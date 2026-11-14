@@ -644,6 +644,9 @@ async fn under_node_hooks_the_permission_request_names_the_tool_call() {
 /// the Claude Code input has only `error` (specs/fork-rust-agent-parity.md "Command hook stdin").
 #[tokio::test]
 async fn under_node_hooks_a_failure_names_its_error_type() {
+    // Node passes the raw `error.message` (`hook-flow.ts` `runPostToolUseFailureHooks`, `configured-runner-input.ts`);
+    // the model still gets the trimmed, length-limited text.
+    let long = format!("  {}  ", "x".repeat(12_000));
     let failures = [
         (
             ToolError::Stopped {
@@ -651,22 +654,36 @@ async fn under_node_hooks_a_failure_names_its_error_type() {
                 display: Value::Null,
             },
             "tool_cancelled",
+            "stopped".to_owned(),
         ),
-        (ToolError::Cancelled, "tool_cancelled"),
+        (
+            ToolError::Cancelled,
+            "tool_cancelled",
+            "Tool execution cancelled".to_owned(),
+        ),
         (
             ToolError::InvalidInput {
                 message: "bad".to_owned(),
             },
             "invalid_input",
+            "bad".to_owned(),
         ),
         (
             ToolError::Failed {
                 message: "boom".to_owned(),
             },
             "tool_execution_failed",
+            "boom".to_owned(),
+        ),
+        (
+            ToolError::Failed {
+                message: long.clone(),
+            },
+            "tool_execution_failed",
+            long.clone(),
         ),
     ];
-    for (failure, kind) in failures {
+    for (failure, kind, message) in failures {
         for node_hooks in [true, false] {
             let hooks = Arc::new(Hooks::default());
             let pipeline = Pipeline::new(
@@ -681,7 +698,7 @@ async fn under_node_hooks_a_failure_names_its_error_type() {
             .with_node_hooks(node_hooks);
             let (progress, _updates) = mpsc::channel(4);
             let tool = Arc::new(Failing(Mutex::new(Some(failure.clone()))));
-            let _ = pipeline
+            let executed = pipeline
                 .execute(
                     tool,
                     json!({}),
@@ -697,9 +714,18 @@ async fn under_node_hooks_a_failure_names_its_error_type() {
                 .payload;
             if node_hooks {
                 assert_eq!(payload["error_details"]["type"], kind);
-                assert_eq!(payload["error_details"]["message"], payload["error"]);
+                assert_eq!(payload["error_details"]["message"], message.as_str());
+                assert_eq!(payload["error"], message.as_str());
             } else {
                 assert!(payload.get("error_details").is_none(), "{payload}");
+            }
+            if message == long {
+                // The model's text is limited either way.
+                let text = serde_json::to_string(&executed.output.content).unwrap();
+                assert!(text.contains("characters truncated"), "{node_hooks}");
+                if !node_hooks {
+                    assert_ne!(payload["error"], message.as_str());
+                }
             }
         }
     }
