@@ -90,6 +90,13 @@ impl Kernel for LocalKernel {
         self.open_in(session, StartSource::Resume, true).await
     }
 
+    async fn authorize_app_tool(
+        &self,
+        call: rust_cli_kernel_api::app_tool::AppToolCall,
+    ) -> Result<serde_json::Value, rust_cli_kernel_api::app_tool::AppToolError> {
+        self.authorize_app(call).await
+    }
+
     async fn list_sessions(
         &self,
         filter: SessionFilter,

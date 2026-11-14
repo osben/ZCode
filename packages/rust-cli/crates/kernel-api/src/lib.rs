@@ -59,6 +59,8 @@
 
 pub mod abort;
 pub mod agents;
+// Fork: specs/fork-rust-node-helper.md F3.
+pub mod app_tool;
 pub mod automation;
 pub mod background_origin;
 pub mod catalog;

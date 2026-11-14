@@ -109,3 +109,33 @@ fn helper_hosted_calls_carry_the_helper_context() {
         "subagent"
     );
 }
+
+/// Fork (specs/fork-rust-node-helper.md F3, `helper/authorizeAppTool`): the transient tool of an App call is named and
+/// shaped like a listed tool of that server, so rules and hooks match it as they match the model's calls.
+#[test]
+fn an_app_tool_is_shaped_like_a_listed_tool_of_its_server() {
+    let tool = super::app_tool(
+        "plugin:viewer:view",
+        "search",
+        &json!({
+            "description": "Search the viewer",
+            "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}}},
+            "annotations": {"readOnlyHint": true},
+        }),
+    );
+    assert_eq!(tool.name(), "mcp__plugin_viewer_view__search");
+    assert_eq!(
+        tool.input_schema(),
+        json!({"type": "object", "properties": {"query": {"type": "string"}}})
+    );
+    assert!(tool.is_read_only(&json!({})));
+    let info = tool.mcp_info().expect("an MCP tool");
+    assert_eq!(
+        (info.server.as_str(), info.tool.as_str()),
+        ("plugin:viewer:view", "search")
+    );
+    // A descriptor without a schema gets the listed tools' default.
+    let bare = super::app_tool("plugin:viewer:view", "open", &json!({}));
+    assert_eq!(bare.input_schema(), json!({"type": "object"}));
+    assert!(!bare.is_read_only(&json!({})));
+}

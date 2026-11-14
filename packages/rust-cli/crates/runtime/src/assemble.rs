@@ -291,6 +291,22 @@ pub(crate) fn context(
 
 /// 主循环用到的能力。工具是 ext 的注册表外面去掉整个工具被 deny 的（tools-files.md §1.1.1，工作线 F69）：主线程、子代理、
 /// 延迟清单与压缩摘要都从这一层往外取；agents 建好后主线程换成它的注册表。压缩器先交出“稍后接上”的句柄（late.rs）。
+/// 管线直接拿判决链（F125：缺陷 D1 是以前包在外面的一层漏转发了“只批准这一次”）；按调用的 `machine` 选机器
+/// （R3，remote-exec.md §20.6）。Fork: the kernel keeps this instance for MCP App calls
+/// (specs/fork-rust-node-helper.md F3, `helper/authorizeAppTool`), so they pass the same checks as the model's.
+pub(crate) fn pipeline(
+    ports: &Ports,
+    ext: &Ext,
+    gate: &Arc<PolicyGate>,
+    hooks: &Arc<HookEngine>,
+) -> Arc<Pipeline> {
+    Arc::new(
+        Pipeline::new(gate.clone(), hooks.clone())
+            .with_machines(ports.environments.clone())
+            .with_incognito(ext.incognito_tools()),
+    )
+}
+
 pub(crate) fn query_parts(
     ports: &Ports,
     (context, ext, gate, hooks): (
@@ -299,7 +315,7 @@ pub(crate) fn query_parts(
         &Arc<PolicyGate>,
         &Arc<HookEngine>,
     ),
-    (late, operations): (&Arc<LateCompactor>, Operations),
+    (late, operations, pipeline): (&Arc<LateCompactor>, Operations, &Arc<Pipeline>),
     (defaults, traits): (&Defaults, SurfaceTraits),
 ) -> QueryParts {
     QueryParts {
@@ -309,13 +325,7 @@ pub(crate) fn query_parts(
             ext.registry(),
             gate.clone(),
         )),
-        // 管线直接拿判决链（F125：缺陷 D1 是以前包在外面的一层漏转发了“只批准这一次”）；按调用的 `machine` 选机器
-        // （R3，remote-exec.md §20.6）。
-        executor: Arc::new(
-            Pipeline::new(gate.clone(), hooks.clone())
-                .with_machines(ports.environments.clone())
-                .with_incognito(ext.incognito_tools()),
-        ),
+        executor: pipeline.clone(),
         compactor: late.clone(),
         hooks: hooks.clone(),
         ids: ports.ids.clone(),

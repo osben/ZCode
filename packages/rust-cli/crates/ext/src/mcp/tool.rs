@@ -246,6 +246,19 @@ impl Tool for McpTool {
     }
 }
 
+/// Fork: the transient tool of an MCP App call (specs/fork-rust-node-helper.md F3, `helper/authorizeAppTool`), built from
+/// the helper's descriptor `{description?, inputSchema, annotations?}` as Node's `createMcpToolEntry` fallback does.
+/// App-only tools are not in Rust's tool list; this one is only authorized, never called (it has no manager).
+pub fn app_tool(server: &str, tool: &str, descriptor: &Value) -> Arc<dyn Tool> {
+    let mut listed = match descriptor {
+        Value::Object(_) => descriptor.clone(),
+        _ => json!({}),
+    };
+    listed["name"] = json!(tool);
+    let tool = McpTool::from_listed(server, &listed, false, Weak::new()).expect("named above");
+    Arc::new(tool)
+}
+
 /// The session a helper-hosted tool call runs for (specs/fork-rust-node-helper.md F3).
 pub(crate) struct HelperCall<'a> {
     pub(crate) session: &'a str,

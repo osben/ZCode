@@ -8,6 +8,8 @@
 
 mod acp;
 mod agents;
+// Fork: specs/fork-rust-node-helper.md F3.
+mod app_tool;
 mod assemble;
 mod catalog;
 mod config;
@@ -159,6 +161,8 @@ pub struct LocalKernel {
     error_holds_queue: bool,
     /// Fork: a SessionStart `session_title` and `initial_user_message` apply only outside the Node desktop agent, which reads neither.
     session_start_extras: bool,
+    /// Fork: the main loop's tool pipeline; MCP App calls are authorized with it (app_tool.rs).
+    pipeline: Arc<rust_cli_tools::Pipeline>,
 }
 
 impl LocalKernel {
@@ -261,10 +265,11 @@ impl LocalKernel {
             extensions.code_intelligence.clone(),
         );
         let sessions = OpenSessions::default();
+        let pipeline = assemble::pipeline(&ports, &ext, &gate, &hooks);
         let parts = assemble::query_parts(
             &ports,
             (&assembler, &ext, &gate, &hooks),
-            (&late, operations),
+            (&late, operations, &pipeline),
             (&defaults, traits),
         );
         let agents = assemble::agents(
@@ -364,6 +369,7 @@ impl LocalKernel {
             fork_while_running: extensions.node_desktop,
             error_holds_queue: extensions.node_desktop,
             session_start_extras: !extensions.node_desktop,
+            pipeline,
         }
     }
 

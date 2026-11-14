@@ -768,6 +768,20 @@ pub trait Kernel: Send + Sync {
         })
     }
 
+    /// Fork: runs the admission part of the tool pipeline on an MCP App tool call of a helper-hosted server
+    /// (specs/fork-rust-node-helper.md F3, `helper/authorizeAppTool`): validation, PreToolUse hooks, the rules and the
+    /// gate, with a session-scoped prompt when it asks. Answers the approved input; never runs the tool. Opens the
+    /// session when it is stored but not open. A kernel without it refuses.
+    async fn authorize_app_tool(
+        &self,
+        _call: crate::app_tool::AppToolCall,
+    ) -> Result<serde_json::Value, crate::app_tool::AppToolError> {
+        Err(KernelError::Unsupported {
+            what: "MCP App tool authorization".to_owned(),
+        }
+        .into())
+    }
+
     /// Fork: opens a stored session whose prepared execution worktree is not active yet (an agent restart before the
     /// activation): SessionStart waits for `Command::SetExecutionRoot`, as after [`Kernel::create_prepared_session`],
     /// so the hook never runs in the parent checkout. A session already open keeps its state. A kernel without it

@@ -269,6 +269,19 @@ pub(crate) struct SessionAsks {
 }
 
 impl SessionAsks {
+    /// Fork: the session-level entry of a context built outside a turn (an MCP App call, app_tool_context.rs).
+    pub(crate) fn new(
+        requests: mpsc::WeakSender<crate::actor::Request>,
+        session: SessionId,
+        detached: Option<Arc<crate::detached::DetachedAsks>>,
+    ) -> Self {
+        Self {
+            requests,
+            session,
+            detached,
+        }
+    }
+
     /// 交给会话 actor；actor 收不下（发不出去或回复被丢下）时为 None。
     async fn to_actor(
         &self,
