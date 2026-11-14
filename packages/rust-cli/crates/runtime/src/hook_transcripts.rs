@@ -78,6 +78,11 @@ impl HookTranscripts for LocalHookTranscripts {
         let dir = self.confined(&transcript.dir)?;
         rust_cli_fs::remove_dir_all_optional(&dir).await
     }
+
+    fn remove_blocking(&self, transcript: &HookTranscript) -> std::io::Result<()> {
+        let dir = self.confined(&transcript.dir)?;
+        rust_cli_fs::remove_dir_all_optional_blocking(&dir)
+    }
 }
 
 #[cfg(test)]

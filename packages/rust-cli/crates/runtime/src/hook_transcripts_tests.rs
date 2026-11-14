@@ -90,7 +90,23 @@ async fn remove_refuses_a_directory_outside_the_root() {
     ] {
         let error = transcripts.remove(&forged(dir.clone())).await.unwrap_err();
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput, "{dir:?}");
+        let error = transcripts
+            .remove_blocking(&forged(dir.clone()))
+            .unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput, "{dir:?}");
     }
     assert!(rust_cli_fs::is_dir(outside.path()).await);
     assert!(rust_cli_fs::is_dir(root.path()).await);
+}
+
+/// The drop guard's last resort removes the directory synchronously; a missing one is not an error.
+#[tokio::test]
+async fn remove_blocking_removes_the_directory() {
+    let root = tempfile::tempdir().unwrap();
+    let transcripts = LocalHookTranscripts::new(root.path().to_path_buf());
+    let file = transcripts.locate("zcode-hook-1").unwrap();
+    transcripts.create(&file, "{}\n").await.unwrap();
+    transcripts.remove_blocking(&file).unwrap();
+    assert!(!rust_cli_fs::is_dir(std::path::Path::new(&file.dir)).await);
+    transcripts.remove_blocking(&file).unwrap();
 }

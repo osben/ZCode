@@ -308,6 +308,9 @@ pub trait HookTranscripts: Send + Sync {
     /// Removes the transcript's directory; a missing directory is not an error, a directory outside the root is
     /// refused.
     async fn remove(&self, transcript: &HookTranscript) -> std::io::Result<()>;
+    /// [`Self::remove`], synchronously: the last resort of a guard dropped where its spawned removal cannot run (no
+    /// runtime, or the runtime shutting down).
+    fn remove_blocking(&self, transcript: &HookTranscript) -> std::io::Result<()>;
 }
 
 /// 一条并入的插话：文本与排在它的 `queued_command` 之后提交的 hook 消息。

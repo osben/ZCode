@@ -34,7 +34,7 @@ fn context(operation: &str) -> OperationContext {
 }
 
 async fn run_with(
-    env: &ScriptedEnv,
+    env: &Arc<ScriptedEnv>,
     hook: &CommandHook,
     timeout_ms: u64,
     cancel: CancellationToken,
@@ -42,13 +42,14 @@ async fn run_with(
     let workspace = workspace();
     run(
         CommandRun {
-            commands: env,
+            commands: env.clone(),
             workspace: &workspace,
             operation: context("op_1"),
             hook,
             input: "{\"hook_event_name\":\"Stop\"}",
             timeout_ms,
             transcript: None,
+            cancel_background: false,
         },
         cancel,
     )
@@ -57,7 +58,7 @@ async fn run_with(
 
 #[tokio::test]
 async fn sends_stdin_env_and_collects_separate_streams() {
-    let env = ScriptedEnv::with(&[("guard.sh", script("out", "err", 2))]);
+    let env = Arc::new(ScriptedEnv::with(&[("guard.sh", script("out", "err", 2))]));
     let raw = run_with(&env, &hook("guard.sh"), 5_000, CancellationToken::new()).await;
     assert_eq!(
         raw,
@@ -144,12 +145,12 @@ async fn timeout_and_cancel_are_cancelled() {
 
 #[tokio::test]
 async fn start_failure_and_background() {
-    let failing = ScriptedEnv::failing();
+    let failing = Arc::new(ScriptedEnv::failing());
     assert_eq!(
         run_with(&failing, &hook("x"), 1_000, CancellationToken::new()).await,
         Raw::Failed("Failed to run: io error: spawn failed".to_owned())
     );
-    let env = ScriptedEnv::default();
+    let env = Arc::new(ScriptedEnv::default());
     let background = CommandHook {
         background: true,
         ..hook("bg")
@@ -208,10 +209,10 @@ async fn plugin_hooks_see_their_root() {
         command_line(&exec, "/w", None),
         "'/Users/dev/plugins/kit/a.sh /Users/dev/plugins/kit' '/Users/dev/plugins/kit/b.js'"
     );
-    let env = ScriptedEnv::with(&[(
+    let env = Arc::new(ScriptedEnv::with(&[(
         "/Users/dev/plugins/kit/a.sh /Users/dev/plugins/kit",
         script("", "", 0),
-    )]);
+    )]));
     run_with(&env, &shell, 5_000, CancellationToken::new()).await;
     let CommandKind::Hook { hook: io } = env.started().remove(0).1.kind else {
         panic!("not a hook command");
@@ -226,7 +227,10 @@ async fn plugin_hooks_see_their_root() {
 async fn hook_output_in_memory_is_capped() {
     let stdout = "o".repeat(6 * 1024 * 1024);
     let stderr = "e".repeat(3 * 1024 * 1024);
-    let env = ScriptedEnv::with(&[("loud.sh", script(&stdout, &stderr, 0))]);
+    let env = Arc::new(ScriptedEnv::with(&[(
+        "loud.sh",
+        script(&stdout, &stderr, 0),
+    )]));
     let raw = run_with(&env, &hook("loud.sh"), 5_000, CancellationToken::new()).await;
     let Raw::Command {
         stdout: kept_out,

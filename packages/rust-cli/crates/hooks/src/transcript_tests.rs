@@ -20,6 +20,10 @@ use crate::{HookEngine, HookPorts, NodeStdinPorts};
 struct MemoryTranscripts {
     created: Mutex<Vec<(HookTranscript, String)>>,
     removed: Mutex<Vec<HookTranscript>>,
+    /// `create` / `remove` / `remove_blocking`, in the order they finished.
+    order: Arc<Mutex<Vec<&'static str>>>,
+    /// The write runs this long in its own task, which a dropped caller does not stop (as `spawn_blocking`).
+    write_ms: u64,
 }
 
 impl MemoryTranscripts {
@@ -29,6 +33,10 @@ impl MemoryTranscripts {
 
     fn removed(&self) -> Vec<HookTranscript> {
         self.removed.lock_unpoisoned().clone()
+    }
+
+    fn order(&self) -> Vec<&'static str> {
+        self.order.lock_unpoisoned().clone()
     }
 }
 
@@ -45,11 +53,27 @@ impl HookTranscripts for MemoryTranscripts {
         self.created
             .lock_unpoisoned()
             .push((transcript.clone(), text.to_owned()));
+        let order = self.order.clone();
+        let write_ms = self.write_ms;
+        let write = tokio::spawn(async move {
+            if write_ms > 0 {
+                tokio::time::sleep(Duration::from_millis(write_ms)).await;
+            }
+            order.lock_unpoisoned().push("create");
+        });
+        let _ = write.await;
         Ok(())
     }
 
     async fn remove(&self, transcript: &HookTranscript) -> std::io::Result<()> {
         self.removed.lock_unpoisoned().push(transcript.clone());
+        self.order.lock_unpoisoned().push("remove");
+        Ok(())
+    }
+
+    fn remove_blocking(&self, transcript: &HookTranscript) -> std::io::Result<()> {
+        self.removed.lock_unpoisoned().push(transcript.clone());
+        self.order.lock_unpoisoned().push("remove_blocking");
         Ok(())
     }
 }
@@ -204,4 +228,117 @@ async fn a_dropped_run_removes_its_transcript() {
     assert_eq!(created.len(), 1);
     settle().await;
     assert_eq!(transcripts.removed(), [created[0].0.clone()]);
+}
+
+/// N3: a run dropped while its transcript is being written removes the directory only after the write ends (the
+/// write keeps going after the drop, so a removal before it would leave the file behind).
+#[tokio::test(start_paused = true)]
+async fn a_run_dropped_during_the_write_removes_after_the_write() {
+    let env = Arc::new(ScriptedEnv::with(&[("stop.sh", slow(60_000))]));
+    let transcripts = Arc::new(MemoryTranscripts {
+        write_ms: 50,
+        ..MemoryTranscripts::default()
+    });
+    let engine = engine(
+        env,
+        transcripts.clone(),
+        json!({"type": "command", "command": "stop.sh"}),
+    );
+    let ran = tokio::time::timeout(
+        Duration::from_millis(10),
+        engine.run(stop(), CancellationToken::new()),
+    )
+    .await;
+    assert!(ran.is_err(), "the run should still be writing");
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    settle().await;
+    assert_eq!(transcripts.order(), ["create", "remove"]);
+}
+
+/// N2: a dropped run cancels its hook process too (dropping the event stream does not stop the command).
+#[tokio::test(start_paused = true)]
+async fn a_dropped_run_cancels_its_hook_process() {
+    let env = Arc::new(ScriptedEnv::with(&[("stop.sh", slow(60_000))]));
+    let transcripts = Arc::new(MemoryTranscripts::default());
+    let engine = engine(
+        env.clone(),
+        transcripts,
+        json!({"type": "command", "command": "stop.sh"}),
+    );
+    let ran = tokio::time::timeout(
+        Duration::from_millis(10),
+        engine.run(stop(), CancellationToken::new()),
+    )
+    .await;
+    assert!(ran.is_err(), "the run should still be going");
+    settle().await;
+    let started = env.started();
+    assert_eq!(started.len(), 1);
+    assert_eq!(env.cancelled(), [started[0].0.operation.clone()]);
+}
+
+/// N2: a run that finished sends no cancel.
+#[tokio::test]
+async fn a_finished_run_sends_no_cancel() {
+    let env = Arc::new(ScriptedEnv::with(&[("stop.sh", script("", "", 0))]));
+    let transcripts = Arc::new(MemoryTranscripts::default());
+    let engine = engine(
+        env.clone(),
+        transcripts,
+        json!({"type": "command", "command": "stop.sh"}),
+    );
+    engine.run(stop(), CancellationToken::new()).await;
+    settle().await;
+    assert!(env.cancelled().is_empty());
+}
+
+/// N4: a run dropped while the runtime shuts down still removes its transcript (the spawned removal never runs, so
+/// the guard removes it synchronously).
+#[test]
+fn a_run_dropped_at_runtime_shutdown_removes_its_transcript() {
+    let env = Arc::new(ScriptedEnv::with(&[("stop.sh", slow(60_000))]));
+    let transcripts = Arc::new(MemoryTranscripts::default());
+    let engine = engine(
+        env,
+        transcripts.clone(),
+        json!({"type": "command", "command": "stop.sh"}),
+    );
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .start_paused(true)
+        .build()
+        .unwrap();
+    let ran = runtime.block_on(async {
+        tokio::time::timeout(
+            Duration::from_millis(10),
+            engine.run(stop(), CancellationToken::new()),
+        )
+        .await
+    });
+    assert!(ran.is_err(), "the run should still be going");
+    drop(runtime);
+    assert_eq!(transcripts.order(), ["create", "remove_blocking"]);
+}
+
+/// N5: an async hook is cancelled with the turn (Node passes the turn's signal to `runBackgroundHook`); its transcript
+/// goes once the process ends.
+#[tokio::test(start_paused = true)]
+async fn an_async_hook_is_cancelled_with_the_turn() {
+    let env = Arc::new(ScriptedEnv::with(&[("stop.sh", slow(60_000))]));
+    let transcripts = Arc::new(MemoryTranscripts::default());
+    let engine = engine(
+        env.clone(),
+        transcripts.clone(),
+        json!({"type": "command", "command": "stop.sh", "async": true}),
+    );
+    let turn = CancellationToken::new();
+    engine.run(stop(), turn.clone()).await;
+    settle().await;
+    assert!(env.cancelled().is_empty());
+    assert!(transcripts.removed().is_empty());
+    turn.cancel();
+    settle().await;
+    let started = env.started();
+    assert_eq!(env.cancelled(), [started[0].0.operation.clone()]);
+    assert_eq!(transcripts.removed().len(), 1);
 }

@@ -114,13 +114,14 @@ async fn execute(
                 None => (None, None),
             };
             let run = CommandRun {
-                commands: ports.commands.as_ref(),
+                commands: ports.commands.clone(),
                 workspace: batch.workspace,
                 operation: operation(ports, batch),
                 hook: command,
                 input: text.as_deref().unwrap_or(batch.input.as_str()),
                 timeout_ms: timeout,
                 transcript,
+                cancel_background: ports.node_stdin.is_some(),
             };
             Executed::Raw(command::run(run, cancel).await)
         }

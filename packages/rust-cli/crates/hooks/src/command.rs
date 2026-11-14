@@ -6,6 +6,7 @@
 //! 进程、超时与进程树回收都在执行环境里；这里只发请求、读事件。取消是一条消息，发出后继续等终态。
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use futures_util::StreamExt;
 use rust_cli_kernel_api::env::{
@@ -14,7 +15,7 @@ use rust_cli_kernel_api::env::{
 };
 use rust_cli_kernel_api::env_shell::{HookIo, ShellKind};
 use rust_cli_kernel_api::ids::{OperationId, ShellTaskId};
-use rust_cli_kernel_api::machine::Commands;
+use rust_cli_kernel_api::machine::{CommandEvents, Commands};
 use tokio_util::sync::CancellationToken;
 
 use rust_cli_base::names::vars;
@@ -135,7 +136,7 @@ fn hook_env(
 }
 
 pub(crate) struct CommandRun<'a> {
-    pub commands: &'a dyn Commands,
+    pub commands: Arc<dyn Commands>,
     pub workspace: &'a WorkspaceRef,
     pub operation: OperationContext,
     pub hook: &'a CommandHook,
@@ -143,6 +144,36 @@ pub(crate) struct CommandRun<'a> {
     pub timeout_ms: u64,
     /// Fork: the run's Node transcript file (specs/fork-rust-agent-parity.md "Command hook stdin").
     pub transcript: Option<TranscriptGuard>,
+    /// Fork: an async hook is cancelled with the turn (Node `runBackgroundHook` links the turn's `parentSignal`).
+    pub cancel_background: bool,
+}
+
+/// Cancels a started hook command whose run is dropped before its terminal event (dropping the event stream does not
+/// stop the command; Node aborts the callback's `signal`).
+struct CancelOnDrop {
+    commands: Arc<dyn Commands>,
+    operation: Option<OperationId>,
+}
+
+impl CancelOnDrop {
+    fn disarm(&mut self) {
+        self.operation = None;
+    }
+}
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        let Some(operation) = self.operation.take() else {
+            return;
+        };
+        let commands = self.commands.clone();
+        match tokio::runtime::Handle::try_current() {
+            Ok(handle) => drop(handle.spawn(async move {
+                let _ = commands.cancel(operation).await;
+            })),
+            Err(_) => tracing::warn!("dropped hook command not cancelled: no runtime"),
+        }
+    }
 }
 
 pub(crate) async fn run(mut run: CommandRun<'_>, cancel: CancellationToken) -> Raw {
@@ -197,11 +228,65 @@ async fn command(
     if run.hook.background {
         // async：不等待，结果不回送（D6）；丢掉流不影响命令。
         // Fork: the transcript stays until the process ends (Node keeps it for the background run).
-        if let Some(transcript) = transcript.take() {
+        let transcript = transcript.take();
+        if run.cancel_background {
+            drop(tokio::spawn(follow_background(
+                run.commands.clone(),
+                operation,
+                events,
+                cancel,
+                transcript,
+            )));
+        } else if let Some(transcript) = transcript {
             drop(tokio::spawn(transcript.remove_after(events)));
         }
         return Raw::Backgrounded;
     }
+    let mut stop = CancelOnDrop {
+        commands: run.commands.clone(),
+        operation: Some(operation.clone()),
+    };
+    let raw = foreground(run.commands.as_ref(), &operation, &mut events, &cancel).await;
+    stop.disarm();
+    raw
+}
+
+/// Fork: an async hook under the Node rules: cancelled when the turn is, its transcript removed when it ends.
+async fn follow_background(
+    commands: Arc<dyn Commands>,
+    operation: OperationId,
+    mut events: CommandEvents,
+    cancel: CancellationToken,
+    transcript: Option<TranscriptGuard>,
+) {
+    let mut cancel_sent = false;
+    loop {
+        let event = tokio::select! {
+            event = events.next() => event,
+            () = cancel.cancelled(), if !cancel_sent => {
+                cancel_sent = true;
+                let _ = commands.cancel(operation.clone()).await;
+                continue;
+            }
+        };
+        if matches!(
+            event,
+            None | Some(Ok(CommandEvent::Finished { .. }) | Err(_))
+        ) {
+            break;
+        }
+    }
+    if let Some(transcript) = transcript {
+        transcript.remove().await;
+    }
+}
+
+async fn foreground(
+    commands: &dyn Commands,
+    operation: &OperationId,
+    events: &mut CommandEvents,
+    cancel: &CancellationToken,
+) -> Raw {
     let mut captured = Captured::default();
     let mut cancel_sent = false;
     loop {
@@ -209,7 +294,7 @@ async fn command(
             event = events.next() => event,
             () = cancel.cancelled(), if !cancel_sent => {
                 cancel_sent = true;
-                let _ = run.commands.cancel(operation.clone()).await;
+                let _ = commands.cancel(operation.clone()).await;
                 continue;
             }
         };

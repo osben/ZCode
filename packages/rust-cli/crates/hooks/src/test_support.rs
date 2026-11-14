@@ -54,6 +54,7 @@ pub struct ScriptedEnv {
     scripts: Mutex<HashMap<String, Script>>,
     started: Mutex<Vec<(OperationContext, StartCommand)>>,
     running: Mutex<HashMap<OperationId, Started>>,
+    cancelled: Mutex<Vec<OperationId>>,
     shell_cwd: Option<String>,
     fail_start: bool,
 }
@@ -87,6 +88,11 @@ impl ScriptedEnv {
 
     pub fn started(&self) -> Vec<(OperationContext, StartCommand)> {
         self.started.lock_unpoisoned().clone()
+    }
+
+    /// The operations `cancel` was sent for, in order.
+    pub fn cancelled(&self) -> Vec<OperationId> {
+        self.cancelled.lock_unpoisoned().clone()
     }
 }
 
@@ -199,6 +205,7 @@ impl Commands for ScriptedEnv {
     }
 
     async fn cancel(&self, operation: OperationId) -> Result<(), EnvError> {
+        self.cancelled.lock_unpoisoned().push(operation.clone());
         if let Some(started) = self.running.lock_unpoisoned().get(&operation) {
             started.cancel.cancel();
         }
