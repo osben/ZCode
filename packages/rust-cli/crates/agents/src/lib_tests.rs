@@ -665,7 +665,13 @@ async fn a_desktop_resume_uses_the_current_profile_and_refuses_a_removed_one() {
     assert!(system.contains("You are the new reviewer."), "{system}");
     assert!(!system.contains("You are the old reviewer."), "{system}");
     // The resumed run ends before the next message.
-    while !matches!(stream.next().await, Some(AgentSignal::Notice(_))) {}
+    loop {
+        match stream.next().await {
+            Some(AgentSignal::Notice(_)) => break,
+            Some(_) => {}
+            None => panic!("the signal stream ended before the resumed run's notice"),
+        }
+    }
 
     *host.0.lock_unpoisoned() = reviewer_snapshot(None);
     // The harness names a parent run after its tool, so both SendMessage calls share one run: drop the cached

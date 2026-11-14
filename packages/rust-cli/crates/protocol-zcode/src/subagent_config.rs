@@ -3,6 +3,7 @@
 //! `subagents/readRuntimeConfig`. Both are reverse requests like the credential cipher's.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -48,10 +49,27 @@ impl HostSubagentConfig {
         }
     }
 
-    async fn ask(&self, method: &str, params: &Value) -> Result<Result<Value, i64>, String> {
-        match tokio::time::timeout(self.limit, self.context.peer.request(method, params)).await {
+    /// `Ok(Err((code, message)))` is the Host's JSON-RPC error. A Host that promised the attach acknowledgement drops
+    /// reverse requests sent before it, so the wait for it is part of the same bound (as the credential cipher's);
+    /// `ready` records inside the bound that the wait ended, so the timeout names the right step.
+    async fn ask(
+        &self,
+        method: &str,
+        params: &Value,
+    ) -> Result<Result<Value, (i64, String)>, String> {
+        let ready = AtomicBool::new(false);
+        let answer = tokio::time::timeout(self.limit, async {
+            self.context.host_ready().await;
+            ready.store(true, Ordering::SeqCst);
+            self.context.peer.request(method, params).await
+        })
+        .await;
+        match answer {
+            Err(_) if !ready.load(Ordering::SeqCst) => Err(format!(
+                "the host did not acknowledge the attach in time before {method}"
+            )),
             Err(_) => Err(format!("{method} did not reply in time")),
-            Ok(Err(error)) => Ok(Err(error.code)),
+            Ok(Err(error)) => Ok(Err((error.code, error.message))),
             Ok(Ok(result)) => Ok(Ok(result)),
         }
     }
@@ -66,8 +84,12 @@ impl HostSubagentConfig {
             "workspace": workspace,
         });
         let offered = match self.ask(PREFERENCES, &params).await? {
-            Err(code) if NOT_OFFERED.contains(&code) => false,
-            Err(code) => return Err(format!("{PREFERENCES} failed (JSON-RPC error {code})")),
+            Err((code, _)) if NOT_OFFERED.contains(&code) => false,
+            Err((code, message)) => {
+                return Err(format!(
+                    "{PREFERENCES} failed (JSON-RPC error {code}: {message})"
+                ));
+            }
             Ok(result) => {
                 Inbound::get()
                     .reply(PREFERENCES, &result)
@@ -87,17 +109,15 @@ impl SubagentConfigSource for HostSubagentConfig {
     async fn read(&self, session: &SessionId) -> Result<Option<SubagentSnapshot>, String> {
         let workspace = self
             .context
-            .workspace_of(session.as_str())
+            .workspace_ref(session.as_str())
             .ok_or_else(|| "the session is not open in this agent".to_owned())?;
-        let workspace = json!({"workspacePath": workspace, "workspaceKey": workspace});
         if !self.offered(session, &workspace).await? {
             return Ok(None);
         }
         let params = json!({"sessionId": session.as_str(), "workspace": workspace});
-        let result = self
-            .ask(READ, &params)
-            .await?
-            .map_err(|code| format!("{READ} failed (JSON-RPC error {code})"))?;
+        let result = self.ask(READ, &params).await?.map_err(|(code, message)| {
+            format!("{READ} failed (JSON-RPC error {code}: {message})")
+        })?;
         Inbound::get()
             .reply(READ, &result)
             .map_err(|error| format!("invalid {READ} reply: {error}"))?;
@@ -124,14 +144,17 @@ fn snapshot(result: &Value) -> Result<SubagentSnapshot, String> {
     let overrides = &result["builtInModelSelectionOverrides"];
     Ok(SubagentSnapshot::Ready {
         profiles,
-        explore: selection(&overrides["Explore"]),
-        general_purpose: selection(&overrides["general-purpose"]),
+        explore: selection(&overrides["Explore"])?,
+        general_purpose: selection(&overrides["general-purpose"])?,
         plugins: result["pluginAgentModelSelectionOverrides"]
             .as_object()
             .into_iter()
             .flatten()
-            .filter_map(|(key, value)| Some((key.clone(), selection(value)?)))
-            .collect(),
+            .filter_map(|(key, value)| match selection(value) {
+                Ok(found) => found.map(|found| Ok((key.clone(), found))),
+                Err(error) => Some(Err(error)),
+            })
+            .collect::<Result<_, _>>()?,
     })
 }
 
@@ -162,12 +185,13 @@ fn profile(value: &Value) -> Result<SubagentProfile, String> {
         description: text("description"),
         source,
         system_prompt: text("systemPrompt"),
-        selection: selection(&value["modelSelection"]),
+        selection: selection(&value["modelSelection"])?,
         tools: names("tools"),
         disallowed_tools: names("disallowedTools").unwrap_or_default(),
+        // Node's schema has no upper bound: a larger limit stays a limit (the largest), never "unlimited".
         max_turns: value["maxTurns"]
             .as_u64()
-            .and_then(|turns| u32::try_from(turns).ok()),
+            .map(|turns| u32::try_from(turns).unwrap_or(u32::MAX)),
         background: value["background"] == true,
         inject_agents_md: value["injectAgentsMd"] != false,
         permission_mode: value["permissionMode"]
@@ -176,15 +200,28 @@ fn profile(value: &Value) -> Result<SubagentProfile, String> {
     })
 }
 
-/// Node `modelSelectionSchema` (zod trims the strings).
-fn selection(value: &Value) -> Option<ModelSelection> {
-    let provider = value["providerId"].as_str()?.trim();
-    let model = value["modelId"].as_str()?.trim();
-    let mut selection = ModelSelection::new(provider, model);
-    selection.reasoning = value["options"]["reasoningLevel"]
-        .as_str()
-        .map(|level| level.trim().to_owned());
-    Some(selection)
+/// Node `modelSelectionSchema`: each string is trimmed and must then be non-empty (`trim().min(1)`), or the whole
+/// reply fails to parse. JSON Schema cannot say "non-empty after trimming", so the inbound check lets it through.
+fn selection(value: &Value) -> Result<Option<ModelSelection>, String> {
+    let (Some(provider), Some(model)) = (value["providerId"].as_str(), value["modelId"].as_str())
+    else {
+        return Ok(None);
+    };
+    let level = value["options"]["reasoningLevel"].as_str();
+    for (field, text) in [
+        ("providerId", Some(provider)),
+        ("modelId", Some(model)),
+        ("options.reasoningLevel", level),
+    ] {
+        if text.is_some_and(|text| text.trim().is_empty()) {
+            return Err(format!(
+                "invalid {READ} reply: a model selection has a blank {field}"
+            ));
+        }
+    }
+    let mut selection = ModelSelection::new(provider.trim(), model.trim());
+    selection.reasoning = level.map(|level| level.trim().to_owned());
+    Ok(Some(selection))
 }
 
 #[cfg(test)]

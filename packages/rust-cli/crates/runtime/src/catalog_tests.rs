@@ -29,3 +29,28 @@ fn a_definition_becomes_agent_info_and_inherit_means_no_model() {
         Some(rust_cli_base::models::GLM_5)
     );
 }
+
+/// Fork: a full selection (Host profile, Settings override) names the model even when the file names another one,
+/// and it does so for `inherit` too (specs/fork-rust-subagent-runtime-config.md rule 9).
+#[test]
+fn a_full_selection_names_the_model_over_the_file_model() {
+    let builtin = rust_cli_agents::builtins()
+        .into_iter()
+        .next()
+        .expect("there is a built-in agent");
+    for file_model in [Some(rust_cli_base::models::GLM_5), Some("inherit"), None] {
+        let selected = AgentDefinition {
+            model: file_model.map(str::to_owned),
+            selection: Some(rust_cli_kernel_api::model::ModelSelection::new(
+                "custom-openai",
+                "gpt-x",
+            )),
+            ..builtin.clone()
+        };
+        assert_eq!(
+            agent_info(&selected).model.as_deref(),
+            Some("gpt-x"),
+            "{file_model:?}"
+        );
+    }
+}

@@ -109,6 +109,33 @@ fn connect() -> (Arc<HostSubagentConfig>, Host, TaskScope) {
     (source, host, scope)
 }
 
+/// Like [`connect`], with a Host that promised the attach acknowledgement (`ZCODE_HOST_ATTACH_ACK=1`).
+fn connect_attached(limit: Duration) -> (Arc<HostSubagentConfig>, Host, TaskScope) {
+    let scope = TaskScope::root("test", |_| {});
+    let (host_out, agent_in) = duplex(1 << 20);
+    let (agent_out, host_in) = duplex(1 << 20);
+    let (peer, _writer) = connection::start(agent_out, &scope.spawner(), Options::default());
+    let context = Arc::new(Context::new(peer, Arc::new(FixedClock(1))));
+    context.expect_host_attach();
+    drop(scope.spawner().spawn(
+        "serve",
+        crate::attach::serve_attached(
+            BufReader::new(agent_in),
+            context.clone(),
+            Arc::new(Nothing),
+            scope.spawner(),
+            Options::default(),
+        ),
+    ));
+    context.register(SESSION, WORKSPACE);
+    let source = Arc::new(HostSubagentConfig::with_limit(context, limit));
+    let host = Host {
+        write: host_out,
+        lines: BufReader::new(host_in).lines(),
+    };
+    (source, host, scope)
+}
+
 fn reading(
     source: &Arc<HostSubagentConfig>,
 ) -> tokio::task::JoinHandle<Result<Option<SubagentSnapshot>, String>> {
@@ -330,4 +357,113 @@ async fn a_released_session_asks_the_gate_again() {
         );
         source.forget(&SessionId::new(SESSION));
     }
+}
+
+/// Review 11: a Host that promised the attach acknowledgement drops reverse requests sent before it; like the
+/// credential cipher, the gate request waits for the acknowledgement inside the same bound.
+#[tokio::test]
+async fn the_gate_waits_for_a_late_attach_ack() {
+    let (source, mut host, _scope) = connect_attached(Duration::from_secs(5));
+    let asking = reading(&source);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(200), host.lines.next_line())
+            .await
+            .is_err(),
+        "nothing is sent before the acknowledgement"
+    );
+    let ack =
+        json!({"method": crate::attach::HOST_ATTACHED, "params": {"credentialCipher": false}});
+    host.write
+        .write_all(format!("{ack}\n").as_bytes())
+        .await
+        .unwrap();
+    let read = host.open_gate().await;
+    host.answer(&read, json!({"kind": "built-in-fallback"}))
+        .await;
+    assert_eq!(
+        asking.await.unwrap(),
+        Ok(Some(SubagentSnapshot::BuiltInFallback))
+    );
+}
+
+/// Review 11: no acknowledgement within the bound: nothing reaches the Host, and the error names the attach.
+#[tokio::test]
+async fn a_missing_attach_ack_fails_with_its_own_error() {
+    let (source, mut host, _scope) = connect_attached(Duration::from_millis(100));
+    let error = reading(&source).await.unwrap().unwrap_err();
+    assert_eq!(
+        error,
+        "the host did not acknowledge the attach in time before session/requestRuntimePreferences"
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_millis(200), host.lines.next_line())
+            .await
+            .is_err(),
+        "nothing reached the Host"
+    );
+}
+
+/// Review 4: a Host error keeps its message next to the code.
+#[tokio::test]
+async fn a_host_error_keeps_its_message() {
+    let (source, mut host, _scope) = connect();
+    let asking = reading(&source);
+    let gate = host.next().await;
+    host.fail(&gate, -32603).await;
+    assert_eq!(
+        asking.await.unwrap(),
+        Err("session/requestRuntimePreferences failed (JSON-RPC error -32603: no)".to_owned())
+    );
+    let asking = reading(&source);
+    let read = host.open_gate().await;
+    host.fail(&read, -32603).await;
+    assert_eq!(
+        asking.await.unwrap(),
+        Err("subagents/readRuntimeConfig failed (JSON-RPC error -32603: no)".to_owned())
+    );
+}
+
+/// Review 5: Node's `modelSelectionSchema` trims and then requires a non-empty id, so a blank id fails the reply.
+#[tokio::test]
+async fn a_blank_selection_id_fails_the_reply() {
+    let blank = json!({"providerId": "  ", "modelId": "m"});
+    let profile = json!({"name": "reviewer", "description": "", "source": "user", "systemPrompt": "",
+        "modelSelection": {"providerId": "p", "modelId": " \t"}});
+    for reply in [
+        json!({"kind": "ready", "profiles": [profile], "builtInModelSelectionOverrides": {},
+            "pluginAgentModelSelectionOverrides": {}}),
+        json!({"kind": "ready", "profiles": [], "builtInModelSelectionOverrides": {"Explore": blank},
+            "pluginAgentModelSelectionOverrides": {}}),
+        json!({"kind": "ready", "profiles": [], "builtInModelSelectionOverrides": {},
+            "pluginAgentModelSelectionOverrides": {"plugin:p:a": blank}}),
+    ] {
+        let (source, mut host, _scope) = connect();
+        let asking = reading(&source);
+        let read = host.open_gate().await;
+        host.answer(&read, reply.clone()).await;
+        let error = asking.await.unwrap().unwrap_err();
+        assert!(
+            error.starts_with("invalid subagents/readRuntimeConfig reply"),
+            "{reply}: {error}"
+        );
+    }
+}
+
+/// Review 6: a `maxTurns` above `u32::MAX` keeps a limit (the largest), not none.
+#[tokio::test]
+async fn a_huge_max_turns_is_clamped() {
+    let (source, mut host, _scope) = connect();
+    let asking = reading(&source);
+    let read = host.open_gate().await;
+    host.answer(
+        &read,
+        json!({"kind": "ready", "profiles": [{"name": "reviewer", "description": "", "source": "user",
+            "systemPrompt": "", "maxTurns": 1_u64 << 40}], "builtInModelSelectionOverrides": {},
+            "pluginAgentModelSelectionOverrides": {}}),
+    )
+    .await;
+    let Ok(Some(SubagentSnapshot::Ready { profiles, .. })) = asking.await.unwrap() else {
+        panic!("a ready snapshot");
+    };
+    assert_eq!(profiles[0].max_turns, Some(u32::MAX));
 }

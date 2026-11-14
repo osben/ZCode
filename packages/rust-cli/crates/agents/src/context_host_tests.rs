@@ -552,6 +552,47 @@ async fn a_released_session_reads_again() {
     assert_eq!(host.reads(), 2);
 }
 
+/// A Host double whose read waits until the test lets it answer.
+struct Held {
+    started: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+}
+
+#[async_trait]
+impl SubagentConfigSource for Held {
+    async fn read(&self, _session: &SessionId) -> Result<Option<SubagentSnapshot>, String> {
+        self.started.notify_one();
+        self.release.notified().await;
+        Ok(Some(ready(vec![profile("late", ProfileSource::User)])))
+    }
+
+    fn forget(&self, _session: &SessionId) {}
+}
+
+/// Review 8: a session released while its read is in flight keeps no slot once the read returns.
+#[tokio::test]
+async fn a_release_during_a_read_leaves_no_slot() {
+    let catalog = Arc::new(catalog());
+    let host = Arc::new(Held {
+        started: tokio::sync::Notify::new(),
+        release: tokio::sync::Notify::new(),
+    });
+    catalog.set_host(host.clone());
+    let lookup = tokio::spawn({
+        let catalog = catalog.clone();
+        async move {
+            catalog
+                .prepared_definitions(&workspace(), &session(PARENT), Some(&run("run_1")))
+                .await
+        }
+    });
+    host.started.notified().await;
+    catalog.forget(&session(PARENT));
+    host.release.notify_one();
+    lookup.await.unwrap().expect("read");
+    assert!(catalog.snapshots.lock_unpoisoned().is_empty());
+}
+
 /// Rule 14: a desktop catalog has no `Plan` on any path (the agent files, a `ready` snapshot, `built-in-fallback`,
 /// incognito without custom agents, the sessionless list); the TUI catalog keeps it.
 #[tokio::test]

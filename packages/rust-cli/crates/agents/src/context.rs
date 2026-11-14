@@ -316,12 +316,13 @@ impl AgentCatalog {
         };
         let result = flight.clone().await;
         let mut slots = self.snapshots.lock_unpoisoned();
-        let slot = slots.entry(root).or_default();
-        // The first lookup back from this read settles it; a newer read in flight is left alone.
-        if slot
-            .flight
-            .as_ref()
-            .is_some_and(|(_, current)| current.ptr_eq(&flight))
+        // The first lookup back from this read clears its flight and caches a successful snapshot. A newer read in
+        // flight is left alone, and so is a root released meanwhile (`forget`): its slot stays gone.
+        if let Some(slot) = slots.get_mut(&root)
+            && slot
+                .flight
+                .as_ref()
+                .is_some_and(|(_, current)| current.ptr_eq(&flight))
         {
             slot.flight = None;
             if let Ok(snapshot) = &result {

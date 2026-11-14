@@ -38,10 +38,12 @@ pub(crate) fn selection(
 ) -> ModelSelection {
     let mut selection = match (full, model.filter(|model| *model != "inherit")) {
         (Some(full), _) => ModelSelection {
+            provider: full.provider.clone(),
+            model: full.model.clone(),
+            reasoning: full.reasoning.clone(),
             connection: (full.provider == parent.provider)
                 .then(|| parent.connection.clone())
                 .flatten(),
-            ..full.clone()
         },
         (None, Some(model)) => ModelSelection {
             connection: parent.connection.clone(),
