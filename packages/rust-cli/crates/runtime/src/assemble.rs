@@ -55,6 +55,7 @@ pub(crate) fn hooks(
     ports: &Ports,
     operations: &Operations,
     incognito: &rust_cli_kernel_api::incognito::IncognitoProfiles,
+    transcripts: Option<Arc<dyn rust_cli_kernel_api::hooks::HookTranscripts>>,
 ) -> Arc<HookEngine> {
     let machine = ports.environments.primary_machine();
     Arc::new(
@@ -67,6 +68,10 @@ pub(crate) fn hooks(
             operations: operations.clone(),
             // 大输出与工具结果落在同一个存储（hooks.md §4.5，修复线 F15）。
             artifacts: ports.artifacts.clone(),
+            node_stdin: transcripts.map(|transcripts| rust_cli_hooks::NodeStdinPorts {
+                transcripts,
+                clock: ports.clock.clone(),
+            }),
         })
         .with_incognito(incognito.clone()),
     )
@@ -300,7 +305,7 @@ pub(crate) fn query_parts(
         &Arc<HookEngine>,
     ),
     (late, operations): (&Arc<LateCompactor>, Operations),
-    (defaults, traits): (&Defaults, SurfaceTraits),
+    (defaults, traits, node_desktop): (&Defaults, SurfaceTraits, bool),
     code: Option<Arc<dyn rust_cli_kernel_api::lsp::CodeIntelligence>>,
 ) -> QueryParts {
     QueryParts {
@@ -319,7 +324,9 @@ pub(crate) fn query_parts(
         executor: Arc::new(
             Pipeline::new(gate.clone(), hooks.clone())
                 .with_machines(ports.environments.clone())
-                .with_incognito(ext.incognito_tools()),
+                .with_incognito(ext.incognito_tools())
+                // Fork (node_desktop): tool hook contexts after the tool result, like Node.
+                .with_node_hooks(node_desktop),
         ),
         compactor: late.clone(),
         hooks: hooks.clone(),
@@ -329,7 +336,15 @@ pub(crate) fn query_parts(
         artifacts: ports.artifacts.clone(),
         operations,
         non_interactive: traits.non_interactive,
-        limits: defaults.limits.request,
+        // Fork (node_desktop): Node's Stop continuation cap (specs/fork-rust-agent-parity.md "Stop continuation cap").
+        limits: rust_cli_query::RequestLimits {
+            stop_continuations: if node_desktop {
+                rust_cli_query::StopContinuations::NodeTurn
+            } else {
+                rust_cli_query::StopContinuations::Consecutive
+            },
+            ..defaults.limits.request
+        },
     }
 }
 

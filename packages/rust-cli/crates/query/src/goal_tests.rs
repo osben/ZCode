@@ -22,12 +22,18 @@ use crate::run::tests::{parts, request};
 struct Evaluator {
     verdicts: Mutex<VecDeque<StopVerdict>>,
     asked: Mutex<Vec<StopCondition>>,
+    /// The Stop hook outcomes, in order (none: the hooks let the turn end).
+    outcomes: Mutex<VecDeque<HookOutcome>>,
 }
 
 #[async_trait]
 impl HookRunner for Evaluator {
     async fn run(&self, _event: HookEvent, _cancel: CancellationToken) -> HookOutcome {
-        HookOutcome::default()
+        self.outcomes
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or_default()
     }
 
     async fn evaluate_stop_condition(
@@ -133,7 +139,7 @@ async fn run(goal: Option<&str>, verdicts: Vec<StopVerdict>, agent: Option<Agent
     ));
     let evaluator = Arc::new(Evaluator {
         verdicts: Mutex::new(verdicts.into()),
-        asked: Mutex::default(),
+        ..Evaluator::default()
     });
     let mut parts = parts(model.clone(), Vec::new());
     parts.hooks = evaluator.clone();
@@ -218,4 +224,136 @@ async fn subagents_do_not_check_the_goal() {
     assert_eq!(ran.stop, QueryStop::Completed);
     assert!(ran.asked.is_empty());
     let _ = QuerySource::MainThread;
+}
+
+fn hook_block(text: &str) -> HookOutcome {
+    HookOutcome {
+        blocking_error: Some(text.to_owned()),
+        messages: vec![Message::User(UserMessage {
+            stall_execution: None,
+            intent: None,
+            id: MessageId::new(format!("msg_hook_{text}")),
+            content: vec![ContentBlock::Text {
+                text: text.to_owned(),
+            }],
+            origin: UserOrigin::Meta {
+                source: "hook_blocking_error".to_owned(),
+            },
+        })],
+        ..HookOutcome::default()
+    }
+}
+
+fn has_text(messages: &[Message], wanted: &str) -> bool {
+    messages.iter().any(|message| match message {
+        Message::User(user) => user
+            .content
+            .iter()
+            .any(|block| matches!(block, ContentBlock::Text { text } if text == wanted)),
+        _ => false,
+    })
+}
+
+/// Fork: the Node desktop rule (`StopContinuations::NodeTurn`) caps only Stop hook continuations (Node
+/// `stopHookContinuationCount`, `turn-stop.ts`); a `/goal` continuation is its own input there (`goal-continuation`).
+async fn run_node(goal: &str, outcomes: Vec<HookOutcome>, verdicts: Vec<StopVerdict>) -> Ran {
+    let model = Arc::new(ScriptedModel::new(
+        (0..12)
+            .map(|index| text_response(&[&format!("reply {index}")]))
+            .collect(),
+    ));
+    let evaluator = Arc::new(Evaluator {
+        verdicts: Mutex::new(verdicts.into()),
+        outcomes: Mutex::new(outcomes.into()),
+        ..Evaluator::default()
+    });
+    let mut parts = parts(model.clone(), Vec::new());
+    parts.hooks = evaluator.clone();
+    parts.limits.stop_continuations = crate::StopContinuations::NodeTurn;
+    let request = request("go");
+    let sink = Arc::new(GoalSink::new(Some(goal)));
+    let scope = Arc::new(RunScope::new(&request, sink.clone(), parts, Abort::new()));
+    let stop = crate::run::run(scope, request).await.unwrap();
+    let asked = std::mem::take(&mut *evaluator.asked.lock().unwrap());
+    let reports = sink.reports.lock().unwrap().clone();
+    Ran {
+        stop,
+        requests: model.requests().len(),
+        asked,
+        reports,
+        messages: sink.inner.messages(),
+    }
+}
+
+fn not_met(text: &str) -> StopVerdict {
+    StopVerdict::NotMet {
+        reason: None,
+        feedback: feedback(text),
+    }
+}
+
+/// Node checks the goal once the turn ends; an unmet goal starts a new turn whose Stop hooks count from zero.
+#[tokio::test]
+async fn under_node_an_unmet_goal_continues_past_the_hook_cap() {
+    let mut hooks: Vec<_> = (1..=5)
+        .map(|index| hook_block(&format!("step {index}")))
+        .collect();
+    // The new turn's hooks let it end after one more block.
+    hooks.push(HookOutcome::default());
+    let verdicts = vec![
+        not_met("g1"),
+        not_met("g2"),
+        StopVerdict::Met { reason: None },
+    ];
+    let ran = run_node("tests pass", hooks, verdicts).await;
+    assert_eq!(ran.stop, QueryStop::Completed);
+    // Steps 1-3 continue; step 4 is past the cap, so the goal (g1) continues; step 5 continues the new turn; then
+    // g2 continues and the met goal ends the turn.
+    assert_eq!(ran.requests, 7);
+    assert_eq!(ran.reports.len(), 3);
+    let verdicts: Vec<_> = ran
+        .reports
+        .iter()
+        .map(|(_, verdict)| verdict.clone())
+        .collect();
+    assert_eq!(
+        verdicts,
+        [
+            not_met("g1"),
+            not_met("g2"),
+            StopVerdict::Met { reason: None }
+        ]
+    );
+    for index in [1, 2, 3, 5] {
+        assert!(
+            has_text(&ran.messages, &format!("step {index}")),
+            "step {index}"
+        );
+    }
+    // Past the hook cap the hook feedback is not written.
+    assert!(!has_text(&ran.messages, "step 4"));
+}
+
+#[tokio::test]
+async fn under_node_a_goal_alone_is_not_held_to_the_hook_cap() {
+    let mut verdicts: Vec<_> = (1..=5).map(|index| not_met(&format!("g{index}"))).collect();
+    verdicts.push(StopVerdict::Met { reason: None });
+    let ran = run_node("tests pass", Vec::new(), verdicts).await;
+    assert_eq!(ran.stop, QueryStop::Completed);
+    assert_eq!(ran.requests, 6);
+    assert_eq!(ran.reports.len(), 6);
+}
+
+/// A goal that is never met still ends: past eight goal continuations the goal is not evaluated, so no unmet verdict
+/// is written and then ended.
+#[tokio::test]
+async fn under_node_a_goal_never_met_ends_after_eight_continuations() {
+    let verdicts = (1..=10)
+        .map(|index| not_met(&format!("g{index}")))
+        .collect();
+    let ran = run_node("tests pass", Vec::new(), verdicts).await;
+    assert_eq!(ran.stop, QueryStop::Completed);
+    assert_eq!(ran.requests, 9);
+    assert_eq!(ran.reports.len(), 8);
+    assert_eq!(ran.asked.len(), 8);
 }

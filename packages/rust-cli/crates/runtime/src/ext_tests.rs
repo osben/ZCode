@@ -115,6 +115,7 @@ async fn plugin_agents_reach_the_agent_listing() {
             topic_resources: None,
             acp: None,
             code_intelligence: None,
+            hook_transcripts: None,
         },
     );
     kernel.start_extensions().await;
@@ -227,6 +228,7 @@ async fn the_session_catalog_follows_the_incognito_profile() {
             topic_resources: None,
             acp: None,
             code_intelligence: None,
+            hook_transcripts: None,
         },
     );
     kernel.start_extensions().await;

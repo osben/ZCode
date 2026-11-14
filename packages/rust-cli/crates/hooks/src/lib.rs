@@ -44,6 +44,7 @@ mod prompt;
 mod result;
 mod run;
 mod texts;
+mod transcript;
 pub mod workspace_digest;
 
 #[cfg(test)]
@@ -63,8 +64,9 @@ use tokio_util::sync::CancellationToken;
 
 pub use config::{HookSource, HooksConfig, HooksSettings};
 pub use plugin::PluginHooks;
-pub use run::HookPorts;
+pub use run::{HookPorts, NodeStdinPorts};
 
+use crate::config::HookCommand;
 use crate::effective::Effective;
 use crate::fold::Fold;
 use crate::http::HttpPolicy;
@@ -217,7 +219,22 @@ impl HookRunner for HookEngine {
         }
         let query = matcher::match_query(event.name, &event.payload).filter(|q| !q.is_empty());
         let hook_name = input::hook_name(event.name.as_str(), query.as_deref());
-        let input = input::build(&event, &self.cwd(&event).await).to_string();
+        let cwd = self.cwd(&event).await;
+        let input = input::build(&event, &cwd).to_string();
+        // Only command hooks read the Node stdin (HTTP and prompt hooks keep the Claude Code input).
+        let node = self
+            .ports
+            .node_stdin
+            .as_ref()
+            .filter(|_| {
+                hooks
+                    .iter()
+                    .any(|hook| matches!(hook, HookCommand::Command(_)))
+            })
+            .map(|stdin| transcript::NodeStdin {
+                input: input::node_compatible(&event, &cwd, stdin.clock.now_ms()),
+                transcript: input::transcript_text(&event),
+            });
         let batch = Batch {
             event: event.name,
             session: &event.session,
@@ -231,6 +248,7 @@ impl HookRunner for HookEngine {
                 env: loaded.config.env.vars(),
             },
             prompt_model: loaded.config.prompt_model.as_ref(),
+            node,
         };
         let mut done = run::run_all(&self.ports, &batch, &hooks, &cancel).await;
         // Node runs the hooks of one event one by one in config order (`runner.ts`) and folds each result as it

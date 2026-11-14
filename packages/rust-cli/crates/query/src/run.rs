@@ -21,12 +21,13 @@ use rust_cli_kernel_api::orchestration::{Absorbed, QueryError, QueryRequest, Que
 use serde_json::json;
 
 use crate::RunScope;
+use crate::StopContinuations;
 use crate::compaction::Compaction;
 use crate::recovery::{Fate, Guards, Outcome};
 use crate::request::{Prepared, orchestration, prepare};
 use crate::respond::{Responded, commit, commit_metered, respond};
 use crate::step::StepTools;
-use crate::stop_hooks::{StopHook, stop_hooks};
+use crate::stop_hooks::{Continuation, StopCounts, StopHook, stop_hooks};
 
 /// 一次运行内不变的请求参数。
 struct Inputs {
@@ -52,29 +53,39 @@ struct LoopState {
     guards: Guards,
     /// 这一轮已经因 Stop hook 续过（`stop_hook_active`）。
     stop_hook_active: bool,
-    /// 连续被 Stop hook 阻塞的次数。
+    /// 连续被 Stop hook 阻塞的次数。Fork: under [`StopContinuations::NodeTurn`] the count of the whole run.
     stop_blocks: u32,
+    /// Fork: goal continuations of the run under [`StopContinuations::NodeTurn`] (bounded, never reset).
+    goal_blocks: u32,
+    /// Fork: whether a tool round resets `stop_blocks` (specs/fork-rust-agent-parity.md "Stop continuation cap").
+    stop_continuations: StopContinuations,
     /// 自动压缩的跟踪与是否试过反应式压缩。
     compaction: Compaction,
 }
 
 impl LoopState {
-    fn new() -> Self {
+    fn new(stop_continuations: StopContinuations) -> Self {
         Self {
             responses: 0,
             turn_count: 1,
             guards: Guards::default(),
             stop_hook_active: false,
             stop_blocks: 0,
+            goal_blocks: 0,
+            stop_continuations,
             compaction: Compaction::default(),
         }
     }
 
-    /// 工具结果之后进入下一轮：轮数加 1，恢复计数、连续阻塞次数与压缩的单轮状态清零，Stop hook 的状态保留。
+    /// 工具结果之后进入下一轮：轮数加 1，恢复计数与压缩的单轮状态清零，Stop hook 的状态保留。Fork: the Stop block count
+    /// resets only under [`StopContinuations::Consecutive`]; under `NodeTurn` it counts the whole run.
     fn next_turn(&mut self) {
         self.turn_count += 1;
         self.guards.next_turn();
-        self.stop_blocks = 0;
+        // Fork: Node counts Stop continuations per turn and never resets them (`stopHookContinuationCount`).
+        if self.stop_continuations == StopContinuations::Consecutive {
+            self.stop_blocks = 0;
+        }
         self.compaction.next_turn();
     }
 
@@ -85,6 +96,24 @@ impl LoopState {
         self.stop_blocks += 1;
         self.turn_count += 1;
         self.guards.after_stop_block();
+    }
+
+    /// Fork: an unmet `/goal` under [`StopContinuations::NodeTurn`] starts a new Node turn (`goal-continuation`): its
+    /// Stop hooks count from zero again and see `stop_hook_active: false`.
+    fn after_goal_block(&mut self) {
+        self.stop_hook_active = false;
+        self.stop_blocks = 0;
+        self.goal_blocks += 1;
+        self.turn_count += 1;
+        self.guards.after_stop_block();
+    }
+
+    fn stop_counts(&self) -> StopCounts {
+        StopCounts {
+            active: self.stop_hook_active,
+            blocked: self.stop_blocks,
+            goals: self.goal_blocks,
+        }
     }
 }
 
@@ -314,7 +343,7 @@ pub(crate) async fn run(
     // 这一步的工具快照（query.md §1.3）：运行开始与每个工具批之后各取一次，附件与请求共用。
     let mut step = StepTools::refresh(&scope, &inputs.selection).await;
     start(&scope, &mut history, &inputs, &step, prompt_hook_messages).await?;
-    let mut state = LoopState::new();
+    let mut state = LoopState::new(scope.parts.limits.stop_continuations);
     loop {
         // 自动压缩排在上下文宣布之前：压缩后按“边界之后”重新宣布规则文件与日期，
         // 环境段与模型身份在压缩附件里。已中止时不压缩（不为要被取消的回合发摘要请求，query.md §1.2）。
@@ -454,16 +483,15 @@ async fn reply_ended(
                 history,
                 &inputs.source,
                 &inputs.selection,
-                state.stop_hook_active,
-                state.stop_blocks,
+                state.stop_counts(),
             )
             .await?;
             match hook {
                 StopHook::End => return Ok(Some(QueryStop::Completed)),
                 StopHook::Prevented => return Ok(Some(QueryStop::StopHookPrevented)),
-                StopHook::Continue => {}
+                StopHook::Continue(Continuation::Hook) => state.after_stop_block(),
+                StopHook::Continue(Continuation::Goal) => state.after_goal_block(),
             }
-            state.after_stop_block();
             if reached_max_turns(scope, history, inputs.max_turns, state.turn_count).await? {
                 return Ok(Some(QueryStop::MaxTurns));
             }

@@ -14,6 +14,7 @@ mod config;
 mod directory;
 mod export;
 mod ext;
+mod hook_transcripts;
 mod kernel;
 mod late;
 mod listings;
@@ -58,6 +59,7 @@ use crate::assemble::SurfaceTraits;
 
 pub use acp::{AcpSetup, external_agent};
 pub use ext::{ExtConfig, Extensions};
+pub use hook_transcripts::LocalHookTranscripts;
 pub use rust_cli_compact::{AutoCompactAt, CompactConfig, Thresholds as CompactThresholds};
 pub use rust_cli_context::{Attribution, ContextConfig, DesktopContext, OutputStyle, Surface};
 // hooks 快照（`LocalKernel::replace_hooks` 的参数）：前端的测试组装它不必依赖 hooks crate（修复线 F37 的 TUI 测试）。
@@ -234,7 +236,12 @@ impl LocalKernel {
         let machine = ports.environments.primary_machine();
         // Fork: the one in-memory owner of the sessions' incognito profiles, read by every gate.
         let incognito = rust_cli_kernel_api::incognito::IncognitoProfiles::default();
-        let hooks = assemble::hooks(&ports, &operations, &incognito);
+        let hooks = assemble::hooks(
+            &ports,
+            &operations,
+            &incognito,
+            extensions.hook_transcripts.clone(),
+        );
         let traits = SurfaceTraits::new(
             matches!(context.surface, Surface::Print),
             extensions.streaming_input,
@@ -267,7 +274,7 @@ impl LocalKernel {
             &ports,
             (&assembler, &ext, &gate, &hooks),
             (&late, operations),
-            (&defaults, traits),
+            (&defaults, traits, extensions.node_desktop),
             extensions.code_intelligence.clone(),
         );
         let agents = assemble::agents(

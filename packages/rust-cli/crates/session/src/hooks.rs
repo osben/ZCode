@@ -14,6 +14,7 @@ use rust_cli_kernel_api::interaction::NOTIFY_AFTER as PERMISSION_NOTIFY_DELAY;
 use rust_cli_kernel_api::message::Message;
 use rust_cli_kernel_api::model::ModelSelection;
 use rust_cli_kernel_api::orchestration::InteractionRequest;
+use rust_cli_kernel_api::permission::PermissionMode;
 use rust_cli_kernel_api::session_api::{Delivery, EndReason, QueuedInput, StartSource};
 use rust_cli_kernel_api::store::{Fact, SessionMeta, StoreError};
 use serde_json::{Map, Value, json};
@@ -54,11 +55,26 @@ fn event(
     }
 }
 
+/// The Notification of a permission prompt. Fork: the session mode goes to the Node stdin only (Node sends `mode` on
+/// every event; specs/fork-rust-agent-parity.md "Command hook stdin").
+fn permission_notification(meta: &SessionMeta, tool: &str, mode: PermissionMode) -> HookEvent {
+    let payload = json!({
+        "message": format!("ZCode needs your permission to use {tool}"),
+        "notification_type": "permission_prompt",
+    });
+    let context = HookContext {
+        session_mode: Some(mode),
+        ..HookContext::default()
+    };
+    event(meta, HookEventName::Notification, payload, context)
+}
+
 /// SessionStart 的载荷：`{source, model, session_title?}`（hooks.md §7）。
 pub(crate) fn session_start(
     meta: &SessionMeta,
     source: StartSource,
     selection: &ModelSelection,
+    mode: PermissionMode,
 ) -> HookEvent {
     let mut payload = Map::new();
     payload.insert("source".into(), source_name(source).into());
@@ -69,6 +85,7 @@ pub(crate) fn session_start(
     // prompt hook 的缺省模型经小模型槽位从当前主模型得出（model.md §6.1）。
     let context = HookContext {
         selection: Some(selection.clone()),
+        session_mode: Some(mode),
         ..HookContext::default()
     };
     event(
@@ -83,6 +100,7 @@ pub(crate) fn session_start(
 pub(crate) async fn session_end(
     deps: &SessionDeps,
     meta: &SessionMeta,
+    mode: PermissionMode,
     reason: EndReason,
 ) -> Vec<String> {
     if !deps.hooks.has_hooks(HookEventName::SessionEnd) {
@@ -93,7 +111,10 @@ pub(crate) async fn session_end(
         meta,
         HookEventName::SessionEnd,
         payload,
-        HookContext::default(),
+        HookContext {
+            session_mode: Some(mode),
+            ..HookContext::default()
+        },
     );
     deps.hooks
         .run(event, CancellationToken::new())
@@ -117,7 +138,7 @@ impl Actor {
         if !self.deps.hooks.has_hooks(HookEventName::SessionStart) {
             return;
         }
-        let event = session_start(&self.meta, source, &self.selection);
+        let event = session_start(&self.meta, source, &self.selection, self.mode());
         let hooks = self.deps.hooks.clone();
         let cancel = CancellationToken::new();
         let token = cancel.clone();
@@ -242,16 +263,7 @@ impl Actor {
         if !self.deps.hooks.has_hooks(HookEventName::Notification) {
             return None;
         }
-        let payload = json!({
-            "message": format!("ZCode needs your permission to use {tool}"),
-            "notification_type": "permission_prompt",
-        });
-        let hook = event(
-            &self.meta,
-            HookEventName::Notification,
-            payload,
-            HookContext::default(),
-        );
+        let hook = permission_notification(&self.meta, tool, self.mode());
         let hooks = self.deps.hooks.clone();
         let cancel = CancellationToken::new();
         let token = cancel.clone();
