@@ -103,14 +103,53 @@ pub async fn apply(
             persisted_output::persist_generic(artifacts, session, &body, media_type).await
         }
     };
-    let Ok(text) = persisted else {
+    let text = match (persisted, declared) {
+        (Ok(text), _) => text,
+        // Node `serializeToolResult`: a byte budget that cannot persist falls back to its head truncation.
+        (Err(_), Limit::Bytes(limit)) => truncate_to_budget(&parts, limit),
         // 存不下时原样返回。
-        return output;
+        (Err(_), Limit::Chars(_)) => return output,
     };
     ToolOutput {
         content: vec![ToolResultContent::Text { text }],
         ..output
     }
+}
+
+/// Node `fitContentWithSuffix(content, maxModelBytes, suffix, "head")` over `modelMessageContentToText` (the non-empty
+/// text blocks joined by a blank line), with the `resultBudget` suffix of the artifact strategy.
+fn truncate_to_budget(parts: &[&str], limit: usize) -> String {
+    let content = parts
+        .iter()
+        .filter(|part| !part.is_empty())
+        .copied()
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let suffix = format!(
+        "\n\n[Tool output truncated by resultBudget: originalBytes={}, maxModelBytes={limit}, strategy=artifact]",
+        content.len()
+    );
+    if limit == 0 {
+        return String::new();
+    }
+    let suffix = head_within(&suffix, limit);
+    let remaining = limit - suffix.len();
+    if remaining == 0 {
+        return suffix.to_owned();
+    }
+    format!("{}{suffix}", head_within(&content, remaining))
+}
+
+/// The longest prefix of whole code points within `limit` UTF-8 bytes.
+fn head_within(text: &str, limit: usize) -> &str {
+    if text.len() <= limit {
+        return text;
+    }
+    let mut end = limit;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
 }
 
 #[cfg(test)]
