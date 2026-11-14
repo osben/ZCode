@@ -54,9 +54,6 @@ const SYMBOL_KIND_NAMES: [&str; 26] = [
     "operator",
     "typeParameter",
 ];
-/// Node `fileURLToPath`'s error for a URI that is not a `file:` URI.
-const NOT_A_FILE_URI: &str = "The URL must be of scheme file";
-
 /// Node `OPERATION_CAPABILITY`: the initialize capability that must be truthy; none for diagnostics.
 pub(crate) fn capability(operation: LspOperation) -> Option<&'static str> {
     Some(match operation {
@@ -447,7 +444,8 @@ pub(crate) struct Projection<'a> {
 }
 
 fn file_path(uri: &str, windows: bool) -> Result<String, LspError> {
-    path_of(uri, windows).ok_or_else(|| LspError::new("lsp_invalid_uri", NOT_A_FILE_URI))
+    // Node `fromFileUri` lets `fileURLToPath` throw: the model sees its message.
+    path_of(uri, windows).map_err(|error| LspError::new(error.code, error.message))
 }
 
 fn cap<T>(mut items: Vec<T>) -> (Vec<T>, bool, usize) {

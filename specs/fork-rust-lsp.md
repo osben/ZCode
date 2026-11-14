@@ -327,7 +327,8 @@ session close ─▶ CodeIntelligence::session_closed ─▶ drop fact[session]
 - Symbols: a `DocumentSymbol` tree is flattened depth first (`selectionRange`, children get the parent's name as `containerName`); `SymbolInformation` uses `location` and its own `containerName`. Kinds map to Node's names (`file` … `typeParameter`, else `unknown`). Each becomes `{name, kind, path, line, containerName?}`.
 - Hover: `MarkupContent`, `MarkedString` or an array of them, joined by a blank line and trimmed; empty gives no `hover`; longer than 2000 UTF-16 units is cut and gets `\n...(truncated)`.
 - Lists are capped at 200 items: `truncated` and `total` (the uncapped count). Hover has no `total`.
-- A URI that is not a decodable `file:` URI fails the call ("The URL must be of scheme file"), as Node's `fileURLToPath` throws.
+- A URI that Node's `fileURLToPath` rejects fails the call with Node's message, in Node's order of checks (`uri::path_of`, the WHATWG URL parser, then `getPathFromURLPosix` / `getPathFromURLWin32`): "Invalid URL", "The URL must be of scheme file", `File URL host must be "localhost" or empty on <platform>` (POSIX), "File URL path must not include encoded / characters" (POSIX) or "encoded \ or / characters" (Windows), "File URL path must be absolute" (Windows), and "URI malformed" for an escape that does not decode. The error code is Node's `error.code` (`URIError` for the last). A punycode UNC host stays in its `xn--` form, where Node converts it with `domainToUnicode`.
+- Document URIs encode like Node's `pathToFileURL`: every C0 control, space, `"#%<>?[\]^`{|}~`, DEL and every non-ASCII byte.
 
 ### Model text (Node `formatLspModelContent`)
 
