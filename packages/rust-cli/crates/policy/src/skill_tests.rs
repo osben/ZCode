@@ -6,6 +6,14 @@ use super::*;
 use crate::chain;
 use crate::test_support::run;
 
+fn called() -> chain::Called<'static> {
+    static INPUT: serde_json::Value = serde_json::Value::Null;
+    chain::Called {
+        tool: "Skill",
+        input: &INPUT,
+    }
+}
+
 fn subject(name: &str) -> rust_cli_kernel_api::permission::PermissionSubject {
     rust_cli_kernel_api::permission::PermissionSubject::Skill {
         name: name.to_owned(),
@@ -72,14 +80,14 @@ fn a_safe_skill_still_meets_deny_rules_first() {
     let denied = run(
         PermissionMode::Default,
         &[(RuleBehavior::Deny, "Skill(greet)")],
-        |inputs| chain::own(Some(&subject("greet")), safe.clone(), inputs).0,
+        |inputs| chain::own(Some(&subject("greet")), called(), safe.clone(), inputs).0,
     );
     assert_eq!(
         denied,
         Check::deny("Skill execution blocked by permission rules")
     );
     let allowed = run(PermissionMode::Default, &[], |inputs| {
-        chain::own(Some(&subject("greet")), safe.clone(), inputs).0
+        chain::own(Some(&subject("greet")), called(), safe.clone(), inputs).0
     });
     assert_eq!(allowed, Check::Allow);
 }

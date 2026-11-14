@@ -1,10 +1,25 @@
 import type { ZCodeProtocolError, ZCodeProtocolMessage, ZCodeProtocolResponse } from "@zcode/shared";
+import { zcodePluginsCancelOperationParamsSchema, zcodeProtocolMethods } from "@zcode/shared";
 import {
-  zcodePluginsCancelOperationParamsSchema,
-  zcodePluginsReferenceCatalogParamsSchema,
-  zcodeProtocolErrorCodes,
-  zcodeProtocolMethods,
-} from "@zcode/shared";
+  callMcpUiTool,
+  cancelMcpUiSampling,
+  cancelMcpUiToolCall,
+  claimMcpUiAppToolCall,
+  closeMcpUiInstance,
+  listMcpUiResourceTemplates,
+  listMcpUiResources,
+  openMcpUiInstance,
+  readMcpUiResource,
+  readMcpUiResourceForUi,
+  registerMcpUiAppTools,
+  resolveMcpUiAppToolCall,
+  sampleMcpUi,
+  subscribeMcpUiResource,
+  unregisterMcpUiAppTools,
+  unsubscribeMcpUiResource,
+  validateMcpUiInstance,
+} from "../zcode-protocol/mcp-ui/index.js";
+import { getPluginMentionItems } from "../zcode-protocol/plugin-mention-items.js";
 import {
   getPluginReferenceCatalog,
   resolveSuggestedPluginReference,
@@ -52,6 +67,10 @@ import {
   FORK_RUST_HELPER_METHODS,
   FORK_RUST_HELPER_PROTOCOL_VERSION,
 } from "./methods.js";
+import { errorMessage, FORK_RUST_HELPER_F3, requireString } from "./f3-protocol.js";
+import type { Logger } from "@zcode/contracts";
+import type { ForkRustHelperMcpHost } from "./mcp-host.js";
+import type { ForkRustHelperClient } from "./rust-client.js";
 import type { createWorkflowRunReads } from "./workflow-run-reads.js";
 
 type Handler = (params: unknown) => Promise<unknown> | unknown;
@@ -61,7 +80,15 @@ export interface ForkRustHelperServerDeps {
   /** Opens the session store on first use (saved workflows and run history read the dwf journal). */
   ensureSessionStore(): Promise<void>;
   workflowRuns: ReturnType<typeof createWorkflowRunReads>;
+  /** F3: the helper's requests to the Rust agent (their answers arrive here). */
+  client: ForkRustHelperClient;
+  /** F3: Rust's MCP pipes and the helper sessions. */
+  mcpHost: ForkRustHelperMcpHost;
+  logger?: Logger;
 }
+
+/** F3 helper-protocol requests from Rust (specs/fork-rust-node-helper.md, "F3 Office tools and panels"). */
+type HelperRequestHandler = (params: Record<string, unknown> | undefined) => Promise<unknown>;
 
 /**
  * The saved-workflow methods that read the dwf journal (`listSavedWorkflowRunsOp`, and `runRecordOf`
@@ -73,25 +100,6 @@ const JOURNAL_BACKED_WORKFLOW_METHODS: ReadonlySet<string> = new Set([
   zcodeProtocolMethods.workflowsSave,
   zcodeProtocolMethods.workflowsForRun,
 ]);
-
-/** Reason code of a session-authority plugin reference catalog request the helper cannot answer. */
-export const FORK_RUST_HELPER_SESSION_CATALOG_UNAVAILABLE =
-  "proto.forkRustAgent.sessionPluginCatalogUnavailable";
-
-/**
- * Node answers a reference catalog with a `sessionId` from that session's frozen catalog and must not
- * fall back to workspace authority (plugin-reference-catalog.ts). The session lives in the Rust agent,
- * so the helper refuses that branch explicitly instead of reporting a missing session.
- */
-function catalogForDraftsOnly(params: unknown): void {
-  const parsed = parseParams(zcodePluginsReferenceCatalogParamsSchema, params);
-  if (!parsed.sessionId) return;
-  throw new ProtocolRequestError(
-    zcodeProtocolErrorCodes.sessionUnavailable,
-    "The Rust agent's Node helper has no session-owned plugin catalog",
-    { reasonCode: FORK_RUST_HELPER_SESSION_CATALOG_UNAVAILABLE },
-  );
-}
 
 /**
  * The helper's request dispatch: the F1+F2 handlers of Node's protocol server, unchanged, on a
@@ -139,14 +147,11 @@ export class ForkRustHelperServer {
       [zcodeProtocolMethods.pluginsCancelOperation]: (params) => this.cancelOperation(params),
       [zcodeProtocolMethods.pluginsReadUserOptions]: (params) => readPluginUserOptions(context, params),
       [zcodeProtocolMethods.pluginsListUiSurfaces]: (params) => listPluginUiSurfaces(context, params),
-      [zcodeProtocolMethods.pluginsReferenceCatalog]: (params) => {
-        catalogForDraftsOnly(params);
-        return getPluginReferenceCatalog(context, params);
-      },
-      [zcodeProtocolMethods.pluginsReferenceCatalogWithCategory]: (params) => {
-        catalogForDraftsOnly(params);
-        return getPluginReferenceCatalog(context, params, true);
-      },
+      // With a sessionId these answer from the frozen catalog of a session Rust opened (F3).
+      [zcodeProtocolMethods.pluginsReferenceCatalog]: (params) =>
+        getPluginReferenceCatalog(context, params),
+      [zcodeProtocolMethods.pluginsReferenceCatalogWithCategory]: (params) =>
+        getPluginReferenceCatalog(context, params, true),
       [zcodeProtocolMethods.workflowsList]: (params) => listSavedWorkflowsOp(context, params),
       [zcodeProtocolMethods.workflowsGet]: (params) => getSavedWorkflowOp(context, params),
       [zcodeProtocolMethods.workflowsUpdateMeta]: (params) => updateSavedWorkflowMetaOp(context, params),
@@ -156,15 +161,74 @@ export class ForkRustHelperServer {
       [zcodeProtocolMethods.workflowsSave]: (params) => saveSavedWorkflowFromRunOp(context, params),
       [zcodeProtocolMethods.workflowsForRun]: (params) => findSavedWorkflowForRunOp(context, params),
       ...deps.workflowRuns,
+      // F3: the same handlers as Node's protocol server, on the helper's session records.
+      [zcodeProtocolMethods.pluginsMentionItems]: (params) => getPluginMentionItems(context, params),
+      [zcodeProtocolMethods.mcpReadResource]: (params) => readMcpUiResource(context, params),
+      [zcodeProtocolMethods.mcpUiOpenInstance]: (params) => openMcpUiInstance(context, params),
+      [zcodeProtocolMethods.mcpUiValidateInstance]: (params) => validateMcpUiInstance(context, params),
+      [zcodeProtocolMethods.mcpUiCloseInstance]: (params) => closeMcpUiInstance(context, params),
+      [zcodeProtocolMethods.mcpUiSampling]: (params) => sampleMcpUi(context, params),
+      [zcodeProtocolMethods.mcpUiCancelSampling]: (params) => cancelMcpUiSampling(context, params),
+      [zcodeProtocolMethods.mcpUiCallTool]: (params) => callMcpUiTool(context, params),
+      [zcodeProtocolMethods.mcpUiCancelCall]: (params) => cancelMcpUiToolCall(context, params),
+      [zcodeProtocolMethods.mcpUiReadResource]: (params) => readMcpUiResourceForUi(context, params),
+      [zcodeProtocolMethods.mcpUiListResources]: (params) => listMcpUiResources(context, params),
+      [zcodeProtocolMethods.mcpUiListResourceTemplates]: (params) =>
+        listMcpUiResourceTemplates(context, params),
+      [zcodeProtocolMethods.mcpUiSubscribeResource]: (params) => subscribeMcpUiResource(context, params),
+      [zcodeProtocolMethods.mcpUiUnsubscribeResource]: (params) =>
+        unsubscribeMcpUiResource(context, params),
+      [zcodeProtocolMethods.mcpUiRegisterAppTools]: (params) => registerMcpUiAppTools(context, params),
+      [zcodeProtocolMethods.mcpUiUnregisterAppTools]: (params) =>
+        unregisterMcpUiAppTools(context, params),
+      [zcodeProtocolMethods.mcpUiClaimAppToolCall]: (params) => claimMcpUiAppToolCall(context, params),
+      [zcodeProtocolMethods.mcpUiResolveAppToolCall]: (params) =>
+        resolveMcpUiAppToolCall(context, params),
     };
     this.handlers = new Map(Object.entries(handlers));
+    const host = deps.mcpHost;
+    this.helperRequests = new Map<string, HelperRequestHandler>([
+      [FORK_RUST_HELPER_F3.mcpConnect, (params) => host.connect(params)],
+      [FORK_RUST_HELPER_F3.sessionOpen, (params) => host.openSession(params)],
+      [FORK_RUST_HELPER_F3.appToolsCall, (params) => host.callAppTool(params)],
+      [FORK_RUST_HELPER_F3.ping, async () => ({})],
+    ]);
+    this.helperNotifications = new Map<string, HelperRequestHandler>([
+      [FORK_RUST_HELPER_F3.mcpSend, (params) => host.send(params)],
+      // Async, so a malformed close is a rejection the dispatch logs rather than a throw.
+      [FORK_RUST_HELPER_F3.mcpClose, async (params) => host.closePipe(requireString(params, "connection"))],
+      [FORK_RUST_HELPER_F3.sessionClose, (params) => host.closeSession(params)],
+      [FORK_RUST_HELPER_F3.appToolsCancel, async (params) => host.cancelAppTool(params)],
+    ]);
   }
 
-  /** Answers one inbound message; notifications and stray responses get no answer. */
+  private readonly helperRequests: ReadonlyMap<string, HelperRequestHandler>;
+  private readonly helperNotifications: ReadonlyMap<string, HelperRequestHandler>;
+
+  /**
+   * Answers one inbound message. A response settles one of the helper's own requests; a helper
+   * notification runs its handler; other notifications get no answer.
+   */
   async handleMessage(
     message: ZCodeProtocolMessage,
   ): Promise<ZCodeProtocolResponse | ZCodeProtocolError | undefined> {
-    if (!("method" in message) || !("id" in message) || message.id === undefined) return undefined;
+    if (!("method" in message)) {
+      this.deps.client.handleResponse(message);
+      return undefined;
+    }
+    if (!("id" in message) || message.id === undefined) {
+      const run = this.helperNotifications.get(message.method);
+      // A notification has no answer: a refused one is logged, since a thrown error would close the connection.
+      if (run)
+        await run((message as { params?: Record<string, unknown> }).params).catch((error: unknown) =>
+          this.deps.logger?.warn("Rust helper notification refused", {
+            event: "fork_rust_helper.notification.refused",
+            method: message.method,
+            error: errorMessage(error),
+          }),
+        );
+      return undefined;
+    }
     const { id, method, params } = message as { id: string | number; method: string; params?: unknown };
     try {
       return { id, result: await this.dispatch(method, params) };
@@ -181,6 +245,8 @@ export class ForkRustHelperServer {
 
   private async dispatch(method: string, params: unknown): Promise<unknown> {
     if (method === FORK_RUST_HELPER_INITIALIZE) return this.initialize(params);
+    const helperRequest = this.helperRequests.get(method);
+    if (helperRequest) return helperRequest(params as Record<string, unknown> | undefined);
     const handler = this.handlers.get(method);
     if (!handler) throw new ProtocolRequestError(-32601, `Method not found: ${method}`);
     if (JOURNAL_BACKED_WORKFLOW_METHODS.has(method)) await this.deps.ensureSessionStore();

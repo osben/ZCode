@@ -156,6 +156,12 @@ impl LocalMcpTransport {
                 let (link, task) = http::sse(self.egress()?, url, headers, sender).await?;
                 (Outbox::Http(link), task)
             }
+            // Fork: the cli's routing transport sends these to the Node helper before they reach this one.
+            McpTransportConfig::NodeHelper => {
+                return Err(McpError::Unsupported {
+                    what: "a Node helper MCP server without a Node helper".to_owned(),
+                });
+            }
         };
         let id = format!("mcp-{}", self.next.fetch_add(1, Ordering::Relaxed));
         self.connections().insert(

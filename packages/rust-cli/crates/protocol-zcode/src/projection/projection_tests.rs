@@ -2242,3 +2242,49 @@ fn a_queue_item_shows_its_edit_lock_and_its_attachment_chips() {
             .is_none()
     );
 }
+
+/// Fork: a session-level ask (an MCP App authorization from the composer or a panel, a background subagent's ask)
+/// outlives the turn that was running when it was asked. The kernel resolves the turn's own asks before `TurnFinished`
+/// (`cancel_turn_asks`), so the projection keeps what is still pending. Found by `plugin-extension-mention` on Rust: a
+/// mention's prompt asked during a turn vanished when the turn ended, though Rust still waited for its answer.
+#[test]
+fn a_session_level_ask_stays_pending_after_the_turn_ends() {
+    let mut feed = Feed::new();
+    feed.apply(KernelEvent::TurnStarted {
+        turn: TurnId::new("turn_1"),
+        command: None,
+    });
+    feed.apply(KernelEvent::InteractionAsked {
+        interaction: InteractionId::new("int_app"),
+        request: InteractionRequest::Permission {
+            origin: None,
+            tool_use: ToolUseId::new("helper_req_1"),
+            tool: "mcp__plugin_e2e_mention__mention_search".into(),
+            input: json!({"query": "a"}),
+            message: "Allow?".into(),
+            suggestions: Vec::new(),
+            rule_seed: None,
+            asked_by: None,
+            machine: Default::default(),
+            once: false,
+            independent: false,
+        },
+    });
+    let finished = feed.apply(KernelEvent::TurnFinished {
+        turn: TurnId::new("turn_1"),
+        outcome: TurnOutcome::Success,
+        usage: None,
+    });
+    assert!(
+        finished
+            .iter()
+            .all(|delta| delta["patch"].get("pendingInteractions").is_none()),
+        "{finished:?}"
+    );
+    assert_eq!(feed.projection.pending_permissions(), 1);
+    let snapshot = feed.projection.snapshot(9, "epoch-1");
+    assert_eq!(
+        snapshot["pendingInteractions"][0]["interactionId"],
+        "int_app"
+    );
+}

@@ -1057,13 +1057,9 @@ impl Projection {
                     patch.insert("inputRouting".into(), self.input_routing());
                 }
                 patch.insert("usage".into(), state::usage(self.context, &self.total));
-                // Fork: a turn's end drops the tool-bound interactions only; the session-level workspace hook review
-                // stays (Node `product-projection.ts` filters by toolCallId there).
-                let before = self.pending.len();
-                self.pending.retain(is_hook_review);
-                if self.pending.len() != before {
-                    patch.insert("pendingInteractions".into(), json!(self.pending));
-                }
+                // Fork: the kernel resolves the turn's own asks before this event (`cancel_turn_asks`); what is still
+                // pending is session-level (an MCP App authorization, a background subagent's ask, the workspace hook
+                // review) and outlives the turn. Clearing it here hid a prompt Rust still waited for.
             }
             KernelEvent::ContextUsage {
                 used_tokens,

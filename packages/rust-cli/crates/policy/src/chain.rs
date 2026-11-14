@@ -94,7 +94,12 @@ fn web_fetch(url: &str, inputs: &Inputs<'_>) -> Check {
 /// 工具自己没有意见时的内置检查：按工具声明的判决主体（kernel-api `PermissionSubject`）。没有主体的工具交给通用判决链。
 ///
 /// F125（T3）：以前按工具名分派（`Bash`、带 `command` 的 `Monitor`、`WebFetch`、`Skill`、六个文件工具与各自的路径字段）。
-pub fn builtin(subject: Option<&PermissionSubject>, inputs: &Inputs<'_>) -> Check {
+/// Fork: a tool with no subject (an MCP tool) is checked against its content rules like Node (`generic`).
+pub fn builtin(
+    subject: Option<&PermissionSubject>,
+    called: Called<'_>,
+    inputs: &Inputs<'_>,
+) -> Check {
     match subject {
         Some(PermissionSubject::Shell { command }) => bash::check(command, inputs),
         Some(PermissionSubject::Path { access, path }) => {
@@ -102,21 +107,26 @@ pub fn builtin(subject: Option<&PermissionSubject>, inputs: &Inputs<'_>) -> Chec
         }
         Some(PermissionSubject::Url { url }) => web_fetch(url, inputs),
         Some(PermissionSubject::Skill { name }) => skill::check(name, inputs),
-        None => Check::Passthrough {
-            reason: None,
-            suggestions: Vec::new(),
-        },
+        None => crate::generic::check(called.tool, called.input, inputs),
     }
+}
+
+/// The call being checked: the tool's name and its input.
+#[derive(Clone, Copy)]
+pub struct Called<'a> {
+    pub tool: &'a str,
+    pub input: &'a Value,
 }
 
 /// 工具自己的 `check_permissions` 结果换成检查结果；没有意见时用内置检查。
 pub fn own(
     subject: Option<&PermissionSubject>,
+    called: Called<'_>,
     decision: PermissionDecision,
     inputs: &Inputs<'_>,
 ) -> (Check, Option<Value>) {
     match decision {
-        PermissionDecision::Passthrough => (builtin(subject, inputs), None),
+        PermissionDecision::Passthrough => (builtin(subject, called, inputs), None),
         PermissionDecision::Allow { updated_input } => match subject {
             // Skill 工具放行只有安全字段的 skill，内容 deny 规则仍然优先（ext.md §2.4）。
             Some(PermissionSubject::Skill { name }) => {

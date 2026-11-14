@@ -89,6 +89,23 @@ pub(crate) enum Request {
     CancelAsk {
         tool_use: ToolUseId,
     },
+    /// Fork: the tool context of an MCP App call outside any turn (specs/fork-rust-node-helper.md F3,
+    /// `helper/authorizeAppTool`); the pipeline runs in the caller's task, never in the actor.
+    AppToolContext {
+        tool_use: ToolUseId,
+        cancel: CancellationToken,
+        reply: oneshot::Sender<rust_cli_kernel_api::tool::ToolUseContext>,
+    },
+    /// Fork: the model an MCP App sampling call runs on (specs/fork-rust-node-helper.md F3, `helper/sampleModel`); the
+    /// call runs in the caller's task.
+    SamplingSelection {
+        reply: oneshot::Sender<ModelSelection>,
+    },
+    /// Fork: a sampling call's usage row.
+    RecordModelCall {
+        call: Box<rust_cli_kernel_api::metering::ModelCall>,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
 }
 
 /// 待回答的交互属于谁：回合里的询问随回合结束取消；会话级的询问只随会话关闭取消。
@@ -270,7 +287,7 @@ pub(crate) struct Actor {
     /// 等后台子代理的起点（回合结束那一行，修复线 F118，duration.rs）：只在内存。
     pub(crate) wait_started: Option<u64>,
     /// 自己的请求通道（弱引用）：交给回合的输出端，给出会话级的询问入口；不让 actor 因此不退出。
-    asks: mpsc::WeakSender<Request>,
+    pub(crate) asks: mpsc::WeakSender<Request>,
     /// Fork: SessionStart held for a prepared execution worktree (`SessionState::start_held`) until
     /// `Command::SetExecutionRoot` moves the session (workspace.rs).
     pub(crate) deferred_start: Option<rust_cli_kernel_api::session_api::StartSource>,
@@ -616,6 +633,36 @@ impl Actor {
             }
             Request::Goal { reply } => {
                 let _ = reply.send(self.goal_view());
+            }
+            // Closing: the reply is dropped and the caller answers that the session is closed.
+            Request::AppToolContext { reply, .. }
+                if self.closing.is_some() || self.shutting_down =>
+            {
+                drop(reply);
+            }
+            Request::AppToolContext {
+                tool_use,
+                cancel,
+                reply,
+            } => {
+                let _ = reply.send(self.app_tool_context(tool_use, cancel));
+            }
+            // Closing: the reply is dropped and the caller answers that the session is closed.
+            Request::SamplingSelection { reply }
+                if self.closing.is_some() || self.shutting_down =>
+            {
+                drop(reply);
+            }
+            Request::SamplingSelection { reply } => {
+                let _ = reply.send(self.selection.clone());
+            }
+            Request::RecordModelCall { reply, .. }
+                if self.closing.is_some() || self.shutting_down =>
+            {
+                drop(reply);
+            }
+            Request::RecordModelCall { call, reply } => {
+                let _ = reply.send(self.record_model_call(*call).await);
             }
             Request::Close { reply, reason } => self.close(reply, reason).await,
             // 关闭中、要退出时不再登记询问：丢下回复，询问方按会话已关闭处理。

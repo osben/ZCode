@@ -719,6 +719,20 @@ impl StoreQueries for NodeStore {
         .await
     }
 
+    async fn session_workspace(
+        &self,
+        session: &SessionId,
+    ) -> Result<Option<rust_cli_kernel_api::store::SessionWorkspace>, StoreError> {
+        let session = session.as_str().to_owned();
+        self.with_drafts(move |conn, _, drafts| {
+            if let Some(workspace) = drafts.and_then(|drafts| drafts.workspace(&session)) {
+                return Ok(Some(workspace));
+            }
+            fork_execution_worktree::workspace(conn, &session)
+        })
+        .await
+    }
+
     /// Fork: the session's execution worktree (`execution_directory`, `execution_branch`).
     async fn execution_worktree(
         &self,

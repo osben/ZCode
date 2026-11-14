@@ -16,7 +16,8 @@ fn every_source_is_listed_and_reads_back() {
             | SideSource::GoalVerification
             | SideSource::WorkspaceText
             | SideSource::GitCommitMessage
-            | SideSource::ConnectivityProbe => {}
+            | SideSource::ConnectivityProbe
+            | SideSource::McpSampling => {}
         }
         assert_eq!(SideSource::from_wire(source.as_wire()), Some(source));
     }
@@ -64,6 +65,11 @@ fn names_are_the_previous_strings() {
             "provider_settings_connectivity",
             "provider_settings_connectivity",
         ),
+        (
+            SideSource::McpSampling,
+            "mcp_app_sampling",
+            "mcp_app_sampling",
+        ),
     ];
     for (source, wire, node) in table {
         assert_eq!(source.as_wire(), wire);
@@ -96,6 +102,7 @@ fn the_rules_match_the_previous_lists() {
         (SideSource::WorkspaceText, true, false),
         (SideSource::GitCommitMessage, true, false),
         (SideSource::ConnectivityProbe, true, false),
+        (SideSource::McpSampling, true, false),
     ];
     for (source, foreground, quiet) in table {
         assert_eq!(source.foreground(), foreground, "{source:?}");
@@ -104,7 +111,7 @@ fn the_rules_match_the_previous_lists() {
     }
 }
 
-/// Fork: only the desktop workspace model calls are workspace-scoped (`x-zcode-session-type: other`).
+/// Fork: only the desktop workspace model calls and MCP App sampling are workspace-scoped (`x-zcode-session-type: other`).
 #[test]
 fn only_the_workspace_model_calls_are_workspace_scoped() {
     for source in SideSource::ALL {
@@ -112,7 +119,8 @@ fn only_the_workspace_model_calls_are_workspace_scoped() {
         let expected = match source {
             SideSource::WorkspaceText
             | SideSource::GitCommitMessage
-            | SideSource::ConnectivityProbe => true,
+            | SideSource::ConnectivityProbe
+            | SideSource::McpSampling => true,
             SideSource::SessionTitle
             | SideSource::Rename
             | SideSource::HookPrompt

@@ -215,7 +215,7 @@ impl Kernel for OneKernel {
 
 /// The entry point's admin double: answers what it is told and records the calls.
 #[derive(Default)]
-struct FakeAdmin {
+pub(crate) struct FakeAdmin {
     accept: bool,
     banners: StdMutex<Admission>,
     calls: StdMutex<Vec<Value>>,
@@ -281,8 +281,17 @@ pub(crate) fn fixture_with(
     admin: Option<Arc<dyn WorkspaceAdmin>>,
     resumed: bool,
 ) -> (TaskScope, Arc<Server>) {
+    let (scope, server, _reader) = fixture_reading(admin, resumed);
+    (scope, server)
+}
+
+/// [`fixture_with`] keeping the Host's end of the connection, to read the frames the server sends.
+pub(crate) fn fixture_reading(
+    admin: Option<Arc<dyn WorkspaceAdmin>>,
+    resumed: bool,
+) -> (TaskScope, Arc<Server>, tokio::io::DuplexStream) {
     let scope = TaskScope::root("test", |_| {});
-    let (out, _reader) = tokio::io::duplex(1 << 16);
+    let (out, reader) = tokio::io::duplex(1 << 16);
     let (peer, _writer) = connection::start(out, &scope.spawner(), Options::default());
     let context = Arc::new(Context::new(peer, Arc::new(FixedClock(5))));
     if let Some(admin) = admin {
@@ -303,7 +312,7 @@ pub(crate) fn fixture_with(
             environment: EnvironmentId::new("local"),
         },
     ));
-    (scope, server)
+    (scope, server, reader)
 }
 
 /// Waits until the session's pump ran every job queued before this call (jobs run in order).

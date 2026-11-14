@@ -90,6 +90,23 @@ impl Drafts {
         })
     }
 
+    /// The workspace a draft's row will hold (`directory`, non-empty `workspace_id`).
+    pub(crate) fn workspace(
+        &self,
+        session: &str,
+    ) -> Option<rust_cli_kernel_api::store::SessionWorkspace> {
+        self.pending
+            .get(session)
+            .map(|draft| rust_cli_kernel_api::store::SessionWorkspace {
+                directory: draft.create.directory.clone(),
+                identity: draft
+                    .create
+                    .workspace_id
+                    .clone()
+                    .filter(|id| !id.is_empty()),
+            })
+    }
+
     /// The execution worktree a draft's row will hold, beside the parent directory it is listed under; `None` when
     /// the session is not a draft, `Some(None)` for a draft without a worktree.
     pub(crate) fn execution(&self, session: &str) -> Option<Option<ExecutionWorktree>> {
