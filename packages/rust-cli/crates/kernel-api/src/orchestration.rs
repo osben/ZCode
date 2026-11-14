@@ -129,6 +129,14 @@ pub enum QueryEvent {
     },
     /// 模型端口的通知（重试、停顿、恢复），只供显示（docs/specs/rust-cli/stall-visibility.md §1）。
     ModelNotice { notice: crate::model::ModelNotice },
+    /// Fork: the hook runs of one dispatch, for the App's `hookInvocation` row (specs/fork-rust-agent-parity.md
+    /// HK-UP-01); only under the Node desktop session.
+    HookInvocation {
+        invocation: crate::hooks::HookInvocation,
+    },
+    /// Fork: the input a UserPromptSubmit hook blocked, shown as the turn's `userInput` row and never committed
+    /// (Node projects it from `TurnStarted`); only under the Node desktop session.
+    PromptBlocked { message: crate::message::Message },
 }
 
 impl QueryEvent {
@@ -187,6 +195,8 @@ impl QueryEvent {
             },
             // 模型通知只供显示，不落库（stall-visibility.md §1）。
             Self::ModelNotice { notice } => KernelEvent::ModelNotice { notice },
+            Self::HookInvocation { invocation } => KernelEvent::HookInvocation { turn, invocation },
+            Self::PromptBlocked { message } => KernelEvent::PromptBlocked { turn, message },
         }
     }
 }

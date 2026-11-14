@@ -100,6 +100,7 @@ fn engine(harness: &Harness, settings: &Value) -> HookEngine {
             operations: rust_cli_kernel_api::env::Operations::new(Generation::new("g1"), ids),
             artifacts: Arc::new(MemoryArtifacts::default()),
             node_stdin: None,
+            clock: Arc::new(rust_cli_kernel_api::testing::FixedClock(0)),
         },
         HooksConfig {
             version: 1,

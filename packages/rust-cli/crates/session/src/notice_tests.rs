@@ -140,6 +140,7 @@ async fn session_as(
             error_holds_queue: false,
             session_start_extras: true,
             typed_compact: false,
+            hook_rows: false,
         },
         SessionState {
             commands: Default::default(),

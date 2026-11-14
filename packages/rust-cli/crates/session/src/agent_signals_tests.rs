@@ -111,6 +111,7 @@ async fn an_agent_notice_starts_a_turn_and_is_acked_after_the_commit() {
             error_holds_queue: false,
             session_start_extras: true,
             typed_compact: false,
+            hook_rows: false,
         },
         SessionState {
             commands: Default::default(),
@@ -229,6 +230,7 @@ async fn open_with(signals: Arc<FakeSignals>, scope: &TaskScope) -> Session {
             error_holds_queue: false,
             session_start_extras: true,
             typed_compact: false,
+            hook_rows: false,
         },
         SessionState {
             commands: Default::default(),

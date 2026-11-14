@@ -72,6 +72,7 @@ pub(crate) fn hooks(
                 transcripts,
                 clock: ports.clock.clone(),
             }),
+            clock: ports.clock.clone(),
         })
         .with_incognito(incognito.clone()),
     )

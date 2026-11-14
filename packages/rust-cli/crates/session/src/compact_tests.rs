@@ -216,6 +216,7 @@ async fn session_with(
             error_holds_queue: false,
             session_start_extras: true,
             typed_compact,
+            hook_rows: false,
         },
         SessionState {
             commands: Default::default(),

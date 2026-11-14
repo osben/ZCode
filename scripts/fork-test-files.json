@@ -7,6 +7,7 @@
   "apps/zcode-cli/packages/bootstrap/tests/fork-agent-runtime/host-attach-ack.test.ts",
   "apps/zcode-cli/packages/bootstrap/tests/fork-agent-runtime/lsp-preferences-sidecar.test.ts",
   "apps/zcode-cli/packages/bootstrap/tests/fork-agent-runtime/official-plugin-seed.test.ts",
+  "apps/zcode-cli/packages/bootstrap/tests/fork-agent-runtime/rust-hook-invocation-golden.test.ts",
   "apps/zcode-cli/packages/bootstrap/tests/fork-agent-runtime/rust-hook-review-golden.test.ts",
   "apps/zcode-cli/packages/bootstrap/tests/fork-rust-helper/helper.test.ts",
   "packages/acp-agent-runtime/test/config-options.test.ts",

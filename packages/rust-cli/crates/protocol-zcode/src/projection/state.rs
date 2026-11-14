@@ -50,6 +50,19 @@ pub struct LastError {
     /// Fork: the failure's Node error code (`TurnOutcome::Failed`), else `fault.turn.failed`.
     pub code: Option<String>,
     pub at: u64,
+    /// Fork: `false` hides Resume (a blocked prompt, HK-UP-01); a failed turn is recoverable.
+    pub recoverable: bool,
+    /// Fork: the error's details (a blocked prompt's reason and diagnostic).
+    pub detail: Option<String>,
+    pub attribution: Option<ErrorAttribution>,
+}
+
+/// Fork: `sessionErrorInfoSchema.attribution`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ErrorAttribution {
+    /// `{source: "runtime", reason: "hook_blocked"}`.
+    #[expect(dead_code, reason = "the HK-UP-01 fix sets it")]
+    HookBlocked,
 }
 
 /// `verifier`: the start time of a running goal completion verification (Node `activeWorks` kind `goalVerifier`).

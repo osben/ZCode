@@ -165,6 +165,8 @@ pub struct LocalKernel {
     session_start_extras: bool,
     /// Fork: a typed `/compact [instructions]` runs the manual compaction, like the Node desktop agent ([`Extensions::node_desktop`]).
     typed_compact: bool,
+    /// Fork: hook run rows and the blocked-prompt banner, like the Node desktop agent ([`Extensions::node_desktop`]).
+    hook_rows: bool,
 }
 
 impl LocalKernel {
@@ -386,6 +388,7 @@ impl LocalKernel {
             error_holds_queue: extensions.node_desktop,
             session_start_extras: !extensions.node_desktop,
             typed_compact: extensions.node_desktop,
+            hook_rows: extensions.node_desktop,
         }
     }
 

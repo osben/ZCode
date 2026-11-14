@@ -4,7 +4,7 @@ use rust_cli_kernel_api::hooks::HookEventName as E;
 use serde_json::json;
 
 use super::*;
-use crate::config::{CommandHook, HttpHook, PromptHook};
+use crate::config::{CommandHook, HookOrigin, HttpHook, PromptHook};
 
 fn cmd(text: &str, condition: Option<&str>) -> HookCommand {
     HookCommand::Command(CommandHook {
@@ -43,6 +43,7 @@ fn matcher(pattern: Option<&str>, hooks: Vec<HookCommand>) -> HookMatcher {
     HookMatcher {
         matcher: pattern.map(str::to_owned),
         hooks,
+        origin: HookOrigin::default(),
     }
 }
 

@@ -41,6 +41,8 @@ pub struct HookPorts {
     /// Fork: command hooks get Node's stdin and a transcript file when set (the app-server sets it;
     /// specs/fork-rust-agent-parity.md "Command hook stdin").
     pub node_stdin: Option<NodeStdinPorts>,
+    /// Fork: the start time and duration of each hook run (specs/fork-rust-agent-parity.md HK-UP-01).
+    pub clock: Arc<dyn Clock>,
 }
 
 /// Fork: what Node's command hook stdin needs.
