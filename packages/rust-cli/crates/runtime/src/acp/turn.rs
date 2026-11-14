@@ -101,11 +101,19 @@ pub(super) async fn run(
     }
     // Chosen values reach the agent before the prompt; a change made during a running turn waits here.
     match host
-        .reconcile_config(&runtime, &request.session, &agent_id, turn.sink.as_ref())
+        .reconcile_config(
+            &runtime,
+            &request.session,
+            &agent_id,
+            turn.sink.as_ref(),
+            &abort,
+        )
         .await
     {
         Ok(()) => {}
+        // Node `isTurnCancellationError`: once Stop aborted the turn, any failure of the reconcile is a cancellation.
         Err(_) if abort.is_aborted() => return turn.aborted(&abort).await,
+        Err(ReconcileError::Aborted) => return turn.aborted(&abort).await,
         Err(ReconcileError::Refused(message)) => {
             tracing::warn!(event = "acp.config_failed", agent = %agent_id, "ACP agent refused a chosen config value");
             return Ok(QueryStop::ApiError { message });

@@ -6,7 +6,9 @@
 //! "narrate" (text, a tool call, more text; Rust-only), "linger" (a tool call that never settles,
 //! then as "hang"; Rust-only), "dwell" (as "linger", then the text "still running" before it waits; Rust-only), "hang" (wait for `session/cancel`), "tool", "plan", "switch model" (a `config_option_update` to model m2, then "switched"; Rust-only), "title", "permission", "remember <word>", "recall", anything else "pong".
 //! Flags: `--state <file>` (memory and method log), `--config options|legacy` (or `ACP_MOCK_CONFIG`),
-//! `--fail-config` (Rust-only: `session/set_config_option` fails), `--refuse-load` (Rust-only: `session/load` fails, so a resume becomes a reset), `--pid-file <file>` (Rust-only: the
+//! `--fail-config` (Rust-only: `session/set_config_option` fails), `--coupled-config` (Rust-only: setting mode `plan`
+//! also switches the model to m2 in the answer), `--hang-config` (Rust-only: `session/set_config_option` is recorded
+//! and never answered), `--refuse-load` (Rust-only: `session/load` fails, so a resume becomes a reset), `--pid-file <file>` (Rust-only: the
 //! process id is written there at start, so a test can see the process end), `--deaf-after-session` (Rust-only: after
 //! answering `session/new` it stops reading stdin and stays alive, so the client's writes block), `--silent-initialize`
 //! (Rust-only: `initialize` is never answered, so the start hangs), `--close-stdin-after-session` (Rust-only: it
@@ -28,6 +30,8 @@ struct Mock {
     config_mode: String,
     refuse_load: bool,
     fail_config: bool,
+    coupled_config: bool,
+    hang_config: bool,
     deaf_after_session: bool,
     silent_initialize: bool,
     close_stdin_after_session: bool,
@@ -369,6 +373,9 @@ impl Mock {
                 if self.fail_config {
                     return fail(&id, "the agent refused the option");
                 }
+                if self.hang_config {
+                    return;
+                }
                 let offered = match config_id {
                     "mode" => ["agent", "plan", "ask"].contains(&value),
                     "model" => ["m1", "m2"].contains(&value),
@@ -382,6 +389,9 @@ impl Mock {
                 }
                 if config_id == "mode" {
                     self.mode = value.to_owned();
+                    if self.coupled_config && value == "plan" {
+                        self.model = "m2".to_owned();
+                    }
                 } else {
                     self.model = value.to_owned();
                 }
@@ -431,6 +441,8 @@ fn main() {
             .unwrap_or_default(),
         refuse_load: args.iter().any(|arg| arg == "--refuse-load"),
         fail_config: args.iter().any(|arg| arg == "--fail-config"),
+        coupled_config: args.iter().any(|arg| arg == "--coupled-config"),
+        hang_config: args.iter().any(|arg| arg == "--hang-config"),
         deaf_after_session: args.iter().any(|arg| arg == "--deaf-after-session"),
         silent_initialize: args.iter().any(|arg| arg == "--silent-initialize"),
         close_stdin_after_session: args.iter().any(|arg| arg == "--close-stdin-after-session"),

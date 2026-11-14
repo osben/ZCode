@@ -770,6 +770,81 @@ fn catalog_file(harness: &Harness) -> Option<serde_json::Value> {
     serde_json::from_str(&text).ok()
 }
 
+/// Each choice is checked against the agent's options as they are after the previous answer (Node
+/// `reconcileAcpSessionConfig` reads `runtime.configOptions` for every choice). Choosing mode `plan` makes this agent
+/// switch the model to m2, so the stored `model=m1` is no longer current and is sent too.
+#[tokio::test]
+async fn a_choice_is_checked_against_the_options_after_the_previous_answer() {
+    let harness = Harness::with(&["--config", "options", "--coupled-config"], None);
+    let session = SessionId::new("s1");
+    for (id, value) in [("mode", "plan"), ("model", "m1")] {
+        harness
+            .store
+            .set_acp_choice(&session, "mock", id, value)
+            .await
+            .unwrap();
+    }
+    let (stop, _) = run(&harness, "hello").await;
+    assert_eq!(stop, QueryStop::Completed);
+    let methods = harness.methods();
+    let sets: Vec<&String> = methods
+        .iter()
+        .filter(|method| method.starts_with("session/set_config_option"))
+        .collect();
+    assert_eq!(
+        sets,
+        [
+            "session/set_config_option mode=plan",
+            "session/set_config_option model=m1"
+        ],
+        "{methods:?}"
+    );
+    harness.release().await;
+}
+
+/// Stop while the agent has not answered a chosen value ends the turn at once as stopped: the pending call is
+/// dropped, no later choice is sent and the agent is never prompted.
+#[tokio::test]
+async fn stop_during_the_config_reconcile_ends_the_turn_at_once() {
+    let harness = Harness::with(&["--config", "options", "--hang-config"], None);
+    let session = SessionId::new("s1");
+    for (id, value) in [("mode", "plan"), ("model", "m2")] {
+        harness
+            .store
+            .set_acp_choice(&session, "mock", id, value)
+            .await
+            .unwrap();
+    }
+    let sink = Arc::new(RecordingSink::default());
+    let abort = Abort::new();
+    let running = {
+        let runner = harness.runner.clone();
+        let request = harness.request(vec![user("m1", "hello", UserOrigin::Human)]);
+        let sink = sink.clone();
+        let abort = abort.clone();
+        tokio::spawn(async move { runner.run(request, sink, abort).await })
+    };
+    while !harness.agent_got("session/set_config_option mode=plan") {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    abort.abort(AbortReason::User);
+    // Far below the 30 s request timeout the pending call would otherwise wait for.
+    let stop = tokio::time::timeout(Duration::from_secs(5), running)
+        .await
+        .expect("the turn ended at Stop")
+        .expect("task")
+        .expect("run");
+    assert_eq!(stop, QueryStop::Aborted);
+    let methods = harness.methods();
+    assert!(
+        !methods
+            .iter()
+            .any(|method| method == "session/set_config_option model=m2"
+                || method == "session/prompt"),
+        "{methods:?}"
+    );
+    harness.release().await;
+}
 /// Rule 13 reconcile: the stored choices reach the agent before the prompt; a choice the agent does not offer and one
 /// equal to its value are not sent. The agent's options become the display copy and an event; the catalog keeps the
 /// handshake's values, not this session's.

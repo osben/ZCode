@@ -1694,10 +1694,17 @@ failure    ─▶ rows closed "The agent turn failed before this tool finished" 
 
         - **Turn reconcile** runs after the acquire and the reset divider, before the prompt (Node
           `reconcileAcpSessionConfig`):
+          - The choices are applied in id order. Each is checked against the agent's options as they
+            are after the previous answer, as Node reads `runtime.configOptions` for every choice: an
+            answer can replace the whole snapshot (a mode that picks its own model).
           - A stored choice the agent no longer offers is skipped (debug log, values never logged).
           - A choice equal to the agent's current value is skipped.
           - Any other choice is sent with `session/set_config_option`. A failure fails the turn with
             `Could not set <option name> to <value name>: <error>`.
+          - Stop ends the turn as stopped at once (Node `isTurnCancellationError`). Difference kept:
+            the pending call is dropped and no later choice is sent, nor is anything stored. Node
+            waits for the call's answer or its 30 s timeout, applies the remaining choices, and only
+            then ends the turn cancelled.
           - The handshake's offered options, never the values applied for this session, are written to
             the catalog when there are any. A failed catalog write is a warning, and the turn goes on.
           - With no stored copy and no options, nothing more happens. Otherwise, when the agent's

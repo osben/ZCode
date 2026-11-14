@@ -8,6 +8,7 @@
 
 use async_trait::async_trait;
 use rust_cli_acp::{AcpRuntime, ConfigOption};
+use rust_cli_kernel_api::abort::Abort;
 use rust_cli_kernel_api::external_agent_config::{
     ExternalAgentConfigOption, ExternalAgentConfigs, options_from_json, options_to_json,
 };
@@ -27,6 +28,8 @@ pub(super) enum ReconcileError {
     /// The agent refused a chosen value: Node's `ExternalAgentTurnError("prompt_failed")` text.
     Refused(String),
     Store(StoreError),
+    /// Stop arrived: no later choice is sent and nothing is stored.
+    Aborted,
 }
 
 impl AcpHost {
@@ -37,14 +40,20 @@ impl AcpHost {
         session: &SessionId,
         agent: &str,
         sink: &dyn RunSink,
+        abort: &Abort,
     ) -> Result<(), ReconcileError> {
         let stored = self
             .store
             .acp_config(session)
             .await
             .map_err(ReconcileError::Store)?;
-        let current = to_contract(&runtime.config_options());
         for (config_id, value) in &stored.choices {
+            if abort.is_aborted() {
+                return Err(ReconcileError::Aborted);
+            }
+            // Node reads the options for every choice: an answer can replace the whole snapshot (a mode that picks
+            // its own model, an option the agent no longer offers).
+            let current = to_contract(&runtime.config_options());
             let Some(option) = current
                 .iter()
                 .find(|option| option.id == *config_id && option.offers(value))
@@ -56,7 +65,14 @@ impl AcpHost {
             if option.current_value == *value {
                 continue;
             }
-            if let Err(error) = runtime.set_config_option(config_id, value).await {
+            // Fork: Stop drops the pending call instead of waiting for its answer or its timeout (Node waits, then
+            // ends the turn cancelled). A later answer finds no caller and changes nothing.
+            let answered = tokio::select! {
+                biased;
+                () = abort.token().cancelled() => return Err(ReconcileError::Aborted),
+                answered = runtime.set_config_option(config_id, value) => answered,
+            };
+            if let Err(error) = answered {
                 return Err(ReconcileError::Refused(format!(
                     "Could not set {} to {}: {}",
                     option.name,
@@ -64,6 +80,9 @@ impl AcpHost {
                     error.message
                 )));
             }
+        }
+        if abort.is_aborted() {
+            return Err(ReconcileError::Aborted);
         }
         let snapshot = to_contract(&runtime.config_options());
         // The catalog is the agent's offer. The values applied above belong to this session: a new draft would
