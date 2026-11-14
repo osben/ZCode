@@ -24,10 +24,12 @@ use crate::plugin::PluginAgentFile;
 const PARENT: &str = "sess_parent";
 const CHILD: &str = "sess_child";
 const PLUGIN_ROOT: &str = "/Users/dev/plugins/kit";
+const OTHER_ROOT: &str = "/Users/dev/plugins/other";
 
 /// The Host double: counts the reads and answers what the test set.
 struct Host {
     reads: AtomicUsize,
+    forgotten: Mutex<Vec<String>>,
     answer: Mutex<Result<Option<SubagentSnapshot>, String>>,
 }
 
@@ -35,6 +37,7 @@ impl Host {
     fn new(answer: Result<Option<SubagentSnapshot>, String>) -> Arc<Self> {
         Arc::new(Self {
             reads: AtomicUsize::new(0),
+            forgotten: Mutex::default(),
             answer: Mutex::new(answer),
         })
     }
@@ -55,6 +58,12 @@ impl SubagentConfigSource for Host {
         assert_eq!(session.as_str(), PARENT);
         self.reads.fetch_add(1, Ordering::SeqCst);
         self.answer.lock_unpoisoned().clone()
+    }
+
+    fn forget(&self, session: &SessionId) {
+        self.forgotten
+            .lock_unpoisoned()
+            .push(session.as_str().to_owned());
     }
 }
 
@@ -104,6 +113,7 @@ fn ready(profiles: Vec<SubagentProfile>) -> SubagentSnapshot {
         profiles,
         explore: None,
         general_purpose: None,
+        plugins: Default::default(),
     }
 }
 
@@ -132,15 +142,40 @@ fn catalog() -> AgentCatalog {
             .with_file(
                 &format!("{PLUGIN_ROOT}/agents/review.md"),
                 "---\nname: review\ndescription: Plugin review.\n---\nP.",
+            )
+            .with_file(
+                &format!("{PLUGIN_ROOT}/agents/deep/audit.md"),
+                "---\nname: Audit \ndescription: Plugin audit.\nmodel: declared-model\n---\nA.",
+            )
+            .with_file(
+                &format!("{OTHER_ROOT}/agents/review.md"),
+                "---\nname: review\ndescription: Another plugin's review.\nmodel: own-model\n---\nO.",
             ),
     );
     let catalog = AgentCatalog::new(env.clone(), env);
-    catalog.set_plugins(vec![PluginAgentFile {
-        plugin: "kit".to_owned(),
-        root: PLUGIN_ROOT.to_owned(),
-        path: format!("{PLUGIN_ROOT}/agents/review.md"),
-        namespace: Vec::new(),
-    }]);
+    catalog.set_plugins(vec![
+        PluginAgentFile {
+            id: "kit@market".to_owned(),
+            plugin: "kit".to_owned(),
+            root: PLUGIN_ROOT.to_owned(),
+            path: format!("{PLUGIN_ROOT}/agents/review.md"),
+            namespace: Vec::new(),
+        },
+        PluginAgentFile {
+            id: "kit@market".to_owned(),
+            plugin: "kit".to_owned(),
+            root: PLUGIN_ROOT.to_owned(),
+            path: format!("{PLUGIN_ROOT}/agents/deep/audit.md"),
+            namespace: vec!["deep".to_owned()],
+        },
+        PluginAgentFile {
+            id: "other@market".to_owned(),
+            plugin: "other".to_owned(),
+            root: OTHER_ROOT.to_owned(),
+            path: format!("{OTHER_ROOT}/agents/review.md"),
+            namespace: Vec::new(),
+        },
+    ]);
     catalog.set_roots(Arc::new(|session: &SessionId| {
         if session.as_str() == CHILD {
             SessionId::new(PARENT)
@@ -214,6 +249,8 @@ async fn a_ready_snapshot_replaces_the_agent_files() {
             "Explore",
             "Plan",
             "kit:review",
+            "kit:deep:Audit",
+            "other:review",
             "enabled",
             "team"
         ]
@@ -242,6 +279,7 @@ async fn overrides_set_the_built_ins_and_a_profile_replaces_a_built_in() {
         profiles: vec![explore],
         explore: Some(full("zai", "glm-5.3", "max")),
         general_purpose: Some(full("custom-openai", "gpt-y", "high")),
+        plugins: Default::default(),
     }))));
     let found = catalog
         .prepared_definitions(&workspace(), &session(PARENT), Some(&run("run_1")))
@@ -444,4 +482,69 @@ async fn a_failed_read_fails_the_listing_and_is_not_cached() {
         .expect("read");
     assert!(names(&found).contains(&"back"));
     assert_eq!(host.reads(), 3);
+}
+
+/// Rule 7: a plugin override keyed by Node's plugin agent state id (`plugin:<id>:<bare name lowercased>`) sets that
+/// plugin agent's full selection, also for a namespaced agent that declares `model:`; another plugin's agent with the
+/// same bare name keeps its own model.
+#[tokio::test]
+async fn plugin_overrides_set_the_plugin_agents_selection() {
+    let catalog = catalog();
+    let review = full("zai", "glm-5.3-air", "low");
+    let audit = full("custom-openai", "gpt-x", "high");
+    let host = Host::new(Ok(Some(SubagentSnapshot::Ready {
+        profiles: Vec::new(),
+        explore: None,
+        general_purpose: None,
+        plugins: [
+            ("plugin:kit@market:review".to_owned(), review.clone()),
+            ("plugin:kit@market:audit".to_owned(), audit.clone()),
+        ]
+        .into(),
+    })));
+    catalog.set_host(host);
+    let found = catalog
+        .prepared_definitions(&workspace(), &session(PARENT), Some(&run("run_1")))
+        .await
+        .expect("read");
+    assert_eq!(find(&found, "kit:review").selection, Some(review));
+    assert_eq!(find(&found, "kit:deep:Audit").selection, Some(audit));
+    let other = find(&found, "other:review");
+    assert_eq!(other.selection, None);
+    assert_eq!(other.model.as_deref(), Some("own-model"));
+}
+
+/// Without a Host snapshot the plugin agents keep the model their files declare.
+#[tokio::test]
+async fn plugin_agents_keep_their_model_without_a_snapshot() {
+    let catalog = catalog();
+    let found = catalog
+        .definitions_in(&workspace(), Some(&session(PARENT)))
+        .await;
+    let audit = find(&found, "kit:deep:Audit");
+    assert_eq!(audit.selection, None);
+    assert_eq!(audit.model.as_deref(), Some("declared-model"));
+}
+
+/// Rule 11: releasing a session drops its cached snapshot and tells the source to forget its gate; the next lookup in
+/// the same run reads again.
+#[tokio::test]
+async fn a_released_session_reads_again() {
+    let catalog = catalog();
+    let host = Host::new(Ok(Some(ready(vec![profile("first", ProfileSource::User)]))));
+    catalog.set_host(host.clone());
+    for _ in 0..2 {
+        catalog
+            .prepared_definitions(&workspace(), &session(PARENT), Some(&run("run_1")))
+            .await
+            .expect("read");
+    }
+    assert_eq!(host.reads(), 1);
+    catalog.forget(&session(PARENT));
+    assert_eq!(*host.forgotten.lock_unpoisoned(), vec![PARENT.to_owned()]);
+    catalog
+        .prepared_definitions(&workspace(), &session(PARENT), Some(&run("run_1")))
+        .await
+        .expect("read");
+    assert_eq!(host.reads(), 2);
 }

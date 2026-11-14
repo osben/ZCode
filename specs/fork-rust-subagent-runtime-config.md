@@ -27,12 +27,12 @@ zcode-rs read `~/.zcode/agents` and the project directories itself and never ask
 
 ## Owners
 
-| State                                                  | Owner                                                                                 | Writers                                      |
-| ------------------------------------------------------ | ------------------------------------------------------------------------------------- | -------------------------------------------- |
-| Profiles, disabled agents, built-in overrides          | Host (Settings, `agents-state.json`, profile parse cache)                             | Settings UI only; zcode-rs never writes them |
-| Whether the Host offers the snapshot, per root session | `protocol-zcode` `HostSubagentConfig` (answer of `session/requestRuntimePreferences`) | that port, once per root session             |
-| The snapshot a session's agents come from              | `agents` `AgentCatalog`, keyed by root session, tagged with the run that read it      | the catalog, at most once per parent run     |
-| Which agents a request sees                            | `AgentCatalog::prepared_definitions` / `definitions_in`                               | derived, not stored                          |
+| State                                                          | Owner                                                                                 | Writers                                      |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------- | -------------------------------------------- |
+| Profiles, disabled agents, built-in and plugin agent overrides | Host (Settings, `agents-state.json`, profile parse cache)                             | Settings UI only; zcode-rs never writes them |
+| Whether the Host offers the snapshot, per root session         | `protocol-zcode` `HostSubagentConfig` (answer of `session/requestRuntimePreferences`) | that port, once per root session             |
+| The snapshot a session's agents come from                      | `agents` `AgentCatalog`, keyed by root session, tagged with the run that read it      | the catalog, at most once per parent run     |
+| Which agents a request sees                                    | `AgentCatalog::prepared_definitions` / `definitions_in`                               | derived, not stored                          |
 
 The port is a kernel-api trait (`subagent_config::SubagentConfigSource`). Only the desktop app-server installs it (`frontends/app_server.rs`). The standalone CLI, the TUI and headless runs have no source and keep reading files.
 
@@ -77,6 +77,8 @@ parent run R2 of S starts ──▶ a new read; cache[S] = (R2, snapshot')
    - The files in `~/.zcode/agents` and the project directories are not read. The Host's project scope is `<workspace>/.zcode/agents` plus the session's additional directories, so Rust's walk from the cwd up to the git root no longer applies on this path.
 6. **Catalog from `built-in-fallback`.** The built-ins only, without overrides and without plugin agents (Node `create-app.ts`).
 7. **Built-in overrides.** `builtInModelSelectionOverrides.Explore` and `["general-purpose"]` set the full model selection of that built-in before the merge. A user or project profile with the same name still replaces the built-in outright.
+   - **Plugin agent overrides.** `pluginAgentModelSelectionOverrides` is keyed by Node's plugin agent state id, `plugin:<plugin id>:<bare name, trimmed and lowercased>` (`createPluginAgentStateId`). The plugin id is the loaded plugin's `<name>@<marketplace>` (`<name>@inline` for `--plugin-dir`); the bare name is the agent file's frontmatter `name`, or the file name when there is none, without the namespace segments of the agent type. A matching entry sets that plugin agent's full model selection, replacing a `model:` it declares (Node replaces the whole selection before it adds the bare-name alias, `resolvePluginAgentProfiles`).
+   - The overrides apply only with a `ready` snapshot; `built-in-fallback` has no plugin agents at all.
 8. **Profile → agent definition.**
    - Fields that carry over:
      - `name` becomes the agent type;
@@ -93,13 +95,12 @@ parent run R2 of S starts ──▶ a new read; cache[S] = (R2, snapshot')
 10. **Incognito.**
     - Without custom agents, a session sees the built-ins and no request is sent.
     - Without plugins, the snapshot is still read and the plugin layer is dropped.
-11. **Sessionless lookups.** `AgentCatalog::definitions(workspace)` serves the TUI and headless agent lists and has no session to key a snapshot on, so it reads files.
+11. **Cache lifetime.** A session's cached snapshot and its remembered gate are dropped when the session closes (the runtime's per-session release, `SessionScoped::released`). A reopened session asks the gate and reads the snapshot again, as a Node runtime does at startup.
+12. **Sessionless lookups.** `AgentCatalog::definitions(workspace)` serves the TUI and headless agent lists and has no session to key a snapshot on, so it reads files.
 
 ## Out of scope
 
-- **Plugin agent overrides** (`pluginAgentModelSelectionOverrides`, keyed `plugin:<name@marketplace>:<agent>`). zcode-rs does not carry the plugin's marketplace, which is the same provenance gap as the `process/childProcesses` follow-up. Both are fixed together.
 - **Standalone CLI.** It does not honor `disabledAgentIds` the way the Node standalone CLI does (`bootstrap/src/subagents.ts` `readAgentState`).
-- **Cache lifetime.** The per-root cache is not dropped when a session closes. Each entry is one snapshot, so the cache grows with the number of root sessions a process ran.
 
 ## Acceptance
 
@@ -117,6 +118,7 @@ Unit tests:
   - An invalid reply fails, and so does a `built-in` profile.
 - **`agents`, catalog contents.**
   - A `ready` snapshot replaces the file layers: an agent in `~/.zcode/agents` and absent from the snapshot is not listed.
+  - A plugin override keyed `plugin:<id>:<bare name>` sets that plugin agent's selection (a namespaced agent and a `model:` in its file included); another plugin's agent with the same bare name keeps its own model.
   - The built-in overrides set the selection, and a profile named `Explore` replaces the built-in.
   - `built-in-fallback` gives the built-ins only, without plugin agents.
   - With incognito custom agents excluded, no request is sent.
@@ -124,6 +126,7 @@ Unit tests:
 - **`agents`, cadence.**
   - One parent run with two listings, an Agent lookup and a child's listing sends exactly one read.
   - The next run reads again.
+  - After the session is released, the next lookup reads again (catalog), and the gate is asked again (`protocol-zcode`).
   - A failed read fails the listing; an Agent lookup that misses the cache returns the error.
 - **`agents`, spawn selection.**
   - A full selection replaces the provider, model and reasoning.
@@ -136,5 +139,6 @@ Desktop E2E: run each spec on both runtimes in the container runner.
 - `subagents/conversation-session-subagent-runtime-refresh` (SHR01–SHR03): the current turn keeps its config and the next turn's spawn uses the new one.
 - `subagents/conversation-session-built-in-subagent-model-overrides` (I20).
 - `subagents/conversation-session-subagent-runtime-catalog-reasoning`.
+- `plugins/runtime/plugin-subagent-override-cold` (plugin agent override).
 
 A case that fails on Node too is not a parity gap.

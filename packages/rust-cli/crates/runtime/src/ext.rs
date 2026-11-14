@@ -79,6 +79,7 @@ pub(crate) fn plugin_parts(plugins: &Plugins) -> (Vec<PluginAgentFile>, Vec<Plug
         .iter()
         .flat_map(|plugin| {
             plugin.agent_files.iter().map(|file| PluginAgentFile {
+                id: plugin.id.clone(),
                 plugin: plugin.name.clone(),
                 root: plugin.dir.clone(),
                 path: file.path.clone(),

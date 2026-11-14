@@ -140,13 +140,22 @@ impl AgentCatalog {
         let _ = self.roots.set(roots);
     }
 
+    /// Fork: `session` closed: drop its cached snapshot and the source's gate (rule 11). A subagent's session holds no
+    /// entry of its own, so releasing one drops nothing.
+    pub fn forget(&self, session: &SessionId) {
+        self.snapshots.lock_unpoisoned().remove(session);
+        if let Some(host) = self.host.get() {
+            host.forget(session);
+        }
+    }
+
     /// 换上插件加载得到的 agent 文件（`LocalKernel::start_extensions`）。
     pub fn set_plugins(&self, files: Vec<PluginAgentFile>) {
         *self.plugins.write_unpoisoned() = files;
     }
 
     /// 当前可用的 agent 类型（`/context` 的自定义 agent 也用它，context-usage.md §3）。Fork: no session to key a
-    /// Host snapshot on, so the agent files apply (rule 11).
+    /// Host snapshot on, so the agent files apply (rule 12).
     pub async fn definitions(&self, workspace: &WorkspaceRef) -> Vec<AgentDefinition> {
         self.definitions_in(workspace, None).await
     }
@@ -195,6 +204,7 @@ impl AgentCatalog {
                 profiles,
                 explore,
                 general_purpose,
+                plugins,
             }) => {
                 let mut built_in = builtins();
                 for definition in &mut built_in {
@@ -209,7 +219,7 @@ impl AgentCatalog {
                 }
                 Ok(merge(vec![
                     built_in,
-                    plugin::load(self.files.as_ref(), workspace, &plugin_files).await,
+                    plugin::load(self.files.as_ref(), workspace, &plugin_files, &plugins).await,
                     profiles.into_iter().map(from_profile).collect(),
                 ]))
             }
@@ -294,7 +304,13 @@ impl AgentCatalog {
     ) -> Vec<AgentDefinition> {
         let mut layers = vec![
             builtins(),
-            plugin::load(self.files.as_ref(), workspace, &plugin_files).await,
+            plugin::load(
+                self.files.as_ref(),
+                workspace,
+                &plugin_files,
+                &Default::default(),
+            )
+            .await,
         ];
         match self.info.facts(workspace).await {
             Ok(facts) => layers.extend(custom::load(self.files.as_ref(), workspace, &facts).await),

@@ -52,6 +52,7 @@ fn plugin_parts_carry_the_plugin_name_and_root() {
     assert_eq!(
         agents,
         [rust_cli_agents::PluginAgentFile {
+            id: "kit@inline".to_owned(),
             plugin: "kit".to_owned(),
             root: KIT.to_owned(),
             path: format!("{KIT}/agents/team/lead.md"),

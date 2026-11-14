@@ -4,6 +4,8 @@
 //! already dropped, and the model chosen for the built-in `Explore` and `general-purpose` agents. The agent catalog
 //! reads it through [`SubagentConfigSource`]; only the desktop app-server installs one.
 
+use std::collections::BTreeMap;
+
 use async_trait::async_trait;
 
 use crate::ids::SessionId;
@@ -42,6 +44,8 @@ pub enum SubagentSnapshot {
         profiles: Vec<SubagentProfile>,
         explore: Option<ModelSelection>,
         general_purpose: Option<ModelSelection>,
+        /// Node `pluginAgentModelSelectionOverrides`, keyed `plugin:<plugin id>:<bare name lowercased>`.
+        plugins: BTreeMap<String, ModelSelection>,
     },
     /// The Host could not load a scope: the built-in agents only, no plugin agents.
     BuiltInFallback,
@@ -52,4 +56,7 @@ pub trait SubagentConfigSource: Send + Sync {
     /// The snapshot for the root session `session`. `Ok(None)`: the Host does not offer one (the agent files apply).
     /// `Err` is the reason the read failed; the turn that needed it fails.
     async fn read(&self, session: &SessionId) -> Result<Option<SubagentSnapshot>, String>;
+
+    /// The root session `session` closed: drop what was remembered for it (the gate).
+    fn forget(&self, _session: &SessionId) {}
 }

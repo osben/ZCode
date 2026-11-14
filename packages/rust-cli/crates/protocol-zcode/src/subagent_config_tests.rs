@@ -165,7 +165,10 @@ async fn an_open_gate_reads_and_maps_the_ready_snapshot() {
             "builtInModelSelectionOverrides": {
                 "Explore": {"providerId": "zai", "modelId": "glm-5.3"},
             },
-            "pluginAgentModelSelectionOverrides": {},
+            "pluginAgentModelSelectionOverrides": {
+                "plugin:kit@market:review": {"providerId": "zai", "modelId": "glm-5.3-air",
+                    "options": {"reasoningLevel": "low"}},
+            },
         }),
     )
     .await;
@@ -203,6 +206,14 @@ async fn an_open_gate_reads_and_maps_the_ready_snapshot() {
             ],
             explore: Some(ModelSelection::new("zai", "glm-5.3")),
             general_purpose: None,
+            plugins: [(
+                "plugin:kit@market:review".to_owned(),
+                ModelSelection {
+                    reasoning: Some("low".to_owned()),
+                    ..ModelSelection::new("zai", "glm-5.3-air")
+                },
+            )]
+            .into(),
         }
     );
 
@@ -299,4 +310,21 @@ async fn an_invalid_or_failed_read_fails() {
 async fn an_unknown_session_fails_without_a_request() {
     let (source, _host, _scope) = connect();
     assert!(source.read(&SessionId::new("sess_other")).await.is_err());
+}
+
+/// Rule 11: a released session's gate is forgotten, so its next read asks the gate again.
+#[tokio::test]
+async fn a_released_session_asks_the_gate_again() {
+    let (source, mut host, _scope) = connect();
+    for _ in 0..2 {
+        let asking = reading(&source);
+        let read = host.open_gate().await;
+        host.answer(&read, json!({"kind": "built-in-fallback"}))
+            .await;
+        assert_eq!(
+            asking.await.unwrap(),
+            Ok(Some(SubagentSnapshot::BuiltInFallback))
+        );
+        source.forget(&SessionId::new(SESSION));
+    }
 }

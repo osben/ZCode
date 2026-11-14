@@ -103,6 +103,10 @@ impl SubagentConfigSource for HostSubagentConfig {
             .map_err(|error| format!("invalid {READ} reply: {error}"))?;
         snapshot(&result).map(Some)
     }
+
+    fn forget(&self, session: &SessionId) {
+        self.gates.lock_unpoisoned().remove(session);
+    }
 }
 
 /// A validated reply as the snapshot (rule 8).
@@ -122,6 +126,12 @@ fn snapshot(result: &Value) -> Result<SubagentSnapshot, String> {
         profiles,
         explore: selection(&overrides["Explore"]),
         general_purpose: selection(&overrides["general-purpose"]),
+        plugins: result["pluginAgentModelSelectionOverrides"]
+            .as_object()
+            .into_iter()
+            .flatten()
+            .filter_map(|(key, value)| Some((key.clone(), selection(value)?)))
+            .collect(),
     })
 }
 

@@ -131,6 +131,9 @@ pub(crate) struct SessionScoped {
     pub(crate) agents: Arc<dyn rust_cli_kernel_api::agents::AgentSignals>,
     /// Fork: a session close releases its ACP agent process (specs/fork-rust-agent-parity.md "ACP external agents").
     pub(crate) acp: Option<crate::acp::AcpRelease>,
+    /// Fork: a session close drops its Host subagent snapshot and gate (specs/fork-rust-subagent-runtime-config.md
+    /// rule 11).
+    pub(crate) agent_catalog: Arc<rust_cli_agents::AgentCatalog>,
 }
 
 impl SessionScoped {
@@ -169,6 +172,7 @@ impl SessionScoped {
         if let Some(acp) = &self.acp {
             acp.released(session);
         }
+        self.agent_catalog.forget(session);
     }
 }
 
