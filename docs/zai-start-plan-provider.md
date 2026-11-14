@@ -31,6 +31,8 @@ account query + Family selection
 
 Full boundaries and acceptance SIP-01..21: [Todo154](working-memory/provider-refactor/steps/todo-154-start-plan-independent-provider.md).
 
+The domestic entry (`zai_cn`) is not a plan family: its Start always belongs to BigModel (shared mapping `resolveStartPlanFamilyFromOAuthProvider`, used by both the Host and the settings page). A domestic account not linked to BigModel still queries, claims and uses BigModel Start with the ZCode identity and the shared JWT; Z.ai Start is unavailable to it. Identity resolution rules: [login scheme 5.5](zcode-login-rework.md#55-套餐凭据解析核心链路已实现).
+
 `builtin:*` ids in the legacy interface notes below are the pre-migration identity; they now correspond
 to `account:*`, and the old Provider Store must not be restored.
 

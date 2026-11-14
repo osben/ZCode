@@ -1568,6 +1568,9 @@ export function createLocalServices(options: {
   const oauthCredentialRepo = new OAuthCredentialRepo(credentialService);
   const loadOAuthAccountMaterial = (family: ProviderFamilyDomain) =>
     oauthCredentialRepo.loadFamilyMaterial(family);
+  // Start 与付费套餐分开取材料：国内无关联账号只有 Start 材料（ZCode 主体与共享 JWT）。
+  const loadStartPlanMaterial = (family: ProviderFamilyDomain) =>
+    oauthCredentialRepo.loadStartPlanMaterial(family);
   const loadOAuthFamilyTokenSet = async (providerId: string) => {
     if (providerId !== ZAI_PROVIDER_ID && providerId !== BIGMODEL_PROVIDER_ID) return null;
     const account = await loadOAuthAccountMaterial(providerId);
@@ -1677,8 +1680,11 @@ export function createLocalServices(options: {
           access,
           readSettings: readAccountProviderSettings,
           loadAccountIdentity,
+          loadStartPlanMaterial,
         }),
       loadOAuthTokenSet: loadOAuthFamilyTokenSet,
+      loadStartPlanZcodeJwt: async (family) =>
+        (await loadStartPlanMaterial(family))?.zcodeJwtToken ?? null,
       async loadIndividualPlanMaterial(providerId, family, rejectedProjectTokenFingerprint) {
         const accountIdentity = (await loadOAuthAccountMaterial(family))?.accountIdentity;
         if (!accountIdentity) return null;
@@ -1774,10 +1780,12 @@ export function createLocalServices(options: {
       });
     },
     loadAccountIdentity,
+    loadStartPlanMaterial,
     resolveFamilyAvailability: createCodingPlanFamilyAvailabilityResolver({
       apiClient,
       credentialService,
       loadOAuthAccountMaterial,
+      loadStartPlanMaterial,
     }),
   });
   const accountProviderRuntimeLog = createServiceLogger("account-provider-runtime");
