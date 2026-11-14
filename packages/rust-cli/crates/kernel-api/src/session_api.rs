@@ -308,6 +308,13 @@ pub enum Command {
     SetIncognito {
         profile: crate::incognito::IncognitoProfile,
     },
+    /// Fork: the options a `setExternalAgentConfigOption` stored for the session's ACP agent (Node
+    /// `external_agent_config_updated`, specs/fork-rust-agent-parity.md rule 13). The actor appends
+    /// [`KernelEvent::ExternalAgentConfig`]; the agent process is not touched.
+    PublishExternalAgentConfig {
+        agent: String,
+        options: Vec<crate::external_agent_config::ExternalAgentConfigOption>,
+    },
     /// 同 [`Command::ChangeDirectory`]，移动成功时 `record` 与说明文字同一批、排在它之前提交（修复线 L-A，
     /// docs/specs/rust-cli/tui-manage.md §11.2：对照实现的 `/cd` 先记命令输入与输出，说明文字是之后的 meta 消息）。
     ChangeDirectoryRecorded {

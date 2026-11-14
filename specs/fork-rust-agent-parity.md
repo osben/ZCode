@@ -1598,6 +1598,55 @@ failure    ─▶ rows closed "The agent turn failed before this tool finished" 
     `control.externalAgentStall` (`{agentId, since, silentMs}`), cleared by `resumed` and by the
     turn's end. Error codes are Node's `config.invalid`, `config.notExternalAgent`,
     `config.notAvailable`, `config.unchanged`.
+    - **Handler.** Checks in Node's order (`external-agent-config.ts`), each a `failed` ack with
+      Node's message unless noted:
+      1. `sessionId` differs from the envelope's session: `config.invalid`.
+      2. The entry gave no config port: `fault.command.capabilityUnsupported`.
+      3. The session's model (the actor's held selection) is not `acp:<agentId>`:
+         `config.notExternalAgent`.
+      4. The stored config names another agent: `config.notAvailable`.
+      5. The offered options are the stored display copy, or else the agent's catalog entry.
+         Neither exists: `config.notAvailable`.
+      6. The id is not offered, or the value is not one of its values: `config.invalid`.
+      7. The choice is already stored **and** the shown `currentValue` equals it: a `noop` ack
+         `config.unchanged`. A shown agent value that differs from the stored choice is pinned
+         again.
+
+      The command then:
+      - stores the choice (pending before the first turn, in the binding after it);
+      - overlays the offered options: a pending session with every stored choice plus this one,
+        a bound session with this choice only;
+      - writes that copy as the display copy, which a pending session has none of, so nothing is
+        written;
+      - has the session actor append `KernelEvent::ExternalAgentConfig {agent, options}`.
+
+      The agent process is never touched; the next turn applies the choice. The command takes
+      the session's switch turn (`Live::config_switch`), so two choices are applied in arrival
+      order. Without the Node tables (rule 15), the choice write answers `config.notAvailable`.
+
+    - **Turn reconcile** runs after the acquire and the reset divider, before the prompt (Node
+      `reconcileAcpSessionConfig`):
+      - A stored choice the agent no longer offers is skipped (debug log, values never logged).
+      - A choice equal to the agent's current value is skipped.
+      - Any other choice is sent with `session/set_config_option`. A failure fails the turn with
+        `Could not set <option name> to <value name>: <error>`.
+      - The handshake's offered options, never the values applied for this session, are written to
+        the catalog when there are any. A failed catalog write is a warning, and the turn goes on.
+      - With no stored copy and no options, nothing more happens. Otherwise, when the agent's
+        options differ from the stored copy (canonical JSON), they become the display copy and
+        the turn emits `QueryEvent::ExternalAgentConfig`.
+      - An agent-initiated `config_option_update` during the prompt also emits the event and
+        writes the display copy (a failed write is a warning). The choices stay as they are.
+    - **Projection.** `KernelEvent::ExternalAgentConfig` sets `config.externalAgentConfig:
+{agentId, options}` with a `state.updated` patch, and an identical state patches nothing.
+      - A cold open of a session whose model is `acp:<agentId>` seeds it, without a delta, from
+        the stored display copy when the stored agent matches (Node
+        `getSessionExternalAgentConfigSeed`).
+      - An event-set value always wins over the seed.
+      - The field is absent until a seed or an event sets it.
+      - The event is not stored (Node keeps it in its in-memory event log only). A reopen gets
+        the selects from the seed.
+
 14. **Resume (S5).** The binding is written after every acquire. A cold start resumes only when the
     agent, the cwd and the launch key all match. `launch_key` is
     `sha256(JSON.stringify({agentId, command, args, env, cwd}))` with `env` as sorted `[k, v]` pairs,
@@ -1605,8 +1654,16 @@ failure    ─▶ rows closed "The agent turn failed before this tool finished" 
 15. **No migrations.** `zcode-rs` checks that the tables and columns exist (Node's storage
     preparation creates them). Without them there is no binding and no resume, and a config write
     answers `config.notAvailable`.
-16. **Catalog.** Writes take the Node-compatible directory lock (`fs::with_file_lock`), reread under
-    it, skip when equal, and write the file atomically with private permissions.
+16. **Catalog.** `fork_acp_agent_catalog.json` next to `provider_config.json` (Node
+    `NodeForkAcpAgentCatalogStore`, `acp-agent-derivation.ts`) holds `{schemaVersion: 1, agents:
+[{agentId, capturedAt, options}]}`.
+    - **Reads** take no lock and are tolerant: a missing, unparsable or non-version-1 file reads
+      as empty, and an invalid entry or a later duplicate agent is dropped.
+    - **Writes** take the Node-compatible directory lock (`fs::with_file_lock`) and reread under
+      it. They skip the write when the agent's normalized options are equal (`capturedAt` is not
+      compared).
+    - Otherwise a write replaces the agent's entry, appended last. It writes `JSON.stringify(_,
+null, 2)` bytes, with the schema's key order, atomically and with private permissions.
 17. **Child process.** Launch rules, the child env filter (credential-like keys dropped, loader keys
     refused in overrides) and the timeouts are Node's (`packages/shared/src/acp-launch-rules`,
     `acp-agent-runtime`). The process is spawned through `rust_cli_proc` as its own group and killed
@@ -1618,15 +1675,13 @@ failure    ─▶ rows closed "The agent turn failed before this tool finished" 
 ### Delivery status (2026-11-13)
 
 Delivered: rules 1–10, 12, 17, 18 (rows, plan and agent title in S3); rule 14 writes and reads the
-binding (resume when agent, cwd and launch key match).
+binding (resume when agent, cwd and launch key match); rules 13, 15, 16 (S6: the config command, the
+turn reconcile, the catalog and `config.externalAgentConfig`).
 
 Not yet ported, tracked as follow-ups:
 
 - **Resume and divider (S5).** No context-reset divider (`ExternalAgentContextReset`), no stall
   status in the projection (a stall is logged only), no second-process `session/load` test.
-- **Config (S6), rules 13, 15, 16.** No `setExternalAgentConfigOption` handler, no pending-choice
-  reconcile, no catalog write and no `config.externalAgentConfig` projection. The Host gate admits
-  the command for a runtime with `externalAgentTurns`; `zcode-rs` answers it as an unknown command.
 
 Divergences from Node, by design of `zcode-rs`:
 

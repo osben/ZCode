@@ -2,6 +2,8 @@
 //! [`ExternalAgentRunner`] wraps the main query loop: a turn whose selection is an `acp:<agentId>` provider runs on
 //! the agent process instead of a model request; every other turn goes to the loop unchanged.
 
+mod catalog;
+mod config;
 mod guard;
 mod pool;
 mod records;
@@ -18,7 +20,7 @@ use rust_cli_acp::{AcpError, AcpErrorCode, AcpLaunch, AcpRuntime};
 use rust_cli_base::Spawner;
 use rust_cli_base::Task;
 use rust_cli_kernel_api::abort::Abort;
-use rust_cli_kernel_api::clock::Ids;
+use rust_cli_kernel_api::clock::{Clock, Ids};
 use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::message::Message;
 use rust_cli_kernel_api::model::{ApiMessage, ModelSelection};
@@ -28,6 +30,7 @@ use rust_cli_kernel_api::orchestration::{
 use rust_cli_kernel_api::store::Store;
 use rust_cli_proc::ledger::Ledger;
 
+use catalog::AgentCatalog;
 pub(crate) use guard::ExternalAgentModelGuard;
 pub(crate) use pool::AcpPool;
 use records::AgentRecords;
@@ -51,6 +54,11 @@ pub struct AcpSetup {
 pub(crate) struct AcpHost {
     records: AgentRecords,
     pub(crate) pool: AcpPool,
+    /// The session's ACP binding: its chosen values and the display copy of the agent's options.
+    store: Arc<dyn Store>,
+    /// `fork_acp_agent_catalog.json` beside the agent records.
+    catalog: AgentCatalog,
+    clock: Arc<dyn Clock>,
     ids: Arc<dyn Ids>,
     /// The session task list an agent plan replaces (the agents task board).
     plans: Arc<dyn rust_cli_kernel_api::agents::TaskPlanWriter>,
@@ -62,15 +70,18 @@ impl AcpHost {
     pub(crate) fn new(
         setup: AcpSetup,
         store: Arc<dyn Store>,
-        ids: Arc<dyn Ids>,
+        (clock, ids): (Arc<dyn Clock>, Arc<dyn Ids>),
         plans: Arc<dyn rust_cli_kernel_api::agents::TaskPlanWriter>,
         spawner: Spawner,
     ) -> Self {
         Self {
+            catalog: AgentCatalog::beside(&setup.records_file),
             records: AgentRecords {
                 file: setup.records_file,
             },
-            pool: AcpPool::new(setup.env, setup.ledger, store),
+            pool: AcpPool::new(setup.env, setup.ledger, store.clone()),
+            store,
+            clock,
             ids,
             plans,
             spawner,

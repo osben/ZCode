@@ -30,6 +30,7 @@ use rust_cli_kernel_api::user_input::INTERRUPT_TEXTS;
 use serde_json::{Value, json};
 
 use super::AcpHost;
+use super::config::ReconcileError;
 
 pub(super) async fn run(
     host: &Arc<AcpHost>,
@@ -47,6 +48,7 @@ pub(super) async fn run(
         host,
         sink,
         session: request.session.clone(),
+        agent: agent_id.clone(),
         model: request.selection.model.clone(),
         response: 0,
         segment: Vec::new(),
@@ -81,6 +83,22 @@ pub(super) async fn run(
     };
     // The session start is read once; the context-reset divider follows with the session events (S5).
     let _ = runtime.take_session_start();
+    if abort.is_aborted() {
+        return turn.aborted(&abort).await;
+    }
+    // Chosen values reach the agent before the prompt; a change made during a running turn waits here.
+    match host
+        .reconcile_config(&runtime, &request.session, &agent_id, turn.sink.as_ref())
+        .await
+    {
+        Ok(()) => {}
+        Err(_) if abort.is_aborted() => return turn.aborted(&abort).await,
+        Err(ReconcileError::Refused(message)) => {
+            tracing::warn!(event = "acp.config_failed", agent = %agent_id, "ACP agent refused a chosen config value");
+            return Ok(QueryStop::ApiError { message });
+        }
+        Err(ReconcileError::Store(error)) => return Err(error.into()),
+    }
     if abort.is_aborted() {
         return turn.aborted(&abort).await;
     }
@@ -410,6 +428,8 @@ struct Turn<'a> {
     host: &'a AcpHost,
     sink: Arc<dyn RunSink>,
     session: SessionId,
+    /// The ACP agent id (the selection's provider without `acp:`).
+    agent: String,
     model: String,
     /// The live rows of the open segment are keyed by this response number (the projection settles them by it).
     response: usize,
@@ -458,7 +478,12 @@ impl Turn<'_> {
                     "ACP agent produced no output for a while"
                 );
             }
-            RuntimeEvent::ConfigOptions(_) | RuntimeEvent::Resumed => {}
+            RuntimeEvent::ConfigOptions(options) => {
+                self.host
+                    .agent_config_changed(&self.session, &self.agent, &options, self.sink.as_ref())
+                    .await;
+            }
+            RuntimeEvent::Resumed => {}
         }
         None
     }

@@ -727,3 +727,133 @@ fn a_first_turn_agent_title_wins_over_the_first_input_title() {
     );
     server.stop();
 }
+
+/// The ACP methods the mock agent has received so far, in order (its `--state` log).
+fn agent_methods(state: &Path) -> Vec<String> {
+    let text = std::fs::read_to_string(state).unwrap_or_default();
+    let state: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+    state["methods"]
+        .as_array()
+        .map(|methods| {
+            methods
+                .iter()
+                .filter_map(|method| method.as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Node's fork ACP migrations (9003-9005). zcode-rs adds no migration of its own (rule 15), so a
+/// home that only zcode-rs has opened lacks them; the shared `db.sqlite` of a real install has them.
+fn node_acp_tables(home: &Path) {
+    let conn = rusqlite::Connection::open(home.join(".zcode/cli/db/db.sqlite")).unwrap();
+    conn.execute_batch(
+        "create table if not exists fork_acp_session_binding (session_id text primary key, agent_id text not null, acp_session_id text not null, cwd text not null, launch_key text not null, updated_at integer not null);
+         alter table fork_acp_session_binding add column config_options text;
+         alter table fork_acp_session_binding add column config_choices text;
+         create table if not exists fork_acp_session_choice (session_id text primary key, agent_id text not null, config_choices text not null, updated_at integer not null);",
+    )
+    .unwrap();
+}
+
+fn set_option(session: &str, command: &str, config_id: &str, value: &str) -> Value {
+    json!({
+        "commandId": command, "clientId": "k", "sessionId": session, "type": "setExternalAgentConfigOption",
+        "issuedAt": 1, "payload": {"sessionId": session, "configId": config_id, "value": value},
+    })
+}
+
+/// The mock agent's handshake options as the Host's Settings test stores them in `fork_acp_agent_catalog.json`.
+fn write_catalog(home: &Path) {
+    let value = |value: &str, name: &str| json!({"value": value, "name": name, "description": null, "group": null});
+    let file = json!({"schemaVersion": 1, "agents": [{"agentId": "mock", "capturedAt": 1, "options": [
+        {"id": "mode", "name": "Mode", "description": null, "category": "mode", "currentValue": "agent",
+         "options": [value("agent", "Agent"), value("plan", "Plan"), value("ask", "Ask")]},
+        {"id": "model", "name": "Model", "description": null, "category": "model", "currentValue": "m1",
+         "options": [value("m1", "Model 1"), value("m2", "Model 2")]},
+    ]}]});
+    std::fs::write(
+        home.join(".zcode/v2/fork_acp_agent_catalog.json"),
+        file.to_string(),
+    )
+    .unwrap();
+}
+
+/// Rule 13 end to end: `setExternalAgentConfigOption` refuses in Node's order, keeps a choice made before the first
+/// turn (offered from the agent's catalog), shows it, and the first turn applies it before the prompt. The applied
+/// value is then unchanged, and a fresh app-server seeds the display copy into the subscribe snapshot.
+#[test]
+fn an_agent_option_chosen_before_the_first_turn_is_applied_by_it() {
+    let (dir, home, work) = dirs();
+    let state = dir.path().join("agent-state.json");
+    write_agents(
+        &home,
+        &mock_agent(),
+        true,
+        &["--state", state.to_str().unwrap(), "--config", "options"],
+    );
+    let model = ModelStub::start();
+    let mut server = Server::start(&home, &work, &model);
+    let session = open_session(&mut server, &work);
+    node_acp_tables(&home);
+    let refused = |ack: &Value, code: &str| {
+        assert_eq!(ack["status"], "failed", "{ack}");
+        assert_eq!(ack["reasonCode"], code, "{ack}");
+    };
+
+    let ack = server.command(set_option(&session, "o1", "model", "m2"));
+    refused(&ack, "config.notExternalAgent");
+    let ack = server.command(json!({
+        "commandId": "c-switch", "clientId": "k", "sessionId": session, "type": "switchModelConfig",
+        "issuedAt": 1, "baseRevision": 0, "baseLogEpoch": "e",
+        "payload": {"provider": "acp:mock", "model": "mock", "thought": ""},
+    }));
+    assert_eq!(ack["status"], "accepted", "{ack}");
+    let ack = server.command(set_option(&session, "o2", "model", "m2"));
+    refused(&ack, "config.notAvailable");
+    write_catalog(&home);
+    let ack = server.command(set_option(&session, "o3", "model", "m9"));
+    refused(&ack, "config.invalid");
+    let ack = server.command(set_option(&session, "o4", "model", "m2"));
+    assert_eq!(ack["status"], "accepted", "{ack}");
+    server.wait_for(|frame| {
+        frame["method"] == "v4/conversation/frame"
+            && contains(frame, "\"externalAgentConfig\"")
+            && contains(frame, "\"currentValue\":\"m2\"")
+    });
+
+    let finished = finish_turn(&mut server, &session, "c-hello", "hello");
+    assert!(
+        contains(&finished, "\"phase\":\"completedSuccess\""),
+        "{finished}"
+    );
+    let methods = agent_methods(&state);
+    let set = methods
+        .iter()
+        .position(|method| method == "session/set_config_option model=m2");
+    let prompt = methods.iter().position(|method| method == "session/prompt");
+    assert!(set.is_some() && set < prompt, "{methods:?}");
+    let ack = server.command(set_option(&session, "o5", "model", "m2"));
+    assert_eq!(ack["status"], "noop", "{ack}");
+    assert_eq!(ack["reasonCode"], "config.unchanged", "{ack}");
+    server.stop();
+
+    let mut server = Server::start(&home, &work, &model);
+    server.request(
+        "v4/conversation/subscribe",
+        json!({"topic": format!("conversation/{session}"), "connectionId": "k2", "clientMode": "desktop-continuous"}),
+    );
+    let snapshot = server.wait_for(|frame| {
+        frame["method"] == "v4/conversation/frame" && contains(frame, "\"kind\":\"snapshot\"")
+    });
+    let config = snapshot.to_string();
+    assert!(
+        config.contains(r#""externalAgentConfig":{"agentId":"mock""#),
+        "{config}"
+    );
+    assert!(
+        config.contains(r#""id":"model","name":"Model","description":null,"category":"model","currentValue":"m2""#),
+        "{config}"
+    );
+    server.stop();
+}

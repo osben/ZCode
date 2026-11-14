@@ -19,8 +19,8 @@ use rust_cli_kernel_api::orchestration::{
     QueryError, QueryRequest, QueryRunner, QueryStop, RunSink,
 };
 use rust_cli_kernel_api::permission::PermissionMode;
-use rust_cli_kernel_api::store::StoreError;
-use rust_cli_kernel_api::testing::{MemoryStore, RecordingSink, SequentialIds};
+use rust_cli_kernel_api::store::{StoreError, StoreQueries as _};
+use rust_cli_kernel_api::testing::{FixedClock, MemoryStore, RecordingSink, SequentialIds};
 use rust_cli_kernel_api::user_input::INTERRUPT_TEXTS;
 use rust_cli_proc::ledger::Ledger;
 use serde_json::json;
@@ -71,29 +71,41 @@ struct Harness {
     dir: tempfile::TempDir,
     runner: Arc<ExternalAgentRunner>,
     plans: Arc<Plans>,
+    store: Arc<MemoryStore>,
     _scope: TaskScope,
 }
 
 impl Harness {
     fn new() -> Self {
+        Self::with_flags(&[])
+    }
+
+    /// A harness whose mock agent also gets `flags` (after `--state <file>`).
+    fn with_flags(flags: &[&str]) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let records_file = dir.path().join("fork_acp_agents.json");
         let state = dir.path().join("agent-state.json");
+        let mut args = vec![json!("--state"), json!(state)];
+        args.extend(flags.iter().map(|flag| json!(flag)));
         let file = json!({"schemaVersion": 1, "agents": [{
             "agentId": "mock", "providerName": "Mock Agent", "enabled": true,
-            "command": mock_agent(), "args": ["--state", state],
+            "command": mock_agent(), "args": args,
         }]});
         std::fs::write(&records_file, file.to_string()).unwrap();
         let scope = TaskScope::root("acp-test", |_| {});
         let plans = Arc::new(Plans::default());
+        let store = Arc::new(MemoryStore::default());
         let host = AcpHost::new(
             AcpSetup {
                 records_file,
                 env: Arc::from(Vec::new()),
                 ledger: Ledger::open(dir.path().join("ledger")),
             },
-            Arc::new(MemoryStore::default()),
-            Arc::new(SequentialIds::default()),
+            store.clone(),
+            (
+                Arc::new(FixedClock(1_700_000_000_000)),
+                Arc::new(SequentialIds::default()),
+            ),
             plans.clone(),
             scope.spawner(),
         );
@@ -105,6 +117,7 @@ impl Harness {
             dir,
             runner,
             plans,
+            store,
             _scope: scope,
         }
     }
@@ -127,6 +140,19 @@ impl Harness {
     fn agent_got(&self, method: &str) -> bool {
         std::fs::read_to_string(self.dir.path().join("agent-state.json"))
             .is_ok_and(|state| state.contains(method))
+    }
+
+    /// The ACP methods the mock agent received, in order.
+    fn methods(&self) -> Vec<String> {
+        let text =
+            std::fs::read_to_string(self.dir.path().join("agent-state.json")).unwrap_or_default();
+        let state: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
+        state["methods"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|method| method.as_str().map(str::to_owned))
+            .collect()
     }
 
     async fn release(&self) {
@@ -589,5 +615,184 @@ async fn a_permission_ask_opens_its_row() {
     let (_, sink) = run(&harness, "ask permission").await;
     let events = sink.events();
     assert_eq!(live(&events)[0], r#"row acp:other "" running=false"#);
+    harness.release().await;
+}
+
+/// The `ExternalAgentConfig` events of a run as (agent, the model option's current value).
+fn configs(events: &[QueryEvent]) -> Vec<(String, String)> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            QueryEvent::ExternalAgentConfig { agent, options } => Some((
+                agent.clone(),
+                options
+                    .iter()
+                    .find(|option| option.id == "model")
+                    .map(|option| option.current_value.clone())
+                    .unwrap_or_default(),
+            )),
+            _ => None,
+        })
+        .collect()
+}
+
+fn catalog_file(harness: &Harness) -> Option<serde_json::Value> {
+    let text =
+        std::fs::read_to_string(harness.dir.path().join("fork_acp_agent_catalog.json")).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+/// Rule 13 reconcile: the stored choices reach the agent before the prompt; a choice the agent does not offer and one
+/// equal to its value are not sent. The agent's options become the display copy and an event; the catalog keeps the
+/// handshake's values, not this session's.
+#[tokio::test]
+async fn stored_choices_reach_the_agent_before_the_prompt() {
+    let harness = Harness::with_flags(&["--config", "options"]);
+    let session = SessionId::new("s1");
+    for (id, value) in [("model", "m2"), ("mode", "agent"), ("gone", "x")] {
+        harness
+            .store
+            .set_acp_choice(&session, "mock", id, value)
+            .await
+            .unwrap();
+    }
+    let sink = Arc::new(RecordingSink::default());
+    let stop = harness
+        .runner
+        .run(
+            harness.request(vec![user("m1", "hello", UserOrigin::Human)]),
+            sink.clone(),
+            Abort::new(),
+        )
+        .await
+        .expect("run");
+    assert_eq!(stop, QueryStop::Completed);
+    let methods = harness.methods();
+    let set = methods
+        .iter()
+        .position(|method| method == "session/set_config_option model=m2")
+        .expect("the model choice was sent");
+    let prompt = methods
+        .iter()
+        .position(|method| method == "session/prompt")
+        .expect("prompted");
+    assert!(set < prompt, "{methods:?}");
+    assert!(
+        !methods
+            .iter()
+            .any(|method| method.contains("mode=") || method.contains("gone=")),
+        "{methods:?}"
+    );
+    assert_eq!(
+        configs(&sink.events()),
+        [("mock".to_owned(), "m2".to_owned())]
+    );
+    let stored = harness.store.acp_config(&session).await.unwrap();
+    let offered = rust_cli_kernel_api::external_agent_config::options_from_json(
+        stored.offered.as_ref().expect("a display copy"),
+    )
+    .unwrap();
+    assert_eq!(offered[1].current_value, "m2");
+    assert_eq!(
+        stored.choices.get("gone").map(String::as_str),
+        Some("x"),
+        "choices are kept"
+    );
+    let catalog = catalog_file(&harness).expect("the catalog");
+    assert_eq!(catalog["agents"][0]["agentId"], "mock");
+    assert_eq!(catalog["agents"][0]["options"][1]["currentValue"], "m1");
+    harness.release().await;
+}
+
+/// A choice the agent refuses fails the turn with Node's text, and no prompt is sent.
+#[tokio::test]
+async fn a_refused_choice_fails_the_turn() {
+    let harness = Harness::with_flags(&["--config", "options", "--fail-config"]);
+    harness
+        .store
+        .set_acp_choice(&SessionId::new("s1"), "mock", "model", "m2")
+        .await
+        .unwrap();
+    let sink = Arc::new(RecordingSink::default());
+    let stop = harness
+        .runner
+        .run(
+            harness.request(vec![user("m1", "hello", UserOrigin::Human)]),
+            sink.clone(),
+            Abort::new(),
+        )
+        .await
+        .expect("run");
+    assert!(
+        matches!(&stop, QueryStop::ApiError { message } if message.starts_with("Could not set Model to Model 2: ")),
+        "{stop:?}"
+    );
+    assert!(!harness.methods().contains(&"session/prompt".to_owned()));
+    harness.release().await;
+}
+
+/// An agent-initiated change during the prompt is an event and the display copy; the choices stay as they are. The
+/// next turn with the same options emits nothing.
+#[tokio::test]
+async fn an_agent_change_during_the_prompt_updates_the_display_copy() {
+    let harness = Harness::with_flags(&["--config", "options"]);
+    let session = SessionId::new("s1");
+    let first = Arc::new(RecordingSink::default());
+    harness
+        .runner
+        .run(
+            harness.request(vec![user("m1", "switch model", UserOrigin::Human)]),
+            first.clone(),
+            Abort::new(),
+        )
+        .await
+        .expect("run");
+    assert_eq!(
+        configs(&first.events()),
+        [
+            ("mock".to_owned(), "m1".to_owned()),
+            ("mock".to_owned(), "m2".to_owned())
+        ]
+    );
+    let stored = harness.store.acp_config(&session).await.unwrap();
+    assert!(stored.choices.is_empty());
+    assert_eq!(
+        stored.offered.as_ref().unwrap()[1]["currentValue"],
+        "m2",
+        "the agent's value is shown"
+    );
+    let second = Arc::new(RecordingSink::default());
+    harness
+        .runner
+        .run(
+            harness.request(vec![user("m2", "hello", UserOrigin::Human)]),
+            second.clone(),
+            Abort::new(),
+        )
+        .await
+        .expect("run");
+    assert!(
+        configs(&second.events()).is_empty(),
+        "the same options again"
+    );
+    harness.release().await;
+}
+
+/// An agent without options and a session without a stored copy have nothing to show or to catalog.
+#[tokio::test]
+async fn an_agent_without_options_shows_nothing() {
+    let harness = Harness::new();
+    let sink = Arc::new(RecordingSink::default());
+    harness
+        .runner
+        .run(
+            harness.request(vec![user("m1", "hello", UserOrigin::Human)]),
+            sink.clone(),
+            Abort::new(),
+        )
+        .await
+        .expect("run");
+    assert!(configs(&sink.events()).is_empty());
+    assert!(catalog_file(&harness).is_none());
     harness.release().await;
 }

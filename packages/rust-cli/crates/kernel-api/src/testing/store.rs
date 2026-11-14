@@ -76,6 +76,13 @@ fn split_cold(messages: Vec<Message>) -> (Vec<Message>, Vec<Message>) {
 
 /// 内存里的会话存储：记录每次提交的事实，`load` 重放消息、回退游标与 checkpoint。
 #[derive(Default)]
+struct MemoryAcpConfig {
+    offered: Option<serde_json::Value>,
+    choices: std::collections::BTreeMap<String, String>,
+    pending: Option<(String, std::collections::BTreeMap<String, String>)>,
+}
+
+#[derive(Default)]
 pub struct MemoryStore {
     sessions: Mutex<HashMap<SessionId, (SessionMeta, Vec<Fact>)>>,
     sequence: AtomicU64,
@@ -113,6 +120,9 @@ pub struct MemoryStore {
     execution: Mutex<HashMap<SessionId, (crate::env::EnvPath, Option<String>)>>,
     /// Fork: ACP session bindings (`fork_acp_session_binding`).
     acp_bindings: Mutex<HashMap<SessionId, crate::store::AcpSessionBinding>>,
+    /// Fork: the ACP config of each session (node-store's `config_options` / `config_choices` columns and
+    /// `fork_acp_session_choice`): the display copy, the binding's choices and the pending choices with their agent.
+    acp_configs: Mutex<HashMap<SessionId, MemoryAcpConfig>>,
     /// Fork: the next `set_acp_binding` fails ([`Self::fail_next_acp_binding_write`]).
     fail_acp_binding: std::sync::atomic::AtomicBool,
     /// Fork: live `register_runtime` guards per session ([`Self::presence`]).
@@ -974,26 +984,110 @@ impl StoreQueries for MemoryStore {
         self.acp_bindings
             .lock_unpoisoned()
             .insert(session.clone(), binding.clone());
+        // node-store `set_binding`: pending choices of the same agent move into the binding's choices.
+        let mut configs = self.acp_configs.lock_unpoisoned();
+        let config = configs.entry(session.clone()).or_default();
+        if let Some((agent, pending)) = config.pending.take()
+            && agent == binding.agent_id
+        {
+            config.choices.extend(pending);
+        }
         Ok(())
     }
 
-    /// The binding's agent; offered options and pending choices are not kept here (S6).
+    /// node-store `config`: the binding's state, else the pending choices with their agent.
     async fn acp_config(
         &self,
         session: &SessionId,
     ) -> Result<crate::store::AcpSessionConfig, StoreError> {
-        Ok(crate::store::AcpSessionConfig {
-            agent_id: self
-                .acp_bindings
-                .lock_unpoisoned()
-                .get(session)
-                .map(|binding| binding.agent_id.clone()),
-            ..Default::default()
+        let bound = self
+            .acp_bindings
+            .lock_unpoisoned()
+            .get(session)
+            .map(|binding| binding.agent_id.clone());
+        let configs = self.acp_configs.lock_unpoisoned();
+        let config = configs.get(session);
+        Ok(match (bound, config) {
+            (Some(agent), config) => crate::store::AcpSessionConfig {
+                agent_id: Some(agent),
+                offered: config.and_then(|config| config.offered.clone()),
+                choices: config
+                    .map(|config| config.choices.clone())
+                    .unwrap_or_default(),
+            },
+            (
+                None,
+                Some(MemoryAcpConfig {
+                    pending: Some((agent, choices)),
+                    ..
+                }),
+            ) => crate::store::AcpSessionConfig {
+                agent_id: Some(agent.clone()),
+                offered: None,
+                choices: choices.clone(),
+            },
+            (None, _) => crate::store::AcpSessionConfig::default(),
         })
     }
 
     async fn clear_acp_binding(&self, session: &SessionId) -> Result<(), StoreError> {
         self.acp_bindings.lock_unpoisoned().remove(session);
+        self.acp_configs.lock_unpoisoned().remove(session);
+        Ok(())
+    }
+
+    /// node-store `set_offered`: only a binding keeps a display copy.
+    async fn set_acp_offered(
+        &self,
+        session: &SessionId,
+        offered: &serde_json::Value,
+    ) -> Result<(), StoreError> {
+        if self.acp_bindings.lock_unpoisoned().contains_key(session) {
+            self.acp_configs
+                .lock_unpoisoned()
+                .entry(session.clone())
+                .or_default()
+                .offered = Some(offered.clone());
+        }
+        Ok(())
+    }
+
+    /// node-store `set_choice`: the binding's choices, or the pending choices (replaced for another agent).
+    async fn set_acp_choice(
+        &self,
+        session: &SessionId,
+        agent_id: &str,
+        config_id: &str,
+        value: &str,
+    ) -> Result<(), StoreError> {
+        let bound = self
+            .acp_bindings
+            .lock_unpoisoned()
+            .get(session)
+            .map(|binding| binding.agent_id.clone());
+        let mut configs = self.acp_configs.lock_unpoisoned();
+        let config = configs.entry(session.clone()).or_default();
+        match bound {
+            Some(agent) if agent != agent_id => {
+                return Err(StoreError::Storage {
+                    message: "the session is bound to another ACP agent".to_owned(),
+                });
+            }
+            Some(_) => {
+                config
+                    .choices
+                    .insert(config_id.to_owned(), value.to_owned());
+            }
+            None => {
+                let pending = match config.pending.take() {
+                    Some((agent, choices)) if agent == agent_id => choices,
+                    _ => std::collections::BTreeMap::new(),
+                };
+                let mut pending = pending;
+                pending.insert(config_id.to_owned(), value.to_owned());
+                config.pending = Some((agent_id.to_owned(), pending));
+            }
+        }
         Ok(())
     }
 

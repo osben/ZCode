@@ -495,6 +495,17 @@ impl Live {
         self.state().projection.deny(tool_use.as_str());
     }
 
+    /// Fork: see [`crate::projection::Projection::seed_external_agent_config`].
+    pub fn seed_external_agent_config(
+        &self,
+        agent: &str,
+        options: &[rust_cli_kernel_api::external_agent_config::ExternalAgentConfigOption],
+    ) {
+        self.state()
+            .projection
+            .seed_external_agent_config(agent, options);
+    }
+
     /// Fork: see [`crate::projection::Projection::current_config`].
     pub fn current_config(
         &self,

@@ -93,7 +93,8 @@ impl AgentActivity {
             QueryEvent::Delta { .. }
             | QueryEvent::ToolInputStarted { .. }
             | QueryEvent::ToolProgress { .. }
-            | QueryEvent::ExternalToolRow { .. } => {}
+            | QueryEvent::ExternalToolRow { .. }
+            | QueryEvent::ExternalAgentConfig { .. } => {}
         }
     }
 }

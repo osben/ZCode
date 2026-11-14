@@ -35,7 +35,8 @@ impl Doing {
             | QueryEvent::ToolInputStarted { .. }
             | QueryEvent::ToolStarted { .. }
             | QueryEvent::ToolFinished { .. }
-            | QueryEvent::ExternalToolRow { .. } => None,
+            | QueryEvent::ExternalToolRow { .. }
+            | QueryEvent::ExternalAgentConfig { .. } => None,
             QueryEvent::ToolProgress { .. } => return None,
             QueryEvent::ModelNotice { notice } => match notice {
                 ModelNotice::Retrying {

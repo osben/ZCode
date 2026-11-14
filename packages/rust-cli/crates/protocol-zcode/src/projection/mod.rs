@@ -9,6 +9,7 @@ mod background_shells;
 mod bash_progress;
 mod cold;
 pub mod elicitation;
+mod external_agent_config;
 mod external_tools;
 mod goal_verify;
 mod kinds;
@@ -138,6 +139,10 @@ pub struct Projection {
     permission_grant: Option<String>,
     /// Fork: the last plan tool transition (`config.planTransition`: call id, plan switch).
     plan_transition: Option<(String, bool)>,
+    /// Fork: the selects of the session's ACP agent (`config.externalAgentConfig`, rule 13): a seed or the last
+    /// `ExternalAgentConfig` event. `external_agent_config_from_event` keeps a later seed from overriding an event.
+    external_agent_config: Option<Value>,
+    external_agent_config_from_event: bool,
     /// Fork: the desktop goal (snapshot `goal`), from the view and `KernelEvent::GoalChanged`.
     goal: Option<rust_cli_kernel_api::goal::GoalState>,
     followup: Followup,
@@ -278,6 +283,10 @@ impl Projection {
         projection.auto_drain = self.auto_drain;
         projection.pause_reason = self.pause_reason;
         projection.plan_transition.clone_from(&self.plan_transition);
+        projection
+            .external_agent_config
+            .clone_from(&self.external_agent_config);
+        projection.external_agent_config_from_event = self.external_agent_config_from_event;
         projection.banners.clone_from(&self.banners);
         // Fork: the workspace hook review is session-level protocol state, not history (`fork/hook_review.rs`).
         projection.pending.extend(
@@ -318,6 +327,8 @@ impl Projection {
             // Fork (B3): the session's last grant (its stored receipt after a cold read, Node `lastPermissionGrantId`).
             permission_grant: view.permission_grant.clone(),
             plan_transition: None,
+            external_agent_config: None,
+            external_agent_config_from_event: false,
             goal: view.goal.clone(),
             followup,
             levels,
@@ -656,6 +667,9 @@ impl Projection {
         }
         if let Some((tool_call, enabled)) = &self.plan_transition {
             config["planTransition"] = json!({"toolCallId": tool_call, "planEnabled": enabled});
+        }
+        if let Some(state) = &self.external_agent_config {
+            config["externalAgentConfig"] = state.clone();
         }
         config
     }
@@ -1047,6 +1061,9 @@ impl Projection {
                     self.title_source = *source;
                     patch.insert("meta".into(), state::meta(&self.title, self.title_source));
                 }
+            }
+            KernelEvent::ExternalAgentConfig { agent, options } => {
+                self.external_agent_config_event(agent, options, &mut patch);
             }
             KernelEvent::ModelChanged { selection } => {
                 self.selection = selection.clone();

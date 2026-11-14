@@ -231,6 +231,10 @@ async fn serve(
         },
         (opened.primary.mcp().clone(), spawner.clone(), clock.clone()),
     )));
+    // Fork: the ACP agents' session config behind `setExternalAgentConfigOption` and the subscribe seed.
+    if let Some(configs) = built.kernel.external_agent_configs() {
+        context.set_external_agent_configs(configs);
+    }
     state.ready().await;
     let defaults = Defaults {
         // App 模式组装时已等缺省模型定下（`Controller::app` 的 `wait_model`；performance.md §12.3 只改 TUI）。Shared, so
