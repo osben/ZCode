@@ -26,7 +26,7 @@ use rust_cli_node_store::LOCAL_ENVIRONMENT;
 use rust_cli_paths::StoragePaths;
 use rust_cli_platform::local::{McpTrustError, McpTrustRecord, StillDeclared};
 use rust_cli_protocol_zcode::{
-    Admission, ReviewBundle, ToggleError, WorkspaceAdmin, WorkspaceTarget,
+    Admission, ReviewLookup, ToggleError, WorkspaceAdmin, WorkspaceTarget,
 };
 use serde_json::{Map, Value, json};
 
@@ -548,7 +548,7 @@ impl WorkspaceAdmin for AppWorkspace {
         Admission { mcp, hook }
     }
 
-    async fn hook_review(&self, target: &WorkspaceTarget) -> Option<ReviewBundle> {
+    async fn hook_review(&self, target: &WorkspaceTarget) -> ReviewLookup {
         self.review_bundle(target).await
     }
 

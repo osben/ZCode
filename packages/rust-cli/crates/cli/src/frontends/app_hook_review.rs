@@ -13,7 +13,9 @@ use rust_cli_kernel_api::env_files::PutFile;
 use rust_cli_kernel_api::ids::{Generation, OperationId};
 use rust_cli_platform::local::{TrustLoad, TrustRecord, node_pretty};
 use rust_cli_protocol_zcode::hook_review_codes as codes;
-use rust_cli_protocol_zcode::{ReviewBundle, ReviewItem, ReviewSource, StoredTrust, ToggleError};
+use rust_cli_protocol_zcode::{
+    ReviewBundle, ReviewItem, ReviewLookup, ReviewSource, StoredTrust, ToggleError,
+};
 
 use super::*;
 use crate::commands::hooks_trust::HookSourceFile;
@@ -66,14 +68,16 @@ impl AppWorkspace {
         (self.replace_hooks)(hooks);
     }
 
-    pub(super) async fn review_bundle(&self, target: &WorkspaceTarget) -> Option<ReviewBundle> {
+    pub(super) async fn review_bundle(&self, target: &WorkspaceTarget) -> ReviewLookup {
         let trust = Self::trust_target(target);
         let (hooks, unreadable, sources) = self.review_hooks(&trust).await;
-        // Node `discoverSnapshot` throws on a config it cannot read: nothing to review.
+        // Node `discoverSnapshot` throws on a config it cannot read.
         if unreadable {
-            return None;
+            return ReviewLookup::Unreadable;
         }
-        let bundle = hooks.bundle.as_ref()?;
+        let Some(bundle) = hooks.bundle.as_ref() else {
+            return ReviewLookup::Nothing;
+        };
         let trusted = hooks.trusted();
         let records: &[TrustRecord] = match &hooks.load {
             TrustLoad::Records(records) => records,
@@ -93,7 +97,7 @@ impl AppWorkspace {
                 review_item(entry, hooks.root.max_output_bytes, stored)
             })
             .collect();
-        Some(ReviewBundle {
+        ReviewLookup::Bundle(ReviewBundle {
             identity: hooks.identity.clone(),
             bundle_digest: bundle.bundle_digest.clone(),
             sources: sources

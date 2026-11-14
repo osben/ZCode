@@ -16,7 +16,9 @@ use rust_cli_protocol_core::sessions::Bridged;
 use serde_json::{Value, json};
 
 use super::hook_review::REQUIRE_TRUST_CAPABLE_HOST;
-pub use super::hook_review::{ReviewBundle, ReviewItem, ReviewSource, StoredTrust, ToggleError};
+pub use super::hook_review::{
+    ReviewBundle, ReviewItem, ReviewLookup, ReviewSource, StoredTrust, ToggleError,
+};
 use crate::live::Live;
 use crate::server::{Server, kernel_error};
 
@@ -99,10 +101,9 @@ pub trait WorkspaceAdmin: Send + Sync {
     ) -> Value;
     /// The banners of a workspace now.
     async fn admission(&self, target: &WorkspaceTarget) -> Admission;
-    /// The workspace's hook bundle and its stored trust for a review (`fork/hook_review.rs`); `None` when the
-    /// workspace cannot be reviewed (no declarations, or a config that cannot be read or parsed).
-    async fn hook_review(&self, _target: &WorkspaceTarget) -> Option<ReviewBundle> {
-        None
+    /// The workspace's hook bundle and its stored trust for a review (`fork/hook_review.rs`), or why there is none.
+    async fn hook_review(&self, _target: &WorkspaceTarget) -> ReviewLookup {
+        ReviewLookup::Nothing
     }
     /// Writes the trust records of `review_item_ids` in the bundle `bundle_digest` (Node
     /// `createWorkspaceHookTrustRecords` + `store.grant`); `Err` is the reason code.

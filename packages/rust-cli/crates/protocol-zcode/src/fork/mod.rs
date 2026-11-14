@@ -26,6 +26,6 @@ mod workspace_model;
 pub(crate) use workspace_model::Operations as WorkspaceOperations;
 pub(crate) mod workspace_trust;
 pub use workspace_trust::{
-    Admission, ReviewBundle, ReviewItem, ReviewSource, StoredTrust, ToggleError, WorkspaceAdmin,
-    WorkspaceTarget,
+    Admission, ReviewBundle, ReviewItem, ReviewLookup, ReviewSource, StoredTrust, ToggleError,
+    WorkspaceAdmin, WorkspaceTarget,
 };

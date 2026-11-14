@@ -55,8 +55,8 @@ pub use fork::node_helper::{
     Timing as NodeHelperTiming,
 };
 pub use fork::{
-    Admission, ReviewBundle, ReviewItem, ReviewSource, StoredTrust, ToggleError, WorkspaceAdmin,
-    WorkspaceTarget,
+    Admission, ReviewBundle, ReviewItem, ReviewLookup, ReviewSource, StoredTrust, ToggleError,
+    WorkspaceAdmin, WorkspaceTarget,
 };
 pub use headers::HostHeaders;
 pub use network_capture::{NetworkCapture, with_network_capture};

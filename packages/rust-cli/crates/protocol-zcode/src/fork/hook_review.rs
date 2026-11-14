@@ -39,8 +39,8 @@ pub mod codes {
 #[cfg(test)]
 use codes::BUNDLE_CHANGED;
 pub(crate) use codes::{
-    CONFIG_REBUILD_FAILED, REQUIRE_TRUST_CAPABLE_HOST, REVIEW_SUPERSEDED, SNAPSHOT_MISMATCH,
-    TRUST_STORE_CORRUPT,
+    CONFIG_REBUILD_FAILED, CONFIG_UNREADABLE, REQUIRE_TRUST_CAPABLE_HOST, REVIEW_SUPERSEDED,
+    SNAPSHOT_MISMATCH, TRUST_STORE_CORRUPT,
 };
 
 /// The stored trust of one declaration (Node `WorkspaceHookTrustCoordinator.evaluateSnapshot` without a policy).
@@ -92,6 +92,16 @@ pub struct ReviewBundle {
     pub items: Vec<ReviewItem>,
     /// The trust store exists but cannot be read: every declaration is `blocked_untrusted`.
     pub store_corrupt: bool,
+}
+
+/// What a review lookup found in the workspace.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReviewLookup {
+    Bundle(ReviewBundle),
+    /// No workspace hook declarations: Node builds no runtime security for the session.
+    Nothing,
+    /// A config that cannot be read or parsed: nothing can be reviewed or confirmed.
+    Unreadable,
 }
 
 /// A toggle failure: a reason code before the write, or a rebuild failure after it (Node settles the flow as
@@ -220,17 +230,19 @@ fn scope<'a>(server: &'a Server, live: &'a Arc<Bridged<Live>>, session: &str) ->
     })
 }
 
-async fn bundle(scope: &Scope<'_>) -> Result<ReviewBundle, Refusal> {
-    scope
-        .admin
-        .hook_review(&scope.target)
-        .await
-        .ok_or(REQUIRE_TRUST_CAPABLE_HOST)
+/// The bundle a command works on; `unreadable` is the command's code for a config that cannot be read.
+async fn bundle(scope: &Scope<'_>, unreadable: Refusal) -> Result<ReviewBundle, Refusal> {
+    match scope.admin.hook_review(&scope.target).await {
+        ReviewLookup::Bundle(bundle) => Ok(bundle),
+        ReviewLookup::Nothing => Err(REQUIRE_TRUST_CAPABLE_HOST),
+        ReviewLookup::Unreadable => Err(unreadable),
+    }
 }
 
 /// `requestWorkspaceHookReview` (Node `requestReview`).
 async fn request(scope: &Scope<'_>, payload: &Value) -> Result<(), Refusal> {
-    let bundle = bundle(scope).await?;
+    // Node builds no snapshot from a config it cannot read, so no runtime security answers.
+    let bundle = bundle(scope, REQUIRE_TRUST_CAPABLE_HOST).await?;
     if !matches_bundle(scope, payload, &bundle) {
         return Err(SNAPSHOT_MISMATCH);
     }
@@ -257,7 +269,7 @@ async fn respond(scope: &Scope<'_>, payload: &Value) -> Result<(), Refusal> {
     }
     let ids = strings(&decision["reviewItemIds"]).ok_or(SNAPSHOT_MISMATCH)?;
     validate(scope, payload, &ids)?;
-    let bundle = bundle(scope).await?;
+    let bundle = bundle(scope, SNAPSHOT_MISMATCH).await?;
     if !matches_bundle(scope, payload, &bundle) {
         return Err(SNAPSHOT_MISMATCH);
     }
@@ -268,6 +280,14 @@ async fn respond(scope: &Scope<'_>, payload: &Value) -> Result<(), Refusal> {
     let interaction = text(payload, "interactionId").to_owned();
     {
         let mut state = scope.live.sink.hook_review.state.lock_unpoisoned();
+        // Node `coordinator.ts` forgets the session's revocation of a granted declaration.
+        for item in bundle
+            .items
+            .iter()
+            .filter(|item| ids.contains(&item.review_item_id))
+        {
+            state.revoked.remove(&item.digest);
+        }
         // A flow that timed out meanwhile still answers accepted: the grant took effect (Node).
         if let Some(flow) = state.current.as_mut()
             && flow.interaction_id() == interaction
@@ -285,10 +305,7 @@ async fn respond(scope: &Scope<'_>, payload: &Value) -> Result<(), Refusal> {
     )
     .await;
     let mut outcome = Outcome::default();
-    if let Ok(bundle) = bundle_after_mutation(scope).await {
-        let mut state = scope.live.sink.hook_review.state.lock_unpoisoned();
-        refresh_pending(scope, &mut state, &bundle, &mut outcome);
-    }
+    refresh_after_mutation(scope, &mut outcome).await;
     finish(scope, outcome, false).await;
     Ok(())
 }
@@ -298,7 +315,7 @@ async fn toggle(scope: &Scope<'_>, payload: &Value) -> Result<(), Refusal> {
     let id = text(payload, "reviewItemId").to_owned();
     let enabled = payload["enabled"].as_bool().ok_or(SNAPSHOT_MISMATCH)?;
     validate(scope, payload, std::slice::from_ref(&id))?;
-    let bundle = bundle(scope).await?;
+    let bundle = bundle(scope, CONFIG_UNREADABLE).await?;
     if !bundle
         .items
         .iter()
@@ -337,10 +354,7 @@ async fn toggle(scope: &Scope<'_>, payload: &Value) -> Result<(), Refusal> {
         }
     }
     let mut outcome = Outcome::default();
-    if let Ok(bundle) = bundle_after_mutation(scope).await {
-        let mut state = scope.live.sink.hook_review.state.lock_unpoisoned();
-        refresh_pending(scope, &mut state, &bundle, &mut outcome);
-    }
+    refresh_after_mutation(scope, &mut outcome).await;
     finish(scope, outcome, true).await;
     Ok(())
 }
@@ -349,7 +363,7 @@ async fn toggle(scope: &Scope<'_>, payload: &Value) -> Result<(), Refusal> {
 async fn revoke_flow(scope: &Scope<'_>, payload: &Value) -> Result<(), Refusal> {
     let ids = strings(&payload["reviewItemIds"]).ok_or(SNAPSHOT_MISMATCH)?;
     validate(scope, payload, &ids)?;
-    let bundle = bundle(scope).await?;
+    let bundle = bundle(scope, SNAPSHOT_MISMATCH).await?;
     if !matches_bundle(scope, payload, &bundle) {
         return Err(SNAPSHOT_MISMATCH);
     }
@@ -372,7 +386,7 @@ async fn revoke_current(scope: &Scope<'_>, payload: &Value) -> Result<(), Refusa
     if payload.get("remoteSessionId").is_some() {
         return Err(SNAPSHOT_MISMATCH);
     }
-    let bundle = bundle(scope).await?;
+    let bundle = bundle(scope, SNAPSHOT_MISMATCH).await?;
     if !matches_bundle(scope, payload, &bundle) {
         return Err(SNAPSHOT_MISMATCH);
     }
@@ -402,17 +416,32 @@ async fn apply_revoke(scope: &Scope<'_>, digests: Vec<String>) -> Result<(), Ref
         let mut state = scope.live.sink.hook_review.state.lock_unpoisoned();
         state.revoked.extend(digests);
     }
-    if let Ok(bundle) = bundle_after_mutation(scope).await {
-        let mut state = scope.live.sink.hook_review.state.lock_unpoisoned();
-        refresh_pending(scope, &mut state, &bundle, &mut outcome);
-    }
+    refresh_after_mutation(scope, &mut outcome).await;
     finish(scope, outcome, true).await;
     Ok(())
 }
 
-/// The bundle after an accepted mutation: one that cannot be read opens no new flow.
-async fn bundle_after_mutation(scope: &Scope<'_>) -> Result<ReviewBundle, Refusal> {
-    bundle(scope).await
+/// Node `refreshPendingFlow` after an accepted mutation, from the bundle rediscovered now. Node refreshes from its
+/// session snapshot; without one, a bundle that can no longer be discovered closes the pending flow, so the UI keeps no
+/// actions on a bundle that does not exist.
+async fn refresh_after_mutation(scope: &Scope<'_>, outcome: &mut Outcome) {
+    let rediscovered = bundle(scope, CONFIG_UNREADABLE).await;
+    let mut state = scope.live.sink.hook_review.state.lock_unpoisoned();
+    match rediscovered {
+        Ok(bundle) => refresh_pending(scope, &mut state, &bundle, outcome),
+        Err(code) => {
+            tracing::warn!(
+                reason = code,
+                "the workspace hook bundle could not be rediscovered after a trust change"
+            );
+            if let Some(flow) = state.current.as_mut().filter(|flow| flow.pending) {
+                flow.pending = false;
+                outcome
+                    .changes
+                    .push(Change::Remove(flow.interaction_id().to_owned()));
+            }
+        }
+    }
 }
 
 /// Node `WorkspaceHookReviewFlowRegistry.validate`: the target names the current pending flow, and its items.

@@ -19,11 +19,10 @@ const PROJECT: &str = r#"{"zeta": 1.5, "hooks": {"enabled": true, "events": {"Us
 const PROJECT_PATH: &str = "/Users/dev/repo/.zcode/config.json";
 
 async fn bundle(fixture: &Fixture) -> ReviewBundle {
-    fixture
-        .admin
-        .review_bundle(&target(ROOT))
-        .await
-        .expect("a reviewable bundle")
+    match fixture.admin.review_bundle(&target(ROOT)).await {
+        ReviewLookup::Bundle(bundle) => bundle,
+        other => panic!("a reviewable bundle: {other:?}"),
+    }
 }
 
 fn ids(bundle: &ReviewBundle) -> Vec<String> {
@@ -122,14 +121,20 @@ async fn the_bundle_lists_every_declaration_with_nodes_display_fields() {
 #[tokio::test]
 async fn nothing_is_reviewable_without_declarations_or_with_an_unreadable_config() {
     let empty = fixture_text(r#"{"zeta": 1}"#, json!({}));
-    assert_eq!(empty.admin.review_bundle(&target(ROOT)).await, None);
+    assert_eq!(
+        empty.admin.review_bundle(&target(ROOT)).await,
+        ReviewLookup::Nothing
+    );
     let fixture = fixture_text(PROJECT, json!({}));
     std::fs::write(
         fixture._home.path().join(".zcode/cli/config.json"),
         "{ not json",
     )
     .unwrap();
-    assert_eq!(fixture.admin.review_bundle(&target(ROOT)).await, None);
+    assert_eq!(
+        fixture.admin.review_bundle(&target(ROOT)).await,
+        ReviewLookup::Unreadable
+    );
 }
 
 #[tokio::test]
@@ -231,6 +236,30 @@ async fn a_revoke_removes_the_records_and_rebuilds_the_process_hooks() {
         stored(&bundle(&fixture).await),
         vec![StoredTrust::Trusted, StoredTrust::Untrusted]
     );
+}
+
+/// An unreadable user config could name another trust store: the revoke writes nothing.
+#[tokio::test]
+async fn an_unreadable_config_refuses_a_revoke() {
+    let fixture = fixture_text(PROJECT, json!({}));
+    let review = bundle(&fixture).await;
+    fixture
+        .admin
+        .review_grant(&target(ROOT), &review.bundle_digest, &ids(&review))
+        .await
+        .unwrap();
+    let before = std::fs::read(store_file(&fixture)).unwrap();
+    std::fs::write(
+        fixture._home.path().join(".zcode/cli/config.json"),
+        "{ not json",
+    )
+    .unwrap();
+    let answer = fixture
+        .admin
+        .review_revoke(&target(ROOT), &[review.items[0].digest.clone()])
+        .await;
+    assert_eq!(answer, Err(codes::SNAPSHOT_MISMATCH));
+    assert_eq!(std::fs::read(store_file(&fixture)).unwrap(), before);
 }
 
 #[tokio::test]

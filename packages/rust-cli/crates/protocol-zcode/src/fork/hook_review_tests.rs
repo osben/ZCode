@@ -63,6 +63,10 @@ struct FakeReview {
     grant: StdMutex<Result<(), &'static str>>,
     toggle: StdMutex<Result<(), ToggleError>>,
     calls: StdMutex<Vec<Value>>,
+    /// The config cannot be read or parsed now.
+    unreadable: StdMutex<bool>,
+    /// The next accepted grant, revoke or toggle leaves a config that cannot be read.
+    unreadable_after_mutation: StdMutex<bool>,
 }
 
 impl FakeReview {
@@ -72,11 +76,19 @@ impl FakeReview {
             grant: StdMutex::new(Ok(())),
             toggle: StdMutex::new(Ok(())),
             calls: StdMutex::new(Vec::new()),
+            unreadable: StdMutex::new(false),
+            unreadable_after_mutation: StdMutex::new(false),
         })
     }
 
     fn calls(&self) -> Vec<Value> {
         self.calls.lock_unpoisoned().clone()
+    }
+
+    fn mutated(&self) {
+        if *self.unreadable_after_mutation.lock_unpoisoned() {
+            *self.unreadable.lock_unpoisoned() = true;
+        }
     }
 
     fn set_stored(&self, digest: &str, stored: StoredTrust) {
@@ -129,9 +141,15 @@ impl WorkspaceAdmin for FakeReview {
         }
     }
 
-    async fn hook_review(&self, target: &WorkspaceTarget) -> Option<ReviewBundle> {
+    async fn hook_review(&self, target: &WorkspaceTarget) -> ReviewLookup {
         assert_eq!(target.path, ROOT);
-        self.bundle.lock_unpoisoned().clone()
+        if *self.unreadable.lock_unpoisoned() {
+            return ReviewLookup::Unreadable;
+        }
+        self.bundle
+            .lock_unpoisoned()
+            .clone()
+            .map_or(ReviewLookup::Nothing, ReviewLookup::Bundle)
     }
 
     async fn hook_review_grant(
@@ -155,6 +173,7 @@ impl WorkspaceAdmin for FakeReview {
         for digest in digests {
             self.set_stored(&digest, StoredTrust::Trusted);
         }
+        self.mutated();
         Ok(())
     }
 
@@ -169,6 +188,7 @@ impl WorkspaceAdmin for FakeReview {
         for digest in digests {
             self.set_stored(digest, StoredTrust::Untrusted);
         }
+        self.mutated();
         Ok(())
     }
 
@@ -191,6 +211,7 @@ impl WorkspaceAdmin for FakeReview {
                 }
             }
         }
+        self.mutated();
         Ok(())
     }
 }
@@ -747,6 +768,11 @@ async fn a_settings_revoke_reopens_the_review_with_the_revoked_declaration() {
         .await;
     assert_eq!(ack.status, Status::Accepted);
     assert!(harness.reviews().is_empty());
+    // Node `coordinator.ts` deletes the `revokedKeys` entry on a grant: if the record goes away later, the item is
+    // pending trust again, not revoked by this session.
+    harness.admin.set_stored(D1, StoredTrust::Untrusted);
+    let review = harness.open().await;
+    assert_eq!(review["payload"]["items"][0]["trustState"], "pending_trust");
 }
 
 #[tokio::test]
@@ -766,6 +792,91 @@ async fn a_flow_revoke_supersedes_the_open_review() {
     assert_eq!(next["payload"]["generation"], 2);
     assert_eq!(next["payload"]["items"][1]["trustState"], "revoked");
     assert_eq!(next["payload"]["summary"]["pendingCount"], 2);
+}
+
+/// An unreadable config is not "nothing to review": each command answers the code Node gives it. Node toggles
+/// against a rebuilt snapshot (`workspace-hook-review-mutation.ts` `config_unreadable`); a grant or revoke cannot
+/// confirm the reviewed bundle, so it refuses and writes nothing.
+#[tokio::test]
+async fn an_unreadable_config_refuses_each_command_with_its_code() {
+    let harness = harness(Some(two_hooks())).await;
+    let review = harness.open().await;
+    *harness.admin.unreadable.lock_unpoisoned() = true;
+    let respond = harness
+        .send(
+            "respondWorkspaceHookReview",
+            with(
+                target(&review),
+                json!({"decision": {"action": "trust_selected", "reviewItemIds": ["r1"]}}),
+            ),
+        )
+        .await;
+    refused(&respond, SNAPSHOT_MISMATCH);
+    let toggle = harness
+        .send(
+            "toggleWorkspaceHookReviewItem",
+            with(
+                target(&review),
+                json!({"reviewItemId": "r1", "enabled": false}),
+            ),
+        )
+        .await;
+    refused(&toggle, CONFIG_UNREADABLE);
+    let flow_revoke = harness
+        .send(
+            "revokeWorkspaceHookTrust",
+            with(target(&review), json!({"reviewItemIds": ["r1"]})),
+        )
+        .await;
+    refused(&flow_revoke, SNAPSHOT_MISMATCH);
+    let current_revoke = harness
+        .send(
+            "revokeWorkspaceHookTrust",
+            json!({"sessionId": "s1", "workspaceIdentity": ROOT, "bundleDigest": B1, "hookDeclarationDigests": [D1]}),
+        )
+        .await;
+    refused(&current_revoke, SNAPSHOT_MISMATCH);
+    let request = harness
+        .send(
+            "requestWorkspaceHookReview",
+            json!({"sessionId": "s1", "workspaceIdentity": ROOT, "bundleDigest": B1}),
+        )
+        .await;
+    refused(&request, REQUIRE_TRUST_CAPABLE_HOST);
+    assert!(
+        harness.admin.calls().is_empty(),
+        "{:?}",
+        harness.admin.calls()
+    );
+    assert_eq!(harness.review(), review);
+}
+
+/// A write that took effect but leaves a config that cannot be rediscovered closes the open review rather than
+/// leaving its actions on a bundle that no longer exists (Node refreshes from its snapshot instead).
+#[tokio::test]
+async fn a_mutation_whose_bundle_cannot_be_rediscovered_closes_the_review() {
+    let harness = harness(Some(two_hooks())).await;
+    harness.admin.set_stored(D2, StoredTrust::Trusted);
+    let review = harness.open().await;
+    *harness.admin.unreadable_after_mutation.lock_unpoisoned() = true;
+    let ack = harness
+        .send(
+            "revokeWorkspaceHookTrust",
+            with(target(&review), json!({"reviewItemIds": ["r2"]})),
+        )
+        .await;
+    assert_eq!(ack.status, Status::Accepted, "{ack:?}");
+    assert!(harness.reviews().is_empty(), "{:?}", harness.reviews());
+    let stale = harness
+        .send(
+            "respondWorkspaceHookReview",
+            with(
+                target(&review),
+                json!({"decision": {"action": "trust_selected", "reviewItemIds": ["r1"]}}),
+            ),
+        )
+        .await;
+    refused(&stale, REVIEW_SUPERSEDED);
 }
 
 #[tokio::test(start_paused = true)]
