@@ -78,6 +78,57 @@ fn digests_match_the_node_golden() {
     }
 }
 
+#[test]
+fn a_file_nodes_strict_schema_rejects_is_dropped_whole() {
+    // Node's project loader parses the whole file through its strict schema (`loadFileConfig`,
+    // `workspaceHooksConfigSchema.parse`); a failure marks the file not loaded, so none of its hooks is a candidate.
+    let root = "/Users/dev/repo";
+    let hook = |command: &str| json!({"type": "command", "command": command});
+    let rejected = [
+        json!({"extra": 1, "events": {"Stop": [{"hooks": [hook("a")]}]}}),
+        json!({"events": {"Stop": [{"hooks": []}, {"hooks": [hook("a")]}]}}),
+        json!({"events": {"Notification": [{"hooks": [hook("n")]}], "Stop": [{"hooks": [hook("a")]}]}}),
+        json!({"events": {"Stop": [{"matcher": 5, "hooks": [hook("a")]}, {"hooks": [hook("b")]}]}}),
+    ];
+    for bad in rejected {
+        let files = vec![
+            file_with(root, "/Users/dev/repo/zcode.json", 0, &bad),
+            file_with(
+                root,
+                "/Users/dev/repo/.zcode/config.json",
+                1,
+                &json!({"events": {"PreToolUse": [{"hooks": [hook("good")]}]}}),
+            ),
+        ];
+        let mut warnings = Vec::new();
+        let found = candidates(&files, &mut warnings);
+        let paths: Vec<&str> = found.iter().map(|(file, _)| file.path.as_str()).collect();
+        assert_eq!(paths, ["/Users/dev/repo/.zcode/config.json"], "{bad}");
+        assert!(!warnings.is_empty(), "{bad}");
+    }
+}
+
+#[test]
+fn compaction_and_session_end_hooks_are_candidates() {
+    let root = "/Users/dev/repo";
+    let hooks = json!({"events": {
+        "PreCompact": [{"hooks": [{"type": "command", "command": "a"}]}],
+        "PostCompact": [{"hooks": [{"type": "command", "command": "b"}]}],
+        "SessionEnd": [{"hooks": [{"type": "command", "command": "c"}]}]
+    }});
+    let files = vec![file_with(root, "/Users/dev/repo/zcode.json", 0, &hooks)];
+    let mut warnings = Vec::new();
+    let found = candidates(&files, &mut warnings);
+    assert!(warnings.is_empty(), "{warnings:?}");
+    let events: Vec<&str> = found[0]
+        .1
+        .events
+        .iter()
+        .map(|(event, _)| event.as_str())
+        .collect();
+    assert_eq!(events.len(), 3, "{events:?}");
+}
+
 fn record(identity: &str, digest: &str) -> TrustRecord {
     TrustRecord {
         workspace_identity: identity.to_owned(),

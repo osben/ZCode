@@ -141,7 +141,8 @@ fn absorbed_defaults_to_prompts_before_notices() {
 }
 
 #[test]
-fn node_events_are_the_seven_node_names_in_node_order() {
+fn node_events_are_the_ten_node_names_in_node_order() {
+    // Node `WORKSPACE_HOOK_EVENT_NAMES` (`packages/shared/src/workspace-hook-config.ts`), the digest's event order.
     let names: Vec<&str> = NODE_EVENTS.iter().map(|event| event.as_str()).collect();
     assert_eq!(
         names,
@@ -153,6 +154,9 @@ fn node_events_are_the_seven_node_names_in_node_order() {
             "PostToolUse",
             "PostToolUseFailure",
             "Stop",
+            "PreCompact",
+            "PostCompact",
+            "SessionEnd",
         ]
     );
 }
