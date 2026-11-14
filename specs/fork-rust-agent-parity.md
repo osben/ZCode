@@ -1788,7 +1788,7 @@ Known small gaps and follow-ups:
 
 ## Hook invocation rows and the blocked-prompt banner (HK-UP-01)
 
-Status: items 1 and 2 of the delivery are implemented; the UserPromptSubmit rows and banner (Design 1–7) follow. It closes HK-UP-01 in desktop E2E `hooks/conversation-session-hooks-lifecycle`. That case blocks a UserPromptSubmit with two hooks: an async command, and a process hook that writes stderr and returns `{continue:false, reason:"hooks_prompt_block"}`. It then checks three things:
+Status: items 1–3 of the delivery are implemented: batch order, the typed `/compact`, and the human-turn UserPromptSubmit rows and banner (Design 1–3, 5, 6). Deferred: the per-session record list and `SessionView.hook_invocations` (the record-keeping half of Design 4) and the cold rebuild (Design 7). Cold drops a blocked turn anyway, so HK-UP-01 does not need them, and they only matter for allowed dispatches after a resubscribe. It closes HK-UP-01 in desktop E2E `hooks/conversation-session-hooks-lifecycle`. That case blocks a UserPromptSubmit with two hooks: an async command, and a process hook that writes stderr and returns `{continue:false, reason:"hooks_prompt_block"}`. It then checks three things:
 
 1. The prompt's turn shows the text `E2E_HOOKS_PROMPT_BLOCK` and a Hook details trigger (`v4-hook-details-trigger-<turnId>`) inside the same `[data-turn-id]` element.
 2. The chat error banner reads `hooks_prompt_block: <stderr>`.
@@ -1857,16 +1857,18 @@ sequenceDiagram
   participant P as protocol-zcode Projection
   I->>L: TurnStarted (already today)
   I->>E: run(UserPromptSubmit)
-  E-->>I: HookOutcome { …, runs: [HookRunRecord…] }
-  I->>L: HookInvocation { invocation, event, turn, runs }
-  L->>A: record kept per session (in memory)
-  L->>P: apply → row.appended hookInvocation
+  E-->>I: HookOutcome { …, invocation, runs: [HookRunRecord…] }
   alt blocked
     I->>L: PromptBlocked { message }
     L->>P: userInput row in the same turn
-    P->>P: lastError fault.runtime.hookBlocked (state.updated)
+    I->>L: HookInvocation { invocation }
+    L->>P: row.appended hookInvocation, lastError fault.runtime.hookBlocked (state.updated)
     I->>L: TurnFinished(Success)
     P->>P: header completed, lastError kept, queue not paused
+  else allowed
+    I->>L: the input committed (MessageDone)
+    I->>L: HookInvocation { invocation }
+    L->>P: row.appended hookInvocation
   end
   Note over A,P: resubscribe: from_view reads records from SessionView, anchors them to their turn
 ```
@@ -1926,6 +1928,7 @@ sequenceDiagram
    - The turn finishes as `TurnOutcome::Success`, as Node's `TurnComplete(resultType:"success")` (`turn.ts:650-696`); no new `TurnOutcome` variant. So the header is `completed`, the projection keeps `lastError` (a success does not touch it), `error_holds_queue` does not hold the queue, and the turn's usage row is skipped (its prompt is not stored). **Accepted divergence:** Node's blocked path still writes its turn usage fact (`recordTurnUsageFact`, status `completed`, no model call); Rust writes none for a turn whose input is not stored.
    - The projection sets `lastError` from the `HookInvocation` event: the last execution with `outcome: blocked` for UserPromptSubmit, in index order (Node emits one `state.updated` per `HookRunBlocked` and runs every hook, so the last block wins), using Node's message, `detail`, `recoverable:false` and `attribution` rules. `LastError` gains `detail`, `recoverable` and `attribution`. Other faults keep `recoverable: true`.
    - `traceId` is omitted, because Rust has no trace id ("Conversation telemetry facts").
+   - **Known divergence:** the blocked turn finishes as a success, so the post-turn `/goal` steps (continue after set, verify after a turn) see a completed turn. Node's blocked path returns before its goal handling. No E2E combines an active goal with a blocked prompt. This is a follow-up.
 7. **Cold (in-process resubscribe or reopen).** `from_view` reads `hook_invocations`. A record whose turn is a stored turn is anchored to that cold turn through its user message id, like goal verification's `anchor_message`.
    - A record for a turn with no stored prompt (a blocked prompt) is dropped cold, together with that turn, which Rust never stores. This differs from Node.
    - SessionStart records go before the first turn that follows them.
