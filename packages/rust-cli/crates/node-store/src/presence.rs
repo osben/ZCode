@@ -9,7 +9,8 @@
 //!
 //! A row stays in [`Held`] until its delete succeeds: a release that fails (the database locked past the busy timeout,
 //! which is when Node holds `begin immediate`) is retried by every later release and register, by a backoff timer the
-//! store owns while failed releases remain, and by the shutdown sweep, as Node's `close()` deletes every row of its
+//! store owns while failed releases remain (busy or locked databases only; it holds the store weakly), and by the
+//! shutdown sweep, as Node's `close()` deletes every row of its
 //! owner whatever an earlier `unregisterSessionRuntime` did.
 //!
 //! The entry, and the guard that releases it, exist before the insert is queued: an open or a create dropped while
@@ -20,7 +21,7 @@
 //! store's blocking thread.
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use rusqlite::{Connection, ErrorCode, params};
@@ -46,7 +47,7 @@ pub(crate) type Held = Arc<Mutex<HashMap<String, Entry>>>;
 
 /// The first wait of the retry timer, doubled after each try that leaves rows, up to [`RETRY_MAX`].
 const RETRY_FIRST: Duration = Duration::from_millis(50);
-const RETRY_MAX: Duration = Duration::from_secs(2);
+const RETRY_MAX: Duration = Duration::from_secs(30);
 
 /// A fresh owner id in Node's format (`${process.pid}:${randomUUID()}`). One per open, so the late release of a
 /// closed runtime can never delete the row of a reopen of the same session.
@@ -155,6 +156,15 @@ fn sweep(conn: &Connection, held: &Held, select: fn(&Entry) -> bool) -> rusqlite
     failed.map_or(Ok(()), Err)
 }
 
+/// Whether a delete failed only because another connection holds the database (Node's `begin immediate`).
+fn is_busy(error: &rusqlite::Error) -> bool {
+    matches!(
+        error,
+        rusqlite::Error::SqliteFailure(failure, _)
+            if matches!(failure.code, ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked)
+    )
+}
+
 /// Retries the releases that failed earlier. Best effort: a row that still cannot be deleted waits for the next try.
 fn retry_released(conn: &Connection, held: &Held) {
     if let Err(error) = sweep(conn, held, |entry| entry.released) {
@@ -170,40 +180,90 @@ fn any_released(held: &Held) -> bool {
     held.lock_unpoisoned().values().any(|entry| entry.released)
 }
 
-/// Starts the store's retry timer unless it runs: while failed releases remain it retries them on a bounded backoff,
-/// and it stops once none is left. It is a runtime task, so it never keeps the process alive; what it has not deleted
-/// by the runtime shutdown goes to the exit sweep.
+/// Clears the store's retry flag when the timer ends, also when the runtime shutdown drops it.
+struct Running(Arc<AtomicBool>);
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
+/// What one retry of the timer found.
+enum Retry {
+    /// Nothing is left, or the store is gone.
+    Done,
+    /// The database was still busy or locked.
+    Busy,
+    /// Another error: the timer stops, and the row waits for the next release, register or the exit sweep.
+    Stop,
+}
+
+/// One retry of the failed releases on the store's blocking thread.
+fn retry_once(
+    connection: &Weak<Mutex<Option<Connection>>>,
+    held: &Weak<Mutex<HashMap<String, Entry>>>,
+) -> Retry {
+    let (Some(connection), Some(held)) = (connection.upgrade(), held.upgrade()) else {
+        return Retry::Done;
+    };
+    let slot = connection.lock_unpoisoned();
+    let Some(conn) = slot.as_ref() else {
+        return Retry::Done;
+    };
+    match sweep(conn, &held, |entry| entry.released) {
+        Ok(()) => Retry::Done,
+        Err(error) if is_busy(&error) => Retry::Busy,
+        Err(error) => {
+            tracing::warn!(
+                event = "session_presence.retry_stopped",
+                error = %error,
+                "retrying the session runtime presence release failed; the next release or the exit sweep retries it"
+            );
+            Retry::Stop
+        }
+    }
+}
+
+/// Starts the store's retry timer unless it runs: while failed releases remain and the database is busy or locked, it
+/// retries them on an exponential backoff capped at [`RETRY_MAX`], and it stops once none is left, on another error, or
+/// when the store is gone (it holds the store weakly). It is a runtime task, so it never keeps the process alive; what
+/// it has not deleted by the runtime shutdown goes to the exit sweep.
 fn schedule_retry(
     runtime: &tokio::runtime::Handle,
-    connection: Arc<Mutex<Option<Connection>>>,
-    held: Held,
-    retrying: Arc<AtomicBool>,
+    connection: &Arc<Mutex<Option<Connection>>>,
+    held: &Held,
+    retrying: &Arc<AtomicBool>,
 ) {
     if retrying.swap(true, Ordering::AcqRel) {
         return;
     }
+    let mut running = Some(Running(retrying.clone()));
+    let retrying = retrying.clone();
+    let (connection, held) = (Arc::downgrade(connection), Arc::downgrade(held));
     let blocking = runtime.clone();
     drop(runtime.spawn(async move {
         let mut wait = RETRY_FIRST;
         loop {
             tokio::time::sleep(wait).await;
             let (slot, rows) = (connection.clone(), held.clone());
-            let swept = blocking
-                .spawn_blocking(move || {
-                    if let Some(conn) = slot.lock_unpoisoned().as_ref() {
-                        retry_released(conn, &rows);
+            let found = blocking
+                .spawn_blocking(move || retry_once(&slot, &rows))
+                .await
+                .unwrap_or(Retry::Stop);
+            match found {
+                Retry::Busy => wait = (wait * 2).min(RETRY_MAX),
+                Retry::Stop => return,
+                Retry::Done => {
+                    drop(running.take());
+                    // A release that failed after this retry found the timer still running: take it over.
+                    let left = held.upgrade().is_some_and(|held| any_released(&held));
+                    if !left || retrying.swap(true, Ordering::AcqRel) {
+                        return;
                     }
-                })
-                .await;
-            if swept.is_err() || !any_released(&held) {
-                retrying.store(false, Ordering::Release);
-                // A release that failed after the check found the timer still running: take it over.
-                if !any_released(&held) || retrying.swap(true, Ordering::AcqRel) {
-                    return;
+                    running = Some(Running(retrying.clone()));
+                    wait = RETRY_FIRST;
                 }
-                wait = RETRY_FIRST;
-            } else {
-                wait = (wait * 2).min(RETRY_MAX);
             }
         }
     }));
@@ -312,12 +372,7 @@ impl Release {
         if let Some(runtime) = runtime
             && any_released(&self.held)
         {
-            schedule_retry(
-                runtime,
-                self.connection.clone(),
-                self.held.clone(),
-                self.retrying.clone(),
-            );
+            schedule_retry(runtime, &self.connection, &self.held, &self.retrying);
         }
     }
 }

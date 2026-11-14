@@ -1,5 +1,6 @@
 //! Fork: the session runtime presence protocol on the shared database (specs/fork-rust-agent-parity.md "Session
 //! runtime presence on the shared database").
+use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use rusqlite::{Connection, params};
@@ -541,6 +542,8 @@ async fn a_release_retries_the_earlier_failed_releases() {
         .register_runtime(&SessionId::new("sess_other"))
         .await
         .unwrap();
+    // Mark the retry timer as running so it never starts: only the second release can delete the first row.
+    store.store.presence_retry.store(true, Ordering::SeqCst);
     fail_fast_when_locked(&store);
     let node = store.connection();
     node.execute_batch("begin immediate").unwrap();
@@ -550,4 +553,99 @@ async fn a_release_retries_the_earlier_failed_releases() {
     // Outside a runtime the release runs inline: both rows are gone when it returns.
     std::thread::spawn(move || drop(second)).join().unwrap();
     assert!(presence(&store).is_empty(), "{:?}", presence(&store));
+}
+
+/// A delete that fails for another reason than a busy or locked database stops the retry timer; the row stays held for
+/// the next release, register or the exit sweep.
+#[tokio::test]
+async fn the_retry_timer_stops_on_an_error_other_than_busy() {
+    let store = migrated().await;
+    let guard = store.store.register_runtime(&sid()).await.unwrap();
+    let owner = presence(&store)[0].1.clone();
+    let node = store.connection();
+    node.execute_batch(
+        "create trigger fork_test_refuse_delete before delete on session_runtime_presence
+           begin select raise(abort, 'refused'); end;",
+    )
+    .unwrap();
+    drop(guard);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !store
+        .store
+        .presence
+        .lock()
+        .unwrap()
+        .get(&owner)
+        .is_some_and(|entry| entry.released)
+    {
+        assert!(Instant::now() < deadline, "the release never ran");
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    // The failed release starts the timer; its first retry (after 50 ms) meets the same error and stops it.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !store.store.presence_retry.load(Ordering::SeqCst) {
+        assert!(Instant::now() < deadline, "the timer never started");
+        tokio::time::sleep(Duration::from_millis(1)).await;
+    }
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while store.store.presence_retry.load(Ordering::SeqCst) {
+        assert!(Instant::now() < deadline, "the timer kept retrying");
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    assert_eq!(presence(&store).len(), 1);
+    node.execute_batch("drop trigger fork_test_refuse_delete")
+        .unwrap();
+    store.store.release_presence_blocking();
+    assert!(presence(&store).is_empty());
+}
+
+/// The retry timer holds the connection weakly: once the store is gone, the timer ends and the connection closes.
+#[tokio::test]
+async fn the_retry_timer_ends_with_the_store() {
+    let test = migrated().await;
+    let guard = test.store.register_runtime(&sid()).await.unwrap();
+    let owner = presence(&test)[0].1.clone();
+    fail_fast_when_locked(&test);
+    let node = test.connection();
+    node.execute_batch("begin immediate").unwrap();
+    drop(guard);
+    release_failed(&test, &owner).await;
+    assert!(test.store.presence_retry.load(Ordering::SeqCst));
+    let connection = std::sync::Arc::downgrade(&test.store.connection);
+    let TestStore { dir, store, .. } = test;
+    drop(store);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while connection.upgrade().is_some() {
+        assert!(Instant::now() < deadline, "the timer kept the connection");
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    node.execute_batch("commit").unwrap();
+    drop(dir);
+}
+
+/// A timer the runtime shutdown drops resets the running flag, so a later failure starts a new one.
+#[test]
+fn a_timer_dropped_at_runtime_shutdown_resets_its_flag() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    let store = runtime.block_on(migrated());
+    let node = store.connection();
+    runtime.block_on(async {
+        let guard = store.store.register_runtime(&sid()).await.unwrap();
+        let owner = presence(&store)[0].1.clone();
+        fail_fast_when_locked(&store);
+        node.execute_batch("begin immediate").unwrap();
+        drop(guard);
+        release_failed(&store, &owner).await;
+    });
+    assert!(store.store.presence_retry.load(Ordering::SeqCst));
+    drop(runtime);
+    assert!(
+        !store.store.presence_retry.load(Ordering::SeqCst),
+        "the dropped timer left its flag set"
+    );
+    node.execute_batch("commit").unwrap();
 }
