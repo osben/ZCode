@@ -84,6 +84,8 @@ export class ForkRustHelperMcpHost {
   private workspace: HelperWorkspace | undefined;
   private plugins: Promise<PluginLoadOutcome> | undefined;
   private readonly pipes = new Map<string, PipeConnection>();
+  /** Pipe connects in flight; `true` once Rust closed the connection meanwhile (spec F3 pipe messages). */
+  private readonly connecting = new Map<string, boolean>();
   private readonly sessions = new Map<string, HelperSession>();
   private readonly opening = new Map<string, Promise<void>>();
 
@@ -128,14 +130,34 @@ export class ForkRustHelperMcpHost {
   async connect(params: Record<string, unknown> | undefined): Promise<Record<string, never>> {
     const connection = requireString(params, "connection");
     const server = requireString(params, "server");
-    if (this.pipes.has(connection))
+    if (this.pipes.has(connection) || this.connecting.has(connection))
       throw new ProtocolRequestError(-32602, `Connection already open: ${connection}`);
-    const config = await this.serverConfig(server, params?.workspace);
+    this.connecting.set(connection, false);
+    try {
+      return await this.connectPipe(connection, server, params?.workspace);
+    } finally {
+      this.connecting.delete(connection);
+    }
+  }
+
+  /** Rust gave up on this connect and closed it: a late connect must not keep its lease and MCP child. */
+  private assertStillWanted(connection: string): void {
+    if (this.connecting.get(connection)) throw new Error(`Connection closed while connecting: ${connection}`);
+  }
+
+  private async connectPipe(
+    connection: string,
+    server: string,
+    workspace: unknown,
+  ): Promise<Record<string, never>> {
+    const config = await this.serverConfig(server, workspace);
+    this.assertStillWanted(connection);
     const port = this.deps.pool.acquireLease({ leaseId: `fork-rust-pipe:${connection}` });
     try {
       const status = await port.connectServer(server, config, this.connectOptions());
       if (status.status !== "connected")
         throw new Error(status.error ?? `MCP server ${server} is ${status.status}`);
+      this.assertStillWanted(connection);
     } catch (error) {
       await port.close().catch(() => undefined);
       throw error;
@@ -158,7 +180,10 @@ export class ForkRustHelperMcpHost {
 
   async closePipe(connection: string): Promise<void> {
     const pipe = this.pipes.get(connection);
-    if (!pipe) return;
+    if (!pipe) {
+      if (this.connecting.has(connection)) this.connecting.set(connection, true);
+      return;
+    }
     this.pipes.delete(connection);
     pipe.offInvalidated();
     for (const controller of pipe.inflight.values()) controller.abort(new Error("Connection closed"));

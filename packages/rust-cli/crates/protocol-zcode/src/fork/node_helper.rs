@@ -308,8 +308,7 @@ impl NodeHelper {
                 result
             }
         };
-        self.panel_answered(generation, method, params, &result);
-        Some(result)
+        Some(self.panel_answered(generation, method, params, result))
     }
 
     /// A ready link for `method`, starting the helper when it is not running. `Ok(None)` when the helper does not
@@ -613,21 +612,18 @@ impl NodeHelper {
         }
     }
 
-    /// The kept process still runs a call its caller gave up on. A cancellable plugin operation is cancelled in the
-    /// helper, as the Host would, so it neither keeps running nor stays registered under its id. Fire and forget: the
-    /// answer does not matter, and a process dropped meanwhile ends the operation anyway.
+    /// The kept process still runs a call its caller gave up on. It is cancelled in the helper with that call's own
+    /// cancel, as the Host would, so it neither keeps running nor stays registered under its id: a panel tool call's
+    /// pending authorization is withdrawn, a sampling call ends. Fire and forget: the answer does not matter, and a
+    /// process dropped meanwhile ends the call anyway.
     fn cancel_abandoned(&self, method: &str, params: &Value, peer: &Peer) {
-        if method == CANCEL_OPERATION {
-            return;
-        }
-        let Some(operation_id) = operation_id(params) else {
+        let Some((cancel_method, cancel)) = abandoned_cancel(method, params) else {
             return;
         };
         let peer = peer.clone();
         let deadline = self.timing.cancel;
         drop(self.spawner.spawn("node-helper-cancel", async move {
-            let cancel = json!({"operationId": operation_id});
-            let _ = tokio::time::timeout(deadline, peer.request(CANCEL_OPERATION, &cancel)).await;
+            let _ = tokio::time::timeout(deadline, peer.request(cancel_method, &cancel)).await;
         }));
     }
 
@@ -755,6 +751,45 @@ async fn reclaim(weak: Weak<NodeHelper>, generation: u64, idle: Duration) {
 
 /// The id a cancellable plugin operation registers under in the helper: trimmed and non-empty, as Node's
 /// `getPluginOperationId`.
+const UI_CALL_TOOL: &str = "mcp/uiCallTool";
+const UI_SAMPLING: &str = "mcp/uiSampling";
+/// The plugin scope of an `mcp/ui*` call (`zcodeMcpUiPluginScopeShape`). The cancel schemas are strict: a cancel carries
+/// these and its id, nothing else.
+const UI_SCOPE: &[&str] = &[
+    "instance",
+    "workspace",
+    "sessionId",
+    "pluginId",
+    "serverName",
+];
+
+/// The cancel of an abandoned call: a panel tool call by its `callId` (`mcp/uiCancelCall`), a panel sampling call by
+/// its `operationId` (`mcp/uiCancelSampling`), any other call with an `operationId` as a plugin operation.
+fn abandoned_cancel(method: &str, params: &Value) -> Option<(&'static str, Value)> {
+    let ui_cancel = |cancel: &'static str, id: &str| {
+        let value = params
+            .get(id)
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())?;
+        let mut fields: serde_json::Map<String, Value> = UI_SCOPE
+            .iter()
+            .filter_map(|key| {
+                params
+                    .get(*key)
+                    .map(|value| ((*key).to_owned(), value.clone()))
+            })
+            .collect();
+        fields.insert(id.to_owned(), json!(value));
+        Some((cancel, Value::Object(fields)))
+    };
+    match method {
+        CANCEL_OPERATION => None,
+        UI_CALL_TOOL => ui_cancel("mcp/uiCancelCall", "callId"),
+        UI_SAMPLING => ui_cancel("mcp/uiCancelSampling", "operationId"),
+        _ => operation_id(params).map(|id| (CANCEL_OPERATION, json!({"operationId": id}))),
+    }
+}
+
 fn operation_id(params: &Value) -> Option<String> {
     let id = params.get("operationId")?.as_str()?.trim();
     (!id.is_empty()).then(|| id.to_owned())

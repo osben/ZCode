@@ -55,6 +55,11 @@ impl Panels {
     fn forget(&mut self, token: &str) {
         self.open.retain(|panel| panel.token != token);
     }
+
+    /// The helper closed `session` and its panels with it.
+    pub(super) fn forget_session(&mut self, session: &str) {
+        self.open.retain(|panel| panel.session != session);
+    }
 }
 
 impl Drop for Panels {
@@ -118,16 +123,17 @@ impl NodeHelper {
         }
     }
 
-    /// Tracks the panel instances a forwarded call of `generation` opened or closed.
+    /// Tracks the panel instances a forwarded call of `generation` opened or closed. An open answered after its
+    /// generation is gone fails: nothing could close that panel later.
     pub(super) fn panel_answered(
         &self,
         generation: u64,
         method: &str,
         params: &Value,
-        result: &Result<Value, RpcError>,
-    ) {
-        let Ok(answer) = result else {
-            return;
+        result: Result<Value, RpcError>,
+    ) -> Result<Value, RpcError> {
+        let Ok(answer) = &result else {
+            return result;
         };
         match method {
             OPEN_INSTANCE => {
@@ -135,7 +141,7 @@ impl NodeHelper {
                     non_empty(answer.get("token")),
                     non_empty(params.get("sessionId")),
                 ) else {
-                    return;
+                    return result;
                 };
                 let closed = json!({
                     "op": INSTANCE_CLOSED,
@@ -152,7 +158,9 @@ impl NodeHelper {
                     session: session.to_owned(),
                     closed,
                 };
-                self.with_running(generation, |running| running.panels.open.push(panel));
+                if !self.with_running(generation, |running| running.panels.open.push(panel)) {
+                    return Err(super::unavailable("the helper exited"));
+                }
             }
             CLOSE_INSTANCE => {
                 if let Some(token) = non_empty(params.pointer("/instance/token")) {
@@ -161,5 +169,6 @@ impl NodeHelper {
             }
             _ => {}
         }
+        result
     }
 }

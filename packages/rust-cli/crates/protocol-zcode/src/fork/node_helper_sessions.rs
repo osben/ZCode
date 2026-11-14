@@ -124,20 +124,29 @@ impl NodeHelper {
         let Some(cell) = cell else {
             return Err(unavailable("the helper exited"));
         };
+        let opened_here = std::sync::atomic::AtomicBool::new(false);
         let result = cell
-            .get_or_try_init(|| self.open_session(generation, peer, session))
+            .get_or_try_init(|| {
+                opened_here.store(true, std::sync::atomic::Ordering::Relaxed);
+                self.open_session(generation, peer, session)
+            })
             .await
             .copied();
-        if result.is_err() {
-            self.with_running(generation, |running| {
-                if running
-                    .sessions
-                    .get(session)
-                    .is_some_and(|known| Arc::ptr_eq(known, &cell))
-                {
+        let mut forgotten = false;
+        self.with_running(generation, |running| {
+            let current = running.sessions.get(session);
+            if result.is_err() {
+                if current.is_some_and(|known| Arc::ptr_eq(known, &cell)) {
                     running.sessions.remove(session);
                 }
-            });
+            } else if opened_here.load(std::sync::atomic::Ordering::Relaxed) {
+                // Closed while this open was in flight, and not opened again since: the helper has a session that
+                // nothing would close. A newer entry is a reopen, which a close would end.
+                forgotten = current.is_none();
+            }
+        });
+        if forgotten {
+            self.send_close(peer, session);
         }
         result
     }
@@ -182,17 +191,23 @@ impl NodeHelper {
             let Slot::Running(running) = &mut state.slot else {
                 return;
             };
+            running.panels.forget_session(session);
             match running.sessions.remove(session) {
                 Some(opening) => {
                     running.last_used = tokio::time::Instant::now();
+                    // An open still in flight closes the session itself once it succeeds (`ensure_session`).
                     opening.initialized().then(|| running.peer.clone())
                 }
                 None => None,
             }
         };
-        let Some(peer) = peer else {
-            return;
-        };
+        if let Some(peer) = peer {
+            self.send_close(&peer, session);
+        }
+    }
+
+    fn send_close(&self, peer: &Peer, session: &str) {
+        let peer = peer.clone();
         let params = json!({"sessionId": session});
         drop(self.spawner.spawn("node-helper-session-close", async move {
             peer.notify(CLOSE, &params).await;

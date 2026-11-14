@@ -242,6 +242,11 @@ Why plugin-level MCP Apps go through the helper too: the panel and the model mus
 | `helper/mcp/closed {connection, reason}`             | Notification, helper → Rust: the real server's connection closed                                                                  |
 | `helper/mcp/close {connection}`                      | Notification, Rust → helper: Rust closed the connection                                                                           |
 
+A connect that Rust gives up on is closed in the helper too:
+
+- Rust sends `helper/mcp/close` and drops the pipe whenever its connect does not succeed: an error answer, its timeout, or the caller dropping it.
+- A close that reaches the helper while that connection is still connecting makes the connect release its lease and answer an error once it finishes. Otherwise a late connect would keep a lease and an MCP child that nothing closes, and the helper would never be idle.
+
 `workspace` is `{workspacePath, workspaceIdentity?}`. A helper serves one workspace (its Rust process's); a second workspace is refused. The helper protocol version is 2 from F3 on: a Rust build and a helper of different versions refuse each other at `initialize`.
 
 The helper answers Rust's MCP messages as a small MCP server facade over Node's port:
@@ -263,6 +268,8 @@ helper/session/open {sessionId, rootSessionId?, workspace, pluginIds: [...], ser
 - `rootSessionId` is the root of a subagent session when Rust knows it (a foreground subagent chain); otherwise absent. It goes into the session trace, so Node's adapter sends it to the server as `root_session_id` in `_meta["com.zcode/request-context"]`, next to `session_id` and `turn_id`.
 - The helper session has no Node session lifecycle: the helper sets a lifecycle that is always ready, because Rust owns the session and opened it before forwarding.
 - `helper/session/close {sessionId}` (notification) is sent when Rust closes a session it opened in this generation. The helper does Node's close steps: abort the session's panel tool calls, clear its app tools, unsubscribe its resources, close its lease.
+  - A session that Rust closes while its open is still in flight is closed once the open succeeds. This applies only if nothing opened the session again meanwhile; a close would end that newer session.
+  - The close also forgets the session's panels, so a later crash sends no `pluginUi.instanceClosed` for them.
 
 **Session-scoped forwarded methods.** Same params and result as Host ↔ Node:
 
@@ -270,16 +277,27 @@ helper/session/open {sessionId, rootSessionId?, workspace, pluginIds: [...], ser
 - `plugins/mentionItems`;
 - `plugins/referenceCatalog` and `plugins/referenceCatalogWithCategory` with a `sessionId` (the session's frozen catalog; drafts stay sessionless as in F1).
 
-Rust forwards one only when the session is one of its own (open or resumable in this process), and, for a method that names a `serverName`, when that server is helper-hosted; `plugins/mentionItems` names a plugin, which must be helper-hosted. Otherwise Rust answers `proto.forkRustAgent.mcpUiServerNotHelperHosted`.
+Rust forwards one only when the session is one of its own, and, for a method that names a `serverName`, when that server is helper-hosted; `plugins/mentionItems` names a plugin, which must be helper-hosted. Otherwise Rust answers `proto.forkRustAgent.mcpUiServerNotHelperHosted`.
+
+A session is one of Rust's own when its stored workspace key equals the helper catalog's workspace identity key (`workspaceIdentity?.trim() || workspacePath`), because a helper serves one workspace.
+
+- The stored key is the store's `coalesce(nullif(workspace_id, ''), directory)`, or the draft's.
+- Rust stores its local sessions with no `workspace_id`, so their key is their directory. An execution-worktree session keeps its parent's directory and stays listed under it.
+- The shared session database also holds other workspaces' sessions and the upstream app's remote sessions. Being present in it does not make a session Rust's.
 
 **Helper → Rust requests (F3).** Each carries a `requestKey` (the request id). When the helper abandons one (the panel call was aborted, the session closed), it sends the notification `helper/cancelRequest {requestKey}` and does not wait for the answer; Rust drops its work for that key (a pending prompt is withdrawn, a sampling request is cancelled).
 
 - `helper/authorizeAppTool {sessionId, serverName, toolName, input, tool: {description?, inputSchema, annotations?}}`
+  - `input` must be an object, and `tool` must be an object with an object `inputSchema`; otherwise the request is invalid params. The helper always sends both: Node's `input: args ?? {}` and the descriptor from its `listTools`. A defaulted descriptor would have no schema, so validation would accept any input.
   - Node's `authorizeAppTool` for `mcp/uiCallTool` and `plugins/mentionItems`. App-only tools are not in Rust's tool list, so the helper sends the descriptor and Rust builds a transient MCP tool from it, as Node's `createMcpToolEntry` fallback does.
   - Rust runs the admission part of its tool pipeline on it, named `mcp__<server>__<tool>`: schema validation, `validate_input`, PreToolUse hooks, the rules and the gate, with a session-scoped prompt when it asks. It does not run the tool or PostToolUse hooks.
   - The answer is `{input}` (the approved, possibly hook-updated input), or an error whose `data.type` is Node's `CoreErrorType` (`permission_denied`, `invalid_input`).
   - "Always allow" lands in Rust's rules, so later model calls of that tool are allowed too.
-  - The prompt is session-level: a turn that ends while it waits neither cancels it nor hides it. The kernel resolves a turn's own asks before `TurnFinished`, so the projection keeps every ask still pending then (before, it cleared them all; `plugin-extension-mention` lost a mention prompt asked during a turn).
+  - The prompt is session-level: a turn that ends while it waits neither cancels it nor hides it. The kernel resolves a turn's own asks before `TurnFinished` (`cancel_turn_asks`, each with `InteractionResolved`), so the projection keeps every ask still pending then (before, it cleared them all; `plugin-extension-mention` lost a mention prompt asked during a turn).
+    - Node's turn end drops a pending entry whose `toolCallId` is a foreground tool row that the turn closes (`closeOpenToolRows`). In Rust those entries are the turn's own asks, already resolved by the kernel.
+    - An App prompt's `toolCallId` is the request key, which has no tool row in either runtime, so Node keeps it too.
+    - The projection never drops an ask that the kernel still waits on.
+  - When Rust gives up on the panel's `mcp/uiCallTool` (its timeout), it sends `mcp/uiCancelCall` to the helper; see "Helper hang". Node's handler aborts the call, the helper's client sends `helper/cancelRequest`, and the prompt is withdrawn. Otherwise an approval given after the timeout would still run the tool with no caller waiting.
 - `helper/sampleModel {sessionId, request, source: {pluginId, serverName, appIdentity}}`
   - `mcp/uiSampling`, Node's `sampleModel`. The helper has validated `request` against `mcpAppsSamplingParamsSchema`; Rust reads the part Node forwards to the model (`messages`, `systemPrompt`, `maxTokens`) and ignores `includeContext`, `modelPreferences`, `metadata` and `source`, as Node does.
   - Rust opens the session, then runs one side request (source `mcp_app_sampling`) on the session's current model selection as it is: no small-model slot and no reasoning level. The output cap is `min(maxTokens, the model's max output)`, and the provider patch gets the same cap. `systemPrompt` is the system block; image blocks are base64 images.
@@ -311,6 +329,7 @@ Rust forwards one only when the session is one of its own (open or resumable in 
 - **Crash.**
   - Rust's MCP connections over the helper close. A helper-hosted server then reconnects with the backoff of a remote server (a new helper generation starts on the reconnect), instead of failing for good as a stdio server does; once the breaker keeps the helper down, it fails after the usual reconnect limit.
   - For every panel instance Rust saw opened (`mcp/uiOpenInstance` answers) in that generation and not closed, Rust sends `pluginUi.instanceClosed` on the session stream.
+  - An open whose answer arrives after its generation is gone fails as `proto.forkRustAgent.nodeHelperUnavailable`, so no panel stays open on a helper that no longer exists.
   - App tools registered by that generation are removed. Helper sessions reopen lazily in the next generation.
 - **Lazy start.** `McpManager` registers helper-hosted servers as pending at `Ext::start` and connects them on the first tool snapshot of any session (a turn), or when an MCP status listing asks for them. The plugin lane runs neither, so it never starts the helper for them.
 
@@ -409,10 +428,19 @@ Plugin-host servers stay helper-hosted (the reasons above). Each server then has
 - **Helper hang.** Each forwarded method uses the Host's timeout for that method. Tool calls use the server's tool timeout (node_repl 600 s).
   - F1+F2 (shipped): every forwarded call has 300 s, the Host's plugin-management timeout, and `helper/initialize` has 30 s (all calls wait on a start). On timeout Rust fails the call as unavailable.
     - The process is kept if other calls are in flight on it and it has been heard from since the timed-out call started: an answer, any notification (relayed or not, such as `plugins/operationProgress`), or a request. It is alive, and only this call is slow (a long install). A hung call on a live process is then left to its cancel and to the idle reclaim.
-    - On a kept process, a timed-out call that carries an `operationId` (trimmed, non-empty, as `getPluginOperationId`) is cancelled in the helper with `plugins/cancelOperation`, fire and forget, with the Host's 5 s cancel deadline. Otherwise the abandoned operation would keep running and stay registered under its id. The Host cancels an operation when the user cancels it or the UI abandons it (a workspace or attachment switch, a superseded suggested prompt), but not on its own request timeout. Operation ids are unique per Host request, so the cancel names only the abandoned call.
+    - On a kept process, a timed-out call is cancelled in the helper with its own cancel method, fire and forget, with the Host's 5 s cancel deadline:
+      - a plugin operation that carries an `operationId` (trimmed, non-empty, as `getPluginOperationId`): `plugins/cancelOperation {operationId}`;
+      - `mcp/uiCallTool` (F3): `mcp/uiCancelCall`;
+      - `mcp/uiSampling` (F3): `mcp/uiCancelSampling`.
+
+      Both `mcp/ui` cancels carry only the call's `instance`, `workspace`, `sessionId`, `pluginId` and `serverName`, plus its `callId` or `operationId`, because the schemas are strict.
+      The Host's own timeout for these calls is the same 180 s or 65 s (`DEFAULT_ZCODE_PROTOCOL_REQUEST_TIMEOUT_MS`), so Rust gives up no earlier than the Host would. Otherwise the abandoned operation would keep running and stay registered under its id. The Host cancels an operation when the user cancels it or the UI abandons it (a workspace or attachment switch, a superseded suggested prompt), but not on its own request timeout. Operation ids are unique per Host request, so the cancel names only the abandoned call.
+
     - Otherwise the process is hung, and Rust drops it. That is not counted as a crash, and the next call starts a new helper. The other calls in flight on it fail as unavailable. Without this rule, a hung helper would never be dropped while overlapping calls keep arriving.
+
   - F3: per-method timeouts and the `helper/ping` liveness check (see F3, "Lifecycle changes"). Tool calls are timed and cancelled by Rust's MCP client.
   - F4 (planned): the node_repl tool timeout (600 s) and its cancel.
+
 - **Version mismatch** in `helper/initialize`: the helper is treated as unavailable for the life of the Rust process, with a single `warn`. A launch or initialize failure is not a crash. For 30 s after it, calls fail fast with the same code and start nothing (the run list is polled on every subscribe, so a broken bundle must not cost a Node process per call); the first call after that tries again. One `warn` covers a run of failures; a launch failure names the program file and the OS error. A start runs on its own task, so a caller that gives up mid-start does not strand the launched process. A start that panics or is aborted, and a helper that advertises no methods, count as failed starts with the same cooldown.
 - **Logging.**
   - Rust `info`: `helper.spawned`, `helper.exited`, `helper.reclaimed`. The exit code is not logged: the process ledger's handle does not report it.

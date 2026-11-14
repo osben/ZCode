@@ -13,6 +13,7 @@ import {
   FORK_RUST_HELPER_PROTOCOL_VERSION,
   runForkRustHelper,
 } from "../../src/fork-rust-helper/contract.js";
+import { ForkRustHelperClient } from "../../src/fork-rust-helper/rust-client.js";
 
 interface Frame {
   id?: string | number;
@@ -309,6 +310,47 @@ describe("fork: Node helper F3 (Office tools and panels)", () => {
     helper.close();
     await helper.done;
   }, 60_000);
+
+  it("releases a pipe that Rust closed while it was still connecting", async () => {
+    const home = await tempHome();
+    const helper = await initialized(home.env, home.workspace);
+    // Rust gave up on the connect (timeout, failure, dropped caller): its close arrives before the connect finishes.
+    const connecting = helper.request("helper/mcp/connect", {
+      connection: "c-late",
+      server: SERVER,
+      workspace: helper.workspace,
+    });
+    helper.notify("helper/mcp/close", { connection: "c-late" });
+    const connected = await connecting;
+    expect(connected.error?.message).toMatch(/closed while connecting/);
+    const reply = (await helper.mcp("c-late", { id: 1, method: "tools/list", params: {} })) as {
+      error?: { message: string };
+    };
+    expect(reply.error?.message).toMatch(/not open/);
+    // The connection id can connect again once Rust opens it anew.
+    const again = await helper.request("helper/mcp/connect", {
+      connection: "c-late",
+      server: SERVER,
+      workspace: helper.workspace,
+    });
+    expect(again.error).toBeUndefined();
+    helper.close();
+    await helper.done;
+  }, 60_000);
+
+  it("cancels an aborted request to Rust with helper/cancelRequest", async () => {
+    const sent: { id?: string; method: string; params: Record<string, unknown> }[] = [];
+    const client = new ForkRustHelperClient((message) => sent.push(message as (typeof sent)[number]));
+    const abort = new AbortController();
+    const pending = client.request("helper/authorizeAppTool", { sessionId: SESSION }, abort.signal);
+    abort.abort(new Error("panel call cancelled"));
+    await expect(pending).rejects.toThrow("panel call cancelled");
+    const requestKey = sent[0]?.params.requestKey;
+    expect(sent[0]?.id).toBe(requestKey);
+    expect(sent[1]).toEqual({ method: "helper/cancelRequest", params: { requestKey } });
+    // A late answer to it settles nothing.
+    expect(client.handleResponse({ jsonrpc: "2.0", id: String(requestKey), result: {} } as never)).toBe(true);
+  });
 
   it("refuses a tool call for a session the helper has not opened", async () => {
     const home = await tempHome();

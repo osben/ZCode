@@ -62,6 +62,32 @@ impl Pipe {
     }
 }
 
+/// A helper connection whose connect has not succeeded. Dropped armed, it drops the pipe and sends
+/// `helper/mcp/close`, as [`NodeHelper::mcp_close`] does.
+struct Abandoned<'a> {
+    helper: &'a NodeHelper,
+    connection: Option<String>,
+    peer: rust_cli_protocol_core::connection::Peer,
+}
+
+impl Drop for Abandoned<'_> {
+    fn drop(&mut self) {
+        let Some(connection) = self.connection.take() else {
+            return;
+        };
+        let retired = self.helper.take_pipe(&connection);
+        drop(retired);
+        let peer = self.peer.clone();
+        drop(
+            self.helper
+                .spawner
+                .spawn("node-helper-pipe-abandoned", async move {
+                    peer.notify(CLOSE, &json!({"connection": connection})).await;
+                }),
+        );
+    }
+}
+
 impl Drop for Pipe {
     fn drop(&mut self) {
         self.close(Some("the Node helper exited".to_owned()));
@@ -121,6 +147,13 @@ impl NodeHelper {
         }
         // Ends when the pipe is dropped (its `outbound` closes).
         drop(self.spawner.spawn("node-helper-pipe-writer", writer));
+        // Until the connect succeeds, a failure, a timeout or a caller dropping this future closes the connection on
+        // both sides: the helper may still be connecting, and a late connect would hold its lease and MCP child.
+        let mut abandoned = Abandoned {
+            helper: self,
+            connection: Some(id.clone()),
+            peer: peer.clone(),
+        };
         let params = json!({"connection": id, "server": server, "workspace": workspace});
         let answer = tokio::time::timeout(
             self.timing.timeout_for(CONNECT),
@@ -130,6 +163,7 @@ impl NodeHelper {
         let failure = match answer {
             Ok(Ok(_)) => {
                 self.heard(generation);
+                abandoned.connection = None;
                 return Ok(HelperMcpConnection { id, events });
             }
             Ok(Err(error)) if error.code == CONNECTION_CLOSED && peer.is_closed() => {
@@ -142,8 +176,7 @@ impl NodeHelper {
             }
             Err(_elapsed) => "the helper did not connect the server in time".to_owned(),
         };
-        let retired = self.take_pipe(&id);
-        drop(retired);
+        drop(abandoned);
         Err(McpError::Connect { message: failure })
     }
 

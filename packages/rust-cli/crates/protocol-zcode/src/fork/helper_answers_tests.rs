@@ -27,17 +27,57 @@ fn the_request_names_the_session_the_server_the_tool_and_its_prompt_id() {
     assert_eq!(call.input, json!({"query": "q"}));
     assert_eq!(call.descriptor, json!({"inputSchema": {"type": "object"}}));
     assert_eq!(call.tool_use.as_str(), "helper-1");
-    // Node's `args ?? {}`.
-    let bare = json!({"requestKey": "k", "sessionId": "s1", "serverName": "a", "toolName": "b"});
-    assert_eq!(
-        parse(&bare, CancellationToken::new()).unwrap().input,
-        json!({})
-    );
     for missing in ["requestKey", "sessionId", "serverName", "toolName"] {
         let mut params = params.clone();
         params.as_object_mut().unwrap().remove(missing);
         let error = parse(&params, CancellationToken::new()).unwrap_err();
         assert_eq!(error.message, format!("{missing} is required"));
+    }
+}
+
+/// The helper always sends Node's `input: args ?? {}` and the `listTools` descriptor: without them nothing could be
+/// validated, so a missing or malformed one is invalid params, never a default.
+#[test]
+fn the_input_and_the_descriptor_schema_are_required_objects() {
+    let params = json!({
+        "requestKey": "k", "sessionId": "s1", "serverName": "a", "toolName": "b",
+        "input": {}, "tool": {"inputSchema": {"type": "object"}},
+    });
+    assert!(parse(&params, CancellationToken::new()).is_ok());
+    let cases = [
+        ("/input", None, "input must be an object"),
+        ("/input", Some(json!("q")), "input must be an object"),
+        (
+            "/tool",
+            None,
+            "tool must be an object with an object inputSchema",
+        ),
+        (
+            "/tool",
+            Some(json!({})),
+            "tool must be an object with an object inputSchema",
+        ),
+        (
+            "/tool",
+            Some(json!({"inputSchema": true})),
+            "tool must be an object with an object inputSchema",
+        ),
+    ];
+    for (pointer, value, message) in cases {
+        let mut params = params.clone();
+        let key = &pointer[1..];
+        match value {
+            Some(value) => params[key] = value,
+            None => {
+                params.as_object_mut().unwrap().remove(key);
+            }
+        }
+        let error = parse(&params, CancellationToken::new()).unwrap_err();
+        assert_eq!(
+            (error.code, error.message.as_str()),
+            (-32602, message),
+            "{pointer}"
+        );
     }
 }
 

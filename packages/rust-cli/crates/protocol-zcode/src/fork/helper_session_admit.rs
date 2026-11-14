@@ -1,7 +1,7 @@
 //! Fork: the ownership check of the session-scoped methods Rust forwards to the Node helper
 //! (specs/fork-rust-node-helper.md F3, "Session-scoped forwarded methods"). Rust forwards one only when the session is
-//! one of its own (open or resumable in this process) and, for a method that names a `serverName`, when that server
-//! is helper-hosted; `plugins/mentionItems` names a plugin, which must be helper-hosted. Otherwise it answers
+//! one of its own (its stored workspace key is the helper's workspace) and, for a method that names a `serverName`,
+//! when that server is helper-hosted; `plugins/mentionItems` names a plugin, which must be helper-hosted. Otherwise it answers
 //! [`MCP_UI_SERVER_NOT_HELPER_HOSTED`].
 
 use rust_cli_kernel_api::ids::SessionId;
@@ -23,32 +23,58 @@ pub(crate) async fn admit(
     let Some(session) = session_of(method, params) else {
         return Ok(());
     };
-    let owned = !session.is_empty() && owns(server, &SessionId::new(session)).await;
-    match refusal(method, params, owned, helper.catalog().as_deref()) {
+    let stored = if session.is_empty() {
+        None
+    } else {
+        stored_key(server, &SessionId::new(session)).await
+    };
+    match refusal(
+        method,
+        params,
+        stored.as_deref(),
+        helper.catalog().as_deref(),
+    ) {
         Some(error) => Err(error),
         None => Ok(()),
     }
 }
 
-/// Open in this process, or a session of this process's store (resumable).
-async fn owns(server: &Server, session: &SessionId) -> bool {
-    server.bridge.get(session).is_some()
-        || matches!(
-            server.kernel.queries().session_workspace_key(session).await,
-            Ok(Some(_))
-        )
+/// The session's stored workspace key (`coalesce(nullif(workspace_id, ''), directory)`, or its draft's); `None` for a
+/// session the store does not know.
+async fn stored_key(server: &Server, session: &SessionId) -> Option<String> {
+    server
+        .kernel
+        .queries()
+        .session_workspace_key(session)
+        .await
+        .ok()
+        .flatten()
+}
+
+/// The identity key of the helper's workspace, `workspaceIdentity?.trim() || workspacePath`.
+fn workspace_key(catalog: &HelperCatalog) -> Option<&str> {
+    let workspace = &catalog.workspace;
+    workspace["workspaceIdentity"]
+        .as_str()
+        .map(str::trim)
+        .filter(|identity| !identity.is_empty())
+        .or_else(|| workspace["workspacePath"].as_str())
 }
 
 pub(crate) fn refusal(
     method: &str,
     params: &Value,
-    owned: bool,
+    stored_key: Option<&str>,
     catalog: Option<&HelperCatalog>,
 ) -> Option<RpcError> {
     let session = session_of(method, params)?;
     if session.is_empty() {
         return Some(RpcError::invalid_params("sessionId is required"));
     }
+    // A helper serves one workspace: a session of the shared database's other workspaces is not Rust's.
+    let owned = catalog
+        .and_then(workspace_key)
+        .is_some_and(|key| stored_key == Some(key));
     if !owned {
         return Some(not_hosted("the session is not one of this agent's"));
     }

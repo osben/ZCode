@@ -1260,3 +1260,49 @@ mod requests;
 
 #[path = "node_helper_panels_tests.rs"]
 mod panels;
+
+/// A connect Rust gives up on (refused, timed out, or dropped by its caller) is closed in the helper and leaves no
+/// pipe behind: otherwise a late connect keeps a lease and an MCP child, and the helper is never idle.
+#[tokio::test(start_paused = true)]
+async fn a_connect_rust_gives_up_on_is_closed_in_the_helper() {
+    let behaviour = behaviour(|_, method, params| match method {
+        "helper/mcp/connect" if params["server"] == "plugin:a:refused" => {
+            Act::Fail(RpcError::internal("MCP server failed to start"))
+        }
+        "helper/mcp/connect" => Act::Hang,
+        _ => Act::Notify(Vec::new()),
+    });
+    let rig = rig(fake(&["plugins/list"], behaviour), timing());
+    rig.helper
+        .mcp_connect(&workspace_params(), "plugin:a:refused")
+        .await
+        .expect_err("refused");
+    rig.helper
+        .mcp_connect(&workspace_params(), "plugin:a:slow")
+        .await
+        .expect_err("timed out");
+    let dropped = tokio::time::timeout(
+        Duration::from_secs(1),
+        rig.helper.mcp_connect(&workspace_params(), "plugin:a:slow"),
+    )
+    .await;
+    assert!(dropped.is_err(), "the caller gave up");
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    let connections = |method: &str| -> Vec<Value> {
+        received(&rig.fake, method)
+            .into_iter()
+            .map(|params| params["connection"].clone())
+            .collect()
+    };
+    assert_eq!(connections("helper/mcp/connect").len(), 3);
+    assert_eq!(
+        connections("helper/mcp/close"),
+        connections("helper/mcp/connect")
+    );
+    tokio::time::sleep(Duration::from_secs(301)).await;
+    assert_eq!(
+        rig.fake.stopped.load(Ordering::SeqCst),
+        1,
+        "no pipe keeps the helper"
+    );
+}

@@ -69,15 +69,33 @@ pub(super) fn required<'a>(params: &'a Value, key: &str) -> Result<&'a str, RpcE
         .ok_or_else(|| RpcError::invalid_params(format!("{key} is required")))
 }
 
-/// `{requestKey, sessionId, serverName, toolName, input, tool}`; the request key is the prompt's tool use id.
+/// `{requestKey, sessionId, serverName, toolName, input, tool}`; the request key is the prompt's tool use id. The helper
+/// always sends Node's `input: args ?? {}` and its `listTools` descriptor; neither is defaulted here, since a
+/// descriptor without `inputSchema` would let any input through validation.
 pub(crate) fn parse(params: &Value, cancel: CancellationToken) -> Result<AppToolCall, RpcError> {
+    let session = SessionId::new(required(params, "sessionId")?);
+    let server = required(params, "serverName")?.to_owned();
+    let tool = required(params, "toolName")?.to_owned();
+    let tool_use = ToolUseId::new(required(params, "requestKey")?);
+    let input = params
+        .get("input")
+        .filter(|input| input.is_object())
+        .cloned()
+        .ok_or_else(|| RpcError::invalid_params("input must be an object"))?;
+    let descriptor = params
+        .get("tool")
+        .filter(|tool| tool.get("inputSchema").is_some_and(Value::is_object))
+        .cloned()
+        .ok_or_else(|| {
+            RpcError::invalid_params("tool must be an object with an object inputSchema")
+        })?;
     Ok(AppToolCall {
-        session: SessionId::new(required(params, "sessionId")?),
-        server: required(params, "serverName")?.to_owned(),
-        tool: required(params, "toolName")?.to_owned(),
-        input: params.get("input").cloned().unwrap_or_else(|| json!({})),
-        descriptor: params.get("tool").cloned().unwrap_or_else(|| json!({})),
-        tool_use: ToolUseId::new(required(params, "requestKey")?),
+        session,
+        server,
+        tool,
+        input,
+        descriptor,
+        tool_use,
         cancel,
     })
 }

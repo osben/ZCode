@@ -202,3 +202,37 @@ async fn a_failed_open_is_not_tracked() {
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert!(deltas.taken().is_empty());
 }
+
+/// An open answered after its generation is gone fails, so no panel stays open on a helper that no longer exists.
+#[tokio::test]
+async fn an_open_answered_after_its_generation_is_gone_fails() {
+    let (rig, deltas) = panels_rig();
+    forward_ok(&rig.helper, CALL, json!({"sessionId": "s1"})).await;
+    let stale = rig
+        .helper
+        .panel_answered(u64::MAX, OPEN, &open_params("t9"), Ok(instance("t9")));
+    expect_unavailable(&stale.expect_err("the generation is gone"));
+    // Any other answer of a gone generation passes through.
+    let other = rig
+        .helper
+        .panel_answered(u64::MAX, CALL, &json!({}), Ok(json!({"ok": true})));
+    assert_eq!(other.expect("passed through"), json!({"ok": true}));
+    crash(&rig).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(deltas.taken().is_empty(), "nothing was tracked");
+}
+
+/// A session Rust closes forgets its panels: the helper closed them with the session.
+#[tokio::test]
+async fn a_closed_session_forgets_its_panels() {
+    let (rig, deltas) = panels_rig();
+    forward_ok(&rig.helper, OPEN, open_params("t1")).await;
+    let mut other = open_params("t2");
+    other["sessionId"] = json!("s2");
+    forward_ok(&rig.helper, OPEN, other).await;
+    rig.helper.session_closed("s1");
+    crash(&rig).await;
+    let closed = deltas_after(&deltas, 1).await;
+    assert_eq!(closed.len(), 1, "{closed:?}");
+    assert_eq!(closed[0].0, "s2");
+}

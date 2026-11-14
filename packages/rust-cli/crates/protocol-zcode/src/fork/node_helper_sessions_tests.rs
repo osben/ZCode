@@ -285,3 +285,117 @@ fn the_catalog_lists_every_admitted_plugin_and_the_helper_hosted_ones() {
         }
     );
 }
+
+/// The scope fields of the panel call params, as the Host sends them (`zcodeMcpUiPluginScopeShape`).
+fn ui_scope() -> serde_json::Map<String, Value> {
+    json!({
+        "workspace": {"workspacePath": "/w", "workspaceKey": "/w"},
+        "sessionId": "s1",
+        "instance": {"token": "tok-1", "generation": 1},
+        "pluginId": "viewer@inline",
+        "serverName": "plugin:viewer:view",
+    })
+    .as_object()
+    .cloned()
+    .expect("an object")
+}
+
+/// Node's own cancel of each panel call (`handlers.ts` `cancelToolCall`, `samplingCalls.ts`): a timed-out call is
+/// cancelled in the helper, with exactly the strict schema's fields, so its pending authorization or sampling ends.
+#[tokio::test(start_paused = true)]
+async fn an_abandoned_panel_call_is_cancelled_in_the_helper_by_its_own_cancel() {
+    let pipes = sessions(|_| opened());
+    let rig = rig(
+        fake(
+            &[SESSION_METHOD, "mcp/uiSampling"],
+            behaviour(move |launch, method, params| match method {
+                SESSION_METHOD | "mcp/uiSampling" => Act::Hang,
+                _ => pipes(launch, method, params),
+            }),
+        ),
+        timing(),
+    );
+    rig.helper.set_catalog(catalog());
+    let mut call = ui_scope();
+    call.insert("toolName".into(), json!("search"));
+    call.insert("arguments".into(), json!({"query": "q"}));
+    call.insert("callId".into(), json!("call-1"));
+    let mut sampling = ui_scope();
+    sampling.insert("operationId".into(), json!("op-7"));
+    sampling.insert("request".into(), json!({"messages": [], "maxTokens": 10}));
+    let (call_error, sampling_error) = tokio::join!(
+        forward_err(&rig.helper, SESSION_METHOD, Value::Object(call)),
+        forward_err(&rig.helper, "mcp/uiSampling", Value::Object(sampling)),
+    );
+    expect_unavailable(&call_error);
+    expect_unavailable(&sampling_error);
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    let mut cancel_call = ui_scope();
+    cancel_call.insert("callId".into(), json!("call-1"));
+    let mut cancel_sampling = ui_scope();
+    cancel_sampling.insert("operationId".into(), json!("op-7"));
+    assert_eq!(
+        received(&rig.fake, "mcp/uiCancelCall"),
+        [Value::Object(cancel_call)]
+    );
+    assert_eq!(
+        received(&rig.fake, "mcp/uiCancelSampling"),
+        [Value::Object(cancel_sampling)]
+    );
+    // A sampling call's `operationId` is not a plugin operation.
+    assert!(received(&rig.fake, "plugins/cancelOperation").is_empty());
+}
+
+/// A session Rust closes while its open is in flight is closed in the helper once the open succeeds.
+#[tokio::test(start_paused = true)]
+async fn a_session_closed_while_opening_is_closed_once_its_open_succeeds() {
+    let rig = session_rig(sessions(|_| Act::Delay {
+        after: Duration::from_secs(2),
+        result: json!({}),
+    }));
+    let call = forward_ok(&rig.helper, SESSION_METHOD, json!({"sessionId": "s1"}));
+    let close = async {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        rig.helper.session_closed("s1");
+    };
+    tokio::join!(call, close);
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(
+        received(&rig.fake, "helper/session/close"),
+        [json!({"sessionId": "s1"})]
+    );
+    // Nothing keeps the helper afterwards.
+    tokio::time::sleep(Duration::from_secs(301)).await;
+    assert_eq!(rig.fake.stopped.load(Ordering::SeqCst), 1);
+}
+
+/// A late open does not close the session that a newer call opened again after the close.
+#[tokio::test(start_paused = true)]
+async fn a_late_open_leaves_a_session_reopened_after_its_close() {
+    let rig = session_rig(sessions(|attempt| {
+        if attempt == 0 {
+            Act::Delay {
+                after: Duration::from_secs(2),
+                result: json!({}),
+            }
+        } else {
+            opened()
+        }
+    }));
+    let first = forward_ok(&rig.helper, SESSION_METHOD, json!({"sessionId": "s1"}));
+    let reopen = async {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        rig.helper.session_closed("s1");
+        forward_ok(&rig.helper, SESSION_METHOD, json!({"sessionId": "s1"})).await
+    };
+    tokio::join!(first, reopen);
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(received(&rig.fake, "helper/session/open").len(), 2);
+    assert!(
+        received(&rig.fake, "helper/session/close").is_empty(),
+        "the reopened session stays open"
+    );
+    rig.helper.session_closed("s1");
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(received(&rig.fake, "helper/session/close").len(), 1);
+}
