@@ -32,6 +32,19 @@ pub struct RequestLimits {
     pub tool_search: ToolSearchSetting,
     /// Fork: how far Stop hooks may continue a run (specs/fork-rust-agent-parity.md "Stop continuation cap").
     pub stop_continuations: StopContinuations,
+    /// Fork: where a batch's tool hook contexts are committed (specs/fork-rust-agent-parity.md "Tool hook context
+    /// after the tool result", Multi-call batches).
+    pub tool_hook_contexts: ToolHookContexts,
+}
+
+/// Fork: the commit place of the tool hook contexts (`hook_additional_context`) of one batch.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ToolHookContexts {
+    /// zcode-rs: each right after its own call's result.
+    #[default]
+    PerCall,
+    /// The Node desktop agent (`toolBatchModelEntries`): all after the batch's last result, in result order.
+    NodeBatch,
 }
 
 /// Fork: the Stop hook continuation rule of a run.

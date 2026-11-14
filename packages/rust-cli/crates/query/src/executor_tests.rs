@@ -171,3 +171,181 @@ async fn a_user_interrupt_rejects_running_tools_and_appends_the_interruption() {
         }]
     );
 }
+
+/// Fork: an executor that gives each call a hook context and a follow-up note in `after` (as the pipeline does: the
+/// PostToolUse context, then the tool's own follow-up message), and says when a call has finished.
+struct ContextExecutor {
+    finished: Arc<Notify>,
+}
+
+#[async_trait::async_trait]
+impl rust_cli_kernel_api::orchestration::ToolExecutor for ContextExecutor {
+    async fn execute(
+        &self,
+        tool: Arc<dyn Tool>,
+        input: Value,
+        context: rust_cli_kernel_api::tool::ToolUseContext,
+        progress: tokio::sync::mpsc::Sender<rust_cli_kernel_api::tool::ToolProgress>,
+    ) -> rust_cli_kernel_api::orchestration::ToolExecution {
+        let name = tool.name().to_owned();
+        let mut execution = rust_cli_kernel_api::testing::DirectExecutor
+            .execute(tool, input, context, progress)
+            .await;
+        execution.after = vec![
+            Message::Attachment(rust_cli_kernel_api::message::AttachmentMessage {
+                id: rust_cli_kernel_api::ids::MessageId::new(format!("ctx_{name}")),
+                source: "hook_additional_context".to_owned(),
+                text: format!("ctx {name}"),
+                data: Value::Null,
+            }),
+            Message::User(rust_cli_kernel_api::message::UserMessage {
+                stall_execution: None,
+                intent: None,
+                id: rust_cli_kernel_api::ids::MessageId::new(format!("note_{name}")),
+                content: vec![ContentBlock::Text {
+                    text: format!("note {name}"),
+                }],
+                origin: rust_cli_kernel_api::message::UserOrigin::Meta {
+                    source: "test".to_owned(),
+                },
+            }),
+        ];
+        self.finished.notify_one();
+        execution
+    }
+}
+
+/// The committed tool results, hook contexts and notes, in commit order.
+fn batch_order(messages: &[Message]) -> Vec<String> {
+    messages
+        .iter()
+        .filter_map(|message| match message {
+            Message::User(user) => user.content.iter().find_map(|block| match block {
+                ContentBlock::ToolResult { tool_use_id, .. } => {
+                    Some(format!("result {}", tool_use_id.as_str()))
+                }
+                ContentBlock::Text { text } if text.starts_with("note ") => Some(text.clone()),
+                _ => None,
+            }),
+            Message::Attachment(attachment) => Some(attachment.text.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn context_parts(
+    model: Arc<dyn rust_cli_kernel_api::model::ModelPort>,
+    contexts: crate::ToolHookContexts,
+) -> (crate::QueryParts, Arc<Notify>) {
+    let finished = Arc::new(Notify::new());
+    let mut parts = parts(
+        model,
+        vec![
+            Arc::new(FakeTool::new("A", false, "a")),
+            Arc::new(FakeTool::new("B", false, "b")),
+        ],
+    );
+    parts.executor = Arc::new(ContextExecutor {
+        finished: finished.clone(),
+    });
+    parts.limits.tool_hook_contexts = contexts;
+    (parts, finished)
+}
+
+/// Fork (Node `toolBatchModelEntries`): under the node batch order every hook context of a batch comes after its last
+/// result, in result order; the default keeps each after its own result. A call's other `after` messages keep their
+/// place.
+#[tokio::test]
+async fn under_the_node_batch_order_hook_contexts_follow_the_last_result() {
+    for (contexts, expected) in [
+        (
+            crate::ToolHookContexts::PerCall,
+            ["result t1", "ctx A", "note A", "result t2", "ctx B", "note B"],
+        ),
+        (
+            crate::ToolHookContexts::NodeBatch,
+            ["result t1", "note A", "result t2", "note B", "ctx A", "ctx B"],
+        ),
+    ] {
+        let model = Arc::new(ScriptedModel::new(vec![
+            tool_uses(&[("t1", "A", json!({})), ("t2", "B", json!({}))]),
+            text_response(&["ok"]),
+        ]));
+        let (parts, _) = context_parts(model.clone(), contexts);
+        let request = request("go");
+        let (scope, sink) = scope(parts, &request, Abort::new());
+        assert_eq!(
+            crate::run::run(scope, request).await.unwrap(),
+            QueryStop::Completed
+        );
+        assert_eq!(batch_order(&sink.messages()), expected, "{contexts:?}");
+        if contexts == crate::ToolHookContexts::NodeBatch {
+            // The next request folds both contexts into the batch's last tool result, as Node.
+            let wire = serde_json::to_string(&model.requests()[1].messages).unwrap();
+            let (first, last) = (wire.find("ctx A").unwrap(), wire.find("ctx B").unwrap());
+            let second_result = wire.find("\"t2\"").unwrap();
+            assert!(second_result < first && first < last, "{wire}");
+        }
+    }
+}
+
+/// A model reply that streams `first`, waits until a call has finished (and the stream loop has handed its result
+/// out), then streams `rest`.
+struct PausedModel {
+    finished: std::sync::Mutex<Option<Arc<Notify>>>,
+    first: std::sync::Mutex<Option<Vec<Result<ModelEvent, ModelError>>>>,
+    rest: std::sync::Mutex<Option<Vec<Result<ModelEvent, ModelError>>>>,
+}
+
+impl rust_cli_kernel_api::model::ModelPort for PausedModel {
+    fn stream(
+        &self,
+        _request: rust_cli_kernel_api::model::ModelRequest,
+        _cancel: tokio_util::sync::CancellationToken,
+    ) -> futures_util::stream::BoxStream<'static, Result<ModelEvent, ModelError>> {
+        use futures_util::StreamExt;
+        let take = |slot: &std::sync::Mutex<Option<Vec<_>>>| slot.lock().unwrap().take();
+        let Some(first) = take(&self.first) else {
+            return futures_util::stream::iter(text_response(&["ok"])).boxed();
+        };
+        let rest = take(&self.rest).unwrap();
+        let finished = self.finished.lock().unwrap().take().unwrap();
+        futures_util::stream::iter(first)
+            .chain(
+                futures_util::stream::once(async move {
+                    finished.notified().await;
+                    // Paused time: the sleep ends only once the loop is idle, after it handed the result out.
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    futures_util::stream::iter(rest)
+                })
+                .flatten(),
+            )
+            .boxed()
+    }
+}
+
+/// A call that finishes while the model still streams does not commit its context before a later call's result: the
+/// held contexts go after the stream ended and every call was committed.
+#[tokio::test(start_paused = true)]
+async fn a_call_finished_while_the_reply_streams_keeps_its_context_to_the_batch_end() {
+    let mut events = tool_uses(&[("t1", "A", json!({})), ("t2", "B", json!({}))]);
+    // `tool_uses`: the start, three events per call, then the delta and the stop.
+    let rest = events.split_off(4);
+    let model = Arc::new(PausedModel {
+        finished: std::sync::Mutex::new(None),
+        first: std::sync::Mutex::new(Some(events)),
+        rest: std::sync::Mutex::new(Some(rest)),
+    });
+    let (parts, finished) = context_parts(model.clone(), crate::ToolHookContexts::NodeBatch);
+    *model.finished.lock().unwrap() = Some(finished);
+    let request = request("go");
+    let (scope, sink) = scope(parts, &request, Abort::new());
+    assert_eq!(
+        crate::run::run(scope, request).await.unwrap(),
+        QueryStop::Completed
+    );
+    assert_eq!(
+        batch_order(&sink.messages()),
+        ["result t1", "note A", "result t2", "note B", "ctx A", "ctx B"]
+    );
+}
