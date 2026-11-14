@@ -4,7 +4,7 @@
 //! Prompt markers, checked in order: "crash" (exit 3 without answering; Rust-only), "last words" (answer "end_turn",
 //! then exit 0 at once; Rust-only), "slow" (stream "partial", then answer "end_turn" with usage after 300 ms without reading stdin; Rust-only),
 //! "narrate" (text, a tool call, more text; Rust-only), "linger" (a tool call that never settles,
-//! then as "hang"; Rust-only), "hang" (wait for `session/cancel`), "tool", "plan", "title", "permission", "remember <word>", "recall", anything else "pong".
+//! then as "hang"; Rust-only), "dwell" (as "linger", then the text "still running" before it waits; Rust-only), "hang" (wait for `session/cancel`), "tool", "plan", "title", "permission", "remember <word>", "recall", anything else "pong".
 //! Flags: `--state <file>` (memory and method log), `--config options|legacy` (or `ACP_MOCK_CONFIG`),
 //! `--refuse-load` (Rust-only: `session/load` fails, so a resume becomes a reset), `--pid-file <file>` (Rust-only: the
 //! process id is written there at start, so a test can see the process end), `--deaf-after-session` (Rust-only: after
@@ -164,6 +164,17 @@ impl Mock {
             );
             notify(&session_id, message("done looking"));
             return done(&id, "end_turn");
+        }
+        if text.contains("dwell") {
+            // A tool call that never settles and an open text segment, then wait for `session/cancel`.
+            notify(
+                &session_id,
+                json!({"sessionUpdate": "tool_call", "toolCallId": "tool-9",
+                "title": "Run the suite", "kind": "execute", "status": "in_progress"}),
+            );
+            notify(&session_id, message("still running"));
+            self.hang_id = Some(id);
+            return;
         }
         if text.contains("linger") {
             // A tool call that never settles, then wait for `session/cancel`.

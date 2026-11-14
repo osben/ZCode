@@ -131,19 +131,33 @@ pub(super) async fn run(
     }
     turn.withdraw_asks(&mut asks).await;
     drop(guard);
+    let failed = turn.failed.take();
+    // Node `isTurnCancellationError`: once Stop aborted the turn, any failure of it is a cancellation. The turn ends
+    // interrupted whatever the agent answered and whether or not its writes succeeded: open rows close "Cancelled" and
+    // the interrupt marker follows.
+    if abort.is_aborted() {
+        let ended = match failed {
+            Some(error) => {
+                turn.settle_open_live(CANCELLED).await;
+                Err(error)
+            }
+            None => {
+                turn.end(outcome.as_ref().ok().and_then(usage_of), CANCELLED)
+                    .await
+            }
+        };
+        if let Err(error) = ended {
+            tracing::warn!(event = "acp.stopped_turn_commit_failed", %error, "ACP turn stopped with a failed commit");
+        }
+        return turn.aborted(&abort).await;
+    }
     // A lost segment or row, or a failed plan write, fails the turn like a failed commit in the query loop. The open
     // rows settle on screen; nothing more is written.
-    if let Some(error) = turn.failed.take() {
+    if let Some(error) = failed {
         turn.settle_open_live(ENDED_FAILED).await;
         return Err(error);
     }
     match outcome {
-        // Node `external-agent-turn.ts`: after Stop the turn ends interrupted whatever the agent answered.
-        _ if abort.is_aborted() => {
-            turn.end(outcome.as_ref().ok().and_then(usage_of), CANCELLED)
-                .await?;
-            turn.aborted(&abort).await
-        }
         Ok(response) => {
             turn.end(usage_of(&response), ENDED_OPEN).await?;
             Ok(QueryStop::Completed)
@@ -674,9 +688,15 @@ impl Turn<'_> {
         let usage = if self.segment.is_empty() {
             usage
         } else {
-            // A lost last segment fails the turn like a mid-turn commit failure: open rows settle on screen only.
+            // A lost last segment fails the turn like a mid-turn commit failure: open rows settle on screen only, as
+            // "Cancelled" after Stop (the turn still ends interrupted).
             if let Err(error) = self.close_segment(usage).await {
-                self.settle_open_live(ENDED_FAILED).await;
+                let text = if reason == CANCELLED {
+                    CANCELLED
+                } else {
+                    ENDED_FAILED
+                };
+                self.settle_open_live(text).await;
                 return Err(error);
             }
             None

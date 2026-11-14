@@ -412,6 +412,44 @@ async fn a_failed_last_segment_commit_settles_open_rows_live() {
     harness.release().await;
 }
 
+/// Rule 6, Node `isTurnCancellationError`: an aborted turn whose last segment cannot be committed still ends
+/// interrupted. Its open rows settle "Cancelled" on screen, and the interrupt marker follows.
+#[tokio::test]
+async fn stop_with_a_failed_last_segment_commit_still_ends_interrupted() {
+    let harness = Harness::new();
+    let sink = Arc::new(RecordingSink::default());
+    // The tool call closes no segment (none is open yet); "still running" is the first commit, at the turn end.
+    sink.fail_next_commit_message();
+    let abort = Abort::new();
+    let running = {
+        let runner = harness.runner.clone();
+        let request = harness.request(vec![user("m1", "dwell", UserOrigin::Human)]);
+        let sink = sink.clone();
+        let abort = abort.clone();
+        tokio::spawn(async move { runner.run(request, sink, abort).await })
+    };
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while !sink.events().iter().any(|event| {
+            matches!(event, QueryEvent::Delta { delta: rust_cli_kernel_api::model::BlockDelta::Text(text), .. } if text.contains("still running"))
+        }) {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the segment opened");
+    abort.abort(AbortReason::User);
+    assert_eq!(
+        running.await.expect("task").expect("run"),
+        QueryStop::Aborted
+    );
+    assert_eq!(
+        live(&sink.events()).last().map(String::as_str),
+        Some(r#"done "Cancelled" error=true"#)
+    );
+    assert_eq!(texts(&sink.messages()), vec![INTERRUPT_TEXTS[0].to_owned()]);
+    harness.release().await;
+}
+
 /// Rule 6: Stop closes an open row "Cancelled", committed before the interrupt marker.
 #[tokio::test]
 async fn stop_closes_open_rows_before_the_interrupt_marker() {

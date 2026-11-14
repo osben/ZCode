@@ -1403,7 +1403,10 @@ failure    ─▶ rows closed "The agent turn failed before this tool finished" 
    before this tool finished" (prompt failure), "The agent turn ended before this tool finished"
    (completion). They are committed after the last segment and before the interrupt marker. When
    the last segment cannot be committed the turn fails like a mid-turn commit failure: open rows
-   settle on screen with the failed-turn text and nothing more is committed. A
+   settle on screen with the failed-turn text and nothing more is committed. After Stop any
+   failure (a lost segment or row, a failed plan write) still ends the turn interrupted, because
+   Node's `isTurnCancellationError` counts every error of an aborted turn as a cancellation: open
+   rows settle "Cancelled" on screen and the interrupt marker follows. A
    process killed mid-turn loses only the open segment and open rows, like a regular Rust turn.
 7. **Plan.** An ACP `plan` is a `TodoWrite` row (title "Plan", input `{todos}`) that settles at
    once with Node's output `{oldTodos, todos, summary}` (`summarizeTodos`). Each todo is Node's
@@ -1421,10 +1424,10 @@ failure    ─▶ rows closed "The agent turn failed before this tool finished" 
    v2 fields Node's todo has no column for (description, owner, blocks, blockedBy) go with the
    replaced tasks; the plan row's `oldTodos` lists them as Node's todos. A failed write fails the turn like a failed commit. The projection sets `state.plan`
    (`{items: [{id, content, status}], updatedAt}`, Node `todoPlanDeltas` over
-   `extractPlanStepsFromToolInput`) from a `TodoWrite` row's input, live and cold. As Node emits
-   on each row's `ToolCallScheduled`, a patch follows a row that opens or whose input changes
-   before it settles; a repeated event or an update after the row settled sends none, and a new
-   row with the same steps sends one. An empty plan keeps the last one.
+   `extractPlanStepsFromToolInput`) from a `TodoWrite` row's input, live and cold. A patch
+   follows a row that opens or whose input changes before it settles; a repeated event or an
+   update after the row settled sends none, and a new row with the same steps sends one. An empty
+   plan keeps the last one. (Node's emission differs; see "Plan patches" under the divergences.)
 8. **Title.** An agent `session_info_update` title (trimmed, non-empty) is a generated title
    (`Fact::TitleGenerated` without a message, `Source::Generated`; Node
    `setExternalAgentSessionTitle`). A custom title is kept, an unchanged one is skipped, and a
@@ -1503,6 +1506,15 @@ Divergences from Node, by design of `zcode-rs`:
   and continuations refuse an ACP selection). A title change on a row update sets the row title
   instead of Node's progress `message`. Native `TodoWrite` rows do not set `state.plan` yet; only
   ACP rows do.
+- **Plan patches.** Node's projection emits `todoPlanDeltas` on every `ToolCallScheduled`
+  (`product-projection.ts`, the scheduled handler) and again on a successful completion, from
+  the output. It never deduplicates, so an ACP plan sends two patches with the same items, the
+  second with the completion's `updatedAt`. Rust sends one per row when it opens, and one more
+  only when its input changes before it settles; the settle sends none. This cannot flood the
+  panel. Only names matching Node's todo pattern carry a plan, and ACP tool rows are named
+  `acp:<kind>`, which never matches. An ACP plan row is opened with its whole todo list and
+  settles at once. So an agent streaming a growing input sends no plan patches, and each ACP
+  plan sends exactly one.
 - **Stream close.** A closed stdout fails the prompt as "stopped during the turn" at once; Node does so
   only when the process exits within the death grace and otherwise keeps the transport error text.
 - **Agent self-cancel.** An agent that answers `cancelled` without a Stop completes the turn; Node
