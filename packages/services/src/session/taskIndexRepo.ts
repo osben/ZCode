@@ -1,3 +1,4 @@
+import { pauseAutomationsForArchivedTask } from "#src/session/automationRepo.js";
 import {
   isTasksStorageMigrated,
   isTasksStoragePrepared,
@@ -100,6 +101,10 @@ interface TaskIndexRow {
   title_overridden: number;
   searchable_text: string;
   meta_json: string;
+  /** Task cwd: equals workspace_path for ordinary local tasks, and points inside the worktree for worktree tasks. */
+  root_path?: string | null;
+  /** Managed worktree root (docs/git/worktree.md section 6.6.1); NULL when the task is not a worktree task. */
+  worktree_root?: string | null;
 }
 
 /**
@@ -276,8 +281,18 @@ function projectCliFacts(row: TaskIndexMetaRow, meta: ZCodeTaskMeta): ZCodeTaskM
   };
 }
 
+/** The cwd and root of a worktree task come only from columns (the single data source), never from meta_json. */
+function readWorktreePlacement(row: TaskIndexMetaRow): Pick<ZCodeTaskMeta, "worktreeRoot" | "cwd"> {
+  const worktreeRoot = row.worktree_root ?? undefined;
+  const cwd = row.root_path && row.root_path !== row.workspace_path ? row.root_path : undefined;
+  return {
+    ...(worktreeRoot ? { worktreeRoot } : {}),
+    ...(cwd ? { cwd } : {}),
+  };
+}
+
 function rowToMeta(row: TaskIndexMetaRow): ZCodeTaskMeta {
-  return projectCliFacts(row, rowToStoredMeta(row));
+  return { ...projectCliFacts(row, rowToStoredMeta(row)), ...readWorktreePlacement(row) };
 }
 
 function rowToStoredMeta(row: TaskIndexMetaRow): ZCodeTaskMeta {
@@ -342,7 +357,9 @@ function rowToStoredMeta(row: TaskIndexMetaRow): ZCodeTaskMeta {
 
 /** Serialize meta to meta_json. Store cron identity with meta as the single source of truth, and project it to the cron_automation_id index column in writeRecord. */
 function serializeMetaJson(meta: ZCodeTaskMeta): string {
-  return JSON.stringify(meta);
+  // worktreeRoot / cwd are column projections; writing them back to meta_json would create a second data source.
+  const { worktreeRoot: _worktreeRoot, cwd: _cwd, ...persisted } = meta;
+  return JSON.stringify(persisted);
 }
 
 function normalizeLimit(limit: number | undefined): number | null {
@@ -838,7 +855,8 @@ export class TaskIndexRepo {
           deleted,
           title_overridden,
           searchable_text,
-          meta_json
+          meta_json,
+          root_path, worktree_root
         FROM tasks
         WHERE acp_session_id IS NOT NULL
           AND trim(acp_session_id) <> ''
@@ -871,7 +889,8 @@ export class TaskIndexRepo {
         deleted,
         title_overridden,
         searchable_text,
-        meta_json
+        meta_json,
+        root_path, worktree_root
       FROM tasks
       WHERE workspace_key = ? AND task_id = ?`,
     );
@@ -1206,7 +1225,7 @@ export class TaskIndexRepo {
           deleted,
           title_overridden,
           searchable_text,
-          meta_json, cli_title, cli_title_source, cli_created_at, cli_updated_at, cli_last_outcome, cli_deleted, handoff_pending
+          meta_json, cli_title, cli_title_source, cli_created_at, cli_updated_at, cli_last_outcome, cli_deleted, handoff_pending, root_path, worktree_root
         FROM tasks
         WHERE workspace_key = ? AND task_id = ?`,
       )
@@ -1414,7 +1433,8 @@ export class TaskIndexRepo {
           deleted,
           title_overridden,
           searchable_text,
-          meta_json
+          meta_json,
+          root_path, worktree_root
         FROM tasks
         WHERE ${where.join(" AND ")}
         ORDER BY updated_at DESC, created_at DESC, task_id DESC`,
@@ -2257,7 +2277,8 @@ export class TaskIndexRepo {
       const requestedUnreadAt = params.patch.unreadAt;
       const allocatingUnreadAt = typeof requestedUnreadAt === "number";
       const mutatingUnreadAt = "unreadAt" in params.patch;
-      const transactional = deleting || mutatingUnreadAt;
+      const archiving = params.patch.archived === true;
+      const transactional = deleting || mutatingUnreadAt || archiving;
       if (transactional) {
         database.exec("BEGIN IMMEDIATE");
       }
@@ -2303,6 +2324,9 @@ export class TaskIndexRepo {
           // sessions-index content, task visibility, and SQLite group ownership inconsistent.
           this.deleteTaskGroupingReferencesReady(row.workspace_key, row.task_id);
         }
+        // Archiving is a one-shot pause event: a repeated archive request must not override a manual re-enable made after archiving.
+        if (archiving && row.archived !== 1)
+          pauseAutomationsForArchivedTask(database, row.workspace_key, row.task_id);
         if (transactional) database.exec("COMMIT");
         return persistedMeta;
       } catch (error) {
@@ -2411,7 +2435,8 @@ export class TaskIndexRepo {
           cli_created_at,
           cli_updated_at,
           cli_last_outcome,
-          meta_json
+          meta_json,
+          root_path, worktree_root
         FROM tasks
         WHERE (@workspace_key IS NULL OR workspace_key = @workspace_key)
           AND (@include_deleted = 1 OR deleted = 0)
@@ -2519,7 +2544,8 @@ export class TaskIndexRepo {
           archived,
           deleted,
           title_overridden,
-          meta_json
+          meta_json,
+          root_path, worktree_root
         FROM tasks
         WHERE (workspace_identity IS NULL OR TRIM(workspace_identity) = '')
           AND (@provider IS NULL OR provider = @provider)
@@ -2695,6 +2721,7 @@ export class TaskIndexRepo {
         WHERE workspace_key = @workspace_key
           AND deleted = 1
           AND (@provider IS NULL OR provider = @provider)
+        UNION SELECT task_id FROM task_purge WHERE workspace_key=@workspace_key AND state='deleted'
         ORDER BY task_id`,
       )
       .all({
@@ -2747,7 +2774,8 @@ export class TaskIndexRepo {
           archived,
           deleted,
           title_overridden,
-          meta_json
+          meta_json,
+          root_path, worktree_root
         FROM tasks
         WHERE cron_automation_id = @automation_id
           AND deleted = 0
@@ -2783,6 +2811,11 @@ export class TaskIndexRepo {
     }
     if (params.provider) {
       appendZCodeAgentIndexedProviderFilter(where, args, params.provider);
+    }
+    if (params.taskIds) {
+      if (params.taskIds.length === 0) return { items: [], total: 0, hasMore: false };
+      where.push(`task_id IN (${params.taskIds.map(() => "?").join(", ")})`);
+      args.push(...params.taskIds);
     }
     if (params.kind === "pinned") {
       where.push("pinned = 1", "archived = 0");
@@ -2843,7 +2876,8 @@ export class TaskIndexRepo {
           cli_updated_at,
           cli_last_outcome,
           ${normalizedSearchLike ? "searchable_text," : ""}
-          meta_json
+          meta_json,
+          root_path, worktree_root
         FROM tasks
         WHERE ${whereClause}
         ORDER BY ${orderBy}${limit === null ? "" : " LIMIT ?"}`,
@@ -2864,6 +2898,95 @@ export class TaskIndexRepo {
       total,
       hasMore: total > rows.length,
     };
+  }
+
+  async isTaskArchived(target: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+    taskId: string;
+  }): Promise<boolean> {
+    await this.ensureReady();
+    const row = this.getTaskRow(target);
+    return row?.archived === 1 && row.deleted === 0;
+  }
+
+  async listPermanentlyDeletedTaskIds(target: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+  }): Promise<string[]> {
+    await this.ensureReady();
+    const rows = this.getDatabase()
+      .prepare("SELECT task_id FROM task_purge WHERE workspace_key=? AND state='deleted'")
+      .all(workspaceKey(target)) as Array<{ task_id: string }>;
+    return rows.map((row) => row.task_id);
+  }
+
+  /** Admission into the organized state checks the archive flag in the same transaction; a cross-window unarchive must not get past a confirmed deletion. */
+  async reservePermanentDeletion(target: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+    taskId: string;
+  }): Promise<boolean> {
+    await this.ensureReady();
+    return this.enqueueWrite(target, () => {
+      const db = this.getDatabase();
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        const key = workspaceKey(target);
+        const receipt = db
+          .prepare("SELECT state FROM task_purge WHERE workspace_key=? AND task_id=?")
+          .get(key, target.taskId);
+        const row = this.getTaskRow(target);
+        if (!receipt && (!row || row.archived !== 1 || row.deleted === 1)) {
+          db.exec("COMMIT");
+          return false;
+        }
+        db.prepare("INSERT OR IGNORE INTO task_purge VALUES(?,?,'pending')").run(
+          key,
+          target.taskId,
+        );
+        db.exec("COMMIT");
+        return true;
+      } catch (error) {
+        if (db.isTransaction) db.exec("ROLLBACK");
+        throw error;
+      }
+    });
+  }
+
+  async releasePermanentDeletion(target: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+    taskId: string;
+  }): Promise<void> {
+    await this.ensureReady();
+    this.getDatabase()
+      .prepare("DELETE FROM task_purge WHERE workspace_key=? AND task_id=? AND state='pending'")
+      .run(workspaceKey(target), target.taskId);
+  }
+
+  async completePermanentDeletion(
+    target: { workspacePath: string; workspaceIdentity?: string; taskId: string },
+    sessionIds: string[],
+  ): Promise<void> {
+    await this.ensureReady();
+    const db = this.getDatabase();
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      for (const id of sessionIds) {
+        const key = workspaceKey(target);
+        // Keep only the identity barrier; the title, body search cache and organization records must be physically removed with the session.
+        db.prepare(
+          "INSERT INTO task_purge VALUES(?,?,'deleted') ON CONFLICT(workspace_key,task_id) DO UPDATE SET state='deleted'",
+        ).run(key, id);
+        for (const table of ["tasks", "task_group_members", "task_group_admissions"])
+          db.prepare(`DELETE FROM ${table} WHERE workspace_key=? AND task_id=?`).run(key, id);
+      }
+      db.exec("COMMIT");
+    } catch (error) {
+      if (db.isTransaction) db.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   async createTaskGroup(params?: {
@@ -3093,7 +3216,8 @@ export class TaskIndexRepo {
                 deleted,
                 title_overridden,
                 searchable_text,
-                meta_json
+                meta_json,
+                root_path, worktree_root
               FROM tasks
               WHERE ${activeTaskWhere.join(" AND ")}`,
             )

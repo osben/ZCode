@@ -104,7 +104,7 @@ async fn the_builtin_comes_after_file_skills() {
     let env = Arc::new(env);
     let catalog = SkillCatalog::new(env.clone(), env);
     let lines: Vec<String> = catalog
-        .listing(&workspace(), &[], "")
+        .listing(&workspace(), None, &[], "")
         .await
         .into_iter()
         .map(|entry| entry.line)
@@ -216,4 +216,14 @@ async fn the_prompt_commands_render_their_bodies() {
         "{body}"
     );
     assert!(body.contains("!`git status`"), "{body}");
+}
+
+/// Fork (specs/fork-rust-automations.md, slice 2): under the desktop Host's automations the builtin `/loop` is not
+/// offered (Node's desktop agent has none); the other builtins stay.
+#[tokio::test]
+async fn host_automations_drop_the_builtin_loop() {
+    let env = Arc::new(MemoryEnvironment::new(facts()));
+    let catalog = SkillCatalog::new(env.clone(), env).with_loop(false);
+    assert!(catalog.find(&workspace(), "loop").await.is_none());
+    assert!(catalog.find(&workspace(), "init").await.is_some());
 }

@@ -98,12 +98,17 @@ fn is_human_prompt(attachment: &AttachmentMessage) -> bool {
 
 fn assistant_kind(block: &ContentBlock) -> Kind {
     match block {
-        ContentBlock::Text { .. } | ContentBlock::Image { .. } => Kind::Replies,
+        ContentBlock::Text { .. } | ContentBlock::Image { .. } | ContentBlock::Video { .. } => {
+            Kind::Replies
+        }
         ContentBlock::Thinking { .. } | ContentBlock::RedactedThinking { .. } => Kind::Thinking,
         ContentBlock::ToolUse { .. } | ContentBlock::ServerToolUse { .. } => Kind::Calls,
         ContentBlock::ToolResult { .. } | ContentBlock::WebSearchToolResult { .. } => Kind::Results,
         // Fork: only user messages carry attached files.
         ContentBlock::File { .. } => Kind::Attachments,
+        // Fork: never asked. `pieces` filters ACP rows out before it classifies a block, because they never reach the
+        // model; the kind here only completes the match and counts nothing.
+        ContentBlock::ExternalTool(_) => Kind::Calls,
     }
 }
 
@@ -157,10 +162,13 @@ pub(crate) fn pieces(messages: &[&Message], per: u64) -> Vec<Piece> {
                     _ => piece(block, kind),
                 }));
             }
+            // Fork: an ACP row is record-only (specs/fork-rust-agent-parity.md "ACP external agents", rule 5), so it
+            // is no piece: its JSON would otherwise weigh as a tool call the model never received.
             Message::Assistant(assistant) => out.extend(
                 assistant
                     .content
                     .iter()
+                    .filter(|block| !matches!(block, ContentBlock::ExternalTool(_)))
                     .map(|block| piece(block, assistant_kind(block))),
             ),
             // 文字为空的 attachment 只供显示，不发给模型（与规范化相同）。

@@ -43,6 +43,7 @@ impl McpManager {
         server.cancel.cancel();
         server.generation += 1;
         server.cancel = CancellationToken::new();
+        server.deferred = false;
         server.status = status;
         server.tools.clear();
         server.prompts.clear();

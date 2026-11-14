@@ -15,6 +15,7 @@ import { createGenerateTextOptions } from "./runner-options.js";
 import { detectProviderBusinessFinishError } from "./provider-finish-business-error.js";
 import {
   normalizeReasoning,
+  orderGeneratedContent,
   normalizeSources,
   normalizeToolCalls,
   normalizeToolResults,
@@ -59,7 +60,10 @@ import {
   retryAllowedByFailurePolicy,
 } from "./workflow-model-failure-policy.js";
 import { modelFailureStatusFields, providerRequestIdFromHeaders } from "./runner-telemetry.js";
-import { repairReasoningHistoryAfterSignatureRejection } from "./reasoning-history-normalization.js";
+import {
+  repairReasoningHistoryAfterSignatureRejection,
+  thinkingSignatureRejectionEvidence,
+} from "./reasoning-history-normalization.js";
 import { admitAttempt, type AttemptAdmission } from "./request-admission.js";
 import { zhipuAccountMode } from "./account-access-mode.js";
 import {
@@ -344,8 +348,13 @@ export async function runGenerateText(input: {
         statusPublishOptions(input, admission),
       );
 
+      // 结构化输出的 text 是序列化结果，不对应模型块，不编号。
+      const textBlocks = input.request.responseJsonSchema
+        ? undefined
+        : orderGeneratedContent(result, { text, reasoning, toolCalls });
       return {
         text,
+        ...(textBlocks ? { textBlocks } : {}),
         finishReason: result.finishReason,
         usage,
         reasoning,
@@ -353,6 +362,8 @@ export async function runGenerateText(input: {
         toolResults,
         sources,
         providerMetadata: result.providerMetadata as Record<string, unknown> | undefined,
+        // 修复后的重试成功：core 在产出的 assistant 上记标记，之后的请求不再发被拒的块。
+        ...(signatureRepairAttempted ? { signedReasoningReset: true } : {}),
       };
     } catch (error) {
       // Resolve authentication inside the attempt try after merging; as in the stream path, preserve
@@ -505,6 +516,8 @@ export async function runGenerateText(input: {
           nextAttempt: attempt + 1,
           requestId: statusContext.requestId,
           status: "waiting",
+          // 记下 provider 原文和 prefix 不一致响应头：写明哪一块、因为什么被拒，排查前缀变化时用。
+          ...thinkingSignatureRejectionEvidence(error, responseHeaders),
         });
         await publishRetryScheduledStatus(
           input,

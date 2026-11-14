@@ -22,6 +22,13 @@ import {
 } from "../src/storage/session-store/repositories/fork-usage-rollup-schema.js";
 import * as usage from "../src/storage/session-store/repositories/usage.js";
 
+// Builds before 3.18 pruned raw usage rows on write; the rollup must survive rows they already deleted.
+function deleteRawUsageBefore(db: DatabaseSync, beforeTime: number): void {
+  for (const table of ["model_usage", "turn_usage", "tool_usage"]) {
+    db.prepare(`delete from ${table} where started_at < ?`).run(beforeTime);
+  }
+}
+
 const MINUTE = 60_000;
 const BUCKET = 15 * MINUTE;
 const DAY = 24 * 60 * MINUTE;
@@ -183,8 +190,8 @@ describe("fork usage rollup", () => {
     const input = { since: 0, until: NOW, tzOffsetMs: 0 };
     const full = normalize(queryAppUsageFromRollup(db, input));
 
-    // Simulate the upstream build pruning raw rows older than 10 days, then a later recompute.
-    await usage.pruneUsage(db, { beforeTime: NOW - 10 * DAY });
+    // Simulate an older build (fork <= 3.17) pruning raw rows older than 10 days, then a later recompute.
+    deleteRawUsageBefore(db, NOW - 10 * DAY);
     expect((await usage.queryAppUsage(db, input)).totals.modelRequestCount).toBeLessThan(
       (full as { totals: { modelRequestCount: number } }).totals.modelRequestCount,
     );
@@ -198,7 +205,7 @@ describe("fork usage rollup", () => {
     recomputeForkUsageRollup(db, NOW);
     const input = { since: 0, until: NOW, tzOffsetMs: 0 };
     const full = normalize(queryAppUsageFromRollup(db, input));
-    await usage.pruneUsage(db, { beforeTime: NOW - 3 * DAY });
+    deleteRawUsageBefore(db, NOW - 3 * DAY);
     // Watermark is NOW, so the replace window starts 7 days back, older than the surviving raw rows.
     recomputeForkUsageRollup(db, NOW + MINUTE);
     expect(normalize(queryAppUsageFromRollup(db, input))).toEqual(full);

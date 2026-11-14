@@ -60,7 +60,7 @@ Windows machine right-click shows only the target directory window with the file
 desktop window.
 
 Automatic regression: `openInEditor.test.ts` checks there is no child process call;
-`test/e2e/manual-review/pending/windows-file-reveal.test.ts` checks the call count from the real
+`test/e2e/workspace/files/manual-review/pending/windows-file-reveal.test.ts` checks the call count from the real
 preload/main IPC to shell (Windows only, mock shell, does not prove the real window count).
 
 ## P1 audit list

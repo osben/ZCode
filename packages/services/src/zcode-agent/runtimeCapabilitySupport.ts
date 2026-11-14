@@ -80,6 +80,18 @@ export async function supportsProviderRegistryRefresh(client: CapabilityClient):
   }
 }
 
+/**
+ * Fork: the agent runs `acp:<agentId>` selections (specs/fork-agent-runtime-selection.md rule 7). A failed read
+ * answers false.
+ */
+export async function supportsExternalAgentTurns(client: CapabilityClient): Promise<boolean> {
+  try {
+    return (await readRuntimeCapabilities(client)).externalAgentTurns === true;
+  } catch {
+    return false;
+  }
+}
+
 /** specs/incognito-session.md: an incognito create must never run as a normal session. */
 export async function ensureIncognitoSupport(client: CapabilityClient): Promise<void> {
   let capabilities: ZCodeRuntimeCapabilities;
@@ -100,4 +112,37 @@ export function ensureDurableFirstSubmissionSupport(client: CapabilityClient): P
     "durableFirstSubmission",
     "proto.durableFirstSubmissionUnsupported",
   );
+}
+
+/** The CLI advertises plugin discovery UI support; a failed read answers false. */
+export async function supportsPluginDiscoveryUi(client: CapabilityClient): Promise<boolean> {
+  try {
+    return (await readRuntimeCapabilities(client)).pluginDiscoveryUi === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * plugins/overview includeExtensionSummary: older CLIs use a strict parameter schema, so one extra
+ * key rejects the whole request. The field is sent only when the endpoint advertises it.
+ */
+export async function supportsPluginExtensionSummary(client: CapabilityClient): Promise<boolean> {
+  try {
+    return (await readRuntimeCapabilities(client)).pluginExtensionSummary === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Older CLIs use a strict metadata schema that does not know ownerKey. Without support only the new
+ * field is dropped and the send continues.
+ */
+export async function supportsHighspeedCardOwner(client: CapabilityClient): Promise<boolean> {
+  try {
+    return (await readRuntimeCapabilities(client)).highspeedCardOwner === true;
+  } catch {
+    return false;
+  }
 }

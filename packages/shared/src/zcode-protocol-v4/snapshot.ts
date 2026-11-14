@@ -1,6 +1,7 @@
 /* oxlint-disable max-lines -- v4 snapshot schema is a frozen cross-process contract; additions stay grouped here. */
 // ConversationSnapshot section A.
 // Section A updates replace whole fields (state.updated); never deep-merge them, which causes inconsistent state.
+import { pluginInstallRequestPayloadSchema } from "./pluginInstall.js";
 import { z } from "zod";
 import { sharedContextImportStateSchema } from "./shared-context-import.js";
 export { sharedContextImportStateSchema } from "./shared-context-import.js";
@@ -12,7 +13,7 @@ import {
   zcodeSessionContextCacheUsageSchema,
 } from "../zcode-protocol-legacy-types.js";
 import { timestampSchema } from "./core.js";
-import { conversationRowSchema } from "./rows.js";
+import { displayConversationRowSchema } from "./rows.js";
 import { toolCallDisplaySchema } from "./toolDisplay.js";
 
 import { workspaceHookReviewRequestPayloadSchema } from "./workspace-hook-review.js";
@@ -182,6 +183,9 @@ export const sessionActionAvailabilitySchema = z.object({
   sendQueuedNow: actionAvailabilitySchema,
   pauseGoal: actionAvailabilitySchema,
   resumeGoal: actionAvailabilitySchema,
+  // 文件撤销的 session 锁；目标资格看 turnHeader.actions.canRewindFiles。
+  // optional 只用于兼容旧 CLI 的帧（旧 CLI 把锁写在行上）：客户端缺失时按允许处理。
+  rewindFiles: actionAvailabilitySchema.optional(),
 });
 export type SessionActionAvailability = z.infer<typeof sessionActionAvailabilitySchema>;
 
@@ -254,6 +258,17 @@ export const sessionUsageStateSchema = z.object({
 export type SessionUsageState = z.infer<typeof sessionUsageStateSchema>;
 
 // ── queue (not persisted; discarded when the CLI process exits, and the client lets the user decide whether to resend after reconciliation). ──
+// editorId identifies a single editor instance (one per window/tab, persisted in sessionStorage); clientId is shared by multiple windows on the same device,
+// so it cannot serve as lock ownership on its own. inputOrigin is injected by the trusted Host and used only to display "desktop / mobile".
+export const queueItemEditLockSchema = z
+  .object({
+    editorId: z.string().min(1),
+    clientId: z.string().min(1),
+    inputOrigin: z.enum(["desktop", "mobile"]).optional(),
+  })
+  .strict();
+export type QueueItemEditLock = z.infer<typeof queueItemEditLockSchema>;
+
 export const queueItemSchema = conversationInputIntentSchema.extend({
   dispatch: conversationInputDispatchSchema.extend({
     state: z.enum(["queued", "reserved", "promoting"]),
@@ -261,6 +276,11 @@ export const queueItemSchema = conversationInputIntentSchema.extend({
   /** Trusted automation identity injected by Host admission; only queue promotion may replay it verbatim. */
   automationId: z.string().min(1).optional(),
   toolDisallowlist: z.array(z.string().min(1)).optional(),
+  /**
+   * 底部 composer 正在编辑该项（docs/ui/composer-edit-mode.md）：CLI 内存权威，冻结期间
+   * 自动续跑停在该项前，且不能删除、重排或立即发送。缺省 = 未锁。
+   */
+  editLock: queueItemEditLockSchema.optional(),
 });
 export type QueueItem = z.infer<typeof queueItemSchema>;
 
@@ -277,6 +297,12 @@ export type QueueState = z.infer<typeof queueStateSchema>;
 export const MAX_PERMISSION_FEEDBACK_CHARS = 4_096;
 
 export const PERMISSION_FULL_ACCESS_OPTION_ID = "fullAccess";
+export const PERMISSION_GUARDED_OPTION_ID = "allowAndSwitchGuarded";
+export function permissionGrantMode(optionId: string | undefined): "guarded" | "yolo" | undefined {
+  if (optionId === PERMISSION_GUARDED_OPTION_ID) return "guarded";
+  if (optionId === PERMISSION_FULL_ACCESS_OPTION_ID) return "yolo";
+  return undefined;
+}
 const permissionOptionSchema = z.object({
   optionId: z.string(),
   label: z.string(),
@@ -296,7 +322,8 @@ export const permissionRequestPayloadSchema = z.object({
   // Tool-reported confirmation preview reuses the row display projection (the same bounded shape). Defaults to a plain-text ask.
   // This is also non-gating: if preview parsing fails, fall back to a plain-text ask instead of rejecting the snapshot (see toolDisplay.ts comments).
   display: toolCallDisplaySchema.optional().catch(undefined),
-  // Independent additive capability: older UIs ignore this field and continue to show the original options, without exposing a partially implemented authorization entry point.
+  // Independent additive capability: older UIs ignore this field and keep showing only the original options, without exposing a partially implemented authorization entry point.
+  modeSwitch: z.enum(["choose", "fullAccessOnly"]).optional(),
   fullAccessOption: permissionOptionSchema
     .extend({
       optionId: z.literal(PERMISSION_FULL_ACCESS_OPTION_ID),
@@ -360,7 +387,7 @@ export type InteractionAutoResolution = z.infer<typeof interactionAutoResolution
 export const pendingInteractionSchema = z
   .object({
     interactionId: z.string(),
-    kind: z.enum(["permission", "userInput", "workspaceHookReview"]),
+    kind: z.enum(["permission", "userInput", "workspaceHookReview", "pluginInstall"]),
     // null = session-level (for example, provider interactions and workspace Hook review).
     anchorRowId: z.number().nullable(),
     createdAt: timestampSchema,
@@ -369,6 +396,7 @@ export const pendingInteractionSchema = z
       permissionRequestPayloadSchema,
       userInputRequestPayloadSchema,
       workspaceHookReviewRequestPayloadSchema,
+      pluginInstallRequestPayloadSchema,
     ]),
   })
   .superRefine((interaction, context) => {
@@ -379,7 +407,10 @@ export const pendingInteractionSchema = z
         message: "pending interaction kind must match payload kind",
       });
     }
-    if (interaction.kind === "workspaceHookReview" && interaction.autoResolution) {
+    if (
+      (interaction.kind === "workspaceHookReview" || interaction.kind === "pluginInstall") &&
+      interaction.autoResolution
+    ) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["autoResolution"],
@@ -441,6 +472,10 @@ export const runningSubagentSummarySchema = z.object({
   title: z.string(),
   summary: z.string().optional(),
   status: z.enum(["running", "waiting", "blocked"]),
+  stopControl: z
+    .object({ taskId: z.string().min(1), executionId: z.string().min(1) })
+    .strict()
+    .optional(),
   startedAt: timestampSchema.optional(),
 });
 export type RunningSubagentSummary = z.infer<typeof runningSubagentSummarySchema>;
@@ -501,8 +536,9 @@ export type PlanState = z.infer<typeof planStateSchema>;
 
 // ── Snapshot overview ──
 export const rowsWindowSchema = z.object({
-  // Tail window, ordered by rowId ascending.
-  window: z.array(conversationRowSchema),
+  // Tail window, ordered by rowId ascending. Per-row degradation (closed rule 13): rows that cannot be read degrade to unreadable placeholder rows,
+  // instead of rejecting the whole frame. totalCount/firstRowId are unaffected: degradation only changes whether a row can render, not whether it exists.
+  window: z.array(displayConversationRowSchema),
   // Current total ordered row count (decreases after truncation; used only to estimate the scrollbar).
   totalCount: z.number(),
   // First rowId in the total order; if it equals the window's first row, the beginning has been reached (cursor pagination check).

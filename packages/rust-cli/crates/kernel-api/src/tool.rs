@@ -33,6 +33,9 @@ pub const REJECT_MESSAGE: &str = "The user doesn't want to proceed with this too
 /// `PermissionDenied`, not a tool error).
 pub const PLAN_MODE_READ_ONLY: &str = "Plan mode only allows read-only, non-destructive tools";
 
+/// Fork: Node's message for a foreground subagent stopped on its own (`ToolCancelled`, core `subagent/runner.ts`).
+pub const SUBAGENT_STOPPED_BY_USER: &str = "Subagent was stopped by user";
+
 /// 工具结果落盘的通用上限（字符）：结果超过它就落盘为 Artifact，只把预览交给模型（[`Tool::max_result_size_chars`]）。
 /// 多数工具用这个值；值不同的工具在自己那里命名（工作线 F122，用户决定 2026-10-30，docs/specs/rust-cli/constants.md §5.1）。
 pub const DEFAULT_MAX_RESULT_CHARS: usize = 100_000;
@@ -91,7 +94,11 @@ pub struct ToolUseContext {
     /// 子代理里的调用带子代理 ID。
     pub agent: Option<AgentId>,
     pub workspace: WorkspaceRef,
+    /// The effective mode for decisions and tools (`Plan` while plan is on).
     pub mode: PermissionMode,
+    /// Fork: the session's permission mode under plan (`ExecutionState.mode`, the same snapshot as `mode`); equal to
+    /// `mode` when plan is off. Node's plan gate reads it (specs/fork-rust-agent-parity.md, "MCP tools in plan mode").
+    pub base_mode: PermissionMode,
     pub cancel: CancellationToken,
     /// 这次调用在哪台机器上执行：缺省是会话的主 env，工具写了 `machine` 时换成那台额外机器（remote-exec.md §15.8.1）。
     /// Git 与 worktree 也在这台机器上。
@@ -163,6 +170,12 @@ pub enum ToolError {
     InvalidInput { message: String },
     #[error("tool call cancelled")]
     Cancelled,
+    /// Fork: this call alone was stopped while its turn goes on (Node `ToolCancelled`, core `subagent/runner.ts`: a
+    /// foreground subagent stopped by the user). The executor runs the failure hooks as an interrupt and settles the
+    /// call as an error with `message`, keeping `display` (the Agent call's child link); the desktop projection reads
+    /// `display` to show the row as cancelled.
+    #[error("{message}")]
+    Stopped { message: String, display: Value },
     #[error(transparent)]
     Environment(#[from] EnvError),
     #[error("{message}")]
@@ -244,6 +257,13 @@ pub trait Tool: Send + Sync {
         false
     }
 
+    /// Fork: the message of a cancelled call under Node hooks (Node `cancellation.userVisibleMessage`): by default
+    /// Node's text for a built-in tool of this name ([`crate::tool_names::node_cancel_message`]); `None` sends Node's
+    /// fallback. MCP tools name themselves (specs/fork-rust-agent-parity.md "Command hook stdin").
+    fn cancel_message(&self) -> Option<std::borrow::Cow<'_, str>> {
+        crate::tool_names::node_cancel_message(self.name()).map(std::borrow::Cow::Borrowed)
+    }
+
     /// 只按名字宣布、经 ToolSearch 按需加载。是否真的延迟由
     /// [`crate::tool_search::is_deferred`] 统一判定（docs/specs/rust-cli/tools-more.md §3.1；MCP 工具看
     /// [`Tool::mcp_info`] 的 `always_load`，不看这个方法）。
@@ -261,6 +281,12 @@ pub trait Tool: Send + Sync {
         false
     }
 
+    /// Fork: the call may destroy data (an MCP tool's `destructiveHint: true`, Node `destructive`). Node's plan mode
+    /// denies such an MCP call before the server runs it (specs/fork-rust-agent-parity.md, "MCP tools in plan mode").
+    fn is_destructive(&self, _input: &Value) -> bool {
+        false
+    }
+
     /// 并发安全的调用可以和其他并发安全的调用同时执行（按输入判定）。
     fn is_concurrency_safe(&self, _input: &Value) -> bool {
         false
@@ -272,6 +298,12 @@ pub trait Tool: Send + Sync {
 
     /// 结果超过这个字符数时落盘为 Artifact，只把预览交给模型。None 表示不落盘。
     fn max_result_size_chars(&self) -> Option<usize> {
+        None
+    }
+
+    /// Fork: a Node `resultBudget` with the artifact strategy: a result above this many UTF-8 bytes is persisted with
+    /// Node's generic envelope. It replaces [`Tool::max_result_size_chars`] and its shared 50 000 cap.
+    fn result_budget_bytes(&self) -> Option<usize> {
         None
     }
 

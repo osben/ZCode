@@ -87,7 +87,7 @@ full mobile remote-control acceptance.
 ## E2E Handoff Notes
 
 - After 8/8 passed locally the user explicitly authorized promotion; the formal path is
-  `packages/desktop/test/e2e/help-client-config.test.ts`, collected by the default desktop E2E.
+  `packages/desktop/test/e2e/feedback/help/help-client-config.test.ts`, collected by the default desktop E2E.
 - Fixtures are case-local JSON; model request policy is none, all help requests are synthetic with
   `syntheticReason`.
 - The local HTTP server listens on loopback only; each case has its own origin and restores settings
@@ -115,7 +115,7 @@ This file doubles as impact brief, catalog, matrix and pruning record.
   suite.
 - `e2e:fixture:check` returns "unsupported domain" for the new path; tool rules were not changed and
   no provider fixture was faked. Self-check confirmed all 8 synthetic scenarios of the manifest have
-  reasons, all files exist, the canonical spec is `./test/e2e/help-client-config.test.ts`, and the
+  reasons, all files exist, the canonical spec is `./test/e2e/feedback/help/help-client-config.test.ts`, and the
   provider policy is none.
 - After moving to a supported candidate directory, the common-provider-fixture rerun passed 8/8;
   provider capture records were 0.
@@ -128,7 +128,7 @@ This file doubles as impact brief, catalog, matrix and pruning record.
 
 ```bash
 E2E_PROVIDER_REPLAY_FIXTURE_PATH=packages/desktop/test/e2e/fixtures/upstream/common.json \
-pnpm --filter @zcode/desktop test:e2e -- --spec ./test/e2e/help-client-config.test.ts
+pnpm --filter @zcode/desktop test:e2e -- --spec ./test/e2e/feedback/help/help-client-config.test.ts
 ```
 
 Finish typecheck before building/running Electron so the two do not write out/host at the same time.
@@ -151,3 +151,9 @@ After promotion, local verification:
   diff checks passed.
 - Manifest check confirmed the formal path exists, the 8 synthetic scenarios carry reasons, the file
   fixture exists, and the provider policy is none.
+
+## Optional-login request header increment (2026-11-03)
+
+HC-05 reads the anonymous, account A, account B and signed-out states in turn on the same Chromium page and asserts request headers, same-identity dedup and cache isolation. It follows the optional-login convention in client-config-service.md. The formal E2E passed 9/9; evidence: `packages/desktop/.e2e-artifacts/desktop-e2e-20261103072354051-p27008-4b1f5847ed2c0020`.
+
+Supplementary isolated runtime: 56 Node/Electron checks and 5 Chromium default credential-store checks passed. They cover the public HTTP cache, anonymous / login A / login B / sign-out, credential errors and illegal characters, identity cache isolation, late responses, redirects not forwarding credentials, and read-only handling of a browser's partial session. Full package, Windows/Linux, real phone and production backend are not verified.

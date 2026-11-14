@@ -9,7 +9,11 @@ mod background_shells;
 mod bash_progress;
 mod cold;
 pub mod elicitation;
+mod external_agent_config;
+mod external_agent_status;
+mod external_tools;
 mod goal_verify;
+mod hook_rows;
 mod kinds;
 mod markers;
 mod model_change;
@@ -50,6 +54,9 @@ pub struct InputMeta {
     /// Fork: the `attachments` refs sent with the input; only the queue shows them (a stored input's row reads its
     /// file parts).
     pub attachments: Vec<Value>,
+    /// Fork: the `automationId` the Host sent with the input (trimmed, non-empty); the telemetry facts read it when the
+    /// input's turn starts.
+    pub automation: Option<String>,
 }
 
 /// Fork: a turn's file changes merged across the turn's `KernelEvent::FileChanges` batches (Node derives the
@@ -85,11 +92,35 @@ struct Turn {
     output_tokens: Option<u64>,
     /// Fork: the turn makes no model call (`KernelEvent::TurnControlOnly`, Node `executionKind: "controlOnly"`).
     control_only: bool,
+    /// Fork: the text and reasoning rows of the turn's latest assistant message when it was stored without a stop
+    /// reason (a reply cut off by Stop, `finish_aborted`). An interrupted turn closes them `interrupted`, like Node's
+    /// `closeStreamingRows`.
+    unstopped: Vec<String>,
+    /// Fork: tool rows whose result is the rejection text (`REJECT_MESSAGE`, an error result). An interrupted turn
+    /// settles them `cancelled` without output, like Node's `ToolCancelled` (the query answers a call cut off by Stop
+    /// with that text).
+    rejected: Vec<String>,
+}
+
+/// Fork: a pending interaction that is the session's workspace hook review (`fork/hook_review.rs`).
+fn is_hook_review(pending: &Value) -> bool {
+    pending["kind"] == "workspaceHookReview"
+}
+
+/// Fork: the workspace trust banners (`fork/workspace_trust.rs`): the last published payloads, so a snapshot shows
+/// what the deltas showed.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Banners {
+    mcp: Option<Value>,
+    /// Node publishes the MCP banner only once something was pending; after that a clear is published too.
+    mcp_published: bool,
+    hook: Option<Value>,
 }
 
 /// 一个会话的投影。
 #[derive(Debug, Clone)]
 pub struct Projection {
+    banners: Banners,
     session: String,
     rows: Vec<Map<String, Value>>,
     index: HashMap<String, usize>,
@@ -100,14 +131,20 @@ pub struct Projection {
     error: Option<LastError>,
     executions: u64,
     title: String,
+    /// Fork: where `title` came from (the view's, then each `TitleChanged`), for the meta and the summary.
+    title_source: rust_cli_kernel_api::title::Source,
     selection: ModelSelection,
     mode: PermissionMode,
     plan: bool,
-    /// Fork: the last full-access grant (`config.permissionGrant`), the composer's one-shot
-    /// adoption key; protocol memory like Node's runtime `lastPermissionGrantId`.
+    /// Fork: the last permission mode grant (`config.permissionGrant`), the composer's one-shot adoption key: the
+    /// view's (the session actor's, from the stored receipt), then each `PermissionGranted`.
     permission_grant: Option<String>,
     /// Fork: the last plan tool transition (`config.planTransition`: call id, plan switch).
     plan_transition: Option<(String, bool)>,
+    /// Fork: the selects of the session's ACP agent (`config.externalAgentConfig`, rule 13): a seed or the last
+    /// `ExternalAgentConfig` event. `external_agent_config_from_event` keeps a later seed from overriding an event.
+    external_agent_config: Option<Value>,
+    external_agent_config_from_event: bool,
     /// Fork: the desktop goal (snapshot `goal`), from the view and `KernelEvent::GoalChanged`.
     goal: Option<rust_cli_kernel_api::goal::GoalState>,
     followup: Followup,
@@ -135,10 +172,21 @@ pub struct Projection {
     compactions: u64,
     /// Fork: the provider and model of the last started turn (Node `lastTurnModel`, projection/model_change.rs).
     last_turn_model: Option<(String, String)>,
+    /// Fork: a subagent child session whose first turn has not started; it gets the source-less "Using" marker
+    /// (Node `lastTurnModel` `sourceLess`, projection/model_change.rs).
+    initial_model_marker: bool,
+    /// Fork: the parent of a forked session, for its fork divider (projection/markers.rs).
+    fork_parent: Option<String>,
     /// Fork: the start time of the running goal completion verification (projection/goal_verify.rs).
     goal_verifier: Option<u64>,
     /// Fork: the last verification request failed (Node's phase `error` with `sessionEnded: false`).
     goal_verifier_failed: bool,
+    /// Fork: `control.externalAgentStall` (projection/external_agent_status.rs): absent until the first ACP stall,
+    /// then the stall or `null` once cleared.
+    external_agent_stall: Option<Value>,
+    /// Fork: the ACP context-reset dividers this process drew, by the message that opened their turn → agent id
+    /// (projection/external_agent_status.rs). A history rebuild draws them again; a relaunch starts empty.
+    context_resets: HashMap<String, String>,
     /// Fork: the model directory; `thoughtLevels` are the selected model's levels in it (Node `listThoughtLevels`).
     catalog: std::sync::Arc<[rust_cli_kernel_api::provider::CatalogModel]>,
     /// Fork: file changes per turn (`KernelEvent::FileChanges`): feed the turn header's `fileChanges` summary and
@@ -147,6 +195,23 @@ pub struct Projection {
     /// Fork: subagent rows and the snapshot `subagents` manifest (projection/subagent_rows.rs).
     subagents: subagent_rows::Subagents,
     shells: background_shells::Shells,
+    /// Fork: the tool call each streaming `tool_use` block opened (turn, response, block index), so its `InputJson`
+    /// deltas append to that row's `inputText` (Node `tool_input_delta`, projection/rows.rs).
+    streaming_tools: HashMap<(String, u32, usize), rows::StreamingTool>,
+    /// Fork: per user message id, what each of its attachments reads from (the stored `file` parts), for
+    /// `v4/conversation/attachmentRead` / `attachmentStat` (attachments.rs).
+    attachment_sources: HashMap<String, Vec<AttachmentSource>>,
+    /// Fork: the snapshot `plan` (`{items, updatedAt}`) from the last todo tool row (projection/external_tools.rs).
+    plan_panel: Option<Value>,
+}
+
+/// Fork: one attachment of a `userInput` row as its stored `file` part has it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AttachmentSource {
+    /// The part's MIME ([`rust_cli_kernel_api::prompt_attachment::part_mime`]).
+    pub mime: String,
+    /// The artifact or path a read opens ([`rust_cli_kernel_api::prompt_attachment::part_source`]).
+    pub source: Option<String>,
 }
 
 /// user 与 assistant 消息里的文字块，以换行接起来（`session/read` 的旧快照也用它）。
@@ -156,13 +221,15 @@ pub(crate) fn text_of(content: &[ContentBlock]) -> String {
         .filter_map(|block| match block {
             ContentBlock::Text { text } => Some(text.as_str()),
             ContentBlock::Image { .. }
+            | ContentBlock::Video { .. }
             | ContentBlock::Thinking { .. }
             | ContentBlock::RedactedThinking { .. }
             | ContentBlock::ToolUse { .. }
             | ContentBlock::ToolResult { .. }
             | ContentBlock::ServerToolUse { .. }
             | ContentBlock::WebSearchToolResult { .. }
-            | ContentBlock::File { .. } => None,
+            | ContentBlock::File { .. }
+            | ContentBlock::ExternalTool(_) => None,
         })
         .collect::<Vec<_>>()
         .join("\n")
@@ -210,23 +277,53 @@ fn tool_key(tool_use: &str) -> String {
 impl Projection {
     /// 从视图建投影（冷打开或第一次订阅）。`followup` 与 `levels` 是协议自己保存的配置（不在内核里）。
     pub fn from_view(view: &SessionView, followup: Followup, levels: Vec<String>) -> Self {
-        Self::from_view_at(view, followup, levels, 1)
+        Self::from_view_at(view, followup, levels, 1, HashMap::new())
     }
 
     /// Fork: the projection of a rewritten history (rewind, edit, retry). Keeps what the protocol remembers outside the
     /// kernel (follow-up mode, levels, input facts, denials) and keeps row ids increasing.
     pub fn rebuilt(&self, view: &SessionView) -> Self {
-        let mut projection =
-            Self::from_view_at(view, self.followup, self.levels.clone(), self.next_row);
+        let mut projection = Self::from_view_at(
+            view,
+            self.followup,
+            self.levels.clone(),
+            self.next_row,
+            self.context_resets.clone(),
+        );
+        // Fork: the stall of the running ACP prompt is not history; it is kept only while that same turn still runs.
+        let live_turn = self.turn.as_ref().map(|turn| turn.id.as_str());
+        if view.running
+            && live_turn.is_some()
+            && view
+                .running_turn
+                .as_ref()
+                .map(rust_cli_kernel_api::ids::TurnId::as_str)
+                == live_turn
+        {
+            projection
+                .external_agent_stall
+                .clone_from(&self.external_agent_stall);
+        }
         projection.inputs.clone_from(&self.inputs);
         projection.denied.clone_from(&self.denied);
         projection.catalog = self.catalog.clone();
         projection.auto_drain = self.auto_drain;
         projection.pause_reason = self.pause_reason;
-        projection
-            .permission_grant
-            .clone_from(&self.permission_grant);
         projection.plan_transition.clone_from(&self.plan_transition);
+        projection
+            .external_agent_config
+            .clone_from(&self.external_agent_config);
+        projection.external_agent_config_from_event = self.external_agent_config_from_event;
+        projection.banners.clone_from(&self.banners);
+        // Fork: the workspace hook review is session-level protocol state, not history (`fork/hook_review.rs`).
+        projection.pending.extend(
+            self.pending
+                .iter()
+                .filter(|pending| is_hook_review(pending))
+                .cloned(),
+        );
+        // Fork (B2): the runs going now were not spawned in this projection's sight, so they get no Stop.
+        projection.subagents.recovering = true;
         projection
     }
 
@@ -235,8 +332,10 @@ impl Projection {
         followup: Followup,
         levels: Vec<String>,
         first_row: u64,
+        context_resets: HashMap<String, String>,
     ) -> Self {
         let mut projection = Self {
+            banners: Banners::default(),
             session: view.meta.id.as_str().to_owned(),
             rows: Vec::new(),
             index: HashMap::new(),
@@ -247,11 +346,17 @@ impl Projection {
             error: None,
             executions: 0,
             title: view.meta.title.clone(),
+            title_source: view
+                .title_source
+                .unwrap_or_else(|| rust_cli_kernel_api::title::Source::derived(&view.meta.title)),
             selection: view.selection.clone(),
             mode: view.mode,
             plan: view.plan,
-            permission_grant: None,
+            // Fork (B3): the session's last grant (its stored receipt after a cold read, Node `lastPermissionGrantId`).
+            permission_grant: view.permission_grant.clone(),
             plan_transition: None,
+            external_agent_config: None,
+            external_agent_config_from_event: false,
             goal: view.goal.clone(),
             followup,
             levels,
@@ -267,14 +372,27 @@ impl Projection {
             compact_turn: false,
             compactions: 0,
             last_turn_model: None,
+            initial_model_marker: view.meta.kind
+                == rust_cli_kernel_api::store::SessionKind::Subagent,
+            fork_parent: view
+                .meta
+                .parent
+                .as_ref()
+                .filter(|_| view.meta.kind == rust_cli_kernel_api::store::SessionKind::Fork)
+                .map(|parent| parent.as_str().to_owned()),
+            streaming_tools: HashMap::new(),
             goal_verifier: None,
             goal_verifier_failed: false,
+            external_agent_stall: None,
+            context_resets,
             catalog: std::sync::Arc::from(Vec::new()),
             auto_drain: true,
             pause_reason: None,
             turn_file_changes: HashMap::new(),
             subagents: subagent_rows::Subagents::default(),
             shells: background_shells::Shells::default(),
+            attachment_sources: HashMap::new(),
+            plan_panel: None,
         };
         cold::rows(&mut projection, view);
         projection.adopt_turn_files(view);
@@ -301,6 +419,10 @@ impl Projection {
         &self.title
     }
 
+    pub fn title_source(&self) -> rust_cli_kernel_api::title::Source {
+        self.title_source
+    }
+
     /// 最后一条 assistant 正文（会话列表的预览）。
     pub fn last_reply(&self) -> Option<String> {
         self.rows.iter().rev().find_map(|row| {
@@ -311,7 +433,11 @@ impl Projection {
     }
 
     pub fn pending_permissions(&self) -> usize {
-        self.pending.len()
+        // Node's index summary counts permission and question interactions only.
+        self.pending
+            .iter()
+            .filter(|pending| !is_hook_review(pending))
+            .count()
     }
 
     /// 用户拒绝了这个工具调用（resolveInteraction 的裁决在内核事件之前）：结果投成 cancelled（与 Node 相同）。
@@ -319,17 +445,106 @@ impl Projection {
         self.denied.insert(tool_use.to_owned());
     }
 
-    /// Fork: the MIME of an attachment ref a `userInput` row of this session carries (`attachmentRead` serves only these).
-    pub fn attachment_mime(&self, reference: &str) -> Option<String> {
+    /// Fork: the MIME of an attachment ref a `userInput` row of this session carries (`attachmentRead` serves only these),
+    /// and whether that chip marks text material (a `sourceKind`, which only a live row carries).
+    pub fn attachment_mime(&self, reference: &str) -> Option<(String, bool)> {
         self.rows.iter().find_map(|row| {
             row.get("attachments")?
                 .as_array()?
                 .iter()
                 .find_map(|attachment| {
-                    (attachment["ref"] == reference || attachment["previewRef"] == reference)
-                        .then(|| attachment["mime"].as_str().unwrap_or_default().to_owned())
+                    (attachment["ref"] == reference || attachment["previewRef"] == reference).then(
+                        || {
+                            (
+                                attachment["mime"].as_str().unwrap_or_default().to_owned(),
+                                attachment.get("sourceKind").is_some(),
+                            )
+                        },
+                    )
                 })
         })
+    }
+
+    /// Fork: the first attachment of a `userInput` row whose `ref` or `previewRef` is `reference` (Node
+    /// `resolveReadableMediaAttachment` without a row target): its chip MIME and its stored source.
+    pub fn attachment_source(&self, reference: &str) -> Option<AttachmentSource> {
+        self.rows.iter().find_map(|row| {
+            if RowKind::of(row) != Some(RowKind::UserInput) {
+                return None;
+            }
+            let index = row
+                .get("attachments")?
+                .as_array()?
+                .iter()
+                .position(|chip| chip["ref"] == reference || chip["previewRef"] == reference)?;
+            self.attachment_sources
+                .get(row["entityId"].as_str()?)?
+                .get(index)
+                .cloned()
+        })
+    }
+
+    /// Fork: the attachment at `index` of the `userInput` row `(row_id, entity)` when the App's `reference` is its
+    /// `ref` or `previewRef` (Node `conversationAttachmentRead` / `conversationAttachmentStat` authorisation): its chip
+    /// MIME and its stored source.
+    pub fn row_attachment(
+        &self,
+        row_id: u64,
+        entity: &str,
+        index: usize,
+        reference: &str,
+    ) -> Option<AttachmentSource> {
+        self.row_chip(row_id, entity, index, reference)?;
+        self.attachment_sources
+            .get(entity)
+            .and_then(|sources| sources.get(index))
+            .cloned()
+    }
+
+    /// Fork: the chip at `index` of the `userInput` row `(row_id, entity)` when the App's `reference` is its `ref` or
+    /// `previewRef` (Node `resolveReadableMediaAttachment` with a row target): its MIME and whether it marks text
+    /// material, as [`Self::attachment_mime`].
+    pub fn row_chip_mime(
+        &self,
+        row_id: u64,
+        entity: &str,
+        index: usize,
+        reference: &str,
+    ) -> Option<(String, bool)> {
+        let chip = self.row_chip(row_id, entity, index, reference)?;
+        Some((
+            chip["mime"].as_str().unwrap_or_default().to_owned(),
+            chip.get("sourceKind").is_some(),
+        ))
+    }
+
+    fn row_chip(&self, row_id: u64, entity: &str, index: usize, reference: &str) -> Option<&Value> {
+        let row = self
+            .rows
+            .iter()
+            .find(|row| row["rowId"].as_u64() == Some(row_id) && row["entityId"] == entity)?;
+        if RowKind::of(row) != Some(RowKind::UserInput) {
+            return None;
+        }
+        let chip = row.get("attachments")?.as_array()?.get(index)?;
+        (chip["ref"] == reference || chip["previewRef"] == reference).then_some(chip)
+    }
+
+    /// Fork: the attachment refs of a queued input changed (`editQueueItem.attachments`): returns the queue patch,
+    /// or `None` when the input has no recorded metadata.
+    pub fn set_queued_attachments(
+        &mut self,
+        command: &str,
+        attachments: Vec<Value>,
+    ) -> Option<Value> {
+        let meta = self.inputs.get_mut(command)?;
+        meta.attachments = attachments;
+        Some(self.queue_patch())
+    }
+
+    /// Fork: the automation the Host sent with a remembered input (see [`InputMeta::automation`]).
+    pub fn input_automation(&self, command: &str) -> Option<String> {
+        self.inputs.get(command)?.automation.clone()
     }
 
     /// 记下 sendText 的事实（行与队列项要用）。
@@ -344,6 +559,79 @@ impl Projection {
             "config": self.config(),
             "inputRouting": self.input_routing(),
         }})
+    }
+
+    /// Fork: the workspace trust banners now (Node `onWorkspaceMcpAdmissionUpdated` and
+    /// `onWorkspaceHookAdmissionUpdated`): a `state.updated` with the banners that changed, `None` when none did.
+    pub fn set_admission(&mut self, admission: crate::fork::Admission) -> Option<Value> {
+        let mut patch = Map::new();
+        if let Some(payload) = admission.mcp {
+            let pending = payload["pendingCount"].as_u64().unwrap_or(0);
+            if self.banners.mcp_published || pending > 0 {
+                self.banners.mcp_published = true;
+                let next = (pending > 0).then_some(payload);
+                if next != self.banners.mcp {
+                    patch.insert(
+                        "workspaceMcpAdmission".into(),
+                        next.clone().unwrap_or(Value::Null),
+                    );
+                    self.banners.mcp = next;
+                }
+            }
+        }
+        let hook = admission
+            .hook
+            .filter(|payload| payload["pendingCount"].as_u64().unwrap_or(0) > 0);
+        if hook != self.banners.hook {
+            patch.insert(
+                "workspaceHookAdmission".into(),
+                hook.clone().unwrap_or(Value::Null),
+            );
+            self.banners.hook = hook;
+        }
+        (!patch.is_empty()).then(|| json!({"op": "state.updated", "patch": patch}))
+    }
+
+    /// Fork: publishes the session's workspace hook review interaction (`fork/hook_review.rs`), replacing the previous
+    /// one: Node keeps one review per session and a newer generation of the flow replaces it
+    /// (`onWorkspaceHookReviewRequested`).
+    pub fn put_hook_review(&mut self, interaction: Value) -> Value {
+        self.pending.retain(|pending| !is_hook_review(pending));
+        self.pending.push(interaction);
+        json!({"op": "state.updated", "patch": {"pendingInteractions": self.pending}})
+    }
+
+    /// Fork: removes the workspace hook review `interaction_id` (Node `removeWorkspaceHookReview`): `None` when it is
+    /// not the current one.
+    pub fn remove_hook_review(&mut self, interaction_id: &str) -> Option<Value> {
+        let before = self.pending.len();
+        self.pending.retain(|pending| {
+            !(is_hook_review(pending) && pending["interactionId"] == interaction_id)
+        });
+        (self.pending.len() != before)
+            .then(|| json!({"op": "state.updated", "patch": {"pendingInteractions": self.pending}}))
+    }
+
+    /// Fork: the kernel's real admission of a remembered input (its `SubmitWith` answered `Queued` or started it), which
+    /// the protocol predicted otherwise: the remembered admission follows the kernel (Node answers from Core's
+    /// admission). An input remembered as `startNow` that the kernel queued is a queue item after all (inputs admitted
+    /// `startNow` are not shown as queue items). Returns the `state.updated` for the queue when what it shows changed
+    /// (the kernel's `QueueChanged` came first); `None` otherwise (a coming `QueueChanged` shows the corrected item).
+    pub fn readmit(&mut self, command: &str, admitted: &'static str) -> Option<Value> {
+        if self.inputs.get(command)?.admitted == admitted {
+            return None;
+        }
+        let before = self.queue_state();
+        if let Some(meta) = self.inputs.get_mut(command) {
+            meta.admitted = admitted;
+        }
+        let after = self.queue_state();
+        (after != before).then(|| {
+            json!({"op": "state.updated", "patch": {
+                "queue": after,
+                "inputRouting": self.input_routing(),
+            }})
+        })
     }
 
     /// Fork: whether the queue drains on its own (`queue.autoDrain`).
@@ -410,6 +698,9 @@ impl Projection {
         if let Some((tool_call, enabled)) = &self.plan_transition {
             config["planTransition"] = json!({"toolCallId": tool_call, "planEnabled": enabled});
         }
+        if let Some(state) = &self.external_agent_config {
+            config["externalAgentConfig"] = state.clone();
+        }
         config
     }
 
@@ -421,6 +712,16 @@ impl Projection {
     ) -> Self {
         self.catalog = catalog;
         self
+    }
+
+    /// Fork: the directory entry of `selection` (a subagent run's own model, crate::telemetry).
+    pub(crate) fn catalog_entry_for(
+        &self,
+        selection: &ModelSelection,
+    ) -> Option<&rust_cli_kernel_api::provider::CatalogModel> {
+        self.catalog
+            .iter()
+            .find(|entry| rust_cli_kernel_api::model_name::is_entry(selection, entry))
     }
 
     /// Fork: the selected model's levels in the directory, like Node `listThoughtLevels`; a model the directory does
@@ -498,6 +799,9 @@ impl Projection {
         if self.goal_verifier_failed && self.phase == Phase::Error {
             control["sessionEnded"] = json!(false);
         }
+        if let Some(stall) = &self.external_agent_stall {
+            control["externalAgentStall"] = stall.clone();
+        }
         control
     }
 
@@ -540,6 +844,8 @@ impl Projection {
         let seq = event.seq;
         match &event.event {
             KernelEvent::TurnStarted { turn, command } => {
+                // Fork: a new turn clears an ACP stall still shown (Node `onTurnStarted`); the phase patch carries it.
+                self.clear_external_agent_stall();
                 self.goal_verifier_failed = false;
                 self.compact_turn = false;
                 let selection = Some(self.selection.clone());
@@ -561,6 +867,22 @@ impl Projection {
                 index,
                 delta,
             } => self.stream(turn.as_str(), *response, *index, delta, now, seq, &mut out),
+            KernelEvent::ToolInputStarted {
+                turn,
+                response,
+                index,
+                tool_use,
+                name,
+            } => self.streaming_tool_row(
+                turn.as_str(),
+                *response,
+                *index,
+                tool_use.as_str(),
+                name,
+                now,
+                seq,
+                &mut out,
+            ),
             KernelEvent::ToolStarted {
                 tool_use,
                 name,
@@ -573,6 +895,11 @@ impl Projection {
                 self.upsert(
                     &key,
                     |row| {
+                        // Fork: a row opened while the input streamed gets the final input (Node's scheduled call).
+                        if ToolStatus::of(row) == Some(ToolStatus::InputStreaming) {
+                            row.insert("inputText".into(), json!(input.to_string()));
+                            row.insert("input".into(), input.clone());
+                        }
                         if ToolStatus::of(row) != Some(ToolStatus::PendingApproval) {
                             row.insert("status".into(), json!(ToolStatus::Running.as_str()));
                         }
@@ -580,6 +907,28 @@ impl Projection {
                     },
                     &mut out,
                 );
+            }
+            KernelEvent::ExternalToolRow {
+                tool_use,
+                name,
+                title,
+                input,
+                running,
+            } => self.external_tool_row(
+                tool_use.as_str(),
+                name,
+                title,
+                input,
+                *running,
+                now,
+                seq,
+                &mut out,
+            ),
+            KernelEvent::ExternalAgentContextReset { agent } => {
+                self.external_agent_context_reset(agent, now, seq, &mut out);
+            }
+            KernelEvent::ExternalAgentStatus { agent, status } => {
+                self.external_agent_status(agent, *status, now, &mut patch);
             }
             KernelEvent::ToolDone { tool_use, output } => {
                 let text = text_of_result(&output.content);
@@ -596,19 +945,36 @@ impl Projection {
                 // so the cold read settles it by the same text.
                 let plan_denied =
                     output.is_error && text == rust_cli_kernel_api::tool::PLAN_MODE_READ_ONLY;
-                let status = if self.denied.remove(tool_use.as_str()) || plan_denied {
-                    ToolStatus::Cancelled
-                } else if output.is_error {
-                    ToolStatus::Error
-                } else {
-                    ToolStatus::Success
-                };
+                // Fork: a foreground subagent stopped on its own is Node's `ToolCancelled` (`onToolCallError`): the
+                // executor keeps the Agent display with `status: "killed"` (`ToolError::Stopped`), which no hook can
+                // rewrite. A cold read has no display and settles the row as an error, as Node's hydration does.
+                let subagent_stopped = output.is_error
+                    && output.display[rust_cli_kernel_api::agents::DISPLAY_KEY]["status"]
+                        == "killed";
+                let status =
+                    if self.denied.remove(tool_use.as_str()) || plan_denied || subagent_stopped {
+                        ToolStatus::Cancelled
+                    } else if output.is_error {
+                        ToolStatus::Error
+                    } else {
+                        ToolStatus::Success
+                    };
+                if status == ToolStatus::Error
+                    && text == rust_cli_kernel_api::tool::REJECT_MESSAGE
+                    && let Some(turn) = self.turn.as_mut()
+                {
+                    turn.rejected.push(tool_key(tool_use.as_str()));
+                }
                 self.upsert(
                     &tool_key(tool_use.as_str()),
                     |row| {
                         row.insert("status".into(), json!(status.as_str()));
                         if !plan_denied {
-                            row.insert("output".into(), settled);
+                            // Node's `onToolCallError` settles a `ToolCancelled` call with `endedAt` and no
+                            // output or error.
+                            if !subagent_stopped {
+                                row.insert("output".into(), settled);
+                            }
                             row.insert("endedAt".into(), json!(now));
                         }
                         row.remove("approvalInteractionId");
@@ -706,26 +1072,35 @@ impl Projection {
                     patch.insert("inputRouting".into(), self.input_routing());
                 }
                 patch.insert("usage".into(), state::usage(self.context, &self.total));
-                if !self.pending.is_empty() {
-                    self.pending.clear();
-                    patch.insert("pendingInteractions".into(), json!([]));
-                }
+                // Fork: the kernel resolves the turn's own asks before this event (`cancel_turn_asks`); what is still
+                // pending is session-level (an MCP App authorization, a background subagent's ask, the workspace hook
+                // review) and outlives the turn. Clearing it here hid a prompt Rust still waited for.
             }
             KernelEvent::ContextUsage {
                 used_tokens,
                 max_tokens,
                 compact_at,
+                window_tokens,
             } => {
                 self.context = Some(rust_cli_kernel_api::compaction::ContextOccupancy {
                     used_tokens: *used_tokens,
                     max_tokens: *max_tokens,
                     compact_at: *compact_at,
+                    window_tokens: *window_tokens,
                 });
                 patch.insert("usage".into(), state::usage(self.context, &self.total));
             }
-            KernelEvent::TitleChanged { title } => {
-                self.title.clone_from(title);
-                patch.insert("meta".into(), state::meta(&self.title, true));
+            KernelEvent::TitleChanged { title, source } => {
+                // Node `onSessionTitleUpdated`: once custom, an automatic title does not replace it.
+                let custom = rust_cli_kernel_api::title::Source::Custom;
+                if self.title_source != custom || source.shown() != "generated" {
+                    self.title.clone_from(title);
+                    self.title_source = *source;
+                    patch.insert("meta".into(), state::meta(&self.title, self.title_source));
+                }
+            }
+            KernelEvent::ExternalAgentConfig { agent, options } => {
+                self.external_agent_config_event(agent, options, &mut patch);
             }
             KernelEvent::ModelChanged { selection } => {
                 self.selection = selection.clone();
@@ -750,6 +1125,14 @@ impl Projection {
             KernelEvent::GoalVerification { verification, .. } => {
                 self.goal_verification(verification, now, seq, &mut out);
                 self.phase_patch(&mut patch);
+            }
+            // Fork: a blocked prompt's input row and its turn's hook rows and banner (specs/fork-rust-agent-parity.md
+            // HK-UP-01).
+            KernelEvent::PromptBlocked { message, .. } => self.message(message, now, seq, &mut out),
+            KernelEvent::HookInvocation { invocation, .. } => {
+                if self.hook_invocation(invocation, now, seq, &mut out) {
+                    self.phase_patch(&mut patch);
+                }
             }
             KernelEvent::GoalChanged { goal } => {
                 self.goal.clone_from(goal);
@@ -805,6 +1188,7 @@ impl Projection {
                 turn_input.as_ref().map(|input| input.as_str().to_owned()),
                 &mut out,
             ),
+            KernelEvent::BackgroundWork { work, status } => self.remember_ended(work, *status),
             KernelEvent::TurnFilesReverted { turn_input } => {
                 self.turn_files_reverted(turn_input.as_str(), &mut out);
             }
@@ -817,7 +1201,6 @@ impl Projection {
             | KernelEvent::ContextNotice { .. }
             | KernelEvent::OutputSpeed { .. }
             | KernelEvent::TasksChanged { .. }
-            | KernelEvent::BackgroundWork { .. }
             | KernelEvent::HistoryRewritten { .. }
             | KernelEvent::ScheduledFire { .. }
             | KernelEvent::SystemNotice { .. }
@@ -879,6 +1262,8 @@ impl Projection {
             notified: Vec::new(),
             output_tokens: None,
             control_only: false,
+            unstopped: Vec::new(),
+            rejected: Vec::new(),
         });
         self.model_change(turn, selection, now, seq, out);
         let mut row = self.base(turn, turn, RowKind::TurnHeader, now, seq);
@@ -919,6 +1304,8 @@ impl Projection {
         // A control turn made no request: the usage the kernel reports is an earlier response's.
         let control_only = self.turn.as_ref().is_some_and(|live| live.control_only);
         let usage = usage.filter(|_| !control_only);
+        // Fork: the turn's end clears its ACP stall (Node `clearedExternalAgentStall`); the phase patch carries it.
+        self.clear_external_agent_stall();
         if let Some(usage) = usage {
             self.total += *usage;
         }
@@ -932,10 +1319,14 @@ impl Projection {
                 "interrupted",
                 Phase::CompletedInterrupted,
             ),
-            TurnOutcome::Failed { message } => {
+            TurnOutcome::Failed { message, code } => {
                 self.error = Some(LastError {
                     message: message.clone(),
+                    code: code.clone(),
                     at: now,
+                    recoverable: true,
+                    detail: None,
+                    attribution: None,
                 });
                 ("failed", "failed", Phase::Error)
             }
@@ -944,18 +1335,39 @@ impl Projection {
         self.active = None;
         let started = self.turn.as_ref().map_or(now, |turn| turn.started_at);
         let summed = self.turn.as_ref().and_then(|turn| turn.output_tokens);
-        let keys = self.turn.take().map(|turn| turn.keys).unwrap_or_default();
+        let (keys, unstopped, rejected) = self
+            .turn
+            .take()
+            .map(|turn| (turn.keys, turn.unstopped, turn.rejected))
+            .unwrap_or_default();
+        if row_state == "interrupted" {
+            for key in &rejected {
+                self.upsert(
+                    key,
+                    |row| {
+                        if ToolStatus::of(row) == Some(ToolStatus::Error) {
+                            row.insert("status".into(), json!(ToolStatus::Cancelled.as_str()));
+                            row.remove("output");
+                            row.remove("error");
+                        }
+                    },
+                    out,
+                );
+            }
+        }
         for key in &keys {
+            // Fork: a stopped turn's cut-off reply settled `complete` on commit; Node closes it `interrupted`.
+            let cut_off = row_state == "interrupted" && unstopped.contains(key);
             self.upsert(
                 key,
                 |row| match RowKind::of(row) {
                     Some(RowKind::AssistantText) => {
-                        if row["state"] == "streaming" {
+                        if row["state"] == "streaming" || cut_off {
                             row.insert("state".into(), json!(row_state));
                         }
                     }
                     Some(RowKind::Reasoning) => {
-                        if row["state"] == "streaming" {
+                        if row["state"] == "streaming" || cut_off {
                             let reasoning = if row_state == "failed" {
                                 "interrupted"
                             } else {
@@ -972,7 +1384,12 @@ impl Projection {
                         }
                     }
                     Some(RowKind::Subagent) => Self::settle_open_subagent(row, now),
-                    Some(RowKind::TurnHeader | RowKind::UserInput | RowKind::TimelineMarker)
+                    Some(
+                        RowKind::TurnHeader
+                        | RowKind::UserInput
+                        | RowKind::TimelineMarker
+                        | RowKind::HookInvocation,
+                    )
                     | None => {}
                 },
                 out,
@@ -1129,6 +1546,8 @@ impl Projection {
                 let command = item.command.as_str();
                 let meta = self.inputs.get(command);
                 let goal_text = queued_goal_text(&item.text);
+                // Fork: a queued input's quotes come from its intent, like Node's queue item.
+                let quotes = item.intent.as_ref().and_then(|intent| intent.quotes());
                 // Fork: kind and the frozen execution state come from the kernel's item (one owner).
                 let (kind, text) = match item.kind {
                     QueuedKind::Text => ("sendText", item.text.as_str()),
@@ -1156,12 +1575,39 @@ impl Projection {
                 if let Some(origin) = meta.and_then(|meta| meta.origin.as_ref()) {
                     value["inputOrigin"] = json!(origin);
                 }
+                // Fork: the composer edit lock while it is held (App `queueItemEditLockSchema`, strict).
+                if let Some(lock) = &item.edit_lock {
+                    let mut edit_lock =
+                        json!({"editorId": lock.editor_id, "clientId": lock.client_id});
+                    if let Some(origin) = &lock.input_origin {
+                        edit_lock["inputOrigin"] = json!(origin);
+                    }
+                    value["editLock"] = edit_lock;
+                }
+                if let Some(quotes) = &quotes {
+                    value["conversationQuotes"] = json!(quotes);
+                }
+                // B4: a queued input shows the source it was sent with (Node queue item `source`).
+                if let Some(source) = item.intent.as_ref().and_then(|intent| intent.source()) {
+                    value["source"] = source.clone();
+                }
+                // Fork: a queued bot-group input shows its bot source (Node queue item `botGroupSource`).
+                if let Some(source) = item
+                    .intent
+                    .as_ref()
+                    .and_then(|intent| intent.bot_group_source())
+                {
+                    value["botGroupSource"] = source.clone();
+                }
                 if let Some(execution) = &item.execution {
                     if let Some(selection) = &execution.selection {
                         value["modelSelection"] = state::selection(selection);
                     }
-                    value["mode"] = json!(state::mode_name(execution.state.mode));
-                    value["planEnabled"] = json!(execution.state.plan);
+                    // Fork: an input that named no mode or plan shows none (Node's queue item has no state then).
+                    if !execution.keeps_session_state {
+                        value["mode"] = json!(state::mode_name(execution.state.mode));
+                        value["planEnabled"] = json!(execution.state.plan);
+                    }
                 }
                 value
             })
@@ -1176,7 +1622,7 @@ impl Projection {
     /// 快照（`conversationSnapshotSchema`）：`seq` 是主题的序号，`epoch` 是主题的代际标识。
     pub fn snapshot(&self, seq: u64, epoch: &str) -> Value {
         let start = self.rows.len().saturating_sub(WINDOW_ROWS);
-        json!({
+        let mut snapshot = json!({
             "protocolVersion": 1,
             "sessionId": self.session,
             "logEpoch": epoch,
@@ -1185,7 +1631,7 @@ impl Projection {
             "control": self.control(),
             "availability": self.availability(),
             "inputRouting": self.input_routing(),
-            "meta": state::meta(&self.title, true),
+            "meta": state::meta(&self.title, self.title_source),
             "config": self.config(),
             "modelTransition": null,
             "usage": state::usage(self.context, &self.total),
@@ -1195,14 +1641,19 @@ impl Projection {
             "backgroundWorks": self.background_works_value(),
             "subagents": self.subagents.manifest.to_value(),
             "goal": self.goal_json(),
-            "plan": null,
-            "workspaceHookAdmission": null,
+            "plan": self.plan_panel,
+            "workspaceHookAdmission": self.banners.hook,
             "rows": {
                 "window": &self.rows[start..],
                 "totalCount": self.rows.len(),
                 "firstRowId": self.rows.first().map(|row| row["rowId"].clone()),
             },
-        })
+        });
+        // Fork: optional in the schema; absent and null both mean no MCP banner.
+        if let Some(mcp) = &self.banners.mcp {
+            snapshot["workspaceMcpAdmission"] = mcp.clone();
+        }
+        snapshot
     }
 }
 

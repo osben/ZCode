@@ -87,9 +87,11 @@ quota, so it must not be denied because the main database disk still has space.
 Insufficient-space hint (zh-CN, kept verbatim): **存储空间不足或已达到容量限制，无法完成数据更新。请检查数据目录及系统临时目录所在磁盘的可用空间，释放空间或调整存储额度后重试。**
 (Storage space is insufficient or a quota is reached, so the data update cannot complete. Check free space on
 the disks of the data directory and the system temp directory, free space or adjust the quota, then retry.)
-The failure page offers the diagnostic ID, copy diagnostics, manual retry (where applicable) and quit. Copied
+The failure page offers the diagnostic ID, copy diagnostics, export logs, manual retry (where applicable) and quit. Copied
 content contains no keys/accounts/chat text. The startup page reuses the theme, i18n and responsive rules and
 shows no fake percentage.
+
+Export logs reuses the Help menu's export chain (`packages/desktop/src/main/exportLogs.ts`) and depends only on the Main process, with no need for Host or Agent to be ready, so logs can still be packaged when migration fails. After a successful export Main reveals the zip in the file manager; on failure the failure page shows an inline hint, does not leave the startup page and does not trigger a retry. The button appears only on the failure page and is disabled while exporting, to avoid duplicate packaging.
 
 ## Disk observation and ARMS
 
@@ -228,3 +230,21 @@ violations), CLI adapters/bootstrap tsc and adapters lint, desktop tsup passed. 
 verified on an isolated temp database: empty database starting point null; only 0003 missing starts at 0002
 with 1 commit; opening again starts at 0003 with 0 executions. No UI/E2E interaction changed, no production
 ARMS event was sent, and backend ingestion is still to be verified.
+
+## Memory bound of large-table backup and restore (2026-10-27)
+
+The old implementation kept all rows of touchedTables in a JS array and joined the sorted row JSON into one string. A multi-GB session database could exhaust the heap first, and after raising the heap could still hit the V8 single-string length limit. Backup, verification and restore must work row by row, so JS memory grows only with the largest single row, not with the row count.
+
+```text
+source DB BEGIN IMMEDIATE -> re-read ledger under lock -> estimate space row by row
+  -> copy row by row to a separate backup connection, computing row digests
+  -> sort digests in a temporary SQLite file -> compute table hash incrementally -> commit backup, write completion metadata
+  -> original migration SQL -> source DB COMMIT
+```
+
+- The shared sqlite-migrations module remains the only owner of backup and restore logic; Host/CLI add no second executor. Historical SQL, checksums, the single transaction and the touchedTables scope are unchanged; backup is never skipped by data size.
+- New backup metadata is version=2. Each row keeps the integer/BLOB type encoding and a SHA-256 of the row JSON is computed; the fixed 32-byte digests are sorted in binary ascending order (duplicate rows kept), then a SHA-256 prefixed with `sqlite-table-v2\0` is computed incrementally. Sorting is done by a temporary SQLite file with a limited page cache and on-disk temporary storage; no whole-table data or whole-table string is collected.
+- Restore accepts version=1/2 and rejects unknown versions. Version 1 sorts on disk in the original JS UTF-16 string order and then reproduces the original outer JSON array hash incrementally, so existing backups stay usable. An older program cannot read a v2 backup; an ordinary downgrade still does not consume migration backups.
+- During restore it holds a read transaction on the backup DB, verifies table by table, then writes the source DB row by row; foreign keys off, cascade guard, the single source-DB transaction, post-restore row count/hash/foreign-key checks and failure rollback are kept. Untouched tables are unchanged.
+- The disk candidate directories, insufficient-space handling and the keep-latest-two-backups rule are kept. Out-of-memory, corruption and verification failures in the database are reported as the real error and not disguised as insufficient space.
+- Acceptance uses a standalone CLI regression: a restricted-heap child process handles data whose total body exceeds the V8 single-string limit through migration backup, close/reopen and restore; it also checks v1 Unicode/integer/BLOB compatibility, v2 row-order independence with duplicate rows, tampered-backup rejection and migration-failure rollback. GUI interaction and the mobile protocol are unchanged.

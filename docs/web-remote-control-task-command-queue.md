@@ -56,8 +56,8 @@ explicit `rejected/failed`, and the UI keeps the text and attachments.
 
 ## Queue operations
 
-`editQueueItem` updates in place, keeping the item ID, source command, original position, attachments, client
-and admission order; only the new fields the user explicitly submitted change. reorder/delete also modify the
+`editQueueItem` updates in place, keeping the item ID, source command, original position, kind, client
+and admission order; only the text, attachments and model/mode/Plan config the user explicitly submitted change, and it releases the edit lock. During editing the item is frozen by `lockQueueItemEdit` (`editLock` enters the projection); phone and desktop can both see it and manually `releaseQueueItemEdit`, see [Composer edit mode](ui/composer-edit-mode.md). reorder/delete also modify the
 same authoritative queue through CLI commands.
 
 `sendQueuedNow` does not delete first and send after:

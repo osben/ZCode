@@ -1,6 +1,7 @@
 import type { BrowserKeyModifier, BrowserMouseButton } from "@zcode/shared";
 import { RESOLVE_SCRIPT } from "./browserCommandScripts.js";
 import type { BrowserPoint, ControlledView } from "./browserCommandTypes.js";
+import { withFocusedFrameSession } from "./browserVirtualClipboard.js";
 
 /**
  * Keyboard modifiers → CDP modifiers bitmask (Alt=1, Control=2, Meta=4, Shift=8).
@@ -278,7 +279,61 @@ export async function dispatchScrollGesture(
   });
 }
 
-/** Chord input: press each key, send down/up for the final key, then release the remaining keys in reverse order. */
+const SEND_INPUT_KEY_CODES: Record<string, string> = {
+  ArrowUp: "Up",
+  ArrowDown: "Down",
+  ArrowLeft: "Left",
+  ArrowRight: "Right",
+};
+
+const SEND_INPUT_MODIFIERS: Array<[number, "alt" | "control" | "meta" | "shift"]> = [
+  [1, "alt"],
+  [2, "control"],
+  [4, "meta"],
+  [8, "shift"],
+];
+
+function keyText(keyName: string, modifiers: number): string | undefined {
+  if (modifiers & 7) return undefined;
+  if (keyName === "Enter") return "\r";
+  if (keyName === "Space") return " ";
+  if ([...keyName].length !== 1) return undefined;
+  if (!(modifiers & 8)) return keyName;
+  return /^[a-z]$/iu.test(keyName) ? keyName.toUpperCase() : undefined;
+}
+
+// The guest main frame's CDP Input.dispatchKeyEvent routes by the focus of the whole window: when the guest lacks focus, keys land on
+// the ZCode host page (Esc stops the session, Enter/Backspace edit the input box). sendInputEvent posts directly to the guest's
+// own RenderWidgetHost; when focus is in a cross-process iframe, that iframe's CDP session likewise does not route by window focus.
+async function dispatchKeyEvent(
+  view: ControlledView,
+  type: "keyDown" | "keyUp",
+  keyName: string,
+  modifiers: number,
+  sessionId: string | undefined,
+): Promise<void> {
+  const text = type === "keyDown" ? keyText(keyName, modifiers) : undefined;
+  if (sessionId != null) {
+    await view.cdp.send(
+      "Input.dispatchKeyEvent",
+      {
+        type,
+        ...keyDefinition(keyName),
+        ...(modifiers > 0 ? { modifiers } : {}),
+        ...(text == null ? {} : { text }),
+      },
+      sessionId,
+    );
+    return;
+  }
+  const keyCode = SEND_INPUT_KEY_CODES[keyName] ?? keyName;
+  const names = SEND_INPUT_MODIFIERS.filter(([bit]) => modifiers & bit).map(([, name]) => name);
+  view.webContents.sendInputEvent({ type, keyCode, modifiers: names });
+  if (text != null)
+    view.webContents.sendInputEvent({ type: "char", keyCode: text, modifiers: names });
+}
+
+/** Chord input: press the chord's keys in order, then release the rest in reverse after the last key's down/up. */
 export async function dispatchKeyPress(
   view: ControlledView,
   keys: readonly string[],
@@ -292,42 +347,37 @@ export async function dispatchKeyPress(
   const held = normalized.slice(0, -1);
   const pressedModifiers = new Set<BrowserKeyModifier>();
 
-  const dispatch = async (type: "keyDown" | "keyUp", keyName: string): Promise<void> => {
-    const modifier = asModifier(keyName);
-    if (type === "keyDown" && modifier) pressedModifiers.add(modifier);
-    if (type === "keyUp" && modifier) pressedModifiers.delete(modifier);
-    const definition = keyDefinition(keyName);
-    const modifiers = modifiersBitmask([...pressedModifiers]);
-    await view.cdp.send("Input.dispatchKeyEvent", {
-      type,
-      ...definition,
-      ...(modifiers > 0 ? { modifiers } : {}),
-    });
-  };
-
-  for (const key of held) await dispatch("keyDown", key);
-  await dispatch("keyDown", last);
-  await dispatch("keyUp", last);
-  for (const key of held.toReversed()) await dispatch("keyUp", key);
+  await withFocusedFrameSession(view, async (sessionId) => {
+    const dispatch = async (type: "keyDown" | "keyUp", keyName: string): Promise<void> => {
+      const modifier = asModifier(keyName);
+      if (type === "keyDown" && modifier) pressedModifiers.add(modifier);
+      if (type === "keyUp" && modifier) pressedModifiers.delete(modifier);
+      await dispatchKeyEvent(
+        view,
+        type,
+        keyName,
+        modifiersBitmask([...pressedModifiers]),
+        sessionId,
+      );
+    };
+    for (const key of held) await dispatch("keyDown", key);
+    await dispatch("keyDown", last);
+    await dispatch("keyUp", last);
+    for (const key of held.toReversed()) await dispatch("keyUp", key);
+  });
 }
 
-/** Send one key press (keyDown + keyUp); mapped keys include full parameters, unmapped keys pass through the key. Pass through the modifiers bitmask when provided. */
+/** Send one key press (keyDown + keyUp); the modifiers bitmask passes through, and sessionId targets a cross-process iframe. */
 export async function dispatchKey(
   view: ControlledView,
   keyName: string,
   modifiers = 0,
   sessionId?: string,
 ): Promise<void> {
-  const def = KEY_MAP[keyName];
-  const base = def
-    ? { key: def.key, code: def.code, windowsVirtualKeyCode: def.windowsVirtualKeyCode }
-    : { key: keyName };
-  // Omit this field when modifiers=0 to match existing tests that assert no modifiers property.
-  const mod = modifiers > 0 ? { modifiers } : {};
-  const sendKey = (type: "keyDown" | "keyUp") =>
-    sessionId == null
-      ? view.cdp.send("Input.dispatchKeyEvent", { type, ...base, ...mod })
-      : view.cdp.send("Input.dispatchKeyEvent", { type, ...base, ...mod }, sessionId);
-  await sendKey("keyDown");
-  await sendKey("keyUp");
+  const press = async (target: string | undefined) => {
+    await dispatchKeyEvent(view, "keyDown", keyName, modifiers, target);
+    await dispatchKeyEvent(view, "keyUp", keyName, modifiers, target);
+  };
+  if (sessionId != null) return press(sessionId);
+  await withFocusedFrameSession(view, press);
 }

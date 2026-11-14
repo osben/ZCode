@@ -78,6 +78,8 @@ pub fn expand_transport_vars(
                 .map(|(key, value)| (key.clone(), expand(value)))
                 .collect(),
         ),
+        // Fork: no string fields; the helper resolves the config itself.
+        McpTransportConfig::NodeHelper => McpTransportConfig::NodeHelper,
     };
     let mut seen = std::collections::HashSet::new();
     missing.retain(|name| seen.insert(name.clone()));

@@ -10,6 +10,8 @@ const readyMarkerNames = {
   // Scheduler is now an independent tsup target, and onSuccess calls this marker script for it too.
   // The old allowlist omitted this target, so production builds failed with unknown target after bundling.
   scheduler: ".scheduler-build-ready",
+  // 扩展进程（docs/plugins/extension-host.md §12.1）：独立 tsup target，dev.mjs 等待它就绪。
+  "extension-host": ".extension-host-build-ready",
 };
 
 if (!Object.hasOwn(readyMarkerNames, target)) {

@@ -2,15 +2,35 @@
 //! `zcode-rs` (specs/fork-rust-agent-parity.md). Each method family or command group lives in its
 //! own module and is registered with one line in [`commands`] or [`methods`].
 
+mod background_task;
 mod background_work;
+mod child_processes;
 pub(crate) mod commands;
+pub(crate) mod external_agent_config;
 mod file_summary;
+// Fork: specs/fork-rust-node-helper.md F3, "Helper → Rust requests".
+mod helper_answers;
+mod helper_sampling;
+mod helper_session_admit;
+pub(crate) mod hook_review;
+pub(crate) mod legacy_session;
+mod lsp;
 pub(crate) mod methods;
+pub mod node_helper;
 mod queue;
+mod release_under_directory;
+pub(crate) use queue::settle_running_turn;
 mod row_commands;
 mod session_config;
 mod session_delete;
-mod session_tree;
+pub(crate) mod session_tree;
 mod skills;
 mod subagents;
 mod usage;
+mod workspace_model;
+pub(crate) use workspace_model::Operations as WorkspaceOperations;
+pub(crate) mod workspace_trust;
+pub use workspace_trust::{
+    Admission, ReviewBundle, ReviewItem, ReviewLookup, ReviewSource, StoredTrust, ToggleError,
+    WorkspaceAdmin, WorkspaceTarget,
+};

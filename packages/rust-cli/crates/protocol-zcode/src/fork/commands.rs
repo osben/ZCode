@@ -33,13 +33,32 @@ pub(crate) async fn decide(
         "applyFileRewind" => file_summary::apply(live, envelope, revision).await,
         "deleteSession" => session_delete::delete(server, live, envelope, revision).await,
         "deleteQueueItem" => queue::delete_queue_item(live, envelope, revision).await,
-        "editQueueItem" => queue::edit_queue_item(live, envelope, revision).await,
+        "editQueueItem" => queue::edit_queue_item(server, live, envelope, revision).await,
         "reorderQueueItem" => queue::reorder_queue_item(live, envelope, revision).await,
         "setAutoDrain" => queue::set_auto_drain(live, envelope, revision).await,
         "sendQueuedNow" => queue::send_queued_now(live, envelope, revision).await,
+        "lockQueueItemEdit" => queue::lock_queue_item_edit(live, envelope, revision).await,
+        "releaseQueueItemEdit" => queue::release_queue_item_edit(live, envelope, revision).await,
+        "applyQueueItemsConfig" => queue::apply_queue_items_config(live, envelope, revision).await,
         "pauseGoal" => goal(live, envelope, revision, Command::PauseGoal).await,
         "resumeGoal" => goal(live, envelope, revision, Command::ResumeGoal).await,
+        // Fork: the workspace hook review flow (fork/hook_review.rs).
+        "requestWorkspaceHookReview"
+        | "respondWorkspaceHookReview"
+        | "revokeWorkspaceHookTrust"
+        | "toggleWorkspaceHookReviewItem" => {
+            super::hook_review::decide(server, live, envelope, revision).await
+        }
+        // Fork: the selects of the session's ACP agent (fork/external_agent_config.rs).
+        "setExternalAgentConfigOption" => {
+            super::external_agent_config::set_option(server, live, envelope, revision).await
+        }
         "cancelBackgroundWork" => background_work::cancel(live, envelope, revision).await,
+        "stopSubagent" => background_work::stop_subagent(live, envelope, revision).await,
+        // Fork: the prepared worktree's compare-and-set update (crate::worktree).
+        "updateWorktreePreparation" => {
+            crate::worktree::update(server, live, envelope, revision).await
+        }
         _ => return None,
     })
 }

@@ -5,6 +5,7 @@
 use rust_cli_base::names::{DOT_DIR, LOCAL_RULES_FILE, RULES_FILE};
 use rust_cli_kernel_api::env::WorkspaceRef;
 use rust_cli_kernel_api::env_files::PathStyle;
+use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::message::Message;
 
 use crate::PromptAssembler;
@@ -37,9 +38,17 @@ impl PromptAssembler {
     /// 活动历史（找已宣布过的路径）。
     pub async fn directory_rules(
         &self,
+        session: &SessionId,
         workspace: &WorkspaceRef,
         history: &[Message],
     ) -> Option<String> {
+        // Fork: the same gate as the startup rule files; an incognito profile without `projectInstructions` loads none.
+        if self.incognito.excludes(
+            session,
+            rust_cli_kernel_api::incognito::IncognitoKey::ProjectInstructions,
+        ) {
+            return None;
+        }
         let facts = self.ports.info.facts(workspace).await.ok()?;
         let scope = Scope {
             files: self.ports.files.as_ref(),
@@ -68,10 +77,11 @@ impl PromptAssembler {
 impl rust_cli_kernel_api::orchestration::DirectoryRules for PromptAssembler {
     async fn directory_rules(
         &self,
+        session: &SessionId,
         workspace: &WorkspaceRef,
         history: &[Message],
     ) -> Option<String> {
-        PromptAssembler::directory_rules(self, workspace, history).await
+        PromptAssembler::directory_rules(self, session, workspace, history).await
     }
 }
 

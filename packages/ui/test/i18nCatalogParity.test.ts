@@ -22,7 +22,8 @@ const EN_ONLY_KEYS = [
 const PLURAL_CATEGORIES = ["zero", "one", "two", "few", "many", "other"];
 
 function placeholders(message: string): Set<string> {
-  return new Set([...message.matchAll(/\{(\w+)\}/g)].map((match) => match[1]!));
+  // `{count}` and the ICU argument of `{count, plural, ...}` both name the placeholder `count`.
+  return new Set([...message.matchAll(/\{(\w+)(?:\}|,)/g)].map((match) => match[1]!));
 }
 
 function htmlTags(message: string): string[] {

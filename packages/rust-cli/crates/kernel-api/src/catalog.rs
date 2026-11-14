@@ -25,6 +25,10 @@ pub struct SessionCatalog {
     pub agents: Vec<String>,
     /// 用户可调用的 skill。
     pub skills: Vec<String>,
+    /// Fork: the MCP servers the session sees (its tool snapshot's view), so `system/init` never names a server an
+    /// incognito profile removes.
+    #[serde(default)]
+    pub mcp_servers: Vec<String>,
 }
 
 /// 工作区的一个 agent 类型（[`crate::session_api::Kernel::agent_definitions`]，docs/specs/rust-cli/agents.md §8 的

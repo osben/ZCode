@@ -15,6 +15,7 @@
 // with no atSeq / atLogEpoch (it reads the journal, so there is no staleness to guard against). The new method is naturally safe under version skew.
 
 import { z } from "zod";
+import { v4ColdResumeWorkspaceSchema } from "./core.js";
 
 /** Display limits for the workspace transcript. The numbers are the contract. */
 export const WORKFLOW_WORKSPACE_LIMITS = {
@@ -87,6 +88,7 @@ export type WorkflowRunWorkspaceNode = z.infer<typeof workflowRunWorkspaceNodeSc
 // ── v4 query ①: workflowRunWorkspace (lightweight row list) ──
 export const v4ConversationWorkflowRunWorkspaceParamsSchema = z
   .object({
+    workspace: v4ColdResumeWorkspaceSchema,
     sessionId: z.string().min(1),
     runId: z.string().min(1),
   })
@@ -113,6 +115,7 @@ export type V4ConversationWorkflowRunWorkspaceResult = z.infer<
 // independently — a card needs "what ran and what the first few hundred lines were," not the script's all-or-nothing data retrieval.
 export const v4ConversationWorkflowRunNodeResultParamsSchema = z
   .object({
+    workspace: v4ColdResumeWorkspaceSchema,
     sessionId: z.string().min(1),
     runId: z.string().min(1),
     siteId: z.string().min(1).max(64),

@@ -274,6 +274,114 @@ async fn task_tools_write_the_root_list_and_signal_the_root_session() {
     assert_eq!(listed, "#1 [pending] Write tests");
 }
 
+/// Fork: an ACP plan replaces the root list through the board (specs/fork-rust-agent-parity.md "ACP external agents",
+/// rule 7): the old tasks come back by ID, IDs are never reused, and the root session hears the new list once.
+#[tokio::test]
+async fn an_acp_plan_replaces_the_root_list_and_signals_it() {
+    use rust_cli_kernel_api::agents::{TaskRecord, TaskStatus};
+    let harness = harness(None);
+    let root = SessionId::new("sess_parent");
+    let signals = harness.agents.signals();
+    let mut stream = signals.signals(&root);
+    for subject in ["One", "Two", "Three"] {
+        harness
+            .call(
+                "sess_parent",
+                "TaskCreate",
+                json!({"subject": subject, "description": ""}),
+            )
+            .await;
+        stream.next().await;
+    }
+    let task = |id: &str, subject: &str, status: TaskStatus| TaskRecord {
+        id: id.into(),
+        subject: subject.into(),
+        description: String::new(),
+        active_form: None,
+        owner: None,
+        status,
+        blocks: Vec::new(),
+        blocked_by: Vec::new(),
+        metadata: Some(serde_json::Map::from_iter([(
+            "priority".to_owned(),
+            json!("high"),
+        )])),
+    };
+    // The writer numbers the plan from the high-water mark: IDs are never reused (kernel-api `TaskList`), so a later
+    // `TaskUpdate "1"` cannot reach a plan step. The IDs it is given are ignored.
+    let plan = vec![task("", "Read", TaskStatus::InProgress)];
+    let numbered = vec![task("4", "Read", TaskStatus::InProgress)];
+    let writer = harness.agents.task_plan_writer();
+    let old = writer.replace(&root, plan.clone()).await.unwrap();
+    let subjects: Vec<&str> = old.iter().map(|task| task.subject.as_str()).collect();
+    assert_eq!(subjects, ["One", "Two", "Three"]);
+    let Some(AgentSignal::TasksChanged { tasks }) = stream.next().await else {
+        panic!("expected tasks");
+    };
+    assert_eq!(tasks, serde_json::to_value(&numbered).unwrap());
+    let stored = harness.tasks.load(&root).await.unwrap();
+    assert_eq!(
+        (stored.tasks, stored.high_water_mark),
+        (numbered.clone(), 4)
+    );
+    // The same plan again writes nothing, signals nothing and keeps its IDs; the old list is still answered.
+    assert_eq!(writer.replace(&root, plan.clone()).await.unwrap(), numbered);
+    let nothing = tokio::time::timeout(std::time::Duration::from_millis(50), stream.next()).await;
+    assert!(nothing.is_err(), "an unchanged plan signalled {nothing:?}");
+    let stored = harness.tasks.load(&root).await.unwrap();
+    assert_eq!(
+        (stored.tasks, stored.high_water_mark),
+        (numbered.clone(), 4)
+    );
+    // A task the model creates next takes the next ID.
+    harness
+        .call(
+            "sess_parent",
+            "TaskCreate",
+            json!({"subject": "After", "description": ""}),
+        )
+        .await;
+    let stored = harness.tasks.load(&root).await.unwrap();
+    assert_eq!(stored.tasks.last().map(|task| task.id.as_str()), Some("5"));
+}
+
+/// Rule 7: a plan is the same steps when subject, status and priority match in order; the fields a plan has no
+/// value for (here the description) do not count, so the list and its IDs stay.
+#[tokio::test]
+async fn an_acp_plan_with_the_same_steps_keeps_the_list() {
+    use rust_cli_kernel_api::agents::{TaskRecord, TaskStatus};
+    let harness = harness(None);
+    let root = SessionId::new("sess_parent");
+    for subject in ["One", "Two"] {
+        harness
+            .call(
+                "sess_parent",
+                "TaskCreate",
+                json!({"subject": subject, "description": "Details"}),
+            )
+            .await;
+    }
+    let before = harness.tasks.load(&root).await.unwrap();
+    let step = |subject: &str| TaskRecord {
+        id: String::new(),
+        subject: subject.into(),
+        description: String::new(),
+        active_form: None,
+        owner: None,
+        status: TaskStatus::Pending,
+        blocks: Vec::new(),
+        blocked_by: Vec::new(),
+        metadata: None,
+    };
+    let writer = harness.agents.task_plan_writer();
+    let old = writer
+        .replace(&root, vec![step("One"), step("Two")])
+        .await
+        .unwrap();
+    assert_eq!(old, before.tasks);
+    assert_eq!(harness.tasks.load(&root).await.unwrap(), before);
+}
+
 /// 子会话的当前轮随每个批次交给存储（node-store.md §4，修复线 F6）；续跑的输入开新的一轮。以前都不带锚点。
 #[tokio::test]
 async fn child_batches_name_the_prompt_of_their_run() {
@@ -578,4 +686,355 @@ async fn a_desktop_task_stop_returns_after_the_agent_notice() {
         "{}",
         notice.text
     );
+}
+
+/// Fork: a Host snapshot source whose answer the test changes between runs.
+struct ChangingHost(std::sync::Mutex<rust_cli_kernel_api::subagent_config::SubagentSnapshot>);
+
+#[async_trait::async_trait]
+impl rust_cli_kernel_api::subagent_config::SubagentConfigSource for ChangingHost {
+    async fn read(
+        &self,
+        _session: &rust_cli_kernel_api::ids::SessionId,
+    ) -> Result<Option<rust_cli_kernel_api::subagent_config::SubagentSnapshot>, String> {
+        use rust_cli_base::sync::LockUnpoisoned;
+        Ok(Some(self.0.lock_unpoisoned().clone()))
+    }
+}
+
+fn reviewer_snapshot(
+    prompt: Option<&str>,
+) -> rust_cli_kernel_api::subagent_config::SubagentSnapshot {
+    use rust_cli_kernel_api::subagent_config::{ProfileSource, SubagentProfile, SubagentSnapshot};
+    SubagentSnapshot::Ready {
+        profiles: prompt
+            .map(|prompt| SubagentProfile {
+                name: "reviewer".to_owned(),
+                description: "Reviews.".to_owned(),
+                source: ProfileSource::User,
+                system_prompt: format!("You are the {prompt} reviewer."),
+                selection: Some(rust_cli_kernel_api::model::ModelSelection::new(
+                    "e2e-provider",
+                    format!("{prompt}-model"),
+                )),
+                tools: None,
+                disallowed_tools: Vec::new(),
+                max_turns: None,
+                background: false,
+                permission_mode: None,
+                inject_agents_md: true,
+            })
+            .into_iter()
+            .collect(),
+        explore: None,
+        general_purpose: None,
+        plugins: Default::default(),
+    }
+}
+
+/// Fork (node_desktop, specs/fork-rust-subagent-runtime-config.md rule 13): like Node's
+/// `resumeTerminalAgentInBackground`, a SendMessage resume runs with the agent's current profile, and a profile that
+/// is gone refuses the resume with Node's text.
+#[tokio::test]
+async fn a_desktop_resume_uses_the_current_profile_and_refuses_a_removed_one() {
+    use rust_cli_base::sync::LockUnpoisoned;
+    let harness = desktop_harness();
+    let host = Arc::new(ChangingHost(std::sync::Mutex::new(reviewer_snapshot(
+        Some("old"),
+    ))));
+    harness.catalog.set_host(host.clone());
+    let signals = harness.agents.signals();
+    let mut stream = signals.signals(&SessionId::new("sess_parent"));
+    let spawned = harness
+        .call(
+            "sess_parent",
+            "Agent",
+            json!({"description": "Review", "prompt": "Review.", "subagent_type": "reviewer"}),
+        )
+        .await;
+    assert!(!spawned.is_error, "{}", text(&spawned));
+    assert_eq!(
+        harness.started(1).await[0].request.selection.model,
+        "old-model"
+    );
+
+    let mut renewed = reviewer_snapshot(Some("new"));
+    if let rust_cli_kernel_api::subagent_config::SubagentSnapshot::Ready { profiles, .. } =
+        &mut renewed
+    {
+        profiles[0].permission_mode =
+            Some(rust_cli_kernel_api::permission::PermissionMode::AcceptEdits);
+    }
+    *host.0.lock_unpoisoned() = renewed;
+    let resumed = harness
+        .call(
+            "sess_parent",
+            "SendMessage",
+            json!({"to": "agent_1", "message": "Go on."}),
+        )
+        .await;
+    assert!(!resumed.is_error, "{}", text(&resumed));
+    let seen = harness.started(2).await;
+    assert_eq!(seen[1].request.selection.model, "new-model");
+    let system = format!("{:?}", seen[1].system);
+    assert!(system.contains("You are the new reviewer."), "{system}");
+    assert!(!system.contains("You are the old reviewer."), "{system}");
+    // The resumed run ends before the next message.
+    loop {
+        match stream.next().await {
+            Some(AgentSignal::Notice(_)) => break,
+            Some(_) => {}
+            None => panic!("the signal stream ended before the resumed run's notice"),
+        }
+    }
+    // Like Node's `persistRuntimeModelSelection`, the resume stores the model and mode it ran with, so reopening the
+    // child shows them.
+    let facts = harness.store.facts(&seen[1].request.session);
+    let last_model = facts.iter().rev().find_map(|fact| match fact {
+        rust_cli_kernel_api::store::Fact::ModelSelected { selection } => {
+            Some(selection.model.clone())
+        }
+        _ => None,
+    });
+    let last_mode = facts.iter().rev().find_map(|fact| match fact {
+        rust_cli_kernel_api::store::Fact::ModeChanged { mode } => Some(*mode),
+        _ => None,
+    });
+    assert_eq!(last_model.as_deref(), Some("new-model"));
+    assert_eq!(
+        last_mode,
+        Some(rust_cli_kernel_api::permission::PermissionMode::AcceptEdits)
+    );
+
+    *host.0.lock_unpoisoned() = reviewer_snapshot(None);
+    // The harness names a parent run after its tool, so both SendMessage calls share one run: drop the cached
+    // snapshot as a new parent run would read again.
+    harness.catalog.forget(&SessionId::new("sess_parent"));
+    let refused = harness
+        .call(
+            "sess_parent",
+            "SendMessage",
+            json!({"to": "agent_1", "message": "Once more."}),
+        )
+        .await;
+    assert!(!refused.is_error, "{}", text(&refused));
+    assert_eq!(
+        text(&refused),
+        "Cannot resume local agent agent_1: profile reviewer is unavailable."
+    );
+    for _ in 0..100 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(harness.seen().len(), 2);
+}
+
+/// Fork (specs/fork-rust-subagent-runtime-config.md rule 14): Node has no `Plan` agent, so on the desktop
+/// `subagent_type: "Plan"` is an unknown type with Node's text.
+#[tokio::test]
+async fn a_desktop_agent_call_does_not_know_plan() {
+    let harness = desktop_harness();
+    let tool = harness.agents.registry().find("Agent").unwrap();
+    let context = crate::test_support::tool_context(
+        &SessionId::new("sess_parent"),
+        &rust_cli_kernel_api::ids::RunId::new("r"),
+    );
+    let verdict = tool
+        .validate_input(
+            &json!({"description": "x", "prompt": "y", "subagent_type": "Plan"}),
+            &context,
+        )
+        .await;
+    assert_eq!(
+        verdict,
+        rust_cli_kernel_api::tool::Validation::Invalid {
+            message: "Agent type 'Plan' not found. Available agents: general-purpose, Explore"
+                .to_owned(),
+            error_code: None
+        }
+    );
+}
+
+/// Fork (specs/fork-rust-subagent-runtime-config.md rule 15): the child's context gets the definition's
+/// `injectAgentsMd`: the built-in Explore leaves the project instructions out, general-purpose keeps them.
+#[tokio::test]
+async fn a_child_context_follows_the_definitions_inject_agents_md() {
+    let harness = harness(None);
+    for (agent_type, inject) in [("Explore", false), ("general-purpose", true)] {
+        harness.injected.lock().unwrap().clear();
+        harness
+            .call("sess_parent", "Agent", json!({"description": "Find", "prompt": "List.", "subagent_type": agent_type, "run_in_background": false}))
+            .await;
+        assert_eq!(*harness.injected.lock().unwrap(), [inject], "{agent_type}");
+        // The child run carries it too, for the summary run of its auto-compaction.
+        let seen = harness.seen();
+        assert_eq!(
+            seen.last().unwrap().request.inject_agents_md,
+            inject,
+            "{agent_type}"
+        );
+    }
+}
+
+/// Fork: a model catalog with one entry, `e2e-provider/old-model` at `low`.
+struct OneModel;
+
+#[async_trait::async_trait]
+impl rust_cli_kernel_api::provider::ModelDirectory for OneModel {
+    async fn catalog(&self) -> rust_cli_kernel_api::provider::ModelCatalog {
+        rust_cli_kernel_api::provider::ModelCatalog {
+            revision: 1,
+            models: vec![rust_cli_kernel_api::provider::CatalogModel {
+                provider: "e2e-provider".to_owned(),
+                provider_name: "E2E".to_owned(),
+                model: "old-model".to_owned(),
+                protocol: rust_cli_kernel_api::provider::WireProtocol::OpenAiChatCompletions,
+                reasoning_levels: vec!["low".to_owned()],
+                context_window: 200_000,
+                max_output_tokens: 32_000,
+                capabilities: Default::default(),
+                connection: None,
+                host: None,
+            }],
+            default: None,
+        }
+    }
+}
+
+/// The reviewer profile on `e2e-provider/<model>` at `level`.
+fn reviewer_on(model: &str, level: &str) -> rust_cli_kernel_api::subagent_config::SubagentSnapshot {
+    let mut snapshot = reviewer_snapshot(Some("old"));
+    if let rust_cli_kernel_api::subagent_config::SubagentSnapshot::Ready { profiles, .. } =
+        &mut snapshot
+    {
+        profiles[0].selection = Some(rust_cli_kernel_api::model::ModelSelection {
+            reasoning: Some(level.to_owned()),
+            ..rust_cli_kernel_api::model::ModelSelection::new("e2e-provider", model)
+        });
+    }
+    snapshot
+}
+
+/// Fork (node_desktop, specs/fork-rust-subagent-runtime-config.md rule 9): like Node's `resolveSubagentSelection`, an
+/// own selection the catalog cannot serve fails the Agent call itself, in the foreground and in the background, with
+/// Node's text; no child run starts and the parent's model is not used instead.
+#[tokio::test]
+async fn a_desktop_agent_with_an_unservable_selection_does_not_start() {
+    let harness = desktop_harness();
+    harness.catalog.set_models(Arc::new(OneModel));
+    harness
+        .catalog
+        .set_host(Arc::new(ChangingHost(std::sync::Mutex::new(reviewer_on(
+            "gone-model",
+            "low",
+        )))));
+    for background in [false, true] {
+        let refused = harness
+            .call(
+                "sess_parent",
+                "Agent",
+                json!({"description": "Review", "prompt": "Review.", "subagent_type": "reviewer", "run_in_background": background}),
+            )
+            .await;
+        assert!(refused.is_error, "{}", text(&refused));
+        assert_eq!(
+            text(&refused),
+            "Cannot start subagent: Model unavailable / 模型不存在或不可用 [reason=model-not-found; selection=e2e-provider/gone-model]",
+            "background: {background}"
+        );
+    }
+    for _ in 0..100 {
+        tokio::task::yield_now().await;
+    }
+    assert!(harness.seen().is_empty());
+}
+
+/// Fork (rule 9): a servable own selection starts; an agent without a selection is not checked.
+#[tokio::test]
+async fn a_desktop_agent_with_a_servable_selection_starts() {
+    let harness = desktop_harness();
+    harness.catalog.set_models(Arc::new(OneModel));
+    harness
+        .catalog
+        .set_host(Arc::new(ChangingHost(std::sync::Mutex::new(reviewer_on(
+            "old-model",
+            "low",
+        )))));
+    let started = harness
+        .call(
+            "sess_parent",
+            "Agent",
+            json!({"description": "Review", "prompt": "Review.", "subagent_type": "reviewer"}),
+        )
+        .await;
+    assert!(!started.is_error, "{}", text(&started));
+    let inherited = harness
+        .call(
+            "sess_parent",
+            "Agent",
+            json!({"description": "Find", "prompt": "Find.", "subagent_type": "general-purpose"}),
+        )
+        .await;
+    assert!(!inherited.is_error, "{}", text(&inherited));
+    assert_eq!(harness.started(2).await.len(), 2);
+}
+
+/// Fork (rules 9 and 13): a SendMessage resume checks the current profile's selection and fails the call with Node's
+/// text; no run starts.
+#[tokio::test]
+async fn a_desktop_resume_with_an_unservable_selection_fails() {
+    use rust_cli_base::sync::LockUnpoisoned;
+    let harness = desktop_harness();
+    harness.catalog.set_models(Arc::new(OneModel));
+    let host = Arc::new(ChangingHost(std::sync::Mutex::new(reviewer_on(
+        "old-model",
+        "low",
+    ))));
+    harness.catalog.set_host(host.clone());
+    let spawned = harness
+        .call(
+            "sess_parent",
+            "Agent",
+            json!({"description": "Review", "prompt": "Review.", "subagent_type": "reviewer"}),
+        )
+        .await;
+    assert!(!spawned.is_error, "{}", text(&spawned));
+    harness.started(1).await;
+
+    *host.0.lock_unpoisoned() = reviewer_on("old-model", "max");
+    harness.catalog.forget(&SessionId::new("sess_parent"));
+    let refused = harness
+        .call(
+            "sess_parent",
+            "SendMessage",
+            json!({"to": "agent_1", "message": "Go on."}),
+        )
+        .await;
+    assert!(refused.is_error, "{}", text(&refused));
+    assert_eq!(
+        text(&refused),
+        "Cannot start subagent: Reasoning level unsupported / 不支持所选思考档位 [reason=reasoning-level-not-supported; selection=e2e-provider/old-model]"
+    );
+    for _ in 0..100 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(harness.seen().len(), 1);
+}
+
+/// Fork (node_desktop, specs/fork-rust-agent-parity.md "Subagents launch no subagents"): a desktop subagent's tools
+/// have no Agent, SendMessage or ListAgents (Node child runtimes run with `subagents.enabled: false`); TaskStop stays.
+#[tokio::test]
+async fn a_desktop_subagent_gets_no_subagent_tools() {
+    let harness = desktop_harness();
+    harness
+        .call(
+            "sess_parent",
+            "Agent",
+            json!({"description": "Look around", "prompt": "Look around.", "subagent_type": "general-purpose"}),
+        )
+        .await;
+    let tools = &harness.started(1).await[0].tools;
+    for name in ["Agent", "SendMessage", "ListAgents"] {
+        assert!(!tools.iter().any(|tool| tool == name), "{name}: {tools:?}");
+    }
+    assert!(tools.iter().any(|tool| tool == "TaskStop"), "{tools:?}");
 }

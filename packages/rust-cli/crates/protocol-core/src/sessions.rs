@@ -65,7 +65,13 @@ pub struct SessionBridge<S> {
     /// 一批事件的窗口。
     window: Duration,
     open: Mutex<HashMap<SessionId, Opening<S>>>,
+    /// Fork (specs/fork-rust-node-helper.md F3): told when a session the table knew is closed, so state another owner
+    /// keeps per open session (the Node helper's session) ends with it.
+    on_close: Option<CloseListener>,
 }
+
+/// Called with the session after [`SessionBridge::close`] removed it.
+pub type CloseListener = Arc<dyn Fn(&SessionId) + Send + Sync>;
 
 impl<S: SessionSink> SessionBridge<S> {
     pub fn new(kernel: Arc<dyn Kernel>, spawner: Spawner, window: Duration) -> Self {
@@ -74,7 +80,15 @@ impl<S: SessionSink> SessionBridge<S> {
             spawner,
             window,
             open: Mutex::new(HashMap::new()),
+            on_close: None,
         }
+    }
+
+    /// Fork: sets the close listener.
+    #[must_use]
+    pub fn with_close_listener(mut self, listener: CloseListener) -> Self {
+        self.on_close = Some(listener);
+        self
     }
 
     pub fn kernel(&self) -> &Arc<dyn Kernel> {
@@ -142,6 +156,9 @@ impl<S: SessionSink> SessionBridge<S> {
     /// 不再转发这个会话的事件（会话本身由内核管理）。
     pub fn close(&self, session: &SessionId) -> Option<Arc<Bridged<S>>> {
         let cell = self.table().remove(session)?;
+        if let Some(listener) = &self.on_close {
+            listener(session);
+        }
         cell.get().and_then(|opened| opened.as_ref().ok().cloned())
     }
 

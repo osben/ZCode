@@ -33,6 +33,10 @@ pub enum Purpose {
     Bash,
     Hook,
     Mcp,
+    /// Fork: an external ACP agent process (rust-cli-acp).
+    Acp,
+    /// Fork: a language server (specs/fork-rust-lsp.md "Pool"). A build without it skips these records.
+    Lsp,
 }
 
 impl Purpose {
@@ -41,14 +45,22 @@ impl Purpose {
             Purpose::Bash => "bash",
             Purpose::Hook => "hook",
             Purpose::Mcp => "mcp",
+            Purpose::Acp => "acp",
+            Purpose::Lsp => "lsp",
         }
     }
 
     #[cfg(unix)]
     fn parse(name: &str) -> Option<Self> {
-        [Purpose::Bash, Purpose::Hook, Purpose::Mcp]
-            .into_iter()
-            .find(|purpose| purpose.as_str() == name)
+        [
+            Purpose::Bash,
+            Purpose::Hook,
+            Purpose::Mcp,
+            Purpose::Acp,
+            Purpose::Lsp,
+        ]
+        .into_iter()
+        .find(|purpose| purpose.as_str() == name)
     }
 }
 
@@ -239,6 +251,19 @@ impl Tracked {
 
     pub fn pid(&self) -> u32 {
         self.pid
+    }
+
+    /// 丢弃这个句柄时整棵树都会结束：Unix 上向进程组发 KILL；Windows 上只有树在自己的 Job 里时才成立
+    /// （[`Containment::OwnJob`] 建 Job 或加入失败、退回进程级 Job 时为 false）。
+    pub fn ends_with_drop(&self) -> bool {
+        #[cfg(unix)]
+        {
+            true
+        }
+        #[cfg(windows)]
+        {
+            self.job.is_some()
+        }
     }
 
     /// 结束整棵树并回收根进程；错误表示无法确认回收，记录保留。Unix：[`crate::tree::terminate`]，

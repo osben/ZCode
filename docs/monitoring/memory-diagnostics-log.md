@@ -2,6 +2,73 @@
 
 Status: **confirmed, implemented per this spec**
 
+## CLI allocation diagnostics (3.18.1)
+
+Besides the 60-second base log described below, the CLI enables a separate, bounded diagnostics recorder once
+app-server is ready. The goal is to correlate memory growth with release-code locations; it does not change task
+scheduling, recovery or model behaviour.
+
+- The CLI adapter is the single owner of collection and file retention. Bootstrap only exposes read-only counters
+  and stops collection with the runtime.
+- Every 15 seconds it reads the memory breakdown and read-only counters and keeps the last 8 readings: read-only
+  session counts and V4 container sizes, without calling `eventStore.getStats()`, which walks historical events.
+  Full event statistics keep the original 60-second period; message bodies are not walked and business objects are
+  not re-serialized.
+- It uses an in-process inspector Session: no debug port is opened, script sources are not read, no source map is
+  generated or loaded, no heap snapshot is taken, no forced GC. The allocation sampling interval is 1 MiB with
+  stack depth 16; the sampling window resets every 60 seconds.
+- Each 15-second sample inspects at most 4096 profile nodes and outputs only the top 32 allocation hotspots with
+  the last 8 stack frames of each. The profile is not retained size or a retention chain, and Buffer backing
+  stores do not necessarily show up in the JS profile, so it must be read together with `external`.
+- Only function names of the release bundle and zero-based line/column numbers are stored; for other scripts no
+  paths, function names or source are stored. The bundle SHA-256, build version, Node/V8 versions, process
+  instance and PID are stored, so growth can be located against the same internal build.
+- At most one collect/write operation per round; when busy the round is dropped, not queued. If one synchronous
+  sampling/projection exceeds 25 ms or the node count exceeds the limit, this process permanently degrades to
+  metrics only. A sampling exception degrades the same way and must never throw into a task. Startup and exit do
+  not wait for disk collection. After degrading, the record keeps the last valid hotspot and its collection time,
+  so metrics-only rotation does not overwrite existing evidence. Past 80% of the heap-usage limit it also
+  degrades, never materializing a profile near OOM. If a write is still in flight when the sampling window
+  expires, the profiler is released; a slow disk must not let sampling state accumulate without bound.
+- All CLI processes share `~/.zcode/cli/memory-diagnostics`: at most 2 completed files per instance, at most 16
+  in the whole directory, 64 KiB each, completed files totalling at most 1 MiB. A directory lock serializes
+  eviction and writing; contention retries only briefly and then drops the round. Evict first, then write, with
+  atomic replacement; inside the lock, temporary files left by a previous crash are cleaned up, so at most one
+  extra 64 KiB temporary file exists. Files older than 7 days are evicted too. The JSONL is not appended to, so
+  it cannot grow without bound with run length or process restarts.
+- Feedback full/compact archives and manual log export both carry the records. Feedback places this directory
+  ahead of the normal logs, accepts only the specified file names and structured numeric/location fields, and
+  must not drop a whole profile because generic body redaction matched it; environment variables, conversations,
+  tool arguments, configuration or script contents are never uploaded. When feedback is submitted without
+  attaching logs, this directory is not packaged or uploaded.
+- A remote CLI records on the remote side; local feedback does not auto-download remote diagnostics. Mobile still
+  reuses the Host and adds no duplicate collector.
+
+```text
+app-server ready -> adapter allocation sampling + 15s metrics -> bounded files (directory lock is the sole writer)
+                          | 60s window reset                 |
+                          v                                  v
+                    over budget -> metrics only     existing feedback / log export -> structured safe projection
+runtime stop -> stop timers, disconnect the inspector; a crash relies on the files already written
+```
+
+Acceptance: the CLI regression covers sampling-window reset, over-budget degradation, no writes after stop, no
+queueing on slow writes, concurrent retention limits, expired/temporary-file cleanup and forbidden data fields; a
+real runtime verifies allocation locations of the minified bundle and external growth of Buffers; the real
+archive function is verified with synthetic records for full/compact carriage, privacy filtering and the total
+budget. Alternating the sampling switch under the same load records CPU/elapsed time and the per-collection
+cost; a "low sampling frequency" is not accepted in place of performance evidence.
+
+Local verification (2026-11-11, macOS, Node 24.21.0 shipped with the desktop): a synthetic bundle, minified
+without source maps, recorded allocation locations and a matching SHA-256, with a single inspection taking
+13.8 ms. Across 8 same-load tests alternating the sampling switch, the median elapsed time was 441.9 ms off and
+446.6 ms on (about +1.1%), with no median CPU increase. This short test measures the cost of allocation
+sampling; the cost of the 15-second periodic check is measured separately and cannot be extrapolated into a
+performance guarantee for all real tasks. After 8 processes competed to write 400 times, 14 valid files
+totalling 10,164 bytes remained, with no leftover locks or temporary files. A real feedback archive kept the
+allocation locations and removed injected body and environment-variable fields; Windows/Linux runtimes are not
+verified yet.
+
 ## Problem
 
 When users report steadily growing desktop memory, a log archive could not answer three questions: which process
@@ -18,8 +85,9 @@ host→main or renderer→main message types, or change any business logic.
 ## Product contract
 
 1. Four process kinds each sample their own memory: main, renderer (per window), utility_host (per-window Local
-   Host), agent_node (the `zcode-cli` of each workspace). The sampling period is fixed at `60_000ms`; agent_node
-   reuses the beat of the existing `process/resourceSample` sampler and adds no timer.
+   Host), agent_node (the `zcode-cli` of each workspace). The base log's sampling period is fixed at `60_000ms`;
+   agent_node reuses the beat of the existing `process/resourceSample` sampler. The 3.18.1 allocation diagnostics
+   use the separate 15-second timer described above.
 2. Sampling and writing are separate. After each sample it is written on any of these conditions, otherwise
    dropped:
    - first sample (`reason=first`);
@@ -44,7 +112,7 @@ host→main or renderer→main message types, or change any business logic.
  60s: performance.memory          60s: process.memoryUsage()      existing 60s sampler, inside onSample
       + ui domain counters             + services domain counters       process.memoryUsage()
       │ logger.logMemoryDiagnostics    │ host logger.info                + server domain counters
-      │ (bypasses prod gating, goes     │ (existing [host-log] forwarding) │ CLI logger.info
+      │ (bypasses prod gating, goes    │ (existing [host-log] forwarding) │ CLI logger.info
       │  through window.zcode.log)      v                                 v
       v
  ~/.zcode/v2/logs/YYYY-MM-DD.log  ←── main 60s: memoryUsage + per-role working set + main counters
@@ -113,7 +181,8 @@ read (only `Map.size` / `Set.size` / array length), must not change state and mu
   directly.
 - Main does not supplement other processes with `ps` / PowerShell; it uses only `process.memoryUsage()` and
   `app.getAppMetrics()`.
-- Each workspace process on the CLI side has only the one existing `unref()` timer.
+- The CLI's base log reuses the resource-sampling timer; the allocation diagnostics hold their own separate
+  `unref()` timer, which stops with the runtime.
 
 ## How to read
 

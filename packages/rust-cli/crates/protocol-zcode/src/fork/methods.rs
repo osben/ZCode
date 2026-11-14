@@ -13,6 +13,19 @@ pub(crate) async fn dispatch(
     method: &str,
     params: Value,
 ) -> Option<Result<Reply, RpcError>> {
+    // Fork: the Node helper answers the forwarded families when the Host configured one. `None` falls through, so
+    // an unadvertised method keeps its answer (`-32601`, or `{"runs": []}` for the run list).
+    if let Some(helper) = server.context.node_helper() {
+        // F3: a session-scoped call is forwarded only for an own session and a helper-hosted server.
+        if let Err(error) =
+            super::helper_session_admit::admit(server, helper, method, &params).await
+        {
+            return Some(Err(error));
+        }
+        if let Some(result) = helper.forward(method, &params).await {
+            return Some(result.map(Reply::new));
+        }
+    }
     let result = match method {
         "v4/conversation/plans" => plans(server, &params).await,
         // Fork: the App's per-turn file summary queries (specs/fork-rust-agent-parity.md).
@@ -26,17 +39,67 @@ pub(crate) async fn dispatch(
         "session/treeCounts" => super::session_tree::tree_counts(server, &params).await,
         "session/eraseTree" => super::session_tree::erase_tree(server, &params).await,
         "session/debug" => session_debug(&params),
+        // Fork: the legacy session methods behind the Host's automation runs (specs/fork-rust-automations.md).
+        "session/create" => super::legacy_session::create(server, &params).await,
+        "session/resume" => super::legacy_session::resume(server, &params).await,
+        "session/setMode" => super::legacy_session::set_mode(server, &params).await,
+        "session/setThoughtLevel" => {
+            super::legacy_session::set_thought_level(server, &params).await
+        }
+        "session/setModel" => super::legacy_session::set_model(server, &params).await,
         "skills/referenceCatalog" => super::skills::reference_catalog(server, &params).await,
         // Fork: the App's subagent directory pane (Node `listSessionSubagents`).
         "session/subagents" => super::subagents::subagents(server, &params).await,
         // Fork: the App's usage surfaces.
         "v4/usage/stats" => super::usage::usage_stats(server, &params).await,
         "v4/conversation/usage" => super::usage::conversation_usage(server, &params).await,
+        // Fork: the Host unloads a removed managed worktree's sessions (Node `releaseSessionsUnderDirectory`).
+        "session/releaseUnderDirectory" => {
+            super::release_under_directory::release(server, &params).await
+        }
         // Fork: the background Bash detail pane (Node `readBackgroundBashOutput`).
         "v4/conversation/backgroundBashOutput" => {
             super::background_work::bash_output(server, &params).await
         }
-        _ => return None,
+        // Fork: workspace trust from the App (fork/workspace_trust.rs); not ported without the entry point's admin.
+        "mcp/list" => {
+            return super::workspace_trust::mcp_list(server, &params)
+                .await
+                .map(|r| r.map(Reply::new));
+        }
+        "workspace/mcp/trust" => {
+            return super::workspace_trust::mcp_trust(server, &params)
+                .await
+                .map(|r| r.map(Reply::new));
+        }
+        "workspace/hooks/trustGrant" => {
+            return super::workspace_trust::hook_trust_grant(server, &params)
+                .await
+                .map(|r| r.map(Reply::new));
+        }
+        "mcp/readResource" => super::workspace_trust::read_resource(server, &params).await,
+        // Fork: workspace model calls (Node `workspace-generate-text.ts`); unported without the entry's model port.
+        "workspace/generateText"
+        | "workspace/cancelGenerateText"
+        | "provider/testModelConnectivity"
+            if server.context.model_port().is_none() =>
+        {
+            return None;
+        }
+        "workspace/generateText" => super::workspace_model::generate_text(server, &params).await,
+        "workspace/cancelGenerateText" => super::workspace_model::cancel(server, &params),
+        "provider/testModelConnectivity" => {
+            super::workspace_model::test_connectivity(server, &params).await
+        }
+        // Fork: the legacy background stop (Node `cancelBackgroundTask`).
+        "session/cancelBackgroundTask" => super::background_task::cancel(server, &params).await,
+        // Fork: the Host's resource sampler (Node `process/childProcesses`); params are not read.
+        "process/childProcesses" => Ok(super::child_processes::child_processes(server)),
+        _ => {
+            return super::lsp::dispatch(server.context.language_servers(), method, &params)
+                .await
+                .map(|result| result.map(Reply::new));
+        }
     };
     Some(result.map(Reply::new))
 }

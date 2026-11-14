@@ -5,6 +5,7 @@ use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use rust_cli_kernel_api::history;
+use rust_cli_kernel_api::hooks::is_session_start_context;
 use rust_cli_kernel_api::message::{
     CompactBoundary, ContentBlock, Message, PreservedSegment, UserMessage, UserOrigin,
 };
@@ -46,6 +47,14 @@ pub(crate) enum Failure {
     Aborted,
     #[error("Error during compaction: {0}")]
     Error(String),
+}
+
+/// The text of an attachment message (the full text, as the SessionStart comparison uses it).
+fn attachment_text(message: &Message) -> Option<&str> {
+    match message {
+        Message::Attachment(attachment) => Some(attachment.text.as_str()),
+        _ => None,
+    }
 }
 
 /// 一次摘要请求的输入。
@@ -176,6 +185,8 @@ impl Engine<'_> {
     ) -> Attempt {
         let meta = |text: &str, source: &str| {
             Message::User(UserMessage {
+                stall_execution: None,
+                intent: None,
                 id: self.ports.ids.message(),
                 content: vec![ContentBlock::Text {
                     text: text.to_owned(),
@@ -194,6 +205,8 @@ impl Engine<'_> {
         messages.extend(split.summarize.iter().map(|m| (*m).clone()));
         // 摘要提示是一条普通 user 消息。
         messages.push(Message::User(UserMessage {
+            stall_execution: None,
+            intent: None,
             id: self.ports.ids.message(),
             content: vec![ContentBlock::Text {
                 text: summary::prompt(instructions),
@@ -203,6 +216,7 @@ impl Engine<'_> {
         let query = QueryRequest {
             agent: request.agent.clone(),
             max_turns: Some(1),
+            inject_agents_md: request.inject_agents_md,
             ..QueryRequest::new(
                 request.session.clone(),
                 self.ports.ids.run(),
@@ -234,10 +248,15 @@ impl Engine<'_> {
             .iter()
             .map(|g| tokens::messages(g.iter().copied()))
             .collect();
-        let mut keep = 1;
+        // Fork: like Node `selectCompactEntries`, a manual `/compact` summarizes every round and keeps no
+        // tail; only automatic and reactive compaction start by keeping the last round verbatim.
+        let manual = request.trigger == rust_cli_kernel_api::message::CompactTrigger::Manual;
+        let mut keep = usize::from(!manual);
         // 播种（有初始差且组数 > 3）：差减去最后一组仍 > 0 时，按剩下的差多保留几组。
+        // A manual compact keeps no tail, so it is not seeded either.
         if let Some(gap) = request.initial_token_gap
             && total > SEED_MIN_GROUPS
+            && !manual
         {
             let remaining = gap.saturating_sub(group_tokens[total - 1]);
             if remaining > 0 {
@@ -323,21 +342,21 @@ impl Engine<'_> {
         }
     }
 
-    /// 压缩附件里的计划模式、调用过的 skill 与清单增量（spec §3.4），排在文件之后；只在主线程。
-    /// 生成失败时不带（吞掉错误），下一步由 context 照常宣布。
-    async fn listings(&self, request: &CompactRequest, kept: &[&Message]) -> Vec<Message> {
-        if request.agent.is_some() {
-            return Vec::new();
-        }
-        let context = ContextRequest {
+    /// 给 context 的请求：主线程的工具与模式；子代理的压缩带子代理 ID（只用于重读文件的排除）。
+    fn context_request(&self, request: &CompactRequest) -> ContextRequest {
+        ContextRequest {
+            // Fork: the session's snapshot, not the global list, so an incognito session's removed tools (MCP
+            // servers, automation tools) never reach the post-compact `deferred_tools_delta` (main loop: query::step).
             tool_names: self
                 .ports
                 .tools
-                .tools()
+                .snapshot(&request.session)
+                .tools
                 .into_iter()
                 .filter(|tool| tool.is_enabled())
                 .map(|tool| tool.name().to_owned())
                 .collect(),
+            agent: request.agent.clone(),
             ..ContextRequest::new(
                 request.session.clone(),
                 request.workspace.clone(),
@@ -345,7 +364,16 @@ impl Engine<'_> {
                 request.mode.unwrap_or(PermissionMode::Default),
                 request.selection.clone(),
             )
-        };
+        }
+    }
+
+    /// 压缩附件里的计划模式、调用过的 skill 与清单增量（spec §3.4），排在文件之后；只在主线程。
+    /// 生成失败时不带（吞掉错误），下一步由 context 照常宣布。
+    async fn listings(&self, request: &CompactRequest, kept: &[&Message]) -> Vec<Message> {
+        if request.agent.is_some() {
+            return Vec::new();
+        }
+        let context = self.context_request(request);
         let kept: Vec<Message> = kept.iter().map(|message| (*message).clone()).collect();
         // 压缩前的全部历史：调用过的 skill 从它取（spec §3.4）。
         self.ports
@@ -374,6 +402,8 @@ impl Engine<'_> {
             kept_tail: !split.keep.is_empty(),
         };
         let summary = UserMessage {
+            stall_execution: None,
+            intent: None,
             id: summary_id.clone(),
             content: vec![ContentBlock::Text {
                 text: summary::message_text(&raw, shape),
@@ -400,15 +430,37 @@ impl Engine<'_> {
         // 判断“读过且未变”，压缩后的文件附件是 `Wasted call…`。应在这里先复制、再清空，用复制品选文件，
         // 重读时状态已空。`clear` 一次做完复制与清空。
         let recent = self.ports.files.clear(&request.session);
+        // Node `excludedPaths`: files already in the context are not restored (owner: context).
+        let excluded = self
+            .ports
+            .context
+            .restore_exclusions(&self.context_request(request))
+            .await;
         let mut restored: Vec<Message> = restore
-            .files(request, &recent, &split.keep, cancel)
+            .files(request, &recent, &split.keep, &excluded, cancel)
             .await
             .into_iter()
             .map(Message::Attachment)
             .collect();
         restored.extend(self.listings(request, &split.keep).await);
         // SessionStart（`compact`）的消息排在附件之后，三种触发都跑。
-        restored.extend(hooks::session_start(self.ports.hooks.as_ref(), request, cancel).await);
+        let started = hooks::session_start(self.ports.hooks.as_ref(), request, cancel).await;
+        let session_start_context = started.iter().any(is_session_start_context);
+        // Node `runCompactSessionStartHooks`: a context equal to the latest one the compaction keeps is not restored
+        // (`preservedEntries`), and its hook group goes with it. The kept history is the only comparison.
+        let kept = split
+            .keep
+            .iter()
+            .rev()
+            .find(|message| is_session_start_context(message))
+            .and_then(|message| attachment_text(message));
+        let duplicate = kept.is_some()
+            && started.iter().any(|message| {
+                is_session_start_context(message) && attachment_text(message) == kept
+            });
+        if !duplicate {
+            restored.extend(started);
+        }
         hooks::post_compact(self.ports.hooks.as_ref(), request, &raw, cancel).await;
         Ok(CompactResult {
             boundary: CompactBoundary {
@@ -421,6 +473,7 @@ impl Engine<'_> {
             },
             summary,
             restored,
+            session_start_context,
         })
     }
 }

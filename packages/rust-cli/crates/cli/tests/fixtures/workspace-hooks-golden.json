@@ -118,5 +118,43 @@
         "hookDeclarationDigest": "8e137da0c0075889db2e360e4ec4228e7db70aa2cfe7efa4a99ff0016f135d98"
       }
     ]
+  },
+  {
+    "name": "compaction and session end events, in Node's event order",
+    "bundleDigest": "856e765a04c8a75785c345c3f2607c02234cf59013ab5dbe5a2624ecc060b749",
+    "hooks": [
+      {
+        "reviewItemId": "workspace-hook-0-UserPromptSubmit-0-0",
+        "sourceRelativePath": ".zcode/config.json",
+        "resolvedTimeoutMs": 60000,
+        "configuredEnabled": true,
+        "editable": true,
+        "hookDeclarationDigest": "a0f610988e1391c1d1758387e8b766a709173ece3d37b92c9a288ce6272b4507"
+      },
+      {
+        "reviewItemId": "workspace-hook-0-PreCompact-0-0",
+        "sourceRelativePath": ".zcode/config.json",
+        "resolvedTimeoutMs": 3000,
+        "configuredEnabled": true,
+        "editable": true,
+        "hookDeclarationDigest": "45c45ac7a6630e08b7c7bd1c9540ccdd4481175d7dfff69467a46fa90f020b9a"
+      },
+      {
+        "reviewItemId": "workspace-hook-0-PostCompact-0-0",
+        "sourceRelativePath": ".zcode/config.json",
+        "resolvedTimeoutMs": 60000,
+        "configuredEnabled": true,
+        "editable": true,
+        "hookDeclarationDigest": "aa415a912ff425f3db72bd09d8c7982ec055c5980a4f3707917692d83cc6e1df"
+      },
+      {
+        "reviewItemId": "workspace-hook-0-SessionEnd-0-0",
+        "sourceRelativePath": ".zcode/config.json",
+        "resolvedTimeoutMs": 60000,
+        "configuredEnabled": true,
+        "editable": true,
+        "hookDeclarationDigest": "59b46f1dcc0e106e5a69dfd7df44d53c61c676cc007e7a6e52a8a8b6cba9576e"
+      }
+    ]
   }
 ]

@@ -3,7 +3,7 @@
 //! 算法照搬 `packages/shared/src/workspace-hook-digest.ts`（`resolveWorkspaceHookEntries`、
 //! `buildWorkspaceHookBundleSnapshot`、`createWorkspaceHookDeclarationDigest`）与
 //! `workspace-hook-config.ts`（`resolveWorkspaceHookRuntimeRoot`、门的计算）。digest 是
-//! `sha256(JSON.stringify(数组))`，JSON 文本按 JS 的规则生成。只遍历 Node 的 7 个事件。
+//! `sha256(JSON.stringify(数组))`，JSON 文本按 JS 的规则生成。只遍历 Node 的 10 个事件。
 
 use rust_cli_base::js::json::stringify;
 use serde_json::{Value, json};
@@ -146,7 +146,7 @@ fn declaration_digest(
     sha256(&Value::Array(payload))
 }
 
-/// Node `resolveWorkspaceHookEntries`：来源 → 7 个事件的固定顺序 → matcher → hook。
+/// Node `resolveWorkspaceHookEntries`：来源 → 10 个事件的固定顺序 → matcher → hook。
 pub fn entries(sources: &[DigestSource<'_>], root: &RuntimeRoot) -> Vec<DigestEntry> {
     let mut entries = Vec::new();
     for (source_index, source) in sources.iter().enumerate() {

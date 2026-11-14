@@ -4,16 +4,16 @@ This matrix tracks the behavior contracts in the [Usage Stats E2E Case Catalog](
 
 ## Existing evidence
 
-| Spec                                                       | Proven                                                                                                                                                    | Not proven                                    |
-| ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
-| `packages/desktop/test/e2e/coding-plan-team-usage.test.ts` | Team pricing cold start, connection method, personal/Team credit, range, error isolation and recovery, access freshness, entry visibility, viewport/theme | App Usage; mobile `/remote` UI (pruned by D1) |
-| UI/services/CLI focused tests                              | mapper, dates, statistics aggregation, hooks state, in-flight/backoff, Coding/Start mutual exclusion, Z.AI source isolation and error branches            | Real Electron navigation is not re-proven     |
+| Spec                                                                           | Proven                                                                                                                                                    | Not proven                                    |
+| ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| `packages/desktop/test/e2e/coding-plan/account/coding-plan-team-usage.test.ts` | Team pricing cold start, connection method, personal/Team credit, range, error isolation and recovery, access freshness, entry visibility, viewport/theme | App Usage; mobile `/remote` UI (pruned by D1) |
+| UI/services/CLI focused tests                                                  | mapper, dates, statistics aggregation, hooks state, in-flight/backoff, Coding/Start mutual exclusion, Z.AI source isolation and error branches            | Real Electron navigation is not re-proven     |
 
 ## Candidate spec groups
 
 | Spec abbreviation  | Candidate path                                                   | Cases                                                 | Timing                           | Status       |
 | ------------------ | ---------------------------------------------------------------- | ----------------------------------------------------- | -------------------------------- | ------------ |
-| `UA`               | `test/e2e/usage-stats/usage-stats-app-usage.test.ts`             | US-AU-01..05                                          | fast-text                        | formal-green |
+| `UA`               | `test/e2e/usage-stats/application/usage-stats-app-usage.test.ts` | US-AU-01..05                                          | fast-text                        | formal-green |
 | `UP`               | existing `coding-plan-team-usage.test.ts` plus focused extension | US-CP-01..07,09; US-RF-01; US-SY-01..03; US-CM-01..02 | fast-text/fault HTTP             | formal-green |
 | `UI-focused`       | existing UI hook/component tests                                 | US-RF-02..05, US-SY-04, US-SP-01..04, Z.AI isolation  | deterministic state tests        | green        |
 | `remote-invariant` | existing desktop shared-host/attachment tests                    | US-CM-03                                              | deterministic architecture tests | green        |
@@ -55,7 +55,7 @@ Final targeted core-file line coverage: `AppUsagePanel` 97.22%, `CodingPlanUsage
 
 ## User pruning confirmation
 
-Provider settings addition: CTP-12 `packages/desktop/test/e2e/provider-family-responsive.test.ts` covers long-name wide/narrow layout, the Start tooltip, quick switching and settings persistence in the real app. Status: formal, promoted with user confirmation on 2026-09-04; the formal entry passed 1 with evidence `packages/desktop/.e2e-artifacts/desktop-e2e-20260904060754282-p39563-0c1b2374a55285ca/summary.json`. It counts as provider-settings formal coverage, does not extend usage-statistics business coverage and does not represent mobile remote verification.
+Provider settings addition: CTP-12 `packages/desktop/test/e2e/settings/providers/provider-family-responsive.test.ts` covers long-name wide/narrow layout, the Start tooltip, quick switching and settings persistence in the real app. Status: formal, promoted with user confirmation on 2026-09-04; the formal entry passed 1 with evidence `packages/desktop/.e2e-artifacts/desktop-e2e-20260904060754282-p39563-0c1b2374a55285ca/summary.json`. It counts as provider-settings formal coverage, does not extend usage-statistics business coverage and does not represent mobile remote verification.
 
 | Decision                                                                                  | Proposed answer | Status              |
 | ----------------------------------------------------------------------------------------- | --------------- | ------------------- |

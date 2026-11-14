@@ -216,6 +216,62 @@ fn disabled_servers_and_origins_follow_the_shadowing() {
     assert_eq!(found.origins["repo"].path, layers(&user, &projects)[2].path);
 }
 
+/// Fork: Node `normalizeProjectMcpServer` resolves a project stdio server's `cwd` against the declaring file's base
+/// directory (the parent of `.zcode/`), default `.`, so a file above the workspace root runs what its trust review
+/// showed. User servers keep their `cwd` (resolved against the workspace root at spawn), and so does a project server
+/// bound to another machine (that machine resolves it).
+#[test]
+fn a_project_stdio_cwd_is_resolved_against_its_files_base_directory() {
+    let user = object(json!({"mcp": {"servers": {"mine": {"command": "u", "cwd": "tools"}}}}));
+    let outer = object(json!({"mcp": {"servers": {
+        "rel": {"command": "a", "cwd": "tools"},
+        "bare": {"command": "b"},
+        "abs": {"command": "c", "cwd": "/opt/x"},
+        "web": {"type": "http", "url": "https://example.test/mcp"},
+    }}}));
+    let layers = vec![
+        Layer {
+            source: RuleSource::UserSettings,
+            object: &user,
+            path: "/home/u/.zcode/v2/config.json",
+        },
+        Layer {
+            source: RuleSource::ProjectSettings,
+            object: &outer,
+            path: "/repo/.zcode/config.json",
+        },
+    ];
+    let mut warnings = Vec::new();
+    let mut found = mcp_layers(&layers, &mut warnings);
+    let mut remote = found
+        .servers
+        .iter()
+        .find(|s| s.name == "rel")
+        .unwrap()
+        .clone();
+    remote.name = "remote".to_owned();
+    remote.machine = rust_cli_kernel_api::ids::MachineName::new("dev-a");
+    found.servers.push(remote);
+    found
+        .origins
+        .insert("remote".to_owned(), found.origins["rel"].clone());
+    resolve_project_cwds(&mut found.servers, &found.origins);
+    let cwd = |name: &str| {
+        let server = found.servers.iter().find(|s| s.name == name).unwrap();
+        match &server.transport {
+            McpTransportConfig::Stdio { cwd, .. } => cwd.clone(),
+            _ => None,
+        }
+    };
+    assert_eq!(cwd("rel").as_deref(), Some("/repo/tools"));
+    assert_eq!(cwd("bare").as_deref(), Some("/repo"));
+    assert_eq!(cwd("abs").as_deref(), Some("/opt/x"));
+    assert_eq!(cwd("mine").as_deref(), Some("tools"));
+    assert_eq!(cwd("remote").as_deref(), Some("tools"));
+    assert_eq!(cwd("web"), None);
+    assert!(warnings.is_empty(), "{warnings:?}");
+}
+
 /// `compact.autoThresholdTokens`（compact.md §2.3）：按键覆盖，正整数才算，坏值记警告、跳过这一层；定了值的不是用户级
 /// 文件时说出是哪个文件（写回用户级配置改不了它）。
 #[test]

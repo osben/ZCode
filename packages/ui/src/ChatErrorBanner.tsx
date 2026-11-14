@@ -65,6 +65,16 @@ const LOCALIZED_ERROR_CODES = new Set([
   "ZCODE_BIGMODEL_TEAM_PLAN_MEMBER_REQUIRED",
 ]);
 
+// Core modeling-stage catalog error codes (still produced by paths that skip pre-send admission, such as subagents and goal continuation).
+// Root cause: after a trial plan expired its Provider was removed, and such TurnErrors showed the Registry's internal text
+// "Provider Registry 中不存在 Provider: account:bigmodel-start-plan" verbatim to users.
+// Reuse the localized "current model is no longer available, pick another" copy by stable code instead of leaking implementation details.
+const MODEL_NOT_IN_REGISTRY_CODES = new Set(["provider_not_found", "model_not_found"]);
+
+/** Whether a projected error is just Core's expression of the fact that the session model is not in the Registry. */
+export function isModelNotInRegistryError(error: Pick<ZCodeUiError, "code">): boolean {
+  return Boolean(error.code && MODEL_NOT_IN_REGISTRY_CODES.has(error.code));
+}
 function parseClaudeUnknownCommandMessage(message: string): {
   command: string;
   args?: string;
@@ -151,6 +161,10 @@ export function resolveChatErrorBannerDisplayMessage(
 
   if (isSuspiciousEmptyModelResultMessage(error.message)) {
     return intl.formatMessage({ id: "zcode.error.modelSuspiciousEmpty" });
+  }
+
+  if (isModelNotInRegistryError(error)) {
+    return intl.formatMessage({ id: "zcode.error.ZCODE_RUNTIME_MODEL_UNAVAILABLE" });
   }
 
   return error.code && LOCALIZED_ERROR_CODES.has(error.code)

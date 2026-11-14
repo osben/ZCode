@@ -10,6 +10,7 @@
 mod anthropic;
 pub(crate) mod dispose;
 mod openai;
+mod siwc;
 mod vocab;
 mod zhipu;
 

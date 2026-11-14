@@ -234,6 +234,14 @@ impl Memo {
         self.0.lock_unpoisoned().insert(session, entry);
     }
 
+    /// 本会话缓存里的规则文件（不看边界）：压缩时就是被压缩的窗口加载的那一份。
+    pub(crate) fn current(&self, session: &SessionId) -> Option<Arc<Vec<RuleFile>>> {
+        self.0
+            .lock_unpoisoned()
+            .get(session)
+            .map(|entry| entry.files.clone())
+    }
+
     /// 会话关闭：丢掉它的缓存（再打开时按 `session_start` 重读，同 `/clear` 与 resume）。
     pub(crate) fn forget(&self, session: &SessionId) {
         self.0.lock_unpoisoned().remove(session);

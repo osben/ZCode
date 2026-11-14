@@ -6,18 +6,25 @@
 //!
 //! 每个会话一个 actor，运行在自己的子任务作用域里；内核释放时根作用域中止全部会话任务。
 
+mod acp;
 mod agents;
+// Fork: specs/fork-rust-node-helper.md F3.
+mod app_tool;
 mod assemble;
 mod catalog;
 mod config;
 mod directory;
 mod export;
 mod ext;
+mod hook_transcripts;
 mod kernel;
 mod late;
 mod listings;
+// Fork: the `LSP` tool's availability before a main-thread run (specs/fork-rust-lsp.md "Tool (D2)").
+mod lsp_tool;
 mod permissions;
 mod projects;
+mod sampling;
 mod table;
 mod usage;
 mod workspace_sessions;
@@ -53,9 +60,11 @@ use table::{Closer, OpenSessions};
 
 use crate::assemble::SurfaceTraits;
 
+pub use acp::{AcpSetup, external_agent};
 pub use ext::{ExtConfig, Extensions};
+pub use hook_transcripts::LocalHookTranscripts;
 pub use rust_cli_compact::{AutoCompactAt, CompactConfig, Thresholds as CompactThresholds};
-pub use rust_cli_context::{Attribution, ContextConfig, OutputStyle, Surface};
+pub use rust_cli_context::{Attribution, ContextConfig, DesktopContext, OutputStyle, Surface};
 // hooks 快照（`LocalKernel::replace_hooks` 的参数）：前端的测试组装它不必依赖 hooks crate（修复线 F37 的 TUI 测试）。
 pub use rust_cli_hooks::{HookSource, HooksConfig, HooksSettings};
 pub use rust_cli_query::{RequestLimits, ThinkingTokens};
@@ -106,6 +115,8 @@ pub struct Limits {
     /// `ZCODE_FORK_SUBAGENT`（对照实现有同义的开关，修复线 L-A，agents.md §8.1.1）：Some(true) 打开 fork
     /// 子代理（`-p` 也开），Some(false) 关掉，None 按形态（交互会话开，`-p` 关）。
     pub fork_subagent: Option<bool>,
+    /// `ZCODE_SUBAGENT_STALL_NOTIFY_MS` 的生效值（毫秒，入口已按 Node 的规则读过：至少 10 秒）；None 用 core 的缺省（15 分钟）。
+    pub subagent_stall_notify_ms: Option<u64>,
 }
 
 pub struct LocalKernel {
@@ -138,6 +149,9 @@ pub struct LocalKernel {
     sessions: OpenSessions,
     /// 关闭时标成关闭中、释放按会话的表（[`Closer`]）。
     closer: Arc<Closer>,
+    /// Fork: incognito profiles by session (specs/fork-rust-agent-parity.md, "Incognito sessions"): filled at create
+    /// and open, read by every incognito gate.
+    incognito: rust_cli_kernel_api::incognito::IncognitoProfiles,
     /// 本机跨会话通信（cross-session.md §2.4）：每个会话 actor 共用这一份端口。
     peers: rust_cli_session::PeerDeps,
     /// 父会话关闭之后旧会话的询问入口（进程级，agents.md §4.1.2，工作线 F72）：每个会话 actor 共用这一份。
@@ -150,6 +164,17 @@ pub struct LocalKernel {
     fork_while_running: bool,
     /// Fork: a failed turn holds the queue, like the Node desktop agent ([`Extensions::node_desktop`]).
     error_holds_queue: bool,
+    /// Fork: a SessionStart `session_title` and `initial_user_message` apply only outside the Node desktop agent, which reads neither.
+    session_start_extras: bool,
+    /// Fork: the ACP agents' session config (`setExternalAgentConfigOption`), when the entry runs ACP agents.
+    external_agent_configs:
+        Option<Arc<dyn rust_cli_kernel_api::external_agent_config::ExternalAgentConfigs>>,
+    /// Fork: a typed `/compact [instructions]` runs the manual compaction, like the Node desktop agent ([`Extensions::node_desktop`]).
+    typed_compact: bool,
+    /// Fork: hook run rows and the blocked-prompt banner, like the Node desktop agent ([`Extensions::node_desktop`]).
+    hook_rows: bool,
+    /// Fork: the main loop's tool pipeline; MCP App calls are authorized with it (app_tool.rs).
+    pipeline: Arc<rust_cli_tools::Pipeline>,
 }
 
 impl LocalKernel {
@@ -208,6 +233,11 @@ impl LocalKernel {
         tasks: Arc<dyn TaskListStore>,
         extensions: Extensions,
     ) -> Self {
+        // Fork: an `acp:` selection never reaches a model provider; side callers fail closed (acp::guard).
+        let ports = Ports {
+            model: Arc::new(acp::ExternalAgentModelGuard { inner: ports.model }),
+            ..ports
+        };
         let scope = TaskScope::root("rust-cli", |panic| {
             tracing::error!(scope = %panic.scope, task = panic.task, message = %panic.message, "task panicked");
         });
@@ -216,7 +246,14 @@ impl LocalKernel {
         let operations = Operations::new(ports.ids.generation(), ports.ids.clone());
         // 各能力拿会话主 env 的端口：规则文件、记忆、插件、skills 与 git 都跟着主 env（deployment.md §8、§10）。
         let machine = ports.environments.primary_machine();
-        let hooks = assemble::hooks(&ports, &operations);
+        // Fork: the one in-memory owner of the sessions' incognito profiles, read by every gate.
+        let incognito = rust_cli_kernel_api::incognito::IncognitoProfiles::default();
+        let hooks = assemble::hooks(
+            &ports,
+            &operations,
+            &incognito,
+            extensions.hook_transcripts.clone(),
+        );
         let traits = SurfaceTraits::new(
             matches!(context.surface, Surface::Print),
             extensions.streaming_input,
@@ -228,15 +265,58 @@ impl LocalKernel {
             &ports,
             (&gate, scope.spawner()),
             base.registry.clone(),
-            (extensions.config.clone(), traits),
+            (assemble::ext_config(&extensions), traits),
+            &incognito,
         );
         // agent 清单（context）与 Agent 工具共用一个目录：插件 agent 设置一次，两处同时看到（L12）。
         let agent_catalog = Arc::new(AgentCatalog::new(
             machine.info().clone(),
             machine.files().clone(),
         ));
-        let assembler = assemble::context(&ports, context, (&agent_catalog, &base, &ext));
+        agent_catalog.set_incognito(incognito.clone());
+        if let Some(code) = &extensions.code_intelligence {
+            code.set_incognito(incognito.clone());
+        }
+        if let Some(host) = &extensions.subagent_config {
+            agent_catalog.set_host(host.clone());
+        }
+        if let Some(models) = &extensions.models {
+            agent_catalog.set_models(models.clone());
+        }
+        let assembler = assemble::context(
+            &ports,
+            context,
+            (&agent_catalog, &base, &ext),
+            &incognito,
+            extensions.code_intelligence.clone(),
+        );
         let sessions = OpenSessions::default();
+        let pipeline = assemble::pipeline(&ports, &ext, &gate, &hooks, extensions.node_desktop);
+        let parts = assemble::query_parts(
+            &ports,
+            (&assembler, &ext, &gate, &hooks),
+            (&late, operations, &pipeline),
+            (&defaults, traits, extensions.node_desktop),
+            extensions.code_intelligence.clone(),
+        );
+        let agents = assemble::agents(
+            &ports,
+            (&parts, tasks, &agent_catalog),
+            (&late, scope.spawner(), &extensions.peers),
+            (&defaults, traits, extensions.node_desktop),
+            &incognito,
+        );
+        // Fork: ACP agent processes by session; a session close releases its process.
+        let acp_host = extensions.acp.clone().map(|setup| {
+            Arc::new(acp::AcpHost::new(
+                setup,
+                ports.store.clone(),
+                (ports.clock.clone(), ports.ids.clone()),
+                agents.task_plan_writer(),
+                scope.spawner(),
+            ))
+        });
+        // Fork: built after the agents so a release also reaches them (their notice forwarders).
         let closer = Arc::new(Closer {
             sessions: Arc::downgrade(&sessions),
             scoped: table::SessionScoped {
@@ -245,20 +325,11 @@ impl LocalKernel {
                 worktrees: base.worktrees.clone(),
                 gate: gate.clone(),
                 mcp: ext.mcp().clone(),
+                agents: agents.signals(),
+                acp: acp_host.clone().map(|host| acp::AcpRelease { host }),
+                agent_catalog: agent_catalog.clone(),
             },
         });
-        let parts = assemble::query_parts(
-            &ports,
-            (&assembler, &ext, &gate, &hooks),
-            (&late, operations),
-            (&defaults, traits),
-        );
-        let agents = assemble::agents(
-            &ports,
-            (&parts, tasks, &agent_catalog),
-            (&late, scope.spawner(), &extensions.peers),
-            (&defaults, traits, extensions.node_desktop),
-        );
         // 两处晚绑定（late.rs）：ToolSearch 的目录看 agents 的注册表；任务提醒读 agents 的清单（agents 要用上下文）。
         let tools = agents.registry();
         base.catalog.bind(&tools);
@@ -283,7 +354,29 @@ impl LocalKernel {
         late.bind(compactor.clone());
         let operations = parts.operations.clone();
         let parts = QueryParts { tools, ..parts };
-        let runner = agents.track(Arc::new(QueryLoop::new(parts)));
+        let main_loop: Arc<dyn QueryRunner> = Arc::new(QueryLoop::new(parts));
+        // Fork: the session's `LSP` tool fact is settled before the run's first tool snapshot.
+        let main_loop: Arc<dyn QueryRunner> = match extensions.code_intelligence.clone() {
+            Some(code) => Arc::new(lsp_tool::LspToolSettle {
+                inner: main_loop,
+                code,
+            }),
+            None => main_loop,
+        };
+        // Fork: ACP selections run on the agent process (specs/fork-rust-agent-parity.md "ACP external agents").
+        let external_agent_configs = acp_host.clone().map(
+            |host| -> Arc<dyn rust_cli_kernel_api::external_agent_config::ExternalAgentConfigs> {
+                host
+            },
+        );
+        let main_loop: Arc<dyn QueryRunner> = match acp_host {
+            Some(host) => Arc::new(acp::ExternalAgentRunner {
+                inner: main_loop,
+                host,
+            }),
+            None => main_loop,
+        };
+        let runner = agents.track(main_loop);
         let detached = Arc::new(rust_cli_session::DetachedAsks::new(
             ports.store.clone(),
             ports.ids.clone(),
@@ -310,22 +403,37 @@ impl LocalKernel {
             scope,
             sessions,
             closer,
+            incognito,
             peers: extensions.peers,
             detached,
             one_input_per_turn: extensions.node_desktop,
             desktop_goals: extensions.node_desktop,
             fork_while_running: extensions.node_desktop,
             error_holds_queue: extensions.node_desktop,
+            session_start_extras: !extensions.node_desktop,
+            external_agent_configs,
+            typed_compact: extensions.node_desktop,
+            hook_rows: extensions.node_desktop,
+            pipeline,
         }
+    }
+
+    /// Fork: the ACP agents' session config, when the entry runs ACP agents.
+    pub fn external_agent_configs(
+        &self,
+    ) -> Option<Arc<dyn rust_cli_kernel_api::external_agent_config::ExternalAgentConfigs>> {
+        self.external_agent_configs.clone()
     }
 
     /// 加载插件、开始连接 MCP 服务器（不等待连接完成，ext.md §3.3）。插件的 agent 文件交给 agent
     /// 目录、hooks 登记到 hooks 引擎（ext.md §4，L12）；返回时两者都已生效，之后才开会话。
-    pub async fn start_extensions(&self) {
+    /// Fork: returns the loaded plugins, for the Node helper's catalog (specs/fork-rust-node-helper.md F3).
+    pub async fn start_extensions(&self) -> rust_cli_ext::plugins::Plugins {
         let plugins = self.ext.start().await;
         let (agents, hooks) = ext::plugin_parts(&plugins);
         self.agent_catalog.set_plugins(agents);
         self.hooks.register_plugins(hooks);
+        plugins
     }
 
     /// `-p` 在第一个请求前的 MCP 等待（ext.md §3.3.1，修复线 F36）：alwaysLoad 的服务器与 prewait，到期就开跑，
@@ -355,3 +463,11 @@ mod metering_tests;
 #[cfg(test)]
 #[path = "closing_tests.rs"]
 mod closing_tests;
+
+#[cfg(test)]
+#[path = "adopt_tests.rs"]
+mod adopt_tests;
+
+#[cfg(test)]
+#[path = "presence_tests.rs"]
+mod presence_tests;

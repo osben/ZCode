@@ -67,9 +67,15 @@ impl Reply {
     }
 }
 
+/// Fork: the text a title request is made of (Node `normalizeTitleInput(sanitizeTitleSeed(input))`, used for both the
+/// length guard and the request): composer mentions keep their label, the manual skill template becomes its request.
+pub(crate) fn request_input(input: &str) -> String {
+    normalize_input(&rust_cli_kernel_api::title::seed(input))
+}
+
 /// 首条输入能不能生成标题（长度下限按码点数，同 Node）。
 pub(crate) fn long_enough(input: &str) -> bool {
-    let normalized = normalize_input(input);
+    let normalized = request_input(input);
     !normalized.is_empty() && normalized.chars().count() >= title::limits().min_input_chars
 }
 
@@ -110,7 +116,7 @@ impl TitleModel {
         source: SideSource,
     ) -> Generated {
         let (selection, max_tokens) = self.auxiliary(small_fast_model(main)).await;
-        let content = normalize_input(input);
+        let content = request_input(input);
         let (system, user) = if self.node_prompt {
             (title::node_system(), content)
         } else {

@@ -162,6 +162,9 @@ impl Target {
             Request::BackgroundCommand { task } => {
                 port(call(background::background_command(m, task)))
             }
+            Request::EndedBackgroundCommand { task } => {
+                port(call(background::ended_background_command(m, task)))
+            }
             Request::BackgroundElapsed { task } => {
                 port(call(background::background_elapsed(m, task)))
             }

@@ -8,6 +8,7 @@ mod commands;
 mod config;
 mod consts;
 mod frontends;
+mod lsp;
 mod machines;
 mod process;
 

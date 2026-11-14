@@ -18,18 +18,21 @@ export const ProjectTaskRow = memo(function Row({
   refresh,
   variant,
   showFiles,
+  renameOnDoubleClick = true,
 }: {
   task: ProjectTask;
   onSelect: ProjectSidebarProps["onSelectTask"];
   refresh(): Promise<void>;
   variant: "default" | "timeline";
   showFiles: boolean;
+  renameOnDoubleClick?: boolean;
 }) {
   const presentation = useContext(ProjectTaskListContext);
   const { remoteSessionId, rename, pin, archive, unread } = useProjectTaskActions(task, refresh);
   const workspaceKey = task.workspaceIdentity?.trim() || task.workspacePath;
-  const activeId = useZCodeSessionStore(
-    (state) => state.workspaces[workspaceKey]?.activeTaskId ?? null,
+  // 原因：每行订阅完整 activeTaskId 会让同工作区所有行随选择更新；只订阅自身选中态。
+  const isActive = useZCodeSessionStore(
+    (state) => state.workspaces[workspaceKey]?.activeTaskId === task.taskId,
   );
   const rows = useMemo(() => [task], [task]);
   const select = useCallback(
@@ -57,7 +60,7 @@ export const ProjectTaskRow = memo(function Row({
   );
   // Reason: inline JSX creates a new reference every render, defeating TaskList's memo comparison.
   const organizationActions = useMemo(() => <TaskGroupTaskMenu task={task} />, [task]);
-  // Reason: session rows reusing project details would pop layers repeatedly while browsing tasks; remote identity details live only on the project entry.
+  // 项目身份详情只由项目入口承载；会话行使用任务卡，不复用项目详情。
   return (
     // Each row renders its own TaskList; the outer padding keeps selected/hover backgrounds from sticking together.
     <div className="py-px">
@@ -69,7 +72,7 @@ export const ProjectTaskRow = memo(function Row({
         // pinnedTasks only drives badge styling; TaskList's actual render set is always tasks.
         tasks={rows}
         pinnedTasks={task.pinned ? rows : EMPTY}
-        activeTaskId={activeId}
+        activeTaskId={isActive ? task.taskId : null}
         isWorkspaceActive={presentation.activeWorkspaceKey === workspaceKey}
         mobileActiveTaskKey={presentation.mobileActiveTaskKey}
         onOpenFileTree={
@@ -94,6 +97,7 @@ export const ProjectTaskRow = memo(function Row({
         onArchiveTask={archive}
         isArchived={task.archived}
         onSetTaskUnread={unread}
+        renameOnDoubleClick={renameOnDoubleClick}
       />
     </div>
   );
@@ -183,6 +187,8 @@ export function ProjectTaskRows({
             refresh={refresh}
             variant={chronological ? "timeline" : "default"}
             showFiles={kind === "pinned"}
+            // 按未读第一击会清未读并移除该行，第二击没有目标；该视图保留右键重命名。
+            renameOnDoubleClick={kind !== "unread"}
           />
         </Fragment>
       ))}

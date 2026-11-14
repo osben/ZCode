@@ -15,7 +15,10 @@ async fn sign_in_comes_from_the_oauth_profile_or_a_manual_key() {
         none.iter().map(|f| f.family).collect::<Vec<_>>(),
         [Family::Zai, Family::Bigmodel]
     );
-    assert!(none.iter().all(|f| !f.signed_in && f.account.is_empty()));
+    assert!(
+        none.iter()
+            .all(|f| f.login == FamilyLogin::SignedOut && f.account.is_empty())
+    );
     assert_eq!(none[0].plan, AccountPlan::Individual);
     assert_eq!(none[0].provider, ZAI);
     harness
@@ -25,14 +28,14 @@ async fn sign_in_comes_from_the_oauth_profile_or_a_manual_key() {
         }))
         .await;
     let oauth = harness.platform.family_accounts().await;
-    assert!(oauth[0].signed_in);
+    assert_eq!(oauth[0].login, FamilyLogin::SignedIn);
     assert_eq!(oauth[0].account, "dev@example.com");
-    assert!(!oauth[1].signed_in);
+    assert_eq!(oauth[1].login, FamilyLogin::SignedOut);
     harness
         .write_credentials(&manual_login(ZAI, "sk-zai"))
         .await;
     let manual = harness.platform.family_accounts().await;
-    assert!(manual[0].signed_in);
+    assert_eq!(manual[0].login, FamilyLogin::SignedIn);
     assert_eq!(manual[0].account, "");
 }
 
@@ -50,7 +53,7 @@ async fn the_bigmodel_profile_names_the_account() {
         }))
         .await;
     let with_email = harness.platform.family_accounts().await;
-    assert!(with_email[1].signed_in);
+    assert_eq!(with_email[1].login, FamilyLogin::SignedIn);
     assert_eq!(with_email[1].account, "dev@example.com");
     harness
         .write_credentials(&json!({
@@ -59,4 +62,109 @@ async fn the_bigmodel_profile_names_the_account() {
         }))
         .await;
     assert_eq!(harness.platform.family_accounts().await[1].account, "Dev");
+}
+
+/// Desktop credentials that cannot be decrypted: only the value's own family is unreadable (fork spec F2, B7/B8).
+struct OneBadValue;
+
+#[async_trait::async_trait]
+impl rust_cli_kernel_api::provider::CredentialCipher for OneBadValue {
+    async fn encrypt(
+        &self,
+        plaintext: &str,
+    ) -> Result<String, rust_cli_kernel_api::provider::CipherError> {
+        Ok(plaintext.to_owned())
+    }
+
+    async fn decrypt(
+        &self,
+        value: &str,
+    ) -> Result<String, rust_cli_kernel_api::provider::CipherError> {
+        if value.starts_with("enc:v2:") {
+            return Err(rust_cli_kernel_api::provider::CipherError::Decrypt {
+                reason: "the stored credential could not be decrypted",
+            });
+        }
+        Ok(value.to_owned())
+    }
+}
+
+async fn platform_with(
+    cipher: std::sync::Arc<dyn rust_cli_kernel_api::provider::CredentialCipher>,
+    record: serde_json::Value,
+) -> (tempfile::TempDir, crate::Platform) {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = rust_cli_paths::StoragePaths::resolve(&Default::default(), dir.path(), dir.path());
+    crate::test_support::write(paths.credentials().as_path(), record.to_string()).await;
+    let services = crate::test_support::offline_services().await;
+    let platform = crate::Platform::with_cipher(&paths, cipher, services);
+    (dir, platform)
+}
+
+/// B7: the cipher cannot read the stored values: no family with values is reported signed out.
+#[tokio::test]
+async fn unreadable_credentials_are_not_signed_out() {
+    let (_dir, platform) = platform_with(
+        std::sync::Arc::new(crate::test_support::UnavailableCipher),
+        json!({
+            "oauth:zai:access_token": "enc:v2:os:0123456789abcdef01234567:x",
+            "oauth:zai:user_info": "enc:v2:os:0123456789abcdef01234567:y",
+            "oauth:bigmodel:access_token": "enc:v2:os:0123456789abcdef01234567:z",
+        }),
+    )
+    .await;
+    let families = platform.family_accounts().await;
+    assert!(
+        families.iter().all(|f| f.login == FamilyLogin::Unreadable),
+        "{families:?}"
+    );
+    assert!(families.iter().all(|f| f.account.is_empty()));
+}
+
+/// B8: one family's token cannot be decrypted; the other family is read as usual.
+#[tokio::test]
+async fn one_undecryptable_family_does_not_mark_the_other() {
+    let (_dir, platform) = platform_with(
+        std::sync::Arc::new(OneBadValue),
+        json!({
+            "oauth:zai:access_token": "enc:v2:os:0123456789abcdef01234567:x",
+            "oauth:bigmodel:access_token": "at-bm",
+            "oauth:bigmodel:user_info": json!({"id": "1", "username": "dev", "displayName": "Dev"}).to_string(),
+        }),
+    )
+    .await;
+    let families = platform.family_accounts().await;
+    assert_eq!(families[0].login, FamilyLogin::Unreadable);
+    assert_eq!(families[1].login, FamilyLogin::SignedIn);
+    assert_eq!(families[1].account, "Dev");
+}
+
+/// B8: values shared by both families (the ZCode JWT, the active provider) do not decide a family's sign-in, so an
+/// undecryptable shared value marks neither family unreadable.
+#[tokio::test]
+async fn an_undecryptable_shared_value_does_not_mark_the_families() {
+    let (_dir, platform) = platform_with(
+        std::sync::Arc::new(OneBadValue),
+        json!({
+            "zcodejwttoken": "enc:v2:os:0123456789abcdef01234567:x",
+            "oauth:active_provider": "enc:v2:os:0123456789abcdef01234567:y",
+            "oauth:bigmodel:access_token": "at-bm",
+            "oauth:bigmodel:user_info": json!({"id": "1", "username": "dev", "displayName": "Dev"}).to_string(),
+        }),
+    )
+    .await;
+    let families = platform.family_accounts().await;
+    assert_eq!(families[0].login, FamilyLogin::SignedOut, "{families:?}");
+    assert_eq!(families[1].login, FamilyLogin::SignedIn, "{families:?}");
+}
+
+/// F2: a readable manual key wins over an undecryptable OAuth value left behind, as in the account overlay (the
+/// manual branch); the family is signed in, not unreadable.
+#[tokio::test]
+async fn a_readable_manual_key_wins_over_an_undecryptable_oauth_value() {
+    let mut record = manual_login(ZAI, "sk-zai");
+    record["oauth:zai:access_token"] = json!("enc:v2:os:0123456789abcdef01234567:x");
+    let (_dir, platform) = platform_with(std::sync::Arc::new(OneBadValue), record).await;
+    let families = platform.family_accounts().await;
+    assert_eq!(families[0].login, FamilyLogin::SignedIn, "{families:?}");
 }

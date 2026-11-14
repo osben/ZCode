@@ -13,6 +13,7 @@ import {
 } from "@zcode/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ICredentialService } from "../src/credential/credential.js";
+import type { LocalCredentialService } from "../src/credential/credentialService.js";
 import { createOAuthProviderLogoutHandler } from "../src/oauth/oauthProviderLogout.js";
 import { OAuthService } from "../src/oauth/oauthService.js";
 import { OAuthCredentialRepo } from "../src/oauth/repo/oauthCredentialRepo.js";
@@ -32,18 +33,58 @@ const staticConfigSource: ProviderSource<ProviderConfigSnapshot> = {
   onDidChange: () => () => {},
 };
 
-function createCorruptCredentialService(): ICredentialService {
+function createCorruptCredentialService(): ICredentialService &
+  Pick<LocalCredentialService, "loadMany" | "updateMany" | "deleteUnreadable"> {
+  // Host-private batch store: OAuthCredentialRepo requires loadMany/updateMany/deleteUnreadable.
+  // "oauth:active_provider" is unreadable until a corrupt-session cleanup removes it.
+  const unreadable = new Set<string>(["oauth:active_provider"]);
+  const stored = new Map<string, string | null>();
+  const read = (key: string): string | null => {
+    if (unreadable.has(key)) {
+      throw Object.assign(new Error("Serialized credential decrypt failure"), {
+        code: CREDENTIAL_DECRYPT_ERROR_CODE,
+      });
+    }
+    return stored.has(key) ? (stored.get(key) ?? null) : `${key}-value`;
+  };
   return {
-    load: async (key: string) => {
-      if (key === "oauth:active_provider") {
-        throw Object.assign(new Error("Serialized credential decrypt failure"), {
-          code: CREDENTIAL_DECRYPT_ERROR_CODE,
-        });
-      }
-      return `${key}-value`;
+    inspectStore: async () => ({ status: "healthy" as const }),
+    recoverStore: async () => ({ status: "changed" as const }),
+    load: async (key: string) => read(key),
+    save: async (key: string, value: string) => {
+      unreadable.delete(key);
+      stored.set(key, value);
     },
-    save: async () => {},
-    delete: async () => {},
+    delete: async (key: string) => {
+      unreadable.delete(key);
+      stored.set(key, null);
+    },
+    loadMany: async (keys: readonly string[]) =>
+      Object.fromEntries(keys.map((key) => [key, read(key)])),
+    updateMany: async (changes: Readonly<Record<string, string | null>>, options) => {
+      for (const [key, value] of Object.entries(options?.expected ?? {})) {
+        if (read(key) !== value) return false;
+      }
+      for (const [key, value] of Object.entries(changes)) {
+        unreadable.delete(key);
+        stored.set(key, value);
+      }
+      return true;
+    },
+    deleteUnreadable: async (keys, options) => {
+      if (!keys.some((key) => unreadable.has(key))) return false;
+      for (const [key, value] of Object.entries(options?.expected ?? {})) {
+        if (read(key) !== value) return false;
+      }
+      for (const key of options?.removeKeys ?? keys) {
+        unreadable.delete(key);
+        stored.set(key, null);
+      }
+      for (const [key, value] of Object.entries(options?.replacements ?? {})) {
+        stored.set(key, value);
+      }
+      return true;
+    },
   };
 }
 

@@ -58,7 +58,7 @@ async fn a_failed_write_ends_the_turn_and_is_logged() {
     built.session.send(submit("c1", "hello")).await;
     let seen = until(&mut events, finished).await;
     let Some(KernelEvent::TurnFinished {
-        outcome: TurnOutcome::Failed { message },
+        outcome: TurnOutcome::Failed { message, .. },
         ..
     }) = seen.last()
     else {

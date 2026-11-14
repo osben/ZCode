@@ -14,6 +14,7 @@ const ROOT: &str = "/Users/dev/plugins/kit";
 
 fn file(path: &str, namespace: &[&str]) -> PluginAgentFile {
     PluginAgentFile {
+        id: "kit@inline".to_owned(),
         plugin: "kit".to_owned(),
         root: ROOT.to_owned(),
         path: format!("{ROOT}/{path}"),
@@ -24,12 +25,14 @@ fn file(path: &str, namespace: &[&str]) -> PluginAgentFile {
 #[test]
 fn names_descriptions_and_variables_follow_the_plugin_rules() {
     let raw = "---\nname: lead\nwhen_to_use: Leads the team.\ntools: Read\npermissionMode: bypassPermissions\nmaxTurns: 3\n---\nRun ${CLAUDE_PLUGIN_ROOT}/bin/x in ${ZCODE_PROJECT_DIR}.\n";
-    let agent = parse(
+    let (agent, name) = parse(
         raw,
         &file("agents/team/lead.md", &["team"]),
         "/Users/dev/repo",
     );
     assert_eq!(agent.agent_type, "kit:team:lead");
+    // Fork: the bare name (the Host's override key) has no namespace segments.
+    assert_eq!(name, "lead");
     assert_eq!(agent.when_to_use, "Leads the team.");
     assert_eq!(agent.source, AgentSource::Plugin);
     assert_eq!(agent.tools, Some(vec!["Read".to_owned()]));
@@ -41,12 +44,13 @@ fn names_descriptions_and_variables_follow_the_plugin_rules() {
         "Run /Users/dev/plugins/kit/bin/x in /Users/dev/repo."
     );
     // 没有 frontmatter：名字取文件名，描述用缺省句。
-    let bare = parse(
+    let (bare, name) = parse(
         "Just do it.",
         &file("agents/helper.md", &[]),
         "/Users/dev/repo",
     );
     assert_eq!(bare.agent_type, "kit:helper");
+    assert_eq!(name, "helper");
     assert_eq!(bare.when_to_use, "Agent from kit plugin");
     assert_eq!(bare.prompt, "Just do it.");
 }
@@ -108,4 +112,45 @@ async fn plugin_agents_sit_between_built_ins_and_user_agents() {
             ),
         ]
     );
+    // Fork (incognito, specs/fork-rust-agent-parity.md): without custom agents only the built-ins remain; without
+    // plugins the user's agents stay and the plugin's go.
+    use rust_cli_kernel_api::ids::SessionId;
+    use rust_cli_kernel_api::incognito::{IncognitoProfile, IncognitoProfiles};
+    let profiles = IncognitoProfiles::default();
+    catalog.set_incognito(profiles.clone());
+    let locked = SessionId::new("locked");
+    let no_plugins = SessionId::new("no_plugins");
+    profiles.record(&locked, Some(IncognitoProfile::LOCKDOWN));
+    profiles.record(
+        &no_plugins,
+        Some(IncognitoProfile {
+            custom_agents: true,
+            ..IncognitoProfile::LOCKDOWN
+        }),
+    );
+    let sources = |session: SessionId| {
+        let catalog = &catalog;
+        let workspace = workspace.clone();
+        async move {
+            catalog
+                .definitions_in(&workspace, Some(&session))
+                .await
+                .into_iter()
+                .map(|agent| (agent.agent_type, agent.source))
+                .collect::<Vec<_>>()
+        }
+    };
+    let builtins_only = sources(locked).await;
+    assert_eq!(builtins_only.len(), 3);
+    assert!(
+        builtins_only
+            .iter()
+            .all(|(_, source)| *source == AgentSource::BuiltIn)
+    );
+    let without_plugins = sources(no_plugins).await;
+    assert_eq!(
+        &without_plugins[3..],
+        [("kit:review".to_owned(), AgentSource::User)]
+    );
+    assert_eq!(found.len(), sources(SessionId::new("normal")).await.len());
 }

@@ -1,4 +1,5 @@
 import { useOptionalTabStore } from "@/store/TabStoreProvider.js";
+import { useShallow } from "zustand/react/shallow";
 import { isWorkspaceTab, type WorkspaceTabState } from "@/store/tabStore.js";
 import { useRemoteWorkspaceSessionStore } from "@/store/remoteWorkspaceSessionStore.js";
 import {
@@ -11,7 +12,10 @@ export function resolveRemoteWorkspaceSessionIdForTarget<TServices>(params: {
   preferredRemoteSessionId?: string | null;
   workspaceIdentity?: string | null;
   remoteTarget?: unknown;
-  activeTab?: WorkspaceTabState | null;
+  activeTab?: Pick<
+    WorkspaceTabState,
+    "workspacePath" | "workspaceIdentity" | "remoteSessionId" | "remoteTarget"
+  > | null;
   state: WorkspaceServiceResolverState<TServices>;
 }): string | null {
   if (!params.workspacePath) {
@@ -56,22 +60,31 @@ export function useResolvedRemoteWorkspaceSessionId(
   workspaceIdentity?: string | null,
   remoteTarget?: unknown,
 ): string | null {
-  const activeWorkspaceTab = useOptionalTabStore((state) => {
-    if (!workspacePath || !state.activeTabId) {
-      return null;
-    }
+  const activeWorkspaceTab = useOptionalTabStore(
+    useShallow((state) => {
+      if (!workspacePath || !state.activeTabId) {
+        return null;
+      }
 
-    const activeTab = state.tabs.find((tab) => tab.id === state.activeTabId);
-    if (!activeTab || !isWorkspaceTab(activeTab)) {
-      return null;
-    }
+      const activeTab = state.tabs.find((tab) => tab.id === state.activeTabId);
+      if (!activeTab || !isWorkspaceTab(activeTab)) {
+        return null;
+      }
 
-    if (workspaceIdentity) {
-      return activeTab.workspaceIdentity?.trim() === workspaceIdentity.trim() ? activeTab : null;
-    }
-
-    return activeTab.workspacePath === workspacePath ? activeTab : null;
-  });
+      const matches = workspaceIdentity
+        ? activeTab.workspaceIdentity?.trim() === workspaceIdentity.trim()
+        : activeTab.workspacePath === workspacePath;
+      // Completing the tab classification on first creation used to update every session row of the same workspace; subscribe only to the fields connection resolution consumes.
+      return matches
+        ? {
+            workspacePath: activeTab.workspacePath,
+            workspaceIdentity: activeTab.workspaceIdentity,
+            remoteSessionId: activeTab.remoteSessionId,
+            remoteTarget: activeTab.remoteTarget,
+          }
+        : null;
+    }),
+  );
 
   return useRemoteWorkspaceSessionStore((state) =>
     resolveRemoteWorkspaceSessionIdForTarget({

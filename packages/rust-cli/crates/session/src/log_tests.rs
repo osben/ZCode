@@ -6,6 +6,7 @@ use super::*;
 fn title(value: &str) -> KernelEvent {
     KernelEvent::TitleChanged {
         title: value.to_owned(),
+        source: Default::default(),
     }
 }
 
@@ -223,6 +224,7 @@ async fn the_revision_counts_state_changes_only() {
         used_tokens: 1,
         max_tokens: 2,
         compact_at: None,
+        window_tokens: None,
     });
     assert_eq!(log.revision(), 2);
     let replay: Vec<(u64, u64)> = log

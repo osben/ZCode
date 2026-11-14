@@ -226,6 +226,7 @@ pub(crate) fn tool_context(session: &SessionId, run: &RunId) -> ToolUseContext {
         run: run.clone(),
         workspace: workspace(),
         mode: PermissionMode::DontAsk,
+        base_mode: PermissionMode::DontAsk,
         machine: machine(env.clone()),
         controller: controller_services(env),
         interactions: Arc::new(RecordingSink::default()),
@@ -277,10 +278,26 @@ impl QueryRunner for ParentRunner {
                 is_error: true,
                 display: Value::Null,
             },
-            Validation::Ok => tool
-                .call(self.input.clone(), context, progress)
-                .await
-                .unwrap(),
+            // A stopped call settles as the executor settles it (`tools::Pipeline`): an error with its own message that
+            // keeps its display.
+            Validation::Ok => match tool.call(self.input.clone(), context, progress).await {
+                Err(rust_cli_kernel_api::tool::ToolError::Stopped { message, display }) => {
+                    ToolOutput {
+                        content: vec![ToolResultContent::Text { text: message }],
+                        is_error: true,
+                        display,
+                    }
+                }
+                // Any other failure: the bare message (the executor's `format_error` wraps it for the model).
+                Err(error) => ToolOutput {
+                    content: vec![ToolResultContent::Text {
+                        text: error.to_string(),
+                    }],
+                    is_error: true,
+                    display: Value::Null,
+                },
+                Ok(output) => output,
+            },
         };
         *self.output.lock_unpoisoned() = Some(output);
         while let Ok(update) = updates.try_recv() {
@@ -290,9 +307,104 @@ impl QueryRunner for ParentRunner {
     }
 }
 
+/// Fork: `StoreQueries::subagent_child_ids` of the memory store, held while the gate is shut; counts the reads that
+/// started (an adoption in flight).
+pub(crate) struct GatedChildren {
+    store: Arc<MemoryStore>,
+    open: tokio::sync::watch::Sender<bool>,
+    reads: std::sync::atomic::AtomicUsize,
+}
+
+impl GatedChildren {
+    fn new(store: Arc<MemoryStore>) -> Self {
+        Self {
+            store,
+            open: tokio::sync::watch::channel(true).0,
+            reads: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+
+    pub(crate) fn hold(&self) {
+        self.open.send_replace(false);
+    }
+
+    pub(crate) fn release(&self) {
+        self.open.send_replace(true);
+    }
+
+    pub(crate) fn reads(&self) -> usize {
+        self.reads.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+#[async_trait]
+impl rust_cli_kernel_api::store::StoreQueries for GatedChildren {
+    async fn subagent_child_ids(
+        &self,
+        root: &SessionId,
+    ) -> Result<Vec<SessionId>, rust_cli_kernel_api::store::StoreError> {
+        // Reads first, then waits: the adoption holds what the store said before anything the test does meanwhile.
+        let read =
+            rust_cli_kernel_api::store::StoreQueries::subagent_child_ids(self.store.as_ref(), root)
+                .await;
+        self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let mut open = self.open.subscribe();
+        let _ = open.wait_for(|open| *open).await;
+        read
+    }
+
+    async fn metering(
+        &self,
+        session: &SessionId,
+    ) -> Result<
+        rust_cli_kernel_api::metering::SessionMetering,
+        rust_cli_kernel_api::store::StoreError,
+    > {
+        rust_cli_kernel_api::store::StoreQueries::metering(self.store.as_ref(), session).await
+    }
+
+    async fn request_stats(
+        &self,
+        session: &SessionId,
+    ) -> Result<rust_cli_kernel_api::metering::RequestStats, rust_cli_kernel_api::store::StoreError>
+    {
+        rust_cli_kernel_api::store::StoreQueries::request_stats(self.store.as_ref(), session).await
+    }
+
+    async fn activity(
+        &self,
+        query: rust_cli_kernel_api::metering::ActivityQuery,
+    ) -> Result<rust_cli_kernel_api::metering::ActivityStats, rust_cli_kernel_api::store::StoreError>
+    {
+        rust_cli_kernel_api::store::StoreQueries::activity(self.store.as_ref(), query).await
+    }
+
+    async fn put_record(
+        &self,
+        session: &SessionId,
+        record: &rust_cli_kernel_api::store::FrontendRecord,
+    ) -> Result<(), rust_cli_kernel_api::store::StoreError> {
+        rust_cli_kernel_api::store::StoreQueries::put_record(self.store.as_ref(), session, record)
+            .await
+    }
+
+    async fn records(
+        &self,
+        session: &SessionId,
+        kind: &str,
+    ) -> Result<
+        Vec<rust_cli_kernel_api::store::FrontendRecord>,
+        rust_cli_kernel_api::store::StoreError,
+    > {
+        rust_cli_kernel_api::store::StoreQueries::records(self.store.as_ref(), session, kind).await
+    }
+}
+
 pub(crate) struct Harness {
     pub(crate) agents: Agents,
     pub(crate) store: Arc<MemoryStore>,
+    /// Fork: the store's `subagent_child_ids` behind a gate (adoption reads it).
+    pub(crate) children: Arc<GatedChildren>,
     pub(crate) tasks: Arc<MemoryTaskLists>,
     pub(crate) seen: Arc<Mutex<Vec<Seen>>>,
     pub(crate) absorbed: Arc<Mutex<Vec<(SessionId, String)>>>,
@@ -303,7 +415,31 @@ pub(crate) struct Harness {
     pub(crate) controller: ControllerServices,
     /// 只读快照问过的压缩器（F112）：每次问的模型与档位。
     pub(crate) compactor: Arc<ContextFake>,
+    /// Fork: the top-level sessions a call opened (the kernel's open hook runs once per open, as `create_session_as`).
+    pub(crate) opened: Arc<Mutex<std::collections::HashSet<SessionId>>>,
+    /// Fork: the agent catalog (a test installs a Host snapshot source on it).
+    pub(crate) catalog: Arc<crate::AgentCatalog>,
+    /// Fork: `ContextRequest::inject_agents_md` of every context build, in order.
+    pub(crate) injected: Arc<Mutex<Vec<bool>>>,
     pub(crate) _scope: TaskScope,
+}
+
+/// Fork: the harness's context (no attachments, no system) that records each build's `inject_agents_md`.
+struct RecordingContext(Arc<Mutex<Vec<bool>>>);
+
+#[async_trait]
+impl rust_cli_kernel_api::orchestration::ContextBuilder for RecordingContext {
+    async fn build(
+        &self,
+        request: ContextRequest,
+        history: &[Message],
+    ) -> Result<
+        rust_cli_kernel_api::orchestration::BuiltContext,
+        rust_cli_kernel_api::orchestration::OrchestrationError,
+    > {
+        self.0.lock_unpoisoned().push(request.inject_agents_md);
+        FixedContext(Vec::new()).build(request, history).await
+    }
 }
 
 /// 只读快照用的压缩器替身（修复线 F112，tui-panels.md §1.7）：上下文用量是“历史条数 × 1000 / 10000”，提示是
@@ -341,6 +477,7 @@ impl rust_cli_kernel_api::compaction::Compactor for ContextFake {
             used_tokens: history.len() as u64 * 1_000,
             max_tokens: 10_000,
             compact_at: None,
+            window_tokens: None,
         })
     }
 
@@ -393,6 +530,23 @@ pub(crate) fn desktop_harness_gated(gate: Option<Arc<Notify>>) -> Harness {
         no_peers(),
         &[],
         Arc::new(FixedClock(1_000)),
+        None,
+        true,
+    )
+}
+
+/// [`desktop_harness_gated`] with the clock `clock` (the stall reminder's timer and the agents' start times follow it).
+pub(crate) fn desktop_harness_clocked(
+    gate: Arc<Notify>,
+    clock: Arc<dyn rust_cli_kernel_api::clock::Clock>,
+) -> Harness {
+    built_full(
+        Some(Gate::Shared(gate)),
+        true,
+        machine(Arc::new(UnusedEnvironment)),
+        no_peers(),
+        &[],
+        clock,
         None,
         true,
     )
@@ -542,6 +696,7 @@ fn built_full(
 ) -> Harness {
     let scope = TaskScope::root("agents-test", |_| {});
     let store = Arc::new(MemoryStore::default());
+    let children = Arc::new(GatedChildren::new(store.clone()));
     let tasks = Arc::new(MemoryTaskLists::default());
     let queries = FakeQueries {
         gate,
@@ -555,6 +710,11 @@ fn built_full(
         .map(|name| Arc::new(FakeTool::new(name, true, "")) as Arc<dyn Tool>)
         .collect();
     let compactor = Arc::new(ContextFake::default());
+    let injected: Arc<Mutex<Vec<bool>>> = Arc::default();
+    let catalog = Arc::new(crate::AgentCatalog::new(
+        Arc::new(UnusedEnvironment),
+        Arc::new(UnusedEnvironment),
+    ));
     // 操作上下文与别的 ID 同一个来源（ID 的顺序不变，工作线 F134）。
     let ids: Arc<dyn rust_cli_kernel_api::clock::Ids> = Arc::new(SequentialIds::default());
     let ports = AgentsPorts {
@@ -568,19 +728,18 @@ fn built_full(
                 rust_cli_kernel_api::testing::controller_services(Arc::new(UnusedEnvironment)),
             ))
         }),
-        catalog: Arc::new(crate::AgentCatalog::new(
-            Arc::new(UnusedEnvironment),
-            Arc::new(UnusedEnvironment),
-        )),
+        catalog: catalog.clone(),
         tasks: tasks.clone() as Arc<dyn TaskListStore>,
+        store_queries: children.clone(),
         queries: Arc::new(queries),
-        context: Arc::new(FixedContext(Vec::new())),
+        context: Arc::new(RecordingContext(injected.clone())),
         spawner: scope.spawner(),
         peers,
         operations: rust_cli_kernel_api::env::Operations::new(
             rust_cli_kernel_api::ids::Generation::new(GENERATION),
             ids,
         ),
+        incognito: Default::default(),
     };
     let agents = Agents::new(
         ports,
@@ -597,11 +756,14 @@ fn built_full(
             fork: false,
             // Fork (node_desktop): only the desktop harness registers TaskOutput.
             node_desktop,
+            // 无进展提醒：测试用的时钟与驱动分开测（stall_tests.rs），这里取缺省。
+            stall: crate::StallConfig::default(),
         },
     );
     Harness {
         agents,
         store,
+        children,
         tasks,
         seen,
         absorbed,
@@ -609,6 +771,9 @@ fn built_full(
         machine: machine(Arc::new(UnusedEnvironment)),
         controller: controller_services(Arc::new(UnusedEnvironment)),
         compactor,
+        opened: Arc::default(),
+        catalog,
+        injected,
         _scope: scope,
     }
 }
@@ -656,18 +821,23 @@ impl Harness {
         };
         let runner = self.agents.track(Arc::new(parent));
         let session = SessionId::new(session);
-        self.store
-            .create(rust_cli_kernel_api::store::SessionMeta {
-                id: session.clone(),
-                kind: rust_cli_kernel_api::store::SessionKind::Interactive,
-                parent: None,
-                workspace: workspace(),
-                title: String::new(),
-                trace: rust_cli_kernel_api::ids::TraceId::new(session.as_str()),
-                created_at_ms: 0,
-            })
-            .await
-            .unwrap();
+        let meta = rust_cli_kernel_api::store::SessionMeta {
+            id: session.clone(),
+            kind: rust_cli_kernel_api::store::SessionKind::Interactive,
+            parent: None,
+            workspace: workspace(),
+            title: String::new(),
+            trace: rust_cli_kernel_api::ids::TraceId::new(session.as_str()),
+            created_at_ms: 0,
+            incognito: None,
+        };
+        self.store.create(meta.clone()).await.unwrap();
+        // Fork: a top-level session the kernel runs a turn in was opened or created first (its open hook).
+        if !session.as_str().starts_with("sess_subagent_")
+            && self.opened.lock_unpoisoned().insert(session.clone())
+        {
+            self.agents.signals().session_opened(&meta);
+        }
         // 子会话里的调用带子代理 ID（与主循环相同）：`sess_subagent_<id>` 里的 `<id>`。
         let agent = session
             .as_str()

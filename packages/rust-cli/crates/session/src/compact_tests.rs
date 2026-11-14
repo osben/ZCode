@@ -33,6 +33,8 @@ const UP_TO_DATE: &str = "Context is up to date; no compression needed";
 /// 成功时给出固定的结果；`fail` 时以固定的原文失败。
 struct FakeCompactor {
     fail: Option<String>,
+    /// The instructions the compaction must receive.
+    instructions: Option<String>,
 }
 
 #[async_trait]
@@ -72,6 +74,7 @@ impl Compactor for FakeCompactor {
             used_tokens: history.len() as u64,
             max_tokens: window,
             compact_at: None,
+            window_tokens: None,
         })
     }
 
@@ -91,7 +94,7 @@ impl Compactor for FakeCompactor {
             });
         }
         assert_eq!(request.trigger, CompactTrigger::Manual);
-        assert_eq!(request.instructions.as_deref(), Some("focus"));
+        assert_eq!(request.instructions, self.instructions);
         // 冷加载的历史以没有回答的输入结束：补了一条 assistant（session-lifecycle.md §6.3.1）。
         assert_eq!(request.messages.len(), 2);
         Ok(CompactResult {
@@ -104,6 +107,8 @@ impl Compactor for FakeCompactor {
                 discovered_tools: Vec::new(),
             },
             summary: UserMessage {
+                stall_execution: None,
+                intent: None,
                 id: MessageId::new("msg_s"),
                 content: vec![ContentBlock::Text {
                     text: "S".to_owned(),
@@ -111,6 +116,7 @@ impl Compactor for FakeCompactor {
                 origin: UserOrigin::CompactSummary,
             },
             restored: Vec::new(),
+            session_start_context: false,
         })
     }
 }
@@ -127,10 +133,20 @@ fn meta() -> SessionMeta {
         title: String::new(),
         trace: TraceId::new("trace_1"),
         created_at_ms: 0,
+        incognito: None,
     }
 }
 
 async fn session(fail: Option<&str>) -> (TaskScope, Arc<MemoryStore>, Session) {
+    session_with(fail, false, Some("focus")).await
+}
+
+/// Fork: `typed_compact` is `SessionDeps::typed_compact`; `instructions` are what the compaction must receive.
+async fn session_with(
+    fail: Option<&str>,
+    typed_compact: bool,
+    instructions: Option<&str>,
+) -> (TaskScope, Arc<MemoryStore>, Session) {
     let scope = TaskScope::root("test", |_| {});
     let store = Arc::new(MemoryStore::default());
     store.create(meta()).await.unwrap();
@@ -155,6 +171,8 @@ async fn session(fail: Option<&str>) -> (TaskScope, Arc<MemoryStore>, Session) {
         limits: rust_cli_query::RequestLimits::default(),
     }));
     let history = vec![Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
         id: MessageId::new("msg_u"),
         content: vec![ContentBlock::Text {
             text: "hi".to_owned(),
@@ -171,6 +189,7 @@ async fn session(fail: Option<&str>) -> (TaskScope, Arc<MemoryStore>, Session) {
             runner,
             compactor: Arc::new(FakeCompactor {
                 fail: fail.map(str::to_owned),
+                instructions: instructions.map(str::to_owned),
             }),
             machines: rust_cli_kernel_api::testing::environments(env),
             max_turns: None,
@@ -195,6 +214,9 @@ async fn session(fail: Option<&str>) -> (TaskScope, Arc<MemoryStore>, Session) {
             desktop_goals: false,
             fork_while_running: false,
             error_holds_queue: false,
+            session_start_extras: true,
+            typed_compact,
+            hook_rows: false,
         },
         SessionState {
             commands: Default::default(),
@@ -205,10 +227,14 @@ async fn session(fail: Option<&str>) -> (TaskScope, Arc<MemoryStore>, Session) {
             mode: PermissionMode::Default.into(),
             checkpoints: Vec::new(),
             start: rust_cli_kernel_api::session_api::StartSource::Startup,
+            start_held: false,
+            execution_worktree: false,
             turn: None,
             last_turn_failed: false,
             child_live: None,
             title_pending: true,
+            title_source: None,
+            permission_grant: None,
             goal_target: None,
             goal_verifications: Vec::new(),
             message_models: Default::default(),
@@ -288,6 +314,7 @@ async fn compact_runs_as_a_turn_and_commits_one_batch() {
         used_tokens: 7,
         max_tokens: 100,
         compact_at: None,
+        window_tokens: None,
     }));
     assert!(matches!(
         events.last(),
@@ -316,6 +343,90 @@ async fn compact_runs_as_a_turn_and_commits_one_batch() {
             "<local-command-stdout>\u{1b}[2mCompacted (ctrl+o to see full summary)\u{1b}[22m</local-command-stdout>".to_owned(),
         ]
     );
+}
+
+fn typed(text: &str) -> CommandEnvelope {
+    CommandEnvelope {
+        id: CommandId::new("cmd_typed"),
+        command: Command::Submit {
+            text: text.to_owned(),
+            attachments: Vec::new(),
+            delivery: rust_cli_kernel_api::session_api::Delivery::Queue,
+        },
+    }
+}
+
+fn kinds(events: &[KernelEvent]) -> Vec<String> {
+    events
+        .iter()
+        .map(|event| {
+            serde_json::to_value(event).unwrap()["type"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        })
+        .collect()
+}
+
+/// Fork: under the Node desktop session a typed `/compact <instructions>` runs the manual compaction (Node
+/// `parseCompactCommand`), not a model turn; the script is empty, so a model request would fail the turn.
+#[tokio::test]
+async fn a_typed_compact_with_instructions_runs_the_manual_compaction() {
+    let (_scope, _store, session) = session_with(None, true, Some("focus")).await;
+    assert!(matches!(
+        session.send(typed("  /compact   focus  ")).await,
+        Ack::Accepted { .. }
+    ));
+    let events = events_until_finished(&session).await;
+    let kinds = kinds(&events);
+    assert_eq!(kinds[..2], ["turn_started", "compact_started"]);
+    assert!(kinds.contains(&"compact_done".to_owned()));
+    assert!(matches!(
+        events.last(),
+        Some(KernelEvent::TurnFinished {
+            outcome: TurnOutcome::Success,
+            ..
+        })
+    ));
+    let view = session.view().await.unwrap();
+    assert!(record_texts(&view.messages)[1].contains("<command-args>focus</command-args>"));
+    // The typed text is not an input of its own: the history is the summary's batch only.
+    assert_eq!(view.messages.len(), 7);
+}
+
+#[tokio::test]
+async fn a_typed_compact_alone_runs_the_compaction_without_instructions() {
+    let (_scope, _store, session) = session_with(None, true, None).await;
+    assert!(matches!(
+        session.send(typed("/compact")).await,
+        Ack::Accepted { .. }
+    ));
+    let events = events_until_finished(&session).await;
+    assert_eq!(kinds(&events)[..2], ["turn_started", "compact_started"]);
+    assert!(matches!(
+        events.last(),
+        Some(KernelEvent::TurnFinished {
+            outcome: TurnOutcome::Success,
+            ..
+        })
+    ));
+}
+
+/// `/compactx` is not the command, and with the switch off (zcode-rs) the text goes to the model as typed.
+#[tokio::test]
+async fn other_texts_and_the_switch_off_run_a_model_turn() {
+    for (text, typed_compact) in [("/compactx", true), ("/compact focus", false)] {
+        let (_scope, _store, session) = session_with(None, typed_compact, Some("focus")).await;
+        assert!(matches!(
+            session.send(typed(text)).await,
+            Ack::Accepted { .. }
+        ));
+        let events = events_until_finished(&session).await;
+        assert!(
+            !kinds(&events).contains(&"compact_started".to_owned()),
+            "{text} {typed_compact}"
+        );
+    }
 }
 
 /// 本地命令记录的文字（来源以 `local-command` 开头的 meta 消息）。
@@ -352,7 +463,8 @@ async fn a_failed_compaction_finishes_the_turn_with_the_reason() {
                 other => panic!("{other:?}"),
             },
             outcome: TurnOutcome::Failed {
-                message: "Not enough messages to compact.".to_owned()
+                message: "Not enough messages to compact.".to_owned(),
+                code: None,
             },
             usage: None,
         })
@@ -404,6 +516,7 @@ async fn the_view_carries_the_context_usage_and_notice() {
             used_tokens: 2,
             max_tokens: 100,
             compact_at: None,
+            window_tokens: None,
         })
     );
     assert_eq!(
@@ -455,6 +568,7 @@ async fn changing_the_model_recomputes_the_context() {
                 used_tokens: 2,
                 max_tokens: 1_000,
                 compact_at: None,
+                window_tokens: None,
             }
         ]
     );

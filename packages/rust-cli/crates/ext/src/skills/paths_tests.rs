@@ -26,6 +26,8 @@ fn call(id: &str, tool: &str, path: &str) -> Message {
 
 fn result(id: &str, is_error: bool) -> Message {
     Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
         id: MessageId::new(format!("u_{id}")),
         content: vec![ContentBlock::ToolResult {
             tool_use_id: ToolUseId::new(id),

@@ -1,4 +1,5 @@
 import { Fragment } from "react";
+import { cn } from "@/components/lib/utils.js";
 import { ContextMenuItem, ContextMenuSeparator } from "@/components/ui/context-menu.js";
 import { DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu.js";
 import type { ProjectRowAction } from "@/project-sidebar/contract.js";
@@ -22,7 +23,10 @@ export function ProjectMenuItems({
         <Item
           disabled={action.disabled}
           data-testid={`virtual-project-${context && (action.id.startsWith("files-") || action.id === "create-task") ? "context-" : ""}${action.id}`}
-          className={action.destructive ? "text-destructive" : undefined}
+          className={cn(
+            action.destructive && "text-destructive",
+            action.id.startsWith("files-") && "break-all",
+          )}
           onSelect={action.run}
         >
           {action.icon ? <action.icon className="size-4 shrink-0" aria-hidden="true" /> : null}

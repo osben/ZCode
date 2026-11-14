@@ -1,68 +1,17 @@
-# Pause CSS Animations While the Page Is Hidden
+# Page visibility and CSS animations
 
-## Problem
+2026-11-03: the policy of globally disabling CSS animations and transitions while the page is in the background is revoked.
 
-When the window is not visible (minimized, on another desktop, screen locked, mobile browser in the
-background), Chromium produces no animation frames and CSS transitions / animations on the
-`DocumentTimeline` cannot settle. If an animated element is removed meanwhile (virtual list recycling,
-task switch, streaming remount), `HTMLDocument → DocumentTimeline → CSSTransition` still strongly
-references the element and, through parent pointers, holds the whole unmounted message subtree until
-the page becomes visible again.
+- Removed the visibility animation listener, the shared utility and its exports at the desktop and Web (including mobile `/remote`) entries.
+- Removed the animation and transition override on all elements and pseudo-elements under `html[data-document-hidden]`.
+- `animation: none` / `transition: none` cancels animations, and they may be rebuilt when the page returns to the foreground, which interferes with component lifecycles. Users reported clear side effects, so the global policy is deleted outright and no restore logic is added.
+- Component-level visibility handling, the reduced-motion preference and browser background throttling keep their existing behavior.
 
-Measured (2026-09-29, isolated HOME + mock provider streaming stress, after GC):
-
-| State                     | DOM nodes | JS listeners | renderer footprint |
-| ------------------------- | --------- | ------------ | ------------------ |
-| while hidden              | 235,382   | 12,071       | 498 MB             |
-| 1s after becoming visible | 45,297    | 1,943        | 379 MB             |
-
-Controlled experiment: triggering a transition while hidden and then removing the element retains 100%
-(even after `cancel()` first); without triggering a transition 0 is retained. The main entry is the
-markdown table's `transition-[max-width]` / `transition-[width,opacity]` that change with measurement,
-but the mechanism applies to all CSS animations.
-
-## Contract
-
-```
-visibilitychange ──► document.visibilityState === "hidden"
-                        │ yes                        │ no
-                        ▼                            ▼
-          <html data-document-hidden>        remove data-document-hidden
-                        │
-                        ▼
-   *, ::before, ::after { transition: none; animation: none } (!important)
-   → no new CSSTransition / CSSAnimation is created while hidden, removed elements can be GC'd
+```text
+visible -> hidden -> visible
+             `- the browser manages scheduling; components manage animation; the App does not override animation styles globally
 ```
 
-- The only data source is `document.visibilityState`; it syncs once at install time and then reacts
-  only to `visibilitychange`, with no timers.
-- The desktop renderer and Web (including mobile `/remote`) entries each call
-  `installDocumentHiddenMotionPause()` (`packages/ui/src/lib/documentHiddenMotionPause.ts`) before
-  `createRoot`.
-- While the page is hidden the user sees nothing, so disabling animations has no visible effect; after it
-  becomes visible styles return to the final state immediately and later changes transition normally.
-- Side benefit: exit animations that wait for `animationend` before unmounting (Radix Presence, etc.)
-  read `animation-name: none` while hidden and unmount synchronously, so no overlay lingers.
+Acceptance passed: macOS Electron start page and the 390px Web login page, real hide and restore, in light and dark themes. The entry-level CSS probe kept the original objects for element and pseudo-element animations, with no cancel events and the transition declarations kept; the old build in the same scenario showed 3 animation cancels and object rebuilds. Run record: `desktop-e2e-20261103120018850-p11234-98dc3116b27be36f` (2 items passed). Not covered: the full business UI, Windows/Linux native windows, real mobile devices and background memory stress.
 
-## Verification result
-
-Same stress script, window minimized (hidden), 15 consecutive rounds, compared after GC:
-
-| Metric                                         | Before  | After  |
-| ---------------------------------------------- | ------- | ------ |
-| DOM nodes (Memory counters)                    | 175,224 | 22,361 |
-| JS listeners                                   | 12,071  | 1,213  |
-| heap snapshot detached nodes                   | 109,407 | 3,819  |
-| controlled-experiment retention (20,050 nodes) | 100%    | ~2%    |
-
-The remaining detached nodes are held by TanStack virtual `elementsCache` through a pending rAF closure,
-settle after the page becomes visible and are bounded.
-
-## Boundaries
-
-- Covers only CSS transitions / animations; JS-driven (Web Animations API) animations such as `motion`
-  are unaffected.
-- A transition in progress at the moment of entering hidden is canceled (firing `transitioncancel`
-  rather than `transitionend`), so logic that relies on `transitionend` to close out must bring its own
-  fallback (the existing `useAnimatedResizablePanel` and `HighspeedActivationVisual` already have
-  timeout fallbacks).
+The original policy was meant to mitigate background animations holding unmounted DOM. In the historical stress record of 2026-09-29, 235,382 DOM nodes remained after GC while hidden and dropped to 45,297 one second after becoming visible. That is not a measurement of the current baseline; revoking the policy does not mean that memory issue is solved, and later work should retest per concrete component.

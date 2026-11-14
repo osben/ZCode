@@ -90,6 +90,8 @@ fn stop_conditions_and_verdicts_round_trip() {
         transcript: Vec::new(),
     });
     let feedback = Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
         id: MessageId::new("msg_2"),
         content: vec![ContentBlock::Text {
             text: "Stop hook feedback:\n[done]: no".to_owned(),

@@ -17,7 +17,7 @@
 
 import { z } from "zod";
 
-import { PROTOCOL_V4_LIMITS } from "./core.js";
+import { PROTOCOL_V4_LIMITS, v4ColdResumeWorkspaceSchema } from "./core.js";
 
 /**
  * User-facing artifact kinds: the six members of the `artifact.*` facade.
@@ -185,6 +185,7 @@ export type WorkflowRunArtifactSummary = z.infer<typeof workflowRunArtifactSumma
 // New methods are naturally skew-safe — older Desktop clients never call them.
 export const v4ConversationWorkflowRunArtifactsParamsSchema = z
   .object({
+    workspace: v4ColdResumeWorkspaceSchema,
     sessionId: z.string().min(1),
     runId: z.string().min(1),
   })
@@ -208,6 +209,7 @@ export type V4ConversationWorkflowRunArtifactsResult = z.infer<
 // cursor = journal sequence (same semantics as the event log; `afterSequence` is exclusive).
 export const v4ConversationWorkflowRunArtifactDataParamsSchema = z
   .object({
+    workspace: v4ColdResumeWorkspaceSchema,
     sessionId: z.string().min(1),
     runId: z.string().min(1),
     artifactId: z.string().min(1).max(WORKFLOW_ARTIFACT_LIMITS.maxIdLength),
@@ -276,6 +278,7 @@ export type V4ConversationWorkflowRunArtifactDataResult = z.infer<
 // IDs sent by the renderer **never** become paths directly — same rule as attachmentRead.
 export const v4ConversationWorkflowRunArtifactReadParamsSchema = z
   .object({
+    workspace: v4ColdResumeWorkspaceSchema,
     sessionId: z.string().min(1),
     runId: z.string().min(1),
     artifactId: z.string().min(1).max(WORKFLOW_ARTIFACT_LIMITS.maxIdLength),

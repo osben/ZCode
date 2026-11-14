@@ -4,7 +4,7 @@ use rust_cli_kernel_api::hooks::HookEventName as E;
 use serde_json::json;
 
 use super::*;
-use crate::config::{CommandHook, HttpHook, PromptHook};
+use crate::config::{CommandHook, HookOrigin, HttpHook, PromptHook};
 
 fn cmd(text: &str, condition: Option<&str>) -> HookCommand {
     HookCommand::Command(CommandHook {
@@ -43,6 +43,7 @@ fn matcher(pattern: Option<&str>, hooks: Vec<HookCommand>) -> HookMatcher {
     HookMatcher {
         matcher: pattern.map(str::to_owned),
         hooks,
+        origin: HookOrigin::default(),
     }
 }
 
@@ -110,7 +111,7 @@ fn select_filters_dedups_by_type_and_keeps_first_position() {
         matcher(None, vec![cmd("two", None), cmd("one", None), prompt("p")]),
     ];
     let hooks = select(E::PreToolUse, &matchers, &json!({"tool_name": "Bash"}));
-    let shown: Vec<String> = hooks.iter().map(HookCommand::display).collect();
+    let shown: Vec<String> = hooks.iter().map(|(hook, _)| hook.display()).collect();
     // command 组在前（one 保留第一次的位置），再 prompt，再 http。
     assert_eq!(shown, ["one", "two", "p", "https://a.example.com"]);
 }
@@ -130,7 +131,7 @@ fn if_conditions_and_session_start_http() {
     let shown = |payload| {
         select(E::PreToolUse, &matchers, &payload)
             .iter()
-            .map(HookCommand::display)
+            .map(|(hook, _)| hook.display())
             .collect::<Vec<_>>()
     };
     assert_eq!(

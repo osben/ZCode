@@ -88,20 +88,11 @@ pub(crate) const NOT_IN_PLAN_MODE: &str = "You are not in plan mode. To enter pl
 /// ExitPlanMode 结果：子代理。
 pub(crate) const AGENT_PLAN_APPROVED: &str = "User has approved the plan. There is nothing else needed from you now. Please respond with \"ok\"";
 
-/// ExitPlanMode 结果：没有计划。
-pub(crate) const PLAN_EXIT_APPROVED: &str =
-    "User has approved exiting plan mode. You can now proceed.";
-
-/// ExitPlanMode 结果：有计划（agent teams 关闭时没有团队一段）。
-pub(crate) fn plan_approved(path: &str, plan: &str) -> String {
+/// ExitPlanMode 结果（Node `formatExitPlanModeModelContent`）：`plan` 是去掉首尾空白后的计划。
+pub(crate) fn plan_approved(plan: &str) -> String {
     format!(
-        "User has approved your plan. You can now start coding. Start with updating your todo list if applicable
-
-Your plan has been saved to: {path}
-You can refer back to it if needed during implementation.
-
-## Approved Plan:
-{plan}"
+        "User has approved your plan. You can now start coding. Start with updating your todo list if applicable.\n\n## Approved Plan:\n{}",
+        plan.trim()
     )
 }
 

@@ -260,25 +260,28 @@ const ConversationTurnNavigatorItemView = memo(function ConversationTurnNavigato
             onPointerLeave={() => onInteractionChange(undefined)}
             className="flex h-2.5 w-9 items-center justify-start rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-input-border-focused focus-visible:ring-offset-2 focus-visible:ring-offset-background"
           >
-            <span
-              className={cn(
-                "block h-0.5 w-3 origin-left rounded-full transition-[height,opacity,transform,background-color] duration-150 ease-out motion-reduce:transition-none",
-                visualState.colorTone === "focus" && "bg-foreground",
-                visualState.colorTone === "muted" &&
-                  (showScrollActiveColor ? "bg-foreground" : "bg-foreground-subtlest"),
-                // Pinned color wins over focus/muted (tailwind-merge keeps the last bg utility);
-                // proximity scale/opacity still apply on top, keeping pinned bars findable at a glance.
-                item.isPinned && "bg-pinned-turn",
-              )}
-              style={{
-                opacity: showScrollActiveColor
-                  ? 0.9
-                  : item.isRunning
-                    ? Math.max(visualState.opacity, 0.72)
-                    : visualState.opacity,
-                transform: `scaleX(${visualState.scaleX})`,
-              }}
-            />
+            {/* Entry displacement and hover scaling are layered so they do not override the same transform; the button hit area stays fixed. */}
+            <span className="zcode-turn-navigator-enter block" aria-hidden="true">
+              <span
+                className={cn(
+                  "block h-0.5 w-3 origin-left rounded-full transition-[height,opacity,transform,background-color] duration-150 ease-out motion-reduce:transition-none",
+                  visualState.colorTone === "focus" && "bg-foreground",
+                  visualState.colorTone === "muted" &&
+                    (showScrollActiveColor ? "bg-foreground" : "bg-foreground-subtlest"),
+                  // Pinned color wins over focus/muted (tailwind-merge keeps the last bg utility);
+                  // proximity scale/opacity still apply on top, keeping pinned bars findable at a glance.
+                  item.isPinned && "bg-pinned-turn",
+                )}
+                style={{
+                  opacity: showScrollActiveColor
+                    ? 0.9
+                    : item.isRunning
+                      ? Math.max(visualState.opacity, 0.72)
+                      : visualState.opacity,
+                  transform: `scaleX(${visualState.scaleX})`,
+                }}
+              />
+            </span>
           </button>
         </HoverCardTrigger>
         <HoverCardContent

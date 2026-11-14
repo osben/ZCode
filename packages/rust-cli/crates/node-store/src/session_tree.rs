@@ -153,6 +153,26 @@ pub(crate) fn list_tree_ids_with_surviving_children(
     Ok(retained)
 }
 
+/// Fork: the subagent descendants of `root` reached through `subagent_child` rows only (not a Node query). A side
+/// chat or workflow child stops the walk: it is the top-level session of the agents it spawns.
+pub(crate) fn list_subagent_child_ids(
+    conn: &Connection,
+    root: &str,
+) -> Result<Vec<String>, StoreError> {
+    let sql = "with recursive tree(id) as (
+           select id from session where parent_id = ?1 and task_type = 'subagent_child'
+           union
+           select s.id from session s join tree t on s.parent_id = t.id
+           where s.task_type = 'subagent_child'
+         ) select id from tree order by id";
+    conn.prepare_cached(sql)
+        .storage()?
+        .query_map([root], |row| row.get(0))
+        .storage()?
+        .collect::<rusqlite::Result<_>>()
+        .storage()
+}
+
 /// Node `countSessionTree`: the tree's session mix plus the workflow runs attached to it.
 pub(crate) fn count_tree(
     conn: &Connection,

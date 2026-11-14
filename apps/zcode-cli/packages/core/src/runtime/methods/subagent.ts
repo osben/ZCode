@@ -65,6 +65,7 @@ import { computeOfficialCuaServerNames } from "./mcp.js";
 import { persistRuntimeModelSelection, sameModelSelection } from "./turn-model.js";
 import { getOffPeakExecution, markTemporaryRuntimeSelection } from "../off-peak/runtime.js";
 import { getOffPeakModelBinding } from "../off-peak/model-binding.js";
+import { noteSubagentActivity } from "../../subagent/background-stall.js";
 
 export function createDefaultSubagentPort(
   this: AgentRuntimeInternal,
@@ -355,6 +356,7 @@ export function createDefaultSubagentPort(
             // fact lets the subagent env block render the same isolation notice as the main agent.
             executionWorktree: this.config.executionWorktree,
             incognito: this.config.incognito,
+            workspaceKey: this.config.workspaceKey,
             // The execution model is projected into Context only by the child Active Model; envInfo keeps no second copy of model facts.
             envInfo: childRuntimeEnvInfo,
             // Explore child runtimes previously did not inherit the main session's streaming config,
@@ -463,12 +465,19 @@ export function createDefaultSubagentPort(
             eventSink: {
               onSessionEvent: async (event) => {
                 request.reportActivity?.();
-                // Child runtime events are already persisted under childSessionId, but the old chain
-                // mirrored only a few tool events to the parent sink, so a UI subscribed to the child
-                // topic got only the initial hydration and no streamed updates. The raw child event
-                // only notifies the parent runtime's external sinks without appending again, so it is
-                // not double-persisted; bootstrap then routes it to the child publisher by
-                // event.sessionId.
+                request.onEvent?.(event);
+                noteSubagentActivity(
+                  this.runtimeTaskRegistry,
+                  request.agentId,
+                  event,
+                  Date.now(),
+                  request.executionId,
+                );
+                // child runtime 的事件已经按 childSessionId 落库，但旧链路只把
+                // 少量工具事件镜像给 parent sink，导致 UI 订阅 child topic 后只能拿到打开时
+                // 的 hydration，后续流式内容不会更新。raw child event 只通知父 runtime 的
+                // 外部 sinks，不再次 append，因此不会重复持久化；bootstrap 再按 event.sessionId
+                // 把它路由到 child publisher。
                 await this.notifyEventSinks(event, {
                   ...request.traceContext,
                   sessionId: request.sessionId,

@@ -228,8 +228,11 @@ fn glm_5_3_flash_follows_the_node_rules() {
         ("account:zai-offpeak-idle-plan", false),
     ] {
         let config = effective(provider_id);
-        let capabilities =
-            crate::providers::catalog::capabilities(models::GLM_5_3_FLASH_ACCOUNT, &config);
+        let capabilities = crate::providers::catalog::capabilities(
+            WireProtocol::AnthropicMessages,
+            models::GLM_5_3_FLASH_ACCOUNT,
+            &config,
+        );
         assert_eq!(
             capabilities.supports_native_web_search, web_search,
             "{provider_id}"
@@ -287,4 +290,25 @@ fn glm_always_takes_mid_conversation_system() {
     assert!(!glm.supports_native_web_search);
     let plain = site(anthropic, "https://gw.example.com", models::DEEPSEEK_V4_PRO);
     assert!(!plain.supports_mid_conversation_system);
+}
+
+/// Fork: the F121 GLM forcing is an Anthropic Messages shape. On the OpenAI-compatible protocols GLM follows its
+/// configuration, and every protocol but Anthropic Messages keeps user messages separate (Node's
+/// `foldRemindersIntoToolResults` is Anthropic Messages only).
+#[test]
+fn openai_protocols_keep_user_messages_separate_and_skip_the_glm_forcing() {
+    let anthropic = site(
+        WireProtocol::AnthropicMessages,
+        "https://gw.example.com",
+        models::GLM_5_3,
+    );
+    assert!(!anthropic.separate_user_messages);
+    for protocol in [
+        WireProtocol::OpenAiChatCompletions,
+        WireProtocol::OpenAiResponses,
+    ] {
+        let glm = site(protocol, "https://gw.example.com", models::GLM_5_3);
+        assert!(!glm.supports_mid_conversation_system, "{protocol:?}");
+        assert!(glm.separate_user_messages, "{protocol:?}");
+    }
 }

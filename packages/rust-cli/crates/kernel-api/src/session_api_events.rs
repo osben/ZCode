@@ -27,6 +27,10 @@ pub enum TurnOutcome {
     StopHookPrevented,
     Failed {
         message: String,
+        /// Fork: Node's error code for the failure ([`crate::model::ModelError::code`]), which the App localizes
+        /// (`lastError.code`); `None` is the generic turn fault.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        code: Option<String>,
     },
 }
 
@@ -54,6 +58,13 @@ pub struct QueuedInput {
     /// `None` keeps the session's state (TUI inputs).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution: Option<InputExecution>,
+    /// Fork: the App input's intent ([`crate::input_intent`]); `text` stays the typed text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intent: Option<Box<crate::input_intent::InputIntent>>,
+    /// Fork: the composer edit lock on this item (Node `pendingInputEditLocks`, `editLock` in the App's queue item).
+    /// Held in the session actor's memory only; it is not replayed after the agent process exits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edit_lock: Option<QueueEditLock>,
 }
 
 impl QueuedInput {
@@ -65,8 +76,21 @@ impl QueuedInput {
             delivery,
             kind: QueuedKind::Text,
             execution: None,
+            intent: None,
+            edit_lock: None,
         }
     }
+}
+
+/// Fork: who holds the composer edit lock of a queued input (Node `PendingInputEditLock`). `client_id` is the
+/// envelope's client, `input_origin` the trusted Host field (`desktop` or `mobile`), shown to the other clients.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueueEditLock {
+    pub editor_id: String,
+    pub client_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_origin: Option<String>,
 }
 
 /// Fork: the kind of a queued input (Node's queue item `kind`: `sendText`, `sendGoalCommand`, `compact`).
@@ -95,6 +119,17 @@ pub struct InputExecution {
     pub state: crate::permission::ExecutionState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selection: Option<ModelSelection>,
+    /// Fork: the limits of the turn this input opens (automation id, hidden tools); the session keeps none of them.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::turn_limits::TurnLimits::is_empty"
+    )]
+    pub limits: crate::turn_limits::TurnLimits,
+    /// Fork: the input named no mode and no plan switch (an automation run's limits alone; Node
+    /// `resolveSubmittedExecutionState` gives no state then). `state` only records the session's state at submission:
+    /// the session's state is left alone when the input starts, and a queue row shows no mode for it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub keeps_session_state: bool,
 }
 
 /// 只供显示的系统提示的级别（informational system 消息的 `level`）。
@@ -114,6 +149,10 @@ pub enum KernelEvent {
     },
     TitleChanged {
         title: String,
+        /// Fork: where the title came from (Node `SessionTitleUpdated.source`); an event without it reads as
+        /// `generated`.
+        #[serde(default)]
+        source: crate::title::Source,
     },
     ModelChanged {
         selection: ModelSelection,
@@ -153,6 +192,15 @@ pub enum KernelEvent {
     MessageDone {
         message: Message,
     },
+    /// Fork: the model started a tool call in response `response` of `turn` (block `index`); its input streams as
+    /// [`KernelEvent::StreamDelta`] with `BlockDelta::InputJson` (Node `tool_input_start`).
+    ToolInputStarted {
+        turn: TurnId,
+        response: u32,
+        index: usize,
+        tool_use: ToolUseId,
+        name: String,
+    },
     ToolStarted {
         tool_use: ToolUseId,
         name: String,
@@ -165,6 +213,31 @@ pub enum KernelEvent {
     ToolDone {
         tool_use: ToolUseId,
         output: ToolOutput,
+    },
+    /// Fork: an ACP agent's tool or plan row before it settles ([`crate::orchestration::QueryEvent::ExternalToolRow`]).
+    ExternalToolRow {
+        tool_use: ToolUseId,
+        name: String,
+        title: String,
+        input: Value,
+        running: bool,
+    },
+    /// Fork: the selects of the session's ACP agent (Node `external_agent_config_updated`; a turn's
+    /// [`crate::orchestration::QueryEvent::ExternalAgentConfig`] or [`super::Command::PublishExternalAgentConfig`]).
+    ExternalAgentConfig {
+        agent: String,
+        options: Vec<crate::external_agent_config::ExternalAgentConfigOption>,
+    },
+    /// Fork: a new ACP session replaced one that could not be loaded
+    /// ([`crate::orchestration::QueryEvent::ExternalAgentContextReset`]); the timeline divider.
+    ExternalAgentContextReset {
+        agent: String,
+    },
+    /// Fork: the running ACP prompt went silent or spoke again ([`crate::orchestration::QueryEvent::ExternalAgentStatus`]).
+    ExternalAgentStatus {
+        agent: String,
+        #[serde(flatten)]
+        status: crate::orchestration::ExternalAgentStatus,
     },
     FileChanges {
         turn: TurnId,
@@ -189,6 +262,9 @@ pub enum KernelEvent {
         /// 生效的自动压缩阈值（[`crate::compaction::ContextOccupancy::compact_at`]，compact.md §2.3）。serde 缺省 None。
         #[serde(default)]
         compact_at: Option<u64>,
+        /// Fork: [`crate::compaction::ContextOccupancy::window_tokens`]. serde default None.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        window_tokens: Option<u64>,
     },
     /// 上下文快满的提示（docs/specs/rust-cli/compact.md §2.1）：提交带用量的 assistant 与压缩结果之后重算。
     ContextNotice {
@@ -235,8 +311,8 @@ pub enum KernelEvent {
     TurnFilesReverted {
         turn_input: MessageId,
     },
-    /// Fork: full access was granted from the permission ask `interaction`
-    /// ([`crate::session_api::Command::GrantFullAccess`]), right after the mode change. The desktop
+    /// Fork: a permission mode (full access or guarded) was granted from the permission ask `interaction`
+    /// ([`crate::session_api::Command::GrantPermissionMode`]), right after the mode change. The desktop
     /// composer adopts the session mode once per grant (Node `config.permissionGrant`).
     PermissionGranted {
         interaction: String,
@@ -258,6 +334,18 @@ pub enum KernelEvent {
     GoalVerification {
         verification: crate::goal::GoalVerification,
         at_ms: u64,
+    },
+    /// Fork: the hook runs of one dispatch in `turn` (Node's `HookRun*` events), for the App's `hookInvocation` row
+    /// and the blocked-prompt banner (specs/fork-rust-agent-parity.md HK-UP-01). Not stored.
+    HookInvocation {
+        turn: crate::ids::TurnId,
+        invocation: crate::hooks::HookInvocation,
+    },
+    /// Fork: the human input of `turn` a UserPromptSubmit hook blocked: the message it would have committed, shown as
+    /// the turn's `userInput` row. Not stored, not sent to the model.
+    PromptBlocked {
+        turn: crate::ids::TurnId,
+        message: crate::message::Message,
     },
     /// 定时任务触发的界面行（tools-more.md §18.3，L22）：不进模型上下文、不落库，
     /// 紧接着是这次触发开的回合。`at` 是本地时间（`Oct 18 3:04pm`）；`fold` 有值时前端收起上一个 loop tick。

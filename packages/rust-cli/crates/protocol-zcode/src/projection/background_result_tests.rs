@@ -7,11 +7,13 @@ use rust_cli_kernel_api::message::{
 use rust_cli_kernel_api::session_api::KernelEvent;
 use serde_json::json;
 
-use super::super::background_result::origin_meta;
 use super::{Feed, Followup, Projection, assistant, row_of, user, view};
+use rust_cli_kernel_api::background_origin::origin_meta;
 
 fn notification(id: &str, task: &str, summary: &str) -> Message {
     Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
         id: MessageId::new(id),
         content: vec![ContentBlock::Text {
             text: format!(
@@ -232,6 +234,8 @@ fn one_notification_message_with_two_blocks_is_one_batch_header() {
         ),
     };
     let batch = Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
         id: MessageId::new("msg_n"),
         content: vec![block("b1", "First"), block("b2", "Second")],
         origin: UserOrigin::Meta {
@@ -289,6 +293,8 @@ fn agent_block(task: &str, call: &str, status: &str, summary: &str) -> ContentBl
 
 fn notifications(id: &str, blocks: Vec<ContentBlock>) -> Message {
     Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
         id: MessageId::new(id),
         content: blocks,
         origin: UserOrigin::Meta {
@@ -396,6 +402,8 @@ fn a_single_failed_notification_settles_its_card_live_and_cold() {
             user("msg_u1", "start it"),
             agent_calls(&["call_1"]),
             Message::User(UserMessage {
+                stall_execution: None,
+                intent: None,
                 id: MessageId::new("msg_r1"),
                 content: vec![ContentBlock::ToolResult {
                     tool_use_id: ToolUseId::new("call_1"),

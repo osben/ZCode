@@ -110,6 +110,7 @@ import {
   toWorkflowError,
 } from "./workflow-driver-helpers.js";
 import { makeSessionSubmitPort, type SubmitBridgeHost } from "./workflow-driver-submit-bridge.js";
+import { makeWebSearchBudgetPort, webSearchLimitOf } from "./workflow-driver-web-search-budget.js";
 import {
   countSessionTranscript,
   journalAskMessageBoundary,
@@ -271,11 +272,11 @@ class AgentRuntimeWorkflowDriver implements WorkflowDriver {
     // computing it here once is cheaper than looking it up on each escalate and cannot change
     // midway through the run.
     const escalatePort = this.makeEscalatePort(sessionId, actor, persona);
-    // Model activity surface: the admission port is passed through runtime deps (the runner
-    // checks the gate before each attempt). Report waiting/executing observations only while an
-    // ask is in flight and has not been settled/cancelled by the engine; late observations are
-    // meaningless for a completed ask, and the engine checks again as well. State is created
-    // below, so bind it later through a closure.
+    // WebSearch 预算端口同构：按会话 closure 绑定，计数在下面才建的会话状态里（端口按 id 晚查）。
+    const webSearchBudgetPort = makeWebSearchBudgetPort(this.sessions, sessionId);
+    // 模型活动面：准入端口随 runtime deps 下传（runner 每次尝试先过闸门），
+    // waiting / executing 观察只在有在飞 ask、且它还没被引擎结算/取消时上报——迟到的观察对一个
+    // 已完结的 ask 没有意义，引擎侧也会再挡一次。state 在下面才建，所以经 closure 晚绑定。
     let state: SessionState | undefined;
     const live = (): InstanceRef | undefined =>
       state === undefined ||
@@ -325,6 +326,7 @@ class AgentRuntimeWorkflowDriver implements WorkflowDriver {
       submitPort,
       submitProfile,
       escalatePort,
+      webSearchBudgetPort,
       ...(seed === undefined ? {} : { seed }),
       ...(modelActivity.admission === undefined
         ? {}
@@ -341,6 +343,8 @@ class AgentRuntimeWorkflowDriver implements WorkflowDriver {
       turnGeneration: 0,
       pendingEscalations: new Map(),
       escalationsUsed: 0,
+      webSearchesUsed: 0,
+      webSearchLimit: webSearchLimitOf(persona),
       modelActivity,
       actor,
       actorName: effectiveActorName(persona),
@@ -388,6 +392,7 @@ class AgentRuntimeWorkflowDriver implements WorkflowDriver {
     state.pendingSubmit = undefined;
     // Reset the per-ask budget (nudge uses runTurn, not this path; it remains within the same ask).
     state.escalationsUsed = 0;
+    state.webSearchesUsed = 0;
     state.abortController = new AbortController();
     // Do not carry the previous ask's waiting/executing phase or tool count into this ask; the
     // transient retry count is reset for the same reason.

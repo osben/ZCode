@@ -1,3 +1,4 @@
+import type { IManagedWorktreeService } from "#src/managed-worktree-tasks/contract.js";
 import type { IGenUiService } from "./gen-ui/contract.js";
 import type { IDefinitionPreviewService } from "./definition-preview/contract.js";
 import { IOffPeakTaskService } from "./session/offPeakTask.js";
@@ -35,6 +36,12 @@ import type { ISkillsService } from "./skills/skills.js";
 import type { ISkillSyncService } from "./skill-sync/skillSync.js";
 import type { IDeviceSyncStateService, IUserConfigSyncService } from "./data-sync/index.js";
 import type { IProviderProvisioningStatusService } from "./provider-provisioning-status/index.js";
+import type {
+  IExtensionGrantsService,
+  IExtensionsService,
+  IExtensionViewsService,
+} from "./extensions/index.js";
+import type { IVoiceInputService } from "./voice-input/index.js";
 import type { IMcpSyncService } from "./mcp-sync/mcpSync.js";
 import type { IPluginSyncService } from "./plugin-sync/pluginSync.js";
 import type { IPluginsService } from "./plugins/plugins.js";
@@ -56,6 +63,7 @@ import type { IVoiceDictationService } from "./voice-dictation/voiceDictation.js
 // API members used by packages/ui (upstream 3.16.1). Optional so existing hosts and test doubles still compile.
 import type { ITaskGroupService } from "#src/task-groups/contract.js";
 import type { IQuickPromptService } from "#src/quick-prompts/contract.js";
+import type { IExternalSessionsService } from "#src/external-sessions/contract.js";
 import type { IProjectService } from "#src/project/contract.js";
 import type { IRemoteProjectService } from "#src/remote-projects/contract.js";
 import type { WindowProjectDirectoryServices } from "#src/window-project-directory/contract.js";
@@ -68,7 +76,11 @@ export interface IServiceAccessor {
   readonly taskGroupService?: ITaskGroupService;
   /** Fork: composer quick prompts, owned by the controller Host (specs/composer-quick-prompts.md). */
   readonly quickPromptService?: IQuickPromptService;
+  /** Fork: sessions recorded by other AI coding CLIs; desktop local Host only (specs/external-sessions.md). */
+  readonly externalSessionsService?: IExternalSessionsService;
   readonly projectService?: IProjectService;
+  /** 受管 worktree 管理；仅本地桌面 Host 提供，手机与旧 Host 缺省。 */
+  readonly managedWorktreeService?: IManagedWorktreeService;
   readonly remoteProjectService?: IRemoteProjectService;
   readonly windowProjectDirectory?: WindowProjectDirectoryServices;
   /** Source Server workspace identity resolution; optional until every host registers it. */
@@ -109,6 +121,14 @@ export interface IServiceAccessor {
   readonly deviceSyncStateService?: IDeviceSyncStateService;
   /** Registered only by the desktop local Host: provider Provisioning lane status and retry for the data sync page. */
   readonly providerProvisioningStatusService?: IProviderProvisioningStatusService;
+  /** 仅桌面本机 Host 注册：扩展（docs/plugins/extension-host.md）。Web / 手机 / 远端不提供。 */
+  readonly extensionsService?: IExtensionsService;
+  /** 仅桌面本机 Host 注册：扩展视图（与 extensionsService 同一开关）。Web / 手机 / 远端不提供。 */
+  readonly extensionViewsService?: IExtensionViewsService;
+  /** 仅桌面本机 Host 注册：扩展授权（与 extensionsService 同一开关，§17.7）。Web / 手机 / 远端不提供。 */
+  readonly extensionGrantsService?: IExtensionGrantsService;
+  /** 语音输入；只在桌面 base 连接存在 */
+  readonly voiceInputService?: IVoiceInputService;
   readonly usageStatsService: IUsageStatsService;
   readonly codingPlanSubscriptionService: ICodingPlanSubscriptionService;
   readonly clientConfigService: IClientConfigService;

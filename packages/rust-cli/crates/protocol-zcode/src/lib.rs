@@ -2,39 +2,70 @@
 //! 还在调用的旧方法。与 tui、headless 同层：只经内核的会话 API 与平台层，协议的机制在 protocol-core。
 //!
 //! 入口（cli 的 `app-server --stdio`）的顺序：[`connection::start`](rust_cli_protocol_core::connection::start) 起写者，
-//! [`Context::new`]；马上 [`Startup::checking`]（Host 要求 30 s 内有首帧）；用 [`HostHeaders`] 组装平台层与内核；
-//! [`Startup::ready`] 或 [`Startup::failed`]；最后 [`serve`] 读到 Host 关掉输入。
+//! [`Context::new`]；[`connection::serve`](rust_cli_protocol_core::connection::serve) 配 [`connection::Deferred`] 在组装
+//! 之前就开始读 Host 的输入（自己请求的回复要在组装期间送达，例如凭据加解密）；马上 [`Startup::checking`]（Host 要求 30 s
+//! 内有首帧）；用 [`HostHeaders`] 与 [`HostCredentialCipher`] 组装平台层与内核；[`Startup::ready`] 或 [`Startup::failed`]；
+//! 内核装好后 [`handler`] 交给 `Deferred` 的安装端，之后 Host 的请求才被处理。Host 关掉输入时读者结束。
+//! （specs/fork-rust-credential-cipher.md，「Startup ordering」）
 
+mod attach;
+mod attachment_share;
+mod attachment_text;
 mod attachments;
+mod automation_port;
+mod child_runs;
+mod cipher;
 mod commands;
 pub mod context;
 mod fork;
 pub mod headers;
+mod ids;
 mod inbound;
 mod inbox;
 mod index;
 mod legacy;
 mod lifecycle;
 mod live;
+mod network_capture;
 mod preparation;
+mod presence_gate;
 mod projection;
 mod reservations;
 mod server;
+mod subagent_config;
 mod subscribe;
+mod telemetry;
+// Fork: specs/fork-rust-topic-resource.md.
+mod topic_resource;
 mod uploads;
 mod wire;
+mod worktree;
 
 use std::sync::Arc;
 
 use rust_cli_base::Spawner;
 use rust_cli_kernel_api::session_api::Kernel;
-use rust_cli_protocol_core::connection::{self, Options, Peer};
+use rust_cli_protocol_core::connection;
 use serde_json::json;
-use tokio::io::AsyncBufRead;
 
+pub use attach::{HOST_ATTACH_ACK_ENV, serve_attached};
+pub use automation_port::HostAutomations;
+pub use cipher::HostCredentialCipher;
 pub use context::Context;
+pub use fork::hook_review::codes as hook_review_codes;
+pub use fork::node_helper::{
+    HelperCatalog, HelperRoutedMcp, NODE_HELPER_UNAVAILABLE, NodeHelper, NodeHelperLauncher,
+    NodeHelperProcess, Timing as NodeHelperTiming,
+};
+pub use fork::{
+    Admission, ReviewBundle, ReviewItem, ReviewLookup, ReviewSource, StoredTrust, ToggleError,
+    WorkspaceAdmin, WorkspaceTarget,
+};
 pub use headers::HostHeaders;
+pub use network_capture::{NetworkCapture, with_network_capture};
 pub use server::Defaults;
+pub use subagent_config::HostSubagentConfig;
+pub use topic_resource::HostTopicResources;
 
 /// 存储的启动状态（`startup/storageState`，`zcodeStorageStartupStateSchema`）：checking → ready / failed。迁移与备份只由
 /// Node 的存储准备 Worker 做，这里只报本进程打开会话库的结果。
@@ -94,33 +125,21 @@ impl Startup {
     }
 }
 
-/// 读循环：处理 Host 的请求直到它关掉输入。
-pub async fn serve<R>(
-    reader: R,
+/// 协议的处理方（不读输入）：启动时可以先开读者（[`connection::Deferred`]），内核装好后再交给它。
+pub fn handler(
     context: Arc<Context>,
     kernel: Arc<dyn Kernel>,
     defaults: Defaults,
     spawner: Spawner,
-    options: Options,
-) -> std::io::Result<()>
-where
-    R: AsyncBufRead + Unpin,
-{
-    let peer: Peer = context.peer.clone();
-    let server = Arc::new(server::Server::new(
-        context,
-        kernel,
-        spawner.clone(),
-        defaults,
-    ));
-    connection::serve(
-        reader,
-        peer,
-        Arc::new(server::Handler(server)),
-        spawner,
-        options,
-    )
-    .await
+) -> Arc<dyn connection::Service> {
+    let server = Arc::new(server::Server::new(context, kernel, spawner, defaults));
+    // Fork: the Node helper's requests are answered by this server (specs/fork-rust-node-helper.md F3).
+    if let Some(helper) = server.context.node_helper() {
+        let answers: std::sync::Weak<dyn fork::node_helper::HelperRequests> =
+            Arc::downgrade(&server) as _;
+        helper.set_requests(answers);
+    }
+    Arc::new(server::Handler(server))
 }
 
 #[cfg(test)]

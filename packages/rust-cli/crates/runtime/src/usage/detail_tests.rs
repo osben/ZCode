@@ -31,6 +31,8 @@ fn text(value: &str) -> ContentBlock {
 
 fn user(origin: UserOrigin, content: Vec<ContentBlock>) -> Message {
     Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
         id: MessageId::new("u"),
         content,
         origin,
@@ -208,4 +210,28 @@ fn kinds_and_tool_results_add_up_with_their_call_counts() {
     // 类别是 0：没有明细。
     let (kinds, tools) = super::messages(0, &found);
     assert!(kinds.is_empty() && tools.is_empty());
+}
+
+/// Fork: an ACP row never reaches the model (specs/fork-rust-agent-parity.md "ACP external agents", rule 5), so it is
+/// no piece of the breakdown: no tool call and no weight beside the text the model does see.
+#[test]
+fn acp_rows_are_no_piece_of_the_breakdown() {
+    let row = ContentBlock::ExternalTool(Box::new(rust_cli_kernel_api::message::ExternalTool {
+        id: ToolUseId::new("acp_1"),
+        name: "acp:read".into(),
+        title: "Read a".into(),
+        input: json!({"path": "a.txt"}),
+        output: "a long file body that the model never sees".into(),
+        is_error: false,
+    }));
+    let history = [assistant(vec![text("reading"), row])];
+    let messages: Vec<&Message> = history.iter().collect();
+    let found = pieces(&messages, 4);
+    assert_eq!(
+        found
+            .iter()
+            .map(|piece| (piece.kind, piece.weight))
+            .collect::<Vec<_>>(),
+        [(Kind::Replies, counts::block(&text("reading"), 4))]
+    );
 }

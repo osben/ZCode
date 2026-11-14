@@ -7,7 +7,7 @@ returned the canonical Markdown. Lexical could not find the actual text along `f
 selection offset disagreed with the displayed text length, so select-all with an endpoint on a mention
 made the internal selection diverge from the browser selection.
 
-Applies to `LexicalChatInput`, shared by the main Composer and inline message editing, covering files,
+Applies to `LexicalChatInput`, shared by the main Composer (including edit mode) and inline message editing (inline editing is being folded into composer edit mode, see [Composer edit mode](composer-edit-mode.md)), covering files,
 skills, commands, subagents, sessions, whiteboards and plugins.
 
 ## Contract
@@ -75,7 +75,7 @@ The 8 native interaction regressions of MSEL-01/02/03 moved to the standalone
 `conversation-session-mention-selection`; the top-level spec keeps the MSEL-05 adjacent-navigation case.
 
 - Pending: `packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-mention-selection.test.ts`.
-- Canonical target: `packages/desktop/test/e2e/conversation-session/conversation-session-mention-selection.test.ts`.
+- Canonical target: `packages/desktop/test/e2e/conversation-session/composer/conversation-session-mention-selection.test.ts`.
 - Provider contract: `providerRequestPolicy: none`, case-local fixture and requests are empty; after
   each case assert the provider request count did not increase.
 - Order: pending explicit replay + screenshot review -> fixture check -> promotion dry run/apply ->

@@ -33,6 +33,7 @@ fn meta() -> SessionMeta {
         title: String::new(),
         trace: TraceId::new("trace_1"),
         created_at_ms: 0,
+        incognito: None,
     }
 }
 
@@ -186,19 +187,43 @@ impl rust_cli_kernel_api::tool::Tool for AskingTool {
         context: rust_cli_kernel_api::tool::ToolUseContext,
         _progress: tokio::sync::mpsc::Sender<rust_cli_kernel_api::tool::ToolProgress>,
     ) -> Result<rust_cli_kernel_api::tool::ToolOutput, rust_cli_kernel_api::tool::ToolError> {
-        let answer = context
-            .interactions
-            .ask(
-                rust_cli_kernel_api::orchestration::InteractionRequest::Question {
-                    origin: None,
+        // Fork (B3, grant_mode_tests.rs): `{"permission": {"once", "independent", "subagent"}}` asks a permission.
+        let request = match input.get("permission") {
+            Some(permission) => {
+                rust_cli_kernel_api::orchestration::InteractionRequest::Permission {
+                    origin: permission["subagent"].as_bool().unwrap_or(false).then(|| {
+                        Box::new(rust_cli_kernel_api::orchestration::AskOrigin {
+                            agent: rust_cli_kernel_api::ids::AgentId::new("agent_1"),
+                            agent_type: "general-purpose".to_owned(),
+                            child_session: SessionId::new("sess_child"),
+                            parent_session: SessionId::new("sess_1"),
+                            description: String::new(),
+                            parent_tool_use: None,
+                        })
+                    }),
                     tool_use: context.tool_use.clone(),
-                    questions: input,
-                },
-            )
-            .await
-            .map_err(|error| rust_cli_kernel_api::tool::ToolError::Failed {
+                    tool: "Bash".to_owned(),
+                    input: serde_json::json!({"command": "rm -rf target"}),
+                    message: "ask".to_owned(),
+                    suggestions: Vec::new(),
+                    rule_seed: None,
+                    asked_by: None,
+                    machine: Default::default(),
+                    once: permission["once"].as_bool().unwrap_or(false),
+                    independent: permission["independent"].as_bool().unwrap_or(false),
+                }
+            }
+            None => rust_cli_kernel_api::orchestration::InteractionRequest::Question {
+                origin: None,
+                tool_use: context.tool_use.clone(),
+                questions: input,
+            },
+        };
+        let answer = context.interactions.ask(request).await.map_err(|error| {
+            rust_cli_kernel_api::tool::ToolError::Failed {
                 message: error.to_string(),
-            })?;
+            }
+        })?;
         Ok(rust_cli_kernel_api::tool::ToolOutput {
             content: vec![rust_cli_kernel_api::message::ToolResultContent::Text {
                 text: serde_json::to_string(&answer.answer).unwrap(),
@@ -219,24 +244,39 @@ async fn asking_session_with(
     scope: &TaskScope,
     hooks: Arc<dyn rust_cli_kernel_api::hooks::HookRunner>,
 ) -> (Arc<MemoryStore>, Arc<ScriptedModel>, Session) {
+    asking_session_input(scope, hooks, serde_json::json!({"question": "which?"})).await
+}
+
+/// Same as [`asking_session_with`], the [`AskingTool`] call taking `input`.
+async fn asking_session_input(
+    scope: &TaskScope,
+    hooks: Arc<dyn rust_cli_kernel_api::hooks::HookRunner>,
+    input: serde_json::Value,
+) -> (Arc<MemoryStore>, Arc<ScriptedModel>, Session) {
+    let model = Arc::new(ScriptedModel::new(vec![
+        rust_cli_kernel_api::testing::tool_use_response("toolu_1", "AskUserQuestion", &input),
+        text_response(&["thanks"]),
+    ]));
+    let (store, session) =
+        tool_session(scope, hooks, model.clone(), vec![Arc::new(AskingTool)]).await;
+    (store, model, session)
+}
+
+/// A created session whose turns run `model` with `tools` (no execution environment).
+pub(super) async fn tool_session(
+    scope: &TaskScope,
+    hooks: Arc<dyn rust_cli_kernel_api::hooks::HookRunner>,
+    model: Arc<dyn rust_cli_kernel_api::model::ModelPort>,
+    tools: Vec<Arc<dyn rust_cli_kernel_api::tool::Tool>>,
+) -> (Arc<MemoryStore>, Session) {
     let store = Arc::new(MemoryStore::default());
     store.create(meta()).await.unwrap();
     let ids = Arc::new(SequentialIds::default());
-    let model = Arc::new(ScriptedModel::new(vec![
-        rust_cli_kernel_api::testing::tool_use_response(
-            "toolu_1",
-            "AskUserQuestion",
-            &serde_json::json!({"question": "which?"}),
-        ),
-        text_response(&["thanks"]),
-    ]));
     let env = Arc::new(UnusedEnvironment);
     let runner = Arc::new(QueryLoop::new(QueryParts {
         model: model.clone(),
         context: Arc::new(FixedContext(Vec::new())),
-        tools: Arc::new(rust_cli_kernel_api::testing::ListTools(vec![Arc::new(
-            AskingTool,
-        )])),
+        tools: Arc::new(rust_cli_kernel_api::testing::ListTools(tools)),
         executor: Arc::new(rust_cli_kernel_api::testing::DirectExecutor),
         compactor: Arc::new(NeverCompact),
         hooks: Arc::new(NoHooks),
@@ -277,6 +317,9 @@ async fn asking_session_with(
             desktop_goals: false,
             fork_while_running: false,
             error_holds_queue: false,
+            session_start_extras: true,
+            typed_compact: false,
+            hook_rows: false,
         },
         SessionState {
             commands: Default::default(),
@@ -287,17 +330,21 @@ async fn asking_session_with(
             mode: PermissionMode::Default.into(),
             checkpoints: Vec::new(),
             start: StartSource::Startup,
+            start_held: false,
+            execution_worktree: false,
             turn: None,
             last_turn_failed: false,
             child_live: None,
             title_pending: true,
+            title_source: None,
+            permission_grant: None,
             goal_target: None,
             goal_verifications: Vec::new(),
             message_models: Default::default(),
         },
         Opened::Created,
     );
-    (store, model, session)
+    (store, session)
 }
 
 /// 等到工具向用户提问。
@@ -369,11 +416,17 @@ mod steer;
 #[path = "dequeue_tests.rs"]
 mod dequeue;
 
+#[path = "grant_mode_tests.rs"]
+mod grant_mode_tests;
+
 #[path = "submit_with_tests.rs"]
 mod submit_with;
 
 #[path = "queue_edit_tests.rs"]
 mod queue_edit;
+
+#[path = "quote_intent_tests.rs"]
+mod quote_intent;
 
 #[path = "notice_tests.rs"]
 mod notice;
@@ -392,3 +445,6 @@ mod close;
 
 #[path = "input_ledger_tests.rs"]
 mod input_ledger_tests;
+
+#[path = "turn_limits_tests.rs"]
+mod turn_limits_tests;

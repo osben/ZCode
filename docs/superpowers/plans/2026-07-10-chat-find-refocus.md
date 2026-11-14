@@ -34,7 +34,7 @@ not change.
 ## Evidence
 
 - `CFR` pending manual-review E2E
-  (`packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-chat-find-refocus.test.ts`,
+  (`packages/desktop/test/e2e/conversation-session/presentation/manual-review/pending/conversation-session-chat-find-refocus.test.ts`,
   WDIO-only `window.__zcodeSessionStoreE2E` bridge, no provider requests) provides evidence
   for catalog cases CF01 (conversation) and CF02 (file-change). Both stay `planned` in the
   coverage matrix with no replay fixture, Docker admission, or CI promotion claim until a

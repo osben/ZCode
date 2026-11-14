@@ -34,6 +34,7 @@ export function GroupedTaskContextMenuContent({
   onOpenProviderConfig,
   onOpenTaskFeedback,
   disabledReason,
+  archiveDisabledReason,
 }: {
   task: ZCodeTaskMeta;
   currentGroupId?: string;
@@ -56,6 +57,8 @@ export function GroupedTaskContextMenuContent({
   onOpenProviderConfig: () => void;
   onOpenTaskFeedback: () => void;
   disabledReason?: string;
+  /** Archive-only disabled reason (running task); other actions are unaffected. */
+  archiveDisabledReason?: string;
 }) {
   return (
     <ContextMenuContent className="w-56">
@@ -244,10 +247,10 @@ export function GroupedTaskContextMenuContent({
       <ContextMenuSeparator />
       <SidebarNativeTooltip>
         <ContextMenuItem
-          disabled={Boolean(disabledReason)}
-          title={disabledReason}
+          disabled={Boolean(disabledReason) || Boolean(archiveDisabledReason)}
+          title={disabledReason ?? archiveDisabledReason}
           onSelect={() => {
-            if (!disabledReason) {
+            if (!disabledReason && !archiveDisabledReason) {
               onArchiveTask(task);
             }
           }}

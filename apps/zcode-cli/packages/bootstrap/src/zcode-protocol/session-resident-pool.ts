@@ -32,6 +32,7 @@ export interface SessionResidencyFacts {
 
 export interface SessionResidentPoolHost {
   listSessionIds(): string[];
+  onOperationsReleased?(sessionId: string): void;
   readResidencyFacts(sessionId: string): SessionResidencyFacts | null;
   /**
    * The first synchronous execution step must remove the session from the resident registry; the
@@ -116,7 +117,10 @@ export class SessionResidentPool {
       for (const sessionId of sessionIds) {
         this.touch(sessionId);
         const next = (this.operationLeaseCounts.get(sessionId) ?? 1) - 1;
-        if (next <= 0) this.operationLeaseCounts.delete(sessionId);
+        if (next <= 0) {
+          this.operationLeaseCounts.delete(sessionId);
+          this.host.onOperationsReleased?.(sessionId);
+        }
         else this.operationLeaseCounts.set(sessionId, next);
       }
       this.activeOperationCount = Math.max(0, this.activeOperationCount - 1);

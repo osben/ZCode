@@ -326,6 +326,7 @@ export function launchDynamicWorkflowRun(
       actor,
       persona,
       escalatePort,
+      webSearchBudgetPort,
       seed,
       submitPort,
       submitProfile,
@@ -344,8 +345,9 @@ export function launchDynamicWorkflowRun(
         // Pass the escalation port along with the submit port; core's registration gate checks only
         // for the port, so always pass it.
         escalatePort,
-        // Resume pin: the model this actor used last time. Read it **before creating the runtime**,
-        // because journalActorResolvedModel below writes this turn's resolved model back to the same field.
+        webSearchBudgetPort,
+        // resume 的 pin：这个 actor 上一次跑在哪个模型上。必须在**造 runtime 之前**读，
+        // 因为下面那行 journalActorResolvedModel 会把这一轮的解析结果写回同一个字段。
         //
         // A seed-provided pin is **inherited** (amend-resume): during the amended run's first dispatch,
         // its journal has no resolved model yet, so the pin can come only from the predecessor. The

@@ -36,8 +36,8 @@ const UNTRANSLATED_VALUES = new Set([
   "{provider} Coding Plan",
 ]);
 
-// Keys left in English on purpose until their plural-family conversion lands (tracked by ISSUE-046).
-const UNTRANSLATED_KEYS = new Set(["archives.deleteTitle"]);
+// Keys left in English on purpose. None now: archives.deleteTitle is translated (its English changed upstream).
+const UNTRANSLATED_KEYS = new Set<string>();
 
 const PLURAL_CATEGORY = /\.(?:zero|one|two|few|many|other)$/;
 

@@ -100,6 +100,8 @@ The upper layer can therefore reliably learn whether Git is installed, whether t
 4. For untracked files, read the content to compute added lines.
 5. Return `GitStatusSnapshot`.
 
+On automatic status refresh, `status` and both `git diff --numstat` runs override `core.fsmonitor` with an empty value, so a repository-local config cannot make Git queries run scripts; Git operations the user starts explicitly are not subject to this.
+
 `status --porcelain=v2` keeps the format stable regardless of system language. Staged / unstaged line statistics are done in the repo layer. The upper layer never guesses whether a file is staged, unstaged, untracked or conflicted.
 
 ### 3. Workspace Subdirectory Filter

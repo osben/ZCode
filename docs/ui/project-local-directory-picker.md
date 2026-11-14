@@ -47,8 +47,8 @@ remote / Web / mobile -> original projectService.readDirectory(hostId) -> same d
 | NDP03 | In-flight native selection blocks save/close; after failure the draft is kept and retryable; a remote Host browses via the Host even with native capability; Web/mobile without native capability can still browse |
 | NDP04 | Old single-select still returns one path or null; multi-select cancel returns []; light/dark editor usable                                                                                                         |
 
-Electron interaction candidate:
-`packages/desktop/test/e2e/ui-shell/manual-review/pending/project-native-directory-picker.test.ts`. The mock
+Electron interaction case:
+`packages/desktop/test/e2e/workspace/projects/project-native-directory-picker.test.ts`. The mock
 replaces only the user's return value of the system dialog and really exercises UI -> preload -> main, save
 and re-edit; it does not claim to cover mouse multi-select inside the native OS window. Unit tests cover
 Host/platform boundaries and failure/in-flight states. The existing local directory browse E2E uses the

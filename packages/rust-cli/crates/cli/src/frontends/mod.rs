@@ -1,8 +1,10 @@
 //! 三个薄入口（交互界面、`-p`、app-server）与交互界面的服务（账号、机器、MCP、剪贴板、编辑器、工作区信任）。
 
 pub(crate) mod app_server;
+pub(crate) mod app_workspace;
 pub(crate) mod clipboard;
 pub(crate) mod editor;
+pub(crate) mod node_helper;
 pub(crate) mod print;
 pub(crate) mod tui;
 pub(crate) mod tui_account;

@@ -217,7 +217,7 @@ The 4 uncovered lines are only in share-failure feedback, the verification dupli
 
 ## Migration note (2026-09-10)
 
-2026-09-12 update: the user confirmed the marketing E2E promotion; the current formal paths are `ui-shell/marketing-touch-delivery.test.ts`, `ui-shell/marketing-touch-entitlement.test.ts` and `ui-shell/marketing-touch-anonymous.test.ts`. Latest execution evidence: `marketing-touch-e2e-implementation.md`.
+2026-09-12 update: the user confirmed the marketing E2E promotion; the current formal paths are `ui-shell/marketing/marketing-touch-delivery.test.ts`, `ui-shell/marketing/marketing-touch-entitlement.test.ts` and `ui-shell/marketing/marketing-touch-anonymous.test.ts`. Latest execution evidence: `marketing-touch-e2e-implementation.md`.
 
 Everything above is a historical coverage record of the old Banner/preview flow and is no longer the current Sidebar contract; see `docs/marketing-touch-client.md` for current semantics and the MTC acceptance matrix.
 

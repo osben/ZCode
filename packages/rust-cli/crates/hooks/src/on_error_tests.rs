@@ -13,7 +13,8 @@ use crate::node_config::NodeHooks;
 use crate::test_support::{Script, ScriptedEnv, event, ports, script};
 use crate::{HookEngine, HookRunner};
 
-const BLOCKED: &str = "PreToolUse:Bash hook error: [guard.sh]: PreToolUse hook failed and its onError is \"deny\", so the tool call is blocked: ";
+const BLOCKED: &str =
+    "PreToolUse hook failed and its onError is \"deny\", so the tool call is blocked: ";
 
 fn node_engine(env: Arc<ScriptedEnv>, hook: Value, event_name: &str) -> HookEngine {
     let (hooks, warnings) = NodeHooks::from_json(&json!({
@@ -119,7 +120,7 @@ async fn a_successful_or_blocking_guard_is_unchanged() {
     assert_eq!(
         pre_tool_use(env, guard(Some("deny"))).await.decision,
         Some(PermissionDecision::Deny {
-            message: "PreToolUse:Bash hook error: [guard.sh]: no rm".to_owned()
+            message: "no rm".to_owned()
         })
     );
 }

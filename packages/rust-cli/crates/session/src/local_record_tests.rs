@@ -208,7 +208,7 @@ async fn records_before_the_first_input_keep_it_the_first_turn() {
         .await;
     until(
         &mut events,
-        |event| matches!(event, KernelEvent::TitleChanged { title } if title == "Fresh start"),
+        |event| matches!(event, KernelEvent::TitleChanged { title, .. } if title == "Fresh start"),
     )
     .await;
     assert_eq!(title_model.requests().len(), 1);

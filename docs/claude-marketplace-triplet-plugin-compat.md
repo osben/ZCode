@@ -75,20 +75,20 @@ Not compatible / needs separate diagnosis:
 
 ## skills field semantics
 
-In the Claude plugin spec, array items of manifest `skills` point at the **skill
-directory itself** (with `SKILL.md` directly inside, e.g. `./skills/engineering/tdd`);
-the string form points at a **skill collection directory** (whose child directories
-are each a skill). Both shapes are handled by the shared scan rules in
+Manifest `skills` accepts a string or an array of paths. When declared, only the
+declared paths are used; an empty array loads no skills; the default `skills/` is
+used only when the field is absent. A path may point at a single skill or at a
+collection, handled by the shared scan rules in
 `apps/zcode-cli/packages/adapters/src/skills/scan.ts`:
 
-- If a skill root itself contains `SKILL.md`, the root is one skill (array-item
-  semantics, matching the desktop services side's depth-0 output of
-  `skillDiscoveryWalk`);
-- Otherwise scan one level of child directories (the string form / default
-  `skills/` directory, ZCode's one-level layout); a child hit must verify that
+- If a skill root itself has a loadable `SKILL.md`, only that root is loaded and its
+  child directories are not enumerated; other skills inside must be declared by their
+  own paths. User-level and project-level skill scanning is not affected by this rule;
+- If the root has no loadable `SKILL.md`, scan one level of child directories as a
+  collection; a child hit must verify that
   `SKILL.md` really exists, so category directories (like `skills/engineering/`)
   are not miscounted;
-- If a declared root and a default root hit the same `SKILL.md`, deduplicate by
+- If several declared roots hit the same `SKILL.md`, deduplicate by
   file path so counts and discovery results do not double;
 - When a manifest-declared skills path scans to 0 skills, emit a
   `plugin_skill_root_empty` warning diagnostic (the declared path goes into the

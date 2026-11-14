@@ -118,11 +118,17 @@ Attributes:
 | `termination_class`   | `exit_zero` / `exit_nonzero` / `signal` / `unknown`                |
 | `diagnostic_class`    | `oom` / `sqlite` / `errno` / `generic` / `none`                    |
 
-Diagnostic summary extracted by determinism priority: OOM → SQLite → errno → generic exception → no diagnosis. `[Object]`,
-object closing parenthesis, GC header, native stack address, Node internal location and SQLite ExperimentalWarning
-are retained only in sanitized `error_stack`, not allowed to become `error_message`. OOM uses
+Diagnostic summary extracted by determinism priority: exit code → OOM → SQLite → errno → generic exception → no diagnosis. `[Object]`,
+object closing parenthesis, GC header, native stack address, Node internal location, SQLite ExperimentalWarning, and
+object property lines printed by util.inspect (for example the HTTP response header `server: 'ESA',`)
+are retained only in sanitized `error_stack`, never a source of `error_message` or `error_code`. OOM uses
 `AgentOutOfMemory / ERR_OUT_OF_MEMORY`; errno must put `EPERM`、`EPIPE` etc. into
 `error_code`; SQLite aggregates via `diagnostic_class=sqlite` even without SQLite code.
+
+- Exit code first: the Windows exit code `0xE0000008` (decimal 3758096392) is the exception code with which Chromium/PartitionAlloc terminates the process when system committable memory is exhausted, and it writes nothing to stderr. It is classified directly as `AgentOutOfMemory / ERR_OUT_OF_MEMORY`, `diagnostic_class=oom`, with `error_message` fixed to `Native memory allocation failed (exit code 0xE0000008)`, and the fingerprint does not read stderr. Counting by `exit_code` gives the share of online native out-of-memory crashes and tells them apart from JS heap OOM.
+- Other platforms have no equally definite exit signature: on Linux/macOS a Chromium allocation failure shows as SIGTRAP/SIGILL, the same as any assertion failure; the kernel OOM killer and macOS jetsam send SIGKILL, the same as a manual `kill -9`. So memory exhaustion is not inferred from signals, and V8 heap OOM is still recognized from heap out of memory in stderr.
+- Without an explicit `code:`, `error_code` accepts only Node/libuv errno names (including `os.constants.errno`), Node dns error codes (such as `getaddrinfo ENOTFOUND`), `ERR_*` and `SQLITE_*`; the list does not include `EOF` or `UNKNOWN`. The regression test checks the runtime Node's own errno / dns error codes one by one, so a name newly added in a newer Node and missed fails the test; uppercase words such as `ESA`, `END`, `ENV` are not error codes. For a long-running Agent the stderr tail is often unrelated logs from hours ago; when only noise remains `error_message` falls back to `Agent process exited unexpectedly (code=..., signal=...)`, so the fingerprint differs by exit code.
+- Implementation: `packages/shared/src/agent-crash-diagnostic/agentCrashDiagnostic.ts`. Regression samples (including 0xE0000008 and a 429 response-header dump) are in `packages/desktop/test/agent-crash-diagnostic.node.test.ts`, run by `pnpm --filter @zcode/desktop test:agent-crash-diagnostic`; when an MR touches the diagnostic rules, the stderr collection of services, `desktopStabilityTelemetry.ts` or the test itself, the CI job `test:agent-crash-diagnostic` runs automatically and a failure fails the job.
 
 ### `perf_agent_spawn_error`
 
@@ -151,9 +157,8 @@ First-set termination intent is root cause fact, subsequent idempotent cleanup d
 
 - Prohibit uploading `workspacePath`、`workspaceIdentity`、command、args、environment variables、
   session/task ID or model input/output.
-- services layer first masks token、cookie、authorization、password、secret etc. assignments.
-- services and desktop main both mask non-prefixed `sk-...` API key; error text must not
-  bypass masking due to missing `token=` / `Authorization` prefix.
+- There is one set of credential masking rules: `redactAgentDiagnosticSecrets` (`@zcode/shared/agent-crash-diagnostic`). Both the services stderr line collector (`redactAgentDiagnostic` in `zcodeAgentProcessManager.ts`) and desktop main before reporting (`sanitizeAgentCrashDetail`) call it, and neither keeps its own regex. Once there were two copies, and services did assignment replacement first, replacing the `Bearer` of `Authorization: Bearer <token>`, so main could not recognize the token and it was reported with `error_stack`. The rules are idempotent on already processed text, so chaining both layers gives the same result as running one.
+- Masking order: `Bearer` / `Basic` credentials → cookie / set-cookie → assignments of token, authorization, password, secret and the like → non-prefixed `sk-...` API keys (error text must not bypass masking due to a missing `token=` / `Authorization` prefix). A quoted cookie value is replaced only up to the closing quote, so a later `"code":"ECONNRESET"` on the same line can still yield the error code; an unquoted one is replaced to the end of the line so no later cookie segments remain. A quoted value keeps its quotes after replacement, otherwise a second pass would treat it as unquoted.
 - desktop main then replaces workspace absolute path with `<workspace>`, error details truncated to
   4000 characters.
 - desktop main simultaneously replaces common Windows/macOS/Linux user home directories; before fingerprint generation

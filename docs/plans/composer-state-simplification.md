@@ -47,7 +47,7 @@ flowchart TD
 - CLI/projection owns the effective session config. A historical grant ID is correlation information and must not re-execute authorization at initialization.
 - The current Composer owns the local selection for the next submission; menu changes do not rewrite a running task. Only new grant/tool changes within this scope update the matching fields.
 - The text draft stores only what is needed to restore input, never consumed-markers of grant events, subscription state or temporary init flags.
-- Recent is updated only by an accepted Submission and isolated by workspaceKey.
+- Recent is updated by an accepted Submission; the approval dialog's full access separately updates the current project's permission, see the [permission approval spec](../permission-project-approval.md).
 - Project/group is a navigation and creation target and cannot persist through an empty Composer; mobile page recovery uses the existing navigation entry.
 
 ## UI Surface Matrix

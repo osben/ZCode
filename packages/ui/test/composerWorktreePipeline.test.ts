@@ -56,6 +56,7 @@ vi.mock("@/prompt-editor/ChatPromptEditor.js", async () => {
       if (inputApiRef) {
         inputApiRef.current = {
           clear: vi.fn(),
+          clearHistory: vi.fn(),
           focus: vi.fn(),
           getEditorState: () => null,
           getMarkdown: () => "",
@@ -124,6 +125,24 @@ vi.mock("@/hooks/useZCodeSessionService.js", () => ({
 }));
 vi.mock("@/hooks/useSettingService.js", () => ({
   useSettings: () => ({ settings: {} }),
+}));
+vi.mock("@/hooks/useZCodeAgentService.js", () => {
+  // The draft owner subscribes to plugin startup events through this service; no-op subscription.
+  const agentService = {
+    onDynamicPluginStartupDegraded: () => () => ({ dispose: () => {} }),
+  };
+  return { useZCodeAgentService: () => agentService };
+});
+vi.mock("@/voice-input/index.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/voice-input/index.js")>()),
+  // Voice input needs a Host voice service and a logged-in user, neither of which these suites provide.
+  useComposerVoiceInput: () => ({
+    available: false,
+    state: "idle",
+    toggle: () => {},
+    settle: () => undefined,
+    subscribeLevel: () => () => {},
+  }),
 }));
 
 vi.mock("@/hooks/useWorkspaceServices.js", async (importOriginal) => {
@@ -2705,7 +2724,7 @@ describe("shared-context-only worktree submission recovery", () => {
         cumulative: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
       },
       queue: { items: [], autoDrain: true },
-      rows: { totalCount: 0 },
+      rows: { totalCount: 0, window: [], firstRowId: null },
       sharedContextImport: pending
         ? {
             contextId: SHARED_CONTEXT_ID,

@@ -109,7 +109,7 @@ An HTTP probe timeout means a network failure and must not classify the server a
 
 Focused adapter/process tests prove negotiation and cleanup; the Browser Use bundle smoke test keeps proving a real modern stdio server. The change does not alter conversation UI/product state and adds no conversation E2E state combinations.
 
-An additional desktop real-process E2E, `packages/desktop/test/e2e/settings/mcp-dual-era-version-negotiation.test.ts`, starts modern/legacy stdio fixtures from a real CLI config in an isolated HOME and reads `mcp.server.connected` JSONL from the worker-specific `ZCODE_LOG_DIR`. That E2E must lock:
+An additional desktop real-process E2E, `packages/desktop/test/e2e/settings/mcp/mcp-dual-era-version-negotiation.test.ts`, starts modern/legacy stdio fixtures from a real CLI config in an isolated HOME and reads `mcp.server.connected` JSONL from the worker-specific `ZCODE_LOG_DIR`. That E2E must lock:
 
 - the modern fixture actually negotiates `2026-07-28` with no legacy `initialize`;
 - the legacy fixture completes `initialize` in the real session child after the disposable probe;

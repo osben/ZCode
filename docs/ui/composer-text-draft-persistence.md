@@ -144,7 +144,7 @@ The persistent draft's `lastPermissionGrantId`, `lastPlanTransitionId` and `init
 
 The first send no longer uses a global seed Map: the current pane allows only an accepted result with the same workspaceKey and the same draft generation to migrate; New Task, page switch and unmount invalidate old callbacks. Share-import initialization attaches to the existing workspace navigation action, is cleared on receipt and discarded on task switch/New; it is not saved as an empty draft. The submit config is still frozen at send time and does not change with later edits.
 
-Reading drafts only parses/filters and does not write localStorage; old empty records are cleaned on explicit writes. No text means nothing is saved; New uses the workspace Recent, and Recent updates only on accepted.
+Reading drafts only parses/filters and does not write localStorage; old empty records are cleaned on explicit writes. No text means nothing is saved; New uses the workspace Recent, and Recent updates when a submission is accepted; the approval dialog's full access additionally updates only this client's same-project permission from the actual grant receipt, see the [permission approval spec](../permission-project-approval.md).
 
 This round explicitly does not modify mobile project/navigation restore; the shared Composer logic still serves both desktop continuous and mobile replayable and does not change Host, CLI, queue or transport recovery semantics. Plan: [state simplification plan](../plans/composer-state-simplification.md).
 

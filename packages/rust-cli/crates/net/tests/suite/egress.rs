@@ -1,6 +1,7 @@
 use std::time::{Duration, Instant};
 
 use rust_cli_base::secret::RedactedString;
+use rust_cli_base::sync::LockUnpoisoned;
 use rust_cli_net::{
     CaBundle, Egress, HeaderValue, HttpRequest, NetError, NetworkPolicy, NoProxy, TrustRoots,
 };
@@ -239,4 +240,63 @@ async fn an_invalid_url_is_a_request_error() {
         .unwrap_err();
     assert!(matches!(error, NetError::Request(_)), "{error:?}");
     assert!(!error.is_transient());
+}
+
+/// Fork: records what the egress observer sees (specs/fork-rust-network-capture.md, case 8).
+#[derive(Default)]
+struct Seen(std::sync::Mutex<Vec<(String, String)>>);
+
+impl rust_cli_net::RequestObserver for Seen {
+    fn request(&self, method: &str, url: &str) {
+        self.0
+            .lock_unpoisoned()
+            .push((method.to_owned(), url.to_owned()));
+    }
+}
+
+#[tokio::test]
+async fn the_observer_sees_observed_requests_and_upgrades_but_not_unobserved_ones() {
+    let server = Fixture::start(vec![Reply::new(200).send("a"), Reply::new(200).send("b")]).await;
+    let egress = Egress::new(NetworkPolicy::default()).await.unwrap();
+    let seen = std::sync::Arc::new(Seen::default());
+    egress.set_observer(seen.clone());
+    let url = format!("{}/v1/x?key=secret", server.url());
+    egress
+        .send(HttpRequest::post(url.clone(), "{}"))
+        .await
+        .unwrap();
+    egress
+        .send(HttpRequest::get(format!("{}/mcp", server.url())).unobserved())
+        .await
+        .unwrap();
+    // The upgrade is reported before connecting, with the socket scheme; the connection itself fails here.
+    let _ = egress
+        .websocket("https://127.0.0.1:1/socket?t=1", &[])
+        .await;
+    let _ = egress.websocket("ws://127.0.0.1:1/plain", &[]).await;
+    let _ = egress.websocket("ftp://127.0.0.1:1/refused", &[]).await;
+    assert_eq!(
+        *seen.0.lock_unpoisoned(),
+        vec![
+            ("POST".to_owned(), url),
+            ("GET".to_owned(), "wss://127.0.0.1:1/socket?t=1".to_owned()),
+            ("GET".to_owned(), "ws://127.0.0.1:1/plain".to_owned()),
+        ]
+    );
+    assert_eq!(server.requests().len(), 2);
+}
+
+#[tokio::test]
+async fn the_first_observer_stays() {
+    let server = Fixture::start(vec![Reply::new(200).send("a")]).await;
+    let egress = Egress::new(NetworkPolicy::default()).await.unwrap();
+    let (first, second) = (
+        std::sync::Arc::new(Seen::default()),
+        std::sync::Arc::new(Seen::default()),
+    );
+    egress.set_observer(first.clone());
+    egress.set_observer(second.clone());
+    egress.send(HttpRequest::get(server.url())).await.unwrap();
+    assert_eq!(first.0.lock_unpoisoned().len(), 1);
+    assert!(second.0.lock_unpoisoned().is_empty());
 }

@@ -237,6 +237,18 @@ pub trait Background: Send + Sync {
         Err(not_provided("background_command"))
     }
 
+    /// Fork: the terminal record of a background command that ended in this session, kept after its notice is
+    /// acknowledged (read, the desktop detail pane; specs/fork-rust-agent-parity.md, "Subagent child sessions: one owner
+    /// for background-command notices"). [`Background::background_command`] keeps answering None once the notice is
+    /// acknowledged, because its callers read Some as "the notice is still pending". None by default (an executor
+    /// that keeps no record).
+    async fn ended_background_command(
+        &self,
+        _request: BackgroundTask,
+    ) -> Result<Option<BackgroundInfo>, EnvError> {
+        Ok(None)
+    }
+
     /// 在跑的后台命令从开始到现在的毫秒数（read，Shell 详情的 Runtime，tui-panels.md §3.3）；已结束或
     /// 不认识时为 None。
     async fn background_elapsed(&self, _request: BackgroundTask) -> Result<Option<u64>, EnvError> {

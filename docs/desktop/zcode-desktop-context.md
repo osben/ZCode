@@ -2,7 +2,7 @@
 
 ## Status
 
-- This is the current feature spec for injecting ZCode Desktop output-presentation constraints into the Agent system prompt.
+- This is the current feature spec for injecting ZCode Desktop output-presentation constraints into the Agent context. The constraints are sent with the environment notice, not in the system prompt.
 - Desktop context keeps asking the Agent to emit `::code-comment{...}`. Renderer parsing, cards and Review navigation are specified separately in [Assistant Code Comment Cards](../ui/assistant-code-comment-cards.md) and are controlled by a default-off gray-release capability.
 - The existing Identity wording about terminal display is unchanged.
 
@@ -24,11 +24,22 @@ The Desktop surface uses a dedicated `buildDesktopContextSection()` with this me
 ```text
 name: ZCode Desktop Context
 source: desktop_context
-injectionTarget: system
-cacheHint: stable
+injectionTarget: meta_user
+cacheHint: dynamic
 ```
 
-The body is fixed:
+`desktop_context` is announced by the runtime like `env_info`: the builder keeps the section only as a switch and for usage statistics, puts nothing in system and generates no meta user attachment. The body is sent through the environment notice; rules are in the next section.
+
+`### Interactive views` and the session visualization directory are injected only when the official visualize plugin is effectively enabled and the host provides an output directory. It reuses the plugin resolution from App assembly; when disabled or uninstalled the whole Gen UI explanation is not injected, and no "unavailable" substitute text is injected either. Files & URLs and Inline Code Comments are unchanged. See `docs/specs/gen-ui-output-directory.md`.
+
+This only controls newly added model context; it does not change skills, rendering, sandbox or the state echo of existing widgets. Enabling and disabling follow the plugin's runtime assembly timing: a new or re-assembled session reads the current configuration, no hot switch while running is added, and history prompts are not cleaned.
+
+```text
+existing plugin config -> effective enabled state after App assembly -> keep the Gen UI output root?
+                                                                    -> does the environment notice carry the directory and Interactive views?
+```
+
+Body when enabled with a directory:
 
 ```text
 # ZCode Desktop Context
@@ -46,21 +57,37 @@ The body is fixed:
 - file should be an absolute path or include the workspace folder segment so it can be resolved relative to the workspace.
 - Keep line ranges tight; end defaults to start.
 - Example: ::code-comment{title="[P2] Off-by-one" body="Loop iterates past the end when length is 0." file="/path/to/foo.ts" start=10 end=11 priority=2}
+
+### Interactive views
+- This Desktop host supports Gen UI: …
+- Widget modelContent may accompany a user input in <untrusted_gen_ui_state>. …
 ```
 
-Default system section order:
+## Position in the environment notice
 
 ```text
-CLI Prefix
-Agent Identity
-ZCode Desktop Context       <- stable, zcode_desktop only
-Dynamic Behavior            <- dynamic
-Session Guidance
-Environment
-...
+system        CLI Prefix / Agent Identity / Dynamic Behavior / Session Guidance / ...   <- no Desktop section
+first user    # Environment
+              You have been invoked in the following environment:
+               - ...
+               - Visualization directory for this session: <path>   <- when there is a Gen UI directory
+               - ...
+              (blank line)
+              # ZCode Desktop Context                                  <- zcode_desktop only
+              ...
 ```
 
-`ZCode Desktop Context` goes into the same stable system message as Identity; the number of system messages does not change. `customSystemPrompt` replaces the default system prompt set, so Desktop context is not injected. Subagents use a separate context builder and also do not get Desktop context.
+Reason: the presentation surface and server-side gray release are process-level facts, while the Gen UI directory changes per session; system is frozen by the prompt snapshot until compaction, and the snapshot compares only the model. With the Desktop section in system, a gray-release flip between two launches, or a session resumed under terminal, would still send the old Desktop section from the snapshot. Inside the environment notice, a change is appended as an environment update and the prefix already sent does not change:
+
+| Desktop form in the last notice                 | Current form          | Appended content                                                                                 |
+| ----------------------------------------------- | --------------------- | ------------------------------------------------------------------------------------------------ |
+| none (including old metadata without the field) | with / without Gen UI | the whole ZCode Desktop Context (current wording; Interactive views omitted without Gen UI)      |
+| with Gen UI / without Gen UI                    | the other one         | the whole ZCode Desktop Context (current wording; Interactive views omitted without Gen UI)      |
+| with Gen UI / without Gen UI                    | none                  | `The ZCode Desktop Context above no longer applies: this session is not shown in ZCode Desktop.` |
+
+When only the Desktop section changes, the update is just this text, without the `# Environment update` title; when environment entries change at the same time, the text comes after the entries with a blank line between. When only the Gen UI directory changes (fork), the form stays and only the directory line is appended. When a previously enabled session is resumed, the existing environment delta can still send one directory revocation (`none`), and the Gen UI usage explanation is not injected again.
+
+`customSystemPrompt` replaces the default system prompt set, so Desktop context is not injected; workflow subagents and subagents do not get it either. Their environment notices carry no Desktop section.
 
 ## Surface and Launch Chain
 
@@ -157,18 +184,19 @@ Network failure, a malformed response or a timeout never blocks client startup. 
 
 ## Acceptance Cases
 
-| Case    | Setup                                                  | Action                                               | Assertions                                                                |
-| ------- | ------------------------------------------------------ | ---------------------------------------------------- | ------------------------------------------------------------------------- |
-| DCTX-01 | default/terminal ContextBuilder                        | build context                                        | no `desktop_context`                                                      |
-| DCTX-02 | `zcode_desktop` ContextBuilder                         | build context                                        | section appears exactly once, metadata correct, before `dynamic_behavior` |
-| DCTX-03 | `zcode_desktop` + custom system prompt                 | build context                                        | no `desktop_context`                                                      |
-| DCTX-04 | subagent runtime                                       | build context                                        | no `desktop_context`                                                      |
-| DCTX-05 | `--surface desktop --prompt`                           | create App                                           | runtime config is `zcode_desktop`, `sourceTitle` unchanged                |
-| DCTX-06 | `app-server --stdio --surface desktop`                 | start protocol runner                                | every session App gets `zcode_desktop`                                    |
-| DCTX-07 | local Desktop runtime fact / attached remote authority | create Services and resolve Agent command            | arguments contain `--surface desktop`                                     |
-| DCTX-08 | plain HTTP server / manual stdio, no Desktop host fact | create Services and resolve Agent command            | Desktop surface is not added automatically                                |
-| DCTX-09 | invalid value / unsupported command                    | CLI argument validation                              | clear error, App not started                                              |
-| DCTX-10 | `entry-stdio` receives `desktop-attached-remote`       | resolve Agent command through real Services assembly | authority, resolver surface and command arguments all stay Desktop        |
+| Case    | Setup                                                  | Action                                               | Assertions                                                                                                        |
+| ------- | ------------------------------------------------------ | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| DCTX-01 | default/terminal ContextBuilder                        | build context                                        | no `desktop_context`                                                                                              |
+| DCTX-02 | `zcode_desktop` ContextBuilder                         | build context                                        | section appears exactly once, metadata correct, neither system nor attachment contains the body                   |
+| DCTX-03 | `zcode_desktop` + custom system prompt                 | build context                                        | no `desktop_context`                                                                                              |
+| DCTX-04 | subagent runtime                                       | build context                                        | no `desktop_context`                                                                                              |
+| DCTX-05 | `--surface desktop --prompt`                           | create App                                           | runtime config is `zcode_desktop`, `sourceTitle` unchanged                                                        |
+| DCTX-06 | `app-server --stdio --surface desktop`                 | start protocol runner                                | every session App gets `zcode_desktop`                                                                            |
+| DCTX-07 | local Desktop runtime fact / attached remote authority | create Services and resolve Agent command            | arguments contain `--surface desktop`                                                                             |
+| DCTX-08 | plain HTTP server / manual stdio, no Desktop host fact | create Services and resolve Agent command            | Desktop surface is not added automatically                                                                        |
+| DCTX-09 | invalid value / unsupported command                    | CLI argument validation                              | clear error, App not started                                                                                      |
+| DCTX-10 | `entry-stdio` receives `desktop-attached-remote`       | resolve Agent command through real Services assembly | authority, resolver surface and command arguments all stay Desktop                                                |
+| DCTX-11 | `zcode_desktop` runtime, first turn and cold resume    | send request                                         | the full environment block carries the Desktop section; form changes append per the table above, system unchanged |
 
 ## Impact Brief
 

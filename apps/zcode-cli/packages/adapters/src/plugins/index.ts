@@ -1,5 +1,7 @@
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { z } from "zod";
+import { zcodePluginUserConfigOptionSchema } from "@zcode/shared";
 import type {
   CustomCommandRoot,
   HookConfig,
@@ -16,7 +18,6 @@ import type {
   ResolvedLspServer,
   PluginUiSurfaceDefinition,
   PluginMetadata,
-  PluginOperationOptions,
   PluginPort,
   SkillRoot,
 } from "@zcode/contracts";
@@ -27,17 +28,20 @@ import {
   ZCODE_OFFICIAL_PLUGIN_MARKETPLACE,
 } from "@zcode/contracts";
 import {
-  directoryExists,
-  fileExists,
-  isMissingPath,
+  directoryExistsAsync,
   isNotFoundError,
   isRecord,
   parsePathList,
   resolveInside,
   sanitizePluginId,
   throwIfAborted,
+  PluginMaterialCache,
+  type PluginMaterialReader,
+  pluginSourcesChanged,
+  isPluginMaterialChange,
+  rethrowPluginMaterialInterrupt,
+  waitForPluginQuery,
 } from "./helpers.js";
-import { scanSkillFilesUnderRootSync } from "../skills/scan.js";
 import { loadPluginMcpServerDefinitions, resolvePluginMcpServers } from "./mcp.js";
 import {
   loadPluginLspServerDefinitions,
@@ -45,14 +49,19 @@ import {
   resolvePluginLspServers,
 } from "./lsp.js";
 import { parsePluginUiSurfaces } from "./ui-surfaces.js";
-import { listPluginHookSources } from "./hook-sources.js";
-import { enumeratePluginComponents } from "./plugin-components.js";
+import { createHookPluginContext, listPluginHookSources } from "./hook-sources.js";
 import {
-  listInstalledPluginRecords,
+  countSkillFiles,
+  materializeCommandMetadataRoot,
+  warnEmptyDeclaredSkillRoots,
+  enumeratePluginComponents,
+} from "./plugin-components.js";
+import {
+  listInstalledPluginRecordsAsync,
   normalizeAuthorValue,
-  resolveInstalledPluginRoot,
+  resolveInstalledPluginRootAsync,
 } from "./marketplace.js";
-import { loadBundledOfficialPluginRootsSync } from "./official-marketplace.js";
+import { loadBundledOfficialPluginRoots } from "./official-marketplace.js";
 import type {
   LoadedPlugin,
   PluginAbortOptions,
@@ -73,6 +82,7 @@ export {
   loadKnownMarketplacesSync,
   loadMarketplaceManifestSync,
   normalizeAuthorValue,
+  parseEntryExtensionSummary,
   parseEntryStoreListing,
   parsePluginIconSources,
   parseMarketplaceSourceInput,
@@ -91,14 +101,15 @@ export {
   type PluginComponentGroup,
   type PluginComponentItem,
   type PluginComponentKind,
+  type PluginExtensionSummary,
   type PluginManifestDisplayMetadata,
   type PluginMarketplaceEntry,
   type PluginMarketplaceManifest,
 } from "./marketplace.js";
 
 export {
-  writeBundledOfficialMarketplacePartitionSync,
-  writeCdnOfficialMarketplacePartitionSync,
+  writeBundledOfficialMarketplacePartition,
+  writeCdnOfficialMarketplacePartition,
 } from "./official-marketplace.js";
 
 export { getPluginSourceDiagnosticCode } from "./source-errors.js";
@@ -113,8 +124,11 @@ const ZCODE_MANIFEST_PATH = join(".zcode-plugin", "plugin.json");
 const CLAUDE_MANIFEST_PATH = join(".claude-plugin", "plugin.json");
 const CODEX_MANIFEST_PATH = join(".codex-plugin", "plugin.json");
 const DEFAULT_VERSION = "0.0.0";
+// 外部清单的扩展字段不能穿透到 strict 协议；复用已知字段校验，尤其不能丢掉 sensitive。
+const pluginUserConfigSchema = z.record(z.string(), zcodePluginUserConfigOptionSchema.strip());
 const FIRST_PLUGIN_PRIORITY = 1_000;
 const PRIORITY_STEP = 10;
+const PLUGIN_DISCOVERY_REBUILD_LIMIT = 3;
 const PLUGIN_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]{0,127}$/;
 const UNSUPPORTED_COMPONENT_KEYS = ["channels", "outputStyles", "settings"] as const;
 const SUPPORTED_HOOK_EVENTS = new Set<string>(Object.values(HookEventNameValue));
@@ -129,24 +143,61 @@ export interface NodePluginAdapterOptions {
 }
 
 export class NodePluginAdapter implements PluginPort {
-  constructor(private readonly options: NodePluginAdapterOptions) {}
+  private readonly materials = new PluginMaterialCache();
+  invalidate(): void {
+    this.materials.invalidate();
+  }
+  dispose(): void {
+    this.materials.dispose();
+  }
 
   async discoverPlugins(
     request: PluginDiscoverRequest,
-    options?: PluginOperationOptions,
+    options?: PluginAbortOptions,
   ): Promise<PluginLoadOutcome> {
-    return this.discoverPluginsSync(request, options);
+    const signal = options?.signal
+      ? AbortSignal.any([options.signal, this.materials.signal])
+      : this.materials.signal;
+    return waitForPluginQuery(this.discoverCurrent(request, options), signal);
   }
 
-  discoverPluginsSync(
+  private async discoverCurrent(
     request: PluginDiscoverRequest,
     options?: PluginAbortOptions,
-  ): PluginLoadOutcome {
+  ): Promise<PluginLoadOutcome> {
+    for (let attempt = 0; attempt < PLUGIN_DISCOVERY_REBUILD_LIMIT; attempt += 1) {
+      this.materials.signal.throwIfAborted();
+      throwIfAborted(options);
+      const scope = JSON.stringify([
+        resolve(request.workingDirectory),
+        request.workspaceIdentity?.trim() || resolve(request.workingDirectory),
+        request.remoteSessionId?.trim() ?? "",
+        resolve(request.storageRoot || this.options.storageRoot),
+      ]);
+      const materials = this.materials.reader(scope);
+      try {
+        const outcome = await this.loadDiscovery(request, options, materials);
+        throwIfAborted(options);
+        if (await materials.validate()) return outcome;
+      } catch (error) {
+        if (!isPluginMaterialChange(error)) throw error;
+      }
+    }
+    throw pluginSourcesChanged();
+  }
+
+  constructor(private readonly options: NodePluginAdapterOptions) {}
+
+  private async loadDiscovery(
+    request: PluginDiscoverRequest,
+    options: PluginAbortOptions | undefined,
+    materials: PluginMaterialReader,
+  ): Promise<PluginLoadOutcome> {
     if (!request.config.enabled) return emptyOutcome();
 
     const diagnostics: PluginDiagnostic[] = [];
     const dataRoot = join(request.storageRoot || this.options.storageRoot, "data");
-    const candidates = this.resolveCandidates(request, diagnostics, options);
+    const candidates = await this.resolveCandidates(request, diagnostics, materials, options);
     const commandRoots: CustomCommandRoot[] = [];
     const hooks: PluginLoadOutcome["hooks"] = {};
     const mcpServers: PluginLoadOutcome["mcpServers"] = {};
@@ -160,7 +211,7 @@ export class NodePluginAdapter implements PluginPort {
 
     for (const candidate of candidates) {
       throwIfAborted(options);
-      const loaded = loadPlugin(candidate, diagnostics);
+      const loaded = await loadPlugin(candidate, diagnostics, materials);
       if (!loaded) continue;
       // Uninstalling a built-in (official) plugin writes only a suppressedBuiltins marker to user config. Filter it at
       // discovery time using the plugin's authoritative id (manifest name @ marketplace), without relying on the cache
@@ -193,17 +244,17 @@ export class NodePluginAdapter implements PluginPort {
       // Building mcpServerNames only from components resolved after enabling would hide built-in MCP
       // servers from the management page for disabled plugins. Read the declared names for read-only UI
       // display; runtime injection still uses only component.mcpServers resolved by the enabled branch.
-      const mcpServerDefinitions = loadPluginMcpServerDefinitions({ diagnostics, loaded });
+      const mcpServerDefinitions = await loadPluginMcpServerDefinitions({ diagnostics, loaded });
       const lspServerDefinitions = loadPluginLspServerDefinitions({ diagnostics, loaded });
       const hooksRunnable = canRunPluginHooks(loaded);
-      const hookInspection = inspectPluginHooks({
+      const hookInspection = await inspectPluginHooks({
         dataPath,
         diagnostics,
         loaded,
         runnable: hooksRunnable,
       });
       const component = enabled
-        ? resolveEnabledComponents({
+        ? await resolveEnabledComponents({
             dataPath,
             diagnostics,
             env: request.env ?? {},
@@ -227,7 +278,7 @@ export class NodePluginAdapter implements PluginPort {
       commandRoots.push(...component.commandRoots);
       const declaredMcpServerNames = Object.keys(mcpServerDefinitions);
       plugins.push(
-        createPluginMetadata(
+        await createPluginMetadata(
           loaded,
           component,
           dataPath,
@@ -257,11 +308,12 @@ export class NodePluginAdapter implements PluginPort {
     };
   }
 
-  private resolveCandidates(
+  private async resolveCandidates(
     request: Pick<PluginDiscoverRequest, "config" | "officialPluginRoots" | "storageRoot">,
     diagnostics: PluginDiagnostic[],
+    materials: PluginMaterialReader,
     options?: PluginAbortOptions,
-  ): PluginCandidate[] {
+  ): Promise<PluginCandidate[]> {
     const candidates: PluginCandidate[] = [];
     for (const rootPath of request.config.dirs) {
       candidates.push({
@@ -280,18 +332,31 @@ export class NodePluginAdapter implements PluginPort {
       });
     }
     candidates.push(
-      ...scanOfficialCache(request.storageRoot, diagnostics, options).map((rootPath) => ({
-        defaultEnabled: false,
-        marketplace: ZCODE_OFFICIAL_PLUGIN_MARKETPLACE,
-        rootPath,
-        source: "official" as const,
-      })),
+      ...(await scanOfficialCache(request.storageRoot, diagnostics, materials, options)).map(
+        (rootPath) => ({
+          defaultEnabled: false,
+          marketplace: ZCODE_OFFICIAL_PLUGIN_MARKETPLACE,
+          rootPath,
+          source: "official" as const,
+        }),
+      ),
     );
-    for (const installed of listInstalledPluginRecords(request.storageRoot)) {
+    for (const name of [
+      "installed_plugins.json",
+      ".installed_plugins.json.backup",
+      ".installed_plugins.json.transaction.json",
+    ]) {
+      try {
+        await materials.observe(join(request.storageRoot, name));
+      } catch (error) {
+        rethrowPluginMaterialInterrupt(error);
+      }
+    }
+    for (const installed of await listInstalledPluginRecordsAsync(request.storageRoot)) {
       candidates.push({
         defaultEnabled: false,
         marketplace: installed.marketplace,
-        rootPath: resolveInstalledPluginRoot(request.storageRoot, installed),
+        rootPath: await resolveInstalledPluginRootAsync(request.storageRoot, installed),
         source: "cache",
       });
     }
@@ -303,17 +368,19 @@ export function createNodePluginAdapter(options: NodePluginAdapterOptions): Node
   return new NodePluginAdapter(options);
 }
 
-export function discoverNodePluginsSync(
+export async function discoverNodePlugins(
   request: PluginDiscoverRequest,
   options?: PluginAbortOptions,
-): PluginLoadOutcome {
-  return createNodePluginAdapter({ storageRoot: request.storageRoot }).discoverPluginsSync(
-    request,
-    options,
-  );
+): Promise<PluginLoadOutcome> {
+  const adapter = createNodePluginAdapter({ storageRoot: request.storageRoot });
+  try {
+    return await adapter.discoverPlugins(request, options);
+  } finally {
+    adapter.dispose();
+  }
 }
 
-function createPluginMetadata(
+async function createPluginMetadata(
   loaded: LoadedPlugin,
   component: PluginComponents,
   dataPath: string,
@@ -322,9 +389,8 @@ function createPluginMetadata(
   declaredLspServerNames: string[],
   configuredOptions: Record<string, string | number | boolean>,
   uiSurfaces: PluginUiSurfaceDefinition[],
-): PluginMetadata {
-  // Use the manifest's author and homepage as fallbacks for the details page (the store listing has
-  // priority).
+): Promise<PluginMetadata> {
+  // manifest 的 author/homepage 作为详情页信息区的回退来源（商店 listing 优先）。
   const author = normalizeAuthorValue(loaded.manifest.author);
   const homepage =
     typeof loaded.manifest.homepage === "string" && loaded.manifest.homepage.trim().length > 0
@@ -335,15 +401,13 @@ function createPluginMetadata(
     ...(author?.url ? { authorUrl: author.url } : {}),
     ...(homepage ? { homepage } : {}),
     commandRootCount: component.commandRoots.length,
-    // The details UI previously combined plugin.skillCount (the authoritative count) with a UI-side
-    // join that filtered skillsService results by pluginName. These data sources diverged: disabled
-    // plugins used emptyComponents(), making skillCount zero, and the UI join omitted their names
-    // (`if (!enabled) continue` in skillsService). As a result, the skills group disappeared when a
-    // plugin was disabled, and enabled plugins showed a count without names. Enumerate the plugin root
-    // authoritatively regardless of enabled state and include names and descriptions in the list, so
-    // the UI no longer needs this fragile join.
-    components: enumeratePluginComponents(loaded.rootPath, loaded.manifest, { loaded }),
-    configuredOptions,
+    // 详情 UI 过去靠 plugin.skillCount（权威计数）+ 一条 UI 侧 join（按 pluginName 过滤
+    // skillsService 结果）拿名称，二者数据源分离。停用插件走 emptyComponents() 使 skillCount=0、
+    // 且 UI join 对停用插件不产出名称（skillsService 里 `if (!enabled) continue`），导致：停用时
+    // 整个技能分组消失、启用时只有数量没有名称。这里改为对插件根目录做权威枚举（与启用态无关），
+    // 直接把名称+描述随 list 下发，UI 不再需要脆弱的 join。
+    components: await enumeratePluginComponents(loaded.rootPath, loaded.manifest, { loaded }),
+    configuredOptions: { ...configuredOptions },
     dataPath,
     declaredMcpServerNames,
     description: loaded.manifest.description,
@@ -365,7 +429,7 @@ function createPluginMetadata(
   };
 }
 
-function resolveEnabledComponents(input: {
+async function resolveEnabledComponents(input: {
   dataPath: string;
   diagnostics: PluginDiagnostic[];
   env: Record<string, string | undefined>;
@@ -377,12 +441,12 @@ function resolveEnabledComponents(input: {
   options: Record<string, string | number | boolean>;
   priority: number;
   workingDirectory: string;
-}): PluginComponents {
-  mkdirSync(input.dataPath, { recursive: true });
+}): Promise<PluginComponents> {
+  await mkdir(input.dataPath, { recursive: true });
 
-  const skillRoots = resolveSkillRoots(input, input.priority);
+  const skillRoots = await resolveSkillRoots(input, input.priority);
   return {
-    commandRoots: resolveCommandRoots(input, input.priority + 1),
+    commandRoots: await resolveCommandRoots(input, input.priority + 1),
     hooks: input.hookEvents,
     hookDetails: input.hookDetails,
     lspServers: resolvePluginLspServers({
@@ -393,9 +457,9 @@ function resolveEnabledComponents(input: {
       ...input,
       definitions: input.mcpServerDefinitions,
     }),
-    // The plugin page must show the actual skill count. Counting skills roots incorrectly showed a
-    // plugin such as document-skills as 1 even when one root contained multiple SKILL.md files.
-    skillCount: countSkillFiles(skillRoots),
+    // 插件页要展示真实技能数量。之前只统计 skills root 数，
+    // document-skills 这种一个 root 下有多个 SKILL.md 的插件会被显示成 1。
+    skillCount: await countSkillFiles(skillRoots, input.loaded.materials),
     skillRoots,
   };
 }
@@ -422,93 +486,37 @@ function warnUnsupportedComponents(loaded: LoadedPlugin, diagnostics: PluginDiag
   }
 }
 
-function resolveSkillRoots(
+async function resolveSkillRoots(
   input: { diagnostics: PluginDiagnostic[]; loaded: LoadedPlugin },
   priority: number,
-): SkillRoot[] {
-  warnEmptyDeclaredSkillRoots(input);
-  return resolveComponentRoots("skills", input, priority);
+): Promise<SkillRoot[]> {
+  await warnEmptyDeclaredSkillRoots(input);
+  return await resolveComponentRoots("skills", input, priority);
 }
 
-/**
- * Emit a diagnostic when an explicitly declared skills path in the manifest has no usable skills,
- * so path configuration errors do not fail silently. Compute declarations independently of the
- * roots list to avoid false positives for an empty default skills/ directory. Keep actionable
- * diagnostics distinct for missing paths, empty directories, and symlink escapes; let the actual
- * scan path report permission errors.
- */
-function warnEmptyDeclaredSkillRoots(input: {
-  diagnostics: PluginDiagnostic[];
-  loaded: LoadedPlugin;
-}): void {
-  const declared = parsePathList(input.loaded.manifest.skills);
-  if (declared.length === 0) return;
-  const seenPaths = new Set<string>();
-  for (const rawPath of declared) {
-    const resolved = resolveInside(input.loaded.rootPath, rawPath);
-    if (!resolved || seenPaths.has(resolved)) continue;
-    seenPaths.add(resolved);
-    // Treat a path as missing only for ENOENT/ENOTDIR (classified precisely by statSync). Do not
-    // report permission errors such as EACCES as “missing”: there is not enough evidence, so skip this
-    // warning and let the skill adapter emit skill_scan_failed when it scans the same directory.
-    // Distinguish messages by cause: “path does not exist” means the manifest is misconfigured,
-    // “exists but contains no skills” is a content issue, and “symlink escapes plugin root” is a
-    // security rejection. Each requires a different fix; keep one code so the UI need not handle these
-    // categories.
-    if (isMissingPath(resolved)) {
-      input.diagnostics.push({
-        code: "plugin_skill_root_empty",
-        message: `Plugin skills path does not exist: ${rawPath}`,
-        path: resolved,
-        pluginId: input.loaded.id,
-        severity: "warning",
-      });
-      continue;
-    }
-    // Trust boundary: declared paths are plugin content, and scanning does not follow symlinks
-    // (reject directory- and file-level escapes, including Windows junctions). A symlinked root or
-    // SKILL.md scans as empty and reaches the “no skills” warning below; do not misreport it as
-    // “missing” because the lexical path exists.
-    let skillFiles: string[];
-    try {
-      skillFiles = scanSkillFilesUnderRootSync(resolved, { followSymbolicLinks: false });
-    } catch {
-      continue;
-    }
-    if (skillFiles.length > 0) continue;
-    input.diagnostics.push({
-      code: "plugin_skill_root_empty",
-      message: `Plugin skills path does not contain any skills: ${rawPath}`,
-      path: resolved,
-      pluginId: input.loaded.id,
-      severity: "warning",
-    });
-  }
-}
-
-function resolveCommandRoots(
+async function resolveCommandRoots(
   input: { dataPath: string; diagnostics: PluginDiagnostic[]; loaded: LoadedPlugin },
   priority: number,
-): CustomCommandRoot[] {
-  const roots = resolveComponentRoots<CustomCommandRoot>(
+): Promise<CustomCommandRoot[]> {
+  const roots = await resolveComponentRoots<CustomCommandRoot>(
     "commands",
     input,
     priority,
     createHookPluginContext(input.loaded, input.dataPath),
   );
-  const generatedRoot = materializeCommandMetadataRoot(input, priority + 1);
+  const generatedRoot = await materializeCommandMetadataRoot(input, priority + 1);
   if (generatedRoot) roots.push(generatedRoot);
   return roots;
 }
 
-function inspectPluginHooks(input: {
+async function inspectPluginHooks(input: {
   dataPath: string;
   diagnostics: PluginDiagnostic[];
   loaded: LoadedPlugin;
   runnable: boolean;
-}): PluginHookInspection {
+}): Promise<PluginHookInspection> {
   const inspection = emptyHookInspection();
-  for (const source of listPluginHookSources({
+  for (const source of await listPluginHookSources({
     diagnostics: input.diagnostics,
     loaded: input.loaded,
   })) {
@@ -642,20 +650,6 @@ function toPluginHookDetail(input: {
   return detail;
 }
 
-function createHookPluginContext(
-  loaded: LoadedPlugin,
-  dataPath: string,
-  sourcePath?: string,
-): HookPluginContext {
-  return {
-    dataPath,
-    id: loaded.id,
-    name: loaded.manifest.name,
-    rootPath: loaded.rootPath,
-    ...(sourcePath ? { sourcePath } : {}),
-  };
-}
-
 function attachPluginToHook(hook: HookConfig, plugin: HookPluginContext): HookConfig {
   return {
     ...hook,
@@ -688,37 +682,20 @@ function emptyHookInspection(): PluginHookInspection {
   };
 }
 
-function countSkillFiles(skillRoots: SkillRoot[]): number {
-  // Skill recognition now uses the shared scan helper (a root containing SKILL.md is itself a skill). The declared
-  // root and default skills/ root can find the same SKILL.md, so deduplicate by file path to avoid double-counting.
-  // This also fixes drift: checking only isDirectory() omitted symlink skill directories, which the shared helper includes.
-  // The helper swallows only ENOENT; permission errors (EACCES, etc.) are thrown. Preserve the existing behavior by
-  // counting that root as 0 here; the skill adapter emits the skill_scan_failed diagnostic when it scans the same
-  // directory at runtime. Trust boundary: consume only plugin roots (from resolveSkillRoots) and do not follow symlinks.
-  const seenFiles = new Set<string>();
-  for (const skillRoot of skillRoots) {
-    try {
-      for (const file of scanSkillFilesUnderRootSync(skillRoot.path, {
-        followSymbolicLinks: skillRoot.source !== "plugin",
-      })) {
-        seenFiles.add(file);
-      }
-    } catch {
-// Fall back to a count of 0 in the overview; the skill adapter handles scan diagnostics.
-    }
-  }
-  return seenFiles.size;
-}
-
-function resolveComponentRoots<T extends CustomCommandRoot | SkillRoot>(
+async function resolveComponentRoots<T extends CustomCommandRoot | SkillRoot>(
   key: "commands" | "skills",
   input: { diagnostics: PluginDiagnostic[]; loaded: LoadedPlugin },
   priority: number,
   plugin?: HookPluginContext,
-): T[] {
+): Promise<T[]> {
   const paths = parsePathList(input.loaded.manifest[key]);
   const defaultPath = join(input.loaded.rootPath, key);
-  if (directoryExists(defaultPath)) {
+  // skills 的显式声明是完整入口清单，不能再补扫未声明的默认目录。
+  if (
+    (key !== "skills" || input.loaded.manifest.skills === undefined) &&
+    (await (input.loaded.materials?.directoryExists(defaultPath) ??
+      directoryExistsAsync(defaultPath)))
+  ) {
     paths.unshift(key);
   }
   const roots: T[] = [];
@@ -749,179 +726,48 @@ function resolveComponentRoots<T extends CustomCommandRoot | SkillRoot>(
   return roots;
 }
 
-function materializeCommandMetadataRoot(
-  input: { dataPath: string; diagnostics: PluginDiagnostic[]; loaded: LoadedPlugin },
-  priority: number,
-): CustomCommandRoot | null {
-  const spec = input.loaded.manifest.commands;
-  if (!isRecord(spec)) return null;
-
-  const generatedRoot = join(input.dataPath, "generated-commands");
-  let wroteCommand = false;
-  mkdirSync(generatedRoot, { recursive: true });
-
-  for (const [rawName, rawMetadata] of Object.entries(spec)) {
-    if (!isRecord(rawMetadata)) {
-      input.diagnostics.push({
-        code: "plugin_manifest_invalid",
-        message: `Plugin command metadata must be an object: ${rawName}`,
-        path: input.loaded.manifestPath,
-        pluginId: input.loaded.id,
-        severity: "error",
-      });
-      continue;
-    }
-
-    const name = normalizeGeneratedCommandName(rawName);
-    if (!name) {
-      input.diagnostics.push({
-        code: "plugin_manifest_invalid",
-        message: `Invalid plugin command name: ${rawName}`,
-        path: input.loaded.manifestPath,
-        pluginId: input.loaded.id,
-        severity: "error",
-      });
-      continue;
-    }
-
-    const source = typeof rawMetadata.source === "string" ? rawMetadata.source : undefined;
-    const content = typeof rawMetadata.content === "string" ? rawMetadata.content : undefined;
-    if ((source && content) || (!source && !content)) {
-      input.diagnostics.push({
-        code: "plugin_manifest_invalid",
-        message: `Plugin command '${rawName}' must provide exactly one of source or content`,
-        path: input.loaded.manifestPath,
-        pluginId: input.loaded.id,
-        severity: "error",
-      });
-      continue;
-    }
-
-    let markdown = content;
-    if (source) {
-      const sourcePath = resolveInside(input.loaded.rootPath, trimRelativePrefix(source));
-      if (!sourcePath) {
-        input.diagnostics.push({
-          code: "plugin_component_path_invalid",
-          message: `Plugin command source escapes plugin root: ${source}`,
-          path: input.loaded.manifestPath,
-          pluginId: input.loaded.id,
-          severity: "error",
-        });
-        continue;
-      }
-      if (!fileExists(sourcePath)) {
-        input.diagnostics.push({
-          code: "plugin_component_path_invalid",
-          message: `Plugin command source file not found: ${source}`,
-          path: sourcePath,
-          pluginId: input.loaded.id,
-          severity: "error",
-        });
-        continue;
-      }
-      markdown = readFileSync(sourcePath, "utf8");
-    }
-    if (markdown === undefined) continue;
-
-    // The marketplace manifest supports a commands object mapping and inline content.
-    // ZCode's custom command loader scans only Markdown roots, so materialize low-risk command content
-    // in the plugin data directory. The generated path is not exposed outside the plugin root, and the
-    // command itself is not executed.
-    writeFileSync(
-      join(generatedRoot, `${name}.md`),
-      applyCommandMetadataFrontmatter(markdown, rawMetadata),
-      "utf8",
-    );
-    wroteCommand = true;
-  }
-
-  return wroteCommand
-    ? {
-        path: generatedRoot,
-        plugin: createHookPluginContext(input.loaded, input.dataPath),
-        priority,
-        scope: input.loaded.source === "official" ? "system" : "user",
-        source: "plugin",
-      }
-    : null;
-}
-
-function normalizeGeneratedCommandName(name: string): string | null {
-  const normalized = name.trim().replace(/^\/+/, "").toLowerCase();
-  if (!/^[a-z0-9][a-z0-9_:-]{0,63}$/.test(normalized)) return null;
-  return normalized;
-}
-
-function trimRelativePrefix(path: string): string {
-  return path.replace(/^\.\//, "");
-}
-
-function applyCommandMetadataFrontmatter(
-  markdown: string,
-  metadata: Record<string, unknown>,
-): string {
-  const frontmatter = new Map<string, string>();
-  if (typeof metadata.description === "string" && metadata.description.trim()) {
-    frontmatter.set("description", metadata.description.trim());
-  }
-  if (typeof metadata.argumentHint === "string" && metadata.argumentHint.trim()) {
-    frontmatter.set("argument-hint", metadata.argumentHint.trim());
-  }
-  if (typeof metadata.model === "string" && metadata.model.trim()) {
-    frontmatter.set("model", metadata.model.trim());
-  }
-  if (Array.isArray(metadata.allowedTools)) {
-    const allowedTools = metadata.allowedTools
-      .filter((tool): tool is string => typeof tool === "string" && tool.trim().length > 0)
-      .map((tool) => tool.trim());
-    if (allowedTools.length > 0) frontmatter.set("allowed-tools", allowedTools.join(", "));
-  }
-  if (frontmatter.size === 0) return markdown;
-  const body = stripMarkdownFrontmatter(markdown).trimStart();
-  return `---\n${Array.from(frontmatter, ([key, value]) => `${key}: ${value}`).join("\n")}\n---\n\n${body}`;
-}
-
-function stripMarkdownFrontmatter(markdown: string): string {
-  const normalized = markdown.replace(/^\uFEFF/, "");
-  if (!normalized.startsWith("---")) return markdown;
-  const lines = normalized.split(/\r?\n/);
-  if (lines[0]?.trim() !== "---") return markdown;
-  const endIndex = lines.findIndex((line, index) => index > 0 && line.trim() === "---");
-  return endIndex > 0 ? lines.slice(endIndex + 1).join("\n") : markdown;
-}
-
-function scanOfficialCache(
+async function scanOfficialCache(
   storageRoot: string,
   diagnostics: PluginDiagnostic[],
+  materials: PluginMaterialReader,
   options?: PluginAbortOptions,
-): string[] {
-  // Upgrading official plugins preserves old version cache directories. If every directory is
-  // traversed and the first match for a plugin id wins, an old version may load before the current
-  // version referenced by the bundled marketplace. The bundled shard is the authoritative manifest
-  // for assets shipped with the app; when present, load only its cachePath. Do not simply select the
-  // highest semver, since that would still load an old cache after an official rollback.
-  const bundledRoots = loadBundledOfficialPluginRootsSync(storageRoot);
+): Promise<string[]> {
+  // 官方插件升级会保留旧版本缓存目录；若遍历全部目录再按插件 id
+  // “先到先得”，旧版本会抢在 bundled marketplace 指向的当前版本前被加载。
+  // bundled 分片是当前随应用发布资产的权威清单；存在时只加载其 cachePath。
+  // 不能简单选择最高 semver，否则官方回滚版本时仍会错误加载旧缓存。
+  try {
+    await materials.observe(
+      join(
+        storageRoot,
+        "marketplaces",
+        ZCODE_OFFICIAL_PLUGIN_MARKETPLACE,
+        "bundled-marketplace.json",
+      ),
+    );
+  } catch (error) {
+    rethrowPluginMaterialInterrupt(error);
+  }
+  const bundledRoots = await loadBundledOfficialPluginRoots(storageRoot);
   if (bundledRoots !== undefined) {
-    for (const rootPath of bundledRoots) {
-      throwIfAborted(options);
-    }
+    throwIfAborted(options);
     return bundledRoots;
   }
 
   const cacheRoot = join(storageRoot, "cache", ZCODE_OFFICIAL_PLUGIN_MARKETPLACE);
   try {
     const roots: string[] = [];
-    for (const pluginEntry of readdirSync(cacheRoot, { withFileTypes: true })) {
+    for (const pluginEntry of await materials.directory(cacheRoot)) {
       throwIfAborted(options);
       if (!pluginEntry.isDirectory()) continue;
       const pluginDir = join(cacheRoot, pluginEntry.name);
-      for (const versionEntry of readdirSync(pluginDir, { withFileTypes: true })) {
+      for (const versionEntry of await materials.directory(pluginDir)) {
         if (versionEntry.isDirectory()) roots.push(join(pluginDir, versionEntry.name));
       }
     }
     return roots;
   } catch (error) {
+    rethrowPluginMaterialInterrupt(error);
     if (isNotFoundError(error)) return [];
     diagnostics.push({
       code: "plugin_root_not_found",
@@ -933,11 +779,12 @@ function scanOfficialCache(
   }
 }
 
-function loadPlugin(
+async function loadPlugin(
   candidate: PluginCandidate,
   diagnostics: PluginDiagnostic[],
-): LoadedPlugin | null {
-  if (!directoryExists(candidate.rootPath)) {
+  materials: PluginMaterialReader,
+): Promise<LoadedPlugin | null> {
+  if (!(await materials.directoryExists(candidate.rootPath))) {
     diagnostics.push({
       code: "plugin_root_not_found",
       message: `Plugin root does not exist: ${candidate.rootPath}`,
@@ -947,7 +794,13 @@ function loadPlugin(
     return null;
   }
 
-  const manifestPath = findManifest(candidate.rootPath);
+  try {
+    await materials.directory(candidate.rootPath);
+  } catch (error) {
+    // 列目录只是减少缺失入口探测；无枚举权限时仍允许按已知路径读取 manifest。
+    rethrowPluginMaterialInterrupt(error);
+  }
+  const manifestPath = await findManifest(candidate.rootPath, materials);
   if (!manifestPath) {
     diagnostics.push({
       code: "plugin_manifest_not_found",
@@ -958,47 +811,63 @@ function loadPlugin(
     return null;
   }
 
-  const manifest = readManifest(manifestPath, diagnostics);
+  const manifest = await readManifest(manifestPath, diagnostics, materials, candidate.marketplace);
   if (!manifest) return null;
   return {
     id: `${manifest.name}@${candidate.marketplace}`,
     manifest,
     manifestPath,
+    materials,
     marketplace: candidate.marketplace,
     rootPath: candidate.rootPath,
     source: candidate.source,
   };
 }
 
-function findManifest(rootPath: string): string | null {
+async function findManifest(
+  rootPath: string,
+  materials: PluginMaterialReader,
+): Promise<string | null> {
   const zcodePath = join(rootPath, ZCODE_MANIFEST_PATH);
-  if (fileExists(zcodePath)) {
+  if (await materials.fileExists(zcodePath)) {
     return zcodePath;
   }
 
   // Support different manifest directory conventions by trying stable fallbacks during discovery.
   const claudePath = join(rootPath, CLAUDE_MANIFEST_PATH);
-  if (fileExists(claudePath)) {
+  if (await materials.fileExists(claudePath)) {
     return claudePath;
   }
   const codexPath = join(rootPath, CODEX_MANIFEST_PATH);
-  return fileExists(codexPath) ? codexPath : null;
+  return (await materials.fileExists(codexPath)) ? codexPath : null;
 }
 
-function readManifest(path: string, diagnostics: PluginDiagnostic[]): PluginManifest | null {
+async function readManifest(
+  path: string,
+  diagnostics: PluginDiagnostic[],
+  materials: PluginMaterialReader,
+  marketplace: string,
+): Promise<PluginManifest | null> {
+  let pluginId: string | undefined;
   try {
-    const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    const parsed = await materials.json(path);
     if (!isRecord(parsed)) throw new Error("Manifest must be a JSON object");
     const name = typeof parsed.name === "string" ? parsed.name.trim() : "";
     if (!PLUGIN_NAME_PATTERN.test(name)) throw new Error(`Invalid plugin name: ${name}`);
+    pluginId = `${name}@${marketplace}`;
     return {
       ...parsed,
       name,
       version: typeof parsed.version === "string" ? parsed.version : DEFAULT_VERSION,
+      ...(parsed.userConfig !== undefined
+        ? { userConfig: pluginUserConfigSchema.parse(parsed.userConfig) }
+        : {}),
     } as PluginManifest;
   } catch (error) {
+    rethrowPluginMaterialInterrupt(error);
     diagnostics.push({
       code: "plugin_manifest_invalid",
+      ...(pluginId ? { pluginId } : {}),
       message: error instanceof Error ? error.message : `Invalid plugin manifest: ${path}`,
       path,
       severity: "error",

@@ -183,6 +183,7 @@ impl rust_cli_kernel_api::provider::ModelDirectory for LeveledDirectory {
                 context_window: 200_000,
                 max_output_tokens: 32_000,
                 connection: None,
+                host: None,
             }],
             default: None,
         }

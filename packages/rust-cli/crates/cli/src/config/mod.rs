@@ -6,13 +6,17 @@
 //! 候选目录在同一次组装里从本机存储的插件清单得出（`plugins`，config.md §2.1）。
 
 mod files;
+pub(crate) mod mcp_trust;
+mod mcp_trust_display;
 pub(crate) mod merge;
 mod plugins;
+pub(crate) mod project_hooks;
 mod storage;
 pub(crate) mod trust;
+pub(crate) mod workspace_schema;
 
 use rust_cli_ext::PluginSources;
-use rust_cli_ext::mcp::McpServer;
+use rust_cli_ext::mcp::{McpScope, McpServer};
 use rust_cli_hooks::node_config::NodeHooks;
 use rust_cli_hooks::{HookSource, HooksConfig};
 use rust_cli_kernel_api::env::WorkspaceRef;
@@ -55,6 +59,8 @@ const FLAG_LAYER: &str = "--settings";
 pub(crate) struct ConfigSnapshot {
     pub(crate) version: u64,
     pub(crate) hooks: HooksConfig,
+    /// Fork: the process root's own project hook entry (`project_hooks.rs`); never part of `hooks`.
+    pub(crate) project_hooks: rust_cli_hooks::ProjectEntry,
     /// 配置文件的 `allowedTools` / `disallowedTools`（来源是最后写它的层）。
     pub(crate) rules: Vec<SourcedRule>,
     /// 配置文件的 `permission.mode`。
@@ -185,23 +191,21 @@ pub(crate) async fn read_files(inputs: &ConfigInputs<'_>) -> Files {
     }
 }
 
-/// 读配置文件并组装快照。只在启动时调用一次（没有文件监听，config.md §6 D6）。
-pub(crate) async fn assemble(inputs: &ConfigInputs<'_>) -> ConfigSnapshot {
-    let mut warnings = Vec::new();
-    let Files {
-        user_path,
-        user,
-        projects,
-    } = read_files(inputs).await;
-    let empty = Map::new();
-    let user_object = object(&user_path, &user, &mut warnings);
+/// 配置层：用户级、项目级每层、`--settings`（按优先级从低到高）。
+fn layers<'a>(
+    files: &'a Files,
+    flag: Option<&'a Map<String, Value>>,
+    empty: &'a Map<String, Value>,
+    warnings: &mut Vec<String>,
+) -> Vec<Layer<'a>> {
+    let user_object = object(&files.user_path, &files.user, warnings);
     let mut layers = vec![Layer {
         source: RuleSource::UserSettings,
-        object: user_object.unwrap_or(&empty),
-        path: &user_path,
+        object: user_object.unwrap_or(empty),
+        path: &files.user_path,
     }];
-    for project in &projects {
-        if let Some(object) = object(&project.path, &project.file, &mut warnings) {
+    for project in &files.projects {
+        if let Some(object) = object(&project.path, &project.file, warnings) {
             layers.push(Layer {
                 source: RuleSource::ProjectSettings,
                 object,
@@ -210,13 +214,75 @@ pub(crate) async fn assemble(inputs: &ConfigInputs<'_>) -> ConfigSnapshot {
         }
     }
     // `--settings`（flagSettings，排在 user / project / local 之后）：规则的来源记为命令行（cli-args.md §8、D7）。
-    if let Some(object) = inputs.flag {
+    if let Some(object) = flag {
         layers.push(Layer {
             source: RuleSource::CliArg,
             object,
             path: FLAG_LAYER,
         });
     }
+    layers
+}
+
+/// 存储位置的层：项目级配置不在本机时只认用户级与环境变量（deployment.md §21）。
+fn storage_layers(
+    inputs: &ConfigInputs<'_>,
+    layers: &[Layer<'_>],
+    warnings: &mut Vec<String>,
+) -> StorageLayers {
+    if inputs.project_is_local {
+        StorageLayers::from_layers(layers, inputs.process_env)
+    } else {
+        let own = storage::controller_layers(layers, warnings);
+        StorageLayers::from_layers(&own, inputs.process_env)
+    }
+}
+
+/// Fork: what a workspace's plugins resolve against (specs/fork-rust-lsp.md "Owners"). The same layers,
+/// storage rule and candidates as [`assemble`], without hooks, trust, MCP or warning logs, so it can run for
+/// every `lsp/status` request.
+pub(crate) struct PluginView {
+    pub(crate) sources: PluginSources,
+    pub(crate) options: std::collections::BTreeMap<String, Map<String, Value>>,
+    /// `<cliStorageRoot>/plugins` for this workspace (Node `pluginStorageRoot`).
+    pub(crate) storage: rust_cli_paths::StoragePath,
+}
+
+pub(crate) async fn plugin_view(inputs: &ConfigInputs<'_>) -> PluginView {
+    let mut warnings = Vec::new();
+    let files = read_files(inputs).await;
+    let empty = Map::new();
+    let layers = layers(&files, inputs.flag, &empty, &mut warnings);
+    let mut section = plugins::merge(&layers, &mut warnings);
+    let options = std::mem::take(&mut section.options);
+    let storage_layers = storage_layers(inputs, &layers, &mut warnings);
+    let root = inputs.workspace.root.as_str();
+    let storage = inputs
+        .paths
+        .plugin_storage(storage_layers.dir.as_deref(), std::path::Path::new(root));
+    let sources = plugins::sources(section, root, &storage).await;
+    for warning in &warnings {
+        tracing::debug!(warning, "configuration (plugin view)");
+    }
+    PluginView {
+        sources,
+        options,
+        storage,
+    }
+}
+
+/// 读配置文件并组装快照。只在启动时调用一次（没有文件监听，config.md §6 D6）。
+pub(crate) async fn assemble(inputs: &ConfigInputs<'_>) -> ConfigSnapshot {
+    let mut warnings = Vec::new();
+    let files = read_files(inputs).await;
+    let empty = Map::new();
+    let layers = layers(&files, inputs.flag, &empty, &mut warnings);
+    let Files {
+        user_path,
+        user,
+        projects,
+    } = &files;
+    let user_object = user.object();
     let permission = merge::permission(&layers, &mut warnings);
     let mut rules = Vec::new();
     if let Some((source, texts)) = &permission.allowed {
@@ -230,6 +296,32 @@ pub(crate) async fn assemble(inputs: &ConfigInputs<'_>) -> ConfigSnapshot {
         disabled: mcp_disabled,
         origins: mcp_origins,
     } = merge::mcp_layers(&layers, &mut warnings);
+    // Fork: project MCP servers connect only with a workspace trust grant for their current declaration
+    // (specs/fork-rust-agent-parity.md, "Workspace MCP trust"), like Node's guarded session MCP port.
+    let trust = mcp_trust::Inspection::read(
+        inputs.files,
+        inputs.workspace,
+        mcp_trust::Target::new(inputs.workspace.root.as_str(), None),
+        (user_object, projects),
+        inputs.paths,
+    )
+    .await;
+    let (admitted, granted) = (trust.admitted(), trust.granted());
+    let untrusted = |server: &McpServer, allowed: &std::collections::BTreeSet<String>| {
+        server.scope == McpScope::Project && !allowed.contains(&server.name)
+    };
+    let skipped: Vec<&str> = mcp_servers
+        .iter()
+        .filter(|server| untrusted(server, &admitted))
+        .map(|server| server.name.as_str())
+        .collect();
+    if !skipped.is_empty() {
+        tracing::info!(servers = ?skipped, "workspace MCP servers wait for a trust grant");
+    }
+    let mut mcp_servers = mcp_servers;
+    mcp_servers.retain(|server| !untrusted(server, &admitted));
+    let mut mcp_disabled = mcp_disabled;
+    mcp_disabled.retain(|server| !untrusted(server, &granted));
     let mcp_enabled = merge::mcp_enabled(&layers);
     let locale = merge::locale(&layers, &mut warnings);
     let check_for_update = merge::check_for_update(&layers, &mut warnings);
@@ -237,12 +329,7 @@ pub(crate) async fn assemble(inputs: &ConfigInputs<'_>) -> ConfigSnapshot {
     let (compact_at, compact_pinned) = merge::compact_at(&layers, &mut warnings);
     let root = inputs.workspace.root.as_str();
     let plugin_section = plugins::merge(&layers, &mut warnings);
-    let storage = if inputs.project_is_local {
-        StorageLayers::from_layers(&layers, inputs.process_env)
-    } else {
-        let own = storage::controller_layers(&layers, &mut warnings);
-        StorageLayers::from_layers(&own, inputs.process_env)
-    };
+    let storage = storage_layers(inputs, &layers, &mut warnings);
     let plugin_root = inputs
         .paths
         .plugin_storage(storage.dir.as_deref(), std::path::Path::new(root));
@@ -257,17 +344,18 @@ pub(crate) async fn assemble(inputs: &ConfigInputs<'_>) -> ConfigSnapshot {
     };
     let (user_settings, found) = user_hooks.user_settings();
     warnings.extend(found);
-    // 项目级 hooks：只有已信任且启用的声明进快照（config.md §4.2）。
+    // 项目级 hooks：只有已信任且启用的声明进快照（config.md §4.2）。Fork: they are the root workspace's own entry, not
+    // process sources (specs/fork-rust-agent-parity.md, "Per-workspace hook snapshots").
     let workspace = WorkspaceHooks::inspect(
         inputs.workspace.root.as_str(),
         user_object,
-        &projects,
+        projects,
         inputs.paths,
         &mut warnings,
     )
     .await;
+    let project_hooks = rust_cli_hooks::ProjectEntry::Admitted(workspace.admitted());
     let mut sources = vec![(HookSource::User, user_settings)];
-    sources.extend(workspace.admitted());
     // `--settings` 的 hooks：命令行上给的，不经项目 hooks 的信任（同用户级）。
     if let Some(value) = inputs.flag.and_then(|object| object.get("hooks")) {
         let (parsed, found) = NodeHooks::from_json(value);
@@ -289,6 +377,7 @@ pub(crate) async fn assemble(inputs: &ConfigInputs<'_>) -> ConfigSnapshot {
     ConfigSnapshot {
         version: 1,
         hooks,
+        project_hooks,
         rules,
         mode: permission.mode,
         mcp_servers,
@@ -302,7 +391,7 @@ pub(crate) async fn assemble(inputs: &ConfigInputs<'_>) -> ConfigSnapshot {
         question_timeout,
         compact_at,
         compact_pinned,
-        project_allow: project_allow(&projects, inputs.workspace.root.as_str()),
+        project_allow: project_allow(projects, inputs.workspace.root.as_str()),
         rule_files: rule_files(&permission),
         storage,
     }

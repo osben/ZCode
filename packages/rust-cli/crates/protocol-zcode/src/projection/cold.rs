@@ -23,12 +23,20 @@ pub(super) fn rows(projection: &mut Projection, view: &SessionView) {
         matches!(message, Message::User(user) if user.origin == UserOrigin::Human
             && !INTERRUPT_TEXTS.contains(&super::text_of(&user.content).as_str()))
     };
+    // Fork: a turn still running keeps the id its live events carry (SessionView::running_turn), so the events that
+    // follow a rebuild land on the rebuilt turn instead of drawing a second reply and leaving its header running.
+    let running = view
+        .running_turn
+        .as_ref()
+        .filter(|_| view.running)
+        .zip(last_opening(&view.messages));
+    let turn_id = |index: usize, user: &str, turns: u64| match running {
+        Some((turn, last)) if last == index => turn.as_str().to_owned(),
+        _ => format!("{user}:turn:{turns}"),
+    };
     for (index, message) in view.messages.iter().enumerate() {
         match message {
-            Message::User(user)
-                if user.origin == UserOrigin::Human
-                    && !INTERRUPT_TEXTS.contains(&super::text_of(&user.content).as_str()) =>
-            {
+            Message::User(user) if opening(message, turn_ended) && !is_notice(message) => {
                 if projection.turn.is_some() {
                     projection.close_cold_turn(interrupted, at, &mut out);
                 }
@@ -36,23 +44,23 @@ pub(super) fn rows(projection: &mut Projection, view: &SessionView) {
                 notice_batch = false;
                 turns += 1;
                 turn_ended = false;
-                let turn = format!("{}:turn:{turns}", user.id.as_str());
+                let turn = turn_id(index, user.id.as_str(), turns);
                 // Fork: the stored submitting command, so the App settles its pending command after a restart.
                 let command = view.commands.get(&user.id).map(|c| c.as_str().to_owned());
                 let model = super::model_change::cold_turn_model(view, index, opens_turn);
+                // Fork: the ACP reset divider of this turn goes before its header, as Node's cold merge places it.
+                projection.cold_context_reset(user.id.as_str(), &turn, at, &mut out);
                 projection.start_turn(&turn, command, model, at, 0, &mut out);
                 projection.message(message, at, 0, &mut out);
             }
-            Message::User(user)
-                if turn_ended && super::rows::is_task_notification(&user.origin) =>
-            {
+            Message::User(user) if opening(message, turn_ended) => {
                 if projection.turn.is_some() {
                     projection.close_cold_turn(interrupted, at, &mut out);
                 }
                 interrupted = false;
                 turns += 1;
                 turn_ended = false;
-                let turn = format!("{}:turn:{turns}", user.id.as_str());
+                let turn = turn_id(index, user.id.as_str(), turns);
                 let model = super::model_change::cold_turn_model(view, index, opens_turn);
                 projection.start_turn(&turn, None, model, at, 0, &mut out);
                 projection.message(message, at, 0, &mut out);
@@ -105,10 +113,7 @@ pub(super) fn rows(projection: &mut Projection, view: &SessionView) {
             }
             Message::Assistant(assistant) => {
                 notice_batch = false;
-                turn_ended = !assistant
-                    .content
-                    .iter()
-                    .any(|block| matches!(block, ContentBlock::ToolUse { .. }));
+                turn_ended = ends_turn(assistant);
                 projection.message(message, at, 0, &mut out);
                 // Fork: the stored goal verifications that followed this message (projection/goal_verify.rs).
                 if let Some(goal) = &view.goal {
@@ -124,11 +129,21 @@ pub(super) fn rows(projection: &mut Projection, view: &SessionView) {
             Message::System(SystemMessage::CompactBoundary(boundary)) => {
                 projection.compacted(boundary.trigger, boundary.pre_tokens, at, &mut out);
             }
-            // 附件不投成行（P1）。
-            Message::Attachment(_) => {}
+            // 附件不投成行（P1）; fork: an absorbed steer is a guided user row of the current turn (rows.rs).
+            Message::Attachment(_) => projection.message(message, at, 0, &mut out),
         }
     }
     projection.seed_turn_model(turns);
+    // Fork: a rewind past a turn forgets its ACP context-reset divider.
+    let present: std::collections::HashSet<String> = view
+        .messages
+        .iter()
+        .filter_map(|message| match message {
+            Message::User(user) => Some(user.id.as_str().to_owned()),
+            _ => None,
+        })
+        .collect();
+    projection.retain_context_resets(&present);
     // Fork: a verification whose anchor message is not in the active history shows at the end.
     if let Some(goal) = &view.goal {
         for item in &goal.verifications {
@@ -145,6 +160,45 @@ pub(super) fn rows(projection: &mut Projection, view: &SessionView) {
             projection.close_cold_turn(interrupted, at, &mut out);
         }
     }
+}
+
+/// Fork: the stored message opens a turn: a typed input, or a task notification after a reply that ended its turn
+/// (one that follows a tool boundary joins the running turn). The same rule finds the running turn's opening.
+fn opening(message: &Message, turn_ended: bool) -> bool {
+    match message {
+        Message::User(user) if user.origin == UserOrigin::Human => {
+            !INTERRUPT_TEXTS.contains(&super::text_of(&user.content).as_str())
+        }
+        Message::User(user) => turn_ended && super::rows::is_task_notification(&user.origin),
+        _ => false,
+    }
+}
+
+fn is_notice(message: &Message) -> bool {
+    matches!(message, Message::User(user) if super::rows::is_task_notification(&user.origin))
+}
+
+/// A reply without tool calls ends its turn.
+fn ends_turn(assistant: &rust_cli_kernel_api::message::AssistantMessage) -> bool {
+    !assistant
+        .content
+        .iter()
+        .any(|block| matches!(block, ContentBlock::ToolUse { .. }))
+}
+
+/// The index of the message that opens the last turn, by the same rule as [`rows`].
+fn last_opening(messages: &[Message]) -> Option<usize> {
+    let mut turn_ended = true;
+    let mut last = None;
+    for (index, message) in messages.iter().enumerate() {
+        if opening(message, turn_ended) {
+            last = Some(index);
+            turn_ended = false;
+        } else if let Message::Assistant(assistant) = message {
+            turn_ended = ends_turn(assistant);
+        }
+    }
+    last
 }
 
 impl Projection {

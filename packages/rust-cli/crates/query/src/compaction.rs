@@ -55,6 +55,7 @@ fn request(
         mode: Some(scope.mode),
         agent: scope.agent.clone(),
         initial_token_gap: None,
+        inject_agents_md: scope.inject_agents_md,
     }
 }
 
@@ -68,13 +69,17 @@ async fn commit(
         boundary,
         summary,
         restored,
+        session_start_context,
     } = result;
     let mut messages = vec![
         Message::System(rust_cli_kernel_api::message::SystemMessage::CompactBoundary(boundary)),
         Message::User(summary),
     ];
     messages.extend(restored);
-    scope.sink.commit_messages(messages.clone()).await?;
+    scope
+        .sink
+        .commit_compaction(messages.clone(), session_start_context)
+        .await?;
     history.extend(messages);
     Ok(())
 }

@@ -55,6 +55,7 @@ import {
   MobilePushConnection,
   type WebRemoteControlDeviceTransportOptions,
   type WebRemoteControlDeviceTransportState,
+  buildWebRemoteControlClientLanguageHeader,
   createWebRemoteControlV2Http,
   type WebRemoteControlLogin,
   createMobileLogPullCoordinator,
@@ -180,6 +181,8 @@ interface WindowControlRuntime {
 }
 
 interface WebRemoteControlManagerDependencies {
+  /** 当前界面语言（Main 的 currentApplicationLocale），用于 ZCode endpoint 请求的 X-Client-Language。 */
+  getClientLanguage?: () => string | undefined;
   getEndpointUrls?: () => Promise<ZCodeEndpointUrls> | ZCodeEndpointUrls;
   relayWsUrl: string;
   mobileRemoteControlUrl: string;
@@ -446,7 +449,7 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
     // Registration HTTP may target the relay origin, while the stored identity stays keyed by the endpoint origin.
     httpOrigin: string = origin,
   ) {
-    const http = createWebRemoteControlV2Http(httpOrigin);
+    const http = createWebRemoteControlV2Http(httpOrigin, fetch, dependencies.getClientLanguage);
     // The manager reads/updates identity serially so that first starts in multiple windows do not each overwrite the persisted SID.
     const operation = registrationQueue.then(async () => {
       const current = await currentLogin();
@@ -500,12 +503,16 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
     signal.throwIfAborted();
     if (!login?.jwt || !login.userId || !dependencies.featureGate.isEnabled()) return null;
     const origin = new URL(endpoint?.origin ?? dependencies.mobileRemoteControlUrl).origin;
-    const http = createWebRemoteControlV2Http(origin);
+    const http = createWebRemoteControlV2Http(origin, fetch, dependencies.getClientLanguage);
     let supported = false,
       status: "available" | "unavailable" | "unknown" = "unknown";
     try {
       const response = await fetch(new URL("/api/v1/remote/notification/status", origin), {
-        headers: { Authorization: `Bearer ${login.jwt}` },
+        // 这里直接 fetch，绕过了 NodeApiClient 的来源头；以前完全不带 X-Client-Language。
+        headers: {
+          Authorization: `Bearer ${login.jwt}`,
+          ...buildWebRemoteControlClientLanguageHeader(dependencies.getClientLanguage),
+        },
         signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]),
         redirect: "error",
       });
@@ -1002,6 +1009,21 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
       label: getPathLabel(runtime.workspacePath),
       kind: runtime.remoteSessionId || runtime.workspaceIdentity ? "remote" : "local",
     };
+  }
+
+  // Bugfix：远控可能以未连接的远端目标启动（重启恢复时远端还没重连）。runtime 的 remoteSessionId
+  // 以前只在 start 时写一次，远端之后连上也不更新：桌面弹窗按“不同目标”重启 device relay，
+  // initialViewState 也因目标不可 bridge 丢掉 initialTaskId。窗口快照是 workspace 连接身份的唯一来源，
+  // 目标在快照里时 runtime 跟随快照；目标不在快照里时没有新事实，保留原值。
+  function syncRuntimeRemoteSession(runtime: WindowControlRuntime): boolean {
+    if (!runtime.workspaceIdentity) return false;
+    const workspaceKey = resolveWebRemoteControlWorkspaceKey(runtime);
+    const workspace = availableWorkspacesByWindowId
+      .get(runtime.windowId)
+      ?.find((candidate) => resolveWebRemoteControlWorkspaceKey(candidate) === workspaceKey);
+    if (!workspace || workspace.remoteSessionId === runtime.remoteSessionId) return false;
+    runtime.remoteSessionId = workspace.remoteSessionId;
+    return true;
   }
 
   function getRuntimeStatusTarget(runtime: WindowControlRuntime): WebRemoteControlWorkspaceTarget {
@@ -1970,7 +1992,11 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
         assertActive();
         // Relay HTTP shares the origin of the relay WS URL (self-hosted relays are configured as one origin).
         const relayOrigin = resolveWebRemoteControlRelayHttpOrigin(relayWsUrl);
-        const http = createWebRemoteControlV2Http(relayOrigin);
+        const http = createWebRemoteControlV2Http(
+          relayOrigin,
+          fetch,
+          dependencies.getClientLanguage,
+        );
         const currentLogin = async (): Promise<WebRemoteControlLogin> => {
           const current = await dependencies.getLogin();
           const endpoint = await dependencies.getEndpointUrls?.();
@@ -2162,6 +2188,8 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
             repairRequired,
           };
           runtimes.set(windowId, runtime);
+          // 启动前的 await 期间远端可能已连上，那次窗口同步还找不到 runtime，这里补读最新快照。
+          syncRuntimeRemoteSession(runtime);
           emitRuntimeStatus(runtime);
           transport.start();
         });
@@ -2323,11 +2351,25 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
 
       const persistedWorkspaceKey = resolveWebRemoteControlWorkspaceKey(persistedContext);
       // Tab closes or remote reconnects may happen during a disk read; only consume the latest complete snapshot.
-      const currentContext = availableWorkspacesByWindowId
-        .get(windowId)
-        ?.find(
-          (candidate) => resolveWebRemoteControlWorkspaceKey(candidate) === persistedWorkspaceKey,
-        );
+      const isPersistedTarget = (candidate: WebRemoteControlWorkspaceTarget) =>
+        resolveWebRemoteControlWorkspaceKey(candidate) === persistedWorkspaceKey;
+      // Bugfix: startup restores only the last active workspace. That target is often not in this window, and a
+      // remote target may not have reconnected yet. The old logic required "in this window and connected" as the
+      // gate, so an unmet condition skipped the restore silently and the device stayed offline.
+      // The persisted target only picks the initial workspace for the phone: use it when this window has it,
+      // otherwise the first bridgeable workspace in this window. When it lives in another window, leave it to
+      // that window to keep the original ownership; when this window has no workspace, wait for the next sync.
+      const windowWorkspaces = availableWorkspacesByWindowId.get(windowId) ?? [];
+      const persistedTarget = windowWorkspaces.find(isPersistedTarget);
+      const ownedByOtherWindow = [...availableWorkspacesByWindowId].some(
+        ([id, workspaces]) => id !== windowId && workspaces.some(isPersistedTarget),
+      );
+      const currentContext =
+        persistedTarget ??
+        (ownedByOtherWindow
+          ? undefined
+          : (windowWorkspaces.find(isBridgeableRemoteTarget) ?? windowWorkspaces[0]));
+      // Fork guard kept: a remote target without a connected remote session cannot be restored yet.
       if (
         !currentContext ||
         (currentContext.kind === "remote" && !currentContext.remoteSessionId)
@@ -2337,14 +2379,15 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
 
       startupRestoreClaimed = true;
       dependencies.logger.info(
-        `[web-remote-control] restoring previous enabled state window=${windowId} workspace=${currentContext.workspacePath} remoteSession=${currentContext.remoteSessionId ?? "none"}`,
+        `[web-remote-control] restoring previous enabled state window=${windowId} target=${persistedTarget ? "saved" : "window"} workspace=${currentContext.workspacePath} remoteSession=${currentContext.remoteSessionId ?? "none"}`,
       );
       try {
         await this.start(windowId, {
           workspacePath: currentContext.workspacePath,
           workspaceIdentity: currentContext.workspaceIdentity,
           remoteSessionId: currentContext.remoteSessionId,
-          initialTaskId: persistedContext.initialTaskId,
+          // 任务只属于上次启用目标；换成窗口里的其他工作区时不能带过去。
+          initialTaskId: persistedTarget ? persistedContext.initialTaskId : undefined,
         });
         return true;
       } catch (error) {
@@ -2415,6 +2458,7 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
       if (!runtime) {
         return;
       }
+      if (syncRuntimeRemoteSession(runtime)) emitRuntimeStatus(runtime);
       pushWorkspaceListUpdated(runtime);
     },
 

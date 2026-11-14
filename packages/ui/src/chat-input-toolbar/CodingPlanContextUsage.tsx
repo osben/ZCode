@@ -1,6 +1,6 @@
 /* eslint-disable max-lines -- Composer usage entry coordinates multi-source state, overlays, and reset interactions; this phase only migrates Account Access and does not split the existing UI structure. */
 import { type CodingPlanResetType } from "@zcode/shared";
-import { Loader2 } from "lucide-react";
+import { LoaderCircle } from "lucide-react";
 import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   type CodingPlanUsageRemainingEntitlement,
@@ -358,7 +358,7 @@ export function ChatCodingPlanUsageRemainingPanel({
       <div className={cn("grid gap-2", getContextQuotaMeterGridClass(quotaGridCount))}>
         {state.loading && !state.visibleSnapshot ? (
           <div className="flex items-center gap-2 p-2 text-ui-base text-foreground-subtle">
-            <Loader2 className="size-3.5 animate-spin" />
+            <LoaderCircle className="size-3.5 animate-spin" />
             {intl.formatMessage({ id: "sidebar.usage.plan.loading" })}
           </div>
         ) : state.displayedEntitlement?.error && !state.visibleSnapshot ? (

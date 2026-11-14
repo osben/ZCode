@@ -42,6 +42,8 @@ impl SessionOps for NoSession {
         Err(unsupported("changing the working directory"))
     }
 
+    async fn freeze_title(&self, _title: String) {}
+
     async fn arm_monitor(
         &self,
         _monitor: MonitorArmed,
@@ -78,6 +80,10 @@ pub trait OpsOverride: Send + Sync {
         self.ops().set_workspace(root).await
     }
 
+    async fn freeze_title(&self, title: String) {
+        self.ops().freeze_title(title).await;
+    }
+
     async fn arm_monitor(
         &self,
         monitor: MonitorArmed,
@@ -107,6 +113,10 @@ impl<T: OpsOverride> SessionOps for T {
 
     async fn set_workspace(&self, root: EnvPath) -> Result<(), OrchestrationError> {
         OpsOverride::set_workspace(self, root).await
+    }
+
+    async fn freeze_title(&self, title: String) {
+        OpsOverride::freeze_title(self, title).await;
     }
 
     async fn arm_monitor(

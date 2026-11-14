@@ -54,6 +54,7 @@ fn create(id: &str, root: &str) -> CreateSession {
         selection: selection(),
         mode: PermissionMode::Default,
         plan: false,
+        incognito: None,
     }
 }
 

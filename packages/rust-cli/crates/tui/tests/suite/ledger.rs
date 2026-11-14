@@ -98,6 +98,7 @@ impl Background for Ledger {
                 status: BackgroundStatus::Running,
                 kind,
                 description: description.to_owned(),
+                output: None,
             }))
     }
 

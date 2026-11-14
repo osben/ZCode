@@ -29,6 +29,8 @@ pub(crate) enum SinkRequest {
     },
     /// 工具边界领取插话与通知（不出队，query.md §4.1、§5）。
     ClaimSteering {
+        /// Fork: claim steers only (the text-only boundary); notices stay in the lane.
+        prompts_only: bool,
         reply: oneshot::Sender<Option<crate::steering::Claimed>>,
     },
     /// 插话的结局（出队或留下）与并入的通知（按顺序）：回复出了队、可以并入的插话，与每条通知的 attachment 用的
@@ -47,6 +49,13 @@ pub(crate) enum SinkRequest {
     /// 一组消息一个事务（压缩的边界、摘要与附件）。
     Messages {
         messages: Vec<Message>,
+        reply: oneshot::Sender<Result<(), StoreError>>,
+    },
+    /// Fork: a compaction batch, with the flag that clears the held SessionStart result once it has committed
+    /// (`RunSink::commit_compaction`).
+    Compaction {
+        messages: Vec<Message>,
+        session_start_context: bool,
         reply: oneshot::Sender<Result<(), StoreError>>,
     },
     /// 主循环开始压缩。
@@ -69,6 +78,8 @@ pub(crate) enum SinkRequest {
     },
     /// hook 给出的会话标题（UserPromptSubmit / SessionStart 的 `sessionTitle`）。
     Title(String),
+    /// Fork: an ACP agent's title (`RunSink::external_title`), stored as a generated title.
+    ExternalTitle(String),
     /// 工具请求修改工作目录（docs/specs/rust-cli/tools-more.md §11.4）。
     SetWorkspace {
         root: rust_cli_kernel_api::env::EnvPath,
@@ -231,6 +242,11 @@ impl SessionOps for ActorSink {
             .await
     }
 
+    /// Fork: the same path as a hook's title (`retitle`): committed as a custom title, generation stops.
+    async fn freeze_title(&self, title: String) {
+        self.title(title).await;
+    }
+
     /// monitor 的 owner 是会话 actor（工作线 F83）。
     async fn arm_monitor(
         &self,
@@ -255,6 +271,19 @@ pub(crate) struct SessionAsks {
 }
 
 impl SessionAsks {
+    /// Fork: the session-level entry of a context built outside a turn (an MCP App call, app_tool_context.rs).
+    pub(crate) fn new(
+        requests: mpsc::WeakSender<crate::actor::Request>,
+        session: SessionId,
+        detached: Option<Arc<crate::detached::DetachedAsks>>,
+    ) -> Self {
+        Self {
+            requests,
+            session,
+            detached,
+        }
+    }
+
     /// 交给会话 actor；actor 收不下（发不出去或回复被丢下）时为 None。
     async fn to_actor(
         &self,
@@ -312,6 +341,10 @@ impl Interactions for SessionAsks {
 
 #[async_trait]
 impl RunSink for ActorSink {
+    async fn external_title(&self, title: String) {
+        let _ = self.sender.send(SinkRequest::ExternalTitle(title)).await;
+    }
+
     async fn commit_message(&self, message: Message) -> Result<(), StoreError> {
         self.call(|reply| SinkRequest::Message { message, reply })
             .await
@@ -320,6 +353,19 @@ impl RunSink for ActorSink {
     async fn commit_messages(&self, messages: Vec<Message>) -> Result<(), StoreError> {
         self.call(|reply| SinkRequest::Messages { messages, reply })
             .await
+    }
+
+    async fn commit_compaction(
+        &self,
+        messages: Vec<Message>,
+        session_start_context: bool,
+    ) -> Result<(), StoreError> {
+        self.call(|reply| SinkRequest::Compaction {
+            messages,
+            session_start_context,
+            reply,
+        })
+        .await
     }
 
     async fn commit_metered(
@@ -356,7 +402,11 @@ impl RunSink for ActorSink {
 
     /// 插话（并入前先跑 UserPromptSubmit）与后台通知，按到达顺序（steering.rs，query.md §5）。
     async fn take_absorbed(&self) -> Vec<Absorbed> {
-        self.absorbed().await
+        self.absorbed(false).await
+    }
+
+    async fn take_steered_prompts(&self) -> Vec<Absorbed> {
+        self.absorbed(true).await
     }
 
     async fn goal_checked(

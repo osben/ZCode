@@ -7,6 +7,7 @@ import {
   BOT_RUNTIME_LOCK_RETRY_MS,
   createBotConnectionFingerprint,
   createLatestRuntimeRefreshQueue,
+  getBotPollingRetryDelayMs,
   type BotRuntimeLogger,
   type BotRuntimeStatusSink,
   waitFor,
@@ -59,6 +60,7 @@ export function createWeixinChannelRuntime(deps: WeixinChannelRuntimeDeps) {
       return;
     }
 
+    let consecutiveFailures = 0;
     while (!signal.aborted) {
       let lock: Awaited<ReturnType<typeof acquireWeixinPollingLock>>;
       try {
@@ -151,6 +153,7 @@ export function createWeixinChannelRuntime(deps: WeixinChannelRuntimeDeps) {
             // Persisting the cursor before processing replies meant an interrupted process skipped unfinished messages, reordering or losing AskUserQuestion replies.
             await deps.writeWeixinGetUpdatesBuf(bot.id, result.buf);
           }
+          consecutiveFailures = 0;
           deps.statusSink.setRuntimeStatus({
             botId: bot.id,
             provider: "weixin",
@@ -164,13 +167,22 @@ export function createWeixinChannelRuntime(deps: WeixinChannelRuntimeDeps) {
         if (signal.aborted) {
           return;
         }
+        const message = error instanceof Error ? error.message : String(error);
+        consecutiveFailures += 1;
+        const retryDelayMs = getBotPollingRetryDelayMs(consecutiveFailures);
+        // Bugfix：游标提交失败原来只改运行状态、不写日志，并每 5 秒用旧游标无限重拉；
+        // 线上同一条消息被重投约 23 小时，日志里看不到原因。失败必须可见，并按退避降低重拉频率。
+        deps.logger.warn(
+          undefined,
+          `weixin polling failed bot=${bot.id} failures=${consecutiveFailures} retryInMs=${retryDelayMs}: ${message}`,
+        );
         deps.statusSink.setRuntimeStatus({
           botId: bot.id,
           provider: "weixin",
           status: "error",
-          message: `Weixin polling failed: ${error instanceof Error ? error.message : String(error)}`,
+          message: `Weixin polling failed: ${message}`,
         });
-        await waitFor(5_000, signal);
+        await waitFor(retryDelayMs, signal);
       } finally {
         // Bugfix: the Weixin buf is the third-party queue acknowledgment point; only the lock owner can consume and write, and must release the lock on exit so another host can take over.
         await lock.release().catch((error: unknown) => {

@@ -17,6 +17,13 @@ export interface ControlledViewWebContents {
    * browserGuestManager wires this to `guest.executeJavaScript(script, true)` (userGesture=true, matching element-picker).
    */
   executeJavaScript(script: string): Promise<unknown>;
+  sendInputEvent(event: ControlledViewKeyInputEvent): void;
+}
+
+export interface ControlledViewKeyInputEvent {
+  type: "keyDown" | "keyUp" | "char";
+  keyCode: string;
+  modifiers?: Array<"alt" | "control" | "meta" | "shift">;
 }
 
 export interface ControlledViewCdp {

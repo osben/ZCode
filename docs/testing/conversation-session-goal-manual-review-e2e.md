@@ -14,7 +14,7 @@ The default full desktop E2E does not run manual review specs. Turn it on explic
 ZCODE_E2E_MANUAL_REVIEW=1 \
 E2E_PROVIDER_API_KEY=<real-provider-key> \
 pnpm exec wdio run wdio.conf.ts \
-  --spec ./test/e2e/conversation-session/conversation-session-goal-run-cases.test.ts
+  --spec ./test/e2e/conversation-session/goals/conversation-session-goal-run-cases.test.ts
 ```
 
 Manual review mode forces the real DeepSeek v4 flash capture chain and does not use replay fixtures. Output goes to:

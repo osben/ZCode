@@ -34,6 +34,41 @@ impl Family {
     }
 }
 
+/// Fork: the builtin ChatGPT Plan (SIWC) provider id. It is only the template rule: the registry publishes one entry
+/// per signed-in account, `account:chatgpt-plan:<accountKey>` (specs/fork-rust-chatgpt-plan.md, Node
+/// `BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan`).
+pub const CHATGPT_PLAN_PROVIDER: &str = "account:chatgpt-plan";
+
+/// Fork: Node `isChatGptPlanAccountKey`: 16 lowercase hex characters (a `sha256(sub)` prefix) after trimming.
+pub fn is_chatgpt_plan_account_key(key: &str) -> bool {
+    let key = key.trim();
+    key.len() == 16
+        && key
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// Fork: Node `buildChatGptPlanAccountProviderId`: the per-account entry id (not the template id
+/// [`CHATGPT_PLAN_PROVIDER`]). Node throws on an invalid key; callers pass keys already validated.
+pub fn chatgpt_plan_account_provider(key: &str) -> String {
+    debug_assert!(
+        is_chatgpt_plan_account_key(key),
+        "invalid ChatGPT Plan account key"
+    );
+    format!("{CHATGPT_PLAN_PROVIDER}:{}", key.trim())
+}
+
+/// Fork: Node `parseChatGptPlanAccountProviderId`: the account key of a per-account entry, None for any other id
+/// (the base id included).
+pub fn chatgpt_plan_account(provider: &str) -> Option<&str> {
+    let key = provider
+        .trim()
+        .strip_prefix(CHATGPT_PLAN_PROVIDER)?
+        .strip_prefix(':')?
+        .trim();
+    is_chatgpt_plan_account_key(key).then_some(key)
+}
+
 #[cfg(test)]
 #[path = "account_tests.rs"]
 mod tests;

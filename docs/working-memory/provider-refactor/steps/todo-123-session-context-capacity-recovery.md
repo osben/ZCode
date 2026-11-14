@@ -109,5 +109,5 @@ the unknown-capacity convention.
 `bootstrap/src/zcode-protocol-v4/{transcript-hydration,product-projection}.ts`;
 `packages/shared/src/zcode-protocol-v4/snapshot.ts` (existing nullable capacity protocol, not extended);
 `packages/ui/src/v4/composer/V4ComposerToolbar.tsx` (shared display consumer, layout unchanged);
-`packages/desktop/test/e2e/conversation-session/conversation-session-context-window-cold-resume.test.ts` and Bootstrap
+`packages/desktop/test/e2e/conversation-session/context/conversation-session-context-window-cold-resume.test.ts` and Bootstrap
 hydration / projection / protocol unit tests.

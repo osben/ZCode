@@ -91,6 +91,8 @@ fn batch(facts: Vec<Fact>) -> FactBatch {
 fn user(id: MessageId, text: String) -> Fact {
     Fact::MessageAppended {
         message: Message::User(UserMessage {
+            stall_execution: None,
+            intent: None,
             id,
             content: vec![ContentBlock::Text { text }],
             origin: UserOrigin::Human,
@@ -127,6 +129,7 @@ async fn create(store: &NodeStore) -> Result<SessionId> {
             title: String::new(),
             trace: TraceId::new(id.as_str()),
             created_at_ms: now_ms(),
+            incognito: None,
         })
         .await?;
     let selection = ModelSelection::new("p", "m");

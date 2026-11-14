@@ -1,6 +1,6 @@
 # Upstream provider E2E
 
-`packages/desktop/test/e2e/upstream-provider.test.ts` is the fixed regression case for the E2E upstream provider. The provider's address, API key and model name are all controlled by environment variables; the repository hard-codes no provider.
+`packages/desktop/test/e2e/infrastructure/smoke/upstream-provider.test.ts` is the fixed regression case for the E2E upstream provider. The provider's address, API key and model name are all controlled by environment variables; the repository hard-codes no provider.
 
 The case writes the E2E provider through the desktop settings page, adds the main model, returns to the workspace, selects that model and sends a request. The default mode does not touch the real network: it starts a local fixture replay server that replays previously captured real responses as HTTP content, so the fixed case reproduces stably.
 
@@ -23,7 +23,7 @@ The case writes the E2E provider through the desktop settings page, adds the mai
 Run the spec directly:
 
 ```bash
-pnpm --filter @zcode/desktop test:e2e -- --spec ./test/e2e/upstream-provider.test.ts
+pnpm --filter @zcode/desktop test:e2e -- --spec ./test/e2e/infrastructure/smoke/upstream-provider.test.ts
 ```
 
 Default replay behavior:
@@ -46,7 +46,7 @@ E2E_PROVIDER_HTTP_MODE=capture \
 E2E_PROVIDER_BASE_URL=https://<provider-host>/anthropic \
 E2E_PROVIDER_API_KEY=... \
 E2E_PROVIDER_MODEL=<model-id> \
-pnpm --filter @zcode/desktop test:e2e -- --spec ./test/e2e/upstream-provider.test.ts
+pnpm --filter @zcode/desktop test:e2e -- --spec ./test/e2e/infrastructure/smoke/upstream-provider.test.ts
 ```
 
 Capture mode starts a transparent MITM capture proxy on the local machine:
@@ -70,7 +70,7 @@ E2E_PROVIDER_PRESET=glmhighspeed \
 GLM_HIGHSPEED_E2E_API_KEY=... \
 E2E_PROVIDER_PROMPT='输出一篇很长的 Markdown，包含多级标题、列表和代码块，末尾写 PERF_TRACE_DONE' \
 E2E_PROVIDER_EXPECT_REPLY_TEXT=PERF_TRACE_DONE \
-pnpm --filter @zcode/desktop test:e2e -- --spec ./test/e2e/upstream-provider.test.ts
+pnpm --filter @zcode/desktop test:e2e -- --spec ./test/e2e/infrastructure/smoke/upstream-provider.test.ts
 ```
 
 Replay a custom fixture or capture artifact later:
@@ -78,7 +78,7 @@ Replay a custom fixture or capture artifact later:
 ```bash
 E2E_PROVIDER_PRESET=glmhighspeed \
 E2E_PROVIDER_REPLAY_FIXTURE_PATH=/absolute/path/to/upstream-provider.json \
-pnpm --filter @zcode/desktop test:e2e -- --spec ./test/e2e/upstream-provider.test.ts
+pnpm --filter @zcode/desktop test:e2e -- --spec ./test/e2e/infrastructure/smoke/upstream-provider.test.ts
 ```
 
 When the replay fixture carries `response.chunks`, or a capture artifact containing `responseChunkTimeline` is used directly, the local replay server streams the response back at the original chunk offsets instead of returning the whole body at once.

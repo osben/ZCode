@@ -36,8 +36,13 @@ impl StepTools {
     pub(crate) async fn refresh(scope: &RunScope, selection: &ModelSelection) -> Self {
         let capabilities = scope.parts.model.capabilities(selection).await;
         let snapshot = scope.parts.tools.snapshot(&scope.session);
+        // Fork: the running turn's limits (Node `getTurnTools`): an automation run hides the Cron mutation tools and its
+        // disallowlist, other turns hide CronPauseSelf (specs/fork-rust-automations.md).
+        let limits = scope.view().await.turn;
+        let mut tools = visible_tools(snapshot.tools, capabilities.as_ref());
+        tools.retain(|tool| !limits.hides(tool.name()));
         Self {
-            tools: visible_tools(snapshot.tools, capabilities.as_ref()),
+            tools,
             mcp: snapshot.mcp,
             capabilities,
         }
@@ -60,6 +65,9 @@ impl StepTools {
             mcp: self.mcp.clone(),
             // 远端执行 F98（remote-exec.md §25.2.1）：机器清单提醒按这次运行的缺省机器写（子代理可能缺省在远端）。
             default_machine: scope.default_machine.clone(),
+            // Fork: the agent catalog reads the Host's subagent snapshot once per parent run.
+            run: Some(scope.run.clone()),
+            inject_agents_md: scope.inject_agents_md,
             ..ContextRequest::new(
                 scope.session.clone(),
                 view.workspace,

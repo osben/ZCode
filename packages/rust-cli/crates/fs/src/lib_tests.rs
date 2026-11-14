@@ -300,3 +300,67 @@ async fn folders_and_files_are_told_apart() {
     assert!(!is_dir(&dir.path().join("missing")).await);
     assert!(!is_file(&dir.path().join("missing")).await);
 }
+
+/// Fork: the language-server install probe (specs/fork-rust-lsp.md "Install probe").
+#[tokio::test]
+async fn an_executable_is_a_regular_file_this_process_may_run() {
+    let dir = tempfile::tempdir().unwrap();
+    let tool = dir.path().join("tool");
+    tokio::fs::write(&tool, "#!/bin/sh\n").await.unwrap();
+    assert!(!is_executable_file(dir.path()).await);
+    assert!(!is_executable_file(&dir.path().join("missing")).await);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert!(!is_executable_file(&tool).await);
+        tokio::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755))
+            .await
+            .unwrap();
+        assert!(is_executable_file(&tool).await);
+        // A directory with the execute bit is still not a file.
+        tokio::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755))
+            .await
+            .unwrap();
+        assert!(!is_executable_file(dir.path()).await);
+    }
+    #[cfg(not(unix))]
+    assert!(is_executable_file(&tool).await);
+}
+
+/// Fork: the synchronous write replaces the target owner-only and leaves no temp file; a failed rename removes it.
+#[cfg(unix)]
+#[test]
+fn the_blocking_write_matches_the_async_one() {
+    use std::os::unix::fs::PermissionsExt;
+    let directory = tempfile::tempdir().unwrap();
+    let private = directory.path().join("private");
+    create_private_dir_all_blocking(&private).unwrap();
+    let mode = std::fs::metadata(&private).unwrap().permissions().mode();
+    assert_eq!(mode & 0o777, 0o700);
+    let target = private.join("transcript.jsonl");
+    for text in ["first\n", "x\n"] {
+        atomic_write_blocking(
+            &target,
+            text.as_bytes(),
+            options(FileMode::Private, TempName::Hidden, ParentDir::Existing),
+        )
+        .unwrap();
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), text);
+        assert_eq!(entries(&private), vec!["transcript.jsonl".to_owned()]);
+    }
+    let mode = std::fs::metadata(&target).unwrap().permissions().mode();
+    assert_eq!(mode & 0o777, 0o600);
+    let occupied = directory.path().join("occupied");
+    std::fs::create_dir(&occupied).unwrap();
+    std::fs::write(occupied.join("keep"), "kept").unwrap();
+    let result = atomic_write_blocking(
+        &occupied,
+        b"new",
+        options(FileMode::Private, TempName::Hidden, ParentDir::Existing),
+    );
+    assert!(result.is_err());
+    assert_eq!(
+        entries(directory.path()),
+        vec!["occupied".to_owned(), "private".to_owned()]
+    );
+}

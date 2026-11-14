@@ -12,6 +12,7 @@
 
 mod ask_user_question;
 mod asking;
+mod automation_tools;
 mod base64;
 mod bash;
 mod bash_mode;
@@ -45,6 +46,9 @@ mod grep;
 mod grep_output;
 mod html_markdown;
 mod line_diff;
+mod lsp_range;
+// Fork: the `LSP` agent tool (specs/fork-rust-lsp.md "Tool (D2)").
+mod lsp_tool;
 mod mentions;
 mod monitor;
 mod monitor_input;
@@ -59,8 +63,10 @@ mod pipeline_machine;
 mod plan_mode;
 mod policy_filter;
 mod read;
+// Fork: specs/fork-rust-topic-resource.md.
 mod read_pdf;
 mod read_support;
+mod read_topic_resource;
 mod registry;
 mod report_findings;
 mod schedule_wakeup;
@@ -91,6 +97,7 @@ use rust_cli_kernel_api::orchestration::PermissionGate;
 use rust_cli_kernel_api::tool::Tool;
 
 pub use ask_user_question::AskUserQuestionTool;
+pub use automation_tools::automation_tools;
 pub use bash::BashTool;
 pub use bash_settings::BashSettings;
 pub use bash_timeouts::BashTimeouts;
@@ -103,12 +110,14 @@ pub use file_state::ReadFileState;
 pub use file_state_restore::restore_file_state;
 pub use glob::GlobTool;
 pub use grep::GrepTool;
+pub use lsp_tool::{LspTool, LspTools};
 pub use monitor::MonitorTool;
 pub use notebook_edit::NotebookEditTool;
 pub use pipeline::Pipeline;
 pub use plan_mode::{EnterPlanModeTool, ExitPlanModeTool};
 pub use policy_filter::PolicyFiltered;
 pub use read::ReadTool;
+pub use read_topic_resource::ReadTopicResourceTool;
 pub use registry::BuiltinTools;
 pub use report_findings::ReportFindingsTool;
 pub use schedule_wakeup::ScheduleWakeupTool;
@@ -134,11 +143,16 @@ pub fn file_tools(files: &FileTools) -> Vec<Arc<dyn Tool>> {
 /// 交互、计划模式与 ToolSearch（docs/specs/rust-cli/tools-more.md）。`interactive` 为假（`-p`）时
 /// AskUserQuestion 与计划模式的两个工具不可用（非交互会话里不提供它们）；`catalog` 由 runtime
 /// 在主线程注册表建好后绑定，同时作为 `deferred_tools_delta` 的清单来源。
-pub fn interaction_tools(catalog: &Arc<ToolCatalog>, interactive: bool) -> Vec<Arc<dyn Tool>> {
+/// `ids` names the message ExitPlanMode adds for plan feedback.
+pub fn interaction_tools(
+    catalog: &Arc<ToolCatalog>,
+    interactive: bool,
+    ids: Arc<dyn rust_cli_kernel_api::clock::Ids>,
+) -> Vec<Arc<dyn Tool>> {
     vec![
         Arc::new(AskUserQuestionTool::new(interactive)),
         Arc::new(EnterPlanModeTool::new(interactive)),
-        Arc::new(ExitPlanModeTool::new(interactive)),
+        Arc::new(ExitPlanModeTool::new(interactive, ids)),
         Arc::new(ToolSearchTool::new(catalog.clone())),
     ]
 }
@@ -160,10 +174,22 @@ pub fn builtin(gate: Arc<dyn PermissionGate>) -> BuiltinTools {
 
 /// 同 [`builtin`]，另给 Read 查模型能力用的模型端口（整读 PDF 前看 `supports_pdf`，tools-files.md §1.5）。
 pub fn builtin_with(gate: Arc<dyn PermissionGate>, model: Option<SideModel>) -> BuiltinTools {
+    builtin_with_code(gate, model, None)
+}
+
+/// Fork: [`builtin_with`] plus the language-server runtime the file tools report to (specs/fork-rust-lsp.md).
+pub fn builtin_with_code(
+    gate: Arc<dyn PermissionGate>,
+    model: Option<SideModel>,
+    code: Option<Arc<dyn rust_cli_kernel_api::lsp::CodeIntelligence>>,
+) -> BuiltinTools {
     let state = Arc::new(ReadFileState::default());
     let mut files = FileTools::new(state.clone(), gate);
     if let Some(model) = model {
         files = files.with_model(model);
+    }
+    if let Some(code) = code {
+        files = files.with_code_intelligence(code);
     }
     BuiltinTools::new(file_tools(&files)).with_file_state(state)
 }

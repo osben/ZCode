@@ -110,6 +110,10 @@ const TOOL_FILES: &[&str] = &[
     include_lf!("../../../prompts/tools/ReadMcpResourceTool.json"),
     // 连接中的 MCP 服务器（ext.md §3.8，修复线 F36）。
     include_lf!("../../../prompts/tools/WaitForMcpServers.json"),
+    // Fork: a bot-group topic's resource (specs/fork-rust-topic-resource.md), generated from Node's contract.
+    include_lf!("../../../prompts/tools/ReadTopicResource.json"),
+    // Fork: the language-server tool (specs/fork-rust-lsp.md "Tool (D2)"), generated from Node's contract.
+    include_lf!("../../../prompts/tools/LSP.json"),
 ];
 
 fn tools() -> &'static HashMap<String, Definition> {

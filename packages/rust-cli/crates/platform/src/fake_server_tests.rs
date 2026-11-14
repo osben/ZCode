@@ -24,8 +24,9 @@ use tokio::task::JoinHandle;
 use crate::credentials::{CredentialStore, Credentials};
 use rust_cli_kernel_api::testing::ManualClock;
 
-use crate::test_support::write;
-use crate::{AccountOrigins, AccountServices, CredentialSecret, Platform};
+use crate::test_support::{ReversedCipher, SwitchCipher, read_text, write};
+use crate::{AccountOrigins, AccountServices, CredentialCipher, CredentialSecret, Platform};
+use rust_cli_kernel_api::provider::{ModelDirectory, ModelEndpoints};
 
 /// 收到的一个请求。header 名为小写。
 #[derive(Debug, Clone)]
@@ -385,4 +386,138 @@ impl Account {
             _ => Reply::json(404, &json!({"code": 404})),
         }
     }
+}
+
+/// 账号服务的地址指向 `url`（与 `Harness::platform_with` 相同的组装，但凭据的 cipher 由测试给）。
+async fn services_for(url: &str, clock: Arc<ManualClock>) -> AccountServices {
+    AccountServices {
+        egress: Arc::new(Egress::new(NetworkPolicy::default()).await.unwrap()),
+        clock,
+        origins: AccountOrigins {
+            zcode_api: format!("{url}/api/v1"),
+            zai_api: url.to_owned(),
+            bigmodel_api: url.to_owned(),
+            bigmodel_team_plans: format!("{url}/coding-plan/team/plans"),
+            client_version: "0.1.0-test".to_owned(),
+            usage_quota_url: None,
+        },
+    }
+}
+
+/// desktop 写的 `enc:v2:` 凭据（A11）：经 Host（这里是替身 cipher）解开后，个人订阅有效，账号模型进目录。
+#[tokio::test]
+async fn desktop_encrypted_credentials_entitle_the_account_models() {
+    let account = Account::new(false);
+    let server = Server::start(move |request| account.reply(request)).await;
+    let dir = tempfile::tempdir().unwrap();
+    let paths = StoragePaths::resolve(&Default::default(), dir.path(), dir.path());
+    let clock = Arc::new(ManualClock::new(NOW_MS));
+    let cipher: Arc<dyn CredentialCipher> = Arc::new(ReversedCipher);
+    let mut record = serde_json::Map::new();
+    for (key, value) in [
+        (
+            "oauth:zai:user_info",
+            r#"{"id":"u-1","username":"a","displayName":"A"}"#,
+        ),
+        ("oauth:zai:access_token", "login-token"),
+    ] {
+        record.insert(
+            key.to_owned(),
+            Value::String(cipher.encrypt(value).await.unwrap()),
+        );
+    }
+    let before = Value::Object(record.clone()).to_string();
+    write(paths.credentials().as_path(), &before).await;
+    let services = services_for(&server.url(), clock).await;
+    let platform = Platform::with_cipher(&paths, cipher, services);
+    let catalog = platform.catalog().await;
+    assert!(
+        catalog
+            .models
+            .iter()
+            .any(|model| model.provider == "account:zai-individual-coding-plan"),
+        "the entitled personal plan lists its models"
+    );
+    // 读取不改写原有的值（没有写回明文）；项目位置是这次取目录新写的，经同一个 cipher 加密。
+    let after: serde_json::Map<String, Value> =
+        serde_json::from_str(&read_text(paths.credentials().as_path()).await.unwrap()).unwrap();
+    let original: serde_json::Map<String, Value> = serde_json::from_str(&before).unwrap();
+    for key in original.keys() {
+        assert_eq!(after[key], original[key], "{key}");
+    }
+    assert!(
+        after
+            .iter()
+            .filter(|(key, _)| !original.contains_key(*key))
+            .all(|(_, value)| value.as_str().is_some_and(|v| v.starts_with("enc:v2:"))),
+        "new records are written encrypted"
+    );
+}
+
+/// 存储不可用时（A14）：已发布过的账号模型保留，文件不动，不发布“未授权”。
+#[tokio::test]
+async fn an_unavailable_store_keeps_the_last_known_account_models() {
+    let account = Account::new(false);
+    let server = Server::start(move |request| account.reply(request)).await;
+    let dir = tempfile::tempdir().unwrap();
+    let paths = StoragePaths::resolve(&Default::default(), dir.path(), dir.path());
+    let clock = Arc::new(ManualClock::new(NOW_MS));
+    let cipher = Arc::new(SwitchCipher {
+        down: std::sync::atomic::AtomicBool::new(false),
+    });
+    let mut record = serde_json::Map::new();
+    for (key, value) in [
+        (
+            "oauth:zai:user_info",
+            r#"{"id":"u-1","username":"a","displayName":"A"}"#,
+        ),
+        ("oauth:zai:access_token", "login-token"),
+    ] {
+        record.insert(
+            key.to_owned(),
+            Value::String(ReversedCipher.encrypt(value).await.unwrap()),
+        );
+    }
+    write(
+        paths.credentials().as_path(),
+        Value::Object(record).to_string(),
+    )
+    .await;
+    let services = services_for(&server.url(), clock).await;
+    let platform = Platform::with_cipher(&paths, cipher.clone(), services);
+    assert!(
+        platform
+            .catalog()
+            .await
+            .models
+            .iter()
+            .any(|model| model.provider == "account:zai-individual-coding-plan")
+    );
+    // 第一次取目录写进了项目位置；之后的失败读取不能再改文件（A13/A14）。
+    let before = read_text(paths.credentials().as_path()).await.unwrap();
+    cipher.down.store(true, std::sync::atomic::Ordering::SeqCst);
+    let kept = platform.catalog().await;
+    assert!(
+        kept.models
+            .iter()
+            .any(|model| model.provider == "account:zai-individual-coding-plan"),
+        "the last known account models stay listed while the store is unavailable"
+    );
+    let error = platform
+        .endpoint(rust_cli_kernel_api::provider::EndpointQuery::new(
+            &selection("account:zai-individual-coding-plan"),
+        ))
+        .await
+        .unwrap_err();
+    match error {
+        rust_cli_kernel_api::model::ModelError::Authentication { message } => {
+            assert!(message.contains("could not be read"), "{message}");
+            assert!(!message.contains("login"), "{message}");
+        }
+        other => panic!("unexpected error: {other:?}"),
+    }
+    assert_eq!(
+        read_text(paths.credentials().as_path()).await.unwrap(),
+        before
+    );
 }

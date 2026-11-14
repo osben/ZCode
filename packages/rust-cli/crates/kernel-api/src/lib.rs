@@ -50,6 +50,7 @@
 //! | [`context_usage`] | 上下文用量（`/context`）的查询、结果与数字写法 |
 //! | [`history`] | 活动历史（最近一次压缩边界之后，含保留段） |
 //! | [`hooks`] | hook 事件、合并结果与 http hook 的出口端口 |
+//! | [`incognito`] | Fork: incognito session profiles and their per-session owner |
 //! | [`session_api`] | 前端使用的会话 API 与内核事件 |
 //! | [`session_follow`] | 跟着一个会话的事件走：订阅流落后结束时按最后的 seq 重新订阅（三个前端共用） |
 //! | [`clock`] | 时间与 ID 的注入端口 |
@@ -58,6 +59,9 @@
 
 pub mod abort;
 pub mod agents;
+// Fork: specs/fork-rust-node-helper.md F3.
+pub mod app_tool;
+pub mod automation;
 pub mod background_origin;
 pub mod catalog;
 pub mod checkpoint;
@@ -65,6 +69,7 @@ pub mod clock;
 pub mod compaction;
 pub mod context_usage;
 pub mod controller_services;
+pub mod conversation_quote;
 pub mod cron;
 pub mod cron_store;
 pub mod default_model;
@@ -79,13 +84,17 @@ pub mod env_rewind;
 pub mod env_shell;
 pub mod env_web;
 pub mod env_worktree;
+pub mod external_agent_config;
 pub mod goal;
 pub mod history;
 pub mod hooks;
 pub mod ids;
 pub mod image;
+pub mod incognito;
+pub mod input_intent;
 pub mod interaction;
 pub mod listing;
+pub mod lsp;
 pub mod machine;
 pub mod machine_notices;
 pub mod machine_param;
@@ -109,17 +118,23 @@ pub mod plan;
 pub mod prompt_attachment;
 pub mod provider;
 pub mod reminder_fold;
+// Fork: remote workspace identities (Node packages/shared remote-workspace-identity.ts).
+pub mod remote_identity;
 pub mod run_ledger;
+pub mod sampling;
 pub mod session_api;
 pub mod session_follow;
 pub mod session_ops;
 pub mod side_request;
 pub mod store;
+pub mod subagent_config;
 pub mod title;
 pub mod tool;
 pub mod tool_names;
 pub mod tool_search;
+pub mod topic_resource;
 pub mod turn_duration;
+pub mod turn_limits;
 pub mod unparsed_input;
 pub mod user_command;
 pub mod user_input;

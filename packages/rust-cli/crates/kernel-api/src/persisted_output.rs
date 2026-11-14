@@ -72,9 +72,40 @@ pub fn message(location: &str, original: usize, preview: &str, more: bool) -> St
     )
 }
 
-/// 把 `body` 经 [`ArtifactStore`] 落盘（用途 `ToolOutput`，放在会话的 tool-results 里），返回给模型的
-/// `<persisted-output>` 文字。存不下时返回存储的错误，由调用方按自己的规则退回。
-pub async fn persist(
+/// Fork: Node `formatDecimalBytes` (tool/result-persistence-format.ts): decimal units, rounded to a whole number.
+pub fn format_decimal_bytes(bytes: u64) -> String {
+    const STEP: u64 = 1_000;
+    let rounded = |unit: u64| (bytes as f64 / unit as f64).round() as u64;
+    if bytes < STEP {
+        format!("{bytes} B")
+    } else if bytes < STEP.pow(2) {
+        format!("{} KB", rounded(STEP))
+    } else if bytes < STEP.pow(3) {
+        format!("{} MB", rounded(STEP.pow(2)))
+    } else {
+        format!("{} GB", rounded(STEP.pow(3)))
+    }
+}
+
+/// Fork: [`persist`] with Node's generic envelope (`formatGenericPersistedOutputContent`), the one a tool with a byte
+/// result budget gets: the size is the body's UTF-8 bytes in decimal units; the preview is the same head.
+pub async fn persist_generic(
+    artifacts: &dyn ArtifactStore,
+    session: &SessionId,
+    body: &str,
+    media_type: &str,
+) -> Result<String, StoreError> {
+    let location = store(artifacts, session, body, media_type).await?;
+    let (shown, more) = preview(body);
+    Ok(format!(
+        "{OPEN}\nOutput too large ({}). Full output saved to: {location}\n\nPreview (first {}):\n{shown}{}{CLOSE}",
+        format_decimal_bytes(u64::try_from(body.len()).unwrap_or(u64::MAX)),
+        format_decimal_bytes(PREVIEW_UNITS as u64),
+        if more { "\n...\n" } else { "\n" }
+    ))
+}
+
+async fn store(
     artifacts: &dyn ArtifactStore,
     session: &SessionId,
     body: &str,
@@ -88,7 +119,21 @@ pub async fn persist(
             body.as_bytes().to_vec(),
         )
         .await?;
-    let location = format!("{ARTIFACT_SCHEME}{}/{}", artifact.session, artifact.id);
+    Ok(format!(
+        "{ARTIFACT_SCHEME}{}/{}",
+        artifact.session, artifact.id
+    ))
+}
+
+/// 把 `body` 经 [`ArtifactStore`] 落盘（用途 `ToolOutput`，放在会话的 tool-results 里），返回给模型的
+/// `<persisted-output>` 文字。存不下时返回存储的错误，由调用方按自己的规则退回。
+pub async fn persist(
+    artifacts: &dyn ArtifactStore,
+    session: &SessionId,
+    body: &str,
+    media_type: &str,
+) -> Result<String, StoreError> {
+    let location = store(artifacts, session, body, media_type).await?;
     let (shown, more) = preview(body);
     Ok(message(&location, utf16_len(body), shown, more))
 }

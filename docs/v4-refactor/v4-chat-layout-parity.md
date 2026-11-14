@@ -16,15 +16,11 @@ output diverged on wide screens).
 - In a session, the v4 message area and composer share one vertical scroll viewport.
 - The composer stays `sticky bottom-0` inside that viewport; scrolled to the bottom, the composer bottom is
   within reach.
-- The composer's bottom whitespace is carried by a transparent `padding-bottom` of the inner dock; messages
-  gradually mask to transparent near the sticky composer so scrolled content does not run through the
-  whitespace. In session state `chat-composer-input-surface` stays transparent with no `background`; the
-  draft card with a context header still uses `bg-surface`.
+- The composer's bottom `16px` whitespace is carried by the `padding-bottom` of the timeline root container, outside the scroll viewport; the inner dock has no bottom padding. Messages no longer fade out and cannot scroll into the bottom whitespace. Session state keeps the existing input background; the draft card with a context header still uses `bg-surface`.
 - Message content, empty-message hint, back-to-bottom button and composer reuse the unified main column of
   `conversationLayout`. For a bound session: `w-full` below `conversation < 864px`; `calc(100% - 96px)` with
-  `max-w-4xl` for `864px <= conversation < 1136px`; `calc(100% - 384px)` with `max-w-6xl` from `1136px`;
-  drafts use `max-w-2xl`. Message turns respond to the conversation container via `@max-md/conversation:px-4`,
-  while the composer dock always uses `px-4 pb-4`.
+  `max-w-4xl` for `864px <= conversation < 1280px`; `calc(100% - 384px)` with `max-w-6xl` from `1280px`;
+  drafts use `max-w-2xl`. Message turns use `px-4 @md/conversation:px-6` to respond to the conversation container, and the composer dock's horizontal padding is `px-2`; the bottom whitespace comes from the outer timeline.
 - Keep v4 virtual scrolling, row measure cache, bottom following and `loadOlder` semantics.
 - Do not change the centered draft layout or the data links of remote replayable / desktop continuous.
 
@@ -38,9 +34,10 @@ SessionPane
     shared scroll viewport
       virtual timeline content
         centered row column: conversationLayout
-        viewport-aligned bottom mask: virtual history + running live tail
+        unmasked virtual history + running live tail
       sticky bottom composer dock
         centered composer column: conversationLayout
+    fixed bottom padding: 16px outside scroll viewport
   QueuePanel
   runtime/dialog controllers
 ```
@@ -49,14 +46,8 @@ SessionPane
 
 - `ConversationTimeline` keeps the virtual list and scroll anchoring but gains a `bottomDock` slot that
   renders the composer at the tail of its scroll viewport.
-- The dock's bottom whitespace belongs to the dock container's own layout (responsive transparent padding, no
-  spacing-only background child). The padding counts in the dock's real height so the Markdown table floating
-  scrollbar keeps avoiding the full input-area height.
-- The message mask wraps only the virtual history and the running live tail, not the composer, back-to-bottom
-  button or pane focus ring. The fade position tracks the scroll viewport and the dock's real height (not the
-  virtual content total height); desktop and mobile use a uniform 40px fade distance. The mask is off when the
-  scrollbar is at the bottom and shows only when scrolled away from the bottom, where messages can pass under
-  the sticky composer.
+- For ordinary sessions the existing bottom whitespace moves from the inner dock to the timeline root container; no background child is added and the input height is not measured to position the whitespace. The Markdown table floating scrollbar still avoids the input area's real geometry.
+- The virtual history, running live tail and header slot use no mask; during fast scrolling the top and bottom edges are clipped by the fixed overflow viewport, with no scroll-callback compensation of edge positions. The outer bottom padding does not apply to the centered draft, floating windows or read-only timelines without a bottomDock.
 - In session state `SessionPane` no longer renders the composer outside the timeline; the draft state still
   renders it in the centered container.
 - The scroll ref of `ConversationTimeline` stays the only scroll element and `useVirtualizer.getScrollElement`

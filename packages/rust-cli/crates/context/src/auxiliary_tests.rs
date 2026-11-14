@@ -67,6 +67,8 @@ fn request(source: QuerySource) -> ContextRequest {
 
 fn user(id: &str, text: &str) -> Message {
     Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
         id: MessageId::new(id),
         content: vec![ContentBlock::Text {
             text: text.to_owned(),
@@ -121,4 +123,30 @@ async fn side_requests_announce_nothing() {
         .await
         .unwrap();
     assert!(built.attachments.is_empty());
+}
+
+/// Fork (specs/fork-rust-subagent-runtime-config.md rule 15): a child's summary request follows the child's context.
+/// With `injectAgentsMd: false` it re-announces neither the rule files nor the session context; on the desktop no
+/// child's summary request gets the git status (Node's child context has neither, compaction included).
+#[tokio::test]
+async fn a_childs_summary_request_follows_its_context() {
+    let history = vec![user("msg_marker", "[earlier conversation truncated]")];
+    let child = |inject| ContextRequest {
+        agent: Some(rust_cli_kernel_api::ids::AgentId::new("agent_1")),
+        inject_agents_md: inject,
+        ..request(QuerySource::Compact)
+    };
+    let built = assembler().build(child(false), &history).await.unwrap();
+    assert_eq!(sources(&built), ["date"]);
+
+    let mut desktop = assembler();
+    desktop.config.subagent_git_status = false;
+    let built = desktop.build(child(true), &history).await.unwrap();
+    assert_eq!(sources(&built), ["instructions", "date"]);
+    // The main thread's summary request on the desktop keeps the git status.
+    let built = desktop
+        .build(request(QuerySource::Compact), &history)
+        .await
+        .unwrap();
+    assert_eq!(sources(&built), ["instructions", "session_context", "date"]);
 }

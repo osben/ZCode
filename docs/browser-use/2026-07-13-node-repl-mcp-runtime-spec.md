@@ -134,14 +134,11 @@ continuation must not write into a new cell.
 - Bootstrap injects `node_repl` as a host-reserved stdio MCP server. The browser-use plugin manifest
   declares no MCP: the MCP server belongs to the host, the skill and assets belong to the plugin. The
   browser-use package is only the physical asset carrier of the current server bundle.
-- The settings page shows host `node_repl` as a read-only MCP associated with the browser-use plugin and
-  links `mcp/list` status through the real runtime name `node_repl`. The association is projected from the
-  official plugin definition into the protocol field `hostMcpServerNames`. It expresses product ownership
-  and observability only; it is not written back to the plugin manifest and the runtime name does not
-  become `plugin:browser:node_repl`.
-- After the browser-use plugin is disabled, the settings page keeps the association, because the generic
-  `node_repl` host lifecycle does not follow the skill switch. The row text must say it is provided by the
-  ZCode host for the browser-use plugin and must not report "plugin not enabled".
+- Host `node_repl` is a ZCode built-in runtime; the settings pages (plugin page and MCP page) do not show it,
+  nor the `node-repl-host` plugin (2026-11-05, see `docs/plugin-capabilities-settings.md` "Scope semantics").
+  `hostMcpServerNames` in the official plugin definition is used only by the Agent to look up process
+  ownership internally and is no longer projected into `plugins/list`; the runtime name stays `node_repl`
+  and does not become `plugin:browser:node_repl`.
 - After user/plugin MCP merging, host `node_repl` overrides a same-named entry; third-party/inline
   plugins still use the forced `plugin:<plugin>:<server>` namespace and cannot impersonate
   `mcp__node_repl__*`.
@@ -181,10 +178,14 @@ a local IPC broker for Node REPL:
 high-risk MCP tool. Browser command action confirmation is not pushed down to relay/main, and the MCP
 child cannot bypass the existing URL, download, file-selection and backend capability policy.
 
-The MCP kernel uses a restricted `process` facade and intercepts `require/import("node:process")`, so a
-cell cannot touch stdin/stdout/stderr, exit/kill/chdir, which would break MCP stdio or kill the child. The
-facade is not a full sandbox: dynamically imported third-party modules still run in the host Node realm,
-so `js` stays approved at high/system execution level.
+The MCP kernel uses a protocol-guarding `process` facade (`protectProtocolStdio`) and intercepts
+`require/import("node:process")`, so a cell cannot touch stdin/stdout/stderr, exit/kill/chdir, which would
+corrupt MCP stdio or kill the child. It protects only the protocol channel and the host process lifecycle and
+limits no capability: a cell can still do anything the agent can through `node:child_process`, `node:fs`,
+`node:net` or any local module. `node_repl` is not a sandbox. The approval path of `js` differs from Bash: it is
+approved as an MCP high/system capability; in guarded mode no dangerous-command matching is done, it is allowed
+under the YOLO base policy, and Bash prefix rules do not apply; what keeps it within the official skill use is
+the routing prohibition in the model-visible text (see `docs/mcp-stateless-node-repl.md` §2).
 
 ## 5. Multi-client and workspace boundary
 

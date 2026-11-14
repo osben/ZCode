@@ -72,6 +72,7 @@ export interface CreateOfficialMcpAuthFetchInput {
   url: string;
   workspaceIdentity?: string;
   workspacePath?: string;
+  workspaceKey?: string;
 }
 
 /** Nonsensitive facts from one official MCP response that can be used for correlation. Contains
@@ -176,6 +177,7 @@ export function createOfficialMcpAuthFetch(
           targetOrigin: origin,
           ...(input.workspaceIdentity ? { workspaceIdentity: input.workspaceIdentity } : {}),
           ...(input.workspacePath ? { workspacePath: input.workspacePath } : {}),
+          ...(input.workspaceKey ? { workspaceKey: input.workspaceKey } : {}),
           ...(init?.signal ? { signal: init.signal } : {}),
         });
         resolveDurationMs = Date.now() - resolveStartedAt;

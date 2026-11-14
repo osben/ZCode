@@ -9,6 +9,7 @@ import {
   resolveRuntimeZCodeEndpointOrigin,
   stripZcodeForkVersionSuffix,
   ZCODE_APP_VERSION_ENV,
+  ZCODE_CLIENT_LANGUAGE_ENV,
 } from "@zcode/shared";
 import {
   createRuntimePlatformHeaders,
@@ -54,7 +55,7 @@ export function buildCliZCodeSourceHeaders(
 ): Record<string, string> {
   const sourceTitle = options.sourceTitle ?? detectDefaultProviderSourceTitle();
   const appVersion = resolveAppVersionForHeaders(env, options);
-  const locale = normalizePrintableHeaderValue(Intl.DateTimeFormat().resolvedOptions().locale);
+  const locale = resolveClientLanguageForHeaders(env);
   const timezone = normalizePrintableHeaderValue(Intl.DateTimeFormat().resolvedOptions().timeZone);
   return {
     "HTTP-Referer": resolveRuntimeZCodeEndpointOrigin(env),
@@ -79,6 +80,18 @@ function resolveAppVersionForHeaders(
   // 对外版本只发上游基线：-fork.N 后缀按 semver 低于同基线正式版，
   // 会被 z.ai 后端的版本门控误判为旧客户端。
   return appVersion ? stripZcodeForkVersionSuffix(appVersion) : undefined;
+}
+
+/**
+ * X-Client-Language 优先取 Desktop spawn 时下发的界面语言（ZCODE_CLIENT_LANGUAGE）。
+ * Bug 原因：过去只取 Agent 进程 Intl，App 从 Dock 启动没有 LANG 时 ICU 回退 en-US，
+ * 界面选日/俄/韩语时模型请求仍发 en-US。非法或空值回落 Intl，不阻断请求。
+ */
+export function resolveClientLanguageForHeaders(env: EnvRecord): string | undefined {
+  return (
+    normalizePrintableHeaderValue(env[ZCODE_CLIENT_LANGUAGE_ENV]) ??
+    normalizePrintableHeaderValue(Intl.DateTimeFormat().resolvedOptions().locale)
+  );
 }
 
 function detectDefaultProviderSourceTitle(): ModelProviderSourceTitle {

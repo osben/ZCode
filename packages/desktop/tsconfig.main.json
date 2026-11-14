@@ -8,7 +8,13 @@
     "lib": ["es2025", "dom"],
     "types": ["node", "electron"]
   },
-  "include": ["src/main", "src/shared", "src/scheduler"],
+  "include": ["src/main", "src/shared", "src/scheduler", "src/extension-host"],
   // Main depends directly on shared and services; these references let the Desktop subproject consistently reuse their generated declarations.
-  "references": [{ "path": "../shared" }, { "path": "../services" }]
+  "references": [
+    { "path": "../shared" },
+    { "path": "../services" },
+    // The extension-process source is type-checked together with main (the root typecheck only covers the main, host and e2e projects).
+    { "path": "../rpc" },
+    { "path": "./tsconfig.app-navigation.json" }
+  ]
 }

@@ -1,0 +1,52 @@
+{
+  "row": {
+    "turnId": "turn_1",
+    "entityId": "hookinv_1",
+    "productTurnId": "turn_1",
+    "visibility": "visible",
+    "kind": "hookInvocation",
+    "hookInvocationId": "hookinv_1",
+    "hookEventName": "UserPromptSubmit",
+    "hookCount": 2,
+    "state": "completed",
+    "startedAt": 1000,
+    "endedAt": 1041,
+    "durationMs": 41,
+    "lane": "assistantWork",
+    "executions": [
+      {
+        "hookRunId": "hookrun_1",
+        "hookIndex": 0,
+        "didExecute": true,
+        "state": "completed",
+        "outcome": "success",
+        "startedAt": 1000,
+        "endedAt": 1000,
+        "durationMs": 0,
+        "displayName": "node · async-record.js",
+        "sourceKind": "user"
+      },
+      {
+        "hookRunId": "hookrun_2",
+        "hookIndex": 1,
+        "didExecute": true,
+        "state": "completed",
+        "outcome": "blocked",
+        "blockReason": "hooks_prompt_block",
+        "startedAt": 1001,
+        "endedAt": 1041,
+        "durationMs": 40,
+        "displayName": "node · block.js",
+        "sourceKind": "user"
+      }
+    ]
+  },
+  "lastError": {
+    "code": "fault.runtime.hookBlocked",
+    "message": "hooks_prompt_block: prompt blocked by the E2E hook",
+    "recoverable": false,
+    "source": "runtime",
+    "detail": "Hook block reason: hooks_prompt_block\nHook error: prompt blocked by the E2E hook",
+    "attribution": { "source": "runtime", "reason": "hook_blocked" }
+  }
+}

@@ -333,6 +333,7 @@ impl Background for Echo {
             status: BackgroundStatus::Killed,
             kind: BackgroundKind::Monitor,
             description: "follow the log".to_owned(),
+            output: None,
         }))
     }
 

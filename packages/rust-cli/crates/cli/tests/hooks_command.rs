@@ -99,6 +99,8 @@ fn engine(harness: &Harness, settings: &Value) -> HookEngine {
             http: None,
             operations: rust_cli_kernel_api::env::Operations::new(Generation::new("g1"), ids),
             artifacts: Arc::new(MemoryArtifacts::default()),
+            node_stdin: None,
+            clock: Arc::new(rust_cli_kernel_api::testing::FixedClock(0)),
         },
         HooksConfig {
             version: 1,
@@ -123,6 +125,7 @@ fn context(harness: &Harness, index: usize) -> ToolUseContext {
         tool_use: ToolUseId::new(format!("toolu_{index}")),
         workspace: workspace(&harness.root),
         mode: PermissionMode::DontAsk,
+        base_mode: PermissionMode::DontAsk,
         machine: machine(env.clone()),
         controller: controller_services(env),
         interactions: Arc::new(rust_cli_kernel_api::testing::NoOneToAsk),
@@ -195,14 +198,14 @@ async fn pre_and_post_tool_hooks_run_as_real_processes() {
 
     let blocked = bash(&pipeline, &harness, 1, "rm -rf data").await;
     assert!(blocked.output.is_error);
-    assert_eq!(
-        text(&blocked.output.content),
-        format!(
-            "PreToolUse:Bash hook error: [{}]: rm is blocked\n",
-            script(&harness, "guard.sh")
-        )
+    assert_eq!(text(&blocked.output.content), "rm is blocked");
+    // Node's exit-2 output is a `continue: false`, so the refusal also stops the turn with the reason.
+    let stops = attachment_texts(&blocked.after);
+    assert_eq!(stops.len(), 1);
+    assert!(
+        stops[0].contains("PreToolUse:Bash hook stopped continuation: rm is blocked"),
+        "{stops:?}"
     );
-    assert!(blocked.after.is_empty());
 
     let ran = bash(&pipeline, &harness, 2, "echo hi").await;
     assert!(!ran.output.is_error);

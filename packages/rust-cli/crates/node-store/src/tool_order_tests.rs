@@ -37,6 +37,8 @@ fn calls(id: &str, ids: &[&str]) -> Fact {
 fn result(id: &str, owner: &str, call: &str) -> Fact {
     Fact::MessageAppended {
         message: Message::User(UserMessage {
+            stall_execution: None,
+            intent: None,
             id: MessageId::new(id),
             content: vec![ContentBlock::ToolResult {
                 tool_use_id: ToolUseId::new(call),

@@ -13,6 +13,7 @@ const OPTIONS: NormalizeOptions = NormalizeOptions {
     system_turns: true,
     turn_effort: None,
     skip_cache_write: false,
+    separate_user_messages: false,
 };
 
 fn text(value: &str) -> ContentBlock {
@@ -38,6 +39,8 @@ fn call(id: &str) -> ContentBlock {
 
 fn human(id: &str, value: &str) -> Message {
     Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
         id: MessageId::new(id),
         content: vec![text(value)],
         origin: UserOrigin::Human,
@@ -56,6 +59,8 @@ fn assistant(id: &str, content: Vec<ContentBlock>) -> Message {
 
 fn result(id: &str, owner: &str, calls: &[&str]) -> Message {
     Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
         id: MessageId::new(id),
         content: calls
             .iter()

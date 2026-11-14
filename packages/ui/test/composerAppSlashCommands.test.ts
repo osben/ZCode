@@ -52,6 +52,23 @@ describe("selectComposerAppSlashCommands", () => {
     ).toEqual(["side"]);
   });
 
+  it("hides the ordinary plan command while blocked and lists it again once the runtime is ready", () => {
+    const withPlan = [command("plan"), command("reload", true)];
+    expect(
+      values(
+        selectComposerAppSlashCommands(withPlan, { runtimeBlocked: true, recoveryAvailable: true }),
+      ),
+    ).toEqual(["reload"]);
+    expect(
+      values(
+        selectComposerAppSlashCommands(withPlan, {
+          runtimeBlocked: false,
+          recoveryAvailable: true,
+        }),
+      ),
+    ).toEqual(["plan", "reload"]);
+  });
+
   it("passes an absent command list through", () => {
     expect(
       selectComposerAppSlashCommands(undefined, { runtimeBlocked: true, recoveryAvailable: true }),

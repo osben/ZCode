@@ -210,6 +210,7 @@ pub(crate) fn requests() -> Vec<Request> {
             cwd: "/w/sub".to_owned(),
         },
         Request::BackgroundCommand { task: task() },
+        Request::EndedBackgroundCommand { task: task() },
         Request::BackgroundElapsed { task: task() },
         Request::StopBackgroundCommand {
             context: context("op_4"),
@@ -443,6 +444,12 @@ pub(crate) fn replies() -> Vec<Reply> {
             status: BackgroundStatus::Killed,
             kind: Default::default(),
             description: String::new(),
+        })),
+        Reply::EndedBackgroundCommand(Some(BackgroundInfo {
+            command: "sleep 1".to_owned(),
+            status: BackgroundStatus::Completed,
+            kind: Default::default(),
+            description: "nap".to_owned(),
         })),
         Reply::BackgroundElapsed(None),
         Reply::StopBackgroundCommand(BackgroundStop::NotRunning {

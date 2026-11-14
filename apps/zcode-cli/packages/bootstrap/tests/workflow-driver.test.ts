@@ -290,7 +290,7 @@ describe("workflow driver — actor tool surface", () => {
       "EnterPlanMode",
       "ExitPlanMode",
       "CreateWorkflow",
-      "ReadSessionContext",
+      "ReadTopicResource",
     ]) {
       expect(names).not.toContain(forbidden);
     }

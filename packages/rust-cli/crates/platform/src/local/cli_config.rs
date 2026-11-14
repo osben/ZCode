@@ -255,7 +255,7 @@ pub async fn write_compact_at(
 }
 
 /// `JSON.stringify(value, null, 2)`：先按 JS 规则得到紧凑文本（键序、数字写法），再缩进。
-pub(crate) fn node_pretty(value: &Value) -> String {
+pub fn node_pretty(value: &Value) -> String {
     let compact = rust_cli_base::js::json::stringify(value);
     serde_json::from_str::<Value>(&compact)
         .and_then(|value| serde_json::to_string_pretty(&value))

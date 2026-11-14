@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use rust_cli_agents::{AgentCatalog, Agents, AgentsConfig, AgentsPorts, TaskTools};
+use rust_cli_agents::{AgentCatalog, Agents, AgentsConfig, AgentsPorts, StallConfig, TaskTools};
 use rust_cli_base::Spawner;
 use rust_cli_compact::{CompactConfig, CompactPorts, Compaction, DenyTools, Disabled};
 use rust_cli_context::{ContextConfig, ContextPorts, PromptAssembler};
@@ -51,18 +51,31 @@ impl SurfaceTraits {
 
 /// 会话侧 hooks 与回退事务的执行环境实例：hook 命令在主 env 上跑，与工具共用同一个实例（`operations` 的 generation）。配置快照由入口层
 /// 组装后经 `HookEngine::replace` 交进来（hooks.md §2.2）。
-pub(crate) fn hooks(ports: &Ports, operations: &Operations) -> Arc<HookEngine> {
+pub(crate) fn hooks(
+    ports: &Ports,
+    operations: &Operations,
+    incognito: &rust_cli_kernel_api::incognito::IncognitoProfiles,
+    transcripts: Option<Arc<dyn rust_cli_kernel_api::hooks::HookTranscripts>>,
+) -> Arc<HookEngine> {
     let machine = ports.environments.primary_machine();
-    Arc::new(HookEngine::new(HookPorts {
-        commands: machine.commands().clone(),
-        shell: machine.shell().clone(),
-        ids: ports.ids.clone(),
-        model: Some(ports.model.clone()),
-        http: None,
-        operations: operations.clone(),
-        // 大输出与工具结果落在同一个存储（hooks.md §4.5，修复线 F15）。
-        artifacts: ports.artifacts.clone(),
-    }))
+    Arc::new(
+        HookEngine::new(HookPorts {
+            commands: machine.commands().clone(),
+            shell: machine.shell().clone(),
+            ids: ports.ids.clone(),
+            model: Some(ports.model.clone()),
+            http: None,
+            operations: operations.clone(),
+            // 大输出与工具结果落在同一个存储（hooks.md §4.5，修复线 F15）。
+            artifacts: ports.artifacts.clone(),
+            node_stdin: transcripts.map(|transcripts| rust_cli_hooks::NodeStdinPorts {
+                transcripts,
+                clock: ports.clock.clone(),
+            }),
+            clock: ports.clock.clone(),
+        })
+        .with_incognito(incognito.clone()),
+    )
 }
 
 /// 一个判决链实例：工具注册（Edit / Write 的先读规则）与执行管线共用，会话内“总是允许”的规则因此对两边都生效。规则
@@ -114,6 +127,26 @@ fn bash_settings(
     }
 }
 
+/// Fork: the local cron's store. Under the Host's automation port the Host schedules, so the local cron gets none even
+/// when an embedder passes one: persisted local jobs never fire beside the Host's (specs/fork-rust-automations.md).
+pub(crate) fn cron_store(
+    extensions: &Extensions,
+) -> Option<Arc<dyn rust_cli_kernel_api::cron_store::CronStore>> {
+    match extensions.automation {
+        Some(_) => None,
+        None => extensions.cron_store.clone(),
+    }
+}
+
+/// Fork: the extension config with `host_automations` derived from the automation port, the one place both are known,
+/// so the builtin `/loop` is hidden exactly when the Cron tools are the Host's.
+pub(crate) fn ext_config(extensions: &Extensions) -> rust_cli_ext::ExtConfig {
+    rust_cli_ext::ExtConfig {
+        host_automations: extensions.automation.is_some(),
+        ..extensions.config.clone()
+    }
+}
+
 /// 基础工具的注册表（tools 的工具，ext 与 agents 之前的那一层）。
 pub(crate) fn base_tools(
     ports: &Ports,
@@ -123,13 +156,17 @@ pub(crate) fn base_tools(
 ) -> BaseTools {
     // `ENABLE_TOOL_SEARCH` 为关时 ToolSearch 不启用（工作线 F89，tools-more.md §3.2.1）。
     let catalog = Arc::new(ToolCatalog::new(defaults.limits.request.tool_search));
-    let cron = CronBoard::new(ports.clock.clone(), extensions.cron_store.clone());
+    let cron = CronBoard::new(ports.clock.clone(), cron_store(extensions));
     // Read 整读 PDF 前按会话当前模型的生效配置查 `supports_pdf`（tools-files.md §1.5，修复线 F24）。
     let side_model = || rust_cli_tools::SideModel {
         model: ports.model.clone(),
         selection: defaults.selection.clone(),
     };
-    let builtin = rust_cli_tools::builtin_with(gate.clone(), Some(side_model()));
+    let builtin = rust_cli_tools::builtin_with_code(
+        gate.clone(),
+        Some(side_model()),
+        extensions.code_intelligence.clone(),
+    );
     let read_files: Arc<ReadFileState> = builtin.file_state().cloned().unwrap_or_default();
     let worktrees = Arc::new(WorktreeBoard::default());
     // Monitor（工作线 F83，tools-more.md §19）：单次的 `-p` 上限 10 分钟，其余 30 分钟。
@@ -140,6 +177,19 @@ pub(crate) fn base_tools(
         Vec::new()
     };
     let bash = bash_settings(defaults, extensions, traits);
+    // Fork: under the desktop Host the Cron tools are Node's, scheduling in the Host's store.
+    let cron_tools = match &extensions.automation {
+        Some(port) => rust_cli_tools::automation_tools(port.clone()),
+        None => rust_cli_tools::cron_tools(&cron, extensions.monitor),
+    };
+    // Fork: only where a Host serves `topic/resource/read` (specs/fork-rust-topic-resource.md).
+    let topic: Vec<Arc<dyn rust_cli_kernel_api::tool::Tool>> = match &extensions.topic_resources {
+        Some(resources) => vec![Arc::new(rust_cli_tools::ReadTopicResourceTool::new(
+            ports.store.clone(),
+            resources.clone(),
+        ))],
+        None => Vec::new(),
+    };
     let registry: Arc<dyn ToolRegistry> = Arc::new(
         builtin
             .with_search_opt_in(defaults.search_tools)
@@ -150,15 +200,17 @@ pub(crate) fn base_tools(
             .with_tools(rust_cli_tools::interaction_tools(
                 &catalog,
                 traits.interactive,
+                ports.ids.clone(),
             ))
             .with_tools(rust_cli_tools::web_tools(side_model(), ports.clock.clone()))
-            .with_tools(rust_cli_tools::cron_tools(&cron, extensions.monitor))
+            .with_tools(cron_tools)
             // `/loop` 动态模式的自定节奏（L17，tools-more.md §17.2）：默认注册、不延迟。
             .with_tools(vec![Arc::new(rust_cli_tools::ScheduleWakeupTool::new(
                 &cron,
             ))])
             .with_tools(monitor)
             .with_tools(vec![Arc::new(rust_cli_tools::ReportFindingsTool::new())])
+            .with_tools(topic)
             .with_tools(rust_cli_tools::worktree_tools(&worktrees)),
     );
     // 用户输入的提及与 bash 模式用基础注册表里的 Read 与 Bash（与模型的调用共用 readFileState 与 shell 状态）。
@@ -184,6 +236,7 @@ pub(crate) fn ext(
     (gate, spawner): (&Arc<PolicyGate>, Spawner),
     base: Arc<dyn ToolRegistry>,
     (config, traits): (rust_cli_ext::ExtConfig, SurfaceTraits),
+    incognito: &rust_cli_kernel_api::incognito::IncognitoProfiles,
 ) -> Arc<Ext> {
     let machine = ports.environments.primary_machine();
     let ext = Arc::new(Ext::new(
@@ -196,6 +249,7 @@ pub(crate) fn ext(
             machines: Some(ports.environments.clone()),
             spawner,
             clock: ports.clock.clone(),
+            incognito: incognito.clone(),
         },
         base,
         config,
@@ -211,6 +265,8 @@ pub(crate) fn context(
     ports: &Ports,
     config: ContextConfig,
     (agent_catalog, tools, ext): (&Arc<AgentCatalog>, &BaseTools, &Ext),
+    incognito: &rust_cli_kernel_api::incognito::IncognitoProfiles,
+    code: Option<Arc<dyn rust_cli_kernel_api::lsp::CodeIntelligence>>,
 ) -> Arc<PromptAssembler> {
     let machine = ports.environments.primary_machine();
     let assembler = PromptAssembler::new(
@@ -233,8 +289,29 @@ pub(crate) fn context(
         rust_cli_tools::FileChanges::new(tools.read_files.clone(), machine.files().clone())
             .with_machines(ports.environments.clone()),
     ))
-    .with_machines(ports.environments.clone());
+    .with_machines(ports.environments.clone())
+    .with_incognito(incognito.clone())
+    .with_code_intelligence(code);
     Arc::new(assembler)
+}
+
+/// 管线直接拿判决链（F125：缺陷 D1 是以前包在外面的一层漏转发了“只批准这一次”）；按调用的 `machine` 选机器
+/// （R3，remote-exec.md §20.6）。Fork: the kernel keeps this instance for MCP App calls
+/// (specs/fork-rust-node-helper.md F3, `helper/authorizeAppTool`), so they pass the same checks as the model's.
+pub(crate) fn pipeline(
+    ports: &Ports,
+    ext: &Ext,
+    gate: &Arc<PolicyGate>,
+    hooks: &Arc<HookEngine>,
+    node_desktop: bool,
+) -> Arc<Pipeline> {
+    Arc::new(
+        Pipeline::new(gate.clone(), hooks.clone())
+            .with_machines(ports.environments.clone())
+            .with_incognito(ext.incognito_tools())
+            // Fork (node_desktop): tool hook contexts after the tool result, like Node.
+            .with_node_hooks(node_desktop),
+    )
 }
 
 /// 主循环用到的能力。工具是 ext 的注册表外面去掉整个工具被 deny 的（tools-files.md §1.1.1，工作线 F69）：主线程、子代理、
@@ -247,21 +324,23 @@ pub(crate) fn query_parts(
         &Arc<PolicyGate>,
         &Arc<HookEngine>,
     ),
-    (late, operations): (&Arc<LateCompactor>, Operations),
-    (defaults, traits): (&Defaults, SurfaceTraits),
+    (late, operations, pipeline): (&Arc<LateCompactor>, Operations, &Arc<Pipeline>),
+    (defaults, traits, node_desktop): (&Defaults, SurfaceTraits, bool),
+    code: Option<Arc<dyn rust_cli_kernel_api::lsp::CodeIntelligence>>,
 ) -> QueryParts {
     QueryParts {
         model: ports.model.clone(),
         context: context.clone(),
         tools: Arc::new(rust_cli_tools::PolicyFiltered::new(
-            ext.registry(),
+            match code {
+                // Fork: the `LSP` tool sits under the deny filter, offered per session (specs/fork-rust-lsp.md).
+                Some(code) => Arc::new(rust_cli_tools::LspTools::new(ext.registry(), code)),
+                None => ext.registry(),
+            },
             gate.clone(),
         )),
-        // 管线直接拿判决链（F125：缺陷 D1 是以前包在外面的一层漏转发了“只批准这一次”）；按调用的 `machine` 选机器
-        // （R3，remote-exec.md §20.6）。
-        executor: Arc::new(
-            Pipeline::new(gate.clone(), hooks.clone()).with_machines(ports.environments.clone()),
-        ),
+        // One pipeline for model calls and MCP App authorizations (pipeline_authorize.rs); see `pipeline`.
+        executor: pipeline.clone(),
         compactor: late.clone(),
         hooks: hooks.clone(),
         ids: ports.ids.clone(),
@@ -270,7 +349,21 @@ pub(crate) fn query_parts(
         artifacts: ports.artifacts.clone(),
         operations,
         non_interactive: traits.non_interactive,
-        limits: defaults.limits.request,
+        // Fork (node_desktop): Node's Stop continuation cap (specs/fork-rust-agent-parity.md "Stop continuation cap").
+        limits: rust_cli_query::RequestLimits {
+            stop_continuations: if node_desktop {
+                rust_cli_query::StopContinuations::NodeTurn
+            } else {
+                rust_cli_query::StopContinuations::Consecutive
+            },
+            // Fork (node_desktop): a batch's tool hook contexts after its last result, like Node.
+            tool_hook_contexts: if node_desktop {
+                rust_cli_query::ToolHookContexts::NodeBatch
+            } else {
+                rust_cli_query::ToolHookContexts::PerCall
+            },
+            ..defaults.limits.request
+        },
     }
 }
 
@@ -281,6 +374,7 @@ pub(crate) fn agents(
     (parts, tasks, agent_catalog): (&QueryParts, Arc<dyn TaskListStore>, &Arc<AgentCatalog>),
     (late, spawner, peers): (&Arc<LateCompactor>, Spawner, &rust_cli_session::PeerDeps),
     (defaults, traits, node_desktop): (&Defaults, SurfaceTraits, bool),
+    incognito: &rust_cli_kernel_api::incognito::IncognitoProfiles,
 ) -> Agents {
     Agents::new(
         AgentsPorts {
@@ -289,6 +383,7 @@ pub(crate) fn agents(
             clock: ports.clock.clone(),
             machines: ports.environments.clone(),
             tasks,
+            store_queries: ports.store.clone(),
             queries: Arc::new(agents::LoopFactory {
                 parts: parts.clone(),
             }),
@@ -298,6 +393,7 @@ pub(crate) fn agents(
             spawner,
             peers: peers.port.clone(),
             operations: parts.operations.clone(),
+            incognito: incognito.clone(),
         },
         parts.tools.clone(),
         AgentsConfig {
@@ -317,6 +413,8 @@ pub(crate) fn agents(
                 .unwrap_or(traits.interactive && !node_desktop),
             // Fork (node_desktop): Node's TaskOutput only on the app-server's agent.
             node_desktop,
+            // 无进展提醒：`ZCODE_SUBAGENT_STALL_NOTIFY_MS`（入口已读）；没设时用 core 的缺省。
+            stall: StallConfig::new(defaults.limits.subagent_stall_notify_ms, None),
         },
     )
 }

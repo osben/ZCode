@@ -6,18 +6,33 @@ export async function selectCombinedComposerThoughtLevel(value: string): Promise
     `[data-testid="${TID_CHAT_MODEL_SELECT_TRIGGER}"][data-composer-combined-model]`,
   );
   if (!(await trigger.isExisting())) return false;
-  if ((await trigger.getAttribute("aria-expanded")) !== "true") await trigger.click();
   const slider = $('[data-testid="composer-thought-slider"]');
   const toggle = $('[data-testid="composer-thought-switch"]');
+  // Cause: a panel left open by the model pick keeps its backdrop over the trigger; reuse it once its pending ACK clears.
+  await browser.waitUntil(
+    async () => {
+      if ((await trigger.getAttribute("aria-expanded")) !== "true") return trigger.isClickable();
+      const control = (await slider.isExisting()) ? slider : toggle;
+      return (
+        (await control.isExisting()) && (await control.getAttribute("aria-disabled")) !== "true"
+      );
+    },
+    { timeout: 30000, timeoutMsg: "combined model trigger or panel did not settle" },
+  );
+  if ((await trigger.getAttribute("aria-expanded")) !== "true") await trigger.click();
   if (await toggle.isExisting()) {
     const on = await toggle.getAttribute("data-on-value");
     const off = await toggle.getAttribute("data-off-value");
     if (value !== on && value !== off) throw new Error(`思考开关不支持档位 ${value}`);
     const checked = String(value === on);
     if ((await toggle.getAttribute("aria-checked")) !== checked) await toggle.click();
-    await browser.waitUntil(async () => (await toggle.getAttribute("aria-checked")) === checked, {
-      timeout: 15000,
-    });
+    await browser.waitUntil(
+      async () =>
+        (await $(`[data-testid="${TID_V4_MODEL_CONFIG}"]`).getAttribute("data-thought")) === value,
+      {
+        timeout: 15000,
+      },
+    );
     await browser.keys("Escape");
     return true;
   }
@@ -40,22 +55,39 @@ export async function selectCombinedComposerThoughtLevel(value: string): Promise
       document.querySelector<HTMLInputElement>('[data-testid="composer-thought-slider"]')?.focus(),
     );
     const waitForLevel = async (expected: number) => {
+      // 已有会话提交档位会关闭菜单；断言配置投影，下一步再打开。
       await browser.waitUntil(
         async () =>
-          (await slider.getAttribute("aria-disabled")) === "false" &&
-          Number(await slider.getValue()) === expected,
+          (await $(`[data-testid="${TID_V4_MODEL_CONFIG}"]`).getAttribute("data-thought")) ===
+          levels[expected],
         { timeout: 15000 },
       );
+      // Cause: an open combined panel keeps its z-[19] backdrop over the trigger, so the trigger is never clickable while expanded; wait on the panel instead.
+      await browser.waitUntil(
+        async () => {
+          if ((await trigger.getAttribute("aria-expanded")) !== "true")
+            return trigger.isClickable();
+          return (
+            (await slider.isExisting()) && (await slider.getAttribute("aria-disabled")) !== "true"
+          );
+        },
+        { timeout: 30000, timeoutMsg: "combined model panel did not settle" },
+      );
     };
-    await browser.keys("Home");
-    await waitForLevel(0);
-    for (let step = 0; step < index; step++) {
-      await browser.keys("ArrowRight");
-      await waitForLevel(step + 1);
+    await browser.keys(index === levels.length - 1 ? "End" : "Home");
+    await waitForLevel(index === levels.length - 1 ? index : 0);
+    if (index !== levels.length - 1) {
+      for (let step = 0; step < index; step++) {
+        if ((await trigger.getAttribute("aria-expanded")) !== "true") await trigger.click();
+        await browser.execute(() =>
+          document
+            .querySelector<HTMLInputElement>('[data-testid="composer-thought-slider"]')
+            ?.focus(),
+        );
+        await browser.keys("ArrowRight");
+        await waitForLevel(step + 1);
+      }
     }
-    await browser.waitUntil(async () => Number(await slider.getValue()) === index, {
-      timeout: 15000,
-    });
   }
   await browser.keys("Escape");
   return true;

@@ -50,9 +50,9 @@ OpenRouter cases covering the five model families and the off tier (network inte
 mock 200s claimed as server support). Typecheck, format and architecture checks pass; lint 0
 errors, 42 pre-existing warnings. Live Air → OpenRouter checks with the release-config request
 shape and the original test prompt (`low`, `max_tokens=1000`) returned HTTP 200 with `end_turn` /
-`message_stop` twice each for z-ai/glm-5.3-flash (`gen-1789366855-73w0bfyOBz3ELtvUBygJ`) and
-deepseek/deepseek-v4.1-flash (`gen-1789366855-gFYWCQboaRXqxM9q5QkH`); the earlier GLM-5.3 adaptive
-control also fully succeeded (`gen-1789365468-l1GzIrS9atlIn0WGWZsj`). Other models were not
+`message_stop` twice each for z-ai/glm-5.3-flash and
+deepseek/deepseek-v4.1-flash; the earlier GLM-5.3 adaptive
+control also fully succeeded. Other models were not
 individually called online; the Fable regional restriction remains. No new packages installed, no
 Air personal config or published online config modified.
 

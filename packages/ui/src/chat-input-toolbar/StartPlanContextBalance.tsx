@@ -1,5 +1,5 @@
 import { CodingPlanEntryButton } from "@/settings/CodingPlanEntryButton.js";
-import { Loader2Icon, RocketIcon } from "lucide-react";
+import { LoaderCircle, RocketIcon } from "lucide-react";
 import type { UsageEntitlementSnapshot, UsageQuotaLimit } from "@zcode/shared";
 import { cn } from "@/components/lib/utils.js";
 import {
@@ -140,9 +140,9 @@ export function ChatStartPlanBalancePanel({
             {intl.formatMessage({ id: "settings.modelProvider.startPlan.balance.title" })}
           </span>
           {config.loading || config.refreshing === true ? (
-            // A silent access refresh with a cached snapshot does not set entitlement.loading to true.
-            // The spinner must also follow the promise started by hover (refreshing), matching the Coding Plan section.
-            <Loader2Icon className="size-3.5 shrink-0 animate-spin text-foreground-subtle" />
+            // 静默 access 刷新有缓存快照时不会把 entitlement.loading 置 true，
+            // spinner 还要跟随 hover 触发的本次 promise（refreshing），与 Coding Plan 段语义一致。
+            <LoaderCircle className="size-3.5 shrink-0 animate-spin text-foreground-subtle" />
           ) : null}
         </div>
         {config.onUpgradeClick ? (

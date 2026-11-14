@@ -26,6 +26,8 @@ use crate::plan::PlanModeFlags;
 pub struct RunView {
     /// 判决用的权限模式（plan 开时是 plan）。
     pub mode: PermissionMode,
+    /// Fork: the permission mode under plan (`ExecutionState.mode`); equal to `mode` when plan is off.
+    pub base_mode: PermissionMode,
     /// 计划模式的会话标志（与 `mode` 同一个快照）。
     pub plan_flags: PlanModeFlags,
     pub workspace: WorkspaceRef,
@@ -34,6 +36,15 @@ pub struct RunView {
     pub selection: Option<ModelSelection>,
     /// 会话现在的目标条件（`/goal`，goal.md §4）；子代理没有。
     pub goal: Option<String>,
+    /// Fork: the workspace is the session's execution worktree (a subagent: its parent's), so a root that is gone
+    /// refuses the workspace tools (Node `getMissingExecutionWorktreeToolError` applies only then).
+    pub execution_worktree: bool,
+    /// Fork: the limits of the running turn (automation id, hidden tools; specs/fork-rust-automations.md). Default
+    /// outside a turn the Host dispatched, and always for a subagent: like Node, a child run takes the session's tool
+    /// config, not the turn's. Node registers no Cron tool for a subagent child (`runtime-tools.ts`
+    /// `mainAutomationToolsIncluded`); slice 2 (#449: `agents/src/spawn.rs` `NodeChild`, `ToolRule::node_child`)
+    /// does the same for desktop subagents and forks, so a subagent of an automation run has no Cron tool.
+    pub turn: crate::turn_limits::TurnLimits,
 }
 
 impl RunView {
@@ -42,10 +53,13 @@ impl RunView {
     pub fn new(mode: PermissionMode, workspace: WorkspaceRef) -> Self {
         Self {
             mode,
+            base_mode: mode,
             plan_flags: PlanModeFlags::default(),
             workspace,
             selection: None,
             goal: None,
+            execution_worktree: false,
+            turn: Default::default(),
         }
     }
 }
@@ -83,6 +97,11 @@ pub trait SessionOps: Send + Sync {
     /// 改会话的工作目录（EnterWorktree / ExitWorktree）；owner 是会话 actor，它同时设执行环境的 shell cwd
     /// （tools-more.md §11.4）。前台子代理改的是父会话的；不持有会话的返回 `Unsupported`。
     async fn set_workspace(&self, root: EnvPath) -> Result<(), OrchestrationError>;
+
+    /// Fork: take `title` as the session's custom title, so a generated title no longer replaces it (Node
+    /// `setCustomSessionTitle` after a desktop CronCreate; specs/fork-rust-automations.md, slice 2). Not awaited: a
+    /// failure is only logged. A foreground subagent's request goes to its parent; sinks without a session ignore it.
+    async fn freeze_title(&self, title: String);
 
     /// Monitor 工具起好的 monitor 交给它的 owner（工作线 F83，tools-more.md §19.6）：主线程是会话 actor，子代理里是
     /// agents。`events` 是 `start_command` 返回、工具读过 `Started` 的那条流。不持有的返回 `Unsupported`，调用方停掉

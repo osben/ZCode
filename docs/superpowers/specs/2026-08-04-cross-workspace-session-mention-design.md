@@ -26,13 +26,12 @@ the current composer:
   persistence protocol are unchanged.
 
 - A local composer can select sessions of all local workspaces under the current window-scoped Local Host.
-  Multiple local Agent processes share one SQLite session DB, so `ReadSessionContext` can read a selected
-  session by id.
+  Multiple local Agent processes share one SQLite session DB, so the Agent can read a selected
+  session with `ReadSession` by `sessionId`.
 - A remote composer can select sessions of multiple workspaces under the same `remoteSessionId` / Agent
   service authority.
 - A local and a remote Host, or two different remote Hosts, do not share a session DB. Sessions of another
-  authority are not shown, to avoid references that can be selected but make `ReadSessionContext` return
-  `not_found`.
+  authority are not shown, to avoid references that can be selected but cannot be read.
 - A disconnected remote workspace does not fall back to the local service; it re-enters the candidates only
   after the remote attachment is restored.
 - Closed workspaces that are not restored in the current window are not candidates; no global persistent
@@ -84,18 +83,18 @@ aggregated result
 - The `#` cap of 20 is counted per `workspaceKey` after query matching; a global `slice(0, 20)` of the merged
   result is wrong because the current workspace would crowd out the others. `@` does not apply the cap and
   keeps the existing current-workspace behavior.
-- The canonical mention, history parsing and `ReadSessionContext` tool input keep only the session id; no
+- The canonical mention, history parsing and the `ReadSession` `sessionId` input keep only the session id; no
   workspace field is added.
 
 ## State Owners
 
-| State / fact                | Authority                                          | Mirrors / caches        | Evidence                                           |
-| --------------------------- | -------------------------------------------------- | ----------------------- | -------------------------------------------------- |
-| Workspace set of the window | window-scoped Tab Store                            | tab persistence restore | workspace tabs in hook test                        |
-| remote workspace -> service | `remoteSessionId` + remote workspace session store | identity/path lookup    | mock service call counts per endpoint              |
-| Session candidate facts     | sessions-index of each Host                        | shared registry store   | snapshot/delta aggregation result                  |
-| session context content     | SQLite session store of the current Agent Host     | no cross-Host mirror    | `ReadSessionContext` docs and store implementation |
-| workspace isolation key     | `workspaceIdentity?.trim() \|\| workspacePath`     | scope/registry key      | same path, different identity focused case         |
+| State / fact                | Authority                                          | Mirrors / caches        | Evidence                                    |
+| --------------------------- | -------------------------------------------------- | ----------------------- | ------------------------------------------- |
+| Workspace set of the window | window-scoped Tab Store                            | tab persistence restore | workspace tabs in hook test                 |
+| remote workspace -> service | `remoteSessionId` + remote workspace session store | identity/path lookup    | mock service call counts per endpoint       |
+| Session candidate facts     | sessions-index of each Host                        | shared registry store   | snapshot/delta aggregation result           |
+| session context content     | SQLite session store of the current Agent Host     | no cross-Host mirror    | `ReadSession` docs and store implementation |
+| workspace isolation key     | `workspaceIdentity?.trim() \|\| workspacePath`     | scope/registry key      | same path, different identity focused case  |
 
 ## Boundary Decisions
 

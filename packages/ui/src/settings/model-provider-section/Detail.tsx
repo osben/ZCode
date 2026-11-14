@@ -6,6 +6,7 @@ import {
   ZAI_PROVIDER_ID,
   type BuiltinModelProviderId,
   type ProviderFamilyConnectionSelectionSettings,
+  type ProviderFamilyDomain,
   type StartPlanPreviewConfig,
   isStartPlanModelProviderId,
   isIndividualCodingPlanModelProviderId,
@@ -233,6 +234,7 @@ export function ModelProviderSectionDetail({
   navigationItems = selectedNavItem ? [selectedNavItem] : [],
   connectionSettingsFailed = false,
   connectionSelections,
+  activeProviderFamily,
   startPlanSubscriptionCount = 0,
   presetLoading,
   codingPlanPurchaseTokenAuthenticatedByProviderId,
@@ -261,6 +263,7 @@ export function ModelProviderSectionDetail({
   navigationItems?: ModelProviderNavItem[];
   connectionSettingsFailed?: boolean;
   connectionSelections?: ProviderFamilyConnectionSelectionSettings;
+  activeProviderFamily?: ProviderFamilyDomain | null;
   startPlanSubscriptionCount?: number;
   presetLoading: boolean;
   codingPlanPurchaseTokenAuthenticatedByProviderId: Partial<
@@ -385,6 +388,7 @@ export function ModelProviderSectionDetail({
       navigationItems={navigationItems}
       connectionSettingsFailed={connectionSettingsFailed}
       connectionSelections={connectionSelections}
+      activeProviderFamily={activeProviderFamily}
       startPlanSubscriptionCount={startPlanSubscriptionCount}
       onSelectNavItem={onSelectNavItem}
     />
@@ -483,27 +487,16 @@ export function ModelProviderSectionDetail({
     const visibleStatusLabelId =
       statusPanelViewState.displayStatus === "checking" ? undefined : selectedNavItem.statusLabelId;
     const isStartPlanProvider = isStartPlanModelProviderId(selectedNavItem.presetId);
-    // Hide the configuration entry only when entitlement is explicitly absent; query/key-fetch failure does not prove that and must not delete config.
-    const hasNoPlanEntitlement =
-      !isStartPlanProvider &&
-      (selectedNavItem.type === "teamPlan"
-        ? selectedNavItem.availabilityReason === "not-allocated" ||
-          selectedNavItem.availabilityReason === "expired"
-        : selectedNavItem.status === "notPurchased");
-    // Once the Account snapshot confirms Start is available, clearing/refreshing the quota query's own cache must not unmount the editor.
-    // Do not show executable models without an active plan; the config area does not depend on temporary quota-request loading state.
-    const accountAvailable =
-      providerSettingsView?.providers.find(
-        (provider) => provider.providerId === selectedNavItem.presetId,
-      )?.accountState?.availability === "available";
-    const hidePlanModels =
-      hasNoPlanEntitlement ||
-      selectedNavItem.status === "disconnected" ||
-      selectedNavItem.status === "notPurchased";
-    const shouldShowDedicatedProviderDetail =
-      dedicatedProvider !== null &&
-      !hidePlanModels &&
-      (!isStartPlanProvider || accountAvailable || selectedNavItem.status === "purchased");
+    // 模型列表只属于“当前确实可用”的套餐：Coding/Team 要有已解析的 purchased 快照；
+    // Start 还要由 Account 快照确认 available。待生效（pending）时余额快照同样带套餐详情、
+    // status 也会投影成 purchased，只看 status 会把模型区误渲染成“没有配置模型，可手动添加”。
+    // 未登录、未开通、查询中/查询失败、凭据失效同理：只保留状态卡和对应操作，不渲染模型配置。
+    const accountAvailable = dedicatedProvider?.accountState?.availability === "available";
+    const planModelsVisible = isStartPlanProvider
+      ? // Start 可用时余额刷新可能暂时清空自己的快照，此时不能卸载编辑器。
+        accountAvailable
+      : selectedNavItem.status === "purchased";
+    const shouldShowDedicatedProviderDetail = dedicatedProvider !== null && planModelsVisible;
     const reloginOnFailure =
       selectedNavItem.type === "codingPlan" &&
       isIndividualCodingPlanModelProviderId(selectedNavItem.presetId) &&
@@ -825,14 +818,16 @@ export function ModelProviderSectionDetail({
             upgradeActionVisible={!isStartPlanProvider || !hasActivePaidPlan}
             startPlanPreviewVisible={false}
           />
-          {hidePlanModels ? null : providerSettingsView && !dedicatedProvider ? (
-            <PresetProviderPlaceholderCard
-              displayName={selectedNavItem.providerName}
-              messageId="settings.modelProvider.accountProviderConfigMissing"
-            />
-          ) : !selectedNavItem.provider ||
-            selectedNavItem.provider.providerId !== selectedNavItem.presetId ? (
-            <ModelProviderLoadingCard loadingLabel={loadingLabel} />
+          {planModelsVisible ? (
+            providerSettingsView && !dedicatedProvider ? (
+              <PresetProviderPlaceholderCard
+                displayName={selectedNavItem.providerName}
+                messageId="settings.modelProvider.accountProviderConfigMissing"
+              />
+            ) : !selectedNavItem.provider ||
+              selectedNavItem.provider.providerId !== selectedNavItem.presetId ? (
+              <ModelProviderLoadingCard loadingLabel={loadingLabel} />
+            ) : null
           ) : null}
           {planSupplementalContent}
         </div>

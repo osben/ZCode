@@ -113,7 +113,8 @@ The spec does not auto-open review during draft prewarm. The user may review ear
 - **3.3 HookBundleSnapshot:** an immutable in-memory snapshot created before admission. The summary the user sees, the canonical digest and the actual execution all come from the same snapshot.
 - **3.3.1 Hook Declaration Digest:** the digest of the versioned canonical serialization of one `CanonicalWorkspaceHookEntry`'s execution semantics. Persistent Trust and per-item revoke use it as the content boundary. `bundleDigest` still exists but identifies the whole snapshot, detects review/execute inconsistency and aggregates diagnostics; it is no longer the sole V1 persistent Trust granularity.
 - **3.4 Workspace Identity:** the workspace dimension of Trust. Local: the canonical `workspacePath` / `workspaceKey` of the protocol/service layer. Remote: the existing `workspaceIdentity`. A bare path on a remote machine is never an identity. The Trust service treats identity as an opaque string and does not guess or re-assemble it.
-- **3.5 Trust lifecycle:** Workspace Hook authorization comes only from exact persistent records in the user-owned Trust store. `sessionId`, `taskId`, `runId`, `reviewFlowId` and `interactionId` only bind one review command to the current trusted Runtime snapshot and never widen Trust scope. Whether authorization holds depends only on the exact `workspace identity + hook declaration digest` record and the current policy/snapshot gate. compact, resume, fork, new task and subagent neither generate nor inherit extra authorization; they can only reuse persistent records under the same workspace identity that still match the current declaration digest. After a Runtime rebuild it must bootstrap from the Trust store and fail closed until the read completes.
+- **3.4a Trust identity (2026-11-03, D23):** the read/write key of Trust records, computed by the single shared resolver `resolveWorkspaceHookTrustIdentity`. For almost all workspaces the Trust identity is the `workspaceKey`. The only exception is a local, strictly validated ZCode managed worktree (see `docs/git/worktree.md`), whose Trust identity is normalized to the corresponding path in the source repository. Review binding, command routing, the Security Revision carrier and remote control still match by `workspaceKey` and must not use the Trust identity instead.
+- **3.5 Trust lifecycle:** Workspace Hook authorization comes only from exact persistent records in the user-owned Trust store. `sessionId`, `taskId`, `runId`, `reviewFlowId` and `interactionId` only bind one review command to the current trusted Runtime snapshot and never widen Trust scope. Whether authorization holds depends only on the exact `workspace identity + hook declaration digest` record and the current policy/snapshot gate. compact, resume, fork, new task and subagent neither generate nor inherit extra authorization; they can only reuse persistent records under the same workspace identity that still match the current declaration digest. A managed worktree using the source repository's records is the result of Trust identity normalization (D23), not a new authorization: the record set and digest are unchanged, and once a declaration changes in the worktree it returns to pending per item. After a Runtime rebuild it must bootstrap from the Trust store and fail closed until the read completes.
 - **3.6 Trust Record:** a persistent record in user-domain secure storage that a `workspace identity + hook declaration digest` was chosen as trusted by the user. The product creates one exact record from a Hook row each time.
 - **3.7 Admission:** the security decision before a project Hook enters the Runtime executable set. Admission is a different dimension from ordinary tool permission and from the Hook's enabled state.
 
@@ -377,6 +378,39 @@ Prompt-bar dismiss is renderer-local hiding keyed by `sessionId + bundleDigest`;
 ### D22. Settings shows only provable persistent facts
 
 `hooksService.readPersistentWorkspaceHookTrustDigests` reads only the user-owned Trust store; this is a design boundary, not a missing runtime query. Settings decides from the static snapshot only whether the current declaration is persistently trusted; it must not add a task/session authorization query and must not show derived "will run / won't run" badges that cross policy, configured gate and future events.
+
+### D23. A managed worktree inherits the source repository's Trust (2026-11-03)
+
+**Adopted:** once a local ZCode managed worktree passes strict validation, its Trust identity is normalized to the corresponding path in the source repository and directly hits the source repository's existing Trust records, with no new review.
+
+**Resolution rule** (`resolveWorkspaceHookTrustIdentity`, single implementation in `packages/shared`):
+
+```text
+input { workspacePath, workspaceIdentity? }
+  |- has workspaceIdentity (remote)                  -> return as is, no resolution
+  |- not under managed root <root>/<bucket>/<name>/  -> return workspacePath
+  `- all of the following hold -> return <source repo toplevel>/<relative(worktree root, workspacePath)>
+       1 <worktree root>/.git is a regular file whose content is gitdir: <common>/worktrees/<id>
+       2 <common>/worktrees/<id>/gitdir resolves back to <worktree root>/.git (back link)
+       3 <common>/worktrees/<id>/commondir resolves to <common>
+       4 the parent of <common>, <source repo toplevel>, exists, and <source repo toplevel>/.git is <common>
+       5 all of the above paths are compared by realpath; on Windows case and separators are normalized by platform rules
+     any one fails -> return workspacePath (no inheritance), debug log only
+```
+
+- All file reads are asynchronous, through a read-only file port injected by the caller. The CLI follows the adapter boundary and uses no `fs` directly in business modules.
+- A validation failure only means "no inheritance": it falls back to the worktree's own path as identity and creates no extra authorization.
+- Only ZCode managed worktrees are covered. User-created linked worktrees and symlinks are still handled per CFG21 and Trust is not widened.
+
+**Semantics:**
+
+- The source repository and all its managed worktrees share one set of records. Granting or revoking Trust in a worktree takes effect for the source repository and the other worktrees at once, so the worktree's review row must say: "Trust applies to the source repository <path> and its worktrees".
+- The declaration digest rule is unchanged. The source path is already computed relative to the workspace root (`normalizeRelativeSourcePath` in `packages/shared/src/workspace-hook-digest.ts`), so the same committed config yields the same digest in the source repository and the worktree. An uncommitted Hook change in the source repository does not appear in the worktree, the digests of the two sides differ, and that entry returns to pending in the worktree.
+- Enterprise policy (D10) is also evaluated by Trust identity.
+- A Trust change raises the Security Revision of all runtimes under that Trust identity. The runtime side must register a `Trust identity -> workspaceKey[]` mapping so a change in the source repository reaches the worktree's runtime.
+- The CLI snapshot builder and the Settings path of `hooksService` must call the same resolver. The D20 digest parity test adds a worktree scenario to verify both sides get the same Trust identity.
+
+**Reason:** committed config in a worktree comes from the same source as the source repository. The back-link validation guarantees no arbitrary directory can impersonate a source repository, since an attacker would need to write the source repository's `.git` directory. Without inheritance the user would have to review the same Hooks again for every new worktree.
 
 ---
 
@@ -696,7 +730,7 @@ Do not rely on plain `JSON.stringify()` of un-normalized objects with incidental
 
 ### 12.6 Source path rules
 
-Source file identity enters the declaration digest; local paths use the workspace identity resolver's canonical form; remote paths are interpreted inside the matching `workspaceIdentity` namespace; a symlink alias does not inherit another path's Trust unless the existing resolver normalizes them to one identity; Windows case/separator normalization reuses existing platform rules; a non-Git directory includes only cwd discovery and never accidentally pulls in parent-directory declarations.
+Source file identity enters the declaration digest; local paths use the workspace identity resolver's canonical form; remote paths are interpreted inside the matching `workspaceIdentity` namespace; a symlink alias does not inherit another path's Trust (a managed worktree is the only case explicitly normalized, D23) unless the existing resolver normalizes them to one identity; Windows case/separator normalization reuses existing platform rules; a non-Git directory includes only cwd discovery and never accidentally pulls in parent-directory declarations.
 
 ### 12.7 Digest versioning
 
@@ -786,7 +820,7 @@ Commit order: persistent Trust — the store grants atomically first, then its r
 
 ### 14.5 Preconditions on all SessionStart entries
 
-Admission must not hang only on `turn.ts`. The shared entry `runSessionStartHooks(source, ...)` accepts `type SessionStartSource = "startup" | "resume" | "clear" | "compact"`. Current real call sites: `turn.ts -> ensureContextInitialized -> runSessionStartHooks("startup")` and `resume.ts -> restore/append resumed state -> runSessionStartHooks("resume")`. The project Hook admission guard sinks into `runSessionStartHooks()` before any matcher/runner dispatch:
+Admission must not hang only on `turn.ts`. The shared entry `runSessionStartHooks(source, ...)` accepts `type SessionStartSource = "startup" | "resume" | "fork" | "clear" | "compact"`. Current real call sites: `turn.ts -> ensureContextInitialized -> runSessionStartHooks("startup")` and `resume.ts -> restore/append resumed state -> runSessionStartHooks("resume" | "fork")` (a forked child session opened before its first input uses `fork`) and `compact-active.ts -> runSessionStartHooks("compact")` after every compaction. The project Hook admission guard sinks into `runSessionStartHooks()` before any matcher/runner dispatch:
 
 ```text
 runSessionStartHooks(source)
@@ -1133,7 +1167,7 @@ With the soft gate `activate()` does not wait for review. In `turn.ts -> runSess
 
 ### 20.4 Resume
 
-`resume.ts -> runSessionStartHooks("resume")` must use the same shared admission guard: resume must not execute untrusted Hooks by bypassing `turn.ts`; `matcher: "resume"` and any project Hook that can match the resume source are under the gate; persistent Trust hits only by identity + declaration digest; after an app/host restart bootstrap again from the user-owned Trust store, failing closed until the read completes.
+`resume.ts -> runSessionStartHooks("resume" | "fork")` must use the same shared admission guard: resume must not execute untrusted Hooks by bypassing `turn.ts`; `matcher: "resume"` and any project Hook that can match the resume source are under the gate; persistent Trust hits only by identity + declaration digest; after an app/host restart bootstrap again from the user-owned Trust store, failing closed until the read completes.
 
 ### 20.5 Active session
 
@@ -1141,7 +1175,7 @@ Uses the admitted immutable snapshot of activation; when a watcher sees an on-di
 
 ### 20.6 Clear / Compact
 
-Facts: compact is an in-place operation within the current session (no new session id); there is currently no standalone clear protocol/runtime call site; `SessionStartSource` reserves `clear` and `compact`. V1 builds no special bypass for non-existent chains; when the call sites are added they reuse the shared admission guard automatically, new or changed digests miss, and persistent Trust hits per item.
+Facts: compact is an in-place operation within the current session (no new session id); there is currently no standalone clear protocol/runtime call site; `SessionStartSource` reserves `clear`, and `compact` runs `runSessionStartHooks("compact")` after every compaction. V1 builds no special bypass for non-existent chains; when the call sites are added they reuse the shared admission guard automatically, new or changed digests miss, and persistent Trust hits per item.
 
 ### 20.7 Fork / New Task
 
@@ -1252,7 +1286,11 @@ Each row is `ID: scenario → expected`.
 - CFG18: non-Git workspace → scans cwd only, no parent directories.
 - CFG19: JSON whitespace/key order change → digest unchanged.
 - CFG20: invalid schema → no executable snapshot, diagnostic, fail closed.
-- CFG21: symlink/worktree → follows identity/source rules, never widens Trust.
+- CFG21: symlink / user-created worktree → follows identity/source rules, never widens Trust.
+- CFG26: managed worktree, source repository already trusts the same committed declaration → Trust identity normalizes to the source repository and hits directly, no new review (D23).
+- CFG27: managed worktree with a missing back link, pointing at another checkout, or escaping through a symlink → validation fails, Trust identity falls back to the worktree path, no inheritance.
+- CFG28: Trust revoked in a worktree → the source repository and the other worktrees lose it at once, and each runtime's Security Revision is raised.
+- CFG29: the source repository has an uncommitted Hook change → only the entry in the worktree that lacks that change returns to pending.
 - CFG22: explicit `projectConfigPath` → marked as explicit source and in the digest.
 - CFG23: Settings atomic write success → after temp + flush/close + rename the watcher sees only complete JSON.
 - CFG24: Settings atomic write failure → original file stays parseable; no new review generation installed.

@@ -5,6 +5,7 @@
 use rust_cli_base::ui_prefs::UiLocale;
 use rust_cli_base::units;
 use rust_cli_ext::mcp::{McpScope, McpServer, parse_node_servers};
+use rust_cli_kernel_api::mcp::McpTransportConfig;
 use rust_cli_kernel_api::permission::{PermissionMode, RuleSource};
 use serde_json::{Map, Value};
 
@@ -250,6 +251,30 @@ pub(crate) fn mcp_layers(layers: &[Layer<'_>], warnings: &mut Vec<String>) -> Mc
         servers: servers.into_iter().map(|found| found.server).collect(),
         disabled: disabled.into_iter().map(|found| found.server).collect(),
         origins,
+    }
+}
+
+/// Fork: Node `normalizeProjectMcpServer` resolves a project stdio `cwd` against the declaring file's base directory
+/// (default `.`), so what runs is the declaration the workspace trust review showed and digested. Runs after the
+/// machine bindings: a server bound to another machine keeps its raw `cwd`, which that machine resolves.
+pub(crate) fn resolve_project_cwds(
+    servers: &mut [McpServer],
+    origins: &std::collections::BTreeMap<String, McpOrigin>,
+) {
+    for server in servers {
+        if server.scope != McpScope::Project || !server.machine.is_primary() {
+            continue;
+        }
+        let Some(origin) = origins.get(&server.name).filter(|origin| !origin.user) else {
+            continue;
+        };
+        if let McpTransportConfig::Stdio { cwd, .. } = &mut server.transport {
+            let base = super::mcp_trust::base_dir(&origin.path);
+            *cwd = Some(super::mcp_trust::absolute_or_resolved(
+                &base,
+                cwd.as_deref().unwrap_or("."),
+            ));
+        }
     }
 }
 

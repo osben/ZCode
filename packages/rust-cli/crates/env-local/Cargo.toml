@@ -36,6 +36,10 @@ tracing.workspace = true
 # MCP SSE 传输：`endpoint` 事件的相对地址按 SSE URL 解析（mcp/http.rs）。
 url.workspace = true
 
+# O_NOFOLLOW/ELOOP for writes that refuse symlinks (files.rs put_file).
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
 [dev-dependencies]
 # 共用的测试时钟（kernel-api 的 testing，F126）。
 rust-cli-kernel-api = { workspace = true, features = ["testing"] }

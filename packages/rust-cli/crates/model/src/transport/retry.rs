@@ -29,6 +29,14 @@ impl Connect {
         phase: Phase,
         tape: Option<Tape>,
     ) -> Result<(ModelNotice, Box<Self>, Duration), ModelError> {
+        let renew = verdict.class == Class::AuthRejected && self.endpoint.renewable;
+        // Fork (specs/fork-rust-chatgpt-plan.md rule 10): one renewal per request, like Node `AccountRequestRetry`.
+        // A token the Host just refreshed and the server still rejects will not get better; renewing again would only
+        // force more refreshes of the same account.
+        if renew && self.renewed {
+            end(tape, End::Failed(verdict.error.clone(), None));
+            return Err(verdict.error);
+        }
         let delay = match self.delay_for(&verdict, phase) {
             Ok(delay) => {
                 end(
@@ -42,7 +50,8 @@ impl Connect {
                 return Err(error);
             }
         };
-        if verdict.class == Class::AuthRejected && self.endpoint.renewable {
+        if renew {
+            self.renewed = true;
             // 每请求取的凭据被拒：带上被拒的端点再取一次（401 时刷新凭据再重试）。
             let renewed = self.route.endpoints.endpoint(EndpointQuery {
                 selection: &self.selection,

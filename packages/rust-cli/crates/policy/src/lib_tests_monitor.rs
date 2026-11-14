@@ -59,6 +59,7 @@ async fn guarded_asks_once_for_a_dangerous_monitor_command() {
         message: DANGER.to_owned(),
         suggestions: Vec::new(),
         once: true,
+        independent: false,
     };
     // allow 规则不盖过它。
     assert_eq!(

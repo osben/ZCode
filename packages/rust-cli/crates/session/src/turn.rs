@@ -40,6 +40,8 @@ pub(crate) fn output_speed(call: &ModelCall) -> Option<OutputSpeed> {
 #[derive(Debug)]
 pub(crate) struct MorePrompt {
     pub(crate) text: String,
+    /// Fork: the App input's intent; its quotes join `text` when the input is committed.
+    pub(crate) intent: Option<Box<rust_cli_kernel_api::input_intent::InputIntent>>,
     /// 在工具边界已跑过的 UserPromptSubmit 结果。
     pub(crate) screened: Option<Box<HookOutcome>>,
 }
@@ -53,6 +55,8 @@ pub(crate) enum TurnInput {
         screened: Option<Box<HookOutcome>>,
         /// 与它成批进这个回合的后续排队输入（修复线 L-A，query.md §4.3），按队列顺序。
         more: Vec<MorePrompt>,
+        /// Fork: the App input's intent (`text` is the typed text).
+        intent: Option<Box<rust_cli_kernel_api::input_intent::InputIntent>>,
     },
     /// 回合结束后还没并入的后台通知（命令与子代理，到达顺序）：连续的几条合成一个回合，每条一条
     /// meta user 消息、只调一次模型（docs/specs/rust-cli/query.md §5，通知合并）。
@@ -65,16 +69,76 @@ pub(crate) enum TurnInput {
     Content {
         command: CommandId,
         content: Vec<ContentBlock>,
+        /// Fork: the App input's intent (the text block is the typed text).
+        intent: Option<Box<rust_cli_kernel_api::input_intent::InputIntent>>,
     },
-    /// Fork: a queued manual compaction (`Command::SubmitWith` with `QueuedKind::Compact`).
-    Compact { command: CommandId },
+    /// Fork: a queued manual compaction (`Command::SubmitWith` with `QueuedKind::Compact`), or a typed
+    /// `/compact [instructions]` under [`crate::SessionDeps::typed_compact`].
+    Compact {
+        command: CommandId,
+        instructions: Option<String>,
+    },
     /// Fork (desktop App): a resumed goal's continuation (Node `goal-continuation`, model-only):
     /// `text` is the wrapped continuation prompt, a meta user message.
     GoalContinuation { text: String },
 }
 
+/// Node `parseCompactCommand` (`core/src/runtime/helpers/commands.ts`): `Some(instructions)` for a typed
+/// `/compact [instructions]` (an empty rest is none), `None` for any other text.
+fn parse_compact(text: &str) -> Option<Option<String>> {
+    let trimmed = text.trim();
+    if trimmed == "/compact" {
+        return Some(None);
+    }
+    let rest = trimmed.strip_prefix("/compact ")?.trim();
+    Some((!rest.is_empty()).then(|| rest.to_owned()))
+}
+
 impl Actor {
+    /// Fork: under [`crate::SessionDeps::typed_compact`] a typed `/compact` text runs the manual compaction where
+    /// Node parses it, at the turn start after queue admission (specs/fork-rust-agent-parity.md HK-UP-01 item 2).
+    fn typed_compact(&self, input: TurnInput) -> TurnInput {
+        if !self.deps.typed_compact {
+            return input;
+        }
+        match input {
+            // A batch with later inputs (only without `one_input_per_turn`) stays a model turn.
+            TurnInput::Human {
+                command,
+                text,
+                more,
+                ..
+            } if more.is_empty()
+                && let Some(instructions) = parse_compact(&text) =>
+            {
+                TurnInput::Compact {
+                    command,
+                    instructions,
+                }
+            }
+            input => input,
+        }
+    }
+
     pub(crate) async fn start_turn(&mut self, input: TurnInput) -> Result<(), StoreError> {
+        self.start_turn_with(input, Default::default()).await
+    }
+
+    /// Fork: [`Self::start_turn`] with the limits of the input that opens the turn (automation id, hidden tools,
+    /// specs/fork-rust-automations.md). Only a human input's turn takes them; Bash, a compaction, a goal continuation, a
+    /// cron fire and notices run without, so no other turn can inherit an input's limits.
+    pub(crate) async fn start_turn_with(
+        &mut self,
+        input: TurnInput,
+        limits: rust_cli_kernel_api::turn_limits::TurnLimits,
+    ) -> Result<(), StoreError> {
+        let input = self.typed_compact(input);
+        // The held SessionStart result is written first: Node's `session_persistence` phase runs before the
+        // turn's `TurnStarted`, the UserPromptSubmit hook and the input. Bash and compaction are not turns in Node
+        // (`turn.ts` returns before that phase for `/compact`), so they do not write it.
+        if !matches!(input, TurnInput::Bash { .. } | TurnInput::Compact { .. }) {
+            self.commit_pending_session_start().await?;
+        }
         let meta = |source: &str| UserOrigin::Meta {
             source: source.to_owned(),
         };
@@ -87,20 +151,34 @@ impl Actor {
                 text,
                 screened,
                 more,
+                intent,
             } => {
-                self.start_human_turn(command, vec![ContentBlock::Text { text }], screened, more);
+                let content = if text.is_empty() && intent.is_some() {
+                    // Quotes alone are an input (Node `session-flow.ts`); the block becomes its text.
+                    Vec::new()
+                } else {
+                    vec![ContentBlock::Text { text }]
+                };
+                self.start_human_turn(command, content, (screened, more), intent, limits);
                 return Ok(());
             }
-            TurnInput::Content { command, content } => {
-                self.start_human_turn(command, content, None, Vec::new());
+            TurnInput::Content {
+                command,
+                content,
+                intent,
+            } => {
+                self.start_human_turn(command, content, (None, Vec::new()), intent, limits);
                 return Ok(());
             }
             TurnInput::Bash { command, line } => {
                 self.start_bash_turn(command, line);
                 return Ok(());
             }
-            TurnInput::Compact { command } => {
-                if let Err(reason) = self.start_compaction(command, None) {
+            TurnInput::Compact {
+                command,
+                instructions,
+            } => {
+                if let Err(reason) = self.start_compaction(command, instructions) {
                     tracing::warn!(%reason, "queued compaction could not start");
                 }
                 return Ok(());
@@ -115,7 +193,9 @@ impl Actor {
                 let prompt = self.resolve_loop_prompt(fire.prompt).await;
                 (vec![(prompt, meta(crate::cron::CRON_SOURCE))], Vec::new())
             }
-            TurnInput::Notices(notices) => {
+            TurnInput::Notices(mut notices) => {
+                // Node `orderTaskNotificationsForParsing`: the batch's terminal notices come first.
+                crate::lane::order_for_parsing(&mut notices);
                 // 同伴消息开回合时用空闲的写法与自己的来源（cross-session.md §1.7）。
                 let texts = notices
                     .iter()
@@ -127,7 +207,17 @@ impl Actor {
         // Fork: the Node desktop agent stores a batch of task notifications as one user message with a
         // text block per notification (`persistBackgroundTaskNotificationBatch`); the model request is
         // the same either way. Mixed sources (a peer message among them) keep a message each.
-        let blocks: Vec<(Vec<ContentBlock>, UserOrigin)> = if self.deps.one_input_per_turn
+        // The run of each stall reminder, index-aligned with the notices (None for every other notice).
+        let stalls: Vec<Option<String>> = notices
+            .iter()
+            .map(|notice| match notice {
+                Waiting::Stall(stall) => {
+                    (!stall.execution_id.is_empty()).then(|| stall.execution_id.clone())
+                }
+                _ => None,
+            })
+            .collect();
+        let blocks: Vec<(Vec<ContentBlock>, UserOrigin, Option<String>)> = if self.deps.one_input_per_turn
             && texts.len() > 1
             && texts.iter().all(|(_, origin)| {
                 matches!(origin, UserOrigin::Meta { source } if source == crate::notices::NOTICE_SOURCE)
@@ -137,11 +227,20 @@ impl Actor {
                 .into_iter()
                 .map(|(text, _)| ContentBlock::Text { text })
                 .collect();
-            vec![(content, origin)]
+            // One block for the whole batch: its execution only when the batch is exactly one stall reminder.
+            let execution = if stalls.len() == 1 { stalls[0].clone() } else { None };
+            vec![(content, origin, execution)]
         } else {
             texts
                 .into_iter()
-                .map(|(text, origin)| (vec![ContentBlock::Text { text }], origin))
+                .enumerate()
+                .map(|(index, (text, origin))| {
+                    (
+                        vec![ContentBlock::Text { text }],
+                        origin,
+                        stalls.get(index).cloned().flatten(),
+                    )
+                })
                 .collect()
         };
         let before = fired
@@ -150,13 +249,19 @@ impl Actor {
             .unwrap_or_default();
         let users: Vec<Message> = before
             .into_iter()
-            .chain(blocks.into_iter().map(|(content, origin)| {
-                Message::User(UserMessage {
-                    id: self.deps.ids.message(),
-                    content,
-                    origin,
-                })
-            }))
+            .chain(
+                blocks
+                    .into_iter()
+                    .map(|(content, origin, stall_execution)| {
+                        Message::User(UserMessage {
+                            stall_execution,
+                            intent: None,
+                            id: self.deps.ids.message(),
+                            content,
+                            origin,
+                        })
+                    }),
+            )
             .collect();
         // 一个事务：几条通知一起成立；折叠说明与定时任务的 prompt 一起成立；同伴项“已并入”的事实与它们的 user 消息
         // 一起成立（cross-session.md §2.4，F139）。checkpoint 挂在这次运行最后一条 user 消息上（drive 的同一规则）。
@@ -184,7 +289,7 @@ impl Actor {
         let task = self.deps.spawner.spawn("query-run", async move {
             runner.run(request, sink, signal).await
         });
-        self.launch(opening, task, prompt, None);
+        self.launch(opening, task, prompt, None, Default::default());
         Ok(())
     }
 
@@ -205,15 +310,20 @@ impl Actor {
                 self.ask(request, reply, crate::actor::AskScope::Turn);
             }
             SinkRequest::CancelAsk { tool_use } => self.cancel_ask(&tool_use),
-            SinkRequest::ClaimSteering { reply } => {
-                let _ = reply.send(self.claim_steering());
+            SinkRequest::ClaimSteering {
+                prompts_only,
+                reply,
+            } => {
+                self.prune_stalls().await;
+                let _ = reply.send(self.claim_steering(prompts_only));
             }
             SinkRequest::SettleSteering {
                 fates,
                 notices,
                 reply,
             } => {
-                let _ = reply.send(self.settle_steering(fates, notices));
+                let settled = self.settle_steering(fates, notices).await;
+                let _ = reply.send(settled);
             }
             SinkRequest::Metered {
                 message,
@@ -238,6 +348,19 @@ impl Actor {
             SinkRequest::Messages { messages, reply } => {
                 let _ = reply.send(self.record(messages, Vec::new()).await);
             }
+            SinkRequest::Compaction {
+                messages,
+                session_start_context,
+                reply,
+            } => {
+                // A compaction whose SessionStart run gave a context replaces the held result, once the batch has
+                // committed (Node `discardPendingSessionStartContext` after `compactSessionStart.hasContext`).
+                let result = self.record(messages, Vec::new()).await;
+                if session_start_context && result.is_ok() {
+                    self.pending_session_start.clear();
+                }
+                let _ = reply.send(result);
+            }
             SinkRequest::CompactStarted(trigger) => crate::compact::compact_started(self, trigger),
             SinkRequest::CompactFailed(trigger, message) => {
                 self.log
@@ -258,6 +381,7 @@ impl Actor {
                 let _ = reply.send(self.run_view());
             }
             SinkRequest::Title(title) => self.retitle(title).await,
+            SinkRequest::ExternalTitle(title) => self.external_title(title).await,
             SinkRequest::SetWorkspace { root, reply } => {
                 let _ = reply.send(self.change_workspace(root).await);
             }
@@ -276,12 +400,19 @@ impl Actor {
 
     /// 会话现在的状态（[`SinkRequest::View`]）：判决用的模式（plan 开时是 plan）、计划模式的会话标志、工作目录、主模型与
     /// 目标，同一时刻的值。
-    fn run_view(&self) -> RunView {
+    pub(crate) fn run_view(&self) -> RunView {
         RunView {
+            base_mode: self.execution.mode,
             plan_flags: self.plan_flags,
             selection: Some(self.selection.clone()),
             // Fork (desktop App): the desktop goal is verified after the turn (goal_verify.rs), not by the stop hook.
             goal: self.goal.condition().filter(|_| !self.deps.desktop_goals),
+            execution_worktree: self.execution_worktree,
+            turn: self
+                .running
+                .as_ref()
+                .map(|running| running.limits.clone())
+                .unwrap_or_default(),
             ..RunView::new(self.mode(), self.meta.workspace.clone())
         }
     }
@@ -348,6 +479,7 @@ impl Actor {
         let outcome = match (running.failure, result) {
             (Some(error), _) => TurnOutcome::Failed {
                 message: error.to_string(),
+                code: None,
             },
             (None, Ok(Ok(QueryStop::Completed))) => TurnOutcome::Success,
             (None, Ok(Ok(QueryStop::Aborted))) => TurnOutcome::Interrupted,
@@ -355,15 +487,21 @@ impl Actor {
             (None, Ok(Ok(QueryStop::StopHookPrevented))) => TurnOutcome::StopHookPrevented,
             (None, Ok(Ok(QueryStop::MaxTurns))) => TurnOutcome::Failed {
                 message: "reached the maximum number of turns".to_owned(),
+                code: None,
             },
             (None, Ok(Ok(QueryStop::Blocked { message } | QueryStop::ApiError { message }))) => {
-                TurnOutcome::Failed { message }
+                TurnOutcome::Failed {
+                    message,
+                    code: None,
+                }
             }
             (None, Ok(Err(error))) => TurnOutcome::Failed {
                 message: error.to_string(),
+                code: error.code().map(str::to_owned),
             },
             (None, Err(error)) => TurnOutcome::Failed {
                 message: error.to_string(),
+                code: None,
             },
         };
         // Node `turn_usage`（usage.md §2.4）：只在这次运行的输入已经落库时写；压缩运行没有输入。用量行是观测，
@@ -443,8 +581,13 @@ impl Actor {
         if self.closing.is_some() || self.shutting_down {
             return;
         }
+        // Fork: a promoted input holds the foreground (`Command::ReserveForeground`); it starts its own turn.
+        if self.inbox.reserved() {
+            return;
+        }
         // 这次工作期间到达的本地命令记录先进对话，再开下一个回合（修复线 L-A，tui-manage.md §11.3）。
         self.flush_held_records().await;
+        self.prune_stalls().await;
         let (input, execution) = if let Some(next) = self.next_turn_input() {
             next
         } else if let Some(fire) = self.next_cron().await {
@@ -452,6 +595,11 @@ impl Actor {
         } else {
             return;
         };
+        // Fork: the item's turn limits (automation id, hidden tools) belong to the turn it opens.
+        let limits = execution
+            .as_ref()
+            .map(|execution| execution.limits.clone())
+            .unwrap_or_default();
         // Fork: the item's frozen state becomes the session's through the same facts as `SetModel` /
         // `SetMode` / `SetPlan`, so a cold open sees what the turn ran with.
         if let Some(execution) = execution
@@ -463,7 +611,8 @@ impl Actor {
         }
         // 提交失败时只记日志：排队输入已出队，前端从 QueueChanged 看到它消失；通知没有 ack，
         // 会再次送达。
-        if let Err(reason) = self.start_turn(input).await {
+        let started = self.start_turn_with(input, limits).await;
+        if let Err(reason) = started {
             tracing::warn!(%reason, "queued input could not start a turn");
         }
     }
@@ -477,33 +626,7 @@ pub(crate) fn kernel_event(
     turn: rust_cli_kernel_api::ids::TurnId,
     event: QueryEvent,
 ) -> KernelEvent {
-    match event {
-        QueryEvent::Delta {
-            message,
-            index,
-            delta,
-        } => KernelEvent::StreamDelta {
-            turn,
-            response: u32::try_from(message).unwrap_or(u32::MAX),
-            index,
-            delta,
-        },
-        QueryEvent::ToolStarted {
-            tool_use,
-            name,
-            input,
-        } => KernelEvent::ToolStarted {
-            tool_use,
-            name,
-            input,
-        },
-        QueryEvent::ToolProgress { tool_use, progress } => {
-            KernelEvent::ToolProgress { tool_use, progress }
-        }
-        QueryEvent::ToolFinished { tool_use, output } => KernelEvent::ToolDone { tool_use, output },
-        // 模型通知只供显示，不落库（stall-visibility.md §1）。
-        QueryEvent::ModelNotice { notice } => KernelEvent::ModelNotice { notice },
-    }
+    event.into_kernel_event(turn)
 }
 
 #[cfg(test)]

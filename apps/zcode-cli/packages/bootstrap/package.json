@@ -13,6 +13,10 @@
     "./v4-replay": {
       "types": "./dist/zcode-protocol-v4/replay.d.ts",
       "import": "./dist/zcode-protocol-v4/replay.js"
+    },
+    "./fork-rust-helper": {
+      "types": "./dist/fork-rust-helper/contract.d.ts",
+      "import": "./dist/fork-rust-helper/contract.js"
     }
   },
   "scripts": {
@@ -35,6 +39,7 @@
     "@zcode/acp-agent-runtime": "workspace:*",
     "@zcode/provider": "workspace:*",
     "@zcode/provider-node": "workspace:*",
+    "@zcode/session-control": "workspace:*",
     "@zcode/shared": "workspace:*",
     "@zcode/telemetry": "workspace:*",
     "diff": "^9.0.0",

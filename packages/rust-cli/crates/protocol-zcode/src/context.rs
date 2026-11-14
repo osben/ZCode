@@ -5,6 +5,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use rust_cli_kernel_api::clock::Clock;
+use rust_cli_kernel_api::mcp::{McpProcess, McpProcesses};
+use rust_cli_kernel_api::model::ModelPort;
 use rust_cli_kernel_api::provider::{CatalogModel, ModelDirectory};
 use rust_cli_protocol_core::connection::Peer;
 use serde_json::{Value, json};
@@ -29,6 +31,25 @@ pub struct Context {
     /// Fork: the storage root for per-session directories (session erase); set once by the
     /// app-server. Without it the erase removes the rows and skips the files.
     storage_root: std::sync::OnceLock<std::path::PathBuf>,
+    /// Fork: workspace trust from the App (`fork/workspace_trust.rs`); set once by the app-server.
+    workspace_admin: std::sync::OnceLock<Arc<dyn crate::fork::WorkspaceAdmin>>,
+    /// Fork: whether reverse requests wait for the Host's attach acknowledgement (specs/fork-rust-credential-cipher.md F1).
+    pub(crate) attach: crate::attach::HostAttach,
+    /// Fork: the Node helper that answers the JS-only method families; set once by the app-server when the Host
+    /// configured a helper command (specs/fork-rust-node-helper.md).
+    node_helper: std::sync::OnceLock<Arc<crate::fork::node_helper::NodeHelper>>,
+    /// Fork: the entry's model port for workspace model calls (`fork::workspace_model`); without it those methods
+    /// stay unported.
+    model_port: std::sync::OnceLock<Arc<dyn ModelPort>>,
+    /// Fork: the live stdio MCP server processes (`process/childProcesses`); set once by the app-server.
+    mcp_processes: std::sync::OnceLock<Arc<dyn McpProcesses>>,
+    /// Fork: the language-server host behind `lsp/*` (specs/fork-rust-lsp.md); without it they answer -32000.
+    language_servers: std::sync::OnceLock<Arc<dyn rust_cli_kernel_api::lsp::LanguageServers>>,
+    /// Fork: the ACP agents' session config (`setExternalAgentConfigOption` and the subscribe seed); set once by the
+    /// app-server when the ACP host runs. Without it the command answers `fault.command.capabilityUnsupported`.
+    external_agent_configs: std::sync::OnceLock<
+        Arc<dyn rust_cli_kernel_api::external_agent_config::ExternalAgentConfigs>,
+    >,
 }
 
 impl Context {
@@ -38,14 +59,100 @@ impl Context {
         let _ = self.models.set(models);
     }
 
+    /// Fork: the Node helper (set once; without it the forwarded families answer as before).
+    pub fn set_node_helper(&self, helper: Arc<crate::fork::node_helper::NodeHelper>) {
+        let _ = self.node_helper.set(helper);
+    }
+
+    /// Fork: the Node helper, when one is configured.
+    pub fn node_helper(&self) -> Option<&Arc<crate::fork::node_helper::NodeHelper>> {
+        self.node_helper.get()
+    }
+
     /// Fork: the storage root (Node `context.deps.storageRoot`).
     pub fn set_storage_root(&self, root: std::path::PathBuf) {
         let _ = self.storage_root.set(root);
     }
 
+    /// Fork: the workspace trust admin (Node's MCP list, MCP trust and hook trust grant).
+    pub fn set_workspace_admin(&self, admin: Arc<dyn crate::fork::WorkspaceAdmin>) {
+        let _ = self.workspace_admin.set(admin);
+    }
+
+    pub(crate) fn workspace_admin(&self) -> Option<Arc<dyn crate::fork::WorkspaceAdmin>> {
+        self.workspace_admin.get().cloned()
+    }
+
+    /// Fork: the Host promised an attach acknowledgement (`ZCODE_HOST_ATTACH_ACK`); reverse requests wait for it.
+    pub fn expect_host_attach(&self) {
+        self.attach.expect();
+    }
+
+    /// Fork: the Host's attach acknowledgement arrived.
+    pub(crate) fn host_attached(&self, credential_cipher: bool) {
+        self.attach.attached(credential_cipher);
+    }
+
+    /// Fork: waits until reverse requests may be sent. `None` when no acknowledgement was promised; otherwise whether
+    /// the Host answers credential cipher requests.
+    pub(crate) async fn host_ready(&self) -> Option<bool> {
+        self.attach.ready().await
+    }
+
+    /// Fork: the language-server host (the app-server sets it once at startup).
+    pub fn set_language_servers(&self, host: Arc<dyn rust_cli_kernel_api::lsp::LanguageServers>) {
+        let _ = self.language_servers.set(host);
+    }
+
+    /// Fork: the language-server host, when the entry point provided one.
+    pub(crate) fn language_servers(
+        &self,
+    ) -> Option<&Arc<dyn rust_cli_kernel_api::lsp::LanguageServers>> {
+        self.language_servers.get()
+    }
+
+    /// Fork: the ACP agents' session config (the app-server sets it once at startup).
+    pub fn set_external_agent_configs(
+        &self,
+        configs: Arc<dyn rust_cli_kernel_api::external_agent_config::ExternalAgentConfigs>,
+    ) {
+        let _ = self.external_agent_configs.set(configs);
+    }
+
+    /// Fork: the ACP agents' session config, when the entry point runs the ACP host.
+    pub(crate) fn external_agent_configs(
+        &self,
+    ) -> Option<&Arc<dyn rust_cli_kernel_api::external_agent_config::ExternalAgentConfigs>> {
+        self.external_agent_configs.get()
+    }
+
+    /// Fork: the model port the workspace model calls use (the app-server sets it once at startup).
+    pub fn set_model_port(&self, model: Arc<dyn ModelPort>) {
+        let _ = self.model_port.set(model);
+    }
+
+    /// Fork: the model port, when the entry point provided one and a model directory resolves selections.
+    pub(crate) fn model_port(&self) -> Option<Arc<dyn ModelPort>> {
+        self.models.get()?;
+        self.model_port.get().cloned()
+    }
+
     /// Fork: the storage root, when the entry point provided one.
     pub fn storage_root(&self) -> Option<&std::path::Path> {
         self.storage_root.get().map(std::path::PathBuf::as_path)
+    }
+
+    /// Fork: the source of `process/childProcesses` (the app-server's local MCP transport).
+    pub fn set_mcp_processes(&self, processes: Arc<dyn McpProcesses>) {
+        let _ = self.mcp_processes.set(processes);
+    }
+
+    /// Fork: the live stdio MCP server processes, empty without a source.
+    pub(crate) fn mcp_processes(&self) -> Vec<McpProcess> {
+        self.mcp_processes
+            .get()
+            .map(|source| source.processes())
+            .unwrap_or_default()
     }
 
     /// Fork: the selectable models, empty without a directory.
@@ -71,6 +178,13 @@ impl Context {
             prefix,
             models: std::sync::OnceLock::new(),
             storage_root: std::sync::OnceLock::new(),
+            workspace_admin: std::sync::OnceLock::new(),
+            attach: crate::attach::HostAttach::new(),
+            node_helper: std::sync::OnceLock::new(),
+            model_port: std::sync::OnceLock::new(),
+            mcp_processes: std::sync::OnceLock::new(),
+            language_servers: std::sync::OnceLock::new(),
+            external_agent_configs: std::sync::OnceLock::new(),
         }
     }
 
@@ -81,8 +195,21 @@ impl Context {
             .insert(session.to_owned(), workspace.to_owned());
     }
 
+    /// Fork: forgets a session registered only for one call (a workspace model call's requester).
+    pub(crate) fn unregister(&self, session: &str) {
+        self.sessions.lock_unpoisoned().remove(session);
+    }
+
     pub fn workspace_of(&self, session: &str) -> Option<String> {
         self.sessions.lock_unpoisoned().get(session).cloned()
+    }
+
+    /// The protocol `workspace` ref of an open session (`zcodeWorkspaceRefSchema`, a local workspace: its key is its
+    /// path).
+    pub fn workspace_ref(&self, session: &str) -> Option<serde_json::Value> {
+        self.workspace_of(session).map(
+            |workspace| serde_json::json!({"workspacePath": workspace, "workspaceKey": workspace}),
+        )
     }
 
     pub fn now(&self) -> u64 {

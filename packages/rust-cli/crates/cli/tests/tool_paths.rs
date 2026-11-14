@@ -135,6 +135,7 @@ impl Bench {
                 root: EnvPath::new(self.root.to_string_lossy()),
             },
             mode: PermissionMode::DontAsk,
+            base_mode: PermissionMode::DontAsk,
             machine: machine(env.clone()),
             controller: controller_services(env),
             artifacts: self.artifacts.clone(),

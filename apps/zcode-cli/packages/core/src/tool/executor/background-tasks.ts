@@ -1,6 +1,7 @@
 import {
   SessionEventType,
   traceContextToLogContext,
+  type BackgroundExecutionSnapshot,
   type ExecutionPort,
   type SessionEvent,
   type TraceContext,
@@ -289,6 +290,11 @@ export class BackgroundTaskTracker {
           taskId,
           taskStatus: snapshot.status,
           toolName: toolCall.name,
+          // 与 Bash 前台 `tool.bash.process.*` 日志同一组字段，便于用 pid 对回系统侧记录。
+          toolCallId: toolCall.id,
+          ...(toolCall.name === "Bash"
+            ? backgroundExecutionLogFields(snapshot as BackgroundExecutionSnapshot)
+            : {}),
         });
         updateRuntimeBackgroundTask(this.deps, toolCall, taskId, snapshot.status, snapshot);
         this.maybeEnqueueBackgroundTaskNotification(
@@ -935,4 +941,15 @@ function backgroundTaskKind(toolName: string): "bash" | "subagent" | "workflow" 
   // Both dwf entry points (CreateWorkflow / ResumeWorkflowRun) use "workflow": they continue the
   // same run lifecycle, so panel grouping and icon should not depend on which entry point was used.
   return isDynamicWorkflowRunDispatchToolName(toolName) ? "workflow" : "bash";
+}
+
+function backgroundExecutionLogFields(
+  execution: BackgroundExecutionSnapshot,
+): Record<string, unknown> {
+  return {
+    pid: execution.pid ?? execution.result?.pid,
+    exitCode: execution.result?.exitCode,
+    signal: execution.result?.signal,
+    durationMs: execution.result?.durationMs,
+  };
 }

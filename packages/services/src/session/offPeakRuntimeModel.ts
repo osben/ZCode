@@ -13,6 +13,10 @@ import { isOffPeakMockEnabled, startOffPeakMockGateway } from "./offPeakMockGate
 import type { ServiceLogger } from "../logger/serviceLogger.js";
 import { AccountRequestCredentialUnavailableError } from "../model-provider/accountProviderRequestAuthService.js";
 import type { IAccountRequestAuthService } from "../model-provider/accountRequestAuthService.js";
+import {
+  isSameOAuthAccountMaterial,
+  type OAuthAccountMaterial,
+} from "#src/oauth/repo/oauthCredentialRepo.js";
 
 /** Used only for deterministic configuration errors; the host reports these as permanent by type and must not classify them by error text. */
 export class OffPeakPermanentDispatchError extends Error {
@@ -56,13 +60,13 @@ export class OffPeakModelUnavailableError extends OffPeakPermanentDispatchError 
   }
 }
 
-const ZCODE_JWT_TOKEN_KEY = "zcodejwttoken";
-const ACTIVE_OAUTH_PROVIDER_KEY = "oauth:active_provider";
-
 export interface OffPeakCredentialSnapshot {
   jwt: string;
   codingPlanApiKey: string;
+  /** 同一主会话的业务 JWT，仅供使用双 JWT 契约的内部调用方。 */
+  codingPlanAuthorization: string;
   accountScope?: string;
+  zcodeUserId?: string;
   kind: OffPeakCodingPlanKind;
   providerFamily: "zai" | "bigmodel";
   providerId: string;
@@ -74,7 +78,8 @@ export interface OffPeakCredentialSnapshot {
 }
 
 interface OffPeakCredentialResolverDeps {
-  credentialService: { load(key: string): Promise<string | null | undefined> };
+  loadOAuthAccountMaterial(family: "zai" | "bigmodel"): Promise<OAuthAccountMaterial | null>;
+  getRegistryRevision(): number | null;
   accountRequestAuthService: IAccountRequestAuthService;
   resolveAccountProvider(): Promise<{
     readonly providerId: string;
@@ -145,6 +150,7 @@ export async function resolveOffPeakCredentials(
     return {
       jwt: "offpeak-mock-jwt",
       codingPlanApiKey: "offpeak-mock-key",
+      codingPlanAuthorization: "offpeak-mock-business-jwt",
       kind: "bigmodel-personal",
       providerFamily: "bigmodel",
       providerId: BUILTIN_MODEL_PROVIDER_IDS.bigmodelIndividualCodingPlan,
@@ -153,29 +159,15 @@ export async function resolveOffPeakCredentials(
 
   // Settings may change while resolving the account Provider. If the fingerprints differ, read again to avoid combining credentials from two generations.
   for (let attempt = 0; attempt < 2; attempt += 1) {
+    const registryRevision = deps.getRegistryRevision();
     const provider = await deps.resolveAccountProvider();
     const selection = resolveSelectedOffPeakCodingPlan(provider);
-    const activeProvider =
-      (await deps.credentialService.load(ACTIVE_OAUTH_PROVIDER_KEY))?.trim() ?? "";
-    if (activeProvider !== selection.providerFamily) {
-      // The zcode JWT is a global mirror of the current App login identity. Checking selectedKey alone could combine
-      // a ZAI JWT with a BigModel key (or vice versa) in one request, leaving the server to reject it only when issuing a ticket.
-      throw new OffPeakCodingPlanUnavailableError("provider_identity_mismatch");
-    }
-    const jwt = (await deps.credentialService.load(ZCODE_JWT_TOKEN_KEY))?.trim() ?? "";
-    if (!jwt) {
+    // Login channel is not the coding-plan family; the linked material must be provided once by the primary session owner.
+    const account = await deps.loadOAuthAccountMaterial(selection.providerFamily);
+    if (!account) throw new OffPeakCodingPlanUnavailableError("connection_unavailable");
+    const jwt = account.zcodeJwtToken?.trim();
+    if (!jwt || !account.accessToken.trim()) {
       throw new OffPeakCredentialsUnavailableError("jwt");
-    }
-    const [latestProvider, latestActiveProvider] = await Promise.all([
-      deps.resolveAccountProvider(),
-      deps.credentialService.load(ACTIVE_OAUTH_PROVIDER_KEY),
-    ]);
-    if (
-      createOffPeakSelectionFingerprint(provider) !==
-        createOffPeakSelectionFingerprint(latestProvider) ||
-      activeProvider !== latestActiveProvider?.trim()
-    ) {
-      continue;
     }
 
     if (
@@ -207,10 +199,22 @@ export async function resolveOffPeakCredentials(
     if (!codingPlanApiKey) {
       throw new OffPeakCredentialsUnavailableError("codingPlanApiKey");
     }
+    const latestProvider = await deps.resolveAccountProvider();
+    const latestAccount = await deps.loadOAuthAccountMaterial(selection.providerFamily);
+    // PAT 签发与当前连接解析都是异步步骤；最后的同步版本检查防止等待期间切换 Registry。
+    if (
+      createOffPeakSelectionFingerprint(provider) !==
+        createOffPeakSelectionFingerprint(latestProvider) ||
+      !isSameOAuthAccountMaterial(account, latestAccount) ||
+      deps.getRegistryRevision() !== registryRevision
+    )
+      continue;
     return {
       ...selection,
       jwt,
       codingPlanApiKey,
+      codingPlanAuthorization: account.accessToken.trim(),
+      zcodeUserId: account.zcodeUserId,
       ...(accountScope ? { accountScope } : {}),
       ...(provider.baseURL ? { providerBaseURL: provider.baseURL } : {}),
     };
@@ -295,7 +299,8 @@ export async function resolveOffPeakCodingPlanSupport(
  * (real model, using the user's own key, for development/demo only).
  */
 export async function resolveOffPeakMockUpstream(deps: {
-  credentialService: OffPeakCredentialResolverDeps["credentialService"];
+  loadOAuthAccountMaterial: OffPeakCredentialResolverDeps["loadOAuthAccountMaterial"];
+  getRegistryRevision: OffPeakCredentialResolverDeps["getRegistryRevision"];
   accountRequestAuthService: OffPeakCredentialResolverDeps["accountRequestAuthService"];
   resolveAccountProvider: OffPeakCredentialResolverDeps["resolveAccountProvider"];
   env?: NodeJS.ProcessEnv;

@@ -12,6 +12,8 @@ use super::*;
 struct Echo {
     peer: Peer,
     seen: Mutex<Vec<String>>,
+    /// Fork: the `control/*` notifications handled inline, in the order the reader applied them.
+    controls: Mutex<Vec<Value>>,
 }
 
 #[async_trait]
@@ -42,6 +44,14 @@ impl Service for Echo {
     async fn notification(&self, method: &str, _params: Value) {
         self.seen.lock_unpoisoned().push(method.to_owned());
     }
+
+    fn control(&self, method: &str, params: &Value) -> bool {
+        if method != "control/set" {
+            return false;
+        }
+        self.controls.lock_unpoisoned().push(params.clone());
+        true
+    }
 }
 
 struct Harness {
@@ -60,6 +70,7 @@ impl Harness {
         let service = Arc::new(Echo {
             peer: peer.clone(),
             seen: Mutex::new(Vec::new()),
+            controls: Mutex::new(Vec::new()),
         });
         let spawner = scope.spawner();
         drop(scope.spawner().spawn(
@@ -183,4 +194,57 @@ async fn lines_over_the_limit_are_dropped_and_reading_continues() {
         .send(r#"{"id":2,"method":"echo","params":"ok"}"#)
         .await;
     assert_eq!(harness.next().await, json!({"id": 2, "result": "ok"}));
+}
+
+/// Fork: control notifications are applied inline, in arrival order, and never reach `notification`
+/// (specs/fork-rust-network-capture.md, case 9).
+#[tokio::test]
+async fn control_notifications_are_applied_in_arrival_order_and_not_spawned() {
+    let mut harness = Harness::new(Options::default());
+    for index in 0..50 {
+        harness
+            .send(&format!(
+                r#"{{"method":"control/set","params":{{"n":{index}}}}}"#
+            ))
+            .await;
+    }
+    harness.send(r#"{"method":"other"}"#).await;
+    harness
+        .send(r#"{"id":1,"method":"echo","params":{}}"#)
+        .await;
+    harness.next().await;
+    let controls = harness.service.controls.lock_unpoisoned().clone();
+    let expected: Vec<Value> = (0..50).map(|index| json!({"n": index})).collect();
+    assert_eq!(controls, expected);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while harness.service.seen.lock_unpoisoned().is_empty() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        *harness.service.seen.lock_unpoisoned(),
+        vec!["other".to_owned()]
+    );
+}
+
+/// Fork: a control reaches the real service behind [`Deferred`] once it is installed; before that, nothing handles it
+/// and the reader passes it on as a notification, which waits for the service.
+#[tokio::test]
+async fn deferred_forwards_controls_once_the_service_is_installed() {
+    let scope = TaskScope::root("test", |_| {});
+    let (peer, _writer) = start(tokio::io::sink(), &scope.spawner(), Options::default());
+    let echo = Arc::new(Echo {
+        peer,
+        seen: Mutex::new(Vec::new()),
+        controls: Mutex::new(Vec::new()),
+    });
+    let (deferred, install) = Deferred::new();
+    let params = json!({"n": 1});
+    assert!(!deferred.control("control/set", &params));
+    install.install(echo.clone());
+    assert!(deferred.control("control/set", &params));
+    assert!(!deferred.control("other", &params));
+    assert_eq!(*echo.controls.lock_unpoisoned(), vec![params]);
 }

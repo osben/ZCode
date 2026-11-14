@@ -92,6 +92,23 @@ Support conditions:
 
 `openai-compatible`, `gateway` and `custom` currently do not project the WebSearch provider-native tool. Do not degrade it to an ordinary function tool, and do not restore the old BigModel Web Search REST API or the DuckDuckGo HTML fallback.
 
+### Search budget for dynamic-workflow subagents (2026-11-02)
+
+- The tool context may carry `webSearchBudget` (`WorkflowWebSearchBudgetPort`). Only the runtime of a
+  dynamic-workflow subagent injects it; the main session, `Agent` subagents and legacy `Workflow`
+  subagents have no such port and so no limit.
+- The handler calls `charge()` after validating model capability and before issuing the internal
+  request. When the port answers `exhausted`, the handler sends no request and returns a
+  `ToolHandlerFailure` (`WEB_SEARCH_BUDGET_EXHAUSTED_ERROR_CODE`) with the port's `message`: the
+  search budget for this task is used up, stop calling WebSearch, finish with what is known, and say in
+  the result that search was cut short.
+- Counting, limit and reset belong to the driver: 128 per ask by default, changeable to 0-1024 by the
+  persona's `budget.webSearch`; nudge and repair rounds share the count; the next ask resets it. Contract:
+  `packages/dynamic-workflow/docs/execution-engine.md` "Search budget" and
+  `docs/dynamic-workflow/authoring.md` "A subagent's search budget".
+- Tool schema, description, permissions and the tools segment bytes are unchanged. A rejected call still
+  produces tool lifecycle events, and `tool_usage` records an error.
+
 ## Registration, permission and execution
 
 - `WebSearch` is registered in `builtInTools`; the default main agent and the Explore agent may each expose it according to their own tool pool/allowlist.

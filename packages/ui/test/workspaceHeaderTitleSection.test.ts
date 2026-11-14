@@ -498,6 +498,12 @@ it.each([false, true])("头部读取项目错误/恢复事实（恢复=%s）", a
 const headerDirectory = vi.hoisted(() => ({ current: null as unknown }));
 vi.mock("@/project-sidebar/index.js", () => ({
   useOptionalProjectDirectory: () => headerDirectory.current,
+  useOptionalProjectSelectionDirectory: () => headerDirectory.current,
+}));
+// The Data Sync entry is offered only when a dialog opener is provided; this suite has no provider.
+vi.mock("@/data-sync/ui/DataSyncDialogProvider.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/data-sync/ui/DataSyncDialogProvider.js")>()),
+  useOpenDataSyncDialog: () => vi.fn(),
 }));
 
 it("远控 Header 从身份索引读取连接并从同一 Host 读取名称，连接换代和删除会更新", async () => {

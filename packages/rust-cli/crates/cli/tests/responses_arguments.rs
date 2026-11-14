@@ -121,6 +121,7 @@ fn endpoint(base_url: String) -> ModelEndpoint {
             ..ModelCapabilities::default()
         },
         renewable: false,
+        compress_body_over: None,
     }
 }
 
@@ -201,6 +202,7 @@ impl Sandbox {
                 selection: selection(),
                 mode: PermissionMode::BypassPermissions,
                 plan: false,
+                incognito: None,
             })
             .await
             .unwrap();

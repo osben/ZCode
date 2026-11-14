@@ -74,6 +74,7 @@ fn leveled_catalog() -> rust_cli_kernel_api::provider::ModelCatalog {
         context_window: 200_000,
         max_output_tokens: 32_000,
         connection: None,
+        host: None,
     };
     rust_cli_kernel_api::provider::ModelCatalog {
         revision: 1,

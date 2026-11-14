@@ -67,6 +67,22 @@ fn the_permission_mode_accepts_the_manual_alias() {
     assert_eq!(mode("yolo"), None);
 }
 
+/// Fork (specs/fork-rust-subagent-runtime-config.md rule 15): `injectAgentsMd` as Node's `optionalBoolean`: only
+/// `false` (any case, quoted or not) turns it off.
+#[test]
+fn inject_agents_md_is_off_only_for_false() {
+    let inject = |line: &str| {
+        let raw = format!("---\nname: x\ndescription: y\n{line}---\nbody");
+        parse(&raw, AgentSource::Project).unwrap().inject_agents_md
+    };
+    assert!(inject(""));
+    assert!(!inject("injectAgentsMd: false\n"));
+    assert!(!inject("injectAgentsMd: FALSE\n"));
+    assert!(!inject("injectAgentsMd: \"false\"\n"));
+    assert!(inject("injectAgentsMd: true\n"));
+    assert!(inject("injectAgentsMd: no\n"));
+}
+
 #[tokio::test]
 async fn loads_user_then_project_dirs_up_to_the_git_root() {
     let env = MemoryEnvironment::new(facts("/Users/dev/repo/pkg"))

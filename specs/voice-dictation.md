@@ -41,6 +41,7 @@ sequenceDiagram
 - `VoiceDictationSection` owns only display and settings edits; the service is authoritative for model readiness.
 - The voice hook mounts only when Desktop local voice input is enabled. Web and test composers without a `ServiceProvider` must render without mounting the voice hook.
 - Browser recording stays in the UI recorder; the Desktop Host owns inference. Web has no voice transcription service.
+- The composer has one mic: this dictation control. Upstream voice input (`packages/ui/src/voice-input`, ASR through zcode-server, needs a ZCode account) stays in the codebase, but the composer never enables its hook or renders its button, whether dictation is on or off (owner decision 5, `specs/upstream-sync-3.18.0.md`; test `v4ConversationComposerSingleMic`). With dictation off the composer shows no mic.
 
 ## Acceptance cases
 

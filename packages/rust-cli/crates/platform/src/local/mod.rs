@@ -9,14 +9,16 @@ pub(crate) mod cli_config;
 mod device;
 mod history;
 mod hook_trust;
+mod mcp_trust;
 pub mod plugin_inventory;
 mod settings;
 
 pub use cli_config::{
-    ConfigFile, ConfigWriteError, compact_at_text, mcp_enabled_text, read_cli_config,
+    ConfigFile, ConfigWriteError, compact_at_text, mcp_enabled_text, node_pretty, read_cli_config,
     write_compact_at, write_mcp_enabled, write_ui_locale, write_ui_theme,
 };
 pub use device::{DeviceMid, NewUuid};
 pub use history::{History, Recorder};
 pub use hook_trust::{HookTrustStore, TrustError, TrustLoad, TrustRecord};
+pub use mcp_trust::{McpTrustError, McpTrustLoad, McpTrustRecord, McpTrustStore, StillDeclared};
 pub use settings::Settings;

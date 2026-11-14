@@ -21,6 +21,7 @@ export interface OfficialPluginListingSeed {
 
 export const OFFICIAL_BROWSER_USE_PLUGIN_NAME = "browser-use";
 export const OFFICIAL_BROWSER_USE_PLUGIN_ID = `${OFFICIAL_BROWSER_USE_PLUGIN_NAME}@${ZCODE_OFFICIAL_PLUGIN_MARKETPLACE}`;
+export const OFFICIAL_VISUALIZE_PLUGIN_ID = `visualize@${ZCODE_OFFICIAL_PLUGIN_MARKETPLACE}`;
 /**
  * The node_repl host. Not a user-facing plugin: no skill, no listing, not in the market; its
  * sole job is carrying the `dist/mcp/server.js` runtime artifact shared by Browser Use and Computer Use.
@@ -53,6 +54,11 @@ export interface OfficialPluginDefinition {
    * Used only for product attribution and settings-page status display; at runtime the host identity remains.
    */
   hostMcpServerNames?: readonly string[];
+  /**
+   * 构建产物内嵌每次构建不同、但不改版本号的值时，指向构建脚本写出的身份文件。
+   * seed 把文件内容记入 marker，内容变化按版本变化处理。
+   */
+  buildIdentityPath?: string;
   name: string;
   /** Reject generating a partial official plugin cache when the filesystem/SEA seed is missing any entry. */
   requiredSeedPaths?: readonly string[];
@@ -66,6 +72,7 @@ const ZAI_AUTHOR = { name: "Z.ai", url: "https://z.ai" } as const;
 const OFFICIAL_PLUGIN_ASSETS_BASE_URL = "https://cdn-zcode.z.ai/zcode/official-plugin/assets";
 
 export const OFFICIAL_NODE_REPL_HOST_REQUIRED_SEED_PATHS = ["dist/mcp/server.js"] as const;
+const NODE_REPL_HOST_BUILD_IDENTITY_PATH = "dist/build-identity.json";
 
 /** Build artifacts of the document plugins' (documents / pdf / presentations / spreadsheets) viewer panel. */
 export const OFFICIAL_OFFICE_VIEWER_RUNTIME_PATHS = [
@@ -101,9 +108,31 @@ export const OFFICIAL_ZCODE_GUIDE_REQUIRED_SEED_PATHS = [
   "skills/zcode-configuration-guide/SKILL.md",
 ] as const;
 
+// design 是纯内容型插件（技能 + 设计资源 + SessionStart hook，无 MCP），技能正文按需读取 references/
+// 与 scripts/；hook 只注入一句指针，正文缺失时 hook 静默退出，会话里就再也触发不到技能。
+// 所以这里钉住入口、7 份规则文件、三个随包脚本和 hook，seed 缺任一项都拒绝生成残缺缓存。
+export const OFFICIAL_DESIGN_REQUIRED_SEED_PATHS = [
+  "skills/design/SKILL.md",
+  "skills/design/references/catalog.md",
+  "skills/design/references/check.md",
+  "skills/design/references/create.md",
+  "skills/design/references/design-system.md",
+  "skills/design/references/interact.md",
+  "skills/design/references/output.md",
+  "skills/design/references/redesign.md",
+  "skills/design/scripts/adapt-canvas.mjs",
+  "skills/design/scripts/design-lint.mjs",
+  "skills/design/scripts/design-tokens.mjs",
+  "skills/design/scripts/import-design-system.mjs",
+  "hooks/hooks.json",
+  "hooks/run-hook.cmd",
+  "hooks/design-rules",
+] as const;
+
 export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = [
   {
-    defaultEnabled: true,
+    // 交互视图默认关闭，避免默认注入固定上下文；旧开关由配置迁移关闭一次。
+    defaultEnabled: false,
     listing: {
       author: ZAI_AUTHOR,
       category: "productivity",
@@ -144,7 +173,7 @@ export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = 
       "../../visualize-plugin",
       "../../../visualize-plugin",
     ],
-    version: "0.1.1",
+    version: "0.1.2",
   },
   {
     // No listing: the host never enters the market or surfaces to users. It must always be
@@ -156,6 +185,8 @@ export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = 
     // start the Helper" — the seed host does neither. Whether tools enter the model tool pool is
     // decided by the two capability plugins' enablement, and the Helper starts only on first SDK call.
     defaultEnabled: true,
+    // server.js 内嵌 CUA Helper build id（每条 CI 流水线不同），由 scripts/build.mjs 同步写出。
+    buildIdentityPath: NODE_REPL_HOST_BUILD_IDENTITY_PATH,
     name: OFFICIAL_NODE_REPL_HOST_PLUGIN_NAME,
     requiredSeedPaths: OFFICIAL_NODE_REPL_HOST_REQUIRED_SEED_PATHS,
     rootCandidates: [
@@ -184,7 +215,7 @@ export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = 
       "../../android-emulator-plugin",
       "../../../android-emulator-plugin",
     ],
-    version: "0.1.0",
+    version: "0.1.1",
   },
   {
     // The manifest declares only the browser-use skill; the host node_repl MCP is injected
@@ -216,13 +247,12 @@ export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = 
   },
   ...(
     [
-      // Versions bump per plugin and swap in a new cache directory: from pdf 0.2.1 the panel has
-      // CJK font fallback; from 0.2.1 (pdf 0.2.2) the server is shared by all sessions in the
-      // workspace — the old cache's session-agnostic server cannot be reused.
-      ["documents", "docx", "Documents", "Word文档", "0.2.1"],
-      ["pdf", "pdf", "PDF", "PDF", "0.2.2"],
-      ["presentations", "pptx", "Presentations", "演示文档", "0.2.1"],
-      ["spreadsheets", "xlsx", "Spreadsheets", "电子表格", "0.2.1"],
+      // 版本按插件各自升，换新缓存目录：pdf 0.2.1 起面板带中日韩字体回退；0.2.1（pdf 0.2.2）起
+      // server 由工作区内各 session 共享，旧缓存的 server 不区分 session，不能沿用。
+      ["documents", "docx", "Documents", "Word文档", "0.2.2"],
+      ["pdf", "pdf", "PDF", "PDF", "0.2.3"],
+      ["presentations", "pptx", "Presentations", "演示文档", "0.2.2"],
+      ["spreadsheets", "xlsx", "Spreadsheets", "电子表格", "0.2.2"],
     ] as const
   ).map(
     ([name, skill, displayName, chineseName, version]): OfficialPluginDefinition => ({
@@ -421,17 +451,41 @@ export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = 
     version: "0.3.0",
   },
   {
-    // Product decision: computer use falls back to default-off and requires an explicit opt-in
-    // on the settings page. Hence no defaultEnabled here — computer-use carries an MCP server
-    // and system Helper dependencies, and default-on would inject the whole toolset and start
-    // the Helper on every new user's first launch.
-    // The old "defaultEnabled is for content-only plugins" rule is thereby fully restored.
-    // The decision expression is enabledPlugins[id] ?? defaultEnabled: users who once manually
-    // enabled it in settings already have an explicit true persisted and are unaffected by this
-    // default change. Reverting to default-on requires syncing
-    // packages/shared/src/plugin-marketplaces.ts (bootstrap unit tests mechanically compare the
-    // two), isZCodeCuaInternalFeatureEnabled (packaging layer defaults true), and the linked
-    // semantics of the input-box entry's hidden default.
+    // 设计工作流（HTML 设计稿、交互原型、HTML 演示稿）。纯内容型，默认关闭；用户可启用、可停用、不可卸载。
+    // 版本与 package.json / 两份 plugin.json / sea-official-plugin-assets.mjs 同步 bump。
+    listing: {
+      author: ZAI_AUTHOR,
+      category: "productivity",
+      displayName: "Design",
+      // 英文名与描述回退到 manifest（displayName / description）；这里只放 zh-CN 覆盖。
+      displayName_i18n: { "zh-CN": "设计" },
+      description_i18n: {
+        "zh-CN": "做网页设计稿、原型和演示稿；桌面端本地工作区可在内置浏览器里点选修改。",
+      },
+      examplePrompts: ["Design a landing page for a budgeting app", "Build an 8-page HTML deck"],
+      examplePrompts_i18n: {
+        "zh-CN": ["给记账 App 设计一个落地页", "做一份 8 页的 HTML 演示稿"],
+      },
+    },
+    name: "design",
+    requiredSeedPaths: OFFICIAL_DESIGN_REQUIRED_SEED_PATHS,
+    rootCandidates: [
+      "packages/design-plugin",
+      "../design-plugin",
+      "../../design-plugin",
+      "../../../design-plugin",
+    ],
+    version: "0.7.2",
+  },
+  {
+    // 产品决策：电脑控制回退为默认关闭，需用户在设置页显式开启。
+    // 因此这里不声明 defaultEnabled——computer-use 携带 MCP server 与系统 Helper 依赖，
+    // 默认开启意味着每个新用户首启即注入整套工具集并拉起 Helper。
+    // 「defaultEnabled 仅限内容型插件」的旧约定随之恢复完整。
+    // 判定式是 enabledPlugins[id] ?? defaultEnabled：曾在设置页手动开过的用户已落盘
+    // 显式 true，不受本次默认值变更影响。改回默认开启时，需同步
+    // packages/shared/src/plugin-marketplaces.ts 的名单（bootstrap 单测机械对照两者）、
+    // isZCodeCuaInternalFeatureEnabled（打包层默认 true）与输入框入口 hidden 默认值的联动语义。
     name: "computer-use",
     hostMcpServerNames: ["node_repl"],
     // The user-facing name is unified as "Computer Use". The package and producer workspace
@@ -498,6 +552,7 @@ export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = 
       "commands/site-deploy.md",
       "scripts/zcode-site.mjs",
       "scripts/stage.mjs",
+      "scripts/errors.mjs",
       "skills/site-deploy/SKILL.md",
       "skills/site-deploy/templates/static.sh",
       "skills/site-deploy/templates/static-server.mjs",
@@ -507,7 +562,7 @@ export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = 
       "dist/server.mjs",
       "dist/ui/panel.html",
     ],
-    version: "0.4.2",
+    version: "0.5.0",
   },
 ];
 
@@ -521,13 +576,6 @@ export const DEFAULT_ENABLED_OFFICIAL_PLUGIN_IDS: ReadonlySet<string> = new Set(
     (definition) => `${definition.name}@${ZCODE_OFFICIAL_PLUGIN_MARKETPLACE}`,
   ),
 );
-
-export function resolveOfficialPluginHostMcpServerNames(pluginId: string): string[] {
-  const definition = OFFICIAL_PLUGIN_DEFINITIONS.find(
-    (candidate) => `${candidate.name}@${ZCODE_OFFICIAL_PLUGIN_MARKETPLACE}` === pluginId,
-  );
-  return definition?.hostMcpServerNames ? [...definition.hostMcpServerNames] : [];
-}
 
 /**
  * MCP servers injected by the host CLI for official plugins (e.g. browser-use's `node_repl`)

@@ -100,6 +100,7 @@ fn loaded_sessions_round_trip_with_open_work() {
         title: String::new(),
         trace: TraceId::new("sess_1"),
         created_at_ms: 1,
+        incognito: None,
     };
     let loaded = LoadedSession {
         commands: Default::default(),
@@ -113,9 +114,12 @@ fn loaded_sessions_round_trip_with_open_work() {
         last_turn_failed: true,
         earlier: vec![assistant()],
         title_pending: true,
+        title_source: None,
+        permission_grant: Some("int_1".to_owned()),
         goal_target: None,
         goal_verifications: Vec::new(),
         message_models: Default::default(),
+        execution_worktree: false,
     };
     round_trip(&loaded);
     // 没有这些字段的旧结果也能读，读出来是空清单。
@@ -199,6 +203,7 @@ fn system_turns_carry_their_output_config() {
                 text: "# Environment".to_owned(),
             },
             cache_control: None,
+            meta: false,
         }],
         output_config: Some(TurnOutputConfig {
             effort: Some("medium".to_owned()),
@@ -347,6 +352,7 @@ fn provider_and_failover_types_round_trip() {
             context_window: 200_000,
             max_output_tokens: 32_000,
             connection: None,
+            host: None,
         }],
         default: Some(ModelSelection {
             reasoning: Some("high".to_owned()),

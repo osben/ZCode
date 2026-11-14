@@ -146,6 +146,7 @@ export class NodeSkillAdapter implements SkillPort {
       // the existing skill-import capability.
       return await scanSkillFilesUnderRoot(skillRoot.path, {
         followSymbolicLinks: skillRoot.source !== "plugin",
+        stopAtSkill: skillRoot.source === "plugin",
       });
     } catch (error) {
       if (isNotFoundError(error)) {

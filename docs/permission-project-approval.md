@@ -199,33 +199,36 @@ rule interpretation with the agent.
   only with the response, never into the option DOM.
 - After refresh/replay, scope copy and raw `permissionUpdates` match the first request.
 
-## Dialog "Full access" (Todo158)
+## Dialog "Allow, and switch to..." (Todo158)
 
 When the Agent supports the full-commit capability, ordinary main-task approvals offer in order:
-allow once, always allow this command, full access, deny; with `freeText` declared, feedback is the
+allow once, always allow this command, allow and switch mode, deny; with `freeText` declared, feedback is the
 fifth row. The command's project-allow keeps the Agent's prefix/exact rule; files, network, MCP and
 CUA keep their own scope copy.
 
 Command approval item 2's description is "项目范围内，后续相同命令不再询问" (in this project, the
-same command will not be asked again); item 3's is "授予 Agent 完全访问权限，不再确认。" (grant the
-Agent full access, no more confirmations). The copy does not change the authorization scope or Plan
-boundaries below.
+same command will not be asked again); item 3 is "允许，并切换为〔模式〕" (allow, and switch to [mode]). Entered from a pre-change confirmation it defaults to autonomous mode (guarded), and a separate menu can pick full access (yolo). Picking in the menu does not allow; submitting the row grants, and full access still needs the second risk confirmation. When the current execution permission is already autonomous mode, only the action of switching to full access is offered and no menu is shown. An old Agent that declares no new capability keeps the original full-access entry, with no promise that a new session inherits it. Icon and color are shared with the input box. The copy does not change the authorization scope or Plan boundaries below.
 
-Only the dialog's full-access action batch-switches the current task runtime, that task's Composer
-and all admitted-but-unexecuted queue items (including held/Guide) to `yolo`. Each item's
+Item 3 uses the same row layout as the other options: a number column, then on the right the action text, the mode menu and the note "新会话也会使用所选模式" ("new sessions of the same project also use the chosen mode"); the note has the same font size as the other options' notes and wraps to the next line, left-aligned with the action text, when the width is short. The whole row has one selected/hover background; clicking anywhere in the row outside the menu is the same as submitting the row; the mode menu opens on its own without submitting.
+
+Only the dialog's mode-grant action batch-switches the current task runtime, that task's Composer
+and all admitted-but-unexecuted queue items (including held/Guide) to the `guarded` or `yolo` the user submitted. Each item's
 `planEnabled` is preserved separately; other config, body, attachments, order and delivery are
 unchanged; existing Plan tool restrictions still apply. The ordinary Composer menu still edits only
-the draft. The current turn keeps executing; no new message is created and project
-permission/mode, ruleset and Composer Recent are untouched.
+the draft. The current turn keeps executing; no new message is created and Agent project
+permission/mode and ruleset are untouched. After the initiating end receives the receipt that the command actually completed the chosen mode grant, it updates only the current project's Composer Recent permission; a blank session newly created on the same end, same Host and same project inherits it at once with no message needed. Cancel, deny, a late answer and an old Agent with no grant proof never write it. Model, Plan, existing sessions and other projects keep their behavior; later accepted explicit submissions can still update the preference.
 
 ```text
-resolveInteraction(fullAccess) → session FIFO → registry + broker claim (Hook bows out)
+resolveInteraction(allowAndSwitchGuarded / fullAccess) → session FIFO → registry + broker claim (Hook bows out)
  → queue consumption barrier, pin target IDs → SQLite atomic execution / session_input / receipt
  → Runtime memory → SessionModeChanged (mode + permissionGrant + target IDs)
  → V4 config/queue projected in one pass → Composer consumes once per interactionId
  → current broker allow → current tool continues
 ```
 
+- The project-ownership query serves only the new-session preference. The answer is registered and sent first, the project query runs in parallel with the send, and the Agent can release without waiting for the query. Direct ACKs and the reconnect query share one settlement entry; Recent is written only after both the ownership and the actual grant receipt are determined. When the query fails or ownership was not obtained before refresh, no project is guessed.
+- When the same request has committed a permission but not finished publishing, choosing another permission does not authorize again. The Agent returns a reason code naming the original mode; the UI pins the retry target of that request and tells the user to click the original mode to retry, without submitting automatically. The visible approve action and the mode control are translated separately, and the accessible name is a complete localized sentence.
+- A new optional `modeSwitch`: `choose` for an ordinary main task, `fullAccessOnly` for a dangerous command in autonomous mode. The latter does not carry the old `fullAccessOption`, so an old client still has only the ordinary single-use options; an ordinary main task keeps the old entry for compatibility. A switch must use its own optionId and the actual grant receipt and must not be handled as a plain allow.
 - `fullAccessOption` is a standalone optional capability field; the original `options` list stays
   legacy-compatible; only the new UI merges it as the third item. Old UI ignores the field; old
   Agents do not declare the entry. The static response is deny — an unknown client cannot mistake
@@ -253,9 +256,7 @@ resolveInteraction(fullAccess) → session FIFO → registry + broker claim (Hoo
   markers cleared, and task recovery continues. Idempotent retries of the grant action strictly
   reject corrupted receipts and never re-authorize against the current queue.
 - The Composer persists processed grant IDs within the existing workspaceIdentity/session draft;
-  ordinary snapshots and edit-withdrawal cannot re-trigger an old grant. Withdrawing an edit also
-  restores each queue item's recorded mode, Plan, model and reasoning; fields missing on old items
-  keep the current draft. Scope switching does not modify other tasks; new submissions follow their
+  ordinary snapshots and queue edits cannot re-trigger an old grant. Queue edit is frozen in place ([Composer edit mode](ui/composer-edit-mode.md)): entering edit mode loads the queue item's recorded mode, Plan, model and reasoning into the toolbar (fields missing on old items keep the current draft), `editQueueItem` writes back in place after the user changes them, and leaving edit mode restores the original draft config. Scope switching does not modify other tasks; new submissions follow their
   own explicit config.
 - Desktop continuous and mobile replayable keep their delivery/reconnect contracts; process restart
   recovers execution state and grant markers; the queue keeps the existing cold-recovery discard

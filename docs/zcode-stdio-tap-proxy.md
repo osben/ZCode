@@ -32,3 +32,5 @@ jq 'select(.id == 7)' < <traffic-file>.ndjson
 
 Each record keeps `direction`, `raw`, `message`, `parseError`, `id`, `method`, `sessionId` and
 `inputId`. `raw` is the original stdio line; `message` is a structured copy when it parses as JSON.
+
+Parameters of the credential encrypt/decrypt request `interaction/requestCredentialCipher`, and the matching reverse reply, are hidden in both `raw` and `message`, keeping only communication metadata. The raw bytes forwarded to the peer are unchanged; plaintext credentials must not reach disk because of a development capture.

@@ -1,0 +1,205 @@
+[
+  {
+    "name": "CronCreate",
+    "description": "Create a persistent scheduled automation in the current workspace. It uses the host's real current clock for relative delayMinutes schedules, or a standard 5-field cron expression in the user's local timezone for absolute/recurring schedules, and survives app restarts. The prompt must describe the final scheduled work directly and must never ask the run to create, schedule, or configure another automation or call CronCreate.\n\nUsage:\n- Use this only when the user explicitly asks to schedule future automatic work.\n- Interpret cron in the user's local timezone using fields: minute hour day-of-month month day-of-week. Do not convert to UTC.\n- For any schedule expressed as a delay from now — 'in 3 minutes' sets delayMinutes=3, 'in 8 minutes' sets delayMinutes=8, 'in 2 hours' sets delayMinutes=120, 'later' — in any language — set delayMinutes to the total whole minutes, omit cron, set recurring=false, and omit maxRuns. The host anchors to its real current clock; never infer the current time or convert a relative delay into a cron or clock time yourself.\n- Use '*/20 * * * *' for every 20 minutes, '0 * * * *' for hourly, and '0 9 * * 1-5' for weekdays at 09:00.\n- For every N minutes/hours/days/weeks/months/years, always set intervalUnit (minute|hourly|daily|weekly|monthly|yearly) and interval together. interval must be an integer from 1 to 200, including values cron could express directly. Supply a legal 5-field compatible cron only for time-of-day/day/weekday/month slots; never put an out-of-range step in cron. Examples: every 20 minutes -> intervalUnit='minute', interval=20, cron='* * * * *'; every 31 hours at minute 49 -> intervalUnit='hourly', interval=31, cron='49 * * * *'; every 40 days at 09:00 -> intervalUnit='daily', interval=40, cron='0 9 * * *'. Omit intervalUnit/interval only for ordinary calendar cron schedules, such as weekdays at 09:00.\n- Pin minute, hour, day-of-month, and month in cron only for an absolute wall-clock date the user names outright, such as 'tomorrow at 9am' or 'on July 30 at 20:00'; set recurring=false and omit maxRuns (the default limit is 1). A relative one-shot such as 'in 8 minutes' or 'in 2 hours' must use delayMinutes instead, because a self-computed one-shot time that has just passed silently rolls a full year forward.\n- For exactly N scheduled runs, set recurring=false and maxRuns=N. recurring=true is indefinite and must not be combined with maxRuns.\n- Automations persist in the current workspace until the user deletes them. Finite automations become completed and retain their history; they are not session-only or auto-deleted.\n- Honor exact user-provided times without adding jitter or shifting the schedule.\n- Do not include workspace paths or identities in the input; the current session workspace is used.\n- Always set title and preserve the user's natural-language schedule phrase verbatim in it. The title may be concise, but must not omit timing such as 'every 20 minutes', 'every day at 9am', or 'every Friday'.\n- Write prompt as a complete instruction that can run later without relying on unstated conversation context.\n- Write the final work directly in prompt. Never ask the scheduled run to create, schedule, or configure another automation, and never ask it to call CronCreate.\n- If the user describes a condition under which the automation should stop, write that stop condition into prompt and tell the run to call CronPauseSelf once the condition is met. The run cannot edit or delete the automation itself.",
+    "searchHint": "schedule a recurring or one-shot prompt",
+    "readOnly": false,
+    "destructive": false,
+    "concurrentSafe": false,
+    "needsApproval": true,
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "cron": {
+          "description": "Standard 5-field cron expression in the user's local timezone: minute hour day-of-month month day-of-week. Use it only for an absolute named date/time or a recurring schedule; required unless delayMinutes is set. For any relative delay such as 'in 8 minutes' or 'in 2 hours' (in any language), omit cron and use delayMinutes instead — never convert a relative phrase into a fixed clock time or calendar date, because a just-passed one-shot time silently rolls a full year forward. Examples: '*/20 * * * *' means every 20 minutes, '0 * * * *' means hourly, and '0 9 * * 1-5' means weekdays at 09:00. Do not convert to UTC.",
+          "type": "string",
+          "minLength": 1
+        },
+        "delayMinutes": {
+          "description": "For any relative delay from now — 'in 3 minutes' (3), 'in 8 minutes' (8), 'in 2 hours' (120), 'later' — in any language — set the exact positive delay in whole minutes and omit cron. The host calculates the future local schedule from its real current clock, so never compute an absolute time or cron yourself. For an absolute named date/time or a recurring schedule, omit it (or set null) and provide cron.",
+          "oneOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 525600
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "prompt": {
+          "description": "Complete prompt to send at every scheduled fire. Include all instructions needed when the automation runs. Describe the final work directly; do not ask it to create or schedule another automation or call CronCreate.",
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "description": "Concise automation title that preserves the user's natural-language schedule phrase verbatim. For example, for 'remind me to drink water every 20 minutes', use 'Drink water every 20 minutes', not 'Drink water reminder'.",
+          "type": "string",
+          "minLength": 1
+        },
+        "recurring": {
+          "description": "true (default) repeats until paused or deleted. false creates a finite automation; without maxRuns it runs once.",
+          "type": "boolean"
+        },
+        "maxRuns": {
+          "description": "Maximum successful scheduled dispatch count. Use only with recurring=false; omit for a one-shot automation (defaults to 1).",
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "intervalUnit": {
+          "description": "Custom recurring interval unit for every N minutes/hours/days/weeks/months/years. Pair with interval (1-200) for every N-unit request, even if cron can express N; submit a legal compatible cron whose time/day slots are used by the scheduleRule. Omit both for ordinary calendar cron schedules.",
+          "type": "string",
+          "enum": [
+            "minute",
+            "hourly",
+            "daily",
+            "weekly",
+            "monthly",
+            "yearly"
+          ]
+        },
+        "interval": {
+          "description": "Integer interval from 1 to 200 paired with intervalUnit. The host carries the real interval via scheduleRule; the compatible cron is only a legal display expression. Must be set together with intervalUnit.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200
+        }
+      },
+      "required": [
+        "prompt",
+        "title"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "CronList",
+    "description": "List scheduled automations in the current workspace.",
+    "searchHint": "list active cron jobs",
+    "readOnly": true,
+    "destructive": false,
+    "concurrentSafe": true,
+    "needsApproval": false,
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "CronUpdate",
+    "description": "Update selected definition fields of an existing scheduled automation in the current workspace while preserving its id and run history.\n\nUsage:\n- Use CronList first when the automation id is not already known. Never guess an automation id.\n- Always pass title on every CronUpdate. Rewrite it so it describes the task after the update and keeps the user's natural-language schedule phrase consistent with cron; for example, changing every 5 minutes to every 6 minutes must also update the title.\n- Apart from the required synchronized title, only pass fields the user asked to change. Omitted fields preserve their existing values.\n- Interpret cron in the user's local timezone using five fields: minute hour day-of-month month day-of-week. Do not convert to UTC.\n- To create or change every N minutes/hours/days/weeks/months/years, pass intervalUnit and interval together for every N-unit schedule. interval must be an integer from 1 to 200 even when cron could express N. Also pass a legal compatible cron with only the time/day/weekday/month slot; for example, every 40 days at 09:00 uses intervalUnit='daily', interval=40, cron='0 9 * * *'. Omit the pair only when preserving or using an ordinary calendar cron schedule.\n- Use numeric maxRuns only with recurring=false. Setting recurring=true clears any old finite limit automatically; never combine recurring=true with a numeric maxRuns.\n- CronUpdate cannot change workspace, session binding, model, provider, mode, thought level, run count, history, or enabled state.\n- Do not simulate an update by deleting and recreating the automation.\n- After a successful update, reply with only a brief confirmation. Do not restate the automation fields in a fenced code block or simulate a text file because the UI renders the updated automation card.",
+    "searchHint": null,
+    "readOnly": false,
+    "destructive": false,
+    "concurrentSafe": false,
+    "needsApproval": true,
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Automation id returned by CronCreate or CronList",
+          "type": "string",
+          "minLength": 1
+        },
+        "cron": {
+          "description": "Replacement standard 5-field cron expression in the user's local timezone. Omit to preserve the existing schedule. Do not convert to UTC.",
+          "type": "string",
+          "minLength": 1
+        },
+        "prompt": {
+          "description": "Replacement prompt for future scheduled fires. Omit to preserve the existing prompt.",
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "description": "Required synchronized automation title describing the task after this update. Keep the user's natural-language schedule phrase consistent with cron (for example, changing every 5 minutes to every 6 minutes must also change the title), and update the title when the prompt meaning changes.",
+          "type": "string",
+          "minLength": 1
+        },
+        "recurring": {
+          "description": "Replacement recurrence mode. true repeats indefinitely and clears any old finite maxRuns limit; false is finite. Do not combine true with a numeric maxRuns.",
+          "type": "boolean"
+        },
+        "maxRuns": {
+          "description": "Replacement maximum successful scheduled dispatch count for recurring=false. null clears the existing limit and is valid only when recurring=true is included in the same update; when recurring=true is supplied without maxRuns, the service clears the old limit automatically.",
+          "oneOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "intervalUnit": {
+          "description": "Switch this automation to a long recurring interval whose step exceeds a cron field ceiling (hourly N>24, daily N>31, etc.). Pair with interval and submit a legal compatible cron (omit cron to keep the existing schedule's minute).",
+          "type": "string",
+          "enum": [
+            "minute",
+            "hourly",
+            "daily",
+            "weekly",
+            "monthly",
+            "yearly"
+          ]
+        },
+        "interval": {
+          "description": "Positive integer interval paired with intervalUnit. Must be set together with intervalUnit.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200
+        }
+      },
+      "required": [
+        "id",
+        "title"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "CronDelete",
+    "description": "Delete a scheduled automation from the current workspace by automation id.",
+    "searchHint": "cancel a scheduled cron job",
+    "readOnly": false,
+    "destructive": true,
+    "concurrentSafe": false,
+    "needsApproval": true,
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Automation id returned by CronCreate or CronList",
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "CronPauseSelf",
+    "description": "Pause the scheduled automation that triggered the current run so it stops running on schedule until the user resumes it. It only targets the automation of this run, takes no input, and cannot change the automation definition.\n\nUsage:\n- Call this only when the stop condition written in the automation prompt is met.\n- Do not call it to skip a single run; finish the run normally instead.\n- After pausing, briefly tell the user the automation was paused and why.",
+    "searchHint": "pause the automation that triggered this run",
+    "readOnly": false,
+    "destructive": false,
+    "concurrentSafe": false,
+    "needsApproval": false,
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    }
+  }
+]

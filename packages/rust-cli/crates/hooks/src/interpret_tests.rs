@@ -1,7 +1,7 @@
 //! 退出码语义与“外部”路径（spec §4.1、§4.3）。
 
 use super::*;
-use crate::result::Blocking;
+use crate::result::{Behavior, Blocking};
 
 fn command(stdout: &str, stderr: &str, exit: i32) -> Executed {
     Executed::Raw(Raw::Command {
@@ -16,22 +16,46 @@ fn exit_codes() {
     let ok = repl(command("  hello \n", "", 0), "c", "UserPromptSubmit");
     assert_eq!(ok.outcome, Outcome::Success);
     assert_eq!(ok.success_content.as_deref(), Some("hello"));
+    // PreToolUse: Node's synthetic deny, the reason is trimmed stderr (`createExitCodeBlockOutput`).
     let blocked = repl(command("", "  bad thing\n", 2), "guard.sh", "PreToolUse");
     assert_eq!(
         blocked.blocking,
         Some(Blocking {
-            error: "[guard.sh]:   bad thing\n".to_owned(),
+            error: "bad thing".to_owned(),
             command: "guard.sh".to_owned()
         })
     );
+    assert!(blocked.prevent && blocked.behavior == Some(Behavior::Deny));
+    assert_eq!(blocked.reason.as_deref(), Some("bad thing"));
     let silent = repl(command("", "", 2), "g", "PreToolUse");
-    assert_eq!(silent.blocking.unwrap().error, "[g]: No stderr output");
+    assert_eq!(silent.blocking.unwrap().error, "Hook blocked execution");
+    // Other events keep the `[command]: stderr` form.
+    let stop = repl(command("", "  bad thing\n", 2), "guard.sh", "Stop");
+    assert_eq!(stop.blocking.unwrap().error, "[guard.sh]:   bad thing\n");
     let other = repl(command("out", " oops \n", 1), "c", "PreToolUse");
     assert_eq!(other.outcome, Outcome::NonBlockingError);
     assert_eq!(
         other.error.as_deref(),
         Some("Failed with non-blocking status code: oops")
     );
+}
+
+/// Node `trimForPreview` is JS `trim()`: U+0085 (NEL) is kept and U+FEFF is removed. Rust's `char::is_whitespace`
+/// does the opposite on both (review of #424, finding A).
+#[test]
+fn permission_request_exit_two_preview_follows_js_trim() {
+    let nel = repl(
+        command("", "\u{85}not allowed\u{85}", 2),
+        "c",
+        "PermissionRequest",
+    );
+    assert_eq!(nel.blocking.unwrap().error, "\u{85}not allowed\u{85}");
+    let bom = repl(
+        command("", "\u{feff} not allowed \u{feff}", 2),
+        "c",
+        "PermissionRequest",
+    );
+    assert_eq!(bom.blocking.unwrap().error, "not allowed");
 }
 
 #[test]

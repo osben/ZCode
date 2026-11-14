@@ -27,6 +27,11 @@ fn classifies_stdout() {
         parse("{\"hookSpecificOutput\": {\"hookEventName\": \"Nope\"}}"),
         Parsed::Invalid(_)
     ));
+    // Node's PreToolUse schema has no `defer`: the output is a validation error, not a decision.
+    assert!(matches!(
+        parse("{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"defer\"}}"),
+        Parsed::Invalid(text) if text.contains("permissionDecision")
+    ));
     // 以 { 开头但不以 } 结尾：纯文本；多行空对象：纯文本；像 JSON 但不合法：校验错误。
     assert_eq!(parse("{ not json"), Parsed::Plain);
     assert_eq!(parse("{}\n{}"), Parsed::Plain);
@@ -154,4 +159,42 @@ fn event_specific_fields() {
     assert!(wrong.starts_with(
         "Hook returned incorrect event name: expected 'PreToolUse' but got 'Stop'. Full stdout: {"
     ));
+}
+
+/// #422 review P2-2: `continue: false` stops with `stopReason ?? reason` (Node `hooks/output.ts`) for every event but
+/// Stop.
+#[test]
+fn a_stop_without_stop_reason_uses_the_reason() {
+    let stop = json!({"continue": false, "reason": "not now"});
+    let result = process(&json(stop.clone()), "c", "PermissionRequest").unwrap();
+    assert!(result.prevent);
+    assert_eq!(result.stop_reason.as_deref(), Some("not now"));
+    let stop_event = process(&json(stop), "c", "Stop").unwrap();
+    assert_eq!(stop_event.stop_reason, None);
+}
+
+/// Node `hooks/output.ts` pushes `additionalContext` only when it is truthy, so an empty string is no context
+/// for any event: no attachment, and nothing for the compaction flag to see.
+#[test]
+fn an_empty_additional_context_is_no_context() {
+    let start = process(
+        &json(
+            json!({"hookSpecificOutput": {"hookEventName": "SessionStart",
+            "additionalContext": ""}}),
+        ),
+        "c",
+        "SessionStart",
+    )
+    .unwrap();
+    assert_eq!(start.additional_context, None);
+    let post = process(
+        &json(
+            json!({"hookSpecificOutput": {"hookEventName": "PostToolUse",
+            "additionalContext": ""}}),
+        ),
+        "c",
+        "PostToolUse",
+    )
+    .unwrap();
+    assert_eq!(post.additional_context, None);
 }

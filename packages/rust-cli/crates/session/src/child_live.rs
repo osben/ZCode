@@ -41,11 +41,16 @@ impl Mirror {
     pub(crate) fn running(&self) -> bool {
         self.turn.is_some()
     }
+
+    /// The mirrored run's turn while it runs (`SessionView::running_turn`).
+    pub(crate) fn turn(&self) -> Option<&TurnId> {
+        self.turn.as_ref()
+    }
 }
 
 /// The feed taken at the cold load shows a running child run.
 pub(crate) fn running(feed: Option<&ChildLiveFeed>) -> bool {
-    feed.is_some_and(|feed| matches!(feed.replay.first(), Some(ChildLive::Started)))
+    feed.is_some_and(|feed| matches!(feed.replay.first(), Some(ChildLive::Started { .. })))
 }
 
 /// The next mirrored event; `None` when the live stream ended (the receiver fell behind). Pending without a stream.
@@ -95,7 +100,7 @@ impl Actor {
 
     fn on_child_live(&mut self, event: ChildLive) {
         match event {
-            ChildLive::Started => {
+            ChildLive::Started { .. } => {
                 if self.mirror.turn.is_none() {
                     let turn = self.deps.ids.turn();
                     self.mirror.turn = Some(turn.clone());
@@ -172,7 +177,7 @@ impl Actor {
             self.finish_mirrored(TurnOutcome::Success);
             return;
         };
-        if !matches!(feed.replay.first(), Some(ChildLive::Started)) {
+        if !matches!(feed.replay.first(), Some(ChildLive::Started { .. })) {
             self.finish_mirrored(TurnOutcome::Success);
         }
         self.mirror.live = Some(Mutex::new(feed.live));

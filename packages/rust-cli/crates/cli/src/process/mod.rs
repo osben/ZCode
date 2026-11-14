@@ -15,10 +15,12 @@ pub(crate) mod time_zone;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use rust_cli_base::clock::SystemClock;
+use rust_cli_base::sync::LockUnpoisoned;
+use rust_cli_node_store::NodeStore;
 
 use crate::commands::args::{Invocation, Mode, parse, version_line};
 use crate::commands::executor::ExecutorCommand;
@@ -235,7 +237,25 @@ pub(crate) fn main(args: &[String]) -> ExitCode {
         Shutdown::Background => runtime.shutdown_background(),
         Shutdown::Timeout(limit) => runtime.shutdown_timeout(limit),
     }
+    release_presence();
     ExitCode::from(code)
+}
+
+/// Fork: the session stores whose runtime presence rows go when the process ends (Node `SqliteSessionStore.close()`,
+/// specs/fork-rust-agent-parity.md "Session runtime presence on the shared database").
+static PRESENCE_STORES: Mutex<Vec<Arc<NodeStore>>> = Mutex::new(Vec::new());
+
+/// Fork: releases `store`'s presence rows at process exit, after the async runtime shut down: Node settles its owned
+/// work before it closes the store, and here no session task is left to write once the rows are gone.
+pub(crate) fn release_presence_at_exit(store: Arc<NodeStore>) {
+    PRESENCE_STORES.lock_unpoisoned().push(store);
+}
+
+fn release_presence() {
+    let stores = std::mem::take(&mut *PRESENCE_STORES.lock_unpoisoned());
+    for store in stores {
+        store.release_presence_blocking();
+    }
 }
 
 /// `process.start` 的模式与（app-server 的）展示形态。

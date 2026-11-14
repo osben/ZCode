@@ -142,7 +142,12 @@ pub(crate) fn resolve(
             continue;
         };
         let config = &rule["config"];
-        let account_access = config["access"]["type"] == "zhipu-account";
+        // Fork: ChatGPT Plan accounts are account providers too (Node `resolver.ts`); their `entitled` comes from the
+        // per-account derivation (`crate::chatgpt::derive`), not from the zhipu overlay.
+        let account_access = matches!(
+            config["access"]["type"].as_str(),
+            Some("zhipu-account" | "chatgpt-account")
+        );
         let enabled = account_access || rule["enabled"] != false;
         let issues = provider_issues(config, *missing_template);
         let entitled = !account_access || config["access"]["entitled"] == true;

@@ -54,7 +54,7 @@
   `apps/zcode-cli/packages/core/tests/subagent-explore.test.ts` — assert the final child
   provider request (`messages.filter(role === "system")`), not runtime config or intermediate
   objects.
-- E2E: `packages/desktop/test/e2e/conversation-session/conversation-session-subagent-prompt-assembly.test.ts`
+- E2E: `packages/desktop/test/e2e/conversation-session/subagents/conversation-session-subagent-prompt-assembly.test.ts`
   (foreground Electron window, replay provider, child request evidence).
 - Main-prompt regression guards: `context-builder.test.ts`, `runtime-trace.test.ts`.
 

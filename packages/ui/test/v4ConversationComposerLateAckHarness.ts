@@ -167,6 +167,10 @@ export function installMinimalDom() {
     nodeType: 9,
     removeEventListener: () => {},
   } as unknown as Document & { defaultView?: unknown };
+  // The locale provider writes document.documentElement.lang on mount.
+  Object.assign(documentMock, {
+    documentElement: createMinimalElement(documentMock as unknown as Document, "html"),
+  });
   const windowMock = {
     addEventListener: target.addEventListener.bind(target),
     cancelAnimationFrame: () => {},
@@ -238,6 +242,17 @@ export interface LateAckHarness {
 
 export const replaceComposerDraftSpy = vi.fn();
 
+const mountedLateAckRoots: Root[] = [];
+
+/** Unmounts every composer rendered by renderLateAckComposer; a mounted composer keeps reacting to window events and editor props. */
+export function unmountLateAckComposers() {
+  for (const root of mountedLateAckRoots.splice(0)) {
+    act(() => {
+      root.unmount();
+    });
+  }
+}
+
 export function renderLateAckComposer(
   options: {
     worktree?: boolean;
@@ -247,6 +262,7 @@ export function renderLateAckComposer(
 ): LateAckHarness {
   const container = installMinimalDom();
   const root: Root = createRoot(container);
+  mountedLateAckRoots.push(root);
   const sessionActivated = vi.fn();
   let resolveReservation!: (sessionId: string) => void;
   const reservationAck = new Promise<string>((resolve) => {

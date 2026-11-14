@@ -30,6 +30,7 @@ pub fn tool_use_context() -> ToolUseContext {
             root: EnvPath::new("/Users/dev/work"),
         },
         mode: PermissionMode::Default,
+        base_mode: PermissionMode::Default,
         cancel: CancellationToken::new(),
         machine: unsupported_machine(),
         controller: unsupported_controller(),

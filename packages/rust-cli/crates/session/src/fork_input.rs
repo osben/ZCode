@@ -43,11 +43,39 @@ fn is_last_turn(messages: &[Message], input: &MessageId) -> bool {
         .is_some_and(|message| message.id() == input)
 }
 
+/// The position of `id` when it is a stored assistant reply (not the resume sentinel).
+fn reply_position(messages: &[Message], id: &MessageId) -> Option<usize> {
+    messages.iter().position(|message| {
+        message.id() == id
+            && matches!(message, Message::Assistant(assistant) if !assistant.is_resume_sentinel())
+    })
+}
+
+/// Where the running turn starts in `messages`: its opening user message (`Running::prompt`, a typed input or the
+/// last notification of a notification turn). Without a stored prompt (compaction, or a prompt not committed yet)
+/// the last selectable input stands in.
+fn running_turn_start(messages: &[Message], prompt: Option<&MessageId>) -> Option<usize> {
+    prompt
+        .and_then(|prompt| messages.iter().position(|message| message.id() == prompt))
+        .or_else(|| {
+            messages
+                .iter()
+                .rposition(|message| selectable(message).is_some())
+        })
+}
+
+/// While a turn runs, a reply at `at` is a completed turn when it precedes the running turn's opening message.
+fn completed_while_running(messages: &[Message], at: usize, prompt: Option<&MessageId>) -> bool {
+    running_turn_start(messages, prompt).is_some_and(|start| at < start)
+}
+
+const RUNNING: &str = "a turn is running; fork after it finishes";
+
 impl Actor {
     /// `ForkFromInput`：空闲时按内存里的活动历史算出终点，交给存储一次写完新会话（§6.5.2）。
     pub(crate) async fn fork_from_input(&self, input: MessageId) -> Ack {
         if self.busy() && !self.deps.fork_while_running {
-            return rejected("a turn is running; fork after it finishes");
+            return rejected(RUNNING);
         }
         let Some(through) = through(&self.messages, &input) else {
             return rejected(format!("{input} is not a message to fork from"));
@@ -55,8 +83,35 @@ impl Actor {
         // Fork (node_desktop): only a completed turn is a stable target while a turn runs; the running turn
         // is the last one in the active history, so its input has no later selectable input.
         if self.busy() && is_last_turn(&self.messages, &input) {
-            return rejected("a turn is running; fork after it finishes");
+            return rejected(RUNNING);
         }
+        self.copy_through(through).await
+    }
+
+    /// `ForkFromAssistant`: the copy ends at `assistant`. Only the projection's offer decides which reply the App
+    /// may fork from; here a running turn is refused: a reply from the running turn's opening message on belongs to
+    /// it, a reply before it is a completed turn (also when a notification opened the running turn).
+    pub(crate) async fn fork_from_assistant(&self, assistant: MessageId) -> Ack {
+        let Some(at) = reply_position(&self.messages, &assistant) else {
+            return rejected(format!("{assistant} is not a message to fork from"));
+        };
+        if self.busy() {
+            if !self.deps.fork_while_running {
+                return rejected(RUNNING);
+            }
+            let prompt = self
+                .running
+                .as_ref()
+                .and_then(|running| running.prompt.as_ref());
+            if !completed_while_running(&self.messages, at, prompt) {
+                return rejected(RUNNING);
+            }
+        }
+        self.copy_through(assistant).await
+    }
+
+    /// Writes the child session that carries the history through `through` (`SessionStore::fork`, files untouched).
+    async fn copy_through(&self, through: MessageId) -> Ack {
         let child = self.deps.ids.session();
         let fork = SessionFork {
             parent: self.meta.id.clone(),

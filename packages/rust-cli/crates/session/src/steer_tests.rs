@@ -37,6 +37,95 @@ async fn a_steering_input_joins_the_running_turn_and_a_queued_one_waits() {
     )));
 }
 
+/// Fork (Node `drainInlineGuideForNextRequest`): a steer pending when the reply has no tool calls joins the same turn
+/// after the reply, and the loop requests again; the turn finishes once, with no queued input left.
+#[tokio::test]
+async fn a_steer_joins_the_turn_after_a_reply_without_tools() {
+    let gate = Arc::new(Notify::new());
+    let fixture = fixture(
+        Arc::new(crate::test_support::GatedModel::new(gate.clone())),
+        true,
+    )
+    .await;
+    let mut events = fixture.session.subscribe(Some(0));
+    fixture.session.send(submit("c1", "first")).await;
+    fixture.session.send(steer("c2", "also b")).await;
+    assert_eq!(fixture.session.view().await.unwrap().queue.len(), 1);
+    gate.notify_one();
+    // The first reply ends without tool calls: the steer leaves the queue into this turn.
+    for _ in 0..200 {
+        if fixture.session.view().await.unwrap().queue.is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    assert!(fixture.session.view().await.unwrap().queue.is_empty());
+    gate.notify_one();
+    let finished = until_finished(&mut events, 1).await;
+    assert!(matches!(
+        finished.last(),
+        Some(KernelEvent::TurnFinished {
+            outcome: TurnOutcome::Success,
+            ..
+        })
+    ));
+    let view = fixture.session.view().await.unwrap();
+    assert!(view.queue.is_empty());
+    let kinds: Vec<&str> = view
+        .messages
+        .iter()
+        .map(|message| match message {
+            Message::User(_) => "user",
+            Message::Assistant(_) => "assistant",
+            Message::Attachment(attachment)
+                if rust_cli_kernel_api::hooks::queued_command::guided(attachment).is_some() =>
+            {
+                "guided"
+            }
+            Message::Attachment(_) => "attachment",
+            Message::System(_) => "system",
+        })
+        .filter(|kind| *kind != "attachment" && *kind != "system")
+        .collect();
+    assert_eq!(kinds, ["user", "assistant", "guided", "assistant"]);
+}
+
+/// Fork: a guided steer is a rewind target (Node edits a drained guide row): the conversation is
+/// cut right before it and the earlier part of the turn stays.
+#[tokio::test]
+async fn a_rewind_to_a_guided_steer_cuts_before_it() {
+    let scope = TaskScope::root("test", |_| {});
+    let (_store, _model, session) = asking_session(&scope).await;
+    let mut events = session.subscribe(Some(0));
+    session.send(submit("c1", "ask me")).await;
+    let interaction = asked(&mut events).await;
+    session.send(steer("c2", "also b")).await;
+    session.send(answer("c4", interaction)).await;
+    until_finished(&mut events, 1).await;
+    let messages = session.view().await.unwrap().messages;
+    let at = messages
+        .iter()
+        .position(|message| {
+            matches!(message, Message::Attachment(attachment)
+            if rust_cli_kernel_api::hooks::queued_command::guided(attachment).is_some())
+        })
+        .expect("a guided steer");
+    let guided = messages[at].id().clone();
+    assert!(session.rewind_preview(&guided).await.is_ok());
+    let rewind = CommandEnvelope {
+        id: CommandId::new("r1"),
+        command: Command::Rewind {
+            target: guided,
+            scope: rust_cli_kernel_api::session_api::RewindScope::Conversation,
+        },
+    };
+    let ack = session.send(rewind).await;
+    assert!(matches!(ack, Ack::Accepted { .. }), "{ack:?}");
+    let kept = session.view().await.unwrap().messages;
+    assert_eq!(kept.len(), at);
+    assert_eq!(kept[..], messages[..at]);
+}
+
 /// 斜杠命令不在工具边界并入（query.md §4）：后面的插话照常并入，
 /// 斜杠命令留到回合结束后作为独立回合。
 #[tokio::test]

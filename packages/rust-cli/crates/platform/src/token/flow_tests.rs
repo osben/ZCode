@@ -106,8 +106,10 @@ async fn zai_uses_the_stored_business_jwt_and_caches_a_project_token() {
     // 不补写来源（修复线 F50：以前照 Node 独立 CLI 写 `auth-source = oauth`）；项目位置按 App 的 profile id 存进
     // 凭据文件。
     let credentials = harness.credentials().await;
-    let source =
-        credentials.present("account-provider:account:zai-individual-coding-plan:auth-source");
+    let source = credentials
+        .present("account-provider:account:zai-individual-coding-plan:auth-source")
+        .await
+        .unwrap();
     assert!(source.is_none());
     let key = crate::token::location::storage_key(
         &server.url(),
@@ -115,7 +117,7 @@ async fn zai_uses_the_stored_business_jwt_and_caches_a_project_token() {
         "u-1",
         None,
     );
-    let saved = credentials.present(&key).unwrap();
+    let saved = credentials.present(&key).await.unwrap().unwrap();
     assert_eq!(
         saved.expose(),
         r#"{"organizationId":"org-1","projectId":"p-1","apiKeyId":"key-1"}"#
@@ -248,7 +250,15 @@ async fn a_missing_key_forgets_the_location_and_disabled_tokens_fail() {
         "u-1",
         None,
     );
-    assert!(harness.credentials().await.present(&key).is_none());
+    assert!(
+        harness
+            .credentials()
+            .await
+            .present(&key)
+            .await
+            .unwrap()
+            .is_none()
+    );
     // 位置重新解析，这次签发成功。
     assert_eq!(pat(&harness, ZAI_PLAN, None).await.unwrap(), "pat-1");
     assert_eq!(server.count("/api/biz/customer"), 2);

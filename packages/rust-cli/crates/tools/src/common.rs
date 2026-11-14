@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use rust_cli_kernel_api::env::{EnvError, EnvPath};
 use rust_cli_kernel_api::env_files::{FileStat, ListDir, PathStyle, StatFile};
+use rust_cli_kernel_api::lsp::CodeIntelligence;
 use rust_cli_kernel_api::orchestration::PermissionGate;
 use rust_cli_kernel_api::permission::PermissionDecision;
 use rust_cli_kernel_api::tool::{Tool, ToolError, ToolUseContext, Validation};
@@ -21,6 +22,8 @@ pub struct FileTools {
     pub(crate) gate: Arc<dyn PermissionGate>,
     /// Read 整读 PDF 前查模型能力用（tools-files.md §1.5，修复线 F24）；没有时按能读处理。
     pub(crate) model: Option<crate::web_fetch::SideModel>,
+    /// Fork: the language-server runtime (specs/fork-rust-lsp.md "Runtime"); only the app-server gives one.
+    pub(crate) code: Option<Arc<dyn CodeIntelligence>>,
 }
 
 impl FileTools {
@@ -29,7 +32,24 @@ impl FileTools {
             state,
             gate,
             model: None,
+            code: None,
         }
+    }
+
+    /// Fork: Read prewarms and Edit / Write publish their mutations to the language-server runtime.
+    #[must_use]
+    pub fn with_code_intelligence(mut self, code: Arc<dyn CodeIntelligence>) -> Self {
+        self.code = Some(code);
+        self
+    }
+
+    /// The runtime for this call: Node builds subagent runtimes without it, and it serves only the session's own
+    /// environment.
+    pub(crate) fn code_for(&self, context: &ToolUseContext) -> Option<&Arc<dyn CodeIntelligence>> {
+        if context.agent.is_some() || context.machine.name().remote().is_some() {
+            return None;
+        }
+        self.code.as_ref()
     }
 
     /// 模型端口与没有会话 owner 时的回退选择：Read 按会话当前模型的生效配置判断能否整读 PDF。
@@ -215,6 +235,33 @@ pub(crate) async fn stable_path(
         .ok_or_else(|| ToolError::Failed {
             message: texts::unstable_path(tool, field),
         })
+}
+
+/// The session's execution worktree is gone: every tool that runs in the workspace is refused (the pipeline, before
+/// validation), and Write and Edit check again when they write, so nothing recreates it as an ordinary directory
+/// (execution-worktree-missing-handling.md section 2; Node `getMissingExecutionWorktreeToolError`). Like Node, only
+/// a session that runs in an execution worktree is guarded: an ordinary session whose directory is gone keeps its
+/// tools (a Read of an absolute path still works). An error reading the root is left to the tool itself.
+pub(crate) async fn missing_workspace(context: &ToolUseContext) -> Option<String> {
+    let root = context.workspace.root.as_str();
+    match stat(context, root).await {
+        Ok(Some(found)) if found.kind == rust_cli_kernel_api::env_files::FileKind::Directory => {
+            None
+        }
+        // The worktree fact is asked only for a missing root, so the ordinary path costs one stat.
+        Ok(_) if in_execution_worktree(context).await => {
+            Some(crate::texts::workspace_missing(root))
+        }
+        Ok(_) | Err(_) => None,
+    }
+}
+
+async fn in_execution_worktree(context: &ToolUseContext) -> bool {
+    context
+        .session_ops
+        .view()
+        .await
+        .is_some_and(|view| view.execution_worktree)
 }
 
 pub(crate) async fn stat(

@@ -75,9 +75,15 @@ pub(crate) struct ChildSink {
     asks: Option<Asks>,
     /// 写进询问的子代理名字（agent 类型）。
     name: String,
+    /// Fork: the subagent behind this sink, fixed when the run starts (Node's subagent ask always carries
+    /// `payload.origin`). It is not looked up in `live` at ask time: an agent already gone from `live` would leave the
+    /// ask without origin, and the App would offer it a permission mode switch.
+    origin: Option<rust_cli_kernel_api::orchestration::AskOrigin>,
     record: Mutex<Record>,
     /// 子代理里的 Monitor 交给 agents（agents.md §5.3，工作线 F83）；没有时（测试）不支持。
     core: Option<Arc<crate::Core>>,
+    /// 这次运行的 execution（`Shown::execution`）：活动只记在它还是 agent 当前运行时。
+    execution: u64,
 }
 
 impl ChildSink {
@@ -100,9 +106,18 @@ impl ChildSink {
             parent,
             asks: None,
             name: String::new(),
+            origin: None,
             record: Mutex::default(),
             core: None,
+            execution: 0,
         }
+    }
+
+    /// The run this sink belongs to (`Shown::execution` when it started). Its events update the clock only while it is
+    /// still the agent's run.
+    pub(crate) fn with_execution(mut self, execution: u64) -> Self {
+        self.execution = execution;
+        self
     }
 
     /// 子代理里的 Monitor 经 agents 起转发任务（`spawn::drive` 给出）。
@@ -171,17 +186,19 @@ impl ChildSink {
 }
 
 impl ChildSink {
-    /// Fork: the subagent behind this sink, as an ask's origin.
-    fn origin(&self) -> Option<rust_cli_kernel_api::orchestration::AskOrigin> {
-        let agent = self.live.get(&self.agent)?;
-        Some(rust_cli_kernel_api::orchestration::AskOrigin {
-            agent: agent.agent.clone(),
-            agent_type: agent.definition.agent_type.clone(),
-            child_session: agent.child.clone(),
-            parent_session: agent.parent.clone(),
-            description: agent.description.clone(),
-            parent_tool_use: agent.tool_use.clone(),
-        })
+    /// Fork: fixes the subagent behind this sink as its asks' origin (`spawn::drive`, from the run's agent).
+    pub(crate) fn with_origin(self, agent: &crate::live::LiveAgent) -> Self {
+        Self {
+            origin: Some(rust_cli_kernel_api::orchestration::AskOrigin {
+                agent: agent.agent.clone(),
+                agent_type: agent.definition.agent_type.clone(),
+                child_session: agent.child.clone(),
+                parent_session: agent.parent.clone(),
+                description: agent.description.clone(),
+                parent_tool_use: agent.tool_use.clone(),
+            }),
+            ..self
+        }
     }
 }
 
@@ -189,18 +206,23 @@ impl ChildSink {
 struct Waiting<'a> {
     live: &'a Live,
     agent: &'a AgentId,
+    execution: u64,
 }
 
 impl<'a> Waiting<'a> {
-    fn start(live: &'a Live, agent: &'a AgentId) -> Self {
-        live.waiting(agent, true);
-        Self { live, agent }
+    fn start(live: &'a Live, agent: &'a AgentId, execution: u64) -> Self {
+        live.waiting(agent, execution, true);
+        Self {
+            live,
+            agent,
+            execution,
+        }
     }
 }
 
 impl Drop for Waiting<'_> {
     fn drop(&mut self) {
-        self.live.waiting(self.agent, false);
+        self.live.waiting(self.agent, self.execution, false);
     }
 }
 
@@ -231,6 +253,7 @@ impl Interactions for ChildSink {
                 asked_by: None,
                 machine,
                 once,
+                independent,
                 origin,
             } => InteractionRequest::Permission {
                 machine,
@@ -242,17 +265,18 @@ impl Interactions for ChildSink {
                 rule_seed,
                 asked_by: Some(self.name.clone()),
                 once,
+                independent,
                 origin,
             },
             other => other,
         };
         // Fork: the App shows a delegated ask with the subagent it came from (Node `payload.origin`).
-        let request = match self.origin() {
+        let request = match self.origin.clone() {
             Some(origin) => request.asked_from(origin),
             None => request,
         };
         // 等用户回答期间列表显示 ` · waiting`（tui-panels.md §1.1）；被取消时 guard 复原。
-        let _waiting = Waiting::start(&self.live, &self.agent);
+        let _waiting = Waiting::start(&self.live, &self.agent, self.execution);
         asker.ask(request).await
     }
 
@@ -285,6 +309,7 @@ impl SessionOps for ChildSink {
         };
         Some(RunView {
             selection,
+            execution_worktree: agent.execution_worktree,
             ..RunView::new(agent.mode, agent.workspace)
         })
     }
@@ -320,6 +345,13 @@ impl SessionOps for ChildSink {
             None => Err(OrchestrationError::Unsupported {
                 what: "changing the working directory from a background agent".to_owned(),
             }),
+        }
+    }
+
+    /// Fork: a foreground subagent's title freeze is its parent session's; a background one has no session title.
+    async fn freeze_title(&self, title: String) {
+        if let Some(parent) = &self.parent {
+            parent.ops.freeze_title(title).await;
         }
     }
 
@@ -382,6 +414,10 @@ impl RunSink for ChildSink {
         message: Option<Message>,
         metered: rust_cli_kernel_api::metering::Metered,
     ) -> Result<(), StoreError> {
+        // 模型请求完成是进展（stall.rs，Node `ModelComplete`）。
+        if matches!(metered, rust_cli_kernel_api::metering::Metered::Model(_)) {
+            self.live.progress(&self.agent, self.execution);
+        }
         let speed = match &metered {
             rust_cli_kernel_api::metering::Metered::Model(call) => matches!(
                 call.source,
@@ -398,10 +434,39 @@ impl RunSink for ChildSink {
         }
     }
 
+    async fn request_started(&self) {
+        self.live.progress(&self.agent, self.execution);
+    }
+
+    async fn tool_scheduled(
+        &self,
+        tool_use: &rust_cli_kernel_api::ids::ToolUseId,
+        name: &str,
+        input: &serde_json::Value,
+    ) {
+        self.live
+            .tool_scheduled(&self.agent, self.execution, tool_use, name, input);
+    }
+
     async fn emit(&self, event: QueryEvent) -> bool {
         // `ToolFinished` 先于工具结果的提交到达（同一个任务里按顺序调用）：记下 checkpoint 与子代理关联。
         if let QueryEvent::ToolFinished { tool_use, output } = &event {
             self.record().ledger.tool_finished(tool_use, output);
+        }
+        // 无进展提醒的进展：工具调用开始与结束（stall.rs，Node `ToolCallStarted` / `ToolCallResult`）。
+        match &event {
+            QueryEvent::ToolStarted {
+                tool_use,
+                name,
+                input,
+            } => self
+                .live
+                .tool_started(&self.agent, self.execution, tool_use, name, input),
+            QueryEvent::ToolFinished { tool_use, .. } => {
+                self.live
+                    .tool_finished(&self.agent, self.execution, tool_use)
+            }
+            _ => {}
         }
         // 列表行的当前活动（前台与后台都记，L35，stall-visibility.md §4.3）。
         if let Some(doing) = Doing::after(&event) {
@@ -424,6 +489,15 @@ impl RunSink for ChildSink {
         Ok(())
     }
 
+    /// 子代理没有待写的 SessionStart 结果，压缩的标志不用。
+    async fn commit_compaction(
+        &self,
+        messages: Vec<Message>,
+        _session_start_context: bool,
+    ) -> Result<(), StoreError> {
+        self.commit_messages(messages).await
+    }
+
     /// 子代理里的压缩不显示进度。
     async fn compact_started(&self, _trigger: rust_cli_kernel_api::message::CompactTrigger) {}
 
@@ -444,7 +518,10 @@ impl RunSink for ChildSink {
             .into_iter()
             .map(|notice| rust_cli_prompts::agents::notification_wrap(&notice.envelope))
             .collect();
-        Absorbed::ordered(steered.into_iter().map(Steered::plain).collect(), notices)
+        Absorbed::ordered(
+            steered.into_iter().map(Steered::coordinator).collect(),
+            notices,
+        )
     }
 
     /// 子代理没有目标（goal.md §4）：不提交。

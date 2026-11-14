@@ -14,8 +14,8 @@ use rust_cli_base::account::Family;
 use rust_cli_base::secret::RedactedString;
 use rust_cli_kernel_api::model::{ModelConnection, ModelError};
 
-use crate::account::{self, OAuthLogin, RequestAuth, profile_id};
-use crate::credentials::{CredentialStore, Credentials};
+use crate::account::{self, OAuthLogin, RequestAuth, RequestError, profile_id};
+use crate::credentials::{CredentialError, CredentialStore, Credentials};
 use crate::token::{ProjectTokens, TeamProject, TokenError, TokenRequest, fingerprint};
 
 /// 记下的“令牌指纹 → 账号范围”的条数上限（令牌每小时级才换一次）。
@@ -77,9 +77,11 @@ impl AccountAuth {
                 .await;
         }
         let credentials = self.credentials.read().await.map_err(read)?;
-        let auth = match account::request_auth(&credentials, provider, family, mode) {
+        let auth = match account::request_auth(&credentials, provider, family, mode).await {
             Ok(auth) => auth,
-            Err(error) => {
+            // 凭据读不到（存储不可用、解不开）不是登录失效：令牌与文件都不动（specs/fork-rust-credential-cipher.md）。
+            Err(RequestError::Unreadable(error)) => return Err(self.unreadable(error)),
+            Err(RequestError::Login(error)) => {
                 // 登录状态没了：在途与缓存的项目令牌都不能再交出。
                 self.tokens.clear();
                 return Err(error);
@@ -116,9 +118,10 @@ impl AccountAuth {
             .map_err(authentication)?;
         // 换取期间凭据变了（退出、换账号）：迟到的令牌不能交给新登录态（App 换证前后核对范围）。
         let current = self.credentials.read().await.map_err(read)?;
-        let after = match account::request_auth(&current, provider, family.as_str(), mode) {
+        let after = match account::request_auth(&current, provider, family.as_str(), mode).await {
             Ok(RequestAuth::OAuth(login)) => Some(login),
-            Ok(RequestAuth::Manual(_)) | Err(_) => None,
+            Ok(RequestAuth::Manual(_)) | Err(RequestError::Login(_)) => None,
+            Err(RequestError::Unreadable(error)) => return Err(self.unreadable(error)),
         };
         let unchanged = after.as_ref().is_some_and(|login| {
             login.identity == before.identity && individual_scope(family, login) == scope
@@ -192,7 +195,20 @@ impl AccountAuth {
                 .map_err(|error| ModelError::Authentication {
                     message: error.to_string(),
                 })?;
-        Ok(TeamAccess::read(&credentials, family, team))
+        TeamAccess::read(&credentials, family, team)
+            .await
+            .map_err(|error| self.unreadable(error))
+    }
+
+    /// 凭据存储不可用：可见的错误说明是“凭据读不到”，不是“未登录”；只记一次日志（静态原因）。
+    fn unreadable(&self, error: CredentialError) -> ModelError {
+        self.credentials.note_error(&error);
+        ModelError::Authentication {
+            message: format!(
+                "ZCode credentials could not be read ({}); the sign-in state was kept",
+                crate::credentials::unreadable_reason(&error)
+            ),
+        }
     }
 
     fn scope_of(&self, print: &str) -> Option<String> {
@@ -224,13 +240,24 @@ struct TeamAccess {
 }
 
 impl TeamAccess {
-    fn read(credentials: &Credentials, family: Family, team: &ModelConnection) -> Option<Self> {
-        let identity = profile_id(credentials, family)?;
-        let token = credentials.present(account::oauth_key(family.as_str()))?;
-        let jwt = credentials.present(account::ZCODE_JWT_KEY);
+    async fn read(
+        credentials: &Credentials,
+        family: Family,
+        team: &ModelConnection,
+    ) -> Result<Option<Self>, CredentialError> {
+        let Some(identity) = profile_id(credentials, family).await? else {
+            return Ok(None);
+        };
+        let Some(token) = credentials
+            .present(account::oauth_key(family.as_str()))
+            .await?
+        else {
+            return Ok(None);
+        };
+        let jwt = credentials.present(account::ZCODE_JWT_KEY).await?;
         // BigModel /api/biz 只接受登录 access token，不能用旧版本误存的 ZCode JWT（App 相同）。
         if family == Family::Bigmodel && jwt.as_ref() == Some(&token) {
-            return None;
+            return Ok(None);
         }
         let project = serde_json::json!([team.organization_id, team.project_id, team.product_id]);
         let scope = app_scope(
@@ -240,7 +267,7 @@ impl TeamAccess {
             &token,
             jwt.as_ref(),
         );
-        Some(Self {
+        Ok(Some(Self {
             identity,
             token,
             team: TeamProject {
@@ -248,7 +275,7 @@ impl TeamAccess {
                 project_id: team.project_id.clone(),
             },
             scope,
-        })
+        }))
     }
 }
 

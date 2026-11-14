@@ -176,6 +176,7 @@ mod guarded_hooks {
                 selection: selection(),
                 mode: PermissionMode::Guarded,
                 plan: false,
+                incognito: None,
             })
             .await
             .unwrap();

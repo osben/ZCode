@@ -36,11 +36,9 @@ export function GetWorkflowRunToolCallBlock(context: ToolCallBlockRenderContext)
     () =>
       run ? (
         <span className="inline-flex min-w-0 items-center gap-2">
-          <span aria-hidden>·</span>
           <span className="min-w-0 truncate">
             {run.label ?? intl.formatMessage({ id: "chat.toolCall.workflow.fallbackName" })}
           </span>
-          <span aria-hidden>·</span>
           {/*
             When a summary exists, let it occupy the collapsed row: “Stage 2 of 4, 5 steps settled, 2 running”
             answers more than “5/7 steps.” Let CSS (truncate) handle clipping instead of cutting characters here;

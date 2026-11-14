@@ -116,6 +116,7 @@ fn request(
     let question = ApiContent {
         block: ContentBlock::Text { text: user },
         cache_control: ephemeral(),
+        meta: false,
     };
     match messages.last_mut() {
         Some(last) if last.role == ApiRole::User => last.content.push(question),

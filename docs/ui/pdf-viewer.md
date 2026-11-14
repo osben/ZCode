@@ -9,6 +9,7 @@ editing or annotation. PDF data is supplied by the caller.
 - The pdf.js worker is imported via Vite `?url` from `pdfjs-dist/build/pdf.worker.min.mjs` and
   `GlobalWorkerOptions.workerSrc` is set once at module load; the `?url` type declaration comes from
   `packages/ui/src/assets.d.ts`.
+- Desktop uses the default pdf.js build. The Web build aliases the `pdfjs-dist` main entry and the worker path above to the same-version `pdfjs-dist/legacy/build/` in `packages/web/vite.config.ts`, so old browsers get the runtime APIs pdf.js needs on both the main thread and the worker; component source does not know about the switch. Reason and scope: `docs/web-remote-control/web-browser-support.md`.
 - The Vite builds of Desktop and Web must both publish `pdfjs-dist/cmaps` under `pdfjs/cmaps/` at the
   current build base. `PdfViewer` uses one stable module-level options set for all sources (whole file and
   range), passing `cMapUrl` and `cMapPacked: true`; otherwise CJK PDFs that use predefined CMaps such as

@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use rust_cli_env_local::{LocalEnvironment, LocalMcpTransport};
+use rust_cli_env_local::LocalEnvironment;
 use rust_cli_env_remote::RemoteEnvironment;
 use rust_cli_exec_client::{ClientOptions, ExecClient};
 use rust_cli_exec_transport::stdio::{ChildCommand, StdioConnector};
@@ -22,7 +22,7 @@ use crate::commands::executor_run::this_executable;
 pub(crate) async fn environments(
     process: &crate::process::facts::ProcessFacts,
     env: Arc<LocalEnvironment>,
-    mcp: Arc<LocalMcpTransport>,
+    mcp: Arc<dyn rust_cli_kernel_api::mcp::McpTransport>,
     find_and_grep: bool,
 ) -> Result<Arc<dyn EnvironmentRegistry>> {
     let command = ChildCommand {

@@ -39,6 +39,38 @@ describe("Bash command permission rule policy", () => {
     );
   });
 
+  it.each(["cmd", "legacy-shell"] as const)(
+    "only suggests and accepts exact command grants for %s",
+    (dialect) => {
+      const command = "npm run test # & python script.py";
+      const policy = createBashPermissionRulePolicy(command, {
+        bashShellSelection: { dialect, source: "legacy-fallback", display: { name: dialect } },
+      });
+      expect(policy.suggestedPermissionUpdates).toEqual([
+        {
+          behavior: "allow",
+          type: "addRules",
+          rules: [{ toolName: "Bash", ruleContent: command }],
+        },
+      ]);
+      for (const ruleContent of ["npm run:*", "npm *", "npm run test"]) {
+        expect(policy.evaluateRules("allow", [{ toolName: "Bash", ruleContent }])).toBe(false);
+      }
+      expect(policy.evaluateRules("allow", [{ toolName: "Bash", ruleContent: command }])).toBe(
+        true,
+      );
+      expect(policy.evaluateRules("allow", [{ toolName: "Bash" }])).toBe(true);
+      for (const behavior of ["deny", "ask"] as const) {
+        expect(policy.evaluateRules(behavior, [{ toolName: "Bash", ruleContent: command }])).toBe(
+          true,
+        );
+        expect(
+          policy.evaluateRules(behavior, [{ toolName: "Bash", ruleContent: "npm run:*" }]),
+        ).toBe(true);
+      }
+    },
+  );
+
   it.each([
     ["pnpm run lint --fix", "pnpm run lint:*"],
     ["pnpm --dir /tmp/project run lint --fix", "pnpm run lint:*"],

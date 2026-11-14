@@ -40,6 +40,7 @@ fn hook_event_round_trips_and_old_payloads_get_defaults() {
                 "anthropic".to_owned(),
                 rust_cli_base::models::GLM_5_3.to_owned(),
             )),
+            session_mode: Some(PermissionMode::Plan),
         },
         ..HookEvent::new(
             HookEventName::Stop,
@@ -85,6 +86,8 @@ fn hook_outcome_round_trips_and_old_outcomes_get_defaults() {
         watch_paths: vec!["/w/a".to_owned()],
         custom_instructions: Some("focus".to_owned()),
         retry: true,
+        invocation: Some("inv_1".to_owned()),
+        runs: Vec::new(),
     };
     let text = serde_json::to_string(&outcome).unwrap();
     assert_eq!(serde_json::from_str::<HookOutcome>(&text).unwrap(), outcome);
@@ -140,7 +143,8 @@ fn absorbed_defaults_to_prompts_before_notices() {
 }
 
 #[test]
-fn node_events_are_the_seven_node_names_in_node_order() {
+fn node_events_are_the_ten_node_names_in_node_order() {
+    // Node `WORKSPACE_HOOK_EVENT_NAMES` (`packages/shared/src/workspace-hook-config.ts`), the digest's event order.
     let names: Vec<&str> = NODE_EVENTS.iter().map(|event| event.as_str()).collect();
     assert_eq!(
         names,
@@ -152,6 +156,9 @@ fn node_events_are_the_seven_node_names_in_node_order() {
             "PostToolUse",
             "PostToolUseFailure",
             "Stop",
+            "PreCompact",
+            "PostCompact",
+            "SessionEnd",
         ]
     );
 }

@@ -3,12 +3,15 @@ import type {
   ConversationShareAccessMode,
   ConversationShareCapabilities,
   ConversationShareContinuation,
+  ConversationShareManagedItem,
+  ConversationShareManagedList,
   ConversationSharePreview,
   ConversationShareRecord,
+  ConversationShareTtlOptions,
   Locale,
 } from "@zcode/shared";
 import { ServiceChannels } from "@zcode/shared";
-import type { ConversationRow } from "@zcode/shared/zcode-protocol-v4";
+import type { WireConversationRow } from "@zcode/shared/zcode-protocol-v4";
 import { Event as RpcEvent, type Event } from "@zcode/rpc";
 
 import { createServiceDescriptor } from "../descriptors.js";
@@ -26,6 +29,8 @@ export interface PublishTextConversationInput {
   sessionId: string;
   title: string;
   accessMode: ConversationShareAccessMode;
+  /** 分享有效时长；省略时使用服务端默认值。必须落在预检返回的 ttlOptions 范围内。 */
+  ttlMs?: number;
   selection: ConversationShareSelection;
   clientRequestId: string;
   disclosureAcceptedAt: number;
@@ -66,6 +71,8 @@ export interface ConversationSharePreflightResult {
   skippableWarnings: readonly ConversationShareFailureIssue[];
   deferredIssues: readonly ConversationShareFailureIssue[];
   supportedArtifactTypes: readonly ConversationShareAllowedArtifact[];
+  /** 发布方服务端声明的有效期范围；未声明时省略，UI 不显示有效期选择。 */
+  ttlOptions?: ConversationShareTtlOptions;
   turnResults: readonly ConversationShareTurnPreflightResult[];
 }
 
@@ -407,7 +414,7 @@ export interface ImportedConversationShare {
   shareId: string;
   contextId: string;
   title: string;
-  rows: ConversationRow[];
+  rows: WireConversationRow[];
   /**
    * Number of rows skipped because this client cannot render them (the copy contains a new row kind or a newer formatVersion).
    * When >0, show a non-blocking notice at the top of the read-only block so users do not think content was lost.
@@ -457,6 +464,13 @@ export interface IConversationShareService {
     shareCode: string;
     clientRequestId: string;
   }): Promise<ConversationShareContinuation>;
+  /** 当前 Host 登录账号的分享管理列表；cursor 原样回传上一页的 next_cursor。 */
+  listManagedShares(input: { cursor?: string }): Promise<ConversationShareManagedList>;
+  /** 停止分享（服务端 revoke）；重复调用幂等。 */
+  revokeManagedShare(shareId: string): Promise<ConversationShareManagedItem>;
+  restoreManagedShare(shareId: string): Promise<ConversationShareManagedItem>;
+  /** 删除分享，不可恢复；重复调用幂等。 */
+  deleteManagedShare(shareId: string): Promise<void>;
 }
 
 export const IConversationShareService = createServiceDescriptor<IConversationShareService>(
@@ -491,5 +505,9 @@ export function createUnsupportedConversationShareService(options: {
     getImportedConversation: async () => null,
     getPreview: reject("getPreview"),
     getContinuation: reject("getContinuation"),
+    listManagedShares: reject("listManagedShares"),
+    revokeManagedShare: reject("revokeManagedShare"),
+    restoreManagedShare: reject("restoreManagedShare"),
+    deleteManagedShare: reject("deleteManagedShare"),
   };
 }

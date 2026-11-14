@@ -1,4 +1,8 @@
-import { createSessionPayloadSchema } from "./create-session-command.js";
+import {
+  createSessionPayloadSchema,
+  worktreeCreationRecordSchema,
+  type WorktreeCreationRecord,
+} from "./create-session-command.js";
 import { genUiModelContextSchema } from "../gen-ui/contract.js";
 import { createSessionRequestedConfigSchema } from "./create-session-config.js";
 import { localTtftContextSchema, localTtftClockSchema } from "../local-ttft/contract.js";
@@ -8,8 +12,13 @@ import { conversationQuotesSchema } from "../conversationSelection.js";
 // workspace-only file rollback uses applyFileRewind and does not truncate chat history.
 import { z } from "zod";
 import * as worktreePreparationCommand from "./worktree-preparation-command.js";
-import { conversationRowTargetSchema, timestampSchema } from "./core.js";
+import {
+  conversationRowTargetSchema,
+  timestampSchema,
+  v4ColdResumeWorkspaceSchema,
+} from "./core.js";
 import { attachmentRefSchema } from "./attachment-ref.js";
+import { turnHeaderRowSchema } from "./rows.js";
 import { v4ConversationFileRewindPreviewResultSchema } from "./transport.js";
 import { modelSelectionSchema } from "../model-selection.js";
 import { modelExecutionSchema } from "../model-execution.js";
@@ -32,8 +41,24 @@ import { conversationInputSourceSchema } from "./input-intent.js";
 export type { SharedContextRef } from "./shared-context-ref.js";
 export * from "./workflow-command-rejections.js";
 
+// Defined next to createSessionPayloadSchema, which also uses it.
+export { worktreeCreationRecordSchema, type WorktreeCreationRecord };
+
+/**
+ * forkAssistant places the child session in another cwd under the same workspace (managed worktree, §8.2).
+ * childSessionId is pre-allocated by the Host. strict: undeclared fields are rejected, never silently dropped.
+ */
+export const forkTargetCwdSchema = z
+  .object({
+    cwd: z.string().trim().min(1),
+    childSessionId: z.string().trim().min(1),
+    worktreeCreation: worktreeCreationRecordSchema,
+  })
+  .strict();
+export type ForkTargetCwd = z.infer<typeof forkTargetCwdSchema>;
+
 // Execution-material invariant shared by sendText / editUserQuery / sendQueuedNow: modelExecution may only accompany
-// this request’s modelSelection; never provide credentials without a Selection (do not reuse credentials after rewinding a historical message).
+// this request's modelSelection; never provide credentials without a Selection (do not reuse credentials after rewinding a historical message).
 function requireModelSelectionForExecution(
   payload: { modelSelection?: unknown; modelExecution?: unknown },
   context: z.RefinementCtx,
@@ -78,7 +103,7 @@ export const commandPayloadSchemas = {
       // Share handover allows only one imported context for the current session; runtime resolves the full body from
       // persisted provenance, which must not be passed by the renderer in the command.
       context_refs: z.array(sharedContextRefSchema).max(1).optional(),
-      // Source marker for messages relayed by the plugin UI (ui/message); persisted with the intent and projected onto the userInput row.
+      // Structured source (plugin UI, interactive view, session, extension); persisted with the intent and projected onto the userInput row.
       source: conversationInputSourceSchema.optional(),
       heldQueueDisposition: z.enum(["clearQueueAndSend", "keepQueueAndSend"]).optional(),
       // Set of queueItemIds shown when the pause-queue confirmation dialog opened. CLI validates before applying clear/keep
@@ -87,6 +112,8 @@ export const commandPayloadSchemas = {
       // Older senders may omit these during migration; CLI admission fixes the current Session Selection into
       // the canonical intent. After the renderer migration, first-party user submissions always include both explicitly.
       modelSelection: modelSelectionSchema.optional(),
+      // Bot 异步解析的读取依据；接纳时若已变化，固定最新 Session Selection。
+      modelSelectionBasis: modelSelectionSchema.optional(),
       mode: submissionModeSchema.optional(),
       planEnabled: z.boolean().optional(),
       // This execution still uses the standard Selection above; this carries only non-persistent semantics, dynamic auth, and child policy.
@@ -141,11 +168,24 @@ export const commandPayloadSchemas = {
     // From activeWorks; CLI uses it to reject a late Stop that could otherwise kill an unrelated later execution.
     expectedForegroundExecutionId: z.string().min(1).optional(),
   }),
+  stopSubagent: z
+    .object({
+      taskId: z.string().min(1),
+      executionId: z.string().min(1),
+    })
+    .strict(),
   // compact is an input-style maintenance command: execute immediately when idle, enqueue FIFO when busy/held.
   // Admission is unrelated to the current revision, so it does not use CAS; sourceCommandId provides the idempotency boundary.
   compact: z.object({ modelSelection: modelSelectionSchema.optional() }),
   // Available for the stable assistant row while running.
-  forkAssistant: z.object({ target: conversationRowTargetSchema }),
+  forkAssistant: z.object({
+    target: conversationRowTargetSchema,
+    // The child session stays in the same workspace with its cwd moved to a new managed worktree (docs/git/worktree.md §8.2).
+    // Default = parent session cwd, behavior unchanged. An older CLI silently drops this field and forks into the parent directory,
+    // so the Host must confirm runtime/capabilities.worktreeCwd before sending.
+    // Additional directories are not sent here: the Host sends them uniformly on child create/resume/subscribe (I16).
+    targetCwd: forkTargetCwdSchema.optional(),
+  }),
   applyFileRewind: z.object({ target: conversationRowTargetSchema }),
   editUserQuery: z
     .object({
@@ -160,6 +200,9 @@ export const commandPayloadSchemas = {
       highspeedMeta: highspeedMessageMetaSchema.optional(),
       // The default is preserve: it only switches the conversation branch; rewind first restores that turn's files safely.
       workspaceMode: z.enum(["preserve", "rewind"]).optional(),
+      // Composer edit mode reuses the send toolbar: same semantics as sendText; defaults to the original intent.
+      mode: submissionModeSchema.optional(),
+      planEnabled: z.boolean().optional(),
     })
     .superRefine(requireModelSelectionForExecution),
   retryTurn: z.object({ target: conversationRowTargetSchema }),
@@ -195,7 +238,32 @@ export const commandPayloadSchemas = {
       highspeedMeta: highspeedMessageMetaSchema.optional(),
     })
     .superRefine(requireModelSelectionForExecution),
-  editQueueItem: z.object({ queueItemId: z.string(), newText: z.string() }),
+  // Frozen edit (docs/ui/composer-edit-mode.md): lock succeeds only for a queued item without a lock;
+  // editQueueItem carrying editorId must hold the lock; after the in-place replacement the same command releases it.
+  // attachments/modelSelection/mode/planEnabled default to keeping the original values; attachments=[] clears them.
+  lockQueueItemEdit: z.object({ queueItemId: z.string(), editorId: z.string().min(1) }),
+  releaseQueueItemEdit: z.object({ queueItemId: z.string() }),
+  editQueueItem: z.object({
+    queueItemId: z.string(),
+    newText: z.string(),
+    editorId: z.string().min(1).optional(),
+    attachments: z.array(attachmentRefSchema).optional(),
+    conversationQuotes: conversationQuotesSchema.optional(),
+    modelSelection: modelSelectionSchema.optional(),
+    mode: submissionModeSchema.optional(),
+    planEnabled: z.boolean().optional(),
+  }),
+  // After an edit is submitted, apply the new model/mode to other queued items (docs/ui/composer-edit-mode.md): body and Plan unchanged;
+  // items that do not exist, are not queued, are compact, or hold an edit lock are skipped; skipping all = noop. No CAS, for the same reason as editQueueItem.
+  applyQueueItemsConfig: z
+    .object({
+      queueItemIds: z.array(z.string()).min(1),
+      modelSelection: modelSelectionSchema.optional(),
+      mode: submissionModeSchema.optional(),
+    })
+    .refine((value) => value.modelSelection !== undefined || value.mode !== undefined, {
+      message: "applyQueueItemsConfig requires modelSelection or mode",
+    }),
   // beforeQueueItemId = null → move to the end of the queue.
   reorderQueueItem: z.object({
     queueItemId: z.string(),
@@ -313,7 +381,8 @@ export const COMMANDS_REQUIRING_BASE_REVISION: ReadonlySet<CommandType> = new Se
   "setAssistantFeedback",
   "setRowPinned",
   "sendQueuedNow",
-  "editQueueItem",
+  // editQueueItem 不走 CAS：运行中 revision 随 control/queue 投影频繁递增，用户编辑排队消息的提交
+  // 会被 proto.staleRevision 误拒。冻结编辑的并发保护是 CLI 编辑锁（editorId 必须仍持锁）。
   "reorderQueueItem",
   "deleteQueueItem",
   "setAutoDrain",
@@ -336,6 +405,9 @@ export const ROW_TARGETING_COMMANDS: ReadonlySet<CommandType> = new Set([
 
 // ── Envelope ──
 export const commandEnvelopeSchema = z.object({
+  workspace: v4ColdResumeWorkspaceSchema,
+  /** Injected by the Host only, based on the current attachment handshake; unknown CLIs do not receive it. */
+  pluginDiscoveryUi: z.literal(true).optional(),
   /** Trusted attachment injection by the Host; the CLI keeps it through to the original input intent. */
   inputOrigin: z.enum(["desktop", "mobile"]).optional(),
   ttft: localTtftContextSchema.optional(),
@@ -384,6 +456,17 @@ export function parseCommandEnvelope(
 }
 
 // ── ACK ──
+/** 同一审批已提交后的重试原因码。只有原权限可继续发布，不得据失败回执更新偏好。 */
+export const permissionGrantCommittedReasons = {
+  guarded: "fault.permissionGrant.committed.guarded",
+  yolo: "fault.permissionGrant.committed.yolo",
+} as const;
+export function committedPermissionGrantMode(reasonCode: string | undefined) {
+  if (reasonCode === permissionGrantCommittedReasons.guarded) return "guarded";
+  if (reasonCode === permissionGrantCommittedReasons.yolo) return "yolo";
+  return undefined;
+}
+
 export const commandResultSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.enum(["createSession", "createSelectionSideSession", "forkAssistant"]),
@@ -472,6 +555,11 @@ export const commandAckSchema = z.object({
 export type CommandAck = z.infer<typeof commandAckSchema>;
 
 // ── commands/query ──
+/**
+ * commands/query 读取命令记录失败时的 reasonCode（status 为 failed）。它表示"无法确认命令是否执行"，
+ * 不表示命令执行失败；调用方不能据此做破坏性清理（docs/git/worktree.md §3.5）。
+ */
+export const COMMAND_QUERY_UNAVAILABLE_REASON = "fault.command.queryUnavailable" as const;
 export const commandKeySchema = z
   .object({
     // null belongs only to the global/createSession idempotency bucket; session commands must include sessionId.
@@ -493,12 +581,25 @@ export const commandsQueryParamsSchema = z
   );
 export type CommandsQueryParams = z.infer<typeof commandsQueryParamsSchema>;
 
+// 命令对应回合的当前状态：owner 全量投影中 sourceCommandId 匹配的第一个 turnHeader。
+// 修复原因：快照只下发 60 行尾窗，长回合的 header 会滚出窗口，客户端据此判定 wait 结果会得到
+// unknown，审批也匹配不到回合。由 owner 直接给出，不受尾窗限制；只出现在 session bucket。
+export const commandQueryTurnSchema = z
+  .object({
+    turnId: turnHeaderRowSchema.shape.turnId,
+    state: turnHeaderRowSchema.shape.state,
+  })
+  .strict();
+export type CommandQueryTurn = z.infer<typeof commandQueryTurnSchema>;
+
 export const commandQueryItemSchema = z
   .object({
     key: commandKeySchema,
     result: z.union([commandAckSchema, z.literal("unknown")]),
+    turn: commandQueryTurnSchema.optional(),
   })
-  .strict();
+  .strict()
+  .refine((item) => !item.turn || item.key.sessionId !== null, "global commands carry no turn");
 export type CommandQueryItem = z.infer<typeof commandQueryItemSchema>;
 
 export const commandsQueryResultSchema = z

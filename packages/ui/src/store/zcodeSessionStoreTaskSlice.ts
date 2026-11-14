@@ -1,4 +1,5 @@
-/* oxlint-disable eslint(max-lines) -- This file owns the task-level state slice; keep the draft-logic fix minimal and split the file later as a separate effort. */
+import { clearV4ComposerDraft } from "@/v4/composer/composerDraftStore.js";
+/* oxlint-disable eslint(max-lines) -- 当前文件承接 task 级状态切片，先保持最小改动修复草稿逻辑，后续再统一拆分 */
 import {
   normalizeAgentProviderToZCodeAgent,
   type ZCodeApiRetryStatus,
@@ -862,6 +863,7 @@ export function createTaskSlice(set: SetFn) {
       // Deleting a task clears its in-memory state, but the composer draft also has a Desktop localStorage bucket.
       // If it is not cleared in the shared delete action, drafts for deleted tasks will remain after restart.
       clearPersistedComposerDraft(workspacePath, taskId, workspaceIdentity);
+      clearV4ComposerDraft(workspacePath, workspaceIdentity, taskId);
       set((state) => {
         const workspaceUpdate = updateWorkspaceState(
           state,

@@ -43,6 +43,16 @@ pub trait SinkOverride: Send + Sync {
         self.sink().commit_messages(messages).await
     }
 
+    async fn commit_compaction(
+        &self,
+        messages: Vec<Message>,
+        session_start_context: bool,
+    ) -> Result<(), StoreError> {
+        self.sink()
+            .commit_compaction(messages, session_start_context)
+            .await
+    }
+
     async fn commit_metered(
         &self,
         message: Option<Message>,
@@ -84,6 +94,14 @@ impl<T: SinkOverride + Interactions + SessionOps> RunSink for T {
 
     async fn commit_messages(&self, messages: Vec<Message>) -> Result<(), StoreError> {
         SinkOverride::commit_messages(self, messages).await
+    }
+
+    async fn commit_compaction(
+        &self,
+        messages: Vec<Message>,
+        session_start_context: bool,
+    ) -> Result<(), StoreError> {
+        SinkOverride::commit_compaction(self, messages, session_start_context).await
     }
 
     async fn commit_metered(
@@ -291,6 +309,11 @@ pub trait RegistryOverride: Send + Sync {
 
     fn find(&self, name: &str) -> Option<Arc<dyn Tool>>;
 
+    /// Fork: a double without per-session tools answers like `find`.
+    fn find_for(&self, _session: &SessionId, name: &str) -> Option<Arc<dyn Tool>> {
+        self.find(name)
+    }
+
     fn withheld(&self, _name: &str) -> Option<Arc<dyn Tool>> {
         None
     }
@@ -322,6 +345,10 @@ impl<T: RegistryOverride> ToolRegistry for T {
 
     fn find(&self, name: &str) -> Option<Arc<dyn Tool>> {
         RegistryOverride::find(self, name)
+    }
+
+    fn find_for(&self, session: &SessionId, name: &str) -> Option<Arc<dyn Tool>> {
+        RegistryOverride::find_for(self, session, name)
     }
 
     fn withheld(&self, name: &str) -> Option<Arc<dyn Tool>> {

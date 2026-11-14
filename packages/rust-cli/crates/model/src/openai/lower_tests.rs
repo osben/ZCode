@@ -14,6 +14,7 @@ pub(crate) fn content(block: ContentBlock) -> ApiContent {
             ttl: None,
             scope: None,
         }),
+        meta: false,
     }
 }
 
@@ -112,9 +113,10 @@ fn messages_lower_to_protocol_neutral_items() {
             Item::User(vec![
                 Part::Text("<system-reminder>ctx</system-reminder>".to_owned()),
                 Part::Text("read a.png".to_owned()),
-                // 中途的 system 消息并进它之前的 user 回合（在 assistant 之前写出）。
-                reminder("# Environment"),
             ]),
+            // Fork: the mid-conversation system message is its own user message (written before the assistant);
+            // adjacent user messages are not merged on the OpenAI protocols.
+            Item::User(vec![reminder("# Environment")]),
             Item::Assistant {
                 text: String::new(),
                 reasoning: "need the file".to_owned(),
@@ -254,4 +256,44 @@ fn documents_lower_to_file_parts_after_the_tool_result() {
             )]),
         ]
     );
+}
+
+/// A user turn carrying an attached video (Node `normalizeTurnAttachments`' video block).
+pub(crate) fn video_turn() -> Vec<ApiMessage> {
+    vec![message(
+        ApiRole::User,
+        vec![
+            text("what happens?"),
+            ContentBlock::Video {
+                source: ImageSource::Base64 {
+                    media_type: "video/mp4".to_owned(),
+                    data: "AAAA".to_owned(),
+                },
+                name: Some("clip.mp4".to_owned()),
+            },
+        ],
+    )]
+}
+
+/// Fork: `query::normalize` drops ACP rows; one reaching the adapter is refused, as the Anthropic writer does, on
+/// either side of the conversation.
+#[test]
+fn acp_rows_are_refused_like_the_anthropic_writer() {
+    let row = || {
+        ContentBlock::ExternalTool(Box::new(rust_cli_kernel_api::message::ExternalTool {
+            id: ToolUseId::new("acp_1"),
+            name: "acp:read".into(),
+            title: String::new(),
+            input: json!({}),
+            output: "A".into(),
+            is_error: false,
+        }))
+    };
+    for role in [ApiRole::Assistant, ApiRole::User] {
+        let refused = items(Vec::new(), vec![message(role, vec![text("x"), row()])]);
+        assert!(
+            matches!(&refused, Err(ModelError::InvalidRequest { message }) if message == "ACP rows never reach the model request"),
+            "{refused:?}"
+        );
+    }
 }

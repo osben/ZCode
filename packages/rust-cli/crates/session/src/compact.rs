@@ -59,6 +59,7 @@ impl Actor {
             mode: Some(self.mode()),
             agent: None,
             initial_token_gap: None,
+            inject_agents_md: true,
         };
         let opening = self.open_turn(turn, None, SINK_REQUESTS);
         let sink = opening.sink.clone();
@@ -69,6 +70,7 @@ impl Actor {
         let task = self.deps.spawner.spawn("compact-run", async move {
             match compactor.compact(request, signal.token().clone()).await {
                 Ok(result) => {
+                    let session_start_context = result.session_start_context;
                     let mut messages = vec![
                         Message::System(SystemMessage::CompactBoundary(result.boundary)),
                         Message::User(result.summary),
@@ -78,7 +80,8 @@ impl Actor {
                         ids.as_ref(),
                         &compact_record(&args, LocalCommandOutput::Stdout(dim(COMPACTED))),
                     ));
-                    sink.commit_messages(messages).await?;
+                    sink.commit_compaction(messages, session_start_context)
+                        .await?;
                     Ok(QueryStop::Completed)
                 }
                 Err(_) if signal.is_aborted() => Ok(QueryStop::Aborted),
@@ -106,7 +109,7 @@ impl Actor {
                 }
             }
         });
-        self.launch(opening, task, None, None);
+        self.launch(opening, task, None, None, Default::default());
         Ok(())
     }
 
@@ -121,12 +124,14 @@ impl Actor {
             used_tokens,
             max_tokens,
             compact_at,
+            window_tokens,
         }) = self.context_occupancy()
         {
             self.log.append(KernelEvent::ContextUsage {
                 used_tokens,
                 max_tokens,
                 compact_at,
+                window_tokens,
             });
         }
     }

@@ -87,6 +87,10 @@ async function createSession(
   ) {
     throw new V4InputAdmissionRejectedError("proto.invalidPayload", "input must not be empty");
   }
+  // "已创建 worktree" 只描述 cwd 指向的 worktree；缺 cwd 时没有可绑定的目录。
+  if (payload.worktreeCreation && !payload.cwd) {
+    throw new V4InputAdmissionRejectedError("proto.invalidPayload", "worktreeCreation requires cwd");
+  }
   const runActivation = async (): Promise<CommandResult | undefined> => {
     const { sessionId, preparedActivation } = await host.createSessionRecord!({
       ...(payload.sessionId ? { sessionId: payload.sessionId } : {}),
@@ -94,6 +98,7 @@ async function createSession(
         ? { additionalDirectories: payload.additionalDirectories }
         : {}),
       workspaceId: payload.workspaceId,
+      ...(payload.cwd ? { cwd: payload.cwd } : {}),
       ...(payload.preparedSessionId ? { preparedSessionId: payload.preparedSessionId } : {}),
       ...(payload.expectedAttemptId ? { expectedAttemptId: payload.expectedAttemptId } : {}),
       ...(payload.expectedSubmissionId ? { expectedSubmissionId: payload.expectedSubmissionId } : {}),
@@ -117,6 +122,12 @@ async function createSession(
       // The frozen input already reached Core durably; only the completion receipt may be missing.
       await completePreparedActivation(host, sessionId);
       return { type: "createSession", sessionId, preparedActivation };
+    }
+    if (payload.worktreeCreation) {
+      // 首轮持久化会话后、TurnStarted 之前落盘并投影（docs/git/worktree.md §6.6.4）。
+      requireRecord(host, sessionId).app.runtime.recordPendingWorktreeCreation(
+        payload.worktreeCreation,
+      );
     }
     // createSession.config 消费——草稿态 UI 的先行选择（模型/思考深度/
     // 模式）在首发之前应用并补发事件，首条 turn 即用所选配置。必须在 firstInput 之前。
@@ -167,6 +178,8 @@ async function createSession(
           requestedDelivery: "startNow",
           attachmentRefs: payload.firstInput.attachments,
           ...resolveSubmittedExecutionState(record, payload.firstInput),
+          // 首条消息与 sendText 同一来源契约：扩展代建会话时由 Host 注入，随 intent 持久化并投影。
+          ...(payload.firstInput.source ? { source: payload.firstInput.source } : {}),
         });
         const started = await startPromptTurn(host, record, {
           content: payload.firstInput.text,

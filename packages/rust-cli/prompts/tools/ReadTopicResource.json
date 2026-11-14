@@ -1,0 +1,32 @@
+{
+  "name": "ReadTopicResource",
+  "description": "Download a file or image listed in the current task's topic history resource index to a managed local file.\n\nUsage:\n- Use only for a resource listed in the topic history file resource index (A1, A2…). Pass its inputId, messageId and index.\n- The result gives a managed local file path. Read that file with an appropriate tool.\n- The tool reads only the current task's admitted topic. Missing host capability or authorization is an error, not permission to fetch another URL.",
+  "input_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "inputId": {
+        "description": "Snapshot inputId from the topic history file; selects only an admitted input in this task.",
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      },
+      "messageId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256,
+        "description": "Message id of the resource in the topic history file resource index."
+      },
+      "index": {
+        "description": "Resource position inside that message, starting at zero. Defaults to 0.",
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      }
+    },
+    "required": [
+      "messageId"
+    ],
+    "additionalProperties": false
+  }
+}

@@ -11,6 +11,7 @@ fn asked_once() -> PermissionDecision {
         message: DANGER.to_owned(),
         suggestions: Vec::new(),
         once: true,
+        independent: false,
     }
 }
 

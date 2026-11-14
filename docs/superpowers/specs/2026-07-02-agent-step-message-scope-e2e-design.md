@@ -61,6 +61,6 @@ Evidence layers: UI/session — both turns return to `idle`, turn 2 reuses turn 
 
 ## E2E handoff notes
 
-- Spec: `packages/desktop/test/e2e/conversation-session/conversation-session-agent-step-message-scope.test.ts`; fixture `packages/desktop/test/e2e/fixtures/upstream/conversation-session/conversation-session-agent-step-message-scope.json`; timing `fast-text`; both marker requests classified `main`; synthetic (manifest must record `syntheticReason`); no file-system fixture.
+- Spec: `packages/desktop/test/e2e/conversation-session/presentation/conversation-session-agent-step-message-scope.test.ts`; fixture `packages/desktop/test/e2e/fixtures/upstream/conversation-session/conversation-session-agent-step-message-scope.json`; timing `fast-text`; both marker requests classified `main`; synthetic (manifest must record `syntheticReason`); no file-system fixture.
 - Promoted to formal case by manual review; post-fix status `covered`; GREEN artifact `desktop-e2e-20260703-090147-683`; Docker preset admission follows the separate admission process.
 - Review risk: telemetry reporting is asynchronous — poll mock calls, never fixed sleeps; the mock replaces only Electron `net.fetch` (provider replay goes through the agent's own HTTP chain).

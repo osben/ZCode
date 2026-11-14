@@ -1,5 +1,6 @@
 //! `/hooks` 的只读快照（docs/specs/rust-cli/tui-display.md §3.5，工作线 L28）：设置快照与插件的 hooks，按来源的
 //! 合并顺序（User → Project → Local → Policy → 插件）、来源内按事件与 matcher 的书写顺序列出。
+use rust_cli_base::sync::RwLockUnpoisoned;
 use rust_cli_kernel_api::manage::HookEntry;
 
 use crate::config::{HookCommand, HookSource, HooksSettings};
@@ -61,8 +62,8 @@ pub(crate) fn entries(
 impl HookEngine {
     /// 当前快照里的 hooks（`Kernel::hooks`）。
     pub fn entries(&self) -> Vec<HookEntry> {
-        let loaded = self.snapshot();
-        entries(&loaded.config.sources, &loaded.plugins)
+        let state = self.state.read_unpoisoned();
+        entries(&state.listed_sources(), &state.process.plugins)
     }
 }
 

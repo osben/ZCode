@@ -24,6 +24,11 @@ pub struct SessionRow {
     pub time_created: i64,
     pub time_updated: i64,
     pub time_deleted: Option<i64>,
+    /// Node `lastOutcome` of the last finished turn (`completed` / `interrupted` / `error`).
+    pub last_outcome: Option<String>,
+    /// Fork: `fork_incognito`, the stored incognito profile JSON (NULL for a normal session, and when the database
+    /// has no such column).
+    pub incognito: Option<String>,
 }
 
 /// Node `CreateSessionInput`（本 crate 写入的成员）。
@@ -43,6 +48,8 @@ pub struct Create {
     pub version: String,
     pub permission: Option<Value>,
     pub time_created: Option<i64>,
+    /// Fork: the incognito profile JSON for `fork_incognito`, set once (a later create keeps the stored value).
+    pub incognito: Option<String>,
 }
 
 /// Node `UpdateSessionInput`（本 crate 写入的成员）。
@@ -91,7 +98,61 @@ fn decode(row: &Row) -> rusqlite::Result<SessionRow> {
         time_created: row.get("time_created")?,
         time_updated: row.get("time_updated")?,
         time_deleted: row.get("time_deleted")?,
+        last_outcome: nonempty(row.get("last_outcome")?),
+        // Fork: the column comes from Node's fork migration; a database without it has normal sessions only.
+        incognito: match row.as_ref().column_index("fork_incognito") {
+            Ok(index) => stored_incognito(row.get_ref(index)?),
+            Err(_) => None,
+        },
     })
+}
+
+/// Fork: whether `session` has the `fork_incognito` column (Node's `9001_fork_session_incognito`). Storage
+/// preparation runs it before the desktop starts `zcode-rs`; a standalone run may open a database without it.
+pub fn has_incognito_column(conn: &Connection) -> rusqlite::Result<bool> {
+    conn.prepare_cached(
+        "select count(*) from pragma_table_info('session') where name = 'fork_incognito'",
+    )?
+    .query_row([], |row| row.get::<_, i64>(0))
+    .map(|count| count > 0)
+}
+
+/// Fork: the stored incognito profile of `id`; None for a normal session or a database without the column.
+pub fn incognito(conn: &Connection, id: &str) -> rusqlite::Result<Option<String>> {
+    if !has_incognito_column(conn)? {
+        return Ok(None);
+    }
+    conn.prepare_cached("select fork_incognito from session where id = ?")?
+        .query_row([id], |row| row.get_ref(0).map(stored_incognito))
+        .optional()
+        .map(Option::flatten)
+}
+
+/// Fork: write `profile` (Node's JSON) into `fork_incognito` while it is NULL; the stored text afterwards (the
+/// written one, or the one an earlier write left). `None` when the row does not exist.
+pub fn freeze_incognito(
+    conn: &Connection,
+    id: &str,
+    profile: &str,
+) -> rusqlite::Result<Option<Option<String>>> {
+    conn.prepare_cached(
+        "update session set fork_incognito = ?2 where id = ?1 and fork_incognito is null",
+    )?
+    .execute([id, profile])?;
+    conn.prepare_cached("select fork_incognito from session where id = ?")?
+        .query_row([id], |row| row.get_ref(0).map(stored_incognito))
+        .optional()
+}
+
+/// Fork: `fork_incognito` as text. A value that is not text (a BLOB, a number) is still present, so it reads as an
+/// unparseable profile, i.e. lockdown (Node `parseStoredIncognitoProfile`), instead of failing the whole row.
+fn stored_incognito(value: rusqlite::types::ValueRef<'_>) -> Option<String> {
+    use rusqlite::types::ValueRef;
+    match value {
+        ValueRef::Null => None,
+        ValueRef::Text(text) => Some(String::from_utf8_lossy(text).into_owned()),
+        ValueRef::Integer(_) | ValueRef::Real(_) | ValueRef::Blob(_) => Some(String::new()),
+    }
 }
 
 pub fn get(conn: &Connection, id: &str) -> rusqlite::Result<Option<SessionRow>> {
@@ -101,18 +162,31 @@ pub fn get(conn: &Connection, id: &str) -> rusqlite::Result<Option<SessionRow>> 
 }
 
 /// Node `createSession`（upsert，保留首次的 trace 与 time_created）。
+///
+/// Fork: with `incognito` the insert also writes `fork_incognito` and a conflict keeps the stored value (Node
+/// `coalesce(session.fork_incognito, excluded.fork_incognito)`), so the profile is set once. Without it the statement
+/// does not name the column, so a database without the fork migration still creates normal sessions; an incognito
+/// create there fails instead of writing a normal row.
 pub fn create(conn: &Connection, input: &Create, now: i64) -> rusqlite::Result<()> {
     let created = input.time_created.unwrap_or(now);
     let updated = created;
     let titled = input.title_source.as_deref().is_some_and(|s| !s.is_empty());
-    conn.prepare_cached(
+    let (column, value, keep) = match input.incognito {
+        Some(_) => (
+            "fork_incognito,\n        ",
+            "?, ",
+            "fork_incognito = coalesce(session.fork_incognito, excluded.fork_incognito),\n        ",
+        ),
+        None => ("", "", ""),
+    };
+    let sql = format!(
         "insert into session (
         id, project_id, workspace_id, parent_id, trace_id, task_type, slug, directory, path,
-        title, title_source, title_message_id, version,
+        {column}title, title_source, title_message_id, version,
         share_url, summary_additions, summary_deletions, summary_files, summary_diffs,
         revert, permission, time_created, time_updated, time_title_updated,
         time_compacting
-      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, null, null, null, null, null, ?, ?, ?, ?, null)
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, {value}?, ?, ?, ?, ?, null, null, null, null, null, ?, ?, ?, ?, null)
       on conflict(id) do update set
         project_id = excluded.project_id,
         workspace_id = excluded.workspace_id,
@@ -122,35 +196,46 @@ pub fn create(conn: &Connection, input: &Create, now: i64) -> rusqlite::Result<(
         slug = excluded.slug,
         directory = excluded.directory,
         path = excluded.path,
-        title = excluded.title,
+        {keep}title = excluded.title,
         title_source = excluded.title_source,
         title_message_id = excluded.title_message_id,
         version = excluded.version,
         share_url = excluded.share_url,
         permission = coalesce(excluded.permission, session.permission),
         time_title_updated = excluded.time_title_updated,
-        time_updated = excluded.time_updated",
-    )?
-    .execute(params![
-        input.id,
-        input.project_id,
-        input.workspace_id,
-        input.parent_id,
-        input.trace_id,
-        input.task_type.as_deref().unwrap_or("interactive"),
-        input.slug,
-        input.directory,
-        input.path,
-        input.title,
-        input.title_source.as_deref().unwrap_or("first_input"),
-        Option::<String>::None,
-        input.version,
-        Option::<String>::None,
-        input.permission.as_ref().and_then(encode),
-        created,
-        updated,
-        titled.then_some(updated),
-    ])?;
+        time_updated = excluded.time_updated"
+    );
+    let task_type = input.task_type.as_deref().unwrap_or("interactive");
+    let title_source = input.title_source.as_deref().unwrap_or("first_input");
+    let none = Option::<String>::None;
+    let permission = input.permission.as_ref().and_then(encode);
+    let title_updated = titled.then_some(updated);
+    let mut values: Vec<&dyn rusqlite::ToSql> = vec![
+        &input.id,
+        &input.project_id,
+        &input.workspace_id,
+        &input.parent_id,
+        &input.trace_id,
+        &task_type,
+        &input.slug,
+        &input.directory,
+        &input.path,
+    ];
+    if let Some(incognito) = &input.incognito {
+        values.push(incognito);
+    }
+    values.extend::<[&dyn rusqlite::ToSql; 9]>([
+        &input.title,
+        &title_source,
+        &none,
+        &input.version,
+        &none,
+        &permission,
+        &created,
+        &updated,
+        &title_updated,
+    ]);
+    conn.prepare_cached(&sql)?.execute(values.as_slice())?;
     Ok(())
 }
 
@@ -202,6 +287,9 @@ pub fn update(conn: &Connection, input: &Update, now: i64) -> rusqlite::Result<u
     .execute(rusqlite::params_from_iter(values))
 }
 
+/// Fork: Node `listSessions`'s purge clause.
+const NOT_PURGING: &str = "not exists(select 1 from session_purge where session_id=session.id)";
+
 /// `/resume` 与 `-c` 的会话列表：本目录的顶层会话加 fork 出的会话（`task_type = 'fork'`），排序同
 /// Node `listSessions`（`order by time_updated desc, id desc`）。
 ///
@@ -215,6 +303,10 @@ pub fn list(
     limit: Option<i64>,
 ) -> rusqlite::Result<Vec<SessionRow>> {
     let mut clauses: Vec<&str> = vec!["time_deleted is null"];
+    // Fork: Node `listSessions` hides a session whose purge started (0025's `session_purge`, when it exists).
+    if crate::presence::has_purge_table(conn)? {
+        clauses.push(NOT_PURGING);
+    }
     let mut values: Vec<Sql> = vec![];
     if !directory.is_empty() {
         clauses.push("directory = ?");
@@ -249,6 +341,10 @@ pub fn query(
         "workspace_id is null",
         "task_type in ('interactive', 'fork', 'workflow_parent')",
     ];
+    // Fork: as `list`.
+    if crate::presence::has_purge_table(conn)? {
+        clauses.push(NOT_PURGING);
+    }
     let mut values: Vec<Sql> = vec![];
     if let Some(directory) = directory {
         clauses.push("directory = ?");

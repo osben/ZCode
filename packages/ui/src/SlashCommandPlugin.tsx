@@ -7,11 +7,21 @@
  * 2. The panel renders through a portal into a separate mount above the input and overlays the message area when expanded.
  * 3. Supports closing with Esc, navigating with the arrow keys, selecting with Enter / Tab, and fuzzy search as the user types.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Dispatch,
+  type RefObject,
+  type SetStateAction,
+} from "react";
 import type { ZCodeProvider } from "@zcode/shared";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { createPortal } from "react-dom";
 import {
+  type LexicalEditor,
   $createTextNode,
   BLUR_COMMAND,
   COMMAND_PRIORITY_CRITICAL,
@@ -68,6 +78,87 @@ import {
   parseSerializedPromptBodyNodes,
 } from "@/prompt-body/index.js";
 import { logger } from "./logger.js";
+
+// Bug 原因：常驻 Lexical listener 与 applySuggestion 共享组件作用域，连带保留旧 appCommands。
+// 触发器监听只接收编辑器与本地 trigger 状态，不持有会话命令回调。
+function useSlashTriggerListener(
+  editor: LexicalEditor,
+  disabled: boolean,
+  activeTokenRef: RefObject<ActivePromptInputTokenSnapshot | null>,
+  dismissedSignatureRef: RefObject<string | null>,
+  setActiveTrigger: Dispatch<SetStateAction<ActivePromptInputTrigger | null>>,
+) {
+  useEffect(() => {
+    return editor.registerUpdateListener(({ dirtyElements, dirtyLeaves, editorState, tags }) => {
+      editorState.read(() => {
+        // 历史导航回填含 / 的历史条目时，不应重新打开 slash 面板，
+        // 否则面板以 COMMAND_PRIORITY_CRITICAL 注册方向键处理器，吞掉后续历史翻阅按键。
+        if (!shouldSlashPanelProcessUpdate(tags)) {
+          activeTokenRef.current = null;
+          setActiveTrigger(null);
+          return;
+        }
+
+        if (disabled) {
+          activeTokenRef.current = null;
+          setActiveTrigger(null);
+          return;
+        }
+
+        const selectionState = getCurrentTextNodeSelection();
+        const cursorText = selectionState ?? getTextAroundCursor();
+        if (!cursorText) {
+          activeTokenRef.current = null;
+          dismissedSignatureRef.current = null;
+          setActiveTrigger(null);
+          return;
+        }
+
+        const nextActiveToken = selectionState
+          ? reconcileActivePromptInputTokenSnapshot(
+              activeTokenRef.current,
+              selectionState,
+              dirtyElements.size === 0 && dirtyLeaves.size === 0,
+            )
+          : null;
+        const nextActiveTrigger = selectionState
+          ? nextActiveToken
+          : extractActivePromptInputTrigger(cursorText.textBeforeCursor);
+        if (!nextActiveTrigger || nextActiveTrigger.trigger !== "/") {
+          activeTokenRef.current = null;
+          dismissedSignatureRef.current = null;
+          setActiveTrigger(null);
+          return;
+        }
+        activeTokenRef.current = nextActiveToken;
+
+        const nextSignature = getPromptInputTriggerSignature(nextActiveTrigger);
+        if (
+          dismissedSignatureRef.current !== null &&
+          dismissedSignatureRef.current !== nextSignature
+        ) {
+          dismissedSignatureRef.current = null;
+        }
+
+        if (dismissedSignatureRef.current === nextSignature) {
+          setActiveTrigger(null);
+          return;
+        }
+
+        setActiveTrigger((current) => {
+          if (
+            current?.trigger === nextActiveTrigger.trigger &&
+            current.query === nextActiveTrigger.query
+          ) {
+            return current;
+          }
+
+          return nextActiveTrigger;
+        });
+      });
+    });
+  }, [activeTokenRef, disabled, dismissedSignatureRef, editor, setActiveTrigger]);
+}
 
 export function SlashCommandPlugin({
   workspacePath,
@@ -214,76 +305,13 @@ export function SlashCommandPlugin({
     activeTokenRef.current = null;
   }, [disabled]);
 
-  useEffect(() => {
-    return editor.registerUpdateListener(({ dirtyElements, dirtyLeaves, editorState, tags }) => {
-      editorState.read(() => {
-        // When history navigation restores an entry containing `/`, the slash panel should not reopen,
-        // or its COMMAND_PRIORITY_CRITICAL arrow-key handler will consume subsequent history-navigation keys.
-        if (!shouldSlashPanelProcessUpdate(tags)) {
-          activeTokenRef.current = null;
-          setActiveTrigger(null);
-          return;
-        }
-
-        if (disabled) {
-          activeTokenRef.current = null;
-          setActiveTrigger(null);
-          return;
-        }
-
-        const selectionState = getCurrentTextNodeSelection();
-        const cursorText = selectionState ?? getTextAroundCursor();
-        if (!cursorText) {
-          activeTokenRef.current = null;
-          dismissedSignatureRef.current = null;
-          setActiveTrigger(null);
-          return;
-        }
-
-        const nextActiveToken = selectionState
-          ? reconcileActivePromptInputTokenSnapshot(
-              activeTokenRef.current,
-              selectionState,
-              dirtyElements.size === 0 && dirtyLeaves.size === 0,
-            )
-          : null;
-        const nextActiveTrigger = selectionState
-          ? nextActiveToken
-          : extractActivePromptInputTrigger(cursorText.textBeforeCursor);
-        if (!nextActiveTrigger || nextActiveTrigger.trigger !== "/") {
-          activeTokenRef.current = null;
-          dismissedSignatureRef.current = null;
-          setActiveTrigger(null);
-          return;
-        }
-        activeTokenRef.current = nextActiveToken;
-
-        const nextSignature = getPromptInputTriggerSignature(nextActiveTrigger);
-        if (
-          dismissedSignatureRef.current !== null &&
-          dismissedSignatureRef.current !== nextSignature
-        ) {
-          dismissedSignatureRef.current = null;
-        }
-
-        if (dismissedSignatureRef.current === nextSignature) {
-          setActiveTrigger(null);
-          return;
-        }
-
-        setActiveTrigger((current) => {
-          if (
-            current?.trigger === nextActiveTrigger.trigger &&
-            current.query === nextActiveTrigger.query
-          ) {
-            return current;
-          }
-
-          return nextActiveTrigger;
-        });
-      });
-    });
-  }, [disabled, editor]);
+  useSlashTriggerListener(
+    editor,
+    disabled,
+    activeTokenRef,
+    dismissedSignatureRef,
+    setActiveTrigger,
+  );
 
   const applySuggestion = useCallback(
     (suggestion: PromptInputSuggestionItem) => {

@@ -298,6 +298,24 @@ pub(crate) async fn bash_output(
             break;
         }
     }
+    // Fork: after the notice's ack the ledger still keeps the command's terminal record, whichever subscriber
+    // acknowledged it (specs/fork-rust-agent-parity.md, "Subagent child sessions: one owner for background-command
+    // notices").
+    if found.is_none() {
+        for place in &places {
+            let info = place
+                .machine
+                .background()
+                .ended_background_command(key.clone())
+                .await
+                .ok()
+                .flatten();
+            if let Some(info) = info {
+                found = Some((place, Some(info)));
+                break;
+            }
+        }
+    }
     let (place, info) = found.or_else(|| places.first().map(|place| (place, None)))?;
     if info
         .as_ref()
@@ -313,8 +331,13 @@ pub(crate) async fn bash_output(
         .ok()
         .and_then(|state| state.outputs)?;
     let path = output_path(&dir, task);
+    // Fork: the pane shows the file the command writes (Node's path), not the `.output` link read here.
+    let shown = info
+        .as_ref()
+        .and_then(|info| info.output.clone())
+        .unwrap_or_else(|| path.clone());
     let request = ReadText {
-        path: path.clone(),
+        path,
         start_line: 0,
         max_lines: None,
         max_bytes: Some(OUTPUT_MAX_BYTES),
@@ -348,7 +371,7 @@ pub(crate) async fn bash_output(
         status: info.map(|info| info.status),
         truncated: start > 0,
         text: content[start..].to_owned(),
-        path,
+        path: shown,
     })
 }
 
@@ -430,6 +453,33 @@ impl Actor {
                 result: CommandResult::Stopped { message },
             },
             Err(reason) => Ack::Rejected { reason },
+        }
+    }
+
+    /// Fork: `Command::StopSubagent`, the desktop's guarded stop (specs/fork-rust-agent-parity.md B2).
+    pub(crate) async fn stop_subagent(
+        &self,
+        agent: rust_cli_kernel_api::ids::AgentId,
+        execution: String,
+    ) -> Ack {
+        let operation = self.deps.operations.next(
+            self.meta.workspace.environment.clone(),
+            Origin::User {
+                session: Some(self.meta.id.clone()),
+            },
+        );
+        match self
+            .deps
+            .agents
+            .stop_subagent(&self.meta.id, &agent, &execution, operation)
+            .await
+        {
+            Ok(()) => Ack::Accepted {
+                result: CommandResult::Done,
+            },
+            Err(refusal) => Ack::Rejected {
+                reason: refusal.as_str().to_owned(),
+            },
         }
     }
 }

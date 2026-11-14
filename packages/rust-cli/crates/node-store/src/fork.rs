@@ -4,6 +4,7 @@
 //! 依据：Node `session-fork.ts`（`buildForkedSessionInput`、`createForkedSession`、`forkConversationFromMessage`）、
 //! `timeline-persistence.ts`（`persistAssistantTimelinePartForSession`）、`message-persistence.ts`
 //! （`persistSyntheticUserNoticeForSession`）与 `helpers/rewind.ts` 的分叉对话提示。
+use rust_cli_kernel_api::incognito::IncognitoProfile;
 use std::borrow::Cow;
 
 use rusqlite::{Connection, TransactionBehavior};
@@ -165,6 +166,10 @@ pub(crate) fn fork(
         version: parent.version.clone(),
         permission: parent.permission.clone(),
         time_created: Some(created),
+        // Fork: a fork keeps its source session's incognito profile (Node `buildForkedSessionInput`).
+        incognito: sessions::incognito(&tx, fork.parent.as_str())
+            .storage()?
+            .map(|stored| IncognitoProfile::from_stored(&stored).to_stored()),
     };
     sessions::create(&tx, &input, created).storage()?;
     let uuid = || ids.uuid();

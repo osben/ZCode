@@ -114,10 +114,22 @@ impl HookCommand {
     }
 }
 
+/// Fork: where a matcher was configured, as Node's `descriptor.sourceKind` shows it (specs/fork-rust-agent-parity.md
+/// HK-UP-01): user and policy files are `user`, project and local files `project`, a plugin `plugin`.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum HookOrigin {
+    #[default]
+    User,
+    Project,
+    Plugin(String),
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct HookMatcher {
     pub matcher: Option<String>,
     pub hooks: Vec<HookCommand>,
+    /// Fork: set where [`crate::effective`] flattens the sources.
+    pub origin: HookOrigin,
 }
 
 /// 一份设置文件里与 hooks 有关的部分。
@@ -261,6 +273,7 @@ fn parse_matchers(
         matchers.push(HookMatcher {
             matcher: text(object, "matcher"),
             hooks,
+            origin: HookOrigin::default(),
         });
     }
     Some(matchers)

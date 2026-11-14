@@ -12,7 +12,7 @@ use rust_cli_kernel_api::hooks::NODE_EVENTS;
 use rust_cli_paths::StoragePath;
 use serde_json::{Map, Value, json};
 
-/// `eventAtGrant` 只允许 Node 的 7 个事件：表只定义在 kernel-api，这里按名字比较（F58：以前另写了一份字符串表）。
+/// `eventAtGrant` must be one of Node's ten events: the table lives only in kernel-api (F58).
 fn node_event(name: &str) -> bool {
     NODE_EVENTS.iter().any(|event| event.as_str() == name)
 }
@@ -84,7 +84,7 @@ fn non_empty(text: &str) -> bool {
     !text.trim().is_empty()
 }
 
-fn sha256_hex(text: &str) -> bool {
+pub(super) fn sha256_hex(text: &str) -> bool {
     text.len() == SHA256_HEX_LEN
         && text
             .bytes()
@@ -92,7 +92,7 @@ fn sha256_hex(text: &str) -> bool {
 }
 
 /// zod `z.string().datetime()`：`YYYY-MM-DDTHH:MM:SS[.小数]Z`。
-fn datetime(text: &str) -> bool {
+pub(super) fn datetime(text: &str) -> bool {
     let bytes = text.as_bytes();
     let digits = |range: std::ops::Range<usize>| {
         bytes
@@ -241,7 +241,9 @@ impl TrustRecord {
 fn parse_store(bytes: &[u8]) -> Option<Vec<TrustRecord>> {
     let value: Value = serde_json::from_slice(bytes).ok()?;
     let object = value.as_object()?;
-    if object.len() != STORE_KEY_COUNT || object.get("schemaVersion") != Some(&json!(1)) {
+    if object.len() != STORE_KEY_COUNT
+        || object.get("schemaVersion").and_then(Value::as_f64) != Some(1.0)
+    {
         return None;
     }
     let records: Vec<TrustRecord> = object

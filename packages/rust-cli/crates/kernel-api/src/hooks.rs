@@ -75,9 +75,9 @@ hook_events!(
     MessageDisplay,
 );
 
-/// Node 的 7 个事件，按 Node `WORKSPACE_HOOK_EVENT_NAMES` 的顺序：项目 hook 的 digest 按这个顺序遍历，信任记录的
-/// `eventAtGrant` 只允许它们（config.md §4）。F58：以前 hooks（枚举）与 platform（字符串）各写一份。
-pub const NODE_EVENTS: [HookEventName; 7] = [
+/// Node's ten workspace hook events in `WORKSPACE_HOOK_EVENT_NAMES` order: the project hook digest iterates them in
+/// this order, and a trust record's `eventAtGrant` must be one of them (config.md §4). The only definition (F58).
+pub const NODE_EVENTS: [HookEventName; 10] = [
     HookEventName::SessionStart,
     HookEventName::UserPromptSubmit,
     HookEventName::PreToolUse,
@@ -85,6 +85,9 @@ pub const NODE_EVENTS: [HookEventName; 7] = [
     HookEventName::PostToolUse,
     HookEventName::PostToolUseFailure,
     HookEventName::Stop,
+    HookEventName::PreCompact,
+    HookEventName::PostCompact,
+    HookEventName::SessionEnd,
 ];
 
 /// hook 输入的公共字段与命令 hook 的执行上下文。全部可缺省。
@@ -109,6 +112,11 @@ pub struct HookContext {
     /// model.md §6.1、hooks.md §5.3）。调用方没有填时 hook 引擎用配置的回退值。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selection: Option<crate::model::ModelSelection>,
+    /// Fork: the session's mode at an event whose Claude Code input has no `permission_mode` (SessionStart,
+    /// SessionEnd). Only the Node-compatible stdin reads it (Node always sends `mode`;
+    /// specs/fork-rust-agent-parity.md "Command hook stdin").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_mode: Option<PermissionMode>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -184,6 +192,73 @@ pub struct HookOutcome {
     /// PermissionDenied 的 `retry`。
     #[serde(default)]
     pub retry: bool,
+    /// Fork: the id of this dispatch (Node `hookInvocationId`); `None` when no hook ran.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub invocation: Option<String>,
+    /// Fork: one record per hook of this dispatch, in config order (Node's `HookRun*` lifecycle facts,
+    /// specs/fork-rust-agent-parity.md HK-UP-01).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub runs: Vec<HookRunRecord>,
+}
+
+/// Fork: one dispatch's hook runs as the session reports them (Node's `HookRun*` events of one `hookInvocationId`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HookInvocation {
+    pub id: String,
+    pub hook_event: HookEventName,
+    /// The tool call of a tool event (Node `toolCallId`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_use: Option<crate::ids::ToolUseId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_name: Option<String>,
+    pub runs: Vec<HookRunRecord>,
+}
+
+/// Fork: how one hook run ended (Node `HookOutcome`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HookRunOutcome {
+    Success,
+    Blocked,
+    Failed,
+    Cancelled,
+    TimedOut,
+}
+
+/// Fork: where a hook was configured (Node `descriptor.sourceKind`, without `internal`: those are never shown).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HookSourceKind {
+    User,
+    Project,
+    Plugin,
+}
+
+/// Fork: the facts of one hook run of a dispatch (Node's `HookRunStarted` and its terminal event).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HookRunRecord {
+    /// Node `hookRunId`.
+    pub run: String,
+    /// Node `hookIndex`: the run's position among the dispatch's hooks.
+    pub index: u32,
+    pub outcome: HookRunOutcome,
+    /// Masked; only for a blocked run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub block_reason: Option<String>,
+    /// Masked diagnostics of a blocked run (Node `sanitizeHookDiagnostics`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stderr_preview: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stdout_preview: Option<String>,
+    pub started_at_ms: u64,
+    pub duration_ms: u64,
+    pub source_kind: HookSourceKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugin_name: Option<String>,
+    /// The masked command display (Node `descriptor.commandDisplay`).
+    pub display: String,
 }
 
 #[async_trait]
@@ -192,7 +267,9 @@ pub trait HookRunner: Send + Sync {
 
     /// 当前配置里有没有这个事件的 hook（不看 matcher）。调用方用它决定要不要为 hook 进入等待状态
     /// （docs/specs/rust-cli/session-lifecycle.md §3.2）；默认按“有”处理，结果不变、只是多一次空跑。
-    fn has_hooks(&self, _event: HookEventName) -> bool {
+    /// Fork: `workspace` selects the workspace's project hooks (specs/fork-rust-agent-parity.md, "Per-workspace hook
+    /// snapshots").
+    fn has_hooks(&self, _event: HookEventName, _workspace: &WorkspaceRef) -> bool {
         true
     }
 
@@ -281,18 +358,78 @@ pub trait HookHttp: Send + Sync {
     ) -> Result<HookHttpResponse, HookHttpError>;
 }
 
+/// Fork: the temp transcript file of one command hook run (Node `createCompatibleHookStdin`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HookTranscript {
+    /// The `transcript.jsonl` file given to the hook as `transcript_path`.
+    pub path: String,
+    /// Its fresh directory, removed with the file.
+    pub dir: String,
+}
+
+/// Fork: writes the transcript file of a command hook on the agent's host (specs/fork-rust-agent-parity.md "Command
+/// hook stdin"). The hook engine gives command hooks the Node-compatible stdin only when it has this port.
+#[async_trait]
+pub trait HookTranscripts: Send + Sync {
+    /// Where the transcript `name` goes (`<root>/<name>/transcript.jsonl`), without touching the disk. Refuses a
+    /// `name` that is not one plain path component. The caller holds the result as its removal guard before it
+    /// creates the file, so a run dropped mid-way still removes the directory.
+    fn locate(&self, name: &str) -> std::io::Result<HookTranscript>;
+    /// Writes `text` as the transcript file in a new private directory (the file is created new, mode 0600).
+    /// Synchronous: the caller runs it as one job on the blocking pool, so a runtime shutting down waits for a write
+    /// already under way and the job can remove what it wrote.
+    fn create(&self, transcript: &HookTranscript, text: &str) -> std::io::Result<()>;
+    /// Removes the transcript's directory; a missing directory is not an error, a directory outside the root is
+    /// refused.
+    async fn remove(&self, transcript: &HookTranscript) -> std::io::Result<()>;
+    /// [`Self::remove`], synchronously: the last resort of a guard dropped where its spawned removal cannot run (no
+    /// runtime, or the runtime shutting down).
+    fn remove_blocking(&self, transcript: &HookTranscript) -> std::io::Result<()>;
+}
+
 /// 一条并入的插话：文本与排在它的 `queued_command` 之后提交的 hook 消息。
 #[derive(Debug, Clone, PartialEq)]
 pub struct Steered {
     pub text: String,
     pub after: Vec<Message>,
+    /// Who sent it; picks the mid-turn wrapper (Node `user_steer` / `coordinator_steer`).
+    pub from: SteerSender,
+    /// Fork: the absorbed queued command, stored on its `queued_command` attachment so the projection shows the steer
+    /// as a guided user row with that command (Node's drained guide row). None for a coordinator steer.
+    pub command: Option<String>,
+    /// Fork: the steered App input's intent; `text` is the typed text.
+    pub intent: Option<Box<crate::input_intent::InputIntent>>,
+}
+
+/// The sender of a mid-turn steer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SteerSender {
+    /// The user typed it into the running session.
+    #[default]
+    User,
+    /// The parent agent sent it to a running subagent with SendMessage.
+    Coordinator,
 }
 
 impl Steered {
     pub fn plain(text: String) -> Self {
         Self {
+            intent: None,
             text,
             after: Vec::new(),
+            from: SteerSender::User,
+            command: None,
+        }
+    }
+
+    /// A SendMessage from the parent agent, absorbed by the running subagent.
+    pub fn coordinator(text: String) -> Self {
+        Self {
+            intent: None,
+            text,
+            after: Vec::new(),
+            from: SteerSender::Coordinator,
+            command: None,
         }
     }
 }
@@ -310,6 +447,104 @@ pub mod queued_command {
     pub const PROMPT_MODE: &str = "prompt";
     /// 后台通知的模式；通知开的回合里 meta user 消息的来源也是它（会话 actor 与子代理的续跑）。
     pub const TASK_NOTIFICATION: &str = "task-notification";
+    /// Fork: the `data` key of the absorbed command of a typed steer.
+    pub const COMMAND_KEY: &str = "sourceCommandId";
+    /// Fork: the `data` key of a steer that no command carries (Node `TurnSteerSource`).
+    pub const STEER_SOURCE_KEY: &str = "steerSource";
+    /// Fork: the steer source of ExitPlanMode feedback (Node `plan_approval_feedback`).
+    pub const PLAN_APPROVAL_FEEDBACK: &str = "plan_approval_feedback";
+    /// Fork: the `data` key of a typed steer's App input intent (its row's typed text and quotes).
+    pub const INTENT_KEY: &str = "inputIntent";
+
+    /// Fork: the App input intent a typed steer was absorbed with.
+    pub fn intent(attachment: &AttachmentMessage) -> Option<crate::input_intent::InputIntent> {
+        let value = attachment.data.get(INTENT_KEY)?;
+        serde_json::from_value(value.clone()).ok()
+    }
+
+    use serde_json::{Map, Value, json};
+
+    use super::SteerSender;
+    use crate::ids::MessageId;
+    use crate::message::AttachmentMessage;
+
+    /// The model text of a steer absorbed mid-turn: Node's `user_steer` / `coordinator_steer` wrapper
+    /// (`incoming-message.ts`, product name ZCode) inside `<system-reminder>`.
+    pub fn steer_text(prompt: &str, from: SteerSender) -> String {
+        rust_cli_base::reminder::wrap(&match from {
+            SteerSender::User => format!(
+                "The user sent a new message while you were working:\n{prompt}\n\nThis is how ZCode surfaces messages the user sends mid-turn \u{2014} within the running turn, often alongside the next tool result, rather than as a separate conversation turn. Address the message above as you continue this turn."
+            ),
+            SteerSender::Coordinator => format!(
+                "The coordinator sent a message while you were working:\n{prompt}\n\nAddress this before completing your current task."
+            ),
+        })
+    }
+
+    /// The `queued_command` attachment (`commandMode: prompt`) of an absorbed steer. `command` is the queued command a
+    /// typed steer came from; `steer_source` names a steer without a command (plan feedback). With either, the
+    /// projection shows it as a guided user row.
+    pub fn steer_attachment(
+        id: MessageId,
+        prompt: &str,
+        from: SteerSender,
+        command: Option<&str>,
+        steer_source: Option<&str>,
+    ) -> AttachmentMessage {
+        let mut data = Map::new();
+        data.insert(PROMPT_KEY.to_owned(), json!(prompt));
+        data.insert(MODE_KEY.to_owned(), json!(PROMPT_MODE));
+        if let Some(command) = command {
+            data.insert(COMMAND_KEY.to_owned(), json!(command));
+        }
+        if let Some(source) = steer_source {
+            data.insert(STEER_SOURCE_KEY.to_owned(), json!(source));
+        }
+        AttachmentMessage {
+            id,
+            source: SOURCE.to_owned(),
+            text: steer_text(prompt, from),
+            data: Value::Object(data),
+        }
+    }
+
+    /// Fork: the source of a steer that no command carries (plan feedback) and its prompt. Node keeps such an input a
+    /// plain user message for the model (no steer reminder: `steering.ts` sets the guide presentation only for a
+    /// guide without a source).
+    pub fn sourced(attachment: &AttachmentMessage) -> Option<(&str, &str)> {
+        if attachment.source != SOURCE
+            || attachment.data.get(MODE_KEY).and_then(Value::as_str) != Some(PROMPT_MODE)
+        {
+            return None;
+        }
+        let source = attachment
+            .data
+            .get(STEER_SOURCE_KEY)
+            .and_then(Value::as_str)?;
+        let prompt = attachment.data.get(PROMPT_KEY).and_then(Value::as_str)?;
+        Some((source, prompt))
+    }
+
+    /// A steer the user sees as a guided user row: its prompt and the command it came from. None for other
+    /// attachments, notifications, coordinator steers and steers stored before the keys existed.
+    pub fn guided(attachment: &AttachmentMessage) -> Option<(&str, Option<&str>)> {
+        if attachment.source != SOURCE
+            || attachment.data.get(MODE_KEY).and_then(Value::as_str) != Some(PROMPT_MODE)
+        {
+            return None;
+        }
+        let command = attachment.data.get(COMMAND_KEY).and_then(Value::as_str);
+        let sourced = attachment
+            .data
+            .get(STEER_SOURCE_KEY)
+            .and_then(Value::as_str)
+            .is_some();
+        if command.is_none() && !sourced {
+            return None;
+        }
+        let prompt = attachment.data.get(PROMPT_KEY).and_then(Value::as_str)?;
+        Some((prompt, command))
+    }
 }
 
 /// 工具边界并入的一条通知。
@@ -343,6 +578,20 @@ impl Absorbed {
                     .map(|text| Self::Notice(AbsorbedNotice { text, id: None })),
             )
             .collect()
+    }
+}
+
+/// Fork: the SessionStart additional-context attachment (source `hook_additional_context`, `data.hookEvent`
+/// `SessionStart`). The session's pending slot and the compactor's kept-context check both compare these by their full
+/// text (Node `latestSessionStartContext`).
+pub fn is_session_start_context(message: &Message) -> bool {
+    match message {
+        Message::Attachment(attachment) => {
+            attachment.source == "hook_additional_context"
+                && attachment.data.get("hookEvent").and_then(Value::as_str)
+                    == Some(HookEventName::SessionStart.as_str())
+        }
+        _ => false,
     }
 }
 

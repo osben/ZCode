@@ -1,10 +1,16 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { parseMarketingTouchResponse, type ApiClient } from "@zcode/shared";
+import {
+  parseMarketingTouchResponse,
+  SUPPORTED_LOCALES,
+  type ApiClient,
+  type Locale,
+} from "@zcode/shared";
 import { readApiJson } from "#src/providers/api/apiJson.js";
 import type { IMarketingTouchService } from "#src/marketing-touch/marketingTouch.js";
 
-const localeSchema = z.enum(["zh-CN", "en-US"]);
+// X-Client-Language must carry the real UI language (including ja-JP/ru-RU/ko-KR); it must not be downgraded to zh/en first.
+const localeSchema = z.enum(SUPPORTED_LOCALES);
 // The sequence belongs to this service-process boot; it must never reset when components, accounts, or service instances are rebuilt.
 let bootRequestSeq = 0;
 const reportSchema = z.object({
@@ -24,7 +30,7 @@ export function createMarketingTouchService(options: {
 }): IMarketingTouchService {
   let previousToken: string | undefined;
   let scope = randomUUID();
-  async function context(locale: "zh-CN" | "en-US") {
+  async function context(locale: Locale) {
     const token = (await options.getToken())?.trim() || "";
     if (previousToken !== token) {
       previousToken = token;

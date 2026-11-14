@@ -37,7 +37,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::account::{self, AccountView};
-use crate::credentials::{CredentialStore, Credentials};
+use crate::credentials::{CredentialError, CredentialStore, Credentials};
 use crate::personal::PersonalPlans;
 use crate::team::{TeamAccount, TeamPlan, TeamPlans};
 use catalog::Snapshot;
@@ -78,6 +78,16 @@ pub(crate) struct Registry {
     gate: Mutex<ChangeGate>,
     published: Mutex<Published>,
     next_seq: AtomicU64,
+    /// 最近一次读取的不可读原因（没有时为空）：模型端点查不到模型时据此报“凭据读不到”，而不是“不可用”。A watch so the
+    /// default-model task can wait for a readable read (fork spec `fork-rust-credential-cipher.md` F3).
+    unreadable: tokio::sync::watch::Sender<Signal>,
+}
+
+/// The credentials state of the latest read that signalled it.
+#[derive(Debug, Default, Clone, Copy)]
+pub(crate) struct Signal {
+    seq: u64,
+    reason: Option<&'static str>,
 }
 
 /// 读到的三份输入。
@@ -85,6 +95,8 @@ struct Inputs {
     builtin: Vec<u8>,
     personal: Vec<u8>,
     account: Value,
+    /// 凭据存储不可用时的静态原因（specs/fork-rust-credential-cipher.md）：账号 overlay 不是“未授权”，调用方保留上一次结果。
+    unreadable: Option<&'static str>,
 }
 
 impl Registry {
@@ -105,7 +117,35 @@ impl Registry {
                 current: Arc::new(Current::default()),
             }),
             next_seq: AtomicU64::new(1),
+            unreadable: tokio::sync::watch::Sender::new(Signal::default()),
         }
+    }
+
+    /// 最近一次读取凭据失败的静态原因（读得到时为空）。
+    pub fn unreadable_reason(&self) -> Option<&'static str> {
+        self.unreadable.borrow().reason
+    }
+
+    /// Records the credentials state of read `seq`. Like the published snapshot, a read older than the last one
+    /// signalled does not overwrite it.
+    fn signal(&self, seq: u64, reason: Option<&'static str>) {
+        self.unreadable.send_if_modified(|signal| {
+            if seq < signal.seq {
+                return false;
+            }
+            let changed = signal.reason != reason;
+            *signal = Signal { seq, reason };
+            changed
+        });
+    }
+
+    /// Resolves once the latest read had readable credentials; at once when it had, or when nothing was read yet.
+    /// Pull-based: a later [`Self::current`] read does it (a catalog read, a session's endpoint lookup, the Host's
+    /// model requests); nothing reads on a timer.
+    pub async fn readable(&self) {
+        let mut receiver = self.unreadable.subscribe();
+        // The sender lives in `self`, so the channel cannot close while this borrow is held.
+        let _ = receiver.wait_for(|signal| signal.reason.is_none()).await;
     }
 
     /// 当前快照；文件有变化时先重新读取。
@@ -131,7 +171,33 @@ impl Registry {
                 return self.published.lock_unpoisoned().current.clone();
             }
         };
-        self.gate.lock_unpoisoned().record(stamps, now);
+        let unreadable = inputs.unreadable;
+        if unreadable.is_some() {
+            // Wakes no one: signalled at once, so a cancelled read cannot lose it.
+            self.signal(seq, unreadable);
+        }
+        let current = self.publish(seq, inputs).await;
+        if unreadable.is_none() {
+            // Only after this read's snapshot is published: a waiter woken by `readable()` reads the catalog next,
+            // and the change gate hands it the published snapshot without reading. The gate is recorded here too, so
+            // a read cancelled before this point records neither and the next read reads again.
+            self.gate.lock_unpoisoned().record(stamps, now);
+            self.signal(seq, None);
+        }
+        current
+    }
+
+    /// Publishes the snapshot of one read (the inputs already read), or keeps the published one.
+    async fn publish(&self, seq: u64, inputs: Inputs) -> Arc<Current> {
+        if inputs.unreadable.is_none() {
+            self.credentials.note_ok();
+        } else {
+            // 凭据不可读：保留上一次发布的结果（它的账号授权是已知的），且不记录文件的印记，下一次照常重读。
+            let published = self.published.lock_unpoisoned();
+            if published.current.revision > 0 {
+                return published.current.clone();
+            }
+        }
         let signature = signature(&inputs);
         if self.published.lock_unpoisoned().current.signature == signature {
             return self.published.lock_unpoisoned().current.clone();
@@ -200,8 +266,17 @@ impl Registry {
         let builtin_value: Value = serde_json::from_slice(&builtin).unwrap_or(Value::Null);
         let builtin_config = &builtin_value["config"];
         let credentials = self.account_credentials().await;
-        let accounts = account::team_accounts(builtin_config, credentials.as_ref());
-        let individuals = account::personal_accounts(builtin_config, credentials.as_ref());
+        let (accounts, individuals) = match (
+            account::team_accounts(builtin_config, credentials.as_ref()).await,
+            account::personal_accounts(builtin_config, credentials.as_ref()).await,
+        ) {
+            (Ok(accounts), Ok(individuals)) => (accounts, individuals),
+            (Err(error), _) | (_, Err(error)) => {
+                return self
+                    .unreadable_inputs(builtin, personal, builtin_config, &error)
+                    .await;
+            }
+        };
         // 个人订阅与团队、两个 family 都同时查（团队的 pricing、customerInfo 与订阅详情也是同时发的，platform.md
         // §5.7、§9.2）：第一次取目录的等待是各条查询的最大值，不是总和。
         let (rounds, checks) = join(
@@ -221,9 +296,18 @@ impl Registry {
         {
             // App `accountProviderConnectionResolver`：查询可能跨越换账号，旧身份的结果不能发布给新身份。
             let after = self.account_credentials().await;
-            if account::team_accounts(builtin_config, after.as_ref()) != accounts
-                || account::personal_accounts(builtin_config, after.as_ref()) != individuals
-            {
+            let same = match (
+                account::team_accounts(builtin_config, after.as_ref()).await,
+                account::personal_accounts(builtin_config, after.as_ref()).await,
+            ) {
+                (Ok(teams), Ok(personal)) => teams == accounts && personal == individuals,
+                (Err(error), _) | (_, Err(error)) => {
+                    return self
+                        .unreadable_inputs(builtin, personal, builtin_config, &error)
+                        .await;
+                }
+            };
+            if !same {
                 return Err("the account changed during the plan queries".to_owned());
             }
         }
@@ -248,10 +332,35 @@ impl Registry {
             personal: &entitled,
             teams: &teams,
         };
-        let layer = account::overlay(builtin_config, &view);
+        let layer = match account::overlay(builtin_config, &view).await {
+            Ok(layer) => layer,
+            Err(error) => {
+                return self
+                    .unreadable_inputs(builtin, personal, builtin_config, &error)
+                    .await;
+            }
+        };
         let connections = connections(&accounts, &teams);
-        let account = json!({"providers": layer.providers, "connections": connections});
+        // Fork: ChatGPT Plan accounts (specs/fork-rust-chatgpt-plan.md rules 1-3). They enter the signature, so a
+        // sign-in, sign-out or scope change while running publishes a new revision.
+        let chatgpt = match &credentials {
+            Some(credentials) => match crate::chatgpt::accounts(credentials).await {
+                Ok(accounts) => accounts,
+                Err(error) => {
+                    return self
+                        .unreadable_inputs(builtin, personal, builtin_config, &error)
+                        .await;
+                }
+            },
+            None => Vec::new(),
+        };
+        let account = json!({
+            "providers": layer.providers,
+            "connections": connections,
+            "chatgpt": crate::chatgpt::ChatGptAccount::to_json(&chatgpt),
+        });
         Ok(Inputs {
+            unreadable: None,
             builtin,
             personal,
             account,
@@ -260,6 +369,35 @@ impl Registry {
 }
 
 impl Registry {
+    /// 凭据存储不可用（解密失败或 cipher 不可用）时的读取结果：账号 overlay 全部不授权，并带上不可读的原因。
+    /// 调用方（[`Self::current`]）据此保留上一次发布的结果，而不是把它当成“未登录”。
+    async fn unreadable_inputs(
+        &self,
+        builtin: Vec<u8>,
+        personal: Vec<u8>,
+        builtin_config: &Value,
+        error: &CredentialError,
+    ) -> Result<Inputs, String> {
+        self.credentials.note_error(error);
+        let empty_personal = HashMap::new();
+        let empty_teams = HashMap::new();
+        let view = AccountView {
+            credentials: None,
+            personal: &empty_personal,
+            teams: &empty_teams,
+        };
+        let layer = account::overlay(builtin_config, &view)
+            .await
+            .map_err(|error| error.to_string())?;
+        let account = json!({"providers": layer.providers, "connections": []});
+        Ok(Inputs {
+            builtin,
+            personal,
+            account,
+            unreadable: Some(crate::credentials::unreadable_reason(error)),
+        })
+    }
+
     /// 凭据（读不到或损坏时为空：账号 provider 一律不授权，fail-closed，不影响其他 provider）。
     async fn account_credentials(&self) -> Option<Credentials> {
         match self.credentials.read().await {
@@ -281,6 +419,8 @@ impl Registry {
         let builtin = self.builtin_config().await.ok()?;
         let credentials = self.account_credentials().await;
         account::team_accounts(&builtin, credentials.as_ref())
+            .await
+            .ok()?
             .iter()
             .filter(|account: &&TeamAccount| provider.is_none_or(|p| p == account.provider))
             .find_map(|account| {
@@ -323,7 +463,7 @@ fn signature(inputs: &Inputs) -> Vec<u8> {
 }
 
 fn parse(inputs: &Inputs) -> Result<Snapshot, String> {
-    let builtin: Value = serde_json::from_slice(&inputs.builtin)
+    let mut builtin: Value = serde_json::from_slice(&inputs.builtin)
         .map_err(|error| format!("builtin provider config: {error}"))?;
     let personal: Value = serde_json::from_slice(&inputs.personal)
         .map_err(|error| format!("personal provider config: {error}"))?;
@@ -339,7 +479,11 @@ fn parse(inputs: &Inputs) -> Result<Snapshot, String> {
     };
     let connections: HashMap<String, Vec<CatalogConnection>> =
         serde_json::from_value(inputs.account["connections"].clone()).unwrap_or_default();
-    let resolved = resolve::resolve(&builtin["config"], &personal["config"], Some(&layer));
+    let chatgpt = crate::chatgpt::ChatGptAccount::from_json(&inputs.account["chatgpt"]);
+    // `builtin` is not read after this point: move the config out instead of deep-cloning up to 8 MiB.
+    let mut builtin_config = builtin["config"].take();
+    crate::chatgpt::derive(&mut builtin_config, &chatgpt);
+    let resolved = resolve::resolve(&builtin_config, &personal["config"], Some(&layer));
     Ok(catalog::snapshot(&resolved, &connections))
 }
 

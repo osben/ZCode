@@ -117,6 +117,7 @@ async fn the_session_moves_and_gets_the_note_with_the_new_rules() {
             selection: selection(),
             mode: PermissionMode::Default,
             plan: false,
+            incognito: None,
         })
         .await
         .unwrap();
@@ -185,6 +186,7 @@ async fn already_there_is_judged_by_the_session_not_the_front_end_copy() {
             selection: selection(),
             mode: PermissionMode::Default,
             plan: false,
+            incognito: None,
         })
         .await
         .unwrap();
@@ -245,6 +247,7 @@ async fn the_session_records_each_cd_like_the_reference() {
             selection: selection(),
             mode: PermissionMode::Default,
             plan: false,
+            incognito: None,
         })
         .await
         .unwrap();

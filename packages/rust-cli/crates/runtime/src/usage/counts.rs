@@ -24,6 +24,7 @@ pub(crate) fn user_text(text: &str) -> Vec<ApiMessage> {
                 text: text.to_owned(),
             },
             cache_control: None,
+            meta: false,
         }],
         output_config: None,
     }]
@@ -40,7 +41,7 @@ pub(crate) fn block(block: &ContentBlock, per: u64) -> u64 {
     match block {
         ContentBlock::Text { text } => rough(text, per),
         // 每张图的估计与压缩共用（2000，F55）。
-        ContentBlock::Image { .. } => rust_cli_compact::IMAGE_TOKENS,
+        ContentBlock::Image { .. } | ContentBlock::Video { .. } => rust_cli_compact::IMAGE_TOKENS,
         // Fork: an attached file counts as what the model receives for it.
         ContentBlock::File { file } => rust_cli_kernel_api::prompt_attachment::blocks(file)
             .iter()

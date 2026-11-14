@@ -28,8 +28,32 @@ describe("selectForkAgentRuntimeCommand", () => {
       command: "/res/zcode-rs/zcode-rs",
       args: ["app-server", "--stdio"],
       cwd: "/work",
+      env: {
+        ZCODE_FORK_NODE_HELPER_COMMAND: JSON.stringify({
+          command: "/electron",
+          args: ["/bundle/zcode.cjs", "__zcode-rust-helper", "--stdio"],
+          env: { ELECTRON_RUN_AS_NODE: "1" },
+        }),
+      },
       storagePreparationEntry: "/bundle/zcode.cjs",
     });
+  });
+
+  it("hands the rust agent the bundled node entry as its helper command", () => {
+    const selected = selectForkAgentRuntimeCommand(nodeCommand, context, {
+      ZCODE_FORK_AGENT_RUNTIME: "rust",
+      ZCODE_FORK_RUST_AGENT_PATH: "/res/zcode-rs/zcode-rs",
+    });
+    const helper = JSON.parse(selected?.env?.ZCODE_FORK_NODE_HELPER_COMMAND ?? "null") as {
+      command: string;
+      args: string[];
+      env: Record<string, string>;
+    };
+    // Same executable and entry as storage preparation: one plugin store, one migrated database.
+    expect(helper.command).toBe(nodeCommand.command);
+    expect(helper.args[0]).toBe(nodeCommand.storagePreparationEntry);
+    // The helper must stay a plain Node process even though Electron is the executable.
+    expect(helper.env.ELECTRON_RUN_AS_NODE).toBe("1");
   });
 
   it("does not run rust without a binary path", () => {

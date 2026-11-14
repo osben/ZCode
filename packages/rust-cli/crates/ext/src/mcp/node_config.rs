@@ -17,7 +17,7 @@ use super::connection::PROTOCOL_VERSION;
 const NEWER_PROTOCOL: &str = "2026-07-28";
 
 /// Node `normalizeMcpServerConfigInput`：旧字段名与缺省的 `type`。
-fn normalize(server: &Map<String, Value>) -> Map<String, Value> {
+pub fn normalize_node_server(server: &Map<String, Value>) -> Map<String, Value> {
     let mut server = server.clone();
     if !server.contains_key("env")
         && let Some(environment) = server.get("environment").cloned()
@@ -172,7 +172,7 @@ fn extra_fields(
 
 /// 一个服务器；`Err` 是不合法。
 fn server(value: &Value) -> Result<Parsed, String> {
-    let server = normalize(value.as_object().ok_or("<server>: expected an object")?);
+    let server = normalize_node_server(value.as_object().ok_or("<server>: expected an object")?);
     let enabled = server.get("enabled") != Some(&Value::Bool(false));
     let stdio = server.get("type").and_then(Value::as_str) == Some("stdio");
     if stdio {

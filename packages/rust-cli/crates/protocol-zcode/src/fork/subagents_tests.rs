@@ -49,6 +49,9 @@ fn entry(
     ended_ago_ms: Option<u64>,
 ) -> SubagentEntry {
     SubagentEntry {
+        execution_id: String::new(),
+        execution: 0,
+        previous: None,
         agent: AgentId::new("agent_x"),
         child: SessionId::new(child),
         agent_type: "Explore".to_owned(),
@@ -635,6 +638,7 @@ fn meta(id: &str) -> SessionMeta {
         title: String::new(),
         trace: TraceId::new("trace"),
         created_at_ms: 1000,
+        incognito: None,
     }
 }
 
@@ -650,7 +654,7 @@ fn server(store: Arc<MemoryStore>) -> (TaskScope, Arc<Server>) {
         kernel,
         scope.spawner(),
         Defaults {
-            selection: selection(),
+            selection: selection().into(),
             mode: PermissionMode::Default,
             environment: EnvironmentId::new("local"),
         },

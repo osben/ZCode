@@ -57,6 +57,8 @@ pub enum Reply {
     SetShellCwd,
     #[serde(rename = "background.background_command")]
     BackgroundCommand(Option<BackgroundInfo>),
+    #[serde(rename = "background.ended_background_command")]
+    EndedBackgroundCommand(Option<BackgroundInfo>),
     #[serde(rename = "background.background_elapsed")]
     BackgroundElapsed(Option<u64>),
     #[serde(rename = "background.stop_background_command")]
@@ -124,6 +126,7 @@ impl Reply {
             Self::AckShellNotice => Op::AckShellNotice,
             Self::SetShellCwd => Op::SetShellCwd,
             Self::BackgroundCommand(_) => Op::BackgroundCommand,
+            Self::EndedBackgroundCommand(_) => Op::EndedBackgroundCommand,
             Self::BackgroundElapsed(_) => Op::BackgroundElapsed,
             Self::StopBackgroundCommand(_) => Op::StopBackgroundCommand,
             Self::RewindPrepare(_) => Op::RewindPrepare,

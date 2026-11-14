@@ -155,6 +155,7 @@ mod interactions {
                 selection: selection(),
                 mode: PermissionMode::Default,
                 plan: false,
+                incognito: None,
             })
             .await
             .unwrap();

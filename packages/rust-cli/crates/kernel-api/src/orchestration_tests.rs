@@ -149,6 +149,7 @@ async fn no_one_to_ask_answers_by_the_kind_of_question() {
         asked_by: None,
         machine: crate::ids::MachineName::primary(),
         once: false,
+        independent: false,
     };
     let question = InteractionRequest::Question {
         origin: None,

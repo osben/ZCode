@@ -139,14 +139,24 @@ async fn zai_login_polls_exchanges_and_writes_both_files() {
             r#"{"user_id":" u-9 ","name":"Dev","email":"dev@example.com","extra":1}"#,
         ),
     ] {
-        assert_eq!(text(credentials.present(key)), value, "{key}");
+        assert_eq!(
+            text(credentials.present(key).await.unwrap()),
+            value,
+            "{key}"
+        );
     }
-    assert!(credentials.present("oauth:zai:refresh_token").is_none());
+    assert!(
+        credentials
+            .present("oauth:zai:refresh_token")
+            .await
+            .unwrap()
+            .is_none()
+    );
     for key in [
         "account-provider:account:zai-individual-coding-plan:identity",
         "account-provider:account:zai-individual-coding-plan:auth-source",
     ] {
-        assert!(credentials.present(key).is_none(), "{key}");
+        assert!(credentials.present(key).await.unwrap().is_none(), "{key}");
     }
     let config = read_text(harness.paths.provider_config().as_path())
         .await
@@ -203,13 +213,17 @@ async fn bigmodel_login_writes_the_app_profile() {
         ("oauth:bigmodel:refresh_token", "rt-new"),
         ("oauth:bigmodel:user_info", info),
     ] {
-        assert_eq!(text(credentials.present(key)), value, "{key}");
+        assert_eq!(
+            text(credentials.present(key).await.unwrap()),
+            value,
+            "{key}"
+        );
     }
     for key in [
         "account-provider:account:bigmodel-individual-coding-plan:identity",
         "account-provider:account:bigmodel-individual-coding-plan:auth-source",
     ] {
-        assert!(credentials.present(key).is_none(), "{key}");
+        assert!(credentials.present(key).await.unwrap().is_none(), "{key}");
     }
     // 已有的 Node 规范文件：只改默认选择，其余字节与 Node 相同。
     let config = read_text(harness.paths.provider_config().as_path())
@@ -360,7 +374,12 @@ async fn a_team_only_account_logs_in_and_uses_the_team_plan() {
     assert_eq!(server.count("/api/biz/"), 0);
     let credentials = harness.credentials().await;
     assert_eq!(
-        text(credentials.present("oauth:bigmodel:access_token")),
+        text(
+            credentials
+                .present("oauth:bigmodel:access_token")
+                .await
+                .unwrap()
+        ),
         "at-new"
     );
     let catalog = harness.platform.catalog().await;
@@ -420,17 +439,32 @@ async fn api_keys_and_logout_follow_node() {
     // Node：key- + sha256("sk-manual") 的前 24 个 hex。
     let identity = "key-1e5d18ec8e47b2df74173352";
     assert_eq!(
-        text(credentials.present(&format!("account-provider:{ZAI}:identity"))),
+        text(
+            credentials
+                .present(&format!("account-provider:{ZAI}:identity"))
+                .await
+                .unwrap()
+        ),
         identity
     );
     assert_eq!(
-        text(credentials.present(&format!("account-provider:{ZAI}:auth-source"))),
+        text(
+            credentials
+                .present(&format!("account-provider:{ZAI}:auth-source"))
+                .await
+                .unwrap()
+        ),
         "manual"
     );
     assert_eq!(
-        text(credentials.present(&format!(
-            "account-provider:coding-plan:{ZAI}:account:{identity}:api-key"
-        ))),
+        text(
+            credentials
+                .present(&format!(
+                    "account-provider:coding-plan:{ZAI}:account:{identity}:api-key"
+                ))
+                .await
+                .unwrap()
+        ),
         "sk-manual"
     );
     let endpoint = harness
@@ -582,7 +616,7 @@ async fn login_writes_what_the_app_writes() {
         let credentials = harness.credentials().await;
         for (key, value) in app {
             assert_eq!(
-                text(credentials.present(key)),
+                text(credentials.present(key).await.unwrap()),
                 value.as_str().unwrap(),
                 "{name}: {key}"
             );

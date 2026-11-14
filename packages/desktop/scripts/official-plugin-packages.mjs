@@ -202,6 +202,33 @@ export const officialPluginPackages = [
     requiresRuntime: false,
     stagedPath: "packages/zcode-cua-plugin",
   },
+  {
+    // design (content plugin, enabled by default): the Electron production package seeds first launch
+    // from the directory staged here; without it the production desktop package has no design skills.
+    // The required files match requiredSeedPaths in official-plugin-definitions.ts.
+    packageName: "@zcode/design-plugin",
+    relativePath: "apps/zcode-cli/packages/design-plugin",
+    requiresRuntime: false,
+    requiredSeedPaths: [
+      "skills/design/SKILL.md",
+      "skills/design/references/catalog.md",
+      "skills/design/references/check.md",
+      "skills/design/references/create.md",
+      "skills/design/references/design-system.md",
+      "skills/design/references/interact.md",
+      "skills/design/references/output.md",
+      "skills/design/references/redesign.md",
+      "skills/design/scripts/adapt-canvas.mjs",
+      "skills/design/scripts/design-lint.mjs",
+      "skills/design/scripts/design-tokens.mjs",
+      "skills/design/scripts/import-design-system.mjs",
+      "hooks/hooks.json",
+      "hooks/run-hook.cmd",
+      "hooks/design-rules",
+    ],
+    requiredRuntimePaths: [],
+    stagedPath: "packages/design-plugin",
+  },
   // superpowers has been retired from bundled plugins and is now installed on demand from the UI
   // recommendations section; its resources are no longer staged here.
   {

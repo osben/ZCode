@@ -25,11 +25,17 @@ mod monitors;
 mod peer_send;
 mod plugin;
 mod report;
+mod routes;
 mod routing;
 mod runs;
+mod selection_check;
 mod shell_notices;
 mod signals;
 mod spawn;
+mod stall;
+#[cfg(test)]
+#[path = "stop_subagent_tests.rs"]
+mod stop_subagent_tests;
 mod task_output;
 mod task_stop;
 mod tasks;
@@ -41,6 +47,7 @@ use std::sync::{Arc, Weak};
 use async_trait::async_trait;
 use futures_util::stream::BoxStream;
 use rust_cli_base::Spawner;
+use rust_cli_base::sync::LockUnpoisoned;
 use rust_cli_kernel_api::agents::{AgentSignal, AgentSignals, SubagentQueries, TaskListStore};
 use rust_cli_kernel_api::clock::{Clock, Ids};
 use rust_cli_kernel_api::ids::{AgentId, MachineName, SessionId};
@@ -54,6 +61,7 @@ pub use agent_tool::AgentTool;
 pub use context::AgentCatalog;
 pub use definitions::{AgentDefinition, AgentSource, builtins};
 pub use plugin::PluginAgentFile;
+pub use stall::StallConfig;
 pub use tasks::{MemoryTaskLists, task_tools_enabled};
 
 use crate::live::Live;
@@ -72,6 +80,9 @@ pub struct AgentsPorts {
     /// 以前另存一份主 env，与注册表给的是同一份。
     pub machines: Arc<dyn rust_cli_kernel_api::env_registry::EnvironmentRegistry>,
     pub tasks: Arc<dyn TaskListStore>,
+    /// Fork: the store's read queries; a reopened top-level session's persisted subagent children come from it
+    /// (`StoreQueries::subagent_child_ids`, shell_notices.rs).
+    pub store_queries: Arc<dyn rust_cli_kernel_api::store::StoreQueries>,
     pub queries: Arc<dyn SubagentQueries>,
     /// 主线程的上下文组装；子代理的 attachment 也由它按 `QuerySource::Subagent` 产生。
     pub context: Arc<dyn ContextBuilder>,
@@ -85,6 +96,8 @@ pub struct AgentsPorts {
     pub peers: Arc<dyn rust_cli_kernel_api::peers::PeerMessaging>,
     /// 操作上下文的工厂（同会话 actor 的 `SessionDeps::operations`）：子代理里停掉 monitor 的操作上下文。
     pub operations: rust_cli_kernel_api::env::Operations,
+    /// Fork: incognito profiles by session; a child session inherits its parent's.
+    pub incognito: rust_cli_kernel_api::incognito::IncognitoProfiles,
 }
 
 /// Task v2 四个工具开不开（[`task_tools_enabled`]）。
@@ -123,6 +136,8 @@ pub struct AgentsConfig {
     /// Fork (node_desktop): register Node's TaskOutput tool (the desktop agent's regression
     /// drives background Bash through it). Off keeps the CLI's tool list unchanged.
     pub node_desktop: bool,
+    /// 后台子代理的无进展提醒（Node `subagents.backgroundStallNotifyMs` 与 `backgroundStallMaxIntervalMs`）。
+    pub stall: StallConfig,
 }
 
 impl AgentsPorts {
@@ -217,6 +232,18 @@ impl ToolRegistry for AgentRegistry {
         }
     }
 
+    fn find_for(&self, session: &SessionId, name: &str) -> Option<Arc<dyn Tool>> {
+        match self
+            .own
+            .iter()
+            .find(|tool| rust_cli_kernel_api::tool::answers_to(tool.as_ref(), name))
+        {
+            Some(tool) if self.base.hides(tool.name()) || !tool.is_enabled() => None,
+            Some(tool) => Some(tool.clone()),
+            None => self.base.find_for(session, name),
+        }
+    }
+
     fn hides(&self, name: &str) -> bool {
         self.base.hides(name)
     }
@@ -239,6 +266,17 @@ pub struct Agents {
 impl Agents {
     pub fn new(ports: AgentsPorts, base: Arc<dyn ToolRegistry>, config: AgentsConfig) -> Self {
         let live = Arc::new(Live::new(ports.clock.clone()));
+        // Fork: a subagent's catalog lookups use its root session's Host snapshot.
+        let tree = Arc::downgrade(&live);
+        ports
+            .catalog
+            .set_roots(Arc::new(move |session: &SessionId| {
+                tree.upgrade()
+                    .map_or_else(|| session.clone(), |live| live.root_of(session))
+            }));
+        if config.node_desktop {
+            ports.catalog.set_node_desktop();
+        }
         let registry = Arc::new_cyclic(|registry: &Weak<AgentRegistry>| {
             let core = Arc::new(Core {
                 catalog: ports.catalog.clone(),
@@ -266,6 +304,12 @@ impl Agents {
             }
             AgentRegistry { base, own, core }
         });
+        // 无进展提醒的钟：弱引用，注册表释放后驱动结束（stall.rs）。
+        stall::spawn(
+            Arc::downgrade(&registry.core),
+            config.stall,
+            &registry.core.ports.spawner,
+        );
         Self {
             core: registry.core.clone(),
             registry,
@@ -294,6 +338,73 @@ impl Agents {
     pub fn task_reader(&self) -> Arc<dyn rust_cli_kernel_api::agents::TaskReader> {
         Arc::new(TaskLists(self.core.clone()))
     }
+
+    /// Fork: the ACP plan writer (kernel-api `TaskPlanWriter`), through the same task board as the task tools.
+    pub fn task_plan_writer(&self) -> Arc<dyn rust_cli_kernel_api::agents::TaskPlanWriter> {
+        Arc::new(TaskLists(self.core.clone()))
+    }
+}
+
+#[async_trait]
+impl rust_cli_kernel_api::agents::TaskPlanWriter for TaskLists {
+    async fn replace(
+        &self,
+        session: &SessionId,
+        tasks: Vec<rust_cli_kernel_api::agents::TaskRecord>,
+    ) -> Result<Vec<rust_cli_kernel_api::agents::TaskRecord>, rust_cli_kernel_api::store::StoreError>
+    {
+        let list = self.0.live.root_of(session);
+        let replaced = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let slot = replaced.clone();
+        let change: tasks::Change = Box::new(move |current| {
+            // A plan sent again unchanged keeps the list and its IDs, so an agent repeating its plan writes nothing.
+            if same_steps(&current.tasks, &tasks) {
+                *slot.lock_unpoisoned() = current.tasks.clone();
+                return (String::new(), false);
+            }
+            // IDs are never reused (`TaskList::high_water_mark`): the plan is numbered after the highest ID ever
+            // issued, so a model's `TaskUpdate` of an older ID cannot reach a plan step.
+            let mut tasks = tasks;
+            for task in &mut tasks {
+                current.high_water_mark += 1;
+                task.id = current.high_water_mark.to_string();
+            }
+            *slot.lock_unpoisoned() = std::mem::replace(&mut current.tasks, tasks);
+            (String::new(), true)
+        });
+        let (_, written) = self.0.board.update(&list, change).await?;
+        if let Some(written) = written {
+            let value = serde_json::to_value(&written.tasks).unwrap_or(serde_json::Value::Null);
+            self.0.hub.tasks_changed(&list, value);
+        }
+        let mut old = std::mem::take(&mut *replaced.lock_unpoisoned());
+        old.sort_by_key(|task| task.id.parse::<u64>().unwrap_or(u64::MAX));
+        Ok(old)
+    }
+}
+
+/// Whether `plan` lists the same steps as `tasks` in ID order: subject, status and priority, the fields a plan
+/// carries (Node's todo). Other Task v2 fields do not count.
+fn same_steps(
+    tasks: &[rust_cli_kernel_api::agents::TaskRecord],
+    plan: &[rust_cli_kernel_api::agents::TaskRecord],
+) -> bool {
+    use rust_cli_kernel_api::agents::TaskRecord;
+    // node-store `task_lists`: a missing or unknown priority is the `medium` placeholder.
+    fn priority(task: &TaskRecord) -> &str {
+        task.metadata
+            .as_ref()
+            .and_then(|metadata| metadata.get("priority"))
+            .and_then(serde_json::Value::as_str)
+            .filter(|priority| ["high", "medium", "low"].contains(priority))
+            .unwrap_or("medium")
+    }
+    fn step(task: &TaskRecord) -> (&str, rust_cli_kernel_api::agents::TaskStatus, &str) {
+        (task.subject.as_str(), task.status, priority(task))
+    }
+    let mut ordered: Vec<_> = tasks.iter().collect();
+    ordered.sort_by_key(|task| task.id.parse::<u64>().unwrap_or(u64::MAX));
+    ordered.len() == plan.len() && ordered.into_iter().map(step).eq(plan.iter().map(step))
 }
 
 struct TaskLists(Arc<Core>);
@@ -323,11 +434,41 @@ impl AgentSignals for Signals {
         self.0.hub.subscribe(session)
     }
 
+    fn session_opened(&self, meta: &rust_cli_kernel_api::store::SessionMeta) {
+        shell_notices::adopt(&self.0, meta);
+    }
+
+    async fn stall_current(
+        &self,
+        _session: &SessionId,
+        stall: &rust_cli_kernel_api::agents::AgentStall,
+    ) -> bool {
+        self.0.live.stall_current(stall)
+    }
+
+    fn session_closing(&self, session: &SessionId) {
+        shell_notices::closing(&self.0, session);
+    }
+
+    fn sessions_erased(&self, sessions: &[SessionId]) {
+        shell_notices::erased(&self.0, sessions);
+    }
+
+    fn running_agent_sessions(&self, sessions: &[SessionId]) -> Vec<SessionId> {
+        self.0.live.running_in(sessions)
+    }
+
     fn child_live(
         &self,
         session: &SessionId,
     ) -> Option<rust_cli_kernel_api::agents::ChildLiveFeed> {
         self.0.node_desktop.then(|| self.0.mirrors.feed(session))
+    }
+
+    fn child_run(&self, session: &SessionId) -> Option<rust_cli_kernel_api::agents::ChildLiveFeed> {
+        self.0
+            .node_desktop
+            .then(|| self.0.mirrors.run_feed(session))
     }
 
     async fn ack(&self, session: &SessionId, seq: u64) {
@@ -401,6 +542,40 @@ impl AgentSignals for Signals {
             .await
             .map(|stopped| stopped.message())
             .map_err(|error| error.to_string())
+    }
+
+    /// Fork (desktop `stopSubagent`, specs/fork-rust-agent-parity.md B2): the guarded user stop of one run. A parked
+    /// agent ends as a `/tasks` stop of it does (`KilledByUser` on the desktop, its child's background commands stopped).
+    async fn stop_subagent(
+        &self,
+        session: &SessionId,
+        agent: &AgentId,
+        execution: &str,
+        operation: rust_cli_kernel_api::env::OperationContext,
+    ) -> Result<(), rust_cli_kernel_api::agents::SubagentStopRefusal> {
+        use rust_cli_kernel_api::agents::SubagentStopRefusal;
+        match self.0.live.stop_execution(session, agent, execution) {
+            live::GuardedStop::Aborted => Ok(()),
+            live::GuardedStop::NotFound => Err(SubagentStopRefusal::NotFound),
+            live::GuardedStop::NotRunning => Err(SubagentStopRefusal::NotRunning),
+            live::GuardedStop::Parked(execution) => {
+                let tool = task_stop::TaskStopTool {
+                    core: self.0.clone(),
+                };
+                let machine = self.0.ports.machines.primary_machine();
+                let caller = task_stop::Caller {
+                    session,
+                    agent: None,
+                    machine: &machine,
+                    operation: &operation,
+                    by_user: true,
+                };
+                tool.stop_parked(agent, execution, &caller)
+                    .await
+                    .then_some(())
+                    .ok_or(SubagentStopRefusal::NotRunning)
+            }
+        }
     }
 
     /// 输入框下面的子代理列表（tui-panels.md §1.1）。

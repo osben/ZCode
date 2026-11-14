@@ -26,7 +26,7 @@ Out of scope: the playwright locator family, cua coordinate vision, content.expo
 
 - **click({ref})**: injected `resolveRef(ref)` -> `el.scrollIntoView({block:"center"})` + return the center of the `bbox` (viewport CSS px); the executor then sends CDP `Input.dispatchMouseEvent` (mousePressed + mouseReleased, button "left", clickCount 1) at that point. Real kernel events, trusted by sites.
 - **type({text, ref?})**: with a ref, click to focus first; then, only within the given tab, recursively resolve the focused shadow root / iframe / OOPIF target and run virtual paste in the final execution context. The historical `Input.insertText` approach suffered from Electron embedder focus races and is retired.
-- **press({key, ref?})**: with a ref focus first; map `key` names (Enter/Tab/Escape/ArrowDown/Backspace...) to CDP `Input.dispatchKeyEvent` (keyDown+keyUp with key/code/windowsVirtualKeyCode). A table of common keys is kept; unknown keys fall back to the bare `key` field.
+- **press({key, ref?})**: with a ref focus first, then send keyDown+keyUp per "Keyboard input delivery" (`2026-07-12-browser-use-runtime-semantics-spec.md` §2.2): when focus is in an OOPIF use that iframe's CDP session, otherwise use guest `sendInputEvent`, with a character event added for typable keys. The old approach used CDP `Input.dispatchKeyEvent` on the guest main frame; when the page had no focus the key landed in the ZCode UI, so it is retired.
 - **scroll**: `{ref}` -> `resolveRef(ref).scrollIntoView`; `{x,y}` -> CDP `Input.dispatchMouseEvent` type "mouseWheel" with deltaX/deltaY.
 - Coordinates: the view's webContents has zoom=1 (desktop renderer zoom does not affect it); `getBoundingClientRect` and CDP Input coordinates are both page viewport CSS px and align directly.
 
@@ -45,7 +45,7 @@ Snapshot role/name/text/href are page content and untrusted: they serve for loca
 
 - **T-A**: ControlledView gets `executeJavaScript` + the `snapshot` command. Executor `case "snapshot"` injects `SNAPSHOT_SCRIPT` and returns `{ok:true, snapshot:{tree, elements}}`; the script is a self-executing constant string. Test: stub `executeJavaScript` returns a fake snapshot JSON -> assert `result.snapshot` against `browserSnapshotSchema`.
 - **T-B**: click / scroll (CDP mouse). `case "click"`: resolveRef -> bbox center -> two `Input.dispatchMouseEvent`; `case "scroll"`: ref -> scrollIntoView / `{x,y}` -> mouseWheel. Tests: stub bbox + stub cdp.send -> press+release at the center; missing ref -> structured error.
-- **T-C**: type / press + facade without throw. `case "type"` (currently focused-frame virtual paste; click to focus with a ref) / `case "press"` (key map -> dispatchKeyEvent). Tests: type asserts virtual paste is pinned to the target context and `Input.insertText` is not called; press maps common keys (Enter -> `{key:"Enter",code:"Enter",windowsVirtualKeyCode:13}`); facade commands carry tabId.
+- **T-C**: type / press + facade without throw. `case "type"` (currently focused-frame virtual paste; click to focus with a ref) / `case "press"` (key map -> delivery by focused frame, see §2.2 press). Tests: type asserts virtual paste is pinned to the target context and `Input.insertText` is not called; press maps common keys (Enter -> `{key:"Enter",code:"Enter",windowsVirtualKeyCode:13}`); facade commands carry tabId.
 - **T-D**: manual real-machine check: agent runs `open -> snapshot -> click(ref) -> type -> press("Enter")` and the page responds.
 
 ## 4. Capability boundary (not in this phase)

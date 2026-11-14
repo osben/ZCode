@@ -49,10 +49,8 @@ const MAX_SHOWN_BODY_CHARS: usize = 200;
 fn specific(event: &str) -> Option<&'static [(&'static str, Kind)]> {
     Some(match event {
         "PreToolUse" => &[
-            (
-                "permissionDecision",
-                Kind::OneOf(&["allow", "deny", "ask", "defer"]),
-            ),
+            // Node's schema has no `defer`: such an output fails validation (a hook error).
+            ("permissionDecision", Kind::OneOf(&["allow", "deny", "ask"])),
             ("permissionDecisionReason", Kind::Str),
             ("updatedInput", Kind::Object),
             ("additionalContext", Kind::Str),
@@ -240,7 +238,6 @@ fn behavior(text: &str) -> Option<Behavior> {
         "allow" => Some(Behavior::Allow),
         "deny" => Some(Behavior::Deny),
         "ask" => Some(Behavior::Ask),
-        "defer" => Some(Behavior::Defer),
         _ => None,
     }
 }
@@ -264,12 +261,29 @@ pub(crate) fn process(
     if json.get("continue") == Some(&Value::Bool(false)) {
         result.prevent = true;
         result.stop_reason = string(json, "stopReason");
+        // Node `hooks/output.ts`: `stopReason ?? reason` for every event but Stop (where Node ignores
+        // `continue: false`; Rust keeps its own Stop handling).
+        if event != "Stop" && result.stop_reason.is_none() {
+            result.stop_reason.clone_from(&reason);
+        }
     }
     match json.get("decision").and_then(Value::as_str) {
         Some("approve") => result.behavior = Some(Behavior::Allow),
         Some("block") => {
             result.behavior = Some(Behavior::Deny);
             result.blocking = Some(block(reason.clone()));
+            result.block_requested = true;
+            // Node `shouldPreventContinuation` covers PreToolUse: its `block` also prevents the call.
+            if event == "PreToolUse" {
+                result.prevent = true;
+            }
+            // Node `hooks/output.ts`: `stopReason ?? reason ?? systemMessage`, replacing the `continue: false` one
+            // (Rust keeps its own Stop handling).
+            if event != "Stop" {
+                result.stop_reason = string(json, "stopReason")
+                    .or_else(|| reason.clone())
+                    .or_else(|| string(json, "systemMessage"));
+            }
         }
         _ => {}
     }
@@ -290,9 +304,6 @@ pub(crate) fn process(
             result.blocking = Some(block(reason.clone()));
         }
     }
-    if result.behavior.is_some() && reason.is_some() {
-        result.reason.clone_from(&reason);
-    }
     let Some(output) = output else {
         return Ok(finish(result));
     };
@@ -303,7 +314,8 @@ pub(crate) fn process(
             serde_json::to_string_pretty(json).unwrap_or_default()
         ));
     }
-    let context = string(output, "additionalContext");
+    // Node `hooks/output.ts` pushes `additionalContext` only when truthy: an empty string is no context.
+    let context = string(output, "additionalContext").filter(|text| !text.is_empty());
     match name {
         "PreToolUse" => {
             if let Some(decision) = decision {
@@ -313,7 +325,10 @@ pub(crate) fn process(
                     result.blocking = Some(block(why));
                 }
             }
-            result.reason = string(output, "permissionDecisionReason");
+            // Node sets `hookPermissionDecisionReason` only with a `permissionDecision` (`output.ts`).
+            if decision.is_some() {
+                result.reason = string(output, "permissionDecisionReason");
+            }
             result.updated_input = output.get("updatedInput").cloned();
             result.additional_context = context;
         }

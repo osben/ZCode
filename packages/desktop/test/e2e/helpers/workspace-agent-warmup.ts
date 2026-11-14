@@ -1,5 +1,10 @@
 import { formatZCodeAgentProcessName } from "@zcode/shared";
-import { startDraftFromProject, waitForProjectRow } from "./project-sidebar.js";
+import { DEFAULT_WORKSPACE } from "./desktop-app.js";
+import {
+  ensureLocalProjectRow,
+  startDraftFromProject,
+  waitForProjectRow,
+} from "./project-sidebar.js";
 import {
   countAgentProcessRows,
   listAgentProcessIdentities,
@@ -55,6 +60,9 @@ export { waitForRestoredProjects } from "./project-sidebar.js";
  * 不再依赖旧的「先收起再展开」手势。
  */
 export async function openWorkspaceDraftFromSidebar(workspacePath: string): Promise<void> {
+  // ISSUE-024: the fork does not seed the default project from settings, so it is created through
+  // the project form (as ensureV4ShellReady does). Other workspaces must still be restored.
+  if (workspacePath === DEFAULT_WORKSPACE) await ensureLocalProjectRow(workspacePath);
   await waitForProjectRow(workspacePath, {
     timeout: 15_000,
     timeoutMsg: `侧栏没有 dormant workspace 对应的项目: ${workspacePath}`,

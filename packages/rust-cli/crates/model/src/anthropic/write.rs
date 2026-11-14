@@ -102,6 +102,12 @@ fn block(out: &mut String, block: &ContentBlock) -> Result<(), ModelError> {
             key(out, "source", false);
             image_source(out, source)?;
         }
+        // Fork: Node's patched `@ai-sdk/anthropic` writes a video file part as an image-shaped `video` block.
+        ContentBlock::Video { source, .. } => {
+            kind(out, "video");
+            key(out, "source", false);
+            image_source(out, source)?;
+        }
         ContentBlock::Thinking {
             thinking,
             signature,
@@ -144,6 +150,12 @@ fn block(out: &mut String, block: &ContentBlock) -> Result<(), ModelError> {
         ContentBlock::File { .. } => {
             return Err(ModelError::InvalidRequest {
                 message: "attached files must be expanded before the model request".to_owned(),
+            });
+        }
+        // Fork: `query::normalize` drops ACP rows; one reaching the adapter is a bug upstream of it.
+        ContentBlock::ExternalTool(_) => {
+            return Err(ModelError::InvalidRequest {
+                message: "ACP rows never reach the model request".to_owned(),
             });
         }
         ContentBlock::ToolResult {

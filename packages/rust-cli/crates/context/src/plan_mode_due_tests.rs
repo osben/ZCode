@@ -19,17 +19,14 @@ const LEFT: PlanModeFlags = PlanModeFlags {
     needs_exit_attachment: true,
 };
 
-fn enter(full: bool, reentry: bool) -> Due {
-    Due::Enter { full, reentry }
+fn enter(full: bool) -> Due {
+    Due::Enter { full }
 }
 
 #[test]
 fn the_first_step_in_plan_mode_gets_a_full_reminder() {
-    assert_eq!(due(&[], PermissionMode::Plan, NONE), enter(true, false));
-    assert_eq!(
-        due(&[human()], PermissionMode::Plan, NONE),
-        enter(true, false)
-    );
+    assert_eq!(due(&[], PermissionMode::Plan, NONE), enter(true));
+    assert_eq!(due(&[human()], PermissionMode::Plan, NONE), enter(true));
 }
 
 #[test]
@@ -38,20 +35,14 @@ fn reminders_wait_five_human_turns_and_every_fifth_is_full() {
     history.extend(humans(4));
     assert_eq!(due(&history, PermissionMode::Plan, NONE), Due::Nothing);
     history.push(human());
-    assert_eq!(
-        due(&history, PermissionMode::Plan, NONE),
-        enter(false, false)
-    );
+    assert_eq!(due(&history, PermissionMode::Plan, NONE), enter(false));
     // 第 6 条 plan_mode 又是完整提醒。
     let mut history = Vec::new();
     for _ in 0..5 {
         history.push(marker(PLAN_MODE));
         history.extend(humans(5));
     }
-    assert_eq!(
-        due(&history, PermissionMode::Plan, NONE),
-        enter(true, false)
-    );
+    assert_eq!(due(&history, PermissionMode::Plan, NONE), enter(true));
 }
 
 #[test]
@@ -64,6 +55,7 @@ fn tool_rounds_do_not_count_as_turns() {
 fn leaving_plan_mode_announces_the_exit_once() {
     let entered = vec![human(), marker(PLAN_MODE)];
     assert_eq!(due(&entered, PermissionMode::AcceptEdits, NONE), Due::Exit);
+    // 旧会话里的 plan_mode_reentry 仍算进入（只是不再产生）。
     let reentered = vec![marker(REENTRY), marker(PLAN_MODE)];
     assert_eq!(due(&reentered, PermissionMode::Default, NONE), Due::Exit);
     let exited = vec![marker(PLAN_MODE), marker(EXIT), human()];
@@ -77,11 +69,8 @@ fn the_exit_flag_announces_an_exit_the_history_does_not_show() {
     assert_eq!(due(&[human()], PermissionMode::Default, LEFT), Due::Exit);
     let exited = vec![marker(PLAN_MODE), marker(EXIT), human()];
     assert_eq!(due(&exited, PermissionMode::Default, LEFT), Due::Exit);
-    // 回到 plan 模式时不发退出提醒（进入 plan 时 actor 已清掉这个标志）。
-    assert_eq!(
-        due(&[human()], PermissionMode::Plan, LEFT),
-        enter(true, true)
-    );
+    // 回到 plan 模式时不发退出提醒（进入 plan 时 actor 已清掉这个标志），而是完整提醒。
+    assert_eq!(due(&[human()], PermissionMode::Plan, LEFT), enter(true));
 }
 
 #[test]
@@ -93,20 +82,13 @@ fn entering_again_after_an_exit_restarts_the_cycle() {
     }
     history.push(marker(EXIT));
     history.push(human());
-    assert_eq!(
-        due(&history, PermissionMode::Plan, EXITED),
-        enter(true, true)
-    );
+    assert_eq!(due(&history, PermissionMode::Plan, EXITED), enter(true));
 }
 
-/// reentry 只看“离开过 plan 模式”的标志，不看历史（resume 后标志为假，压缩边界之前的
-/// 退出也照样算，context.md §13.4）。
+/// 再次进入 plan 模式不再有单独的提醒（Node 3.17）：离开过的标志不影响发什么，仍是完整提醒。
 #[test]
-fn the_reentry_follows_the_session_flag_not_the_history() {
+fn entering_again_after_leaving_gets_the_ordinary_reminder() {
     let exited = vec![marker(PLAN_MODE), marker(EXIT), human()];
-    assert_eq!(due(&exited, PermissionMode::Plan, NONE), enter(true, false));
-    assert_eq!(
-        due(&[human()], PermissionMode::Plan, EXITED),
-        enter(true, true)
-    );
+    assert_eq!(due(&exited, PermissionMode::Plan, NONE), enter(true));
+    assert_eq!(due(&[human()], PermissionMode::Plan, EXITED), enter(true));
 }

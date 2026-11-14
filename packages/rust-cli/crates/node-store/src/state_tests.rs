@@ -27,6 +27,7 @@ fn db() -> (tempfile::TempDir, Connection) {
         version: "1".to_owned(),
         permission: None,
         time_created: None,
+        incognito: None,
     };
     sessions::create(&conn, &create, 1).unwrap();
     (dir, conn)

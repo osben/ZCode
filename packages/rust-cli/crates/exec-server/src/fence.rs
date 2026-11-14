@@ -124,6 +124,7 @@ fn paths(request: &Request) -> Vec<&str> {
         | Request::ShellNotices { .. }
         | Request::AckShellNotice { .. }
         | Request::BackgroundCommand { .. }
+        | Request::EndedBackgroundCommand { .. }
         | Request::BackgroundElapsed { .. }
         | Request::StopBackgroundCommand { .. }
         | Request::RewindApply { .. }

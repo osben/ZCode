@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::env::WorkspaceRef;
+use crate::env::{EnvPath, WorkspaceRef};
 use crate::ids::{
     AgentId, ArtifactId, CommandId, MessageId, OwnerEpoch, SessionId, ToolUseId, TraceId, TurnId,
 };
@@ -34,6 +34,10 @@ pub struct SessionMeta {
     pub title: String,
     pub trace: TraceId,
     pub created_at_ms: u64,
+    /// Fork: the incognito profile frozen at creation or at a prepared worktree's activation (`session.fork_incognito`);
+    /// None for a normal session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub incognito: Option<crate::incognito::IncognitoProfile>,
 }
 
 /// 对话分支切点（Node `session.revert`）：活动分支 = `kept` + 切点之后追加的消息。
@@ -86,6 +90,16 @@ pub enum Fact {
     },
     RevertSet {
         cursor: RevertCursor,
+    },
+    /// Fork (B3): the receipt of a permission mode grant from a permission ask (Node `runtime/permission_full_access`,
+    /// `commitPermissionFullAccess`), committed in the grant's batch with its `ExecutionChanged`. `previous` and `next`
+    /// are the session's execution state before and after; `queue_items` the ledger ids (`queue_<command>`) of the
+    /// queued inputs whose frozen mode the grant rewrote.
+    PermissionGranted {
+        interaction: String,
+        previous: crate::permission::ExecutionState,
+        next: crate::permission::ExecutionState,
+        queue_items: Vec<String>,
     },
     /// 本工程独有的状态，映射成带 `rust-cli/` 前缀的 session_entry（Node 忽略未知类型）。`kind` 取 [`entry_kinds`]。
     Entry {
@@ -320,6 +334,14 @@ pub struct LoadedSession {
     /// `isAutoTitlePending`), so a later input may retry the generated title.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub title_pending: bool,
+    /// Fork: the stored `title_source`, so the session actor's view reports a renamed session as `custom` (Node
+    /// `normalizeStoredTitleSource`). `None` when the store does not keep it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title_source: Option<crate::title::Source>,
+    /// Fork (B3): the interaction of the last stored permission mode grant receipt (Node `restorePermissionGrantMarker`,
+    /// `lastPermissionGrantId`), the composer's one-shot adoption key after a cold read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission_grant: Option<String>,
     /// Fork (desktop App): the stored goal row (Node `session_target`), an interrupted active stretch already counted
     /// into `time_used_seconds` (Node `recoverInterruptedSessionTargetRun`); `iteration` is not stored (0).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -331,6 +353,10 @@ pub struct LoadedSession {
     /// cold model switch divider ([`crate::session_api::SessionView::message_models`]).
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub message_models: std::collections::BTreeMap<MessageId, ModelSelection>,
+    /// Fork: `meta.workspace.root` is the session's stored execution worktree (node-store `run_in_worktree`), so a
+    /// root that is gone refuses the workspace tools (Node `getMissingExecutionWorktreeToolError`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub execution_worktree: bool,
 }
 
 /// `/fork` 的新会话（docs/specs/rust-cli/session-lifecycle.md §6.5.2，Node 分叉对话的形状）：存储在一个事务里写完会话行、
@@ -361,6 +387,24 @@ pub struct SessionSummary {
     pub id: SessionId,
     pub title: String,
     pub updated_at_ms: u64,
+    /// Fork: the creation time and the persisted outcome of the last turn (Node `session.last_outcome`).
+    /// A cold sessions-index row must not report its last update as its creation, or every session as
+    /// completed, because the Host stores those facts as authoritative.
+    #[serde(default)]
+    pub created_at_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_outcome: Option<String>,
+    /// Fork: the session this one was forked from (Node cold summary `parentSessionId`). Without it the Host admits a
+    /// cold fork as an ordinary session instead of inheriting its parent's project.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<SessionId>,
+    /// Fork: the stored `title_source` (`default`, `first_input`, `generated`, `custom`), which Node's cold summary
+    /// normalizes into its `titleSource`. `None` for a session the store keeps no row or no source for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title_source: Option<String>,
+    /// Fork: the session is incognito (its row has `fork_incognito`). Only the flag is projected, never the profile.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub incognito: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -417,6 +461,17 @@ pub struct SessionPage {
     pub more: bool,
 }
 
+/// Fork: what [`StoreQueries::persist_for_input`] did.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Admission {
+    /// A draft was persisted.
+    pub persisted: bool,
+    /// The first-input title it wrote over the `default` placeholder (`first_input`); `None` when the row kept its
+    /// title or the input is blank. The caller hands it to the session actor ([`crate::session_api::Command::AdoptTitle`])
+    /// before the input's hooks, as Node emits `SessionTitleUpdated` at the persistence.
+    pub title: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum StoreError {
@@ -428,6 +483,53 @@ pub enum StoreError {
     Storage { message: String },
     #[error("not implemented: {what}")]
     Unsupported { what: String },
+    /// Fork: a purge of the session started elsewhere on the shared database (Node's `session_purge` row and its
+    /// triggers). Displays as Node's message, [`SESSION_DATA_DELETING`] (specs/fork-rust-agent-parity.md "Session
+    /// runtime presence on the shared database").
+    #[error("{}", SESSION_DATA_DELETING)]
+    Deleting,
+}
+
+/// Fork: Node's error for a session whose purge started (`assertSessionNotDeleting` and the 0025 triggers).
+pub const SESSION_DATA_DELETING: &str = "session-data.deleting";
+
+/// Fork: this process's row for one open session in Node's `session_runtime_presence` (specs/fork-rust-agent-parity.md
+/// "Session runtime presence on the shared database"). Node's `beginSessionDeletion` refuses to purge a session while
+/// a foreign row with a live pid exists. Dropping the guard releases the row; [`RuntimePresence::none`] holds nothing
+/// (a store or database without the protocol).
+#[must_use = "dropping the guard releases the presence row"]
+pub struct RuntimePresence(Option<Box<dyn FnOnce() + Send>>);
+
+impl RuntimePresence {
+    pub fn none() -> Self {
+        Self(None)
+    }
+
+    /// A guard that runs `release` once, when it drops.
+    pub fn new(release: impl FnOnce() + Send + 'static) -> Self {
+        Self(Some(Box::new(release)))
+    }
+
+    /// Whether the guard holds a row.
+    pub fn holds(&self) -> bool {
+        self.0.is_some()
+    }
+}
+
+impl Drop for RuntimePresence {
+    fn drop(&mut self) {
+        if let Some(release) = self.0.take() {
+            release();
+        }
+    }
+}
+
+impl std::fmt::Debug for RuntimePresence {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("RuntimePresence")
+            .field(&self.holds())
+            .finish()
+    }
 }
 
 /// 存储的错误到内核 API（工作线 F130，审查 K8）：会话不存在与不支持原样保留，其余给出存储的原文。以前 runtime 与 agents
@@ -437,9 +539,11 @@ impl From<StoreError> for crate::session_api::KernelError {
         match error {
             StoreError::NotFound { session } => Self::NotFound { session },
             StoreError::Unsupported { what } => Self::Unsupported { what },
-            StoreError::StaleOwner { .. } | StoreError::Storage { .. } => Self::Failed {
-                message: error.to_string(),
-            },
+            StoreError::StaleOwner { .. } | StoreError::Storage { .. } | StoreError::Deleting => {
+                Self::Failed {
+                    message: error.to_string(),
+                }
+            }
         }
     }
 }
@@ -549,6 +653,47 @@ pub struct SessionTreeCounts {
     pub subagents: u64,
     pub workflow_sessions: u64,
     pub workflow_runs: u64,
+}
+
+/// Fork (specs/fork-rust-node-helper.md F3 "Session open and close"): where a session's row says it lives, the
+/// workspace its Node helper session opens with.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionWorkspace {
+    /// The row's (or the draft's) `directory`: the workspace path, never the directory an execution worktree runs in.
+    pub directory: String,
+    /// The row's non-empty `workspace_id`, a workspace identity; Rust's local rows have none.
+    pub identity: Option<String>,
+}
+
+/// Fork: a session's execution worktree, stored in the Node `session` row (`execution_directory`,
+/// `execution_branch`, fork migration `9002_fork_session_execution_worktree`). `directory` is the row's
+/// `directory`: the parent workspace the session is listed under; `path` is where the session runs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutionWorktree {
+    pub directory: EnvPath,
+    pub path: EnvPath,
+    pub branch: Option<String>,
+}
+
+/// Fork: the ACP session a session's external agent resumes (Node `ForkAcpSessionBinding`,
+/// `fork_acp_session_binding`, specs/acp-agent-runtime.md "S5"). `launch_key` is a digest of the launch config,
+/// never the config itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AcpSessionBinding {
+    pub agent_id: String,
+    pub acp_session_id: String,
+    pub cwd: String,
+    pub launch_key: String,
+}
+
+/// Fork: a session's ACP config state (Node `ForkAcpSessionConfig`, `readConfig`). `agent_id` is the binding's
+/// agent, or the agent of the pending choices when there is no binding; `offered` is the last offered options
+/// (display copy), `None` before the first turn or when the stored value is malformed.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AcpSessionConfig {
+    pub agent_id: Option<String>,
+    pub offered: Option<Value>,
+    pub choices: std::collections::BTreeMap<String, String>,
 }
 
 /// Fork: what a `session/eraseTree` deleted. `erased_roots` pairs each erased requested root with
@@ -794,6 +939,18 @@ pub trait StoreQueries: Send + Sync {
         })
     }
 
+    /// Fork: registers this process's runtime of `session` in Node's `session_runtime_presence` before the session
+    /// loads or is created (Node `registerSessionRuntime`). `Deleting` when a purge of it started elsewhere: the
+    /// presence insert is the barrier. The default holds nothing (a store without the protocol).
+    async fn register_runtime(&self, _session: &SessionId) -> Result<RuntimePresence, StoreError> {
+        Ok(RuntimePresence::none())
+    }
+
+    /// Fork: `Deleting` when any of `sessions` has a purge row (Node `assertSessionNotDeleting`, the request gate).
+    async fn assert_not_deleting(&self, _sessions: &[SessionId]) -> Result<(), StoreError> {
+        Ok(())
+    }
+
     /// Fork: hard-delete the trees of the given roots in one `BEGIN IMMEDIATE` transaction (Node
     /// `deleteSessionTree`, with the fork-usage preserve step inside it). The caller closes open
     /// runtimes first.
@@ -830,6 +987,16 @@ pub trait StoreQueries: Send + Sync {
         })
     }
 
+    /// Fork: the persisted subagent child sessions under `root`, reached through subagent child rows only (a side
+    /// chat or workflow child stops the walk: it is a top-level session for the agents it spawns). The agents crate
+    /// starts a notice forwarder for each when `root` opens (specs/fork-rust-agent-parity.md, "After a restart, and
+    /// on a remote executor").
+    async fn subagent_child_ids(&self, _root: &SessionId) -> Result<Vec<SessionId>, StoreError> {
+        Err(StoreError::Unsupported {
+            what: "subagent child ids".to_owned(),
+        })
+    }
+
     /// Fork: the child rows for the collected candidate ids, resolved by id like Node's
     /// `getSession` per candidate (missing ids are absent).
     async fn subagent_children(&self, _ids: Vec<String>) -> Result<Value, StoreError> {
@@ -845,6 +1012,158 @@ pub trait StoreQueries: Send + Sync {
     async fn reconcile_row(&self, _session: &SessionId) -> Result<Option<Value>, StoreError> {
         Err(StoreError::Unsupported {
             what: "reconcile row".to_owned(),
+        })
+    }
+
+    /// Fork: the session is a draft the store has not persisted yet (Node `persistence:
+    /// "deferred"`, specs/fork-agent-runtime-selection.md "Draft prewarm in Rust mode"). Stores
+    /// that write every session at create answer `false`.
+    async fn is_draft(&self, _session: &SessionId) -> Result<bool, StoreError> {
+        Ok(false)
+    }
+
+    /// Fork: drops the session if it is still a draft and answers whether it did, in one step,
+    /// so a concurrent first write either materializes before (`false`) or finds the draft gone.
+    async fn discard_draft(&self, _session: &SessionId) -> Result<bool, StoreError> {
+        Ok(false)
+    }
+
+    /// Fork: the session is a draft that never got a row: still held, or dropped without one. The
+    /// sessions index skips it either way (Node `isDraftSession`), so a flush racing a deferred
+    /// close cannot publish it.
+    async fn is_rowless_draft(&self, _session: &SessionId) -> Result<bool, StoreError> {
+        Ok(false)
+    }
+
+    /// Fork: the admission of a session's input (Node `admitInputCommand` →
+    /// `ensureSessionPersistedForExternalActivity(input.text)`): persists a draft with the input's first-input title,
+    /// or gives a stored row still on the `default` placeholder that title, before the input's hooks run (see
+    /// [`Admission`]); `NotFound` when a deferred close dropped it first.
+    async fn persist_for_input(
+        &self,
+        _session: &SessionId,
+        _input: &str,
+    ) -> Result<Admission, StoreError> {
+        Ok(Admission::default())
+    }
+
+    /// Fork: the workspace key the session's row is listed under (Node `workspaceID ?? directory`, the
+    /// `workspaceKey` of `resolveWorkspaceRefFromId`): a remote identity when the row has one, else the directory.
+    /// Never the directory it runs in (an execution worktree); `None` for an unknown session. Stores without that
+    /// read answer `Unsupported`.
+    async fn session_workspace_key(
+        &self,
+        _session: &SessionId,
+    ) -> Result<Option<String>, StoreError> {
+        Err(StoreError::Unsupported {
+            what: "session workspace key".to_owned(),
+        })
+    }
+
+    /// Fork: the session's workspace as its row (or draft) holds it; `None` for an unknown session. Stores without
+    /// that read answer `Unsupported`.
+    async fn session_workspace(
+        &self,
+        _session: &SessionId,
+    ) -> Result<Option<SessionWorkspace>, StoreError> {
+        Err(StoreError::Unsupported {
+            what: "session workspace".to_owned(),
+        })
+    }
+
+    /// Fork: the session's execution worktree (`None`: an ordinary session). Stores without the columns answer
+    /// `None`: they cannot hold one.
+    async fn execution_worktree(
+        &self,
+        _session: &SessionId,
+    ) -> Result<Option<ExecutionWorktree>, StoreError> {
+        Ok(None)
+    }
+
+    /// Fork: store the session's execution worktree, set once like Node's `coalesce` (a stored value is kept).
+    /// `NotFound` without the session row; `Unsupported` when the store has no execution columns, so the
+    /// caller never runs a worktree session that would resume in the parent.
+    async fn set_execution_worktree(
+        &self,
+        _session: &SessionId,
+        _path: &EnvPath,
+        _branch: Option<&str>,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::Unsupported {
+            what: "execution worktree".to_owned(),
+        })
+    }
+
+    /// Fork: freeze the incognito profile of an existing row that has none yet (a prepared execution worktree, whose
+    /// reserved row has no profile; Node `createSessionRecord` freezes it at the activation). Set once like the create
+    /// (`fork_incognito` is written only while NULL); a row that already holds this profile is `Ok`, one that holds
+    /// another is an error. `NotFound` without the row, `Unsupported` without the column, so the caller never runs a
+    /// session it could not freeze.
+    async fn set_incognito(
+        &self,
+        _session: &SessionId,
+        _profile: &crate::incognito::IncognitoProfile,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::Unsupported {
+            what: "incognito profile".to_owned(),
+        })
+    }
+
+    /// Fork: the session's ACP binding (`None` without a row or without the tables).
+    async fn acp_binding(
+        &self,
+        _session: &SessionId,
+    ) -> Result<Option<AcpSessionBinding>, StoreError> {
+        Ok(None)
+    }
+
+    /// Fork: upsert the binding columns; offered options and choices are kept. Pending choices of the same agent
+    /// move into the binding's choices; pending choices of another agent are dropped (Node `write`). `Unsupported`
+    /// without the tables.
+    async fn set_acp_binding(
+        &self,
+        _session: &SessionId,
+        _binding: &AcpSessionBinding,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::Unsupported {
+            what: "ACP session binding".to_owned(),
+        })
+    }
+
+    /// Fork: delete the binding, its offered options and its choices, and any pending choices (Node `clear`).
+    async fn clear_acp_binding(&self, _session: &SessionId) -> Result<(), StoreError> {
+        Ok(())
+    }
+
+    /// Fork: the session's ACP config state (Node `readConfig`); empty without a binding or pending choices.
+    async fn acp_config(&self, _session: &SessionId) -> Result<AcpSessionConfig, StoreError> {
+        Ok(AcpSessionConfig::default())
+    }
+
+    /// Fork: replace the offered options of an existing binding; a no-op without the row (Node `writeOffered`).
+    /// `Unsupported` without the tables.
+    async fn set_acp_offered(
+        &self,
+        _session: &SessionId,
+        _offered: &Value,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::Unsupported {
+            what: "ACP session offered options".to_owned(),
+        })
+    }
+
+    /// Fork: set one chosen config value (Node `writeChoice`). A binding of `agent_id` keeps it in its choices;
+    /// without a binding it is a pending choice. `StoreError::Storage` for a binding of another agent;
+    /// `Unsupported` without the tables.
+    async fn set_acp_choice(
+        &self,
+        _session: &SessionId,
+        _agent_id: &str,
+        _config_id: &str,
+        _value: &str,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::Unsupported {
+            what: "ACP session choice".to_owned(),
         })
     }
 }
@@ -900,6 +1219,12 @@ pub trait ArtifactStore: Send + Sync {
         Err(StoreError::Unsupported {
             what: "artifact lookup by id".to_owned(),
         })
+    }
+
+    /// Fork: the local file holding an artifact, for content the model is told to read by path (Node names the file of
+    /// written text material, `writeToolResultBinaryArtifact`). `None` when the store keeps no local files.
+    fn local_path(&self, _artifact: &ArtifactRef) -> Option<std::path::PathBuf> {
+        None
     }
 }
 

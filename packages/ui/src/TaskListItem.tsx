@@ -14,14 +14,21 @@ import {
   Archive,
   Clock,
   CloudUpload,
-  LoaderIcon,
+  GitBranch,
+  LoaderCircle,
   ListTree,
   Moon,
   Pin,
   Smartphone,
 } from "lucide-react";
 import { isCronTask, isOffPeakTask, type ZCodeTaskMeta } from "@zcode/shared";
-import { TID_TASK_ARCHIVE, TID_TASK_ITEM, testId } from "@zcode/shared/test-ids";
+import {
+  TID_TASK_ARCHIVE,
+  TID_TASK_ITEM,
+  TID_TASK_ROW_WORKTREE_ICON,
+  testId,
+} from "@zcode/shared/test-ids";
+import { formatWorktreeLabel } from "@/managed-worktrees/index.js";
 import { Badge } from "@/components/ui/badge.js";
 import { Button } from "@/components/ui/button.js";
 import { cn } from "@/components/lib/utils.js";
@@ -31,11 +38,13 @@ import { formatTaskTitleWithChanges, getTaskChangeSummary } from "@/lib/taskChan
 import {
   deriveTaskLeadingIndicator,
   formatTaskRelativeTime,
+  isTaskRowRenameBlockedTarget,
   useNowMinute,
 } from "@/lib/taskListItemPresentation.js";
 import {
   getTaskListAttention,
   getTaskListRowActivity,
+  isTaskListRowRunning,
   type TaskListRowActivity,
 } from "@/v4/taskListRowActivity.js";
 import { TaskListItemContextMenu } from "@/TaskListItemContextMenu.js";
@@ -109,6 +118,7 @@ interface TaskListItemProps {
   intl: TaskListItemIntl;
   actionsDisabled?: boolean;
   actionsDisabledReason?: string;
+  renameOnDoubleClick?: boolean;
   /**
    * Opens a child session (subagent / side chat) in this task's workspace. Only owners that pass it
    * render the child marker and list (spec: sidebar-child-conversation-counts.md §7).
@@ -177,6 +187,7 @@ function areTaskListItemPropsEqual(left: TaskListItemProps, right: TaskListItemP
     left.intl === right.intl &&
     left.actionsDisabled === right.actionsDisabled &&
     left.actionsDisabledReason === right.actionsDisabledReason &&
+    left.renameOnDoubleClick === right.renameOnDoubleClick &&
     left.onSelectTask === right.onSelectTask &&
     left.onArchiveTaskInline === right.onArchiveTaskInline &&
     left.onCancelArchiveConfirm === right.onCancelArchiveConfirm &&
@@ -223,6 +234,7 @@ export const MemoTaskItem = memo(function TaskListItem({
   onCancelArchiveConfirm,
   isArchiveConfirming,
   onTogglePinTask,
+  onStartRenameTask,
   onOpenTaskContextMenu,
   onOpenFileTree,
   variant = "default",
@@ -231,6 +243,7 @@ export const MemoTaskItem = memo(function TaskListItem({
   actionsDisabled = false,
   actionsDisabledReason,
   onSelectChildSession,
+  renameOnDoubleClick = true,
 }: TaskListItemProps) {
   const [hoverActionsVisible, setHoverActionsVisible] = useState(false);
   const [focusActionsVisible, setFocusActionsVisible] = useState(false);
@@ -336,6 +349,33 @@ export const MemoTaskItem = memo(function TaskListItem({
       failureStage: "task_open",
     });
   }, [onSelectTask, task.taskId]);
+  const handleRowClick = useCallback(
+    (event: React.MouseEvent<HTMLLIElement>) => {
+      // The second click of a double click is handled by onDoubleClick (rename); skip it here so the
+      // task is not opened twice and no duplicate remote connection is made.
+      if (event.detail > 1) return;
+      handleSelect();
+    },
+    [handleSelect],
+  );
+  const handleRowDoubleClick = useCallback(
+    (event: React.MouseEvent<HTMLLIElement>) => {
+      if (!renameOnDoubleClick || workspaceActionsDisabled || isArchived) return;
+      if (isArchiveConfirming || isHoverNone || event.defaultPrevented) return;
+      if (isTaskRowRenameBlockedTarget(event.target)) return;
+      onStartRenameTask(task.taskId, task.title);
+    },
+    [
+      isArchiveConfirming,
+      isArchived,
+      isHoverNone,
+      onStartRenameTask,
+      renameOnDoubleClick,
+      task.taskId,
+      task.title,
+      workspaceActionsDisabled,
+    ],
+  );
   const handleDragStart = useCallback(
     (event: React.DragEvent<HTMLLIElement>) => {
       if (!canDragToWorkbench) {
@@ -387,9 +427,15 @@ export const MemoTaskItem = memo(function TaskListItem({
   const handleContextMenu = useCallback(() => {
     onOpenTaskContextMenu?.(task.taskId);
   }, [onOpenTaskContextMenu, task.taskId]);
+  // Archiving only writes the task index and does not stop the agent turn, so a running task cannot
+  // be archived: later browser commands would reopen a tab for a task that left the list.
+  const archiveDisabledReason =
+    !isArchived && isTaskListRowRunning(task)
+      ? intl.formatMessage({ id: "taskList.archiveBlockedWhileRunning" })
+      : undefined;
   const handleArchive = useCallback(
     (event: React.MouseEvent) => {
-      if (workspaceActionsDisabled) {
+      if (workspaceActionsDisabled || archiveDisabledReason) {
         event.preventDefault();
         event.stopPropagation();
         return;
@@ -401,7 +447,7 @@ export const MemoTaskItem = memo(function TaskListItem({
         failureStage: "task_archive",
       });
     },
-    [onArchiveTaskInline, task.taskId, workspaceActionsDisabled],
+    [archiveDisabledReason, onArchiveTaskInline, task.taskId, workspaceActionsDisabled],
   );
   const handleTogglePin = useCallback(
     (event: React.MouseEvent) => {
@@ -431,6 +477,15 @@ export const MemoTaskItem = memo(function TaskListItem({
   // 月亮身份改为持久 meta 标记判断；off-peak store 反查在任务被删除后会丢失
   // 会话溯源，且让每一行多背一个全局 store 订阅。
   const isTaskOffPeak = isOffPeakTask(task);
+  // The worktree label reads the task's worktree root (tasks-index worktree_root).
+  const worktreeLabel = formatWorktreeLabel(intl, task.worktreeRoot);
+  const worktreeIcon = worktreeLabel ? (
+    <GitBranch
+      data-testid={TID_TASK_ROW_WORKTREE_ICON}
+      aria-label={intl.formatMessage({ id: "taskList.managedWorktreeLabel" })}
+      className="size-3.5 shrink-0"
+    />
+  ) : null;
   // Bugfix: 手机远控标记和置顶状态共用左侧 leading 槽。
   // 已置顶任务如果继续常显 Pin，会和绝对定位的手机图标重叠；手机激活态默认让手机图标优先，hover 时再显示 Pin 操作。
   const showPinnedState = isPinned && leadingIndicator === "none" && !isMobileActive;
@@ -546,6 +601,7 @@ export const MemoTaskItem = memo(function TaskListItem({
           label={archiveLabel}
           onClick={handleArchive}
           showTooltip
+          {...(archiveDisabledReason ? { disabledReason: archiveDisabledReason } : {})}
           testId={testId(TID_TASK_ARCHIVE, task.taskId)}
         >
           {isRemoteTask ? (
@@ -695,7 +751,8 @@ export const MemoTaskItem = memo(function TaskListItem({
           data-task-item-key={taskItemKey}
           data-mobile-active-task={isMobileActive ? "true" : undefined}
           data-archive-confirming-task-id={isArchiveConfirming ? task.taskId : undefined}
-          onClick={handleSelect}
+          onClick={handleRowClick}
+          onDoubleClick={handleRowDoubleClick}
           onContextMenu={handleContextMenu}
           draggable={canDragToWorkbench}
           onDragStart={handleDragStart}
@@ -767,7 +824,7 @@ export const MemoTaskItem = memo(function TaskListItem({
                   className="size-[7px] rounded-full bg-icon-blue"
                 />
               ) : leadingIndicator === "loading" ? (
-                <LoaderIcon className="size-4 text-foreground-subtle" />
+                <LoaderCircle className="size-4 text-foreground-subtle" />
               ) : null}
             </span>
             {pinPlacement === "left" ? (
@@ -831,7 +888,7 @@ export const MemoTaskItem = memo(function TaskListItem({
               <div className="flex min-w-0 items-center justify-between gap-2 text-ui-base text-foreground-subtle h-6">
                 <div className="flex min-w-0 items-center gap-1.5">
                   <span className="truncate" data-task-workspace-label="true">
-                    {workspaceLabel}
+                    {worktreeLabel ?? workspaceLabel}
                   </span>
                   {taskSourceLabel ? (
                     <>
@@ -881,6 +938,7 @@ export const MemoTaskItem = memo(function TaskListItem({
                       {task.executionWorktree ? <WorktreeTaskMarker task={task} /> : null}
                       {task.executionWorktree ? <TaskPullRequestMarker task={task} /> : null}
                       {task.incognito ? <IncognitoTaskMarker task={task} /> : null}
+                      {worktreeIcon}
                       <span className="mr-1">
                         <TaskRelativeTimeLabel timestamp={task.updatedAt} intl={intl} />
                       </span>
@@ -983,6 +1041,7 @@ export const MemoTaskItem = memo(function TaskListItem({
                     {task.executionWorktree ? <WorktreeTaskMarker task={task} /> : null}
                     {task.executionWorktree ? <TaskPullRequestMarker task={task} /> : null}
                     {task.incognito ? <IncognitoTaskMarker task={task} /> : null}
+                    {worktreeIcon}
                     <TaskRelativeTimeLabel timestamp={task.updatedAt} intl={intl} />
                   </span>
                 ) : null}
@@ -1095,6 +1154,10 @@ export function TaskListItemContextMenuContent({
     (state) =>
       disableTaskActions || isWorkspaceReadOnly(state, task.workspacePath, task.workspaceIdentity),
   );
+  const archiveDisabledReason =
+    !isArchived && isTaskListRowRunning(task)
+      ? intl.formatMessage({ id: "taskList.archiveBlockedWhileRunning" })
+      : undefined;
   const workspaceActionsDisabledReason = workspaceActionsDisabled
     ? (disabledReason ?? intl.formatMessage({ id: "workspaceSidebar.unavailableLocalDirectory" }))
     : undefined;
@@ -1184,6 +1247,7 @@ export function TaskListItemContextMenuContent({
       providerConfigFile={providerConfigFile}
       disableTaskActions={workspaceActionsDisabled}
       disabledReason={workspaceActionsDisabledReason}
+      archiveDisabledReason={archiveDisabledReason}
       onTogglePinTask={() => {
         onTogglePinTask(task.taskId, !isPinned);
       }}

@@ -24,6 +24,7 @@ fn snapshot(messages: Vec<Message>, running: bool) -> SessionView {
                 title: "Look around".into(),
                 trace: TraceId::new("s1"),
                 created_at_ms: 0,
+                incognito: None,
             },
             messages,
             selection(),
@@ -110,6 +111,7 @@ fn appending_takes_the_new_context_and_speed() {
         used_tokens: 4_500,
         max_tokens: 9_000,
         compact_at: None,
+        window_tokens: None,
     });
     next.context_notice = ContextNotice::UntilAutoCompact { percent: 12 };
     let speed = OutputSpeed {

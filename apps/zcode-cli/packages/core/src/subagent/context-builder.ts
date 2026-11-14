@@ -14,6 +14,7 @@ import { buildEnvironmentSections } from "../context/sections/env-info.js";
 import { buildRequestUserContextSection } from "../context/sections/request-user-context.js";
 import type { ExecutionWorktreeEnvFact } from "../context/sections/env-info.js";
 import { buildSkillsSection } from "../context/sections/skills.js";
+import { TOTAL_TOKENS_SYSTEM_LINE } from "../context/total-tokens.js";
 import { estimateTokens } from "../context/utils.js";
 import {
   SUBAGENT_LAUNCHER_MESSAGES_NOTE,
@@ -124,6 +125,14 @@ function buildSubagentContextSections(config: SubagentContextBuilderConfig): Con
         ? `\n\n${SUBAGENT_LAUNCHER_MESSAGES_NOTE}\n\n${DEFAULT_CONFIRMATION_PARAGRAPH}`
         : `\n\n${SUBAGENT_LAUNCHER_MESSAGES_NOTE}\n\n${buildSubagentCommonNotes()}`,
     }),
+    // 固定的 token 预算行紧跟 Notes，是子 agent system 的最后一段。
+    createSubagentSection({
+      name: "Total Tokens",
+      source: "total_tokens",
+      cacheHint: "stable",
+      content: `\n\n${TOTAL_TOKENS_SYSTEM_LINE}`,
+    }),
+    ...buildEnvironmentSections(config.envInfo, config.model),
   );
   // Environment and model are runtime announcements; the incognito `environment` toggle drops them.
   if (!environmentOff) {

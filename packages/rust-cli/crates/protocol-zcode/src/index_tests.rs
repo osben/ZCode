@@ -96,3 +96,17 @@ async fn a_removal_without_a_live_row_still_answers_the_subscriber() {
         json!({"op": "session.removed", "sessionId": "s1"})
     );
 }
+
+/// Fork: a subagent's child session publishes no sessions-index row (Node skips `subagent_child`); interactive and
+/// forked sessions do.
+#[test]
+fn only_task_sessions_are_listed_in_the_sessions_index() {
+    use rust_cli_kernel_api::store::SessionKind;
+    assert!(!crate::live::listed_in_sessions_index(
+        SessionKind::Subagent
+    ));
+    assert!(crate::live::listed_in_sessions_index(
+        SessionKind::Interactive
+    ));
+    assert!(crate::live::listed_in_sessions_index(SessionKind::Fork));
+}

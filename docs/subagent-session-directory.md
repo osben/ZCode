@@ -53,7 +53,13 @@ CLI ProductProjection V4 snapshot.subagents
    the failure happens before the first persistence, or history cannot reliably prove the child
    association, no stub is shown.
 9. `running` includes foreground, background, blocked and waiting; success, failed, cancelled and lost
-   all belong to `ended`, and each item keeps its concrete state.
+   all belong to `ended`, and each item keeps its concrete state. A child still running when the previous
+   runtime process exited (started before this process, no live fact in this process, nothing persisted
+   since this process started) no longer counts as running. A terminal state the old process wrote to
+   `metadata.json` in the output directory (stopped on normal shutdown, failed, completed) shows as
+   cancelled / failed / success; one without a terminal state is marked `lost`. Criteria and the
+   interruption reminder to the model: Subagent tool design doc, "Agents left by a previous runtime"
+   (`apps/zcode-cli/docs/design/v2/tool/07-subagent.md`).
 10. Cold recovery first rebuilds rows from the persisted transcript and then validates members against
     the verified `taskType=subagent_child` fact in the session store; ambiguous, unpersisted or
     branch-cut references in old history cannot enter `snapshot.subagents`. The running recovery state is
@@ -71,7 +77,7 @@ mini capsule
 
 expanded status panel
 └─ Agents (unified collapsible group, title tail shows "{count} running")
-   ├─ Running -> existing running items, child detail opens directly; controllable background items keep Stop
+   ├─ Running -> existing running items, child detail opens directly; controllable foreground/background items offer Stop
    └─ Ended · N -> opens or reuses the Subagent directory tab
 
 Subagent directory (desktop / ordinary Web)
@@ -92,13 +98,29 @@ Subagent directory (desktop / ordinary Web)
 - In the expanded panel "Ended" must be inside the "Agents" collapsible content and must not be a
   top-level section parallel to "Agents"; with no running but the panel present for other summary
   content, an "Agents" group containing only "Ended" can still show.
-- The expanded panel's running items use V4 `snapshot.subagents.running` as the child identity and
-  display fact, but Stop control authority still comes from the parent snapshot's `backgroundWorks`. The
-  two are associated only by exactly the same `childSessionId`; Stop shows on a hit with
-  `status=running`, `kind=subagent`, a `workId` and `cancellable !== false`, and keeps sending
-  `cancelBackgroundWork(workId)`. Stop must stop the detail click from bubbling; a foreground child
-  with no reliable background-work association shows no forged per-item Stop and must not be guessed by
-  title or time.
+- The expanded panel's running items use V4 `snapshot.subagents.running` as the source of child identity,
+  display and Stop capability. Only when the runtime confirms the current execution supports per-item
+  stop does a running item carry `stopControl` (`taskId` and this execution's `executionId`). The UI
+  does not infer Agent Stop from `backgroundWorks` and never guesses by agentId, title or time. Click
+  sends the parent session's `stopSubagent`; that session's runtime validates task ownership, execution
+  identity and not-yet-ended state. A late command cannot stop a new execution resumed for the same
+  agentId through `SendMessage`. Without the capability field no Stop shows. The button stops the
+  detail click from bubbling, is disabled while the request is in flight, shows visible failure
+  feedback, and on success waits for the authoritative projection to remove the item (the UI does not
+  delete it early). `cancelBackgroundWork` stays for the existing Bash/Workflow control and is not
+  widened.
+- Stop ends only the target child, not the parent turn or other children. Foreground cancel returns a
+  stop result through the original Agent tool call, sends no background terminal notification, and does
+  not rewrite the stopped task as failed. Background keeps the killed notification and
+  `SubagentStopped(stopped)`. If artifact write or notification enqueue fails, the target is still
+  cancelled and the end event published, then the failure is reported explicitly; killed is not rolled
+  back. The end event carries `executionId`, and the projection rejects late terminals from an older
+  execution. When completion races stop, only the first terminal commits; the other side must not
+  overwrite it or notify twice.
+- `stopControl` is a current-runtime capability and is not persisted as a historical permission. Cold
+  recovery rebuilds membership and display only: old events, invalid children, ended tasks and running
+  rows without live-runtime proof get no Stop. Desktop continuous and mobile replayable consume the same
+  projection; the runtime still validates at command time.
 - A directory item shows the Agent description, final summary or error, relative time and status icon;
   the directory is read-only and adds no stop/cancel control.
 - On live completion the V4 projection moves the item out of running and updates `endedTotal`; the

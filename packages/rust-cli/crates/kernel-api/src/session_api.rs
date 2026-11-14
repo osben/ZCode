@@ -174,13 +174,25 @@ pub enum Command {
         execution: Option<InputExecution>,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         behind_held: bool,
+        /// Fork: the App input's intent; `text` is the typed text and the quotes join it after slash expansion.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        intent: Option<Box<crate::input_intent::InputIntent>>,
+        /// Fork: the foreground lease ([`Command::ReserveForeground`]) this submit is the promoted input of. While a
+        /// lease is held, a submit that does not name its owner is queued as if busy (Node's admission sees
+        /// `hasActiveOrQueuedTurnWork` while a promotion lease exists), so it cannot start ahead of the promotion.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lease: Option<String>,
     },
-    /// Fork (desktop App): the permission dialog's "Full access" (Node `fullAccess`): the session's
-    /// permission mode becomes bypass and every queued input's frozen mode too; plan switches are
-    /// kept. The pending ask itself is answered separately. `interaction` is the ask that granted it
-    /// (Node `config.permissionGrant`, [`crate::session_api_events::KernelEvent::PermissionGranted`]).
-    GrantFullAccess {
+    /// Fork (desktop App, specs/fork-rust-agent-parity.md B3): the permission dialog's mode switch (Node
+    /// `resolvePermissionMode`): "Full access" grants `BypassPermissions`, "allow and switch to guarded" grants
+    /// `Guarded`. In one step the session actor checks the pending ask `interaction`, makes `mode` the session's
+    /// permission mode and every queued input's frozen mode (plan switches kept), emits
+    /// [`crate::session_api_events::KernelEvent::PermissionGranted`] (Node `config.permissionGrant`), then answers the
+    /// ask allow once. Refused, nothing changes and the ask stays pending; an ask that is no longer pending answers
+    /// [`crate::session_api_results::CommandResult::NotPending`].
+    GrantPermissionMode {
         interaction: String,
+        mode: crate::permission::PermissionMode,
     },
     /// Fork (desktop App): Node `pauseGoal`: an active goal becomes paused (persisted as a
     /// `goal_status` attachment), then the running turn is aborted. No active goal: a no-op.
@@ -206,6 +218,18 @@ pub enum Command {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         at: Option<MessageId>,
     },
+    /// Fork: the store wrote `title` as the session's `first_input` title at an input's admission
+    /// ([`crate::store::Admission::title`]). The actor takes it in memory and emits
+    /// [`crate::session_api_events::KernelEvent::TitleChanged`] without a commit of its own, so the live views show
+    /// the stored title before the input's `UserPromptSubmit` hooks (Node emits `SessionTitleUpdated` at the
+    /// persistence). Ignored once the title is `custom`. Always `Accepted`.
+    AdoptTitle {
+        title: String,
+    },
+    /// Fork: no model-generated title for this actor's lifetime (Node `titleGeneration: {enabled: false}`, the legacy
+    /// `session/create` field `titleGenerationEnabled: false` the desktop Host sends for automation runs,
+    /// specs/fork-rust-automations.md). The first input still names the session. Always `Accepted`.
+    DisableTitleGeneration,
     /// 用户改名（`/rename`，Node `setCustomSessionTitle`）：标题来源记为 `custom`，之后不再自动生成（docs/specs/rust-cli/titles.md §4）。
     Rename {
         title: String,
@@ -239,6 +263,12 @@ pub enum Command {
     ForkFromInput {
         input: MessageId,
     },
+    /// Fork from an assistant reply (Node `forkAssistant`, the row action of a turn opened by a notification): the
+    /// new session carries the history through `assistant`. `assistant` must be a stored assistant reply (not the
+    /// resume sentinel); a running turn's reply is refused (`Rejected`), like [`Command::ForkFromInput`].
+    ForkFromAssistant {
+        assistant: MessageId,
+    },
     /// 批准或拒绝一条扣住的同伴消息（docs/specs/rust-cli/cross-session.md §2.4，F28）：`message` 是
     /// [`crate::peers::HeldPeerMessage::msg_id`]。已经解决（过期、改模式放行）时 `Rejected`。
     ResolvePeerMessage {
@@ -251,11 +281,39 @@ pub enum Command {
     StopTask {
         task: String,
     },
+    /// Fork (desktop `stopSubagent`): the user's guarded stop of one run of a subagent this session spawned
+    /// ([`crate::agents::AgentSignals::stop_subagent`]). `Accepted` with [`CommandResult::Done`]; a refusal is
+    /// `Rejected` whose reason is [`crate::agents::SubagentStopRefusal::as_str`].
+    StopSubagent {
+        agent: crate::ids::AgentId,
+        execution: String,
+    },
     /// `/cd` 由会话 actor 判定（docs/specs/rust-cli/tui-manage.md §7.1，F1）：运行中 `Rejected`（固定的文字）；
     /// 否则回执是 [`CommandResult::Directory`]。移动时 actor 设 shell cwd、改工作区、
     /// 发 [`KernelEvent::WorkspaceChanged`]，给模型的说明（固定的说明文字加新目录的规则文件）由 actor 组成并提交。
     ChangeDirectory {
         root: crate::env::EnvPath,
+    },
+    /// Fork: the session runs in the execution worktree `root` from now on (desktop prepared-worktree activation,
+    /// specs/fork-rust-agent-parity.md "Execution worktree"). Like [`Command::ChangeDirectory`] the actor sets the
+    /// shell cwd and the workspace and emits [`KernelEvent::WorkspaceChanged`], but it commits no note: Node starts
+    /// the runtime in the worktree, so the model sees no move. `Rejected` while a turn or compaction runs.
+    SetExecutionRoot {
+        root: crate::env::EnvPath,
+    },
+    /// Fork: the incognito profile a prepared execution worktree's activation freezes (specs/fork-rust-agent-parity.md,
+    /// "Incognito sessions"). The actor's meta takes it while it has none, so a fork of the session keeps it; the same
+    /// profile again is `Accepted`, another one `Rejected`. Sent after [`Kernel::freeze_incognito`] and before
+    /// [`Command::SetExecutionRoot`] releases the held SessionStart.
+    SetIncognito {
+        profile: crate::incognito::IncognitoProfile,
+    },
+    /// Fork: the options a `setExternalAgentConfigOption` stored for the session's ACP agent (Node
+    /// `external_agent_config_updated`, specs/fork-rust-agent-parity.md rule 13). The actor appends
+    /// [`KernelEvent::ExternalAgentConfig`]; the agent process is not touched.
+    PublishExternalAgentConfig {
+        agent: String,
+        options: Vec<crate::external_agent_config::ExternalAgentConfigOption>,
     },
     /// 同 [`Command::ChangeDirectory`]，移动成功时 `record` 与说明文字同一批、排在它之前提交（修复线 L-A，
     /// docs/specs/rust-cli/tui-manage.md §11.2：对照实现的 `/cd` 先记命令输入与输出，说明文字是之后的 meta 消息）。
@@ -283,12 +341,36 @@ pub enum Command {
     Dequeue {
         command: CommandId,
     },
-    /// Replace the text of an input that is still queued, keeping its place and delivery (Node `editQueueItem`).
-    /// Rejected with the same reason as [`Command::Dequeue`] when the input already started a turn or was
-    /// merged into one.
+    /// Fork: edit a queued input in place (Node `editQueueItem`): the text and the other fields of [`QueuedEdit`],
+    /// keeping its place and delivery. With `editor_id` the lock must be held by that editor (and is released by the
+    /// edit); without it a locked input is refused. Rejected with [`QUEUE_ITEM_MISSING`] when the input is no
+    /// longer queued, with the lock verdict reasons otherwise.
     EditQueued {
         command: CommandId,
-        text: String,
+        edit: QueuedEdit,
+    },
+    /// Fork: take the composer edit lock of a queued input (Node `lockQueueItemEdit`). Accepted for the same editor
+    /// again (idempotent); rejected with [`QUEUE_ITEM_EDIT_LOCKED`], [`QUEUE_ITEM_MISSING`] or
+    /// [`QUEUE_ITEM_NOT_EDITABLE`] otherwise. Reservation (`guard.queueItemReserved`) is the protocol's check.
+    LockQueuedEdit {
+        command: CommandId,
+        lock: QueueEditLock,
+    },
+    /// Fork: release the composer edit lock of a queued input (Node `releaseQueueItemEdit`); rejected with
+    /// [`QUEUE_EDIT_LOCK_MISSING`] when nothing holds it. An idle session re-evaluates the drain.
+    ReleaseQueuedEdit {
+        command: CommandId,
+    },
+    /// Fork: apply a model and/or mode to several queued inputs (Node `applyQueueItemsConfig`). Missing, compact,
+    /// locked and not-queued inputs are skipped; none applied is rejected with [`QUEUE_ITEM_MISSING`].
+    ApplyQueuedConfig {
+        commands: Vec<CommandId>,
+        edit: QueuedEdit,
+    },
+    /// Fork: remove a queued input whatever its lock (Node `clearAllPendingInputs`, the "clear queue and send"
+    /// disposition). Otherwise as [`Command::Dequeue`].
+    ClearQueued {
+        command: CommandId,
     },
     /// Move a queued input before another queued input, or to the end of the queue when `before` is `None`
     /// (Node `reorderQueueItem`). Rejected with the same reason as [`Command::Dequeue`] when either input is
@@ -302,6 +384,29 @@ pub enum Command {
     /// head of the queue, as a turn end would. Always `Accepted`; every change emits `QueueChanged` once.
     HoldQueue {
         held: bool,
+    },
+    /// Fork: the foreground promotion lease (Node `acquireForegroundPromotionLease`, `send-now:`/`sendQueuedNow`). While
+    /// reserved, nothing starts a turn on its own (queued inputs, background notices, cron): the caller interrupts the
+    /// running turn and submits the promoted input to the idle session. Releasing while idle resumes the drain as a turn
+    /// end would. Unlike [`Command::HoldQueue`] it is not the user's `autoDrain` and emits no `QueueChanged`. The lease
+    /// has one owner (`lease`, Node's `leaseId`): another lease is refused with [`FOREGROUND_BUSY`], the owner taking it
+    /// again is accepted, and only the owner's release ends it (another lease's release is accepted and changes
+    /// nothing), as Node `acquireForegroundPromotionLease` / `releaseForegroundPromotionLease`.
+    ReserveForeground {
+        reserved: bool,
+        lease: String,
+    },
+    /// Fork: the release lease of `session/releaseUnderDirectory` (specs/fork-rust-agent-parity.md, A3). Taking it
+    /// (`reserved: true`) is refused with [`SESSION_BUSY`] while a turn, compaction or job runs, an input is queued or
+    /// in the lane, or an interaction is pending. While held, every other command is refused with
+    /// [`SESSION_RELEASING`] and no turn starts on its own; the lease ends when the session closes or when it is
+    /// returned (`reserved: false`, always `Accepted`), which resumes the drain as a turn end would. The lease has one
+    /// owner (`lease`, one per release): another lease is refused with [`SESSION_BUSY`], the owner taking it again is
+    /// accepted, and only the owner's return ends it. It is refused too while a promotion holds the foreground
+    /// ([`Command::ReserveForeground`]), whose dequeued item must still be submitted.
+    ReserveRelease {
+        reserved: bool,
+        lease: String,
     },
 }
 
@@ -337,12 +442,24 @@ pub struct CreateSession {
     /// plan 开关（修复线 F20；serde 缺省 false）。
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub plan: bool,
+    /// Fork: the incognito profile, frozen into the new row (specs/fork-rust-agent-parity.md, "Incognito sessions").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub incognito: Option<crate::incognito::IncognitoProfile>,
 }
 
 /// 会话的当前视图（前端重连或首次打开时用）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SessionView {
     pub meta: SessionMeta,
+    /// Fork: where `meta.title` came from (the stored `title_source`, then each `TitleChanged`), so a projection
+    /// opened on a renamed session reports `custom`. `None` when the producer does not know it (derived from the
+    /// title).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title_source: Option<crate::title::Source>,
+    /// Fork (B3): the interaction of the session's last permission mode grant (the stored receipt, then each grant),
+    /// projected as `config.permissionGrant` (Node `lastPermissionGrantId`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission_grant: Option<String>,
     /// 显示用的历史：冷读取时是只供显示的压缩点之前的消息（[`crate::store::LoadedSession::earlier`]）接上会话 actor 的
     /// 历史（工作线 F102，docs/specs/rust-cli/compact.md §5.1）。要模型侧的那一段时取 [`crate::history::active`]。
     pub messages: Vec<Message>,
@@ -361,6 +478,10 @@ pub struct SessionView {
     /// 有回合正在运行。
     #[serde(default)]
     pub running: bool,
+    /// Fork: the running turn's id (the actor's own turn, else the mirrored subagent run's), so a projection rebuilt
+    /// while it runs keys that turn like the events that follow. `None` when idle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub running_turn: Option<crate::ids::TurnId>,
     /// 执行环境里还没有处理完的后台命令（`ShellState::background`）。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub background: Vec<ShellTaskId>,
@@ -396,6 +517,66 @@ pub struct SessionView {
     pub message_models: std::collections::BTreeMap<MessageId, crate::model::ModelSelection>,
 }
 
+/// The command id prefix of the input a SessionStart hook gives (`initial_user_message`): it is not typed input, so
+/// it is no evidence that a client's first input was admitted (fork prepared-worktree activation).
+pub const SESSION_START_INPUT: &str = "session-start-";
+
+/// Fork: the queued input is not there any more (Node `queue.itemMissing`, a noop).
+pub const QUEUE_ITEM_MISSING: &str = "queue.itemMissing";
+/// Fork: the queued input is locked by another editor (Node `guard.queueItemEditLocked`).
+pub const QUEUE_ITEM_EDIT_LOCKED: &str = "guard.queueItemEditLocked";
+/// Fork: the edit names an editor that no longer holds the lock (Node `guard.queueEditLockLost`).
+pub const QUEUE_EDIT_LOCK_LOST: &str = "guard.queueEditLockLost";
+/// Fork: a release with no lock on the input (Node `queue.editLockMissing`, a noop).
+pub const QUEUE_EDIT_LOCK_MISSING: &str = "queue.editLockMissing";
+/// Fork: a compaction is not editable (Node `guard.queueItemNotEditable`).
+pub const QUEUE_ITEM_NOT_EDITABLE: &str = "guard.queueItemNotEditable";
+
+/// Fork: the fields of an in-place queue edit (Node `editQueueItem` / `applyQueueItemsConfig` payload). `None` keeps
+/// the item's value. `mode` is Node's mode name (`build`, `edit`, `yolo`, `guarded`, `auto`, or the legacy `plan`),
+/// resolved against the item's own execution state with [`crate::permission::resolve_execution`].
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct QueuedEdit {
+    /// The editor whose lock the edit needs (Node `editorId`); `None` for an edit that needs no lock.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub editor_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    /// The quotes as sent (Node `conversationQuotes`), stored on the intent as given.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation_quotes: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_selection: Option<ModelSelection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_enabled: Option<bool>,
+    /// The App's `modelSelection` as sent, stored on the intent unchanged (Node `editedIntent` keeps the payload's
+    /// shape); `model_selection` is the same choice parsed for the kernel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intent_model_selection: Option<serde_json::Value>,
+    /// The new attachments: `[]` clears them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attachments: Option<QueuedAttachments>,
+}
+
+/// Fork: the attachments of a queue edit, resolved by the protocol before the edit is sent (Node maps the refs before
+/// the write-back).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct QueuedAttachments {
+    /// The App's refs as sent (the intent's `attachmentRefs`).
+    pub refs: serde_json::Value,
+    /// The refs' content blocks, without the typed text block (the queue owns the text).
+    pub content: Vec<crate::message::ContentBlock>,
+}
+
+/// Fork: `Command::ReserveRelease` while the session has work (`session/releaseUnderDirectory` busy).
+pub const SESSION_BUSY: &str = "session.busy";
+/// Fork: a command reached a session whose release lease is held (`Command::ReserveRelease`).
+pub const SESSION_RELEASING: &str = "session.releasing";
+/// Fork: `Command::ReserveForeground` refused because another promotion owns the foreground (Node's lease `conflict`).
+pub const FOREGROUND_BUSY: &str = "session.foregroundBusy";
+
 /// Fork: `Command::ResumeGoal` while a turn runs (Node reason `activeTurn`).
 pub const GOAL_ACTIVE_TURN: &str = "activeTurn";
 /// Fork: `Command::ResumeGoal` with plan on (Node `guard.planGoalMutuallyExclusive`).
@@ -424,8 +605,8 @@ pub struct TurnFileCount {
 #[path = "session_api_events.rs"]
 mod events;
 pub use events::{
-    FileChange, InputExecution, KernelEvent, NoticeLevel, QueuedInput, QueuedKind, SequencedEvent,
-    TurnOutcome,
+    FileChange, InputExecution, KernelEvent, NoticeLevel, QueueEditLock, QueuedInput, QueuedKind,
+    SequencedEvent, TurnOutcome,
 };
 
 // 命令的结果放在分出的文件里（800 行上限，工作线 F134）。
@@ -503,6 +684,12 @@ pub trait SessionHandle: Send + Sync {
     /// （修复线 F34）。
     fn subagent_changes(&self) -> BoxStream<'static, ()>;
 
+    /// Fork: the run feed of one of this session's subagent child sessions ([`crate::agents::AgentSignals::child_run`]),
+    /// read by the App's telemetry facts. None when the kernel keeps no live runs (the TUI).
+    fn child_run(&self, _child: &SessionId) -> Option<crate::agents::ChildLiveFeed> {
+        None
+    }
+
     /// 子代理列表与后台任务的同一份快照（修复线 F34，tui-panels.md §0、§3.1）：一次查询、一次回执。前端在子代理的变化
     /// 通知与后台任务相关的事件之后都重取它，不再分别取 [`SessionHandle::subagents`] 与
     /// [`SessionHandle::background_tasks`]。
@@ -546,6 +733,87 @@ pub trait Kernel: Send + Sync {
         _source: StartSource,
     ) -> Result<SessionId, KernelError> {
         self.create_session(request).await
+    }
+
+    /// Fork: a new session that runs in an execution worktree from its first moment (specs/fork-rust-agent-parity.md
+    /// "Execution worktree"). `request.workspace` is the stored workspace the session is listed under; the worktree
+    /// is stored before the session starts, so SessionStart and every turn run in it. A kernel without it refuses.
+    async fn create_session_in_worktree(
+        &self,
+        _request: CreateSession,
+        _worktree: crate::env::EnvPath,
+        _branch: Option<String>,
+    ) -> Result<SessionId, KernelError> {
+        Err(KernelError::Unsupported {
+            what: "execution worktree sessions".to_owned(),
+        })
+    }
+
+    /// Fork: a new session reserved for a prepared execution worktree (specs/fork-rust-agent-parity.md "Execution
+    /// worktree"). It is listed under `request.workspace`; SessionStart waits for `Command::SetExecutionRoot`, so
+    /// the hook runs in the worktree at activation, as Node starts the runtime there. A kernel without it refuses.
+    async fn create_prepared_session(
+        &self,
+        _request: CreateSession,
+    ) -> Result<SessionId, KernelError> {
+        Err(KernelError::Unsupported {
+            what: "prepared worktree sessions".to_owned(),
+        })
+    }
+
+    /// Fork: freezes the incognito profile of a prepared execution worktree at its activation
+    /// (specs/fork-rust-agent-parity.md, "Incognito sessions"): the row's `fork_incognito` once, then the in-memory
+    /// profile every gate reads, before the activation releases SessionStart or admits the first input. A row that
+    /// holds another profile, or a store that cannot hold one, fails it. A kernel without it refuses.
+    async fn freeze_incognito(
+        &self,
+        _session: &SessionId,
+        _profile: crate::incognito::IncognitoProfile,
+    ) -> Result<(), KernelError> {
+        Err(KernelError::Unsupported {
+            what: "incognito profiles".to_owned(),
+        })
+    }
+
+    /// Fork: runs the admission part of the tool pipeline on an MCP App tool call of a helper-hosted server
+    /// (specs/fork-rust-node-helper.md F3, `helper/authorizeAppTool`): validation, PreToolUse hooks, the rules and the
+    /// gate, with a session-scoped prompt when it asks. Answers the approved input; never runs the tool. The session
+    /// must be open: a stored session that is not is `NotFound` (the protocol server opens it first,
+    /// `helper_answers.rs`). A kernel without it refuses.
+    async fn authorize_app_tool(
+        &self,
+        _call: crate::app_tool::AppToolCall,
+    ) -> Result<serde_json::Value, crate::app_tool::AppToolError> {
+        Err(KernelError::Unsupported {
+            what: "MCP App tool authorization".to_owned(),
+        }
+        .into())
+    }
+
+    /// Fork: one model call of an MCP App panel on the session's model, outside any turn
+    /// (specs/fork-rust-node-helper.md F3, `helper/sampleModel`): stores the call's usage row and nothing else. The
+    /// session must be open. A kernel without it refuses.
+    async fn sample_model(
+        &self,
+        _call: crate::sampling::SamplingCall,
+    ) -> Result<crate::sampling::SamplingReply, crate::sampling::SamplingError> {
+        Err(KernelError::Unsupported {
+            what: "MCP App sampling".to_owned(),
+        }
+        .into())
+    }
+
+    /// Fork: opens a stored session whose prepared execution worktree is not active yet (an agent restart before the
+    /// activation): SessionStart waits for `Command::SetExecutionRoot`, as after [`Kernel::create_prepared_session`],
+    /// so the hook never runs in the parent checkout. A session already open keeps its state. A kernel without it
+    /// refuses.
+    async fn open_prepared_session(
+        &self,
+        _session: &SessionId,
+    ) -> Result<Arc<dyn SessionHandle>, KernelError> {
+        Err(KernelError::Unsupported {
+            what: "prepared worktree sessions".to_owned(),
+        })
     }
 
     /// 同 [`Kernel::open_session`]，另给 SessionStart 的来源（刚 fork 出的会话是 `Fork`）。
@@ -731,6 +999,17 @@ pub trait Kernel: Send + Sync {
         Err(KernelError::Unsupported {
             what: "deleting sessions".to_owned(),
         })
+    }
+
+    /// Fork: the store erased these sessions (`session/eraseTree`, after their runtimes closed). The kernel stops what it
+    /// still runs for them: the agents' notice forwarders, and on every machine their background commands and pending
+    /// notices (`close_session` with `forget`), as Node's runtime close cancels them.
+    async fn sessions_erased(&self, _sessions: Vec<SessionId>) {}
+
+    /// Fork: the sessions among `sessions` that a running subagent runs in (`AgentSignals::running_agent_sessions`).
+    /// `session/eraseTree` counts them as running and refuses the erase.
+    fn running_agent_sessions(&self, _sessions: &[SessionId]) -> Vec<SessionId> {
+        Vec::new()
     }
 
     /// 会话的只读快照（F29，`/resume` 页的预览与全屏对话）：打开着的问它的 actor，否则从存储冷加载；不打开会话、

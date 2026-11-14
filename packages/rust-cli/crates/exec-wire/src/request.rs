@@ -92,6 +92,8 @@ pub enum Request {
     SetShellCwd { session: String, cwd: String },
     #[serde(rename = "background.background_command")]
     BackgroundCommand { task: BackgroundTask },
+    #[serde(rename = "background.ended_background_command")]
+    EndedBackgroundCommand { task: BackgroundTask },
     #[serde(rename = "background.background_elapsed")]
     BackgroundElapsed { task: BackgroundTask },
     #[serde(rename = "background.stop_background_command")]
@@ -197,6 +199,7 @@ impl Request {
             Self::AckShellNotice { .. } => Op::AckShellNotice,
             Self::SetShellCwd { .. } => Op::SetShellCwd,
             Self::BackgroundCommand { .. } => Op::BackgroundCommand,
+            Self::EndedBackgroundCommand { .. } => Op::EndedBackgroundCommand,
             Self::BackgroundElapsed { .. } => Op::BackgroundElapsed,
             Self::StopBackgroundCommand { .. } => Op::StopBackgroundCommand,
             Self::RewindPrepare { .. } => Op::RewindPrepare,

@@ -286,9 +286,10 @@ pub(crate) fn render_pdf_pages(request: RenderPdfPages) -> wf::RenderPdfPages {
     }
 }
 
-/// MCP 服务器的配置原样发出（`${VAR}` 由执行器用它自己的环境展开，remote-exec.md §22.7）。
-pub(crate) fn mcp_transport(config: McpTransportConfig) -> wm::McpTransport {
-    match config {
+/// MCP 服务器的配置原样发出（`${VAR}` 由执行器用它自己的环境展开，remote-exec.md §22.7）。Fork: `None` for a Node
+/// helper server, which has no wire form: it is always bound to the main env (specs/fork-rust-node-helper.md F3).
+pub(crate) fn mcp_transport(config: McpTransportConfig) -> Option<wm::McpTransport> {
+    Some(match config {
         McpTransportConfig::Stdio {
             command,
             args,
@@ -302,14 +303,15 @@ pub(crate) fn mcp_transport(config: McpTransportConfig) -> wm::McpTransport {
         },
         McpTransportConfig::Sse { url, headers } => wm::McpTransport::Sse { url, headers },
         McpTransportConfig::Http { url, headers } => wm::McpTransport::Http { url, headers },
-    }
+        McpTransportConfig::NodeHelper => return None,
+    })
 }
 
-/// 一台机器上应该有的一个服务器（期望集合的一项，§22.5）。
-pub(crate) fn mcp_declared(connect: McpConnect) -> wm::McpDeclared {
+/// 一台机器上应该有的一个服务器（期望集合的一项，§22.5）。Fork: a Node helper server is not declared.
+pub(crate) fn mcp_declared(connect: McpConnect) -> Option<wm::McpDeclared> {
     let McpConnect { server, transport } = connect;
-    wm::McpDeclared {
+    Some(wm::McpDeclared {
         server,
-        transport: mcp_transport(transport),
-    }
+        transport: mcp_transport(transport)?,
+    })
 }

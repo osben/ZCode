@@ -40,6 +40,7 @@ fn endpoint(base_url: String, headers: &[(&str, &str)]) -> ModelEndpoint {
             ..ModelCapabilities::default()
         },
         renewable: false,
+        compress_body_over: None,
     }
 }
 

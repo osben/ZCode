@@ -165,6 +165,9 @@ mod reference {
             ContentBlock::Image { source, .. } => {
                 object([("type", text("image")), ("source", image_source(source)?)])
             }
+            ContentBlock::Video { source, .. } => {
+                object([("type", text("video")), ("source", image_source(source)?)])
+            }
             ContentBlock::Thinking {
                 thinking,
                 signature,
@@ -198,6 +201,11 @@ mod reference {
             ContentBlock::File { .. } => {
                 return Err(ModelError::InvalidRequest {
                     message: "attached files must be expanded before the model request".to_owned(),
+                });
+            }
+            ContentBlock::ExternalTool(_) => {
+                return Err(ModelError::InvalidRequest {
+                    message: "ACP rows never reach the model request".to_owned(),
                 });
             }
             ContentBlock::WebSearchToolResult {
@@ -360,6 +368,7 @@ fn item(block: ContentBlock, cache_control: Option<CacheControl>) -> ApiContent 
     ApiContent {
         block,
         cache_control,
+        meta: false,
     }
 }
 

@@ -13,6 +13,14 @@
 
 Every layer records its scope and date. A successful `GET /models`, an SDK that can be created, or one successful connection test must not be written as full Agent support.
 
+## Real validation priority
+
+Confirmed 2026-11-04: real API validation resources go first to the Providers with the highest actual traffic, and within those entries first to the current main models and this change. The maintainer supplies the traffic scope and the test list records the actual choice; do not guess traffic from brand fame and do not walk the whole built-in catalog automatically.
+
+Other entries still get official-source verification, two-environment configuration, rule parsing and parameter-mapping checks, plus a pending list that records "real API not executed". A missing credential or an out-of-scope entry is not a call failure and does not require a new model to be default disabled; additions that follow the maintenance principles can still be submitted. OpenAI Luna/Terra is in the pending-test scope this round and is not mixed into the priority list automatically.
+
+When conditions allow later, rerun through the existing ZCode execution chain, 1 pass per item by default; one pass covers only that entry and model. Report "static checks passed", "real calls passed" and "delivered" separately, and never extend one Provider's result to full validation.
+
 ## Manual handoff for obtaining an API key
 
 First finish the credential-independent material, spec, tests and candidate diff, then give collaborators an executable request: vendor, concrete product/region, model list, ordinary API or plan key, required permissions, expected number of requests, maximum cost and the purpose of test data. A new subscription, a top-up and a quota increase are confirmed by a person; spending must not be expanded on one's own for "full validation".

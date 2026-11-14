@@ -1,3 +1,4 @@
+import { registerSidePaneWidthCases } from "./side-pane-width-motion.cases.mjs";
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import { mkdir } from "node:fs/promises";
@@ -68,6 +69,11 @@ after(async () => {
     server?.close().then(() => console.info("Fixture server closed")),
   ]);
 });
+
+registerSidePaneWidthCases(
+  () => browser,
+  () => origin,
+);
 
 for (const [width, locale, theme] of [
   [1200, "en-US", "light"],

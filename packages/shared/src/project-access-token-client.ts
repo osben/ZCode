@@ -11,6 +11,9 @@ import {
 import { ZCODE_VERSION } from "./version.js";
 import { isCredentialDecryptError } from "./oauth.js";
 
+const MAX_TOKEN_ISSUE_ATTEMPTS = 2;
+const MIN_RATE_LIMIT_RETRY_DELAY_MS = 250;
+const MAX_RATE_LIMIT_RETRY_DELAY_MS = 1_000;
 const DEFAULT_ORGANIZATION_NAME = "默认机构";
 const DEFAULT_PROJECT_NAME = "默认项目";
 const customerSchema = z.object({
@@ -210,18 +213,56 @@ export class ProjectAccessTokenClient {
           usageScene: API_KEY_USAGE_SCENE.CODING_PLAN,
           loginGeneration: current.generation,
         },
-        async () => {
-          const raw = await request(
-            `${keyListUrl(origin, location)}/${encodeURIComponent(location.apiKeyId)}/access_tokens`,
-            {
-              method: "POST",
-              headers,
-              body: JSON.stringify({
-                clientType: "zcode",
-                clientVersion: ZCODE_VERSION,
-              }),
-            },
-          );
+        async (hasValidFallback) => {
+          let raw: unknown;
+          // A transient failure during the first issuance used to abort the whole round; retry once within the same pending for a known Key ID.
+          // Key queries/creation and OAuth are not retried; check the generation after a failure so an old account does not keep issuing.
+          for (let attempt = 1; ; attempt++) {
+            try {
+              raw = await request(
+                `${keyListUrl(origin, location)}/${encodeURIComponent(location.apiKeyId)}/access_tokens`,
+                {
+                  method: "POST",
+                  headers,
+                  body: JSON.stringify({ clientType: "zcode", clientVersion: ZCODE_VERSION }),
+                },
+              );
+              break;
+            } catch (error) {
+              assertCurrent();
+              const failure =
+                error instanceof ProjectAccessTokenTransientError ? error.failure : undefined;
+              const retryable =
+                failure?.kind === "network" ||
+                failure?.kind === "timeout" ||
+                (failure?.kind === "http" &&
+                  (failure.status === 429 || (failure.status >= 500 && failure.status < 600)));
+              // When proactively refreshing with an existing usable PAT, take the same pending fallback directly to avoid waiting another timeout round.
+              if (attempt >= MAX_TOKEN_ISSUE_ATTEMPTS || !retryable || hasValidFallback())
+                throw error;
+              if (failure?.kind === "http" && failure.status === 429) {
+                const requestedDelay = failure.retryAfterMs;
+                if (requestedDelay !== undefined && requestedDelay > MAX_RATE_LIMIT_RETRY_DELAY_MS)
+                  throw error;
+                const minimumDelay = Math.max(
+                  MIN_RATE_LIMIT_RETRY_DELAY_MS,
+                  Number.isFinite(requestedDelay) ? requestedDelay! : 0,
+                );
+                const random = Math.max(0, Math.min(1, (this.options.random ?? Math.random)()));
+                const delay =
+                  minimumDelay +
+                  Math.floor((MAX_RATE_LIMIT_RETRY_DELAY_MS - minimumDelay) * random);
+                // Rate limiting must not be followed by an immediate repeat request; a long Retry-After is not shortened and is handed back to the caller.
+                await new Promise((resolve) => setTimeout(resolve, delay));
+                assertCurrent();
+              }
+              this.options.observe?.({
+                family: input.family,
+                stage: "resolve",
+                code: "project_token_request_retry",
+              });
+            }
+          }
           // Discard the ID only on an explicit not-found; permission/network/switch errors must not trigger creation or key fallback.
           if (raw && typeof raw === "object" && "code" in raw && raw.code === 404) {
             current.locations.delete(locationKey);

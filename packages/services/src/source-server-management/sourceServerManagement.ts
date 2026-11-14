@@ -49,6 +49,12 @@ export interface ISourceServerManagementService {
   }>;
   updateSource(input: SourceServerUpdateRequest): Promise<SourceServerManagementSnapshot>;
   /**
+   * Cancels the update on this route while it is still in the local phase (the snapshot carries `updateCancelable`). `canceled` reports whether the Host canceled the update;
+   * once the update is in the remote phase, or when there is no update, this is a no-op returning false (R3 §6.3). A canceled `updateSource` rejects with
+   * `remote-connection-canceled`. Exposed to the Desktop Renderer only.
+   */
+  cancelSourceUpdate(profileId: string): Promise<{ canceled: boolean }>;
+  /**
    * Stop the remote service on the device (RDLC-01): the Host disconnects and drops the resume
    * intent first, then runs `stop --wait` remotely.
    * The device stays disconnected after both success and failure; failure throws an error with a code. Exposed to the Desktop Renderer only.

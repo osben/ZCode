@@ -234,6 +234,17 @@ pub(crate) fn write_setting(
     upsert(ctx.conn, ctx.now, project, key, value)
 }
 
+/// [`write_setting`] outside a session commit (a draft has no row to resolve the project from).
+pub(crate) fn write_project_setting(
+    conn: &Connection,
+    now: u64,
+    project: &str,
+    key: &str,
+    value: &Value,
+) -> Result<(), StoreError> {
+    upsert(conn, now, project, key, value)
+}
+
 fn upsert(
     conn: &Connection,
     now: u64,

@@ -15,6 +15,7 @@
 
 mod account;
 mod auth;
+mod chatgpt;
 mod consts;
 mod credentials;
 #[cfg(test)]
@@ -24,6 +25,7 @@ mod login;
 mod option_map;
 mod personal;
 mod providers;
+mod system_cipher;
 mod team;
 #[cfg(test)]
 mod test_support;
@@ -38,17 +40,22 @@ use rust_cli_base::secret::RedactedString;
 use rust_cli_kernel_api::clock::Clock;
 use rust_cli_kernel_api::model::{ModelError, ModelSelection};
 use rust_cli_kernel_api::provider::{
-    Credential, EndpointQuery, HeaderRequest, HeaderSource, ModelCapabilities, ModelCatalog,
-    ModelDirectory, ModelEndpoint, ModelEndpoints, ModelLimits, TokenLimits, WireProtocol,
+    Credential, EndpointQuery, HeaderAccess, HeaderRequest, HeaderSource, ModelCapabilities,
+    ModelCatalog, ModelDirectory, ModelEndpoint, ModelEndpoints, ModelLimits, TokenLimits,
+    WireProtocol,
 };
 use rust_cli_net::Egress;
 use rust_cli_net::header;
 use rust_cli_paths::{StoragePath, StoragePaths};
 
-pub use credentials::{CredentialError, CredentialSecret};
+pub use credentials::{CredentialError, CredentialSecret, LocalCipher};
 pub use login::{LoginError, LoginOutcome, PendingLogin, SetupOutcome};
 /// Node 的平台名（定义在 base，F55）；入口经 platform 取用，路径不变。
 pub use rust_cli_base::js::node_platform;
+pub use rust_cli_kernel_api::provider::{CipherError, CredentialCipher};
+pub use system_cipher::{
+    KeyStore, KeyStoreError, SYSTEM_SERVICE, SystemCipher, SystemCipherInputs,
+};
 pub use token::{AccountOrigins, TokenError};
 
 use crate::auth::AccountAuth;
@@ -97,7 +104,16 @@ impl Platform {
     /// `paths` 已按入口读到的 `ZCODE_DATA_BASE_DIR`、`ZCODE_BUILTIN_PROVIDER_CONFIG_FILE` 调整过；`secret` 是
     /// 凭据密钥的材料；`services` 给账号服务（项目令牌、登录）用。
     pub fn new(paths: &StoragePaths, secret: &CredentialSecret, services: AccountServices) -> Self {
-        let credentials = CredentialStore::new(paths.credentials(), secret);
+        Self::with_cipher(paths, Arc::new(LocalCipher::new(secret)), services)
+    }
+
+    /// 同 [`Self::new`]，但凭据的加解密走注入的 cipher（桌面 app-server：Host 委托 Main 的密钥库，specs/fork-rust-credential-cipher.md）。
+    pub fn with_cipher(
+        paths: &StoragePaths,
+        cipher: Arc<dyn CredentialCipher>,
+        services: AccountServices,
+    ) -> Self {
+        let credentials = CredentialStore::with_cipher(paths.credentials(), cipher);
         // 项目令牌的缓存由个人订阅查询与请求期共用（F50）：取目录时换到的令牌，第一次请求直接用。
         let tokens = Arc::new(ProjectTokens::new(
             services.egress.clone(),
@@ -162,6 +178,17 @@ impl Platform {
             .clone()
     }
 
+    /// 最近一次读取凭据失败的静态原因（读得到时为空）。缺省选择据此不把降级的结论写进记忆（cli `default_model`）。
+    pub fn credentials_unreadable(&self) -> Option<&'static str> {
+        self.registry.unreadable_reason()
+    }
+
+    /// Resolves once a catalog read finds the credentials readable (at once when the latest one did). The
+    /// default-model task waits on it to settle the default again (fork spec `fork-rust-credential-cipher.md` F3).
+    pub async fn credentials_readable(&self) {
+        self.registry.readable().await;
+    }
+
     /// 凭据文件 `credentials.json` 的位置。
     pub fn credentials_file(&self) -> &StoragePath {
         self.credentials.file()
@@ -211,8 +238,28 @@ impl Platform {
             let supplied = source
                 .request_auth(HeaderRequest {
                     selection: selection.clone(),
-                    account_type: account_type.clone(),
-                    mode: mode.clone(),
+                    access: HeaderAccess::Zhipu {
+                        account_type: account_type.clone(),
+                        mode: mode.clone(),
+                    },
+                    session: session.cloned(),
+                    rejected_fingerprint: rejected.map(|key| token::fingerprint(key.expose())),
+                })
+                .await?;
+            return Ok((supplied.api_key, supplied.headers));
+        }
+        // Fork: ChatGPT Plan (specs/fork-rust-chatgpt-plan.md rule 7). The Host owns the SIWC refresh token and its
+        // rotation; a second refresher would revoke the grant (`refresh_token_reused`), so only the Host is asked.
+        if template.access == Access::ChatGpt {
+            let Some(source) = &self.header_source else {
+                return Err(ModelError::Authentication {
+                    message: CHATGPT_PLAN_HOST_REQUIRED.to_owned(),
+                });
+            };
+            let supplied = source
+                .request_auth(HeaderRequest {
+                    selection: selection.clone(),
+                    access: HeaderAccess::ChatGptPlan,
                     session: session.cloned(),
                     rejected_fingerprint: rejected.map(|key| token::fingerprint(key.expose())),
                 })
@@ -238,6 +285,9 @@ impl Platform {
                     .credential((&template.provider, account_type, mode), team, rejected)
                     .await
             }
+            Access::ChatGpt => Err(ModelError::Authentication {
+                message: CHATGPT_PLAN_HOST_REQUIRED.to_owned(),
+            }),
         }
     }
 }
@@ -278,6 +328,14 @@ impl ModelEndpoints for Platform {
         } = query;
         let current = self.registry.current().await;
         let Some(template) = current.snapshot.find(selection) else {
+            // 凭据读不到时不是“模型不可用”：说明是凭据存储的问题（specs/fork-rust-credential-cipher.md）。
+            if let Some(reason) = self.registry.unreadable_reason() {
+                return Err(ModelError::Authentication {
+                    message: format!(
+                        "ZCode credentials could not be read ({reason}); account models are unavailable until they can be read"
+                    ),
+                });
+            }
             // 这个团队项目已过期 / 未分配：照 App 的文案提示（platform.md §9.2）。
             let team = selection.connection.as_deref();
             if let Some(notice) = self
@@ -298,7 +356,11 @@ impl ModelEndpoints for Platform {
             .into_iter()
             .flatten()
             .min();
-        let body_patches = template.patches(selection.reasoning.as_deref(), max_output)?;
+        let mut body_patches = template.patches(selection.reasoning.as_deref(), max_output)?;
+        let chatgpt = template.access == Access::ChatGpt;
+        if chatgpt {
+            body_patches.push(chatgpt::request_patch(&template.model));
+        }
         let previous = match rejected.map(|endpoint| &endpoint.credential) {
             Some(Credential::ApiKey(previous)) => Some(previous),
             Some(Credential::None) | None => None,
@@ -317,7 +379,7 @@ impl ModelEndpoints for Platform {
         let mut headers = template.headers.clone();
         // 账号登录的 provider：配置里静态的鉴权头不发，凭据只来自每请求鉴权（Node `withoutModelAuthHeaders`，工作线
         // F64，model.md §2.4）。以前静态的 `Authorization` 会盖过账号的凭据。
-        if matches!(template.access, Access::Account { .. }) {
+        if matches!(template.access, Access::Account { .. } | Access::ChatGpt) {
             without_auth_headers(&mut headers);
         }
         // Node 的 Provider 适配器对 Anthropic 兼容网关同时发 Bearer；配置里显式给了 Authorization 时以配置为准。
@@ -348,7 +410,8 @@ impl ModelEndpoints for Platform {
             headers,
             body_patches,
             capabilities: template.capabilities,
-            renewable: matches!(template.access, Access::Account { .. }),
+            renewable: matches!(template.access, Access::Account { .. } | Access::ChatGpt),
+            compress_body_over: chatgpt.then_some(chatgpt::COMPRESS_BODY_OVER),
         })
     }
 
@@ -361,6 +424,10 @@ impl ModelEndpoints for Platform {
             .map(|template| template.capabilities)
     }
 }
+
+/// Fork: standalone `zcode-rs` has no Host to ask for a ChatGPT Plan token (specs/fork-rust-chatgpt-plan.md rule 8).
+const CHATGPT_PLAN_HOST_REQUIRED: &str =
+    "chatgpt_plan_host_required: ChatGPT Plan models need the ZCode app in Rust mode";
 
 /// 去掉 `authorization` 与 `x-api-key`（名字不分大小写，Node `MODEL_AUTH_HEADER_NAMES`）。
 fn without_auth_headers(headers: &mut Vec<(String, RedactedString)>) {

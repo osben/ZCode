@@ -48,6 +48,6 @@ The side entry only extends the optional reference parameter of the existing ren
 
 ## Verification status
 
-- Formal desktop E2E: `packages/desktop/test/e2e/conversation-session/conversation-session-markdown-preview-selection.test.ts` (promoted at user request; not added to the Docker verification set, no Docker admission run).
+- Formal desktop E2E: `packages/desktop/test/e2e/conversation-session/presentation/conversation-session-markdown-preview-selection.test.ts` (promoted at user request; not added to the Docker verification set, no Docker admission run).
 - Covered by unit tests and macOS Desktop E2E: add/dedupe/remove, draft preservation, source/serialization/limits, touch selectionchange, narrow-screen positioning, draft and remote-identity isolation, side-conversation reference routing and blocking, menu layout, file path round trip.
 - Open (not verified): real mobile device native long-press, real remote attachment chain, Windows/Linux, and visual check of the light theme. Mobile events/narrow layout and identity isolation have unit tests; both themes use existing semantic tokens.

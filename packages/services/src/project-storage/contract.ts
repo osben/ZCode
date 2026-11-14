@@ -24,5 +24,9 @@ export interface ProjectStorageContract {
   /** After the additive upgrade, hands off rows added, deleted, and title intents from the old version in the same transaction; called on every startup, and already-processed NULLs are not recomputed. */
   migrate(db: DatabaseSync, context: ProjectMigrationContext): Promise<MigrationResult>;
   repository(db: DatabaseSync, hostId?: string): ProjectRepositoryContract;
-  admitTaskIdentity(db: DatabaseSync, task: ProjectTaskRef, hostId?: string): void;
+  admitTaskIdentity(
+    db: DatabaseSync,
+    task: ProjectTaskRef & { forkedFromTaskId?: string },
+    hostId?: string,
+  ): void;
 }

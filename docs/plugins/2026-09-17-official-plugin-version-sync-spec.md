@@ -32,7 +32,7 @@ bumps independently, and the comment on `NODE_REPL_SERVER_VERSION` records this.
 
 The former fifth source `NODE_REPL_SERVER_VERSION` no longer belongs to this plugin.
 
-### 2.2 node-repl-host (five plus one artifact, hand-maintained)
+### 2.2 node-repl-host (five places, hand-maintained)
 
 1. `apps/zcode-cli/packages/node-repl-host/package.json`;
 2. `apps/zcode-cli/packages/node-repl-host/.zcode-plugin/plugin.json`;
@@ -40,7 +40,7 @@ The former fifth source `NODE_REPL_SERVER_VERSION` no longer belongs to this plu
 4. the `node-repl-host` entry in SEA `officialSeaPlugins`;
 5. `NODE_REPL_SERVER_VERSION` in `src/tool-contract.ts`, i.e. MCP `serverInfo.version`.
 
-`dist-types/tool-contract.d.ts` is a git-tracked declaration artifact and must be committed in sync with src.
+`dist-types/` is the declaration output of `tsc` and is not in git (same as browser-use-plugin). The package `exports` point directly at `src/*.ts` and no consumer reads it; when it was committed, every src change left a dirty build and it easily fell behind src.
 
 node-repl-host is not user-facing: no skill, no marketplace listing, no icon. It must always ship embedded,
 otherwise neither Browser Use nor Computer Use has a host to run on.

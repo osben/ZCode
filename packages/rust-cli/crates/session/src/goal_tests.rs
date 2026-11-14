@@ -43,7 +43,11 @@ impl HookRunner for Evaluator {
         HookOutcome::default()
     }
 
-    fn has_hooks(&self, _event: rust_cli_kernel_api::hooks::HookEventName) -> bool {
+    fn has_hooks(
+        &self,
+        _event: rust_cli_kernel_api::hooks::HookEventName,
+        _workspace: &rust_cli_kernel_api::env::WorkspaceRef,
+    ) -> bool {
         false
     }
 
@@ -65,6 +69,8 @@ impl HookRunner for Evaluator {
 
 fn feedback() -> Message {
     Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
         id: MessageId::new("msg_feedback"),
         content: vec![ContentBlock::Text {
             text: "Stop hook feedback:\n[tests pass]: red".to_owned(),
@@ -629,7 +635,7 @@ async fn a_later_desktop_goal_asks_for_its_summary_only() {
         .await;
     until(
         &mut events,
-        |event| matches!(event, KernelEvent::TitleChanged { title } if title == "Seed chat"),
+        |event| matches!(event, KernelEvent::TitleChanged { title, .. } if title == "Seed chat"),
     )
     .await;
     built

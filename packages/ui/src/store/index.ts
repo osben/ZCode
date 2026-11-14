@@ -18,7 +18,9 @@ import {
 import { DEFAULT_CODE_PREVIEW_SETTINGS } from "@/lib/codePreviewSettings.js";
 import { readSafeLocalStorage, writeSafeLocalStorage } from "@/lib/browserEnvironment.js";
 import {
+  applyFontSmoothing,
   applyUiFontSizePx,
+  FONT_SMOOTHING_STORAGE_KEY,
   loadUiFontSizePx,
   normalizeUiFontSizePx,
   UI_FONT_SIZE_STORAGE_KEY,
@@ -152,6 +154,9 @@ export interface ZCodeState extends FontPreferencesState {
   fileManagerNavigationOpenByWorkspace: Record<string, boolean>;
   setFileManagerNavigationOpen: (workspaceKey: string, open: boolean) => void;
 
+  /** Local macOS grayscale font smoothing preference. Broadcast-synced like theme and locale. */
+  fontSmoothingEnabled: boolean;
+  setFontSmoothingEnabled: (enabled: boolean) => void;
   /** Root UI font size in rem (px). */
   uiFontSizePx: number;
   setUiFontSizePx: (fontSizePx: number) => void;
@@ -334,6 +339,13 @@ export function createZCodeStore(
         );
         return { fileManagerNavigationOpenByWorkspace: next };
       });
+    },
+
+    fontSmoothingEnabled: readSafeLocalStorage(FONT_SMOOTHING_STORAGE_KEY) !== "false",
+    setFontSmoothingEnabled: (enabled) => {
+      writeSafeLocalStorage(FONT_SMOOTHING_STORAGE_KEY, String(enabled));
+      applyFontSmoothing(enabled);
+      set({ fontSmoothingEnabled: enabled });
     },
 
     uiFontSizePx: loadUiFontSizePx(),

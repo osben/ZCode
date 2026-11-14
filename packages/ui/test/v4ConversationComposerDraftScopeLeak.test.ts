@@ -40,6 +40,24 @@ vi.mock("@/hooks/useZCodeSessionService.js", () => ({
 vi.mock("@/hooks/useSettingService.js", () => ({
   useSettings: () => ({ settings: {} }),
 }));
+vi.mock("@/hooks/useZCodeAgentService.js", () => {
+  // The draft owner subscribes to plugin startup events through this service; no-op subscription.
+  const agentService = {
+    onDynamicPluginStartupDegraded: () => () => ({ dispose: () => {} }),
+  };
+  return { useZCodeAgentService: () => agentService };
+});
+vi.mock("@/voice-input/index.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/voice-input/index.js")>()),
+  // Voice input needs a Host voice service and a logged-in user, neither of which these suites provide.
+  useComposerVoiceInput: () => ({
+    available: false,
+    state: "idle",
+    toggle: () => {},
+    settle: () => undefined,
+    subscribeLevel: () => () => {},
+  }),
+}));
 vi.mock("@/components/ui/toast.js", () => ({ toast: vi.fn() }));
 
 vi.mock("@/components/ui/dialog.js", async () => {
@@ -121,6 +139,7 @@ function createInputApi() {
     clear: () => {
       editor.text = "";
     },
+    clearHistory: vi.fn(),
     focus: vi.fn(),
     getEditorState: () => null,
     getMarkdown: () => editor.text,

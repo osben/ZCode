@@ -14,9 +14,10 @@ import {
   V4_WIRE_PROTOCOL_VERSION,
   conversationRowTargetSchema,
   timestampSchema,
+  v4ColdResumeWorkspaceSchema,
 } from "./core.js";
 import { conversationDeltaSchema } from "./delta.js";
-import { conversationRowSchema, toolCallRowSchema } from "./rows.js";
+import { displayConversationRowSchema, toolCallRowSchema } from "./rows.js";
 import { sessionsIndexDeltaSchema, sessionsIndexSnapshotSchema } from "./sessions-index.js";
 import { WORKFLOW_RUN_STOP_REASONS } from "./workflow-observation-display.js";
 import { conversationSnapshotSchema } from "./snapshot.js";
@@ -45,6 +46,7 @@ export const hostCapabilitiesSchema = z.object({
   incognitoSession: z.boolean().optional(),
   // This Host forwards the thirteen-key incognito profile (see specs/incognito-session.md, Protocol).
   incognitoPromptToggles: z.boolean().optional(),
+  pluginDiscovery: z.boolean().optional(),
   historyFirst: z.boolean().optional(),
   /**
    * This Host enables and forwards `v4/conversation/inputPrediction`. On old Hosts a missing
@@ -100,6 +102,7 @@ export const clientHelloSchema = z
          * causing the entire clientHello to fail parsing and the connection handshake to fail.
          */
         workflowRunDeltas: z.boolean().optional(),
+        pluginDiscoveryUi: z.boolean().optional(),
         historyFirst: z.boolean().optional(),
       })
       .strict()
@@ -391,13 +394,17 @@ export const V4_METHODS = {
   // so this is a v4 query rather than a Host direct connection. This removes consumers of legacy usage/stats and session/usage.
   usageStats: "v4/usage/stats",
   conversationUsage: "v4/conversation/usage",
-  // Full project-data deletion (schema in session-data.ts): measure is read-only; purge is
-  // idempotent — an already-absent session succeeds as 0 bytes.
-  // Skew-safe new methods: an old CLI returns method-not-found, from which the Host hides the "delete data" option.
+  // Context composition (context-composition/contract.ts): read-only, existing-only;
+  // older CLIs return method-not-found, which the App treats as null.
+  conversationContextComposition: "v4/conversation/contextComposition",
+  // Full project-data deletion (schema in session-data.ts): measure is read-only; purge is idempotent, and an already-absent session succeeds as 0 bytes.
+  // New methods are skew-safe: an old CLI returns method-not-found, and the Host then hides the "delete data" option.
   sessionDataMeasure: "v4/storage/sessionData/measure",
   sessionDataPurge: "v4/storage/sessionData/purge",
-  // Attachment transaction: full-data RPC is forbidden. Decoded bytes per chunk <=512KiB;
-  // each request must prove <=1MiB on both renderer->Host Channel and Host->CLI NDJSON.
+  sessionDeletionPreview: "v4/storage/sessionData/deletionPreview",
+  sessionDeletionExecute: "v4/storage/sessionData/deletionExecute",
+  // Attachment transaction: full-data RPC is forbidden. Decoded bytes per chunk <=512KiB,
+  // each request must prove <=1MiB on both the renderer->host Channel and the host->CLI NDJSON.
   attachmentBegin: "v4/attachment/begin",
   attachmentChunk: "v4/attachment/chunk",
   attachmentCommit: "v4/attachment/commit",
@@ -445,6 +452,10 @@ export const V4_NOTIFICATIONS = {
   // Produced only by live ToolCallResult in the current process; history and replayable paths must not synthesize it.
   cuaPermissionObservation: "v4/cua/permission-observation",
   pluginUiToolResult: "v4/plugin-ui/tool-result",
+  // context 组成变更：只带 { sessionId, revision }，live-only，不进 snapshot。
+  conversationContextCompositionChanged: "v4/conversation/contextCompositionChanged",
+  // 模型请求指标（telemetry.ts 的 modelRequestMetricsFactSchema）：live-only，旧 App 不认识即忽略。
+  modelRequestMetrics: "v4/telemetry/model-request-metrics",
 } as const;
 
 /** SSH historical-task ownership proof in 3.3.6 shares the same bounded window as sessions-index cold seeding. */
@@ -460,7 +471,13 @@ export const v4ConversationSubscribeParamsSchema = subscribeParamsSchema.extend(
   workspace: zcodeWorkspaceRefSchema.optional(),
   /** Legacy-task ownership allowlist read precisely by Host from the current remote workspace's tasks-index. */
   legacyTaskIds: z.array(z.string().min(1)).max(MAX_LEGACY_TASK_IDS_PER_SUBSCRIBE).optional(),
-  // Used only for Host→CLI cold resume; live conversations do not consume this hint.
+  /**
+   * Sessions under the local workspace whose cwd differs from the workspace directory (managed worktree tasks, docs/git/worktree.md
+   * §6.6.2). The CLI local cold list scans only by directory and cannot see them; the host supplies their ids exactly from tasks-index,
+   * and the CLI reads summaries only for these ids without rewriting any stored field.
+   */
+  worktreeSessionIds: z.array(z.string().min(1)).max(MAX_LEGACY_TASK_IDS_PER_SUBSCRIBE).optional(),
+  // Used only for host→CLI cold resume; live conversations do not consume this hint.
   resumeThoughtLevel: z.string().trim().min(1).optional(),
   /**
    * Whether this subscription receives `workflowRun.*` key-level deltas. Like `clientMode`, injected by the **trusted Host** from that connection's
@@ -468,6 +485,7 @@ export const v4ConversationSubscribeParamsSchema = subscribeParamsSchema.extend(
    * not a per-subscription preference. Missing means treat as a legacy consumer (whole-key patch + old-limit clamping).
    */
   workflowRunDeltas: z.boolean().optional(),
+  pluginDiscoveryUi: z.boolean().optional(),
   historyFirst: z.boolean().optional(),
 });
 export type V4ConversationSubscribeParams = z.infer<typeof v4ConversationSubscribeParamsSchema>;
@@ -544,6 +562,7 @@ export type V4ConversationUnsubscribeParams = z.infer<typeof v4ConversationUnsub
 // ── rows/range (cursor-based row pagination, loadOlder) ──
 // No index semantics: total order = ascending rowId; clients merge keyed by rowId.
 export const v4ConversationRowsRangeParamsSchema = z.object({
+  workspace: v4ColdResumeWorkspaceSchema,
   sessionId: z.string(),
   /** Host attachment injects this trusted value; renderer callers omit it. */
   clientMode: z.enum(["desktop-continuous", "web-remote-replayable"]).optional(),
@@ -561,8 +580,9 @@ export const v4ConversationRowsRangeParamsSchema = z.object({
 export type V4ConversationRowsRangeParams = z.infer<typeof v4ConversationRowsRangeParamsSchema>;
 
 export const v4ConversationRowsRangeResultSchema = z.object({
-  // Ascending rowId.
-  rows: z.array(conversationRowSchema),
+  // Ascending rowId. History backfill is on the same tier as the snapshot window, with per-row degradation (closed rule 13):
+  // when a row that cannot be read is hit while fetching an older page, the whole rows/range call must not fail, otherwise the session could never scroll to the top.
+  rows: z.array(displayConversationRowSchema),
   // High-water mark/epoch at server read time; shared with read-only queries such as fileChanges to avoid combining data across revisions.
   atSeq: z.number(),
   atRevision: z.number().int().nonnegative(),
@@ -576,6 +596,7 @@ export type V4ConversationRowsRangeResult = z.infer<typeof v4ConversationRowsRan
 // Catalog comes from the CLI's complete valid projection; do not derive it from the renderer's bounded tail window.
 export const v4ConversationPlansParamsSchema = z
   .object({
+    workspace: v4ColdResumeWorkspaceSchema,
     sessionId: z.string().min(1),
   })
   .strict();
@@ -603,6 +624,7 @@ const readonlyDiffHunkSchema = z
 
 export const v4ConversationFileChangesParamsSchema = z
   .object({
+    workspace: v4ColdResumeWorkspaceSchema,
     sessionId: z.string().min(1),
     target: conversationRowTargetSchema,
     baseRevision: z.number().int().nonnegative(),
@@ -652,6 +674,7 @@ export const WORKFLOW_RUN_EVENTS_PAGE_LIMITS = {
 
 export const v4ConversationWorkflowRunEventsParamsSchema = z
   .object({
+    workspace: v4ColdResumeWorkspaceSchema,
     sessionId: z.string().min(1),
     runId: z.string().min(1),
     /** Fetch only events with sequence greater than this value; absent means start from the beginning. */
@@ -706,6 +729,7 @@ export type V4ConversationWorkflowRunEventsResult = z.infer<
 // New methods are naturally skew-safe: older Desktop clients never call them.
 export const v4ConversationWorkflowRunsParamsSchema = z
   .object({
+    workspace: v4ColdResumeWorkspaceSchema,
     sessionId: z.string().min(1),
     /** Maximum number of rows to return; default and clamping are handled by the CLI (the catalog is bounded and never scans without limit). */
     limit: z.number().int().positive().max(64).optional(),
@@ -762,6 +786,7 @@ export type V4ConversationWorkflowRunsResult = z.infer<
 
 export const v4ConversationFileRewindPreviewParamsSchema = z
   .object({
+    workspace: v4ColdResumeWorkspaceSchema,
     sessionId: z.string().min(1),
     target: conversationRowTargetSchema,
     baseRevision: z.number().int().nonnegative(),
@@ -885,6 +910,7 @@ const v4AttachmentChecksumSchema = z.string().regex(/^sha256:[0-9a-f]{64}$/);
 
 export const v4AttachmentBeginParamsSchema = z
   .object({
+    workspace: v4ColdResumeWorkspaceSchema,
     connectionId: z.string().min(1),
     uploadId: v4AttachmentUploadIdSchema,
     sessionId: z.string().min(1),
@@ -1008,6 +1034,7 @@ export const v4AttachmentAbortResultSchema = z.object({}).strict();
 /** Sent image/video/PDF preview query; CLI must authorize ref against the current session projection again. */
 export const v4AttachmentReadParamsSchema = z
   .object({
+    workspace: v4ColdResumeWorkspaceSchema,
     sessionId: z.string().min(1),
     ref: z.string().min(1),
     // New renderer uses stable row identity + attachment index to distinguish the same path across turns; both must appear together.
@@ -1030,6 +1057,7 @@ export type V4AttachmentReadParams = z.infer<typeof v4AttachmentReadParamsSchema
 /** Source query for a sent Desktop-local video; remote and Web must return chunks. PDFs always use chunked responses. */
 export const v4AttachmentPreviewSourceParamsSchema = z
   .object({
+    workspace: v4ColdResumeWorkspaceSchema,
     sessionId: z.string().min(1),
     ref: z.string().min(1),
     target: conversationRowTargetSchema.optional(),
@@ -1122,6 +1150,7 @@ export type V4AttachmentReadResult = z.infer<typeof v4AttachmentReadResultSchema
 /** Share read of user-input attachments; allows any authorized MIME without changing media-preview read semantics. */
 export const v4ConversationAttachmentReadParamsSchema = z
   .object({
+    workspace: v4ColdResumeWorkspaceSchema,
     sessionId: z.string().min(1),
     ref: z.string().min(1),
     target: conversationRowTargetSchema,
@@ -1173,6 +1202,7 @@ export type V4ConversationAttachmentReadResult = z.infer<
 /** Metadata-only attachment check during Share selection. */
 export const v4ConversationAttachmentStatParamsSchema = z
   .object({
+    workspace: v4ColdResumeWorkspaceSchema,
     sessionId: z.string().min(1),
     ref: z.string().min(1),
     target: conversationRowTargetSchema,

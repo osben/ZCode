@@ -21,6 +21,21 @@ pub(crate) async fn background_command(
     Ok(Reply::BackgroundCommand(info.map(output::background_info)))
 }
 
+/// Fork: the executor's own ledger answers the terminal record of an acknowledged command.
+pub(crate) async fn ended_background_command(
+    machine: MachineEnv,
+    task: BackgroundTask,
+) -> Result<Reply, WireError> {
+    let info = machine
+        .background()
+        .ended_background_command(input::background_task(task))
+        .await
+        .map_err(output::error)?;
+    Ok(Reply::EndedBackgroundCommand(
+        info.map(output::background_info),
+    ))
+}
+
 pub(crate) async fn background_elapsed(
     machine: MachineEnv,
     task: BackgroundTask,

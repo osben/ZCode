@@ -13,8 +13,9 @@ Two entry points open the same standalone singleton window: the Help menu in the
 The CPU / Memory tabs contain:
 
 - Two metric cards on the left: **CPU** and **Memory**. Each has a dual-layer progress bar: **gray** = total machine usage, **color (brand)** = ZCode usage; values show ZCode and total machine usage.
-- Processes on the right in three groups. Each group shows a subtotal and expands to per-process name, PID, CPU and memory:
-  - **Core services**: Electron main, GPU, all renderers (including DevTools / WebContentsView), window-scoped Host (utility), non-Agent child processes spawned by Host (such as terminal shells), Agent CLI processes and their non-plugin child processes, and other Electron utilities (such as network service).
+- Processes on the right in four groups. Each group shows a subtotal and expands to per-process name, PID, CPU and memory:
+  - **Core services**: Electron main, GPU, all renderers (including DevTools / WebContentsView), window-scoped Host (utility), non-Agent child processes spawned by Host (such as terminal shells), the Agent CLI process itself, and other Electron utilities (such as network service).
+  - **Task processes**: Agent-spawned non-plugin process trees, such as Bash, PowerShell, Node, Python and build commands. Their usage depends on the user's task, so they get their own CPU / memory subtotal; classification is not by executable name, and no specific task/session ownership is inferred.
   - **Built-in plugins**: MCP child-process trees for plugins from the official marketplace (`zcode-plugins-official`), currently `browser-use` (`node_repl` + plugin host) and `computer-use`.
   - **Community plugins**: all other MCP child-process trees (third-party marketplace plugins and user-defined MCP, `custom`).
 
@@ -83,17 +84,42 @@ CLI observation timeout → No mapping for this round; Agent lifecycle and busin
 
 Acceptance: no queries when unopened; slow sampling does not build a backlog; switching tabs/closing the window cancels in-flight work and prevents further queries; reopening does not accept old results; business requests remain executable after an observation timeout; successful or pending observation does not extend the idle lifetime of mcp-status.
 
+### Task process classification (2026-11-06)
+
+The `resource-manager` module registers the existing Host sampling files and the resource manager UI; public metric types stay in shared, and the UI injection interface is declared in `contract.ts`. The Host sampler is the single owner of classification. It keeps the current OS process table and the nearest-known-ancestor recursive attribution, and only moves non-root, non-plugin descendants of the Agent from `base` to `task`; `groupKey/groupLabel` stay `cli`. The shared type and the Host response schema both accept `task`; Main still merges snapshots by PID and totals all rows; the UI groups only by category, and a task row shows name, PID and current metrics, without the internal `cli` label.
+
+```text
+Host -> Agent root process           -> base
+             |- Bash -> Node/Python  -> task
+             `- MCP root -> descendants -> builtin-plugin / community-plugin
+OS sample -> Host classification -> Main merge and totals -> UI four group subtotals
+```
+
+- The classification change does not alter CPU normalization, RSS/WorkingSet, sampling frequency, cancellation or cache lifetime.
+- The total ZCode usage still includes task processes; the four groups are mutually exclusive and each PID is counted once.
+- Known roots of MCP and Host-managed built-in plugins take precedence over the inherited Agent ownership; plugin descendants still belong to their plugin.
+- Scope stays local-machine only; Web/mobile get no new resource manager entry. The sampling boundary for ordinary descendants that lose a traceable parent-child link is unchanged.
+- Acceptance: the CPU and memory pages of the resource manager both show four groups with independent collapse; a real background Bash artifact PID appears in `task` with memory above 0, the Agent root stays `base`, the total equals the sum of all process rows, and after the process exits it disappears from the group. Desktop narrow/wide windows, Zai Light/Dark and zh/en reuse the existing group layout.
+- Regression entries: `resource-manager.test.ts` and the existing background Bash `BGV01`; the classification/plugin boundary is checked separately with a real OS process-tree sampling scenario, without restoring App business unit tests.
+
+Verification this round (2026-11-06):
+
+- macOS desktop: both resource manager cases pass; screenshots of the four-group display, zh/en, 640/1200px and Zai Light/Dark are in `packages/desktop/.e2e-artifacts/desktop-e2e-20261106124135492-p16677-ea39ec4b7c7a7d20`.
+- Real background Bash: targeted `BGV01` passes, including the task-process reading, independent collapse, Agent classification, totals and removal on exit; evidence is in `packages/desktop/.e2e-artifacts/desktop-e2e-20261106124345420-p26153-139649c7017a716b`. The same directory holds the real OS process-tree sampling script and results, covering Bash/Node descendants, two plugin trees and Host direct child processes, 8 PIDs in all.
+- Type check, E2E type check, lint (existing warnings kept, no Hooks diagnostic in this round's resource manager files), architecture check, 61 architecture engineering checks and affected engineering checks (346 passed / 1 skipped) pass.
+- Windows/Linux desktop were not run; mobile/Web have no entry for this feature. The command-line filter of the first run did not take effect and the run went on to BGV04 child-session cold resume before aborting; that run is not recorded as a pass of the full background Bash suite, and the final result rests only on the targeted BGV01.
+
 ### Why the Layers Are Structured This Way
 
 - **Main must not launch external processes for sampling** (synchronous `ps` / PowerShell blocked the whole app; the CreateProcess stage of asynchronous `execFile` also blocks main). External-process CPU/memory is sampled asynchronously inside **Window Host (utility process)**, only when the Resource Manager window requests it; Host has no periodic overhead after the window closes.
 - **Only the CLI knows plugin ownership**: MCP child processes are started by the Agent CLI, and `ZCODE_PLUGIN_ID` / server name / `source.kind` are in CLI memory; the existing `process/mcpTelemetry` channel deliberately omits pid for telemetry redaction. A pure-memory, no-I/O protocol request `process/childProcesses` lets Host map pids to plugins.
-- **Host attributes process trees**: Host is the Agent's parent process. One `ps -axo pid=,ppid=,rss=,cputime=,comm=` (darwin) / scan of `/proc/*/stat` + `/proc/<pid>/status` (linux) / `Get-CimInstance Win32_Process` (win32) covers all Host descendants. Each descendant is attributed to its nearest known ancestor: MCP root pid → corresponding plugin; Agent pid → core-service `cli`; no owner → core-service `host` child process.
+- **Host attributes process trees**: Host is the Agent's parent process. One `ps -axo pid=,ppid=,rss=,cputime=,comm=` (darwin) / scan of `/proc/*/stat` + `/proc/<pid>/status` (linux) / `Get-CimInstance Win32_Process` (win32) covers all Host descendants. Each descendant is attributed to its nearest known ancestor: MCP root pid → corresponding plugin; Agent root pid → core-service `cli`, its non-plugin descendants → task process `task`; no owner → core-service `host` child process.
 - **Main only merges**: `app.getAppMetrics()` (Electron processes) + system totals + Host reports. Agents known to the Agent registry but not yet reported by Host still appear in the list (`sampled=false`, metrics 0), keeping the topology visible; E2E depends on this.
 
 ### Data Types (`packages/shared/src/protocol.ts`)
 
 ```ts
-type ResourceUsageCategory = "base" | "builtin-plugin" | "community-plugin";
+type ResourceUsageCategory = "base" | "task" | "builtin-plugin" | "community-plugin";
 
 interface ResourceUsageProcess {
   pid: number;
@@ -184,7 +210,7 @@ contracts/spec:   packages/shared protocol.ts / channels.ts / validation.ts / zc
 - Top tabs use `Tabs variant="line"` (same pill trigger as the Settings plugin tabs); test id `resource-manager-tab-{cpu|memory|storage}`; default CPU.
 - Window size 900×600 with the system default title bar; theme and font size reuse the main window's `localStorage` (`zcode-theme` / UI font size); language uses the local preference in `ZCodeIntlProvider`.
 - Metric cards: `bg-card border-card-border rounded-xl`; progress-bar background `bg-surface-hover`, machine-wide segment `bg-foreground-subtlest/40` (gray), ZCode segment `bg-brand` (color).
-- Groups: fixed order Core services / Built-in plugins / Community plugins. Headers show process count and CPU/memory subtotals; empty groups show "No processes". Core services is expanded by default; others expand on demand. Expanded state is component-local.
+- Groups: fixed order Core services / Task processes / Built-in plugins / Community plugins. Headers show process count and CPU/memory subtotals; empty groups show "No processes". All four groups are expanded by default and each can be collapsed independently. Expanded state is component-local.
 - List rows: name (`font-medium`, full name in `title`), PID (`font-mono`), CPU, memory; unsampled rows show `—` for CPU/memory.
 - Refresh interval 1s; requests are serialized (no new request while one is pending).
 - If the `window.resourceManager` bridge is unavailable, show "Resource Manager interface unavailable".
@@ -192,5 +218,5 @@ contracts/spec:   packages/shared protocol.ts / channels.ts / validation.ts / zc
 ## Tests
 
 - Unit: `desktop/test/resourceManagerWindow.test.ts` (snapshot merge, Agent fallback, linux CPU normalization, system CPU delta), `services/test/processResourceSampler.test.ts` (three-platform parsing, CPU delta, tree attribution), `ui/test/resourceUsageView.test.ts` (group aggregation/formatting), CLI `mcp-telemetry.test.ts` (`listProcesses`).
-- E2E `desktop/test/e2e/resource-manager-storage.test.ts`: Storage-tab scan / drill-down / safe and confirmed cleanup / retain logs from the current day (SM-01~05).
-- E2E `desktop/test/e2e/resource-manager.test.ts`: open the window from the menu, verify three groups are visible on the default CPU tab, switch to Memory and verify metric cards change, verify `zcode-main` and `zcode-agent-*` rows appear, and verify Agent-row `memoryBytes > 0` after Host sampling. E2E helpers read `window.resourceManager.getSnapshot().processes`.
+- E2E `desktop/test/e2e/resource-manager/storage/resource-manager-storage.test.ts`: Storage-tab scan / drill-down / safe and confirmed cleanup / retain logs from the current day (SM-01~05).
+- E2E `desktop/test/e2e/resource-manager/processes/resource-manager.test.ts`: open the window from the menu, verify four groups are visible on the default CPU tab, switch to Memory and verify metric cards change, verify `zcode-main` and `zcode-agent-*` rows appear, and verify Agent-row `memoryBytes > 0` after Host sampling. E2E helpers read `window.resourceManager.getSnapshot().processes`.

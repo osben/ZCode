@@ -7,7 +7,7 @@ Desktop E2E writes test reports to `packages/desktop/.e2e-artifacts/<run-id>/` b
 Local:
 
 ```bash
-ZCODE_E2E_SPEC=./test/e2e/e2ecase-regression.test.ts pnpm --filter @zcode/desktop test:e2e
+ZCODE_E2E_SPEC=./test/e2e/infrastructure/smoke/e2ecase-regression.test.ts pnpm --filter @zcode/desktop test:e2e
 ```
 
 Container:
@@ -80,7 +80,7 @@ Implemented: the report skeleton, case results, container-level resource samplin
 Renderer UI coverage is off by default and enabled only with `ZCODE_E2E_COVERAGE=1`:
 
 ```bash
-ZCODE_E2E_COVERAGE=1 pnpm --filter @zcode/desktop test:e2e -- --spec ./test/e2e/conversation-session/conversation-session-running-actions.test.ts
+ZCODE_E2E_COVERAGE=1 pnpm --filter @zcode/desktop test:e2e -- --spec ./test/e2e/conversation-session/execution/conversation-session-running-actions.test.ts
 ```
 
 To run formal and `manual-review` cases in one go and produce the four-domain report, use the repo entry:

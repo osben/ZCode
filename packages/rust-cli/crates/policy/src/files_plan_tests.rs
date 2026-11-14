@@ -70,6 +70,7 @@ fn context(mode: PermissionMode, home: Option<&str>) -> ToolUseContext {
             root: EnvPath::new("/w"),
         },
         mode,
+        base_mode: mode,
         machine: machine(env.clone()),
         controller: controller_services(env),
         interactions: Arc::new(rust_cli_kernel_api::testing::NoOneToAsk),

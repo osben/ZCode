@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { stripZcodeForkVersionSuffix } from "@zcode/shared";
+import {
+  resolveOptionalZCodeAuthorization,
+  stripZcodeForkVersionSuffix,
+  type ZCodeJwtTokenResolver,
+} from "@zcode/shared";
 import { decodeZCodeBuiltinRelease, type ZCodeBuiltinRelease } from "./zcode-builtin-release.js";
 
 const clientConfigSchema = z
@@ -35,6 +39,7 @@ export interface ZCodeBuiltinDownloadOptions {
   readonly platform: string;
   readonly request: (url: string | URL, init: RequestInit) => Promise<Response>;
   readonly signal?: AbortSignal;
+  readonly resolveZcodeJwtToken?: ZCodeJwtTokenResolver;
 }
 
 /** Shared download boundary for App/CLI. The total budget includes both response bodies and does not depend on ApiClient's response-header timeout. */
@@ -59,7 +64,8 @@ export async function downloadZCodeBuiltinRelease(
     // stripped from the outbound query only.
     url.searchParams.set("app_version", stripZcodeForkVersionSuffix(options.appVersion));
     url.searchParams.set("platform", options.platform);
-    const payload = clientConfigSchema.parse(await readJson(url));
+    const authorization = await resolveOptionalZCodeAuthorization(options.resolveZcodeJwtToken);
+    const payload = clientConfigSchema.parse(await readJson(url, authorization));
     const downloadUrl = payload.data.configs.builtin_provider_config_json;
     if (downloadUrl === undefined) return null;
     stage = "cdn";
@@ -80,12 +86,19 @@ export async function downloadZCodeBuiltinRelease(
     clearTimeout(timer);
   }
 
-  async function readJson(url: URL): Promise<unknown> {
+  async function readJson(url: URL, authorization?: string | null): Promise<unknown> {
     signal.throwIfAborted();
+    // Only the first-hop config request receives the optional login header; CDN calls do not pass it, so the JWT is not leaked to the resource origin.
     // Create fresh request options each time without inheriting control-plane authentication; do not follow redirects and turn the download into an arbitrary new source.
     const response = await abortable(
       options
-        .request(url, { method: "GET", signal, credentials: "omit", redirect: "error" })
+        .request(url, {
+          method: "GET",
+          signal,
+          credentials: "omit",
+          redirect: "error",
+          ...(authorization ? { headers: { Authorization: authorization } } : {}),
+        })
         .then((value) => {
           if (signal.aborted) {
             void value.body?.cancel().catch(() => {});

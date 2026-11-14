@@ -19,6 +19,8 @@ parity = []
 
 [dependencies]
 async-trait.workspace = true
+# Fork: gzip request bodies of ChatGPT Plan endpoints (specs/fork-rust-chatgpt-plan.md rule 14).
+flate2.workspace = true
 futures-util.workspace = true
 # 请求方案表的正则（JS RegExp 语义，同 Node 的 providerSiteRules，model.md §3.2）。
 regress.workspace = true

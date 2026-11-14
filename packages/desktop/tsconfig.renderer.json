@@ -9,5 +9,10 @@
   },
   "include": ["src/renderer"],
   // The renderer imports shared directly; adding it as a reference prevents standalone renderer checks from falling back to source files.
-  "references": [{ "path": "../shared" }, { "path": "../ui" }, { "path": "../client" }]
+  "references": [
+    { "path": "../shared" },
+    { "path": "../ui" },
+    { "path": "../client" },
+    { "path": "./tsconfig.app-navigation.json" }
+  ]
 }

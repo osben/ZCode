@@ -29,7 +29,7 @@ The same case runs at 1200px and 390px with personalOnly and teamOnly: the subsc
 
 ### CTP-13 Start balance rate-limit recovery
 
-When Start Plan's balance returns 429, keep the Start title, one failure notice and the retry action, and do not prompt re-login. After switching the mock to a valid balance and clicking retry, the plan display recovers. The shared request's one-second boundary, account isolation and invalidation races are covered by `zaiStartPlanBalanceSharing.test.ts`.
+When Start Plan's balance returns 429, keep the Start title, one failure notice and the retry action, and do not prompt re-login. After switching the mock to a valid balance and clicking retry, the plan display recovers. The assertion uses the current model `GLM-5.3` returned by the shared balance (`GLM-5-Turbo` is retired). The shared request's one-second boundary, account isolation and invalidation races are covered by `zaiStartPlanBalanceSharing.test.ts`.
 
 ### CTP-14-19: entitlement presentation (formal, 2026-09-18)
 
@@ -53,7 +53,7 @@ Subscription interface -> Account owner confirms entitlement -> ProviderSettings
 Product catalog -> team navigation identity (not entitlement evidence)
 ```
 
-Automated entry: [coding-plan-entitlement-presentation.test.ts](../../packages/desktop/test/e2e/settings/coding-plan-entitlement-presentation.test.ts). Business data comes from [entitlement-presentation.ts](../../packages/desktop/test/e2e/fixtures/entitlement-presentation.ts), including valid static personal/team catalogs, a live team product with `subscribed=true`, a trial-plan preview and a 150% promotion, so no empty "not shown" assertion runs against missing configuration.
+Automated entry: [coding-plan-entitlement-presentation.test.ts](../../packages/desktop/test/e2e/settings/providers/coding-plan-entitlement-presentation.test.ts). Business data comes from [entitlement-presentation.ts](../../packages/desktop/test/e2e/fixtures/entitlement-presentation.ts), including valid static personal/team catalogs, a live team product with `subscribed=true`, a trial-plan preview and a 150% promotion, so no empty "not shown" assertion runs against missing configuration.
 
 Existing-case maintenance: the Account model selection shared by CTP-10 / QR now uses GLM-5.3 of the current Builtin catalog; the isolated account's first start uses the shared `skipOccupationOnboardingIfPresent` to complete onboarding. The former Escape only temporarily closed onboarding, which re-obscured the Composer after QR-09/10 reload; the failure's DOM evidence was `onboarding-page`, not an entitlement or quota interface failure.
 
@@ -71,9 +71,29 @@ CTP-16 startup fixture saves an old product ID while the subscription and pricin
 - CTP-23: The personal entry added while a team is active follows the language: zh-CN shows "个人", en-US shows Individual; the actual team name is unchanged. Passed on macOS Electron in zh and en.
 - CTP-24: When the currently selected team subscription is explicitly EXPIRED, first call the real Provider service to refresh and assert unavailable, then verify the Composer Provider submenu hides that team while a second valid team under the same Provider stays visible, and clicking it updates the complete identity and completes the switch; unknown status is covered by projection unit tests and kept. The settings page does not hide details. Passed on macOS Electron mock at 1100px/390px, Zai Light/Zai Dark.
 - CTP-25: With no OAuth login and an existing API Provider, an API model can be selected and no team login error appears; covers wide/narrow and dark/light themes.
+- CTP-32: personal -> API -> personal and team -> API -> same team; switching back does not rewrite the settings version or the connection mapping, thinking is complete, no error. Both directions passed on macOS Electron.
+- CTP-33: Another window changes team A to B and this window clicks the B row; the root Host identity and label become B, the settings version is unchanged, no error. Passed on macOS Electron.
 - CTP-26: With no OAuth login and no configured Provider, clicking the model button goes straight to Provider settings without expanding an empty menu; covers wide/narrow and dark/light themes. Fixture maintenance: when CTP-26 temporarily disables the plain Provider it must keep and restore `personalConfig` as is; the save interface replaces the whole Overlay, and toggling enabled with `{}` would clear the API configuration and pollute later CTP-27/CTP-22.
 
 The above cases send no model request; mobile Web and Windows/Linux real machines are not verified. They complement CTP-20's direct personal/team switching and hiding of unavailable teams.
+
+CTP-32 verification record (2026-11-05, ZCT-2118278184274395136):
+
+- Pre-fix red run: both directions failed. The connection mapping was the same before and after, but `providerFamilyDomainUpdatedAt` was rewritten (for example `1793875567452 -> 1793875569205`), proving one extra settings write on switch-back. Evidence: `packages/desktop/.e2e-artifacts/ctp32-red/`, `packages/desktop/.e2e-artifacts/ctp32-red2/`.
+- Post-fix: CTP-32 both directions, CTP-21, CTP-22 both directions, CTP-24 and CTP-28/29/31 (9 cases) passed; evidence `packages/desktop/.e2e-artifacts/ctp32-green/`. `conversation-session-model-provider-plan-surface` (3 cases) and `conversation-session-v4-composer-toolbar` (16 cases, including mobile remote CPG01) passed; evidence `packages/desktop/.e2e-artifacts/composer-regression/`.
+- Fixture fix: a team row's group key is the full connection identity, so the default `registry-provider:<id>` of `selectRegistryProviderModelById` cannot find it. CTP-22 team -> personal already failed in setup before the fix; it now passes `TEAM_PLAN_GROUP_KEY`, shared with CTP-32.
+- Pre-existing failures (same failure signature before and after, unrelated, not handled):
+  - CTP-20: on personal -> team the tier list is empty for one frame (about 10ms); the full-run sampling assertion at line 800 fails.
+  - CTP-30: the personal row shows the Chinese label on a Chinese-locale machine, while the case hardcodes `aria-label="BigModel Individual"`.
+  - Baseline evidence: `packages/desktop/.e2e-artifacts/ctp20-30-base/`.
+- SSH remote workspace: covered by RPR-01 ([case catalog](../conversation-session-case-catalog.md), "remote Composer switch back to the effective plan connection"). In the local Docker remote runner the plan mock listens only on host `127.0.0.1`, and the address forwarded to the remote points at the container itself; the case uses an SSH reverse tunnel listening on the same port inside the container and adds `BIGMODEL_API_BASE_URL` to the container `/etc/environment`, so the remote can fetch plan entitlements. It failed before the fix and passed twice in a row after; both the fast path and the "fall back to the old flow when the remote is not synced" path were actually run.
+
+CTP-33 verification record (2026-11-05, review CR-01):
+
+- The case simulates another window's Window Host by writing the shared settings file. This window's Host receives no settings-update event, so the root Host account snapshot still shows team A. This is the case's precondition assertion.
+- Pre-fix red run: clicking team B finished within 99ms with no error and an unchanged settings version, but the root Host `connectionKey` stayed team A and the connection label stayed Team Org. Only a manual refresh switched to team B. Evidence: `packages/desktop/.e2e-artifacts/cr01-probe/`, `packages/desktop/.e2e-artifacts/ctp33-red/`.
+- Post-fix: CTP-33, CTP-32 both directions, CTP-22 both directions, CTP-24 and CTP-28/29/31 (9 cases) passed; evidence `packages/desktop/.e2e-artifacts/ctp33-green/`.
+- Pre-existing failure: CTP-21 depends on the draft left by the previous case. Run alone or after CTP-32, it starts from a plain API (`e2e-upstream`) and the second model selected is not GLM-5.3-Flash. Same failure signature under the baseline hook (`ctp21-after32-base/`), unrelated, not handled.
 
 ### Connection boundary cases
 
@@ -96,13 +116,13 @@ Verification limits: all of the above ran on macOS Electron with isolated mocks;
 - Assertions: a wide screen can show the full name with the title and action area on one line; when a narrow screen is insufficient the name is ellipsized and controls do not overflow; Start details show no paid-connection dropdown; browsing Start does not change the saved team connection, and re-entering the brand page still shows the original team.
 - The current navigation contract is the [Start standalone spec](../zai-start-plan-provider.md). The removed trial-plan shortcut button and tooltip are no longer an operation precondition, and the old `kind: start-plan` write is not restored.
 - Covers the real desktop-app path only; the 20-group component-browser tests keep carrying size/language/theme combinations and do not claim to cover the mobile `/remote` chain.
-- Automated: `packages/desktop/test/e2e/provider-family-responsive.test.ts`; it passed in a local real-Electron run and was promoted after user confirmation; it passed again through the formal entry without the manual-review switch (1 passed). The case enables a dedicated long name and billing/balance fixture through the scenario control; ordinary Team mock scenarios restore default data; no model request is sent. Re-entering Settings only reads recovered state and does not click the provider navigation again to override the selection. The generic promotion script supports only the conversation directory, so this case moved by the Settings-domain path with references synced; it was not added to the Docker suite.
+- Automated: `packages/desktop/test/e2e/settings/providers/provider-family-responsive.test.ts`; it passed in a local real-Electron run and was promoted after user confirmation; it passed again through the formal entry without the manual-review switch (1 passed). The case enables a dedicated long name and billing/balance fixture through the scenario control; ordinary Team mock scenarios restore default data; no model request is sent. Re-entering Settings only reads recovered state and does not click the provider navigation again to override the selection. The generic promotion script supports only the conversation directory, so this case moved by the Settings-domain path with references synced; it was not added to the Docker suite.
 - Windows are 1800/480px (Electron minimum width 480px); the independent Start navigation is checked at 1200px. Each run saves wide, narrow, Start details and the re-entry team-selected screenshots plus geometry values and business-request assertions. The latest navigation regression (2026-10-14 macOS Electron) passed CTP-12, but two webview cases of the same run failed at the time, so the record is not treated as a whole-batch pass.
 
 Run command (this case does not call a model; the account interface uses a local business mock):
 
 ```bash
-pnpm --filter @zcode/desktop test:e2e -- --spec './test/e2e/provider-family-responsive.test.ts'
+pnpm --filter @zcode/desktop test:e2e -- --spec './test/e2e/settings/providers/provider-family-responsive.test.ts'
 ```
 
 ### General constraints

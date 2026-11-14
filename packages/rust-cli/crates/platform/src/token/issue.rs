@@ -133,7 +133,9 @@ impl ProjectTokens {
         let saved = store
             .read()
             .await
-            .and_then(|credentials| credentials.get(&key))
+            .map_err(|_| TokenError::RequestFailed)?
+            .get(&key)
+            .await
             .map_err(|_| TokenError::RequestFailed)?;
         let saved = saved
             .and_then(|saved| Location::parse(saved.expose()))
@@ -149,8 +151,15 @@ impl ProjectTokens {
                 };
                 let location = location::resolve(&self.http, lookup).await?;
                 scope.session(&mut self.state.lock_unpoisoned())?;
+                let sealed = store
+                    .seal(&location.to_json())
+                    .await
+                    .map_err(|_| TokenError::RequestFailed)?;
                 store
-                    .mutate(|credentials| credentials.set(&key, &location.to_json()))
+                    .mutate(async |credentials| {
+                        credentials.put_sealed(&key, sealed.clone());
+                        Ok(())
+                    })
                     .await
                     .map_err(|_| TokenError::RequestFailed)?;
                 location
@@ -252,7 +261,7 @@ impl ProjectTokens {
         }
         let key = location::storage_key(&scope.origin, scope.family, input.account, input.team);
         let removed = store
-            .mutate(|credentials| {
+            .mutate(async |credentials| {
                 credentials.remove(&key);
                 Ok(())
             })

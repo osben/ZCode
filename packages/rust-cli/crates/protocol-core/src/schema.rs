@@ -2,8 +2,8 @@
 // 模块说明改成中文；关键字的范围不变（P1 生成的 schema 只用到这些）。
 //! JSON Schema 子集的校验器（docs/specs/rust-cli/app-protocol.md §7）：只认 zod `toJSONSchema` 生成的关键字。
 //!
-//! 编译时遇到不认识的关键字就报错：zod 新用了一种写法时测试失败，而不是被悄悄忽略。字符串长度按 UTF-16 计（与 JS 的
-//! `length` 相同）。
+//! 编译时遇到不认识的关键字就报错：zod 新用了一种写法时测试失败，而不是被悄悄忽略。Fork: 字符串长度按码点计（zod 4 的
+//! `min` / `max` 数 `[...value].length`，不是 JS `length` 的 UTF-16 单元）。
 use regex::Regex;
 use serde_json::Value;
 
@@ -68,6 +68,8 @@ const SUPPORTED: &[&str] = &[
     "anyOf",
     "oneOf",
     "default",
+    // Fork: an annotation (zod `.readonly()`); it does not constrain the value.
+    "readOnly",
 ];
 
 fn ty(name: &str) -> Result<Ty, String> {
@@ -107,8 +109,11 @@ impl Node {
         if let Some(key) = object.keys().find(|k| !SUPPORTED.contains(&k.as_str())) {
             return Err(format!("unsupported schema keyword {key}"));
         }
+        // Fork: `uri` (zod `z.url()`, the legacy `session/create` `importedHistory.provenance.shareUrl`) is an
+        // annotation here like `uuid`: the agent does not dereference that URL (specs/fork-rust-automations.md).
         if let Some(format) = schema.get("format").and_then(Value::as_str)
             && format != "uuid"
+            && format != "uri"
             && !(format == "date-time" && schema["pattern"].is_string())
         {
             return Err(format!("unsupported format {format}"));
@@ -209,7 +214,8 @@ impl Node {
         }
         match value {
             Value::String(s) => {
-                let length = s.encode_utf16().count();
+                // zod 4 counts code points (`[...value].length`), not JS `length`'s UTF-16 units.
+                let length = s.chars().count();
                 if let Some(min) = self.min_length
                     && length < min
                 {

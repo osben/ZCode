@@ -107,6 +107,12 @@ For compatibility with other plugin runtimes it also accepts:
 
 Both are normalized into the current hook event's `additionalContext`, then injected into the runtime's `hook_context` system reminder.
 
+The `SessionStart` `source` value and matcher match value are `startup`, `resume`, `fork`, `clear`, `compact`:
+
+- `fork`: used when a forked child session is opened before its first input; later opens use `resume`. A hook whose matcher is only `startup|resume` does not run then; the context copied from the parent session is still in the child session.
+- `compact`: runs once for every compaction (manual, auto, reactive).
+- Lifecycle hook context is written into the session and replayed as is after a cold resume. For `startup`, `resume` and `fork`, a body identical to the latest SessionStart context in the session is not written again; `compact` is compared only against the history that compaction kept. Full rules are in `apps/zcode-cli/docs/design/v2/hooks.md`, "Persistence of lifecycle hook context".
+
 ## Claude Code tool compatibility
 
 When ZCode runs Claude Code plugins, tool-name translation must live in the structured runtime layer, not in per-plugin prompt text:
@@ -125,7 +131,7 @@ The full subagent compatibility boundary is in `docs/subagent-compatibility.md`.
 - Main manifest is `.zcode-plugin/plugin.json`.
 - Disabled by default; skills/hooks reach the runtime only after the user explicitly enables it.
 - Provides `skills/` and `hooks/hooks.json`.
-- The `SessionStart` hook injects `using-superpowers` context on `startup|clear|compact`.
+- The `SessionStart` hook injects `using-superpowers` context on `startup|clear|compact`. It runs after every compaction; the earlier copy has been replaced by the summary, so a new one is usually written again, and it is skipped only when the kept history already contains an identical one.
 - ZCode appends no dedicated tool mapping to the Superpowers `SessionStart` output; `Task` / `Agent` compatibility is handled by the generic tool registration and hook matcher alias layer, so an external `.claude-plugin` Superpowers needs no changes to its original files.
 
 Superpowers plugin skills support both bare names and fully qualified aliases. The model context shows `superpowers:<skill>` first; the bare name remains a compatibility alias only.

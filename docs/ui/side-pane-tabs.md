@@ -37,9 +37,39 @@ Display, close current/others/all, recently closed and reopen share the `workspa
   the tab ids selected at click time; tabs opened while waiting are outside the close range. On completion it
   updates the original workspace, and the current conversation's active/collapsed state resolves by the scope
   at completion time and cannot be overwritten by the old operation.
-- No new tab state source, permission queue, timeout, persistence format or cross-process protocol; desktop
+- When a task is archived or permanently deleted, all tabs under it close (task-specific tabs: visible in that task's scope, not visible in the draft scope; workspace-common tabs and draft tabs are untouched). On desktop the Window Host Controller forwards the live signal `onDynamicTasksRemovedSignal` (carrying the removed taskIds, covering all workspaces in the window; manual, mobile, automatic archive and CLI delete all use this fact stream) when its source emits `task_archived` / `task_deleted` events with a taskId. The signal goes to every Controller attachment (desktop window and mobile remote each clean their own registry, idempotently), not under the unread signal's "desktop base attachment only" restriction. Web has no Controller and falls back to the current workspace's `task_archived` / `task_deleted` events with a taskId (batch permanent delete acts only on already-archived tasks, handled at archive time). `subscribeTasksRemoved` injects one source per environment. The renderer updates the registry of the workspace named in the signal and writes its persisted memory for non-current workspaces. For Browser / browser-use the host closes the guest through main and then removes the shell through `BrowserViewCloseTab`, so the renderer does not close it again; other tabs are closed by the renderer, which still releases terminal sessions and side-chat runtimes. These tabs do not enter recently closed. Unarchiving does not restore closed tabs.
+- Beyond the archive/delete signal above and the owner upgrade in "Draft first-send migration" below, no new tab state source, permission queue, timeout, persistence format or cross-process protocol; desktop
   and mobile share the UI ownership logic, and the Browser main authority and continuous/replayable message
   boundaries are unchanged.
+
+### Draft first-send migration
+
+When the first send of a draft is accepted and the draft is promoted to a real task, the visible tabs in the current draft scope that belong by `ownerTaskId` move to the new task together instead of staying hidden in the draft.
+
+- The only trigger is the draft first-send commit (SessionPane's draft session created commit). It marks the "session id pending upgrade" before the current task switches. Fork navigation, picking an existing session and split-pane binding to an existing session carry no mark and do not migrate.
+- Migration runs during side-pane scope sync, in the same canonical commit as scope resolution. It migrates only when all hold: same workspace; previous owner is the draft (null); new owner equals the marked sessionId. The mark is consumed on the next owner change, with no timeout.
+- Scope of migration: tabs visible in the draft scope and owned by `ownerTaskId` (Browser, site permissions, file manager, Code Viewer, whiteboard, model trajectory, terminal). Workspace-common tabs are already visible and unchanged. Tabs owned by session id (browser-use, Subagent, side chat) do not exist in a draft and are not handled.
+- The new tab page (`new-tab`) does not migrate. It is only an empty entry and stays in the draft scope. If the draft holds only a new tab page, the new task gets no tab and the side pane collapses.
+- After migration the draft scope's active tab becomes the new task's active tab; if that tab is the unmigrated new tab page, the new task's visible tab is chosen by the existing rule.
+- The new task inherits the draft side pane's expanded/collapsed state at first send (what the user saw then, not the draft's historical preference) and writes it as the new task's preference. Migrated tabs and workspace-common tabs follow this rule. With no visible tab after first send the pane collapses and no preference is written.
+- Browser's owner also exists in main, frozen at attach, encoded `"unscoped"` for a draft. On migration the renderer first calls `browserViewPromoteDraftTabs`, then commits the new `ownerTaskId`. Main accepts only user tabs of the same window, workspace and remote connection whose current owner is `"unscoped"`, rewrites the owner, user owner, scope index and residency record together, then persists the shell. IPC in the same frame is handled in order, so later attach, residency and close requests carrying the new sessionId see the new owner; the guest is kept as is and the page does not reload.
+- Consequence of not upgrading the main owner: attach with the new sessionId is rejected with `session-mismatch`; the user tab does not rebind, the guest keeps the old owner, the user cannot close the tab, residency reporting fails, and the new session's AI cannot claim it.
+- If main rejects, or the platform has no such interface (Web and mobile remote have no main guest), the renderer migrates as usual, logs only a warn, and neither retries nor rolls back.
+- Acceptance: SPT-E2E-009 (first send while expanded), SPT-E2E-010 (first send while collapsed) and SPT-E2E-011 (first send with only a new tab page) in `packages/desktop/test/e2e/ui-shell/panels/side-pane-draft-promotion.test.ts`.
+
+```mermaid
+sequenceDiagram
+  participant SP as SessionPane (draft first send)
+  participant AP as useAppPanels
+  participant M as main browserGuestManager
+  participant BV as UnifiedBrowserView
+  SP->>AP: mark session id pending upgrade
+  SP->>AP: activeTaskId: null -> sessionId
+  AP->>M: browserViewPromoteDraftTabs(unscoped -> sessionId)
+  AP->>AP: same commit: migrate ownerTaskId (skip new-tab) + resolve scope + inherit draft collapsed state
+  BV->>M: attach / residency (sessionId) - owner already consistent
+```
+
 - The `Open tab` launcher page (opened by `+` or the empty state) also offers a Model trajectory entry for the
   active task (`model-trajectory` in `OpenTabLauncherItemId`). The entry is hidden (not disabled) while no
   active task exists, matching the selection-side-conversation gating. Opening always targets the active task
@@ -98,6 +128,7 @@ flowchart LR
   an RPC method that is newly created on every read; repeated directory reads yielding an equivalent project,
   empty task list, connection state and entry reuse the original references. The sidebar subscribes only to
   the current task state affecting display, and group inheritance reads the current task at click time.
+- Left and right sidebar expand/collapse keep the original 200ms size and opacity transition; the right content width stays stable during the transition and is released when the animation completes. Dragging and window resizes that do not trigger auto-collapse do not enable the size transition. The input keeps fitting its font size before paint. Existing tabs, width memory and the mobile drawer transform keep their original contract. Performance acceptance: [sidebar toggle layout cost](../performance/sidebar-toggle-rendering.md).
   Project data, identity or navigation target really changing still updates normally, with no delay,
   navigation queue or business state copy added. SPT03 covers new and follow-up operations of desktop and
   mobile layouts and verifies the boundary with render counts, navigation results and data updates.
@@ -131,7 +162,7 @@ flowchart LR
   context and menus with `variant="draft"` while keeping Help / Terminal / Side Pane and the platform caption
   area. Entering a new draft keeps the side pane collapsed by default; after the user clicks the button, the
   draft owner's existing tabs are restored; with no visible tab a real `New tab` is created and the unified tab
-  strip shows. Mobile Web remote keeps reusing the existing side pane overlay, adding no separate runtime or
+  strip shows. "Enter draft collapses by default" applies only on entering a scope: first sync, or a `workspaceKey` / `ownerTaskId` change. If only the plugin-panel scope (`pluginUiSessionId` / plugin workspace) changes inside a draft scope, only the active tab is re-selected and expanded/collapsed keeps its current value; with no visible tab it still collapses, and the rules for a plugin-panel active tab and for existing tasks are unchanged. The draft runtime's plugin session id arrives asynchronously after the draft is created; that change is not re-entering the draft and must not collapse a file tree, browser or other tab the user just opened in the draft (MPS01 regression). Mobile Web remote keeps reusing the existing side pane overlay, adding no separate runtime or
   recovery chain. Full constraints: `docs/ui/workspace-header-variants.md`.
 - When the user actively expands the side pane and the current task has no visible tab, a `New tab` is
   created; the decision uses the visible tab set filtered by the active task, not all tabs of the workspace

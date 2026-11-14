@@ -87,8 +87,18 @@ export function buildSessionMentionMarkdown(sessionId: string, label?: string): 
   return `[${escapeMarkdownLabel(`#${trimmedLabel}`)}](#${escapeMarkdownDestination(sessionId)})`;
 }
 
-// Canonical persistence carrier for Plugin references:
-// `[@Label](plugin://stable-id)`. Identity is only in the destination; the label is for display.
+// Plugin 引用的 canonical 持久化载体：
+/**
+ * 内置浏览器设计模式点选的页面元素：`[@名称](zcode-element://引用 id)`。
+ * id 与消息末尾网页元素块里的 `Reference: zcode-element://…` 一致，模型据此把正文里的指代对到元素。
+ */
+export const ELEMENT_MENTION_SCHEME = "zcode-element://";
+
+export function buildElementMentionMarkdown(label: string, referenceId: string): string {
+  return `[${escapeMarkdownLabel(`@${label}`)}](${ELEMENT_MENTION_SCHEME}${escapeMarkdownDestination(referenceId)})`;
+}
+
+// `[@Label](plugin://stable-id)`。身份只在 destination；label 仅用于展示。
 export function buildPluginMentionMarkdown(label: string, pluginId: string): string {
   return `[${escapeMarkdownLabel(`@${label}`)}](plugin://${escapeMarkdownDestination(pluginId)})`;
 }
@@ -131,13 +141,14 @@ export function renderMentionMarkdownAsPlainText(content: string): string {
 
 type MentionTextPart =
   | { type: "text"; text: string }
-  | { type: "file"; label: string }
+  | { type: "file"; label: string; href: string }
   | { type: "directory"; label: string }
   | { type: "skill"; label: string }
   | { type: "command"; label: string }
   | { type: "subagent"; label: string }
   | { type: "session"; label: string }
-  | { type: "plugin"; label: string; pluginId?: string };
+  | { type: "plugin"; label: string; pluginId?: string }
+  | { type: "element"; label: string };
 
 const PLUGIN_STABLE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*@[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
@@ -228,6 +239,8 @@ export function parseMentionMarkdown(content: string): MentionTextPart[] {
     // Legacy session_ references must keep rendering as sessions; matching the sess_ prefix alone would misroute them into the file branch.
     if (/^#(?:sess|session)_[a-zA-Z0-9._-]+$/.test(destination)) {
       parts.push({ type: "session", label: label.startsWith("#") ? label.slice(1) : label });
+    } else if (destination.startsWith(ELEMENT_MENTION_SCHEME)) {
+      parts.push({ type: "element", label: label.startsWith("@") ? label.slice(1) : label });
     } else if (destination.startsWith("plugin://")) {
       // Plugin reference links must never enter the file branch or be handled as external links.
       // Previously, only the label was retained after sending, leaving the message layer without a stable ID and forcing a fallback icon.
@@ -246,7 +259,13 @@ export function parseMentionMarkdown(content: string): MentionTextPart[] {
       // and folder candidates continued to show a file icon in the bubble. Restore directory type based on whether the link target ends with a slash.
       parts.push({ type: "directory", label: label.startsWith("@") ? label.slice(1) : label });
     } else {
-      parts.push({ type: "file", label: label.startsWith("@") ? label.slice(1) : label });
+      // 文件引用曾丢弃 destination，只剩蓝色 label，消息层无法打开真实图片。
+      // 仅还原 Markdown 标点转义，保留 Windows 路径中的普通反斜杠。
+      parts.push({
+        type: "file",
+        label: label.startsWith("@") ? label.slice(1) : label,
+        href: destination.replace(/\\([\\()[\]<>])/g, "$1"),
+      });
     }
     cursor = matchStart + fullMatch.length;
   }

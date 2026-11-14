@@ -1,14 +1,18 @@
 //! 压缩附件里的上下文（docs/specs/rust-cli/compact.md §3.4）。
 //!
-//! 压缩收尾时生成附件：重读的文件之后是计划模式提醒，再是延迟工具、agent、MCP instructions 的清单增量（按保留段
+//! 压缩收尾时生成附件：重读的文件之后是计划文件与计划模式提醒，再是延迟工具、agent、MCP instructions 的清单增量（按保留段
 //! 算），然后是环境段与模型身份（保留段里没有时从压缩前带过来）。这里用与当步
 //! attachment 相同的增量函数生成，compact 经 kernel-api [`PostCompactContext`] 调用（只在主线程的压缩里调，由
 //! compact 决定）。
 
 use async_trait::async_trait;
 use rust_cli_kernel_api::compaction::PostCompactContext;
+use rust_cli_kernel_api::incognito::IncognitoKey;
 use rust_cli_kernel_api::message::{AttachmentMessage, Message};
 use rust_cli_kernel_api::orchestration::{ContextRequest, OrchestrationError};
+
+use rust_cli_kernel_api::env_files::PathStyle;
+use rust_cli_memory::entrypoint::ENTRYPOINT;
 
 use crate::system::AGENT_TOOL;
 use crate::{PromptAssembler, announce, environment, invoked, listings, mcp};
@@ -24,6 +28,8 @@ impl PromptAssembler {
         let current = self.ports.listings.listings_for(&request, kept).await?;
         let instructions = self.ports.listings.mcp_instructions(&request).await?;
         let mut out = Vec::new();
+        // Node order: file restore (compact engine, before these) → plan file → plan reminder.
+        out.extend(self.post_compact_plan_file(&request).await);
         out.extend(self.post_compact_plan_mode(&request).await);
         // 调用过的 skill（compact.md §3.4）：计划模式之后、清单之前。
         if let Some(history) = history {
@@ -56,6 +62,10 @@ impl PromptAssembler {
         );
         // F10：环境段与模型身份以前由压缩后下一步的上下文宣布；当步 attachment 改在输入与工具轮之后产生后，
         // 放进压缩附件，排在清单之后。
+        // Fork: incognito without `environment` announces neither the environment nor the model here either.
+        if self.excludes(&request, IncognitoKey::Environment) {
+            return Ok(out);
+        }
         let facts = self.facts(&request).await;
         if let Some(shown) = self.shown_facts(&request, facts.as_ref()).await {
             out.extend(
@@ -90,5 +100,24 @@ impl PostCompactContext for PromptAssembler {
         kept: &[Message],
     ) -> Result<Vec<AttachmentMessage>, OrchestrationError> {
         self.post_compact_parts(request, Some(history), kept).await
+    }
+
+    async fn restore_exclusions(&self, request: &ContextRequest) -> Vec<String> {
+        let mut out = Vec::new();
+        if let Some((plan, _)) = self.plan_file(request).await {
+            out.push(plan.as_str().to_owned());
+        }
+        if let Some(files) = self.rules.current(&request.session) {
+            out.extend(files.iter().map(|file| file.path.clone()));
+        }
+        if let Some(dir) = &self.config.memory_dir
+            && let Some(facts) = self.facts(request).await
+        {
+            let style = PathStyle::of_platform(&facts.platform);
+            out.push(style.join(dir.trim_end_matches(['/', '\\']), &[ENTRYPOINT]));
+        }
+        out.sort();
+        out.dedup();
+        out
     }
 }

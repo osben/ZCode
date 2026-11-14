@@ -173,6 +173,7 @@ fn transcript() -> Vec<ApiMessage> {
             text: text.to_owned(),
         },
         cache_control: ephemeral(),
+        meta: false,
     };
     vec![
         ApiMessage {
@@ -308,6 +309,7 @@ async fn a_repeated_condition_is_truncated_in_the_feedback() {
                 text: format!("Stop hook feedback:\n[{long}]: no"),
             },
             cache_control: None,
+            meta: false,
         }],
         output_config: None,
     });

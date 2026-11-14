@@ -1,7 +1,11 @@
+import type {
+  V4SessionDeletionPreview,
+  V4SessionDeletionResult,
+} from "@zcode/shared/zcode-protocol-v4";
 /* eslint-disable max-lines -- Keep the ZCode task wrapper service's app/runtime API together so it remains easier to trace during replacement. */
 import type { Event } from "@zcode/rpc";
 import { ServiceChannels } from "@zcode/shared";
-import type { CommandPayloadMap } from "@zcode/shared/zcode-protocol-v4";
+import type { CommandAck, CommandPayloadMap } from "@zcode/shared/zcode-protocol-v4";
 import { createServiceDescriptor } from "#src/descriptors.js";
 import type { ZCodeModelTrajectoryV2 } from "#src/model-trajectory-v2/contract.js";
 import type {
@@ -379,7 +383,10 @@ export interface IZCodeTaskService {
     source: import("@zcode/shared").BotGroupInputSource;
   }): Promise<import("@zcode/shared/zcode-protocol-v4").CommandAck>;
 
-  /** Send a prompt to the specified task. */
+  /**
+   * Sends a prompt to the specified task.
+   * The v4 text path returns a sendText ACK (including duplicate); the legacy attachment path and older remotes return no ACK.
+   */
   sendPrompt(
     params: {
       taskId: string;
@@ -398,10 +405,11 @@ export interface IZCodeTaskService {
       botDeliveryTarget?: ZCodeAutomationBotDeliveryTarget;
       /** Standard model selection; off-peak tasks also create a Model through Registry / ModelFactory. */
       modelSelection?: CommandPayloadMap["sendText"]["modelSelection"];
+      modelSelectionBasis?: CommandPayloadMap["sendText"]["modelSelectionBasis"];
       /** Per-execution constraints and dynamic authorization; accepted only for idle start-now and not added to the regular queue. */
       modelExecution?: CommandPayloadMap["sendText"]["modelExecution"];
     } & ZCodeBackgroundTurnAttribution,
-  ): Promise<void>;
+  ): Promise<CommandAck | void>;
 
   deliverSessionMessage(
     request: SessionMessageSendRequested,
@@ -557,6 +565,12 @@ export interface IZCodeTaskService {
 
   /** Read deleted task IDs in the workspace; used for a persistent negative-membership join in the sessions-index list. */
   listDeletedTaskIds(params: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+  }): Promise<string[]>;
+
+  /** Deleted-for-good task IDs in the workspace; lets a new attachment clean up client content left over while offline. */
+  listPermanentlyDeletedTaskIds?(params: {
     workspacePath: string;
     workspaceIdentity?: string;
   }): Promise<string[]>;
@@ -878,6 +892,19 @@ export interface IZCodeTaskService {
     resumeTaskId?: string;
     bumpRuntimeEpoch?: boolean;
   }): Promise<void>;
+
+  previewArchivedTaskDeletion(params: {
+    taskId: string;
+    workspacePath: string;
+    workspaceIdentity?: string;
+  }): Promise<V4SessionDeletionPreview>;
+  permanentlyDeleteArchivedTask(params: {
+    taskId: string;
+    workspacePath: string;
+    workspaceIdentity?: string;
+    revision: string;
+    operationId: string;
+  }): Promise<V4SessionDeletionResult>;
 
   /** Hide a persisted task from the list while retaining its CLI session content. */
   deleteTask(params: {

@@ -71,6 +71,9 @@ pub struct ModelEndpoint {
     /// 凭据是每次请求现取的（官方账号模型）：服务端回 401 时，适配器带上这个端点再取一次（见
     /// [`EndpointQuery::rejected`]），换到新凭据后重发。
     pub renewable: bool,
+    /// Fork: request bodies longer than this many bytes are sent gzip-compressed with `content-encoding: gzip`
+    /// (ChatGPT Plan, specs/fork-rust-chatgpt-plan.md rule 14); `None` never compresses.
+    pub compress_body_over: Option<usize>,
 }
 
 /// 一次取端点的查询（F129，审查 K1：以前是 `endpoint → endpoint_with_output_limit → endpoint_in` 三层伸缩的方法，
@@ -128,6 +131,10 @@ pub struct ModelCapabilities {
     pub supports_native_web_search: bool,
     /// `supportsMidConversationSystem`：对话中间的 `role: system` 消息。
     pub supports_mid_conversation_system: bool,
+    /// Fork: every user message and reminder is its own request message (no adjacent-user merge, no reminder fold into
+    /// tool results). Node sets `requestCapabilities.foldRemindersIntoToolResults` only for Anthropic Messages, so this
+    /// is true on the OpenAI-compatible protocols.
+    pub separate_user_messages: bool,
     /// `supportsJsonSchemaOutput`。
     pub supports_json_schema_output: bool,
     /// `requiresMfjsToolSchema`。
@@ -158,6 +165,7 @@ impl Default for ModelCapabilities {
             supports_tool_call: true,
             supports_native_web_search: false,
             supports_mid_conversation_system: false,
+            separate_user_messages: false,
             supports_json_schema_output: false,
             requires_mfjs_tool_schema: false,
             supports_image: false,
@@ -187,6 +195,26 @@ pub struct CatalogModel {
     /// 这一项的账号连接（Team Plan 的团队项目，工作线 F49）；没有时为 None。选中时 `connection.id` 进选择。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connection: Option<CatalogConnection>,
+    /// Fork: the host of the provider's base URL, without scheme, port, path or credentials (the
+    /// `providerHostname` of the App's telemetry facts); None when the URL has no host.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+}
+
+/// Fork: the host of a base URL (`https://user@api.example.com:8443/v1` → `api.example.com`, an IPv6
+/// literal keeps its brackets); None without one.
+pub fn url_host(url: &str) -> Option<String> {
+    let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    let authority = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    let host = if authority.starts_with('[') {
+        authority.split_inclusive(']').next().unwrap_or_default()
+    } else {
+        authority.split(':').next().unwrap_or_default()
+    };
+    (!host.is_empty()).then(|| host.to_ascii_lowercase())
 }
 
 /// 目录项的账号连接（docs/specs/rust-cli/platform.md §9.3）：连接本身与显示用的两个名字，前端按界面语言拼说明。
@@ -217,14 +245,22 @@ pub struct ModelCatalog {
 pub struct HeaderRequest {
     /// 这次模型请求的选择。
     pub selection: ModelSelection,
-    /// 账号的类别（Provider 配置的 `access.accountType`）。
-    pub account_type: String,
-    /// 账号的模式（Provider 配置的 `access.mode`）。
-    pub mode: String,
+    /// Fork: which account kind asks (specs/fork-rust-chatgpt-plan.md rule 7). The platform decides it from the
+    /// provider's `access`, so the source never re-derives it from the provider id.
+    pub access: HeaderAccess,
     /// 发请求的会话（[`EndpointQuery::session`]）；没有时来源可以拒绝。
     pub session: Option<crate::ids::SessionId>,
     /// 刚被模型服务拒绝（401）的凭据的 sha256（小写十六进制）；第一次请求为 None。
     pub rejected_fingerprint: Option<String>,
+}
+
+/// Fork: the account kind of a [`HeaderRequest`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HeaderAccess {
+    /// A zhipu account provider: 账号的类别与模式（Provider 配置的 `access.accountType` / `access.mode`）。
+    Zhipu { account_type: String, mode: String },
+    /// A ChatGPT Plan account entry (`access.type: "chatgpt-account"`): routed by provider id, no zhipu access.
+    ChatGptPlan,
 }
 
 /// 来源给出的凭据：key 写进 `Authorization: Bearer`（Anthropic 协议）或适配器的鉴权位置；`headers` 原样加在请求上。
@@ -239,6 +275,29 @@ pub struct SuppliedAuth {
 pub trait HeaderSource: Send + Sync {
     /// 这次请求的凭据。拿不到时返回 [`ModelError::Authentication`]（文字给用户看）。
     async fn request_auth(&self, request: HeaderRequest) -> Result<SuppliedAuth, ModelError>;
+}
+
+/// 凭据加解密的失败（specs/fork-rust-credential-cipher.md）。每个变体只带静态原因，不带值、密钥或 Host 的消息。
+/// `Unavailable` 不是登录失效：调用方不能清除令牌、不能报 `login_required`、不能写凭据文件。
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum CipherError {
+    /// 解密失败（原因文案与 Node 相同前缀：`凭据解密失败：<原因>`）。
+    #[error("凭据解密失败：{reason}")]
+    Decrypt { reason: &'static str },
+    #[error("无法加密凭据：{reason}")]
+    Encrypt { reason: &'static str },
+    /// 系统凭据存储不可用（Host 或 Main 的密钥库、传输失败、超时、回复不合法）。
+    #[error("凭据存储不可用：{reason}")]
+    Unavailable { reason: &'static str },
+}
+
+/// 凭据的加解密端口。standalone 用本地 v1 编解码；桌面（app-server）用 Host 委托 Main 的密钥库（Main 持有密钥）。
+#[async_trait]
+pub trait CredentialCipher: Send + Sync {
+    /// 明文加密成存入 `credentials.json` 的值。
+    async fn encrypt(&self, plaintext: &str) -> Result<String, CipherError>;
+    /// 存储值解密成明文；没有加密前缀的旧值原样返回（Node 相同）。
+    async fn decrypt(&self, value: &str) -> Result<String, CipherError>;
 }
 
 /// 读取模型目录。

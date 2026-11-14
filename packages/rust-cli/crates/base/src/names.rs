@@ -96,6 +96,8 @@ pub mod env {
     pub const ZCODE_DATA_BASE_DIR: &str = "ZCODE_DATA_BASE_DIR";
     pub const ZCODE_BUILTIN_PROVIDER_CONFIG_FILE: &str = "ZCODE_BUILTIN_PROVIDER_CONFIG_FILE";
     pub const ZCODE_CREDENTIAL_SECRET: &str = "ZCODE_CREDENTIAL_SECRET";
+    /// Fork: a file holding the credential secret (specs/fork-rust-credential-cipher.md F4).
+    pub const ZCODE_CREDENTIAL_SECRET_FILE: &str = "ZCODE_CREDENTIAL_SECRET_FILE";
     pub const ZCODE_MODEL_BASE_URL: &str = "ZCODE_MODEL_BASE_URL";
     pub const ZCODE_API_KEY: &str = "ZCODE_API_KEY";
     pub const ZCODE_MODEL: &str = "ZCODE_MODEL";
@@ -115,9 +117,15 @@ pub mod env {
     pub const BASH_DEFAULT_TIMEOUT_MS: &str = "BASH_DEFAULT_TIMEOUT_MS";
     pub const BASH_MAX_TIMEOUT_MS: &str = "BASH_MAX_TIMEOUT_MS";
     pub const ZCODE_FORK_SUBAGENT: &str = "ZCODE_FORK_SUBAGENT";
+    /// 后台子代理无进展提醒的首次阈值（开发与验收用，Node `ZCODE_SUBAGENT_STALL_NOTIFY_MS`）。
+    pub const ZCODE_SUBAGENT_STALL_NOTIFY_MS: &str = "ZCODE_SUBAGENT_STALL_NOTIFY_MS";
     pub const IS_SANDBOX: &str = "IS_SANDBOX";
     pub const ZCODE_ENABLE_TASKS: &str = "ZCODE_ENABLE_TASKS";
     pub const ZCODE_ENABLE_TODO_TOOLS: &str = "ZCODE_ENABLE_TODO_TOOLS";
+    /// Fork: the Host's Gen UI output root (shared `GEN_UI_OUTPUT_ROOT_ENV`), named in the desktop prompt section.
+    pub const ZCODE_GEN_UI_OUTPUT_ROOT: &str = "ZCODE_GEN_UI_OUTPUT_ROOT";
+    /// Fork: the Host's Node helper command for the Rust agent (shared `FORK_NODE_HELPER_COMMAND_ENV`).
+    pub const ZCODE_FORK_NODE_HELPER_COMMAND: &str = "ZCODE_FORK_NODE_HELPER_COMMAND";
 
     // 压缩与记忆（compact.md §2、memory.md）。
     pub const DISABLE_COMPACT: &str = "DISABLE_COMPACT";

@@ -3,7 +3,7 @@
  * Data comes from useStorageUsage (a projection of the main-process StorageService through the preload bridge); this component only owns UI selection state:
  * the selected disk, expanded category details, and cleanup target awaiting confirmation.
  */
-import { Loader2, RefreshCw } from "lucide-react";
+import { LoaderCircle, RefreshCw } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import {
   groupStorageRootsByVolume,
@@ -155,7 +155,7 @@ export function StorageSection({
           data-state={status}
           className="flex items-center gap-1.5 text-ui-caption text-foreground-subtle"
         >
-          {scanning ? <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> : null}
+          {scanning ? <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" /> : null}
           {scanning
             ? intl.formatMessage({ id: "resourceManager.storage.scanning" })
             : snapshot?.finishedAt

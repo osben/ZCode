@@ -11,6 +11,7 @@ fn plain(block: ContentBlock) -> ApiContent {
     ApiContent {
         block,
         cache_control: None,
+        meta: false,
     }
 }
 

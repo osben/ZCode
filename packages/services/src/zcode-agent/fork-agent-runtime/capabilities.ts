@@ -13,20 +13,17 @@ export function isForkRustAgentRuntime(env: NodeJS.ProcessEnv = process.env): bo
   return env[FORK_AGENT_RUNTIME_ENV]?.trim() === "rust";
 }
 
-/** Spread after both Host hello capability literals so the renderer takes the older-agent routes. */
-export function forkAgentRuntimeHelloOverrides(env: NodeJS.ProcessEnv = process.env): {
-  incognitoSession?: false;
-  incognitoPromptToggles?: false;
-} {
-  if (!isForkRustAgentRuntime(env)) return {};
-  return {
-    incognitoSession: false,
-    incognitoPromptToggles: false,
-  };
+/**
+ * Spread after both Host hello capability literals so the renderer takes the older-agent routes. Empty for
+ * both runtimes: zcode-rs reports every flag the Host claims (the incognito flags left this table when
+ * zcode-rs implemented incognito sessions).
+ */
+export function forkAgentRuntimeHelloOverrides(
+  _env: NodeJS.ProcessEnv = process.env,
+): Record<string, never> {
+  return {};
 }
 
-export const FORK_RUST_AGENT_EXECUTION_WORKTREE_UNSUPPORTED =
-  "proto.forkRustAgent.executionWorktreeUnsupported";
 export const FORK_RUST_AGENT_EXTERNAL_AGENT_UNSUPPORTED =
   "proto.forkRustAgent.externalAgentUnsupported";
 
@@ -36,7 +33,7 @@ interface CommandEnvelopeLike {
 }
 
 function isAcpProvider(providerId: unknown): boolean {
-  return typeof providerId === "string" && providerId.trim().startsWith("acp:");
+  return typeof providerId === "string" && providerId.startsWith("acp:");
 }
 
 function isAcpSelection(value: unknown): boolean {
@@ -44,32 +41,20 @@ function isAcpSelection(value: unknown): boolean {
   return isAcpProvider((value as { providerId?: unknown }).providerId);
 }
 
-/**
- * Fork features with no agent capability flag. The Node agent implements them; zcode-rs drops the
- * fields, which would run a worktree session in the main checkout or send an ACP prompt to an
- * unknown provider. Refuse them before the command reaches the Rust agent.
- */
-export function forkAgentRuntimeCommandGateError(
-  envelope: CommandEnvelopeLike,
-  env: NodeJS.ProcessEnv = process.env,
-): string | undefined {
-  if (!isForkRustAgentRuntime(env)) return undefined;
+/** What the gate may read from the agent; read only for a command that needs it. */
+interface ForkAgentRuntimeGateCapabilities {
+  /** The agent runs `acp:<agentId>` selections (runtime capability `externalAgentTurns`). */
+  externalAgentTurns(): Promise<boolean>;
+}
+
+function isExternalAgentCommand(envelope: CommandEnvelopeLike): boolean {
   const payload = (envelope.payload ?? {}) as {
-    worktreePreparation?: unknown;
-    executionWorktree?: unknown;
     modelSelection?: unknown;
     provider?: unknown;
     config?: { modelSelection?: unknown; provider?: unknown };
     firstInput?: { modelSelection?: unknown };
   };
-  if (
-    envelope.type === "updateWorktreePreparation" ||
-    (envelope.type === "createSession" &&
-      (payload.worktreePreparation !== undefined || payload.executionWorktree !== undefined))
-  ) {
-    return FORK_RUST_AGENT_EXECUTION_WORKTREE_UNSUPPORTED;
-  }
-  if (
+  return (
     envelope.type === "setExternalAgentConfigOption" ||
     isAcpSelection(payload.modelSelection) ||
     isAcpSelection(payload.config?.modelSelection) ||
@@ -77,8 +62,20 @@ export function forkAgentRuntimeCommandGateError(
     // switchModelConfig and createSession config name the provider as a plain id.
     (envelope.type === "switchModelConfig" && isAcpProvider(payload.provider)) ||
     isAcpProvider(payload.config?.provider)
-  ) {
-    return FORK_RUST_AGENT_EXTERNAL_AGENT_UNSUPPORTED;
-  }
-  return undefined;
+  );
+}
+
+/**
+ * Fork features zcode-rs may lack (specs/fork-agent-runtime-selection.md rule 7). An ACP command reaches the Rust
+ * agent only when it reports `externalAgentTurns` (macOS); otherwise zcode-rs would run the prompt against an
+ * unknown provider, so the command is refused. A failed capability read refuses too.
+ */
+export async function forkAgentRuntimeCommandGateError(
+  envelope: CommandEnvelopeLike,
+  capabilities: ForkAgentRuntimeGateCapabilities,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<string | undefined> {
+  if (!isForkRustAgentRuntime(env) || !isExternalAgentCommand(envelope)) return undefined;
+  const supported = await capabilities.externalAgentTurns().catch(() => false);
+  return supported ? undefined : FORK_RUST_AGENT_EXTERNAL_AGENT_UNSUPPORTED;
 }

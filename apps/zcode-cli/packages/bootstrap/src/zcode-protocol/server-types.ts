@@ -2,6 +2,7 @@ import {
   createRootTraceContext,
   createTraceId,
   type Logger,
+  type PluginActivationPort,
   type LoggerFactory,
   type McpPort,
   type SessionEventStorePort,
@@ -16,6 +17,7 @@ import type { WorkspaceHookPolicyProvider } from "@zcode/core";
 import type { AccountProviderConfigSnapshot } from "@zcode/provider";
 import {
   zcodeProtocolErrorCodes,
+  zcodeProtocolMethods,
   type AppToolSearchMode,
   type ZCodeAutomationBotDeliveryTarget,
   type ZCodeDeliveryKind,
@@ -45,6 +47,9 @@ export interface ParamsSchema<T> {
 }
 
 export interface ZCodeProtocolAgentDependencies {
+  pluginActivationPort?: PluginActivationPort;
+  pluginPreparation?: ZCodeAppOptions["pluginPreparation"];
+  pluginDiscovery?: ZCodeAppOptions["pluginDiscovery"];
   createZCodeApp(options?: Omit<ZCodeAppOptions, "providerRegistry">): ZCodeApp | Promise<ZCodeApp>;
   /** Process-wide LSP protocol host (lsp/* methods); absent when the runtime has no LSP support. */
   lsp?: LspProtocolHost;
@@ -100,6 +105,7 @@ export interface ZCodeProtocolToolInputTransmissionState {
 
 export interface ZCodeProtocolSessionRecord {
   app: ZCodeApp;
+  appControlEnabled?: boolean;
   subagentRuntimeConfigEnabled?: boolean;
   memoryEnabled: boolean;
   memoryIndexAsContext: boolean;
@@ -126,6 +132,8 @@ export interface ZCodeProtocolSessionRecord {
   lastOutcome?: "completed" | "interrupted" | "error";
   workspace: ZCodeWorkspaceRef;
   activeAbortController?: AbortController;
+  /** 仅属于本实例；被手动关闭、删除或替换时移除。 */
+  pluginReload?: { check(): void; dispose(): void };
   /** background runner 释放 ready lock 后，持久化/snapshot/broadcast 尚未完成的引用计数。 */
   residencyFinalizationCount?: number;
   /** 当前正在执行的 automation 派发 turn；只在 turn 运行期间存在，禁止递归 CronCreate。 */
@@ -135,7 +143,7 @@ export interface ZCodeProtocolSessionRecord {
   /** 当前 Bot 入站 turn 的稳定回推地址；只允许 CronCreate 在本轮读取。 */
   activeBotDeliveryTarget?: ZCodeAutomationBotDeliveryTarget;
   restoreWarning?: { message: string; type: string };
-  /** 冷恢复候选只供初始投影；新的选模事件立即清除，不能替代 Runtime 执行绑定。 */
+  /** 冷恢复候选供投影与输入接纳重校验；新的选模事件立即清除，不能跳过模型可用性校验。 */
   restoredModelSelection?: ModelSelection;
 }
 
@@ -218,6 +226,9 @@ export interface ZCodeProtocolAgentServerContext {
   /** Language server preferences and status; absent in runtimes without LSP, where the methods return a protocol error. */
   lsp?: LspProtocolHost;
   sessionLifecycle?: import("../session-lifecycle/index.js").SessionLifecycleController;
+  sessionRequestCounts?: Map<string, number>;
+  /** context 组成修订号的唯一 owner（context-composition/tracker.ts），首次使用时创建。 */
+  contextCompositionTracker?: import("./context-composition/tracker.js").ContextCompositionRevisionTracker;
   sessions: Map<string, ZCodeProtocolSessionRecord>;
   preparedWorktreeSessions?: Map<string, ZCodeProtocolPreparedWorktreeSession>;
   preparedSubmissionSessions?: Map<string, ZCodeProtocolPreparedSubmissionSession>;
@@ -241,6 +252,31 @@ export const PROTOCOL_CLIENT_REQUEST_ERROR_CODES = {
   /** 请求等待应答超时。 */
   timedOut: -32022,
 } as const;
+
+/**
+ * Plugin mutations after which the server invalidates its plugin caches. Exported for the fork's
+ * Rust-agent Node helper, which must invalidate after exactly the same methods.
+ */
+export const PLUGIN_PREPARATION_MUTATION_METHODS: ReadonlySet<string> = new Set<string>([
+  zcodeProtocolMethods.pluginsSetEnabled,
+  zcodeProtocolMethods.pluginsInstall,
+  zcodeProtocolMethods.pluginsUninstall,
+  zcodeProtocolMethods.pluginsUpdate,
+  zcodeProtocolMethods.pluginsRestoreBuiltin,
+  zcodeProtocolMethods.pluginsConfigure,
+  zcodeProtocolMethods.pluginsMarketplaceAdd,
+  zcodeProtocolMethods.pluginsMarketplaceRemove,
+  zcodeProtocolMethods.pluginsMarketplaceUpdate,
+]);
+
+/** The `operationId` a cancellable plugin operation registers under (trimmed, non-empty). */
+export function getPluginOperationId(params: unknown): string | undefined {
+  if (!params || typeof params !== "object") return undefined;
+  const operationId = (params as { operationId?: unknown }).operationId;
+  return typeof operationId === "string" && operationId.trim().length > 0
+    ? operationId.trim()
+    : undefined;
+}
 
 export class ProtocolRequestError extends Error {
   constructor(

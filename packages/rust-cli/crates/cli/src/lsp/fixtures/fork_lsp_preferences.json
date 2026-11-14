@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "enabled": false,
+  "diagnosticsAfterEdit": {
+    "b@m/y": false,
+    "q@m/\"ü\"": true,
+    "c@m/z": false
+  }
+}

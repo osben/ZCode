@@ -16,6 +16,18 @@ use tokio::sync::mpsc;
 
 use crate::test_support::{Setup, envelope};
 
+fn started() -> ChildLive {
+    ChildLive::Started {
+        run: 1,
+        selection: rust_cli_kernel_api::model::ModelSelection {
+            provider: "p".to_owned(),
+            model: "m".to_owned(),
+            reasoning: None,
+            connection: None,
+        },
+    }
+}
+
 fn delta(text: &str) -> ChildLive {
     ChildLive::Event(QueryEvent::Delta {
         message: 0,
@@ -56,7 +68,7 @@ async fn a_late_view_streams_the_child_run_so_far_and_then_live() {
     let (live, receiver) = mpsc::unbounded_channel();
     let mut setup = Setup::new(Arc::new(ScriptedModel::new(Vec::new())));
     setup.child_live = Some(ChildLiveFeed {
-        replay: vec![ChildLive::Started, delta("E2E_SIDE_TAB_CHILD_1_")],
+        replay: vec![started(), delta("E2E_SIDE_TAB_CHILD_1_")],
         live: tokio_stream_from(receiver),
     });
     let built = setup.build().await;
@@ -65,17 +77,20 @@ async fn a_late_view_streams_the_child_run_so_far_and_then_live() {
     let view = session.view().await.unwrap();
     assert!(view.messages.is_empty());
     let mut events = session.subscribe(Some(view.last_seq));
-    assert!(matches!(
-        next(&mut events).await,
-        KernelEvent::TurnStarted { .. }
-    ));
+    let mirrored = match next(&mut events).await {
+        KernelEvent::TurnStarted { turn, .. } => turn,
+        other => panic!("expected the mirrored turn, got {other:?}"),
+    };
     match next(&mut events).await {
         KernelEvent::StreamDelta { delta, .. } => {
             assert_eq!(delta, BlockDelta::Text("E2E_SIDE_TAB_CHILD_1_".to_owned()));
         }
         other => panic!("expected the partial text, got {other:?}"),
     }
-    assert!(session.view().await.unwrap().running);
+    let running = session.view().await.unwrap();
+    assert!(running.running);
+    // A projection rebuilt from this view keys the running turn like the mirrored events.
+    assert_eq!(running.running_turn, Some(mirrored));
     let ack = session
         .send(envelope(
             "c1",
@@ -109,6 +124,7 @@ async fn a_late_view_streams_the_child_run_so_far_and_then_live() {
     ));
     let view = session.view().await.unwrap();
     assert!(!view.running);
+    assert_eq!(view.running_turn, None);
     assert_eq!(view.messages.len(), 1);
     // Mirrored, not stored again: the child run stored it.
     assert!(
@@ -130,6 +146,8 @@ async fn a_cold_load_during_the_child_run_adds_no_resume_sentinel() {
     let mut setup = Setup::new(Arc::new(ScriptedModel::new(Vec::new())));
     setup.opened = crate::Opened::Loaded;
     setup.messages = vec![Message::User(rust_cli_kernel_api::message::UserMessage {
+        stall_execution: None,
+        intent: None,
         id: MessageId::new("u1"),
         content: vec![ContentBlock::Text {
             text: "E2E_SIDE_TAB_CHILD_1: read the file".to_owned(),
@@ -137,7 +155,7 @@ async fn a_cold_load_during_the_child_run_adds_no_resume_sentinel() {
         origin: rust_cli_kernel_api::message::UserOrigin::Human,
     })];
     setup.child_live = Some(ChildLiveFeed {
-        replay: vec![ChildLive::Started, delta("E2E_SIDE_TAB_CHILD_1_")],
+        replay: vec![started(), delta("E2E_SIDE_TAB_CHILD_1_")],
         live: tokio_stream_from(receiver),
     });
     let built = setup.build().await;

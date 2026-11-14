@@ -64,6 +64,7 @@ fn context(mode: PermissionMode) -> ToolUseContext {
             root: EnvPath::new("/w"),
         },
         mode,
+        base_mode: mode,
         interactions: Arc::new(rust_cli_kernel_api::testing::NoOneToAsk),
         session_ops: Arc::new(rust_cli_kernel_api::testing::NoSession),
         operation: OperationContext::new(
@@ -277,3 +278,9 @@ mod machine;
 
 #[path = "lib_tests_allowed.rs"]
 mod allowed;
+
+#[path = "lib_tests_plan_mcp.rs"]
+mod plan_mcp;
+
+#[path = "lib_tests_generic.rs"]
+mod generic_contents;

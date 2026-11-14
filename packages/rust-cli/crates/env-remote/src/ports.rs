@@ -388,6 +388,26 @@ impl Background for RemoteEnvironment {
         )
     }
 
+    /// Fork: the executor's terminal record of an acknowledged command (specs/fork-rust-agent-parity.md, "After a
+    /// restart, and on a remote executor"). An executor older than the op answers `unsupported`: it keeps no record.
+    async fn ended_background_command(
+        &self,
+        task: BackgroundTask,
+    ) -> Result<Option<BackgroundInfo>, EnvError> {
+        let request = Request::EndedBackgroundCommand {
+            task: to::background_task(task),
+        };
+        let reply = match self.call(request, empty()).await {
+            Ok((reply, _)) => reply,
+            Err(EnvError::Unsupported { .. }) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        Ok(
+            expect!(reply, "background.ended_background_command", Reply::EndedBackgroundCommand(info) => info)
+                .map(from::background_info),
+        )
+    }
+
     async fn background_elapsed(&self, task: BackgroundTask) -> Result<Option<u64>, EnvError> {
         let request = Request::BackgroundElapsed {
             task: to::background_task(task),

@@ -1,0 +1,18 @@
+[package]
+name = "rust-cli-image"
+description = "Fork: prepares an attached image for the model like Node's Jimp adapter"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+doctest = false
+
+[dependencies]
+# Decoding, resizing and encoding (Node uses Jimp).
+image.workspace = true

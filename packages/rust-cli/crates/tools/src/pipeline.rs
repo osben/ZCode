@@ -5,10 +5,12 @@
 //! 都返回 `is_error` 的结果，不进入下一步。hook 的决定与判决链的先后、hook 消息的位置见
 //! docs/specs/rust-cli/hooks.md §6。
 
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use rust_cli_base::js::string::utf16_prefix;
+use rust_cli_kernel_api::app_tool::AppToolRefusal;
 use rust_cli_kernel_api::message::ToolResultContent;
 use rust_cli_kernel_api::orchestration::{
     HookEventName, HookRunner, InteractionRequest, PermissionAnswer, PermissionGate, ToolExecution,
@@ -34,6 +36,9 @@ pub(crate) const REJECT_MESSAGE: &str = rust_cli_kernel_api::tool::REJECT_MESSAG
 pub(crate) const REJECT_WITH_REASON: &str = "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed. To tell you how to proceed, the user said:\n";
 /// 工具使用被中断时的文字（kernel-api 的定义，F55）。
 const INTERRUPT_FOR_TOOL_USE: &str = rust_cli_kernel_api::user_input::INTERRUPT_TEXTS[1];
+/// Node's message of a cancelled call of a tool with no cancel message of its own (`timeout.ts` `executeWithTimeout`,
+/// `CoreErrorType.ToolCancelled`).
+const NODE_TOOL_CANCELLED: &str = "Tool execution cancelled";
 const NO_OUTPUT: &str = "Command failed with no output";
 /// `formatError` 超过这个长度（UTF-16 单元）时保留首尾各一半。
 const ERROR_LIMIT: usize = 10_000;
@@ -44,6 +49,13 @@ pub struct Pipeline {
     hooks: Arc<dyn HookRunner>,
     /// 按调用的 `machine` 选机器（R3，remote-exec.md §20.6）；没有时不路由。
     machines: Machines,
+    /// Fork: the incognito tool gate; a tool the session's profile removes is not called even when the model names
+    /// it (specs/fork-rust-agent-parity.md, "Incognito sessions").
+    incognito: Option<Arc<dyn rust_cli_kernel_api::incognito::IncognitoToolGate>>,
+    /// Fork (node_desktop): Node's hook semantics. PreToolUse messages follow the tool result, as Node's post-batch
+    /// reminders, and the PermissionRequest input names the call (specs/fork-rust-agent-parity.md "Tool hook context
+    /// after the tool result", "Command hook stdin").
+    node_hooks: bool,
 }
 
 /// 子代理里的询问被拒时的结果文字（主线程是 [`REJECT_MESSAGE`]，docs/specs/rust-cli/agents.md §4.1.1）。
@@ -69,6 +81,8 @@ fn rejection(context: &ToolUseContext, feedback: Option<&str>) -> String {
 enum Rejection {
     ByHook(ToolOutput),
     Other(ToolOutput),
+    /// Fork: an MCP App call's refusal in Node's terms (`messages.app_call` only; pipeline_authorize.rs).
+    App(AppToolRefusal),
 }
 
 fn error(text: String) -> ToolOutput {
@@ -89,6 +103,7 @@ struct Asking {
     message: String,
     suggestions: Vec<PermissionRule>,
     once: bool,
+    independent: bool,
 }
 
 fn wrapped(text: &str) -> ToolOutput {
@@ -121,7 +136,27 @@ impl Pipeline {
             gate,
             hooks,
             machines: Machines::default(),
+            incognito: None,
+            node_hooks: false,
         }
+    }
+
+    /// Fork: Node's hook semantics (the Node desktop agent): PreToolUse messages after the tool result, before the
+    /// PostToolUse ones, and `tool_use_id` in the PermissionRequest input.
+    #[must_use]
+    pub fn with_node_hooks(mut self, node_hooks: bool) -> Self {
+        self.node_hooks = node_hooks;
+        self
+    }
+
+    /// Fork: check every call against the session's incognito profile.
+    #[must_use]
+    pub fn with_incognito(
+        mut self,
+        gate: Arc<dyn rust_cli_kernel_api::incognito::IncognitoToolGate>,
+    ) -> Self {
+        self.incognito = Some(gate);
+        self
     }
 
     /// 接上执行环境的注册表：带 `machine` 参数的工具按调用选机器（remote-exec.md §20.6）。
@@ -156,15 +191,18 @@ impl Pipeline {
             message,
             suggestions,
             once,
+            independent,
         } = asking;
         // 修复线 F20：guarded 的危险命令只批准这一次（Node `approvalMode: "user-once"` 时 `runHooks: false`）：
         // 不跑 PermissionRequest hooks，hook 不能替用户批准；没有“总是允许”（判决链不给建议规则）。工作线 F137：这个事实
         // 随判决给出（`Ask.once`），不再另问判决链（以前的 `ask_once` 又取一次执行环境的路径风格）。
         if !once {
-            let payload = tag(
-                hooks::permission_request(tool.name(), input, &suggestions),
-                &call.machine,
-            );
+            let mut payload = hooks::permission_request(tool.name(), input, &suggestions);
+            // Node's PermissionRequest input carries the call id (`toolCallId`, alias `tool_use_id`).
+            if self.node_hooks {
+                payload["tool_use_id"] = Value::from(context.tool_use.as_str());
+            }
+            let payload = tag(payload, &call.machine);
             let event = hooks::event(HookEventName::PermissionRequest, &call.hooks, payload).await;
             let request = self.hooks.run(event, context.cancel.clone()).await;
             match request.decision {
@@ -187,6 +225,7 @@ impl Pipeline {
             // 额外机器上的调用，询问带机器名（R3，remote-exec.md §20.8；主 env 不写出）。
             machine: call.machine.clone(),
             once,
+            independent,
         };
         let Ok(answer) = crate::asking::ask::<PermissionAnswer>(context, request).await else {
             return Err(error(rejection(context, None)));
@@ -251,11 +290,13 @@ impl Pipeline {
                 message,
                 suggestions,
                 once,
+                independent,
             } => {
                 let asking = Asking {
                     message,
                     suggestions,
                     once,
+                    independent,
                 };
                 self.ask_for(tool, schema, input, asking, call).await
             }
@@ -265,6 +306,7 @@ impl Pipeline {
                     message: rust_cli_policy::texts::request_message(tool.name(), None),
                     suggestions: Vec::new(),
                     once: false,
+                    independent: false,
                 };
                 self.ask_for(tool, schema, input, asking, call).await
             }
@@ -311,6 +353,14 @@ impl Pipeline {
             .route(tool, &mut input, context, &plan)
             .map_err(|message| Rejection::Other(wrapped(&message)))?;
         let context = &call.context;
+        // Fork: a tool that runs in the workspace is refused while the session's execution worktree is gone, like
+        // Node's `getMissingExecutionWorktreeToolError`; nothing runs in or recreates it. An ordinary session is not
+        // guarded (`missing_workspace`).
+        if tool.machine_param() == rust_cli_kernel_api::machine_param::MachineParam::RunsThere
+            && let Some(message) = crate::common::missing_workspace(context).await
+        {
+            return Err(Rejection::Other(wrapped(&message)));
+        }
         if let Validation::Invalid { message, .. } = tool.validate_input(&input, context).await {
             return Err(Rejection::Other(wrapped(&message)));
         }
@@ -321,8 +371,17 @@ impl Pipeline {
         let event = hooks::event(HookEventName::PreToolUse, &call.hooks, payload).await;
         let mut pre = self.hooks.run(event, context.cancel.clone()).await;
         hooks::take_pre(messages, &mut pre);
+        // Fork: an MCP App call follows Node's `authorizeAppTool` from here (pipeline_authorize.rs).
+        if messages.app_call
+            && let Some(refusal) = authorize::app_hook_refusal(messages, &pre)
+        {
+            return Err(Rejection::App(refusal));
+        }
         if let Some(updated) = pre.updated_input.take() {
             if let Some(message) = validate(tool.name(), &schema, &updated) {
+                if messages.app_call {
+                    return Err(Rejection::App(AppToolRefusal::InvalidInput(message)));
+                }
                 return Err(Rejection::ByHook(error(format!(
                     "PreToolUse hook for {} returned updatedInput that failed schema validation: {message}",
                     tool.name()
@@ -351,6 +410,7 @@ impl Pipeline {
                 message,
                 suggestions,
                 once,
+                independent,
             }) => match self.gate.check_rules(tool, &input, context).await {
                 Some(PermissionDecision::Deny { message }) => Err(other(error(message))),
                 Some(PermissionDecision::Ask { .. }) => self
@@ -362,6 +422,7 @@ impl Pipeline {
                         message,
                         suggestions,
                         once,
+                        independent,
                     };
                     self.ask_for(tool, &schema, input, asking, &call)
                         .await
@@ -418,31 +479,97 @@ impl Pipeline {
                 budget::apply(
                     output,
                     tool.name(),
-                    tool.max_result_size_chars(),
+                    budget::Limit::of(tool),
                     &context.session,
                     context.artifacts.as_ref(),
                 )
                 .await
             }
             Err(failure) => {
-                let interrupted = matches!(failure, ToolError::Cancelled);
-                let text = if interrupted {
-                    INTERRUPT_FOR_TOOL_USE.to_owned()
-                } else {
-                    format_error(&failure.to_string())
+                // Fork: a call stopped on its own keeps its display and reaches the model as its own message (Node keeps
+                // the `ToolCancelled` text), while the hooks see an interrupt (Node `isInterrupt`).
+                let (failure, display) = match failure {
+                    ToolError::Stopped { message, display } => (Err(message), display),
+                    other => (Ok(other), Value::Null),
                 };
-                let payload = tag(
-                    hooks::post_tool_use_failure(tool.name(), &input, &text, interrupted, &context),
-                    machine,
+                let interrupted = matches!(failure, Ok(ToolError::Cancelled) | Err(_));
+                // Node's CoreError type of the failure (`error_details.type`).
+                let kind = match &failure {
+                    Ok(ToolError::InvalidInput { .. }) => "invalid_input",
+                    Ok(ToolError::Cancelled) | Err(_) => "tool_cancelled",
+                    Ok(_) => "tool_execution_failed",
+                };
+                let text = match &failure {
+                    Ok(ToolError::Cancelled) => INTERRUPT_FOR_TOOL_USE.to_owned(),
+                    Ok(other) => format_error(&other.to_string()),
+                    Err(message) => message.clone(),
+                };
+                // Fork: Node's failure hook gets the raw `error.message` in `error` and `error_details`
+                // (`hook-flow.ts` `runPostToolUseFailureHooks`); only the model's text is trimmed and limited.
+                let hook_text = match &failure {
+                    _ if !self.node_hooks => text.clone(),
+                    // Node's `cancellation.userVisibleMessage` of the tool, else its fallback (`timeout.ts`).
+                    Ok(ToolError::Cancelled) => tool
+                        .cancel_message()
+                        .map_or_else(|| NODE_TOOL_CANCELLED.to_owned(), Cow::into_owned),
+                    Ok(ToolError::InvalidInput { message } | ToolError::Failed { message }) => {
+                        message.clone()
+                    }
+                    Ok(other) => other.to_string(),
+                    Err(message) => message.clone(),
+                };
+                let mut payload = hooks::post_tool_use_failure(
+                    tool.name(),
+                    &input,
+                    &hook_text,
+                    interrupted,
+                    &context,
                 );
+                // Node's failure input carries the error object next to its message (`error_details`).
+                if self.node_hooks {
+                    payload["error_details"] =
+                        serde_json::json!({"message": hook_text, "type": kind});
+                }
+                let payload = tag(payload, machine);
                 let event =
                     hooks::event(HookEventName::PostToolUseFailure, &session, payload).await;
                 let mut post = self.hooks.run(event, context.cancel.clone()).await;
                 messages.after.append(&mut post.messages);
-                error(text)
+                ToolOutput {
+                    display,
+                    ..error(text)
+                }
             }
         }
     }
+}
+
+impl Pipeline {
+    /// A tool the session does not offer: the incognito gate removed it (the session never had it), or the running
+    /// turn hides it (Fork: an automation turn's mutation tools, the Host's disallowlist, CronPauseSelf outside an
+    /// automation turn; specs/fork-rust-automations.md). Without a session view the turn's limits are unknown: the
+    /// automation tools fail closed.
+    async fn hidden(&self, tool: &dyn Tool, context: &ToolUseContext) -> bool {
+        if self
+            .incognito
+            .as_ref()
+            .is_some_and(|gate| gate.hides(&context.session, tool))
+        {
+            return true;
+        }
+        match context.session_ops.view().await {
+            Some(view) => view.turn.hides(tool.name()),
+            None => rust_cli_kernel_api::turn_limits::TurnLimits::hides_without_view(tool.name()),
+        }
+    }
+}
+
+/// The answer to a tool the session does not offer (the incognito gate and the turn limits), the text an unregistered
+/// tool gets.
+fn no_such_tool(name: &str) -> ToolOutput {
+    error(format!(
+        "<tool_use_error>Error: No such tool available: {name}</tool_use_error>"
+    ))
 }
 
 #[async_trait]
@@ -454,7 +581,13 @@ impl ToolExecutor for Pipeline {
         context: ToolUseContext,
         progress: mpsc::Sender<ToolProgress>,
     ) -> ToolExecution {
-        let mut messages = HookMessages::default();
+        if self.hidden(tool.as_ref(), &context).await {
+            return ToolExecution::output(no_such_tool(tool.name()));
+        }
+        let mut messages = HookMessages {
+            pre_after_result: self.node_hooks,
+            ..HookMessages::default()
+        };
         let (input, call) = match self
             .admit(tool.as_ref(), input, context, &mut messages)
             .await
@@ -462,6 +595,10 @@ impl ToolExecutor for Pipeline {
             Ok(admitted) => admitted,
             Err(Rejection::ByHook(output)) => return messages.finish(output, true),
             Err(Rejection::Other(output)) => return messages.finish(output, false),
+            // `execute` never sets `app_call`, so it never sees an App refusal; answer it as a refusal all the same.
+            Err(Rejection::App(refusal)) => {
+                return messages.finish(wrapped(refusal.message()), false);
+            }
         };
         let output = self
             .call(tool.as_ref(), input, call, progress, &mut messages)
@@ -469,6 +606,10 @@ impl ToolExecutor for Pipeline {
         messages.finish(output, true)
     }
 }
+
+// Fork: specs/fork-rust-node-helper.md F3, `helper/authorizeAppTool`.
+#[path = "pipeline_authorize.rs"]
+mod authorize;
 
 #[cfg(test)]
 #[path = "pipeline_tests.rs"]

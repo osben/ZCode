@@ -261,7 +261,11 @@ impl HookRunner for NoHooks {
         HookOutcome::default()
     }
 
-    fn has_hooks(&self, _event: crate::hooks::HookEventName) -> bool {
+    fn has_hooks(
+        &self,
+        _event: crate::hooks::HookEventName,
+        _workspace: &crate::env::WorkspaceRef,
+    ) -> bool {
         false
     }
 }
@@ -299,6 +303,10 @@ impl Ids for SequentialIds {
 
     fn run(&self) -> RunId {
         RunId::new(self.next("run"))
+    }
+
+    fn execution(&self) -> String {
+        self.next("exec")
     }
 
     fn operation(&self) -> OperationId {

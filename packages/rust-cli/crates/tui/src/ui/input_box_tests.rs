@@ -42,6 +42,7 @@ fn app(level: ColorLevel, background: Rgb, lang: Lang) -> App {
             revision: 0,
             event: KernelEvent::TitleChanged {
                 title: "Fix lint".into(),
+                source: Default::default(),
             },
         },
         0,

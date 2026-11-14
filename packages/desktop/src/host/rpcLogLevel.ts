@@ -16,6 +16,8 @@ const SAVED_WORKFLOWS_DIRECTORY_SUFFIX = /[\\/]\.zcode[\\/]workflows'/;
 export function resolveRpcLogLevel(message: string, ...args: unknown[]): RpcLogLevel {
   // Background details are read once per second and success logs would continuously hit disk; lower the success level for this query only and retain failure diagnostics.
   if (message.startsWith("[rpc:call] zcode-agent.backgroundBashOutputV4 OK (")) return "debug";
+  // 语音输入每 100ms 发送一个音频块，成功日志与音频流同数量级；失败及 start/finish/cancel 仍保留。
+  if (message.startsWith("[rpc:call] voice-input.sendAudio OK (")) return "debug";
 
   // Every Desktop composer polls the dictation model state about once per second to drive the microphone
   // status dot; successes would flood the production log, failures stay at warn.

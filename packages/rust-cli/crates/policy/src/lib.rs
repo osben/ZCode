@@ -19,6 +19,7 @@ mod check;
 mod classifier;
 mod consts;
 mod files;
+mod generic;
 mod guarded;
 mod local_rules;
 mod paths;
@@ -71,7 +72,8 @@ use crate::rules::Rules;
 pub(crate) struct PolicyOptions {
     /// plan 模式按自动模式的语义走分类器（缺省开启）。
     pub(crate) auto_in_plan: bool,
-    /// Fork: Node's plan mode ([`chain::Outer::node_plan`]).
+    /// Fork: the Node desktop permission semantics (the app-server turns it on from `node_desktop`): Node's plan mode
+    /// ([`chain::Outer::node_plan`]) and WebSearch without approval in every mode ([`PolicyGate::own_check`]).
     pub(crate) node_plan: bool,
 }
 
@@ -133,7 +135,8 @@ impl PolicyGate {
         self
     }
 
-    /// Fork: plan mode denies what would ask, with Node's reason (the desktop app-server).
+    /// Fork: the Node desktop permission semantics (the desktop app-server): plan mode denies what would ask, with Node's
+    /// reason, and WebSearch needs no approval in any mode (specs/fork-rust-agent-parity.md).
     #[must_use]
     pub fn with_node_plan_mode(mut self, enabled: bool) -> Self {
         self.options.node_plan = enabled;
@@ -230,6 +233,35 @@ impl PolicyGate {
             plans,
         }
     }
+
+    /// The tool's own check. Fork: under the Node desktop semantics WebSearch needs no approval (Node capability
+    /// `readOnly`, `needsApproval: false`: `mode.build.readOnly`, `mode.plan.readOnly`), so its own ask (or passthrough:
+    /// it has no permission subject) becomes an allow and the inner chain's whole-tool deny and ask rules still come
+    /// first, as in Node. Node denies every call in auto mode and over an auto base (`mode.auto.unimplemented`) before
+    /// that allow.
+    async fn own_check(
+        &self,
+        tool: &dyn Tool,
+        input: &Value,
+        context: &ToolUseContext,
+    ) -> PermissionDecision {
+        let own = tool.check_permissions(input, context).await;
+        let auto =
+            context.mode == PermissionMode::Auto || context.base_mode == PermissionMode::Auto;
+        let needs_no_approval = self.options.node_plan
+            && !auto
+            && tool.name() == rust_cli_kernel_api::tool_names::WEB_SEARCH
+            && matches!(
+                own,
+                PermissionDecision::Ask { .. } | PermissionDecision::Passthrough
+            );
+        if needs_no_approval {
+            return PermissionDecision::Allow {
+                updated_input: None,
+            };
+        }
+        own
+    }
 }
 
 #[async_trait]
@@ -251,23 +283,70 @@ impl ScopedGate for PolicyGate {
         };
         let paths = self.path_context(&base, context).await;
         let root = context.workspace.root.as_str();
-        let own = tool.check_permissions(input, context).await;
-        let subject = tool.permission_subject(input);
         let name = tool.name();
+        let own = self.own_check(tool, input, context).await;
+        let subject = tool.permission_subject(input);
         let guarded = guarded_command(subject.as_ref());
-        let evaluate = |mode: PermissionMode| {
+        let evaluate_with = |mode: PermissionMode, full_access: bool| {
             let inputs = Inputs {
                 mode,
                 rules: &rules,
                 paths: &paths,
                 root,
                 dangerous: guarded::applies(mode, guarded, paths.style),
-                full_access: mode == PermissionMode::BypassPermissions,
+                full_access,
             };
-            let (check, updated) = chain::own(subject.as_ref(), own.clone(), &inputs);
+            let called = chain::Called { tool: name, input };
+            let (check, updated) = chain::own(subject.as_ref(), called, own.clone(), &inputs);
             chain::inner(name, check, updated, &inputs)
         };
-        let result = evaluate(context.mode);
+        let evaluate =
+            |mode: PermissionMode| evaluate_with(mode, mode == PermissionMode::BypassPermissions);
+        let node_plan = context.mode == PermissionMode::Plan && self.options.node_plan;
+        let plan_mcp = (node_plan && tool.mcp_info().is_some()).then(|| chain::PlanMcp {
+            read_only: tool.is_read_only(input),
+            destructive: tool.is_destructive(input),
+        });
+        // Node `checkPlanMode`: over a yolo or guarded base the gate passes a non-destructive MCP tool and any
+        // read-only, non-destructive tool (WebFetch, WebSearch), and the base mode decides it. Plan skips Node's early
+        // yolo allow, so deny and ask rules still apply: the base mode runs without full access.
+        let passes_gate = plan_mcp.is_some()
+            || (node_plan && tool.is_read_only(input) && !tool.is_destructive(input));
+        let base_bypass = passes_gate
+            && matches!(
+                context.base_mode,
+                PermissionMode::BypassPermissions | PermissionMode::Guarded
+            );
+        let mut result = if base_bypass {
+            evaluate_with(context.base_mode, false)
+        } else {
+            evaluate(context.mode)
+        };
+        // Over any other base Node's gate passes a read-only, non-destructive built-in tool too, and `checkBuildMode`
+        // decides it in the base mode. Rust's plan chain already allows what needs no approval; a call it would ask
+        // about (and the plan gate would then deny) is decided in the base mode instead, and its ask goes to the user.
+        // A view without a separate base (a subagent, the fallback view) has `base_mode == Plan`: the gate still denies.
+        let base_decides = !base_bypass
+            && passes_gate
+            && context.base_mode != PermissionMode::Plan
+            && plan_mcp.is_none()
+            && matches!(result, chain::Inner::Ask { .. });
+        if base_decides {
+            result = evaluate(context.base_mode);
+        }
+        if let Some(mcp) = plan_mcp {
+            result = chain::plan_mcp(name, mcp, base_bypass, result);
+        }
+        // Node `checkPermission` denies every call while the base mode is auto (`mode.auto.unimplemented`), before the
+        // plan gate and the project ask rules. An ask left over an auto base is that denial, not a prompt to the user.
+        if node_plan
+            && context.base_mode == PermissionMode::Auto
+            && matches!(result, chain::Inner::Ask { .. })
+        {
+            result = chain::Inner::Deny {
+                message: texts::AUTO_UNIMPLEMENTED.to_owned(),
+            };
+        }
         let call = Call {
             tool: name,
             input,
@@ -278,6 +357,7 @@ impl ScopedGate for PolicyGate {
             auto_in_plan: self.options.auto_in_plan,
             avoid_prompts: base.avoid_prompts,
             node_plan: self.options.node_plan,
+            plan_ask: plan_mcp.is_some() || base_bypass || base_decides,
         };
         chain::outer(
             &call,
@@ -341,8 +421,15 @@ impl PermissionGate for PolicyGate {
             // 会话本身是 yolo 时 hook 放行后也不再询问（工作线 F76）；别的模式这里按 bypass 跑，但不算完全访问。
             full_access: context.mode == PermissionMode::BypassPermissions,
         };
+        // The raw check, not `own_check`: the WebSearch allow belongs to `decide`. Here the bypass chain already passes
+        // the tool's own ask, so a hook's ask still reaches `ask_for` (tools/src/pipeline.rs); do not route this through
+        // `own_check` (a reverted ocr/Codex suggestion on PR #441).
         let own = tool.check_permissions(input, context).await;
-        let (check, updated) = chain::own(subject.as_ref(), own, &inputs);
+        let called = chain::Called {
+            tool: tool.name(),
+            input,
+        };
+        let (check, updated) = chain::own(subject.as_ref(), called, own, &inputs);
         match chain::inner(tool.name(), check, updated, &inputs) {
             chain::Inner::Allow { .. } => None,
             chain::Inner::Deny { message } => Some(PermissionDecision::Deny { message }),
@@ -350,11 +437,13 @@ impl PermissionGate for PolicyGate {
                 message,
                 suggestions,
                 once,
+                independent,
                 kind: _,
             } => Some(PermissionDecision::Ask {
                 message,
                 suggestions,
                 once,
+                independent,
             }),
         }
     }

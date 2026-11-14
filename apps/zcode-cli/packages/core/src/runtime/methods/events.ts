@@ -24,7 +24,6 @@ import { sanitizeTitleSeed } from "@zcode/shared";
 import type { AgentRuntimeInternal } from "../internal.js";
 import { buildPersistedConversationInputIntent } from "./input-intent-persistence.js";
 import { recordToolUsageFromEvent } from "./usage-observability.js";
-import { persistSessionShellEnvironmentSnapshot } from "./session-shell-environment.js";
 import { persistRuntimeModelSelection } from "./turn-model.js";
 import { writeDynamicWorkflowActivationEntryIfActivated } from "./dynamic-workflow-activation.js";
 import { writeSessionFeaturesEntryAfterFirstPersist } from "../session-features/contract.js";
@@ -704,8 +703,6 @@ async function persistSession(
     phase = "session_model_selection";
     const initialSelection = this.getSessionModelSelection();
     if (initialSelection) await persistRuntimeModelSelection(this, initialSelection);
-    phase = "session_shell_snapshot";
-    await persistSessionShellEnvironmentSnapshot(this, traceContext);
     phase = "session_execution_state";
     await this.sessionStore.saveSessionEntry?.(
       buildExecutionStateEntry(this.sessionId, readRuntimeExecutionState(this)),

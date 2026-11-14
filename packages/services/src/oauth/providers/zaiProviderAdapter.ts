@@ -2,13 +2,15 @@ import { Buffer } from "node:buffer";
 import {
   ApiError,
   type ApiClient,
-  formatLogPrefix,
-  ZAI_PROVIDER_ID,
+  ZAI_CN_PROVIDER_ID,
+  type OAuthProviderId,
+  type OAuthLinkedBigModel,
   type OAuthCallbackParams,
   type OAuthProviderMeta,
   type OAuthTokenSet,
   type OAuthUserProfile,
 } from "@zcode/shared";
+import { createServiceLogger } from "#src/logger/serviceLogger.js";
 import { readApiJson } from "../../providers/api/apiJson.js";
 import { ZaiBusinessTokenResolver } from "../../providers/zaiBusinessTokenResolver.js";
 import { parseOAuthLoginAttribution } from "../callbackAttribution.js";
@@ -23,6 +25,7 @@ interface ZaiBackendTokenPayload {
     zai?: {
       access_token?: string;
     } | null;
+    bigmodel?: { customer_id?: string; access_token?: string } | null;
     expires_in?: number;
     user?: ZaiBackendUserPayload;
   } | null;
@@ -56,7 +59,7 @@ interface ZaiUserInfoPayload {
 /** Maximum wait allowed for OAuth startup restoration (1 minute). */
 const OAUTH_USERINFO_TIMEOUT_MS = 60_000;
 const ZAI_BUSINESS_TOKEN_TIMEOUT_MS = 10_000;
-const log = (...args: unknown[]) => console.log(formatLogPrefix("zaiOAuth", process.pid), ...args);
+const log = createServiceLogger("zaiOAuth");
 
 function normalizeExpiresIn(raw: number | undefined, now: () => number): number | undefined {
   if (!raw || !Number.isFinite(raw)) {
@@ -179,46 +182,16 @@ function maskOAuthCode(code: string): string {
   return `${code.slice(0, 4)}...${code.slice(-4)}`;
 }
 
-function maskAccessToken(token: string): string {
-  if (token.length <= 8) {
-    return "*".repeat(token.length);
-  }
-
-  return `${token.slice(0, 4)}...${token.slice(-4)}`;
-}
-
 function sanitizeTokenPayloadForLog(tokenPayload: ZaiBackendTokenPayload): unknown {
-  if (!tokenPayload.data) {
-    return tokenPayload;
-  }
-
-  const token = tokenPayload.data.token;
-  const zaiAccessToken = tokenPayload.data.zai?.access_token;
-
+  // 后端新增 bigmodel 或其他关联字段时，对 data 展开再逐项打码会漏掉新凭据。
+  // 仅输出固定的结构摘要，不让上游新增字段或错误文案直接进入日志。
+  const data = tokenPayload.data;
   return {
-    ...tokenPayload,
-    data: {
-      ...tokenPayload.data,
-      ...(token
-        ? {
-            token: maskAccessToken(token),
-            tokenLength: token.length,
-          }
-        : {}),
-      ...(tokenPayload.data.zai
-        ? {
-            zai: {
-              ...tokenPayload.data.zai,
-              ...(zaiAccessToken
-                ? {
-                    access_token: maskAccessToken(zaiAccessToken),
-                    accessTokenLength: zaiAccessToken.length,
-                  }
-                : {}),
-            },
-          }
-        : {}),
-    },
+    code: typeof tokenPayload.code === "number" ? tokenPayload.code : undefined,
+    hasData: Boolean(data),
+    hasZcodeToken: typeof data?.token === "string" && data.token.length > 0,
+    hasZaiToken: typeof data?.zai?.access_token === "string" && data.zai.access_token.length > 0,
+    hasUser: Boolean(data?.user),
   };
 }
 
@@ -229,7 +202,7 @@ function logTokenResponseError(error: unknown): void {
 
   // Troubleshooting backend 4xx/5xx responses requires the request ID; logging full headers would persist sensitive values such as cookies.
   // readApiJson exposes only safe trace headers; log them with the status code so the backend can locate requests by x-request-id.
-  log("token response error", {
+  log.warn(undefined, "token response error", {
     method: error.method,
     url: error.url,
     status: error.status,
@@ -239,7 +212,7 @@ function logTokenResponseError(error: unknown): void {
 
 /** ZAI OAuth protocol adapter. */
 export class ZaiProviderAdapter implements OAuthProviderAdapter {
-  readonly providerId = ZAI_PROVIDER_ID;
+  readonly providerId: OAuthProviderId;
   readonly meta: OAuthProviderMeta;
   readonly redirectUri: string;
   readonly apiClient: ApiClient;
@@ -253,6 +226,7 @@ export class ZaiProviderAdapter implements OAuthProviderAdapter {
     private config: OAuthProviderRuntimeConfig,
     apiClient: ApiClient,
   ) {
+    this.providerId = config.id;
     this.meta = {
       id: config.id,
       displayName: config.displayName,
@@ -285,6 +259,8 @@ export class ZaiProviderAdapter implements OAuthProviderAdapter {
   }
 
   buildAuthorizeUrl(context: OAuthProviderContext): string {
+    if (this.providerId === ZAI_CN_PROVIDER_ID)
+      throw new Error("中国区授权必须使用服务端 init 返回的 URL");
     const query = new URLSearchParams({
       redirect_uri: context.redirectUri,
       response_type: "code",
@@ -301,7 +277,10 @@ export class ZaiProviderAdapter implements OAuthProviderAdapter {
     // Convert at the same adapter boundary for polling and deep links so the two login methods persist the same semantics.
     return {
       ...tokenSet,
-      accessToken: await this.businessTokenResolver.resolve(tokenSet.accessToken),
+      accessToken:
+        this.providerId === ZAI_CN_PROVIDER_ID
+          ? tokenSet.accessToken
+          : await this.businessTokenResolver.resolve(tokenSet.accessToken),
     };
   }
 
@@ -311,12 +290,12 @@ export class ZaiProviderAdapter implements OAuthProviderAdapter {
   ): Promise<OAuthTokenSet> {
     // During troubleshooting of the backend OAuth token route, the old logs recorded only a 404 result and not the actual client request.
     // Log the method/url/header/body shape here and redact the one-time code so the sensitive authorization code is not persisted.
-    log("token request", {
+    log.info(undefined, "token request", {
       method: "POST",
       url: this.config.tokenUrl,
       headers: { "Content-Type": "application/json" },
       body: {
-        provider: ZAI_PROVIDER_ID,
+        provider: this.providerId,
         code: maskOAuthCode(params.code),
         codeLength: params.code.length,
         redirect_uri: context.redirectUri,
@@ -335,7 +314,7 @@ export class ZaiProviderAdapter implements OAuthProviderAdapter {
           // The zcode OAuth token backend now serves both Z.AI and BigModel.
           // Pass the provider enum explicitly so the token exchange does not route incorrectly by inferring the login domain from redirect_uri alone.
           body: JSON.stringify({
-            provider: ZAI_PROVIDER_ID,
+            provider: this.providerId,
             code: params.code,
             redirect_uri: context.redirectUri,
             state: context.state,
@@ -350,7 +329,7 @@ export class ZaiProviderAdapter implements OAuthProviderAdapter {
     // The ZAI token response is immediately mapped to OAuthTokenSet in the adapter, so the Root layer sees only the normalized login result
     // and cannot inspect the final response body when troubleshooting production responses. Log a redacted body before mapping, preserving the code/msg/data structure,
     // without persisting the full access token.
-    log("token final response body", sanitizeTokenPayloadForLog(tokenPayload));
+    log.info(undefined, "token final response body", sanitizeTokenPayloadForLog(tokenPayload));
 
     if (tokenPayload.code !== 0) {
       throw new Error(tokenPayload.msg?.trim() || "ZAI 后端 token 交换失败");
@@ -367,9 +346,14 @@ export class ZaiProviderAdapter implements OAuthProviderAdapter {
     }
     // Z.AI business endpoints accept only the platform JWT returned by /api/auth/z/login.
     // Convert it during login so oauth:zai:access_token stores the business token and no fallback exchange is needed later.
-    const businessAccessToken = await this.businessTokenResolver.resolve(accessToken);
+    const businessAccessToken =
+      this.providerId === ZAI_CN_PROVIDER_ID
+        ? accessToken
+        : await this.businessTokenResolver.resolve(accessToken);
 
     const backendUser = tokenPayload.data?.user ?? undefined;
+    if (!backendUser?.user_id?.trim())
+      throw new Error("Token 交换失败：响应缺少 data.user.user_id");
     if (hasMeaningfulBackendUser(backendUser)) {
       this.lastBackendUserProfile = {
         state: context.state,
@@ -385,6 +369,7 @@ export class ZaiProviderAdapter implements OAuthProviderAdapter {
     return {
       accessToken: businessAccessToken,
       zcodeJwtToken,
+      linkedBigModel: readLinkedBigModel(tokenPayload.data?.bigmodel),
       ...(expiresAt ? { expiresAt } : {}),
     };
   }
@@ -397,6 +382,22 @@ export class ZaiProviderAdapter implements OAuthProviderAdapter {
       const profile = this.lastBackendUserProfile.profile;
       this.lastBackendUserProfile = null;
       return profile;
+    }
+
+    if (this.providerId === ZAI_CN_PROVIDER_ID) {
+      if (!tokenSet.zcodeJwtToken) throw new Error("中国区 profile 缺少 ZCode JWT");
+      const payload = await readApiJson<ZaiBackendTokenPayload>(
+        this.apiClient,
+        this.config.userinfoUrl,
+        {
+          headers: { Authorization: `Bearer ${tokenSet.zcodeJwtToken}` },
+          authFailurePolicy: "caller-handled",
+          timeoutMs: OAUTH_USERINFO_TIMEOUT_MS,
+        },
+      );
+      if (payload.code !== 0 || !payload.data?.user?.user_id?.trim())
+        throw new Error("中国区 profile 响应无效");
+      return toBackendUserProfile(payload.data.user);
     }
 
     const userinfoPayload = await readApiJson<ZaiUserInfoPayload>(
@@ -434,4 +435,15 @@ export class ZaiProviderAdapter implements OAuthProviderAdapter {
 
     return new Error(`ZAI OAuth 异常: ${String(error)}`);
   }
+}
+
+/** 只接受服务端明确返回的完整关联；缺失块不继承上一账号的数据。 */
+export function readLinkedBigModel(value: unknown): OAuthLinkedBigModel | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "object") throw new Error("BigModel 关联响应无效");
+  const raw = value as Record<string, unknown>;
+  const customerId = typeof raw.customer_id === "string" ? raw.customer_id.trim() : "";
+  const accessToken = typeof raw.access_token === "string" ? raw.access_token.trim() : "";
+  if (!customerId || !accessToken) throw new Error("BigModel 关联响应缺少身份或凭据");
+  return { customerId, accessToken };
 }

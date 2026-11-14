@@ -12,14 +12,14 @@ use crate::result::Blocking;
 
 /// PreToolUse 的 `continue: false`。
 pub(crate) const STOPPED_BY_HOOK: &str = "Execution stopped by hook";
-/// PostToolUse 的 `continue: false`（`ooe`）。
-pub(crate) const STOPPED_BY_POST_TOOL_USE: &str = "Execution stopped by PostToolUse hook";
+/// Node `call-runner.ts` fallback for a PreToolUse refusal with neither a reason nor a stop reason.
+pub(crate) const BLOCKED_BY_PRE_TOOL_USE: &str = "Blocked by PreToolUse hook";
 /// Stop 的 `continue: false`。
 pub(crate) const STOP_PREVENTED: &str = "Stop hook prevented continuation";
 /// UserPromptSubmit 的 `continue: false`。
 pub(crate) const OPERATION_STOPPED: &str = "Operation stopped by hook";
-/// PermissionRequest 拒绝时没有 message。
-pub(crate) const PERMISSION_DENIED_BY_HOOK: &str = "Permission denied by hook";
+/// Node `hook-flow.ts`: a PermissionRequest hook that stops (`continue: false`) without a `stopReason`.
+pub(crate) const DENIED_BY_PERMISSION_REQUEST_HOOK: &str = "Denied by PermissionRequest hook";
 
 /// 转义：`<system-reminder` 与 `</system-reminder` 前的 `<`、结尾单独的 `<` 转成 `&lt;`。
 pub(crate) fn escape(text: &str) -> String {
@@ -142,6 +142,8 @@ pub(crate) fn success(ids: &dyn Ids, hook_name: &str, event: &str, content: &str
 /// meta user 消息（`createUserMessage({isMeta: true})`），文本原样。
 pub(crate) fn meta(ids: &dyn Ids, source: &str, text: String) -> Message {
     Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
         id: ids.message(),
         content: vec![ContentBlock::Text { text }],
         origin: UserOrigin::Meta {
@@ -164,10 +166,8 @@ pub(crate) fn pre_tool_blocking(hook_name: &str, blocking: &Blocking) -> String 
     format!("{hook_name} hook error: {}", blocking.error)
 }
 
-/// PreToolUse 的 JSON 决定没有原因时的文本（`getRuleBehaviorDescription`）。
-pub(crate) fn decision_default(hook_name: &str, verb: &str) -> String {
-    format!("Hook {hook_name} {verb} this tool")
-}
+/// Node `hook-flow.ts`: a PreToolUse ask with no `permissionDecisionReason`.
+pub(crate) const ASK_REQUIRES_APPROVAL: &str = "Tool requires approval by PreToolUse hook";
 
 /// UserPromptSubmit 的阻塞说明。
 pub(crate) fn prompt_blocked(blocking: &Blocking, prompt: &str, suppress: bool) -> String {

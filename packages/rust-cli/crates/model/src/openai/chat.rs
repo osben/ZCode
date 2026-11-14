@@ -148,6 +148,7 @@ fn user_part(part: Part) -> Value {
         Part::File(url) => {
             json!({"type": "file", "file": {"filename": super::PDF_NAME, "file_data": url}})
         }
+        Part::Video(url) => json!({"type": "video_url", "video_url": {"url": url}}),
     }
 }
 

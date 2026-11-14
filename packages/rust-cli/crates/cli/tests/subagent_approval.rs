@@ -377,6 +377,7 @@ async fn drive(harness: &Harness) -> (Vec<String>, Arc<dyn SessionHandle>) {
             selection: selection(),
             mode: PermissionMode::Default,
             plan: false,
+            incognito: None,
         })
         .await
         .unwrap();
@@ -549,6 +550,7 @@ async fn a_stalled_request_after_the_approval_leaves_the_incident_trail() {
             selection: selection(),
             mode: PermissionMode::Default,
             plan: false,
+            incognito: None,
         })
         .await
         .unwrap();

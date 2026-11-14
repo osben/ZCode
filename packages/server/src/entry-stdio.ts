@@ -10,6 +10,8 @@ import {
   helloAckMessageSchema,
 } from "@zcode/shared";
 import type { HelloMessage, HelloAckMessage } from "@zcode/shared";
+import { prepareServerCredentialStorage } from "@zcode/shared/credential-security";
+import { join } from "node:path";
 import { createStdioServer } from "./stdio.js";
 import { registerStdioProcessLifecycle } from "./stdio-lifecycle.js";
 import { createStdioServices } from "./stdioServices.js";
@@ -58,6 +60,9 @@ async function main() {
   // lack X-Device-Mid and Start Plan billing/balance requests are rejected. The remote server owns the device identity lifecycle on that host,
   // so ensure deviceMid exists before creating services (see stdioDeviceMid.ts).
   await ensureRemoteServerDeviceMid({ log });
+  if (process.argv.includes("--prepare-credentials")) {
+    await prepareServerCredentialStorage({ filePath: join(getAppConfigDir(), "credentials.json") });
+  }
 
   // Phase 3: Initialize services and start stdio RPC server
   let topicResourceChannel: IChannel | undefined;
@@ -67,7 +72,7 @@ async function main() {
   });
   // Fork form: no settings argument. The projected settings seed has no live consumer (services part 4, section 7).
   await migrateApplicationStorage();
-  const { authorityModeParseResult, services } = createStdioServices({
+  const { authorityModeParseResult, services } = await createStdioServices({
     env: process.env,
     zcodeBuiltinProviderConfigFilePath,
     topicResourceRelayChannel: () => {

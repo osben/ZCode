@@ -380,7 +380,7 @@ class BackendSourceServerTransportAdapter implements SourceServerTransportAdapte
       // Bug cause: update now restarts the full daemon; if the existing transport capability
       // boundary is not passed to the target bootstrap CLI, WSL/Docker will try to register an
       // unavailable systemd user service at handoff.
-      `${this.kind === "ssh" ? "" : "ZCODE_SERVER_SKIP_SERVICE_REGISTRATION=1 "}${bootstrapDirShell}/bin/zcode update --from-archive ${remoteArchiveShell}${options.force ? " --force" : ""}${options.allowDowngrade ? " --allow-downgrade" : ""} --server-root ${SERVER_ROOT_SHELL} --json --progress`,
+      `${this.kind === "ssh" ? "" : "ZCODE_SERVER_SKIP_SERVICE_REGISTRATION=1 "}${bootstrapDirShell}/bin/zcode update --from-archive ${remoteArchiveShell}${options.force ? " --force" : ""}${options.allowDowngrade ? " --allow-downgrade" : ""} --server-root ${SERVER_ROOT_SHELL} --json --progress --prepare-credentials`,
     ].join(" && ");
     // After upload, the command still extracts, verifies the whole tree, and rotates the
     // daemon; phases must be consumed as they arrive, not displayed only at exit.
@@ -423,7 +423,11 @@ class BackendSourceServerTransportAdapter implements SourceServerTransportAdapte
       status?.state === "ready" && Number.isInteger(status.port) && (status.port as number) > 0;
     if (!observedReady) {
       context.onLog?.({ phase: "daemon", message: "Starting Source Server" });
-      const result = await this.exec(target, ["serve", "--daemon", "--json"], context);
+      const result = await this.exec(
+        target,
+        ["serve", "--daemon", "--json", "--prepare-credentials"],
+        context,
+      );
       if (result.exitCode !== 0) {
         // Bug cause: the Server CLI's --json errors are written to stdout while Node runtime
         // warnings go to stderr. The old logic read only stderr and ended up presenting a SQLite

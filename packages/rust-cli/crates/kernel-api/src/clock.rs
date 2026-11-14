@@ -62,6 +62,9 @@ pub trait Ids: Send + Sync {
     fn message(&self) -> MessageId;
     fn turn(&self) -> TurnId;
     fn run(&self) -> RunId;
+    /// 子代理的一次运行（Node `executionId`，每次运行一个新的 UUID，runner.ts）：stopControl 与无进展提醒的 originMeta
+    /// 用它。
+    fn execution(&self) -> String;
     fn operation(&self) -> OperationId;
     fn interaction(&self) -> InteractionId;
 

@@ -3,6 +3,7 @@
 use rusqlite::Connection;
 use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
 use rust_cli_kernel_api::ids::{CommandId, EnvironmentId, MessageId, SessionId, TraceId, TurnId};
+use rust_cli_kernel_api::incognito::IncognitoProfile;
 use rust_cli_kernel_api::model::{ModelConnection, ModelSelection};
 use rust_cli_kernel_api::permission::ExecutionState;
 use rust_cli_kernel_api::store::{
@@ -26,6 +27,13 @@ pub fn load(
     conn: &Connection,
     session: &SessionId,
 ) -> Result<(LoadedSession, Vec<crate::rewind::Active>), StoreError> {
+    // Fork: Node `SqliteSessionStore.getSession` hides a session with a purge row (specs/fork-rust-agent-parity.md
+    // "Session runtime presence on the shared database").
+    if crate::presence::is_purging(conn, session.as_str())? {
+        return Err(StoreError::NotFound {
+            session: session.clone(),
+        });
+    }
     let row = live_session(conn, session)?;
     let records = messages::messages(conn, session.as_str()).storage()?;
     let branch = Branch::from_revert(row.revert.as_ref());
@@ -62,6 +70,11 @@ pub fn load(
             row.title_source.as_deref().unwrap_or("first_input"),
             "default" | "first_input"
         ),
+        title_source: row
+            .title_source
+            .as_deref()
+            .map(rust_cli_kernel_api::title::Source::stored),
+        permission_grant: permission_grant(conn, session)?,
         checkpoints: Vec::new(),
         turn: turn.clone(),
         // 续写时补 assistant 的判断（session-lifecycle.md §6.3.1）：当前轮的 `turn_usage` 是错误。
@@ -72,8 +85,33 @@ pub fn load(
             }
             None => false,
         },
+        // Fork: set by `fork_execution_worktree::run_in_worktree` after the load.
+        execution_worktree: false,
     };
     Ok((loaded, crate::rewind::active_checkpoints(conn, session)?))
+}
+
+/// Fork (B3): Node `restorePermissionGrantMarker`: the last stored grant receipt names the composer's adoption key; an
+/// invalid one or another session's is ignored (logged, the cold read goes on).
+fn permission_grant(conn: &Connection, session: &SessionId) -> Result<Option<String>, StoreError> {
+    let stored = crate::repo::entries::list(
+        conn,
+        session.as_str(),
+        Some(crate::records::PERMISSION_FULL_ACCESS_ENTRY),
+    )
+    .storage()?;
+    let Some(last) = stored.last() else {
+        return Ok(None);
+    };
+    let grant = crate::records::permission_grant_of(session.as_str(), &last.data);
+    if grant.is_none() {
+        tracing::warn!(
+            event = "session.resume.permission_grant_invalid",
+            session = %session,
+            "ignoring an invalid permission grant receipt"
+        );
+    }
+    Ok(grant)
 }
 
 /// Fork: the `anchor.sourceCommandId` of each user message (Node `buildProjectionAnchor` writes it for typed input), so
@@ -137,6 +175,11 @@ pub fn list(conn: &Connection, filter: &SessionFilter) -> Result<Vec<SessionSumm
             id: SessionId::new(row.id),
             title: row.title,
             updated_at_ms: u64::try_from(row.time_updated).unwrap_or(0),
+            created_at_ms: u64::try_from(row.time_created).unwrap_or(0),
+            last_outcome: row.last_outcome,
+            parent: row.parent_id.map(SessionId::new),
+            title_source: row.title_source,
+            incognito: row.incognito.is_some(),
         })
         .collect())
 }
@@ -162,6 +205,8 @@ fn meta(row: &SessionRow) -> SessionMeta {
         // Node 会话都写 traceID；缺失时（极旧的会话）链路 ID 取会话 ID。
         trace: TraceId::new(row.trace_id.as_deref().unwrap_or(&row.id)),
         created_at_ms: u64::try_from(row.time_created).unwrap_or(0),
+        // Fork: a present column never reads as a normal session (unparseable values read as lockdown).
+        incognito: row.incognito.as_deref().map(IncognitoProfile::from_stored),
     }
 }
 

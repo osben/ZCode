@@ -19,11 +19,25 @@ pub(crate) struct HookMessages {
     pub pre_stop: Vec<Message>,
     /// Fork: the tool itself asked to end the turn ([`rust_cli_kernel_api::tool::ToolCallOutput::stop_turn`]).
     pub stop_turn: bool,
+    /// Fork: a PreToolUse hook asked to stop (`continue: false`), with its `stopReason`; an MCP App call is denied then
+    /// (pipeline_authorize.rs, Node's `preventContinuation`).
+    pub pre_stopped: Option<Option<String>>,
+    /// Fork: the call is an MCP App call's authorization, which a stopping hook ends before the gate.
+    pub app_call: bool,
+    /// Fork (node_desktop): `before` goes to the front of `after`, so a PreToolUse context reaches the model after the
+    /// tool result like Node's post-batch reminders; the call's outcome does not matter.
+    pub pre_after_result: bool,
 }
 
 impl HookMessages {
     pub(crate) fn finish(self, output: ToolOutput, keep_pre_stop: bool) -> ToolExecution {
-        let mut after = self.after;
+        let (before, mut after) = if self.pre_after_result {
+            let mut after = self.before;
+            after.extend(self.after);
+            (Vec::new(), after)
+        } else {
+            (self.before, self.after)
+        };
         if keep_pre_stop {
             after.extend(self.pre_stop);
         }
@@ -34,7 +48,7 @@ impl HookMessages {
             });
         ToolExecution {
             output,
-            before: self.before,
+            before,
             after,
             prevent_continuation,
         }
@@ -60,6 +74,7 @@ pub(crate) async fn event(
             cwd: None,
             run: Some(context.run.clone()),
             selection,
+            session_mode: None,
         },
         ..HookEvent::new(
             name,
@@ -149,4 +164,7 @@ pub(crate) fn replace_output(output: &mut ToolOutput, value: Value) {
 pub(crate) fn take_pre(messages: &mut HookMessages, outcome: &mut HookOutcome) {
     messages.before.append(&mut outcome.messages);
     messages.pre_stop.append(&mut outcome.after_result);
+    if outcome.prevent_continuation {
+        messages.pre_stopped = Some(outcome.stop_reason.clone());
+    }
 }

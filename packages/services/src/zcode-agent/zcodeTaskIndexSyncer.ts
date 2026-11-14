@@ -610,17 +610,20 @@ export function createZCodeTaskIndexSyncer(
     });
     // updatedAt comes from the CLI summary: Host receive time must not reorder history (I6).
     const updatedAt = summary.lastActivityAt;
-    void taskIndexRepo
-      .applyAgentPatch({
-        workspacePath: target.workspacePath,
-        workspaceIdentity: target.workspaceIdentity,
-        taskId: target.sessionId,
-        // sessions-index summaries do not include lastError details for error states. Let the subsequent snapshot write the authoritative value
-        // (a patch without the lastError key preserves the current value); completed retains the legacy behavior of clearing it.
-        patch: failed
-          ? { status: "error", updatedAt }
-          : { status: "completed", lastError: undefined, updatedAt },
-      })
+    void serializeSummaryWrite(target, () =>
+      mirrorSummaryOrWarn(target, summary).then(() =>
+        taskIndexRepo.applyAgentPatch({
+          workspacePath: target.workspacePath,
+          workspaceIdentity: target.workspaceIdentity,
+          taskId: target.sessionId,
+          // sessions-index summaries do not include lastError details for error states. Let the subsequent snapshot write the authoritative value
+          // (a patch without the lastError key preserves the current value); completed retains the legacy behavior of clearing it.
+          patch: failed
+            ? { status: "error", updatedAt }
+            : { status: "completed", lastError: undefined, updatedAt },
+        }),
+      ),
+    )
       .then((meta) => {
         if (meta) {
           // Previously only SQLite was updated, with no broadcast; the UI listening for workspace_task_list_changed received no notice,
@@ -672,11 +675,12 @@ export function createZCodeTaskIndexSyncer(
     target: ZCodeAgentSessionTarget,
     summary: SessionSummary,
   ): void {
-    void taskIndexRepo
-      .admitForkSummary({
+    void serializeSummaryWrite(target, () =>
+      taskIndexRepo.admitForkSummary({
         meta: buildBaselineMetaFromSummary(workspace, summary),
         titleSource: summary.titleSource,
-      })
+      }),
+    )
       .then(({ meta, changed }) => {
         // Steady-state summaries change nothing in the admitted facts; broadcast only the first claim or a real fact change.
         if (changed)
@@ -688,6 +692,67 @@ export function createZCodeTaskIndexSyncer(
   }
 
   /**
+   * Upstream taskFacts.ingest: applyCliFacts is the single CLI-facts writer and the only path that admits a row into the
+   * project tree (specs/fork-task-index-cli-facts-admission.md). Fork children are admitted by admitForkChild, whose claim
+   * must precede applyCliFacts.
+   */
+  function mirrorSummary(
+    target: ZCodeAgentSessionTarget,
+    summary: SessionSummary,
+  ): Promise<ZCodeTaskMeta | null> {
+    if (isForkAdmissionCandidate(summary)) return Promise.resolve(null);
+    const lastOutcome = summary.lastOutcome;
+    return taskIndexRepo.applyCliFacts({
+      meta: {
+        taskId: summary.sessionId,
+        traceId: generateTraceId(summary.sessionId),
+        title: summary.title,
+        ...(summary.titleUpdatedAt !== undefined ? { titleUpdatedAt: summary.titleUpdatedAt } : {}),
+        workspacePath: target.workspacePath,
+        workspaceIdentity: target.workspaceIdentity,
+        createdAt: summary.createdAt,
+        updatedAt: summary.lastActivityAt,
+        mode: "default",
+        provider: ZCODE_AGENT_PROVIDER,
+        ...(summary.parentSessionId ? { forkedFromTaskId: summary.parentSessionId } : {}),
+        ...(lastOutcome ? { status: lastOutcome === "error" ? "error" : "completed" } : {}),
+      },
+      titleSource: summary.titleSource,
+      lastOutcome,
+    });
+  }
+
+  // Summary-driven writes for one task run in arrival order. A handler's follow-up patch writes the same
+  // title/status/updatedAt as the CLI facts, so it must not land after the next summary's facts.
+  const summaryWrites = new Map<string, Promise<void>>();
+  function serializeSummaryWrite<T>(
+    target: ZCodeAgentSessionTarget,
+    write: () => Promise<T>,
+  ): Promise<T> {
+    const key = JSON.stringify([resolveWorkspaceKey(target), target.sessionId]);
+    const next = (summaryWrites.get(key) ?? Promise.resolve()).then(write);
+    const settled = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    summaryWrites.set(key, settled);
+    void settled.then(() => {
+      if (summaryWrites.get(key) === settled) summaryWrites.delete(key);
+    });
+    return next;
+  }
+
+  function mirrorSummaryOrWarn(
+    target: ZCodeAgentSessionTarget,
+    summary: SessionSummary,
+  ): Promise<ZCodeTaskMeta | null> {
+    return mirrorSummary(target, summary).catch((error) => {
+      logger.warn(undefined, `Could not mirror CLI facts taskId=${target.sessionId}`, error);
+      return null;
+    });
+  }
+
+  /**
    * Title change → patch the SQLite title only; fetch a full snapshot if the row is missing (matching legacy first_input semantics).
    * The patch deliberately carries no updatedAt: a rename or title echo is not session activity, so the row keeps its CLI order (I6).
    */
@@ -696,42 +761,21 @@ export function createZCodeTaskIndexSyncer(
     title: string,
     summary: SessionSummary,
   ): void {
-    void taskIndexRepo
-      .applyAgentPatch({
-        workspacePath: target.workspacePath,
-        workspaceIdentity: target.workspaceIdentity,
-        taskId: target.sessionId,
-        patch: { title },
-      })
-      .then(async (meta) => {
+    void serializeSummaryWrite(target, () =>
+      mirrorSummaryOrWarn(target, summary).then((mirrored) =>
+        taskIndexRepo
+          .applyAgentPatch({
+            workspacePath: target.workspacePath,
+            workspaceIdentity: target.workspaceIdentity,
+            taskId: target.sessionId,
+            patch: { title },
+          })
+          .then((patched) => patched ?? mirrored),
+      ),
+    )
+      .then((meta) => {
         if (meta) {
-          // Title recency is a CLI fact; applyCliFacts is its only writer on admitted rows (docs/ui/task-title-authority.md).
-          // applyAgentPatch above keeps its own write for the title text, so the recency is persisted through the CLI-facts path.
-          const persisted =
-            summary.titleUpdatedAt === undefined
-              ? meta
-              : await taskIndexRepo.applyCliFacts({
-                  meta: {
-                    taskId: summary.sessionId,
-                    traceId: generateTraceId(summary.sessionId),
-                    title,
-                    workspacePath: target.workspacePath,
-                    workspaceIdentity: target.workspaceIdentity,
-                    createdAt: summary.createdAt,
-                    updatedAt: summary.lastActivityAt,
-                    mode: "default",
-                    provider: ZCODE_AGENT_PROVIDER,
-                    titleUpdatedAt: summary.titleUpdatedAt,
-                  },
-                  titleSource: summary.titleSource,
-                });
-          // Title changes (first message/automatic title generation) are unrelated to ownership and occur for every task.
-          // Use a dedicated reason to avoid reloading global membership whenever the initial or terminal title is persisted.
-          emitWorkspaceTaskListChanged(
-            broadcastTargetFrom(target),
-            persisted,
-            "task_title_changed",
-          );
+          emitWorkspaceTaskListChanged(broadcastTargetFrom(target), meta, "task_title_changed");
         } else {
           // Draft sessions do not pre-write placeholder rows. If the first title (legacy first_input) arrives before any
           // snapshot upsert, fetch a full snapshot rather than relying on an empty session placeholder.
@@ -809,15 +853,87 @@ export function createZCodeTaskIndexSyncer(
       // A V4 prewarmed session promoted from draft, or a new session first seen in an online delta,
       // does not pass through zcodeSessionService.createSession. This is the earliest new-task boundary and does not depend on title timing;
       // fetch a snapshot immediately to write the task row and minimum grouped-root sort_order, preventing an unsequenced node from landing at the end.
-      void resyncTaskIndexRowFromAgent(target, "session.became-visible", {
-        moveGroupedTaskToTop: true,
-      });
+      // The mirror admits the row before the snapshot write places it at the grouped top.
+      void serializeSummaryWrite(target, () => mirrorSummaryOrWarn(target, next))
+        .then((meta) => {
+          if (meta) emitWorkspaceTaskListChanged(broadcastTargetFrom(target), meta, "task_created");
+          return resyncTaskIndexRowFromAgent(target, "session.became-visible", {
+            moveGroupedTaskToTop: true,
+          });
+        })
+        .catch((error) =>
+          logger.warn(
+            undefined,
+            `Could not index visible session taskId=${target.sessionId}`,
+            error,
+          ),
+        );
       return;
     }
     const title = next.title.trim();
     if (title && (previous === undefined || previous.title !== next.title)) {
       applyTitleChange(target, title, next);
+    } else {
+      void serializeSummaryWrite(target, () => mirrorSummaryOrWarn(target, next));
     }
+  }
+
+  /**
+   * Seeding passes of the initial snapshot: each session comes one pass after the session it was forked from, because
+   * admitForkSummary claims a fork for its parent's project only once the parent row is owned.
+   */
+  function parentsBeforeForks(candidates: SessionSummary[]): SessionSummary[][] {
+    const byId = new Map(candidates.map((summary) => [summary.sessionId, summary]));
+    const depthOf = new Map<string, number>();
+    for (const summary of candidates) {
+      const chain: SessionSummary[] = [];
+      const inChain = new Set<string>();
+      let cursor: SessionSummary | undefined = summary;
+      while (cursor && !depthOf.has(cursor.sessionId) && !inChain.has(cursor.sessionId)) {
+        chain.push(cursor);
+        inChain.add(cursor.sessionId);
+        cursor = cursor.parentSessionId ? byId.get(cursor.parentSessionId) : undefined;
+      }
+      let depth = cursor ? (depthOf.get(cursor.sessionId) ?? -1) + 1 : 0;
+      for (const link of chain.reverse()) {
+        depthOf.set(link.sessionId, depth);
+        depth += 1;
+      }
+    }
+    const passes: SessionSummary[][] = [];
+    for (const summary of candidates) {
+      const depth = depthOf.get(summary.sessionId) ?? 0;
+      (passes[depth] ??= []).push(summary);
+    }
+    return passes.filter((pass) => pass.length > 0);
+  }
+
+  function seedBaselineSummary(
+    state: WorkspaceIngestState,
+    baseline: SessionSummary,
+  ): Promise<unknown> {
+    if (baseline.phase === "draft")
+      return taskIndexRepo.seedTaskMetaIfMissing(
+        buildBaselineMetaFromSummary(state.target, baseline),
+      );
+    // Like upstream taskFacts.ingest: an existing non-draft session is admitted with its CLI facts,
+    // so a fresh task index lists it without waiting for a later summary.
+    const target = sessionTargetFrom(state.target, baseline.sessionId);
+    return serializeSummaryWrite(target, async () => {
+      // A later batch is queued after earlier batches settle, and an online summary may replace the snapshot copy
+      // meanwhile. Write the current summary: stale facts must not land after newer ones, and the current summary must
+      // still be admitted when its own online write failed.
+      const current = state.summaries.get(baseline.sessionId);
+      if (!current || current.phase === "draft") return;
+      if (isForkAdmissionCandidate(current)) {
+        await taskIndexRepo.admitForkSummary({
+          meta: buildBaselineMetaFromSummary(state.target, current),
+          titleSource: current.titleSource,
+        });
+        return;
+      }
+      await mirrorSummary(target, current);
+    });
   }
 
   async function seedMissingRowsFromInitialSnapshot(
@@ -838,19 +954,17 @@ export function createZCodeTaskIndexSyncer(
     // Write in fixed small batches and summarize failures in one production log rather than creating a log storm with per-session errors.
     let failedCount = 0;
     let firstError: unknown;
-    for (let offset = 0; offset < candidates.length; offset += INITIAL_BASELINE_SEED_BATCH_SIZE) {
-      const batch = candidates.slice(offset, offset + INITIAL_BASELINE_SEED_BATCH_SIZE);
-      const results = await Promise.allSettled(
-        batch.map((summary) => {
-          const meta = buildBaselineMetaFromSummary(state.target, summary);
-          if (!isForkAdmissionCandidate(summary)) return taskIndexRepo.seedTaskMetaIfMissing(meta);
-          return taskIndexRepo.admitForkSummary({ meta, titleSource: summary.titleSource });
-        }),
-      );
-      for (const result of results) {
-        if (result.status === "rejected") {
-          failedCount += 1;
-          firstError ??= result.reason;
+    for (const pass of parentsBeforeForks(candidates)) {
+      for (let offset = 0; offset < pass.length; offset += INITIAL_BASELINE_SEED_BATCH_SIZE) {
+        const batch = pass.slice(offset, offset + INITIAL_BASELINE_SEED_BATCH_SIZE);
+        const results = await Promise.allSettled(
+          batch.map((summary) => seedBaselineSummary(state, summary)),
+        );
+        for (const result of results) {
+          if (result.status === "rejected") {
+            failedCount += 1;
+            firstError ??= result.reason;
+          }
         }
       }
     }
@@ -2054,9 +2168,10 @@ function hasUserVisibleContent(snapshot: ZCodeSessionStateSnapshot): boolean {
 
 const TASK_SEARCH_TEXT_MAX_CHARS = 200_000;
 
-// Global session search indexes only chat content visible by default, excluding reasoning, tool calls, and collapsed compaction sections.
-// Assistant parts may contain both historical and latest content; take only the final text part here,
-// matching the range shown in the UI's default collapsed view.
+// Global session search indexes only default-visible chat text, excluding reasoning, tool calls, and the collapsed compaction section.
+// An assistant message stores one text part per text block (apps/zcode-cli/docs/design/v2/model/assistant-block-order.md).
+// Concatenate them in order to restore the content of the single text part from before that change, then apply the original rule;
+// taking only the last part would drop the body text before a tool call.
 function buildSearchableTextFromSnapshot(snapshot: ZCodeSessionStateSnapshot): string {
   const parts: string[] = [];
   let total = 0;
@@ -2071,9 +2186,12 @@ function buildSearchableTextFromSnapshot(snapshot: ZCodeSessionStateSnapshot): s
     if (textParts.length === 0) {
       continue;
     }
-    const chosen = message.info.role === "assistant" ? textParts.slice(-1) : textParts;
-    for (const part of chosen) {
-      const content = part.text.trim();
+    const texts =
+      message.info.role === "assistant"
+        ? [textParts.map((part) => part.text).join("")]
+        : textParts.map((part) => part.text);
+    for (const text of texts) {
+      const content = text.trim();
       if (!content) {
         continue;
       }

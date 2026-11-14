@@ -1,6 +1,7 @@
-// Host-injected context for v4 row rendering (required to reconnect ai-elements / ToolCallBlocks).
-// Injection follows PermissionDialog (decoupled from store): display components do not read stores themselves.
-// The host (SessionPane) reads theme/codePreviewSettings and passes them down as stable props.
+import { createContext } from "react";
+// v4 行渲染上下文（ai-elements / ToolCallBlocks 回接所需的宿主注入面）。
+// 注入模式对齐 PermissionDialog（store 耦合剥离）：展示组件不自取 store，
+// theme / codePreviewSettings 在宿主（SessionPane）处取，向下走稳定 props。
 import type { CodePreviewSettings } from "@/lib/codePreviewSettings.js";
 import type { CodeViewerSource } from "@/lib/codeViewer.js";
 import type { AssistantPreviewCardsAutoOpenRequest } from "@/lib/assistantPreviewCards.js";
@@ -65,13 +66,11 @@ export interface ConversationRowRenderContext {
   messageStreamFirstReasoningRowId?: number;
   /** Standard setting: whether to render Todo tool cards in the conversation stream. */
   messageStreamShowTodos?: boolean;
-  /** Standard setting: whether to aggregate consecutive Explore-compatible tools. */
-  toolGroupingExploreEnabled?: boolean;
-  /** Standard setting: whether to aggregate consecutive non-read-only Shell tools. */
-  toolGroupingTerminalEnabled?: boolean;
-  /** Standard setting: whether to aggregate consecutive file-writing tools. */
-  toolGroupingChangesEnabled?: boolean;
-  /** Tier 1 fork navigation: switch the current pane to the target session (forkNotice → parent session, reusing onSessionCreated for an in-place switch). rowId is reserved for Tier 2 precise scrolling; currently forkNotice.parentRowId is always the placeholder 0 and is ignored. Keep this reference stable (rowContext memo depends on it). */
+  /**
+   * Tier 1 fork 跳转：把当前 pane 切到目标会话（forkNotice → 父会话，复用 onSessionCreated
+   * 原地切换）。rowId 预留 Tier 2 精确滚动——当前 forkNotice.parentRowId 恒为 0 占位、暂忽略。
+   * 需保持引用稳定（rowContext 的 memo 依赖）。
+   */
   onNavigateToRow?: (sessionId: string, rowId: number) => void;
   /** Assistant Preview Cards: Website-card preview entry point; app shell injects side-pane behavior. */
   onOpenBrowserUrl?: (url: string) => void;
@@ -144,7 +143,12 @@ export interface ConversationRowRenderContext {
     target: ConversationRowTarget,
   ) => Promise<V4ConversationFileRewindPreviewResult>;
   applyFileRewind?: (target: ConversationRowTarget) => Promise<CommandAck>;
-  /** Sent image/video previews; injected by the workspace transport bound to the pane. */
+  /**
+   * 文件撤销被 session 锁住（availability.rewindFiles 拒绝），且锁一解除就能撤销。锁住时 pane
+   * 不下发上面两个回调；只读 pane、运行时未就绪时为 false，禁用按钮不显示锁定提示。
+   */
+  fileRewindLocked?: boolean;
+  /** 已发送 image/video 预览；由 pane 绑定的 workspace transport 注入。 */
   readAttachment?: (
     params: ConversationAttachmentReadParams,
   ) => ReturnType<ConversationTransport["attachmentRead"]>;
@@ -174,3 +178,12 @@ export function isConversationReasoningRowVisible(
     visibility.messageStreamFirstReasoningRowId === rowId
   );
 }
+
+// Context 独立于组件热更新边界，避免提供方和已挂载工具消费方持有不同实例，
+// 将整条工具摘要误渲染到统计组头的图标槽。
+export const SummaryIconOnlyContext = createContext(false);
+export const SummaryPreviewContext = createContext(false);
+export const SummaryGroupBoundaryContext = createContext<{
+  taskRunning: boolean;
+  tailRowId?: number;
+}>({ taskRunning: false });

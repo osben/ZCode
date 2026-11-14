@@ -5,7 +5,9 @@
 use std::sync::Arc;
 
 use rust_cli_kernel_api::ids::SessionId;
+use rust_cli_kernel_api::panels::WorkspaceSession;
 use rust_cli_kernel_api::store::SessionFilter;
+use rust_cli_kernel_api::title::Source;
 use rust_cli_protocol_core::connection::Reply;
 use rust_cli_protocol_core::rpc::RpcError;
 use serde_json::{Value, json};
@@ -21,34 +23,87 @@ use rust_cli_protocol_core::sessions::Bridged;
 const STORED_SESSIONS_LIMIT: usize = 200;
 
 /// 存储里一个工作区的会话 → 会话列表的行。
-async fn stored_rows(server: &Server, workspace: &str) -> Vec<Value> {
+pub(crate) async fn stored_rows(server: &Server, workspace: &str) -> Vec<Value> {
     let filter = SessionFilter {
         workspace: server.workspace(workspace),
         limit: STORED_SESSIONS_LIMIT,
     };
     match server.kernel.workspace_sessions(filter).await {
-        Ok(sessions) => sessions
-            .into_iter()
-            .map(|session| {
-                let summary = &session.summary;
-                Summary {
-                    session: summary.id.as_str(),
-                    workspace,
-                    title: &summary.title,
-                    phase: Phase::CompletedSuccess,
-                    created_at: summary.updated_at_ms,
-                    activity_at: summary.updated_at_ms,
-                    last_reply: session.last_reply.as_deref(),
-                    permissions: 0,
+        Ok(sessions) => {
+            let queries = server.kernel.queries();
+            let mut rows = Vec::with_capacity(sessions.len());
+            for session in sessions {
+                // Fork: the kernel lists open sessions the store has no row for; a prewarm draft is one of them and
+                // stays out of the seed like Node's gateway `isDraftSession` (fork-agent-runtime-selection.md).
+                if session.activity.is_some()
+                    && queries
+                        .is_rowless_draft(&session.summary.id)
+                        .await
+                        .unwrap_or(false)
+                {
+                    continue;
                 }
-                .to_value()
-            })
-            .collect(),
+                let mut row = cold_row(workspace, &session);
+                // Fork: the prepared worktree and the execution worktree of the stored row (crate::worktree).
+                crate::worktree::decorate_cold_row(server, &session.summary.id, &mut row).await;
+                rows.push(row);
+            }
+            rows
+        }
         Err(error) => {
             tracing::warn!(event = "protocol.index.read_failed", error = %error, "listing the workspace sessions failed");
             Vec::new()
         }
     }
+}
+
+/// A stored session with no live projection → its sessions-index row.
+fn cold_row(workspace: &str, session: &WorkspaceSession) -> Value {
+    let summary = &session.summary;
+    // Fork: like Node's cold summary, report the stored creation time and the persisted
+    // outcome; a session with no finished turn carries no `lastOutcome`.
+    let outcome = summary.last_outcome.as_deref();
+    let phase = match outcome {
+        Some("error") => Phase::Error,
+        Some("interrupted") => Phase::CompletedInterrupted,
+        _ => Phase::CompletedSuccess,
+    };
+    let created_at = match summary.created_at_ms {
+        0 => summary.updated_at_ms,
+        created => created,
+    };
+    let mut row = Summary {
+        session: summary.id.as_str(),
+        workspace,
+        title: &summary.title,
+        // Fork: the stored title source as Node's cold summary normalizes it; deriving it from the title reported a
+        // persisted untouched prewarm ("New session", `default`) as `generated`.
+        title_source: summary
+            .title_source
+            .as_deref()
+            .map_or_else(|| Source::derived(&summary.title), Source::stored),
+        phase,
+        created_at,
+        activity_at: summary.updated_at_ms,
+        last_reply: session.last_reply.as_deref(),
+        permissions: 0,
+    }
+    .to_value();
+    if let Some(fields) = row.as_object_mut() {
+        if outcome.is_none() {
+            fields.remove("lastOutcome");
+        }
+        // Fork: a stored fork keeps its ancestry like Node's cold summary, so the Host admits it into its parent's
+        // project instead of as an ordinary session.
+        if let Some(parent) = &summary.parent {
+            fields.insert("parentSessionId".to_owned(), json!(parent.as_str()));
+        }
+        // Fork: Node's stored summary marks an incognito session (`incognito: true`), never the profile.
+        if summary.incognito {
+            fields.insert("incognito".to_owned(), json!(true));
+        }
+    }
+    row
 }
 
 fn ack(subscription: &str, epoch: &str) -> Value {
@@ -196,6 +251,9 @@ pub async fn reconcile(server: &Server, params: &Value) -> Result<Reply, RpcErro
                                 session: id,
                                 workspace,
                                 title: &view.meta.title,
+                                title_source: view
+                                    .title_source
+                                    .unwrap_or_else(|| Source::derived(&view.meta.title)),
                                 phase: Phase::CompletedSuccess,
                                 created_at: view.meta.created_at_ms,
                                 activity_at: view.meta.created_at_ms,
@@ -238,15 +296,6 @@ fn summary_entry(id: &str, deleted: bool, row: &Value) -> Value {
     entry
 }
 
-/// Node `normalizeStoredTitleSource`.
-fn title_source(source: Option<&str>) -> &'static str {
-    match source {
-        Some("custom") => "custom",
-        Some("default") => "default",
-        _ => "generated",
-    }
-}
-
 /// Node `reconcileSessions` for one stored row (`StoreQueries::reconcile_row`). The workspace
 /// check is Node's local branch (`directory === workspaceId`, no foreign `workspaceID`); zcode-rs
 /// serves local workspaces only, so the remote-identity branch is not ported.
@@ -282,7 +331,8 @@ pub(crate) fn stored_entry(
         "exists": true,
         "deleted": deleted,
         "title": row["title"],
-        "titleSource": title_source(row["titleSource"].as_str()),
+        // Node `normalizeStoredTitleSource`.
+        "titleSource": row["titleSource"].as_str().map_or(Source::Generated, Source::stored).shown(),
         "titleUpdatedAt": title_updated_at,
         "createdAt": row["timeCreated"],
         "updatedAt": row["timeUpdated"],

@@ -62,12 +62,13 @@ pub fn hydrate(record: &WithParts) -> Option<Message> {
     let id = MessageId::new(record.id());
     // Node 的分叉提示（本工程写的形状相同，没有 `rustCli`）：Node 把它当对话中间的 system 提醒
     // （`rewind_notice`）发给模型，这里还原成同来源的 attachment（session-lifecycle.md §6.5.2）。
+    // Fork: the notice's `forkContext` rides along as data, so the projection can draw the fork divider.
     if marker.is_null() && source == FORK_NOTICE_SOURCE && first["synthetic"] == true {
         return Some(Message::Attachment(AttachmentMessage {
             id,
             source,
             text: rust_cli_base::reminder::wrap(&text(first)),
-            data: Value::Null,
+            data: first["metadata"]["forkContext"].clone(),
         }));
     }
     // Fork: Node's background notification (`persistBackgroundTaskNotificationBatch`) has no
@@ -92,6 +93,8 @@ pub fn hydrate(record: &WithParts) -> Option<Message> {
             })
             .collect();
         return Some(Message::User(UserMessage {
+            stall_execution: None,
+            intent: None,
             id,
             content,
             origin: UserOrigin::Meta {
@@ -110,6 +113,8 @@ pub fn hydrate(record: &WithParts) -> Option<Message> {
             ),
         }),
         META => Message::User(UserMessage {
+            stall_execution: None,
+            intent: None,
             id,
             content: content(),
             origin: UserOrigin::Meta {
@@ -121,6 +126,8 @@ pub fn hydrate(record: &WithParts) -> Option<Message> {
             },
         }),
         INTERRUPT | BASH_OUTPUT => Message::User(UserMessage {
+            stall_execution: None,
+            intent: None,
             id,
             content: content(),
             origin: UserOrigin::Human,

@@ -64,6 +64,7 @@ fn bash() -> InteractionRequest {
         rule_seed: None,
         asked_by: None,
         once: false,
+        independent: false,
     }
 }
 
@@ -181,6 +182,7 @@ fn the_root_follows_asks_turns_and_seen_outcomes() {
         &mut app,
         TurnOutcome::Failed {
             message: "quota exhausted\nretry later".into(),
+            code: None,
         },
         true,
     );
@@ -233,6 +235,7 @@ fn an_outcome_not_seen_is_idle() {
         &mut failed,
         TurnOutcome::Failed {
             message: "boom".into(),
+            code: None,
         },
         true,
     );

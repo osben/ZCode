@@ -43,15 +43,6 @@ impl Protocol for OpenAiResponses {
     }
 }
 
-/// OpenAI SDK `getOpenAILanguageModelCapabilities` 的推理模型判断（决定 system 用 developer 角色）。
-fn reasoning_model(model: &str) -> bool {
-    use rust_cli_base::models::{GPT_5_CHAT, OPENAI_REASONING_PREFIXES};
-    OPENAI_REASONING_PREFIXES
-        .iter()
-        .any(|prefix| model.starts_with(prefix))
-        && !model.starts_with(GPT_5_CHAT)
-}
-
 /// 编码请求体。消费请求：文本移入请求体，不复制历史。
 pub(crate) fn body(
     model: &str,
@@ -67,14 +58,15 @@ pub(crate) fn body(
         temperature,
         ..
     } = request;
-    let system_role = if reasoning_model(model) {
+    // OpenAI SDK `getOpenAILanguageModelCapabilities` 的推理模型判断（决定 system 用 developer 角色）。
+    let system_role = if rust_cli_base::models::openai_reasoning_model(model) {
         "developer"
     } else {
         "system"
     };
     let mut input = Vec::new();
     for item in items(system, messages)? {
-        lower(item, system_role, &mut input);
+        lower(item, system_role, &mut input)?;
     }
     let mut body = Map::new();
     body.insert("model".into(), Value::String(model.to_owned()));
@@ -99,19 +91,27 @@ pub(crate) fn body(
     Ok(stringify(&body))
 }
 
-fn lower(item: Item, system_role: &str, input: &mut Vec<Value>) {
+fn lower(item: Item, system_role: &str, input: &mut Vec<Value>) -> Result<(), ModelError> {
     match item {
         Item::System(text) => input.push(json!({"role": system_role, "content": text})),
         Item::User(parts) => {
-            let content: Vec<Value> = parts
+            let content = parts
                 .into_iter()
                 .map(|part| match part {
-                    Part::Text(text) => json!({"type": "input_text", "text": text}),
-                    Part::Image(url) => json!({"type": "input_image", "image_url": url}),
-                    Part::File(url) => json!({"type": "input_file",
-                        "filename": super::PDF_NAME, "file_data": url}),
+                    Part::Text(text) => Ok(json!({"type": "input_text", "text": text})),
+                    Part::Image(url) => Ok(json!({"type": "input_image", "image_url": url})),
+                    Part::File(url) => Ok(json!({"type": "input_file",
+                        "filename": super::PDF_NAME, "file_data": url})),
+                    // Fork: Node's `@ai-sdk/openai` Responses converter refuses a video file part
+                    // (`UnsupportedFunctionalityError`); only the patched Chat Completions writer sends video.
+                    Part::Video(url) => Err(super::lower::invalid(&format!(
+                        "file part media type {} is not supported by the Responses API",
+                        url.strip_prefix("data:")
+                            .and_then(|rest| rest.split(';').next())
+                            .unwrap_or("video")
+                    ))),
                 })
-                .collect();
+                .collect::<Result<Vec<Value>, ModelError>>()?;
             input.push(json!({"role": "user", "content": content}));
         }
         // 推理正文不回放：Responses 的推理项要有 item ID 与加密内容，canonical 的 thinking 块没有。
@@ -137,6 +137,7 @@ fn lower(item: Item, system_role: &str, input: &mut Vec<Value>) {
             "output": output,
         })),
     }
+    Ok(())
 }
 
 fn tool(tool: ToolDefinition) -> Value {

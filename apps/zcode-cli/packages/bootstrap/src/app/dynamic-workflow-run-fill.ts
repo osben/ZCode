@@ -47,7 +47,10 @@ import {
 } from "@zcode/dynamic-workflow";
 import { compileProgram } from "./dynamic-workflow-run-compile.js";
 import { mapFillDiagnostics, unboundFillModelDiagnostics } from "./dynamic-workflow-run-holes.js";
-import type { RunRegistryEntry } from "./dynamic-workflow-run-observation.js";
+import {
+  isRunLiveInThisProcess,
+  type RunRegistryEntry,
+} from "./dynamic-workflow-run-observation.js";
 import type { DynamicWorkflowRunServiceDeps } from "./dynamic-workflow-run-service.js";
 
 /** Service internal state borrowed by this module; all references — this file holds no state of its own. */
@@ -110,10 +113,9 @@ async function fillOnce(
   if (entry === undefined && record === undefined) {
     return refuse("run_not_found", `No run with id ${runId}.`);
   }
-  // In-flight determination looks at **this process's registry**: if the journal says running but it is not
-  // here, it is another process's run (or a dead one), and this service cannot reach its engine. A stopped run
-  // is pointed at ResumeWorkflowRun — resume will reach the hole again and ask once more.
-  if (entry === undefined || entry.terminal !== undefined || entry.control === undefined) {
+  // 在飞判定看**本进程注册表**：journal 说 running 而这里没有它，是别的进程（或死进程）的 run，
+  // 本 service 够不着它的引擎。停下的 run 指向 ResumeWorkflowRun——resume 会重新到达留白、再问一次。
+  if (!isRunLiveInThisProcess(entry)) {
     const status = entry?.terminal?.status ?? record?.status;
     const hint =
       status === "stopped"

@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 use rust_cli_base::names::vars;
 use rust_cli_kernel_api::env::{EnvPath, ReadFile, WorkspaceRef};
 use rust_cli_kernel_api::machine::Files;
+use rust_cli_kernel_api::model::ModelSelection;
 
 use crate::definitions::{AgentDefinition, AgentSource};
 use crate::frontmatter::{self, Value};
@@ -16,6 +17,9 @@ use crate::frontmatter::{self, Value};
 /// 插件里的一个 agent 文件。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PluginAgentFile {
+    /// Fork: the plugin id, `<name>@<marketplace>` (`<name>@inline` for `--plugin-dir`); keys the Host's plugin agent
+    /// overrides (specs/fork-rust-subagent-runtime-config.md rule 7).
+    pub id: String,
     /// 插件名（类型名的第一段）。
     pub plugin: String,
     /// 插件目录（`${CLAUDE_PLUGIN_ROOT}`）。
@@ -44,8 +48,19 @@ fn substitute(text: &str, root: &str, project_dir: &str) -> String {
     })
 }
 
-/// 按插件规则解析一个 agent 文件；总有结果（没有 frontmatter 时名字取文件名、描述用缺省句）。
-pub(crate) fn parse(raw: &str, file: &PluginAgentFile, project_dir: &str) -> AgentDefinition {
+/// Fork: Node's plugin agent state id (`createPluginAgentStateId`): `plugin:<plugin id>:<bare name, trimmed and
+/// lowercased>`, the key of the Host's `pluginAgentModelSelectionOverrides`.
+pub(crate) fn state_id(file: &PluginAgentFile, bare: &str) -> String {
+    format!("plugin:{}:{}", file.id, bare.trim().to_lowercase())
+}
+
+/// 按插件规则解析一个 agent 文件；总有结果（没有 frontmatter 时名字取文件名、描述用缺省句）。Fork: with the agent's
+/// bare name (the frontmatter `name` or the file name, without the namespace), which keys the Host's overrides.
+pub(crate) fn parse(
+    raw: &str,
+    file: &PluginAgentFile,
+    project_dir: &str,
+) -> (AgentDefinition, String) {
     let (map, body) = frontmatter::split(raw).unwrap_or_else(|| (BTreeMap::new(), raw.to_owned()));
     let text = |key: &str| {
         map.get(key)
@@ -84,7 +99,7 @@ pub(crate) fn parse(raw: &str, file: &PluginAgentFile, project_dir: &str) -> Age
             "plugin agent sets permissionMode, hooks or mcpServers, which are ignored"
         );
     }
-    AgentDefinition {
+    let definition = AgentDefinition {
         agent_type,
         when_to_use,
         tools: frontmatter::tools(map.get("tools")),
@@ -99,14 +114,20 @@ pub(crate) fn parse(raw: &str, file: &PluginAgentFile, project_dir: &str) -> Age
         // 插件 agent 不认 permissionMode（插件是第三方代码）。
         permission_mode: None,
         background: text("background") == Some("true"),
-    }
+        selection: None,
+        inject_agents_md: frontmatter::inject_agents_md(text("injectAgentsMd")),
+    };
+    (definition, name.to_owned())
 }
 
 /// 读出并解析插件 agent 文件；读不了的文件跳过。
+/// Fork: `overrides` (the Host's plugin agent overrides, empty without a snapshot) set the full selection of the agents
+/// they name (specs/fork-rust-subagent-runtime-config.md rule 7).
 pub(crate) async fn load(
     port: &dyn Files,
     workspace: &WorkspaceRef,
     files: &[PluginAgentFile],
+    overrides: &BTreeMap<String, ModelSelection>,
 ) -> Vec<AgentDefinition> {
     let mut found = Vec::new();
     for file in files {
@@ -116,7 +137,14 @@ pub(crate) async fn load(
         match port.read_file(workspace, request).await {
             Ok(content) => {
                 let raw = String::from_utf8_lossy(&content.bytes);
-                found.push(parse(&raw, file, workspace.root.as_str()));
+                let (mut definition, bare) = parse(&raw, file, workspace.root.as_str());
+                if let Some(selection) = overrides.get(&state_id(file, &bare)) {
+                    definition.selection = Some(selection.clone());
+                    // Node's profile has no effort: the Settings reasoning level is the whole intent, so the file's
+                    // `effort:` must not lower it at spawn or on a resume.
+                    definition.effort = None;
+                }
+                found.push(definition);
             }
             Err(error) => tracing::debug!(%error, path = file.path, "plugin agent not readable"),
         }

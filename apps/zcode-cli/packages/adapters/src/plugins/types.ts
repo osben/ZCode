@@ -1,3 +1,4 @@
+import type { PluginMaterialReader } from "./helpers.js";
 import type {
   CustomCommandRoot,
   HookEventName,
@@ -18,6 +19,7 @@ export interface PluginCandidate {
 }
 
 export interface LoadedPlugin {
+  materials?: PluginMaterialReader;
   id: string;
   manifest: PluginManifest;
   manifestPath: string;

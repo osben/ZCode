@@ -8,6 +8,7 @@ import {
   ensureIncognitoSupport,
   ensureDurableFirstSubmissionSupport,
   ensureIndependentPlanSupport,
+  supportsExternalAgentTurns,
   supportsHistoryFirst,
   supportsProviderRegistryRefresh,
 } from "../src/zcode-agent/runtimeCapabilitySupport.js";
@@ -62,6 +63,17 @@ describe("provider registry refresh execution-endpoint capability", () => {
     await expect(supportsProviderRegistryRefresh(stale as never)).resolves.toBe(false);
     const broken = { request: vi.fn().mockRejectedValue(new Error("Method not found")) };
     await expect(supportsProviderRegistryRefresh(broken as never)).resolves.toBe(false);
+  });
+});
+
+describe("fork externalAgentTurns execution-endpoint capability", () => {
+  it("answers true only when the agent reports it, and false for a failed capability read", async () => {
+    const current = { request: vi.fn().mockResolvedValue({ externalAgentTurns: true }) };
+    await expect(supportsExternalAgentTurns(current as never)).resolves.toBe(true);
+    const other = { request: vi.fn().mockResolvedValue({ historyFirst: true }) };
+    await expect(supportsExternalAgentTurns(other as never)).resolves.toBe(false);
+    const broken = { request: vi.fn().mockRejectedValue(new Error("Method not found")) };
+    await expect(supportsExternalAgentTurns(broken as never)).resolves.toBe(false);
   });
 });
 

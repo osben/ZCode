@@ -31,6 +31,11 @@ const intl = {
     ),
 } as never;
 
+// CallCard reads the locale from useZCodeIntl (upstream); the test passes its own intl prop.
+vi.mock("@/i18n/IntlProvider.js", () => ({
+  useZCodeIntl: () => ({ locale: "en", intl }),
+}));
+
 const PREFIX = "req-card:0";
 
 afterEach(() => {

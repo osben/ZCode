@@ -27,6 +27,7 @@ fn model_mode_and_title_follow_the_kernel() {
     .push(KernelEvent::PlanChanged { enabled: true })
     .push(KernelEvent::TitleChanged {
         title: "Fix lint".into(),
+        source: Default::default(),
     });
     assert_eq!(feed.view.selection(), &other);
     // 修复线 F20：权限模式与 plan 开关各自折叠。
@@ -80,6 +81,7 @@ fn a_cold_view_rebuilds_rows_with_tool_results() {
                 title: "Old chat".into(),
                 trace: TraceId::new("s1"),
                 created_at_ms: 0,
+                incognito: None,
             },
             vec![
                 user("u1", "list files"),

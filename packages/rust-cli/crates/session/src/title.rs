@@ -50,6 +50,9 @@ pub(crate) struct TitleState {
     /// Fork: no more title requests (Node `sessionTitleGenerationSettled`): a generated title was stored or refused,
     /// the seed message was rewound away, or the title is custom.
     settled: bool,
+    /// Fork: title generation was disabled ([`TitleState::disable`]); a session title already in flight is dropped
+    /// when it returns, since `settled` only gates requests that have not started.
+    disabled: bool,
     /// Fork: the stored title is still automatic (`default` / `first_input`, Node `isAutoTitlePending`); a retry needs it.
     pending: bool,
     /// Fork: the first human input this actor saw (Node `sessionTitleSeed`), the preferred retry seed.
@@ -87,6 +90,13 @@ impl TitleState {
             pending,
             ..Self::default()
         }
+    }
+
+    /// Fork: no more title requests in this actor ([`rust_cli_kernel_api::session_api::Command::DisableTitleGeneration`]);
+    /// a goal summary still runs (it is not the session's title request).
+    pub(crate) fn disable(&mut self) {
+        self.settled = true;
+        self.disabled = true;
     }
 
     pub(crate) fn mark_custom(&mut self) {
@@ -133,7 +143,13 @@ fn human_text(message: &Message) -> Option<String> {
         .content
         .iter()
         .filter_map(|block| match block {
-            ContentBlock::Text { text } => Some(text.as_str()),
+            // Fork: the title is the typed text, without the quote block its input intent added (Node
+            // `titleFromInput(displayInput)`).
+            ContentBlock::Text { text } => Some(
+                user.intent
+                    .as_deref()
+                    .map_or(text.as_str(), |intent| intent.typed(text)),
+            ),
             _ => None,
         })
         .collect();
@@ -148,16 +164,67 @@ fn human_text(message: &Message) -> Option<String> {
 }
 
 impl Actor {
+    /// Fork: the one place the title changes: memory, its source and the event (Node `SessionTitleUpdated` carries
+    /// the source, so a projection never reports a rename as generated).
+    pub(crate) fn set_title(&mut self, title: String, source: rust_cli_kernel_api::title::Source) {
+        self.meta.title.clone_from(&title);
+        self.title_source = source;
+        self.log.append(KernelEvent::TitleChanged { title, source });
+    }
+
+    /// Fork: an ACP agent's title (Node `setExternalAgentSessionTitle`; specs/fork-rust-agent-parity.md "ACP external
+    /// agents", rule 8): trimmed, for a top-level interactive session only; a custom or unchanged title is kept. The
+    /// store writes it only over a generated-eligible source, so a rename another writer stored wins.
+    pub(crate) async fn external_title(&mut self, title: String) {
+        let title = title.trim();
+        if title.is_empty()
+            || self.meta.parent.is_some()
+            || self.meta.kind != rust_cli_kernel_api::store::SessionKind::Interactive
+            || self.titles.custom
+            || self.title_source == rust_cli_kernel_api::title::Source::Custom
+            || self.meta.title == title
+        {
+            return;
+        }
+        let fact = Fact::TitleGenerated {
+            title: title.to_owned(),
+            message: None,
+        };
+        if let Err(reason) = self.commit(None, vec![fact]).await {
+            tracing::debug!(%reason, "the ACP agent title was not stored");
+            return;
+        }
+        self.set_title(
+            title.to_owned(),
+            rust_cli_kernel_api::title::Source::Generated,
+        );
+    }
+
+    /// Fork: the store's admission title ([`rust_cli_kernel_api::session_api::Command::AdoptTitle`]); the stored row
+    /// already has it, so nothing is committed. A rename that won the race stays.
+    pub(crate) fn adopt_title(&mut self, title: String) {
+        if self.title_source == rust_cli_kernel_api::title::Source::Custom
+            || self.meta.title == title
+        {
+            return;
+        }
+        self.set_title(title, rust_cli_kernel_api::title::Source::FirstInput);
+    }
+
     /// 本回合的人类输入已提交（`first` 为真时它之前的活动历史里没有 user 消息）。
     pub(crate) fn after_prompt(&mut self, message: &Message, first: bool) {
         let Some(text) = human_text(message) else {
             return;
         };
-        if self.meta.title.is_empty() {
-            // node-store 在同一事务里写了 first_input（Node `titleFromInput`），这里用同一个函数。
-            let title = rust_cli_kernel_api::title::from_input(&text);
-            self.meta.title.clone_from(&title);
-            self.log.append(KernelEvent::TitleChanged { title });
+        // node-store 在同一事务里写了 first_input（Node `titleFromInput(sanitizeTitleSeed(…))`），这里用同一个函数。
+        // Fork: an input without text keeps the placeholder, which the first real input replaces (Node
+        // `persistSession`, `applyFirstInputTitleForPersistedSession`).
+        let (title, source) = rust_cli_kernel_api::title::first_input(&text);
+        let real = source == rust_cli_kernel_api::title::Source::FirstInput;
+        if self.meta.title.is_empty()
+            || (self.meta.title == rust_cli_kernel_api::title::PLACEHOLDER && real)
+        {
+            self.set_title(title, source);
         }
         // Fork (desktop App): a `/goal` input that set a goal; it gets a summary title either way.
         let goal = self.goal_set_by(message.id());
@@ -168,7 +235,9 @@ impl Actor {
             return;
         };
         if node_titles && goal.is_none() && self.titles.seed.is_none() && !text.trim().is_empty() {
-            self.titles.seed = Some((message.id().clone(), text.clone()));
+            // Node `sessionTitleSeed.input`: seeded and normalized here, seeded again by the retry's request.
+            let seed = crate::title_model::request_input(&text);
+            self.titles.seed = Some((message.id().clone(), seed));
         }
         let Some((prompt, text)) =
             self.title_seed(message, text, first, node_titles, goal.is_some())
@@ -254,6 +323,11 @@ impl Actor {
         let Some(titles) = self.deps.titles.clone() else {
             return;
         };
+        // Fork: an ACP agent names the session itself; no model title runs for its turns (Node skips the title
+        // sidecar for external-agent turns).
+        if self.selection.external_agent().is_some() {
+            return;
+        }
         let DeferredTitle {
             prompt,
             text,
@@ -369,7 +443,10 @@ impl Actor {
             return;
         };
         // 用户先改了名，或首条输入已被回退掉（Node `isSuppressedByFirstQueryEdit`）：丢弃。
-        if self.titles.custom || !self.messages.iter().any(|m| m.id() == &prompt) {
+        if self.titles.custom
+            || self.titles.disabled
+            || !self.messages.iter().any(|m| m.id() == &prompt)
+        {
             tracing::debug!("the generated session title was discarded");
             self.titles.settled = true;
             return;
@@ -387,8 +464,7 @@ impl Actor {
         }
         self.titles.settled = true;
         self.titles.pending = false;
-        self.meta.title.clone_from(&title);
-        self.log.append(KernelEvent::TitleChanged { title });
+        self.set_title(title, rust_cli_kernel_api::title::Source::Generated);
     }
 
     /// 用户改名（Node `setCustomSessionTitle`）：先提交，再改内存、发事件。`record` 是 TUI `/rename <名字>` 的命令记录
@@ -418,8 +494,7 @@ impl Actor {
             Err(reason) => return rejected(reason),
         };
         self.titles.mark_custom();
-        self.meta.title.clone_from(&title);
-        self.log.append(KernelEvent::TitleChanged { title });
+        self.set_title(title, rust_cli_kernel_api::title::Source::Custom);
         self.after_commit(appended).await;
         self.held_records.extend(held);
         accepted()

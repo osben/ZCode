@@ -6,9 +6,9 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use rust_cli_kernel_api::default_model::DefaultModel;
 use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
 use rust_cli_kernel_api::ids::{EnvironmentId, SessionId};
-use rust_cli_kernel_api::model::ModelSelection;
 use rust_cli_kernel_api::permission::PermissionMode;
 use rust_cli_kernel_api::session_api::{EndReason, Kernel, KernelError};
 use rust_cli_protocol_core::connection::{Reply, Service};
@@ -32,7 +32,9 @@ const EVENT_BATCH_WINDOW: std::time::Duration = std::time::Duration::from_millis
 /// 新会话的缺省（入口给出）。
 #[derive(Debug, Clone)]
 pub struct Defaults {
-    pub selection: ModelSelection,
+    /// Read at each session creation: a degraded default is revised once the credentials are readable (fork spec
+    /// `fork-rust-credential-cipher.md` F3); only sessions created after that take it.
+    pub selection: DefaultModel,
     pub mode: PermissionMode,
     pub environment: EnvironmentId,
 }
@@ -49,7 +51,7 @@ pub struct Server {
     pub(crate) kernel: Arc<dyn Kernel>,
     pub(crate) bridge: SessionBridge<Live>,
     /// Fork: spawns the per-session subagent table watchers.
-    spawner: rust_cli_base::Spawner,
+    pub(crate) spawner: rust_cli_base::Spawner,
     pub(crate) topics: Arc<Topics>,
     pub(crate) remembered: Mutex<Remembered>,
     pub(crate) followups: Mutex<HashMap<SessionId, Followup>>,
@@ -61,8 +63,20 @@ pub struct Server {
     pub(crate) uploads: Mutex<crate::uploads::Registry>,
     /// Fork: serializes submission reservations (crate::preparation::ReservationGate).
     pub(crate) reservations: crate::preparation::ReservationGate,
+    /// Fork: prepared worktree sessions materialized in this process whose active marker failed to store
+    /// (`worktree::activate`). Process-local like Node's runtime record: the gate lets their commands through and
+    /// heals the marker; after a restart the durable marker decides again.
+    pub(crate) unreceipted: Mutex<std::collections::HashSet<SessionId>>,
+    /// Fork: the incognito choice a prepared worktree session's first activation froze in this process (Node's
+    /// in-memory `prepared.incognito`): `None` a normal session, `Some(profile)` an incognito one. It covers a warm
+    /// retry of a failed activation; the row's set-once `fork_incognito` is the durable fact, and the stored marker
+    /// never carries the choice (Node `persistPreparedWorktreeStatus`).
+    pub(crate) prepared_incognito:
+        Mutex<HashMap<SessionId, Option<rust_cli_kernel_api::incognito::IncognitoProfile>>>,
     /// Fork: session lifecycle revisions (crate::lifecycle).
     pub(crate) lifecycles: crate::lifecycle::Lifecycles,
+    /// Fork: running `workspace/generateText` calls by operation id (crate::fork::WorkspaceOperations).
+    pub(crate) workspace_operations: crate::fork::WorkspaceOperations,
 }
 
 pub(crate) fn kernel_error(error: &KernelError) -> RpcError {
@@ -116,7 +130,8 @@ impl Server {
         let topics = Arc::new(Topics::new(context.clone(), &spawner));
         Self {
             instance: context.fresh("instance"),
-            bridge: SessionBridge::new(kernel.clone(), spawner.clone(), EVENT_BATCH_WINDOW),
+            bridge: SessionBridge::new(kernel.clone(), spawner.clone(), EVENT_BATCH_WINDOW)
+                .with_close_listener(crate::fork::node_helper::close_listener(context.clone())),
             spawner,
             context,
             kernel,
@@ -127,7 +142,10 @@ impl Server {
             preferences: Mutex::new(Preferences::default()),
             uploads: Mutex::new(crate::uploads::Registry::default()),
             reservations: crate::preparation::ReservationGate::default(),
+            unreceipted: Mutex::new(std::collections::HashSet::new()),
+            prepared_incognito: Mutex::new(HashMap::new()),
             lifecycles: crate::lifecycle::Lifecycles::default(),
+            workspace_operations: crate::fork::WorkspaceOperations::default(),
         }
     }
 
@@ -157,23 +175,99 @@ impl Server {
         } else {
             std::sync::Arc::from(Vec::new())
         };
+        // Fork: the stored worktree and submission facts, read for a cold open only and handed to the projection when
+        // it is made, so a later concurrent open cannot write them again over an activation.
+        let restored = if opening {
+            let execution = crate::worktree::stored_execution(self, session).await;
+            crate::live::Restored {
+                listed: execution
+                    .as_ref()
+                    .map(|worktree| worktree.directory.as_str().to_owned()),
+                worktree: crate::worktree::facts(self, session, execution.as_ref())
+                    .await
+                    .map_err(|reason| KernelError::Failed {
+                        message: reason.to_owned(),
+                    })?,
+                preparation: match crate::preparation::load(self, session).await {
+                    Ok(Some(marker)) => marker.exposed(),
+                    _ => None,
+                },
+            }
+        } else {
+            crate::live::Restored::default()
+        };
+        // Fork: a prepared worktree that is not active yet (an agent restart before the activation) keeps SessionStart
+        // held, as the live session did, so the hook never runs in the parent checkout. The kernel opens it here; the
+        // bridge's own open below finds it open.
+        if restored.worktree.preparing.is_some() {
+            self.kernel.open_prepared_session(session).await?;
+        }
+        // Set by the one open that makes the projection: only it starts the session's watchers.
+        let made = std::sync::atomic::AtomicBool::new(false);
+        let made_here = &made;
+        // Fork: a stored interactive session with history, opened again (Node `resumeFromStore`); a subagent's child
+        // session opened in a side tab has no trust banners.
+        let resumed = std::sync::atomic::AtomicBool::new(false);
+        let resumed_here = &resumed;
         let live = self
             .bridge
             .open(session, move |handle, view| {
-                Live::new(context, topics, handle.clone(), view, followup, catalog)
+                made_here.store(true, std::sync::atomic::Ordering::Relaxed);
+                resumed_here.store(
+                    view.meta.kind == rust_cli_kernel_api::store::SessionKind::Interactive
+                        && !view.messages.is_empty(),
+                    std::sync::atomic::Ordering::Relaxed,
+                );
+                Live::new(
+                    context,
+                    topics,
+                    handle.clone(),
+                    view,
+                    followup,
+                    catalog,
+                    restored,
+                )
             })
             .await?;
-        // Fork: a cold open restores a still-preparing first submission before any subscription starts.
-        if opening && let Ok(Some(marker)) = crate::preparation::load(self, session).await {
-            live.sink.set_preparation(marker.exposed());
-        }
-        if opening {
+        if made.load(std::sync::atomic::Ordering::Relaxed) {
+            // Fork: the stored display copy of the session's ACP agent (Node `seedExternalAgentConfig`).
+            crate::fork::external_agent_config::seed(self, &live, session).await;
+            // Fork: a store draft (an app-server prewarm) stays out of the sessions index (crate::live).
+            let queries = self.kernel.queries();
+            let draft = queries.is_draft(session).await.unwrap_or(false);
+            if draft {
+                live.sink.set_draft_probe(queries);
+            }
+            // Fork: a resumed session shows its workspace's trust banners before the next input, as Node's resume
+            // reannounce does (specs/fork-rust-agent-parity.md, "Workspace MCP trust").
+            if !draft && resumed.load(std::sync::atomic::Ordering::Relaxed) {
+                crate::fork::workspace_trust::refresh_session(self, &live, session).await;
+            }
             // Fork: the subagent rows and the `subagents` manifest follow the kernel's subagent table.
             let watcher = self.spawner.spawn(
                 "subagent-table-watch",
                 crate::live::watch_subagents(live.handle.subagent_changes(), Arc::downgrade(&live)),
             );
             live.sink.watch_subagents(watcher);
+            // Fork: the telemetry facts of a subagent's run are read from its live feed (crate::telemetry).
+            let (spawner, weak) = (self.spawner.clone(), Arc::downgrade(&live));
+            live.sink
+                .set_child_watch(Box::new(move |child, watch, alive| {
+                    let bridged = weak.upgrade()?;
+                    let feed = bridged.sink.handle().child_run(&SessionId::new(child))?;
+                    Some(spawner.spawn(
+                        "telemetry-child-run",
+                        crate::live::read_child_run(
+                            feed,
+                            child.to_owned(),
+                            watch,
+                            alive,
+                            weak.clone(),
+                        ),
+                    ))
+                }));
+            let sink = live.sink.clone();
+            live.run(Box::pin(async move { sink.prime_child_runs().await }));
             // Fork: the background commands already running (a subagent's child session opened in a side tab, a
             // session reopened while its command runs) are listed from the open, not from the next ledger change.
             let sink = live.sink.clone();
@@ -184,7 +278,7 @@ impl Server {
     }
 
     /// Fork: records a lifecycle change and tells the App (crate::lifecycle).
-    async fn announce_lifecycle(&self, session: &SessionId, state: &str) {
+    pub(crate) async fn announce_lifecycle(&self, session: &SessionId, state: &str) {
         let snapshot = self.lifecycles.changed(session, state);
         self.context
             .peer
@@ -271,6 +365,33 @@ impl Server {
 
     async fn close_session(&self, params: &Value) -> Value {
         let session = SessionId::new(params["sessionId"].as_str().unwrap_or_default());
+        // Fork: Node `shouldCloseSessionForExpectedPersistence`. The store owns draft-ness, so a
+        // deferred close drops the draft in one locked step before anything closes; a first
+        // send that materialized it first wins and the close answers `false`.
+        // A close without the field releases a draft too: Node disposes the runtime, and a draft has nothing else.
+        let queries = self.kernel.queries();
+        let expected = params["expectedPersistence"].as_str();
+        match expected {
+            Some("deferred") | None => {
+                if queries.discard_draft(&session).await.unwrap_or(false) {
+                    let live = self.bridge.get(&session);
+                    self.bridge.close(&session);
+                    if let Some(live) = live {
+                        // Node disposes the draft's runtime; the actor's late commits find no draft.
+                        live.handle.close(EndReason::Other).await;
+                        self.announce_lifecycle(&session, "unloaded").await;
+                    }
+                    return json!({"closed": true});
+                }
+                if expected.is_some() {
+                    return json!({"closed": false});
+                }
+            }
+            Some("immediate") if queries.is_draft(&session).await.unwrap_or(false) => {
+                return json!({"closed": false});
+            }
+            _ => {}
+        }
         let open = self.bridge.get(&session).is_some();
         self.bridge.close(&session);
         if open {
@@ -279,22 +400,10 @@ impl Server {
         json!({"closed": true})
     }
 
-    async fn dispatch(&self, method: &str, params: Value) -> Result<Reply, RpcError> {
+    pub(crate) async fn dispatch(&self, method: &str, params: Value) -> Result<Reply, RpcError> {
         let reply = |value: Value| Ok(Reply::new(value));
         match method {
-            // 不支持的能力给 false（app-protocol.md §4.3）。
-            "runtime/capabilities" => reply(json!({
-                // Fork: reservation, activation receipts and the first-input marker (crate::preparation).
-                "durableFirstSubmission": true,
-                // Fork: plan is a switch beside the permission mode, frozen per queued input
-                // (`Command::SubmitWith`); yolo with plan on still runs in plan mode.
-                "independentPlanState": true,
-                "historyFirst": false,
-                "sessionDirectorySource": false,
-                "genUiContext": false,
-                "sessionWorkspaceRouting": true,
-                "residentRowsRange": true,
-            })),
+            "runtime/capabilities" => reply(capabilities(self.context.node_helper().is_some())),
             // platform 自己读同一批文件；回执版本（app-protocol.md §5.1）。
             "provider/updateAccountConfig" => reply(json!({
                 "receivedRevision": params["revision"],
@@ -320,8 +429,10 @@ impl Server {
                     "updatedSessionCount": 0}),
                 )
             }
+            // Fork: the off-peak tools are not ported yet (specs/fork-rust-automations.md, slice 3): answer disabled, so
+            // the Host does not assume OffPeakCreate / OffPeakList exist.
             "workspace/updateOffPeakToolPolicy" => {
-                reply(json!({"workspace": params["workspace"], "enabled": params["enabled"]}))
+                reply(json!({"workspace": params["workspace"], "enabled": false}))
             }
             // 动态工作流不移植（P4 决定）：回 disabled 生效。
             "workspace/updateDynamicWorkflowPolicy" => {
@@ -352,6 +463,8 @@ impl Server {
             "v4/attachment/commit" => crate::attachments::commit(self, &params).await,
             "v4/attachment/abort" => crate::attachments::abort(self, &params).await,
             "v4/attachment/read" => crate::attachments::read_chunk(self, &params).await,
+            "v4/conversation/attachmentRead" => crate::attachment_share::read(self, &params).await,
+            "v4/conversation/attachmentStat" => crate::attachment_share::stat(self, &params).await,
             "v4/attachment/previewSource" => {
                 crate::attachments::preview_source(self, &params).await
             }
@@ -377,7 +490,49 @@ pub struct Handler(pub Arc<Server>);
 #[async_trait]
 impl Service for Handler {
     async fn request(&self, method: &str, params: Value) -> Result<Reply, RpcError> {
+        // Fork: Node asserts that no purge started for the request's sessions before it dispatches and validates
+        // (specs/fork-rust-agent-parity.md "Session runtime presence on the shared database").
+        crate::presence_gate::check(self.0.kernel.queries().as_ref(), method, &params).await?;
         Inbound::get().method(method, &params)?;
         self.0.dispatch(method, params).await
     }
 }
+
+/// `runtime/capabilities`: an unsupported capability is false (app-protocol.md §4.3). `node_helper` says whether the
+/// Host configured a Node helper (specs/fork-rust-node-helper.md).
+pub(crate) fn capabilities(node_helper: bool) -> Value {
+    json!({
+        // Fork: the plugin summary is served through the Node helper (F1); `pluginDiscoveryUi` stays off.
+        "pluginExtensionSummary": node_helper,
+        // Fork: reservation, activation receipts and the first-input marker (crate::preparation).
+        "durableFirstSubmission": true,
+        // Fork: plan is a switch beside the permission mode, frozen per queued input
+        // (`Command::SubmitWith`); yolo with plan on still runs in plan mode.
+        "independentPlanState": true,
+        "historyFirst": false,
+        "sessionDirectorySource": false,
+        "genUiContext": false,
+        "sessionWorkspaceRouting": true,
+        "residentRowsRange": true,
+        // Fork: incognito sessions with per-capability toggles (kernel_api::incognito,
+        // specs/fork-rust-agent-parity.md "Incognito sessions").
+        "incognitoSession": true,
+        "incognitoPromptToggles": true,
+        // Fork: a quote's `comment` / `agent` reach the model with Node's guidance (kernel_api::conversation_quote).
+        "conversationQuoteComment": true,
+        // Fork: the App's extension input source (`{kind: "extension"}`) is accepted on sendText and createSession
+        // firstInput and kept on the intent, the row and the queue item (specs/fork-rust-agent-parity.md, B4).
+        "extensionInputSource": true,
+        // Fork: `acp:<agentId>` selections run on the ACP agent, on macOS only like Node
+        // (specs/fork-rust-agent-parity.md "ACP external agents", rule 2).
+        "externalAgentTurns": cfg!(target_os = "macos"),
+    })
+}
+
+#[cfg(test)]
+#[path = "server_close_tests.rs"]
+mod close_tests;
+
+#[cfg(test)]
+#[path = "server_capabilities_tests.rs"]
+mod capabilities_tests;

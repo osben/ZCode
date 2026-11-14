@@ -4,6 +4,7 @@
 //! 也跑：规则文件、会话上下文、日期只在这次请求的消息里还没有时宣布。压缩裁掉开头时它们随第一组被裁掉，
 //! 摘要请求就重新带上它们（例如 `Today's date is …`）。
 
+use rust_cli_kernel_api::incognito::IncognitoKey;
 use rust_cli_kernel_api::message::{AttachmentMessage, Message};
 use rust_cli_kernel_api::orchestration::ContextRequest;
 
@@ -23,15 +24,22 @@ impl PromptAssembler {
         let window = since_boundary(history);
         let missing = |source: &str| attachments(window, source).next().is_none();
         let mut out = Vec::new();
+        // Fork: a child's summary request follows the child's context (rule 15 of the runtime-config spec): none of
+        // the two with `injectAgentsMd: false`, and no git status for a desktop child.
+        let inject = request.inject_agents_md;
+        let git_status = inject && (self.config.subagent_git_status || request.agent.is_none());
         if let Ok(facts) = self.ports.info.facts(&request.workspace).await {
-            if missing(instructions::SOURCE) {
+            if inject && missing(instructions::SOURCE) {
                 let files = self.load_rule_files(request, &facts).await;
                 out.extend(
                     instructions::announce(window, &files, instructions::Reason::SessionStart)
                         .map(|found| self.attachment(instructions::SOURCE, found)),
                 );
             }
-            if missing(session_context::SOURCE) {
+            if git_status
+                && missing(session_context::SOURCE)
+                && !self.excludes(request, IncognitoKey::Environment)
+            {
                 let git = self.ports.git.as_ref();
                 out.extend(
                     session_context::announce(git, &request.workspace, &facts, window)

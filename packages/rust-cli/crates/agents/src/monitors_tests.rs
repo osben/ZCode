@@ -490,3 +490,89 @@ async fn in_print_mode_a_monitor_command_does_not_park_the_subagent() {
     })
     .await;
 }
+
+/// Round 3 #2: the forwarder hands a monitor's terminal notice to the monitor's task, which delivers it and then
+/// acknowledges it. Until that ack, the child's forwarder entry must stay: a close and reopen of the top-level session
+/// in between must not start a second subscriber, which would replay the unacknowledged notice and deliver it again.
+#[tokio::test]
+async fn a_reopen_while_a_monitor_acknowledges_its_terminal_notice_delivers_it_once() {
+    let gates = Gates::default();
+    let env = Arc::new(MonitorEnv {
+        notices: NoticeEnvironment::replaying(),
+        ..MonitorEnv::default()
+    });
+    // `-p`: the agent does not park for its monitor, so it finishes while the monitor still runs.
+    let harness = held_ticking(&gates, false, env.clone().machine());
+    let (agent, session) = launched(&harness).await;
+    let notices = env.clone();
+    until(|| notices.notices.live_subscriptions() == 1).await;
+    let output = env.command("op_m", "b1");
+    let events = env.watch_command(OperationId::new("op_m"), 0);
+    let core = harness.agents.core.clone();
+    arm(&core, &agent, armed("b1"), events).unwrap();
+    gates.release(&session);
+    let live = core.clone();
+    let agent_id = agent.clone();
+    until(|| {
+        live.live
+            .get(&agent_id)
+            .is_some_and(|entry| matches!(entry.state, crate::live::AgentState::Finished(_)))
+    })
+    .await;
+    // The monitor's events end first: it waits for the terminal notice.
+    output
+        .send(Ok(CommandEvent::Finished {
+            output_unreadable: None,
+            outcome: Outcome::Completed,
+            exit_code: Some(0),
+            timed_out: false,
+            cwd_reset: None,
+            output_bytes: 0,
+            output_limit: None,
+        }))
+        .unwrap();
+    for _ in 0..1_000 {
+        tokio::task::yield_now().await;
+    }
+    env.notices.hold_acks();
+    let mut notice = shell_notice(1, "b1");
+    notice.kind = BackgroundKind::Monitor;
+    env.end(notice);
+    // The notice was delivered once and its ack started (held).
+    until(|| notices.notices.acks_started() == 1).await;
+    let signals = harness.agents.signals();
+    signals.session_closing(&SessionId::new(ROOT));
+    for _ in 0..1_000 {
+        tokio::task::yield_now().await;
+    }
+    let root_meta = rust_cli_kernel_api::store::SessionMeta {
+        id: SessionId::new(ROOT),
+        kind: rust_cli_kernel_api::store::SessionKind::Interactive,
+        parent: None,
+        workspace: crate::test_support::workspace(),
+        title: String::new(),
+        trace: rust_cli_kernel_api::ids::TraceId::new(ROOT),
+        created_at_ms: 0,
+        incognito: None,
+    };
+    signals.session_opened(&root_meta);
+    for _ in 0..1_000 {
+        tokio::task::yield_now().await;
+    }
+    env.notices.release_acks();
+    let board = core.clone();
+    until(|| notices.notices.acked().contains(&1) && !board.monitors.watches("b1")).await;
+    for _ in 0..1_000 {
+        tokio::task::yield_now().await;
+    }
+    let delivered = core
+        .hub
+        .pending(&SessionId::new(ROOT))
+        .iter()
+        .filter(|from| from.as_str() == "b1")
+        .count();
+    assert_eq!(
+        delivered, 1,
+        "the monitor's terminal notice was delivered {delivered} times"
+    );
+}

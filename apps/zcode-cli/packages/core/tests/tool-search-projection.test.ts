@@ -8,12 +8,12 @@ import { buildToolExposure, buildToolSearchAnnouncement } from "../src/tool/sear
 import { createToolRegistry } from "../src/tool/registry.js";
 import { toolSearchToolEntry } from "../src/tool/handlers/tool-search.js";
 import { deferredToolCallEntry } from "../src/tool/handlers/deferred-tool-call.js";
-import { webFetchToolEntry } from "../src/tool/handlers/webfetch.js";
+import { taskOutputToolEntry } from "../src/tool/handlers/task-output.js";
 import { createTestRuntimeModel } from "./test-runtime-model.js";
 
 function fixture() {
   const registry = createToolRegistry();
-  [toolSearchToolEntry, deferredToolCallEntry, webFetchToolEntry].forEach((tool) =>
+  [toolSearchToolEntry, deferredToolCallEntry, taskOutputToolEntry].forEach((tool) =>
     registry.register(tool),
   );
   const model = {
@@ -56,7 +56,7 @@ it.each<ResolvedToolSearchMode>(["native", "local", "off"])(
 
 it("encodes a Local definition once per request and reads new definitions on the next request", () => {
   const input = fixture();
-  const reference = { type: "tool_reference" as const, toolName: "WebFetch" };
+  const reference = { type: "tool_reference" as const, toolName: "TaskOutput" };
   const entries = [result([reference, reference]), result([reference])];
   const stringify = vi.spyOn(JSON, "stringify");
   let first;
@@ -69,10 +69,10 @@ it("encodes a Local definition once per request and reads new definitions on the
       mode: "local",
       entries,
       tools: input.tools.map((tool) =>
-        tool.name === "WebFetch" ? { ...tool, description: "updated definition" } : tool,
+        tool.name === "TaskOutput" ? { ...tool, description: "updated definition" } : tool,
       ),
     });
-    definitions = stringify.mock.calls.filter(([value]) => value?.name === "WebFetch");
+    definitions = stringify.mock.calls.filter(([value]) => value?.name === "TaskOutput");
   } finally {
     stringify.mockRestore();
   }
@@ -88,7 +88,7 @@ it("encodes a Local definition once per request and reads new definitions on the
 
 it("preserves Native discovery ordering when an earlier error reference is discovered later", () => {
   const input = fixture();
-  const reference = { type: "tool_reference" as const, toolName: "WebFetch" };
+  const reference = { type: "tool_reference" as const, toolName: "TaskOutput" };
   const failed = result([reference]);
   failed.message.isError = true;
   const withoutDiscovery = buildToolExposure({ ...input, mode: "native", entries: [failed] });
@@ -102,7 +102,7 @@ it("preserves Native discovery ordering when an earlier error reference is disco
     mode: "native",
     entries: [failed, successful],
   });
-  expect(discovered.tools.find((tool) => tool.name === "WebFetch")?.deferLoading).toBe(true);
+  expect(discovered.tools.find((tool) => tool.name === "TaskOutput")?.deferLoading).toBe(true);
   expect(discovered.entries[0]).toBe(failed);
   expect(discovered.entries[1]).toBe(successful);
 });
@@ -129,7 +129,7 @@ it.each(["ToolSearch", "LocalToolSearch"])(
         message: {
           role: "assistant",
           content: "",
-          toolCalls: [{ id: "search", name: storedName, input: { query: "select:WebFetch" } }],
+          toolCalls: [{ id: "search", name: storedName, input: { query: "select:TaskOutput" } }],
         },
       },
       {
@@ -137,7 +137,7 @@ it.each(["ToolSearch", "LocalToolSearch"])(
           role: "tool",
           toolName: storedName,
           toolCallId: "search",
-          content: [{ type: "tool_reference", toolName: "WebFetch" }],
+          content: [{ type: "tool_reference", toolName: "TaskOutput" }],
         },
       },
     ];
@@ -166,7 +166,7 @@ it.each(["ToolSearch", "LocalToolSearch"])(
         const notices = projected.entries.filter((entry) => entry.kind === "attachment");
         expect(notices).toHaveLength(mode === "off" ? 0 : 1);
         if (mode !== "off") expect(notices[0]!.content).toContain(`via ${name}.`);
-        expect([...projected.context.discovered]).toContain("WebFetch");
+        expect([...projected.context.discovered]).toContain("TaskOutput");
         expect(projected.loadedToolCallIds.has("search")).toBe(mode === "native");
         expect(previous.entries).toEqual(previousSnapshot);
         expect(entries).toEqual(before);

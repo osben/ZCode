@@ -100,5 +100,67 @@
         }
       }
     ]
+  },
+  {
+    "name": "compaction and session end events, in Node's event order",
+    "workspacePath": "/Users/dev/repo",
+    "userHooks": null,
+    "sources": [
+      {
+        "path": "/Users/dev/repo/.zcode/config.json",
+        "discoveryOrder": 0,
+        "hooks": {
+          "enabled": true,
+          "events": {
+            "SessionEnd": [
+              {
+                "hooks": [
+                  {
+                    "type": "command",
+                    "command": "bye.sh"
+                  }
+                ]
+              }
+            ],
+            "PostCompact": [
+              {
+                "matcher": "auto",
+                "hooks": [
+                  {
+                    "type": "process",
+                    "command": "node",
+                    "args": [
+                      "after.js"
+                    ]
+                  }
+                ]
+              }
+            ],
+            "PreCompact": [
+              {
+                "matcher": "manual",
+                "hooks": [
+                  {
+                    "type": "command",
+                    "command": "before.sh",
+                    "timeout": 3
+                  }
+                ]
+              }
+            ],
+            "UserPromptSubmit": [
+              {
+                "hooks": [
+                  {
+                    "type": "command",
+                    "command": "prompt.sh"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    ]
   }
 ]

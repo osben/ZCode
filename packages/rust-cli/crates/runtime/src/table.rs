@@ -17,7 +17,7 @@ use rust_cli_context::PromptAssembler;
 use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::machine::Files;
 use rust_cli_kernel_api::permission::ProjectRules;
-use rust_cli_kernel_api::store::LoadedSession;
+use rust_cli_kernel_api::store::{LoadedSession, RuntimePresence};
 use rust_cli_policy::PolicyGate;
 use rust_cli_session::{Opened, Session, SessionDeps, SessionState};
 use tokio_util::sync::CancellationToken;
@@ -28,6 +28,10 @@ use crate::LocalKernel;
 pub(crate) struct Open {
     pub(crate) session: Arc<Session>,
     _scope: TaskScope,
+    /// Fork: this process's row in Node's `session_runtime_presence` (specs/fork-rust-agent-parity.md "Session
+    /// runtime presence on the shared database"). It stays through Closing and is released when the slot leaves the
+    /// table, after the actor exited, and when the table drops with the kernel.
+    _presence: RuntimePresence,
 }
 
 /// 条目换掉时唤醒等它的调用：丢弃即取消。
@@ -126,6 +130,14 @@ pub(crate) struct SessionScoped {
     pub(crate) gate: Arc<PolicyGate>,
     /// WaitForMcpServers 的 declared 按会话记，会话关闭时清掉（ext.md §3.8、D34）。
     pub(crate) mcp: Arc<rust_cli_ext::McpManager>,
+    /// Fork: the agents' notice forwarders follow a session's close (specs/fork-rust-agent-parity.md, "After a
+    /// restart, and on a remote executor").
+    pub(crate) agents: Arc<dyn rust_cli_kernel_api::agents::AgentSignals>,
+    /// Fork: a session close releases its ACP agent process (specs/fork-rust-agent-parity.md "ACP external agents").
+    pub(crate) acp: Option<crate::acp::AcpRelease>,
+    /// Fork: a session close drops its Host subagent snapshot and gate (specs/fork-rust-subagent-runtime-config.md
+    /// rule 11).
+    pub(crate) agent_catalog: Arc<rust_cli_agents::AgentCatalog>,
 }
 
 impl SessionScoped {
@@ -161,6 +173,10 @@ impl SessionScoped {
         self.worktrees.forget(session);
         self.gate.release(session);
         self.mcp.release(session);
+        if let Some(acp) = &self.acp {
+            acp.released(session);
+        }
+        self.agent_catalog.forget(session);
     }
 }
 
@@ -175,6 +191,9 @@ pub(crate) struct Closer {
 impl rust_cli_session::Released for Closer {
     /// Open → Closing（早于 SessionEnd）：从这时起打开同一个会话都等它关完，不会拿到马上要退出的 actor。
     fn closing(&self, session: &SessionId) {
+        // Fork: a top-level session is closed for the agents' notice forwarders from here, before its actor exits
+        // (a notice no live agent owns is no longer acknowledged into its Hub). Not under the session table lock.
+        self.scoped.agents.session_closing(session);
         let Some(sessions) = self.sessions.upgrade() else {
             return;
         };
@@ -247,7 +266,12 @@ impl LocalKernel {
 
     /// 启动会话 actor 并登记为 Open（`Session::spawn` 是同步调用，持锁期间不等待）。新建的会话 ID 是新的；冷加载时
     /// 这里换掉的是调用方自己登记的 Loading，它的令牌随之丢弃，等它的打开醒来拿到这个句柄。
-    pub(crate) fn start(&self, state: SessionState, opened: Opened) -> Arc<Session> {
+    pub(crate) fn start(
+        &self,
+        state: SessionState,
+        opened: Opened,
+        presence: RuntimePresence,
+    ) -> Arc<Session> {
         let id = state.meta.id.clone();
         let mut sessions = self.sessions();
         if let Some(Slot::Open(open)) = sessions.get(&id) {
@@ -281,6 +305,9 @@ impl LocalKernel {
             desktop_goals: self.desktop_goals,
             fork_while_running: self.fork_while_running,
             error_holds_queue: self.error_holds_queue,
+            session_start_extras: self.session_start_extras,
+            typed_compact: self.typed_compact,
+            hook_rows: self.hook_rows,
         };
         let session = Arc::new(Session::spawn(deps, state, opened));
         tracing::info!(event = "session.open", session = %id, opened = ?opened, "session opened");
@@ -289,6 +316,7 @@ impl LocalKernel {
             Slot::Open(Open {
                 session: session.clone(),
                 _scope: scope,
+                _presence: presence,
             }),
         );
         session

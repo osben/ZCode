@@ -78,8 +78,36 @@ impl Inner {
 impl McpManager {
     /// 同一把锁里取出的 MCP 工具与连接状态（query.md §1.3：工具与 `mcp_instructions_delta`、连接中的服务器同一时点）。
     pub fn snapshot(&self) -> (Vec<Arc<dyn Tool>>, McpView) {
+        self.0.wake_deferred();
         let servers = self.0.servers();
         (tools_of(&self.0, &servers), view_of(&servers))
+    }
+
+    /// Fork (incognito, specs/fork-rust-agent-parity.md): [`Self::snapshot`] restricted to the servers whose scope
+    /// `keep` admits, taken under the same lock. Tools without a server (the resource tools) stay; the incognito tool
+    /// gate decides them.
+    pub fn snapshot_where(
+        &self,
+        keep: impl Fn(crate::mcp::McpScope) -> bool,
+    ) -> (Vec<Arc<dyn Tool>>, McpView) {
+        self.0.wake_deferred();
+        let servers = self.0.servers();
+        let kept = |name: &str| {
+            servers
+                .get(name)
+                .is_some_and(|server| keep(server.config.scope))
+        };
+        let mut tools = tools_of(&self.0, &servers);
+        tools.retain(|tool| tool.mcp_info().is_none_or(|info| kept(&info.server)));
+        let mut view = view_of(&servers);
+        view.servers.retain(|server| kept(&server.name));
+        view.instructions.retain(|entry| kept(&entry.name));
+        (tools, view)
+    }
+
+    /// Fork (incognito): the configured scope of the server named `name`.
+    pub fn scope_of(&self, name: &str) -> Option<crate::mcp::McpScope> {
+        self.0.servers().get(name).map(|server| server.config.scope)
     }
 
     /// 有登记的服务器（含停用的）。

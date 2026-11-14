@@ -35,6 +35,7 @@ fn endpoint(protocol: WireProtocol, base_url: String) -> ModelEndpoint {
             ..ModelCapabilities::default()
         },
         renewable: false,
+        compress_body_over: None,
     }
 }
 
@@ -244,6 +245,7 @@ async fn text_only_models_get_image_placeholders() {
             name: None,
         },
         cache_control: None,
+        meta: false,
     });
     for supports_image in [false, true] {
         let endpoint = ModelEndpoint {

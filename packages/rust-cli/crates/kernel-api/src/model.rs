@@ -50,6 +50,11 @@ pub struct ApiContent {
     pub block: ContentBlock,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_control: Option<CacheControl>,
+    /// Fork: a block of an attachment (a mention's Read result), or a medium of an earlier input merged with a newer
+    /// one, not the current input, even when it is merged into the user's message. Node keeps such entries apart
+    /// from the newest real user message, so its request media budget never protects them. Not sent.
+    #[serde(skip)]
+    pub meta: bool,
 }
 
 /// 每轮的输出设置（Anthropic beta `per-turn-control`）：挂在对话中间的 system 消息上，
@@ -238,7 +243,17 @@ pub struct ModelSelection {
     pub connection: Option<Box<ModelConnection>>,
 }
 
+/// Fork: the provider prefix of an ACP external agent selection (Node `ACP_PROVIDER_ID_PREFIX`).
+pub const ACP_PROVIDER_PREFIX: &str = "acp:";
+
 impl ModelSelection {
+    /// Fork: the agent id of an ACP external agent selection (`acp:<agentId>`, Node `ACP_PROVIDER_ID_PREFIX`); such a
+    /// selection runs on the agent process, never on a model provider (specs/fork-rust-agent-parity.md "ACP external
+    /// agents").
+    pub fn external_agent(&self) -> Option<&str> {
+        self.provider.strip_prefix(ACP_PROVIDER_PREFIX)
+    }
+
     /// 只有 provider 与模型的选择：推理档位、账号连接为空（由目录项或用户的选择填上，结构更新）。
     pub fn new(provider: impl Into<String>, model: impl Into<String>) -> Self {
         Self {
@@ -379,6 +394,30 @@ pub enum ModelError {
         "API Error: Request too large. Remove large images or files from the conversation, or use /rewind to go back to before they were added. · {message}"
     )]
     RequestTooLarge { message: String },
+    /// Fork: the latest real user message's own media exceed the request media budget (Node
+    /// `projectMessagesForMediaBudget`); refused before sending. Node's text, and its error code ([`Self::code`]).
+    #[error("{CURRENT_ATTACHMENTS_TOO_LARGE}")]
+    CurrentAttachmentsTooLarge,
+}
+
+/// Fork: Node's text for [`ModelError::CurrentAttachmentsTooLarge`].
+pub const CURRENT_ATTACHMENTS_TOO_LARGE: &str =
+    "Current attachments are too large to send. Remove or compress attachments and try again.";
+
+/// Fork: Node's `MEDIA_BUDGET_CURRENT_ATTACHMENT_TOO_LARGE_ERROR_CODE` (`packages/shared/src/zcode-media-policy.ts`),
+/// which the App localizes.
+pub const MEDIA_BUDGET_CURRENT_ATTACHMENT_TOO_LARGE: &str =
+    "MEDIA_BUDGET_CURRENT_ATTACHMENT_TOO_LARGE";
+
+impl ModelError {
+    /// Fork: Node's error code for this failure, which a failed turn carries to the App (`lastError.code`); `None`
+    /// keeps the generic turn fault.
+    pub fn code(&self) -> Option<&'static str> {
+        match self {
+            Self::CurrentAttachmentsTooLarge => Some(MEDIA_BUDGET_CURRENT_ATTACHMENT_TOO_LARGE),
+            _ => None,
+        }
+    }
 }
 
 /// 内容拦截的说明（[`ModelError::ContentBlocked`] 的前一句；结束原因是 refusal 时主循环用它结束回合，

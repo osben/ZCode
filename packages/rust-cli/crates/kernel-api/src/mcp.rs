@@ -28,7 +28,8 @@ pub enum McpTransportConfig {
         #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
         env: BTreeMap<String, String>,
         /// 进程的工作目录（Node 配置的 `cwd`）：相对路径相对工作区根，绝对路径原样；None 是工作区根
-        /// （docs/specs/rust-cli/ext.md §3.1、§3.2）。
+        /// （docs/specs/rust-cli/ext.md §3.1、§3.2）。Fork: a project server on the main env arrives already resolved
+        /// against its config file's base directory (Node `normalizeProjectMcpServer`, cli `resolve_project_cwds`).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cwd: Option<String>,
     },
@@ -42,6 +43,10 @@ pub enum McpTransportConfig {
         #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
         headers: BTreeMap<String, String>,
     },
+    /// Fork: a server the Node helper hosts (specs/fork-rust-node-helper.md F3). Only the server name
+    /// (`McpConnect.server`) crosses to the helper, which takes the config from its own Node plugin resolution. Always
+    /// on the main env: the helper is a child of this process.
+    NodeHelper,
 }
 
 impl McpTransportConfig {
@@ -139,6 +144,20 @@ pub trait McpTransport: Send + Sync {
     fn events(&self, connection: &McpConnectionId) -> BoxStream<'static, McpTransportEvent>;
 
     async fn close(&self, connection: &McpConnectionId) -> Result<(), McpError>;
+}
+
+/// Fork: a live stdio MCP server process that this agent process started (Node `McpTrackedProcess`, the source of
+/// `process/childProcesses`, specs/fork-rust-agent-parity.md).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct McpProcess {
+    pub pid: u32,
+    /// The server name the connection was opened with (`McpConnect.server`).
+    pub server: String,
+}
+
+/// Fork: the stdio MCP server processes alive now, in the order they started.
+pub trait McpProcesses: Send + Sync {
+    fn processes(&self) -> Vec<McpProcess>;
 }
 
 /// 没有 MCP 传输时的空实现：连接一律失败。

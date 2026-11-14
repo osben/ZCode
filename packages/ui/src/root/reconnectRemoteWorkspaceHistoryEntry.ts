@@ -38,10 +38,6 @@ type ManualReconnectRemoteWorkspaceParams = {
     requestId?: string,
     context?: Parameters<IPlatformService["connectRemote"]>[2],
   ) => Promise<string>;
-  resolveRemoteWorkspaceCanonicalPath: (
-    sessionId: string,
-    workspacePath: string,
-  ) => Promise<string>;
   bindRemoteWorkspaceScope: (
     sessionId: string,
     workspacePath: string,
@@ -73,6 +69,10 @@ type ManualReconnectRemoteWorkspaceParams = {
   shouldKeepReconnectedWorkspace?: (
     context: Pick<RemoteWorkspaceSessionEntry, "workspacePath" | "workspaceIdentity">,
   ) => boolean;
+  /** 目录当前 tab 上仍在线的 owner session；没有或已失效时返回 undefined。 */
+  readLiveWorkspaceOwner?: (
+    context: Pick<RemoteWorkspaceSessionEntry, "workspacePath" | "workspaceIdentity">,
+  ) => string | undefined;
   onWorkspaceActivated?: (target: {
     workspacePath: string;
     workspaceIdentity: string;
@@ -184,7 +184,6 @@ export async function reconnectRemoteWorkspaceHistoryEntry({
   loadCredential,
   getSettings,
   connectRemoteWorkspaceTarget,
-  resolveRemoteWorkspaceCanonicalPath,
   bindRemoteWorkspaceScope,
   disposeRemoteWorkspaceSession,
   bindRemoteWorkspacePath,
@@ -195,6 +194,7 @@ export async function reconnectRemoteWorkspaceHistoryEntry({
   logger,
   toast,
   shouldKeepReconnectedWorkspace,
+  readLiveWorkspaceOwner,
   onWorkspaceActivated,
   formatError,
   options,
@@ -285,20 +285,17 @@ export async function reconnectRemoteWorkspaceHistoryEntry({
       // From this moment siblings can reuse the initiator credential to create attachments, with no waiting or repeated credential reads.
       options?.onSshHostReady?.(sshCredentials);
     }
-    resolvedWorkspacePath = await resolveRemoteWorkspaceCanonicalPath(
-      sessionId,
-      sessionEntry.workspacePath,
-    );
-    // Bug cause: the Renderer used to derive identity locally from the transport target, splitting from the
-    // authoritative remote:server:* identity bound by the Host. Keep this consistent with first connect:
-    // complete the Host bind first, then consume only the returned authoritative scope.
-    // This bind is also a prerequisite for the mobile remote-control bridge to pass: the bridge compares the
-    // tab's path/identity triple against the main descriptor, and a missing bind — or a bind lagging behind
-    // the tab backfill — is rejected with REMOTE_WORKSPACE_IDENTITY_MISMATCH (3.12.0 could not connect to
-    // remote projects because of this).
-    // The bind must sit before the retention check below: no await may sit between the check and
-    // upsertWorkspaceTab, otherwise a stale check result would re-add the workspace after the user removed
-    // the tab while waiting for the ready ACK.
+    // Bug 原因（3.17.1 用户反馈“设备已连接、会话打不开”）：这里过去先对持久化路径做 realpath。
+    // 项目根目录是 symlink 时（例如 /home/dev/projects/app → /data/projects/app），bind 到目标路径会得到
+    // 另一个 identity，下方保留校验找不到对应 tab，把刚连上的 session 当作“已被移除”静默回收，
+    // 设备上线后的自动挂回与手动重连都会如此。已绑定的 workspace 以首次 bind 的路径为身份，
+    // 重连沿用持久化路径，与项目入口一致；已绑定的路径不再做 realpath。
+    // Bug 原因：Renderer 过去用 transport target 本地推导 identity，与 Host 绑定的 remote:server:*
+    // 权威 identity 分裂。这里和首次连接保持一致：先完成 Host bind，再只消费返回的权威 scope。
+    // 这次 bind 也是手机远控桥接能通过的前提：bridge 按 tab 的 path/identity 三元比对 main descriptor，
+    // 缺少 bind 或 bind 落后于 tab 回填会被 REMOTE_WORKSPACE_IDENTITY_MISMATCH 拒绝（3.12.0 曾因此连不上远程项目）。
+    // bind 必须位于下方保留校验之前：校验与 upsertWorkspaceTab 之间不能再有 await，否则用户在等待
+    // ready ACK 期间移除 tab 后，过期的校验结果会把 workspace 重新加回。
     const boundScope = await bindRemoteWorkspaceScope(
       sessionId,
       resolvedWorkspacePath,
@@ -319,6 +316,22 @@ export async function reconnectRemoteWorkspaceHistoryEntry({
     ) {
       logger.warn("[Root] 远程 workspace 在重连过程中已被移除，跳过恢复并回收 session", {
         workspacePath: resolvedWorkspacePath,
+      });
+      await disposeRemoteWorkspaceSession(sessionId);
+      return;
+    }
+    // Bug 原因：入口只在发起前检查 tab 是否已有 owner；连接与 Provisioning 等待期间，侧栏导航可能已为
+    // 同一目录写入另一条 session，这里直接覆盖 tab，被替换的 session 无人回收。写入前按同一规则复核：
+    // 已有在线 owner 时让出并回收本次连接，与项目打开路径的复用规则一致。
+    const liveOwner = readLiveWorkspaceOwner?.({
+      workspacePath: resolvedWorkspacePath,
+      workspaceIdentity: resolvedWorkspaceIdentity,
+    });
+    if (liveOwner && liveOwner !== sessionId) {
+      logger.warn("[Root] 远程 workspace 在重连过程中已有在线 owner，让出并回收 session", {
+        workspacePath: resolvedWorkspacePath,
+        sessionId,
+        liveOwner,
       });
       await disposeRemoteWorkspaceSession(sessionId);
       return;

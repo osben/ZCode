@@ -17,7 +17,6 @@ import {
   ASK_USER_QUESTION_TOOL_NAME,
   ENTER_PLAN_MODE_TOOL_NAME,
   EXIT_PLAN_MODE_TOOL_NAME,
-  READ_SESSION_CONTEXT_TOOL_NAME,
   RESOLVE_WORKFLOW_QUESTION_TOOL_NAME,
 } from "@zcode/contracts";
 
@@ -48,13 +47,12 @@ const ACTOR_DISALLOWED_TOOLS: readonly string[] = [
   "CreateWorkflow",
   // The amend entry point has the same nested-orchestration root cause as CreateWorkflow.
   "AmendWorkflow",
-  READ_SESSION_CONTEXT_TOOL_NAME,
-  // Subagents must not answer escalation questions for the main agent
-  // (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md, "Escalation").
-  // The root cause differs from the exclusions above: this is about **identity**, not unauthorized
-  // reads. Escalation exists to give the decision to the party that created the workflow; letting
-  // another actor answer would quietly reduce it to persuasion between actors. Actors ask through
-  // `escalate` (always registered); only the main session answers.
+  // 话题资源只属于主会话已接纳的机器人输入（会话工具设计 0.8）。
+  "ReadTopicResource",
+  // 子代理不许替主代理回答升级问题（apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md「Escalation」）。
+  // 与上面几条的根因不同：这不是越权读，而是**身份**——升级的整个意义是把判断权
+  // 交给创建这条工作流的那一方；让另一个 actor 顺手作答，等于把它悄悄退化成 actor 之间的
+  // 互相说服。actor 提问用 `escalate`（恒注册），作答只属于主会话。
   RESOLVE_WORKFLOW_QUESTION_TOOL_NAME,
 ];
 

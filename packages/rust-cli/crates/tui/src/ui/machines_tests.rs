@@ -198,6 +198,7 @@ fn ask(tool: &str, input: serde_json::Value, machine: Option<&str>) -> DetachedE
                 asked_by: None,
                 machine: rust_cli_kernel_api::ids::MachineName::new(machine.unwrap_or_default()),
                 once: false,
+                independent: false,
             },
         }),
     }

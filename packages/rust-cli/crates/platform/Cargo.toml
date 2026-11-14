@@ -37,6 +37,19 @@ tokio-util.workspace = true
 tracing.workspace = true
 url.workspace = true
 
+# Fork: the OS key store of the standalone system cipher (specs/fork-rust-credential-cipher.md F4).
+[target.'cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))'.dependencies]
+keyring-core.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+apple-native-keyring-store.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+dbus-secret-service-keyring-store.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-native-keyring-store.workspace = true
+
 [dev-dependencies]
 # 共用的测试时钟（kernel-api 的 testing，F126）。
 rust-cli-kernel-api = { workspace = true, features = ["testing"] }

@@ -130,6 +130,7 @@ fn speed_app(
                 used_tokens: 66_600,
                 max_tokens: 180_000,
                 compact_at: None,
+                window_tokens: None,
             },
         },
         0,

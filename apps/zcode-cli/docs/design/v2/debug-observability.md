@@ -49,7 +49,9 @@ snapshots are needed, rerun the tested CLI in the dev run mode.
 
 Before each model request the runtime also writes `event: "context_usage_snapshot"` at debug level.
 It is not a stable public API but a dev-time JSONL observation event used by the debug app to show
-context usage. The snapshot contains at least:
+context usage. Consumers that need a stable interface (for example extension plugins) use the query
+method in [Context composition](model/context-composition.md); both come from the same breakdown.
+The snapshot contains at least:
 
 - `categories[]`: usage grouped by system prompt, meta user context, skills, tool prompt, tool
   schemas, messages.

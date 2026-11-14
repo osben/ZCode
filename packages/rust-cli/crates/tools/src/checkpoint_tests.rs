@@ -79,6 +79,7 @@ mod tools {
                 root: EnvPath::new("/work"),
             },
             mode: PermissionMode::AcceptEdits,
+            base_mode: PermissionMode::AcceptEdits,
             machine: machine(env.clone()),
             controller: controller_services(env),
             artifacts: artifacts.clone(),

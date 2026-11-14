@@ -31,6 +31,8 @@ account query + Family selection
 
 Full boundaries and acceptance SIP-01..21: [Todo154](working-memory/provider-refactor/steps/todo-154-start-plan-independent-provider.md).
 
+The domestic entry (`zai_cn`) is not a plan family: its Start always belongs to BigModel (shared mapping `resolveStartPlanFamilyFromOAuthProvider`, used by both the Host and the settings page). A domestic account not linked to BigModel still queries, claims and uses BigModel Start with the ZCode identity and the shared JWT; Z.ai Start is unavailable to it. Identity resolution rules: [login scheme 5.5](zcode-login-rework.md#55-套餐凭据解析核心链路已实现).
+
 `builtin:*` ids in the legacy interface notes below are the pre-migration identity; they now correspond
 to `account:*`, and the old Provider Store must not be restored.
 
@@ -181,6 +183,8 @@ Shared Plan Card behavior:
 The settings detail form exposes no manual connection fields for Start Plan. `Base URL`, `API Format`
 and `API Key` are replaced by a Start Plan card, because OAuth/preset sync maintains those values and
 they must not look user-editable.
+
+The settings page renders the model list only when the Start entitlement is actually available (Account snapshot `availability=available`). `pending` only means the plan is claimed and the entitlement has not reached its effective time: the balance snapshot then also carries plan details (status projected as purchased), but the account entitlement is not executable, so the detail page shows only the plan card and the effective schedule, and must not render the model list or the empty state "No models configured; add one manually". Signed-out, not activated, querying/query failed and unknown also do not render the model area; the status card keeps the matching login, retry and purchase entries.
 
 The Start Plan model catalog stays managed jointly by `billing/balance` and
 `client/configs.builtinModels`; users cannot add, delete or rename models, nor change server-owned

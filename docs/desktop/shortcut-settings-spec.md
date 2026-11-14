@@ -422,7 +422,7 @@ E2E (packages/desktop/test/e2e/; app interaction requires E2E by repo rule):
   the original default key no longer triggers the command in the main UI → re-entering the settings page is
   still unassigned (covers `[]` override persistence, no fallback to default); the recording-state `Backspace`
   restore-default path is unaffected.
-- Search by key combination (SC-11/SC-12, `settings/shortcut-settings-key-search.test.ts`): after arming, the
+- Search by key combination (SC-11/SC-12, `settings/shortcuts/shortcut-settings-key-search.test.ts`): after arming, the
   platform primary modifier + K filters to the command with that default binding (openCommandCenter) and other
   command rows disappear → clearing restores the full list; a combination with no hit (CmdOrCtrl+Shift+9) shows
   the empty state → clear, re-arm, Escape exit (aria-pressed resets, list unchanged).

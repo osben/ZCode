@@ -57,13 +57,18 @@ fn failed(message: String) -> McpError {
 ///
 /// 缺陷修复 R2-13：值原来按普通值交给 net；配置里的 header 常是 Authorization 或 API key，现在一律是秘密值
 /// （发送时标为敏感，任何 Debug 输出都看不到原值）。
+///
+/// Fork: every MCP request passes here and is hidden from the Network panel, like Node's `withoutNetworkCapture`
+/// (specs/fork-rust-network-capture.md).
 fn with_headers(request: HttpRequest, headers: &BTreeMap<String, String>) -> HttpRequest {
-    headers.iter().fold(request, |request, (name, value)| {
-        request.header(
-            name.as_str(),
-            HeaderValue::Secret(RedactedString::new(value.as_str())),
-        )
-    })
+    headers
+        .iter()
+        .fold(request.unobserved(), |request, (name, value)| {
+            request.header(
+                name.as_str(),
+                HeaderValue::Secret(RedactedString::new(value.as_str())),
+            )
+        })
 }
 
 fn messages(value: Value) -> Vec<Value> {

@@ -1,7 +1,7 @@
 # Bash Shell Provider (current implementation)
 
-Updated: 2026-07-15. This file records current behavior, not a pending plan. The Bash execution
-work has shipped and has since expanded to Windows, session shell snapshots, startup sources and
+Updated: 2026-11-10. This file records current behavior, not a pending plan. The Bash execution
+work has shipped and has since expanded to Windows, runtime shell selection, startup sources and
 the embedded search prelude.
 
 ## Current contract
@@ -24,8 +24,7 @@ returns an explicit `legacy-shell` selection and degrades to the legacy system s
 ## Shell selection
 
 ```text
-session persisted selection (when valid)
-  -> user-config selection (new sessions only)
+user-config selection (new sessions and cold resume both read the current setting)
   -> platform auto-detect
   -> legacy system shell fallback
 ```
@@ -49,20 +48,18 @@ Windows:
 The provider injects only the generic variables listed above plus ZCode-named variables; it does
 not introduce environment variables named for other products.
 
-## Session snapshot
+## Runtime selection
 
-The shell is session-start configuration, not a global setting re-read per Bash call:
+The shell is a setting read when the runtime initializes, not a global setting re-read per Bash call:
 
 - `bashShellSelection` is initialized before the first real user execution; a deferred draft may
   refresh the Environment context before that first run.
-- The selection is saved as session entry `runtime:bash_shell_selection`.
-- Cold resume prefers the persisted selection; when the path is stale it records staleness and
-  falls back to the currently available selection.
-- Shell setting changes only affect new sessions; existing sessions keep the selection from
-  their creation time.
-- An old Windows session with no usable snapshot whose shell changed at resume gets a
-  provider-visible `shell_environment_change` insert, so the model does not keep assuming the
-  old shell syntax.
+- Cold resume also reads the current setting; it does not restore the shell of the session's creation.
+  The selection is not persisted.
+- No hot update while the runtime is alive: a shell setting change applies to new sessions at once and
+  to existing sessions at their next cold resume.
+- A shell change is announced to the model in the environment notice: ` - Shell: <new> (was <old>)`.
+  It is written to the store with the request, restored in place on cold resume, and not appended again.
 
 workspace path/identity does not participate in shell identity; actual executable availability is
 judged by the Agent runtime environment. Remote sessions therefore use the remote machine's
@@ -105,7 +102,6 @@ provider must not build a second cwd file or move cwd persistence into the core 
 - `packages/contracts/src/interfaces/execution.port.ts`
 - `packages/core/src/tool/handlers/bash.ts`
 - `packages/core/src/runtime/methods/session-shell-environment.ts`
-- `packages/core/src/runtime/methods/bash-shell-snapshot.ts`
 - `packages/adapters/src/exec/bash-shell-provider.ts`
 - `packages/adapters/src/exec/bash-startup-script.ts`
 - `packages/adapters/src/exec/cwd-capture.ts`
@@ -114,15 +110,13 @@ provider must not build a second cwd file or move cwd persistence into the core 
 - `packages/core/tests/bash-handler.test.ts`
 
 Tests cover POSIX bash/zsh syntax, Windows Git Bash/CMD, fixed directories and PATH fallback,
-legacy fallback, env overlay, cwd capture, background behavior, startup sources, snapshot
-restore/stale fallback, and generic shell not reading the Bash profile.
+legacy fallback, env overlay, cwd capture, background behavior, startup sources, cold
+resume reading the current shell and announcing the change, and generic shell not reading the Bash profile.
 
 ## Boundaries
 
 - The shell provider does not promise full interactive rc/profile behavior; startup arguments and
   source policy are defined by the adapter tests.
-- A persisted executable may be stale on resume; degrade and leave a notice. Never block session
-  recovery to preserve a historical shell.
 - The Bash tool's provider-visible behavior contract is
   `apps/zcode-cli/docs/design/v2/tool/04-bash.md`; this file only describes selection/execution
   architecture.

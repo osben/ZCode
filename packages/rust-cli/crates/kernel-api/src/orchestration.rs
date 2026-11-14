@@ -54,6 +54,11 @@ pub struct QueryRequest {
     /// UserPromptSubmit，docs/specs/rust-cli/query.md §1.1）。其他运行为空（修复线 F10 新增）。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub prompt_hook_messages: Vec<Message>,
+    /// Fork: false for a subagent run whose definition says `injectAgentsMd: false`. The run passes it to its context
+    /// requests and to its compaction, so the summary run leaves the project instructions out too
+    /// (specs/fork-rust-subagent-runtime-config.md rule 15).
+    #[serde(default = "inject_by_default", skip_serializing_if = "is_injected")]
+    pub inject_agents_md: bool,
 }
 
 impl QueryRequest {
@@ -80,6 +85,7 @@ impl QueryRequest {
             max_turns: None,
             default_machine: crate::ids::MachineName::primary(),
             prompt_hook_messages: Vec::new(),
+            inject_agents_md: true,
         }
     }
 }
@@ -95,6 +101,15 @@ pub enum QueryEvent {
         index: usize,
         delta: BlockDelta,
     },
+    /// Fork: the model stream started a `tool_use` block (Node `tool_input_start`); its input follows as
+    /// [`QueryEvent::Delta`] with `BlockDelta::InputJson` (specs/fork-rust-agent-parity.md, "Tool rows while the tool
+    /// input streams").
+    ToolInputStarted {
+        message: usize,
+        index: usize,
+        tool_use: ToolUseId,
+        name: String,
+    },
     ToolStarted {
         tool_use: ToolUseId,
         name: String,
@@ -108,8 +123,121 @@ pub enum QueryEvent {
         tool_use: ToolUseId,
         output: ToolOutput,
     },
+    /// Fork: an ACP agent's tool or plan row before it settles (specs/fork-rust-agent-parity.md "ACP external agents",
+    /// rule 6; Node `ToolCallScheduled`/`Started`/`Progress`): its fixed name, latest title and input, and whether it
+    /// started. It settles with [`QueryEvent::ToolFinished`].
+    ExternalToolRow {
+        tool_use: ToolUseId,
+        name: String,
+        title: String,
+        input: Value,
+        running: bool,
+    },
+    /// Fork: the ACP agent's options changed: the turn reconcile applied the session's choices, or the agent changed a
+    /// value itself (specs/fork-rust-agent-parity.md rule 13; Node `config_options`).
+    ExternalAgentConfig {
+        agent: String,
+        options: Vec<crate::external_agent_config::ExternalAgentConfigOption>,
+    },
     /// 模型端口的通知（重试、停顿、恢复），只供显示（docs/specs/rust-cli/stall-visibility.md §1）。
     ModelNotice { notice: crate::model::ModelNotice },
+    /// Fork: the hook runs of one dispatch, for the App's `hookInvocation` row (specs/fork-rust-agent-parity.md
+    /// HK-UP-01); only under the Node desktop session.
+    HookInvocation {
+        invocation: crate::hooks::HookInvocation,
+    },
+    /// Fork: the input a UserPromptSubmit hook blocked, shown as the turn's `userInput` row and never committed
+    /// (Node projects it from `TurnStarted`); only under the Node desktop session.
+    PromptBlocked { message: crate::message::Message },
+    /// Fork: the ACP agent could not load the session's earlier ACP session, so a new one replaced it
+    /// (specs/fork-rust-agent-parity.md "ACP external agents", rule 14; Node `context_reset`). Display only.
+    ExternalAgentContextReset { agent: String },
+    /// Fork: the running ACP prompt went silent or spoke again (rule 14; Node `ExternalAgentStatus`). Display only.
+    ExternalAgentStatus {
+        agent: String,
+        status: ExternalAgentStatus,
+    },
+}
+
+/// Fork: an ACP prompt's liveness (Node `ExternalAgentStatusPayload.status`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum ExternalAgentStatus {
+    /// No output for the stall window; `silent_ms` is the silence so far.
+    Stalled { silent_ms: u64 },
+    /// Output arrived again after a stall.
+    Resumed,
+}
+
+impl QueryEvent {
+    /// The session event of a query event in `turn` (the session actor's log, and the App's telemetry of a
+    /// subagent's live run).
+    pub fn into_kernel_event(self, turn: crate::ids::TurnId) -> crate::session_api::KernelEvent {
+        use crate::session_api::KernelEvent;
+        match self {
+            Self::Delta {
+                message,
+                index,
+                delta,
+            } => KernelEvent::StreamDelta {
+                turn,
+                response: u32::try_from(message).unwrap_or(u32::MAX),
+                index,
+                delta,
+            },
+            Self::ToolInputStarted {
+                message,
+                index,
+                tool_use,
+                name,
+            } => KernelEvent::ToolInputStarted {
+                turn,
+                response: u32::try_from(message).unwrap_or(u32::MAX),
+                index,
+                tool_use,
+                name,
+            },
+            Self::ToolStarted {
+                tool_use,
+                name,
+                input,
+            } => KernelEvent::ToolStarted {
+                tool_use,
+                name,
+                input,
+            },
+            Self::ToolProgress { tool_use, progress } => {
+                KernelEvent::ToolProgress { tool_use, progress }
+            }
+            Self::ToolFinished { tool_use, output } => KernelEvent::ToolDone { tool_use, output },
+            Self::ExternalToolRow {
+                tool_use,
+                name,
+                title,
+                input,
+                running,
+            } => KernelEvent::ExternalToolRow {
+                tool_use,
+                name,
+                title,
+                input,
+                running,
+            },
+            Self::ExternalAgentConfig { agent, options } => {
+                KernelEvent::ExternalAgentConfig { agent, options }
+            }
+            // 模型通知只供显示，不落库（stall-visibility.md §1）。
+            Self::ModelNotice { notice } => KernelEvent::ModelNotice { notice },
+            Self::HookInvocation { invocation } => KernelEvent::HookInvocation { turn, invocation },
+            Self::PromptBlocked { message } => KernelEvent::PromptBlocked { turn, message },
+            Self::ExternalAgentContextReset { agent } => {
+                KernelEvent::ExternalAgentContextReset { agent }
+            }
+            Self::ExternalAgentStatus { agent, status } => {
+                KernelEvent::ExternalAgentStatus { agent, status }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -146,6 +274,16 @@ pub enum QueryError {
     Unsupported { what: String },
 }
 
+impl QueryError {
+    /// Fork: see [`ModelError::code`].
+    pub fn code(&self) -> Option<&'static str> {
+        match self {
+            Self::Model(error) => error.code(),
+            _ => None,
+        }
+    }
+}
+
 /// 主循环的输出端，由会话 actor 实现（子代理、压缩各有自己的实现）。
 ///
 /// 提交屏障：`commit_message` 与 `commit_intent` 在存储事务成功后才返回，主循环拿到 `Ok` 才继续
@@ -167,6 +305,15 @@ pub trait RunSink: Interactions + SessionOps {
     /// 存储事务里提交。没有事务的输出端（只收集的、子代理的）逐条提交。
     async fn commit_messages(&self, messages: Vec<Message>) -> Result<(), StoreError>;
 
+    /// Fork: a compaction batch (boundary, summary and restored messages) committed as one group, with the flag of
+    /// [`crate::compaction::CompactResult::session_start_context`]. The session clears its held SessionStart result
+    /// once the batch has committed with the flag set. Sinks with no held result commit the messages only.
+    async fn commit_compaction(
+        &self,
+        messages: Vec<Message>,
+        session_start_context: bool,
+    ) -> Result<(), StoreError>;
+
     /// 一条消息与它的计量事实在一个存储事务里提交（docs/specs/rust-cli/usage.md §2.5）：assistant 消息带这次
     /// 模型请求，工具结果带这次工具调用；`message` 为 None 时只提交计量（没有内容的失败请求、丢弃的响应）。
     /// 没有存储的输出端只提交消息、丢弃计量。
@@ -187,11 +334,32 @@ pub trait RunSink: Interactions + SessionOps {
     /// Default: nothing.
     async fn compact_skipped(&self, _trigger: CompactTrigger) {}
 
+    /// A tool call joined the response's batch (Node `ToolCallScheduled`), before it starts, possibly behind a running
+    /// call. Only the subagent's no-progress reminder reads it; it is not logged. Default: nothing.
+    async fn tool_scheduled(&self, _tool_use: &ToolUseId, _name: &str, _input: &Value) {}
+
+    /// A model request is about to be sent (Node `ModelRequest`, which also sets the subagent's last progress). Called
+    /// once per model step, each time the run sends a request to the model. Retries inside the provider adapter are
+    /// not counted, as in Node. Default: nothing.
+    async fn request_started(&self) {}
+
+    /// Fork: an ACP agent's `session_info_update` title (specs/fork-rust-agent-parity.md "ACP external agents", rule
+    /// 8; Node `setExternalAgentSessionTitle`): the session stores it as a generated title, keeping a custom one. Not
+    /// the hook title path, which marks the title custom. Default: nothing (sinks without a session).
+    async fn external_title(&self, _title: String) {}
+
     /// 工具边界并入的插话（`Delivery::Steer`，带各自 UserPromptSubmit 的消息）与发给这次运行的通知，按到达顺序
     /// （L18，docs/specs/rust-cli/query.md §4、§5）。取走即属于当前回合；本回合已中止时插话不取，继续排队。顶层会话的
     /// 通知由会话 actor 在回合结束后开新回合；子代理收到它派生的后台子代理的通知（agents.md §5.1）。工作线 F134 以前
     /// 另有 `take_steering`、`take_steered`、`take_notices` 三个缺省方法拼出它，主循环只调这一个。
     async fn take_absorbed(&self) -> Vec<Absorbed>;
+
+    /// Fork: the steers a reply without tool calls takes into the same turn (Node `drainInlineGuideForNextRequest`:
+    /// a text-only reply is a continuation boundary for a pending guide). Only prompts, never notices (a notice
+    /// still opens its own turn after this one). Default: none (subagents and the compaction sink).
+    async fn take_steered_prompts(&self) -> Vec<Absorbed> {
+        Vec::new()
+    }
 
     /// 报告一次目标评估（goal.md §3）：actor 按判定提交反馈与 `goal_status`、改目标，返回已提交的
     /// 消息（主循环并入自己的历史）。`condition` 不是当前目标时什么都不做；没有目标的输出端（子代理）不提交。
@@ -251,6 +419,28 @@ pub struct ContextRequest {
     /// （[`QueryRequest::default_machine`]）；主 env 不写出。机器清单提醒按它写“不写 `machine` 时在哪台机器上”。
     #[serde(default, skip_serializing_if = "crate::ids::MachineName::is_primary")]
     pub default_machine: crate::ids::MachineName,
+    /// Fork: the run this step belongs to (the query loop's [`QueryRequest::run`]); None for requests outside a run
+    /// (compaction, `/context` usage). The agent catalog reads the Host's subagent snapshot once per parent run
+    /// (specs/fork-rust-subagent-runtime-config.md).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<crate::ids::RunId>,
+    /// Fork: false for a subagent whose definition says `injectAgentsMd: false` (the built-in Explore): no rule files,
+    /// nested rules or git status (specs/fork-rust-subagent-runtime-config.md rule 15). The query loop copies it from
+    /// [`QueryRequest::inject_agents_md`]; the subagent context wrapper also sets it.
+    #[serde(default = "inject_by_default", skip_serializing_if = "is_injected")]
+    pub inject_agents_md: bool,
+}
+
+pub(crate) fn inject_by_default() -> bool {
+    true
+}
+
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde's skip_serializing_if passes a reference"
+)]
+pub(crate) fn is_injected(inject: &bool) -> bool {
+    *inject
 }
 
 impl ContextRequest {
@@ -275,6 +465,8 @@ impl ContextRequest {
             capabilities: None,
             mcp: None,
             default_machine: crate::ids::MachineName::default(),
+            run: None,
+            inject_agents_md: true,
         }
     }
 }
@@ -345,9 +537,11 @@ pub trait ContextBuilder: Send + Sync {
 /// context 实现；会话 actor 判定可以移动后用自己的活动历史调用（不复制历史）。
 #[async_trait]
 pub trait DirectoryRules: Send + Sync {
-    /// `workspace.root` 的规则文件文字（`instructions` 的格式）；没有新文件时为 None。
+    /// `workspace.root` 的规则文件文字（`instructions` 的格式）；没有新文件时为 None。Fork: `session` is the moving
+    /// session, so an incognito profile without `projectInstructions` loads none (specs/fork-rust-agent-parity.md).
     async fn directory_rules(
         &self,
+        session: &SessionId,
         workspace: &WorkspaceRef,
         history: &[Message],
     ) -> Option<String>;
@@ -360,6 +554,7 @@ pub struct NoDirectoryRules;
 impl DirectoryRules for NoDirectoryRules {
     async fn directory_rules(
         &self,
+        _session: &SessionId,
         _workspace: &WorkspaceRef,
         _history: &[Message],
     ) -> Option<String> {
@@ -375,6 +570,11 @@ impl DirectoryRules for NoDirectoryRules {
 pub trait ToolRegistry: Send + Sync {
     fn tools(&self) -> Vec<Arc<dyn Tool>>;
     fn find(&self, name: &str) -> Option<Arc<dyn Tool>>;
+
+    /// Fork: [`Self::find`] for one session: a name two servers share resolves to the tool of the server the session's
+    /// snapshot keeps (an incognito profile hides the other), never the hidden one. Every call of a tool by its name in
+    /// a run looks it up here (specs/fork-rust-agent-parity.md, "Incognito sessions").
+    fn find_for(&self, session: &SessionId, name: &str) -> Option<Arc<dyn Tool>>;
 
     /// 注册了、但按暴露规则不出现在 [`Self::tools`] 里的工具（有 Bash 时的 Glob / Grep，内嵌搜索，
     /// docs/specs/rust-cli/tools-files.md §1.1）。子代理的工具清单点名它们、又没有 Bash 时补回（
@@ -522,6 +722,11 @@ pub enum InteractionRequest {
         /// `approvalMode: "user-once"`): the App offers no "always allow" option for it.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         once: bool,
+        /// Fork (B3): an independent confirmation (Node `optionsPolicy: "no-always-allow"`): the App offers allow
+        /// once and deny only and no permission mode switch, and a grant answering it is refused
+        /// (specs/fork-rust-agent-parity.md B3). Unlike `once`, PermissionRequest hooks still run for it.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        independent: bool,
         /// Fork: the subagent that asked, for the App's delegated ask (Node `payload.origin`); the
         /// innermost subagent writes it, outer forwarding keeps it. None for the main thread.
         #[serde(default, skip_serializing_if = "Option::is_none")]

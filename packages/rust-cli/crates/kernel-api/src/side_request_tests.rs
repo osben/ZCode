@@ -13,7 +13,11 @@ fn every_source_is_listed_and_reads_back() {
             | SideSource::WebFetch
             | SideSource::WebSearch
             | SideSource::GoalSummaryTitle
-            | SideSource::GoalVerification => {}
+            | SideSource::GoalVerification
+            | SideSource::WorkspaceText
+            | SideSource::GitCommitMessage
+            | SideSource::ConnectivityProbe
+            | SideSource::McpSampling => {}
         }
         assert_eq!(SideSource::from_wire(source.as_wire()), Some(source));
     }
@@ -46,6 +50,26 @@ fn names_are_the_previous_strings() {
             "goal_summary_title",
             "goal_summary_title",
         ),
+        (
+            SideSource::WorkspaceText,
+            "workspace_generate_text",
+            "workspace_generate_text",
+        ),
+        (
+            SideSource::GitCommitMessage,
+            "git_commit_message",
+            "git_commit_message",
+        ),
+        (
+            SideSource::ConnectivityProbe,
+            "provider_settings_connectivity",
+            "provider_settings_connectivity",
+        ),
+        (
+            SideSource::McpSampling,
+            "mcp_app_sampling",
+            "mcp_app_sampling",
+        ),
     ];
     for (source, wire, node) in table {
         assert_eq!(source.as_wire(), wire);
@@ -75,11 +99,37 @@ fn the_rules_match_the_previous_lists() {
         (SideSource::WebFetch, true, false),
         (SideSource::WebSearch, true, false),
         (SideSource::GoalSummaryTitle, false, false),
+        (SideSource::WorkspaceText, true, false),
+        (SideSource::GitCommitMessage, true, false),
+        (SideSource::ConnectivityProbe, true, false),
+        (SideSource::McpSampling, true, false),
     ];
     for (source, foreground, quiet) in table {
         assert_eq!(source.foreground(), foreground, "{source:?}");
         assert_eq!(source.quiet(), quiet, "{source:?}");
         assert!(!source.agentic(), "{source:?}");
+    }
+}
+
+/// Fork: only the desktop workspace model calls and MCP App sampling are workspace-scoped (`x-zcode-session-type: other`).
+#[test]
+fn only_the_workspace_model_calls_are_workspace_scoped() {
+    for source in SideSource::ALL {
+        // Exhaustive: a new source must decide its scope.
+        let expected = match source {
+            SideSource::WorkspaceText
+            | SideSource::GitCommitMessage
+            | SideSource::ConnectivityProbe
+            | SideSource::McpSampling => true,
+            SideSource::SessionTitle
+            | SideSource::Rename
+            | SideSource::HookPrompt
+            | SideSource::WebFetch
+            | SideSource::WebSearch
+            | SideSource::GoalSummaryTitle
+            | SideSource::GoalVerification => false,
+        };
+        assert_eq!(source.workspace_scoped(), expected, "{source:?}");
     }
 }
 
@@ -113,6 +163,7 @@ fn a_side_request_has_no_tools_and_carries_the_requester() {
                     text: "hello".to_owned(),
                 },
                 cache_control: None,
+                meta: false,
             }],
             output_config: None,
         }],

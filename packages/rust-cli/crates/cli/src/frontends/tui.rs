@@ -173,6 +173,9 @@ async fn interactive(
     // TUI 的输入历史在 `<dataBaseDir>/.zcode/v2`，不随 `storage.*`。
     let history = rust_cli_platform::local::History::new(paths);
     let opened = assemble::open(&spec, facts, (paths, clock)).await?;
+    // Fork: the process entry releases this store's session runtime presence after the runtime has shut down
+    // (specs/fork-rust-agent-parity.md "Session runtime presence on the shared database").
+    crate::process::release_presence_at_exit(opened.store.clone());
     // 自动更新（docs/specs/rust-cli/update.md §3，F48）：在工作区信任之前；没有启动器标记时什么都不做。`updates`
     // 留到返回：它持有后台刷新的任务作用域。选了 Update now 时不建会话，安装后以它的结果退出。
     let env = &facts.process.env;

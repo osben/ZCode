@@ -58,7 +58,7 @@ Bot submissions fix the target Host's model at the Submission boundary: without 
 getView: async () => ({ revision: 0, providers: [] });
 ```
 
-(`packages/desktop/test/e2e/bots/helpers/bots-service-harness.ts`, `packages/desktop/test/e2e/bots/feishu-streaming-card-lifecycle.test.ts`.) Message processing therefore throws "Bot cannot resolve Submission model from target Host" before creating a Task or subscription; terminal events, AskUserQuestion cards, and streaming card lifecycles never occur. Test Harness is outdated — not four independent Bot product regressions. Fix: inject a minimal but real `ModelSelectionView` (Provider, Model, preferred selection) into the Harness and re-verify the original Bot behavior; do not restore old fallbacks or bypass formal Model Selection.
+(`packages/desktop/test/e2e/bots/helpers/bots-service-harness.ts`, `packages/desktop/test/e2e/bots/delivery/feishu-streaming-card-lifecycle.test.ts`.) Message processing therefore throws "Bot cannot resolve Submission model from target Host" before creating a Task or subscription; terminal events, AskUserQuestion cards, and streaming card lifecycles never occur. Test Harness is outdated — not four independent Bot product regressions. Fix: inject a minimal but real `ModelSelectionView` (Provider, Model, preferred selection) into the Harness and re-verify the original Bot behavior; do not restore old fallbacks or bypass formal Model Selection.
 
 ### R2. Coding Plan E2E Still Uses Old family mode / selectedKey as Authority
 

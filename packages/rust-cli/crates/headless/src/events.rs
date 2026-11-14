@@ -68,9 +68,12 @@ pub(crate) fn init(init: &Init<'_>, uuid: &str) -> Value {
         "cwd": init.cwd,
         "session_id": init.session_id,
         "tools": init.catalog.tools.iter().map(|name| tool_name(name)).collect::<Vec<_>>(),
+        // Fork (incognito, specs/fork-rust-agent-parity.md): only the servers in the session's tool snapshot, so a
+        // lockdown session does not leak the names and states of the servers its profile drops.
         "mcp_servers": init
             .mcp_servers
             .iter()
+            .filter(|server| init.catalog.mcp_servers.contains(&server.name))
             .map(|server| json!({"name": server.name, "status": mcp_status(server.state)}))
             .collect::<Vec<_>>(),
         "model": init.model,
@@ -127,6 +130,9 @@ pub(crate) fn block(block: &ContentBlock) -> Value {
         ContentBlock::Image { source, .. } => {
             json!({"type": "image", "source": image_source(source)})
         }
+        ContentBlock::Video { source, .. } => {
+            json!({"type": "video", "source": image_source(source)})
+        }
         ContentBlock::Thinking {
             thinking,
             signature,
@@ -155,6 +161,10 @@ pub(crate) fn block(block: &ContentBlock) -> Value {
         // Fork: an attached file is written as its metadata (the content stays in the session store).
         ContentBlock::File { file } => json!({"type": "file", "name": file.name, "mime": file.mime,
             "bytes": file.bytes}),
+        // Fork: an ACP row (rule 5 of the parity spec) is written as its record.
+        ContentBlock::ExternalTool(tool) => json!({"type": "external_tool", "id": tool.id.as_str(),
+            "name": tool.name, "title": tool.title, "input": tool.input, "output": tool.output,
+            "is_error": tool.is_error}),
         ContentBlock::ToolResult {
             tool_use_id,
             content,

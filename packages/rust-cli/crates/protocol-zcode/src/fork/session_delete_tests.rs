@@ -121,6 +121,8 @@ fn view(running: bool, running_turn: bool) -> SessionView {
     let mut view = SessionView::new(meta(), Vec::new(), selection(), PermissionMode::Default);
     if running_turn {
         view.messages = vec![Message::User(UserMessage {
+            stall_execution: None,
+            intent: None,
             id: rust_cli_kernel_api::ids::MessageId::new("m1"),
             content: vec![ContentBlock::Text {
                 text: "hello".into(),
@@ -144,6 +146,7 @@ fn meta() -> SessionMeta {
         title: String::new(),
         trace: TraceId::new("trace"),
         created_at_ms: 1000,
+        incognito: None,
     }
 }
 
@@ -164,7 +167,7 @@ fn server(handle: Arc<TestHandle>, fail: bool) -> (TaskScope, Arc<Server>, Arc<D
         kernel.clone(),
         scope.spawner(),
         Defaults {
-            selection: selection(),
+            selection: selection().into(),
             mode: PermissionMode::Default,
             environment: EnvironmentId::new("local"),
         },

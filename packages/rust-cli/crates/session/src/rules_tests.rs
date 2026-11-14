@@ -18,6 +18,7 @@ fn permission() -> InteractionRequest {
         rule_seed: None,
         asked_by: None,
         once: false,
+        independent: false,
     }
 }
 

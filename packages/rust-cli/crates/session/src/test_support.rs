@@ -44,6 +44,7 @@ pub(crate) fn meta() -> SessionMeta {
         title: String::new(),
         trace: TraceId::new("trace_1"),
         created_at_ms: 0,
+        incognito: None,
     }
 }
 
@@ -106,7 +107,7 @@ impl HookRunner for ScriptedHooks {
             .unwrap_or_default()
     }
 
-    fn has_hooks(&self, event: HookEventName) -> bool {
+    fn has_hooks(&self, event: HookEventName, _workspace: &WorkspaceRef) -> bool {
         self.outcomes.lock_unpoisoned().contains_key(&event)
     }
 }
@@ -120,6 +121,8 @@ pub(crate) struct Built {
 pub(crate) struct Setup {
     pub model: Arc<dyn ModelPort>,
     pub hooks: Arc<dyn HookRunner>,
+    /// The manual compactor (`/compact`); `NeverCompact` when unset.
+    pub compactor: Option<Arc<dyn rust_cli_kernel_api::orchestration::Compactor>>,
     pub machine: MachineEnv,
     pub controller: ControllerServices,
     pub artifacts: Arc<MemoryArtifacts>,
@@ -129,6 +132,8 @@ pub(crate) struct Setup {
     pub earlier: Vec<Message>,
     pub checkpoints: Vec<WorkspaceCheckpoint>,
     pub opened: Opened,
+    /// Fork: `SessionState::start_held` (a prepared execution worktree).
+    pub start_held: bool,
     pub start: StartSource,
     /// 为 false 时存储里没有这个会话，所有提交都失败。
     pub stored: bool,
@@ -163,6 +168,12 @@ pub(crate) struct Setup {
     pub fork_while_running: bool,
     /// Fork: `SessionDeps::error_holds_queue`; off by default.
     pub error_holds_queue: bool,
+    /// Fork: `SessionDeps::session_start_extras`; on by default (the TUI and `-p`).
+    pub session_start_extras: bool,
+    /// Fork: `SessionDeps::typed_compact`; off by default (the TUI and `-p`).
+    pub typed_compact: bool,
+    /// Fork: `SessionDeps::hook_rows`; off by default (the TUI and `-p`).
+    pub hook_rows: bool,
     /// 共用的存储（重开会话的测试）；缺省每次新建。
     pub store: Option<Arc<MemoryStore>>,
     /// 会话 actor 看到的存储外面再包一层全委托的代理（记下每一批、让某一批失败，peer_merged_tests.rs）；缺省不包。
@@ -189,6 +200,7 @@ impl Setup {
         Self {
             model,
             hooks: Arc::new(rust_cli_kernel_api::testing::NoHooks),
+            compactor: None,
             machine: machine(env.clone()),
             controller: controller_services(env),
             artifacts: Arc::new(MemoryArtifacts::default()),
@@ -197,6 +209,7 @@ impl Setup {
             earlier: Vec::new(),
             checkpoints: Vec::new(),
             opened: Opened::Created,
+            start_held: false,
             start: StartSource::Startup,
             stored: true,
             cron: Arc::new(rust_cli_kernel_api::cron::NoCron),
@@ -215,6 +228,9 @@ impl Setup {
             desktop_goals: false,
             fork_while_running: false,
             error_holds_queue: false,
+            session_start_extras: true,
+            typed_compact: false,
+            hook_rows: false,
             store: None,
             store_hooks: None,
             machines: None,
@@ -290,7 +306,7 @@ impl Setup {
                 store: session_store,
                 ids: ids.clone(),
                 runner,
-                compactor: Arc::new(NeverCompact),
+                compactor: self.compactor.unwrap_or_else(|| Arc::new(NeverCompact)),
                 machines,
                 max_turns: None,
                 agents: self.agents,
@@ -313,6 +329,9 @@ impl Setup {
                 desktop_goals: self.desktop_goals,
                 fork_while_running: self.fork_while_running,
                 error_holds_queue: self.error_holds_queue,
+                session_start_extras: self.session_start_extras,
+                typed_compact: self.typed_compact,
+                hook_rows: self.hook_rows,
             },
             SessionState {
                 commands: Default::default(),
@@ -323,10 +342,14 @@ impl Setup {
                 mode: PermissionMode::Default.into(),
                 checkpoints: self.checkpoints,
                 start: self.start,
+                start_held: self.start_held,
+                execution_worktree: false,
                 turn: self.turn,
                 last_turn_failed: self.last_turn_failed,
                 child_live: self.child_live,
                 title_pending: self.title_pending,
+                title_source: None,
+                permission_grant: None,
                 goal_target: self.goal_target,
                 goal_verifications: self.goal_verifications,
                 message_models: Default::default(),

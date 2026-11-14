@@ -80,6 +80,8 @@ OpenCode Go and Zen are different product catalogs; verify model permissions, en
 
 Aggregated model IDs are stored as is, including vendor prefix, case and suffixes with real routing meaning. Uniformly stripping prefixes at runtime is forbidden. Batch, image generation, Embedding, TTS, dedicated completion and the like must not be added to the current chat/Agent templates merely because they appear in a Models API; the corresponding product execution capability is needed.
 
+2026-11-04 addendum: real API regression currently covers first the Providers with the highest actual traffic, as given by the maintainer's traffic information and this round's list; the other entries get static checks and are explicitly marked as pending real tests. Validation resource priority does not narrow the model maintenance scope or change the default-enablement principle above. See [Real validation priority](./validation.md#real-validation-priority).
+
 ## Removal and compatibility
 
 First check official retirement / alias routing changes, then distinguish four actions: remove a member, turn off default enablement, delete a capability rule, and migrate an identity. A general rule may still serve other templates or user-defined models; an exact rule detached from static members may also act on a personally added model of the same ID, so it must not be deleted by set difference alone.

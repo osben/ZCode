@@ -149,7 +149,7 @@ function SearchToolCallLayout(
         kindLabel={
           context.kindLabelOverride ??
           intl.formatMessage({
-            id: isRunning ? "chat.toolCall.search.searching" : "chat.toolCall.kind.search",
+            id: isRunning ? "chat.toolCall.search.searching" : "chat.toolCall.search.searched",
           })
         }
         sourceLabel={context.sourceLabel}

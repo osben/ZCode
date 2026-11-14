@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 
+import { keyringPlatformPackage } from "../../../scripts/stage-credential-keyring.mjs";
 const SUPPORTED_DESKTOP_PLATFORM_KEYS = [
   "darwin-arm64",
   "darwin-x64",
@@ -51,7 +52,26 @@ function assertSupportedTargetPlatformKey(targetPlatformKey) {
 export function createDesktopNativePackagePrunePatterns(targetPlatformKey) {
   assertSupportedTargetPlatformKey(targetPlatformKey);
 
+  const keyringVariants = [
+    "darwin-arm64",
+    "darwin-x64",
+    "win32-arm64",
+    "win32-x64",
+    "linux-arm64",
+    "linux-x64",
+  ].map(keyringPlatformPackage);
+  keyringVariants.push(
+    "@napi-rs/keyring-linux-arm64-musl",
+    "@napi-rs/keyring-linux-x64-musl",
+    "@napi-rs/keyring-win32-ia32-msvc",
+    "@napi-rs/keyring-freebsd-x64",
+    "@napi-rs/keyring-linux-riscv64-gnu",
+    "@napi-rs/keyring-linux-arm-gnueabihf",
+  );
   return [
+    ...keyringVariants
+      .filter((name) => name !== keyringPlatformPackage(targetPlatformKey))
+      .map((name) => `!node_modules/${name}/**`),
     // PDF preview is already bundled into the renderer by Vite. pdfjs-dist's optional Canvas dependency
     // is only used for Node rendering; the eight Canvas native packages installed by pnpm for other
     // platforms should not be included in the desktop installer.
@@ -133,6 +153,12 @@ export function findDesktopNativePackageViolations(entries, targetPlatformKey) {
       path.startsWith("/node_modules/@napi-rs/canvas-")
     ) {
       violations.push(`不应打包 renderer 无需的 Canvas native: ${path}`);
+      continue;
+    }
+
+    const keyringMatch = /^\/node_modules\/(@napi-rs\/keyring-[a-z0-9-]+)(?:\/|$)/.exec(path);
+    if (keyringMatch && keyringMatch[1] !== keyringPlatformPackage(targetPlatformKey)) {
+      violations.push(`keyring contains a non-target platform variant: ${keyringMatch[1]}`);
       continue;
     }
 

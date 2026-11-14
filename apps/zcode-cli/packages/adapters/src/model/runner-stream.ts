@@ -93,7 +93,10 @@ import {
   providerRequestIdFromHeaders,
   readModelFailureErrorPhase,
 } from "./runner-telemetry.js";
-import { repairReasoningHistoryAfterSignatureRejection } from "./reasoning-history-normalization.js";
+import {
+  repairReasoningHistoryAfterSignatureRejection,
+  thinkingSignatureRejectionEvidence,
+} from "./reasoning-history-normalization.js";
 import { zhipuAccountMode } from "./account-access-mode.js";
 
 type StreamFailurePhase = "request_setup" | "response_body";
@@ -133,6 +136,11 @@ export async function* runStreamText(input: {
   const isDev = isDevelopmentModelIOEnv(input.env);
   let requestMessages = input.request.messages;
   let signatureRepairAttempted = false;
+  // 修复后的重试成功时，在 finish 上告诉 core 记 signedReasoningReset，之后的请求不再发被拒的块。
+  const withRepairMarker = (event: ModelStreamEvent): ModelStreamEvent =>
+    signatureRepairAttempted && event.type === "finish"
+      ? { ...event, signedReasoningReset: true }
+      : event;
   const authRetry = new AccountRequestRetry(input.request, input.resolved, input.logger);
   let emptyCompletionRetryCount = 0;
   // How many times an unrecognized business code appeared consecutively in this request; the
@@ -228,6 +236,11 @@ export async function* runStreamText(input: {
         nextAttempt: attempt + 1,
         requestId: statusContext.requestId,
         status: "waiting",
+        // 记下 provider 原文和 prefix 不一致响应头：写明哪一块、因为什么被拒，排查前缀变化时用。
+        ...thinkingSignatureRejectionEvidence(
+          error,
+          sanitizeModelNetworkHeaders(getResponseHeaders(unwrapRetryError(error))),
+        ),
       });
       return true;
     };
@@ -435,7 +448,7 @@ export async function* runStreamText(input: {
             emittedRetryBoundaryEvent = true;
             for (const pendingEvent of pendingRetrySafeEvents.splice(0)) {
               emittedEvent = true;
-              yield pendingEvent;
+              yield withRepairMarker(pendingEvent);
             }
             // Providers without raw message-block provenance may emit a complete tool-call
             // directly. Send the inferred block stop to the hidden collector before propagating
@@ -503,7 +516,7 @@ export async function* runStreamText(input: {
             const observation = observeVisibleStreamEvent(visibleEvent, Date.now() - startedAt);
             await publishVisibleMilestones(observation);
             streamOutputCommitted = streamOutputCommitted || observation.outputCommitted;
-            yield visibleEvent;
+            yield withRepairMarker(visibleEvent);
           }
         }
       }
@@ -530,7 +543,7 @@ export async function* runStreamText(input: {
           const observation = observeVisibleStreamEvent(visibleEvent, Date.now() - startedAt);
           await publishVisibleMilestones(observation);
           streamOutputCommitted = streamOutputCommitted || observation.outputCommitted;
-          yield visibleEvent;
+          yield withRepairMarker(visibleEvent);
         }
       }
 
@@ -539,7 +552,7 @@ export async function* runStreamText(input: {
         const observation = observeVisibleStreamEvent(pendingEvent, Date.now() - startedAt);
         await publishVisibleMilestones(observation);
         streamOutputCommitted = streamOutputCommitted || observation.outputCommitted;
-        yield pendingEvent;
+        yield withRepairMarker(pendingEvent);
       }
 
       if (!emittedError) {

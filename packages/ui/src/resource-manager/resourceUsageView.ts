@@ -1,8 +1,9 @@
 import type { ResourceUsageCategory, ResourceUsageProcess } from "@zcode/shared";
 
-/** Three groups in a fixed order: core services / built-in plugins / community plugins */
+/** 四组固定顺序：基础服务 / 任务进程 / 内置插件 / 社区插件 */
 export const RESOURCE_USAGE_CATEGORY_ORDER: readonly ResourceUsageCategory[] = [
   "base",
+  "task",
   "builtin-plugin",
   "community-plugin",
 ];

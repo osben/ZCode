@@ -84,6 +84,11 @@ impl ToolRegistry for BuiltinTools {
             .cloned()
     }
 
+    /// Fork: built-in tools are the same for every session.
+    fn find_for(&self, _session: &SessionId, name: &str) -> Option<Arc<dyn Tool>> {
+        self.find(name)
+    }
+
     /// 被 Bash 藏起来的 Glob / Grep（子代理点名它们、又没有 Bash 时补回，agents.md §4.2，修复线 F16）。
     fn withheld(&self, name: &str) -> Option<Arc<dyn Tool>> {
         self.tools

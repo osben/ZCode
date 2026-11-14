@@ -1,11 +1,11 @@
 import { Component } from "react";
 import type { ErrorInfo, ReactNode } from "react";
 import type { Locale } from "@zcode/shared";
-import { DEFAULT_LOCALE, FALLBACK_UI_LOCALE, isLocale, resolveSystemLocale } from "@zcode/shared";
+import { DEFAULT_LOCALE, isLocale, resolveLocaleFromLanguageTag } from "@zcode/shared";
 import { DesktopWindowFrame } from "@/DesktopWindowFrame.js";
-import zhCN from "@/i18n/locales/zh-CN.js";
 import enUS from "@/i18n/locales/en-US.js";
 import ukUA from "@/i18n/locales/uk-UA.js";
+import { LOCALE_MESSAGES } from "@/i18n/localeMessages.js";
 import { logger } from "@/logger.js";
 import { reportReactErrorToArms } from "@/lib/reactErrorArmsTelemetry.js";
 import { cn } from "@/components/lib/utils.js";
@@ -64,8 +64,7 @@ function serializeErrorForLog(error: Error): {
 }
 
 const BOUNDARY_MESSAGES = {
-  "zh-CN": zhCN,
-  "en-US": enUS,
+  ...LOCALE_MESSAGES,
   "uk-UA": ukUA,
 } satisfies Record<Locale, Record<string, string>>;
 
@@ -84,7 +83,7 @@ function resolveBoundaryLocale(): Locale {
   }
 
   if (typeof navigator !== "undefined") {
-    return resolveSystemLocale(navigator.language, FALLBACK_UI_LOCALE);
+    return resolveLocaleFromLanguageTag(navigator.language);
   }
 
   return DEFAULT_LOCALE;

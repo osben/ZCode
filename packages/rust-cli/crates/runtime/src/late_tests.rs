@@ -89,6 +89,7 @@ fn request() -> CompactRequest {
         mode: None,
         agent: None,
         initial_token_gap: None,
+        inject_agents_md: true,
     }
 }
 
@@ -153,5 +154,6 @@ fn occupancy() -> rust_cli_kernel_api::compaction::ContextOccupancy {
         used_tokens: 150_000,
         max_tokens: 180_000,
         compact_at: Some(160_000),
+        window_tokens: None,
     }
 }

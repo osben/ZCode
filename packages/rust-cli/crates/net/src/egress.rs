@@ -4,8 +4,8 @@
 //! 正在进行的请求不受替换影响。替换按调用顺序生效：后发起的替换总是覆盖先发起的，即使先发起
 //! 的那次构造得更慢。
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwap;
@@ -64,11 +64,22 @@ impl Snapshot {
     }
 }
 
+/// Fork: sees each outbound request as it starts (the Network panel, specs/fork-rust-network-capture.md). Called on
+/// the request's task, so it must not block.
+pub trait RequestObserver: Send + Sync {
+    /// `method` is the HTTP method (`GET` for a WebSocket upgrade); `url` is the target as sent, `ws:`/`wss:` for an
+    /// upgrade. It is NOT sanitized: it may carry credentials, tokens in the path and query values. An observer must
+    /// sanitize it before keeping or forwarding it and must never log the raw value.
+    fn request(&self, method: &str, url: &str);
+}
+
 /// 网络出口。所有出站 HTTP 都经它发出。
 pub struct Egress {
     current: ArcSwap<Snapshot>,
     /// 最近一次发起替换的序号；快照只被序号更大的替换覆盖。
     issued: AtomicU64,
+    /// Fork: the request observer, installed once by the entry point.
+    observer: OnceLock<Arc<dyn RequestObserver>>,
 }
 
 impl Egress {
@@ -77,6 +88,7 @@ impl Egress {
         Ok(Self {
             current: ArcSwap::from_pointee(snapshot),
             issued: AtomicU64::new(0),
+            observer: OnceLock::new(),
         })
     }
 
@@ -98,6 +110,22 @@ impl Egress {
         self.current.load().policy.clone()
     }
 
+    /// Fork: installs the request observer. Only the first call takes effect (one observer per process).
+    pub fn set_observer(&self, observer: Arc<dyn RequestObserver>) {
+        if self.observer.set(observer).is_err() {
+            tracing::warn!(
+                event = "net.observer.duplicate",
+                "a request observer is already installed; the new one is ignored"
+            );
+        }
+    }
+
+    fn observe(&self, method: &str, url: &str) {
+        if let Some(observer) = self.observer.get() {
+            observer.request(method, url);
+        }
+    }
+
     /// 发送请求，返回响应头已到达的响应。非 2xx 状态也是 `Ok`，由调用方分类。
     pub async fn send(&self, request: HttpRequest) -> Result<HttpResponse, NetError> {
         let snapshot = self.current.load_full();
@@ -108,6 +136,9 @@ impl Egress {
         }
         let url = redact_secrets(&request.url).into_owned();
         let method = request.method.as_str();
+        if request.observed {
+            self.observe(method, &request.url);
+        }
         let started = Instant::now();
         let pending = snapshot
             .client
@@ -145,8 +176,22 @@ impl Egress {
         protocols: &[String],
     ) -> Result<crate::websocket::WebSocket, crate::websocket::WsError> {
         let snapshot = self.current.load_full();
+        if self.observer.get().is_some()
+            && let Some(target) = socket_url(url)
+        {
+            self.observe("GET", &target);
+        }
         crate::websocket::connect(&snapshot.client, snapshot.headers.clone(), url, protocols).await
     }
+}
+
+/// Fork: the upgrade target as the observer sees it: `ws:`/`wss:` like Node's capture of an upgrade request. A URL the
+/// connect refuses anyway is not reported.
+fn socket_url(url: &str) -> Option<String> {
+    let mut parsed = reqwest::Url::parse(url).ok()?;
+    let (_, socket) = crate::websocket::schemes(parsed.scheme())?;
+    parsed.set_scheme(socket).ok()?;
+    Some(parsed.into())
 }
 
 /// 代理与直连规则：每个请求按目标判断（`Proxy::custom`），命中直连规则时不经代理。代理 URL 可能带用户名与

@@ -1,4 +1,5 @@
-import { useCallback, useRef, useState } from "react";
+import { remoteHostLabel } from "@/project-sidebar/RemoteHostSection.js";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ProjectTask } from "@/project-sidebar/contract.js";
 import { useProjectDirectory } from "@/project-sidebar/ProjectDirectoryProvider.js";
 import { mutateProjectTask } from "@/project-sidebar/task-mutation.js";
@@ -32,15 +33,28 @@ export function useArchiveManagement({
     succeeded: number;
     failed: number;
     skipped: number;
+    details: string[];
   } | null>(null);
-  const locked = useRef(false);
+  const activeOperation = useRef<AbortController | null>(null);
+  useEffect(
+    () => () => {
+      activeOperation.current?.abort();
+      activeOperation.current = null;
+    },
+    [],
+  );
   const latest = useRef(directory);
   latest.current = directory;
   const refreshDirectory = useCallback(() => latest.current.refresh(), []);
   const permanentDelete = useTaskDeleteDialog(refreshDirectory);
 
   const requestPermanentDelete = (tasks: ProjectTask[]) => {
-    if (!allowPermanentDelete || locked.current || permanentDelete.busy || permanentDelete.pending)
+    if (
+      !allowPermanentDelete ||
+      activeOperation.current ||
+      permanentDelete.busy ||
+      permanentDelete.pending
+    )
       return;
     // Freeze the confirmed identity set: search changes, new archives and repeated clicks must not expand a confirmed batch.
     const candidates = archivedCandidates(tasks);
@@ -69,13 +83,27 @@ export function useArchiveManagement({
       requestPermanentDelete(tasks);
       return;
     }
-    if (locked.current || !tasks.length) return;
+    if (activeOperation.current || !tasks.length) return;
     const candidates = archivedCandidates(tasks);
     if (!candidates.length) return;
-    locked.current = true;
+    const operationLifetime = new AbortController();
+    activeOperation.current = operationLifetime;
     setBusy(true);
     setResult(null);
-    const counts = { succeeded: 0, failed: 0, skipped: 0 };
+    const counts = { succeeded: 0, failed: 0, skipped: 0, details: [] as string[] };
+    const msg = (id: string, values?: Record<string, string | number>) =>
+      intl.formatMessage({ id: `archives.${id}` }, values);
+    const reason = (value?: string) =>
+      msg(
+        `reason.${value && ["running", "in-use", "not-found", "not-archived", "changed"].includes(value) ? value : "unavailable"}`,
+      );
+    const label = (task: ProjectTask) => {
+      const project =
+        latest.current.tree.projects.find((project) => project.id === task.projectId)?.name ??
+        msg("unclassified");
+      const host = latest.current.directory.hosts.find((host) => host.id === task.hostId);
+      return `${task.title} · ${project} · ${host ? remoteHostLabel(host) : msg("localDevice")} · ${task.workspacePath}`;
+    };
     try {
       for (const task of candidates) {
         if (
@@ -84,6 +112,7 @@ export function useArchiveManagement({
           )
         ) {
           counts.skipped++;
+          counts.details.push(`${label(task)} — ${reason("not-archived")}`);
           continue;
         }
         try {
@@ -100,6 +129,7 @@ export function useArchiveManagement({
           counts.succeeded++;
         } catch (error) {
           counts.failed++;
+          counts.details.push(`${label(task)} — ${msg("incomplete")}`);
           logger.error("[archive-management] 任务操作失败", {
             taskId: task.taskId,
             workspaceIdentity: task.workspaceIdentity,
@@ -108,11 +138,15 @@ export function useArchiveManagement({
           });
         }
       }
-      await latest.current.refresh();
+      await latest.current
+        .refresh()
+        .catch((error) => logger.warn("[archive-management] 刷新失败", { error }));
       setResult(counts);
     } finally {
-      locked.current = false;
-      setBusy(false);
+      if (activeOperation.current === operationLifetime) {
+        activeOperation.current = null;
+        setBusy(false);
+      }
     }
   };
 

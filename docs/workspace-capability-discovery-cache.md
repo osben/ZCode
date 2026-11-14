@@ -1,8 +1,73 @@
 # Workspace external capability discovery cache
 
-> Status: design draft, 2026-10-09; not implemented, performance acceptance not done. This document gives recommended decisions; candidate tests are not recorded as covered.
+> Status: on 2026-10-26 the asynchronous plugin seed/discovery main chain, the process-preparation owner with startup prewarm, and the plugin parse-material cache were implemented. The full capability cache below is still a design draft; candidate tests are not recorded as covered.
 > Scope: reuse of external-config discovery, read and parse results across new and cold-resumed sessions inside one Agent process.
 > Layers touched: option-source, persistence (in-memory cache only), recovery. Runtime execution state and message delivery protocol keep their existing owners.
+
+## Implementation boundary (2026-10-26)
+
+This round implements the plugin path, split into three independent commits. The full L1/L2, watcher and LRU framework below remains later design and is not a dependency here.
+
+1. **Async.** Seed file reads/writes, cross-process lock waits, Windows file retries, plugin discovery and all callers become asynchronous. Kept: discovery order, diagnostics, the complete Catalog published first, one shared lock deadline across all plugins, per-plugin failure results, old-cache degradation, and no old-cache fallback for CUA. The lock is released only after the action settles. The generated command is written only when content changes.
+2. **Prewarm and lifecycle.** After the existing Agent process start and workspace config readiness, plugins are prepared in the background; no session is created for prewarm and execution readiness is not bypassed. The process entry creates and injects the preparation state, serialized per normalized storageRoot; the source is read after enqueue and re-validated before leaving, and a source change rebuilds at most three times. Failures can be retried, and nothing is published after close. Each process has its own owner; local/remote identities are not shared.
+3. **Material reuse.** Only raw plugin parse material is cached, validated asynchronously on each query, and the body is re-read only when it changes. A new result is still projected from the current config each time; no mutable PluginLoadOutcome is shared, and enabled, suppression, credentials, trust and MCP connections are not cached. Consecutive new Runtimes can also reuse it; single-flight is not proof of consecutive hits.
+
+```mermaid
+sequenceDiagram
+    participant P as Agent process owner
+    participant F as Plugin files
+    participant S as New or cold-resumed Runtime
+    P->>F: start background preparation (async)
+    S->>P: get plugin material for the current config
+    P->>F: validate changes; rebuild if missing or changed
+    F-->>P: complete material and this round's failure results
+    P-->>S: independent projection, frozen
+    Note over S: A running Runtime keeps its original snapshot
+```
+
+Acceptance records event-loop responsiveness, plugin dependency waits, the request-scheduling limits of the existing transport, and read/parse counts of consecutive calls. Controllable Promises decide concurrency order and real temp directories verify locks and file operations; no fixed sleep is used to infer completion. First load and continuous external rewrites do not promise zero wait, and development-file metadata validation is not detection of arbitrary content changes.
+
+The second commit's preparation state is created by the protocol process entry, starts a background prewarm with the existing active-workspace Agent, and is lent to the App and query entries. It keeps only the source description and target metadata of a successful preparation; each time it still checks source, Catalog, marker, manifest, required entries and host command identity. A partial failure is not recorded as success; if any plugin stays degraded, later queries retry the whole preparation, conservatively keeping self-healing. An install or config write invalidates the preparation description, and close revokes in-flight results and releases state. When a source change or invalidation interleaves with preparation, it still rebuilds at most three times inside storageRoot admission and then returns `ZCODE_PLUGIN_SOURCES_CHANGED`; no sleep waits for stability.
+
+On a preparation hit, the first target metadata is the baseline for the pre-return recheck, skipping the intermediate re-read. After deciding a hit, the baseline must not be replaced by newly read target state, or an external rewrite could be recorded as success; the final source and target recheck still runs inside admission. `createSession` and `workspace/readPresentation` wait for the complete plugin result within the startup budget below; Windows file-occupation retries and lock waits yield the event loop, and the existing serial order of ordinary protocol requests is unchanged. That a heartbeat can run does not imply all requests can run concurrently.
+
+The third commit keeps the in-process parse material and directory entries in the existing `NodePluginAdapter` and lends them to callers through `PluginPort`. Each query checks canonical path, dev/ino, size, mtime, ctime and mode; a directory change re-enumerates and a body change re-reads and re-parses. Manifest, MCP/Hook JSON, component Markdown and generated command sources reuse raw material; config projection, interpolation and diagnostics are rebuilt each time, returning defensive copies. The filesystem seed version-update rule is in the next section; SEA sources keep the embedded resource manifest and SHA verification.
+
+Material is isolated by workspace identity, path, remote attachment, storageRoot and content type. One owner keeps at most 512 entries and about 4 MiB of source material; beyond that it still reads normally. There is no LRU, watcher or TTL. A remote attachment not yet known at startup does not reuse prewarmed parse results across scopes; that scope's first query may still read cold and consecutive Runtimes then reuse. A standalone CLI with no injected process owner creates and releases an adapter per query. Concurrent requests for the same material share one read; a consumer's cancel does not end other consumers, and owner close forbids late publishing. Stable consecutive queries prove reuse by disk-read and parse counts; invalidation or source change rebuilds at most three times.
+
+### Per-query discovery dedupe and bounded concurrency (2026-10-29)
+
+Within one query, Skill scans of the same root and symlink policy share one result, including concurrent requests. Empty-directory diagnostics, skill counts and component details consume the same raw file list, each keeping its existing path-dedupe and display-name-dedupe rules; the next query re-scans and re-checks metadata. Plugin scans still must not follow symlinks, and the user skill root policy is unchanged.
+
+When the material reader has confirmed a file does not exist, it returns the matching ENOENT/ENOTDIR error directly without a body read that must fail. A missing path is also a dependency of this query and is still rechecked before return; creating the file later causes a rebuild or is found by the next query. Permission and parse errors are never cached as missing.
+
+Component Markdown is read concurrently in batches of at most four, and results are consumed in original path order, keeping component order, same-name priority and diagnostic semantics. Physical material reads are limited to four by the existing PluginMaterialCache owner, covering concurrent queries of the same owner; a waiting old revision or cancelled owner must not start new IO. The existing metadata recheck batch size is not widened, and invalidation/cancel/read errors must release the read slot.
+
+This round does not defer building the session plugin reference directory, introduces no persistent index, and does not skip checking editable discovery material by plugin version.
+
+### Filesystem seed updates by version (2026-10-29)
+
+Filesystem-sourced official plugins use `OfficialPluginDefinition.version` as the resource version. When a release changes plugin content or runtime dependencies, the plugin package, manifest, official definition and applicable packaging-manifest versions must be bumped together; startup no longer detects same-version content changes with a full-file SHA. Development directories follow the same rule: editing source with the same version does not trigger a re-seed; bump the version or remove the cache to rebuild, and explicitly invalidating the process preparation state only re-checks this rule.
+
+Source preparation only locates the plugin root, checks the manifest and required entries; it does not enumerate the whole tree, read bodies to compute digests, or keep a source-digest cache. When the target marker's `pluginVersion` matches and the manifest/required entries are usable, the target is reused; the hash field in old markers is tolerated, and filesystem sources no longer compare it. When the version differs, the marker is missing or the target is unusable, it still rechecks inside the original seed lock, then enumerates source files, reads each once, copies, sets permissions, checks the candidate directory's manifest and required entries, and on success writes a marker without a hash. Source reads and enumeration stay cancellable; directory replace/rollback is not interrupted by caller timeout.
+
+Build identity is the exception to the version rule: some plugin artifacts embed a value that differs on every build while the source version stays the same (node-repl-host's `dist/mcp/server.js` embeds the CUA Helper build id, different for each CI pipeline). Such a plugin declares `buildIdentityPath` in its definition and the build script writes a small file (`dist/build-identity.json` for node-repl-host). Source preparation reads only that file and the marker records its content as `buildIdentity`; different content, or an old marker without the field, is treated as a version difference and rebuilt. A missing file compares as "no build identity" and does not block seed. Plugins that do not declare it keep the pure version rule. Source changes of the CUA wrapper (computer-use) rely on bumping the producer version during development.
+
+Host command changes still refresh the runtime manifest by the original rule; the Catalog, per-plugin failure degradation, no old-version fallback for CUA and the process-level 3-second budget keep their existing contracts. This round does not remove the seed write lock or introduce install records, a persistent discovery cache or a new resource manifest. SEA keeps comparing hashes by its embedded manifest and verifies copied bytes.
+
+```mermaid
+flowchart LR
+    A[Locate source and check required entries] --> B[In lock: compare marker version and target usability]
+    B -->|same version and usable| C[Reuse cache and check host launch info]
+    B -->|version differs or cache missing| D[Enumerate and copy files]
+    D --> E[Write version marker and commit directory]
+    C --> F[discovery]
+    E --> F
+```
+
+Regression requirements: when a new owner reuses a same-version cache, source body reads and recursive enumeration counts are zero; a same-version source edit or an old hash marker does not trigger a rewrite; a version change, build-identity change or missing target rebuilds; existing failure recovery, cancel and SEA verification stay valid.
+
+This round covers only plugin discovery and seed. The Runtime's later Skill body loading, plugin Agent template loading and user-config discovery stay with their original modules, and the full capability cache is still the draft below; it must not be claimed that creating a whole Runtime has no disk IO or no synchronous calls. First load, continuous change and over-budget material still wait. Metadata validation of discovery material cannot detect every external rewrite that preserves metadata, and explicit invalidation forces these materials to be re-read; seed still follows the version rule.
 
 ## 1. Goal and current state
 
@@ -21,6 +86,44 @@ Existing capabilities are reused; no new owner is created:
 | Provider Registry, accounts, credentials, Hook trust | Their existing owners                         | Still read when execution facts are needed; never restored from the capability cache |
 
 Related fact docs: [Skill catalog lifecycle](ui/conversation-skill-catalog-lifecycle.md), [Subagent refresh by parent context](subagent-runtime-refresh.md), [Workspace plugins](plugins/workspace-level-plugin-architecture.md), [cold resume](v4-refactor/17-cold-resume-runtime-activation.md).
+
+### Plugin startup timeout degradation (2026-10-28)
+
+Disabled in the protocol process since 2026-10-30. The user confirmed: the protocol process drops the 3-second startup budget first. When the protocol process creates the plugin preparation owner it passes no budget, and seed and discovery wait until complete; seed lock waits are still bound by the existing 15-second shared budget, and on timeout that plugin degrades and falls back to a usable old cache. The protocol process no longer emits `startup/pluginsDegraded`. Reason for disabling: on Windows a cold-start seed of 16 official plugins measured about 3.0-3.1 seconds (the pdf plugin alone about 1 second), so the first start after every plugin version upgrade necessarily timed out, and the degradation locked in until process restart, leaving plugins unavailable for a long time. The budget module `plugin-startup-budget` and the App-side degradation hint listener stay as a disabled capability; the contract below is for when it is enabled. Before re-enabling, seed must be moved out of the budget or the budget scope reconfirmed.
+
+The user confirmed: if plugin directory access times out at startup, startup may continue, but this process does not load plugin skills, commands, plugin MCP and Hooks; the degradation is explicitly shown, and the next process start tries again. Enablement config, uninstall suppression state and on-disk install records are not modified, and no old cache is scanned as a timeout fallback. Built-in plugin recovery completes preparation before committing the suppression config; a cancelled or failed preparation must not change config first and then report an error.
+
+The management protocol `plugins/list` and `plugins/overview` must not project the empty capability result of a startup degradation as missing on disk. When already degraded or degraded mid-query, they return the owner's timeout error through the existing query-failure channel; the management UI keeps the last successful snapshot, and a first load shows the query error. Session capability assembly keeps using the empty result and adds no scan or un-degrade. Cleanup of a cancelled candidate seed directory does not use the business cancel signal and keeps bounded file retries; before commit, a cancel leaves the old target and marker unchanged, and a cleanup failure does not overwrite the original seed error.
+
+The process preparation owner provides one 3-second soft budget for concurrent seed and discovery calls; a call waiting in admission also counts. When all calls of an in-flight batch complete the timer is released and later access may start a new batch; any batch timeout locks the process in degraded, and invalidate does not lift the degradation. The protocol-process prewarm, startup and facade entries use the same owner; a standalone management command with no injected process owner keeps the original contract.
+
+```mermaid
+stateDiagram-v2
+    [*] --> idle
+    idle --> preparing: first plugin request, shared budget starts
+    preparing --> preparing: concurrent requests keep the deadline
+    preparing --> idle: all complete and pass validation
+    preparing --> degraded: over 3 seconds
+    degraded --> degraded: new session or query returns an empty plugin result directly
+    degraded --> [*]: process exits, next start prepares again
+```
+
+The timeout only limits plugin waiting and does not promise a 3-second app startup. Callers do not wait for in-flight file operations to wind down; the abort signal forbids further scheduling of scans, copies and retries and rejects late discovery results. Once a directory-replace transaction has begun it must finish the replace or roll back before releasing the lock, so an abort never leaves a moved-away target directory. IO the OS has already started, synchronous digest computation and event-loop scheduling have no hard real-time guarantee. An existing Runtime's capability snapshot is not hot-switched.
+
+Layers touched are option-source, validation and presentation. The single state owner is the preparation object injected by the protocol process, with no new persistent state. Entries to check: `resolveStartupPlugins`, `resolveZCodePlugins`, `workspace/readPresentation` and process prewarm. Desktop and phone share the protocol fact and show the hint by the original workspace identity; a standalone workspace process does not share degraded. The store's explicit management writes are not authorized by startup degradation and do not rewrite user config.
+
+Acceptance uses the accepted scenarios below; none is marked covered before its test is executed:
+
+| Scenario                                                   | Observable result                                                                          | Layer                                 |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------- |
+| seed or discovery hangs, concurrent create/query           | the same deadline returns an empty plugin result; the base session continues               | CLI controllable Promises, fake clock |
+| late success, failure or explicit invalidate after timeout | no old result published, no scan resumed, no unhandled rejection                           | CLI                                   |
+| preparation completes within budget                        | full result kept, normal later validation                                                  | CLI                                   |
+| timeout during replace/rollback                            | caller degrades first, the disk transaction settles safely, the lock is not released early | CLI real temp dir and fault injection |
+| open a desktop or phone session after timeout              | shows a localized hint that plugins were not loaded this time; input stays usable          | E2E candidate PB01                    |
+| next process start                                         | uses a new owner and tries loading again                                                   | CLI; E2E candidate PB01               |
+
+The full permutation of provider/model and plugin type is not enumerated: degradation happens before the model call and returns an empty result uniformly for all plugin sources. Old-protocol compatibility, workspace isolation, existing Runtime snapshots and no old-version fallback for CUA stay invariants. No full disk-snapshot cache, watcher or automatic background retry is added. UI verification records desktop/phone, theme and language evidence separately.
 
 ## 2. Recommended boundaries
 
@@ -143,7 +246,7 @@ Phase 1 validates mutable sources asynchronously on every activation: directory 
 
 File fingerprints are checked before and after the first read; dependency revisions before and after scan/build. A detected change discards the candidate and retries. In-place replacements that metadata cannot detect are covered by file-event-forced dirty or explicit force reload; this is not a filesystem transaction guarantee against arbitrary concurrent external writes. Tests must cover same-length writes, atomic replace and mtime-preserving writes.
 
-For immutable built-in assets managed by release version, the post-install resource revision may replace per-file validation. Inline, local-dev paths and user-editable marketplace install directories are never immutable by version number alone.
+Built-in seeds (including their development sources) are prepared by the version rule above; for inline or user-editable marketplace install directories, discovery still must not skip material metadata validation on version number alone.
 
 Watchers are early invalidation and avoid wasted builds, not the sole correctness source. Events may coalesce, but the first valid event immediately bumps the generation and marks dirty before async refresh; debounce only merges I/O and does not decide staleness.
 

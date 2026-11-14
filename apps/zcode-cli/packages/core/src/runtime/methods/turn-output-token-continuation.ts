@@ -2,14 +2,18 @@ import type { RuntimeModelTextResult } from "../types.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 import { toTokenUsageInfo } from "../helpers/index.js";
 import {
+  buildAssistantEntries,
   countContextPrefixMessages,
   createRuntimeAssistantEntry,
   createRuntimeUserEntry,
+  hasAssistantReasoningContent,
+  withSignedReasoningReset,
   type RuntimeMessageEntry,
 } from "../../agent/message-history.js";
 import {
   createProviderToolRoundEntries,
   hasProviderToolRoundContent,
+  orderedAssistantHistoryBlocks,
   providerToolRoundsCompactGroupKey,
   withCompactGroupKey,
 } from "../provider-tool-rounds/contract.js";
@@ -117,15 +121,29 @@ export function commitAssistantToTurnRequest(
   result: RuntimeModelTextResult,
   toolCalls: Parameters<typeof createRuntimeAssistantEntry>[1],
 ): boolean {
+  // provider result metadata 可能报告别的模型；assistant 归因必须使用
+  // Turn 已绑定的 Model，避免恢复链重新引入旧的 provider-owned 模型身份。
+  const modelRef = { providerId: state.model.providerId, modelId: state.model.modelId };
+  const orderedBlocks = orderedAssistantHistoryBlocks(result, toolCalls);
+  if (orderedBlocks) {
+    // 有序结果与冷恢复共用 buildAssistantEntries，live 与冷恢复的条目相同。
+    const entries = buildAssistantEntries({
+      blocks: orderedBlocks,
+      model: modelRef,
+      tokens: toTokenUsageInfo(result.usage),
+      groupKey: providerToolRoundsCompactGroupKey(result.providerToolRounds),
+    });
+    // 签名修复后成功的请求同样在第一条 assistant 上记标记；冷恢复的有序分支按消息 metadata
+    // 对 buildAssistantEntries 的结果做同样处理，两边条目一致。
+    commitTurnRequestEntries(runtime, state.turnRequestState, markRepairedStep(entries, result));
+    return entries.length > 0;
+  }
   const reasoning = result.reasoning?.filter(hasAssistantReasoningContent);
   const hasFinalRoundContent =
     state.modelResponse.length > 0 || (reasoning?.length ?? 0) > 0 || (toolCalls?.length ?? 0) > 0;
   const hasProviderRounds = hasProviderToolRoundContent(result.providerToolRounds);
   if (!hasFinalRoundContent && !hasProviderRounds) return false;
-  // Provider result metadata may report a different model; attribute the assistant using the Model already bound to the Turn
-  // so the recovery chain does not reintroduce an old provider-owned model identity.
-  const modelRef = { providerId: state.model.providerId, modelId: state.model.modelId };
-  // Earlier rounds split off by server-side built-in tools precede the final round, each carrying its own calls and results.
+  // 服务端内置工具切出的前序轮次排在最后一轮之前，每轮自带调用与结果。
   const providerRoundEntries = createProviderToolRoundEntries(
     result.providerToolRounds,
     modelRef,
@@ -138,19 +156,8 @@ export function commitAssistantToTurnRequest(
   // serve as a context estimation anchor; attach no tokens, so estimation falls back to the
   // last real anchor plus the local delta. Cold restore attaches none either.
   const contextUsage = compactGroupKey ? undefined : toTokenUsageInfo(result.usage);
-  if (!hasFinalRoundContent) {
-    commitTurnRequestEntries(
-      runtime,
-      state.turnRequestState,
-      withCompactGroupKey(providerRoundEntries, compactGroupKey),
-    );
-    return true;
-  }
-  commitTurnRequestEntries(
-    runtime,
-    state.turnRequestState,
-    withCompactGroupKey(
-      [
+  const stepEntries = hasFinalRoundContent
+    ? [
         ...providerRoundEntries,
         createRuntimeAssistantEntry(
           state.modelResponse,
@@ -159,18 +166,25 @@ export function commitAssistantToTurnRequest(
           modelRef,
           contextUsage,
         ),
-      ],
-      compactGroupKey,
-    ),
+      ]
+    : providerRoundEntries;
+  commitTurnRequestEntries(
+    runtime,
+    state.turnRequestState,
+    withCompactGroupKey(markRepairedStep(stepEntries, result), compactGroupKey),
   );
   return true;
 }
 
-export function hasAssistantReasoningContent(
-  reasoning: NonNullable<RuntimeModelTextResult["reasoning"]>[number],
-): boolean {
-  return reasoning.text.length > 0 || Object.keys(reasoning.providerOptions ?? {}).length > 0;
+/** 签名修复后成功的请求：在这一步产出的第一条 assistant 上记标记（见 withSignedReasoningReset）。 */
+export function markRepairedStep(
+  entries: readonly RuntimeMessageEntry[],
+  result: Pick<RuntimeModelTextResult, "signedReasoningReset">,
+): RuntimeMessageEntry[] {
+  return result.signedReasoningReset ? withSignedReasoningReset(entries) : [...entries];
 }
+
+export { hasAssistantReasoningContent };
 
 export function appendOutputTokenContinuation(state: TurnRequestState): void {
   appendTurnRequestEntries(state, [createOutputTokenContinuationEntry()]);

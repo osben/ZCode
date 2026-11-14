@@ -34,16 +34,20 @@ mod http;
 mod input;
 mod interpret;
 mod listing;
+mod mask;
 mod matcher;
 pub mod node_config;
 mod on_error;
 mod output;
 mod persist;
 mod plugin;
+mod projects;
 mod prompt;
+mod records;
 mod result;
 mod run;
 mod texts;
+mod transcript;
 pub mod workspace_digest;
 
 #[cfg(test)]
@@ -54,6 +58,7 @@ use std::sync::{Arc, RwLock};
 
 use async_trait::async_trait;
 use rust_cli_base::units;
+use rust_cli_kernel_api::env::WorkspaceRef;
 use rust_cli_kernel_api::hooks::{
     HookEvent, HookEventName, HookOutcome, HookRunner, StopCondition, StopVerdict,
 };
@@ -63,8 +68,10 @@ use tokio_util::sync::CancellationToken;
 
 pub use config::{HookSource, HooksConfig, HooksSettings};
 pub use plugin::PluginHooks;
-pub use run::HookPorts;
+pub use projects::{ProjectEntry, ProjectEpoch, ProjectHookLoader, ProjectHookSlots, project_key};
+pub use run::{HookPorts, NodeStdinPorts};
 
+use crate::config::{HookCommand, HookOrigin};
 use crate::effective::Effective;
 use crate::fold::Fold;
 use crate::http::HttpPolicy;
@@ -108,17 +115,22 @@ fn outside(event: HookEventName) -> bool {
     )
 }
 
-struct Loaded {
+pub(crate) struct Loaded {
     config: HooksConfig,
     /// 插件的 hooks（与设置快照分开登记，hooks.md §2.2）。
     plugins: Vec<PluginHooks>,
     effective: Effective,
+    /// Fork: the settings hooks alone, for an incognito session without plugins.
+    without_plugins: Effective,
 }
 
 /// hook 引擎：持有当前快照，实现 [`HookRunner`]。
 pub struct HookEngine {
     ports: HookPorts,
-    loaded: RwLock<Arc<Loaded>>,
+    /// The process snapshot and the workspaces' project entries (`projects.rs`).
+    state: RwLock<projects::State>,
+    /// Fork: the sessions' incognito profiles (specs/fork-rust-agent-parity.md, "Incognito sessions").
+    incognito: rust_cli_kernel_api::incognito::IncognitoProfiles,
 }
 
 impl HookEngine {
@@ -130,26 +142,41 @@ impl HookEngine {
     pub fn with_config(ports: HookPorts, config: HooksConfig) -> Self {
         Self {
             ports,
-            loaded: RwLock::new(Arc::new(load(config, Vec::new()))),
+            state: RwLock::new(projects::State::new(load(config, Vec::new()))),
+            incognito: Default::default(),
         }
+    }
+
+    /// Fork: read the sessions' incognito profiles; without hooks a session runs none, without plugins it runs
+    /// only the settings hooks.
+    #[must_use]
+    pub fn with_incognito(
+        mut self,
+        profiles: rust_cli_kernel_api::incognito::IncognitoProfiles,
+    ) -> Self {
+        self.incognito = profiles;
+        self
     }
 
     /// 换上新的快照；正在运行的事件用旧快照。插件 hooks
     /// 保留。
     pub fn replace(&self, config: HooksConfig) {
-        let mut loaded = self.loaded.write_unpoisoned();
-        *loaded = Arc::new(load(config, loaded.plugins.clone()));
+        let mut state = self.state.write_unpoisoned();
+        let plugins = state.process.plugins.clone();
+        state.set_process(load(config, plugins));
     }
 
     /// 登记插件的 hooks（runtime 在插件加载后调用，hooks.md §2.2）；设置快照保留。读改写在同一把
     /// 写锁里，与 [`HookEngine::replace`] 不会互相冲掉。
     pub fn register_plugins(&self, plugins: Vec<PluginHooks>) {
-        let mut loaded = self.loaded.write_unpoisoned();
-        *loaded = Arc::new(load(loaded.config.clone(), plugins));
+        let mut state = self.state.write_unpoisoned();
+        let config = state.process.config.clone();
+        state.set_process(load(config, plugins));
     }
 
-    fn snapshot(&self) -> Arc<Loaded> {
-        self.loaded.read_unpoisoned().clone()
+    /// The process snapshot (user, `--settings` and plugin hooks).
+    fn process(&self) -> Arc<Loaded> {
+        self.state.read_unpoisoned().process.clone()
     }
 
     /// hook 输入的 `cwd`：调用方给出的，或会话的 shell cwd，再没有时是工作区根。
@@ -168,32 +195,96 @@ impl HookEngine {
     }
 }
 
-fn load(config: HooksConfig, plugins: Vec<PluginHooks>) -> Loaded {
+pub(crate) fn load(config: HooksConfig, plugins: Vec<PluginHooks>) -> Loaded {
     let effective = config.effective_with(&plugins);
+    let without_plugins = config.effective_with(&[]);
     Loaded {
         config,
         plugins,
         effective,
+        without_plugins,
+    }
+}
+
+impl HookEngine {
+    /// Fork: the dispatch's id and a record per hook, in config order (specs/fork-rust-agent-parity.md HK-UP-01). The
+    /// ids are taken after the fold, so the ids the fold and the commands take do not move.
+    fn with_runs(
+        &self,
+        mut outcome: HookOutcome,
+        done: &[run::Timed],
+        hooks: &[HookCommand],
+        origins: &[HookOrigin],
+        results: Option<&[result::HookResult]>,
+    ) -> HookOutcome {
+        outcome.invocation = Some(format!("hookinv_{}", self.ports.ids.execution()));
+        outcome.runs = done
+            .iter()
+            .enumerate()
+            .map(|(at, timed)| {
+                records::record(records::Ran {
+                    run: format!("hookrun_{}", self.ports.ids.execution()),
+                    index: u32::try_from(timed.index).unwrap_or(u32::MAX),
+                    hook: &hooks[timed.index],
+                    origin: &origins[timed.index],
+                    executed: &timed.executed,
+                    result: results.and_then(|results| results.get(at)),
+                    started_at_ms: timed.started_at_ms,
+                    duration_ms: timed.duration_ms,
+                })
+            })
+            .collect();
+        outcome
     }
 }
 
 #[async_trait]
 impl HookRunner for HookEngine {
     async fn run(&self, event: HookEvent, cancel: CancellationToken) -> HookOutcome {
-        let loaded = self.snapshot();
+        let profile = self.incognito.get(&event.session);
+        if !self.process().config.trusted
+            || cancel.is_cancelled()
+            || profile.as_ref().is_some_and(|profile| !profile.hooks)
+        {
+            return HookOutcome::default();
+        }
+        // Fork: the event's own workspace entry (`projects.rs`), assembled first when it has none yet.
+        let loaded = self.snapshot_for(&event).await;
         if !loaded.config.trusted || cancel.is_cancelled() {
             return HookOutcome::default();
         }
-        let Some(matchers) = loaded.effective.matchers.get(&event.name) else {
+        let effective = match profile {
+            Some(profile) if !profile.plugins => &loaded.without_plugins,
+            _ => &loaded.effective,
+        };
+        let Some(matchers) = effective.matchers.get(&event.name) else {
             return HookOutcome::default();
         };
-        let hooks = matcher::select(event.name, matchers, &event.payload);
+        let (hooks, origins): (Vec<HookCommand>, Vec<HookOrigin>) =
+            matcher::select(event.name, matchers, &event.payload)
+                .into_iter()
+                .unzip();
         if hooks.is_empty() {
             return HookOutcome::default();
         }
         let query = matcher::match_query(event.name, &event.payload).filter(|q| !q.is_empty());
         let hook_name = input::hook_name(event.name.as_str(), query.as_deref());
-        let input = input::build(&event, &self.cwd(&event).await).to_string();
+        let cwd = self.cwd(&event).await;
+        let input = input::build(&event, &cwd).to_string();
+        // Only command hooks read the Node stdin (HTTP and prompt hooks keep the Claude Code input).
+        let node = self
+            .ports
+            .node_stdin
+            .as_ref()
+            .filter(|_| {
+                hooks
+                    .iter()
+                    .any(|hook| matches!(hook, HookCommand::Command(_)))
+            })
+            .map(|stdin| transcript::NodeStdin {
+                input: input::node_compatible(&event, &cwd, stdin.clock.now_ms()),
+                transcript: input::transcript_text(&event),
+            });
         let batch = Batch {
             event: event.name,
             session: &event.session,
@@ -202,26 +293,33 @@ impl HookRunner for HookEngine {
             input,
             default_timeout_ms: default_timeout_ms(event.name),
             http: HttpPolicy {
-                allowed_urls: loaded.effective.allowed_urls.as_deref(),
-                allowed_env_vars: loaded.effective.allowed_env_vars.as_deref(),
+                allowed_urls: effective.allowed_urls.as_deref(),
+                allowed_env_vars: effective.allowed_env_vars.as_deref(),
                 env: loaded.config.env.vars(),
             },
             prompt_model: loaded.config.prompt_model.as_ref(),
+            node,
         };
         let mut done = run::run_all(&self.ports, &batch, &hooks, &cancel).await;
+        // Node runs the hooks of one event one by one in config order (`runner.ts`) and folds each result as it
+        // comes (`mergeHookRunResult`: last `updatedInput`, last reason, last decision). The concurrent run finishes
+        // in any order, so every fold reads the results in config order.
+        done.sort_by_key(|timed| timed.index);
         let event_name = event.name.as_str();
         if outside(event.name) {
-            // 结果按配置顺序排列（不按完成顺序）。
-            done.sort_by_key(|(index, _)| *index);
             let summaries: Vec<_> = done
-                .into_iter()
-                .map(|(index, executed)| interpret::outside(executed, &hooks[index].display()))
+                .iter()
+                .map(|timed| {
+                    interpret::outside(timed.executed.clone(), &hooks[timed.index].display())
+                })
                 .collect();
-            return fold_session::outside(event.name, &summaries);
+            let outcome = fold_session::outside(event.name, &summaries);
+            return self.with_runs(outcome, &done, &hooks, &origins, None);
         }
         let mut results: Vec<_> = done
-            .into_iter()
-            .map(|(index, executed)| {
+            .iter()
+            .map(|timed| {
+                let (index, executed) = (timed.index, timed.executed.clone());
                 let hook = &hooks[index];
                 let display = hook.display();
                 // Node 配置的 `onError: "deny"`（修复线 F68）：PreToolUse 的这个 hook 出错时拦下工具。
@@ -247,7 +345,7 @@ impl HookRunner for HookEngine {
             hook_name: &hook_name,
         };
         use HookEventName as E;
-        match event.name {
+        let outcome = match event.name {
             E::PreToolUse => fold::pre_tool_use(&fold, &results),
             E::PostToolUse => fold::post_tool_use(&fold, &results),
             E::PostToolUseFailure => fold::post_tool_use_failure(&fold, &results),
@@ -261,7 +359,8 @@ impl HookRunner for HookEngine {
             ),
             E::SessionStart | E::SubagentStart => fold_session::session_start(&fold, &results),
             _ => fold_session::generic(&fold, &results),
-        }
+        };
+        self.with_runs(outcome, &done, &hooks, &origins, Some(&results))
     }
 
     /// `/goal` 的停止条件（会话级 Stop prompt hook，docs/specs/rust-cli/goal.md §5）：不看配置与信任，
@@ -271,7 +370,7 @@ impl HookRunner for HookEngine {
         request: StopCondition,
         cancel: CancellationToken,
     ) -> StopVerdict {
-        let loaded = self.snapshot();
+        let loaded = self.process();
         let default_model = request
             .event
             .context
@@ -299,14 +398,20 @@ impl HookRunner for HookEngine {
 
     /// 快照里有这个事件的 matcher（不看 match query）；会话据此决定要不要进入等待
     /// （docs/specs/rust-cli/session-lifecycle.md §3.2）。
-    fn has_hooks(&self, event: HookEventName) -> bool {
-        let loaded = self.snapshot();
-        loaded.config.trusted
-            && loaded
-                .effective
-                .matchers
-                .get(&event)
-                .is_some_and(|matchers| !matchers.is_empty())
+    fn has_hooks(&self, event: HookEventName, workspace: &WorkspaceRef) -> bool {
+        let state = self.state.read_unpoisoned();
+        if !state.process.config.trusted {
+            return false;
+        }
+        if state.unknown(event, workspace) {
+            return true;
+        }
+        state
+            .snapshot(workspace)
+            .effective
+            .matchers
+            .get(&event)
+            .is_some_and(|matchers| !matchers.is_empty())
     }
 }
 

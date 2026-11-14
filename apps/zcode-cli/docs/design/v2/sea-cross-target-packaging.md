@@ -38,12 +38,12 @@ Artifact names:
 
 User interface:
 
-- `pnpm run build:sea`: resolves Turbo from the repository root dependencies and, through
-  `--cwd apps/zcode-cli`, rebuilds the packages other than the CLI with `--force` inside the CLI
-  workspace, then rebuilds the CLI bundle directly, and finally builds all first targets. The repository
-  contains a nested pnpm workspace, so the package script must not resolve Turbo with
-  `--workspace-root`, which would wrongly scope to the inner workspace lacking that binary. This flow
-  avoids reusing stale package `dist` and keeps existing SEA artifacts out of the CLI build cache.
+- `pnpm run build:sea`: runs `build:sea:prepare` at the repository root, then builds all first
+  targets. The prepare entry first force-compiles the root `shared`, then builds the CLI packages and
+  their transitive dependencies (including root `model-option-map` and `session-control`) in dependency
+  order through the root pnpm workspace, and finally rebuilds the CLI bundle on its own. The Turbo graph
+  of the CLI sub-workspace cannot see root packages, so it must not be the only build. The prepare
+  step uses no Turbo cache and does not cache existing SEA artifacts.
 - Root `pnpm build:sea:all`: installs dependencies and forwards to the same all-target `build:sea`
   entry.
 - `pnpm run sea -- <target args>`: only wraps the existing `dist/zcode.cjs` and runtime assets; it does
@@ -247,10 +247,9 @@ is still out of scope of this script and must happen after SEA injection.
   `@zcode/i18n`, `@zcode/contracts` and excludes workspace source files.
 - CLI bundle version injection reads the repository root `package.json`; a different version in
   `packages/cli/package.json` does not change the build-time version of `zcode --version`.
-- The `build:sea` workspace script must rebuild the workspaces other than the CLI through Turbo `--force`
-  before `build-sea.mjs --all`, then rebuild the CLI directly through package-local `pnpm build`; the
-  CLI must be excluded from the Turbo build to avoid writing the existing SEA artifacts of the same
-  directory into the `dist/**` cache.
-- The package script must resolve Turbo from the repository root while keeping the Turbo working
-  directory at `apps/zcode-cli`; the dry-run regression test must prove the command is executable, the
-  task set is non-empty and does not contain `@zcode/cli`.
+- The `build:sea` script must call the root `build:sea:prepare` first; the regression test must prove
+  the prepare entry's root pnpm dependency graph contains `@zcode/session-control` and does not contain
+  the separately built `@zcode/cli`.
+- When SEA checks a workspace package it only requires that the `dist` directory exists; a package with
+  subpath exports only (such as `session-control`) has no `dist/index.js`, and the regression test must
+  prove its output is bundled into the SEA.

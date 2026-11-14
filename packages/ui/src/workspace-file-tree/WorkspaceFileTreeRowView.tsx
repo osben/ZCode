@@ -76,6 +76,7 @@ export function WorkspaceFileTreeRowView({
   installedEditors,
   isRemoteWorkspaceFileTree,
   remoteTarget,
+  htmlClickOpensBrowser = false,
   workspacePath,
   workspaceIdentity,
   workspaceRemoteSessionId,
@@ -97,6 +98,7 @@ export function WorkspaceFileTreeRowView({
   installedEditors: EditorInfo[];
   isRemoteWorkspaceFileTree: boolean;
   remoteTarget?: OpenInEditorRemoteTarget;
+  htmlClickOpensBrowser?: boolean;
   workspacePath: string;
   workspaceIdentity?: string;
   workspaceRemoteSessionId?: string;
@@ -152,6 +154,11 @@ export function WorkspaceFileTreeRowView({
     name: row.name,
   };
 
+  const canOpenInBrowser =
+    !isDeletedFile &&
+    !isRemoteWorkspaceFileTree &&
+    Boolean(onOpenBrowserUrl) &&
+    isWorkspaceFileTreeHtmlFile(row);
   const handleRowClick = (event: MouseEvent<HTMLDivElement>) => {
     onSelect(row.path);
     if (event.detail > 1) {
@@ -166,8 +173,14 @@ export function WorkspaceFileTreeRowView({
       // Keep only the selection action on click to avoid opening a preview that will fail to read the file.
       return;
     }
-    // Previously, a single click in the file tree only selected a file; users had to double-click to open its preview.
-    // Use “single click performs the primary action” for both files and directories: expand a directory or preview a file.
+    // 用户开了「单击 HTML 在内置浏览器打开」时，本地 .html 单击进浏览器；
+    // 条件与右键「在浏览器中打开」相同（远端 workspace 的文件不在本机磁盘，仍走源码预览）。
+    if (htmlClickOpensBrowser && canOpenInBrowser) {
+      handleOpenInBrowser();
+      return;
+    }
+    // 文件树单击文件之前只更新选中态，必须双击才打开预览。
+    // 这里让文件和目录都保持“单击执行主要动作”：目录展开，文件预览。
     onOpenPreview(row);
   };
   const handleCopyAbsolutePath = async () => {
@@ -359,11 +372,6 @@ export function WorkspaceFileTreeRowView({
       deleted: isDeletedFile,
     });
   const canOpenPrimary = !isDeletedFile;
-  const canOpenInBrowser =
-    !isDeletedFile &&
-    !isRemoteWorkspaceFileTree &&
-    Boolean(onOpenBrowserUrl) &&
-    isWorkspaceFileTreeHtmlFile(row);
 
   return (
     <div

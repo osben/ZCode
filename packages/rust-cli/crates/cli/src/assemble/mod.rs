@@ -36,15 +36,18 @@ use rust_cli_env_local::{LocalEnvironment, LocalMcpTransport};
 use rust_cli_kernel_api::default_model::DefaultModel;
 use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
 use rust_cli_kernel_api::env_registry::EnvironmentRegistry;
+use rust_cli_kernel_api::lsp::CodeIntelligence;
 use rust_cli_kernel_api::machine::MachineEnv;
 use rust_cli_kernel_api::permission::PermissionMode;
-use rust_cli_kernel_api::provider::{HeaderSource, ModelDirectory, ModelLimits};
-use rust_cli_net::Egress;
+use rust_cli_kernel_api::provider::{CredentialCipher, HeaderSource, ModelDirectory, ModelLimits};
+use rust_cli_kernel_api::subagent_config::SubagentConfigSource;
+use rust_cli_kernel_api::topic_resource::TopicResources;
+use rust_cli_net::{Egress, RequestObserver};
 use rust_cli_node_store::{NodeIds, NodeStore};
 use rust_cli_paths::StoragePaths;
 use rust_cli_platform::Platform;
 use rust_cli_runtime::{
-    AutoCompactAt, ContextConfig, Defaults, LocalKernel, Ports, Surface, TitleModel,
+    AutoCompactAt, ContextConfig, Defaults, DesktopContext, LocalKernel, Ports, Surface, TitleModel,
 };
 
 use crate::assemble::deployment::Deployment;
@@ -146,6 +149,14 @@ pub(crate) struct Controller {
     pub(crate) primary: Primary,
     /// 账号模型每请求鉴权的来源（G8：app-server 经 Host）；None 时平台层自己算。
     pub(crate) headers: Option<Arc<dyn HeaderSource>>,
+    /// 凭据加解密（app-server 经 Host 委托 Main 的密钥库，specs/fork-rust-credential-cipher.md）；None 时用本地 v1 编解码。
+    pub(crate) credential_cipher: Option<Arc<dyn CredentialCipher>>,
+    /// Fork: the Network panel capture (specs/fork-rust-network-capture.md), installed on the egress as soon as it
+    /// exists so requests made while assembling are reported too; only the app-server has one.
+    pub(crate) observer: Option<Arc<dyn RequestObserver>>,
+    /// Fork: the subagent snapshot through the Host (specs/fork-rust-subagent-runtime-config.md); None reads the
+    /// agent files.
+    pub(crate) subagent_config: Option<Arc<dyn SubagentConfigSource>>,
     pub(crate) root_bypass: RootBypass,
     /// 组装时等不等缺省模型定下（工作线 F140，performance.md §12.3）：交互界面不等（第一帧不等模型目录），`-p` 与
     /// app-server 当场等。
@@ -155,6 +166,18 @@ pub(crate) struct Controller {
     /// Fork: the Node desktop agent's semantics where they differ from this CLI's (plan mode boundary, queue
     /// drain); only the app-server turns it on ([`rust_cli_runtime::Extensions::node_desktop`]).
     pub(crate) node_desktop: bool,
+    /// Fork: Node's "ZCode Desktop Context" system section ([`ContextConfig::desktop`]); only the app-server started
+    /// with `--surface desktop` (the Host's rollout decision) turns it on.
+    pub(crate) desktop_context: bool,
+    /// Fork: the desktop Host's automation store (app-server only; specs/fork-rust-automations.md, slice 2).
+    pub(crate) automation: Option<Arc<dyn rust_cli_kernel_api::automation::AutomationPort>>,
+    /// Fork: the Host's topic resources (`ReadTopicResource`, specs/fork-rust-topic-resource.md); only the app-server.
+    pub(crate) topic_resources: Option<Arc<dyn TopicResources>>,
+    /// Fork: the language-server runtime (specs/fork-rust-lsp.md); only the app-server sets it, after opening the store.
+    pub(crate) code_intelligence: Option<Arc<dyn CodeIntelligence>>,
+    /// Fork: the Node helper the Host configured (app-server only, specs/fork-rust-node-helper.md F3): helper-hosted
+    /// plugin MCP servers are selected and routed through it.
+    pub(crate) node_helper: Option<Arc<rust_cli_protocol_zcode::NodeHelper>>,
     pub(crate) cli: CliInputs,
 }
 
@@ -168,10 +191,18 @@ impl Controller {
             machines: Some(machines::When::Background),
             primary: Primary::Configured,
             headers: None,
+            credential_cipher: None,
+            observer: None,
+            subagent_config: None,
             root_bypass: RootBypass::Refuse,
             wait_model: false,
             token_budget: true,
             node_desktop: false,
+            desktop_context: false,
+            automation: None,
+            topic_resources: None,
+            code_intelligence: None,
+            node_helper: None,
             cli,
         }
     }
@@ -190,17 +221,33 @@ impl Controller {
             }),
             primary: Primary::Configured,
             headers: None,
+            credential_cipher: None,
+            observer: None,
+            subagent_config: None,
             root_bypass: RootBypass::Refuse,
             wait_model: true,
             token_budget: true,
             node_desktop: false,
+            desktop_context: false,
+            automation: None,
+            topic_resources: None,
+            code_intelligence: None,
+            node_helper: None,
             cli,
         }
     }
 
     /// app-server（app-protocol.md §3.7）：交互形态的提示词；Fork: 标题照 Node 桌面端生成（Node 的提示词）；不登记跨会话通信、不连远端机器、只接受本地主
     /// env；账号凭据经 Host；root 下的 bypass 照 Node 不拒绝。
-    pub(crate) fn app(headers: Arc<dyn HeaderSource>) -> Self {
+    pub(crate) fn app(
+        headers: Arc<dyn HeaderSource>,
+        credential_cipher: Arc<dyn CredentialCipher>,
+        automation: Arc<dyn rust_cli_kernel_api::automation::AutomationPort>,
+        observer: Arc<dyn RequestObserver>,
+        topic_resources: Arc<dyn TopicResources>,
+        subagent_config: Arc<dyn SubagentConfigSource>,
+        desktop_context: bool,
+    ) -> Self {
         Self {
             surface: Surface::Interactive,
             titles: Titles::Node,
@@ -208,10 +255,18 @@ impl Controller {
             machines: None,
             primary: Primary::LocalOnly,
             headers: Some(headers),
+            credential_cipher: Some(credential_cipher),
+            observer: Some(observer),
+            subagent_config: Some(subagent_config),
             root_bypass: RootBypass::Allow,
             wait_model: true,
             token_budget: false,
             node_desktop: true,
+            desktop_context,
+            automation: Some(automation),
+            topic_resources: Some(topic_resources),
+            code_intelligence: None,
+            node_helper: None,
             cli: CliInputs::default(),
         }
     }
@@ -224,6 +279,8 @@ pub(crate) struct LocalEnv {
     pub(crate) mcp: Arc<LocalMcpTransport>,
     /// Bash 工具用的 shell（Windows 上找不到 Git Bash 时没有）。
     pub(crate) bash: Option<PathBuf>,
+    /// Fork: the process tree ledger Bash and MCP use; ACP agent processes join it.
+    pub(crate) ledger: PathBuf,
 }
 
 /// 建 [`LocalEnv`]。`find_and_grep`：启动参数没有点名 Glob / Grep（embedded-search.md §8.1）；`expanding_vars`：MCP 配置里的
@@ -247,6 +304,7 @@ pub(crate) async fn local_env_with(
     let shell =
         crate::assemble::shell::config(process.env.clone(), &process.temp, find_and_grep).await;
     let bash = shell.bash.clone();
+    let ledger = shell.ledger.clone();
     let mcp = LocalMcpTransport::new(
         shell.ledger.clone(),
         shell.env.clone(),
@@ -266,7 +324,12 @@ pub(crate) async fn local_env_with(
     } else {
         env
     };
-    LocalEnv { env, mcp, bash }
+    LocalEnv {
+        env,
+        mcp,
+        bash,
+        ledger,
+    }
 }
 
 /// 第一阶段的前半：部署配置、出口、平台层、执行环境与注册表、要读文件的参数、配置、存储位置与会话库。
@@ -294,6 +357,10 @@ pub(crate) struct Opened {
     /// 时间与 ID 只有一份（README §4，F7）：内核、会话库的记录、模型、定时任务存储与 TUI 共用。
     pub(crate) ids: Arc<NodeIds>,
     pub(crate) store: Arc<NodeStore>,
+    /// Fork: the local process tree ledger (see [`LocalEnv::ledger`]).
+    pub(crate) ledger: PathBuf,
+    /// Fork: the local MCP transport; `process/childProcesses` lists its live stdio servers.
+    pub(crate) mcp: Arc<LocalMcpTransport>,
 }
 
 /// 开端口的前半。
@@ -311,7 +378,16 @@ pub(crate) async fn open(
         );
     }
     let egress = setup::egress(&facts.process).await?;
-    let platform = setup::platform(facts, paths, egress.clone(), clock.clone())?;
+    if let Some(observer) = &spec.observer {
+        egress.set_observer(observer.clone());
+    }
+    let platform = setup::platform(
+        facts,
+        paths,
+        egress.clone(),
+        clock.clone(),
+        spec.credential_cipher.clone(),
+    )?;
     let platform = Arc::new(match &spec.headers {
         // 缺口 G8：账号模型的凭据向 Host 要（与 Node 相同经反向请求）；API key 的 provider 不受影响。
         Some(headers) => platform.with_header_source(headers.clone()),
@@ -336,8 +412,10 @@ pub(crate) async fn open(
     )
     .await;
     let monitor = options::monitor(&facts.hooks.assume, local.bash.is_some());
+    let ledger = local.ledger.clone();
     let workspace = env_assembly::workspace(&deployment, &facts.process);
     let env = Arc::new(local.env);
+    let mcp = local.mcp.clone();
     let executor_source = machines::artifact_source(facts, &egress);
     let loopback = match spec.primary {
         Primary::Configured => facts
@@ -347,10 +425,19 @@ pub(crate) async fn open(
             .then_some(env_assembly::Loopback { find_and_grep }),
         Primary::LocalOnly => None,
     };
+    // Fork: with a Node helper, `NodeHelper` servers connect through it (F3); `mcp` stays the local transport, whose
+    // stdio processes `process/childProcesses` lists.
+    let routed: Arc<dyn rust_cli_kernel_api::mcp::McpTransport> = match &spec.node_helper {
+        Some(helper) => Arc::new(rust_cli_protocol_zcode::HelperRoutedMcp::new(
+            local.mcp,
+            helper.clone(),
+        )),
+        None => local.mcp,
+    };
     let environments = env_assembly::registry(
         &deployment,
         &facts.process,
-        (env.clone(), local.mcp),
+        (env.clone(), routed),
         loopback,
         executor_source.clone(),
     )
@@ -392,6 +479,10 @@ pub(crate) async fn open(
     })
     .await;
     env_assembly::drop_remote_plugins(&deployment, &mut config.plugins);
+    // Fork: the desktop surface has the App's inline view host, so `visualize` loads (specs/fork-rust-agent-parity.md).
+    config.plugins.view_host = spec.desktop_context;
+    // Fork: helper-hosted plugin servers exactly when the helper that routes them exists (F3).
+    config.plugins.node_helper = spec.node_helper.is_some();
     // 会话库与产物目录按 Node 的 `storage.sessionDbPath` / `storage.dir`（用户级 → 项目级 → 环境变量，
     // config.md §2.3）：先读配置再开库。修复线 F2：以前总在缺省位置，Node 设了这些值时两边各用一个库。
     let paths = facts.storage_paths(&config.storage.settings());
@@ -403,7 +494,14 @@ pub(crate) async fn open(
         (Some(_) | None, _) => None,
     };
     let ids = Arc::new(NodeIds::new(clock.clone()));
-    let store = Arc::new(NodeStore::new(paths.clone(), ids.clone()).with_version(VERSION));
+    let store = NodeStore::new(paths.clone(), ids.clone()).with_version(VERSION);
+    // Fork: the app-server defers prewarmed sessions like the Node desktop agent
+    // (specs/fork-agent-runtime-selection.md "Draft prewarm in Rust mode"); TUI and `-p` do not.
+    let store = Arc::new(if spec.node_desktop {
+        store.with_deferred_drafts()
+    } else {
+        store
+    });
     Ok(Opened {
         deployment,
         egress,
@@ -421,6 +519,8 @@ pub(crate) async fn open(
         paths,
         ids,
         store,
+        ledger,
+        mcp,
     })
 }
 
@@ -572,6 +672,15 @@ pub(crate) async fn kernel(
     // 自动记忆目录先建好，提示词的记忆段才能说“目录已存在”（memory.md §2）；目录在主 env 上（deployment.md §8）。
     let mut context = ContextConfig::new(spec.surface);
     context.token_budget = spec.token_budget;
+    // Fork: the Node desktop agent gives no subagent the git status (rule 15 of
+    // specs/fork-rust-subagent-runtime-config.md).
+    context.subagent_git_status = !spec.node_desktop;
+    // Fork: the Host decides the Gen UI output root for every agent it starts (`zcodeAgentProcessManager.ts`).
+    context.desktop = spec.desktop_context.then(|| DesktopContext {
+        gen_ui_root: env
+            .raw(rust_cli_base::names::env::ZCODE_GEN_UI_OUTPUT_ROOT)
+            .map(str::to_owned),
+    });
     context.custom_system_prompt = opened.resolved.system_prompt.clone();
     context.append_system_prompt = opened.resolved.append_system_prompt.clone();
     // 附加目录只归会话（deployment.md §21）：环境段、嵌套规则文件与权限规则读这一份。
@@ -604,6 +713,35 @@ pub(crate) async fn kernel(
     .await;
     extensions.monitor = opened.monitor;
     extensions.node_desktop = spec.node_desktop;
+    extensions.subagent_config = spec.subagent_config.clone();
+    // Fork: a desktop subagent's own selection is checked against the catalog (rule 9 of
+    // specs/fork-rust-subagent-runtime-config.md); none under an explicit API key.
+    if spec.node_desktop {
+        extensions.models = opened.directory.clone();
+    }
+    // Fork: Node's command hook stdin and transcript files under the process temp directory (Node `os.tmpdir()`).
+    if spec.node_desktop {
+        extensions.hook_transcripts = Some(Arc::new(rust_cli_runtime::LocalHookTranscripts::new(
+            facts.process.temp.clone(),
+        )));
+    }
+    // The runtime derives `/loop` hiding and the storeless local cron from this port.
+    extensions.automation = spec.automation.clone();
+    extensions.topic_resources = spec.topic_resources.clone();
+    // Fork: the desktop app-server runs ACP agents (specs/fork-rust-agent-parity.md "ACP external agents"): records
+    // from the Host's sidecar next to `provider_config.json`, the raw process environment, the shared ledger.
+    if spec.node_desktop {
+        extensions.acp = Some(rust_cli_runtime::AcpSetup {
+            records_file: opened
+                .paths
+                .zcode_config()
+                .as_path()
+                .join("fork_acp_agents.json"),
+            env: env.vars().into(),
+            ledger: rust_cli_proc::ledger::Ledger::open(opened.ledger.clone()),
+        });
+    }
+    extensions.code_intelligence = spec.code_intelligence.clone();
     let mut opened = opened;
     // 绑定到远端机器的 MCP 服务器（R5，remote-exec.md §22.5、§22.8）：连上机器时的期望集合，TUI 的标记。
     let machines = opened
@@ -636,9 +774,12 @@ pub(crate) async fn kernel(
     if let Some(peers) = &peers {
         extensions.peers = peers.deps.clone();
     }
-    // 持久定时任务：启动工作区（项目根）下的 `.zcode/scheduled_tasks.json`（tools-more.md §16）。
-    extensions.cron_store =
-        env_assembly::cron_store(&opened.deployment, &opened.workspace, clock.clone());
+    // 持久定时任务：启动工作区（项目根）下的 `.zcode/scheduled_tasks.json`（tools-more.md §16）。Fork: not opened under
+    // the desktop Host, whose automation store owns schedules; the runtime gives the local cron no store there anyway.
+    if spec.automation.is_none() {
+        extensions.cron_store =
+            env_assembly::cron_store(&opened.deployment, &opened.workspace, clock.clone());
+    }
     // 任务清单（Task v2）放在本地存储：文件是事实源，写后投影到 Node 的 todo 表（agents.md §7）。
     let kernel = LocalKernel::with_extensions(
         ports,
@@ -660,6 +801,16 @@ pub(crate) async fn kernel(
         kernel
     });
     kernel.replace_hooks(opened.config.hooks.clone());
+    // Fork: project hooks are per workspace (specs/fork-rust-agent-parity.md, "Per-workspace hook snapshots"): the
+    // root's entry is already assembled, any other workspace's at its first event.
+    kernel.set_project_hook_loader(Arc::new(config::project_hooks::Loader {
+        files: opened.primary.files().clone(),
+        paths: opened.paths.clone(),
+    }));
+    kernel.put_project_hooks(
+        &rust_cli_hooks::project_key(opened.workspace.root.as_str()),
+        opened.config.project_hooks.clone(),
+    );
     let local = config::local_rules(kernel.ports().store.as_ref(), &opened.workspace).await;
     kernel.replace_permission_rules(
         opened
@@ -676,7 +827,10 @@ pub(crate) async fn kernel(
         None => None,
     };
     // 开始连接 MCP 服务器、加载插件；等不等由前端决定（`-p` 短等，TUI 与 App 不等，ext.md §3.3.1）。
-    kernel.start_extensions().await;
+    let plugins = kernel.start_extensions().await;
+    if let Some(helper) = &spec.node_helper {
+        helper.set_catalog(helper_catalog(&plugins));
+    }
     Ok(Built {
         opened,
         kernel,
@@ -688,4 +842,23 @@ pub(crate) async fn kernel(
         machines,
         mcp_machines,
     })
+}
+
+/// Fork (specs/fork-rust-node-helper.md F3): what this process admitted, sent with every helper session open.
+fn helper_catalog(
+    plugins: &rust_cli_ext::plugins::Plugins,
+) -> rust_cli_protocol_zcode::HelperCatalog {
+    let mut catalog = rust_cli_protocol_zcode::HelperCatalog::default();
+    for plugin in &plugins.0 {
+        let hosted = plugin
+            .mcp_servers
+            .iter()
+            .filter(|server| {
+                server.transport == rust_cli_kernel_api::mcp::McpTransportConfig::NodeHelper
+            })
+            .map(|server| server.name.clone())
+            .collect();
+        catalog.admit(&plugin.id, hosted);
+    }
+    catalog
 }

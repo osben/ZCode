@@ -354,6 +354,153 @@ export interface GitWorktreePruneResult {
   issues: GitWorktreeMutationIssue[];
 }
 
+// ── Managed worktree (docs/git/worktree.md) ──
+// The single source of truth is `git worktree list` plus the managed directory layout; this only describes what is read and keeps no copy.
+
+export type ManagedWorktreeState = "ok" | "missing";
+
+export interface ManagedWorktreeInfo {
+  /** Worktree root directory. */
+  path: string;
+  /** 4-digit hex bucket under the managed root directory. */
+  bucket: string;
+  /** Source repository toplevel. */
+  sourceRoot: string;
+  /** HEAD SHA; null when the directory is missing. */
+  head: string | null;
+  /** null when detached. */
+  branchName: string | null;
+  /** missing = git still registers it but the directory no longer exists (prunable). */
+  state: ManagedWorktreeState;
+  /** Has uncommitted changes or untracked files; null when the directory is missing. */
+  dirty: boolean | null;
+}
+
+/** One worktree row in the management dialog: git facts plus the tasks using it (docs/git/worktree.md §3.10). */
+export interface ManagedWorktreeEntry extends ManagedWorktreeInfo {
+  /** Held by an in-progress creation record; the delete button is hidden in this state. */
+  creating: boolean;
+  tasks: ManagedWorktreeTaskRef[];
+}
+
+export interface ManagedWorktreeTaskRef {
+  taskId: string;
+  /** Workspace the task belongs to (project main directory); used when opening the task. */
+  workspacePath: string;
+  workspaceIdentity?: string;
+  title: string;
+  archived: boolean;
+}
+
+export type ManagedWorktreeErrorCode =
+  | "not-repository"
+  | "invalid-start-ref"
+  | "start-ref-missing-subdir"
+  | "bucket-exhausted"
+  | "worktree-dirty"
+  | "worktree-in-use"
+  | "not-managed"
+  | "local-only"
+  | "git-failed"
+  | "copy-failed"
+  | "unsupported-agent"
+  | "session-failed"
+  | "carry-failed"
+  | "session-close-failed";
+
+export interface ManagedWorktreeError {
+  code: ManagedWorktreeErrorCode;
+  /** Diagnostics such as a git stderr summary; for display only, never used for flow decisions. */
+  detail?: string;
+}
+
+export interface ListManagedWorktreesRequest {
+  /** Any directory inside the source repository; the service resolves it to the toplevel. */
+  sourcePath: string;
+}
+
+export interface ListManagedWorktreesResult {
+  sourceRoot: string | null;
+  worktrees: ManagedWorktreeInfo[];
+}
+
+export interface CreateManagedWorktreeRequest {
+  /** Project main directory; may be a repository subdirectory (monorepo). */
+  sourcePath: string;
+  /** Start ref; defaults to the current HEAD of sourcePath. */
+  startRef?: string;
+  /**
+   * Carries uncommitted changes of the checkout containing sourcePath (staged, unstaged, and untracked files that are not ignored)
+   * Used only by fork (docs/git/worktree.md §3.6); mutually exclusive with startRef, and the start point is fixed to the current HEAD.
+   */
+  carryChanges?: boolean;
+}
+
+export type CreateManagedWorktreeResult =
+  | {
+      ok: true;
+      worktree: ManagedWorktreeInfo;
+      /** Task cwd = worktree root + the path of sourcePath relative to the toplevel. */
+      cwd: string;
+    }
+  | { ok: false; error: ManagedWorktreeError };
+
+export interface RemoveManagedWorktreeRequest {
+  path: string;
+  /** Discard uncommitted changes (`git worktree remove --force`); only for leftover worktrees no task uses (§3.11). */
+  force?: boolean;
+}
+
+export type RemoveManagedWorktreeResult = { ok: true } | { ok: false; error: ManagedWorktreeError };
+
+export interface PruneWorktreesRequest {
+  sourcePath: string;
+}
+
+export type ManagedWorktreeCreationKind = "new-task" | "fork";
+export type ManagedWorktreeCreationPhase = "creating" | "starting-session" | "failed";
+
+/**
+ * An in-progress worktree creation (docs/git/worktree.md §6.2). It exists only in Host memory
+ * and is the single data source for the creation phase; it is deleted once the session is created, abandoned, or completed with "do not use a worktree".
+ */
+export interface ManagedWorktreeCreation {
+  id: string;
+  kind: ManagedWorktreeCreationKind;
+  projectId: string;
+  /** Owning workspace (project main directory); the task is created under this workspace. */
+  workspacePath: string;
+  phase: ManagedWorktreeCreationPhase;
+  /** Start point; null = current HEAD of the source directory. For fork, the HEAD of the parent task's cwd. */
+  ref: string | null;
+  /** Worktree root directory written after the bucket is reserved. */
+  worktreePath: string | null;
+  /** git and copy output; only the tail is kept (MANAGED_WORKTREE_OUTPUT_LIMIT). */
+  output: string;
+  error: ManagedWorktreeError | null;
+  /** New task: body of the first message, used for the user bubble and to restore the draft after "abandon". null for fork. */
+  promptText: string | null;
+  /** Parent task of a fork; null for a new task. */
+  parentSessionId: string | null;
+  createdAt: number;
+}
+
+/** Published once when creation ends; the renderer uses it to switch to the real session or restore the draft. */
+export type ManagedWorktreeCreationSettlement =
+  | { creationId: string; outcome: "session-started"; workspacePath: string; sessionId: string }
+  | { creationId: string; outcome: "dismissed"; workspacePath: string; promptText: string | null };
+
+export const MANAGED_WORKTREE_OUTPUT_LIMIT = 32 * 1024;
+
+/** Candidate start refs for a new worktree (docs/git/worktree.md §3.2); no fetch is run, and remote branches come from local remote-tracking refs. */
+export interface ManagedWorktreeStartRefs {
+  /** Current HEAD; branchName is null when detached. null when the repository has no commits. */
+  head: { sha: string; branchName: string | null } | null;
+  localBranches: string[];
+  /** Such as origin/main; excludes <remote>/HEAD symbolic refs. */
+  remoteBranches: string[];
+}
+
 export interface GitSwitchBranchRequest extends GitRepositoryRequest {
   targetBranchName: string;
 }

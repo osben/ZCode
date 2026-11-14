@@ -17,8 +17,6 @@ pub(crate) enum Behavior {
     Allow,
     Deny,
     Ask,
-    /// 只在 print 模式生效；这里按没有决定处理（D11）。
-    Defer,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,6 +37,8 @@ pub(crate) struct HookResult {
     pub outcome: Outcome,
     pub blocking: Option<Blocking>,
     pub prevent: bool,
+    /// Top-level `decision: "block"` (Node `blockRequested`): a PermissionRequest stop with `stop_reason`.
+    pub block_requested: bool,
     pub stop_reason: Option<String>,
     pub behavior: Option<Behavior>,
     /// `hookPermissionDecisionReason`。
@@ -80,6 +80,18 @@ impl HookResult {
             outcome: Outcome::Blocking,
             blocking: Some(Blocking { error, command }),
             ..Self::default()
+        }
+    }
+
+    /// A PreToolUse refusal in Node's shape (`createExitCodeBlockOutput`, `preToolUseDenyOutput`): `continue: false`
+    /// with a deny whose reason is `reason`, so it prevents the call, counts as a deny and takes part in the reason merge.
+    pub(crate) fn pre_tool_refusal(reason: String, command: String) -> Self {
+        Self {
+            prevent: true,
+            stop_reason: Some(reason.clone()),
+            behavior: Some(Behavior::Deny),
+            reason: Some(reason.clone()),
+            ..Self::blocking(reason, command)
         }
     }
 }

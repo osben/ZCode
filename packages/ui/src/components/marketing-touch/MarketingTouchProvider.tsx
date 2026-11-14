@@ -80,7 +80,7 @@ export function MarketingTouchProvider({
   const openRewards = useOpenRewards();
   const openRewardsRef = useRef(openRewards);
   openRewardsRef.current = openRewards;
-  const { intl, locale } = useZCodeIntl();
+  const { intl, locale, localeResolved } = useZCodeIntl();
   // The marketing backend and copy support only Chinese and English (external service); pass it as a ServiceLocale.
   const serviceLocale = toServiceLocale(locale);
   const startEntitlement = useStartPlanEntitlement(
@@ -92,7 +92,10 @@ export function MarketingTouchProvider({
   const identity = user?.id ?? "anonymous";
   const createRuntime = useCallback(() => {
     const service = services.marketingTouchService;
-    if (!service || restoring) return null;
+    // 冷启动竞态修复：IntlProvider 读完 setting.json 之前 locale 只是占位初值（中文系统即 zh-CN），
+    // 以前这时就创建 runtime 发 marketing/touch，X-Client-Language 会带错语言。等语言确定后再启动；
+    // locale 变化本来就会重建 runtime，所以这里只多等一次设置读取。
+    if (!service || restoring || !localeResolved) return null;
     let poller: ReturnType<typeof createMarketingTouchPoller>;
     const controller = createMarketingTouchController({
       query: () => service.query({ locale: serviceLocale }),
@@ -316,6 +319,7 @@ export function MarketingTouchProvider({
     Boolean(user),
     restoring,
     locale,
+    localeResolved,
     intl,
     requestLogin,
     desktop,

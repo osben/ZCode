@@ -4,7 +4,7 @@ use rust_cli_paths::StoragePaths;
 use serde_json::json;
 
 use super::*;
-use crate::credentials::{Cipher, CredentialSecret, CredentialStore};
+use crate::credentials::{CredentialSecret, CredentialStore, V1Codec};
 use crate::providers::BUNDLED_BUILTIN;
 use crate::test_support::write;
 
@@ -24,7 +24,7 @@ fn secret() -> CredentialSecret {
 async fn credentials(record: &[(&str, &str)]) -> (tempfile::TempDir, Credentials) {
     let dir = tempfile::tempdir().unwrap();
     let paths = StoragePaths::resolve(&Default::default(), dir.path(), dir.path());
-    let cipher = Cipher::new(&secret());
+    let cipher = V1Codec::new(&secret());
     let encrypted: serde_json::Map<String, Value> = record
         .iter()
         .enumerate()
@@ -51,7 +51,7 @@ fn builtin() -> Value {
 }
 
 /// 没有可用团队项目时的 overlay；`subscribed` 是个人订阅查询给出 entitled 的 provider（`personal/`，§5.7）。
-fn overlay(
+async fn overlay(
     builtin: &Value,
     credentials: Option<&Credentials>,
     subscribed: &[&str],
@@ -65,7 +65,7 @@ fn overlay(
         personal: &personal,
         teams: &HashMap::new(),
     };
-    super::overlay(builtin, &view)
+    super::overlay(builtin, &view).await.unwrap()
 }
 
 fn entitled(layer: &AccountLayer, provider: &str) -> bool {
@@ -104,12 +104,12 @@ async fn individual_plans_follow_the_manual_key_or_the_app_login() {
     ])
     .await;
     // 手工 key：有 key 就授权，不看订阅；订阅结论不能盖过手工 key 的来源。
-    let layer = overlay(&builtin(), Some(&manual), &[]);
+    let layer = overlay(&builtin(), Some(&manual), &[]).await;
     assert!(entitled(&layer, ZAI));
     // Node 独立 CLI 的身份（没有 App 的 profile id）：不算登录，只看订阅结论（工作线 F50）。
     assert!(!entitled(&layer, BIGMODEL));
     assert!(entitled(
-        &overlay(&builtin(), Some(&manual), &[BIGMODEL]),
+        &overlay(&builtin(), Some(&manual), &[BIGMODEL]).await,
         BIGMODEL
     ));
     // 独立 CLI 不支持的账号 provider 显式不授权。
@@ -126,6 +126,7 @@ async fn individual_plans_follow_the_manual_key_or_the_app_login() {
     // 凭据读不到：全部不授权（订阅结论也不算）。
     assert!(
         !overlay(&builtin(), None, &[ZAI, BIGMODEL])
+            .await
             .providers
             .values()
             .any(|p| p["access"]["entitled"] == true)
@@ -133,7 +134,10 @@ async fn individual_plans_follow_the_manual_key_or_the_app_login() {
     // 手工 key 缺 key：不授权。
     let (_dir, broken) =
         credentials(&[(&identity_key(ZAI), identity), (&source_key(ZAI), "manual")]).await;
-    assert!(!entitled(&overlay(&builtin(), Some(&broken), &[ZAI]), ZAI));
+    assert!(!entitled(
+        &overlay(&builtin(), Some(&broken), &[ZAI]).await,
+        ZAI
+    ));
 }
 
 #[tokio::test]
@@ -154,7 +158,7 @@ async fn personal_accounts_read_the_app_profile_id() {
         (&source_key(BIGMODEL), "oauth"),
     ])
     .await;
-    let accounts = personal_accounts(&builtin(), Some(&both));
+    let accounts = personal_accounts(&builtin(), Some(&both)).await.unwrap();
     // 来源是 manual 的不查订阅；OAuth 的身份是 App 的 profile id，不是 Node 的 identity。
     assert_eq!(accounts.len(), 1);
     assert_eq!(accounts[0].provider, BIGMODEL);
@@ -163,7 +167,12 @@ async fn personal_accounts_read_the_app_profile_id() {
         accounts[0].token.as_ref().map(RedactedString::expose),
         Some("at")
     );
-    assert!(personal_accounts(&builtin(), None).is_empty());
+    assert!(
+        personal_accounts(&builtin(), None)
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[tokio::test]
@@ -184,14 +193,15 @@ async fn request_credentials_follow_the_login_source() {
     ])
     .await;
     // 手工 key 盖过 App 的 OAuth 登录。
-    let Ok(RequestAuth::Manual(key)) = request_auth(&manual, ZAI, "zai", "individual-coding-plan")
+    let Ok(RequestAuth::Manual(key)) =
+        request_auth(&manual, ZAI, "zai", "individual-coding-plan").await
     else {
         panic!("manual login uses the stored key");
     };
     assert_eq!(key.expose(), "sk-zai-manual");
     // 没有来源、只有 App 写的键：照 App 按 profile id 换取，请求期不补写来源。
     let Ok(RequestAuth::OAuth(login)) =
-        request_auth(&manual, BIGMODEL, "bigmodel", "individual-coding-plan")
+        request_auth(&manual, BIGMODEL, "bigmodel", "individual-coding-plan").await
     else {
         panic!("the App login is an OAuth login");
     };
@@ -203,12 +213,15 @@ async fn request_credentials_follow_the_login_source() {
         ),
         ("u-big", "at", Some("zcode-jwt"))
     );
-    let other = request_auth(&manual, "account:zai-start-plan", "zai", "start-plan");
-    assert!(matches!(other, Err(ModelError::Authentication { .. })));
+    let other = request_auth(&manual, "account:zai-start-plan", "zai", "start-plan").await;
+    assert!(matches!(
+        other,
+        Err(RequestError::Login(ModelError::Authentication { .. }))
+    ));
     let (_dir, empty) = credentials(&[]).await;
     assert!(matches!(
-        request_auth(&empty, ZAI, "zai", "individual-coding-plan"),
-        Err(ModelError::Authentication { .. })
+        request_auth(&empty, ZAI, "zai", "individual-coding-plan").await,
+        Err(RequestError::Login(ModelError::Authentication { .. }))
     ));
     // Node 独立 CLI 的身份与来源、有 token，没有 user_info：没有 profile id，要求重新登录（F50 以前算 OAuth 登录）。
     let (_dir, node) = credentials(&[
@@ -218,8 +231,8 @@ async fn request_credentials_follow_the_login_source() {
     ])
     .await;
     assert!(matches!(
-        request_auth(&node, ZAI, "zai", "individual-coding-plan"),
-        Err(ModelError::Authentication { ref message }) if message.starts_with("project_token_login_required")
+        request_auth(&node, ZAI, "zai", "individual-coding-plan").await,
+        Err(RequestError::Login(ModelError::Authentication { ref message })) if message.starts_with("project_token_login_required")
     ));
 }
 
@@ -272,7 +285,7 @@ async fn profile_ids_follow_the_app() {
         let (_dir, credentials) = plain_credentials(&[(key.as_str(), info)]).await;
         let family = Family::parse(family).unwrap();
         assert_eq!(
-            profile_id(&credentials, family).as_deref(),
+            profile_id(&credentials, family).await.unwrap().as_deref(),
             expected,
             "{info}"
         );
@@ -297,7 +310,9 @@ async fn profile_ids_match_the_app_golden() {
                 .filter(|id| !id.trim().is_empty())
                 .map(str::to_owned);
             assert_eq!(
-                profile_id(&credentials, Family::parse(family).unwrap()),
+                profile_id(&credentials, Family::parse(family).unwrap())
+                    .await
+                    .unwrap(),
                 expected,
                 "{name} ({family})"
             );

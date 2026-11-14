@@ -17,7 +17,7 @@ Result format: each matched tool appears as one <function>{"description": "...",
 Query forms:
 Regular expressions are not supported. Use space-separated keywords for broad searches, or "select:<name>[,<name>...]" for exact tool names. Characters such as "|" and ".*" are treated literally. For example, use "shell terminal execute command".
 
-- "select:TodoWrite,mcp__byob__browser_navigate" — fetch these exact deferred tools by name
+- "select:TaskStop,mcp__byob__browser_navigate" — fetch these exact deferred tools by name
 - "notebook jupyter" — keyword search, up to max_results best matches
 - "+slack send" — require "slack" in the name, rank by remaining terms`;
 }
@@ -35,9 +35,9 @@ export const LOCAL_TOOL_SEARCH_DESCRIPTION = `${description(
   ". For deferred tools, parameters describes the input object passed to DeferredToolCall.",
 )}
 
-Example (TodoWrite is deferred and already loaded):
+Example (TaskStop is deferred and already loaded):
 <example>
-DeferredToolCall({"name":"TodoWrite","input":{"todos":[{"content":"Inspect the implementation","status":"in_progress","priority":"high"}]}})
+DeferredToolCall({"name":"TaskStop","input":{"task_id":"<task_id returned when the task started>"}})
 </example>`;
 
 const ADDED_TOOLS_NOTICE = `The following deferred tools are now available via ${TOOL_SEARCH_NAME}. Their schemas are NOT loaded — calling them directly will fail with InputValidationError. Use ${TOOL_SEARCH_NAME} with query "select:<name>[,<name>...]" to load tool schemas before calling them:`;

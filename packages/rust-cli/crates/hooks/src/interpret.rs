@@ -2,6 +2,7 @@
 //!
 //! REPL 路径：command 与 http 的结果按退出码与 JSON 输出解释。“外部”路径：每个 hook 的结果单独给出。
 
+use rust_cli_base::js::string::{trim, utf16_prefix};
 use rust_cli_base::proto::http;
 use serde_json::Value;
 
@@ -35,7 +36,49 @@ fn with_stderr(message: &str, exit: i32, stderr: &str) -> String {
     }
 }
 
+/// Node `trimForPreview`: the trimmed text cut at 4000 UTF-16 units with `...`, or none when it is blank.
+fn trim_for_preview(text: &str) -> Option<String> {
+    const MAX_UNITS: usize = 4000;
+    // Node's `value.trim()` is JS trim: it drops U+FEFF and keeps U+0085, the opposite of `str::trim`.
+    let trimmed = trim(text);
+    if trimmed.is_empty() {
+        return None;
+    }
+    let cut = utf16_prefix(trimmed, MAX_UNITS);
+    Some(if cut.len() == trimmed.len() {
+        trimmed.to_owned()
+    } else {
+        format!("{cut}...")
+    })
+}
+
+/// Node `createExitCodeBlockOutput` for a PermissionRequest hook: exit code 2 stops the call before any JSON on stdout
+/// is read, with `trimForPreview(stderr) ?? trimForPreview(stdout) ?? "Hook blocked execution"`.
+fn permission_request_exit_two(command: &str, stdout: &str, stderr: &str) -> HookResult {
+    HookResult::blocking(exit_two_reason(stdout, stderr), command.to_owned())
+}
+
+/// Node `createExitCodeBlockOutput` for a PreToolUse hook: the same reason, as a `continue: false` deny
+/// (`permissionDecisionReason` is the reason too), so the refusal text is the reason itself.
+fn pre_tool_exit_two(command: &str, stdout: &str, stderr: &str) -> HookResult {
+    HookResult::pre_tool_refusal(exit_two_reason(stdout, stderr), command.to_owned())
+}
+
+/// `trimForPreview(stderr) ?? trimForPreview(stdout) ?? "Hook blocked execution"`.
+fn exit_two_reason(stdout: &str, stderr: &str) -> String {
+    trim_for_preview(stderr)
+        .or_else(|| trim_for_preview(stdout))
+        .unwrap_or_else(|| "Hook blocked execution".to_owned())
+}
+
 fn command_result(command: &str, event: &str, stdout: &str, stderr: &str, exit: i32) -> HookResult {
+    if exit == BLOCKING_EXIT && event == "PermissionRequest" {
+        return permission_request_exit_two(command, stdout, stderr);
+    }
+    // Node reads no stdout JSON when the exit code is 2 (`processHookExecutionResult`).
+    if exit == BLOCKING_EXIT && event == "PreToolUse" {
+        return pre_tool_exit_two(command, stdout, stderr);
+    }
     match output::parse(stdout) {
         Parsed::Invalid(_) | Parsed::Plain if exit == BLOCKING_EXIT => exit_two(command, stderr),
         Parsed::Invalid(message) => HookResult::non_blocking(format!(

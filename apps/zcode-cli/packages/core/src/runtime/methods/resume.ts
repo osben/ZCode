@@ -4,7 +4,6 @@ import { executionStateSchema, resolveExecutionState } from "@zcode/shared";
 import { SESSION_ENTRY_EXECUTION_STATE } from "@zcode/contracts";
 import {
   CoreErrorType,
-  HookEventName,
   SessionEventType,
   createCoreError,
   traceContextToLogContext,
@@ -30,11 +29,6 @@ import type {
 import { getLatestActiveSessionMessageId, isHiddenReminderMessage } from "../helpers/index.js";
 import type { ResumeSessionOptions, ResumeSessionResult } from "../types.js";
 import type { AgentRuntimeInternal } from "../internal.js";
-import {
-  announceSessionShellEnvironmentNoticeAfterResume,
-  getSessionShellSelection,
-  restoreSessionShellEnvironmentSelectionForResume,
-} from "./session-shell-environment.js";
 import { resetProjectMemoryRecall } from "../helpers/project-memory-recall.js";
 import { restoreDynamicWorkflowActivationOnResume } from "./dynamic-workflow-activation.js";
 import { restoreSessionFeaturesOnResume } from "../session-features/contract.js";
@@ -45,6 +39,30 @@ import {
 } from "./workspace-checkpoint-persistence.js";
 import { mainTurnCacheHitAggregateFromMessages } from "./turn-model-step-usage.js";
 import { refreshRestoredAnnouncements } from "./context-refresh.js";
+import { loadPromptSnapshot } from "../helpers/prompt-snapshot.js";
+import { stageSessionStartContext } from "./hooks.js";
+import { collectPreviousRuntimeAgentInterruptions } from "./background-notifications.js";
+import { createTotalTokensBudgetState } from "../helpers/total-tokens-budget.js";
+
+/**
+ * fork 子会话在 fork 提示之后还没有输入时，SessionStart 用 fork，之后用 resume。
+ * 由历史推出，不另存状态。
+ */
+function sessionStartSourceForResume(
+  activeMessages: readonly MessageWithParts[],
+): "resume" | "fork" {
+  const forkNoticeIndex = activeMessages.findLastIndex(
+    (message) => message.info.role === "user" && message.info.source === "fork",
+  );
+  if (forkNoticeIndex < 0) return "resume";
+  const hasInputAfterFork = activeMessages
+    .slice(forkNoticeIndex + 1)
+    .some(
+      (message) =>
+        message.info.role === "user" && !message.info.summary && !isHiddenReminderMessage(message),
+    );
+  return hasInputAfterFork ? "resume" : "fork";
+}
 
 export function toScheduleState(
   this: AgentRuntimeInternal,
@@ -122,10 +140,7 @@ export async function resumeFromStore(
   if (persistedEnvInfo) {
     this.config.envInfo = persistedEnvInfo;
   }
-  const shellRestore = await restoreSessionShellEnvironmentSelectionForResume(this, {
-    currentSelection: getSessionShellSelection(this),
-    traceContext,
-  });
+  // shell 不从会话恢复：resume 入口已按当前设置初始化 selection，变化由环境公告告诉模型。
 
   // Execution-worktree sessions persist their execution cwd separately from the workspace
   // directory (listing identity); restore the worktree first so the resumed turn runs there.
@@ -169,8 +184,13 @@ export async function resumeFromStore(
   this.messageHistory = new MessageHistoryImpl();
   this.contextBuilder = null;
   this.contextInitialized = false;
-  // Cold-resume history hydration clears runtime-local read-state first. Complete this before
-  // Context initialization so the single subsequent load of MEMORY.md matches what the provider sees.
+  // 修复原因：bootstrap 复用同一个 runtime 再次恢复时，原因还停在上一次 compaction；
+  // 恢复后启动时重读的文件变化被写成"compaction 之后重读"。恢复等同新会话启动，回到 session_start。
+  this.instructionRefreshReason = undefined;
+  // token 预算计数器只在内存：恢复等同新会话启动，从零开始，下一条真实用户消息重新起算。
+  this.totalTokensBudget = createTotalTokensBudgetState();
+  // cold resume 的历史 hydration 会先清空 runtime-local read-state；必须在
+  // Context 初始化前完成，确保随后单次加载的 MEMORY.md 状态与 provider 所见内容一致。
   const readFileStateHydration = await hydrateReadFileStateFromSession({
     branchCutAfterMessageId,
     markRestoredFromSession: true,
@@ -183,7 +203,9 @@ export async function resumeFromStore(
     workspaceRoot: this.workspaceRoot,
   });
   await this.ensureContextInitialized(traceContext);
-  // Resumed envInfo comes from storage, not a fresh Git read, so it cannot count as prefetch; the resumed window has not decided staleness yet, so the next request re-reads.
+  // 第一个轮次重建前缀前装好 prompt 快照，恢复后的请求发送会话记录的 system。
+  await loadPromptSnapshot(this, traceContext);
+  // 恢复的 envInfo 来自存储，不是刚读的 Git，不能当预取；恢复的窗口还没决定过时，下一次请求重新读取。
   this.sessionStartGitPrefetch = false;
   // The stored "is repository" flag was not read by this runtime; re-read once for the first environment announcement and announce on change.
   this.repositoryRecheckPending = true;
@@ -202,10 +224,6 @@ export async function resumeFromStore(
     rewindTargetMessageId,
   });
   refreshRestoredAnnouncements(this);
-  announceSessionShellEnvironmentNoticeAfterResume(this, {
-    persistedEnvInfo,
-    restore: shellRestore,
-  });
   const activeMessages = activeSessionMessages(messages, {
     branchCutAfterMessageId,
     rewindCreatedMessageId,
@@ -286,6 +304,18 @@ export async function resumeFromStore(
     traceContext,
   });
   await this.discardPersistedPendingSteerInputs(traceContext);
+  this.pendingPreviousRuntimeAgentNotice = await collectPreviousRuntimeAgentInterruptions
+    .call(this, activeMessages)
+    .catch((error: unknown) => {
+      // 对账只补一条提醒；读取 child 失败不能让会话恢复失败。
+      this.logger?.warn("Previous runtime agent reconciliation failed", {
+        ...traceContextToLogContext(traceContext),
+        errorMessage: error instanceof Error ? error.message : String(error),
+        event: "session.resume.previous_runtime_agents_failed",
+        module: "core.runtime",
+      });
+      return undefined;
+    });
   const recoveredSteerInputCount = 0;
   const resumedTodos = await this.readSessionTodosForContext(traceContext);
   const resumedTarget = await this.readSessionTargetForContext(traceContext);
@@ -307,14 +337,12 @@ export async function resumeFromStore(
   );
   await this.appendEvent(resumedEvent, traceContext);
   const sessionStartHookResult = await this.runSessionStartHooks(
-    "resume",
+    sessionStartSourceForResume(activeMessages),
     traceContext,
     options?.abortSignal,
   );
-  this.injectHookAdditionalContextIntoMessageHistory(
-    HookEventName.SessionStart,
-    sessionStartHookResult.additionalContexts,
-  );
+  // 只打开会话不写库，否则每次打开都多一行；结果等下一轮会话写库后再提交。
+  stageSessionStartContext(this, sessionStartHookResult.additionalContexts);
 
   if (messages.length > 0 && activeMessages.length === 0) {
     this.logger?.warn("Session resume produced zero active messages", {

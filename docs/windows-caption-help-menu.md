@@ -35,8 +35,8 @@ menu path, and Windows/Linux have no native menu bar, so there was no entry at a
 
 - Unit test: `packages/ui/test/workspaceHelpMenuButton.test.ts` — when `isDesktop` is true the Resource
   Manager item renders and calls `OpenResourceManager`; when false it does not render.
-- E2E: `packages/desktop/test/e2e/resource-manager.test.ts` — open the Resource Manager window from the question-mark menu.
-- Formal About-entry E2E: `packages/desktop/test/e2e/help-menu-about.test.ts` — a real click on the
+- E2E: `packages/desktop/test/e2e/resource-manager/processes/resource-manager.test.ts` — open the Resource Manager window from the question-mark menu.
+- Formal About-entry E2E: `packages/desktop/test/e2e/feedback/help/help-menu-about.test.ts` — a real click on the
   question-mark menu verifies the About window is visible and contains the app name and version; the
   check-update item shows per product identity, and under production a click is verified to forward the
   existing IPC command without downloading or installing. No model request needed; confirmed for promotion
@@ -58,8 +58,8 @@ Node-side `ZCODE_PRODUCT_FLAVOR` (which falls back fixedly to preview when the d
 the default expectation is Preview; production must explicitly pass the expected identity and assert on the real menu.
 
 ```bash
-ZCODE_ENV=production ZCODE_PREVIEW_IDENTITY=0 ZCODE_E2E_HELP_MENU_FLAVOR=production pnpm --filter @zcode/desktop test:e2e -- --spec ./test/e2e/help-menu-about.test.ts
-ZCODE_ENV=test ZCODE_PREVIEW_IDENTITY=1 ZCODE_E2E_HELP_MENU_FLAVOR=preview pnpm --filter @zcode/desktop test:e2e -- --spec ./test/e2e/help-menu-about.test.ts
+ZCODE_ENV=production ZCODE_PREVIEW_IDENTITY=0 ZCODE_E2E_HELP_MENU_FLAVOR=production pnpm --filter @zcode/desktop test:e2e -- --spec ./test/e2e/feedback/help/help-menu-about.test.ts
+ZCODE_ENV=test ZCODE_PREVIEW_IDENTITY=1 ZCODE_E2E_HELP_MENU_FLAVOR=preview pnpm --filter @zcode/desktop test:e2e -- --spec ./test/e2e/feedback/help/help-menu-about.test.ts
 ```
 
 The two identity switches must rebuild; do not set skip build. Hiding the entry on mobile Web is still

@@ -3,7 +3,7 @@
 import { cleanup, render } from "@testing-library/react";
 import { createElement } from "react";
 import type { ZCodeModelTrajectoryMessage, ZCodeModelTrajectoryRecord } from "@zcode/services";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { CallCard } from "@/ModelTrajectoryPaneParts.js";
 import { buildTrajectorySearchIndex } from "@/ModelTrajectorySearch.js";
 import {
@@ -22,6 +22,11 @@ const messages: Record<string, string> = {
 const intl = {
   formatMessage: ({ id }: { id: string }) => messages[id] ?? id,
 };
+
+// CallCard reads the locale from useZCodeIntl (upstream); the test passes its own intl prop.
+vi.mock("@/i18n/IntlProvider.js", () => ({
+  useZCodeIntl: () => ({ locale: "en", intl }),
+}));
 
 afterEach(() => {
   cleanup();

@@ -16,9 +16,14 @@ use rust_cli_kernel_api::ids::EnvironmentId;
 use rust_cli_kernel_api::store::{SessionFilter, SessionStore};
 use rust_cli_node_store::LOCAL_ENVIRONMENT;
 use rust_cli_protocol_core::connection::{self, Options};
-use rust_cli_protocol_zcode::{Context, Defaults, HostHeaders, Startup};
+use rust_cli_protocol_zcode::{
+    Context, Defaults, HOST_ATTACH_ACK_ENV, HostAutomations, HostCredentialCipher, HostHeaders,
+    HostSubagentConfig, HostTopicResources, NetworkCapture, Startup,
+};
 
 use crate::assemble::{self, Controller};
+use crate::frontends::app_workspace::{AppWorkspace, ProcessConfig};
+use crate::frontends::node_helper;
 use crate::process::{ControllerRun, Start};
 
 /// 退出时等进程级任务收尾的上限（存活的上限，不用来同步状态）。
@@ -27,7 +32,8 @@ const SCOPE_CLOSE_GRACE: Duration = Duration::from_secs(2);
 /// 子命令的参数。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Parsed {
-    /// `--surface`（Host 给 `desktop`）。P1 不按它改提示词（app-protocol.md §13 第 4 项）。
+    /// `--surface`（Host 给 `desktop`）。Fork: `desktop` turns on Node's "ZCode Desktop Context" system section
+    /// (specs/fork-rust-agent-parity.md); the Host omits it when its rollout is off.
     pub(crate) surface: Option<String>,
 }
 /// `app-server` 子命令；不是它时为 None。只认 `--stdio` 与 `--surface`。
@@ -81,7 +87,17 @@ pub(crate) async fn run(parsed: Parsed) -> Result<u8> {
     let (peer, writer) =
         connection::start(tokio::io::stdout(), &scope.spawner(), Options::default());
     let context = Arc::new(Context::new(peer, run.clock.clone()));
-    let result = serve(&run, context, scope.spawner()).await;
+    // Fork: the Network panel capture exists before the reader starts (specs/fork-rust-network-capture.md).
+    let capture = Arc::new(NetworkCapture::new(
+        context.peer.clone(),
+        run.clock.clone(),
+        scope.spawner(),
+        std::process::id(),
+    ));
+    let desktop_context = parsed.surface.as_deref() == Some("desktop");
+    let result = serve(&run, context, &capture, scope.spawner(), desktop_context).await;
+    // Node `disconnectClient`: the capture stops with the connection.
+    capture.set(None);
     // 写者写完队列里剩下的帧再退出。
     drop(writer);
     let _ = scope.close(SCOPE_CLOSE_GRACE).await;
@@ -91,7 +107,9 @@ pub(crate) async fn run(parsed: Parsed) -> Result<u8> {
 async fn serve(
     run: &ControllerRun,
     context: Arc<Context>,
+    capture: &Arc<NetworkCapture>,
     spawner: rust_cli_base::Spawner,
+    desktop_context: bool,
 ) -> Result<()> {
     let ControllerRun {
         facts,
@@ -101,8 +119,50 @@ async fn serve(
         model_io,
         ..
     } = run;
-    let spec = Controller::app(Arc::new(HostHeaders::new(context.clone())));
+    // 凭据加解密委托 Host（Main 持有密钥）：standalone 不经这里（specs/fork-rust-credential-cipher.md）。
+    // 读者在组装之前就开始（specs/fork-rust-credential-cipher.md，启动死锁）：组装里的凭据加解密要它送来回复；对端的
+    // 请求在内核装好之前等待。
+    let (deferred, install) = rust_cli_protocol_core::connection::Deferred::new();
+    // Fork: a Host that promises `process/hostAttached` gets no reverse request before it listens; the gate handles
+    // the acknowledgement in front of `Deferred` (specs/fork-rust-credential-cipher.md F1).
+    if facts.process.env.text(HOST_ATTACH_ACK_ENV) == Some("1") {
+        context.expect_host_attach();
+    }
+    let reader = spawner.spawn(
+        "app-server-reader",
+        rust_cli_protocol_zcode::serve_attached(
+            tokio::io::BufReader::new(tokio::io::stdin()),
+            context.clone(),
+            // Fork: the capture control is applied in arrival order while the kernel is still being assembled.
+            rust_cli_protocol_zcode::with_network_capture(deferred, capture.clone()),
+            spawner.clone(),
+            Options::default(),
+        ),
+    );
+    // Fork: the Node helper for the JS-only method families, when the Host set its command (Rust mode only). Installed
+    // before assembly: its helper-hosted MCP servers are routed through the same helper (F3).
+    let node_helper = node_helper::install(
+        &context,
+        facts.process.env.raw(node_helper::COMMAND_ENV),
+        &facts.process.temp,
+        &spawner,
+    );
+    let mut spec = Controller::app(
+        Arc::new(HostHeaders::new(context.clone())),
+        Arc::new(HostCredentialCipher::new(context.clone())),
+        Arc::new(HostAutomations::new(context.clone())),
+        // Fork: every observed request of this process reaches the capture (MCP is built unobserved), from the moment
+        // the egress exists.
+        Arc::new(CaptureObserver(capture.clone())),
+        Arc::new(HostTopicResources::new(context.clone(), spawner.clone())),
+        Arc::new(HostSubagentConfig::new(context.clone())),
+        desktop_context,
+    );
+    spec.node_helper = node_helper;
     let opened = assemble::open(&spec, facts, (paths, clock)).await?;
+    // Fork: the process entry releases this store's session runtime presence after the runtime has shut down
+    // (specs/fork-rust-agent-parity.md "Session runtime presence on the shared database").
+    crate::process::release_presence_at_exit(opened.store.clone());
     // 修复（F133，modularity.md §7 的 P5）：以前 ID 取读配置之前的缺省库路径、在开端口之前就报 `checking`，配置或环境变量
     // 改了 `storage.sessionDbPath` 时 ID 不是实际打开的库。ID 又不能在首帧之后改（Host 丢掉 ID 变了的帧，app-protocol.md
     // §4.2），所以首帧等库的位置定了再发：ID 取会话库所用的同一份存储位置。
@@ -130,24 +190,79 @@ async fn serve(
     }
     // Fork: session erase resolves per-session directories under `<storageRoot>/cli`.
     context.set_storage_root(opened.paths.root().as_path().to_path_buf());
+    // Fork: the Host's resource sampler reads the live stdio MCP servers (`process/childProcesses`).
+    context.set_mcp_processes(opened.mcp.clone());
+    // Fork: one language-server host per process, shared by all workspaces (specs/fork-rust-lsp.md "Owners"). The
+    // sidecar's root follows the startup config's `storage.dir`, as Node's protocol entry resolves it once.
+    let preferences = paths.lsp_preferences(
+        opened.config.storage.dir.as_deref(),
+        std::path::Path::new(opened.workspace.root.as_str()),
+    );
+    let ledger =
+        rust_cli_proc::ledger::Ledger::open(rust_cli_proc::private::user_dir(&facts.process.temp));
+    let language_servers = Arc::new(crate::lsp::Host::new(crate::lsp::HostInputs {
+        files: opened.primary.files().clone(),
+        environment: opened.workspace.environment.clone(),
+        paths: paths.clone(),
+        process_env: facts.process.env.clone(),
+        view_host: desktop_context,
+        preferences: preferences.as_path().to_path_buf(),
+        launcher: Arc::new(crate::lsp::LedgerLauncher::new(ledger)),
+        store: Some(opened.store.clone()),
+    }));
+    context.set_language_servers(language_servers.clone());
+    // The same host is the sessions' code intelligence: Read prewarms, Write and Edit report mutations.
+    spec.code_intelligence = Some(language_servers);
     let ported = assemble::ports(&spec, facts, opened, (clock, model_io)).await?;
+    // Fork: workspace model calls (Git commit message, connectivity probe) go through the entry's model port.
+    context.set_model_port(ported.ports.model.clone());
     let built = assemble::kernel(&spec, facts, ported, clock).await?;
+    // Fork: workspace trust from the App (specs/fork-rust-agent-parity.md, "Workspace MCP trust"): set before the
+    // handler is installed, so the first request already sees it.
+    let opened = &built.opened;
+    context.set_workspace_admin(Arc::new(AppWorkspace::new(
+        (opened.primary.files().clone(), paths.clone()),
+        ProcessConfig {
+            process_env: facts.process.env.clone(),
+        },
+        built.kernel.project_hook_slots(),
+        (opened.primary.mcp().clone(), spawner.clone(), clock.clone()),
+    )));
+    // Fork: the ACP agents' session config behind `setExternalAgentConfigOption` and the subscribe seed.
+    if let Some(configs) = built.kernel.external_agent_configs() {
+        context.set_external_agent_configs(configs);
+    }
     state.ready().await;
     let defaults = Defaults {
-        // App 模式组装时已等缺省模型定下（`Controller::app` 的 `wait_model`；performance.md §12.3 只改 TUI）。
-        selection: built.selection.current(),
+        // App 模式组装时已等缺省模型定下（`Controller::app` 的 `wait_model`；performance.md §12.3 只改 TUI）。Shared, so
+        // a degraded default revised later reaches new sessions (fork spec `fork-rust-credential-cipher.md` F3).
+        selection: built.selection.clone(),
         mode: built.mode,
         environment: EnvironmentId::new(LOCAL_ENVIRONMENT),
     };
-    let input = tokio::io::BufReader::new(tokio::io::stdin());
+    install.install(rust_cli_protocol_zcode::handler(
+        context,
+        built.kernel.clone(),
+        defaults,
+        spawner,
+    ));
     // 读到 Host 关掉输入或收到退出信号时结束（Host 回收整棵进程树）。
     tokio::select! {
-        result = rust_cli_protocol_zcode::serve(input, context, built.kernel.clone(), defaults, spawner, Options::default()) => {
-            result?;
+        result = reader => {
+            result.map_err(|error| anyhow::anyhow!("reading the protocol input: {error}"))??;
         }
         () = stop.token.cancelled() => {}
     }
     Ok(())
+}
+
+/// Fork: the egress observer that feeds the Network panel capture.
+struct CaptureObserver(Arc<NetworkCapture>);
+
+impl rust_cli_net::RequestObserver for CaptureObserver {
+    fn request(&self, method: &str, url: &str) {
+        self.0.record(method, url);
+    }
 }
 
 #[cfg(test)]

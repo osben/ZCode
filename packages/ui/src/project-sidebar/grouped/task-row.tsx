@@ -1,4 +1,9 @@
-import { TID_TASK_ARCHIVE, TID_TASK_ITEM, testId } from "@zcode/shared/test-ids";
+import {
+  TID_TASK_ARCHIVE,
+  TID_TASK_ITEM,
+  TID_TASK_ROW_WORKTREE_ICON,
+  testId,
+} from "@zcode/shared/test-ids";
 import type { ProjectTask as ZCodeTaskMeta } from "@/project-sidebar/contract.js";
 import { memo, useContext, useEffect, useRef, useState } from "react";
 import type { KeyboardEvent, MouseEvent } from "react";
@@ -10,10 +15,12 @@ import {
   ArrowUpToLine,
   Clock,
   CloudUpload,
+  GitBranch,
   ListTree,
   LoaderIcon,
   Moon,
 } from "lucide-react";
+import { formatWorktreeLabel } from "@/managed-worktrees/index.js";
 import { cn } from "@/components/lib/utils.js";
 import { Badge } from "@/components/ui/badge.js";
 import { Button } from "@/components/ui/button.js";
@@ -33,13 +40,20 @@ import { toast } from "@/components/ui/toast.js";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu.js";
 import { Tooltip, TooltipTrigger } from "@/components/ui/tooltip.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
-import { deriveTaskLeadingIndicator } from "@/lib/taskListItemPresentation.js";
+import {
+  deriveTaskLeadingIndicator,
+  isTaskRowRenameBlockedTarget,
+} from "@/lib/taskListItemPresentation.js";
 import { TaskRelativeTimeLabel } from "@/TaskListItem.js";
 import { buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
 import { buildTaskFeedbackDescription } from "@/lib/taskFeedbackDraft.js";
 import { useTaskListItemContextActions } from "@/useTaskListItemContextActions.js";
 import { useFeedbackStore } from "@/feedback/feedbackStore.js";
-import { getTaskListAttention, getTaskListRowActivity } from "@/v4/taskListRowActivity.js";
+import {
+  getTaskListAttention,
+  getTaskListRowActivity,
+  isTaskListRowRunning,
+} from "@/v4/taskListRowActivity.js";
 import { GroupedTaskContextMenuContent } from "@/project-sidebar/grouped/task-context-menu-content.js";
 import { TaskRowActionButton } from "@/workspace-grouped-tasks/task-row-action-button.js";
 import { TaskInteractionBadge } from "@/TaskInteractionBadge.js";
@@ -295,6 +309,9 @@ function GroupedTaskInteractiveRow({
   // 无效 action；本地 task 不需要 remoteSessionId，仍保持入口可用。
   const canOpenFileTree =
     Boolean(onOpenFileTree) && (!task.workspaceIdentity?.trim() || Boolean(remoteSessionId));
+  // The managed worktree marker reads only the task's worktree root (tasks-index worktree_root,
+  // docs/git/worktree.md §3.7).
+  const worktreeLabel = formatWorktreeLabel(intl, task.worktreeRoot);
   // Workflow run lines sit under the title, as in the flat task list.
   const workflowRunLinesNode = taskActivity?.workflowActivity ? (
     <TaskWorkflowRunLines
@@ -396,12 +413,29 @@ function GroupedTaskInteractiveRow({
   const handleSelect = () => {
     onSelectTask(task.workspacePath, task.taskId, task.workspaceIdentity);
   };
+  const handleRowClick = (event: MouseEvent<HTMLDivElement>) => {
+    // The second click of a double click belongs to onDoubleClick (rename); do not reopen the task
+    // or reconnect the remote session.
+    if (event.detail > 1) return;
+    handleSelect();
+  };
+  const handleRowDoubleClick = (event: MouseEvent<HTMLDivElement>) => {
+    if (workspaceActionsDisabled || dragging || contextMenuOpen) return;
+    if (isHoverNone || event.defaultPrevented) return;
+    if (isTaskRowRenameBlockedTarget(event.target)) return;
+    onStartRenameTask(task);
+  };
+  // Archiving does not stop the agent turn; a browser tab the running turn opens after archive would
+  // be invisible and impossible to close, so archive is blocked while the task runs.
+  const archiveDisabledReason = isTaskListRowRunning(task)
+    ? intl.formatMessage({ id: "taskList.archiveBlockedWhileRunning" })
+    : undefined;
   // The hover action archives the task, so it takes a two-step inline confirmation: one stray click
   // must not archive. Spec: specs/ui-sidebar-fork-reapplication.md, ui-accidental-action-guards.md #4.
   const handleArchiveAction = (event: MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
     event.stopPropagation();
-    if (workspaceActionsDisabled) {
+    if (workspaceActionsDisabled || archiveDisabledReason) {
       return;
     }
     if (!archiveConfirming) {
@@ -498,7 +532,8 @@ function GroupedTaskInteractiveRow({
       {...draggable.listeners}
       role="button"
       tabIndex={0}
-      onClick={handleSelect}
+      onClick={handleRowClick}
+      onDoubleClick={handleRowDoubleClick}
       onKeyDown={handleKeyDown}
       onMouseEnter={() => setTaskRowHovered(true)}
       onMouseLeave={() => setTaskRowHovered(false)}
@@ -567,6 +602,15 @@ function GroupedTaskInteractiveRow({
                 <Moon
                   data-off-peak-task-icon="true"
                   aria-label={intl.formatMessage({ id: "taskList.offPeakTaskLabel" })}
+                  className="size-3.5 shrink-0"
+                />
+              ) : null}
+              {!hasPendingInteraction && worktreeLabel && !task.executionWorktree ? (
+                // Upstream managed worktree (tasks-index worktree_root); a fork execution worktree shows
+                // WorktreeTaskMarker instead, so the two never render side by side.
+                <GitBranch
+                  data-testid={TID_TASK_ROW_WORKTREE_ICON}
+                  aria-label={intl.formatMessage({ id: "taskList.managedWorktreeLabel" })}
                   className="size-3.5 shrink-0"
                 />
               ) : null}
@@ -645,7 +689,7 @@ function GroupedTaskInteractiveRow({
                   label={archiveLabel}
                   onClick={handleArchiveAction}
                   showTooltip
-                  disabledReason={workspaceActionsDisabledReason}
+                  disabledReason={workspaceActionsDisabledReason ?? archiveDisabledReason}
                   testId={testId(TID_TASK_ARCHIVE, task.taskId)}
                 >
                   {task.workspaceIdentity?.trim() ? (
@@ -716,6 +760,7 @@ function GroupedTaskInteractiveRow({
             onOpenProviderConfig={() => void handleOpenProviderConfig()}
             onOpenTaskFeedback={() => void handleOpenTaskFeedback()}
             disabledReason={workspaceActionsDisabledReason}
+            archiveDisabledReason={archiveDisabledReason}
           />
         ) : null}
       </ContextMenu>

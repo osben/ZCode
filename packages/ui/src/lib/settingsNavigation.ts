@@ -3,6 +3,7 @@ import { logger } from "@/logger.js";
 
 export type SettingsSectionId =
   | "general"
+  | "agentBehavior"
   | "appearance"
   | "migration"
   // Fork section (voice dictation settings, specs/voice-dictation.md); re-applied in UI-2.
@@ -23,6 +24,7 @@ export type SettingsSectionId =
   | "plugins"
   | "projects"
   | "archives"
+  | "shares"
   | "usage"
   | "sessions"
   | "subagents"
@@ -85,6 +87,7 @@ export interface SettingsModelProviderTarget {
 function isSettingsSectionId(value: string): value is SettingsSectionId {
   return (
     value === "general" ||
+    value === "agentBehavior" ||
     value === "appearance" ||
     value === "migration" ||
     value === "browser" ||
@@ -103,6 +106,7 @@ function isSettingsSectionId(value: string): value is SettingsSectionId {
     value === "plugins" ||
     value === "projects" ||
     value === "archives" ||
+    value === "shares" ||
     value === "usage" ||
     value === "sessions" ||
     value === "subagents" ||

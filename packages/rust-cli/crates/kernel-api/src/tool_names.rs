@@ -8,6 +8,18 @@ pub const BASH: &str = "Bash";
 pub const CRON_CREATE: &str = "CronCreate";
 pub const CRON_DELETE: &str = "CronDelete";
 pub const CRON_LIST: &str = "CronList";
+/// Fork: the desktop agent's Host-backed Cron tools (specs/fork-rust-automations.md).
+pub const CRON_PAUSE_SELF: &str = "CronPauseSelf";
+pub const CRON_UPDATE: &str = "CronUpdate";
+/// Fork: every Cron tool (the desktop's five): the incognito `automationTools` gate and the main-session-only rule
+/// both read this one list.
+pub const CRON_TOOLS: [&str; 5] = [
+    CRON_CREATE,
+    CRON_DELETE,
+    CRON_LIST,
+    CRON_UPDATE,
+    CRON_PAUSE_SELF,
+];
 pub const EDIT: &str = "Edit";
 pub const ENTER_PLAN_MODE: &str = "EnterPlanMode";
 pub const ENTER_WORKTREE: &str = "EnterWorktree";
@@ -17,15 +29,22 @@ pub const GLOB: &str = "Glob";
 pub const GREP: &str = "Grep";
 pub const LIST_AGENTS: &str = "ListAgents";
 pub const LIST_MCP_RESOURCES: &str = "ListMcpResourcesTool";
+/// Fork: code intelligence from language servers (specs/fork-rust-lsp.md "Tool (D2)"); main thread of the app-server only.
+pub const LSP: &str = "LSP";
 pub const MONITOR: &str = "Monitor";
 /// 本工程没有这个工具：界面显示 App 与旧会话记下的调用、工作区信任的授权表按名字认它。
 pub const MULTI_EDIT: &str = "MultiEdit";
 pub const NOTEBOOK_EDIT: &str = "NotebookEdit";
+/// Fork: the desktop agent's off-peak tools (specs/fork-rust-automations.md, slice 3).
+pub const OFF_PEAK_CREATE: &str = "OffPeakCreate";
+pub const OFF_PEAK_LIST: &str = "OffPeakList";
 /// 本工程没有这个工具：子代理的工具表与工作区信任的授权表按名字认它（与 shell 的名字无关）。
 pub const POWER_SHELL: &str = "PowerShell";
 pub const READ: &str = "Read";
 pub const READ_MCP_RESOURCE: &str = "ReadMcpResourceTool";
 pub const READ_MCP_RESOURCE_DIR: &str = "ReadMcpResourceDirTool";
+/// Fork: a bot-group topic's resource (specs/fork-rust-topic-resource.md); app-server only.
+pub const READ_TOPIC_RESOURCE: &str = "ReadTopicResource";
 pub const REPORT_FINDINGS: &str = "ReportFindings";
 pub const SCHEDULE_WAKEUP: &str = "ScheduleWakeup";
 pub const SEND_MESSAGE: &str = "SendMessage";
@@ -45,3 +64,46 @@ pub const WAIT_FOR_MCP_SERVERS: &str = "WaitForMcpServers";
 pub const WEB_FETCH: &str = "WebFetch";
 pub const WEB_SEARCH: &str = "WebSearch";
 pub const WRITE: &str = "Write";
+
+/// Fork: the message of a cancelled call of a built-in tool, under Node hooks (Node `entry.cancellation`
+/// `userVisibleMessage`, core `tool/executor/timeout.ts` `executeWithTimeout`; the texts are the handlers' own,
+/// `tool/handlers/*.ts` and contracts `tools/websearch.ts`). `None` for a tool Node has no handler for: the pipeline
+/// then sends Node's fallback, `Tool execution cancelled` (specs/fork-rust-agent-parity.md "Command hook stdin").
+pub fn node_cancel_message(name: &str) -> Option<&'static str> {
+    let message = match name {
+        AGENT => {
+            "Agent was cancelled before the subagent returned findings or background launch completed"
+        }
+        ASK_USER_QUESTION => "AskUserQuestion was cancelled before answers were returned",
+        BASH => "Bash was cancelled and the child process was asked to stop",
+        CRON_CREATE => "CronCreate was cancelled before the automation was created",
+        CRON_DELETE => "CronDelete was cancelled before the automation was deleted",
+        CRON_LIST => "CronList was cancelled before automations were returned",
+        CRON_PAUSE_SELF => "CronPauseSelf was cancelled before the automation was paused",
+        CRON_UPDATE => "CronUpdate was cancelled before the automation was updated",
+        EDIT => "Edit was cancelled before the file operation completed",
+        ENTER_PLAN_MODE => "EnterPlanMode was cancelled before plan mode was entered",
+        EXIT_PLAN_MODE => "ExitPlanMode was cancelled before plan mode was exited",
+        GLOB => "Glob was cancelled before file matches were returned",
+        GREP => "Grep was cancelled before search results were returned",
+        OFF_PEAK_CREATE => "OffPeakCreate was cancelled before the idle-time task was created",
+        OFF_PEAK_LIST => "OffPeakList was cancelled before idle-time tasks were returned",
+        READ => "Read was cancelled before file content was returned",
+        READ_TOPIC_RESOURCE => "ReadTopicResource was cancelled before the resource was saved",
+        SEND_MESSAGE => "SendMessage was cancelled before delivery status returned",
+        SKILL => "Skill loading was cancelled before content was returned",
+        TASK_OUTPUT => "TaskOutput was cancelled while waiting for the task",
+        TASK_STOP => "TaskStop was cancelled before the stop request completed",
+        TODO_WRITE => "TodoWrite was cancelled before todo state was updated",
+        TOOL_SEARCH => "ToolSearch was cancelled",
+        WEB_FETCH => "WebFetch was cancelled before the page could be processed",
+        WEB_SEARCH => "WebSearch was cancelled",
+        WRITE => "Write was cancelled before the file operation completed",
+        _ => return None,
+    };
+    Some(message)
+}
+
+#[cfg(test)]
+#[path = "tool_names_tests.rs"]
+mod tests;

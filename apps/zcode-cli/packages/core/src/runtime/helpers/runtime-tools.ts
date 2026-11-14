@@ -31,6 +31,7 @@ import type {
   ToolRuntimePermissionCapabilityContext,
   ToolRuntimeScope,
 } from "../../tool/types.js";
+import { sessionControlForRuntime } from "../../tool/session-control/contract.js";
 
 const DEFAULT_SUBAGENT_BACKGROUND_BASH_MAX_MS = 3_600_000;
 const EMPTY_RUNTIME_HOOK_CONFIG = {
@@ -55,6 +56,11 @@ export function initializeRuntimeTooling(
 
 function registerRuntimeBuiltInTools(runtime: AgentRuntimeInternal, deps: AgentRuntimeDeps): void {
   const nodeReplEnabled = runtime.config.runtimeFeatures?.nodeRepl === true;
+  runtime.sessionControlKind = sessionControlForRuntime(
+    deps.sessionControl,
+    runtime.config.taskType,
+    runtime.sessionId,
+  )?.kind;
   const browserUseEnabled = resolveRuntimeBrowserUseEnabled(runtime, deps);
   // Cron and OffPeak are main-session automation; both also follow the `automationTools` toggle.
   const mainAutomationToolsIncluded =
@@ -78,15 +84,21 @@ function registerRuntimeBuiltInTools(runtime: AgentRuntimeInternal, deps: AgentR
     // hit a blocker is the one the author did not mark).
     includeEscalate: Boolean(deps.workflowEscalatePort),
     includeWorkflow: Boolean(deps.workflowPort),
+    sessionControlKind: runtime.sessionControlKind,
     includeAutomation: Boolean(deps.automationPort) && mainAutomationToolsIncluded,
     // offPeakPort is injected only when the host enables offPeakToolEnabled (rollout/remote gate is on the host), so port presence
     // means exposure is allowed. Do not expose it in subagent sessions, matching automation.
     includeOffPeak: Boolean(deps.offPeakPort) && mainAutomationToolsIncluded,
+    // Topic resources are readable only in App-hosted runtimes. The CLI does not know whether a session is a bot session, so
+    // authorization is checked at call time against trusted input.
+    includeTopicResource: Boolean(deps.topicResourcePort),
     // Dynamic-workflow rollout gate: unlike off-peak, port presence cannot be the criterion here; all ten tool ports are wired in
     // every CLI, and rollout is a Host decision. The value is defined in tool-allowlist.ts and shared with the branch-refresh entry point.
     includeDynamicWorkflow: resolveRuntimeDynamicWorkflowToolsIncluded(runtime),
-    // Reason for the fix: browserControlPort is a host capability and must not implicitly expose the privileged node_repl.
-    // node_repl/browser-use is controlled by runtimeFeatures derived from whether the official ZCode browser-use plugin is enabled.
+    includePluginDiscovery:
+      Boolean(deps.pluginDiscoveryPort) && runtime.config.taskType !== "subagent_child",
+    // 修复原因：browserControlPort 只是宿主能力，不应隐式暴露高权限 node_repl。
+    // node_repl/browser-use 由 ZCode 官方 browser-use 插件启停推导出的 runtimeFeatures 控制。
     includeNodeRepl: nodeReplEnabled,
     // Language-server tool: gated by wired service plus availability (shared helper, also used by the branch refresh path).
     includeLsp: resolveRuntimeLspToolIncluded(runtime),
@@ -203,10 +215,17 @@ function createRuntimeToolExecutor(
     coordinatorResponsePort: deps.coordinatorResponsePort,
     workflowSubmitPort: deps.workflowSubmitPort,
     workflowEscalatePort: deps.workflowEscalatePort,
+    webSearchBudget: deps.webSearchBudget,
     artifactStore: deps.artifactStore,
+    sessionControl: sessionControlForRuntime(
+      deps.sessionControl,
+      runtime.config.taskType,
+      runtime.sessionId,
+    ),
     automationPort: deps.automationPort,
     offPeakPort: deps.offPeakPort,
     topicResourcePort: deps.topicResourcePort,
+    pluginDiscoveryPort: deps.pluginDiscoveryPort,
     sessionStore: deps.sessionStore,
     sessionModePort: createRuntimeSessionModePort(runtime),
     workflowPort: deps.workflowPort,
@@ -257,6 +276,7 @@ function createRuntimeToolExecutor(
     setWorkingDirectory: runtime.setWorkingDirectory.bind(runtime),
     getWorkspaceRoot: () => runtime.workspaceRoot,
     workspaceIdentity: runtime.config.workspaceIdentity?.toString(),
+    workspaceKey: runtime.config.workspaceKey,
     remoteSessionId: runtime.config.remoteSessionId,
     clientMode: runtime.config.clientMode,
     deliveryKind: runtime.config.deliveryKind,

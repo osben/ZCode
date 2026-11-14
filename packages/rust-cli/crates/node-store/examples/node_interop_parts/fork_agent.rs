@@ -42,6 +42,7 @@ pub(super) async fn write(dir: &str) -> Result<()> {
             title: "Read the file".into(),
             trace: TraceId::new(parent.as_str()),
             created_at_ms: now_ms(),
+            incognito: None,
         })
         .await?;
     // agents 写的 directive：固定段落之后是 `Your directive: <prompt>`（这里只要形状，段落取短的一段）。

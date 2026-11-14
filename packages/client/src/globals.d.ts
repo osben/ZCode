@@ -14,6 +14,7 @@ import type {
   BrowserViewViewportChangedPayload,
   BrowserViewCloseTabNotification,
   BrowserViewCloseTabRequest,
+  BrowserViewPromoteDraftTabsRequest,
   BrowserViewResidencyReportPayload,
   BrowserViewResidencyTransitionPayload,
   BrowserViewRestoredTabShell,
@@ -139,6 +140,10 @@ declare global {
       ): Promise<import("@zcode/shared").SaveFileResult>;
       /** Export the current page's print layout as a PDF using Chromium's print engine and vector text. */
       printPageToPdf?(): Promise<import("@zcode/shared").PrintPageToPdfResult>;
+      /** Capture the built-in browser guest's current viewport as PNG in main (a renderer-side <webview>.capturePage crashes). */
+      captureBrowserGuestPage?(
+        payload: import("@zcode/shared").CaptureBrowserGuestPageRequest,
+      ): Promise<import("@zcode/shared").CaptureBrowserGuestPageResult>;
       /** Resolve the real local path for a Web File received through system drag-and-drop or file input. */
       getPathForFile?(file: File): string | null;
       /** dwf artifact "open as file": materialize one version's bytes into a local copy and return its path. */
@@ -331,6 +336,7 @@ declare global {
       browserViewDetachGuest?(payload: { key: string; webContentsId: number }): Promise<boolean>;
       browserViewCloseTab?(payload: BrowserViewCloseTabRequest): Promise<void>;
       browserViewReportResidency?(payload: BrowserViewResidencyReportPayload): Promise<void>;
+      browserViewPromoteDraftTabs?(payload: BrowserViewPromoteDraftTabsRequest): Promise<string[]>;
       browserViewSuspendReady?(payload: { tabId: string; generation: number }): Promise<void>;
       browserViewEnsureResident?(payload: BrowserViewCloseTabRequest): Promise<void>;
       browserViewRestoreTabs?(

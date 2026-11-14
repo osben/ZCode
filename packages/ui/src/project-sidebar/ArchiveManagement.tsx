@@ -76,7 +76,7 @@ function ArchiveManagementContent({ allowPermanentDelete }: { allowPermanentDele
           onClick={() => void state.run(rows, "delete")}
         >
           <Trash2 className="size-4" />
-          {msg("deleteAll")}
+          {msg(query.trim() || project !== "all" ? "deleteFiltered" : "deleteAll")}
         </Button>
       </div>
       <div
@@ -164,7 +164,19 @@ function ArchiveManagementContent({ allowPermanentDelete }: { allowPermanentDele
           role={state.result.failed ? "alert" : "status"}
           className="text-ui-sm text-foreground-subtle"
         >
-          {intl.formatMessage({ id: "archives.result" }, state.result)}
+          {intl.formatMessage(
+            { id: "archives.result" },
+            {
+              succeeded: state.result.succeeded,
+              failed: state.result.failed,
+              skipped: state.result.skipped,
+            },
+          )}
+          {state.result.details.map((detail, index) => (
+            <span key={index} className="block break-words">
+              {detail}
+            </span>
+          ))}
         </p>
       ) : null}
       {state.deletionResult ? (

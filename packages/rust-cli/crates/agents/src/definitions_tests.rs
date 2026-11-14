@@ -76,3 +76,22 @@ fn later_sources_override_by_type_and_keep_the_position() {
     assert_eq!(merged[0].when_to_use, "Project override.");
     assert_eq!(merged[0].source, AgentSource::Project);
 }
+
+/// Fork (specs/fork-rust-subagent-runtime-config.md rule 15): only the built-in general-purpose injects the project
+/// instructions (Node's built-in Explore has `injectAgentsMd: false`).
+#[test]
+fn the_built_ins_inject_agents_md_like_node() {
+    let agents = builtins();
+    let flags: Vec<(&str, bool)> = agents
+        .iter()
+        .map(|agent| (agent.agent_type.as_str(), agent.inject_agents_md))
+        .collect();
+    assert_eq!(
+        flags,
+        [
+            ("general-purpose", true),
+            ("Explore", false),
+            ("Plan", false)
+        ]
+    );
+}

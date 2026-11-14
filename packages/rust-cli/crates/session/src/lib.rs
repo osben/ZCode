@@ -9,7 +9,10 @@
 
 mod actor;
 mod agent_signals;
+// Fork: specs/fork-rust-node-helper.md F3.
+mod app_tool_context;
 mod append;
+mod automatic_turn;
 mod bash;
 mod checkpoints;
 mod child_live;
@@ -25,6 +28,8 @@ mod goal;
 mod goal_desktop;
 mod goal_verify;
 mod goal_verify_text;
+#[cfg(test)]
+mod hook_rows_tests;
 mod hooks;
 mod inbox;
 mod input;
@@ -53,6 +58,7 @@ mod rewind;
 mod rewind_machines;
 mod rewind_plan;
 mod rules;
+mod sampling;
 mod sink;
 mod slash;
 mod steering;
@@ -88,6 +94,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use crate::actor::{Actor, Request};
+pub use crate::automatic_turn::automatic_turn_subject;
 pub use crate::detached::DetachedAsks;
 use crate::log::EventLog;
 pub use crate::peers::PeerDeps;
@@ -160,6 +167,19 @@ pub struct SessionDeps {
     /// desktop agent (`queueAutoDrain = false` on a turn error; specs/fork-rust-agent-parity.md). The app-server
     /// turns it on.
     pub error_holds_queue: bool,
+    /// Fork: a SessionStart hook's `session_title` retitles the session and its `initial_user_message` is queued as
+    /// the session's first input (the TUI and `-p`). The Node desktop agent reads neither (its SessionStart output
+    /// reads only `additionalContext`), so the app-server turns this off: the prewarm keeps no conversation and the
+    /// first input titles it.
+    pub session_start_extras: bool,
+    /// Fork: a typed `/compact [instructions]` human text input runs the manual compaction instead of a model turn,
+    /// like the Node desktop agent (`parseCompactCommand`, specs/fork-rust-agent-parity.md HK-UP-01 item 2). The
+    /// app-server turns it on; the TUI runs `/compact` as its own slash command and `-p` sends the text as typed.
+    pub typed_compact: bool,
+    /// Fork: a human turn's UserPromptSubmit dispatch reports its hook runs (`KernelEvent::HookInvocation`), and a
+    /// blocked prompt is shown (`KernelEvent::PromptBlocked`) and completes as a success, like the Node desktop agent
+    /// (specs/fork-rust-agent-parity.md HK-UP-01). The app-server turns it on; the TUI and `-p` keep the failed turn.
+    pub hook_rows: bool,
 }
 
 /// 会话关闭的收尾（docs/specs/rust-cli/session-lifecycle.md §3.3、§3.3.1）：每个会话的关闭任务各调用一次。
@@ -192,6 +212,13 @@ pub struct SessionState {
     pub checkpoints: Vec<WorkspaceCheckpoint>,
     /// SessionStart hook 的来源（session-lifecycle.md §3.2）。
     pub start: StartSource,
+    /// Fork: SessionStart waits for `Command::SetExecutionRoot` (a prepared execution worktree, created or reopened
+    /// before its activation), so the hook runs in the worktree, as Node starts the runtime there
+    /// (specs/fork-rust-agent-parity.md "Execution worktree").
+    pub start_held: bool,
+    /// Fork: the root is the session's execution worktree (created there, reopened there, or moved there by
+    /// `Command::SetExecutionRoot`): a root that is gone refuses the workspace tools ([`RunView::execution_worktree`]).
+    pub execution_worktree: bool,
     /// 当前轮（冷加载的 `LoadedSession.turn`；新建的会话没有）。
     pub turn: Option<rust_cli_kernel_api::store::TurnAnchor>,
     /// 当前轮以错误结束（冷加载的 `LoadedSession.last_turn_failed`）：续写时不补 assistant（session-lifecycle.md
@@ -207,6 +234,11 @@ pub struct SessionState {
     pub child_live: Option<rust_cli_kernel_api::agents::ChildLiveFeed>,
     /// Fork: the stored title is still automatic (cold load: `LoadedSession.title_pending`; a new session: true).
     pub title_pending: bool,
+    /// Fork: where the title came from (cold load: `LoadedSession.title_source`; a new session: `None`, derived from
+    /// the title).
+    pub title_source: Option<rust_cli_kernel_api::title::Source>,
+    /// Fork (B3): the last permission mode grant (cold load: `LoadedSession.permission_grant`; a new session: none).
+    pub permission_grant: Option<String>,
     /// Fork (desktop App): the stored goal row (cold load: `LoadedSession.goal_target`; a new session: none).
     pub goal_target: Option<rust_cli_kernel_api::goal::GoalState>,
     /// Fork (desktop App): the stored goal verification steps (`LoadedSession.goal_verifications`).
@@ -232,11 +264,15 @@ impl SessionState {
             mode,
             checkpoints: Vec::new(),
             start,
+            start_held: false,
+            execution_worktree: false,
             turn: None,
             last_turn_failed: false,
             commands: Default::default(),
             child_live: None,
             title_pending: true,
+            title_source: None,
+            permission_grant: None,
             goal_target: None,
             goal_verifications: Vec::new(),
             message_models: Default::default(),
@@ -266,10 +302,14 @@ impl SessionState {
             ),
             checkpoints: loaded.checkpoints,
             start,
+            start_held: false,
+            execution_worktree: loaded.execution_worktree,
             turn: loaded.turn,
             last_turn_failed: loaded.last_turn_failed,
             child_live: None,
             title_pending: loaded.title_pending,
+            title_source: loaded.title_source,
+            permission_grant: loaded.permission_grant,
             goal_target: loaded.goal_target,
             goal_verifications: loaded.goal_verifications,
             message_models: loaded.message_models,
@@ -362,6 +402,21 @@ impl Session {
         request: impl FnOnce(oneshot::Sender<T>) -> Request,
     ) -> Result<T, KernelError> {
         closing::ask(&self.requests, request).await
+    }
+
+    /// Fork: the tool context an MCP App call is authorized with outside any turn (specs/fork-rust-node-helper.md F3,
+    /// `helper/authorizeAppTool`). Its prompt is a session-level ask that `cancel` withdraws; a closed session fails.
+    pub async fn app_tool_context(
+        &self,
+        tool_use: rust_cli_kernel_api::ids::ToolUseId,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> Result<rust_cli_kernel_api::tool::ToolUseContext, KernelError> {
+        self.ask(|reply| Request::AppToolContext {
+            tool_use,
+            cancel,
+            reply,
+        })
+        .await
     }
 }
 
@@ -496,6 +551,10 @@ impl SessionHandle for Session {
 
     fn subagent_changes(&self) -> BoxStream<'static, ()> {
         self.deps.agents.subagent_changes()
+    }
+
+    fn child_run(&self, child: &SessionId) -> Option<rust_cli_kernel_api::agents::ChildLiveFeed> {
+        self.deps.agents.child_run(child)
     }
 
     /// 子代理列表与后台任务的同一份快照（修复线 F34，tui-panels.md §0）：actor 只给出工作区，命令与子代理在调用方的

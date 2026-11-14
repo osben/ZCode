@@ -41,6 +41,8 @@ pub(crate) fn definition() -> AgentDefinition {
         max_turns: Some(MAX_TURNS),
         permission_mode: None,
         background: true,
+        selection: None,
+        inject_agents_md: true,
     }
 }
 
@@ -67,6 +69,8 @@ pub(crate) fn prefix(
         usage: None,
     }));
     messages.push(Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
         id: ids.message(),
         content: vec![ContentBlock::ToolResult {
             tool_use_id: tool_use.clone(),

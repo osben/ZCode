@@ -1,11 +1,14 @@
-/* eslint-disable max-lines -- Workspace tasks, automations, and the plugin marketplace share browser-style history; handling them together keeps back/forward targets consistent. */
-import { useCallback } from "react";
+/* eslint-disable max-lines -- workspace 的 task、自动化与插件市场共享浏览器式历史，集中处理才能保证前进/后退目标一致。 */
+import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { useBaseWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
 import {
   canGoBack as navCanGoBack,
   canGoForward as navCanGoForward,
+  goBack,
+  goForward,
   isAutomationsNavEntry,
   isPluginStoreNavEntry,
+  isTaskNavEntry,
   type AutomationsNavigationTab,
   type WorkspaceNavEntry,
 } from "@/lib/taskNavigationHistory.js";
@@ -26,7 +29,12 @@ import { getRemoteWorkspaceSession } from "@/store/remoteWorkspaceSessionStore.j
 import { useTabStoreApi } from "@/store/TabStoreProvider.js";
 import { isWorkspaceTab } from "@/store/tabStore.js";
 import { bumpTaskListMembershipVersion } from "@/v4/taskListMembershipVersion.js";
+import {
+  onTaskNavigationCommitted,
+  onTaskNavigationRequested,
+} from "@/store/zcodeSessionStoreNavigation.js";
 import { ensureTaskNavigationWorkspace } from "@/app-shell/taskNavigationWorkspace.js";
+import { selectWorkbenchSession } from "@/v4/workbenchSessionPlacement.js";
 
 // Replay purges a task entry only when the project directory owner reports it as deleted.
 // A query-cache or visible-list miss is not deletion: such a task stays navigable and handleSelectTask opens it.
@@ -43,6 +51,7 @@ export function useWorkspaceTaskNavigation({
   intl,
   workspaceAbsPath,
   workspaceIdentity,
+  isWebRemoteControl = false,
   activateTabByPath,
   onNavigateToTask,
   onNavigateToAutomations,
@@ -51,6 +60,7 @@ export function useWorkspaceTaskNavigation({
   intl: { formatMessage: (descriptor: { id: string }) => string };
   workspaceAbsPath: string;
   workspaceIdentity?: string;
+  isWebRemoteControl?: boolean;
   activateTabByPath: (workspacePath: string, options?: { workspaceIdentity?: string }) => boolean;
   onNavigateToTask?: () => void;
   onNavigateToAutomations?: (target: AutomationsNavigationTarget) => void;
@@ -64,11 +74,19 @@ export function useWorkspaceTaskNavigation({
   const taskNavHistory = useZCodeSessionStore((s) => s.taskNavHistory);
   const taskNavPushAutomations = useZCodeSessionStore((s) => s.taskNavPushAutomations);
   const taskNavPushPluginStore = useZCodeSessionStore((s) => s.taskNavPushPluginStore);
-  const taskNavGoBack = useZCodeSessionStore((s) => s.taskNavGoBack);
   // Read at command time through the owner; no tombstone copy lives in the session store.
   const isTaskKnownDeleted =
     useOptionalProjectDirectory()?.isTaskKnownDeleted ?? NO_KNOWN_DELETED_TASKS;
-  const taskNavGoForward = useZCodeSessionStore((s) => s.taskNavGoForward);
+  const navigationVersion = useRef(0);
+  useEffect(() => {
+    const subscription = onTaskNavigationCommitted(() => {
+      navigationVersion.current += 1;
+    });
+    return () => {
+      navigationVersion.current += 1;
+      subscription.dispose();
+    };
+  }, []);
 
   const handleSelectTask = useCallback(
     (
@@ -237,94 +255,193 @@ export function useWorkspaceTaskNavigation({
     onNavigateToPluginStore?.({ workspacePath: workspaceAbsPath, workspaceIdentity });
   }, [onNavigateToPluginStore, taskNavPushPluginStore, workspaceAbsPath, workspaceIdentity]);
 
-  // Opens a history target. Automations and the plugin marketplace are page entries; task entries go through the normal selection path.
-  const openHistoryEntry = useCallback(
-    (entry: WorkspaceNavEntry) => {
-      if (isAutomationsNavEntry(entry)) {
-        activateTabByPath(
-          entry.workspacePath,
-          entry.workspaceIdentity ? { workspaceIdentity: entry.workspaceIdentity } : undefined,
+  const navigateHistory = useCallback(
+    async (direction: "back" | "forward") => {
+      const sessionStore = useZCodeSessionStore.getState();
+      const origin = sessionStore.getWorkspaceState(workspaceAbsPath, workspaceIdentity);
+      if (
+        shouldBlockTaskSelectionDuringModelRestart(
+          origin.modelSwitchPending,
+          origin.modelSwitchStage,
+        )
+      ) {
+        toast(intl.formatMessage({ id: "taskList.switchBlockedByModelRestart" }));
+        return;
+      }
+      const request = ++navigationVersion.current;
+      const originalHistory = sessionStore.taskNavHistory;
+      const originalTabId = tabStoreApi.getState().activeTabId;
+      const isCurrent = () => {
+        const state = useZCodeSessionStore.getState();
+        const current = state.getWorkspaceState(workspaceAbsPath, workspaceIdentity);
+        return (
+          request === navigationVersion.current &&
+          state.taskNavHistory === originalHistory &&
+          tabStoreApi.getState().activeTabId === originalTabId &&
+          current.activeTaskId === origin.activeTaskId &&
+          current.draftFocusVersion === origin.draftFocusVersion
         );
-        onNavigateToAutomations?.({
-          workspacePath: entry.workspacePath,
-          ...(entry.workspaceIdentity ? { workspaceIdentity: entry.workspaceIdentity } : {}),
-          ...(entry.automationId ? { automationId: entry.automationId } : {}),
-          ...(entry.automationTab ? { automationTab: entry.automationTab } : {}),
+      };
+      const step = direction === "back" ? goBack : goForward;
+      let history = originalHistory;
+      try {
+        for (let next = step(history); next; next = step(history)) {
+          const { entry } = next;
+          if (isAutomationsNavEntry(entry) || isPluginStoreNavEntry(entry)) {
+            if (!isCurrent()) return;
+            useZCodeSessionStore.setState({ taskNavHistory: next.history });
+            activateTabByPath(entry.workspacePath, { workspaceIdentity: entry.workspaceIdentity });
+            if (isAutomationsNavEntry(entry)) onNavigateToAutomations?.(entry);
+            else onNavigateToPluginStore?.(entry);
+            return;
+          }
+          // Fork: a task the project directory reports as deleted is purged like a missing Host row.
+          if (isTaskNavEntry(entry) && isTaskKnownDeleted(entry)) {
+            history = {
+              entries: history.entries.filter((_, index) => index !== next.history.cursor),
+              cursor: history.cursor - (next.history.cursor < history.cursor ? 1 : 0),
+            };
+            continue;
+          }
+          const targetTab = tabStoreApi
+            .getState()
+            .tabs.find(
+              (tab) =>
+                isWorkspaceTab(tab) &&
+                buildTaskWorkspaceKey(tab.workspacePath, tab.workspaceIdentity) ===
+                  buildTaskWorkspaceKey(entry.workspacePath, entry.workspaceIdentity),
+            );
+          const remoteSessionId =
+            targetTab && isWorkspaceTab(targetTab) ? targetTab.remoteSessionId : undefined;
+          const remote = Boolean(
+            entry.workspaceIdentity ||
+            (targetTab && isWorkspaceTab(targetTab) && targetTab.remoteTarget),
+          );
+          const services = remoteSessionId
+            ? getRemoteWorkspaceSession(remoteSessionId)?.services
+            : remote
+              ? undefined
+              : baseServices;
+          if (!services) throw new Error("Navigation target is disconnected");
+          // The sidebar moved to the project tree, so an old cache miss does not mean deletion; only trust an explicit empty result from the Host index.
+          // The real cursor does not move during the query; a new selection, draft or connection generation invalidates a late result.
+          const meta = await services.zcodeTaskService.getTaskMeta({
+            workspacePath: entry.workspacePath,
+            workspaceIdentity: entry.workspaceIdentity,
+            taskId: entry.taskId,
+          });
+          if (
+            !isCurrent() ||
+            (remoteSessionId && getRemoteWorkspaceSession(remoteSessionId)?.services !== services)
+          )
+            return;
+          if (!meta) {
+            // Remove only the exact entry from this query and keep the current position; deleting every duplicate task would skip neighboring targets.
+            history = {
+              entries: history.entries.filter((_, index) => index !== next.history.cursor),
+              cursor: history.cursor - (next.history.cursor < history.cursor ? 1 : 0),
+            };
+            continue;
+          }
+          const targetState = useZCodeSessionStore
+            .getState()
+            .getWorkspaceState(entry.workspacePath, entry.workspaceIdentity);
+          if (
+            shouldBlockTaskSelectionDuringModelRestart(
+              targetState.modelSwitchPending,
+              targetState.modelSwitchStage,
+            )
+          ) {
+            toast(intl.formatMessage({ id: "taskList.switchBlockedByModelRestart" }));
+            return;
+          }
+          const workspace = ensureTaskNavigationWorkspace({
+            workspacePath: entry.workspacePath,
+            workspaceIdentity: entry.workspaceIdentity,
+            activateTabByPath,
+            addLocalWorkspaceTab: (path) => {
+              tabStoreApi.getState().addTab(path);
+            },
+          });
+          if (!workspace.accepted) throw new Error("Navigation target is disconnected");
+          // Share the workbench owner with sidebar selection so only the shell activeTaskId does not change while the split view still shows the old session.
+          if (!isWebRemoteControl)
+            selectWorkbenchSession(
+              origin.activeTaskId
+                ? {
+                    sessionId: origin.activeTaskId,
+                    workspaceScope: { workspacePath: workspaceAbsPath, workspaceIdentity },
+                  }
+                : null,
+              {
+                workspacePath: entry.workspacePath,
+                workspaceIdentity: entry.workspaceIdentity,
+                remoteSessionId,
+                sessionId: entry.taskId,
+              },
+            );
+          useZCodeSessionStore.setState({ taskNavHistory: next.history });
+          handleSelectTask(
+            entry.workspacePath,
+            entry.taskId,
+            entry.workspaceIdentity,
+            meta.unreadAt,
+          );
+          return;
+        }
+        if (isCurrent()) {
+          useZCodeSessionStore.setState({ taskNavHistory: history });
+          toast(
+            intl.formatMessage({
+              id: direction === "back" ? "taskNav.noMoreBack" : "taskNav.noMoreForward",
+            }),
+          );
+        }
+      } catch (error) {
+        if (!isCurrent()) return;
+        logger.warn("[task-navigation] 历史目标查询或打开失败，保留当前选择和历史", {
+          direction,
+          error,
         });
-        return;
+        toast(intl.formatMessage({ id: "automations.runs.openSessionFailed" }));
       }
-      if (isPluginStoreNavEntry(entry)) {
-        activateTabByPath(
-          entry.workspacePath,
-          entry.workspaceIdentity ? { workspaceIdentity: entry.workspaceIdentity } : undefined,
-        );
-        onNavigateToPluginStore?.(entry);
-        return;
-      }
-      handleSelectTask(entry.workspacePath, entry.taskId, entry.workspaceIdentity);
     },
-    [activateTabByPath, handleSelectTask, onNavigateToAutomations, onNavigateToPluginStore],
+    [
+      activateTabByPath,
+      baseServices,
+      handleSelectTask,
+      intl,
+      isTaskKnownDeleted,
+      isWebRemoteControl,
+      onNavigateToAutomations,
+      onNavigateToPluginStore,
+      tabStoreApi,
+      workspaceAbsPath,
+      workspaceIdentity,
+    ],
   );
-
   const handleTaskNavBack = useCallback(() => {
-    const currentWorkspaceState = useZCodeSessionStore
-      .getState()
-      .getWorkspaceState(workspaceAbsPath);
-    if (
-      shouldBlockTaskSelectionDuringModelRestart(
-        currentWorkspaceState.modelSwitchPending,
-        currentWorkspaceState.modelSwitchStage,
-      )
-    ) {
-      logger.info(
-        "[App] 模型运行时重建中，忽略任务后退导航 workspace=" +
-          workspaceAbsPath +
-          " stage=" +
-          currentWorkspaceState.modelSwitchStage,
-      );
-      toast(intl.formatMessage({ id: "taskList.switchBlockedByModelRestart" }));
-      return;
-    }
-
-    // The store purges unavailable task entries and picks the next reachable one in the same update.
-    const entry = taskNavGoBack((target) => !isTaskKnownDeleted(target));
-    if (!entry) {
-      toast(intl.formatMessage({ id: "taskNav.noMoreBack" }));
-      return;
-    }
-    openHistoryEntry(entry);
-  }, [intl, isTaskKnownDeleted, openHistoryEntry, taskNavGoBack, workspaceAbsPath]);
-
+    void navigateHistory("back");
+  }, [navigateHistory]);
   const handleTaskNavForward = useCallback(() => {
-    const currentWorkspaceState = useZCodeSessionStore
-      .getState()
-      .getWorkspaceState(workspaceAbsPath);
-    if (
-      shouldBlockTaskSelectionDuringModelRestart(
-        currentWorkspaceState.modelSwitchPending,
-        currentWorkspaceState.modelSwitchStage,
-      )
-    ) {
-      logger.info(
-        "[App] 模型运行时重建中，忽略任务前进导航 workspace=" +
-          workspaceAbsPath +
-          " stage=" +
-          currentWorkspaceState.modelSwitchStage,
-      );
-      toast(intl.formatMessage({ id: "taskList.switchBlockedByModelRestart" }));
-      return;
-    }
-
-    const entry = taskNavGoForward((target) => !isTaskKnownDeleted(target));
-    if (!entry) {
-      toast(intl.formatMessage({ id: "taskNav.noMoreForward" }));
-      return;
-    }
-    openHistoryEntry(entry);
-  }, [intl, isTaskKnownDeleted, openHistoryEntry, taskNavGoForward, workspaceAbsPath]);
+    void navigateHistory("forward");
+  }, [navigateHistory]);
 
   const canGoBack = navCanGoBack(taskNavHistory);
   const canGoForward = navCanGoForward(taskNavHistory);
+  // 深层组件的跳转请求（规格 0.13）在这里落地：本 hook 是 handleSelectTask 的唯一持有者，
+  // 订阅放在它这儿才不会出现第二条导航路径。App 只挂一次，所以订阅者唯一。
+  const selectTaskRef = useRef(handleSelectTask);
+  useLayoutEffect(() => {
+    selectTaskRef.current = handleSelectTask;
+  });
+  useEffect(() => {
+    const subscription = onTaskNavigationRequested((request) => {
+      selectTaskRef.current(request.workspacePath, request.taskId, request.workspaceIdentity);
+    });
+    return () => subscription.dispose();
+  }, []);
+
   const currentWorkspaceState = useZCodeSessionStore.getState().getWorkspaceState(workspaceAbsPath);
   const isTaskSwitchLockedByModelRestart = shouldBlockTaskSelectionDuringModelRestart(
     currentWorkspaceState.modelSwitchPending,

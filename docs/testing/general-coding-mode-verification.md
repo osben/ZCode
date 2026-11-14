@@ -1,5 +1,22 @@
 # General/Coding Mode: Impact and Verification
 
+## UI-mode switch tracking acceptance (2026-10-28)
+
+Contract: [business monitoring](../monitoring/business-monitoring.md#界面模式切换-ui_mode_switch2026-10-28).
+Reuses MODE-01 of the formal case `packages/desktop/test/e2e/ui-shell/navigation/general-coding-mode.test.ts`: real UI actions, fields checked at the final `/event/report` transport boundary. MODE-02/03 keep verifying panel and PTY retention.
+
+| Scenario                                                    | Expectation and evidence                                                                                                     | Status                                                        |
+| ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| Settings, avatar menu, Onboarding apply                     | The three existing regions, ck, previous_ui_mode / ui_mode are correct                                                       | MODE-01 passed                                                |
+| Same-value select, refresh, onboarding draft and close      | No event added                                                                                                               | MODE-01 passed                                                |
+| Shortcut outside/inside onboarding, then same-value submit  | The mode really changes but is not reported; a same-value submit does not backfill; later menu events use the live old value | MODE-01 passed                                                |
+| Cross-window broadcast, async preference-save failure retry | Broadcast not reported, same-value retry not duplicated                                                                      | No fault/multi-window E2E this round; call chain checked only |
+| Mobile Web and production ingestion                         | Mobile allow-list kept, no new egress; server receives correctly                                                             | Real phone and production ingestion not verified              |
+
+Retired App business unit tests are not restored. The E2E reader only collects events and the wait condition only checks counts; event type, source and before/after mode are asserted together at the end, so a wrong field is not disguised as a wait failure during polling.
+
+This round's macOS desktop, Chinese, dark-theme E2E passed 2/2. Run id `desktop-e2e-20261028091729374-p35453-b6ac858286a53e69`; evidence at `packages/desktop/.e2e-artifacts/<run id>/summary.md`. Windows, Linux and light theme were not run. Root typecheck, E2E typecheck, lint and architecture check passed; the affected-engineering-test selection was 0 items.
+
 ## Feature Summary
 
 | Field                         | Value                                                                                                                            |
@@ -75,7 +92,7 @@ The existing semantic graph has no interface mode; capability, preference owner 
 
 ## Planning and E2E handoff notes
 
-- Spec location: the Electron spec is the formal `packages/desktop/test/e2e/ui-shell/general-coding-mode.test.ts` (MODE-01 and MODE-02/03); no model request, so no provider response fixture and no `ZCODE_E2E_MANUAL_REVIEW`.
+- Spec location: the Electron spec is the formal `packages/desktop/test/e2e/ui-shell/navigation/general-coding-mode.test.ts` (MODE-01 and MODE-02/03); no model request, so no provider response fixture and no `ZCODE_E2E_MANUAL_REVIEW`.
 - Existing conversation data rendering is covered by component unit tests; no model output is faked to pose as real network verification.
 - E2E uses an independent test home and the framework's run-scoped processes; it does not touch the user's dev instance.
 - Docker preset admission has not been executed, so no Docker CI coverage is claimed. `e2e:promote` supports only conversation-session (dry run rejects ui-shell paths), so the spec was moved within its own domain by hand without changing the script.

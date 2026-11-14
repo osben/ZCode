@@ -214,7 +214,7 @@ end-to-end acceptance.
 - RPC regression: `packages/desktop/test/hostRemoteWorkspaceServices.test.ts`,
   `packages/desktop/test/windowHostAttachmentRpcPolicy.test.ts`.
 - Browser candidate case (pending manual review):
-  `packages/desktop/test/e2e/manual-review/pending/mobile-remote-onboarding.mjs`, run from the repo
+  `packages/desktop/test/e2e/remote-control/connection/manual-review/pending/mobile-remote-onboarding.mjs`, run from the repo
   root with `pnpm exec tsx <case path>`.
 
 ## 6. UI integration (OccupationOnboarding.tsx)

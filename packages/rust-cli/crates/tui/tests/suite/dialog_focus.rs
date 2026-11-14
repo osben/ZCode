@@ -196,7 +196,11 @@ async fn the_plan_approval_has_no_bar_and_typing_keeps_planning() {
         let inks = inks(theme);
         let model = GatedModel::scripted(vec![
             tool_use_response("toolu_1", "EnterPlanMode", &json!({})),
-            tool_use_response("toolu_2", "ExitPlanMode", &json!({})),
+            tool_use_response(
+                "toolu_2",
+                "ExitPlanMode",
+                &json!({"plan": "# Plan\n1. do it"}),
+            ),
             text_response(&["revising"]),
         ]);
         with_ui(model.clone(), setup(theme), |mut ui| async move {

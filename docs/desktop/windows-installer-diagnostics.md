@@ -78,11 +78,17 @@ deletion. Historical-version uninstallers may still show only the native retry c
   compatibility and the `.zcode` protection.
 - When upgrading from a historical version without a manifest, electron-builder's native uninstaller retry and
   native error copy are allowed; this round does not take over its backup, restore or full-tree cleanup.
-- In an interactive managed update, if the old uninstaller returns non-zero, electron-builder's
-  `appCannotBeClosed` retry prompt may show first, and after the user cancels this project's cleanup error
-  shows; a silent update relies on the exit code and the log.
+- In an interactive managed update, if the old uninstaller exhausts its retries, this project's cleanup-failure
+  prompt with the exit code is shown; after the user cancels, the deleted files are restored. The real
+  application-process check keeps its original prompt; a silent update relies on the exit code and the log.
 - The cleanup-failure prompt uses `/SD IDOK`: the interactive mode shows an error box, and the silent mode
   automatically takes the default confirmation and returns exit code `2`, without waiting for the user.
+
+## Cleanup recovery diagnostics
+
+Before running an old uninstaller that has a manifest, the new installer records `cleanup-backup-completed`, with the backup path and `failed`. When the old uninstaller exhausts its retries it records `cleanup-retries-exhausted exit-code=...` and no longer shows "application cannot be closed" on this path. The real application-process check keeps its original prompt.
+
+After a cleanup failure it records `cleanup-restore-completed`; a copy failure records the relative path and `win32-error`. A failed restore must keep the backup and show its path to the user. This guarantee covers only the old-uninstaller cleanup stage; it does not mean extraction failure or power loss can be rolled back, and it does not prove that every "application cannot be closed" report comes from the cleanup retries.
 
 ## Diagnostics not currently covered
 

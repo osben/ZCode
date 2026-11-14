@@ -25,7 +25,9 @@ describe("desktop e2e startup credentials", () => {
   it("供应商响应式 spec 保留本地 balance mock 所需的 JWT", () => {
     expect(
       createE2EStartupCredentialSeed({
-        specs: ["/repo/packages/desktop/test/e2e/provider-family-responsive.test.ts"],
+        specs: [
+          "/repo/packages/desktop/test/e2e/settings/providers/provider-family-responsive.test.ts",
+        ],
         legacyAuthToken: "fake-auth-token",
         restoredOAuthCredentials,
       }).zcodejwttoken,
@@ -35,7 +37,7 @@ describe("desktop e2e startup credentials", () => {
     expect(
       createE2EStartupCredentialSeed({
         specs: [
-          "/repo/packages/desktop/test/e2e/conversation-session/conversation-session-unbound-resume.test.ts",
+          "/repo/packages/desktop/test/e2e/conversation-session/runtime/conversation-session-unbound-resume.test.ts",
         ],
         legacyAuthToken: "fake-auth-token",
         restoredOAuthCredentials,
@@ -80,7 +82,7 @@ describe("desktop e2e startup credentials", () => {
     expect(
       createE2EStartupCredentialSeed({
         specs: [
-          "/repo/packages/desktop/test/e2e/conversation-session/conversation-session-v4-sendnow.test.ts",
+          "/repo/packages/desktop/test/e2e/conversation-session/queue/conversation-session-v4-sendnow.test.ts",
         ],
         legacyAuthToken: "fake-auth-token",
         restoredOAuthCredentials,
@@ -93,7 +95,7 @@ describe("desktop e2e startup credentials", () => {
   it("JWT 401 自动退出专项 spec 保留完整 restored OAuth fixture", () => {
     expect(
       createE2EStartupCredentialSeed({
-        specs: ["/repo/packages/desktop/test/e2e/jwt-401-auto-logout.test.ts"],
+        specs: ["/repo/packages/desktop/test/e2e/auth-config/session/jwt-401-auto-logout.test.ts"],
         legacyAuthToken: "fake-auth-token",
         restoredOAuthCredentials,
       }),
@@ -106,7 +108,9 @@ describe("desktop e2e startup credentials", () => {
   it("Start Plan 手动领取 spec 保留调用 claim API 所需的 zcode JWT", () => {
     expect(
       createE2EStartupCredentialSeed({
-        specs: ["/repo/packages/desktop/test/e2e/ui-shell/marketing-touch-entitlement.test.ts"],
+        specs: [
+          "/repo/packages/desktop/test/e2e/ui-shell/marketing/marketing-touch-entitlement.test.ts",
+        ],
         legacyAuthToken: "fake-auth-token",
         restoredOAuthCredentials,
       }),

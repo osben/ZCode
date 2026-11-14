@@ -15,8 +15,10 @@ import {
   IZCodeAgentService,
   IZCodeSessionService,
   IProjectService,
+  IManagedWorktreeService,
   ITaskGroupService,
   IQuickPromptService,
+  IExternalSessionsService,
   IRemoteProjectService,
   ICuaPermissionService,
   IVoiceDictationService,
@@ -31,6 +33,10 @@ import {
   ISourceServerManagementService,
   IDeviceSyncStateService,
   IProviderProvisioningStatusService,
+  IExtensionsService,
+  IExtensionViewsService,
+  IExtensionGrantsService,
+  IVoiceInputService,
   IUsageStatsService,
   ICodingPlanSubscriptionService,
   IClientConfigService,
@@ -91,7 +97,10 @@ export class RemoteServiceAccess implements IServiceAccessor {
   readonly taskGroupService: ITaskGroupService;
   /** Fork: composer quick prompts, owned by the controller Host (specs/composer-quick-prompts.md). */
   readonly quickPromptService: IQuickPromptService;
+  /** Fork: external CLI sessions; the channel exists only on the desktop local Host (specs/external-sessions.md). */
+  readonly externalSessionsService: IExternalSessionsService;
   readonly projectService: IProjectService;
+  readonly managedWorktreeService?: IManagedWorktreeService;
   readonly remoteProjectService: IRemoteProjectService;
   // cuaPermissionService is optional on IServiceAccessor (remote/bots hosts do not provide it), but the Desktop renderer
   // can always access it through RPC (the main host always registers this descriptor; on non-macOS or when disabled, methods return available:false).
@@ -111,6 +120,11 @@ export class RemoteServiceAccess implements IServiceAccessor {
   /** Registered only on the desktop base attachment: device sync status for the data-sync page. */
   readonly deviceSyncStateService?: IDeviceSyncStateService;
   readonly providerProvisioningStatusService?: IProviderProvisioningStatusService;
+  /** 仅 desktop base attachment 注册：扩展（docs/plugins/extension-host.md）。 */
+  readonly extensionsService?: IExtensionsService;
+  readonly extensionViewsService?: IExtensionViewsService;
+  readonly extensionGrantsService?: IExtensionGrantsService;
+  readonly voiceInputService?: IVoiceInputService;
   readonly usageStatsService: IUsageStatsService;
   readonly codingPlanSubscriptionService: ICodingPlanSubscriptionService;
   readonly clientConfigService: IClientConfigService;
@@ -147,6 +161,8 @@ export class RemoteServiceAccess implements IServiceAccessor {
     options: {
       sourceServerManagementService?: boolean;
       deviceSyncStateService?: boolean;
+      extensionsService?: boolean;
+      managedWorktreeService?: boolean;
       windowProjectDirectory?: boolean;
     } = {},
   ) {
@@ -214,9 +230,18 @@ export class RemoteServiceAccess implements IServiceAccessor {
     this.quickPromptService = ProxyChannel.toService<IQuickPromptService>(
       channelClient.getChannel(IQuickPromptService.channelName),
     );
+    this.externalSessionsService = ProxyChannel.toService<IExternalSessionsService>(
+      channelClient.getChannel(IExternalSessionsService.channelName),
+    );
     this.projectService = ProxyChannel.toService<IProjectService>(
       channelClient.getChannel(IProjectService.channelName),
     );
+    // 代理对象不能证明远端注册了频道；只在桌面 base 明确提供能力时创建，避免远程/手机误订阅。
+    this.managedWorktreeService = options.managedWorktreeService
+      ? ProxyChannel.toService<IManagedWorktreeService>(
+          channelClient.getChannel(IManagedWorktreeService.channelName),
+        )
+      : undefined;
     this.zcodeSessionService = ProxyChannel.toService<IZCodeSessionService>(
       channelClient.getChannel(IZCodeSessionService.channelName),
     );
@@ -266,10 +291,34 @@ export class RemoteServiceAccess implements IServiceAccessor {
           channelClient.getChannel(IDeviceSyncStateService.channelName),
         )
       : undefined;
-    // A local Host service on the same data-sync page as device sync status: same switch (enabled only on the desktop base connection).
+    // Local Host service on the same data-sync page as device sync status: same switch (enabled only on the desktop base connection).
+    this.extensionsService = options.extensionsService
+      ? ProxyChannel.toService<IExtensionsService>(
+          channelClient.getChannel(IExtensionsService.channelName),
+        )
+      : undefined;
+    // Extension views facade uses the same switch as the extensions facade: same Window Host service, different channel (§8).
+    this.extensionViewsService = options.extensionsService
+      ? ProxyChannel.toService<IExtensionViewsService>(
+          channelClient.getChannel(IExtensionViewsService.channelName),
+        )
+      : undefined;
+    // Extension grants facade uses the same switch as the extensions facade (§17.7): enabled only on the desktop base connection, not in the mobile allowlist.
+    this.extensionGrantsService = options.extensionsService
+      ? ProxyChannel.toService<IExtensionGrantsService>(
+          channelClient.getChannel(IExtensionGrantsService.channelName),
+        )
+      : undefined;
     this.providerProvisioningStatusService = options.deviceSyncStateService
       ? ProxyChannel.toService<IProviderProvisioningStatusService>(
           channelClient.getChannel(IProviderProvisioningStatusService.channelName),
+        )
+      : undefined;
+    // 语音输入只连接本机 Host（docs/chat/composer-voice-input.md）：与数据同步同一开关，
+    // 只在桌面 base 连接打开，Web / 手机远控 / 远程 workspace 连接不创建代理。
+    this.voiceInputService = options.deviceSyncStateService
+      ? ProxyChannel.toService<IVoiceInputService>(
+          channelClient.getChannel(IVoiceInputService.channelName),
         )
       : undefined;
     this.usageStatsService = ProxyChannel.toService<IUsageStatsService>(

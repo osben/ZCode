@@ -9,7 +9,8 @@ use futures_util::future::BoxFuture;
 use rust_cli_kernel_api::testing::text_response;
 use rust_cli_tui::services::{CancellationToken, RedactedString};
 use rust_cli_tui::{
-    Account, Authorize, Configured, Family, FamilyStatus, LoginFailure, PlanConnection, Services,
+    Account, Authorize, Configured, Family, FamilyLogin, FamilyStatus, LoginFailure,
+    PlanConnection, Services,
 };
 use tokio::sync::oneshot;
 
@@ -25,6 +26,8 @@ struct FakeAccount {
     release: Mutex<Option<oneshot::Sender<()>>>,
     keys: Mutex<Vec<String>>,
     signed_out: Mutex<bool>,
+    /// The saved sign-in cannot be read (fork spec `fork-rust-credential-cipher.md` F2).
+    unreadable: bool,
 }
 
 impl FakeAccount {
@@ -88,13 +91,23 @@ impl Account for FakeAccount {
 
     /// 登录着 Z.ai（退出之后不再是）。
     fn families(&self) -> BoxFuture<'static, Vec<FamilyStatus>> {
-        let signed_in = !*self.signed_out.lock().unwrap();
+        let login = if self.unreadable {
+            FamilyLogin::Unreadable
+        } else if *self.signed_out.lock().unwrap() {
+            FamilyLogin::SignedOut
+        } else {
+            FamilyLogin::SignedIn
+        };
         async move {
             vec![FamilyStatus {
                 family: Family::Zai,
                 name: "Z.ai".to_owned(),
-                signed_in,
-                account: "dev@example.com".to_owned(),
+                login,
+                account: if login == FamilyLogin::SignedIn {
+                    "dev@example.com".to_owned()
+                } else {
+                    String::new()
+                },
                 connection: PlanConnection::Individual,
                 teams: Vec::new(),
                 teams_error: String::new(),
@@ -239,6 +252,28 @@ async fn logout_opens_the_sign_out_row_and_signs_out() {
     })
     .await;
     assert!(*account.signed_out.lock().unwrap());
+}
+
+/// B7: an unreadable sign-in is neither signed in nor signed out. `/logout` says it could not be read, and the family
+/// page offers neither Sign in nor Sign out.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unreadable_sign_in_offers_neither_sign_in_nor_sign_out() {
+    let model = GatedModel::scripted(vec![text_response(&["ok"])]);
+    let account = Arc::new(FakeAccount {
+        unreadable: true,
+        ..FakeAccount::default()
+    });
+    with_ui(model, setup(&account), |mut ui| async move {
+        ui.submit("/logout");
+        let screen = ui
+            .wait("the models page with the unreadable family", |s| {
+                s.contains("Could not read the saved sign-in.") && s.contains("sign-in unreadable")
+            })
+            .await;
+        assert!(!screen.contains("not signed in"), "{screen}");
+    })
+    .await;
+    assert!(!*account.signed_out.lock().unwrap());
 }
 
 /// 没有模型时（门道开着）⏎ 留下消息：画成你的回合，下面说 `Queued. It goes out once a model is connected.`（Puffin

@@ -334,3 +334,139 @@ async fn the_database_is_created_with_its_directory_on_first_use() {
     let ledger = t.rows("select count(*) from schema_migration");
     assert_eq!(ledger[0][0], Value::from(24));
 }
+
+fn receipts(t: &TestStore) -> Vec<(String, Value)> {
+    t.rows("select id, data from session_entry where type = 'runtime/permission_full_access' order by rowid")
+        .into_iter()
+        .map(|row| {
+            let id = row[0].as_str().unwrap().to_owned();
+            let data = serde_json::from_str(row[1].as_str().unwrap()).unwrap();
+            (id, data)
+        })
+        .collect()
+}
+
+fn keys(value: &Value) -> Vec<&str> {
+    let mut keys: Vec<&str> = value
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    keys.sort_unstable();
+    keys
+}
+
+/// B3 review: a permission mode grant's receipt is Node's `runtime/permission_full_access` entry
+/// (`permissionFullAccessReceiptSchema`, strict at every level, so no other key), written with the grant's execution
+/// state in one batch; its id is fixed per interaction and a second commit keeps the first. A cold read names the
+/// last receipt's interaction (Node `restorePermissionGrantMarker`); another session's receipt is ignored.
+#[tokio::test]
+async fn a_grant_receipt_is_nodes_entry_and_is_read_back() {
+    let t = TestStore::new();
+    started(&t, "sess_1").await;
+    assert_eq!(t.store.load(&sid()).await.unwrap().permission_grant, None);
+    let grant = |interaction: &str, mode| {
+        let previous = ExecutionState::from_parts(PermissionMode::DontAsk, true);
+        let next = ExecutionState::from_parts(mode, true);
+        batch(
+            None,
+            vec![
+                Fact::ExecutionChanged { state: next },
+                Fact::PermissionGranted {
+                    interaction: interaction.to_owned(),
+                    previous,
+                    next,
+                    queue_items: vec!["queue_cmd_1".to_owned()],
+                },
+            ],
+        )
+    };
+    t.store
+        .commit(&sid(), grant("int_1", PermissionMode::Guarded))
+        .await
+        .unwrap();
+    let stored = receipts(&t);
+    assert_eq!(stored.len(), 1);
+    let (id, data) = &stored[0];
+    assert_eq!(id, "sess_1:permission-full-access:int_1");
+    assert_eq!(keys(data), ["event", "interactionId"]);
+    let event = &data["event"];
+    assert_eq!(
+        keys(event),
+        [
+            "id",
+            "payload",
+            "sequenceNumber",
+            "sessionId",
+            "timestamp",
+            "traceId",
+            "type"
+        ]
+    );
+    assert!(event["id"].as_str().is_some_and(|id| !id.is_empty()));
+    assert!(event["traceId"].as_str().is_some_and(|id| !id.is_empty()));
+    assert!(event["timestamp"].is_u64());
+    assert_eq!(event["sequenceNumber"], 0);
+    assert_eq!(event["sessionId"], "sess_1");
+    assert_eq!(event["type"], "session_mode_changed");
+    assert_eq!(
+        event["payload"],
+        json!({
+            "mode": "guarded",
+            "planEnabled": true,
+            "previousMode": "build",
+            "previousPlanEnabled": true,
+            "source": "command",
+            "permissionGrant": {"interactionId": "int_1", "queueItemIds": ["queue_cmd_1"]},
+        })
+    );
+    let execution = t.rows("select data from session_entry where type = 'runtime/execution_state'");
+    assert_eq!(
+        execution,
+        vec![vec![Value::from(
+            r#"{"mode":"guarded","planEnabled":true}"#
+        )]]
+    );
+    assert_eq!(
+        t.store
+            .load(&sid())
+            .await
+            .unwrap()
+            .permission_grant
+            .as_deref(),
+        Some("int_1")
+    );
+    // The same interaction again keeps the stored receipt; a later grant is the next one read back.
+    t.store
+        .commit(&sid(), grant("int_1", PermissionMode::BypassPermissions))
+        .await
+        .unwrap();
+    assert_eq!(receipts(&t).len(), 1);
+    assert_eq!(receipts(&t)[0].1["event"]["payload"]["mode"], "guarded");
+    t.store
+        .commit(&sid(), grant("int_2", PermissionMode::BypassPermissions))
+        .await
+        .unwrap();
+    let stored = receipts(&t);
+    assert_eq!(stored[1].1["event"]["payload"]["mode"], "yolo");
+    assert_eq!(stored[1].1["event"]["sequenceNumber"], 1);
+    assert_eq!(
+        t.store
+            .load(&sid())
+            .await
+            .unwrap()
+            .permission_grant
+            .as_deref(),
+        Some("int_2")
+    );
+    // A receipt naming another session is ignored on the cold read.
+    t.connection()
+        .execute(
+            "update session_entry set data = json_set(data, '$.event.sessionId', 'sess_other')
+             where id = 'sess_1:permission-full-access:int_2'",
+            [],
+        )
+        .unwrap();
+    assert_eq!(t.store.load(&sid()).await.unwrap().permission_grant, None);
+}

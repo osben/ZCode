@@ -1,6 +1,7 @@
 /* oxlint-disable eslint(max-lines) -- The Coding Plan webview container coordinates credential injection, purchase completion callbacks, third-party payment navigation, and error handling. */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ExternalLinkIcon, RefreshCwIcon } from "lucide-react";
+import { useServices } from "@/hooks/useServices.js";
 import { usePlatform } from "@/hooks/usePlatform.js";
 import { RENDERER_ZCODE_ENDPOINT_URLS } from "@/lib/rendererZCodeEndpoint.js";
 import { logger } from "@/logger.js";
@@ -19,7 +20,6 @@ import {
   createCodingPlanCredentialClearScript,
   createCodingPlanLangInjectionScript,
   createCodingPlanScrollbarHideScript,
-  getCodingPlanCredentialKeys,
   isTrustedCodingPlanEmbeddedWebviewUrl,
   resolveCodingPlanEmbeddedOrigin,
   resolveCodingPlanWebsiteProvider,
@@ -31,15 +31,12 @@ import {
 import {
   CodingPlanWebviewChannels,
   type CodingPlanPurchaseCompletePayload,
-  toServiceLocale,
   ZCODE_ENV,
   ZCODE_VERSION,
+  toZhOrEnLocale,
 } from "@zcode/shared";
 
 interface CodingPlanEmbeddedWebviewDialogProps {
-  credentialService: {
-    load(key: string): Promise<string | null>;
-  };
   onOpenChange: (open: boolean) => void;
   open: boolean;
   onOpenResult?: (opened: boolean) => void;
@@ -69,7 +66,6 @@ function readCodingPlanWebviewImportMetaEnv(): CodingPlanWebviewImportMetaEnv {
 }
 
 export function CodingPlanEmbeddedWebviewDialog({
-  credentialService,
   onOpenChange,
   open,
   providerId,
@@ -80,14 +76,16 @@ export function CodingPlanEmbeddedWebviewDialog({
   onOpenResult,
 }: CodingPlanEmbeddedWebviewDialogProps) {
   const { intl, locale } = useZCodeIntl();
+  const { oauthService } = useServices();
+  const authGeneration = useRef(0);
   const platform = usePlatform();
   const theme = useZCodeStoreWithDefault((state) => state.theme, "dark");
   const userId = useZCodeStoreWithDefault((state) => state.user?.id ?? null, null);
   const webviewRef = useRef<ElectronWebviewTag | null>(null);
   const onOpenResultRef = useRef(onOpenResult);
   onOpenResultRef.current = onOpenResult;
-  // The official site supports only Chinese and English: map the UI language to the site language before using it as a webview language hint/injected value.
-  const webviewLocale = toServiceLocale(locale);
+  // The current locale is the webview language hint / injected value. The official site has only Chinese and English, so non-Chinese UI languages use English.
+  const webviewLocale = toZhOrEnLocale(locale);
   const webviewCleanupRef = useRef<(() => void) | null>(null);
   // Whether the webview has reached dom-ready; call executeJavaScript only after it is ready,
   // or it throws "WebView must be attached to the DOM and dom-ready emitted".
@@ -149,6 +147,7 @@ export function CodingPlanEmbeddedWebviewDialog({
       if (!webview) {
         return;
       }
+      const generation = ++authGeneration.current;
       setAuthError(null);
       try {
         const env = readCodingPlanWebviewImportMetaEnv();
@@ -163,29 +162,45 @@ export function CodingPlanEmbeddedWebviewDialog({
           await webview.executeJavaScript(createCodingPlanCredentialClearScript(), true);
           return;
         }
-        const keys = getCodingPlanCredentialKeys(provider);
-        const [values, deviceMid] = await Promise.all([
-          Promise.all(keys.map((key) => credentialService.load(key))),
+        // 持久分区先撤销旧会话，再等待 Host 的原子快照，避免多个单键读取拼接账号。
+        await webview.executeJavaScript(createCodingPlanCredentialClearScript(), true);
+        const [session, deviceMid] = await Promise.all([
+          oauthService.getWebsiteSession(),
           Promise.resolve()
             .then(() => platform.getDeviceId())
             .catch(() => null),
         ]);
-        const credentials: CodingPlanEmbeddedCredentials =
-          provider === "zai"
-            ? {
-                zaiAccessToken: values[0],
-                zcodeJwtToken: values[1],
-              }
-            : {
-                bigmodelAccessToken: values[0],
-                // The BigModel OAuth callback also writes the ZCode JWT to storage; the website uses it on the
-                // zcode-plan domain to check billing/balance and determine Start Plan status.
-                zcodeJwtToken: values[1],
-              };
+        const current = await oauthService.getAccountAvailability();
+        if (
+          generation !== authGeneration.current ||
+          webviewRef.current !== webview ||
+          webview.getURL() !== currentUrl ||
+          !webviewReadyRef.current
+        )
+          return;
+        if (
+          current.userId !== (session?.userId ?? null) ||
+          current.loginProvider !== (session?.loginProvider ?? null) ||
+          (session && current.sessionRevision !== session.sessionRevision)
+        ) {
+          // 资料补全也可能推进代次；拒绝旧材料后显示已有重试入口，不能静默停在空白页。
+          throw new Error("OAuth session changed during website handoff");
+        }
+        const credentials: CodingPlanEmbeddedCredentials = {
+          zcodeJwtToken: session?.zcodeJwtToken,
+          zaiAccessToken:
+            session?.loginProvider === "zai" && provider === "zai"
+              ? session.legacyOAuthToken
+              : null,
+          bigmodelAccessToken:
+            session?.loginProvider === "bigmodel" && provider === "bigmodel"
+              ? session.legacyOAuthToken
+              : null,
+        };
         const reportContext = buildCodingPlanEmbeddedReportContext({
           funnelContext,
           deviceMid,
-          userId,
+          userId: session?.userId,
           appVersion: ZCODE_VERSION,
         });
         const script = createCodingPlanAuthInjectionScript({
@@ -194,6 +209,8 @@ export function CodingPlanEmbeddedWebviewDialog({
           theme: embeddedTheme,
           locale: webviewLocale,
           reportContext,
+          loginProvider: session?.loginProvider ?? null,
+          expectedUrl: currentUrl,
         });
         // The webview uses a persistent partition. When switching provider/account, prevent an old token
         // from briefly remaining in localStorage for the site's first-frame logic to read. Clear sensitive keys before injecting current credentials.
@@ -202,8 +219,9 @@ export function CodingPlanEmbeddedWebviewDialog({
           true,
         );
       } catch (error) {
-        // The WebView and App renderer use different storage partitions, so the official site cannot read the App credentialService directly.
-        // If injection fails, show a retryable state; otherwise the page stays logged out/on a skeleton with no way for users to recover.
+        // WebView 和 App renderer 是不同存储分区，官网页不能直接读 App credentialService。
+        // 注入失败时必须给出可重试状态，否则页面会停留在未登录/骨架态且用户无法恢复。
+        if (generation !== authGeneration.current) return;
         setAuthError(error instanceof Error ? error.message : String(error));
         logger.warn("[CodingPlanEmbeddedWebviewDialog] 注入购买凭据失败", {
           provider,
@@ -211,7 +229,7 @@ export function CodingPlanEmbeddedWebviewDialog({
         });
       }
     },
-    [credentialService, embeddedTheme, funnelContext, platform, provider, userId, webviewLocale],
+    [oauthService, embeddedTheme, funnelContext, platform, provider, userId, webviewLocale],
   );
 
   // When the App locale changes at runtime, inject a lang update script into a dom-ready webview
@@ -229,9 +247,17 @@ export function CodingPlanEmbeddedWebviewDialog({
     });
   }, [open, webviewLocale]);
 
+  injectAuthRef.current = injectAuth;
   useEffect(() => {
-    injectAuthRef.current = injectAuth;
-  }, [injectAuth]);
+    const subscription = oauthService.onDidChangeSession(() => {
+      ++authGeneration.current;
+      if (webviewReadyRef.current) void injectAuthRef.current(webviewRef.current);
+    });
+    return () => subscription.dispose();
+  }, [oauthService]);
+  useEffect(() => {
+    if (open && webviewReadyRef.current) void injectAuthRef.current(webviewRef.current);
+  }, [open, injectAuth]);
 
   const syncNavigationState = useCallback((webview: ElectronWebviewTag | null) => {
     if (!webview) {
@@ -306,7 +332,8 @@ export function CodingPlanEmbeddedWebviewDialog({
         onOpenResultRef.current?.(true);
       };
       const handleDidStartLoading = () => {
-        // A new navigation starts: reset ready to avoid executeJavaScript on a page that is not ready.
+        // 新导航开始：重置 ready，避免在未 ready 的页面上 executeJavaScript。
+        ++authGeneration.current;
         webviewReadyRef.current = false;
         setAuthError(null);
         setLoadError(null);
@@ -380,6 +407,7 @@ export function CodingPlanEmbeddedWebviewDialog({
       // React effect binding may happen after the <webview>'s first dom-ready.
       // Bind Electron events immediately when the ref mounts so executeJavaScript runs only after dom-ready.
       webviewCleanupRef.current = () => {
+        ++authGeneration.current;
         webviewReadyRef.current = false;
         element.removeEventListener("dom-ready", handleDomReady);
         element.removeEventListener("did-start-loading", handleDidStartLoading);

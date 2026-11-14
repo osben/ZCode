@@ -29,7 +29,7 @@ const PER_SESSION_DIRECTORIES: [&str; 5] = [
 /// Node `SAFE_SEGMENT` (`/^[A-Za-z0-9._-]{1,120}$/u` plus the `.`/`..` refusal): matches what the
 /// artifact store's path sanitizer leaves unchanged, so the segment equals the id. The charset
 /// is ASCII-only, so bytes equal code points here.
-fn is_plain_segment(session_id: &str) -> bool {
+pub(crate) fn is_plain_segment(session_id: &str) -> bool {
     (1..=120).contains(&session_id.len())
         && session_id
             .bytes()
@@ -85,18 +85,23 @@ fn store_error(method: &str, error: StoreError) -> RpcError {
 
 /// Node `findRunningSessionIds` for this agent: sessions of the tree whose live runtime is busy.
 /// Only already-open sessions count (a cold one has no live turn to protect, and opening here
-/// would race the erase). Node also asks its v4 gateway for detached child sessions; the Rust
-/// agent has no detached gateway children, so there is nothing to add.
+/// would race the erase). Node also counts its running detached subagents
+/// (`getDetachedChildSessionFacts().running`); here the kernel answers for the child sessions its
+/// running subagents run in. A parked subagent does not count: the erase ends it as stopped.
 fn running_session_ids(server: &Server, tree_ids: &[String]) -> Vec<String> {
-    let mut open_running: HashSet<String> = HashSet::new();
+    let mut running: HashSet<String> = HashSet::new();
     for bridged in server.bridge.sessions() {
         if bridged.sink.status().0 == Phase::Running {
-            open_running.insert(bridged.handle.id().as_str().to_owned());
+            running.insert(bridged.handle.id().as_str().to_owned());
         }
+    }
+    let tree: Vec<SessionId> = tree_ids.iter().map(SessionId::new).collect();
+    for session in server.kernel.running_agent_sessions(&tree) {
+        running.insert(session.as_str().to_owned());
     }
     tree_ids
         .iter()
-        .filter(|id| open_running.contains(*id))
+        .filter(|id| running.contains(*id))
         .cloned()
         .collect()
 }
@@ -157,7 +162,8 @@ pub(crate) async fn tree_counts(server: &Server, params: &Value) -> Result<Value
     }))
 }
 
-/// `session/eraseTree` (`zcodeSessionEraseTreeResultSchema`): refuse while a tree session runs,
+/// `session/eraseTree` (`zcodeSessionEraseTreeResultSchema`): refuse while a tree session or a
+/// subagent in the tree runs,
 /// close idle runtimes, remove per-session directories (keeping those a surviving fork points
 /// at), then erase the rows in one transaction. Any file failure erases nothing, so a retry
 /// finds the same tree and finishes the cleanup.
@@ -237,6 +243,13 @@ pub(crate) async fn erase_tree(server: &Server, params: &Value) -> Result<Value,
         .cloned()
         .collect();
     let late_failures = remove_session_directories(storage_root, &late).await;
+    // Fork: stop what the kernel still runs for the erased sessions (notice forwarders, background commands on every
+    // machine), as Node's runtime close does (specs/fork-rust-agent-parity.md, "After a restart, and on a remote
+    // executor").
+    server
+        .kernel
+        .sessions_erased(erased.erased_ids.iter().map(SessionId::new).collect())
+        .await;
     // Tell the sessions index each erased root is gone (the store returns the workspace the row
     // carried, read before the delete). Node's erase has no announcement; the Rust sessions
     // index needs one or the row lingers until the next reconcile.
@@ -258,3 +271,7 @@ pub(crate) async fn erase_tree(server: &Server, params: &Value) -> Result<Value,
         "filesRetainedCount": retained.len(),
     }))
 }
+
+#[cfg(test)]
+#[path = "session_tree_tests.rs"]
+mod tests;

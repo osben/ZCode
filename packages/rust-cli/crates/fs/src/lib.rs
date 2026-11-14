@@ -161,6 +161,16 @@ pub async fn remove_dir_all_optional(path: &Path) -> io::Result<()> {
     }
 }
 
+/// Fork: [`remove_dir_all_optional`], synchronously (a drop guard's last resort when no runtime can run the async
+/// removal).
+pub fn remove_dir_all_optional_blocking(path: &Path) -> io::Result<()> {
+    match std::fs::remove_dir_all(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
 /// 在文件末尾追加 `bytes`（按需建父目录与文件）。只给"一个写者、按顺序追加"的日志类文件用
 /// （例如 TUI 输入历史）；调用方保证同一个文件只有一个写者。
 pub async fn append(path: &Path, bytes: &[u8]) -> io::Result<()> {
@@ -205,6 +215,37 @@ pub async fn atomic_write(path: &Path, bytes: &[u8], options: WriteOptions) -> i
         return Err(error);
     }
     sync_directory(directory).await;
+    Ok(())
+}
+
+/// Fork: [`atomic_write`], synchronously (for a caller already on the blocking pool, which must not split the write
+/// into several jobs).
+pub fn atomic_write_blocking(path: &Path, bytes: &[u8], options: WriteOptions) -> io::Result<()> {
+    let name = path.file_name().ok_or_else(|| {
+        io::Error::new(
+            ErrorKind::InvalidInput,
+            format!("atomic write target has no file name: {}", path.display()),
+        )
+    })?;
+    let directory = match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
+        Some(_) | None => PathBuf::from("."),
+    };
+    let temp = directory.join(temp_name(name, options.temp_name));
+    stage(&directory, &temp, bytes, options.mode, options.parent)?;
+    let mut delays = options.rename_retry.iter();
+    while let Err(error) = std::fs::rename(&temp, path) {
+        match delays.next() {
+            Some(delay) if retryable(&error) => std::thread::sleep(*delay),
+            Some(_) | None => {
+                let _ = std::fs::remove_file(&temp);
+                return Err(error);
+            }
+        }
+    }
+    if cfg!(unix) {
+        let _ = std::fs::File::open(&directory).and_then(|directory| directory.sync_all());
+    }
     Ok(())
 }
 
@@ -342,24 +383,27 @@ pub async fn create_dir_all(path: &Path) -> io::Result<()> {
 /// 0o700})` 后 `chmod(dir, 0o700)`，信任记录的 `security/`，config.md §4.2）。Windows 上同 [`create_dir_all`]。
 pub async fn create_private_dir_all(path: &Path) -> io::Result<()> {
     let path = path.to_path_buf();
-    rust_cli_base::blocking(move || {
-        let mut builder = std::fs::DirBuilder::new();
-        builder.recursive(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
-            builder.mode(rust_cli_base::proto::mode::PRIVATE_DIR);
-            builder.create(&path)?;
-            std::fs::set_permissions(
-                &path,
-                std::fs::Permissions::from_mode(rust_cli_base::proto::mode::PRIVATE_DIR),
-            )
-        }
-        #[cfg(not(unix))]
-        builder.create(&path)
-    })
-    .await
-    .map_err(io::Error::other)?
+    rust_cli_base::blocking(move || create_private_dir_all_blocking(&path))
+        .await
+        .map_err(io::Error::other)?
+}
+
+/// Fork: [`create_private_dir_all`], synchronously (for a caller already on the blocking pool).
+pub fn create_private_dir_all_blocking(path: &Path) -> io::Result<()> {
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+        builder.mode(rust_cli_base::proto::mode::PRIVATE_DIR);
+        builder.create(path)?;
+        std::fs::set_permissions(
+            path,
+            std::fs::Permissions::from_mode(rust_cli_base::proto::mode::PRIVATE_DIR),
+        )
+    }
+    #[cfg(not(unix))]
+    builder.create(path)
 }
 
 /// 把一个已有的文件（含 socket 文件）设成只有本用户能读写（Unix 0600；Windows 上什么都不做）：跨会话的收件箱
@@ -402,6 +446,84 @@ pub async fn is_file(path: &Path) -> bool {
     tokio::fs::metadata(path)
         .await
         .is_ok_and(|metadata| metadata.is_file())
+}
+
+/// Fork: a regular file (following symlinks) this process may execute: Node `stat().isFile()` plus `access(X_OK)`
+/// (the language-server install probe, specs/fork-rust-lsp.md "Install probe"). Windows checks only the file.
+pub async fn is_executable_file(path: &Path) -> bool {
+    if !is_file(path).await {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        let path = path.to_path_buf();
+        rust_cli_base::blocking(move || may_execute(&path))
+            .await
+            .unwrap_or(false)
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
+#[cfg(unix)]
+fn may_execute(path: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    let Ok(path) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
+        return false;
+    };
+    #[expect(
+        unsafe_code,
+        reason = "access(2) is libc FFI; the pointer is a valid NUL-terminated string"
+    )]
+    // SAFETY: `path` is a live `CString`, so the pointer is valid and NUL-terminated for the whole call, and
+    // access(2) only reads it.
+    let result = unsafe { libc::access(path.as_ptr(), libc::X_OK) };
+    result == 0
+}
+
+/// What [`stat`] found at a path (following symlinks).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stat {
+    /// A regular file (not a directory, FIFO, device or socket).
+    pub is_file: bool,
+    pub len: u64,
+    /// Milliseconds since the Unix epoch, when the platform reports it.
+    pub modified_ms: Option<u64>,
+    /// No group or other permission bits (`mode & 0o077 == 0`); always true off Unix (Node checks the mode only off
+    /// Windows). Fork: the default `credential-secret` must be private (specs/fork-rust-credential-cipher.md F4).
+    pub owner_only: bool,
+}
+
+/// The path's metadata, following symlinks; `None` when it does not exist (Fork: a shared attachment's size probe,
+/// specs/fork-agent-runtime-selection.md "Attachments in Rust mode").
+pub async fn stat(path: &Path) -> io::Result<Option<Stat>> {
+    match tokio::fs::metadata(path).await {
+        Ok(metadata) => Ok(Some(Stat {
+            is_file: metadata.is_file(),
+            len: metadata.len(),
+            modified_ms: metadata
+                .modified()
+                .ok()
+                .and_then(|time| time.duration_since(SystemTime::UNIX_EPOCH).ok())
+                .and_then(|elapsed| u64::try_from(elapsed.as_millis()).ok()),
+            owner_only: owner_only(&metadata),
+        })),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(unix)]
+fn owner_only(metadata: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    metadata.permissions().mode() & 0o077 == 0
+}
+
+#[cfg(not(unix))]
+fn owner_only(_: &std::fs::Metadata) -> bool {
+    true
 }
 
 /// 文件的修改时间；不存在时为 `None`（模型轨迹按修改时间从旧到新淘汰文件，docs/specs/rust-cli/model-io.md §3.3）。

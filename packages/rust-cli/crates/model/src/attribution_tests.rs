@@ -103,6 +103,30 @@ fn session_types_and_missing_parts() {
     assert!(headers.contains(&(QUERY_ID, "run_".to_owned())));
 }
 
+/// Fork: the desktop workspace model calls name a requester session (account credentials come from the Host for its
+/// workspace) but are workspace-scoped like Node's: `x-zcode-session-type` is `other`, the session id is still sent.
+#[test]
+fn workspace_model_calls_are_other_with_their_session() {
+    let options = RequestOptions {
+        session_id: Some(SessionId::new("workspace-text-1")),
+        ..RequestOptions::default()
+    };
+    for (source, name) in [
+        (SideSource::GitCommitMessage, "git_commit_message"),
+        (SideSource::WorkspaceText, "workspace_generate_text"),
+        (
+            SideSource::ConnectivityProbe,
+            "provider_settings_connectivity",
+        ),
+    ] {
+        let origin = Origin::of(&request(QuerySource::Side(source), options.clone()));
+        let headers = headers_of(&origin, "http://127.0.0.1:9");
+        assert_eq!(headers[1], (SESSION_TYPE, "other".to_owned()));
+        assert!(headers.contains(&(QUERY_SOURCE, name.to_owned())));
+        assert!(headers.contains(&(SESSION_ID, "workspace-text-1".to_owned())));
+    }
+}
+
 fn headers_of(origin: &Origin, base_url: &str) -> Vec<(&'static str, String)> {
     headers(origin, base_url, "t", "q".to_owned())
 }

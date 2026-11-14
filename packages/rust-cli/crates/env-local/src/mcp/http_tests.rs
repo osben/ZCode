@@ -13,3 +13,14 @@ fn configured_headers_are_secret() {
     assert!(shown.contains("authorization"), "{shown}");
     assert!(!shown.contains("t0k-secret"), "{shown}");
 }
+
+/// Fork: MCP traffic stays out of the Network panel, like Node's `withoutNetworkCapture`
+/// (specs/fork-rust-network-capture.md, case 8). Every MCP request is built through `with_headers`.
+#[test]
+fn mcp_requests_are_not_observed() {
+    let none = BTreeMap::new();
+    assert!(!with_headers(HttpRequest::get("http://h/sse"), &none).observed);
+    let some = BTreeMap::from([("x-a".to_owned(), "b".to_owned())]);
+    assert!(!with_headers(HttpRequest::post("http://h/mcp", "{}"), &some).observed);
+    assert!(HttpRequest::get("http://h/other").observed);
+}

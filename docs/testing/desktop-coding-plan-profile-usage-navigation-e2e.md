@@ -18,4 +18,4 @@ These cases verify navigation semantics only, not Coding Plan entitlements, quot
 
 ## Test placement
 
-Both cases live in `packages/desktop/test/e2e/e2ecase-regression.test.ts` with the default-workspace precondition. The test clicks the currently visible avatar menu and the `使用统计` item through shared test ids, so hidden workspace DOM kept by the settings page cannot affect the assertions.
+Both cases live in `packages/desktop/test/e2e/infrastructure/smoke/e2ecase-regression.test.ts` with the default-workspace precondition. The test clicks the currently visible avatar menu and the `使用统计` item through shared test ids, so hidden workspace DOM kept by the settings page cannot affect the assertions.

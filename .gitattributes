@@ -30,3 +30,9 @@ apps/zcode-cli/packages/visualize-plugin/skills/visualize/assets/vendor/** -text
 # (specs/fork-agent-runtime-selection.md "Source"). Upstream bytes are kept as they are
 # (its migration SQL feeds checksums shared with the Node agent); Rust code is checked by cargo fmt/clippy.
 packages/rust-cli/** -whitespace linguist-vendored=true
+
+# Built-in design plugin: third-party design resources keep upstream bytes (license records check the original hash);
+# the SessionStart hook is a dual sh/cmd script and CRLF breaks sh parsing, so force LF.
+apps/zcode-cli/packages/design-plugin/skills/design/design-resources/** -text -whitespace linguist-vendored=true
+apps/zcode-cli/packages/design-plugin/hooks/design-rules text eol=lf
+apps/zcode-cli/packages/design-plugin/hooks/run-hook.cmd text eol=lf

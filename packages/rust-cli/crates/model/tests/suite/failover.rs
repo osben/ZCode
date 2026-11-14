@@ -58,8 +58,29 @@ impl ModelEndpoints for Rotating {
                 ..ModelCapabilities::default()
             },
             renewable: true,
+            compress_body_over: None,
         })
     }
+}
+
+/// A model on [`Rotating`] endpoints at the fixture.
+async fn rotating(server: &Fixture, retries: u32) -> (Arc<Rotating>, ProviderModel) {
+    let endpoints = Arc::new(Rotating {
+        base_url: server.url(),
+        issued: Mutex::new(0),
+        rejected: Mutex::new(Vec::new()),
+    });
+    let egress = Arc::new(Egress::new(NetworkPolicy::default()).await.unwrap());
+    let model = ProviderModel::new(
+        egress,
+        endpoints.clone(),
+        clock(),
+        RouteOptions {
+            retry: fast_retry(retries),
+            ..RouteOptions::default()
+        },
+    );
+    (endpoints, model)
 }
 
 fn error(status: u16, kind: &str) -> Reply {
@@ -74,21 +95,7 @@ async fn a_rejected_account_credential_is_renewed_once_per_failure() {
         Reply::new(200).send(text_response(&["ok"])),
     ])
     .await;
-    let endpoints = Arc::new(Rotating {
-        base_url: server.url(),
-        issued: Mutex::new(0),
-        rejected: Mutex::new(Vec::new()),
-    });
-    let egress = Arc::new(Egress::new(NetworkPolicy::default()).await.unwrap());
-    let model = ProviderModel::new(
-        egress,
-        endpoints.clone(),
-        clock(),
-        RouteOptions {
-            retry: fast_retry(2),
-            ..RouteOptions::default()
-        },
-    );
+    let (endpoints, model) = rotating(&server, 2).await;
     let events = collect(&model, request("hi", QuerySource::MainThread)).await;
     assert!(events.iter().all(Result::is_ok), "{events:?}");
     let requests = server.requests();
@@ -100,6 +107,29 @@ async fn a_rejected_account_credential_is_renewed_once_per_failure() {
             .body
             .starts_with(&format!(r#"{{"model":"{}-api","#, models::GLM_5_3))
     );
+    assert_eq!(*endpoints.rejected.lock().unwrap(), ["token-1"]);
+}
+
+/// Fork (specs/fork-rust-chatgpt-plan.md rule 10): one renewal per request for every renewable endpoint, like Node
+/// `AccountRequestRetry`; the refreshed credential rejected again ends the request.
+#[tokio::test]
+async fn a_credential_rejected_again_after_the_renewal_ends_the_request() {
+    let server = Fixture::start(vec![
+        error(401, "authentication_error"),
+        error(401, "authentication_error"),
+        Reply::new(200).send(text_response(&["ok"])),
+    ])
+    .await;
+    let (endpoints, model) = rotating(&server, 5).await;
+    let events = collect(&model, request("hi", QuerySource::MainThread)).await;
+    assert!(
+        matches!(events.as_slice(), [Err(ModelError::Authentication { .. })]),
+        "{events:?}"
+    );
+    let requests = server.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].header("x-api-key"), Some("token-1"));
+    assert_eq!(requests[1].header("x-api-key"), Some("token-2"));
     assert_eq!(*endpoints.rejected.lock().unwrap(), ["token-1"]);
 }
 

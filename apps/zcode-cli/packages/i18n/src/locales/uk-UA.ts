@@ -81,6 +81,9 @@ export const ukUA: ZCodeCopy = {
 `,
   },
   tui: {
+    approval: {
+      fromSession: (sessionId) => `З фонового сеансу ${sessionId}`,
+    },
     copy: {
       copied: "Виділений текст скопійовано в буфер обміну.",
       failed: "Не вдалося скопіювати виділений текст.",

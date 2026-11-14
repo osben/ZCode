@@ -2,6 +2,9 @@ import type { LspService } from "../lsp/service.js";
 import type { NestedInstructionTracker } from "../context/nested-instructions/tracker.js";
 import { PermissionService, ToolScheduler } from "./deps.js";
 import type { ModelRequestSessionFeature } from "@zcode/contracts";
+import type { PromptSnapshot } from "./helpers/prompt-snapshot.js";
+import type { TotalTokensBudgetState } from "./helpers/total-tokens-budget.js";
+import type { InstructionRefreshReason } from "../context/types.js";
 import type {
   Logger,
   ModelSelection,
@@ -37,6 +40,7 @@ import type {
   ToolRegistry,
   ContextBuilder,
   ContextBuildResult,
+  PendingInputEditLock,
 } from "./deps.js";
 import type {
   ActiveTurnSteeringState,
@@ -54,6 +58,7 @@ import type {
 import type { RuntimeCommandQueue } from "./command-queue.js";
 import type { RuntimeTaskRegistry } from "../runtime-task/registry.js";
 import type { WorkflowBlockedReminderClock } from "../runtime-task/workflow-blocked-reminder.js";
+import type { BackgroundSubagentStallClock } from "../subagent/background-stall.js";
 import type { DynamicWorkflowActivationSource } from "./methods/dynamic-workflow-activation.js";
 import type { AgentRuntimeCoreMethods } from "./internal-methods.js";
 import type { AgentRuntimeTurnMethods } from "./internal-turn-methods.js";
@@ -95,6 +100,8 @@ export interface AgentRuntimeInternal
   readFileState: ReadFileStateMap;
   nestedInstructionTracker: NestedInstructionTracker;
   cachedTools: ModelToolContract[] | null;
+  /** 首次装配选定的会话工具运行位置；分支刷新复用它，不能回落到另一种实现。 */
+  sessionControlKind?: "cli" | "app";
   /** 工作流工具面是否已注册（launch.md「On demand: activation」）；非 onDemand 会话出生即 true。 */
   dynamicWorkflowToolsActivated: boolean;
   dynamicWorkflowActivationSource?: DynamicWorkflowActivationSource;
@@ -116,6 +123,12 @@ export interface AgentRuntimeInternal
   // A runtime restored from storage has not checked for a repository itself yet; read once on the first environment announcement, then cleared.
   repositoryRecheckPending?: boolean;
   latestContextBuildResult?: ContextBuildResult;
+  // 指令增量的 reason：未设置即 session_start；compaction 提交重读后改为 compaction，之后不再改回。
+  instructionRefreshReason?: InstructionRefreshReason;
+  // 最近一次读取时读不出来的指令文件与 Memory 索引路径（启动与 compaction 采用重读时写入）；不算删除。
+  unreadableInstructionPaths?: ReadonlySet<string>;
+  // 主会话的 prompt 快照（helpers/prompt-snapshot.ts 是唯一写入方）；undefined 没有，null 已清掉。
+  promptSnapshot?: PromptSnapshot | null;
   memoryRoot?: string;
   memoryIndexContent?: string;
   memoryRecallState: MemoryRecallState;
@@ -152,6 +165,8 @@ export interface AgentRuntimeInternal
    * 恒在场；可选只为让手写的局部 runtime 桩不必带它。
    */
   workflowBlockedReminder?: WorkflowBlockedReminderClock;
+  /** 后台 Agent 无进展提醒（subagent/background-stall.ts）。 */
+  subagentStallReminder?: BackgroundSubagentStallClock;
   branchGeneration: number;
   artifactStore?: ToolArtifactStorePort;
   executionPort?: ExecutionPort;
@@ -165,10 +180,14 @@ export interface AgentRuntimeInternal
   sessionMailboxPort?: SessionMailboxPort;
   sessionPersisted: boolean;
   needsPlanModeExitReminder: boolean;
+  /** 恢复时对账出的「上一代 runtime 退出时被中断的后台 Agent」提醒，下一轮请求前落盘后清空。 */
+  pendingPreviousRuntimeAgentNotice?: string;
   latestConversationMessageId?: MessageId;
   latestAssistantMessageId?: MessageId;
   latestAssistantTurnId?: TurnId;
   mainTurnCacheHitAggregate: MainTurnCacheHitAggregate;
+  /** token 预算倒数的计数器；只在内存，resume 时重新开始。 */
+  totalTokensBudget: TotalTokensBudgetState;
   currentTurnFileChanges: RuntimeTurnFileChangeMap;
   lastAssistantCompletedAtMs?: number;
   autoCompactConsecutiveFailures: number;
@@ -180,6 +199,7 @@ export interface AgentRuntimeInternal
   activeTurnStartReservation?: ActiveTurnStartReservation;
   pendingInputSequence: number;
   pendingInputReservations: Map<string, string>;
+  pendingInputEditLocks: Map<string, PendingInputEditLock>;
   permissionFullAccessPending?: boolean;
   pendingInputDrains?: number;
   lastPermissionGrantId?: string;
@@ -191,6 +211,7 @@ export interface AgentRuntimeInternal
   backgroundTaskNotificationsSealed: boolean;
   backgroundTaskNotificationSealReason?: BackgroundTaskNotificationSealReason;
   pendingModelChangeTimeline?: PendingModelChangeTimeline;
+  pendingWorktreeCreation?: import("@zcode/contracts").WorktreeCreationFact;
   sessionStartHookRan: boolean;
   /** Title generation attempts that reached the model in this runtime (specs/session-title-polish.md §6). */
   sessionTitleGenerationAttempts: number;

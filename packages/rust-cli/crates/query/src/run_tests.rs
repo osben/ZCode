@@ -50,6 +50,8 @@ pub(crate) fn request(text: &str) -> QueryRequest {
             root: EnvPath::new("/work"),
         },
         vec![Message::User(UserMessage {
+            stall_execution: None,
+            intent: None,
             id: MessageId::new("msg_user"),
             content: vec![ContentBlock::Text {
                 text: text.to_owned(),
@@ -106,6 +108,38 @@ async fn a_text_reply_ends_the_loop_after_one_request() {
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0].system[0].text, "system");
     assert_eq!(requests[0].messages[0].role, ApiRole::User);
+}
+
+/// Fork: the desktop opens the tool row while the input streams (Node `tool_input_start`): the start of a streamed
+/// `tool_use` block comes before its input deltas.
+#[tokio::test]
+async fn a_streamed_tool_call_is_announced_before_its_input() {
+    let model = Arc::new(ScriptedModel::new(vec![
+        tool_use_response("toolu_1", "Read", &json!({"file_path": "a"})),
+        text_response(&["done"]),
+    ]));
+    let (_, sink) = run_once(model, Vec::new(), request("read a")).await;
+    let events = sink.events();
+    let started = events
+        .iter()
+        .position(|event| {
+            matches!(event, QueryEvent::ToolInputStarted { message: 0, index: 0, tool_use, name }
+                if tool_use.as_str() == "toolu_1" && name == "Read")
+        })
+        .expect("tool input start");
+    let input = events
+        .iter()
+        .position(|event| {
+            matches!(
+                event,
+                QueryEvent::Delta {
+                    delta: rust_cli_kernel_api::model::BlockDelta::InputJson(_),
+                    ..
+                }
+            )
+        })
+        .expect("input delta");
+    assert!(started < input);
 }
 
 #[tokio::test]

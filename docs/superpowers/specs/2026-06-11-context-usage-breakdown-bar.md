@@ -24,4 +24,12 @@ UI rules:
 - The legend uses a compact row layout, works for zh/en and mobile Web narrow widths, and shows no raw char/token counts.
 - With no breakdown or zero total chars, the header bar falls back to a plain single-color used fill; the compact button and cache hit rate are unaffected.
 
+## Relation to Context composition
+
+The bar's `{source, chars}` is a coarse projection of the finer categories in
+[Context composition](../../../apps/zcode-cli/docs/design/v2/model/context-composition.md); both come from the same breakdown.
+
+- The 7 wire `source` values are unchanged. The finer categories (reminders, page tools, deferred tools, compaction summary) appear only in Context composition query results and project back to these 7 values per that doc's section 3.1 table.
+- After the missed-count fix, reminders (environment, mode, subagent list, etc.) count under "Other" (`meta_user_context`), and deferred tools count by name and description only. Segment ratios are more accurate; legend and color rules are unchanged.
+
 Non-goals: token accounting for used/size is unchanged; tool/skill debug-log detail is not exposed to the UI; no new ordering semantics for the desktop busy queue or mobile replayable queue. Desktop `desktop-continuous` and mobile `web-remote-replayable` only pass through the same usage payload — snapshot, stream, queue, owner, and recovery semantics unchanged.

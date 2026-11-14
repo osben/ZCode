@@ -111,6 +111,7 @@ mod tests {
                     text: body.to_owned(),
                 },
                 cache_control: None,
+                meta: false,
             }],
             output_config: None,
         }
@@ -178,6 +179,7 @@ mod tests {
                     is_error: false,
                 },
                 cache_control: None,
+                meta: false,
             }],
             output_config: None,
         };
@@ -207,6 +209,7 @@ mod tests {
                     input: serde_json::Value::Null,
                 },
                 cache_control: None,
+                meta: false,
             }],
             output_config: None,
         };
@@ -221,6 +224,7 @@ mod tests {
                     is_error: false,
                 },
                 cache_control: None,
+                meta: false,
             }],
             output_config: None,
         };

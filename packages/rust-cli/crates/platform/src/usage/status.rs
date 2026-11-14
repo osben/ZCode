@@ -3,9 +3,9 @@
 use rust_cli_kernel_api::provider::CatalogConnection;
 use serde_json::Value;
 
-use super::{FAMILIES, Login};
+use super::FAMILIES;
 use crate::account;
-use crate::credentials::Credentials;
+use crate::credentials::{CredentialError, Credentials};
 use crate::{ListedModel, Platform};
 use rust_cli_base::account::Family;
 
@@ -19,12 +19,23 @@ pub enum AccountPlan {
     Team(usize),
 }
 
+/// Whether a family is signed in (fork spec `fork-rust-credential-cipher.md` F2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FamilyLogin {
+    /// OAuth 登录（profile id 与 access token 都在），或个人 provider 有手工 key。
+    SignedIn,
+    /// The values are absent.
+    SignedOut,
+    /// The store or this family's values could not be read (locked keyring, unavailable Host cipher, undecryptable
+    /// value). Not a logout: nothing may be signed in or out over it.
+    Unreadable,
+}
+
 /// 一个内置家族的账号状态。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FamilyAccount {
     pub family: Family,
-    /// OAuth 登录（profile id 与 access token 都在），或个人 provider 有手工 key。
-    pub signed_in: bool,
+    pub login: FamilyLogin,
     /// 登录的账号：user_info 的邮箱，其次名字；不知道时为 ""。
     pub account: String,
     pub plan: AccountPlan,
@@ -38,8 +49,11 @@ pub struct FamilyAccount {
 
 /// user_info 里给人看的账号：zai 存后端原始对象（`email`、`name`），bigmodel 存 App 的 profile（`rawProfile` 里有
 /// 原始对象，外面是 `displayName`、`username`）。
-fn account_label(credentials: &Credentials, family: Family) -> Option<String> {
-    let raw = credentials.present(&format!("oauth:{}:user_info", family.as_str()))?;
+async fn account_label(credentials: &Credentials, family: Family) -> Option<String> {
+    let raw = credentials
+        .present(&format!("oauth:{}:user_info", family.as_str()))
+        .await
+        .ok()??;
     let parsed: Value = serde_json::from_str(raw.expose()).ok()?;
     let inner = &parsed["rawProfile"];
     [
@@ -58,15 +72,56 @@ fn account_label(credentials: &Credentials, family: Family) -> Option<String> {
 }
 
 impl Platform {
-    /// 每个内置家族的账号状态（FAMILIES 的顺序）。凭据读不出时都算没有登录。
+    /// 每个内置家族的账号状态（FAMILIES 的顺序）。凭据读不出时是 `Unreadable`，不算没有登录（fork spec F2）。
     pub async fn family_accounts(&self) -> Vec<FamilyAccount> {
         let view = self.usage_view().await;
         let selection = self.default_selection().await;
         let credentials = self.credentials.read().await.ok();
         let current = self.registry.current().await;
+        let mut readings = Vec::new();
+        for family in FAMILIES {
+            let individual = view
+                .families
+                .iter()
+                .find(|p| p.family == family)
+                .and_then(|p| p.individual.as_ref())
+                .map(|p| p.provider.clone())
+                .unwrap_or_default();
+            let (login, account) = match credentials.as_ref() {
+                None => (FamilyLogin::Unreadable, String::new()),
+                Some(c) => {
+                    // Only this family's own values: an undecryptable shared value (the ZCode JWT, the active
+                    // provider) must not mark every family unreadable (fork spec F2, B8).
+                    let own = async {
+                        Ok::<_, CredentialError>((
+                            account::profile_id(c, family).await?,
+                            c.present(account::oauth_key(family.as_str())).await?,
+                        ))
+                    };
+                    let login = match own.await {
+                        Ok((Some(_), Some(_))) => FamilyLogin::SignedIn,
+                        Ok(_) if individual.is_empty() => FamilyLogin::SignedOut,
+                        // A readable manual key also wins over an undecryptable OAuth value, as in the account
+                        // overlay; without one the OAuth failure stays unreadable.
+                        own => match (own, account::manual_authorized(c, &individual).await) {
+                            (_, Ok(true)) => FamilyLogin::SignedIn,
+                            (Ok(_), Ok(false)) => FamilyLogin::SignedOut,
+                            _ => FamilyLogin::Unreadable,
+                        },
+                    };
+                    let account = match login {
+                        FamilyLogin::Unreadable => String::new(),
+                        _ => account_label(c, family).await.unwrap_or_default(),
+                    };
+                    (login, account)
+                }
+            };
+            readings.push((login, account));
+        }
         FAMILIES
             .into_iter()
-            .map(|family| {
+            .zip(readings)
+            .map(|(family, (login, account))| {
                 let plans = view.families.iter().find(|p| p.family == family);
                 let individual = plans
                     .and_then(|p| p.individual.as_ref())
@@ -77,15 +132,6 @@ impl Platform {
                     .map(|t| (t.provider.clone(), t.teams.clone()))
                     .unwrap_or_default();
                 let start = format!("account:{}-start-plan", family.as_str());
-                let signed_in = credentials.as_ref().is_some_and(|c| {
-                    let login = Login::read(c, family);
-                    (login.identity.is_some() && login.token.is_some())
-                        || (!individual.is_empty() && account::manual_authorized(c, &individual))
-                });
-                let account = credentials
-                    .as_ref()
-                    .and_then(|c| account_label(c, family))
-                    .unwrap_or_default();
                 let (plan, provider) = match &selection {
                     Some(s) if !team.is_empty() && s.provider == team => {
                         let at = s
@@ -107,7 +153,7 @@ impl Platform {
                     .collect();
                 FamilyAccount {
                     family,
-                    signed_in,
+                    login,
                     account,
                     plan,
                     teams,

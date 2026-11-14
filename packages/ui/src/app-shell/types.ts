@@ -81,7 +81,12 @@ export interface CreateTaskOptions {
   initialPrompt?: string;
   /** Current-draft handoff after project creation; passed in renderer memory only. */
   initialComposerDraft?: ComposerDraftHandoff;
-  /** Structured mention matching the initialPrompt canonical prefix; for editor display only. */
+  /**
+   * 在新的受管 worktree 中准备草稿（docs/git/worktree.md §3.2）：Host 立即创建 worktree，
+   * 草稿迁入后由用户照常发送。仅本地项目；远程由 Host 拒绝。
+   */
+  worktree?: { startRef?: string };
+  /** 与 initialPrompt canonical 前缀对应的结构化 mention；仅用于编辑器展示。 */
   initialPromptMention?: ComposerMentionPrefill;
   /** Which workspace the new task lands in; defaults to the active workspace. */
   targetWorkspace?: {
@@ -279,6 +284,7 @@ export interface WorkspaceShellLayoutProps extends Omit<AppProps, "baseFeedbackS
   activeTaskId: string | null;
   /** Formal session-owner id of the right pane; empty for drafts — the pane's internal warm-up session is not copied. */
   sidePaneOwnerId: string | null;
+  handleSidePaneDraftPromotion: (sessionId: string) => void;
   activeTraceId: string | null;
   activeSessionId: string | null;
   activeTaskProvider: ZCodeProvider | null;

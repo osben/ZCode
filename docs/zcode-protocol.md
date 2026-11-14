@@ -68,20 +68,22 @@ the command inbox.
 The full command set is typed in `packages/shared/src/zcode-protocol-v4/command.ts` (the single type
 source of truth); main groups:
 
-| Group                  | Commands                                                                                                       |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------- |
-| Session / input        | `createSession`, `createSelectionSideSession`, `sendText`, `sendGoalCommand`, `renameSession`, `deleteSession` |
-| Generation control     | `stop`, `compact`, `retryTurn`, `editUserQuery`, `forkAssistant`                                               |
-| File rewind            | `applyFileRewind`                                                                                              |
-| Queue                  | `sendQueuedNow`, `editQueueItem`, `reorderQueueItem`, `deleteQueueItem`, `setAutoDrain`                        |
-| Config                 | `switchModelConfig`, `switchCollaborationMode`, `setFollowupMode`                                              |
-| Goal / background work | `pauseGoal`, `resumeGoal`, `cancelBackgroundWork`                                                              |
-| Blocking interaction   | `resolveInteraction`, `snoozeInteractionAutoResolution`                                                        |
+| Group                  | Commands                                                                                                                             |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Session / input        | `createSession`, `createSelectionSideSession`, `sendText`, `sendGoalCommand`, `renameSession`, `deleteSession`                       |
+| Generation control     | `stop`, `compact`, `retryTurn`, `editUserQuery`, `forkAssistant`                                                                     |
+| File rewind            | `applyFileRewind`                                                                                                                    |
+| Queue                  | `sendQueuedNow`, `lockQueueItemEdit`, `editQueueItem`, `releaseQueueItemEdit`, `reorderQueueItem`, `deleteQueueItem`, `setAutoDrain` |
+| Config                 | `switchModelConfig`, `switchCollaborationMode`, `setFollowupMode`                                                                    |
+| Goal / background work | `pauseGoal`, `resumeGoal`, `cancelBackgroundWork`                                                                                    |
+| Blocking interaction   | `resolveInteraction`, `snoozeInteractionAutoResolution`                                                                              |
 
 `session/steer`, `session/rewind` and the standalone rewind command are deleted. Guide input is
 adjudicated by `sendText` + `inputRouting`/follow-up mode; retry and edit use `retryTurn` and
 `editUserQuery`; workspace file undo uses `applyFileRewind` and does not implicitly truncate session
 history.
+
+`lockQueueItemEdit`, `releaseQueueItemEdit`, the attachment/config/`editorId` fields of `editQueueItem`, and the `mode`/`planEnabled` fields of `editUserQuery` belong to queue-freezing edit, see [Composer edit mode](ui/composer-edit-mode.md). `editQueueItem` does not require `baseRevision`; concurrency protection is carried by the edit lock.
 
 ACK statuses are `accepted | rejected | stale | duplicate | noop | failed`. An ACK only means the
 command adjudication result; the final UI state must come from the authoritative projection flowing

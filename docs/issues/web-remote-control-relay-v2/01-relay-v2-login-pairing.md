@@ -256,7 +256,7 @@ auth_ack(matched) ─▶ bootstrap-request ─▶ version guard ─▶ workspace
   03/04/05 only add/remove states on existing dialog, login and failure pages; new copy is listed in each
   ticket doc first. Every UI-touching ticket delivers a screenshot matrix after implementation: desktop dark/
   light x zh-CN/en-US (04's E2E yields it), phone narrow/wide x dark/light x zh-CN/en-US (new pending
-  screenshot case modeled on `packages/web/test/e2e/manual-review/pending/remote-version.mjs`, never
+  screenshot case modeled on `packages/web/test/e2e/remote-control/transport/manual-review/pending/remote-version.mjs`, never
   auto-promoted).
 - Desktop E2E adds exactly one case: "with the user logged out, opening the remote dialog shows login required
   and main made no registration or relay connection", added and promoted per the E2E workflow skill.

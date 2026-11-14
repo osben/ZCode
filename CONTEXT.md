@@ -24,6 +24,12 @@ _Avoid_: "Third-party marketplace" for `claude-plugins-official`; "third-party" 
 A full-marketplace refresh triggered by the refresh button in the store page's top bar. It is not subject to the auto-refresh throttle.
 _Avoid_: "Refresh" or "check for updates" in documentation; use "manual refresh."
 
+**Session Reload**:
+Rebuilds the running instance of the same task, keeping the task identity and history. The automatic reload after an install waits until the current work ends safely; it does not replay the previous request. Described separately from refreshing the marketplace catalog.
+
+**Plugin Readiness**:
+The current session can actually use the plugin's capabilities. A successful install, an enabled state, or a ready session instance does not prove plugin readiness on its own.
+
 ## Store Page Structure
 
 **Public Segment**:

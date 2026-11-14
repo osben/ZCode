@@ -1,4 +1,5 @@
 import type { Logger } from "@zcode/contracts";
+import { startCliMemoryDiagnostics } from "@zcode/adapters/memory-diagnostics";
 import {
   createMemorySampleWriteGate,
   memoryUsageToSampleFields,
@@ -61,7 +62,21 @@ export function startProtocolResourceSampler(
       },
     });
     sampler.start();
-    return sampler;
+    let diagnostics: { stop(): void } | undefined;
+    try {
+      diagnostics = startCliMemoryDiagnostics(() =>
+        server.collectMemoryDiagnostics({ includeEventStats: false }),
+      );
+    } catch {
+      // inspector 不可用时不能影响协议握手和既有资源采样。
+    }
+    return {
+      start: () => sampler.start(),
+      stop: () => {
+        diagnostics?.stop();
+        sampler.stop();
+      },
+    };
   } catch {
     // Resource telemetry is best effort; initialization failure must not change the Agent startup result.
     return undefined;

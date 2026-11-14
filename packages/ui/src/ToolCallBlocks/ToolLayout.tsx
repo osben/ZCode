@@ -1,4 +1,5 @@
-import { memo, type ReactNode, useEffect, useRef, useState } from "react";
+import { SummaryPreviewContext, SummaryIconOnlyContext } from "@/v4/conversationRowContext.js";
+import { memo, useContext, type ReactNode, useEffect, useRef, useState } from "react";
 import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible.js";
 import { Button } from "@/components/ui/button.js";
 import { cn } from "@/components/lib/utils.js";
@@ -39,7 +40,6 @@ interface ToolLayoutProps {
   expandedPrimaryText?: ReactNode;
   secondaryText?: ReactNode;
   expandedSecondaryText?: ReactNode;
-  summaryContentSeparator?: ReactNode;
   animateSummaryContent?: boolean;
   disableSummaryContentAnimation?: boolean;
   summaryContentKey?: string;
@@ -83,7 +83,6 @@ function ToolLayoutComponent({
   expandedPrimaryText,
   secondaryText,
   expandedSecondaryText,
-  summaryContentSeparator,
   animateSummaryContent = false,
   disableSummaryContentAnimation = false,
   summaryContentKey,
@@ -139,11 +138,13 @@ function ToolLayoutComponent({
   // Many tool calls update continuously while streaming, so spinning loading icons
   // would consume rendering resources for a long time; use a text shimmer and status label while running, and keep the icon static.
   const summaryIcon = icon;
-  // Keep the kind label shimmer while running to show that the tool is still active;
-  // outside the running state, retain the faintest text color so the summary stays understated.
+  // 运行态需要保留 kind 文案扫光，用来表达当前工具仍在进行中；
+  // 非运行态统一使用次要色和普通字重，避免类别比动作正文更突出。
   const kindLabelClassName = cn(
-    "font-medium whitespace-nowrap shrink-0",
-    isRunning ? "animated-gradient-text" : "text-foreground-subtlest",
+    "font-normal whitespace-nowrap shrink-0",
+    isRunning
+      ? "animated-gradient-text animated-gradient-text-foreground"
+      : "text-foreground-subtle",
   );
 
   useEffect(() => {
@@ -333,7 +334,6 @@ function ToolLayoutComponent({
         primaryText={summaryPrimaryText}
         prioritizePrimaryText={prioritizePrimaryText}
         secondaryText={summarySecondaryText}
-        separator={summaryContentSeparator}
         showIcon={showIcon}
         sourceLabel={sourceLabel}
         statusNode={statusNode}
@@ -359,5 +359,29 @@ function ToolLayoutComponent({
   );
 }
 
-export const ToolLayout = memo(ToolLayoutComponent);
+export const ToolLayout = memo(function ToolLayoutWithPreview(props: ToolLayoutProps) {
+  const preview = useContext(SummaryPreviewContext);
+  const iconOnly = useContext(SummaryIconOnlyContext);
+  // 统计图标直接复用原 renderer 的图标，不挂载摘要正文、详情或动画状态。
+  if (iconOnly) return <>{props.icon}</>;
+  // 分组头只展示原始摘要，不挂载详情、自动展开或写入原工具的展开记忆。
+  return (
+    <ToolLayoutComponent
+      {...props}
+      {...(preview
+        ? {
+            persistOpenKey: `summary-preview:${props.toolId}`,
+            canToggle: false,
+            forceOpen: false,
+            autoOpen: false,
+            autoCollapseOnComplete: false,
+            summaryAction: undefined,
+            content: undefined,
+            renderContent: undefined,
+            animateSummaryContent: false,
+          }
+        : {})}
+    />
+  );
+});
 ToolLayout.displayName = "ToolLayout";

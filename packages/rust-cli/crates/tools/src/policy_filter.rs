@@ -80,6 +80,15 @@ impl ToolRegistry for PolicyFiltered {
         }
     }
 
+    fn find_for(&self, session: &SessionId, name: &str) -> Option<Arc<dyn Tool>> {
+        let rules = self.gate.current_rules();
+        match self.inner.find_for(session, name) {
+            Some(tool) if Self::denied(&rules, tool.name()) => None,
+            Some(tool) => Some(tool),
+            None => self.restored_one(&rules, name),
+        }
+    }
+
     fn withheld(&self, name: &str) -> Option<Arc<dyn Tool>> {
         let rules = self.gate.current_rules();
         // 已经补回清单里的不再算藏起来的。

@@ -473,6 +473,9 @@ async function flushMicrotasks(times = 5): Promise<void> {
 
 const compatIndexFrameSeqByEmitter = new WeakMap<Emitter<SessionsIndexTopicWireFrame>, number>();
 
+/** Sessions of the next initial sessions-index snapshot (reset after each test that sets them). */
+let initialIndexSessions: SessionSummary[] = [];
+
 function fireIndexSnapshot(indexFrameEmitter: Emitter<SessionsIndexTopicWireFrame>): void {
   const seq = 100;
   compatIndexFrameSeqByEmitter.set(indexFrameEmitter, seq);
@@ -488,7 +491,7 @@ function fireIndexSnapshot(indexFrameEmitter: Emitter<SessionsIndexTopicWireFram
         protocolVersion: 1,
         workspaceId: "/repo",
         logEpoch: "epoch-compat",
-        sessions: [],
+        sessions: initialIndexSessions,
       },
     },
   };
@@ -895,6 +898,155 @@ describe("ZCode legacy task compat task index", () => {
         workspaceIdentity: "ssh://other/repo",
       }),
     ).rejects.toThrow("workspace mismatch");
+  });
+
+  // specs/fork-task-index-cli-facts-admission.md: the project tree lists only rows admitted with CLI facts.
+  describe("CLI-facts admission from sessions-index summaries", () => {
+    function summary(
+      phase: SessionSummary["phase"],
+      title: string,
+      sessionId = "goal-task",
+    ): SessionSummary {
+      return {
+        sessionId,
+        workspaceId: "/repo",
+        title,
+        phase,
+        sessionEnded: phase === "completedSuccess" || phase === "error",
+        hasBackgroundWork: false,
+        lastActivityAt: 100,
+        createdAt: 1,
+      };
+    }
+
+    function cliCreatedAt(taskId = "goal-task"): unknown {
+      const rawDatabase = new DatabaseSync(getTasksIndexDatabasePath());
+      try {
+        const row = rawDatabase
+          .prepare("SELECT cli_created_at FROM tasks WHERE workspace_key = ? AND task_id = ?")
+          .get("/repo", taskId) as { cli_created_at: unknown } | undefined;
+        return row ? row.cli_created_at : "missing";
+      } finally {
+        rawDatabase.close();
+      }
+    }
+
+    function taskTitle(taskId: string): unknown {
+      const rawDatabase = new DatabaseSync(getTasksIndexDatabasePath());
+      try {
+        const row = rawDatabase
+          .prepare("SELECT title FROM tasks WHERE workspace_key = ? AND task_id = ?")
+          .get("/repo", taskId) as { title: unknown } | undefined;
+        return row ? row.title : "missing";
+      } finally {
+        rawDatabase.close();
+      }
+    }
+
+    it("admits a session titled while still draft once it runs and completes", async () => {
+      const { indexFrameEmitter, service } = createService();
+      await service.createTask({ workspacePath: "/repo", provider: "glm" });
+      await flushMicrotasks();
+      fireIndexUpsert(indexFrameEmitter, summary("draft", "Ship the goal"));
+      fireIndexUpsert(indexFrameEmitter, summary("running", "Ship the goal"));
+      fireIndexUpsert(indexFrameEmitter, summary("completedSuccess", "Ship the goal"));
+      await vi.waitFor(() => expect(typeof cliCreatedAt()).toBe("number"));
+    });
+
+    it("admits a session that goes from draft straight to a terminal phase", async () => {
+      const { indexFrameEmitter, service } = createService();
+      await service.createTask({ workspacePath: "/repo", provider: "glm" });
+      await flushMicrotasks();
+      fireIndexUpsert(indexFrameEmitter, summary("draft", "Ship the goal"));
+      fireIndexUpsert(indexFrameEmitter, summary("completedSuccess", "Ship the goal"));
+      await vi.waitFor(() => expect(typeof cliCreatedAt()).toBe("number"));
+    });
+
+    it("keeps an untouched draft out of the task index", async () => {
+      const { indexFrameEmitter, service } = createService();
+      await service.createTask({ workspacePath: "/repo", provider: "glm" });
+      await flushMicrotasks();
+      fireIndexUpsert(indexFrameEmitter, summary("draft", ""));
+      // A sentinel session delivered right after the draft is admitted through the same path; once
+      // its row exists, any admission of the draft would have been written too.
+      fireIndexUpsert(indexFrameEmitter, summary("running", "Sentinel", "sentinel-task"));
+      await vi.waitFor(() => expect(typeof cliCreatedAt("sentinel-task")).toBe("number"));
+      expect(cliCreatedAt()).toBe("missing");
+    });
+
+    it("keeps a newer online summary over a later baseline batch of the initial snapshot", async () => {
+      // 64 sessions fill the first baseline batch; the late session is seeded in the second one.
+      const fillers = Array.from({ length: 64 }, (_, index) =>
+        summary("completedSuccess", `Filler ${index}`, `filler-${index}`),
+      );
+      initialIndexSessions = [
+        ...fillers,
+        summary("completedSuccess", "Baseline title", "late-task"),
+      ];
+      try {
+        const { indexFrameEmitter, service, taskIndexRepo } = createService();
+        const lateWrites: { title: string; done: Promise<unknown> }[] = [];
+        const applyCliFacts = taskIndexRepo.applyCliFacts.bind(taskIndexRepo);
+        vi.spyOn(taskIndexRepo, "applyCliFacts").mockImplementation((params) => {
+          const done = applyCliFacts(params);
+          if (params.meta.taskId === "late-task")
+            lateWrites.push({ title: params.meta.title, done });
+          return done;
+        });
+        await service.createTask({ workspacePath: "/repo", provider: "glm" });
+        fireIndexUpsert(indexFrameEmitter, {
+          ...summary("completedSuccess", "Online title", "late-task"),
+          lastActivityAt: 200,
+        });
+        // One write from the online summary, one from the second baseline batch.
+        await vi.waitFor(() => expect(lateWrites).toHaveLength(2));
+        await Promise.allSettled(lateWrites.map((write) => write.done));
+        // The baseline write of the second batch carries the current summary, never the stale snapshot copy.
+        expect(lateWrites.map((write) => write.title)).toEqual(["Online title", "Online title"]);
+        expect(taskTitle("late-task")).toBe("Online title");
+      } finally {
+        initialIndexSessions = [];
+      }
+    });
+
+    it("admits a fork from the initial snapshot only after its parent's CLI facts", async () => {
+      // The fork is listed first, so a single concurrent batch would claim it before the parent is owned.
+      initialIndexSessions = [
+        { ...summary("completedSuccess", "Forked", "fork-child"), parentSessionId: "fork-parent" },
+        summary("completedSuccess", "Parent", "fork-parent"),
+      ];
+      try {
+        const { service, taskIndexRepo } = createService();
+        const order: string[] = [];
+        const applyCliFacts = taskIndexRepo.applyCliFacts.bind(taskIndexRepo);
+        vi.spyOn(taskIndexRepo, "applyCliFacts").mockImplementation(async (params) => {
+          const meta = await applyCliFacts(params);
+          order.push(`facts:${params.meta.taskId}`);
+          return meta;
+        });
+        const admitForkSummary = taskIndexRepo.admitForkSummary.bind(taskIndexRepo);
+        vi.spyOn(taskIndexRepo, "admitForkSummary").mockImplementation((params) => {
+          order.push(`fork:${params.meta.taskId}`);
+          return admitForkSummary(params);
+        });
+        await service.createTask({ workspacePath: "/repo", provider: "glm" });
+        await vi.waitFor(() => expect(order).toContain("facts:fork-child"));
+        expect(order).toEqual(["facts:fork-parent", "fork:fork-child", "facts:fork-child"]);
+      } finally {
+        initialIndexSessions = [];
+      }
+    });
+
+    it("admits existing sessions from the initial snapshot", async () => {
+      initialIndexSessions = [summary("completedSuccess", "Earlier task", "earlier-task")];
+      try {
+        const { service } = createService();
+        await service.createTask({ workspacePath: "/repo", provider: "glm" });
+        await vi.waitFor(() => expect(typeof cliCreatedAt("earlier-task")).toBe("number"));
+      } finally {
+        initialIndexSessions = [];
+      }
+    });
   });
 
   it("exposes task ready only after the indexed session returns to an input-ready phase", async () => {

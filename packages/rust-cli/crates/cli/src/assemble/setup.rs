@@ -5,13 +5,17 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use rust_cli_base::clock::SystemClock;
-use rust_cli_base::secret::EnvSnapshot;
-use rust_cli_env_local::{LocalEnvironment, LocalMcpTransport};
+use rust_cli_base::secret::{EnvSnapshot, RedactedString};
+use rust_cli_env_local::LocalEnvironment;
 use rust_cli_kernel_api::env::WorkspaceRef;
+use rust_cli_kernel_api::mcp::McpTransport;
+use rust_cli_kernel_api::provider::CredentialCipher;
 use rust_cli_net::Egress;
 use rust_cli_node_store::{NodeIds, NodeStore};
 use rust_cli_paths::{StoragePaths, StorageSettings};
-use rust_cli_platform::{AccountServices, CredentialSecret, Platform, node_platform};
+use rust_cli_platform::{
+    AccountServices, CredentialSecret, Platform, SystemCipher, SystemCipherInputs, node_platform,
+};
 use rust_cli_runtime::{ExtConfig, Extensions};
 
 use crate::assemble::env_layout::PrimaryPaths;
@@ -57,12 +61,14 @@ pub(crate) fn windows_profile() -> Option<PathBuf> {
     None
 }
 
-/// 平台层：Provider registry、账号（每请求鉴权、登录）与设置。
+/// 平台层：Provider registry、账号（每请求鉴权、登录）与设置。`cipher`：app-server 的凭据委托（Host → Main）；None 时
+/// (standalone) the system `enc:v2` cipher, like the Node CLI (fork spec `fork-rust-credential-cipher.md` F4).
 pub(crate) fn platform(
     facts: &Facts,
     paths: &StoragePaths,
     egress: Arc<Egress>,
     clock: Arc<SystemClock>,
+    cipher: Option<Arc<dyn CredentialCipher>>,
 ) -> Result<Platform> {
     let secret = CredentialSecret {
         explicit: facts.controller.credential_secret.clone(),
@@ -79,8 +85,21 @@ pub(crate) fn platform(
         origins,
     };
     // `ZCODE_MAX_OUTPUT_TOKENS`：Provider 配置的 `maxOutputTokens.map` 用 min(配置的 max, 它)（cli-args.md §9.1，F42）。
-    Ok(Platform::new(paths, &secret, services)
-        .with_max_output_tokens(facts.controller.max_output_tokens))
+    let cipher = cipher.unwrap_or_else(|| {
+        let env = &facts.process.env;
+        Arc::new(SystemCipher::new(SystemCipherInputs {
+            credentials: paths.credentials().as_path().to_path_buf(),
+            env_secret: env
+                .raw(rust_cli_base::names::env::ZCODE_CREDENTIAL_SECRET)
+                .map(RedactedString::new),
+            env_secret_file: env
+                .raw(rust_cli_base::names::env::ZCODE_CREDENTIAL_SECRET_FILE)
+                .map(PathBuf::from),
+            legacy: secret,
+        }))
+    });
+    let platform = Platform::with_cipher(paths, cipher, services);
+    Ok(platform.with_max_output_tokens(facts.controller.max_output_tokens))
 }
 
 /// 网络出口（config.md §2.4，F21）：按环境快照算出口策略；`NODE_EXTRA_CA_CERTS` 用不了时先在 stderr 写警告。
@@ -123,7 +142,8 @@ pub(crate) async fn account(command: login::Command) -> Result<u8> {
     let paths = facts.storage_paths(&StorageSettings::default());
     let egress = egress(&facts.process).await?;
     let clock = Arc::new(SystemClock::new(facts.process.zone.clone()));
-    let platform = platform(&facts, &paths, egress, clock)?;
+    // `zcode login`（standalone）：本地 v1 编解码。
+    let platform = platform(&facts, &paths, egress, clock, None)?;
     Ok(login::run(command, &platform).await)
 }
 
@@ -131,7 +151,7 @@ pub(crate) async fn account(command: login::Command) -> Result<u8> {
 /// 端口与 controller 的取网页，MCP 传输是同一台机器的 `McpTransport` 端口。
 pub(crate) fn environments(
     env: Arc<LocalEnvironment>,
-    mcp: Arc<LocalMcpTransport>,
+    mcp: Arc<dyn McpTransport>,
 ) -> Arc<dyn EnvironmentRegistry> {
     Arc::new(PrimaryRegistry::new(
         MachineEnv::new(env.clone(), mcp),
@@ -200,7 +220,7 @@ pub(crate) async fn extensions(
     let path = bindings.as_path().to_string_lossy();
     let bindings =
         &crate::assemble::mcp_machines::McpBindings::load(controller, workspace, &path).await;
-    let settings = mcp::settings(
+    let mut settings = mcp::settings(
         primary.files().as_ref(),
         workspace,
         (flags, allowed, prewait),
@@ -223,6 +243,9 @@ pub(crate) async fn extensions(
     };
     // `/mcp enable` 之后它也连在绑定的机器上（R5，remote-exec.md §22.2）。
     bindings.bind(&mut mcp_disabled);
+    // Fork: project stdio servers on the main env run from their file's base directory (Node).
+    config::merge::resolve_project_cwds(&mut settings.servers, &config.mcp_origins);
+    config::merge::resolve_project_cwds(&mut mcp_disabled, &config.mcp_origins);
     extensions.config = ExtConfig {
         mcp_disabled,
         mcp: settings,
@@ -232,6 +255,8 @@ pub(crate) async fn extensions(
             .collect(),
         plugins: config.plugins.clone(),
         workspace: Some(workspace.clone()),
+        // Set by the app-server's assembly when the Host owns schedules.
+        host_automations: false,
     };
     // stream-json 输入（headless.md §6.1）：Bash 后台命令的缺省期限随之不同。
     extensions.streaming_input = prewait.streaming_input;

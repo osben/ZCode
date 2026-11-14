@@ -466,7 +466,7 @@ impl Fetch for MemoryEnvironment {}
 impl MemoryEnvironment {
     fn stat_one(
         &self,
-        _workspace: &WorkspaceRef,
+        workspace: &WorkspaceRef,
         request: StatFile,
     ) -> Result<Option<FileStat>, EnvError> {
         let path = request.path.as_str();
@@ -485,7 +485,8 @@ impl MemoryEnvironment {
         Ok(match file {
             None if special => Some(stat(FileKind::Other, 0, FileVersion::new("special"))),
             Some((size, version)) => Some(stat(FileKind::File, size, version)),
-            None if self.is_dir(path) => {
+            // The workspace root exists, as a real session's does, even with no files under it.
+            None if self.is_dir(path) || path == workspace.root.as_str() => {
                 Some(stat(FileKind::Directory, 0, FileVersion::new("dir")))
             }
             None => None,

@@ -23,7 +23,26 @@ const ALL_AGENT_DISALLOWED: &[&str] = &[
     tool_names::EXIT_PLAN_MODE,
     tool_names::ENTER_PLAN_MODE,
     tool_names::ASK_USER_QUESTION,
+    // Fork: Node builds subagent runtimes without the LSP service (specs/fork-rust-lsp.md "Tool (D2)").
+    tool_names::LSP,
 ];
+
+/// Fork: the desktop Cron tools (Node registers them for the main session only).
+const MAIN_SESSION_CRON: &[&str] = &tool_names::CRON_TOOLS;
+
+/// Fork (node_desktop): the subagent tools. Node runs every child runtime with `subagents.enabled: false` (core
+/// `runtime/methods/subagent.ts`), so a child has no subagent port, no Agent and no SendMessage; Node has no ListAgents.
+const NODE_CHILD_SUBAGENT_TOOLS: &[&str] = &[
+    crate::agent_tool::NAME,
+    tool_names::SEND_MESSAGE,
+    tool_names::LIST_AGENTS,
+];
+
+/// Fork (node_desktop): the tools no subagent child of Node's desktop agent has, fork or not: the Cron tools, which
+/// Node registers for the main session only, and the subagent tools (a desktop subagent launches no subagents).
+fn node_child_lacks(name: &str) -> bool {
+    MAIN_SESSION_CRON.contains(&name) || NODE_CHILD_SUBAGENT_TOOLS.contains(&name)
+}
 
 /// 后台子代理只能用的工具（含 SendMessage、TaskStop、Monitor）。
 const ASYNC_ALLOWED: &[&str] = &[
@@ -63,6 +82,8 @@ pub(crate) struct ToolRule {
     /// Fork (node_desktop): a foreground subagent may ask the user (AskUserQuestion), delegated to
     /// the parent's ask (Node `filterSubagentChildToolNames` only removes the plan tools).
     questions: bool,
+    /// Fork (node_desktop): a child of Node's desktop agent ([`node_child_lacks`]).
+    node_child: bool,
 }
 
 impl ToolRule {
@@ -76,6 +97,7 @@ impl ToolRule {
             background,
             depth,
             questions: false,
+            node_child: false,
         }
     }
 
@@ -86,10 +108,20 @@ impl ToolRule {
         self
     }
 
+    /// Fork (node_desktop): see [`node_child_lacks`].
+    #[must_use]
+    pub(crate) fn node_child(mut self, node_child: bool) -> Self {
+        self.node_child = node_child;
+        self
+    }
+
     pub(crate) fn allows(&self, name: &str) -> bool {
         let mcp = rust_cli_kernel_api::mcp_name::is_mcp(name);
         let asks = self.questions && name == tool_names::ASK_USER_QUESTION;
         if !mcp && !asks && ALL_AGENT_DISALLOWED.contains(&name) {
+            return false;
+        }
+        if self.node_child && node_child_lacks(name) {
             return false;
         }
         // Agent 只看深度，不受异步白名单限制（先判 Agent；后台的 general-purpose 有它）。
@@ -196,6 +228,20 @@ impl ToolRegistry for FilteredTools {
         self.tools().into_iter().find(|tool| tool.name() == name)
     }
 
+    fn find_for(&self, session: &SessionId, name: &str) -> Option<Arc<dyn Tool>> {
+        if let Some(tool) = self
+            .inner
+            .find_for(session, name)
+            .filter(|tool| self.rule.allows(tool.name()))
+        {
+            return Some(tool);
+        }
+        if !SEARCH_TOOLS.contains(&name) {
+            return None;
+        }
+        self.tools().into_iter().find(|tool| tool.name() == name)
+    }
+
     fn keeps_order(&self) -> bool {
         self.rule.allow.is_some()
     }
@@ -209,6 +255,70 @@ impl ToolRegistry for FilteredTools {
     /// 同上：没有叠在它上面的工具（以前的缺省）。
     fn hides(&self, _name: &str) -> bool {
         false
+    }
+}
+
+/// Fork: a fork child keeps the main thread's registry but loses the tools Node registers for the main session only:
+/// `LSP` always (a subagent runtime has no LSP service), and under the desktop agent the tools no child of Node's
+/// desktop agent has, fork or not ([`node_child_lacks`]).
+pub(crate) struct ForkChildTools {
+    pub(crate) inner: Arc<dyn ToolRegistry>,
+    /// node_desktop: see [`node_child_lacks`].
+    pub(crate) node_child: bool,
+}
+
+impl ForkChildTools {
+    fn keeps(&self, tool: &Arc<dyn Tool>) -> bool {
+        let name = tool.name();
+        name != tool_names::LSP && !(self.node_child && node_child_lacks(name))
+    }
+}
+
+impl ToolRegistry for ForkChildTools {
+    fn tools(&self) -> Vec<Arc<dyn Tool>> {
+        self.inner
+            .tools()
+            .into_iter()
+            .filter(|tool| self.keeps(tool))
+            .collect()
+    }
+
+    fn find(&self, name: &str) -> Option<Arc<dyn Tool>> {
+        self.inner.find(name).filter(|tool| self.keeps(tool))
+    }
+
+    fn find_for(&self, session: &SessionId, name: &str) -> Option<Arc<dyn Tool>> {
+        self.inner
+            .find_for(session, name)
+            .filter(|tool| self.keeps(tool))
+    }
+
+    fn withheld(&self, name: &str) -> Option<Arc<dyn Tool>> {
+        self.inner.withheld(name).filter(|tool| self.keeps(tool))
+    }
+
+    fn hides(&self, name: &str) -> bool {
+        self.inner.hides(name)
+    }
+
+    fn keeps_order(&self) -> bool {
+        self.inner.keeps_order()
+    }
+
+    fn snapshot(&self, session: &SessionId) -> ToolSnapshot {
+        let snapshot = self.inner.snapshot(session);
+        ToolSnapshot {
+            tools: snapshot
+                .tools
+                .into_iter()
+                .filter(|tool| self.keeps(tool))
+                .collect(),
+            mcp: snapshot.mcp,
+        }
+    }
+
+    fn mcp(&self) -> Option<Arc<dyn McpConnections>> {
+        self.inner.mcp()
     }
 }
 

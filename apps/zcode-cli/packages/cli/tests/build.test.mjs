@@ -294,3 +294,7 @@ test("bundles the public SQLite migration entrypoint without treating index.ts a
   assert.equal(result.errors.length, 0);
   assert.ok(result.outputFiles[0].text.length > 0);
 });
+
+test("CLI leaves system keyring native loading to the runtime", () => {
+  assert.ok(resolveBuildExternal().includes("@napi-rs/keyring"));
+});

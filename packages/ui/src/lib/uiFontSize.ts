@@ -39,3 +39,14 @@ export function subscribeToUiFontSizeStorageChanges(): () => void {
   window.addEventListener("storage", handleStorage);
   return () => window.removeEventListener("storage", handleStorage);
 }
+
+/** macOS font smoothing preference; stored as "true" / "false". Unset means enabled. */
+export const FONT_SMOOTHING_STORAGE_KEY = "zcode-macos-font-smoothing";
+
+/** Only sets the display marker; the CSS rule is bounded to the local macOS desktop, so remote devices and Web are unaffected. */
+export function applyFontSmoothing(enabled: boolean): void {
+  if (typeof document === "undefined") {
+    return;
+  }
+  document.documentElement.classList.toggle("font-smoothing-enabled", enabled);
+}

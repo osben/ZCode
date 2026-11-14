@@ -84,7 +84,7 @@ status of a provider automatic retry is not a manual retry action and may show a
 current running turn.
 
 ```text
-child turnHeader.actions.canRewindFiles
+child turnHeader.actions.canRewindFiles && child availability.rewindFiles
 ├─ false -> rewind button disabled; no query/command
 └─ true  -> fileRewindPreview(childSessionId, turn target)
             ├─ unsafe/ignored -> no file written

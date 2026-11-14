@@ -7,5 +7,10 @@
   },
   "include": ["src/host"],
   // Host depends directly on services/shared and imports rpc; adding project references prevents typecheck from compiling rpc source again.
-  "references": [{ "path": "../shared" }, { "path": "../services" }, { "path": "../rpc" }]
+  "references": [
+    { "path": "../shared" },
+    { "path": "../services" },
+    { "path": "../rpc" },
+    { "path": "./tsconfig.app-navigation.json" }
+  ]
 }

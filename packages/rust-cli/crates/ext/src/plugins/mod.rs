@@ -5,7 +5,9 @@
 //! manifest 按 Node `findManifest` 依次找本工程的 `.zcode-plugin` 与另外两种插件格式的目录下的 `plugin.json`
 //! （同时兼容几种插件格式）；`--plugin-dir` 没有 manifest 时插件名取目录名。
 
+pub mod lsp;
 mod select;
+pub mod template;
 
 use rust_cli_base::names::vars;
 use rust_cli_kernel_api::env::{EnvPath, ReadFile, WorkspaceRef};
@@ -47,6 +49,8 @@ pub struct PluginAgentFile {
 /// 一个已加载的插件。
 #[derive(Debug, Clone, PartialEq)]
 pub struct Plugin {
+    /// `<name>@<marketplace>` (Node plugin id); `--plugin-dir` plugins are `<name>@inline`.
+    pub id: String,
     pub name: String,
     pub dir: String,
     pub manifest: Value,
@@ -277,13 +281,15 @@ impl Reader<'_> {
             .filter(|name| !name.is_empty())
             .map_or_else(|| base_name(dir), str::to_owned);
         let tables = self.mcp_tables(dir, &manifest).await;
-        Some(self.components(dir, name, manifest, &tables).await)
+        let id = format!("{name}@inline");
+        Some(self.components(dir, id, name, manifest, &tables).await)
     }
 
     /// 插件的组件（ext.md §4.5）。`tables` 是 [`Self::mcp_tables`] 的结果。
     async fn components(
         &self,
         dir: &str,
+        id: String,
         name: String,
         manifest: Value,
         tables: &[Value],
@@ -335,6 +341,7 @@ impl Reader<'_> {
         }
         let mcp_servers = Self::mcp_servers(&name, dir, self.workspace.root.as_str(), tables);
         Plugin {
+            id,
             name,
             dir: dir.to_owned(),
             manifest,

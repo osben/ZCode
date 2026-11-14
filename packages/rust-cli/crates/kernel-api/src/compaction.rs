@@ -37,6 +37,13 @@ pub struct CompactRequest {
     /// （docs/specs/rust-cli/compact.md §3.1）。其他触发为 None。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initial_token_gap: Option<u64>,
+    /// Fork: the compacted run's [`crate::orchestration::QueryRequest::inject_agents_md`]; the summary run carries it
+    /// (specs/fork-rust-subagent-runtime-config.md rule 15).
+    #[serde(
+        default = "crate::orchestration::inject_by_default",
+        skip_serializing_if = "crate::orchestration::is_injected"
+    )]
+    pub inject_agents_md: bool,
 }
 
 /// 上下文超限错误文本里的 token 差，认两种句式（docs/specs/rust-cli/compact.md §3.1）：
@@ -129,6 +136,10 @@ pub struct ContextOccupancy {
     /// （不会主动压缩）时为 None。serde 缺省 None。
     #[serde(default)]
     pub compact_at: Option<u64>,
+    /// Fork: the model's window before the summary reserve (Node `usage.contextWindow.maxTokens`);
+    /// None when the model is unknown. Only the App protocol reads it; serde default None.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_tokens: Option<u64>,
 }
 
 impl ContextOccupancy {
@@ -286,7 +297,8 @@ fn block_tokens(block: &ContentBlock) -> u64 {
         ContentBlock::Image {
             source: ImageSource::Base64 { .. } | ImageSource::Artifact { .. },
             ..
-        } => IMAGE_TOKENS,
+        }
+        | ContentBlock::Video { .. } => IMAGE_TOKENS,
         ContentBlock::Thinking { thinking, .. } => rough_tokens(thinking),
         ContentBlock::RedactedThinking { data } => rough_tokens(data),
         ContentBlock::ToolUse { name, input, .. } => rough_tokens(&format!("{name}{input}")),
@@ -297,6 +309,8 @@ fn block_tokens(block: &ContentBlock) -> u64 {
             .iter()
             .map(block_tokens)
             .sum(),
+        // Fork: an ACP row never reaches the model (`query::normalize` drops it).
+        ContentBlock::ExternalTool(_) => 0,
     }
 }
 
@@ -413,6 +427,12 @@ pub trait PostCompactContext: Send + Sync {
     ) -> Result<Vec<AttachmentMessage>, OrchestrationError> {
         self.post_compact(request, kept).await
     }
+
+    /// 压缩后重读文件时要跳过的路径（Node `restorePostCompactFiles` 的 `excludedPaths`）：已在上下文里的计划文件、
+    /// 规则文件与 MEMORY.md。缺省为空。
+    async fn restore_exclusions(&self, _request: &ContextRequest) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -421,6 +441,12 @@ pub struct CompactResult {
     pub summary: UserMessage,
     /// 压缩后重新注入的内容（最近读过的文件、计划、已调用的 skill 等）。
     pub restored: Vec<Message>,
+    /// Fork: the SessionStart(`compact`) run gave a SessionStart additional context, whether it is in `restored` or was
+    /// dropped as a duplicate of the kept one (Node `compactSessionStart.hasContext`). The session clears its held
+    /// SessionStart result when the compaction commits with this flag (specs/fork-rust-agent-parity.md, "SessionStart
+    /// pending slot"). Off when the hook gave no context.
+    #[serde(default)]
+    pub session_start_context: bool,
 }
 
 #[cfg(test)]

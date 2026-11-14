@@ -15,6 +15,8 @@ pub(crate) enum RowKind {
     TimelineMarker,
     /// Fork: a subagent spawned by an Agent call (projection/subagent_rows.rs).
     Subagent,
+    /// Fork: one hook dispatch (projection/hook_rows.rs).
+    HookInvocation,
 }
 
 impl RowKind {
@@ -27,6 +29,7 @@ impl RowKind {
             Self::ToolCall => "toolCall",
             Self::TimelineMarker => "timelineMarker",
             Self::Subagent => "subagent",
+            Self::HookInvocation => "hookInvocation",
         }
     }
 
@@ -40,6 +43,7 @@ impl RowKind {
             Self::ToolCall,
             Self::TimelineMarker,
             Self::Subagent,
+            Self::HookInvocation,
         ]
         .into_iter()
         .find(|kind| row.get("kind").and_then(Value::as_str) == Some(kind.as_str()))

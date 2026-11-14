@@ -5,9 +5,10 @@ import { useAppPanels } from "@/hooks/useAppPanels.js";
 import { clearTaskSidePaneMemoryStateForTest } from "@/lib/taskSidePaneMemory.js";
 
 vi.mock("@/hooks/useInterfaceMode.js", () => ({ useIsOfficeMode: () => false }));
-vi.mock("@/hooks/useServices.js", () => ({
-  useServices: () => ({ zcodeAgentService: {}, zcodeSessionService: { closeSession: vi.fn() } }),
-}));
+vi.mock("@/hooks/useServices.js", () => {
+  const services = { zcodeAgentService: {}, zcodeSessionService: { closeSession: vi.fn() } };
+  return { useServices: () => services, useOptionalServices: () => services };
+});
 
 const WORKSPACE_PATH = "/repo";
 

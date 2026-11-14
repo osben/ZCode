@@ -1,6 +1,5 @@
 import type { ZCodeInteractionRequestOrigin } from "@zcode/shared";
 import { cn } from "@/components/lib/utils.js";
-import { Badge } from "@/components/ui/badge.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 
 export function InteractionRequestOriginBadge({
@@ -16,7 +15,7 @@ export function InteractionRequestOriginBadge({
   }
 
   // description names which subagent is asking (dynamic-workflow subagents use `<name> (<siteId>@<ordinal>)`,
-  // see docs/dynamic-workflow/launch.md "Permissions inside a run"); the badge truncates, with the full text in the tooltip.
+  // see docs/dynamic-workflow/launch.md "Permissions inside a run"); the origin description wraps in full.
   const description = origin.description?.trim();
   const label = description
     ? intl.formatMessage({ id: "chat.interactionOrigin.subagent.named" }, { description })
@@ -34,13 +33,16 @@ export function InteractionRequestOriginBadge({
         );
 
   return (
-    <Badge
-      variant="outline"
+    <span
       title={title}
       data-interaction-origin-badge="subagent"
-      className={cn("max-w-40 align-baseline text-ui-base truncate", className)}
+      className={cn(
+        "block w-full min-w-0 basis-full whitespace-normal [overflow-wrap:anywhere] text-ui-base font-normal text-foreground-subtle",
+        className,
+      )}
     >
+      {/* 完整换行避免长名称被裁切，连续的实例标识也不能撑出窄屏容器。 */}
       {label}
-    </Badge>
+    </span>
   );
 }

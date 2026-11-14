@@ -496,3 +496,46 @@ fn a_prevented_stop_is_a_success_with_its_own_terminal_reason() {
     assert_eq!(result["terminal_reason"], "stop_hook_prevented");
     assert_eq!(result["result"], "done");
 }
+
+/// Fork (incognito, specs/fork-rust-agent-parity.md): `system/init.mcp_servers` lists only the servers the session's
+/// catalog (its tool snapshot) names, so a lockdown session does not see the names or states of excluded servers.
+#[test]
+fn init_lists_only_the_mcp_servers_of_the_sessions_catalog() {
+    use rust_cli_kernel_api::catalog::SessionCatalog;
+    use rust_cli_kernel_api::manage::{McpServerInfo, McpServerState};
+    let server = |name: &str| McpServerInfo {
+        name: name.to_owned(),
+        state: McpServerState::Connected,
+        reason: None,
+        tools: 1,
+        machine: rust_cli_kernel_api::ids::MachineName::default(),
+    };
+    let servers = [server("files"), server("plugin:kit:api")];
+    let names = |catalog: &SessionCatalog| -> Vec<String> {
+        let init = crate::events::init(
+            &crate::events::Init {
+                cwd: "/work",
+                session_id: "sess_1",
+                catalog,
+                mcp_servers: &servers,
+                model: "m",
+                permission_mode: "default",
+                api_key_source: "none",
+                version: "0",
+            },
+            "u1",
+        );
+        init["mcp_servers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|server| server["name"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    let normal = SessionCatalog {
+        mcp_servers: vec!["files".to_owned(), "plugin:kit:api".to_owned()],
+        ..SessionCatalog::default()
+    };
+    assert_eq!(names(&normal), ["files", "plugin:kit:api"]);
+    assert!(names(&SessionCatalog::default()).is_empty());
+}

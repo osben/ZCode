@@ -17,6 +17,9 @@ COPY packages/provider ./packages/provider
 COPY packages/provider-node ./packages/provider-node
 COPY packages/zcode-cua ./packages/zcode-cua
 COPY packages/model-option-map ./packages/model-option-map
+COPY packages/design-runtime ./packages/design-runtime
+COPY packages/session-control ./packages/session-control
+COPY packages/acp-agent-runtime ./packages/acp-agent-runtime
 # Intermittent pnpm race: hoisted node-linker + patchedDependencies can fail
 # linking with ERR_PNPM_ENOENT while renaming _tmp_* dirs (pnpm/pnpm#12880).
 # One retry recovers; the store is already populated so the retry is fast.

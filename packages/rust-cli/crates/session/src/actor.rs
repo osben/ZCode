@@ -41,6 +41,12 @@ pub(crate) enum Request {
     Meta {
         reply: oneshot::Sender<SessionMeta>,
     },
+    /// Fork: the meta and mode for SessionEnd, `None` while SessionStart is still held (a prepared execution worktree
+    /// that was never activated: Node has no runtime for it, so nothing ends).
+    EndMeta {
+        reply:
+            oneshot::Sender<Option<(SessionMeta, rust_cli_kernel_api::permission::PermissionMode)>>,
+    },
     RewindOptions {
         reply: oneshot::Sender<crate::rewind::Snapshot>,
     },
@@ -82,6 +88,23 @@ pub(crate) enum Request {
     /// 撤回会话级的询问（工具被取消；与 `Ask` 走同一个通道，所以总排在它的 `Ask` 之后）。
     CancelAsk {
         tool_use: ToolUseId,
+    },
+    /// Fork: the tool context of an MCP App call outside any turn (specs/fork-rust-node-helper.md F3,
+    /// `helper/authorizeAppTool`); the pipeline runs in the caller's task, never in the actor.
+    AppToolContext {
+        tool_use: ToolUseId,
+        cancel: CancellationToken,
+        reply: oneshot::Sender<rust_cli_kernel_api::tool::ToolUseContext>,
+    },
+    /// Fork: the model an MCP App sampling call runs on (specs/fork-rust-node-helper.md F3, `helper/sampleModel`); the
+    /// call runs in the caller's task.
+    SamplingSelection {
+        reply: oneshot::Sender<ModelSelection>,
+    },
+    /// Fork: a sampling call's usage row.
+    RecordModelCall {
+        call: Box<rust_cli_kernel_api::metering::ModelCall>,
+        reply: oneshot::Sender<Result<(), String>>,
     },
 }
 
@@ -133,6 +156,8 @@ pub(crate) struct Running {
     pub(crate) command: Option<CommandId>,
     /// 回合结束那一行的计时（修复线 F118，duration.rs）。
     pub(crate) timing: crate::duration::TurnTiming,
+    /// Fork: the limits the input that opened this turn set (automation id, hidden tools); they end with the turn.
+    pub(crate) limits: rust_cli_kernel_api::turn_limits::TurnLimits,
 }
 
 enum Next {
@@ -178,6 +203,11 @@ pub(crate) struct Actor {
     pub(crate) deps: SessionDeps,
     pub(crate) log: Arc<EventLog>,
     pub(crate) meta: SessionMeta,
+    /// Fork: where `meta.title` came from; changed only with it ([`Actor::set_title`]).
+    pub(crate) title_source: rust_cli_kernel_api::title::Source,
+    /// Fork (B3): the interaction of the last permission mode grant (the stored receipt, then each grant), in the view
+    /// as the composer's adoption key (Node `lastPermissionGrantId`).
+    pub(crate) permission_grant: Option<String>,
     pub(crate) messages: Vec<Message>,
     /// 冷读取时只供显示的、最后一个压缩点之前的消息（工作线 F102，compact.md §5.1）：打开后不变，只进 `view()`。
     /// 模型侧的一切（主循环、压缩、token、标题、rewind、fork、goal 与任务的恢复）只看 `messages`。另一个只读的读者：
@@ -257,7 +287,15 @@ pub(crate) struct Actor {
     /// 等后台子代理的起点（回合结束那一行，修复线 F118，duration.rs）：只在内存。
     pub(crate) wait_started: Option<u64>,
     /// 自己的请求通道（弱引用）：交给回合的输出端，给出会话级的询问入口；不让 actor 因此不退出。
-    asks: mpsc::WeakSender<Request>,
+    pub(crate) asks: mpsc::WeakSender<Request>,
+    /// Fork: SessionStart held for a prepared execution worktree (`SessionState::start_held`) until
+    /// `Command::SetExecutionRoot` moves the session (workspace.rs).
+    pub(crate) deferred_start: Option<rust_cli_kernel_api::session_api::StartSource>,
+    /// Fork: `SessionState::execution_worktree`; set by a successful `Command::SetExecutionRoot` (workspace.rs).
+    pub(crate) execution_worktree: bool,
+    /// The SessionStart result waiting for the first turn to write it (Node `pendingSessionStartContexts`, hooks.rs).
+    /// Empty when there is none. Kept in memory only: a reopen runs SessionStart again.
+    pub(crate) pending_session_start: Vec<Message>,
 }
 
 /// 拒绝的回执：原因是给前端的文字（存储的错误按它的原文）。
@@ -284,14 +322,23 @@ impl Actor {
         resume_pending: Vec<MessageId>,
     ) -> Self {
         // 本机与连上的远端机器的通知（R3，remote-exec.md §20.7.2）。
-        let stream = Notices::new(rust_cli_kernel_api::machine_notices::all_shell_notices(
-            deps.machines.clone(),
-            state.meta.id.clone(),
-        ));
+        // Fork: a subagent's child session does not subscribe: the agents crate forwarder is the only consumer of its
+        // notices (agents.md §5.2), and only the agents crate runs turns there. A second subscriber raced the forwarder
+        // for the ack and, when it won, started its own turn next to the agent's run (specs/fork-rust-agent-parity.md,
+        // "Subagent child sessions: one owner for background-command notices").
+        let stream = if state.meta.kind == rust_cli_kernel_api::store::SessionKind::Subagent {
+            Notices::idle()
+        } else {
+            Notices::new(rust_cli_kernel_api::machine_notices::all_shell_notices(
+                deps.machines.clone(),
+                state.meta.id.clone(),
+            ))
+        };
         let agent_stream = AgentStream::new(deps.agents.signals(&state.meta.id));
         let cron_stream = CronStream::new(deps.cron.wakeups(&state.meta.id));
         let peer_stream = crate::watched::Watched::new(deps.peers.port.signals(&state.meta.id));
-        let start = state.start;
+        let (start, defer_start, execution_worktree) =
+            (state.start, state.start_held, state.execution_worktree);
         let child_live = state.child_live;
         let goal = crate::goal::Goals::restore(
             &state.messages,
@@ -303,6 +350,10 @@ impl Actor {
         let mut actor = Self {
             deps,
             log,
+            permission_grant: state.permission_grant,
+            title_source: state
+                .title_source
+                .unwrap_or_else(|| rust_cli_kernel_api::title::Source::derived(&state.meta.title)),
             meta: state.meta,
             messages: state.messages,
             earlier: state.earlier,
@@ -343,8 +394,15 @@ impl Actor {
             output_speed: None,
             wait_started: None,
             asks,
+            deferred_start: None,
+            pending_session_start: Vec::new(),
+            execution_worktree,
         };
-        actor.start_session(start);
+        if defer_start {
+            actor.deferred_start = Some(start);
+        } else {
+            actor.start_session(start);
+        }
         actor
     }
 
@@ -388,7 +446,7 @@ impl Actor {
         &mut self,
         id: CommandId,
         kind: rust_cli_kernel_api::session_api::QueuedKind,
-        text: String,
+        (text, intent): crate::steering::Typed,
         content: Vec<rust_cli_kernel_api::message::ContentBlock>,
         delivery: rust_cli_kernel_api::session_api::Delivery,
         execution: Option<rust_cli_kernel_api::session_api::InputExecution>,
@@ -416,6 +474,8 @@ impl Actor {
             };
             self.inbox.push_input(
                 QueuedInput {
+                    edit_lock: None,
+                    intent,
                     command: id,
                     text,
                     delivery,
@@ -425,8 +485,16 @@ impl Actor {
                 input_kind,
             );
             self.emit_queue();
-            return accepted();
+            // The admission's real outcome (Node `started.admission.kind === "queued"`): the App's ACK says `queue`.
+            return Ack::Accepted {
+                result: CommandResult::Queued,
+            };
         }
+        // Fork: the limits belong to the turn this input opens; a compaction runs no turn and takes none.
+        let limits = execution
+            .as_ref()
+            .map(|execution| execution.limits.clone())
+            .unwrap_or_default();
         if let Some(execution) = execution
             && let Err(reason) = self.submitted_execution(execution).await
         {
@@ -444,14 +512,16 @@ impl Actor {
                 text,
                 screened: None,
                 more: Vec::new(),
+                intent,
             }
         } else {
             TurnInput::Content {
                 command: id,
                 content,
+                intent,
             }
         };
-        match self.start_turn(input).await {
+        match self.start_turn_with(input, limits).await {
             Ok(()) => accepted(),
             Err(reason) => rejected(reason),
         }
@@ -542,6 +612,13 @@ impl Actor {
             Request::Meta { reply } => {
                 let _ = reply.send(self.meta.clone());
             }
+            Request::EndMeta { reply } => {
+                let _ = reply.send(
+                    self.deferred_start
+                        .is_none()
+                        .then(|| (self.meta.clone(), self.mode())),
+                );
+            }
             Request::RewindOptions { reply } => {
                 let _ = reply.send(self.rewind_snapshot());
             }
@@ -557,6 +634,36 @@ impl Actor {
             Request::Goal { reply } => {
                 let _ = reply.send(self.goal_view());
             }
+            // Closing: the reply is dropped and the caller answers that the session is closed.
+            Request::AppToolContext { reply, .. }
+                if self.closing.is_some() || self.shutting_down =>
+            {
+                drop(reply);
+            }
+            Request::AppToolContext {
+                tool_use,
+                cancel,
+                reply,
+            } => {
+                let _ = reply.send(self.app_tool_context(tool_use, cancel));
+            }
+            // Closing: the reply is dropped and the caller answers that the session is closed.
+            Request::SamplingSelection { reply }
+                if self.closing.is_some() || self.shutting_down =>
+            {
+                drop(reply);
+            }
+            Request::SamplingSelection { reply } => {
+                let _ = reply.send(self.selection.clone());
+            }
+            Request::RecordModelCall { reply, .. }
+                if self.closing.is_some() || self.shutting_down =>
+            {
+                drop(reply);
+            }
+            Request::RecordModelCall { call, reply } => {
+                let _ = reply.send(self.record_model_call(*call).await);
+            }
             Request::Close { reply, reason } => self.close(reply, reason).await,
             // 关闭中、要退出时不再登记询问：丢下回复，询问方按会话已关闭处理。
             Request::Ask { reply, .. } if self.closing.is_some() || self.shutting_down => {
@@ -571,6 +678,15 @@ impl Actor {
             Request::Command { envelope, reply } => {
                 if !self.seen.insert(envelope.id.clone()) {
                     let _ = reply.send(Ack::Duplicate);
+                    return;
+                }
+                // Fork: the release lease is held (`Command::ReserveRelease`): the session is about to close.
+                if self.inbox.releasing()
+                    && !matches!(envelope.command, Command::ReserveRelease { .. })
+                {
+                    let _ = reply.send(rejected(
+                        rust_cli_kernel_api::session_api::SESSION_RELEASING,
+                    ));
                     return;
                 }
                 if self.mirror.running() && crate::child_live::starts_turn(&envelope.command) {
@@ -603,6 +719,8 @@ impl Actor {
                     // 插话（Steer）进 next 通道，由主循环在下一个工具边界领取（steering.rs），其余等回合结束。
                     self.inbox.push_input(
                         QueuedInput {
+                            edit_lock: None,
+                            intent: None,
                             command: id,
                             text,
                             delivery,
@@ -620,6 +738,7 @@ impl Actor {
                         text,
                         screened: None,
                         more: Vec::new(),
+                        intent: None,
                     })
                     .await
                 {
@@ -639,24 +758,39 @@ impl Actor {
                 Err(reason) => rejected(reason),
             },
             Command::SubmitWith {
+                intent,
                 kind,
                 text,
                 content,
                 delivery,
                 execution,
                 behind_held,
+                lease,
             } => {
-                let queue = behind_held && self.inbox.held() && self.inbox.has_inputs();
-                self.submit_with(id, kind, text, content, delivery, execution, queue)
-                    .await
+                // Fork: while a promotion owns the foreground only its own input starts; any other is queued like
+                // busy (Node's admission sees `hasActiveOrQueuedTurnWork` while a promotion lease exists).
+                let foreign = self
+                    .inbox
+                    .foreground_owner()
+                    .is_some_and(|owner| lease.as_deref() != Some(owner));
+                let queue =
+                    foreign || (behind_held && self.inbox.held() && self.inbox.has_inputs());
+                self.submit_with(
+                    id,
+                    kind,
+                    (text, intent),
+                    content,
+                    delivery,
+                    execution,
+                    queue,
+                )
+                .await
             }
             Command::PauseGoal => self.pause_goal().await,
             Command::ResumeGoal => self.resume_goal().await,
-            Command::GrantFullAccess { interaction } => {
-                match self.grant_full_access(id, interaction).await {
-                    Ok(()) => accepted(),
-                    Err(reason) => rejected(reason),
-                }
+            Command::GrantPermissionMode { interaction, mode } => {
+                self.grant_permission_mode(id, InteractionId::new(interaction), mode)
+                    .await
             }
             Command::SetMode { mode } => match self.user_mode(id, mode).await {
                 Ok(()) => accepted(),
@@ -672,9 +806,21 @@ impl Actor {
             },
             Command::Fork { at } => self.fork(id, at).await,
             Command::ForkFromInput { input } => self.fork_from_input(input).await,
+            Command::ForkFromAssistant { assistant } => self.fork_from_assistant(assistant).await,
+            Command::AdoptTitle { title } => {
+                self.adopt_title(title);
+                accepted()
+            }
+            Command::DisableTitleGeneration => {
+                self.titles.disable();
+                accepted()
+            }
             Command::Rename { title } => self.rename(id, title, None).await,
             Command::RenameRecorded { title, record } => self.rename(id, title, Some(record)).await,
             Command::StopTask { task } => self.stop_task(task).await,
+            Command::StopSubagent { agent, execution } => {
+                self.stop_subagent(agent, execution).await
+            }
             Command::ResolvePeerMessage { message, approve } => {
                 match self.resolve_peer(&message, approve).await {
                     Ok(()) => accepted(),
@@ -682,6 +828,14 @@ impl Actor {
                 }
             }
             Command::ChangeDirectory { root } => self.change_directory(id, root, None).await,
+            Command::SetExecutionRoot { root } => self.set_execution_root(root).await,
+            Command::SetIncognito { profile } => self.set_incognito(profile),
+            // Fork: the options a config command stored; the agent applies them before its next prompt (rule 13).
+            Command::PublishExternalAgentConfig { agent, options } => {
+                self.log
+                    .append(KernelEvent::ExternalAgentConfig { agent, options });
+                accepted()
+            }
             Command::ChangeDirectoryRecorded { root, record } => {
                 self.change_directory(id, root, Some(record)).await
             }
@@ -689,12 +843,24 @@ impl Actor {
             Command::BackgroundForeground { reason } => self.background_foreground(reason).await,
             Command::StoreResumeSentinel => self.store_resume_sentinel(id).await,
             Command::Dequeue { command } => self.dequeue(&command),
+            Command::ClearQueued { command } => self.clear_queued(&command),
             // Fork: in-place queue editing (Node queue.ts handlers, specs/fork-rust-agent-parity.md).
-            Command::EditQueued { command, text } => self.edit_queued(&command, text),
+            Command::EditQueued { command, edit } => self.edit_queued(&command, edit).await,
+            Command::LockQueuedEdit { command, lock } => self.lock_queued_edit(&command, lock),
+            Command::ReleaseQueuedEdit { command } => self.release_queued_edit(&command).await,
+            Command::ApplyQueuedConfig { commands, edit } => {
+                self.apply_queued_config(&commands, &edit)
+            }
             Command::ReorderQueued { command, before } => {
                 self.reorder_queued(&command, before.as_ref())
             }
             Command::HoldQueue { held } => self.hold_queue(held).await,
+            Command::ReserveForeground { reserved, lease } => {
+                self.reserve_foreground(reserved, lease).await
+            }
+            Command::ReserveRelease { reserved, lease } => {
+                self.reserve_release(reserved, lease).await
+            }
             // 在 `handle` 里处理（回执要等事务结束或名字）。
             Command::Rewind { .. } | Command::RewindTurnFiles { .. } | Command::GenerateName => {
                 rejected("this command is handled by the actor loop")
@@ -754,6 +920,11 @@ impl Actor {
             last_seq: self.log.last_seq(),
             revision: self.log.revision(),
             running: self.running.is_some() || self.mirror.running(),
+            running_turn: self
+                .running
+                .as_ref()
+                .map(|running| running.turn.clone())
+                .or_else(|| self.mirror.turn().cloned()),
             background: [self.background().await, self.background_agents().await].concat(),
             peer_held: self.peers.views(),
             // 冷加载后不用等下一条回复（F27）：与 `context_changed` 同样两个函数。
@@ -770,6 +941,8 @@ impl Actor {
                 .map(|(prompt, summary)| (prompt.clone(), summary.facts()))
                 .collect(),
             goal: self.goal_state(),
+            title_source: Some(self.title_source),
+            permission_grant: self.permission_grant.clone(),
             ..SessionView::new(
                 self.meta.clone(),
                 [self.earlier.as_slice(), self.messages.as_slice()].concat(),

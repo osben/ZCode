@@ -128,6 +128,8 @@ impl Screen {
 
 fn user(id: &str, text: &str) -> Message {
     Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
         id: MessageId::new(id),
         content: vec![ContentBlock::Text { text: text.into() }],
         origin: UserOrigin::Human,
@@ -192,6 +194,8 @@ fn conversation(screen: &mut Screen) {
     });
     screen.event(KernelEvent::MessageDone {
         message: Message::User(UserMessage {
+            stall_execution: None,
+            intent: None,
             id: MessageId::new("r1"),
             content: vec![ContentBlock::ToolResult {
                 tool_use_id: ToolUseId::new("tu1"),

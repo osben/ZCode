@@ -93,6 +93,8 @@ fn sources(items: &[AttachmentMessage]) -> Vec<&str> {
 
 fn human(id: &str) -> Message {
     Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
         id: MessageId::new(id),
         content: vec![ContentBlock::Text {
             text: "hi".to_owned(),
@@ -120,6 +122,8 @@ async fn compacted(assembler: &PromptAssembler) -> Vec<Message> {
         },
     )));
     history.push(Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
         id: MessageId::new("msg_summary"),
         content: vec![ContentBlock::Text {
             text: "summary".to_owned(),
@@ -208,4 +212,26 @@ async fn announced_skills_survive_compaction() {
         .unwrap();
     let announced = sources(&next.attachments);
     assert!(!announced.contains(&"skill_listing"), "{announced:?}");
+}
+
+/// Fork: an incognito session without `environment` gets no environment or model announcement after a compaction
+/// either (the same gate as the step context).
+#[tokio::test]
+async fn an_incognito_compaction_without_environment_announces_neither() {
+    use rust_cli_kernel_api::incognito::{IncognitoProfile, IncognitoProfiles};
+    let profiles = IncognitoProfiles::default();
+    profiles.record(&SessionId::new("s"), Some(IncognitoProfile::LOCKDOWN));
+    let restored = assembler()
+        .with_incognito(profiles)
+        .post_compact(request(QuerySource::MainThread), &[])
+        .await
+        .unwrap();
+    assert_eq!(
+        sources(&restored),
+        [
+            "deferred_tools_delta",
+            "agent_listing_delta",
+            "mcp_instructions_delta"
+        ]
+    );
 }

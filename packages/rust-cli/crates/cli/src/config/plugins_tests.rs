@@ -1,6 +1,8 @@
 //! `plugins` 段、插件存储根与插件候选（config.md §2.1、ext.md §4.1）。
 #![allow(clippy::disallowed_methods, reason = "测试准备临时目录里的插件清单")]
 
+use std::collections::BTreeMap;
+
 use rust_cli_ext::plugins::PluginOrigin;
 use rust_cli_kernel_api::permission::RuleSource;
 use rust_cli_paths::StoragePaths;
@@ -56,6 +58,37 @@ fn the_plugins_section_merges_like_node() {
     let off = [object(json!({"plugins": {"enabled": false}}))];
     let merged = merge(&layers(&user, &off), &mut warnings);
     assert!(!merged.enabled);
+}
+
+/// Fork: `plugins.options` merges per plugin id, later keys winning (Node `mergePluginOptions`,
+/// specs/fork-rust-lsp.md "Templates").
+#[test]
+fn plugin_options_merge_per_id() {
+    let user =
+        object(json!({"plugins": {"options": {"x@m": {"a": 1, "b": "user"}, "y@m": {"c": true}}}}));
+    let projects = [
+        object(json!({"plugins": {"options": {"x@m": {"b": "project", "d": "new"}, "z@m": 3}}})),
+        object(json!({"plugins": {"options": []}})),
+    ];
+    let mut warnings = Vec::new();
+    let merged = merge(&layers(&user, &projects), &mut warnings);
+    assert_eq!(
+        warnings,
+        [
+            "project: plugins.options.z@m must be an object",
+            "project: plugins.options must be an object"
+        ]
+    );
+    assert_eq!(
+        merged.options.into_iter().collect::<Vec<_>>(),
+        [
+            (
+                "x@m".to_owned(),
+                object(json!({"a": 1, "b": "project", "d": "new"}))
+            ),
+            ("y@m".to_owned(), object(json!({"c": true}))),
+        ]
+    );
 }
 
 #[test]
@@ -114,6 +147,7 @@ async fn candidates_follow_the_node_order() {
         dirs: vec!["/Users/dev/abs".to_owned(), "rel/kit".to_owned()],
         enabled_plugins: [("kit@market".to_owned(), true)].into_iter().collect(),
         suppressed_builtins: vec!["zcode-guide@zcode-plugins-official".to_owned()],
+        options: BTreeMap::new(),
     };
     let sources = sources(section.clone(), "/Users/dev/repo", &root).await;
     let candidates: Vec<(String, &str, PluginOrigin)> = sources

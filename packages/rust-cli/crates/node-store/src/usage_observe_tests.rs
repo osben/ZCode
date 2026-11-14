@@ -131,6 +131,8 @@ async fn a_tool_usage_row_that_cannot_be_written_keeps_the_result() {
     // 表不在：用量行与批末的保留期删除都写不进去。
     break_schema(&t, "drop table tool_usage");
     let result = Message::User(UserMessage {
+        stall_execution: None,
+        intent: None,
         id: MessageId::new("msg_r1"),
         content: vec![ContentBlock::ToolResult {
             tool_use_id: ToolUseId::new("toolu_1"),
@@ -192,6 +194,10 @@ async fn the_skipped_usage_is_logged_with_its_reason() {
     started(&t, "sess_1").await;
     commit(&t, vec![user("msg_u1", "hi")]).await;
     break_schema(&t, RENAMED_VARIANT);
+    // With a single registered dispatcher, tracing-core computes a new callsite's interest from the registering
+    // thread's default; a parallel test reaching the warning first, without a subscriber, would cache it as "never".
+    // A second live dispatcher makes the interest come from the registered dispatchers instead.
+    let _second = tracing::Dispatch::new(Warnings::default());
     let warnings = Warnings::default();
     let facts = vec![
         assistant("msg_a1", vec![text("hello")], None),

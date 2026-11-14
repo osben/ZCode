@@ -26,12 +26,29 @@ pub struct RecordingSink {
     steering: Mutex<Vec<String>>,
     /// `commit_metered` 的计量，按提交顺序，带同批消息的 id（usage.md §2.5）。
     metered: Mutex<Vec<(Option<crate::ids::MessageId>, crate::metering::Metered)>>,
+    /// The `session_start_context` flag of each `commit_compaction`, in commit order.
+    compaction_flags: Mutex<Vec<bool>>,
+    /// Fork: how many `commit_message` calls still succeed before one fails
+    /// ([`Self::fail_commit_message_after`]); `None` when none fails.
+    fail_commit: Mutex<Option<usize>>,
+    /// Fork: the ACP agent titles handed to `external_title`, in order.
+    titles: Mutex<Vec<String>>,
 }
 
 impl RecordingSink {
     /// 下一次 `take_absorbed` 取走的插话（没有 hook 消息）。
     pub fn steer(&self, text: &str) {
         self.steering.lock_unpoisoned().push(text.to_owned());
+    }
+
+    /// Fork: the next `commit_message` fails with a storage error; later commits work.
+    pub fn fail_next_commit_message(&self) {
+        self.fail_commit_message_after(0);
+    }
+
+    /// Fork: `commits` more `commit_message` calls succeed, then one fails with a storage error; later commits work.
+    pub fn fail_commit_message_after(&self, commits: usize) {
+        *self.fail_commit.lock_unpoisoned() = Some(commits);
     }
 
     pub fn messages(&self) -> Vec<Message> {
@@ -44,6 +61,16 @@ impl RecordingSink {
 
     pub fn metered(&self) -> Vec<(Option<crate::ids::MessageId>, crate::metering::Metered)> {
         self.metered.lock_unpoisoned().clone()
+    }
+
+    /// The `session_start_context` flag of each compaction commit, in order. A plain `commit_messages` records none.
+    pub fn compaction_flags(&self) -> Vec<bool> {
+        self.compaction_flags.lock_unpoisoned().clone()
+    }
+
+    /// Fork: the ACP agent titles the run handed over, in order.
+    pub fn titles(&self) -> Vec<String> {
+        self.titles.lock_unpoisoned().clone()
     }
 }
 
@@ -71,7 +98,24 @@ impl super::OpsOverride for RecordingSink {}
 
 #[async_trait]
 impl RunSink for RecordingSink {
+    async fn external_title(&self, title: String) {
+        self.titles.lock_unpoisoned().push(title);
+    }
+
     async fn commit_message(&self, message: Message) -> Result<(), StoreError> {
+        {
+            let mut left = self.fail_commit.lock_unpoisoned();
+            match *left {
+                Some(0) => {
+                    *left = None;
+                    return Err(StoreError::Storage {
+                        message: "commit failed".to_owned(),
+                    });
+                }
+                Some(commits) => *left = Some(commits - 1),
+                None => {}
+            }
+        }
         self.messages.lock_unpoisoned().push(message);
         Ok(())
     }
@@ -93,6 +137,17 @@ impl RunSink for RecordingSink {
     async fn commit_messages(&self, messages: Vec<Message>) -> Result<(), StoreError> {
         self.messages.lock_unpoisoned().extend(messages);
         Ok(())
+    }
+
+    async fn commit_compaction(
+        &self,
+        messages: Vec<Message>,
+        session_start_context: bool,
+    ) -> Result<(), StoreError> {
+        self.compaction_flags
+            .lock_unpoisoned()
+            .push(session_start_context);
+        self.commit_messages(messages).await
     }
 
     async fn compact_started(&self, _trigger: crate::message::CompactTrigger) {}

@@ -87,6 +87,10 @@ pub(crate) struct McpRegistry {
     pub(crate) late: Mutex<Vec<Arc<dyn Tool>>>,
     pub(crate) mcp: Arc<FakeConnections>,
     pub(crate) snapshots: AtomicUsize,
+    /// Fork: servers the session's snapshot leaves out (an incognito profile).
+    pub(crate) hidden: Mutex<Vec<String>>,
+    /// Fork: tools the session's snapshot leaves out (a hidden server's tools), found only by the global `find`.
+    pub(crate) hidden_tools: Mutex<Vec<Arc<dyn Tool>>>,
 }
 
 impl McpRegistry {
@@ -96,6 +100,8 @@ impl McpRegistry {
             late: Mutex::default(),
             mcp,
             snapshots: AtomicUsize::new(0),
+            hidden: Mutex::default(),
+            hidden_tools: Mutex::default(),
         })
     }
 
@@ -114,7 +120,8 @@ impl McpRegistry {
 
 impl rust_cli_kernel_api::testing::RegistryOverride for McpRegistry {
     fn tools(&self) -> Vec<Arc<dyn Tool>> {
-        let mut tools = self.base.clone();
+        let mut tools = self.hidden_tools.lock_unpoisoned().clone();
+        tools.extend(self.base.iter().cloned());
         tools.extend(self.late.lock_unpoisoned().iter().cloned());
         tools
     }
@@ -125,11 +132,27 @@ impl rust_cli_kernel_api::testing::RegistryOverride for McpRegistry {
             .find(|tool| tool.name() == name)
     }
 
+    /// Fork: like the ext registry, the session's lookup sees only the tools of its snapshot.
+    fn find_for(&self, _session: &SessionId, name: &str) -> Option<Arc<dyn Tool>> {
+        let tools = ToolRegistry::tools(self);
+        let hidden_tools = self.hidden_tools.lock_unpoisoned();
+        tools
+            .into_iter()
+            .filter(|tool| !hidden_tools.iter().any(|hidden| Arc::ptr_eq(hidden, tool)))
+            .find(|tool| tool.name() == name)
+    }
+
     fn snapshot(&self, _session: &SessionId) -> ToolSnapshot {
         self.snapshots.fetch_add(1, Ordering::SeqCst);
+        let mut view = self.mcp.view();
+        let hidden = self.hidden.lock_unpoisoned();
+        view.servers.retain(|server| !hidden.contains(&server.name));
+        let mut tools = ToolRegistry::tools(self);
+        let hidden_tools = self.hidden_tools.lock_unpoisoned();
+        tools.retain(|tool| !hidden_tools.iter().any(|hidden| Arc::ptr_eq(hidden, tool)));
         ToolSnapshot {
-            tools: ToolRegistry::tools(self),
-            mcp: Some(self.mcp.view()),
+            tools,
+            mcp: Some(view),
         }
     }
 
