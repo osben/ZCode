@@ -13,7 +13,7 @@ use serde_json::{Map, Value};
 
 use super::files::{ProjectFile, relative};
 
-/// 含 `hooks` 的项目文件与解析出的 hooks；Node 7 个事件以外的事件去掉并记警告（D2）。
+/// The project files with `hooks` and their parsed hooks; events outside Node's ten are dropped with a warning (D2).
 pub(crate) fn candidates<'a>(
     files: &'a [ProjectFile],
     warnings: &mut Vec<String>,

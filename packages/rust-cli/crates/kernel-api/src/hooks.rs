@@ -75,9 +75,9 @@ hook_events!(
     MessageDisplay,
 );
 
-/// Node 的 7 个事件，按 Node `WORKSPACE_HOOK_EVENT_NAMES` 的顺序：项目 hook 的 digest 按这个顺序遍历，信任记录的
-/// `eventAtGrant` 只允许它们（config.md §4）。F58：以前 hooks（枚举）与 platform（字符串）各写一份。
-pub const NODE_EVENTS: [HookEventName; 7] = [
+/// Node's ten workspace hook events in `WORKSPACE_HOOK_EVENT_NAMES` order: the project hook digest iterates them in
+/// this order, and a trust record's `eventAtGrant` must be one of them (config.md §4). The only definition (F58).
+pub const NODE_EVENTS: [HookEventName; 10] = [
     HookEventName::SessionStart,
     HookEventName::UserPromptSubmit,
     HookEventName::PreToolUse,
@@ -85,6 +85,9 @@ pub const NODE_EVENTS: [HookEventName; 7] = [
     HookEventName::PostToolUse,
     HookEventName::PostToolUseFailure,
     HookEventName::Stop,
+    HookEventName::PreCompact,
+    HookEventName::PostCompact,
+    HookEventName::SessionEnd,
 ];
 
 /// hook 输入的公共字段与命令 hook 的执行上下文。全部可缺省。
