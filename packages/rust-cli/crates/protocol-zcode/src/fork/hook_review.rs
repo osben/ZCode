@@ -230,19 +230,33 @@ fn scope<'a>(server: &'a Server, live: &'a Arc<Bridged<Live>>, session: &str) ->
     })
 }
 
-/// The bundle a command works on; `unreadable` is the command's code for a config that cannot be read.
-async fn bundle(scope: &Scope<'_>, unreadable: Refusal) -> Result<ReviewBundle, Refusal> {
+/// The bundle a command works on, rediscovered now. `nothing` and `unreadable` are the command's codes for a
+/// workspace without declarations and for a config that cannot be read.
+///
+/// Node decides request, respond and revoke against the session's startup snapshot and never rediscovers, so these
+/// codes are zcode-rs's fail-closed choice, not Node parity (zcode-rs keeps no startup snapshot). Only the toggle
+/// rediscovers in Node too (`rebuildSnapshot`), and its codes match Node's.
+async fn bundle(
+    scope: &Scope<'_>,
+    nothing: Refusal,
+    unreadable: Refusal,
+) -> Result<ReviewBundle, Refusal> {
     match scope.admin.hook_review(&scope.target).await {
         ReviewLookup::Bundle(bundle) => Ok(bundle),
-        ReviewLookup::Nothing => Err(REQUIRE_TRUST_CAPABLE_HOST),
+        ReviewLookup::Nothing => Err(nothing),
         ReviewLookup::Unreadable => Err(unreadable),
     }
 }
 
 /// `requestWorkspaceHookReview` (Node `requestReview`).
 async fn request(scope: &Scope<'_>, payload: &Value) -> Result<(), Refusal> {
-    // Node builds no snapshot from a config it cannot read, so no runtime security answers.
-    let bundle = bundle(scope, REQUIRE_TRUST_CAPABLE_HOST).await?;
+    // A config that cannot be read reviews nothing (fail closed; see `bundle`).
+    let bundle = bundle(
+        scope,
+        REQUIRE_TRUST_CAPABLE_HOST,
+        REQUIRE_TRUST_CAPABLE_HOST,
+    )
+    .await?;
     if !matches_bundle(scope, payload, &bundle) {
         return Err(SNAPSHOT_MISMATCH);
     }
@@ -269,7 +283,7 @@ async fn respond(scope: &Scope<'_>, payload: &Value) -> Result<(), Refusal> {
     }
     let ids = strings(&decision["reviewItemIds"]).ok_or(SNAPSHOT_MISMATCH)?;
     validate(scope, payload, &ids)?;
-    let bundle = bundle(scope, SNAPSHOT_MISMATCH).await?;
+    let bundle = bundle(scope, REQUIRE_TRUST_CAPABLE_HOST, SNAPSHOT_MISMATCH).await?;
     if !matches_bundle(scope, payload, &bundle) {
         return Err(SNAPSHOT_MISMATCH);
     }
@@ -315,8 +329,8 @@ async fn toggle(scope: &Scope<'_>, payload: &Value) -> Result<(), Refusal> {
     let id = text(payload, "reviewItemId").to_owned();
     let enabled = payload["enabled"].as_bool().ok_or(SNAPSHOT_MISMATCH)?;
     validate(scope, payload, std::slice::from_ref(&id))?;
-    let bundle = bundle(scope, CONFIG_UNREADABLE).await?;
-    if !bundle
+    let reviewed = bundle(scope, SNAPSHOT_MISMATCH, CONFIG_UNREADABLE).await?;
+    if !reviewed
         .items
         .iter()
         .any(|item| item.review_item_id == id && item.editable)
@@ -331,39 +345,57 @@ async fn toggle(scope: &Scope<'_>, payload: &Value) -> Result<(), Refusal> {
     {
         Ok(()) => {}
         Err(ToggleError::Rejected(code)) => return Err(code),
-        Err(ToggleError::RebuildFailed) => {
-            let interaction = text(payload, "interactionId").to_owned();
-            {
-                let mut state = scope.live.sink.hook_review.state.lock_unpoisoned();
-                if let Some(flow) = state.current.as_mut()
-                    && flow.interaction_id() == interaction
-                {
-                    flow.pending = false;
-                }
-            }
-            finish(
-                scope,
-                Outcome {
-                    changes: vec![Change::Remove(interaction)],
-                    opened: None,
-                },
-                false,
-            )
-            .await;
-            return Err(CONFIG_REBUILD_FAILED);
-        }
+        Err(ToggleError::RebuildFailed) => return Err(rebuild_failed(scope, payload).await),
     }
+    // The write committed: a bundle that cannot be rediscovered now is Node's failed rebuild, not a closed review.
+    let rebuilt = match bundle(scope, SNAPSHOT_MISMATCH, CONFIG_UNREADABLE).await {
+        Ok(bundle) => bundle,
+        Err(code) => {
+            tracing::warn!(
+                reason = code,
+                "the workspace hook bundle could not be rebuilt after a toggle"
+            );
+            return Err(rebuild_failed(scope, payload).await);
+        }
+    };
     let mut outcome = Outcome::default();
-    refresh_after_mutation(scope, &mut outcome).await;
+    {
+        let mut state = scope.live.sink.hook_review.state.lock_unpoisoned();
+        refresh_pending(scope, &mut state, &rebuilt, &mut outcome);
+    }
     finish(scope, outcome, true).await;
     Ok(())
+}
+
+/// Node `toggle` after a committed write whose snapshot could not be rebuilt: the flow fails
+/// (`configuration_error`) and the command answers `workspace_hooks_config_rebuild_failed`.
+async fn rebuild_failed(scope: &Scope<'_>, payload: &Value) -> Refusal {
+    let interaction = text(payload, "interactionId").to_owned();
+    {
+        let mut state = scope.live.sink.hook_review.state.lock_unpoisoned();
+        if let Some(flow) = state.current.as_mut()
+            && flow.interaction_id() == interaction
+        {
+            flow.pending = false;
+        }
+    }
+    finish(
+        scope,
+        Outcome {
+            changes: vec![Change::Remove(interaction)],
+            opened: None,
+        },
+        false,
+    )
+    .await;
+    CONFIG_REBUILD_FAILED
 }
 
 /// `revokeWorkspaceHookTrust` with the flow target (Node `revoke`).
 async fn revoke_flow(scope: &Scope<'_>, payload: &Value) -> Result<(), Refusal> {
     let ids = strings(&payload["reviewItemIds"]).ok_or(SNAPSHOT_MISMATCH)?;
     validate(scope, payload, &ids)?;
-    let bundle = bundle(scope, SNAPSHOT_MISMATCH).await?;
+    let bundle = bundle(scope, REQUIRE_TRUST_CAPABLE_HOST, SNAPSHOT_MISMATCH).await?;
     if !matches_bundle(scope, payload, &bundle) {
         return Err(SNAPSHOT_MISMATCH);
     }
@@ -386,7 +418,7 @@ async fn revoke_current(scope: &Scope<'_>, payload: &Value) -> Result<(), Refusa
     if payload.get("remoteSessionId").is_some() {
         return Err(SNAPSHOT_MISMATCH);
     }
-    let bundle = bundle(scope, SNAPSHOT_MISMATCH).await?;
+    let bundle = bundle(scope, REQUIRE_TRUST_CAPABLE_HOST, SNAPSHOT_MISMATCH).await?;
     if !matches_bundle(scope, payload, &bundle) {
         return Err(SNAPSHOT_MISMATCH);
     }
@@ -425,7 +457,7 @@ async fn apply_revoke(scope: &Scope<'_>, digests: Vec<String>) -> Result<(), Ref
 /// session snapshot; without one, a bundle that can no longer be discovered closes the pending flow, so the UI keeps no
 /// actions on a bundle that does not exist.
 async fn refresh_after_mutation(scope: &Scope<'_>, outcome: &mut Outcome) {
-    let rediscovered = bundle(scope, CONFIG_UNREADABLE).await;
+    let rediscovered = bundle(scope, SNAPSHOT_MISMATCH, CONFIG_UNREADABLE).await;
     let mut state = scope.live.sink.hook_review.state.lock_unpoisoned();
     match rediscovered {
         Ok(bundle) => refresh_pending(scope, &mut state, &bundle, outcome),

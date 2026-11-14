@@ -722,6 +722,55 @@ async fn a_toggle_is_refused_like_node() {
 }
 
 #[tokio::test]
+async fn a_committed_toggle_whose_bundle_cannot_be_rediscovered_fails_like_node() {
+    // Node `toggle`: a write that committed and a snapshot that cannot be rebuilt fail the flow and answer
+    // `workspace_hooks_config_rebuild_failed` (`workspace-hook-review-controller.ts`).
+    let harness = harness(Some(two_hooks())).await;
+    let review = harness.open().await;
+    *harness.admin.unreadable_after_mutation.lock_unpoisoned() = true;
+    let ack = harness
+        .send(
+            "toggleWorkspaceHookReviewItem",
+            with(
+                target(&review),
+                json!({"reviewItemId": "r2", "enabled": false}),
+            ),
+        )
+        .await;
+    refused(&ack, CONFIG_REBUILD_FAILED);
+    assert!(harness.reviews().is_empty(), "{:?}", harness.reviews());
+    let after = harness
+        .send(
+            "toggleWorkspaceHookReviewItem",
+            with(
+                target(&review),
+                json!({"reviewItemId": "r2", "enabled": true}),
+            ),
+        )
+        .await;
+    refused(&after, REVIEW_SUPERSEDED);
+}
+
+#[tokio::test]
+async fn a_toggle_without_a_bundle_answers_snapshot_mismatch() {
+    // Node `rebuildSnapshot`: "Workspace Hook bundle no longer exists" (`workspace-hook-review-mutation.ts`).
+    let harness = harness(Some(two_hooks())).await;
+    let review = harness.open().await;
+    *harness.admin.bundle.lock_unpoisoned() = None;
+    let ack = harness
+        .send(
+            "toggleWorkspaceHookReviewItem",
+            with(
+                target(&review),
+                json!({"reviewItemId": "r2", "enabled": false}),
+            ),
+        )
+        .await;
+    refused(&ack, SNAPSHOT_MISMATCH);
+    assert_eq!(harness.review(), review);
+}
+
+#[tokio::test]
 async fn a_settings_revoke_reopens_the_review_with_the_revoked_declaration() {
     let harness = harness(Some(two_hooks())).await;
     harness.admin.set_stored(D1, StoredTrust::Trusted);
