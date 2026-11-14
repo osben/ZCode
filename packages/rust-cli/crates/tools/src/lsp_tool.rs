@@ -29,8 +29,8 @@ use crate::common::{cwd, style};
 pub const NAME: &str = tool_names::LSP;
 /// Node `LSP_TOOL_TIMEOUT_MS`: one deadline for the whole handler.
 const TIMEOUT: Duration = Duration::from_millis(65_000);
-/// Node `LSP_MODEL_MAX_BYTES` (Rust's budget counts characters).
-const MAX_RESULT_CHARS: usize = 100_000;
+/// Node `LSP_MODEL_MAX_BYTES`: the result budget in UTF-8 bytes.
+const MAX_RESULT_BYTES: usize = 100_000;
 
 const NOT_CONFIGURED: &str = "LSP service is not configured for the LSP tool";
 const EMPTY_PATH: &str = "Tool path must not be empty";
@@ -156,8 +156,8 @@ impl Tool for LspTool {
         true
     }
 
-    fn max_result_size_chars(&self) -> Option<usize> {
-        Some(MAX_RESULT_CHARS)
+    fn result_budget_bytes(&self) -> Option<usize> {
+        Some(MAX_RESULT_BYTES)
     }
 
     /// Node `permission/service.ts`: whole-tool rules apply first; content rules match none of the tool's keys

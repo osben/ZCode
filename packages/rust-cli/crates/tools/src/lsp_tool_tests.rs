@@ -151,7 +151,8 @@ async fn the_contract_matches_node() {
     assert!(tool.is_read_only(&json!({})));
     assert!(tool.is_concurrency_safe(&json!({})));
     assert!(!tool.is_destructive(&json!({})));
-    assert_eq!(tool.max_result_size_chars(), Some(100_000));
+    assert_eq!(tool.max_result_size_chars(), None);
+    assert_eq!(tool.result_budget_bytes(), Some(100_000));
     // Node: content rules never match `filePath`, and a read-only tool without approval is allowed in every mode.
     assert_eq!(
         tool.permission_subject(&json!({"operation": "hover", "filePath": "src/a.ts"})),

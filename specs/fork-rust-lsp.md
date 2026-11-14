@@ -290,7 +290,7 @@ session close ─▶ CodeIntelligence::session_closed ─▶ drop fact[session]
 - Name `LSP`. The description is Node's four sentences joined by a space. The input schema is `prompts/tools/LSP.json`, generated from Node's `LspInputJsonSchema` (`operation` enum of seven operations, `filePath` required; `line`, `character` numbers; `symbol`, `query` strings; `includeDeclaration` boolean). Unknown keys are stripped (`z.object`).
 - Deferred behind ToolSearch (`shouldDefer`), read-only, concurrency-safe, no search hint.
 - Permission: Node's `read` class with no approval (`permission/service.ts`): whole-tool `LSP` deny and ask rules apply; content rules never match, since `ruleSubjects` reads only `command`, `url`, `file_path`, `path`, `pattern` and `patch_text` (the declared `patternSources` have no reader); then `checkBuildMode` allows a read-only tool without approval in every mode. Rust's tool has no permission subject and its own check allows, so the chain keeps whole-tool deny and ask rules and never asks for a path, the workspace's outside included.
-- Timeout 65 s: the call fails with "Tool execution timed out after 65000ms". Results above 100 000 characters go to an artifact with a preview.
+- Timeout 65 s: the call fails with "Tool execution timed out after 65000ms". Result budget: Node's `resultBudget` (`LSP_MODEL_MAX_BYTES`, the artifact strategy). A result above 100 000 UTF-8 bytes is persisted, and the model gets Node's generic envelope (`formatGenericPersistedOutputContent`): the size in decimal units of its UTF-8 bytes and the first 2000 characters. Rust's tool declares the byte budget (`Tool::result_budget_bytes`) in place of the shared character budget and its 50 000 cap.
 - `display` is Node's `LspOutput` object; the model sees the formatted text below.
 
 ### Call order
@@ -338,7 +338,7 @@ session close ─▶ CodeIntelligence::session_closed ─▶ drop fact[session]
 
 ### Differences kept on purpose (D2)
 
-- The result budget counts characters (Rust's artifact threshold), Node's counts bytes; both are 100 000.
+- The persisted location is Rust's `zcode-artifact://` reference, not Node's artifact path. When the artifact cannot be stored, Rust returns the result whole; Node falls back to its head truncation with the `[Tool output truncated by resultBudget: ...]` suffix.
 - A cancelled call settles as the pipeline's generic cancellation, without Node's `userVisibleMessage` text.
 - A file the documents cannot read fails with the environment's error text, not Node's `FileSystemPort` text.
 - The TUI and `-p` still have no LSP runtime, so they have no `LSP` tool (D1).
