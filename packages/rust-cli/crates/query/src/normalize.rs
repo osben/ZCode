@@ -17,6 +17,7 @@
 //!
 //! 其余规则（tool_reference 剥离、thinking 清理、错误结果去图等）属于工作线 L1。
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 use rust_cli_kernel_api::hooks::queued_command;
@@ -375,6 +376,34 @@ fn turn_effort(messages: Vec<ApiMessage>, effort: &str) -> Vec<ApiMessage> {
     out
 }
 
+fn has_rows_or_is_empty(message: &Message) -> bool {
+    match message {
+        Message::Assistant(assistant) => {
+            assistant.content.is_empty()
+                || assistant
+                    .content
+                    .iter()
+                    .any(|block| matches!(block, ContentBlock::ExternalTool(_)))
+        }
+        _ => false,
+    }
+}
+
+/// Only a reply message with rows or without blocks is copied; every other message is borrowed as it is.
+fn without_rows(message: &Message) -> Option<Cow<'_, Message>> {
+    if !has_rows_or_is_empty(message) {
+        return Some(Cow::Borrowed(message));
+    }
+    let Message::Assistant(assistant) = message else {
+        return Some(Cow::Borrowed(message));
+    };
+    let mut assistant = assistant.clone();
+    assistant
+        .content
+        .retain(|block| !matches!(block, ContentBlock::ExternalTool(_)));
+    (!assistant.content.is_empty()).then(|| Cow::Owned(Message::Assistant(assistant)))
+}
+
 pub(crate) fn normalize<'a>(
     messages: impl IntoIterator<Item = &'a Message>,
     options: &NormalizeOptions,
@@ -385,7 +414,11 @@ pub(crate) fn normalize<'a>(
         folded: Vec::new(),
         tool_names: HashMap::new(),
     };
-    for item in hoist(messages.into_iter().collect()) {
+    // Fork: ACP rows are record-only (specs/fork-rust-agent-parity.md "ACP external agents", rule 5); a reply message
+    // left without blocks is not sent, nor does it stop attachments from hoisting.
+    let stripped: Vec<Cow<'a, Message>> = messages.into_iter().filter_map(without_rows).collect();
+    let messages: Vec<&Message> = stripped.iter().map(AsRef::as_ref).collect();
+    for item in hoist(messages) {
         match item {
             // Fork: a notification batch (one message, a text block per notification) reaches the
             // model like one user message per notification: every block but the last ends with a

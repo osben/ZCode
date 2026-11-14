@@ -280,6 +280,7 @@ impl LocalKernel {
                 setup,
                 ports.store.clone(),
                 ports.ids.clone(),
+                agents.task_plan_writer(),
                 scope.spawner(),
             ))
         });

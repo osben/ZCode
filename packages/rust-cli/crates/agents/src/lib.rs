@@ -46,6 +46,7 @@ use std::sync::{Arc, Weak};
 use async_trait::async_trait;
 use futures_util::stream::BoxStream;
 use rust_cli_base::Spawner;
+use rust_cli_base::sync::LockUnpoisoned;
 use rust_cli_kernel_api::agents::{AgentSignal, AgentSignals, SubagentQueries, TaskListStore};
 use rust_cli_kernel_api::clock::{Clock, Ids};
 use rust_cli_kernel_api::ids::{AgentId, MachineName, SessionId};
@@ -325,6 +326,73 @@ impl Agents {
     pub fn task_reader(&self) -> Arc<dyn rust_cli_kernel_api::agents::TaskReader> {
         Arc::new(TaskLists(self.core.clone()))
     }
+
+    /// Fork: the ACP plan writer (kernel-api `TaskPlanWriter`), through the same task board as the task tools.
+    pub fn task_plan_writer(&self) -> Arc<dyn rust_cli_kernel_api::agents::TaskPlanWriter> {
+        Arc::new(TaskLists(self.core.clone()))
+    }
+}
+
+#[async_trait]
+impl rust_cli_kernel_api::agents::TaskPlanWriter for TaskLists {
+    async fn replace(
+        &self,
+        session: &SessionId,
+        tasks: Vec<rust_cli_kernel_api::agents::TaskRecord>,
+    ) -> Result<Vec<rust_cli_kernel_api::agents::TaskRecord>, rust_cli_kernel_api::store::StoreError>
+    {
+        let list = self.0.live.root_of(session);
+        let replaced = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let slot = replaced.clone();
+        let change: tasks::Change = Box::new(move |current| {
+            // A plan sent again unchanged keeps the list and its IDs, so an agent repeating its plan writes nothing.
+            if same_steps(&current.tasks, &tasks) {
+                *slot.lock_unpoisoned() = current.tasks.clone();
+                return (String::new(), false);
+            }
+            // IDs are never reused (`TaskList::high_water_mark`): the plan is numbered after the highest ID ever
+            // issued, so a model's `TaskUpdate` of an older ID cannot reach a plan step.
+            let mut tasks = tasks;
+            for task in &mut tasks {
+                current.high_water_mark += 1;
+                task.id = current.high_water_mark.to_string();
+            }
+            *slot.lock_unpoisoned() = std::mem::replace(&mut current.tasks, tasks);
+            (String::new(), true)
+        });
+        let (_, written) = self.0.board.update(&list, change).await?;
+        if let Some(written) = written {
+            let value = serde_json::to_value(&written.tasks).unwrap_or(serde_json::Value::Null);
+            self.0.hub.tasks_changed(&list, value);
+        }
+        let mut old = std::mem::take(&mut *replaced.lock_unpoisoned());
+        old.sort_by_key(|task| task.id.parse::<u64>().unwrap_or(u64::MAX));
+        Ok(old)
+    }
+}
+
+/// Whether `plan` lists the same steps as `tasks` in ID order: subject, status and priority, the fields a plan
+/// carries (Node's todo). Other Task v2 fields do not count.
+fn same_steps(
+    tasks: &[rust_cli_kernel_api::agents::TaskRecord],
+    plan: &[rust_cli_kernel_api::agents::TaskRecord],
+) -> bool {
+    use rust_cli_kernel_api::agents::TaskRecord;
+    // node-store `task_lists`: a missing or unknown priority is the `medium` placeholder.
+    fn priority(task: &TaskRecord) -> &str {
+        task.metadata
+            .as_ref()
+            .and_then(|metadata| metadata.get("priority"))
+            .and_then(serde_json::Value::as_str)
+            .filter(|priority| ["high", "medium", "low"].contains(priority))
+            .unwrap_or("medium")
+    }
+    fn step(task: &TaskRecord) -> (&str, rust_cli_kernel_api::agents::TaskStatus, &str) {
+        (task.subject.as_str(), task.status, priority(task))
+    }
+    let mut ordered: Vec<_> = tasks.iter().collect();
+    ordered.sort_by_key(|task| task.id.parse::<u64>().unwrap_or(u64::MAX));
+    ordered.len() == plan.len() && ordered.into_iter().map(step).eq(plan.iter().map(step))
 }
 
 struct TaskLists(Arc<Core>);

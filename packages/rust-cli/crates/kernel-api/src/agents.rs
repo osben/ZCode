@@ -318,6 +318,21 @@ pub trait TaskReader: Send + Sync {
     async fn tasks(&self, session: &SessionId) -> Vec<TaskRecord>;
 }
 
+/// Fork: an ACP agent plan replaces the session's task list (specs/fork-rust-agent-parity.md "ACP external agents",
+/// rule 7; Node `ExternalAgentToolRows.applyPlan` → `updateTodos`). Implemented by agents, the one writer of the list,
+/// which also announces the change.
+#[async_trait]
+pub trait TaskPlanWriter: Send + Sync {
+    /// Replaces the list of this session (a subagent's is its top-level session's) with `tasks`; returns the tasks it
+    /// replaced, by ID ascending. The writer numbers `tasks` after the list's high-water mark (their own IDs are
+    /// ignored); the same steps again leave the list and its IDs as they are.
+    async fn replace(
+        &self,
+        session: &SessionId,
+        tasks: Vec<TaskRecord>,
+    ) -> Result<Vec<TaskRecord>, StoreError>;
+}
+
 #[cfg(test)]
 #[path = "agents_tests.rs"]
 mod tests;

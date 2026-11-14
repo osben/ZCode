@@ -152,6 +152,12 @@ fn block(out: &mut String, block: &ContentBlock) -> Result<(), ModelError> {
                 message: "attached files must be expanded before the model request".to_owned(),
             });
         }
+        // Fork: `query::normalize` drops ACP rows; one reaching the adapter is a bug upstream of it.
+        ContentBlock::ExternalTool(_) => {
+            return Err(ModelError::InvalidRequest {
+                message: "ACP rows never reach the model request".to_owned(),
+            });
+        }
         ContentBlock::ToolResult {
             tool_use_id,
             content,

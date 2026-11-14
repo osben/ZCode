@@ -302,6 +302,8 @@ fn block_tokens(block: &ContentBlock) -> u64 {
             .iter()
             .map(block_tokens)
             .sum(),
+        // Fork: an ACP row never reaches the model (`query::normalize` drops it).
+        ContentBlock::ExternalTool(_) => 0,
     }
 }
 
