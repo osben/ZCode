@@ -100,6 +100,7 @@ describe("Node purge against Rust runtime presence rows", () => {
 
   it("does not treat the Rust rows as its own and its close leaves them", async () => {
     const { store, rust, register } = await setup();
+    let closed = false;
     try {
       // Same pid as this Node process, different owner: still a foreign runtime.
       const owner = register(process.pid);
@@ -110,11 +111,14 @@ describe("Node purge against Rust runtime presence rows", () => {
         store.beginSessionDeletion(ROOT, preview.revision, "operation", []),
       ).rejects.toThrow("session-data.running");
       store.close();
+      closed = true;
       expect(
         rust.prepare("select owner_id from session_runtime_presence").all(),
       ).toEqual([{ owner_id: owner }]);
     } finally {
       rust.close();
+      // Node's close() is not idempotent: close here only when the test did not.
+      if (!closed) store.close();
     }
   });
 });
