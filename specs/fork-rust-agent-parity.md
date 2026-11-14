@@ -1449,8 +1449,8 @@ Before:
 Owners:
 
 - **hooks crate (`HookEngine`)** holds the snapshots: the process snapshot (user, `--settings` and plugin hooks, as today) plus a map from the workspace key to that workspace's entry. An entry is either the admitted project sources or `Invalid` (after a failed toggle rebuild). Every read and replacement goes through one lock, like `replace` and `register_plugins` today.
-- **The workspace key** is `workspaceIdentity?.trim() || workspacePath`, built with the existing identity utilities, never hand-written.
-- **cli (assembly and `AppWorkspace`)** is the only writer of an entry. It assembles the entry at session open for the session's workspace, after every accepted trust change (`workspace/hooks/trustGrant`, the review's grant, revoke and toggle), and after `/cd` (the session actor owns the working directory; the entry follows the new workspace). This replaces `rebuild_own_hooks` and its process-root guard.
+- **The workspace key** is `project_key(event.workspace.root)` (`hooks` `projects.rs`): the workspace path with a trailing separator trimmed. A hook event carries only the `WorkspaceRef`, so the identity half of `workspaceIdentity?.trim() || workspacePath` is not part of the key (a known difference below; locally the two agree).
+- **cli (assembly, the loader and `AppWorkspace`)** is the only source of an entry. Startup assembly puts the root's entry; the cli's `ProjectHookLoader` assembles any other workspace's entry when the engine asks (its first event, and each non-compact SessionStart); `AppWorkspace` rebuilds the entry after every accepted trust change (`workspace/hooks/trustGrant`, the review's grant, revoke and toggle). A `/cd` needs no write: the next event names the new root and finds or loads that entry. This replaces `rebuild_own_hooks` and its process-root guard.
 - **session**: a hook event already carries `event.workspace`. The engine combines the process sources with the entry for the event's workspace key. An event whose workspace has no entry, or an `Invalid` entry, gets the process sources only (fail closed).
 
 Rules:
@@ -1470,22 +1470,27 @@ Rules:
 ```mermaid
 sequenceDiagram
   participant UI as Desktop
-  participant C as cli (AppWorkspace / assembly)
+  participant C as cli (AppWorkspace / assembly / loader)
   participant E as HookEngine
   participant S as session actor
-  UI->>C: createSession (workspace W)
-  C->>E: put(key(W), admitted sources of loaded files)
-  S->>E: run(UserPromptSubmit, workspace W)
+  C->>E: startup: set loader, put(key(root), root entry)
+  UI->>S: createSession (workspace W)
+  S->>E: has_hooks(SessionStart, W) = true (loader set)
+  S->>E: run(SessionStart source=startup, W)
+  E->>C: loader.load(W)
+  C-->>E: admitted sources of the loaded files
+  E->>E: insert entry(W) unless a put landed meanwhile
+  S->>E: run(UserPromptSubmit, W)
   E-->>S: process sources + entry(W)
   UI->>C: respondWorkspaceHookReview / trustGrant (W)
   C->>C: write trust record
   C->>E: put(key(W), rebuilt)
   UI->>C: toggleWorkspaceHookDeclaration (W)
-  C->>C: write enabled flag
-  alt rebuild fails
-    C->>E: invalidate(key(W))
+  C->>C: write enabled flag, re-read the config
+  alt re-read fails
+    C->>E: put(key(W), Invalid)
     S->>E: next event: process sources only
-  else rebuild succeeds
+  else re-read succeeds
     C->>E: put(key(W), rebuilt)
   end
 ```
@@ -1495,9 +1500,9 @@ Acceptance (red first; already on the branch unless marked "after #455"):
 - (b) kernel-api `hooks_tests.rs` `node_events_are_the_ten_node_names_in_node_order`; cli `trust_tests.rs` `compaction_and_session_end_hooks_are_candidates`; and `digests_match_the_node_golden` with a fifth Node-generated case (`tests/fixtures/workspace-hooks.json` "compaction and session end events, in Node's event order", golden from Node's `buildWorkspaceHookBundleSnapshot`).
 - (a) `trust_tests.rs` `a_file_nodes_strict_schema_rejects_is_dropped_whole` (unknown root key, empty matcher `hooks` before a valid matcher, unknown event, non-string matcher); `hooks_trust_tests.rs` `a_config_node_cannot_read_stops_every_trust_command` (status, grant and revoke print Node's error, exit 1; a refused grant writes nothing).
 - (c) `app_hook_review_tests.rs` `the_review_skips_only_the_file_node_cannot_load` (a bad `zcode.json` next to a good `.zcode/config.json` reviews the good file's items; the toggle answers `workspace_hooks_config_unreadable` and writes nothing); `a_config_nodes_strict_schema_rejects_is_skipped_and_never_toggled` now expects `ReviewLookup::Nothing` for a single bad file.
-- After #455, hooks unit tests: an event in workspace B never runs A's project hooks; an event with no entry runs only the process sources; a swap does not affect an event already running; an `Invalid` entry runs no project hook.
-- After #455, cli unit tests: session open assembles the entry; grant, revoke and toggle rebuild it; `/cd` moves it; a corrupt store admits nothing; (d) after a committed toggle with a failed rebuild, a trusted project hook does not run on the next event (needs a seam between the toggle's write and its re-read: today `RebuildFailed` is reachable only through the protocol stub, `fork/hook_review_tests.rs`); (a) a trusted declaration in a file with an unknown key does not run; (b) a trusted PreCompact hook runs.
-- E2E: box `hooks/conversation-session-hook-trust` HK07 fails on rust today (box runs at b51ea4bfe and 93213e6f6) and passes on both runtimes after the change; `hooks/conversation-session-hooks-lifecycle` and the WMT spec stay unchanged on both runtimes.
+- After #455, hooks unit tests (`projects_tests.rs`): an event in workspace B never runs A's project hooks (`an_event_runs_only_its_own_workspaces_project_hooks`); an `Invalid` entry runs no project hook; `replace` and `register_plugins` keep the entries; `has_hooks` reads the event's workspace, and with a loader counts an unloaded workspace and SessionStart as hooked; a swap does not affect an event already running; the first event of a workspace loads its entry once and a moved session's next root loads its own (`/cd`); a non-compact SessionStart reloads and a compaction's does not; a put during a load is not overwritten; the key ignores a trailing separator.
+- After #455, cli unit tests: `config/project_hooks_tests.rs` — the entry holds the trusted and enabled declarations, a PreCompact one included (b); a file Node cannot load adds nothing and the other files still count (a, c); a corrupt store admits nothing; startup assembly keeps the root's project hooks out of the process sources. `frontends/app_hook_snapshot_tests.rs` — grant and revoke rebuild the entry of a workspace outside the process root under the key the engine reads; a toggle rebuilds it; (d) a committed toggle whose re-read fails puts `Invalid` and answers `RebuildFailed` (seam: a `Files` wrapper that fails the config read after the write). `app_hook_review_tests.rs` `each_workspace_rebuilds_its_own_entry`.
+- E2E: box `hooks/conversation-session-hook-trust` HK07 failed on rust (box runs at b51ea4bfe and 93213e6f6). Box run 2026-11-14 on rust after the change: HK05, HK06 and HK07 pass. `hooks/conversation-session-hooks-lifecycle` on rust is unchanged from its baseline on the same base without #461 (HK-EF-01, HK-ST-01, HK-UP-ERR-01 pass; HK-LC-01, HK-UP-01, HK17 fail; HK-UP-01 is #461's). Node was not rerun: the change has no TypeScript. The WMT spec was not rerun.
 
 As built:
 
