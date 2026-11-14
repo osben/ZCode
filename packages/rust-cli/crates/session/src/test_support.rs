@@ -170,6 +170,10 @@ pub(crate) struct Setup {
     pub error_holds_queue: bool,
     /// Fork: `SessionDeps::session_start_extras`; on by default (the TUI and `-p`).
     pub session_start_extras: bool,
+    /// Fork: `SessionDeps::typed_compact`; off by default (the TUI and `-p`).
+    pub typed_compact: bool,
+    /// Fork: `SessionDeps::hook_rows`; off by default (the TUI and `-p`).
+    pub hook_rows: bool,
     /// 共用的存储（重开会话的测试）；缺省每次新建。
     pub store: Option<Arc<MemoryStore>>,
     /// 会话 actor 看到的存储外面再包一层全委托的代理（记下每一批、让某一批失败，peer_merged_tests.rs）；缺省不包。
@@ -225,6 +229,8 @@ impl Setup {
             fork_while_running: false,
             error_holds_queue: false,
             session_start_extras: true,
+            typed_compact: false,
+            hook_rows: false,
             store: None,
             store_hooks: None,
             machines: None,
@@ -324,6 +330,8 @@ impl Setup {
                 fork_while_running: self.fork_while_running,
                 error_holds_queue: self.error_holds_queue,
                 session_start_extras: self.session_start_extras,
+                typed_compact: self.typed_compact,
+                hook_rows: self.hook_rows,
             },
             SessionState {
                 commands: Default::default(),

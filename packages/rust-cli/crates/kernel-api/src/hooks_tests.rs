@@ -86,6 +86,8 @@ fn hook_outcome_round_trips_and_old_outcomes_get_defaults() {
         watch_paths: vec!["/w/a".to_owned()],
         custom_instructions: Some("focus".to_owned()),
         retry: true,
+        invocation: Some("inv_1".to_owned()),
+        runs: Vec::new(),
     };
     let text = serde_json::to_string(&outcome).unwrap();
     assert_eq!(serde_json::from_str::<HookOutcome>(&text).unwrap(), outcome);

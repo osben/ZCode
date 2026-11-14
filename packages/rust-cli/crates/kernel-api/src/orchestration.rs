@@ -54,6 +54,11 @@ pub struct QueryRequest {
     /// UserPromptSubmit，docs/specs/rust-cli/query.md §1.1）。其他运行为空（修复线 F10 新增）。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub prompt_hook_messages: Vec<Message>,
+    /// Fork: false for a subagent run whose definition says `injectAgentsMd: false`. The run passes it to its context
+    /// requests and to its compaction, so the summary run leaves the project instructions out too
+    /// (specs/fork-rust-subagent-runtime-config.md rule 15).
+    #[serde(default = "inject_by_default", skip_serializing_if = "is_injected")]
+    pub inject_agents_md: bool,
 }
 
 impl QueryRequest {
@@ -80,6 +85,7 @@ impl QueryRequest {
             max_turns: None,
             default_machine: crate::ids::MachineName::primary(),
             prompt_hook_messages: Vec::new(),
+            inject_agents_md: true,
         }
     }
 }
@@ -129,6 +135,32 @@ pub enum QueryEvent {
     },
     /// 模型端口的通知（重试、停顿、恢复），只供显示（docs/specs/rust-cli/stall-visibility.md §1）。
     ModelNotice { notice: crate::model::ModelNotice },
+    /// Fork: the hook runs of one dispatch, for the App's `hookInvocation` row (specs/fork-rust-agent-parity.md
+    /// HK-UP-01); only under the Node desktop session.
+    HookInvocation {
+        invocation: crate::hooks::HookInvocation,
+    },
+    /// Fork: the input a UserPromptSubmit hook blocked, shown as the turn's `userInput` row and never committed
+    /// (Node projects it from `TurnStarted`); only under the Node desktop session.
+    PromptBlocked { message: crate::message::Message },
+    /// Fork: the ACP agent could not load the session's earlier ACP session, so a new one replaced it
+    /// (specs/fork-rust-agent-parity.md "ACP external agents", rule 14; Node `context_reset`). Display only.
+    ExternalAgentContextReset { agent: String },
+    /// Fork: the running ACP prompt went silent or spoke again (rule 14; Node `ExternalAgentStatus`). Display only.
+    ExternalAgentStatus {
+        agent: String,
+        status: ExternalAgentStatus,
+    },
+}
+
+/// Fork: an ACP prompt's liveness (Node `ExternalAgentStatusPayload.status`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum ExternalAgentStatus {
+    /// No output for the stall window; `silent_ms` is the silence so far.
+    Stalled { silent_ms: u64 },
+    /// Output arrived again after a stall.
+    Resumed,
 }
 
 impl QueryEvent {
@@ -187,6 +219,14 @@ impl QueryEvent {
             },
             // 模型通知只供显示，不落库（stall-visibility.md §1）。
             Self::ModelNotice { notice } => KernelEvent::ModelNotice { notice },
+            Self::HookInvocation { invocation } => KernelEvent::HookInvocation { turn, invocation },
+            Self::PromptBlocked { message } => KernelEvent::PromptBlocked { turn, message },
+            Self::ExternalAgentContextReset { agent } => {
+                KernelEvent::ExternalAgentContextReset { agent }
+            }
+            Self::ExternalAgentStatus { agent, status } => {
+                KernelEvent::ExternalAgentStatus { agent, status }
+            }
         }
     }
 }
@@ -370,6 +410,28 @@ pub struct ContextRequest {
     /// （[`QueryRequest::default_machine`]）；主 env 不写出。机器清单提醒按它写“不写 `machine` 时在哪台机器上”。
     #[serde(default, skip_serializing_if = "crate::ids::MachineName::is_primary")]
     pub default_machine: crate::ids::MachineName,
+    /// Fork: the run this step belongs to (the query loop's [`QueryRequest::run`]); None for requests outside a run
+    /// (compaction, `/context` usage). The agent catalog reads the Host's subagent snapshot once per parent run
+    /// (specs/fork-rust-subagent-runtime-config.md).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<crate::ids::RunId>,
+    /// Fork: false for a subagent whose definition says `injectAgentsMd: false` (the built-in Explore): no rule files,
+    /// nested rules or git status (specs/fork-rust-subagent-runtime-config.md rule 15). The query loop copies it from
+    /// [`QueryRequest::inject_agents_md`]; the subagent context wrapper also sets it.
+    #[serde(default = "inject_by_default", skip_serializing_if = "is_injected")]
+    pub inject_agents_md: bool,
+}
+
+pub(crate) fn inject_by_default() -> bool {
+    true
+}
+
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde's skip_serializing_if passes a reference"
+)]
+pub(crate) fn is_injected(inject: &bool) -> bool {
+    *inject
 }
 
 impl ContextRequest {
@@ -394,6 +456,8 @@ impl ContextRequest {
             capabilities: None,
             mcp: None,
             default_machine: crate::ids::MachineName::default(),
+            run: None,
+            inject_agents_md: true,
         }
     }
 }

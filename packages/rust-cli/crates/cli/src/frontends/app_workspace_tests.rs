@@ -73,7 +73,7 @@ pub(super) fn fixture_text(project: &str, user: Value) -> Fixture {
     fixture_files(project, user, |env| env)
 }
 
-/// [`fixture_text`] with the project files seen through `wrap` (a seam for failing reads).
+/// [`fixture_text`] with the project files seen through `wrap` (a seam for held or failing reads).
 pub(super) fn fixture_files(
     project: &str,
     user: Value,

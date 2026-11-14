@@ -56,6 +56,11 @@ pub(crate) struct AppWorkspace {
     arrivals: AtomicU64,
     /// Serializes the hook review's config writes (`app_hook_review.rs`).
     toggles: tokio::sync::Semaphore,
+    /// Tickets of the project hook entries' rebuilds (`app_hook_review.rs`, `rebuild_hooks`): each is drawn before the
+    /// config read.
+    rebuilds_issued: AtomicU64,
+    /// The ticket of each workspace's last put entry, by workspace key; only a newer ticket puts over it.
+    rebuilds_installed: StdMutex<BTreeMap<String, u64>>,
 }
 
 /// The settings lane of one workspace key: the servers it connected and the ones it refused.
@@ -99,6 +104,8 @@ impl AppWorkspace {
             lane: StdMutex::new(None),
             arrivals: AtomicU64::new(0),
             toggles: tokio::sync::Semaphore::new(1),
+            rebuilds_issued: AtomicU64::new(0),
+            rebuilds_installed: StdMutex::new(BTreeMap::new()),
         }
     }
 

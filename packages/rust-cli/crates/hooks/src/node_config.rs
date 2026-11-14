@@ -8,7 +8,7 @@
 use rust_cli_kernel_api::hooks::HookEventName;
 use serde_json::{Map, Value};
 
-use crate::config::{CommandHook, HookCommand, HookMatcher, HookShell, HooksSettings};
+use crate::config::{CommandHook, HookCommand, HookMatcher, HookOrigin, HookShell, HooksSettings};
 
 /// Node 的默认值（`DefaultHooksRuntimeConfig`）。
 pub const DEFAULT_TIMEOUT_MS: f64 = 60_000.0;
@@ -314,6 +314,7 @@ impl NodeHooks {
                         .filter(|hook| hook.enabled != Some(false))
                         .map(|hook| hook.to_command(default_timeout, &mut warnings))
                         .collect(),
+                    origin: HookOrigin::default(),
                 })
                 .filter(|matcher| !matcher.hooks.is_empty())
                 .collect();

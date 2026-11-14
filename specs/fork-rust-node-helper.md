@@ -1,6 +1,6 @@
 # Node helper for the Rust agent (JS-only features in Rust mode)
 
-Status: approved 2026-11-13 (decisions D1–D3 below). Phase 2 in progress: F1+F2 first. Revised with PR1: `helper/initialize` shape, notification relay without a wrapper, the memory rule, the plugin reload follow-up.
+Status: approved 2026-11-13 (decisions D1–D3 below). Phase 2 in progress: F1+F2 merged (#447), F3 in progress. Revised with PR1: `helper/initialize` shape, notification relay without a wrapper, the memory rule, the plugin reload follow-up.
 
 Related: `specs/fork-agent-runtime-selection.md` (runtime choice, Host gate), `specs/fork-rust-agent-parity.md` ("Out of scope", which this spec shrinks).
 
@@ -151,7 +151,7 @@ The protocol is JSON-RPC 2.0 over the helper's stdio, with the same framing as H
 - **Relayed agent→Host requests.** Rust forwards these to the Host on its own connection and returns the Host's answer.
   - Allowlist: `interaction/browserList` and `interaction/browserExecute`.
   - Rust does not read their payloads, beyond requiring that the `sessionId` names a session it owns.
-- **`helper/sampleModel`** `{sessionId, request}`. Rust runs it through the session's model and records usage. Used by `mcp/uiSampling`.
+- **`helper/sampleModel`** `{sessionId, request, source}`. Rust runs it through the session's model and records usage. Used by `mcp/uiSampling`.
 - **`helper/appTools/replace`** `{sessionId, instanceId, tools}`. Rust replaces the app-provided tools of that session's registry, as Node's `replaceMcpAppProvidedTools` does.
 - **Relayed notifications.** The helper sends them under their Host method names. Rust forwards an allowlisted name to the Host or into the stream, and drops any other:
   - `plugins/operationProgress`: forwarded to the Host verbatim.
@@ -211,9 +211,176 @@ The table lists, for each family, what is delegated to the helper, the Rust-side
   - Chunked `workflowRunArtifactRead` reads share one load per artifact version through a cache with the gateway's byte budget and TTL, least recently read evicted first (an entry counts as read when its load settles). A load in flight is not dropped by the TTL, so concurrent readers of a slow store share it, but it is dropped after four TTLs, so a store read that never settles cannot pin its key.
 - Not forwarded in F1+F2: `plugins/mentionItems` (F3, needs the session), `skills/referenceCatalog` (Rust answers it), `lsp/*` (out of scope).
 - Like Node's server, the helper invalidates its plugin caches after each plugin mutation, and `plugins/cancelOperation` aborts the operation with that `operationId` in the same helper.
-- `plugins/referenceCatalog` and `plugins/referenceCatalogWithCategory` are served for drafts (no `sessionId`, workspace authority). With a `sessionId`, Node answers from that session's frozen catalog and must not fall back to workspace authority. The session belongs to the Rust agent, so until F3 the helper refuses explicitly: `sessionUnavailable` with `data.reasonCode = proto.forkRustAgent.sessionPluginCatalogUnavailable`. It neither reports a missing session nor logs one.
+- `plugins/referenceCatalog` and `plugins/referenceCatalogWithCategory` are served for drafts (no `sessionId`, workspace authority). With a `sessionId`, Node answers from that session's frozen catalog and must not fall back to workspace authority. The session belongs to the Rust agent. In F1+F2 the helper refused that branch (`sessionUnavailable`, `data.reasonCode = proto.forkRustAgent.sessionPluginCatalogUnavailable`); since F3 Rust opens the session in the helper first and the helper answers from the frozen catalog (see F3).
 - The saved-workflow methods open the session database only when they read the dwf journal: `workflows/runs`, `workflows/save` and `workflows/forRun`. The other five only touch workflow files and answer without a database, as in Node.
 - Without a helper command, `v4/conversation/workflowRuns` keeps answering `{runs: []}` and every other method stays `-32601`.
+
+### F3 Office tools and panels
+
+Status: in progress (PR after #447). This section replaces the F3 row's sketch where they differ.
+
+**Helper-hosted plugins.** With a helper command configured (`PluginSources.node_helper`), the MCP servers of these admitted plugins are helper-hosted:
+
+- official plugins whose MCP stdio args contain `__zcode-plugin-host`: today documents, spreadsheets, presentations and pdf. Without a helper they stay skipped (`NodeDependency::PluginHost`);
+- any plugin whose manifest declares an MCP App entry point: a non-empty `ui.surfaces`, or a `slots["composer.mention"]` entry with a `target.tool`. Without a helper these load as today, with servers Rust runs itself and no panel or mention items.
+
+All MCP servers of such a plugin are helper-hosted, because Node resolves a mention tool over all servers of the plugin and a panel may call any of them. OfficialAuth plugins stay skipped: a plugin-host plugin with any official-auth server is skipped as `OfficialAuth`, whatever the order of its servers. The node_repl plugins are F4.
+
+Why plugin-level MCP Apps go through the helper too: the panel and the model must reach the same server instance, and only Node's adapter and `mcp-ui` code speak the panel protocol. The two MCP App E2E fixtures (`e2e-mcp-viewer`, `e2e-mcp-mention`) are inline plugins of this kind.
+
+**Not ported yet: MCP Apps on servers Rust runs itself** (a user or project MCP server whose tools carry `_meta.ui`). Forwarded session methods that name such a server are refused with `proto.forkRustAgent.mcpUiServerNotHelperHosted` (`-32602`, `data.reasonCode`).
+
+**One source of server configuration.** Rust marks a helper-hosted server with `McpTransportConfig::NodeHelper` and sends only its name (`plugin:<plugin>:<server>`, the same in both runtimes). The helper takes the server's config from its own Node plugin resolution of the workspace (`resolveZCodePlugins`, resolved once per helper process). So the model's connection and a panel's connection are the same pool entry, and Rust never re-encodes Node's config.
+
+**Model tools: Rust stays the MCP client, the helper is the pipe.** Rust's `McpManager` owns a helper-hosted server like any other: naming (`mcp__plugin_<plugin>_<server>__<tool>`), deferral and ToolSearch, WaitForMcpServers, the per-server tool timeout, cancel via `notifications/cancelled`, result conversion. Only the transport differs. The connection is a channel to the helper:
+
+| Message (Rust ↔ helper)                              | Meaning                                                                                                                           |
+| ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `helper/mcp/connect {connection, server, workspace}` | Request. The helper connects the server through Node's MCP pool (a lease of its own) and answers `{}` once connected, or an error |
+| `helper/mcp/send {connection, message}`              | Notification, Rust → helper: one MCP JSON-RPC message from Rust's client                                                          |
+| `helper/mcp/message {connection, message}`           | Notification, helper → Rust: one MCP JSON-RPC message to Rust's client                                                            |
+| `helper/mcp/closed {connection, reason}`             | Notification, helper → Rust: the real server's connection closed                                                                  |
+| `helper/mcp/close {connection}`                      | Notification, Rust → helper: Rust closed the connection                                                                           |
+
+A connect that Rust gives up on is closed in the helper too:
+
+- Rust sends `helper/mcp/close` and drops the pipe whenever its connect does not succeed: an error answer, its timeout, or the caller dropping it.
+- A close without a non-empty string `connection` is refused and logged, like a malformed session close; it never closes a guessed connection.
+- A close that reaches the helper while that connection is still connecting makes the connect release its lease and answer an error once it finishes. Otherwise a late connect would keep a lease and an MCP child that nothing closes, and the helper would never be idle.
+
+`workspace` is `{workspacePath, workspaceIdentity?}`, keyed `workspaceIdentity?.trim() || workspacePath`. A Rust process may serve several workspaces, so the helper is never bound to one:
+
+- The Host's shared local task runtime is one agent process for every local workspace, run in the data root (`<home>/.zcode`, `SHARED_TASK_RUNTIME_KEY` in `zcodeAgentProcessManager.ts`).
+- The helper resolves plugins once per workspace key (`workspaceIdentity?.trim() || workspacePath`) and directory (a session in an execution worktree resolves in its worktree), and forgets a failed resolution so the next call retries. The cache keeps one entry per worktree for the helper's lifetime; it is not evicted yet.
+- A pipe keeps the workspace its connect named, for its server config and its lease's working directory. Rust's pipes name the workspace its MCP manager runs in.
+- A session keeps the workspace its open named: its server configs, its lease's working directory, and its model tool calls on that lease. A panel tool call sends no workspace fields, as Node's does (`session-facade.ts:528-536`); it runs on the session's lease.
+
+The helper protocol version is 2 from F3 on: a Rust build and a helper of different versions refuse each other at `initialize`.
+
+The helper answers Rust's MCP messages as a small MCP server facade over Node's port:
+
+- `initialize` answers the protocol version Rust asked for and the `tools` capability with `listChanged: true`. The real server's `tools/list_changed` is forwarded to every pipe connection of that server.
+- Every notification of the helper's MCP pool also takes Node's route (`routeMcpServerNotification`, as Node's server does in `handleMcpNotification`): a server log goes to the helper's log, and `resources/updated` or `resources/list_changed` for a panel's subscription becomes that session's `pluginUi.resourceUpdated` or `pluginUi.resourceListChanged` delta. Resource notifications are not sent to the pipes.
+- `tools/list` lists only model-visible tools (Node's `resolveMcpToolVisibility` includes `"model"`), with `name`, `description`, `inputSchema`, `annotations`, and `_meta["zcode/alwaysLoad"]` when the descriptor is `alwaysLoad`. A `cursor` is accepted; there is no `nextCursor`.
+- `tools/call`: Rust adds `_meta["zcode/helperContext"] = {sessionId, turnId?, runtimeScope}` for helper-hosted servers only. The helper calls Node's `callTool` on **that session's lease** (see session open), with the trace, `runtimeScope`, `turnId` and workspace fields Node's own MCP tool entry sends. So a session-isolated server runs one instance per session, shared by the model and the panel, as in Node.
+- `notifications/cancelled` aborts the call. `ping` answers `{}`. Notifications are never answered. Any other request answers `-32601`.
+- Rust's `tools/list` lease is the pipe's own: for a session-isolated server that is one extra instance per Rust process, used for listing only.
+
+**Session open and close.** Before the first forwarded session call, and before the first helper tool call of a session, in each helper generation, Rust sends and awaits:
+
+```
+helper/session/open {sessionId, openId, rootSessionId?, workspace, executionDirectory?, pluginIds: [...], servers: [...]}
+```
+
+- `workspace` is the session's own, as its row holds it: `workspacePath` is the row's `directory` (a draft's too), and `workspaceIdentity` is its non-empty `workspace_id`. Rust's local rows have none.
+  - Never the agent's cwd: the desktop E2E runs the agent in `<home>/.zcode` while its sessions live in `<home>/ZCodeProject`.
+  - A session whose row Rust cannot read is not opened; the call fails as `nodeHelperUnavailable`.
+- `executionDirectory` is the session's execution worktree path. When present it must be a non-empty string, or the open is invalid params; it is never replaced by the workspace. It is sent when the session has one and its directory exists (Rust checks a local workspace only, as for the session's own cwd). As in Node, the session runs in the worktree while its key stays the parent workspace's:
+  - Node's app takes the worktree as its working directory unless it is missing (`create-app.ts:200-208`). Plugin and MCP config resolution (`:220-230`), the MCP lease and its stdio children (`:607-630`, adapter spawn cwd `adapters/src/mcp/index.ts:2016`) use it.
+  - The session's workspace key is the protocol workspace's, not the worktree (`create-app.ts:477-479`, `core/src/runtime/types.ts:302-307`). Node's MCP tool entry sends `workspacePath` = the working directory and `workspaceKey` = that key (`core/src/mcp/index.ts:259-267`); its session connect does the same (`core/src/runtime/methods/mcp.ts:89-97`).
+  - So the helper resolves the session's plugins and connects its lease in `executionDirectory`, and sends it as the tool call's `workspacePath`. `workspace` stays the key everywhere else.
+- `openId` names this open; it is unique per Rust process. The close of an open names its `openId`, so a close never ends a later open of the same session.
+- `pluginIds` are the plugins Rust admitted in this process. The helper freezes the session's reference catalog from its plugin resolution; an entry is enabled only when Rust admitted it, so the picker and Rust agree on one plugin set.
+- `servers` are the helper-hosted server names. The helper acquires a session lease from its MCP pool (`sessionId` isolation) and connects them before answering. A failed server is logged and left out; the session still opens.
+- `rootSessionId` is the top-level session of a subagent session: Rust sends it for every subagent session. Rust follows the session's parents while they are subagent sessions; the first other session is the root (a fork session is a top-level session for the agents it spawns), and a parent it cannot read is taken as the root. An interactive or fork session is its own root and sends none. Node does the same: a subagent run's trace carries `rootSessionId ?? parent` (`core/src/subagent/runner.ts:1022,1074`).
+  - The stored `trace_id` is not used: Node writes the run's trace id there, not the root session.
+  - Each step reads the session's view: an open session answers from its actor, a closed one is loaded from the store. That happens once per helper open.
+  - It goes into the session trace, so Node's adapter sends it to the server as `root_session_id` in `_meta["com.zcode/request-context"]`, next to `session_id` and `turn_id`.
+  - The Office server keeps one viewer per `root_session_id ?? session_id` (`office-runtime/src/adapters/server.ts` `sessionOf`). Without the root, a subagent's documents would land in a viewer of their own.
+- The helper session has no Node session lifecycle: the helper sets a lifecycle that is always ready, because Rust owns the session and opened it before forwarding.
+- `helper/session/close {sessionId, openId}` (notification) is sent when Rust closes a session it opened in this generation. The helper does Node's close steps: abort the session's panel tool calls, clear its app tools, unsubscribe its resources, close its lease.
+  - A session that Rust closes while its open is still in flight is closed once the open succeeds, with that open's `openId`.
+  - An open that Rust gives up on is closed with its `openId`: its timeout or the caller dropping it. The helper may still finish it, and nothing in Rust would own it. An error answer needs no close, because the helper keeps nothing of a failed open.
+  - Concurrent calls of one session share one open. When that open fails, its call removes the pending entry and fails; a call that was waiting on it starts again from the registered entry and opens the session itself, which then stays registered and open. It must not open on the removed entry: that open would look closed in flight, be closed in the helper, and the call would be forwarded into a closed session.
+  - The close also forgets the session's panels, so a later crash sends no `pluginUi.instanceClosed` for them.
+- The helper runs the opens and closes of one session one at a time, in arrival order:
+  - A close ends the session only when its `openId` is the open one; a stale close is ignored.
+  - An open of a session that is already open replaces it: the old one gets the close steps, then the new open runs with its own params. Node's `openSession` used to answer `{}` and keep the old params.
+  - An open that fails after its lease is acquired closes that lease before it answers the error.
+  - A close without a string `sessionId` or a positive integer `openId` is refused. It is a notification, so the helper logs the refusal and keeps serving; a handler error must not close the connection.
+  - An open still in its lane when the helper is disposed gets the close steps once it finishes, and answers an error.
+
+```
+Rust (NodeHelper, Running slot)              helper (ForkRustHelperMcpHost, one lane per sessionId)
+ensure_session: OnceCell<openId> ──open(s,1)──► lane: [open 1] lease, connect, sessions[s]=1
+  timeout or drop before the answer ──close(s,1)──► lane: [close 1] ends s if sessions[s]=1
+session_closed (cell initialized) ──close(s,1)──► lane: [close 1]
+reopen: new cell ──open(s,2)──────────────────► lane: [open 2] replaces s, if still open
+late close(s,1) after open(s,2) ──────────────► lane: [close 1] ignored, sessions[s]=2
+```
+
+The plugin catalog and admission are still the Rust process's, not the session workspace's: `pluginIds` and `servers` come from the plugins Rust loaded for its own workspace (`cli/src/assemble/mod.rs` `helper_catalog`, checked in `helper_session_admit.rs` and `helper_answers.rs`). Per-workspace admission is the next change after F3 (per-workspace plugins and MCP in Rust's shared local task runtime).
+
+The pipe workspace is not enforced either. Each pipe stores the workspace key of its `helper/mcp/connect` (`workspaceIdentity?.trim() || workspacePath`). The helper does not refuse a session or a tool call whose key differs from the pipe's. In the shared local task runtime every pipe names the agent's directory (`<home>/.zcode`, `node_helper_mcp.rs` `helper_workspace`), while sessions live in their own workspaces, so a refusal would fail every helper model tool call there. The per-workspace change turns the refusal on, once a pipe connects in its session's workspace.
+
+**Session-scoped forwarded methods.** Same params and result as Host ↔ Node:
+
+- the 16 `mcp/ui*` methods and `mcp/readResource`;
+- `plugins/mentionItems`;
+- `plugins/referenceCatalog` and `plugins/referenceCatalogWithCategory` with a `sessionId` (the session's frozen catalog; drafts stay sessionless as in F1).
+
+Rust forwards one only when the session is one of its own (open or resumable in this process), and, for a method that names a `serverName`, when that server is helper-hosted; `plugins/mentionItems` names a plugin, which must be helper-hosted. Otherwise Rust answers `proto.forkRustAgent.mcpUiServerNotHelperHosted`.
+
+The ownership check does not compare workspace paths:
+
+- The agent's cwd is not its sessions' workspace. The Host may spawn it in a fixed directory (`ZCODE_AGENT_SERVER_CWD`, the spawn fallback cwd). The desktop E2E runs it in `<home>/.zcode`, while its sessions live in `<home>/ZCodeProject`. A comparison with the helper catalog's workspace (the agent's cwd) refused Rust's own mention and MCP App calls.
+- The Host routes a session's calls to the agent that owns it (owner/lease), so another workspace's session does not reach this check.
+
+**Helper → Rust requests (F3).** Each carries a `requestKey` (the request id). When the helper abandons one (the panel call was aborted, the session closed), it sends the notification `helper/cancelRequest {requestKey}` and does not wait for the answer; Rust drops its work for that key (a pending prompt is withdrawn, a sampling request is cancelled).
+
+- `helper/authorizeAppTool {sessionId, serverName, toolName, input, tool: {description?, inputSchema, annotations?}}`
+  - `input` must be an object, and `tool` must be an object with an object `inputSchema`; otherwise the request is invalid params. The helper always sends both: Node's `input: args ?? {}` and the descriptor from its `listTools`. A defaulted descriptor would have no schema, so validation would accept any input.
+  - Node's `authorizeAppTool` for `mcp/uiCallTool` and `plugins/mentionItems`. App-only tools are not in Rust's tool list, so the helper sends the descriptor and Rust builds a transient MCP tool from it, as Node's `createMcpToolEntry` fallback does.
+  - Rust runs the admission part of its tool pipeline on it, named `mcp__<server>__<tool>`: schema validation, `validate_input`, PreToolUse hooks, the rules and the gate, with a session-scoped prompt when it asks. It does not run the tool or PostToolUse hooks.
+  - The answer is `{input}` (the approved, possibly hook-updated input), or an error whose `data.type` is Node's `CoreErrorType` (`permission_denied`, `invalid_input`). Node's order and texts (`tool/executor/impl.ts` `authorizeAppTool`):
+    - an invalid input is `invalid_input`, before any hook;
+    - a PreToolUse hook that stops the turn or denies the call is `permission_denied` with `hooks.stopReason ?? "Tool denied by host hook"`. Node sets `stopReason` only with `continue: false` or `decision: "block"` (`hooks/output.ts`); a `permissionDecision: "deny"` reason alone is not the answer;
+    - then a hook-updated input that fails validation is `invalid_input`, which callers report as a failed call, not a denied one;
+    - then the rules and the gate: `permission_denied`. A tool the session hides answers the text a model call gets, `Error: No such tool available: <name>`.
+  - "Always allow" lands in Rust's rules, so later model calls of that tool are allowed too.
+  - The prompt is session-level: a turn that ends while it waits neither cancels it nor hides it. The kernel resolves a turn's own asks before `TurnFinished` (`cancel_turn_asks`, each with `InteractionResolved`), so the projection keeps every ask still pending then (before, it cleared them all; `plugin-extension-mention` lost a mention prompt asked during a turn).
+    - Node's turn end drops a pending entry whose `toolCallId` is a foreground tool row that the turn closes (`closeOpenToolRows`). In Rust those entries are the turn's own asks, already resolved by the kernel.
+    - An App prompt's `toolCallId` is the request key, which has no tool row in either runtime, so Node keeps it too.
+    - The projection never drops an ask that the kernel still waits on.
+  - When Rust gives up on the panel's `mcp/uiCallTool` (its timeout), it sends `mcp/uiCancelCall` to the helper; see "Helper hang". Node's handler aborts the call, the helper's client sends `helper/cancelRequest`, and the prompt is withdrawn. Otherwise an approval given after the timeout would still run the tool with no caller waiting.
+- `helper/sampleModel {sessionId, request, source: {pluginId, serverName, appIdentity}}`
+  - `mcp/uiSampling`, Node's `sampleModel`. The helper has validated `request` against `mcpAppsSamplingParamsSchema`; Rust reads the part Node forwards to the model (`messages`, `systemPrompt`, `maxTokens`) and ignores `includeContext`, `modelPreferences`, `metadata` and `source`, as Node does.
+  - Rust opens the session, then runs one side request (source `mcp_app_sampling`) on the session's current model selection as it is: no small-model slot and no reasoning level. The output cap is `min(maxTokens, the model's max output)`, and the provider patch gets the same cap. `systemPrompt` is the system block; image blocks are base64 images.
+  - Headers: `x-zcode-session-type: other` (Node's `modelRequestSessionType: "other"`) and `x-zcode-query-source: mcp_app_sampling`. Overload retries follow the user-facing rule (Rust's `foreground`); the Node source list for this was not found, so this is inferred from "a panel waits for it".
+  - A model known to take no images refuses an image block with Node's "Selected model does not support image input", before any call and with no usage row. Unknown capabilities leave the block to the model adapter.
+  - The answer is `{role: "assistant", model, content: {type: "text", text}, stopReason}`. `stopReason` is Node's mapping of the AI SDK finish reason: `endTurn` (end turn, stop sequence, pause), `maxTokens` (max tokens, context window), `content-filter` (refusal). A tool call, a tool-use or unknown reason, or none is Node's "Sampling did not produce a supported completion".
+  - The call runs in the request's task, never in the session actor, and writes no message or event. A call that reached the model writes one `model_usage` row anchored to no turn: `cancelled` when the request was cancelled whatever else happened (Node's order), else `error` or `completed`. A draft session is stored by that row.
+  - Rust adds no timeout: the helper's 60 s timeout, a `helper/cancelRequest` or the helper's exit cancels it through the request key. An ACP session's model refuses with Rust's external-agent refusal, as Node's `assertNotExternalAgentModel`.
+  - Not ported: Node's `ensureSessionPersisted("MCP App sampling")` title seed. It only titles a session that never had a prompt, and a panel exists only after a turn's tool result.
+- `helper/appTools/replace {sessionId, tools: [{name, modelName, serverName, pluginId, toolName, title?, description?, inputSchema, readOnlyHint?, destructiveHint?, idempotentHint?}]}` → `{registered: [names]}`
+  - Node's `replaceMcpAppProvidedTools` is synchronous and returns the applied names at once, so the helper answers the panel with its own prediction (Node's registry, deduplicated) and sends the request without waiting. A name Rust skipped is only logged in the helper (`fork_rust_helper.app_tools.skipped`).
+  - Rust replaces that session's app-provided tools (`app__…` names) in an overlay of its tool registry keyed by the exact session id. A name that clashes with an existing tool is skipped, as in Node. They are visible from the session's next tool round.
+  - A model call of one sends `helper/appTools/call {sessionId, turnId, toolCallId, name, input}` (request) and gets `{content, isError}`. A cancelled call sends `helper/appTools/cancel {sessionId, toolCallId}`.
+  - The claim/resolve mailbox stays in the helper (Node's `appToolsProtocol.ts`). The UI answers it through the forwarded `mcp/uiClaimAppToolCall` and `mcp/uiResolveAppToolCall`.
+  - **Not ported yet (F3b, its own PR):** Rust answers `helper/appTools/replace` with `-32601`, so the helper logs `fork_rust_helper.app_tools.replace_failed` and the model sees no `app__` tools. It needs a session-scoped "always allow" first: Node's `askOptions: {allowAlways: "session"}` allows an app tool for the session only and never persists a rule, because the same `app__` name is reused by other pages in other sessions. Rust has no session-only allow yet; F5's gated workflow tools need it too.
+- `helper/session/delta {sessionId, delta}` (notification)
+  - One of `pluginUi.resourceUpdated`, `pluginUi.resourceListChanged`, `pluginUi.instanceClosed`, `pluginUi.appToolCall`, shaped by Node's projection mapping (`product-projection.ts`).
+  - Rust appends it to that session's live stream only, in the session's frame order: not persisted, not in the snapshot, like Node's sequence-0 events. Other ops, and sessions Rust has no live projection for, are dropped.
+
+**Elicitation.** A helper-hosted server's elicitation request is declined by the helper. Not ported yet: relaying it to Rust's elicitation prompt.
+
+**Helper connection.** Pipe messages, `helper/session/*`, `helper/ping` and the responses to the helper's own requests bypass the helper connection's serial request queue, so a tool call or its cancel never waits behind a plugin install. The timeout rule's ping is sent while a request is overdue; queued behind that request, it would time out and drop a live helper.
+
+**Lifecycle changes (F3).**
+
+- **Open resources.** An open helper MCP connection or an open helper session keeps the helper alive; idle reclaim needs neither.
+- **Per-method timeouts.** Each forwarded method uses the Host's timeout for it: 300 s for `plugins/*` and `workflows/*`, 65 s for `mcp/uiSampling`, 180 s for everything else (the Host's default). Model tool calls are timed by Rust's MCP client (the server's `timeoutMs`, else `MCP_TOOL_TIMEOUT`), which cancels with `notifications/cancelled`. A slow tool call never drops the helper.
+- **Timeout rule.** A timed-out forwarded call keeps the process when it was heard from since the call started, or when it answers `helper/ping` within 5 s. Only a process that fails both is dropped.
+- **Pipe order.** A pipe's tool call waits for its session's open, and only its own session's traffic waits with it. Each session has a lane on the pipe: its calls, and the cancels of those calls (matched by `requestId`), go out in order, so a cancel never overtakes its call. Another session's traffic and sessionless messages (`initialize`, `tools/list`, `ping`, answers to the server's requests) pass a pending open, which may take the open's full timeout.
+- **Crash.**
+  - Rust's MCP connections over the helper close. A helper-hosted server then reconnects with the backoff of a remote server (a new helper generation starts on the reconnect), instead of failing for good as a stdio server does; once the breaker keeps the helper down, it fails after the usual reconnect limit.
+  - For every panel instance Rust saw opened (`mcp/uiOpenInstance` answers) in that generation and not closed, Rust sends `pluginUi.instanceClosed` on the session stream.
+  - A panel counts as closed only on a `mcp/uiCloseInstance` answer of `{closed: true}`. Node answers `{closed: false}` for a busy panel under `onlyIfIdle` and keeps it open (`mcp-ui/protocol.ts` `closeMcpUiInstance`); a crash still closes that panel.
+  - An open whose answer arrives after its generation is gone fails as `proto.forkRustAgent.nodeHelperUnavailable`, so no panel stays open on a helper that no longer exists.
+  - App tools registered by that generation are removed. Helper sessions reopen lazily in the next generation.
+- **Lazy start.** `McpManager` registers helper-hosted servers as pending at `Ext::start` and connects them on the first tool snapshot of any session (a turn), or when an MCP status listing asks for them. The plugin lane runs neither, so it never starts the helper for them.
+
+**Memory.** With the Office plugins enabled (the default), a Rust process that ran a turn keeps a helper and the Office servers for as long as its connections are open. This is the same set of servers a Node agent runs for its sessions, plus the helper (324 MB idle, see "Memory").
 
 ### Why the helper, not Rust, is the MCP client for Node-hosted servers
 
@@ -226,6 +393,48 @@ Rust already speaks stdio MCP, so it could spawn node_repl and the Office server
 - a broker socket for browser.
 
 On top of those, Rust would have to port the `mcp/ui*` lease protocol. With the helper as the MCP client, Node's own adapter and `mcp-ui` code run unchanged, and the panel and the model share one server instance. Rust keeps what it must own: the turn, permissions, the model and the stream. Rust's MCP client stays in use for ordinary plugin MCP servers.
+
+### MCP Apps on Rust-hosted servers (F7, after F5)
+
+A panel of an MCP server Rust runs itself (a user's `mcp.json` server, a plugin server without the plugin host) is refused today with `proto.forkRustAgent.mcpUiServerNotHelperHosted`. Full parity needs it. Node's rule: "the ownership truth is the session's MCP server table (plugin servers and ordinary MCP servers in one table); any configured server can render an MCP App" (`zcode-protocol/mcp-ui/sessionAccess.ts`).
+
+What Node does, read from the code:
+
+- **One connection per server per session.** The panel's calls (`callMcpToolForUi`, `readMcpResourceForUi`, `subscribeMcpResourceForUi`, the resource lists) go through the session's own `mcpPort`, on the same `record.client` the model's tool calls use (`adapters/src/mcp/index.ts` `callTool` with `appConnection`).
+- **The lease is tied to that connection.** `McpUiInstances` (`instances.ts`) is the only owner of the panel tokens. It binds each lease to `appConnectionSnapshot(server)`: a hash of the platform, the exec path, the workspace, the server name and its canonical config, plus the connection generation. Each guarded panel call validates the lease before and after the call. A reconnect bumps the generation, fires `onAppConnectionInvalidated`, and the panel's later calls fail with "MCP App connection changed".
+- **Sampling and app tools are per lease, not per connection.**
+  - `McpUiSamplingCalls` (`samplingCalls.ts`) owns the operation ledger and the caps: 4 per session, 8 per agent, 4096 operations per lease. It calls the runtime's `sampleModel`.
+  - The app-tool mailbox (`appToolsProtocol.ts`) owns claim and resolve.
+- **Resource updates come back on that connection.** `notifications/resources/updated` for a subscribed URI becomes `pluginUi.resourceUpdated`.
+
+Option 1: Rust ports the lease, the mailbox and the sampling ledger for its own MCP connections.
+
+```
+owners: Rust MCP client (connection, generation) · Rust McpUi registry (leases, sampling ledger, mailbox) · kernel (sample_model, app tools, permission)
+panel ─mcp/uiOpenInstance─► Rust registry: lease bound to (identity, generation) of Rust's connection
+panel ─mcp/uiCallTool─────► validate lease ─► authorize (kernel pipeline) ─► Rust client tools/call ─► validate lease ─► result
+model ─tools/call─────────► same Rust client, same server process
+server ─resources/updated─► Rust client ─► registry ─► pluginUi.resourceUpdated on the session stream
+Rust reconnect ───────────► generation+1 ─► registry revokes the server's leases (cancel first, then close)
+```
+
+Option 2: the helper becomes the MCP client of UI-declaring plugin servers.
+
+```
+owners: helper (connection, leases, ledger, mailbox) · Rust (model tool calls via helper/mcp/* pipes, kernel)
+Rust ─connect─► server: is it UI-declaring? Only known after connecting (ui:// resources, tool `_meta.ui`)
+    ├─ (2a) hand the whole server to the helper: Rust closes its client, the helper reconnects, model calls go through the pipes
+    └─ (2b) keep Rust's client for the model and add the helper's: two clients, two stdio processes
+```
+
+Verdict: Option 1, as the lean was. The Node code refutes Option 2 on four points:
+
+- **(2b) splits state.** A stateful server holds different state in each process; `appConnections.test.ts` checks that a panel call goes to the connection whose identity and generation the lease holds. Subscriptions would arrive on the helper's connection while the model's calls go to Rust's. OAuth tokens and trust prompts would happen twice.
+- **(2a) needs a connect before it can classify the server, then a second connect.** It moves the trust, OAuth, config and `timeoutMs` handling of the user's own servers from Rust's client into Node's. That duplicates the client Rust already owns, and the helper has no view of Rust's reconnects.
+- **The lease generation must follow the connection that serves the model.** Only the owner of that connection can bump it at the right moment (Node does it inside `nextConnectionGeneration`).
+- **Most of the F3 helper code is reusable as the reference, not as a runtime.** The protocol logic is small (`instances.ts` 151 lines, `samplingCalls.ts` 99, `appToolsProtocol.ts` 166), and `sample_model` and the app tools (F3b) are already kernel features in Rust.
+
+Plugin-host servers stay helper-hosted (the reasons above). Each server then has exactly one client: the helper for `__zcode-plugin-host` servers, Rust for every other server. The `mcp/ui*` router picks the owner by server, so one panel protocol has two implementations of the lease. A shared conformance test (the same request sequence against both owners) keeps them equal.
 
 ### Decisions (approved 2026-11-13)
 
@@ -256,6 +465,7 @@ On top of those, Rust would have to port the `mcp/ui*` lease protocol. With the 
   - F1+F2 (shipped): Rust kills the helper's process group, which takes the helper's children with it. On Windows the helper gets its own Job (`Containment::OwnJob`), which closes when the guard drops. The process-level Job that MCP servers use would keep each dropped helper alive until the Rust process exits, so a launch that falls back to it is refused as a failed launch. The trade-off: on a Windows machine where the helper cannot get its own Job, the forwarded families answer `nodeHelperUnavailable` (with the start cooldown and one `warn`) instead of working while leaking a helper per reclaim until the Rust process exits. Dropping the guard stops the tree in a task (TERM, then KILL after the grace period), so the stop is confirmed and the helper's ledger record is removed instead of one record per generation waiting for the next sweep. If that task cannot run (the Rust process is shutting down), dropping the tree still kills its group. The guard is always dropped after the state lock is released. No call is in flight at that point, and the helper holds no state that needs a flush: the session store is SQLite with WAL.
   - A call dropped by its caller stops counting as in flight, so it never keeps an idle helper alive.
   - F4 (planned): close stdin first and give the helper a grace period, so live MCP children and panels shut down in order.
+  - F3: an open helper MCP connection or helper session also keeps the helper (see F3).
 - **Rust exit.** The helper sees stdin EOF and exits, killing its MCP children. Rust also kills the helper's process tree on drop, as the Host does for agents. The helper starts through the Rust process ledger (`rust_cli_proc::ledger`, group isolation, as MCP stdio servers do), so a Rust process that dies without cleanup has the helper reaped by the next one.
 - **Helper crash.**
   - In-flight forwarded calls fail with `proto.forkRustAgent.nodeHelperUnavailable`.
@@ -265,9 +475,19 @@ On top of those, Rust would have to port the `mcp/ui*` lease protocol. With the 
 - **Helper hang.** Each forwarded method uses the Host's timeout for that method. Tool calls use the server's tool timeout (node_repl 600 s).
   - F1+F2 (shipped): every forwarded call has 300 s, the Host's plugin-management timeout, and `helper/initialize` has 30 s (all calls wait on a start). On timeout Rust fails the call as unavailable.
     - The process is kept if other calls are in flight on it and it has been heard from since the timed-out call started: an answer, any notification (relayed or not, such as `plugins/operationProgress`), or a request. It is alive, and only this call is slow (a long install). A hung call on a live process is then left to its cancel and to the idle reclaim.
-    - On a kept process, a timed-out call that carries an `operationId` (trimmed, non-empty, as `getPluginOperationId`) is cancelled in the helper with `plugins/cancelOperation`, fire and forget, with the Host's 5 s cancel deadline. Otherwise the abandoned operation would keep running and stay registered under its id. The Host cancels an operation when the user cancels it or the UI abandons it (a workspace or attachment switch, a superseded suggested prompt), but not on its own request timeout. Operation ids are unique per Host request, so the cancel names only the abandoned call.
+    - On a kept process, a timed-out call is cancelled in the helper with its own cancel method, fire and forget, with the Host's 5 s cancel deadline:
+      - a plugin operation that carries an `operationId` (trimmed, non-empty, as `getPluginOperationId`): `plugins/cancelOperation {operationId}`;
+      - `mcp/uiCallTool` (F3): `mcp/uiCancelCall`;
+      - `mcp/uiSampling` (F3): `mcp/uiCancelSampling`.
+
+      Both `mcp/ui` cancels carry only the call's `instance`, `workspace`, `sessionId`, `pluginId` and `serverName`, plus its `callId` or `operationId`, because the schemas are strict.
+      The Host's own timeout for these calls is the same 180 s or 65 s (`DEFAULT_ZCODE_PROTOCOL_REQUEST_TIMEOUT_MS`), so Rust gives up no earlier than the Host would. Otherwise the abandoned operation would keep running and stay registered under its id. The Host cancels an operation when the user cancels it or the UI abandons it (a workspace or attachment switch, a superseded suggested prompt), but not on its own request timeout. Operation ids are unique per Host request, so the cancel names only the abandoned call.
+
     - Otherwise the process is hung, and Rust drops it. That is not counted as a crash, and the next call starts a new helper. The other calls in flight on it fail as unavailable. Without this rule, a hung helper would never be dropped while overlapping calls keep arriving.
-  - F4 (planned): per-method timeouts for tool calls, and a cancel message instead of dropping the process.
+
+  - F3: per-method timeouts and the `helper/ping` liveness check (see F3, "Lifecycle changes"). Tool calls are timed and cancelled by Rust's MCP client.
+  - F4 (planned): the node_repl tool timeout (600 s) and its cancel.
+
 - **Version mismatch** in `helper/initialize`: the helper is treated as unavailable for the life of the Rust process, with a single `warn`. A launch or initialize failure is not a crash. For 30 s after it, calls fail fast with the same code and start nothing (the run list is polled on every subscribe, so a broken bundle must not cost a Node process per call); the first call after that tries again. One `warn` covers a run of failures; a launch failure names the program file and the OS error. A start runs on its own task, so a caller that gives up mid-start does not strand the launched process. A start that panics or is aborted, and a helper that advertises no methods, count as failed starts with the same cooldown.
 - **Logging.**
   - Rust `info`: `helper.spawned`, `helper.exited`, `helper.reclaimed`. The exit code is not logged: the process ledger's handle does not report it.
@@ -319,7 +539,7 @@ On top of those, Rust would have to port the `mcp/ui*` lease protocol. With the 
   - the Host command sets `ZCODE_FORK_NODE_HELPER_COMMAND` in Rust mode only.
 - **Desktop E2E in the box**, on both runtimes:
   - existing plugin-management and saved-workflow specs (F1, F2);
-  - Office panel spec (F3);
+  - F3: `plugins/extensions/plugin-extension-entries` (a panel opens and calls an MCP App tool) and `plugins/extensions/plugin-extension-mention` (mention items with the approval prompt: deny, then always allow). There is no Office panel E2E spec; the Office servers are covered by the fork Vitest of the helper facade and by these two specs, which use the same path;
   - node-repl and browser-use specs (F4).
 
   The exact spec names are listed per PR from `packages/desktop/test/e2e`. A spec that fails on both runtimes is not a parity gap.
@@ -341,4 +561,4 @@ On top of those, Rust would have to port the `mcp/ui*` lease protocol. With the 
 
 ## Delivery
 
-One PR per family, in this order: F1+F2 (helper skeleton plus the sessionless families), then F3, then F4+F6, then F5 (after F1–F4 are merged). Each PR updates the "Out of scope" section of `specs/fork-rust-agent-parity.md` and its matrix rows.
+One PR per family, in this order: F1+F2 (helper skeleton plus the sessionless families), then F3, then F3b (session-scoped "always allow" and app-provided tools), then F4+F6, then F5 (after F1–F4 are merged), then F7 (MCP Apps on Rust-hosted servers, Option 1 of "MCP Apps on Rust-hosted servers"). Each PR updates the "Out of scope" section of `specs/fork-rust-agent-parity.md` and its matrix rows.

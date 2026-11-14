@@ -19,6 +19,7 @@ mod check;
 mod classifier;
 mod consts;
 mod files;
+mod generic;
 mod guarded;
 mod local_rules;
 mod paths;
@@ -295,7 +296,8 @@ impl ScopedGate for PolicyGate {
                 dangerous: guarded::applies(mode, guarded, paths.style),
                 full_access,
             };
-            let (check, updated) = chain::own(subject.as_ref(), own.clone(), &inputs);
+            let called = chain::Called { tool: name, input };
+            let (check, updated) = chain::own(subject.as_ref(), called, own.clone(), &inputs);
             chain::inner(name, check, updated, &inputs)
         };
         let evaluate =
@@ -423,7 +425,11 @@ impl PermissionGate for PolicyGate {
         // the tool's own ask, so a hook's ask still reaches `ask_for` (tools/src/pipeline.rs); do not route this through
         // `own_check` (a reverted ocr/Codex suggestion on PR #441).
         let own = tool.check_permissions(input, context).await;
-        let (check, updated) = chain::own(subject.as_ref(), own, &inputs);
+        let called = chain::Called {
+            tool: tool.name(),
+            input,
+        };
+        let (check, updated) = chain::own(subject.as_ref(), called, own, &inputs);
         match chain::inner(tool.name(), check, updated, &inputs) {
             chain::Inner::Allow { .. } => None,
             chain::Inner::Deny { message } => Some(PermissionDecision::Deny { message }),

@@ -24,15 +24,20 @@ impl PromptAssembler {
         let window = since_boundary(history);
         let missing = |source: &str| attachments(window, source).next().is_none();
         let mut out = Vec::new();
+        // Fork: a child's summary request follows the child's context (rule 15 of the runtime-config spec): none of
+        // the two with `injectAgentsMd: false`, and no git status for a desktop child.
+        let inject = request.inject_agents_md;
+        let git_status = inject && (self.config.subagent_git_status || request.agent.is_none());
         if let Ok(facts) = self.ports.info.facts(&request.workspace).await {
-            if missing(instructions::SOURCE) {
+            if inject && missing(instructions::SOURCE) {
                 let files = self.load_rule_files(request, &facts).await;
                 out.extend(
                     instructions::announce(window, &files, instructions::Reason::SessionStart)
                         .map(|found| self.attachment(instructions::SOURCE, found)),
                 );
             }
-            if missing(session_context::SOURCE)
+            if git_status
+                && missing(session_context::SOURCE)
                 && !self.excludes(request, IncognitoKey::Environment)
             {
                 let git = self.ports.git.as_ref();

@@ -280,7 +280,9 @@ impl Transcript {
             KernelEvent::TasksChanged { tasks } => self.tasks_changed(tasks),
             KernelEvent::FileChanges { turn, files, .. } => self.file_changes(turn, files),
             // Fork: ACP agent rows are a desktop projection (specs/fork-rust-agent-parity.md "ACP external agents").
-            KernelEvent::ExternalToolRow { .. } => {}
+            KernelEvent::ExternalToolRow { .. }
+            | KernelEvent::ExternalAgentContextReset { .. }
+            | KernelEvent::ExternalAgentStatus { .. } => {}
             // Fork: the App's per-turn summary rewind flips the turn header's state; the TUI's own
             // per-turn display reads `FileChanges` and does not change on restore.
             KernelEvent::TurnFilesReverted { .. }
@@ -288,6 +290,9 @@ impl Transcript {
             | KernelEvent::PlanTransition { .. }
             | KernelEvent::GoalChanged { .. }
             | KernelEvent::GoalVerification { .. }
+            // Fork: hook rows and the blocked prompt are a desktop projection (HK-UP-01).
+            | KernelEvent::HookInvocation { .. }
+            | KernelEvent::PromptBlocked { .. }
             | KernelEvent::ToolInputStarted { .. }
             | KernelEvent::TurnControlOnly { .. } => {}
             // HistoryRewritten 由 runner 处理（丢弃视图后重新 view()）；后台任务的快照由 runner 在

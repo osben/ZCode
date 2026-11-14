@@ -36,7 +36,12 @@ impl Doing {
             | QueryEvent::ToolStarted { .. }
             | QueryEvent::ToolFinished { .. }
             | QueryEvent::ExternalToolRow { .. } => None,
-            QueryEvent::ToolProgress { .. } => return None,
+            // Fork: hook rows and ACP status events are display only and change no activity.
+            QueryEvent::ToolProgress { .. }
+            | QueryEvent::HookInvocation { .. }
+            | QueryEvent::PromptBlocked { .. }
+            | QueryEvent::ExternalAgentContextReset { .. }
+            | QueryEvent::ExternalAgentStatus { .. } => return None,
             QueryEvent::ModelNotice { notice } => match notice {
                 ModelNotice::Retrying {
                     attempt,

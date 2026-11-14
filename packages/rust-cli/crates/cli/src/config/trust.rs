@@ -3,7 +3,7 @@
 
 use std::collections::HashSet;
 
-use rust_cli_hooks::config::{HookMatcher, HooksSettings};
+use rust_cli_hooks::config::{HookMatcher, HookOrigin, HooksSettings};
 use rust_cli_hooks::node_config::{NODE_EVENTS, NodeHooks};
 use rust_cli_hooks::workspace_digest::{Bundle, DigestEntry, DigestSource, RuntimeRoot};
 use rust_cli_hooks::{HookSource, workspace_digest};
@@ -177,6 +177,7 @@ impl WorkspaceHooks {
                     HookMatcher {
                         matcher: entry.matcher.clone(),
                         hooks: vec![command],
+                        origin: HookOrigin::default(),
                     },
                 )),
             }

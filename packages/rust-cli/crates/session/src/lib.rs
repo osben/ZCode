@@ -9,6 +9,8 @@
 
 mod actor;
 mod agent_signals;
+// Fork: specs/fork-rust-node-helper.md F3.
+mod app_tool_context;
 mod append;
 mod automatic_turn;
 mod bash;
@@ -26,6 +28,8 @@ mod goal;
 mod goal_desktop;
 mod goal_verify;
 mod goal_verify_text;
+#[cfg(test)]
+mod hook_rows_tests;
 mod hooks;
 mod inbox;
 mod input;
@@ -54,6 +58,7 @@ mod rewind;
 mod rewind_machines;
 mod rewind_plan;
 mod rules;
+mod sampling;
 mod sink;
 mod slash;
 mod steering;
@@ -167,6 +172,14 @@ pub struct SessionDeps {
     /// reads only `additionalContext`), so the app-server turns this off: the prewarm keeps no conversation and the
     /// first input titles it.
     pub session_start_extras: bool,
+    /// Fork: a typed `/compact [instructions]` human text input runs the manual compaction instead of a model turn,
+    /// like the Node desktop agent (`parseCompactCommand`, specs/fork-rust-agent-parity.md HK-UP-01 item 2). The
+    /// app-server turns it on; the TUI runs `/compact` as its own slash command and `-p` sends the text as typed.
+    pub typed_compact: bool,
+    /// Fork: a human turn's UserPromptSubmit dispatch reports its hook runs (`KernelEvent::HookInvocation`), and a
+    /// blocked prompt is shown (`KernelEvent::PromptBlocked`) and completes as a success, like the Node desktop agent
+    /// (specs/fork-rust-agent-parity.md HK-UP-01). The app-server turns it on; the TUI and `-p` keep the failed turn.
+    pub hook_rows: bool,
 }
 
 /// 会话关闭的收尾（docs/specs/rust-cli/session-lifecycle.md §3.3、§3.3.1）：每个会话的关闭任务各调用一次。
@@ -389,6 +402,21 @@ impl Session {
         request: impl FnOnce(oneshot::Sender<T>) -> Request,
     ) -> Result<T, KernelError> {
         closing::ask(&self.requests, request).await
+    }
+
+    /// Fork: the tool context an MCP App call is authorized with outside any turn (specs/fork-rust-node-helper.md F3,
+    /// `helper/authorizeAppTool`). Its prompt is a session-level ask that `cancel` withdraws; a closed session fails.
+    pub async fn app_tool_context(
+        &self,
+        tool_use: rust_cli_kernel_api::ids::ToolUseId,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> Result<rust_cli_kernel_api::tool::ToolUseContext, KernelError> {
+        self.ask(|reply| Request::AppToolContext {
+            tool_use,
+            cancel,
+            reply,
+        })
+        .await
     }
 }
 

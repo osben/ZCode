@@ -40,6 +40,7 @@ use rust_cli_kernel_api::lsp::CodeIntelligence;
 use rust_cli_kernel_api::machine::MachineEnv;
 use rust_cli_kernel_api::permission::PermissionMode;
 use rust_cli_kernel_api::provider::{CredentialCipher, HeaderSource, ModelDirectory, ModelLimits};
+use rust_cli_kernel_api::subagent_config::SubagentConfigSource;
 use rust_cli_kernel_api::topic_resource::TopicResources;
 use rust_cli_net::{Egress, RequestObserver};
 use rust_cli_node_store::{NodeIds, NodeStore};
@@ -153,6 +154,9 @@ pub(crate) struct Controller {
     /// Fork: the Network panel capture (specs/fork-rust-network-capture.md), installed on the egress as soon as it
     /// exists so requests made while assembling are reported too; only the app-server has one.
     pub(crate) observer: Option<Arc<dyn RequestObserver>>,
+    /// Fork: the subagent snapshot through the Host (specs/fork-rust-subagent-runtime-config.md); None reads the
+    /// agent files.
+    pub(crate) subagent_config: Option<Arc<dyn SubagentConfigSource>>,
     pub(crate) root_bypass: RootBypass,
     /// 组装时等不等缺省模型定下（工作线 F140，performance.md §12.3）：交互界面不等（第一帧不等模型目录），`-p` 与
     /// app-server 当场等。
@@ -171,6 +175,9 @@ pub(crate) struct Controller {
     pub(crate) topic_resources: Option<Arc<dyn TopicResources>>,
     /// Fork: the language-server runtime (specs/fork-rust-lsp.md); only the app-server sets it, after opening the store.
     pub(crate) code_intelligence: Option<Arc<dyn CodeIntelligence>>,
+    /// Fork: the Node helper the Host configured (app-server only, specs/fork-rust-node-helper.md F3): helper-hosted
+    /// plugin MCP servers are selected and routed through it.
+    pub(crate) node_helper: Option<Arc<rust_cli_protocol_zcode::NodeHelper>>,
     pub(crate) cli: CliInputs,
 }
 
@@ -186,6 +193,7 @@ impl Controller {
             headers: None,
             credential_cipher: None,
             observer: None,
+            subagent_config: None,
             root_bypass: RootBypass::Refuse,
             wait_model: false,
             token_budget: true,
@@ -194,6 +202,7 @@ impl Controller {
             automation: None,
             topic_resources: None,
             code_intelligence: None,
+            node_helper: None,
             cli,
         }
     }
@@ -214,6 +223,7 @@ impl Controller {
             headers: None,
             credential_cipher: None,
             observer: None,
+            subagent_config: None,
             root_bypass: RootBypass::Refuse,
             wait_model: true,
             token_budget: true,
@@ -222,6 +232,7 @@ impl Controller {
             automation: None,
             topic_resources: None,
             code_intelligence: None,
+            node_helper: None,
             cli,
         }
     }
@@ -234,6 +245,7 @@ impl Controller {
         automation: Arc<dyn rust_cli_kernel_api::automation::AutomationPort>,
         observer: Arc<dyn RequestObserver>,
         topic_resources: Arc<dyn TopicResources>,
+        subagent_config: Arc<dyn SubagentConfigSource>,
         desktop_context: bool,
     ) -> Self {
         Self {
@@ -245,6 +257,7 @@ impl Controller {
             headers: Some(headers),
             credential_cipher: Some(credential_cipher),
             observer: Some(observer),
+            subagent_config: Some(subagent_config),
             root_bypass: RootBypass::Allow,
             wait_model: true,
             token_budget: false,
@@ -253,6 +266,7 @@ impl Controller {
             automation: Some(automation),
             topic_resources: Some(topic_resources),
             code_intelligence: None,
+            node_helper: None,
             cli: CliInputs::default(),
         }
     }
@@ -411,10 +425,19 @@ pub(crate) async fn open(
             .then_some(env_assembly::Loopback { find_and_grep }),
         Primary::LocalOnly => None,
     };
+    // Fork: with a Node helper, `NodeHelper` servers connect through it (F3); `mcp` stays the local transport, whose
+    // stdio processes `process/childProcesses` lists.
+    let routed: Arc<dyn rust_cli_kernel_api::mcp::McpTransport> = match &spec.node_helper {
+        Some(helper) => Arc::new(rust_cli_protocol_zcode::HelperRoutedMcp::new(
+            local.mcp,
+            helper.clone(),
+        )),
+        None => local.mcp,
+    };
     let environments = env_assembly::registry(
         &deployment,
         &facts.process,
-        (env.clone(), local.mcp),
+        (env.clone(), routed),
         loopback,
         executor_source.clone(),
     )
@@ -458,6 +481,8 @@ pub(crate) async fn open(
     env_assembly::drop_remote_plugins(&deployment, &mut config.plugins);
     // Fork: the desktop surface has the App's inline view host, so `visualize` loads (specs/fork-rust-agent-parity.md).
     config.plugins.view_host = spec.desktop_context;
+    // Fork: helper-hosted plugin servers exactly when the helper that routes them exists (F3).
+    config.plugins.node_helper = spec.node_helper.is_some();
     // 会话库与产物目录按 Node 的 `storage.sessionDbPath` / `storage.dir`（用户级 → 项目级 → 环境变量，
     // config.md §2.3）：先读配置再开库。修复线 F2：以前总在缺省位置，Node 设了这些值时两边各用一个库。
     let paths = facts.storage_paths(&config.storage.settings());
@@ -647,6 +672,9 @@ pub(crate) async fn kernel(
     // 自动记忆目录先建好，提示词的记忆段才能说“目录已存在”（memory.md §2）；目录在主 env 上（deployment.md §8）。
     let mut context = ContextConfig::new(spec.surface);
     context.token_budget = spec.token_budget;
+    // Fork: the Node desktop agent gives no subagent the git status (rule 15 of
+    // specs/fork-rust-subagent-runtime-config.md).
+    context.subagent_git_status = !spec.node_desktop;
     // Fork: the Host decides the Gen UI output root for every agent it starts (`zcodeAgentProcessManager.ts`).
     context.desktop = spec.desktop_context.then(|| DesktopContext {
         gen_ui_root: env
@@ -685,6 +713,12 @@ pub(crate) async fn kernel(
     .await;
     extensions.monitor = opened.monitor;
     extensions.node_desktop = spec.node_desktop;
+    extensions.subagent_config = spec.subagent_config.clone();
+    // Fork: a desktop subagent's own selection is checked against the catalog (rule 9 of
+    // specs/fork-rust-subagent-runtime-config.md); none under an explicit API key.
+    if spec.node_desktop {
+        extensions.models = opened.directory.clone();
+    }
     // Fork: Node's command hook stdin and transcript files under the process temp directory (Node `os.tmpdir()`).
     if spec.node_desktop {
         extensions.hook_transcripts = Some(Arc::new(rust_cli_runtime::LocalHookTranscripts::new(
@@ -793,7 +827,10 @@ pub(crate) async fn kernel(
         None => None,
     };
     // 开始连接 MCP 服务器、加载插件；等不等由前端决定（`-p` 短等，TUI 与 App 不等，ext.md §3.3.1）。
-    kernel.start_extensions().await;
+    let plugins = kernel.start_extensions().await;
+    if let Some(helper) = &spec.node_helper {
+        helper.set_catalog(helper_catalog(&plugins));
+    }
     Ok(Built {
         opened,
         kernel,
@@ -805,4 +842,23 @@ pub(crate) async fn kernel(
         machines,
         mcp_machines,
     })
+}
+
+/// Fork (specs/fork-rust-node-helper.md F3): what this process admitted, sent with every helper session open.
+fn helper_catalog(
+    plugins: &rust_cli_ext::plugins::Plugins,
+) -> rust_cli_protocol_zcode::HelperCatalog {
+    let mut catalog = rust_cli_protocol_zcode::HelperCatalog::default();
+    for plugin in &plugins.0 {
+        let hosted = plugin
+            .mcp_servers
+            .iter()
+            .filter(|server| {
+                server.transport == rust_cli_kernel_api::mcp::McpTransportConfig::NodeHelper
+            })
+            .map(|server| server.name.clone())
+            .collect();
+        catalog.admit(&plugin.id, hosted);
+    }
+    catalog
 }

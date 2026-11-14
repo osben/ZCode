@@ -41,6 +41,16 @@ pub struct HookPorts {
     /// Fork: command hooks get Node's stdin and a transcript file when set (the app-server sets it;
     /// specs/fork-rust-agent-parity.md "Command hook stdin").
     pub node_stdin: Option<NodeStdinPorts>,
+    /// Fork: the start time and duration of each hook run (specs/fork-rust-agent-parity.md HK-UP-01).
+    pub clock: Arc<dyn Clock>,
+}
+
+/// Fork: one finished hook of a batch with its start time and duration (HK-UP-01).
+pub(crate) struct Timed {
+    pub index: usize,
+    pub executed: Executed,
+    pub started_at_ms: u64,
+    pub duration_ms: u64,
 }
 
 /// Fork: what Node's command hook stdin needs.
@@ -176,13 +186,22 @@ pub(crate) async fn run_all(
     batch: &Batch<'_>,
     hooks: &[HookCommand],
     cancel: &CancellationToken,
-) -> Vec<(usize, Executed)> {
+) -> Vec<Timed> {
     let mut running: FuturesUnordered<_> = hooks
         .iter()
         .enumerate()
         .map(|(index, hook)| {
             let cancel = cancel.clone();
-            async move { (index, execute(ports, batch, hook, cancel).await) }
+            async move {
+                let started_at_ms = ports.clock.now_ms();
+                let executed = execute(ports, batch, hook, cancel).await;
+                Timed {
+                    index,
+                    executed,
+                    started_at_ms,
+                    duration_ms: ports.clock.now_ms().saturating_sub(started_at_ms),
+                }
+            }
         })
         .collect();
     let mut done = Vec::with_capacity(hooks.len());

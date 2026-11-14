@@ -44,6 +44,15 @@ impl AppWorkspace {
 
     /// Rebuilds the project hook entry of the workspace a trust change is about, wherever the process runs.
     pub(super) async fn rebuild_hooks(&self, trust: &Target) {
+        let key = rust_cli_hooks::project_key(&trust.working_directory);
+        // Two trust mutations rebuild one workspace concurrently (grant, revoke, toggle, `trustGrant` from different
+        // sessions). The ticket is drawn after this mutation's write and before the read, so a newer ticket's read sees
+        // every write an older ticket's saw; a rebuild whose read predates a later mutation's must not put its entry
+        // after that mutation's own rebuild and re-enable a revoked hook. Tickets compare per workspace key.
+        let ticket = self
+            .rebuilds_issued
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
+            + 1;
         let workspace = WorkspaceRef {
             environment: self.process.workspace.environment.clone(),
             root: EnvPath::new(trust.working_directory.clone()),
@@ -56,11 +65,21 @@ impl AppWorkspace {
             identity,
         )
         .await;
+        let mut installed = self.rebuilds_installed.lock_unpoisoned();
+        let newest = installed.entry(key.clone()).or_default();
+        if *newest > ticket {
+            tracing::info!(
+                event = "workspace.hooks.rebuild_superseded",
+                "a newer rebuild already put the workspace's project hook entry"
+            );
+            return;
+        }
+        *newest = ticket;
         tracing::info!(
             event = "workspace.hooks.rebuilt",
             "the workspace's project hook entry was rebuilt"
         );
-        (self.put_project_hooks)(rust_cli_hooks::project_key(&trust.working_directory), entry);
+        (self.put_project_hooks)(key, entry);
     }
 
     pub(super) async fn review_bundle(&self, target: &WorkspaceTarget) -> ReviewLookup {
@@ -458,3 +477,7 @@ mod tests;
 #[cfg(test)]
 #[path = "app_hook_snapshot_tests.rs"]
 mod snapshot_tests;
+
+#[cfg(test)]
+#[path = "app_hook_rebuild_tests.rs"]
+mod rebuild_tests;

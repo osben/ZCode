@@ -8,7 +8,9 @@ use std::collections::{BTreeMap, HashSet};
 
 use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
 use rust_cli_kernel_api::env_files::FileKind;
+use rust_cli_kernel_api::ids::MachineName;
 use rust_cli_kernel_api::machine::Files;
+use rust_cli_kernel_api::mcp::McpTransportConfig;
 use serde_json::Value;
 
 use super::{Manifest, Plugin, Plugins, Reader};
@@ -71,6 +73,9 @@ pub struct PluginSources {
     /// Fork: the App's inline view host is there (the app-server started with `--surface desktop`), so `visualize`
     /// loads, like Node's protocol entry (`filterVisualizeSkillRoots(roots, true)`). False everywhere else.
     pub view_host: bool,
+    /// Fork: the Host configured a Node helper (specs/fork-rust-node-helper.md F3). The PluginHost official plugins then
+    /// load, and the MCP servers of helper-hosted plugins are served by the helper ([`McpTransportConfig::NodeHelper`]).
+    pub node_helper: bool,
 }
 
 /// 官方插件依赖的 Node 运行时或宿主（ext.md §4.4）。
@@ -269,12 +274,23 @@ impl Admission<'_> {
             return reject(SkipReason::DuplicateName);
         }
         let tables = self.reader.mcp_tables(dir, &manifest).await;
-        if let Some(dependency) = node_dependency(
+        let dependency = match node_dependency(
             &name,
             &candidate.marketplace,
             &tables,
             self.sources.view_host,
         ) {
+            // With a helper the plugin host is served, so what keeps the plugin out is its auth server.
+            Some(NodeDependency::PluginHost)
+                if self.sources.node_helper && needs_official_auth(&tables) =>
+            {
+                Some(NodeDependency::OfficialAuth)
+            }
+            other => other,
+        };
+        // One of the two helper-hosting triggers (F3); the other, an MCP App entry point, is in `load_all`.
+        let served = dependency == Some(NodeDependency::PluginHost) && self.sources.node_helper;
+        if let Some(dependency) = dependency.filter(|_| !served) {
             return reject(SkipReason::NodeRuntime(dependency));
         }
         let plugin = self
@@ -284,8 +300,55 @@ impl Admission<'_> {
         if clash && takes_name(&plugin) {
             return reject(SkipReason::DuplicateName);
         }
-        Ok(plugin)
+        Ok(if served {
+            helper_hosted(plugin)
+        } else {
+            plugin
+        })
     }
+}
+
+/// A server of the official auth kind keeps a PluginHost plugin skipped even with a helper (F3: OfficialAuth stays
+/// skipped).
+fn needs_official_auth(tables: &[Value]) -> bool {
+    tables
+        .iter()
+        .filter_map(Value::as_object)
+        .flat_map(|table| table.values())
+        .any(|server| server.get("auth").is_some())
+}
+
+/// Whether the manifest declares an MCP App entry point (F3): a non-empty `ui.surfaces`, or a `composer.mention` slot
+/// entry with a `target.tool`. The panel and the model must then reach the same server instance, which only the
+/// helper's Node MCP pool provides.
+fn declares_mcp_app(manifest: &Value) -> bool {
+    let surfaces = manifest
+        .pointer("/ui/surfaces")
+        .and_then(Value::as_array)
+        .is_some_and(|surfaces| !surfaces.is_empty());
+    let mention = manifest
+        .get("slots")
+        .and_then(|slots| slots.get("composer.mention"))
+        .and_then(Value::as_array)
+        .is_some_and(|entries| {
+            entries.iter().any(|entry| {
+                entry
+                    .pointer("/target/tool")
+                    .and_then(Value::as_str)
+                    .is_some()
+            })
+        });
+    surfaces || mention
+}
+
+/// Every MCP server of the plugin is served by the helper, on the main env: Node resolves a mention tool over all
+/// servers of the plugin, and a panel may call any of them.
+fn helper_hosted(mut plugin: Plugin) -> Plugin {
+    for server in &mut plugin.mcp_servers {
+        server.transport = McpTransportConfig::NodeHelper;
+        server.machine = MachineName::primary();
+    }
+    plugin
 }
 
 /// Whether a loaded plugin keeps a later plugin of the same name out. Fork (specs/fork-rust-lsp.md): an official plugin
@@ -346,6 +409,20 @@ pub async fn load_all(
                 skipped.push(skip);
             }
         }
+    }
+    // The other helper-hosting trigger (F3): an MCP App entry point, for every loaded plugin, session ones included
+    // (they bypass `admit`). A plugin `admit` skipped for a Node dependency (official auth among them) never gets here.
+    if sources.node_helper {
+        plugins = plugins
+            .into_iter()
+            .map(|plugin| {
+                if declares_mcp_app(&plugin.manifest) {
+                    helper_hosted(plugin)
+                } else {
+                    plugin
+                }
+            })
+            .collect();
     }
     Loaded {
         plugins: Plugins(plugins),
