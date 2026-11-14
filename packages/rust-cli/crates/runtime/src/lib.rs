@@ -169,6 +169,10 @@ pub struct LocalKernel {
     /// Fork: the ACP agents' session config (`setExternalAgentConfigOption`), when the entry runs ACP agents.
     external_agent_configs:
         Option<Arc<dyn rust_cli_kernel_api::external_agent_config::ExternalAgentConfigs>>,
+    /// Fork: a typed `/compact [instructions]` runs the manual compaction, like the Node desktop agent ([`Extensions::node_desktop`]).
+    typed_compact: bool,
+    /// Fork: hook run rows and the blocked-prompt banner, like the Node desktop agent ([`Extensions::node_desktop`]).
+    hook_rows: bool,
     /// Fork: the main loop's tool pipeline; MCP App calls are authorized with it (app_tool.rs).
     pipeline: Arc<rust_cli_tools::Pipeline>,
 }
@@ -405,6 +409,8 @@ impl LocalKernel {
             error_holds_queue: extensions.node_desktop,
             session_start_extras: !extensions.node_desktop,
             external_agent_configs,
+            typed_compact: extensions.node_desktop,
+            hook_rows: extensions.node_desktop,
             pipeline,
         }
     }

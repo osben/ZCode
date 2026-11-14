@@ -50,6 +50,38 @@ pub struct LastError {
     /// Fork: the failure's Node error code (`TurnOutcome::Failed`), else `fault.turn.failed`.
     pub code: Option<String>,
     pub at: u64,
+    /// Fork: `false` hides Resume (a blocked prompt, HK-UP-01); a failed turn is recoverable.
+    pub recoverable: bool,
+    /// Fork: the error's details (a blocked prompt's reason and diagnostic).
+    pub detail: Option<String>,
+    pub attribution: Option<ErrorAttribution>,
+}
+
+/// Fork: `sessionErrorInfoSchema.attribution`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ErrorAttribution {
+    /// `{source: "runtime", reason: "hook_blocked"}`.
+    HookBlocked,
+}
+
+fn last_error(error: &LastError) -> Value {
+    let mut value = json!({
+        "code": error.code.as_deref().unwrap_or("fault.turn.failed"),
+        "message": error.message,
+        "recoverable": error.recoverable,
+        "at": error.at,
+        "source": "runtime",
+    });
+    if let Some(detail) = &error.detail {
+        value["detail"] = json!(detail);
+    }
+    match error.attribution {
+        Some(ErrorAttribution::HookBlocked) => {
+            value["attribution"] = json!({"source": "runtime", "reason": "hook_blocked"});
+        }
+        None => {}
+    }
+    value
 }
 
 /// `verifier`: the start time of a running goal completion verification (Node `activeWorks` kind `goalVerifier`).
@@ -92,13 +124,7 @@ pub fn control(
         "stopState": if running { "stoppable" } else { "idle" },
         "stopTargetKind": target,
         "activeWorks": works,
-        "lastError": error.map(|error| json!({
-            "code": error.code.as_deref().unwrap_or("fault.turn.failed"),
-            "message": error.message,
-            "recoverable": true,
-            "at": error.at,
-            "source": "runtime",
-        })),
+        "lastError": error.map(last_error),
         "apiRetry": null,
     })
 }

@@ -442,8 +442,8 @@ Node delivers a tool hook's additional context (PreToolUse, PostToolUse, PostToo
 - **Rust before.** The pipeline (`crates/tools/src/pipeline_hooks.rs` `take_pre`) put PreToolUse messages in `ToolExecution::before`, which the executor commits ahead of the tool result. Normalization (`query/src/normalize.rs`) then sent them as a separate text block of the result's user message, not inside the tool result, so E2E HK-EF-01 found no reminder after the result (`expectToolHookContextsAfterResult`, index -1).
 - **Rust under `node_desktop`.** `Pipeline::with_node_hooks(true)` moves the PreToolUse messages to the front of `after` (before the PostToolUse / PostToolUseFailure messages and the tool's own follow-up messages). `fold_into_tool_result` then folds each into the tool result with `\n\n`, Pre before Post. The PreToolUse stop text keeps its place (after everything else, kept only when the call ran or a hook refused it).
 - **zcode-rs (default).** Unchanged: PreToolUse messages stay in `before`.
-- **Multi-call batches (open).** Node commits all tool results of a batch first, then every result's hook contexts in result order (`runtime/helpers/tool-result.ts` `toolBatchModelEntries`), and `foldRemindersIntoToolResults` (`provider-request-messages.ts`) folds those trailing reminders into the batch's last tool result. Rust commits each call as `[before…, result, after…]` (`crates/query/src/executor.rs`), so a call's contexts fold into its own result. A single-call batch is the same on both; a batch of several calls differs in which result carries which context. Not contained in the hook-stdin change: the executor commits each call as it finishes (`take_ready`) and `after` also carries blocking errors, the stop text and the tool's own follow-up messages, so matching Node means holding them to the batch end across the abort, steering and hook-stop paths. Planned as the first change of the HK-UP-01 PR.
-- **Tests.** `crates/tools/src/pipeline_hook_tests.rs`: under node hook order a PreToolUse context of an allowed call comes after the result and before the PostToolUse context, and a PreToolUse deny keeps its context after the refusal; the default keeps it in `before`.
+- **Multi-call batches.** Node commits all tool results of a batch first, then every result's hook contexts in result order, then the batch notices (`runtime/helpers/tool-result.ts` `toolBatchModelEntries`), and `foldRemindersIntoToolResults` (`provider-request-messages.ts`) folds those trailing reminders into the batch's last tool result. Under `node_desktop` (`RequestLimits.tool_hook_contexts` `NodeBatch`, set where `Pipeline::with_node_hooks(true)` is) the executor splits each call's `after`: its hook context attachments (source `hook_additional_context`) are held, and the rest (blocking errors, the tool's own follow-up messages such as the Skill body, the PreToolUse stop text) keeps its place right after the call's result. `commit_batch` commits the held contexts once, after the batch's last result, in the order the results were committed. The flush comes after the model's stream ended and every call was committed, so a call that finished while the model still streamed does not commit its context before a later call's result. An aborted call delivers only its refusal (no `after`, so nothing is held); the failed-request path commits no result and no held context; the interrupt and hook-stop endings come after `commit_batch`, so the contexts are already committed. zcode-rs (default `PerCall`) keeps `[before…, result, after…]` per call. Node's batch notices have no Rust counterpart: Node's Read sends `read_truncation_notice` (`formatReadBatchNotice`) for a partial view, and Rust's Read has no partial-view notice (an open gap).
+- **Tests.** `crates/tools/src/pipeline_hook_tests.rs`: under node hook order a PreToolUse context of an allowed call comes after the result and before the PostToolUse context, and a PreToolUse deny keeps its context after the refusal; the default keeps it in `before`. `crates/query/src/executor_tests.rs`: under the node batch order a two-call batch commits `[result A, result B, context A, context B]` and the default `[result A, context A, result B, context B]`; a call that finishes while the model still streams keeps its context after the later call's result; a non-context `after` message keeps its place after its own result; the next request folds both contexts into the last tool result.
 
 ### Command hook stdin (Node `createCompatibleHookStdin`, `configured-runner-input.ts`)
 
@@ -1381,7 +1381,7 @@ The desktop Settings page trusts a workspace hook through a review interaction: 
 Owners:
 
 - **Protocol** (`protocol-zcode` `fork/hook_review.rs`), per session and in memory only, like Node's per-session controller: the review flow id (`workspace-hook-review:<uuid>`, one per session), the generation counter, the current request and its state (`pending`, `resolved`, `superseded`, `timed_out`, `cancelled`), the deadline timer, the set of digests this session revoked (Node coordinator `revokedKeys`), and one mutation at a time (Node `enqueueMutation`). The run id is `workspace-hook-run:<sessionId>:<uuid>`, fixed per session; the task id is the session id; the workspace label is the last path segment (Node `server-operations.ts` `workspaceHookReviewHost`).
-- **cli** (`frontends/app_workspace.rs`, the `WorkspaceAdmin` port): every command rediscovers the workspace's hook bundle and reads the trust store; it writes the grant and revoke records (the store and fields of `workspace/hooks/trustGrant`) and the toggle (`.zcode/config.json`). After every accepted write in the process's own workspace it rebuilds the process's hook snapshot, so a grant runs from the next natural event and a revoke stops the hook at once (Node's coordinator admits or blocks it in the running session). A session whose workspace is not the process root has no snapshot of its project hooks at all; see "Open gaps", per-workspace hook snapshots.
+- **cli** (`frontends/app_workspace.rs`, the `WorkspaceAdmin` port): every command rediscovers the workspace's hook bundle and reads the trust store; it writes the grant and revoke records (the store and fields of `workspace/hooks/trustGrant`) and the toggle (`.zcode/config.json`). After every accepted write in the process's own workspace it rebuilds the process's hook snapshot, so a grant runs from the next natural event and a revoke stops the hook at once (Node's coordinator admits or blocks it in the running session). The rebuilds have one owner, `AppWorkspace`'s rebuild tickets: each rebuild draws a ticket after its mutation's write and before the config read, and installs only if no newer ticket has installed, so a rebuild that read the config and trust store before a later mutation never installs its snapshot after that mutation's own rebuild (two sessions granting, revoking or toggling at once; before, an earlier grant's rebuild could re-enable a hook a later revoke had removed). A session whose workspace is not the process root has no snapshot of its project hooks at all; see "Open gaps", per-workspace hook snapshots.
 
 Rules:
 
@@ -1449,7 +1449,7 @@ Acceptance:
   - an unreadable config refuses each command with its code (a revoke writes nothing);
   - a grant forgets this session's revocation of the granted declaration;
   - a mutation whose bundle cannot be rediscovered closes the review.
-- cli unit tests (`app_hook_review_tests.rs`): trust states (stale slot, corrupt store, revoked); grant writes Node's record fields and rebuilds the hooks; revoke removes only the named records; the toggle writes only `enabled` with a version precondition and refuses a moved declaration; a config Node's strict schema rejects (an empty matcher `hooks` list, a bad matcher, unknown root, matcher or event keys) is unreadable and never written; a config that breaks the schema between the review read and the write read answers `workspace_hooks_snapshot_mismatch` and is not written; an unreadable config refuses a revoke. `config/workspace_schema_tests.rs`: what Node's schema accepts and rejects.
+- cli unit tests (`app_hook_review_tests.rs`): trust states (stale slot, corrupt store, revoked); grant writes Node's record fields and rebuilds the hooks; revoke removes only the named records; the toggle writes only `enabled` with a version precondition and refuses a moved declaration; a config Node's strict schema rejects (an empty matcher `hooks` list, a bad matcher, unknown root, matcher or event keys) is unreadable and never written; a config that breaks the schema between the review read and the write read answers `workspace_hooks_snapshot_mismatch` and is not written; an unreadable config refuses a revoke; two rebuilds that interleave install the snapshot of the later read last (`app_hook_rebuild_tests.rs`). `config/workspace_schema_tests.rs`: what Node's schema accepts and rejects.
 - Fork Vitest: a review interaction emitted by Rust parses with `pendingInteractionSchema`.
 - E2E: `hooks/conversation-session-hook-trust` HK05 and HK06 pass on the rust runtime as on node (box run 2026-11-14). HK07 fails on Rust only; see "Open gaps", per-workspace hook snapshots.
 
@@ -1901,9 +1901,204 @@ Known small gaps and follow-ups:
 - Desktop E2E: the ACP desktop specs run only on macOS (`acp-agent-e2e.ts` skips elsewhere), so the
   Linux E2E box does not cover them.
 
+## Hook invocation rows and the blocked-prompt banner (HK-UP-01)
+
+Status: items 1–3 of the delivery are implemented: batch order, the typed `/compact`, and the human-turn UserPromptSubmit rows and banner (Design 1–3, 5, 6). Deferred: the per-session record list and `SessionView.hook_invocations` (the record-keeping half of Design 4) and the cold rebuild (Design 7). Cold drops a blocked turn anyway, so HK-UP-01 does not need them, and they only matter for allowed dispatches after a resubscribe. It closes HK-UP-01 in desktop E2E `hooks/conversation-session-hooks-lifecycle`. That case blocks a UserPromptSubmit with two hooks: an async command, and a process hook that writes stderr and returns `{continue:false, reason:"hooks_prompt_block"}`. It then checks three things:
+
+1. The prompt's turn shows the text `E2E_HOOKS_PROMPT_BLOCK` and a Hook details trigger (`v4-hook-details-trigger-<turnId>`) inside the same `[data-turn-id]` element.
+2. The chat error banner reads `hooks_prompt_block: <stderr>`.
+3. The banner has the hook icon and a details button. Its dialog shows the stderr.
+
+### Node behaviour (the contract)
+
+- **Events.** `core/hooks/runner.ts` emits `HookRunStarted`, then `HookRunCompleted`, `HookRunFailed` or `HookRunBlocked`, for each participating hook of one dispatch. `HookRunProgress` is declared but never emitted.
+  - The ids are `hookInvocationId` (one per dispatch) and `hookRunId` (one per hook).
+  - `hookCount` counts only the client-visible hooks. Visible hooks get contiguous `hookIndex` values from 0.
+  - Hooks run one after another, in registration order, with no short-circuit after a block.
+  - An async command hook emits Started, then later Completed or Failed. It is never Blocked.
+- **Outcomes.**
+  - A block (permission deny, `preventContinuation`, `blockRequested`) carries `blockReason` = `stopReason ?? reason ?? … ?? "Hook blocked execution"`.
+  - Its diagnostics are `errorMessage` and `stderrPreview` (stderr), plus `stdoutPreview` only on exit 2. Each is trimmed, sanitized and capped at 4000 characters.
+  - A thrown error gives Failed with `outcome` `failed`, `timed_out` or `cancelled`.
+- **Visibility.** `descriptor.sourceKind` is `user` (user config), `project` (workspace hooks), `plugin`, or `internal`. `internal` covers env and CLI overrides, programmatic hooks and the session mailbox. Internal hooks are never projected.
+- **Projection** (`product-projection.ts` `onHookRunLifecycle`).
+  - Rows: one `hookInvocation` row per `hookInvocationId` (`entityId` = that id). Each row holds `executions` deduped by `hookRunId` and sorted by `hookIndex`.
+  - Row `state`: `running` while fewer than `hookCount` executions are known or one is running; otherwise `failed` if one failed, else `completed`. Blocked counts as completed.
+  - `lane` and `anchorToolCallId` are projected, but no client reads them.
+  - Execution `displayName` uses `hookExecutionDisplayName`.
+  - SessionStart rows stay pending until the next user-intent turn.
+- **Banner** (`hookBlockErrorDelta`). It fires on a `HookRunBlocked` for UserPromptSubmit that ran and has a `blockReason`, and emits `state.updated` with this `lastError`:
+  - `code`: `fault.runtime.hookBlocked`
+  - `message`: `hooks_prompt_block: <diagnostic ?? blockReason>`. The diagnostic is the first of stderr, error or stdout preview that differs from `blockReason`.
+  - `recoverable: false`, which suppresses Resume (`chatErrorResume.ts`)
+  - `detail`: `Hook block reason: …`, plus `\nHook error: …` when there is a diagnostic
+  - `attribution`: `{source:"runtime", reason:"hook_blocked"}`
+  - `traceId`
+
+  The next agent `TurnStarted` clears it.
+
+- **The blocked turn.**
+  - It ends with `TurnComplete(resultType:"success", response: stopReason)` (`turn.ts`). The prompt never reaches the message history.
+  - `TurnStarted`'s fact still projects the prompt as a visible `userInput` row. That row is the text the E2E finds.
+- **Cold.** Hook events live only in the runtime's in-memory event store, so they are not durable.
+  - A resubscribe or reopen in the same process replays them through `cold-event-merge.ts`, anchored to durable turns.
+  - After a process restart, hook rows are gone.
+- **UI.** Hook rows are not rendered as rows of their own.
+  - `ConversationHookDetailsAction` shows the trigger in a finished turn when an execution has `didExecute`.
+  - It reads `hookEventName`, and per execution: `hookRunId`, `hookIndex`, `didExecute`, `state`, `outcome`, `blockReason`, `durationMs` and `sourceKind`.
+
+### Rust today
+
+- `HookEngine::run` returns only the folded `HookOutcome`. It has no event sink, and one engine serves the whole process.
+  - It runs the selected hooks concurrently (`run_all`) and never records start or end times.
+  - `interpret::repl` drops raw stderr and stdout. Only `[cmd]: stderr` survives, in `blocking.error`.
+  - `TimedOut` becomes `Cancelled`.
+  - The hook source (User, Project, Local, Policy) and the plugin name are lost when `effective.rs` flattens matchers.
+- A blocked human-turn UserPromptSubmit (`session/src/input.rs`) ends as `QueryStop::Blocked`, which becomes `TurnOutcome::Failed{code: None}`. The desktop therefore sees:
+  - a `failed` header and phase `error`;
+  - `lastError.code` `fault.turn.failed`, with text that ends in `Original prompt: …`;
+  - the queue paused with `pauseReason:"error"`;
+  - no `userInput` row, because Rust projects that row from the committed message, not from `TurnStarted`. The marker text the E2E finds today is the renderer's optimistic overlay. This is to be confirmed when implementing.
+- The cold projection (`from_view`) is rebuilt from the stored `SessionView` on every subscribe. It never replays events.
+
+### Design
+
+```mermaid
+sequenceDiagram
+  participant I as session input.rs (human turn)
+  participant E as HookEngine.run
+  participant L as session EventLog
+  participant A as session actor (hook record list)
+  participant P as protocol-zcode Projection
+  I->>L: TurnStarted (already today)
+  I->>E: run(UserPromptSubmit)
+  E-->>I: HookOutcome { …, invocation, runs: [HookRunRecord…] }
+  alt blocked
+    I->>L: PromptBlocked { message }
+    L->>P: userInput row in the same turn
+    I->>L: HookInvocation { invocation }
+    L->>P: row.appended hookInvocation, lastError fault.runtime.hookBlocked (state.updated)
+    I->>L: TurnFinished(Success)
+    P->>P: header completed, lastError kept, queue not paused
+  else allowed
+    I->>L: the input committed (MessageDone)
+    I->>L: HookInvocation { invocation }
+    L->>P: row.appended hookInvocation
+  end
+  Note over A,P: resubscribe: from_view reads records from SessionView, anchors them to their turn
+```
+
+**Owners.**
+
+- The hook engine owns the per-hook facts.
+- The session owns the hook events and the in-memory record list.
+- The projection owns rows and `lastError`.
+- Nothing is written to a store or to the shared databases.
+
+1. **Per-hook records.** `HookOutcome.runs: Vec<HookRunRecord>` is a defaulted serde field, so the `HookRunner` trait does not change. One record per visible hook holds:
+   - `run` (id) and `index` (visible index); `hookCount` is the number of records;
+   - `outcome`: `success`, `blocked`, `failed`, `cancelled` or `timed_out`, taken from the raw `Executed` before `interpret` collapses `TimedOut`;
+   - `block_reason`;
+   - `stderr_preview`, `stdout_preview` and `error_message`, using Node's rules: trimmed, capped at 4000 characters, stdout only on exit 2;
+   - `started_at` and `duration_ms` from a `Clock` added to `HookPorts`;
+   - `source_kind` (`user`, `project` or `plugin`), `plugin_name`, and `display`: the masked command display (Node `commandDisplay`: a process hook's parts quoted by `quoteCommandPart`, a shell command as written).
+
+   Rust's hook config keeps no `statusMessage`, so `displayName` always comes from the command label (Node uses `statusMessage` first). The E2E hooks set none.
+
+   The engine also sets `HookOutcome.invocation`, a new id per `run` call.
+   - **Accepted cost:** rows appear only when the batch finishes, so there is no live `running` state. The trigger is hidden while the turn runs, so the E2E does not see the difference.
+   - **Accepted divergence:** Rust starts hooks concurrently, so `started_at` values are close together. Executions are still sorted by index.
+
+2. **Source kind.** `HookMatcher` gains an `origin`, set where `effective.rs` flattens matchers, and `matcher::select` keeps each selected hook's origin through the dedup (the kept definition's origin):
+   - User and Policy map to `user`;
+   - Project and Local map to `project`;
+   - plugin matchers map to `plugin` with `plugin_name`.
+
+   Hooks that are not from a file (none today) would be `internal` and dropped.
+   - **Collision risk:** the per-workspace HookEngine snapshot fix (a separate session) also changes this flattening. Whichever lands second rebases. The change here is limited to one added field.
+
+3. **Async hooks** (`Backgrounded`) are reported when they are spawned, as `success` with `duration_ms: 0`. Rust does not follow a background hook to its end ("Command hook stdin"). Node reports them `running` until they finish.
+4. **Kernel event.** `KernelEvent::HookInvocation { invocation, hook_event, tool_use: Option, runs }` goes to the log through the turn's sink, under `SessionDeps.hook_rows` only. The session actor keeps it in a per-session list, bounded like the event log retention and cleared by a rewind of its turn. `SessionView.hook_invocations` exposes that list to `from_view`.
+5. **Projection.**
+   - **Row.** One `hookInvocation` row per invocation, keyed `hook:{invocation}`. `entityId` is the invocation id.
+   - **Row fields:**
+     - `hookEventName`, `hookCount`;
+     - `state` by Node's rule;
+     - `startedAt` (min) and `endedAt` (max), plus `durationMs`;
+     - `lane`: tool events give `toolBefore` or `toolAfter`, everything else gives `assistantWork`;
+     - `anchorToolCallId` from `tool_use`;
+     - `executions` sorted by index.
+   - **Executions.** The schema is strict, so an execution has exactly these keys:
+     - `hookRunId`, `hookIndex`;
+     - `didExecute: true`;
+     - `state`: completed, or failed for failed, cancelled and timed_out;
+     - `outcome`;
+     - `blockReason`, only when blocked;
+     - `startedAt`, `endedAt`, `durationMs`;
+     - `displayName`, using Node's `hookExecutionDisplayName` and `hookCommandLabel` rules, ported;
+     - `sourceKind`;
+     - `pluginName` and `toolName`, when present.
+6. **Blocked prompt** (human turn, under `SessionDeps.hook_rows`, which the app-server turns on with the other Node desktop switches; the TUI and `-p` keep today's behaviour and see none of the new events).
+   - The session emits `KernelEvent::PromptBlocked { message }` before it ends the turn: `message` is the user message the input would have committed (text, intent, file parts). The projection appends the `userInput` row from it through the same path as a committed human message, in the running turn. The prompt is still not committed to history or sent to the model.
+   - The turn finishes as `TurnOutcome::Success`, as Node's `TurnComplete(resultType:"success")` (`turn.ts:650-696`); no new `TurnOutcome` variant. So the header is `completed`, the projection keeps `lastError` (a success does not touch it), `error_holds_queue` does not hold the queue, and the turn's usage row is skipped (its prompt is not stored). **Accepted divergence:** Node's blocked path still writes its turn usage fact (`recordTurnUsageFact`, status `completed`, no model call); Rust writes none for a turn whose input is not stored.
+   - The projection sets `lastError` from the `HookInvocation` event: the last execution with `outcome: blocked` for UserPromptSubmit, in index order (Node emits one `state.updated` per `HookRunBlocked` and runs every hook, so the last block wins), using Node's message, `detail`, `recoverable:false` and `attribution` rules. `LastError` gains `detail`, `recoverable` and `attribution`. Other faults keep `recoverable: true`.
+   - `traceId` is omitted, because Rust has no trace id ("Conversation telemetry facts").
+   - **Known divergence:** the blocked turn finishes as a success, so the post-turn `/goal` steps (continue after set, verify after a turn) see a completed turn. Node's blocked path returns before its goal handling. No E2E combines an active goal with a blocked prompt. This is a follow-up.
+7. **Cold (in-process resubscribe or reopen).** `from_view` reads `hook_invocations`. A record whose turn is a stored turn is anchored to that cold turn through its user message id, like goal verification's `anchor_message`.
+   - A record for a turn with no stored prompt (a blocked prompt) is dropped cold, together with that turn, which Rust never stores. This differs from Node.
+   - SessionStart records go before the first turn that follows them.
+   - `lastError` is not rebuilt cold, as today.
+   - After a process restart nothing is restored, as in Node.
+
+### Delivery in this change
+
+First, before the rows: the multi-call batch order of tool hook contexts ("Tool hook context after the tool result", "Multi-call batches"). Under `node_desktop` the executor holds every call's hook contexts until the batch's results are all committed, then commits them in result order, so they fold into the batch's last result as Node (rule and paths: "Tool hook context after the tool result", Multi-call batches); tests first in `crates/query/src/executor_tests.rs`.
+
+Second, its own item, after the batch order: HK17 (`conversation-session-hooks-lifecycle`, a first-action `/compact` on a new draft). Under zcode-rs a typed `/compact` sent as text is not the compact command: Node parses it in the runtime (`core/src/runtime/helpers/commands.ts:5-14` `parseCompactCommand`, called at `core/src/runtime/methods/turn.ts:183`; a non-null result runs `executeManualCompact` at `turn.ts:486-496`, so `/compact [instructions]` compacts and sends no model request), while zcode-rs compacts only on the `compact` envelope (`QueuedKind::Compact`) and has no text parse in `session`, `query` or `protocol-zcode`. The box run at fd837a3b8 (2026-11-14, agent log kept) shows it: the session's `main_turn` request carries `/compact` as the user text, the replay upstream answers 500 (no fixture for that request), and the model retries run until the test gives up waiting for the compact marker. Node passes that step and fails later at the follow-up turn's SessionStart details (the rows below). The fix parses the text where Node does, at the turn start after queue admission:
+
+- **Rule.** Under `SessionDeps.typed_compact` (the app-server turns it on, with the other Node desktop session switches) a human text input (`TurnInput::Human`) whose trimmed text is `/compact`, or starts with `/compact `, runs as the manual compaction when its turn would start (`start_turn_with`), with the trimmed rest as its instructions (an empty rest is none), as `parseCompactCommand`. It parses the typed text, before an intent's quotes are joined, as Node parses `input` and joins `conversationQuotes` only when it records the input (`turn.ts:786`). That one place covers the immediate start, the queue drain and a new draft's first input. The queue item stays a text item (`sendText`), as Node's, and the manual compaction is the same one the `compact` command runs: `TurnStarted`, `CompactStarted { Manual }` (the protocol's compact marker), the summary, the `/compact` command record with the instructions as its args, `TurnFinished`. It does not write the held SessionStart result first, as Node's `turn.ts` returns before that phase.
+- **Not parsed.** `/compactx`, a content input (attachments or media), and every input under zcode-rs (default off: the TUI runs `/compact` as its own slash command; `-p` keeps sending the text).
+- **Tests first** in `crates/session/src/compact_tests.rs`: a typed `/compact focus` runs the manual compaction with `focus` and sends no model request; a typed `/compact` runs it with no instructions; `/compactx` and the switch off run a model turn.
+
+Then UserPromptSubmit on the human turn only. Each other event waits for a reason of its own:
+
+- **Stop and SubagentStop:** the sink is reachable (`scope.sink`); next change.
+- **Tool events** (PreToolUse, PermissionRequest, PostToolUse, PostToolUseFailure): the pipeline has no emit. The records would travel back in `ToolExecution`.
+- **SessionStart:** no turn exists yet, so it needs Node's pending queue.
+- **Compact hooks:** they run under `CollectSink`.
+- **Steered UserPromptSubmit:** the input is dropped as `Left::Cancelled("hook_blocked")`, so there is no turn for the row.
+
+HK-LC-01 (`assertHookTurnDetails`) needs all of these, and it also fails on Node.
+
+### Acceptance
+
+- **`hooks` unit tests** (fixed clock and ids):
+  - one record per selected hook, with index, count, outcome mapping (success, blocked, failed, cancelled, timed_out before collapse), block reason, and the stderr, stdout and error previews;
+  - a background hook reported as success;
+  - the source kind for user, project and plugin.
+- **`session` tests:** under `hook_rows` a blocked UserPromptSubmit logs `TurnStarted`, `HookInvocation`, `PromptBlocked` and `TurnFinished(Success)` in that order; nothing is committed and no request is sent. With the switch off the log has neither new event and the turn fails as today. An allowed prompt logs `HookInvocation` before its input's `MessageDone`.
+- **`protocol-zcode` projection tests:**
+  - The row content matches Node's for the HK-UP-01 fixture, checked against the shared zod `conversationRowSchema` (via the existing schema-check tooling), not only a Rust struct.
+  - The `userInput` row sits in the same turn.
+  - `lastError` has the exact message, `detail` and `recoverable:false`.
+  - The header is `completed` and the queue is not paused.
+  - The next turn clears `lastError`.
+  - `from_view` with a stored turn re-anchors the row.
+- **Desktop E2E in the box, Rust runtime:**
+  - HK-UP-01 passes;
+  - HK-UP-ERR-01, HK-ST-01 and HK-EF-01 stay green;
+  - Node is rerun on the same spec to confirm no change.
+
+### Checked against Node
+
+- **Queue.** A blocked prompt completes Node's turn as a success (`turn.ts:650-696`, response `stopReason ?? "Prompt blocked by UserPromptSubmit hook."`), so the queue drains on; Rust's `Success` does the same.
+- **Process failure** (HK-UP-ERR-01: exit neither 0 nor 2). `processHookExecutionResult` throws `ToolExecutionFailed` with the cause `error.message ?? trimForPreview(stderr) ?? "Hook process exited with status <status>"` (`core/src/hooks/configured-runner-callback.ts:117-146`); the runner emits `HookRunFailed` with `outcome: failed` and the prompt continues. Rust's command `NonBlockingError` is `failed`, a Rust `Cancelled` is `cancelled`, a `TimedOut` is `timed_out`. The strict execution schema carries no error text, so only the outcome reaches the row.
+- **Previews.** `trimForPreview` trims and caps at 4000 characters plus `...`; `sanitizeHookDiagnostics` (`core/src/hooks/runner.ts`) trims again, masks with `sanitizeHookDisplayText` (`core/src/hooks/display-metadata.ts:35-67`: credentials in URLs, `authorization` headers and assignments, sensitive query parameters, quoted and bare sensitive keys, sensitive flags) and slices to 4000. Diagnostics are kept only for a blocked run; `stdoutPreview` only on exit 2. The `hooks` crate ports both, with Node's patterns, and `blockReason` is masked the same way.
+- **`-p` and the TUI.** `hook_rows` is off for them, so a blocked prompt stays `TurnOutcome::Failed` and no new event reaches them.
+
 ## Open gaps (not yet ported)
 
-- **Tool hook contexts of a multi-call batch** ("Tool hook context after the tool result", Multi-call batches): Node folds every call's hook contexts into the batch's last tool result, Rust into each call's own result.
+- **Read batch notice** ("Tool hook context after the tool result", Multi-call batches): Node's Read sends `read_truncation_notice` after a batch for a partial view (`formatReadBatchNotice`); Rust's Read has no partial-view notice.
 - **Per-workspace hook snapshots (production-impacting, not cosmetic).** zcode-rs keeps one `HookEngine` snapshot per process. It is assembled from the process cwd at startup (`assemble` `replace_hooks`) and rebuilt only for that workspace (`rebuild_own_hooks`). Under shared task runtime routing (`sessionWorkspaceRouting`), the Desktop starts the agent with its cwd at `~/.zcode` (spawn preflight `cwdSource: "command"`), so a session's workspace is never the process root:
   - Project `.zcode/config.json` hooks never run for such a session, before or after trust. The trust record is written correctly, but no snapshot holds that workspace's hooks.
   - `workspace/hooks/trustGrant` and the review flow's grant and toggle have the same limit; their rebuild is skipped (log `workspace.hooks.rebuild_skipped`).
@@ -1911,7 +2106,7 @@ Known small gaps and follow-ups:
   - Planned fix: `HookEngine` keeps a snapshot per workspace, keyed by `workspaceIdentity?.trim() || workspacePath`. A session's events use its own workspace's snapshot, which is assembled at session open and rebuilt on every trust change (grant, revoke, toggle) and after `/cd`.
 - **Lenient project hook parsing outside the review.** Only the review flow and its toggle check Node's strict `workspaceHooksConfigSchema`. `zcode hooks trust` (`inspect_read`), `workspace/hooks/trustGrant` and the hook snapshot assembly still use the lenient parse, which skips bad entries. So zcode-rs can grant, and run, trusted declarations from a config Node refuses: Node's loader drops the whole file (`loadFileConfig`), and its trust CLI (`workspace-hook-trust-cli.ts`) and `hooksService.ts` refuse on the parse error. After a toggle whose rebuild fails, Node's `admission.invalidate` blocks every project hook dispatch until the next snapshot (`workspace-hook-review-controller.ts`, `workspace-hook-runtime-admission.ts`), while zcode-rs's `rebuild_own_hooks` has already reassembled the hooks from the lenient parse. Planned with the per-workspace snapshot PR.
 - **Project hook events beyond seven.** Node's digest iterates all ten `WORKSPACE_HOOK_EVENT_NAMES` (`workspace-hook-digest.ts`), including `PreCompact`, `PostCompact` and `SessionEnd`. `NODE_EVENTS` (kernel-api) has seven, and the cli's `trust::candidates` drops the other three with a warning. A project config with those events therefore gets another bundle digest and other review items than on Node, so trust records do not carry over between the runtimes. This predates the review flow, from an upstream sync that added the events.
-- **Hooks lifecycle case that fails only on Rust** (desktop E2E `hooks/conversation-session-hooks-lifecycle`; passes on Node): HK-UP-01, the blocked-prompt hook details trigger does not appear when UserPromptSubmit blocks. Rust emits no `hookInvocation` rows (Node projects them from the `HookRunStarted`/`Progress`/`Completed`/`Failed`/`Blocked` session events, `product-projection.ts` `onHookRunLifecycle`, and merges them on cold reopen) and no `lastError` `fault.runtime.hookBlocked` for a blocked UserPromptSubmit (`hookBlockErrorDelta`), so the chat error banner is empty too. Planned as its own change, spec first. HK-ST-01 and HK-EF-01 are fixed ("Stop continuation cap", "Tool hook context after the tool result", "Command hook stdin"). HK-LC-01 fails on both runtimes, so it is not a parity gap. HK17 also fails on Node, but Rust stops earlier, at a parity gap of its own: a typed `/compact` sent as text is not the compact command. Node parses it in the runtime (`core/src/runtime/methods/turn.ts` `parseCompactCommand(input)`, so a first input `/compact` on a new draft runs the manual compact); zcode-rs compacts only on the `compact` envelope (`QueuedKind::Compact`) and has no text parse in `session`, `query` or `protocol-zcode`, so it sends `/compact` to the model as the user text of a `main_turn` request. In the box run on fd837a3b8 the replay upstream answered 500 (no fixture for that request), and the model retries ran until the test gave up waiting for the compact marker. Fixing it is its own change, spec first.
+- **Hooks lifecycle case that fails only on Rust** (desktop E2E `hooks/conversation-session-hooks-lifecycle`; passes on Node): HK-UP-01, the blocked-prompt hook details trigger does not appear when UserPromptSubmit blocks. Rust emits no `hookInvocation` rows (Node projects them from the `HookRunStarted`/`Progress`/`Completed`/`Failed`/`Blocked` session events, `product-projection.ts` `onHookRunLifecycle`, and merges them on cold reopen) and no `lastError` `fault.runtime.hookBlocked` for a blocked UserPromptSubmit (`hookBlockErrorDelta`), so the chat error banner is empty too. Design: "Hook invocation rows and the blocked-prompt banner (HK-UP-01, draft)" above. HK-ST-01 and HK-EF-01 are fixed ("Stop continuation cap", "Tool hook context after the tool result", "Command hook stdin"). HK-LC-01 fails on both runtimes, so it is not a parity gap. HK17 also fails on Node, but Rust stops earlier, at a parity gap of its own: a typed `/compact` sent as text is not the compact command. Node parses it in the runtime (`core/src/runtime/methods/turn.ts` `parseCompactCommand(input)`, so a first input `/compact` on a new draft runs the manual compact); zcode-rs compacts only on the `compact` envelope (`QueuedKind::Compact`) and has no text parse in `session`, `query` or `protocol-zcode`, so it sends `/compact` to the model as the user text of a `main_turn` request. In the box run on fd837a3b8 the replay upstream answered 500 (no fixture for that request), and the model retries ran until the test gave up waiting for the compact marker. Its fix is in the HK-UP-01 design above.
 
 - **Gen UI widget state (`genUiContext`).** Rust reports `runtime/capabilities` `genUiContext: false` and does not implement the `sendText.genUiContext` input path (widget `modelContent` sent to the model as `<untrusted_gen_ui_state>`); Node reports `true`. The Host's `ensureGenUiContextSupport` therefore keeps widget state away from Rust sessions. Visualizations themselves work ("ZCode Desktop Context" above); only the widget-state round trip is missing.
 - **Background Bash result turn stays expanded.** In `conversation-session-background` "background Bash 完成后复用同一 notification/wake 链路" the completed notification turn's work history stays open on Rust. The render unit matches Node (header `completedSuccess`, final reply with `canFork`, `assistantHistoryDefaultOpen: false`), so the open state is UI-local `historyOpen` left over from an earlier frame; the frame order that leaves it set is not identified yet. It is not Rust-only: the case fails on Node too, run alone (`it.only`) and in a full gate run (2026-11-09, `background` 25/26 on Node); the component matches upstream 3.17.2.

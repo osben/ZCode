@@ -37,8 +37,10 @@ impl Doing {
             | QueryEvent::ToolFinished { .. }
             | QueryEvent::ExternalToolRow { .. }
             | QueryEvent::ExternalAgentConfig { .. } => None,
-            // Fork: ACP status events run only in a top-level desktop session and change no activity.
+            // Fork: hook rows and ACP status events are display only and change no activity.
             QueryEvent::ToolProgress { .. }
+            | QueryEvent::HookInvocation { .. }
+            | QueryEvent::PromptBlocked { .. }
             | QueryEvent::ExternalAgentContextReset { .. }
             | QueryEvent::ExternalAgentStatus { .. } => return None,
             QueryEvent::ModelNotice { notice } => match notice {

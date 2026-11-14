@@ -291,6 +291,9 @@ impl Transcript {
             | KernelEvent::PlanTransition { .. }
             | KernelEvent::GoalChanged { .. }
             | KernelEvent::GoalVerification { .. }
+            // Fork: hook rows and the blocked prompt are a desktop projection (HK-UP-01).
+            | KernelEvent::HookInvocation { .. }
+            | KernelEvent::PromptBlocked { .. }
             | KernelEvent::ToolInputStarted { .. }
             | KernelEvent::TurnControlOnly { .. } => {}
             // HistoryRewritten 由 runner 处理（丢弃视图后重新 view()）；后台任务的快照由 runner 在
