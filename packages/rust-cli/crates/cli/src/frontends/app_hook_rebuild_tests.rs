@@ -178,7 +178,7 @@ async fn an_earlier_rebuild_never_installs_over_a_later_mutation() {
 }
 
 #[tokio::test]
-async fn a_newer_ticket_of_another_workspace_never_drops_a_rebuild() {
+async fn a_later_epoch_of_another_workspace_never_drops_a_rebuild() {
     let gate = Arc::new(Gate::default());
     let fixture = fixture_files(PROJECT, json!({}), |inner| {
         Arc::new(HoldsRead {
@@ -193,7 +193,7 @@ async fn a_newer_ticket_of_another_workspace_never_drops_a_rebuild() {
         .await
         .unwrap();
 
-    // The root's rebuild draws its ticket first and is held; another workspace's rebuild draws a newer one and puts.
+    // The root's rebuild reserves its epoch first and is held; another workspace's rebuild reserves a later one and puts.
     gate.armed.store(true, Ordering::SeqCst);
     let (own, other) = (
         Target::new(ROOT, None),
