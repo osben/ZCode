@@ -1932,7 +1932,9 @@ sequenceDiagram
 
 ### Delivery in this change
 
-UserPromptSubmit on the human turn only. Each other event waits for a reason of its own:
+First, before the rows: the multi-call batch order of tool hook contexts ("Tool hook context after the tool result", "Multi-call batches"). Under `node_desktop` the executor holds every call's hook contexts (and Node's batch notices) until the batch's results are all committed, then commits them in result order, so `foldRemindersIntoToolResults` folds them into the batch's last result as Node (`runtime/helpers/tool-result.ts` `toolBatchModelEntries`). The abort, steering and hook-stop paths keep their own order; tests first in `crates/query/src/executor_tests.rs`.
+
+Then UserPromptSubmit on the human turn only. Each other event waits for a reason of its own:
 
 - **Stop and SubagentStop:** the sink is reachable (`scope.sink`); next change.
 - **Tool events** (PreToolUse, PermissionRequest, PostToolUse, PostToolUseFailure): the pipeline has no emit. The records would travel back in `ToolExecution`.
