@@ -331,6 +331,33 @@ async fn the_write_checks_the_declaration_it_rewrites() {
     assert!(!declared_as_reviewed(&moved, entry, &sources[0], &hooks));
 }
 
+/// Node parses the hooks object with its strict schema before a toggle and refuses one it rejects
+/// (`workspace-hook-mutation.ts` `safeParse`), so its indices are raw positions. Rust's lenient parse skips the
+/// malformed matcher, which shifts the indices: the toggle must refuse rather than write onto another declaration.
+#[tokio::test]
+async fn a_toggle_refuses_a_config_whose_parse_skipped_an_entry() {
+    let text = r#"{"hooks": {"events": {"UserPromptSubmit": [
+    {"matcher": 5, "hooks": [{"type": "command", "command": "a"}]},
+    {"matcher": "Bash", "hooks": [{"type": "command", "command": "b"}]}
+]}}}"#;
+    let fixture = fixture_text(text, json!({}));
+    let review = bundle(&fixture).await;
+    assert_eq!(review.items.len(), 1);
+    assert_eq!(review.items[0].display_command, "b");
+    let answer = fixture
+        .admin
+        .review_toggle(
+            &target(ROOT),
+            &review.bundle_digest,
+            &review.items[0].review_item_id,
+            false,
+        )
+        .await;
+    assert_eq!(answer, Err(ToggleError::Rejected(codes::SNAPSHOT_MISMATCH)));
+    assert_eq!(project(&fixture).await, text.as_bytes());
+    assert!(fixture.hooks.lock().unwrap().is_empty());
+}
+
 #[test]
 fn the_display_path_is_relative_to_the_folder_of_dot_zcode() {
     assert_eq!(

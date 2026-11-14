@@ -299,7 +299,12 @@ fn declared_as_reviewed(
     let Some(value) = raw.as_object().and_then(|object| object.get("hooks")) else {
         return false;
     };
-    let (mut parsed, _) = NodeHooks::from_json(value);
+    let (mut parsed, warnings) = NodeHooks::from_json(value);
+    // Node's strict schema rejects the whole object (`workspace-hook-mutation.ts` `safeParse`); the lenient parse
+    // skipped entries instead, so the reviewed indices no longer name raw positions.
+    if !warnings.is_empty() {
+        return false;
+    }
     parsed
         .events
         .retain(|(event, _)| NODE_EVENTS.contains(event));
