@@ -166,6 +166,13 @@ impl Inner {
             .unwrap_or_default()
     }
 
+    /// Fork (F3): the server is served by the Node helper.
+    pub(crate) fn is_helper_hosted(&self, name: &str) -> bool {
+        self.servers().get(name).is_some_and(|server| {
+            server.config.transport == rust_cli_kernel_api::mcp::McpTransportConfig::NodeHelper
+        })
+    }
+
     /// 已连接的服务器的客户端。
     pub(crate) fn client(&self, name: &str) -> Option<Arc<Client>> {
         self.servers()

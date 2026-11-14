@@ -182,11 +182,17 @@ impl Tool for McpTool {
         let settings = manager.settings();
         // 这个服务器的 `timeoutMs`，没有时 `MCP_TOOL_TIMEOUT`（ext.md §3.1）。
         let timeout_ms = settings.tool_timeout_for(manager.options(server));
+        // Fork (F3): a helper-hosted server's call names its session, so the helper runs it on that session's lease.
+        let helper = manager.is_helper_hosted(server).then(|| HelperCall {
+            session: context.session.as_str(),
+            turn: context.run.as_str(),
+            subagent: context.agent.is_some(),
+        });
         let params = json!({
             "name": self.info.tool,
             "arguments": input,
             // 只带本工程的键：tool_use 的 ID（ext.md D35）。
-            "_meta": {"zcode/toolUseId": context.tool_use},
+            "_meta": call_meta(context.tool_use.as_str(), helper),
         });
         let timeout = Duration::from_millis(timeout_ms);
         let mut retried = false;
@@ -238,6 +244,27 @@ impl Tool for McpTool {
             display: Value::Null,
         })
     }
+}
+
+/// The session a helper-hosted tool call runs for (specs/fork-rust-node-helper.md F3).
+pub(crate) struct HelperCall<'a> {
+    pub(crate) session: &'a str,
+    /// The run is the Node turn the call belongs to.
+    pub(crate) turn: &'a str,
+    pub(crate) subagent: bool,
+}
+
+/// The `_meta` of a `tools/call`: the tool use id, and for a helper-hosted server `zcode/helperContext`.
+pub(crate) fn call_meta(tool_use: &str, helper: Option<HelperCall<'_>>) -> Value {
+    let mut meta = json!({"zcode/toolUseId": tool_use});
+    if let Some(call) = helper {
+        meta["zcode/helperContext"] = json!({
+            "sessionId": call.session,
+            "turnId": call.turn,
+            "runtimeScope": if call.subagent { "subagent" } else { "main" },
+        });
+    }
+    meta
 }
 
 #[cfg(test)]

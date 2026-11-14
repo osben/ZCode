@@ -74,3 +74,38 @@ fn only_a_true_destructive_hint_marks_the_tool_destructive() {
         assert!(!destructive(listed));
     }
 }
+
+/// Fork (specs/fork-rust-node-helper.md F3): only a helper-hosted server's call carries the helper context, so the
+/// helper runs it on that session's lease; a subagent's call says so.
+#[test]
+fn helper_hosted_calls_carry_the_helper_context() {
+    assert_eq!(
+        super::call_meta("toolu_1", None),
+        json!({"zcode/toolUseId": "toolu_1"})
+    );
+    assert_eq!(
+        super::call_meta(
+            "toolu_2",
+            Some(super::HelperCall {
+                session: "s-1",
+                turn: "run-1",
+                subagent: false
+            })
+        ),
+        json!({
+            "zcode/toolUseId": "toolu_2",
+            "zcode/helperContext": {"sessionId": "s-1", "turnId": "run-1", "runtimeScope": "main"}
+        })
+    );
+    assert_eq!(
+        super::call_meta(
+            "toolu_3",
+            Some(super::HelperCall {
+                session: "s-2",
+                turn: "run-2",
+                subagent: true
+            })
+        )["zcode/helperContext"]["runtimeScope"],
+        "subagent"
+    );
+}
