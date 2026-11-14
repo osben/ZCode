@@ -57,9 +57,14 @@ fn delta(op: &str, token: &str) -> Value {
 }
 
 /// Opens answer [`instance`] of the `token` param; a call whose `toolName` is `crash` crashes; another call sends the
-/// `notes` param's deltas before it answers.
+/// `notes` param's deltas before it answers. A close answers Node's `{closed}`: an `onlyIfIdle` close finds the panel
+/// busy and keeps it (`mcp-ui/protocol.ts` `closeMcpUiInstance`).
 fn panels() -> Arc<Behaviour> {
     behaviour(|_, method, params| match method {
+        CLOSE => Act::Reply {
+            notes: Vec::new(),
+            result: json!({"closed": params["onlyIfIdle"] != json!(true)}),
+        },
         OPEN => Act::Reply {
             notes: Vec::new(),
             result: instance(params["token"].as_str().unwrap_or_default()),
@@ -189,6 +194,26 @@ async fn a_crash_closes_the_panels_its_generation_opened_and_not_closed() {
     crash(&rig).await;
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert!(deltas.taken().is_empty());
+}
+
+/// A close the helper refused (`{closed: false}`, a busy panel under `onlyIfIdle`) keeps the panel open, so a crash
+/// still closes it.
+#[tokio::test]
+async fn a_refused_close_keeps_the_panel_tracked() {
+    let (rig, deltas) = panels_rig();
+    forward_ok(&rig.helper, OPEN, open_params("t1")).await;
+    let answer = forward_ok(
+        &rig.helper,
+        CLOSE,
+        json!({"sessionId": "s1", "instance": instance("t1"), "onlyIfIdle": true}),
+    )
+    .await;
+    assert_eq!(answer, json!({"closed": false}));
+    crash(&rig).await;
+    assert_eq!(
+        deltas_after(&deltas, 1).await,
+        [("s1".to_owned(), delta("pluginUi.instanceClosed", "t1"))]
+    );
 }
 
 #[tokio::test]

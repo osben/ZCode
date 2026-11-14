@@ -297,9 +297,52 @@ fn call_session(message: &Value) -> Option<&str> {
         .filter(|session| !session.is_empty())
 }
 
-/// Sends a pipe's messages to the helper in order. A tool call first opens its session in the generation (F3,
-/// "Session open and close"); when the open fails, the call is answered on the pipe with the open's error instead of
-/// reaching the helper.
+/// The request a `notifications/cancelled` cancels (its `params.requestId`, as JSON text).
+fn cancelled_request(message: &Value) -> Option<String> {
+    if message.get("method").and_then(Value::as_str) != Some("notifications/cancelled") {
+        return None;
+    }
+    message.pointer("/params/requestId").map(Value::to_string)
+}
+
+/// How many of a pipe's recent tool calls the writer remembers, to send a cancel after its call.
+const REMEMBERED_CALLS: usize = 1024;
+
+/// The sessions of a pipe's recent tool calls by request id (JSON text), oldest first.
+#[derive(Default)]
+struct CallSessions {
+    sessions: std::collections::HashMap<String, String>,
+    order: std::collections::VecDeque<String>,
+}
+
+impl CallSessions {
+    fn remember(&mut self, id: String, session: &str) {
+        if self
+            .sessions
+            .insert(id.clone(), session.to_owned())
+            .is_none()
+        {
+            self.order.push_back(id);
+        }
+        while self.order.len() > REMEMBERED_CALLS {
+            if let Some(oldest) = self.order.pop_front() {
+                self.sessions.remove(&oldest);
+            }
+        }
+    }
+
+    fn session_of(&self, id: &str) -> Option<String> {
+        self.sessions.get(id).cloned()
+    }
+}
+
+/// Sends a pipe's messages to the helper. A tool call first opens its session in the generation (F3, "Session open and
+/// close"); when the open fails, the call is answered on the pipe with the open's error instead of reaching the
+/// helper.
+///
+/// Each session's calls, and the cancels of those calls, go through that session's lane, in order: a cancel never
+/// overtakes its call. Another session's traffic and sessionless messages (`initialize`, `tools/list`, answers to the
+/// server's requests) do not wait on a session's open, which may take the open's full timeout.
 async fn pipe_writer(
     helper: std::sync::Weak<NodeHelper>,
     generation: u64,
@@ -308,25 +351,98 @@ async fn pipe_writer(
     mut queue: mpsc::UnboundedReceiver<Value>,
     events: mpsc::UnboundedSender<McpTransportEvent>,
 ) {
-    while let Some(message) = queue.recv().await {
-        if let Some(session) = call_session(&message) {
-            let Some(owner) = helper.upgrade() else {
-                return;
-            };
-            let opened = owner.ensure_session(generation, &peer, session).await;
-            drop(owner);
-            if let Err(error) = opened {
+    let mut lanes: std::collections::HashMap<String, mpsc::UnboundedSender<Value>> =
+        std::collections::HashMap::new();
+    let mut running = futures_util::stream::FuturesUnordered::new();
+    let mut calls = CallSessions::default();
+    let link = PipeLink {
+        helper,
+        generation,
+        peer,
+        connection,
+        events,
+    };
+    loop {
+        // Lanes first: a call of an open session goes out before the next queued message, as one FIFO writer would.
+        let message = tokio::select! {
+            biased;
+            Some(()) = running.next(), if !running.is_empty() => continue,
+            message = queue.recv() => message,
+        };
+        let Some(message) = message else {
+            break;
+        };
+        let session = match call_session(&message) {
+            Some(session) => {
                 if let Some(id) = message.get("id") {
-                    let answer = json!({"jsonrpc": "2.0", "id": id,
-                        "error": {"code": -32603, "message": error.message}});
-                    let _ = events.send(McpTransportEvent::Message { message: answer });
+                    calls.remember(id.to_string(), session);
                 }
-                continue;
+                Some(session.to_owned())
             }
-        }
-        let params = json!({"connection": connection, "message": message});
-        if !peer.notify(SEND, &params).await {
+            None => cancelled_request(&message).and_then(|id| calls.session_of(&id)),
+        };
+        let Some(session) = session else {
+            if !link.send(message).await {
+                return;
+            }
+            continue;
+        };
+        let lane = lanes.entry(session.clone()).or_insert_with(|| {
+            let (sender, receiver) = mpsc::unbounded_channel();
+            running.push(link.clone().lane(session, receiver));
+            sender
+        });
+        if lane.send(message).is_err() {
+            // The lane ended: the helper link is gone.
             return;
+        }
+    }
+    // The pipe was dropped: the lanes send what they hold, then end.
+    drop(lanes);
+    while running.next().await.is_some() {}
+}
+
+/// What a pipe's writer and its session lanes need to reach the helper.
+#[derive(Clone)]
+struct PipeLink {
+    helper: std::sync::Weak<NodeHelper>,
+    generation: u64,
+    peer: rust_cli_protocol_core::connection::Peer,
+    connection: String,
+    events: mpsc::UnboundedSender<McpTransportEvent>,
+}
+
+impl PipeLink {
+    async fn send(&self, message: Value) -> bool {
+        let params = json!({"connection": self.connection, "message": message});
+        self.peer.notify(SEND, &params).await
+    }
+
+    /// One session's messages, in order: each tool call waits for the session's open.
+    async fn lane(self, session: String, mut queue: mpsc::UnboundedReceiver<Value>) {
+        while let Some(message) = queue.recv().await {
+            if call_session(&message).is_some() {
+                let Some(owner) = self.helper.upgrade() else {
+                    return;
+                };
+                let opened = owner
+                    .ensure_session(self.generation, &self.peer, &session)
+                    .await;
+                drop(owner);
+                if let Err(error) = opened {
+                    if let Some(id) = message.get("id") {
+                        let answer = json!({"jsonrpc": "2.0", "id": id,
+                            "error": {"code": -32603, "message": error.message}});
+                        let _ = self
+                            .events
+                            .send(McpTransportEvent::Message { message: answer });
+                    }
+                    continue;
+                }
+            }
+            if !self.send(message).await {
+                return;
+            }
         }
     }
 }

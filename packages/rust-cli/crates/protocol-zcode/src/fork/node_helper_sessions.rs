@@ -87,6 +87,17 @@ impl HelperCatalog {
 /// unset for a retry.
 pub(super) type Opening = Arc<tokio::sync::OnceCell<u64>>;
 
+/// Bounds the restarts of [`NodeHelper::ensure_session`]; each one needs another call's open to fail first.
+const OPEN_ATTEMPTS: usize = 8;
+
+/// Why one attempt of [`NodeHelper::ensure_session`] did not open the session.
+enum Attempt {
+    /// The cell this call waited on was removed (its open failed, or Rust closed the session) before the call could
+    /// open it: the call starts again from the registered entry.
+    Unregistered,
+    Failed(RpcError),
+}
+
 /// Closes an open that Rust gave up on (its timeout, or the caller dropping it): the helper may still finish it, and
 /// nothing in Rust would own that session. Disarmed once the helper answered.
 struct AbandonedOpen<'a> {
@@ -153,6 +164,24 @@ impl NodeHelper {
         peer: &Peer,
         session: &str,
     ) -> Result<(), RpcError> {
+        // A failed open removes its cell, and the OnceCell hands the retry to a call still waiting on that cell. Such
+        // a call starts again from the registered entry: opening on the removed cell would look closed in flight.
+        for _ in 0..OPEN_ATTEMPTS {
+            match self.ensure_on_registered(generation, peer, session).await {
+                Err(Attempt::Unregistered) => {}
+                Err(Attempt::Failed(error)) => return Err(error),
+                Ok(()) => return Ok(()),
+            }
+        }
+        Err(unavailable("the session open kept failing"))
+    }
+
+    async fn ensure_on_registered(
+        &self,
+        generation: u64,
+        peer: &Peer,
+        session: &str,
+    ) -> Result<(), Attempt> {
         let mut cell = None;
         self.with_running(generation, |running| {
             cell = Some(
@@ -164,7 +193,7 @@ impl NodeHelper {
             );
         });
         let Some(cell) = cell else {
-            return Err(unavailable("the helper exited"));
+            return Err(Attempt::Failed(unavailable("the helper exited")));
         };
         let mut waiting = Waiting {
             helper: self,
@@ -176,9 +205,21 @@ impl NodeHelper {
         let cell = &waiting.cell;
         let opened_here = std::sync::atomic::AtomicBool::new(false);
         let result = cell
-            .get_or_try_init(|| {
+            .get_or_try_init(|| async {
+                let mut registered = false;
+                self.with_running(generation, |running| {
+                    registered = running
+                        .sessions
+                        .get(session)
+                        .is_some_and(|known| Arc::ptr_eq(known, cell));
+                });
+                if !registered {
+                    return Err(Attempt::Unregistered);
+                }
                 opened_here.store(true, std::sync::atomic::Ordering::Relaxed);
                 self.open_session(generation, peer, session)
+                    .await
+                    .map_err(Attempt::Failed)
             })
             .await
             .copied();

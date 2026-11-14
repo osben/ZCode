@@ -162,7 +162,9 @@ impl NodeHelper {
                     return Err(super::unavailable("the helper exited"));
                 }
             }
-            CLOSE_INSTANCE => {
+            // Node answers `{closed: false}` for a busy panel under `onlyIfIdle` and keeps it open
+            // (mcp-ui/protocol.ts `closeMcpUiInstance`): only a closed panel is forgotten.
+            CLOSE_INSTANCE if answer.get("closed") == Some(&Value::Bool(true)) => {
                 if let Some(token) = non_empty(params.pointer("/instance/token")) {
                     self.with_running(generation, |running| running.panels.forget(token));
                 }

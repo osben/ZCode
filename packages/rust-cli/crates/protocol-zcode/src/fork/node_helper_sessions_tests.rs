@@ -290,6 +290,54 @@ async fn a_helper_tool_call_opens_its_session_first_without_holding_its_cancel()
     assert_eq!(received(&rig.fake, "helper/session/open").len(), 1);
 }
 
+/// One session's pending open holds only that session's traffic on the pipe: another session's call and its cancel pass
+/// it, and each session keeps its own order (a cancel follows its call).
+#[tokio::test(start_paused = true)]
+async fn a_pending_open_holds_only_its_own_sessions_pipe_traffic() {
+    // The fake answers in order, so s1's open never answers here (it is left to its timeout).
+    let rig = session_rig(sessions(
+        |attempt| {
+            if attempt == 0 { Act::Hang } else { opened() }
+        },
+    ));
+    let connection = rig
+        .helper
+        .mcp_connect(&workspace_params(), "plugin:viewer:view")
+        .await
+        .expect("connected");
+    let cancel = |id: u64| {
+        json!({"jsonrpc": "2.0", "method": "notifications/cancelled",
+            "params": {"requestId": id, "reason": "User interrupted"}})
+    };
+    let ping = json!({"jsonrpc": "2.0", "id": 9, "method": "ping"});
+    for message in [
+        tool_call(1, "s1"),
+        cancel(1),
+        tool_call(2, "s2"),
+        cancel(2),
+        ping.clone(),
+    ] {
+        rig.helper
+            .mcp_send(&connection.id, message)
+            .await
+            .expect("sent");
+    }
+    let sent = || -> Vec<Value> {
+        received(&rig.fake, "helper/mcp/send")
+            .into_iter()
+            .map(|params| params["message"].clone())
+            .collect()
+    };
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    // s1's call and its cancel wait for s1's open; s2's traffic and the sessionless ping do not. Only each session's
+    // own order is kept: the ping may pass s2's open too.
+    let sent = sent();
+    let at = |message: &Value| sent.iter().position(|seen| seen == message);
+    assert_eq!(sent.len(), 3, "{sent:?}");
+    assert!(at(&ping).is_some());
+    assert!(at(&tool_call(2, "s2")) < at(&cancel(2)) && at(&cancel(2)).is_some());
+}
+
 #[tokio::test]
 async fn a_failed_session_open_answers_the_tool_call_with_an_error() {
     let rig = session_rig(sessions(|_| {
@@ -619,4 +667,47 @@ async fn a_dropped_call_leaves_the_open_to_a_waiting_call() {
     assert_eq!(ids("helper/session/close"), ids("helper/session/open"));
     tokio::time::sleep(Duration::from_secs(301)).await;
     assert_eq!(rig.fake.stopped.load(Ordering::SeqCst), 1);
+}
+
+/// A call waiting on an open that fails opens the session itself, and that session stays open and registered: the
+/// failed call must not leave it looking closed (which would close it in the helper and forward the waiting call into
+/// a closed session).
+#[tokio::test]
+async fn a_call_waiting_on_a_failed_open_opens_a_session_that_stays_open() {
+    let rig = session_rig(sessions(|attempt| {
+        if attempt == 0 {
+            Act::Fail(RpcError::invalid_params("busy"))
+        } else {
+            opened()
+        }
+    }));
+    let params = json!({"sessionId": "s1"});
+    let (first, second) = tokio::join!(
+        rig.helper.forward(SESSION_METHOD, &params),
+        rig.helper.forward(SESSION_METHOD, &params),
+    );
+    // Either call may make the first open; the other waits on it.
+    let mut outcomes = [first.unwrap(), second.unwrap()];
+    outcomes.sort_by_key(Result::is_ok);
+    assert_eq!(outcomes[0].as_ref().unwrap_err().message, "busy");
+    assert_eq!(outcomes[1].as_ref().unwrap(), &params);
+    tokio::task::yield_now().await;
+    assert!(
+        received(&rig.fake, "helper/session/close").is_empty(),
+        "the waiting call's session stays open"
+    );
+    // It is the registered open: the next call reuses it, and Rust's close names it.
+    forward_ok(&rig.helper, SESSION_METHOD, params).await;
+    assert_eq!(received(&rig.fake, "helper/session/open").len(), 2);
+    rig.helper.session_closed("s1");
+    for _ in 0..50 {
+        if !received(&rig.fake, "helper/session/close").is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    assert_eq!(
+        received(&rig.fake, "helper/session/close"),
+        [json!({"sessionId": "s1", "openId": 2})]
+    );
 }
