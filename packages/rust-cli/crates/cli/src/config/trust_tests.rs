@@ -156,13 +156,13 @@ async fn only_trusted_enabled_declarations_run_and_the_rest_are_pending() {
         "PreToolUse": [{"matcher": "Bash", "hooks": [
             {"type": "command", "command": "trusted.sh"},
             {"type": "command", "command": "pending.sh"}
-        ]}],
-        "Notification": [{"hooks": [{"type": "command", "command": "notification-only.sh"}]}]
+        ]}]
     }});
+    // An event outside Node's ten drops the whole file (`a_file_nodes_strict_schema_rejects_is_dropped_whole`).
     let files = vec![file_with(root, "/Users/dev/repo/zcode.json", 0, &hooks)];
     let mut warnings = Vec::new();
     let first = WorkspaceHooks::inspect(root, None, &files, &paths, &mut warnings).await;
-    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings.is_empty(), "{warnings:?}");
     assert!(first.admitted().is_empty());
     let trusted = first.entries()[0].digest.clone();
     first

@@ -8,20 +8,63 @@ use rust_cli_hooks::node_config::{NODE_EVENTS, NodeHooks};
 use rust_cli_hooks::workspace_digest::{Bundle, DigestEntry, DigestSource, RuntimeRoot};
 use rust_cli_hooks::{HookSource, workspace_digest};
 use rust_cli_paths::StoragePaths;
-use rust_cli_platform::local::{HookTrustStore, TrustLoad};
+use rust_cli_platform::local::{ConfigFile, HookTrustStore, TrustLoad};
 use serde_json::{Map, Value};
 
 use super::files::{ProjectFile, relative};
+use super::workspace_schema;
 
-/// The project files with `hooks` and their parsed hooks; events outside Node's ten are dropped with a warning (D2).
+/// What a project file contributes to the workspace hooks (Node `loadFileConfig` for a project file).
+pub(crate) enum ProjectHooks<'a> {
+    /// No `hooks` key.
+    Absent,
+    /// A `hooks` value Node's strict `workspaceHooksConfigSchema` accepts.
+    Declared(&'a Value),
+    /// A file Node cannot load: unreadable, not a JSON object, or `hooks` rejected by the strict schema. Node marks
+    /// it not loaded, so none of its declarations is a candidate.
+    Failed,
+}
+
+/// The one strict check of a project file's hooks: the trust CLI, `workspace/hooks/trustGrant`, the review and the
+/// hook snapshot assembly all read the project hooks through it.
+pub(crate) fn project_hooks(file: &ProjectFile) -> ProjectHooks<'_> {
+    match &file.file {
+        ConfigFile::Invalid { .. } => ProjectHooks::Failed,
+        ConfigFile::Missing => ProjectHooks::Absent,
+        ConfigFile::Loaded(object) => match object.get("hooks") {
+            None => ProjectHooks::Absent,
+            Some(value) if workspace_schema::check(value).is_err() => ProjectHooks::Failed,
+            Some(value) => ProjectHooks::Declared(value),
+        },
+    }
+}
+
+/// The project files Node cannot load, in discovery order.
+pub(crate) fn failed(files: &[ProjectFile]) -> impl Iterator<Item = &ProjectFile> {
+    files
+        .iter()
+        .filter(|file| matches!(project_hooks(file), ProjectHooks::Failed))
+}
+
+/// The loaded project files with `hooks` and their parsed hooks; a file Node cannot load is dropped whole (D2).
 pub(crate) fn candidates<'a>(
     files: &'a [ProjectFile],
     warnings: &mut Vec<String>,
 ) -> Vec<(&'a ProjectFile, NodeHooks)> {
     let mut found = Vec::new();
     for file in files {
-        let Some(value) = file.file.object().and_then(|object| object.get("hooks")) else {
-            continue;
+        let value = match project_hooks(file) {
+            ProjectHooks::Absent => continue,
+            ProjectHooks::Failed => {
+                if file.file.object().is_some() {
+                    warnings.push(format!(
+                        "{}: the hooks do not match the workspace hooks schema; the file's hooks are skipped",
+                        file.path
+                    ));
+                }
+                continue;
+            }
+            ProjectHooks::Declared(value) => value,
         };
         let (mut hooks, parsed) = NodeHooks::from_json(value);
         warnings.extend(parsed.into_iter().map(|w| format!("{}: {w}", file.path)));

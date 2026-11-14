@@ -18,16 +18,19 @@ use rust_cli_protocol_zcode::{
 };
 
 use super::*;
-use crate::commands::hooks_trust::HookSourceFile;
+use crate::commands::hooks_trust::{Failures, HookSourceFile};
 use crate::config::trust::WorkspaceHooks;
 
 /// The only kind of file the review writes.
 const EDITABLE_KIND: &str = ".zcode/config.json";
 
 impl AppWorkspace {
-    /// The workspace's hooks as discovered now, whether a config could not be read, and the files that declare
-    /// hooks.
-    async fn review_hooks(&self, trust: &Target) -> (WorkspaceHooks, bool, Vec<HookSourceFile>) {
+    /// The workspace's hooks as discovered now, the config files that cannot be loaded, and the loaded files that
+    /// declare hooks.
+    async fn review_hooks(
+        &self,
+        trust: &Target,
+    ) -> (WorkspaceHooks, Failures, Vec<HookSourceFile>) {
         let context = TrustContext {
             files: self.files.as_ref(),
             paths: &self.paths,
@@ -70,9 +73,9 @@ impl AppWorkspace {
 
     pub(super) async fn review_bundle(&self, target: &WorkspaceTarget) -> ReviewLookup {
         let trust = Self::trust_target(target);
-        let (hooks, unreadable, sources) = self.review_hooks(&trust).await;
+        let (hooks, failures, sources) = self.review_hooks(&trust).await;
         // Node `discoverSnapshot` throws on a config it cannot read.
-        if unreadable {
+        if failures.any() {
             return ReviewLookup::Unreadable;
         }
         let Some(bundle) = hooks.bundle.as_ref() else {
@@ -120,8 +123,8 @@ impl AppWorkspace {
         review_item_ids: &[String],
     ) -> Result<(), &'static str> {
         let trust = Self::trust_target(target);
-        let (hooks, unreadable, _) = self.review_hooks(&trust).await;
-        let selected = current_items(&hooks, unreadable, bundle_digest, review_item_ids)?;
+        let (hooks, failures, _) = self.review_hooks(&trust).await;
+        let selected = current_items(&hooks, failures.any(), bundle_digest, review_item_ids)?;
         let context = TrustContext {
             files: self.files.as_ref(),
             paths: &self.paths,
@@ -150,9 +153,9 @@ impl AppWorkspace {
         digests: &[String],
     ) -> Result<(), &'static str> {
         let trust = Self::trust_target(target);
-        let (hooks, unreadable, _) = self.review_hooks(&trust).await;
+        let (hooks, failures, _) = self.review_hooks(&trust).await;
         // An unreadable user config could name another store: write nothing.
-        if unreadable {
+        if failures.any() {
             return Err(codes::SNAPSHOT_MISMATCH);
         }
         hooks
@@ -182,8 +185,8 @@ impl AppWorkspace {
             return Err(ToggleError::Rejected(codes::CONFIG_WRITE_FAILED));
         };
         let trust = Self::trust_target(target);
-        let (hooks, unreadable, sources) = self.review_hooks(&trust).await;
-        if unreadable {
+        let (hooks, failures, sources) = self.review_hooks(&trust).await;
+        if failures.any() {
             return Err(ToggleError::Rejected(codes::CONFIG_UNREADABLE));
         }
         let Some(bundle) = hooks.bundle.as_ref() else {
@@ -195,9 +198,9 @@ impl AppWorkspace {
         self.write_toggle(&trust, &hooks, &sources, review_item_id, enabled)
             .await
             .map_err(ToggleError::Rejected)?;
-        let (after, unreadable, _) = self.review_hooks(&trust).await;
+        let (after, failures, _) = self.review_hooks(&trust).await;
         self.rebuild_own_hooks(&trust).await;
-        if unreadable || after.bundle.is_none() {
+        if failures.any() || after.bundle.is_none() {
             return Err(ToggleError::RebuildFailed);
         }
         Ok(())

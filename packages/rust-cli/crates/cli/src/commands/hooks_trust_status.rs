@@ -204,10 +204,14 @@ pub(super) fn select(
 }
 
 async fn act(action: Action, options: &Options, context: &TrustContext<'_>) -> Result<(), String> {
-    let hooks = inspect_workspace(context, options).await;
+    let (hooks, unreadable) = inspect_workspace(context, options).await;
     match action {
         Action::Status | Action::Review => Ok(()),
         Action::Grant => {
+            // Node `requireSnapshot` reads the config before the grant writes anything.
+            if let Some(error) = unreadable {
+                return Err(error);
+            }
             if hooks.bundle.is_none() {
                 return Err("No Workspace Hook declarations were discovered.".to_owned());
             }
@@ -248,7 +252,11 @@ pub(crate) async fn run(command: TrustCommand, context: &TrustContext<'_>) -> Ou
     if let Err(reason) = act(action, &options, context).await {
         return failure(&options, &reason);
     }
-    let hooks = inspect_workspace(context, &options).await;
+    // A revoke has already written the store; like Node, the status read after it fails.
+    let (hooks, unreadable) = inspect_workspace(context, &options).await;
+    if let Some(error) = unreadable {
+        return failure(&options, &error);
+    }
     let (path, _) = super::target(&options, context.cwd);
     let status = status(&hooks, &path);
     Output {
