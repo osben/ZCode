@@ -223,15 +223,9 @@ async fn serve(
     context.set_workspace_admin(Arc::new(AppWorkspace::new(
         (opened.primary.files().clone(), paths.clone()),
         ProcessConfig {
-            workspace: opened.workspace.clone(),
             process_env: facts.process.env.clone(),
-            flag: opened.resolved.settings.clone(),
-            project_is_local: opened.deployment.primary_is_local(),
         },
-        {
-            let kernel = built.kernel.clone();
-            Box::new(move |hooks| kernel.replace_hooks(hooks))
-        },
+        built.kernel.project_hook_slots(),
         (opened.primary.mcp().clone(), spawner.clone(), clock.clone()),
     )));
     // Fork: the ACP agents' session config behind `setExternalAgentConfigOption` and the subscribe seed.

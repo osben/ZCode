@@ -801,6 +801,16 @@ pub(crate) async fn kernel(
         kernel
     });
     kernel.replace_hooks(opened.config.hooks.clone());
+    // Fork: project hooks are per workspace (specs/fork-rust-agent-parity.md, "Per-workspace hook snapshots"): the
+    // root's entry is already assembled, any other workspace's at its first event.
+    kernel.set_project_hook_loader(Arc::new(config::project_hooks::Loader {
+        files: opened.primary.files().clone(),
+        paths: opened.paths.clone(),
+    }));
+    kernel.put_project_hooks(
+        &rust_cli_hooks::project_key(opened.workspace.root.as_str()),
+        opened.config.project_hooks.clone(),
+    );
     let local = config::local_rules(kernel.ports().store.as_ref(), &opened.workspace).await;
     kernel.replace_permission_rules(
         opened

@@ -99,7 +99,7 @@ impl Actor {
         let hooks = self
             .deps
             .hooks
-            .has_hooks(HookEventName::UserPromptSubmit)
+            .has_hooks(HookEventName::UserPromptSubmit, &self.meta.workspace)
             .then(|| self.deps.hooks.clone());
         Some(Claimed {
             items,

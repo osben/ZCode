@@ -10,6 +10,7 @@ pub(crate) mod mcp_trust;
 mod mcp_trust_display;
 pub(crate) mod merge;
 mod plugins;
+pub(crate) mod project_hooks;
 mod storage;
 pub(crate) mod trust;
 pub(crate) mod workspace_schema;
@@ -58,6 +59,8 @@ const FLAG_LAYER: &str = "--settings";
 pub(crate) struct ConfigSnapshot {
     pub(crate) version: u64,
     pub(crate) hooks: HooksConfig,
+    /// Fork: the process root's own project hook entry (`project_hooks.rs`); never part of `hooks`.
+    pub(crate) project_hooks: rust_cli_hooks::ProjectEntry,
     /// 配置文件的 `allowedTools` / `disallowedTools`（来源是最后写它的层）。
     pub(crate) rules: Vec<SourcedRule>,
     /// 配置文件的 `permission.mode`。
@@ -341,7 +344,8 @@ pub(crate) async fn assemble(inputs: &ConfigInputs<'_>) -> ConfigSnapshot {
     };
     let (user_settings, found) = user_hooks.user_settings();
     warnings.extend(found);
-    // 项目级 hooks：只有已信任且启用的声明进快照（config.md §4.2）。
+    // 项目级 hooks：只有已信任且启用的声明进快照（config.md §4.2）。Fork: they are the root workspace's own entry, not
+    // process sources (specs/fork-rust-agent-parity.md, "Per-workspace hook snapshots").
     let workspace = WorkspaceHooks::inspect(
         inputs.workspace.root.as_str(),
         user_object,
@@ -350,8 +354,8 @@ pub(crate) async fn assemble(inputs: &ConfigInputs<'_>) -> ConfigSnapshot {
         &mut warnings,
     )
     .await;
+    let project_hooks = rust_cli_hooks::ProjectEntry::Admitted(workspace.admitted());
     let mut sources = vec![(HookSource::User, user_settings)];
-    sources.extend(workspace.admitted());
     // `--settings` 的 hooks：命令行上给的，不经项目 hooks 的信任（同用户级）。
     if let Some(value) = inputs.flag.and_then(|object| object.get("hooks")) {
         let (parsed, found) = NodeHooks::from_json(value);
@@ -373,6 +377,7 @@ pub(crate) async fn assemble(inputs: &ConfigInputs<'_>) -> ConfigSnapshot {
     ConfigSnapshot {
         version: 1,
         hooks,
+        project_hooks,
         rules,
         mode: permission.mode,
         mcp_servers,

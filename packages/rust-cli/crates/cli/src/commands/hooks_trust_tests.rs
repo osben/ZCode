@@ -186,3 +186,64 @@ async fn no_declarations_are_not_applicable() {
         "Error: No Workspace Hook declarations were discovered.\n"
     );
 }
+
+#[tokio::test]
+async fn a_config_node_cannot_read_stops_every_trust_command() {
+    // Node `discoverSnapshot` (`workspace-hook-trust-cli.ts`) throws `Unable to read Workspace Hook config: <path>`
+    // for a file it cannot read, parse or validate with its strict schema; the command prints `Error: <message>`.
+    // A grant reads the config before it writes (`requireSnapshot`), so nothing is stored; a revoke writes the store
+    // first and fails on the status read after it (`revokeWorkspaceHookTrustCli`).
+    let expected =
+        "Error: Unable to read Workspace Hook config: /Users/dev/repo/.zcode/config.json\n";
+    for hooks in [
+        r#"{"extra": 1, "events": {}}"#,
+        r#"{"events": {"Stop": [{"hooks": []}]}}"#,
+    ] {
+        let home = tempfile::tempdir().unwrap();
+        let paths = StoragePaths::resolve(&Default::default(), home.path(), home.path());
+        let env = env(hooks);
+        for line in [
+            "hooks trust",
+            "hooks trust grant --all-current",
+            "hooks trust revoke --all",
+        ] {
+            let output = run_with(&env, &paths, line).await;
+            assert_eq!(output.code, 1, "{hooks} {line}");
+            assert_eq!(output.stderr, expected, "{hooks} {line}");
+            if line.contains("grant") {
+                assert!(
+                    !paths.hook_trust_store(None).as_path().exists(),
+                    "{hooks}: a refused grant writes nothing"
+                );
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_user_config_node_cannot_read_stops_status_and_grant() {
+    // Node `discoverSnapshot` reads the user hooks after the project files (`readUserHooks`): any error but a missing
+    // file throws, a JSON one and a `hooks` value its strict schema rejects alike. The user config can name another
+    // trust store, so a grant against the default one must not go ahead.
+    for user in [r#"{"hooks": "#, r#"{"hooks": {"extra": 1, "events": {}}}"#] {
+        let home = tempfile::tempdir().unwrap();
+        let paths = StoragePaths::resolve(&Default::default(), home.path(), home.path());
+        let config = paths.cli_config();
+        std::fs::create_dir_all(config.as_path().parent().unwrap()).unwrap();
+        std::fs::write(config.as_path(), user).unwrap();
+        let expected = format!(
+            "Error: Unable to read the user config: {}\n",
+            config.as_path().display()
+        );
+        let env = env(HOOKS);
+        for line in ["hooks trust", "hooks trust grant --all-current"] {
+            let output = run_with(&env, &paths, line).await;
+            assert_eq!(output.code, 1, "{user} {line}");
+            assert_eq!(output.stderr, expected, "{user} {line}");
+        }
+        assert!(
+            !paths.hook_trust_store(None).as_path().exists(),
+            "{user}: a refused grant writes nothing"
+        );
+    }
+}

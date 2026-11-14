@@ -4,38 +4,73 @@
 use std::collections::HashSet;
 
 use rust_cli_hooks::config::{HookMatcher, HookOrigin, HooksSettings};
-use rust_cli_hooks::node_config::{NODE_EVENTS, NodeHooks};
+use rust_cli_hooks::node_config::NodeHooks;
 use rust_cli_hooks::workspace_digest::{Bundle, DigestEntry, DigestSource, RuntimeRoot};
 use rust_cli_hooks::{HookSource, workspace_digest};
 use rust_cli_paths::StoragePaths;
-use rust_cli_platform::local::{HookTrustStore, TrustLoad};
+use rust_cli_platform::local::{ConfigFile, HookTrustStore, TrustLoad};
 use serde_json::{Map, Value};
 
 use super::files::{ProjectFile, relative};
+use super::workspace_schema;
 
-/// 含 `hooks` 的项目文件与解析出的 hooks；Node 7 个事件以外的事件去掉并记警告（D2）。
+/// What a project file contributes to the workspace hooks (Node `loadFileConfig` for a project file).
+pub(crate) enum ProjectHooks<'a> {
+    /// No `hooks` key.
+    Absent,
+    /// A `hooks` value Node's strict `workspaceHooksConfigSchema` accepts.
+    Declared(&'a Value),
+    /// A file Node cannot load: unreadable, not a JSON object, or `hooks` rejected by the strict schema (the reason
+    /// names the first rejected field). Node marks it not loaded, so none of its declarations is a candidate.
+    Failed(String),
+}
+
+/// The one strict check of a project file's hooks: the trust CLI, `workspace/hooks/trustGrant`, the review and the
+/// hook snapshot assembly all read the project hooks through it.
+pub(crate) fn project_hooks(file: &ProjectFile) -> ProjectHooks<'_> {
+    match &file.file {
+        ConfigFile::Invalid { reason } => ProjectHooks::Failed(reason.clone()),
+        ConfigFile::Missing => ProjectHooks::Absent,
+        ConfigFile::Loaded(object) => match object.get("hooks") {
+            None => ProjectHooks::Absent,
+            Some(value) => match workspace_schema::check(value) {
+                Ok(()) => ProjectHooks::Declared(value),
+                Err(reason) => ProjectHooks::Failed(reason),
+            },
+        },
+    }
+}
+
+/// The project files Node cannot load, in discovery order.
+pub(crate) fn failed(files: &[ProjectFile]) -> impl Iterator<Item = &ProjectFile> {
+    files
+        .iter()
+        .filter(|file| matches!(project_hooks(file), ProjectHooks::Failed(_)))
+}
+
+/// The loaded project files with `hooks` and their parsed hooks; a file Node cannot load is dropped whole (D2).
 pub(crate) fn candidates<'a>(
     files: &'a [ProjectFile],
     warnings: &mut Vec<String>,
 ) -> Vec<(&'a ProjectFile, NodeHooks)> {
     let mut found = Vec::new();
     for file in files {
-        let Some(value) = file.file.object().and_then(|object| object.get("hooks")) else {
-            continue;
-        };
-        let (mut hooks, parsed) = NodeHooks::from_json(value);
-        warnings.extend(parsed.into_iter().map(|w| format!("{}: {w}", file.path)));
-        hooks.events.retain(|(event, _)| {
-            let kept = NODE_EVENTS.contains(event);
-            if !kept {
-                warnings.push(format!(
-                    "{}: project hooks for {} are not supported (only the Node CLI events can be trusted)",
-                    file.path,
-                    event.as_str()
-                ));
+        let value = match project_hooks(file) {
+            ProjectHooks::Absent => continue,
+            ProjectHooks::Failed(reason) => {
+                if file.file.object().is_some() {
+                    warnings.push(format!(
+                        "{}: the hooks do not match the workspace hooks schema ({reason}); the file's hooks are skipped",
+                        file.path
+                    ));
+                }
+                continue;
             }
-            kept
-        });
+            ProjectHooks::Declared(value) => value,
+        };
+        // `workspace_schema::check` rejected every event outside `NODE_EVENTS` above, so all of them are Node's.
+        let (hooks, parsed) = NodeHooks::from_json(value);
+        warnings.extend(parsed.into_iter().map(|w| format!("{}: {w}", file.path)));
         found.push((file, hooks));
     }
     found

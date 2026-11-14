@@ -12,7 +12,7 @@ use rust_cli_kernel_api::hooks::NODE_EVENTS;
 use rust_cli_paths::StoragePath;
 use serde_json::{Map, Value, json};
 
-/// `eventAtGrant` 只允许 Node 的 7 个事件：表只定义在 kernel-api，这里按名字比较（F58：以前另写了一份字符串表）。
+/// `eventAtGrant` must be one of Node's ten events: the table lives only in kernel-api (F58).
 fn node_event(name: &str) -> bool {
     NODE_EVENTS.iter().any(|event| event.as_str() == name)
 }

@@ -43,7 +43,11 @@ impl HookRunner for Evaluator {
         HookOutcome::default()
     }
 
-    fn has_hooks(&self, _event: rust_cli_kernel_api::hooks::HookEventName) -> bool {
+    fn has_hooks(
+        &self,
+        _event: rust_cli_kernel_api::hooks::HookEventName,
+        _workspace: &rust_cli_kernel_api::env::WorkspaceRef,
+    ) -> bool {
         false
     }
 

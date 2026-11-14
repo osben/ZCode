@@ -15,7 +15,7 @@ use rust_cli_base::Spawner;
 use rust_cli_base::secret::EnvSnapshot;
 use rust_cli_base::sync::LockUnpoisoned;
 use rust_cli_ext::mcp::{McpManager, McpScope, McpServer, McpSettings, parse_node_servers};
-use rust_cli_hooks::HooksConfig;
+use rust_cli_hooks::ProjectHookSlots;
 use rust_cli_kernel_api::clock::Clock;
 use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
 use rust_cli_kernel_api::ids::EnvironmentId;
@@ -34,21 +34,17 @@ use crate::commands::hooks_trust::{self, TrustContext};
 use crate::config::mcp_trust::{self, Inspection, Review, Target};
 use crate::config::{ConfigInputs, read_files};
 
-/// The inputs the app-server's own workspace was assembled from: an accepted hook grant for that workspace
-/// rebuilds the process's hook snapshot from them.
+/// The app-server's process environment. Trust changes name their own workspace, so the App holds no process root.
 pub(crate) struct ProcessConfig {
-    pub(crate) workspace: WorkspaceRef,
     pub(crate) process_env: EnvSnapshot,
-    pub(crate) flag: Option<Map<String, Value>>,
-    pub(crate) project_is_local: bool,
 }
 
 pub(crate) struct AppWorkspace {
     pub(crate) files: Arc<dyn Files>,
     pub(crate) paths: StoragePaths,
     pub(crate) process: ProcessConfig,
-    /// The kernel's `replace_hooks` (a seam: tests record the snapshot instead).
-    pub(crate) replace_hooks: Box<dyn Fn(HooksConfig) + Send + Sync>,
+    /// The engine's ordered writes of workspace entries (a seam: tests record the entries instead).
+    pub(crate) project_hooks: Arc<dyn ProjectHookSlots>,
     pub(crate) transport: Arc<dyn McpTransport>,
     pub(crate) spawner: Spawner,
     pub(crate) clock: Arc<dyn Clock>,
@@ -59,11 +55,6 @@ pub(crate) struct AppWorkspace {
     arrivals: AtomicU64,
     /// Serializes the hook review's config writes (`app_hook_review.rs`).
     toggles: tokio::sync::Semaphore,
-    /// Tickets of the process hook snapshot's rebuilds (`app_hook_review.rs`, `rebuild_own_hooks`): each is drawn before
-    /// the config read.
-    rebuilds_issued: AtomicU64,
-    /// The ticket of the installed process hook snapshot; only a newer ticket installs over it.
-    rebuilds_installed: StdMutex<u64>,
 }
 
 /// The settings lane of one workspace key: the servers it connected and the ones it refused.
@@ -88,14 +79,14 @@ impl AppWorkspace {
     pub(crate) fn new(
         (files, paths): (Arc<dyn Files>, StoragePaths),
         process: ProcessConfig,
-        replace_hooks: Box<dyn Fn(HooksConfig) + Send + Sync>,
+        project_hooks: Arc<dyn ProjectHookSlots>,
         (transport, spawner, clock): (Arc<dyn McpTransport>, Spawner, Arc<dyn Clock>),
     ) -> Self {
         Self {
             files,
             paths,
             process,
-            replace_hooks,
+            project_hooks,
             transport,
             spawner,
             clock,
@@ -107,8 +98,6 @@ impl AppWorkspace {
             lane: StdMutex::new(None),
             arrivals: AtomicU64::new(0),
             toggles: tokio::sync::Semaphore::new(1),
-            rebuilds_issued: AtomicU64::new(0),
-            rebuilds_installed: StdMutex::new(0),
         }
     }
 
@@ -520,7 +509,7 @@ impl WorkspaceAdmin for AppWorkspace {
         )
         .await;
         if answer["accepted"] == json!(true) {
-            self.rebuild_own_hooks(&trust).await;
+            self.rebuild_hooks(&trust).await;
         }
         answer
     }

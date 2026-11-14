@@ -18,16 +18,19 @@ use rust_cli_protocol_zcode::{
 };
 
 use super::*;
-use crate::commands::hooks_trust::HookSourceFile;
+use crate::commands::hooks_trust::{Failures, HookSourceFile};
 use crate::config::trust::WorkspaceHooks;
 
 /// The only kind of file the review writes.
 const EDITABLE_KIND: &str = ".zcode/config.json";
 
 impl AppWorkspace {
-    /// The workspace's hooks as discovered now, whether a config could not be read, and the files that declare
-    /// hooks.
-    async fn review_hooks(&self, trust: &Target) -> (WorkspaceHooks, bool, Vec<HookSourceFile>) {
+    /// The workspace's hooks as discovered now, the config files that cannot be loaded, and the loaded files that
+    /// declare hooks.
+    async fn review_hooks(
+        &self,
+        trust: &Target,
+    ) -> (WorkspaceHooks, Failures, Vec<HookSourceFile>) {
         let context = TrustContext {
             files: self.files.as_ref(),
             paths: &self.paths,
@@ -39,57 +42,53 @@ impl AppWorkspace {
         hooks_trust::inspect_review(&context, trust.working_directory.clone(), identity).await
     }
 
-    /// The process's hook snapshot belongs to its own workspace: only a change there rebuilds it.
-    pub(super) async fn rebuild_own_hooks(&self, trust: &Target) {
-        let own = Target::new(self.process.workspace.root.as_str(), None);
-        if *trust != own {
-            tracing::info!(
-                event = "workspace.hooks.rebuild_skipped",
-                same_path = trust.working_directory == own.working_directory,
-                same_identity = trust.identity == own.identity,
-                "the trust change is not in the process's own workspace"
-            );
-            return;
-        }
-        // Two trust mutations rebuild concurrently (grant, revoke, toggle, `trustGrant` from different sessions). The
-        // ticket is drawn after this mutation's write and before the read, so a newer ticket's read sees every write an
-        // older ticket's saw; a rebuild whose read predates a later mutation's must not install after that mutation's
-        // own rebuild and re-enable a revoked hook.
-        let ticket = self
-            .rebuilds_issued
-            .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
-            + 1;
-        let inputs = ConfigInputs {
-            files: self.files.as_ref(),
-            workspace: &self.process.workspace,
-            paths: &self.paths,
-            process_env: &self.process.process_env,
-            flag: self.process.flag.as_ref(),
-            project_is_local: self.process.project_is_local,
-        };
-        let hooks = crate::config::assemble(&inputs).await.hooks;
-        let mut installed = self.rebuilds_installed.lock_unpoisoned();
-        if *installed > ticket {
+    /// Trust mutations and session loads rebuild one workspace concurrently (grant, revoke, toggle, `trustGrant` from
+    /// different sessions, a `SessionStart` reload). The engine orders them all: a rebuild reserves its epoch after its
+    /// mutation's write and before its read, so a later reservation's read sees every write an earlier one's saw.
+    fn reserve_rebuild(&self) -> rust_cli_hooks::ProjectEpoch {
+        self.project_hooks.reserve_project()
+    }
+
+    /// Puts a rebuilt entry unless a write that reserved later already set the workspace's slot: a rebuild whose read
+    /// predates a later mutation's or a session's load must not replace that entry (re-enable a revoked or disabled
+    /// hook, or lift an `Invalid`).
+    fn put_rebuilt(
+        &self,
+        trust: &Target,
+        epoch: rust_cli_hooks::ProjectEpoch,
+        entry: rust_cli_hooks::ProjectEntry,
+    ) -> bool {
+        let key = rust_cli_hooks::project_key(&trust.working_directory);
+        let put = self.project_hooks.put_project_at(&key, epoch, entry);
+        if !put {
             tracing::info!(
                 event = "workspace.hooks.rebuild_superseded",
-                "a newer rebuild already installed the process hook snapshot"
+                "a later write already put the workspace's project hook entry"
             );
-            return;
         }
-        *installed = ticket;
-        tracing::info!(
-            event = "workspace.hooks.rebuilt",
-            sources = hooks.sources.len(),
-            "the process hook snapshot was rebuilt"
-        );
-        (self.replace_hooks)(hooks);
+        put
+    }
+
+    /// Rebuilds the project hook entry of the workspace a trust change is about, wherever the process runs, from the
+    /// same read the review answers from.
+    pub(super) async fn rebuild_hooks(&self, trust: &Target) {
+        let epoch = self.reserve_rebuild();
+        let (hooks, _, _) = self.review_hooks(trust).await;
+        let entry = rust_cli_hooks::ProjectEntry::Admitted(hooks.admitted());
+        if self.put_rebuilt(trust, epoch, entry) {
+            tracing::info!(
+                event = "workspace.hooks.rebuilt",
+                "the workspace's project hook entry was rebuilt"
+            );
+        }
     }
 
     pub(super) async fn review_bundle(&self, target: &WorkspaceTarget) -> ReviewLookup {
         let trust = Self::trust_target(target);
-        let (hooks, unreadable, sources) = self.review_hooks(&trust).await;
-        // Node `discoverSnapshot` throws on a config it cannot read.
-        if unreadable {
+        let (hooks, failures, sources) = self.review_hooks(&trust).await;
+        // Like Node's session snapshot (`config-factory.ts`, `hookCandidates` from loaded files only), a project file
+        // that cannot be loaded is skipped. An unreadable user config could name another store: fail closed.
+        if failures.user {
             return ReviewLookup::Unreadable;
         }
         let Some(bundle) = hooks.bundle.as_ref() else {
@@ -137,8 +136,8 @@ impl AppWorkspace {
         review_item_ids: &[String],
     ) -> Result<(), &'static str> {
         let trust = Self::trust_target(target);
-        let (hooks, unreadable, _) = self.review_hooks(&trust).await;
-        let selected = current_items(&hooks, unreadable, bundle_digest, review_item_ids)?;
+        let (hooks, failures, _) = self.review_hooks(&trust).await;
+        let selected = current_items(&hooks, failures.user, bundle_digest, review_item_ids)?;
         let context = TrustContext {
             files: self.files.as_ref(),
             paths: &self.paths,
@@ -157,7 +156,7 @@ impl AppWorkspace {
                 );
                 codes::TRUST_STORE_CORRUPT
             })?;
-        self.rebuild_own_hooks(&trust).await;
+        self.rebuild_hooks(&trust).await;
         Ok(())
     }
 
@@ -167,9 +166,9 @@ impl AppWorkspace {
         digests: &[String],
     ) -> Result<(), &'static str> {
         let trust = Self::trust_target(target);
-        let (hooks, unreadable, _) = self.review_hooks(&trust).await;
+        let (hooks, failures, _) = self.review_hooks(&trust).await;
         // An unreadable user config could name another store: write nothing.
-        if unreadable {
+        if failures.user {
             return Err(codes::SNAPSHOT_MISMATCH);
         }
         hooks
@@ -183,7 +182,7 @@ impl AppWorkspace {
                 );
                 codes::TRUST_STORE_CORRUPT
             })?;
-        self.rebuild_own_hooks(&trust).await;
+        self.rebuild_hooks(&trust).await;
         Ok(())
     }
 
@@ -199,8 +198,9 @@ impl AppWorkspace {
             return Err(ToggleError::Rejected(codes::CONFIG_WRITE_FAILED));
         };
         let trust = Self::trust_target(target);
-        let (hooks, unreadable, sources) = self.review_hooks(&trust).await;
-        if unreadable {
+        let (hooks, failures, sources) = self.review_hooks(&trust).await;
+        // Node `rebuildSnapshot` (`readWorkspaceHookProjectSources`) fails on any file that cannot be loaded.
+        if failures.any() {
             return Err(ToggleError::Rejected(codes::CONFIG_UNREADABLE));
         }
         let Some(bundle) = hooks.bundle.as_ref() else {
@@ -212,10 +212,26 @@ impl AppWorkspace {
         self.write_toggle(&trust, &hooks, &sources, review_item_id, enabled)
             .await
             .map_err(ToggleError::Rejected)?;
-        let (after, unreadable, _) = self.review_hooks(&trust).await;
-        self.rebuild_own_hooks(&trust).await;
-        if unreadable || after.bundle.is_none() {
+        // Node `rebuildSnapshot`: one read after the write decides the outcome and is the snapshot that lands.
+        let epoch = self.reserve_rebuild();
+        let (after, failures, _) = self.review_hooks(&trust).await;
+        // Node `admission.invalidate("workspace_hooks_config_rebuild_failed")`: once the write is committed and the
+        // config cannot be rebuilt, no project hook of the workspace runs until its next successful assembly. A
+        // skip-only rebuild here would keep running the hooks of the files that still load.
+        if failures.any() || after.bundle.is_none() {
+            tracing::warn!(
+                event = "workspace.hooks.invalidated",
+                "the toggled workspace config cannot be rebuilt; its project hooks are blocked"
+            );
+            self.put_rebuilt(&trust, epoch, rust_cli_hooks::ProjectEntry::Invalid);
             return Err(ToggleError::RebuildFailed);
+        }
+        let entry = rust_cli_hooks::ProjectEntry::Admitted(after.admitted());
+        if self.put_rebuilt(&trust, epoch, entry) {
+            tracing::info!(
+                event = "workspace.hooks.rebuilt",
+                "the workspace's project hook entry was rebuilt"
+            );
         }
         Ok(())
     }
@@ -463,6 +479,10 @@ fn display_path(path: &str) -> String {
 #[cfg(test)]
 #[path = "app_hook_review_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "app_hook_snapshot_tests.rs"]
+mod snapshot_tests;
 
 #[cfg(test)]
 #[path = "app_hook_rebuild_tests.rs"]

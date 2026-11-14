@@ -10,6 +10,7 @@ use std::sync::Mutex as StdMutex;
 use futures_util::StreamExt;
 use futures_util::stream::BoxStream;
 use rust_cli_base::TaskScope;
+use rust_cli_hooks::ProjectEntry;
 use rust_cli_kernel_api::env::EnvFacts;
 use rust_cli_kernel_api::mcp::{McpConnect, McpConnectionId, McpError, McpTransportEvent};
 use rust_cli_kernel_api::testing::{FixedClock, MemoryEnvironment};
@@ -56,13 +57,44 @@ impl McpTransport for Recording {
     }
 }
 
+/// The engine's slot ordering (`hooks` `projects.rs` `put_at`), recording the entries it accepts.
+#[derive(Default)]
+pub(super) struct Slots {
+    epoch: std::sync::atomic::AtomicU64,
+    newest: StdMutex<BTreeMap<String, u64>>,
+    pub(super) accepted: Arc<StdMutex<Vec<(String, ProjectEntry)>>>,
+}
+
+impl ProjectHookSlots for Slots {
+    fn reserve_project(&self) -> rust_cli_hooks::ProjectEpoch {
+        rust_cli_hooks::ProjectEpoch(self.epoch.fetch_add(1, Ordering::SeqCst) + 1)
+    }
+
+    fn put_project_at(
+        &self,
+        key: &str,
+        epoch: rust_cli_hooks::ProjectEpoch,
+        entry: ProjectEntry,
+    ) -> bool {
+        let key = rust_cli_hooks::project_key(key);
+        let mut newest = self.newest.lock().unwrap();
+        if newest.get(&key).is_some_and(|newest| *newest > epoch.0) {
+            return false;
+        }
+        newest.insert(key.clone(), epoch.0);
+        self.accepted.lock().unwrap().push((key, entry));
+        true
+    }
+}
+
 /// Shared with `app_hook_review_tests.rs`.
 pub(super) struct Fixture {
     pub(super) _home: tempfile::TempDir,
     _scope: TaskScope,
     pub(super) admin: AppWorkspace,
     transport: Arc<Recording>,
-    pub(super) hooks: Arc<StdMutex<Vec<HooksConfig>>>,
+    pub(super) hooks: Arc<StdMutex<Vec<(String, ProjectEntry)>>>,
+    pub(super) slots: Arc<Slots>,
 }
 
 fn fixture(project: Value, user: Value) -> Fixture {
@@ -98,20 +130,14 @@ pub(super) fn fixture_files(
     let paths = StoragePaths::resolve(&Default::default(), home.path(), home.path());
     let scope = TaskScope::root("app-workspace-test", |_| {});
     let transport = Arc::new(Recording::default());
-    let hooks = Arc::new(StdMutex::new(Vec::new()));
-    let recorded = hooks.clone();
+    let slots = Arc::new(Slots::default());
+    let hooks = slots.accepted.clone();
     let admin = AppWorkspace::new(
         (wrap(Arc::new(env)), paths),
         ProcessConfig {
-            workspace: WorkspaceRef {
-                environment: EnvironmentId::new(LOCAL_ENVIRONMENT),
-                root: EnvPath::new(ROOT),
-            },
             process_env: EnvSnapshot::default(),
-            flag: None,
-            project_is_local: true,
         },
-        Box::new(move |config| recorded.lock().unwrap().push(config)),
+        slots.clone(),
         (
             transport.clone(),
             scope.spawner(),
@@ -124,6 +150,7 @@ pub(super) fn fixture_files(
         admin,
         transport,
         hooks,
+        slots,
     }
 }
 

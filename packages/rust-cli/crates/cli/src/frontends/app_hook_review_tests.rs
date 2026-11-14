@@ -18,6 +18,13 @@ pub(super) const PROJECT: &str = r#"{"zeta": 1.5, "hooks": {"enabled": true, "ev
 
 pub(super) const PROJECT_PATH: &str = "/Users/dev/repo/.zcode/config.json";
 
+fn root_workspace() -> WorkspaceRef {
+    WorkspaceRef {
+        environment: EnvironmentId::new(LOCAL_ENVIRONMENT),
+        root: EnvPath::new(ROOT),
+    }
+}
+
 pub(super) async fn bundle(fixture: &Fixture) -> ReviewBundle {
     match fixture.admin.review_bundle(&target(ROOT)).await {
         ReviewLookup::Bundle(bundle) => bundle,
@@ -38,7 +45,7 @@ fn stored(bundle: &ReviewBundle) -> Vec<StoredTrust> {
 }
 
 async fn project(fixture: &Fixture) -> Vec<u8> {
-    let workspace = fixture.admin.process.workspace.clone();
+    let workspace = root_workspace();
     fixture
         .admin
         .files
@@ -54,7 +61,7 @@ async fn project(fixture: &Fixture) -> Vec<u8> {
 }
 
 async fn write_project(fixture: &Fixture, text: &str) {
-    let workspace = fixture.admin.process.workspace.clone();
+    let workspace = root_workspace();
     let context = OperationContext::new(
         workspace.environment.clone(),
         Generation::new("test"),
@@ -263,18 +270,21 @@ async fn an_unreadable_config_refuses_a_revoke() {
 }
 
 #[tokio::test]
-async fn another_workspace_leaves_the_process_hooks_alone() {
+async fn each_workspace_rebuilds_its_own_entry() {
     let fixture = fixture_text(PROJECT, json!({}));
     fixture
         .admin
-        .rebuild_own_hooks(&Target::new("/Users/dev/other", None))
+        .rebuild_hooks(&Target::new("/Users/dev/other", None))
         .await;
-    assert!(fixture.hooks.lock().unwrap().is_empty());
-    fixture
-        .admin
-        .rebuild_own_hooks(&Target::new(ROOT, None))
-        .await;
-    assert_eq!(fixture.hooks.lock().unwrap().len(), 1);
+    fixture.admin.rebuild_hooks(&Target::new(ROOT, None)).await;
+    let keys: Vec<String> = fixture
+        .hooks
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(key, _)| key.clone())
+        .collect();
+    assert_eq!(keys, ["/Users/dev/other", ROOT]);
 }
 
 #[tokio::test]
@@ -364,7 +374,7 @@ async fn the_write_checks_the_declaration_it_rewrites() {
 /// (`workspace-hook-mutation.ts` `safeParse`), so its indices are raw positions. Rust's lenient parse skips the
 /// malformed matcher, which shifts the indices: the toggle must refuse rather than write onto another declaration.
 #[tokio::test]
-async fn a_config_nodes_strict_schema_rejects_is_unreadable_and_never_toggled() {
+async fn a_config_nodes_strict_schema_rejects_is_skipped_and_never_toggled() {
     // Node `readWorkspaceHookProjectSources` parses `hooks` with the strict `workspaceHooksConfigSchema` and reports
     // a failure as a read error, so its toggle answers `workspace_hooks_config_unreadable`. The lenient parse would
     // skip the bad entry, shift the indices and write onto another declaration.
@@ -388,9 +398,10 @@ async fn a_config_nodes_strict_schema_rejects_is_unreadable_and_never_toggled() 
     ];
     for text in configs {
         let fixture = fixture_text(text, json!({}));
+        // The startup snapshot skips the file (Node `config-factory.ts` `hookCandidates`), leaving no declarations.
         assert_eq!(
             fixture.admin.review_bundle(&target(ROOT)).await,
-            ReviewLookup::Unreadable,
+            ReviewLookup::Nothing,
             "{text}"
         );
         let answer = fixture
@@ -408,13 +419,69 @@ async fn a_config_nodes_strict_schema_rejects_is_unreadable_and_never_toggled() 
 }
 
 #[tokio::test]
+async fn the_review_skips_only_the_file_node_cannot_load() {
+    // Node's session snapshot is built from the loaded project files only (`config-factory.ts`, `hookCandidates`):
+    // a file its strict schema rejects is skipped and the other files are reviewed. Its toggle still rebuilds from
+    // every file and refuses (`rebuildSnapshot`, `workspace_hooks_config_unreadable`).
+    let fixture = fixture_text(PROJECT, json!({}));
+    let workspace = root_workspace();
+    let context = OperationContext::new(
+        workspace.environment.clone(),
+        Generation::new("test"),
+        OperationId::new("test-write-zcode-json"),
+        Origin::User { session: None },
+    );
+    fixture
+        .admin
+        .files
+        .put_file(
+            &workspace,
+            context,
+            PutFile {
+                path: EnvPath::new("/Users/dev/repo/zcode.json"),
+                bytes: br#"{"hooks": {"extra": 1, "events": {"Stop": [{"hooks": [{"type": "command", "command": "bad"}]}]}}}"#.to_vec(),
+                precondition: WritePrecondition::Any,
+                create_parents: false,
+            },
+        )
+        .await
+        .unwrap();
+    let review = bundle(&fixture).await;
+    let commands: Vec<&str> = review
+        .items
+        .iter()
+        .map(|item| item.display_command.as_str())
+        .collect();
+    assert_eq!(commands, ["echo hi", "node check.js --fast"]);
+    assert!(
+        review
+            .sources
+            .iter()
+            .all(|source| source.path == PROJECT_PATH),
+        "{:?}",
+        review.sources
+    );
+    let answer = fixture
+        .admin
+        .review_toggle(
+            &target(ROOT),
+            &review.bundle_digest,
+            &review.items[0].review_item_id,
+            false,
+        )
+        .await;
+    assert_eq!(answer, Err(ToggleError::Rejected(codes::CONFIG_UNREADABLE)));
+    assert_eq!(project(&fixture).await, PROJECT.as_bytes());
+}
+
+#[tokio::test]
 async fn a_config_that_breaks_the_schema_between_the_review_and_the_write_is_a_mismatch() {
     // Node `writeWorkspaceHookConfiguredToggle` re-reads the file and throws `mismatch()` when its strict schema no
     // longer accepts `hooks` (`workspace-hook-mutation.ts`).
     let fixture = fixture_text(PROJECT, json!({}));
     let trust = AppWorkspace::trust_target(&target(ROOT));
     let (hooks, unreadable, sources) = fixture.admin.review_hooks(&trust).await;
-    assert!(!unreadable);
+    assert!(!unreadable.any());
     let id = hooks.entries()[0].review_item_id.clone();
     let broken = PROJECT.replacen(
         r#""hooks": {"enabled": true,"#,

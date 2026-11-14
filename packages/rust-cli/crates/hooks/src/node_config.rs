@@ -2,7 +2,7 @@
 //!
 //! 外形是 Node 的 `HooksRuntimeConfigPatch`（`apps/zcode-cli/packages/contracts/src/hooks/index.ts`、
 //! `adapters/src/config/schema.ts`）：`{enabled, timeoutMs, maxOutputBytes, events: {<事件>: [{matcher,
-//! hooks: [{type: "command" | "process", …}]}]}}`。事件名接受 hooks 设置的全部 33 个（Node 只认 7 个）。
+//! hooks: [{type: "command" | "process", …}]}]}}`。事件名接受 hooks 设置的全部 33 个（Node 只认 10 个）。
 //! 这里只解析与转换，不做 IO；坏项跳过并给出警告（D1）。项目级的信任 digest 见 `workspace_digest`。
 
 use rust_cli_kernel_api::hooks::HookEventName;
@@ -14,8 +14,7 @@ use crate::config::{CommandHook, HookCommand, HookMatcher, HookOrigin, HookShell
 pub const DEFAULT_TIMEOUT_MS: f64 = 60_000.0;
 pub const DEFAULT_MAX_OUTPUT_BYTES: f64 = 32_768.0;
 
-/// Node 的 7 个事件，按 `WORKSPACE_HOOK_EVENT_NAMES` 的顺序（digest 按这个顺序遍历）：只定义在 kernel-api（F58：
-/// 以前这里与 platform 的信任记录各写一份）。
+/// Node's ten events in `WORKSPACE_HOOK_EVENT_NAMES` order (the digest order); defined only in kernel-api (F58).
 pub use rust_cli_kernel_api::hooks::NODE_EVENTS;
 
 /// command hook 的 `shell`（Node `true | string`）。

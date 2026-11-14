@@ -10,7 +10,7 @@ use rust_cli_paths::StoragePaths;
 use rust_cli_platform::local::{ConfigFile, TrustLoad, TrustRecord};
 use serde_json::json;
 
-use crate::config::trust::WorkspaceHooks;
+use crate::config::trust::{self, WorkspaceHooks};
 use crate::config::{ConfigInputs, read_files};
 
 pub(crate) const USAGE: &str = "Usage:
@@ -167,9 +167,21 @@ fn target(options: &Options, cwd: &str) -> (String, Option<String>) {
     }
 }
 
-async fn inspect_workspace(context: &TrustContext<'_>, options: &Options) -> WorkspaceHooks {
+/// The workspace's hooks and, when a project file or the user config cannot be loaded, Node `discoverSnapshot`'s
+/// error: the project files are read first, then the user hooks (`readUserHooks` throws on anything but a missing
+/// file, a `hooks` value its strict schema rejects included).
+async fn inspect_workspace(
+    context: &TrustContext<'_>,
+    options: &Options,
+) -> (WorkspaceHooks, Option<String>) {
     let (path, identity) = target(options, context.cwd);
-    inspect_at(context, path, identity).await
+    let (hooks, failures, _) = inspect_review(context, path, identity).await;
+    let error = match &failures.project {
+        Some(path) => Some(format!("Unable to read Workspace Hook config: {path}")),
+        None => (failures.user || failures.user_hooks)
+            .then(|| format!("Unable to read the user config: {}", failures.user_path)),
+    };
+    (hooks, error)
 }
 
 /// The project hooks of `path`, with records keyed by `identity` when given (a remote workspace's identity).
@@ -181,14 +193,33 @@ pub(crate) async fn inspect_at(
     inspect_read(context, path, identity).await.0
 }
 
-/// [`inspect_at`] and whether a config file could not be read or parsed.
+/// [`inspect_at`] and whether a config file could not be read, parsed or validated.
 async fn inspect_read(
     context: &TrustContext<'_>,
     path: String,
     identity: Option<String>,
 ) -> (WorkspaceHooks, bool) {
-    let (hooks, unreadable, _) = inspect_review(context, path, identity).await;
-    (hooks, unreadable)
+    let (hooks, failures, _) = inspect_review(context, path, identity).await;
+    (hooks, failures.any())
+}
+
+/// The config files of a workspace that cannot be loaded.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct Failures {
+    /// The user config: it could name another trust store, so every trust decision fails closed.
+    pub(crate) user: bool,
+    /// A user `hooks` value Node's strict schema rejects. Only the trust CLI refuses it (Node `readUserHooks`).
+    pub(crate) user_hooks: bool,
+    /// The user config's path, for the trust CLI's error.
+    pub(crate) user_path: String,
+    /// The first project file Node cannot load (unreadable, not an object, or `hooks` its strict schema rejects).
+    pub(crate) project: Option<String>,
+}
+
+impl Failures {
+    pub(crate) fn any(&self) -> bool {
+        self.user || self.project.is_some()
+    }
 }
 
 /// A project file that declares hooks, in the order of the digest's `source_index`.
@@ -201,12 +232,13 @@ pub(crate) struct HookSourceFile {
     pub(crate) editable: bool,
 }
 
-/// [`inspect_read`] with the project files that declare hooks (the App's hook review).
+/// The workspace's hooks, the files that cannot be loaded, and the loaded project files that declare hooks (the
+/// App's hook review). The hooks hold only the loaded files, like Node's session snapshot.
 pub(crate) async fn inspect_review(
     context: &TrustContext<'_>,
     path: String,
     identity: Option<String>,
-) -> (WorkspaceHooks, bool, Vec<HookSourceFile>) {
+) -> (WorkspaceHooks, Failures, Vec<HookSourceFile>) {
     let workspace = WorkspaceRef {
         environment: EnvironmentId::new(rust_cli_node_store::LOCAL_ENVIRONMENT),
         root: EnvPath::new(path.clone()),
@@ -221,24 +253,23 @@ pub(crate) async fn inspect_review(
         project_is_local: true,
     };
     let files = read_files(&inputs).await;
-    // Node `discoverSnapshot` throws on a config it cannot read or parse, and `readWorkspaceHookProjectSources`
-    // reports a `hooks` value its strict schema rejects as unreadable too.
-    let rejected = files.projects.iter().any(|project| {
-        project
-            .file
+    // Node `discoverSnapshot` throws on a project file it cannot read, parse or validate with its strict schema
+    // (`readWorkspaceHookProjectSources`), naming the first one.
+    let failures = Failures {
+        user: matches!(files.user, ConfigFile::Invalid { .. }),
+        user_hooks: files
+            .user
             .object()
             .and_then(|object| object.get("hooks"))
-            .is_some_and(|hooks| crate::config::workspace_schema::check(hooks).is_err())
-    });
-    if rejected {
-        tracing::warn!("a project hook config does not match the workspace hooks schema");
+            .is_some_and(|hooks| crate::config::workspace_schema::check(hooks).is_err()),
+        user_path: files.user_path.clone(),
+        project: trust::failed(&files.projects)
+            .next()
+            .map(|file| file.path.clone()),
+    };
+    if failures.project.is_some() {
+        tracing::warn!("a project hook config cannot be loaded; its hooks are skipped");
     }
-    let unreadable = rejected
-        || matches!(files.user, ConfigFile::Invalid { .. })
-        || files
-            .projects
-            .iter()
-            .any(|project| matches!(project.file, ConfigFile::Invalid { .. }));
     let mut warnings = Vec::new();
     let mut hooks = WorkspaceHooks::inspect(
         &path,
@@ -251,15 +282,11 @@ pub(crate) async fn inspect_review(
     if let Some(identity) = identity {
         hooks.identity = identity;
     }
-    // The same files `candidates` keeps: every project file with a `hooks` key.
+    // The same files `candidates` keeps, so a digest entry's `source_index` names its file.
     let sources = files
         .projects
         .iter()
-        .filter(|file| {
-            file.file
-                .object()
-                .is_some_and(|object| object.contains_key("hooks"))
-        })
+        .filter(|file| matches!(trust::project_hooks(file), trust::ProjectHooks::Declared(_)))
         .map(|file| HookSourceFile {
             path: file.path.clone(),
             kind: file.kind.as_str(),
@@ -267,7 +294,7 @@ pub(crate) async fn inspect_review(
             editable: file.editable,
         })
         .collect();
-    (hooks, unreadable, sources)
+    (hooks, failures, sources)
 }
 
 #[path = "hooks_trust_status.rs"]
