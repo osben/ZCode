@@ -139,7 +139,13 @@ fn windows_paths_and_errors_match_node() {
         "ERR_INVALID_FILE_URL_PATH",
         "File URL path must be absolute",
     );
-    let cases: [(&str, Result<&str, UriError>); 15] = [
+    let cases: [(&str, Result<&str, UriError>); 18] = [
+        // Node `domainToUnicode` on the UNC host.
+        ("file://xn--mnchen-3ya/x", Ok("\\\\m\u{fc}nchen\\x")),
+        ("file://M\u{dc}NCHEN.de/x", Ok("\\\\m\u{fc}nchen.de\\x")),
+        // Kept difference (spec): the `url` crate rejects a punycode label that does not decode; Node 26 gives
+        // `\\xn--a.com\x`.
+        ("file://xn--a.com/x", Err(invalid_url())),
         ("file:///C:/a%5Cb", Err(separator.clone())),
         ("file:///C:/a%2Fb", Err(separator)),
         ("file:///a", Err(relative)),

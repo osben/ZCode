@@ -176,7 +176,7 @@ pub(crate) fn path_of(uri: &str, windows: bool) -> Result<String, UriError> {
     }
     let path = decode(&pathname.replace('/', "\\")).ok_or_else(UriError::malformed)?;
     if !host.is_empty() {
-        return Ok(format!("\\\\{host}{path}"));
+        return Ok(format!("\\\\{}{path}", unicode_host(host)));
     }
     let bytes = path.as_bytes();
     if bytes.len() < 3 || !bytes[1].is_ascii_alphabetic() || bytes[2] != b':' {
@@ -186,6 +186,14 @@ pub(crate) fn path_of(uri: &str, windows: bool) -> Result<String, UriError> {
         ));
     }
     Ok(path[1..].to_owned())
+}
+
+/// Node `domainToUnicode` for a parsed host: punycode labels decoded; a host that does not decode stays as written.
+fn unicode_host(host: &str) -> String {
+    match idna::domain_to_unicode(host) {
+        (unicode, Ok(())) => unicode,
+        (_, Err(_)) => host.to_owned(),
+    }
 }
 
 /// The WHATWG parser normalizes a first segment `X|` (a Windows drive letter) to `X:`; the `url` crate keeps it.
