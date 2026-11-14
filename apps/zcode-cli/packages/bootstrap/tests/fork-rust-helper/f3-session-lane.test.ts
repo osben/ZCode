@@ -84,6 +84,50 @@ describe("fork: Node helper session open and close", () => {
     await expect(host.openSession({ ...open(1), openId: undefined })).rejects.toThrow(/openId/);
   });
 
+  it("refuses an open whose executionDirectory is present but not a non-empty string", async () => {
+    const { host, sessionLeases } = rig();
+    for (const executionDirectory of ["", 5, null])
+      await expect(host.openSession(open(1, { executionDirectory }))).rejects.toThrow(
+        /executionDirectory/,
+      );
+    expect(sessionLeases()).toHaveLength(0);
+    expect(host.busy).toBe(false);
+  });
+
+  it("refuses a malformed close and keeps the session open", async () => {
+    const { host, sessionLeases } = rig();
+    await host.openSession(open(1));
+    await expect(host.closeSession({ sessionId: SESSION, openId: "1" })).rejects.toThrow(/openId/);
+    await expect(host.closeSession({ sessionId: SESSION })).rejects.toThrow(/openId/);
+    await expect(host.closeSession({ openId: 1 })).rejects.toThrow(/sessionId/);
+    expect(sessionLeases()[0]?.closed).toBe(false);
+    expect(host.busy).toBe(true);
+  });
+
+  it("resolves plugins once per workspace key and directory", async () => {
+    const { host, resolved } = rig();
+    await host.openSession(open(1, { workspace: { workspacePath: PROJECT, workspaceIdentity: " id " } }));
+    await host.openSession(open(2, { workspace: { workspacePath: PROJECT, workspaceIdentity: "id" } }));
+    await host.openSession({ ...open(3, { workspace: { workspacePath: PROJECT, workspaceIdentity: "" } }), sessionId: "s2" });
+    await host.openSession({ ...open(4), sessionId: "s3" });
+    expect(resolved).toHaveLength(2);
+  });
+
+  it("closes an open that was still in its lane when the host was disposed", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const { host, sessionLeases, context } = rig({ connect: () => gate });
+    const opening = host.openSession(open(1));
+    await vi.waitFor(() => expect(sessionLeases()).toHaveLength(1));
+    const disposing = host.dispose();
+    release();
+    await expect(opening).rejects.toThrow(/disposed/);
+    await disposing;
+    expect(sessionLeases()[0]?.closed).toBe(true);
+    expect(host.busy).toBe(false);
+    expect(context.sessions.has(SESSION)).toBe(false);
+  });
+
   it("replaces an open session with a reopen's params", async () => {
     const { host, sessionLeases } = rig();
     await host.openSession(open(1));

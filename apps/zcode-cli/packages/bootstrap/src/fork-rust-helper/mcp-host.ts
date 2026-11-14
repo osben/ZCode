@@ -33,6 +33,7 @@ import {
   errorMessage,
   FORK_RUST_HELPER_F3,
   parseWorkspace,
+  optionalDirectory,
   requireOpenId,
   requireString,
   toPluginUiDelta,
@@ -41,6 +42,7 @@ import {
   type HelperWorkspace,
 } from "./f3-protocol.js";
 import type { ForkRustHelperClient } from "./rust-client.js";
+import { PluginOutcomes } from "./plugin-outcomes.js";
 import { SessionLanes } from "./session-lanes.js";
 import { createHelperSessionRecord, type HelperSession } from "./session-record.js";
 
@@ -89,14 +91,18 @@ export class ForkRustHelperMcpHost {
    * Plugin resolutions by workspace and directory: one Rust agent may serve several workspaces, and an
    * execution worktree session resolves in its worktree (spec F3 pipe messages, session open).
    */
-  private readonly plugins = new Map<string, Promise<PluginLoadOutcome>>();
+  private readonly plugins: PluginOutcomes;
+  /** Set by `dispose`: an open still in its lane then ends itself. */
+  private disposed = false;
   private readonly pipes = new Map<string, PipeConnection>();
   /** Pipe connects in flight; `true` once Rust closed the connection meanwhile (spec F3 pipe messages). */
   private readonly connecting = new Map<string, boolean>();
   private readonly sessions = new Map<string, HelperSession>();
   private readonly lanes = new SessionLanes();
 
-  constructor(private readonly deps: ForkRustHelperMcpHostDeps) {}
+  constructor(private readonly deps: ForkRustHelperMcpHostDeps) {
+    this.plugins = new PluginOutcomes((workspace) => deps.resolvePlugins(workspace));
+  }
 
   /** True while a pipe connection or a session keeps resources open. */
   get busy(): boolean {
@@ -105,21 +111,8 @@ export class ForkRustHelperMcpHost {
 
   // ── Plugin resolution and workspace ──
 
-  private outcome(workspace: HelperWorkspace): Promise<PluginLoadOutcome> {
-    const key = JSON.stringify([workspace.workspaceIdentity ?? null, workspace.workspacePath]);
-    let outcome = this.plugins.get(key);
-    if (!outcome) {
-      outcome = this.deps.resolvePlugins(workspace).catch((error: unknown) => {
-        if (this.plugins.get(key) === outcome) this.plugins.delete(key);
-        throw error;
-      });
-      this.plugins.set(key, outcome);
-    }
-    return outcome;
-  }
-
   private async serverConfig(server: string, workspace: HelperWorkspace): Promise<McpServerConfig> {
-    const config = (await this.outcome(workspace)).mcpServers[server];
+    const config = (await this.plugins.get(workspace)).mcpServers[server];
     if (!config) throw new ProtocolRequestError(-32602, `MCP server is not a helper plugin server: ${server}`);
     return config;
   }
@@ -331,9 +324,13 @@ export class ForkRustHelperMcpHost {
   async openSession(params: Record<string, unknown> | undefined): Promise<Record<string, never>> {
     const sessionId = requireString(params, "sessionId");
     const openId = requireOpenId(params);
+    const executionDirectory = optionalDirectory(params, "executionDirectory");
     await this.lanes.run(sessionId, async () => {
       if (this.sessions.has(sessionId)) await this.endSession(sessionId);
-      await this.doOpenSession(sessionId, openId, params ?? {});
+      await this.doOpenSession(sessionId, openId, executionDirectory, params ?? {});
+      if (!this.disposed) return;
+      await this.endSession(sessionId);
+      throw new Error("The Node helper was disposed during the session open");
     });
     return {};
   }
@@ -341,16 +338,14 @@ export class ForkRustHelperMcpHost {
   private async doOpenSession(
     sessionId: string,
     openId: number,
+    executionDirectory: string | undefined,
     params: Record<string, unknown>,
   ): Promise<void> {
     const workspace = parseWorkspace(params.workspace);
     // Node's app runs in the execution worktree unless it is missing (create-app.ts:200-208); Rust
     // sends it only when it exists.
-    const directory =
-      typeof params.executionDirectory === "string" && params.executionDirectory
-        ? params.executionDirectory
-        : workspace.workspacePath;
-    const outcome = await this.outcome({ ...workspace, workspacePath: directory });
+    const directory = executionDirectory ?? workspace.workspacePath;
+    const outcome = await this.plugins.get(workspace, directory);
     const admitted = new Set(Array.isArray(params.pluginIds) ? (params.pluginIds as string[]) : []);
     const requested = Array.isArray(params.servers) ? (params.servers as string[]) : [];
     const servers: Record<string, McpServerConfig> = {};
@@ -417,8 +412,8 @@ export class ForkRustHelperMcpHost {
 
   /** Rust's close of one open: a close of an earlier open of the session is ignored. */
   async closeSession(params: Record<string, unknown> | undefined): Promise<void> {
-    const sessionId = typeof params?.sessionId === "string" ? params.sessionId : "";
-    const openId = params?.openId;
+    const sessionId = requireString(params, "sessionId");
+    const openId = requireOpenId(params);
     await this.lanes.run(sessionId, async () => {
       if (this.sessions.get(sessionId)?.openId === openId) await this.endSession(sessionId);
     });
@@ -491,6 +486,7 @@ export class ForkRustHelperMcpHost {
   }
 
   async dispose(): Promise<void> {
+    this.disposed = true;
     for (const connection of [...this.pipes.keys()]) await this.closePipe(connection);
     for (const sessionId of [...this.sessions.keys()])
       await this.lanes.run(sessionId, () => this.endSession(sessionId));

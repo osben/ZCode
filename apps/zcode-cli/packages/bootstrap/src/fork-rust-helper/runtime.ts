@@ -179,6 +179,7 @@ export async function runForkRustHelper(options: RunForkRustHelperOptions): Prom
   const server = new ForkRustHelperServer({
     client,
     mcpHost,
+    logger,
     context,
     ensureSessionStore: async () => {
       await openSessionStore();

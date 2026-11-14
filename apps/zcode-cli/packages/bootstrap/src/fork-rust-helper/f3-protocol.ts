@@ -104,3 +104,15 @@ export function toPluginUiDelta(event: SessionEvent): Record<string, unknown> | 
       return undefined;
   }
 }
+
+/** An optional directory param: absent is `undefined`; present, it must be a non-empty string. */
+export function optionalDirectory(
+  params: Record<string, unknown> | undefined,
+  key: string,
+): string | undefined {
+  if (params === undefined || !(key in params)) return undefined;
+  const value = params[key];
+  if (typeof value !== "string" || !value)
+    throw new ProtocolRequestError(-32602, `${key} must be a non-empty string`);
+  return value;
+}

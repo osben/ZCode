@@ -250,7 +250,7 @@ A connect that Rust gives up on is closed in the helper too:
 `workspace` is `{workspacePath, workspaceIdentity?}`, keyed `workspaceIdentity?.trim() || workspacePath`. A Rust process may serve several workspaces, so the helper is never bound to one:
 
 - The Host's shared local task runtime is one agent process for every local workspace, run in the data root (`<home>/.zcode`, `SHARED_TASK_RUNTIME_KEY` in `zcodeAgentProcessManager.ts`).
-- The helper resolves plugins once per workspace and directory (a session in an execution worktree resolves in its worktree), and forgets a failed resolution so the next call retries.
+- The helper resolves plugins once per workspace key (`workspaceIdentity?.trim() || workspacePath`) and directory (a session in an execution worktree resolves in its worktree), and forgets a failed resolution so the next call retries. The cache keeps one entry per worktree for the helper's lifetime; it is not evicted yet.
 - A pipe keeps the workspace its connect named, for its server config and its lease's working directory. Rust's pipes name the workspace its MCP manager runs in.
 - A session keeps the workspace its open named: its server configs, its lease's working directory, and its model tool calls on that lease. A panel tool call sends no workspace fields, as Node's does (`session-facade.ts:528-536`); it runs on the session's lease.
 
@@ -273,7 +273,7 @@ helper/session/open {sessionId, openId, rootSessionId?, workspace, executionDire
 - `workspace` is the session's own, as its row holds it: `workspacePath` is the row's `directory` (a draft's too), and `workspaceIdentity` is its non-empty `workspace_id`. Rust's local rows have none.
   - Never the agent's cwd: the desktop E2E runs the agent in `<home>/.zcode` while its sessions live in `<home>/ZCodeProject`.
   - A session whose row Rust cannot read is not opened; the call fails as `nodeHelperUnavailable`.
-- `executionDirectory` is the session's execution worktree path, sent when the session has one and its directory exists (Rust checks a local workspace only, as for the session's own cwd). As in Node, the session runs in the worktree while its key stays the parent workspace's:
+- `executionDirectory` is the session's execution worktree path. When present it must be a non-empty string, or the open is invalid params; it is never replaced by the workspace. It is sent when the session has one and its directory exists (Rust checks a local workspace only, as for the session's own cwd). As in Node, the session runs in the worktree while its key stays the parent workspace's:
   - Node's app takes the worktree as its working directory unless it is missing (`create-app.ts:200-208`). Plugin and MCP config resolution (`:220-230`), the MCP lease and its stdio children (`:607-630`, adapter spawn cwd `adapters/src/mcp/index.ts:2016`) use it.
   - The session's workspace key is the protocol workspace's, not the worktree (`create-app.ts:477-479`, `core/src/runtime/types.ts:302-307`). Node's MCP tool entry sends `workspacePath` = the working directory and `workspaceKey` = that key (`core/src/mcp/index.ts:259-267`); its session connect does the same (`core/src/runtime/methods/mcp.ts:89-97`).
   - So the helper resolves the session's plugins and connects its lease in `executionDirectory`, and sends it as the tool call's `workspacePath`. `workspace` stays the key everywhere else.
@@ -290,6 +290,8 @@ helper/session/open {sessionId, openId, rootSessionId?, workspace, executionDire
   - A close ends the session only when its `openId` is the open one; a stale close is ignored.
   - An open of a session that is already open replaces it: the old one gets the close steps, then the new open runs with its own params. Node's `openSession` used to answer `{}` and keep the old params.
   - An open that fails after its lease is acquired closes that lease before it answers the error.
+  - A close without a string `sessionId` or a positive integer `openId` is refused. It is a notification, so the helper logs the refusal and keeps serving; a handler error must not close the connection.
+  - An open still in its lane when the helper is disposed gets the close steps once it finishes, and answers an error.
 
 ```
 Rust (NodeHelper, Running slot)              helper (ForkRustHelperMcpHost, one lane per sessionId)

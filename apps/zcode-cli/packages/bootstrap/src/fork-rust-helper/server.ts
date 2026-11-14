@@ -67,7 +67,8 @@ import {
   FORK_RUST_HELPER_METHODS,
   FORK_RUST_HELPER_PROTOCOL_VERSION,
 } from "./methods.js";
-import { FORK_RUST_HELPER_F3 } from "./f3-protocol.js";
+import { errorMessage, FORK_RUST_HELPER_F3 } from "./f3-protocol.js";
+import type { Logger } from "@zcode/contracts";
 import type { ForkRustHelperMcpHost } from "./mcp-host.js";
 import type { ForkRustHelperClient } from "./rust-client.js";
 import type { createWorkflowRunReads } from "./workflow-run-reads.js";
@@ -83,6 +84,7 @@ export interface ForkRustHelperServerDeps {
   client: ForkRustHelperClient;
   /** F3: Rust's MCP pipes and the helper sessions. */
   mcpHost: ForkRustHelperMcpHost;
+  logger?: Logger;
 }
 
 /** F3 helper-protocol requests from Rust (specs/fork-rust-node-helper.md, "F3 Office tools and panels"). */
@@ -218,7 +220,15 @@ export class ForkRustHelperServer {
     }
     if (!("id" in message) || message.id === undefined) {
       const run = this.helperNotifications.get(message.method);
-      if (run) await run((message as { params?: Record<string, unknown> }).params);
+      // A notification has no answer: a refused one is logged, since a thrown error would close the connection.
+      if (run)
+        await run((message as { params?: Record<string, unknown> }).params).catch((error: unknown) =>
+          this.deps.logger?.warn("Rust helper notification refused", {
+            event: "fork_rust_helper.notification.refused",
+            method: message.method,
+            error: errorMessage(error),
+          }),
+        );
       return undefined;
     }
     const { id, method, params } = message as { id: string | number; method: string; params?: unknown };

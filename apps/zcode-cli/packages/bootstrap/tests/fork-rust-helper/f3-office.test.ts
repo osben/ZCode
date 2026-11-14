@@ -242,6 +242,19 @@ describe("fork: Node helper F3 (Office tools and panels)", () => {
     await helper.done;
   });
 
+  // A notification has no answer, and a handler error would close the whole connection (transport `fail`).
+  it("refuses a malformed session close and keeps serving", async () => {
+    const home = await tempHome();
+    const helper = await initialized(home.env, home.workspace);
+    helper.notify("helper/session/close", { sessionId: SESSION });
+    helper.notify("helper/session/close", { openId: 1 });
+    const reply = await helper.request("helper/ping", {});
+    expect(reply.error).toBeUndefined();
+    expect(reply.result).toEqual({});
+    helper.close();
+    await helper.done;
+  }, 60_000);
+
   it("answers helper/ping, the liveness check of Rust's timeout rule", async () => {
     const home = await tempHome();
     const helper = await initialized(home.env, home.workspace);

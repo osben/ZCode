@@ -473,25 +473,34 @@ async fn plugin_host_plugins_load_with_a_node_helper() {
 }
 
 /// Fork (F3: OfficialAuth stays skipped): a PluginHost plugin with an official-auth server stays skipped with a
-/// helper, whatever the order of its servers, and says so.
+/// helper, whichever server comes first, and says so.
 #[tokio::test]
 async fn a_plugin_host_plugin_with_an_auth_server_stays_skipped_with_a_node_helper() {
-    let mixed = r#", "mcpServers": {"a_host": {"type": "stdio", "command": "/opt/zcode/zcode", "args": ["__zcode-plugin-host", "/x/dist/mcp/server.js"]}, "b_auth": {"type": "http", "url": "https://x/mcp", "auth": {"type": "zcode_official"}}}"#;
-    let files = [official_manifest("documents", mixed)];
-    let sources = PluginSources {
-        candidates: vec![official("documents")],
-        node_helper: true,
-        ..PluginSources::default()
-    };
-    let loaded = load_all(&env(&files), &workspace(), &[], &sources).await;
-    assert!(names(&loaded).is_empty());
-    assert_eq!(
-        reasons(&loaded),
-        [(
-            Some("documents@zcode-plugins-official"),
-            &SkipReason::NodeRuntime(NodeDependency::OfficialAuth)
-        )]
-    );
+    let host = r#"{"type": "stdio", "command": "/opt/zcode/zcode", "args": ["__zcode-plugin-host", "/x/dist/mcp/server.js"]}"#;
+    let auth = r#"{"type": "http", "url": "https://x/mcp", "auth": {"type": "zcode_official"}}"#;
+    // The names fix the order whether or not the JSON map keeps insertion order.
+    for servers in [
+        format!(r#""a_host": {host}, "b_auth": {auth}"#),
+        format!(r#""a_auth": {auth}, "b_host": {host}"#),
+    ] {
+        let mixed = format!(r#", "mcpServers": {{{servers}}}"#);
+        let files = [official_manifest("documents", &mixed)];
+        let sources = PluginSources {
+            candidates: vec![official("documents")],
+            node_helper: true,
+            ..PluginSources::default()
+        };
+        let loaded = load_all(&env(&files), &workspace(), &[], &sources).await;
+        assert!(names(&loaded).is_empty(), "{servers}");
+        assert_eq!(
+            reasons(&loaded),
+            [(
+                Some("documents@zcode-plugins-official"),
+                &SkipReason::NodeRuntime(NodeDependency::OfficialAuth)
+            )],
+            "{servers}"
+        );
+    }
 }
 
 /// Fork (F3): a plugin that declares an MCP App entry point (a non-empty `ui.surfaces`, or a `composer.mention` slot
