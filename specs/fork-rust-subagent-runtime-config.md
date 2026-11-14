@@ -97,6 +97,12 @@ parent run R2 of S starts ──▶ a new read; cache[S] = (R2, snapshot')
     - Without plugins, the snapshot is still read and the plugin layer is dropped.
 11. **Cache lifetime.** A session's cached snapshot and its remembered gate are dropped when the session closes (the runtime's per-session release, `SessionScoped::released`). A reopened session asks the gate and reads the snapshot again, as a Node runtime does at startup.
 12. **Sessionless lookups.** `AgentCatalog::definitions(workspace)` serves the TUI and headless agent lists and has no session to key a snapshot on, so it reads files.
+13. **A SendMessage resume re-resolves the agent (desktop).** Node resumes a finished agent from the current profiles (`resumeTerminalAgentInBackground`, core `subagent/runner.ts`). On the desktop (`node_desktop`), zcode-rs does the same when SendMessage restarts a finished or parked agent:
+    - It looks the agent type up in the parent's current catalog (the same lookup as the Agent tool, so in a parent run it uses that run's snapshot).
+    - When the type is gone (removed, renamed or disabled in Settings), the call returns Node's text `Cannot resume local agent <agentId>: profile <agentType> is unavailable.`. The result is not an error, and no run starts.
+    - When the type is found, the resumed run uses the current definition: its prompt, tools, maximum turns and permission mode, and the model from its selection (or the parent run's current model when it has none). Node's Agent tool has no `effort` input, so a resume keeps no per-call reasoning level.
+    - A failed Host read returns the error as the tool's result (rule 4).
+    - The TUI keeps the definition the agent started with. So do the restarts SendMessage does not start: a parked agent woken by a notice, and a message that arrived after a stop and resumes the stopped run once it settles.
 
 ## Out of scope
 
@@ -132,6 +138,9 @@ Unit tests:
   - A full selection replaces the provider, model and reasoning.
   - The `effort` input wins over the selection's reasoning level.
   - The connection is kept only for the same provider.
+- **`agents`, resume (rule 13).**
+  - After the profile changes, a SendMessage resume runs with the new prompt and model.
+  - After the profile is removed, SendMessage returns Node's "profile is unavailable" text and starts no run.
 
 Desktop E2E: run each spec on both runtimes in the container runner.
 
@@ -142,3 +151,5 @@ Desktop E2E: run each spec on both runtimes in the container runner.
 - `plugins/runtime/plugin-subagent-override-cold` (plugin agent override).
 
 A case that fails on Node too is not a parity gap.
+
+The refresh specs (`subagent-refresh-capture.ts`, and the explicit tool lists in the model-override and reasoning specs) expect Node's child tool list, which includes `RespondToCoordinator`. zcode-rs has no such tool. That is a separate parity gap, outside this spec, so on Rust these specs run from a copy without that one tool name.
