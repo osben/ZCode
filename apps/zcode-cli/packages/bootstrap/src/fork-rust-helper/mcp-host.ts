@@ -59,6 +59,8 @@ interface HelperContextMeta {
 
 interface PipeConnection {
   server: string;
+  /** The connect's workspace key. Not yet enforced against a session's (spec F3, pipe workspace limit). */
+  workspaceKey: string;
   port: McpPort;
   inflight: Map<string | number, AbortController>;
   offInvalidated: () => void;
@@ -170,6 +172,7 @@ export class ForkRustHelperMcpHost {
     }
     const pipe: PipeConnection = {
       server,
+      workspaceKey: workspaceKeyOf(workspace),
       port,
       inflight: new Map(),
       offInvalidated: () => {},

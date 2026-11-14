@@ -302,6 +302,8 @@ late close(s,1) after open(s,2) ──────────────► la
 
 The plugin catalog and admission are still the Rust process's, not the session workspace's: `pluginIds` and `servers` come from the plugins Rust loaded for its own workspace (`cli/src/assemble/mod.rs` `helper_catalog`, checked in `helper_session_admit.rs` and `helper_answers.rs`). Per-workspace admission is the next change after F3 (per-workspace plugins and MCP in Rust's shared local task runtime).
 
+The pipe workspace is not enforced either. Each pipe stores the workspace key of its `helper/mcp/connect` (`workspaceIdentity?.trim() || workspacePath`). The helper does not refuse a session or a tool call whose key differs from the pipe's. In the shared local task runtime every pipe names the agent's directory (`<home>/.zcode`, `node_helper_mcp.rs` `helper_workspace`), while sessions live in their own workspaces, so a refusal would fail every helper model tool call there. The per-workspace change turns the refusal on, once a pipe connects in its session's workspace.
+
 **Session-scoped forwarded methods.** Same params and result as Host ↔ Node:
 
 - the 16 `mcp/ui*` methods and `mcp/readResource`;

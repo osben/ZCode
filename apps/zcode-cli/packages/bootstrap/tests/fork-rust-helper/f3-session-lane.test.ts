@@ -145,6 +145,34 @@ describe("fork: Node helper session open and close", () => {
     expect(context.sessions.has(SESSION)).toBe(false);
   });
 
+  // Spec F3 "Session open and close", the pipe workspace limit: the key is stored, not yet enforced.
+  it("stores each pipe's workspace key and still serves another workspace's session", async () => {
+    const { host, sessionLeases, notifications } = rig();
+    const DATA_ROOT = "/home/.zcode";
+    await host.connect({
+      connection: "c1",
+      server: SERVER,
+      workspace: { workspacePath: DATA_ROOT, workspaceIdentity: " data-root " },
+    });
+    await host.openSession(open(1));
+    const pipes = (host as unknown as { pipes: Map<string, { workspaceKey?: string }> }).pipes;
+    expect(pipes.get("c1")?.workspaceKey).toBe("data-root");
+    await host.send({
+      connection: "c1",
+      message: {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: {
+          name: "open_doc",
+          _meta: { "zcode/helperContext": { sessionId: SESSION, runtimeScope: "main" } },
+        },
+      },
+    });
+    expect(notifications.at(-1)?.params).toMatchObject({ message: { id: 1, result: {} } });
+    expect(sessionLeases()[0]?.calls[0]).toMatchObject({ workspaceKey: PROJECT });
+  });
+
   it("runs an execution worktree session in its worktree, under its workspace's key", async () => {
     const { host, sessionLeases, resolved, notifications } = rig();
     await host.openSession(open(1, { executionDirectory: WORKTREE }));
