@@ -117,6 +117,7 @@ Subagents launch no subagents under `node_desktop`. Node runs every child runtim
 - Rust removes `Agent`, `SendMessage` and `ListAgents` (Node has no ListAgents tool) from every subagent child's tools (`agents` `toolset.rs`, `ToolRule::node_child`; a fork child through `NodeChild`), together with the Cron tools. The check comes before the definition's `tools` list, so a profile that names them does not get them back. A call to one gets `No such tool available` from the tool pipeline, and with no `Agent` tool the child's requests carry no agent listing.
 - So under `node_desktop` the kernel subagent table has no entry with an `owner`. The desktop telemetry has no nested-agent path any more (it was Rust only). The agents crate keeps its nested paths for the TUI (the owner rules of routing, forwarders and stall reminders), where subagents may still launch subagents down to `MAX_SPAWN_DEPTH`.
 - Before: the Rust Agent tool stayed available to subagents down to `MAX_SPAWN_DEPTH` in `node_desktop` too.
+- Open gap: the main session under `node_desktop` still has `ListAgents`, which Node does not have.
 - Tests: `toolset_tests.rs` (a desktop child, foreground, background, with a `tools` list naming them, and a fork child, has none of them; a TUI child below the depth limit keeps `Agent`), `lib_tests.rs` (a desktop subagent's tools as spawned); E2E `conversation-session-subagent-model-boundary` F-SUBAGENT-018 on Rust.
 
 SendMessage resume and background works follow Node under `node_desktop` too:
