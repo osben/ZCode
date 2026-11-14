@@ -22,7 +22,8 @@ struct MemoryTranscripts {
     removed: Mutex<Vec<HookTranscript>>,
     /// `create` / `remove` / `remove_blocking`, in the order they finished.
     order: Arc<Mutex<Vec<&'static str>>>,
-    /// The write runs this long in its own task, which a dropped caller does not stop (as `spawn_blocking`).
+    /// The write runs this long on the blocking pool, which a dropped caller does not stop and a shutting-down runtime
+    /// waits for.
     write_ms: u64,
     /// The removal runs this long in its own task, which a dropped caller does not stop (as tokio's `remove_dir_all`
     /// on `spawn_blocking`).
@@ -55,19 +56,14 @@ impl HookTranscripts for MemoryTranscripts {
         })
     }
 
-    async fn create(&self, transcript: &HookTranscript, text: &str) -> std::io::Result<()> {
+    fn create(&self, transcript: &HookTranscript, text: &str) -> std::io::Result<()> {
         self.created
             .lock_unpoisoned()
             .push((transcript.clone(), text.to_owned()));
-        let order = self.order.clone();
-        let write_ms = self.write_ms;
-        let write = tokio::spawn(async move {
-            if write_ms > 0 {
-                tokio::time::sleep(Duration::from_millis(write_ms)).await;
-            }
-            order.lock_unpoisoned().push("create");
-        });
-        let _ = write.await;
+        if self.write_ms > 0 {
+            std::thread::sleep(Duration::from_millis(self.write_ms));
+        }
+        self.order.lock_unpoisoned().push("create");
         Ok(())
     }
 
@@ -255,7 +251,7 @@ async fn a_dropped_run_removes_its_transcript() {
 
 /// N3: a run dropped while its transcript is being written removes the directory only after the write ends (the
 /// write keeps going after the drop, so a removal before it would leave the file behind).
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn a_run_dropped_during_the_write_removes_after_the_write() {
     let env = Arc::new(ScriptedEnv::with(&[("stop.sh", slow(60_000))]));
     let transcripts = Arc::new(MemoryTranscripts {
@@ -415,6 +411,37 @@ fn a_removal_in_flight_at_runtime_shutdown_removes_once() {
     assert!(ran.is_err(), "the run should still be removing");
     drop(runtime);
     assert_eq!(transcripts.order(), ["create", "remove"]);
+}
+
+/// A run dropped at runtime shutdown while its write is on the blocking pool leaves the removal to the write: the
+/// shutdown waits for the running write, which then removes the directory (a removal before it would leave the
+/// directory the write creates).
+#[test]
+fn a_run_dropped_at_runtime_shutdown_during_the_write_removes_after_it() {
+    let env = Arc::new(ScriptedEnv::with(&[("stop.sh", slow(60_000))]));
+    let transcripts = Arc::new(MemoryTranscripts {
+        write_ms: 100,
+        ..MemoryTranscripts::default()
+    });
+    let engine = engine(
+        env,
+        transcripts.clone(),
+        json!({"type": "command", "command": "stop.sh"}),
+    );
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .unwrap();
+    let ran = runtime.block_on(async {
+        tokio::time::timeout(
+            Duration::from_millis(20),
+            engine.run(stop(), CancellationToken::new()),
+        )
+        .await
+    });
+    assert!(ran.is_err(), "the run should still be writing");
+    drop(runtime);
+    assert_eq!(transcripts.order(), ["create", "remove_blocking"]);
 }
 
 /// N4: a run dropped while the runtime shuts down still removes its transcript (the spawned removal never runs, so

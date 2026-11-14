@@ -314,7 +314,8 @@ async fn foreground(
                 cancel_sent = true;
                 let _ = commands.cancel(operation.clone()).await;
                 // Sent: a drop from here sends no second cancel. A drop during the send above still does; that is
-                // accepted, since `Commands::cancel` is idempotent.
+                // accepted, since a second cancel stops nothing more: it finds the command still cancelling, or gone
+                // (env-local then returns `unknown_operation`), and its error is ignored like the first one's.
                 stop.disarm();
                 continue;
             }

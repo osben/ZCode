@@ -218,6 +218,37 @@ pub async fn atomic_write(path: &Path, bytes: &[u8], options: WriteOptions) -> i
     Ok(())
 }
 
+/// Fork: [`atomic_write`], synchronously (for a caller already on the blocking pool, which must not split the write
+/// into several jobs).
+pub fn atomic_write_blocking(path: &Path, bytes: &[u8], options: WriteOptions) -> io::Result<()> {
+    let name = path.file_name().ok_or_else(|| {
+        io::Error::new(
+            ErrorKind::InvalidInput,
+            format!("atomic write target has no file name: {}", path.display()),
+        )
+    })?;
+    let directory = match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
+        Some(_) | None => PathBuf::from("."),
+    };
+    let temp = directory.join(temp_name(name, options.temp_name));
+    stage(&directory, &temp, bytes, options.mode, options.parent)?;
+    let mut delays = options.rename_retry.iter();
+    while let Err(error) = std::fs::rename(&temp, path) {
+        match delays.next() {
+            Some(delay) if retryable(&error) => std::thread::sleep(*delay),
+            Some(_) | None => {
+                let _ = std::fs::remove_file(&temp);
+                return Err(error);
+            }
+        }
+    }
+    if cfg!(unix) {
+        let _ = std::fs::File::open(&directory).and_then(|directory| directory.sync_all());
+    }
+    Ok(())
+}
+
 /// 创建并写好临时文件。打开失败时文件不是本次创建的（例如重名），不能删除；之后的失败删除它。
 fn stage(
     directory: &Path,
@@ -352,24 +383,27 @@ pub async fn create_dir_all(path: &Path) -> io::Result<()> {
 /// 0o700})` 后 `chmod(dir, 0o700)`，信任记录的 `security/`，config.md §4.2）。Windows 上同 [`create_dir_all`]。
 pub async fn create_private_dir_all(path: &Path) -> io::Result<()> {
     let path = path.to_path_buf();
-    rust_cli_base::blocking(move || {
-        let mut builder = std::fs::DirBuilder::new();
-        builder.recursive(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
-            builder.mode(rust_cli_base::proto::mode::PRIVATE_DIR);
-            builder.create(&path)?;
-            std::fs::set_permissions(
-                &path,
-                std::fs::Permissions::from_mode(rust_cli_base::proto::mode::PRIVATE_DIR),
-            )
-        }
-        #[cfg(not(unix))]
-        builder.create(&path)
-    })
-    .await
-    .map_err(io::Error::other)?
+    rust_cli_base::blocking(move || create_private_dir_all_blocking(&path))
+        .await
+        .map_err(io::Error::other)?
+}
+
+/// Fork: [`create_private_dir_all`], synchronously (for a caller already on the blocking pool).
+pub fn create_private_dir_all_blocking(path: &Path) -> io::Result<()> {
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+        builder.mode(rust_cli_base::proto::mode::PRIVATE_DIR);
+        builder.create(path)?;
+        std::fs::set_permissions(
+            path,
+            std::fs::Permissions::from_mode(rust_cli_base::proto::mode::PRIVATE_DIR),
+        )
+    }
+    #[cfg(not(unix))]
+    builder.create(path)
 }
 
 /// 把一个已有的文件（含 socket 文件）设成只有本用户能读写（Unix 0600；Windows 上什么都不做）：跨会话的收件箱

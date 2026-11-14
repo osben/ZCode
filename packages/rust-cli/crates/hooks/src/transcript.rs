@@ -1,8 +1,9 @@
 //! Fork: the Node-compatible stdin of one command hook run and its transcript file (Node `createCompatibleHookStdin`,
 //! specs/fork-rust-agent-parity.md "Command hook stdin").
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
+use rust_cli_base::sync::LockUnpoisoned;
 use rust_cli_kernel_api::hooks::{HookTranscript, HookTranscripts};
 use serde_json::{Map, Value};
 use tokio::task::JoinHandle;
@@ -24,8 +25,8 @@ pub(crate) struct Staged {
 
 /// Removes one transcript directory (Node removes it in the callback's `finally`). The owner awaits [`Self::remove`];
 /// a guard dropped without it (the run's future dropped, a panic) removes the directory in a spawned task, or
-/// synchronously where that task cannot run (no runtime, or the runtime shutting down). Either way one task owns the
-/// removal.
+/// synchronously where that task cannot run (no runtime, or the runtime shutting down), where a write still in flight
+/// removes it instead. Either way one task owns the removal.
 pub(crate) struct TranscriptGuard {
     removal: Option<Removal>,
 }
@@ -33,12 +34,22 @@ pub(crate) struct TranscriptGuard {
 struct Removal {
     transcripts: Arc<dyn HookTranscripts>,
     file: HookTranscript,
-    /// The file's write runs in its own task: a dropped run cannot stop a write already under way, so the removal
-    /// waits for it first (removing while it runs would leave the new file behind).
+    /// The file's write runs as one job on the blocking pool: a dropped run cannot stop a write already under way, so
+    /// the removal waits for it first (removing while it runs would leave the new file behind).
     write: Option<JoinHandle<std::io::Result<()>>>,
+    /// Shared with the write job, which owns the cleanup of a write the last resort cannot wait for.
+    state: Arc<Mutex<WriteState>>,
     /// Set before the first await on [`HookTranscripts::remove`]: a removal dropped from then on (the runtime shutting
     /// down with it in flight) leaves the directory to the blocking removal already under way.
     started: bool,
+}
+
+/// Between the write job and a guard dropped without its removal task (the runtime shutting down): a shutdown drops
+/// that task but waits for a blocking job already running, so a write in flight removes what it wrote itself.
+#[derive(Default)]
+struct WriteState {
+    writing: bool,
+    cancelled: bool,
 }
 
 /// Writes the transcript of one run, in its own directory (as Node). The guard exists before the file does, so a run
@@ -81,21 +92,49 @@ fn place(
     text: &str,
 ) -> std::io::Result<(TranscriptGuard, HookTranscript)> {
     let file = transcripts.locate(&format!("zcode-hook-{}", ports.ids.execution()))?;
+    let state = Arc::new(Mutex::new(WriteState::default()));
     let write = {
-        let transcripts = transcripts.clone();
-        let file = file.clone();
+        let (transcripts, file, state) = (transcripts.clone(), file.clone(), state.clone());
         let text = text.to_owned();
-        tokio::spawn(async move { transcripts.create(&file, &text).await })
+        tokio::task::spawn_blocking(move || write(&*transcripts, &file, &text, &state))
     };
     let guard = TranscriptGuard {
         removal: Some(Removal {
             transcripts: transcripts.clone(),
             file: file.clone(),
             write: Some(write),
+            state,
             started: false,
         }),
     };
     Ok((guard, file))
+}
+
+/// The write job: creates the directory and the file, then removes them itself if the guard was dropped meanwhile.
+/// A job that starts after that drop writes nothing.
+fn write(
+    transcripts: &dyn HookTranscripts,
+    file: &HookTranscript,
+    text: &str,
+    state: &Mutex<WriteState>,
+) -> std::io::Result<()> {
+    {
+        let mut state = state.lock_unpoisoned();
+        if state.cancelled {
+            return Ok(());
+        }
+        state.writing = true;
+    }
+    let written = transcripts.create(file, text);
+    let cancelled = {
+        let mut state = state.lock_unpoisoned();
+        state.writing = false;
+        state.cancelled
+    };
+    if cancelled && let Err(error) = transcripts.remove_blocking(file) {
+        tracing::warn!(error = %error, "hook transcript directory could not be removed");
+    }
+    written
 }
 
 impl TranscriptGuard {
@@ -137,7 +176,16 @@ impl Removal {
         }
     }
 
+    /// The last resort: removes the directory synchronously, unless a write is in flight, which then removes it.
     fn now(&self) {
+        let writing = {
+            let mut state = self.state.lock_unpoisoned();
+            state.cancelled = true;
+            state.writing
+        };
+        if writing {
+            return;
+        }
         if let Err(error) = self.transcripts.remove_blocking(&self.file) {
             tracing::warn!(error = %error, "hook transcript directory could not be removed");
         }
@@ -145,7 +193,8 @@ impl Removal {
 }
 
 /// A removal handed to a spawned task. A runtime that shuts down drops the task before it ran or while it waits; the
-/// drop then removes the directory synchronously, unless the removal already started (it is on the blocking pool).
+/// drop then removes the directory synchronously (or leaves it to a write in flight), unless the removal already
+/// started (it is on the blocking pool).
 struct Pending(Option<Removal>);
 
 impl Pending {

@@ -17,17 +17,14 @@ async fn the_transcript_is_readable_until_its_directory_is_removed() {
     );
     // Locating touches nothing.
     assert!(!rust_cli_fs::is_dir(std::path::Path::new(&file.dir)).await);
-    transcripts
-        .create(&file, "{\"message\":{}}\n")
-        .await
-        .unwrap();
+    transcripts.create(&file, "{\"message\":{}}\n").unwrap();
     let text = rust_cli_fs::read_optional(std::path::Path::new(&file.path))
         .await
         .unwrap()
         .unwrap();
     assert_eq!(text, b"{\"message\":{}}\n");
     let empty = transcripts.locate("zcode-hook-2").unwrap();
-    transcripts.create(&empty, "").await.unwrap();
+    transcripts.create(&empty, "").unwrap();
     assert!(rust_cli_fs::is_file(std::path::Path::new(&empty.path)).await);
     transcripts.remove(&file).await.unwrap();
     assert!(!rust_cli_fs::is_dir(std::path::Path::new(&file.dir)).await);
@@ -42,8 +39,8 @@ async fn creating_replaces_an_existing_file_with_owner_only_access() {
     let root = tempfile::tempdir().unwrap();
     let transcripts = LocalHookTranscripts::new(root.path().to_path_buf());
     let file = transcripts.locate("zcode-hook-1").unwrap();
-    transcripts.create(&file, "first text\n").await.unwrap();
-    transcripts.create(&file, "x\n").await.unwrap();
+    transcripts.create(&file, "first text\n").unwrap();
+    transcripts.create(&file, "x\n").unwrap();
     let text = rust_cli_fs::read_optional(std::path::Path::new(&file.path))
         .await
         .unwrap()
@@ -105,7 +102,7 @@ async fn remove_blocking_removes_the_directory() {
     let root = tempfile::tempdir().unwrap();
     let transcripts = LocalHookTranscripts::new(root.path().to_path_buf());
     let file = transcripts.locate("zcode-hook-1").unwrap();
-    transcripts.create(&file, "{}\n").await.unwrap();
+    transcripts.create(&file, "{}\n").unwrap();
     transcripts.remove_blocking(&file).unwrap();
     assert!(!rust_cli_fs::is_dir(std::path::Path::new(&file.dir)).await);
     transcripts.remove_blocking(&file).unwrap();

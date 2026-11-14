@@ -68,10 +68,10 @@ impl HookTranscripts for LocalHookTranscripts {
         })
     }
 
-    async fn create(&self, transcript: &HookTranscript, text: &str) -> std::io::Result<()> {
+    fn create(&self, transcript: &HookTranscript, text: &str) -> std::io::Result<()> {
         let dir = self.confined(&transcript.dir)?;
-        rust_cli_fs::create_private_dir_all(&dir).await?;
-        rust_cli_fs::atomic_write(&dir.join(FILE), text.as_bytes(), WRITE).await
+        rust_cli_fs::create_private_dir_all_blocking(&dir)?;
+        rust_cli_fs::atomic_write_blocking(&dir.join(FILE), text.as_bytes(), WRITE)
     }
 
     async fn remove(&self, transcript: &HookTranscript) -> std::io::Result<()> {

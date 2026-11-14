@@ -304,7 +304,9 @@ pub trait HookTranscripts: Send + Sync {
     /// creates the file, so a run dropped mid-way still removes the directory.
     fn locate(&self, name: &str) -> std::io::Result<HookTranscript>;
     /// Writes `text` as the transcript file in a new private directory (the file is created new, mode 0600).
-    async fn create(&self, transcript: &HookTranscript, text: &str) -> std::io::Result<()>;
+    /// Synchronous: the caller runs it as one job on the blocking pool, so a runtime shutting down waits for a write
+    /// already under way and the job can remove what it wrote.
+    fn create(&self, transcript: &HookTranscript, text: &str) -> std::io::Result<()>;
     /// Removes the transcript's directory; a missing directory is not an error, a directory outside the root is
     /// refused.
     async fn remove(&self, transcript: &HookTranscript) -> std::io::Result<()>;
