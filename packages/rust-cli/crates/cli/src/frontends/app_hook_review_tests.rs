@@ -407,6 +407,30 @@ async fn a_config_nodes_strict_schema_rejects_is_unreadable_and_never_toggled() 
     }
 }
 
+#[tokio::test]
+async fn a_config_that_breaks_the_schema_between_the_review_and_the_write_is_a_mismatch() {
+    // Node `writeWorkspaceHookConfiguredToggle` re-reads the file and throws `mismatch()` when its strict schema no
+    // longer accepts `hooks` (`workspace-hook-mutation.ts`).
+    let fixture = fixture_text(PROJECT, json!({}));
+    let trust = AppWorkspace::trust_target(&target(ROOT));
+    let (hooks, unreadable, sources) = fixture.admin.review_hooks(&trust).await;
+    assert!(!unreadable);
+    let id = hooks.entries()[0].review_item_id.clone();
+    let broken = PROJECT.replacen(
+        r#""hooks": {"enabled": true,"#,
+        r#""hooks": {"enabled": true, "extra": 1,"#,
+        1,
+    );
+    assert_ne!(broken, PROJECT);
+    write_project(&fixture, &broken).await;
+    let answer = fixture
+        .admin
+        .write_toggle(&trust, &hooks, &sources, &id, false)
+        .await;
+    assert_eq!(answer, Err(codes::SNAPSHOT_MISMATCH));
+    assert_eq!(project(&fixture).await, broken.as_bytes());
+}
+
 #[test]
 fn the_display_path_is_relative_to_the_folder_of_dot_zcode() {
     assert_eq!(

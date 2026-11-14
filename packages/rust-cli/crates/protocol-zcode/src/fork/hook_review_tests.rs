@@ -67,6 +67,8 @@ struct FakeReview {
     unreadable: StdMutex<bool>,
     /// The next accepted grant, revoke or toggle leaves a config that cannot be read.
     unreadable_after_mutation: StdMutex<bool>,
+    /// The next accepted grant, revoke or toggle leaves no declarations.
+    empty_after_mutation: StdMutex<bool>,
 }
 
 impl FakeReview {
@@ -78,6 +80,7 @@ impl FakeReview {
             calls: StdMutex::new(Vec::new()),
             unreadable: StdMutex::new(false),
             unreadable_after_mutation: StdMutex::new(false),
+            empty_after_mutation: StdMutex::new(false),
         })
     }
 
@@ -88,6 +91,9 @@ impl FakeReview {
     fn mutated(&self) {
         if *self.unreadable_after_mutation.lock_unpoisoned() {
             *self.unreadable.lock_unpoisoned() = true;
+        }
+        if *self.empty_after_mutation.lock_unpoisoned() {
+            *self.bundle.lock_unpoisoned() = None;
         }
     }
 
@@ -738,6 +744,11 @@ async fn a_committed_toggle_whose_bundle_cannot_be_rediscovered_fails_like_node(
         )
         .await;
     refused(&ack, CONFIG_REBUILD_FAILED);
+    // The write was committed before the rebuild failed.
+    assert_eq!(
+        harness.admin.calls(),
+        vec![json!({"toggle": "r2", "enabled": false, "bundle": B1})]
+    );
     assert!(harness.reviews().is_empty(), "{:?}", harness.reviews());
     let after = harness
         .send(
@@ -749,6 +760,30 @@ async fn a_committed_toggle_whose_bundle_cannot_be_rediscovered_fails_like_node(
         )
         .await;
     refused(&after, REVIEW_SUPERSEDED);
+}
+
+#[tokio::test]
+async fn a_committed_toggle_that_leaves_no_declarations_fails_like_node() {
+    // After a committed write Node's `rebuildSnapshot` "bundle no longer exists" is a failed rebuild
+    // (`workspace-hook-review-controller.ts`), not the mismatch it answers before the write.
+    let harness = harness(Some(two_hooks())).await;
+    let review = harness.open().await;
+    *harness.admin.empty_after_mutation.lock_unpoisoned() = true;
+    let ack = harness
+        .send(
+            "toggleWorkspaceHookReviewItem",
+            with(
+                target(&review),
+                json!({"reviewItemId": "r2", "enabled": false}),
+            ),
+        )
+        .await;
+    refused(&ack, CONFIG_REBUILD_FAILED);
+    assert_eq!(
+        harness.admin.calls(),
+        vec![json!({"toggle": "r2", "enabled": false, "bundle": B1})]
+    );
+    assert!(harness.reviews().is_empty(), "{:?}", harness.reviews());
 }
 
 #[tokio::test]

@@ -251,13 +251,14 @@ impl AppWorkspace {
             );
             codes::CONFIG_UNREADABLE
         })?;
-        // The file may have changed since the review read it: Node's rebuild rejects what its strict schema rejects.
+        // The file may have changed since the review read it. Node re-parses `hooks` with its strict schema and
+        // answers a mismatch (`workspace-hook-mutation.ts` `safeParse`); a missing `hooks` fails that parse too.
         let schema = raw
             .get("hooks")
-            .map_or(Ok(()), crate::config::workspace_schema::check);
+            .map_or(Err(String::new()), crate::config::workspace_schema::check);
         if schema.is_err() {
-            tracing::warn!("the workspace hook config does not match the schema for a toggle");
-            return Err(codes::CONFIG_UNREADABLE);
+            tracing::warn!("the workspace hook config no longer matches the schema for a toggle");
+            return Err(codes::SNAPSHOT_MISMATCH);
         }
         if !declared_as_reviewed(&raw, entry, source, hooks) {
             return Err(codes::SNAPSHOT_MISMATCH);
