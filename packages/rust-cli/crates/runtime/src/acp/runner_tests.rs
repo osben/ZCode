@@ -385,6 +385,33 @@ async fn a_row_open_at_the_turn_end_closes_after_the_last_segment() {
     harness.release().await;
 }
 
+/// Rule 6: when the last segment cannot be committed the turn fails like a mid-turn commit failure: its open rows
+/// settle on screen with the failed-turn text, and nothing more is committed.
+#[tokio::test]
+async fn a_failed_last_segment_commit_settles_open_rows_live() {
+    let harness = Harness::new();
+    let sink = Arc::new(RecordingSink::default());
+    // "let me look" is committed when the tool call arrives; "done looking" at the turn end fails.
+    sink.fail_commit_message_after(1);
+    let result = harness
+        .runner
+        .run(
+            harness.request(vec![user("m1", "narrate", UserOrigin::Human)]),
+            sink.clone(),
+            Abort::new(),
+        )
+        .await;
+    assert!(matches!(result, Err(QueryError::Store(_))), "{result:?}");
+    assert_eq!(
+        live(&sink.events()).last().map(String::as_str),
+        Some(r#"done "The agent turn failed before this tool finished" error=true"#)
+    );
+    let messages = sink.messages();
+    assert!(rows(&messages).is_empty());
+    assert_eq!(texts(&messages), vec!["let me look".to_owned()]);
+    harness.release().await;
+}
+
 /// Rule 6: Stop closes an open row "Cancelled", committed before the interrupt marker.
 #[tokio::test]
 async fn stop_closes_open_rows_before_the_interrupt_marker() {

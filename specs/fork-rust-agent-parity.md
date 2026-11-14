@@ -1384,7 +1384,9 @@ failure    ─▶ rows closed "The agent turn failed before this tool finished" 
    `metadata.externalAgent` to `ExternalTool` in part order, including a Node-written session. Such
    a part is never a `tool_use`; an unsettled one (a Node turn killed mid-tool) becomes an error row
    with its stored error or no text, never a synthetic interrupted `tool_result`. Model
-   normalization drops `ExternalTool`, and an assistant message left without blocks is not sent.
+   normalization drops `ExternalTool`, and an assistant message left without blocks is not sent
+   (nor does it stop attachments from hoisting). A row reaching a model adapter anyway is a bug:
+   the Anthropic and OpenAI adapters both refuse it (`InvalidRequest`), never skip it.
    Text and reasoning of an ACP turn stay in model history (Node `selectToolPartsForHistory`).
 6. **Segments.** A tool or plan event closes the open text/reasoning segment, which is committed as
    one assistant message. A row is committed, as an assistant message of its own, when it settles:
@@ -1399,7 +1401,9 @@ failure    ─▶ rows closed "The agent turn failed before this tool finished" 
    (`acp:other`) first, so the ask has a row to land on (Node `rowFor`). Rows still open at the
    turn end are closed as errors with Node's texts: "Cancelled" (Stop), "The agent turn failed
    before this tool finished" (prompt failure), "The agent turn ended before this tool finished"
-   (completion). They are committed after the last segment and before the interrupt marker. A
+   (completion). They are committed after the last segment and before the interrupt marker. When
+   the last segment cannot be committed the turn fails like a mid-turn commit failure: open rows
+   settle on screen with the failed-turn text and nothing more is committed. A
    process killed mid-turn loses only the open segment and open rows, like a regular Rust turn.
 7. **Plan.** An ACP `plan` is a `TodoWrite` row (title "Plan", input `{todos}`) that settles at
    once with Node's output `{oldTodos, todos, summary}` (`summarizeTodos`). Each todo is Node's
@@ -1417,7 +1421,10 @@ failure    ─▶ rows closed "The agent turn failed before this tool finished" 
    v2 fields Node's todo has no column for (description, owner, blocks, blockedBy) go with the
    replaced tasks; the plan row's `oldTodos` lists them as Node's todos. A failed write fails the turn like a failed commit. The projection sets `state.plan`
    (`{items: [{id, content, status}], updatedAt}`, Node `todoPlanDeltas` over
-   `extractPlanStepsFromToolInput`) from a `TodoWrite` row's input, live and cold.
+   `extractPlanStepsFromToolInput`) from a `TodoWrite` row's input, live and cold. As Node emits
+   on each row's `ToolCallScheduled`, a patch follows a row that opens or whose input changes
+   before it settles; a repeated event or an update after the row settled sends none, and a new
+   row with the same steps sends one. An empty plan keeps the last one.
 8. **Title.** An agent `session_info_update` title (trimmed, non-empty) is a generated title
    (`Fact::TitleGenerated` without a message, `Source::Generated`; Node
    `setExternalAgentSessionTitle`). A custom title is kept, an unchanged one is skipped, and a

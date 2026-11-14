@@ -1137,3 +1137,38 @@ fn acp_rows_never_reach_the_model() {
         ]
     );
 }
+
+/// Fork: a reply message holding only ACP rows (or nothing) does not stop an attachment from hoisting over the
+/// human message before it: the request is the one built without that message.
+#[test]
+fn acp_rows_do_not_stop_attachments_from_hoisting() {
+    let row = ContentBlock::ExternalTool(Box::new(rust_cli_kernel_api::message::ExternalTool {
+        id: ToolUseId::new("acp_1"),
+        name: "acp:read".into(),
+        title: "Read a".into(),
+        input: serde_json::json!({}),
+        output: "A".into(),
+        is_error: false,
+    }));
+    let with_rows = normalize(
+        &[
+            human("u1", "go"),
+            assistant("a1", vec![text("reading")]),
+            human("u2", "next"),
+            assistant("a2", vec![row]),
+            assistant("a3", vec![]),
+            attachment("x1", "date", "Today's date is 2026-11-14."),
+        ],
+        &OFF,
+    );
+    let without = normalize(
+        &[
+            human("u1", "go"),
+            assistant("a1", vec![text("reading")]),
+            human("u2", "next"),
+            attachment("x1", "date", "Today's date is 2026-11-14."),
+        ],
+        &OFF,
+    );
+    assert_eq!(format!("{with_rows:?}"), format!("{without:?}"));
+}

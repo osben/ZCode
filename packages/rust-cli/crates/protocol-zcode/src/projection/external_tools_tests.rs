@@ -263,23 +263,74 @@ fn a_todo_write_row_sets_the_plan() {
         Vec::new(),
     );
     assert_eq!(cold.snapshot(0, "e")["plan"]["items"], items);
-    // An ACP tool row is no plan, and an empty plan keeps the last one.
+}
+
+fn plan_patches(deltas: &[Value]) -> Vec<Value> {
+    deltas
+        .iter()
+        .filter(|delta| delta["op"] == "state.updated" && delta["patch"].get("plan").is_some())
+        .map(|delta| delta["patch"]["plan"]["items"].clone())
+        .collect()
+}
+
+/// A plan row projects its plan when it opens and when its input changes before it settles (Node emits on each
+/// row's `ToolCallScheduled`). The same input again, a settled row, an ACP tool row and an empty plan change nothing.
+#[test]
+fn a_plan_patch_follows_its_row() {
+    let first = json!({"todos": [{"content": "Read", "status": "pending"}]});
+    let first_items = json!([{"id": "Read", "content": "Read", "status": "pending"}]);
+    let second = json!({"todos": [{"content": "Edit", "status": "in_progress"}]});
+    let second_items = json!([{"id": "Edit", "content": "Edit", "status": "inProgress"}]);
     let mut feed = Feed::new();
-    feed.apply(row_event(
-        "acp_1",
-        "acp:other",
-        "",
-        json!({"todos": [{"content": "x", "status": "pending"}]}),
-        true,
-    ));
-    feed.apply(row_event(
+    feed.apply(KernelEvent::TurnStarted {
+        turn: TurnId::new("turn_1"),
+        command: None,
+    });
+    let opened = feed.apply(row_event(
         "acp_p",
+        "TodoWrite",
+        "Plan",
+        first.clone(),
+        false,
+    ));
+    assert_eq!(plan_patches(&opened), vec![first_items.clone()]);
+    // The row starting with the same input is no new plan.
+    let started = feed.apply(row_event("acp_p", "TodoWrite", "Plan", first.clone(), true));
+    assert_eq!(plan_patches(&started), Vec::<Value>::new());
+    // An ACP tool row is no plan, and an empty plan keeps the last one.
+    let other = feed.apply(row_event("acp_1", "acp:other", "", second.clone(), true));
+    assert_eq!(plan_patches(&other), Vec::<Value>::new());
+    let empty = feed.apply(row_event(
+        "acp_e",
         "TodoWrite",
         "Plan",
         json!({"todos": []}),
         true,
     ));
-    assert_eq!(feed.projection.snapshot(0, "e")["plan"], Value::Null);
+    assert_eq!(plan_patches(&empty), Vec::<Value>::new());
+    assert_eq!(
+        feed.projection.snapshot(0, "e")["plan"]["items"],
+        first_items
+    );
+    // Once the row settled, a late update reaches neither the row nor the plan.
+    feed.apply(done("acp_p", "{}", false));
+    let late = feed.apply(row_event(
+        "acp_p",
+        "TodoWrite",
+        "Plan",
+        second.clone(),
+        true,
+    ));
+    assert_eq!(plan_patches(&late), Vec::<Value>::new());
+    assert_eq!(
+        feed.projection.snapshot(0, "e")["plan"]["items"],
+        first_items
+    );
+    // A new plan row with the same steps is projected again, as Node does per row.
+    let again = feed.apply(row_event("acp_q", "TodoWrite", "Plan", first, true));
+    assert_eq!(plan_patches(&again), vec![first_items]);
+    let next = feed.apply(row_event("acp_r", "TodoWrite", "Plan", second, true));
+    assert_eq!(plan_patches(&next), vec![second_items]);
 }
 
 #[test]

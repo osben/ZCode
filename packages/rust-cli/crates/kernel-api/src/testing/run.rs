@@ -28,8 +28,9 @@ pub struct RecordingSink {
     metered: Mutex<Vec<(Option<crate::ids::MessageId>, crate::metering::Metered)>>,
     /// The `session_start_context` flag of each `commit_compaction`, in commit order.
     compaction_flags: Mutex<Vec<bool>>,
-    /// Fork: the next `commit_message` fails ([`Self::fail_next_commit_message`]).
-    fail_commit: std::sync::atomic::AtomicBool,
+    /// Fork: how many `commit_message` calls still succeed before one fails
+    /// ([`Self::fail_commit_message_after`]); `None` when none fails.
+    fail_commit: Mutex<Option<usize>>,
     /// Fork: the ACP agent titles handed to `external_title`, in order.
     titles: Mutex<Vec<String>>,
 }
@@ -42,8 +43,12 @@ impl RecordingSink {
 
     /// Fork: the next `commit_message` fails with a storage error; later commits work.
     pub fn fail_next_commit_message(&self) {
-        self.fail_commit
-            .store(true, std::sync::atomic::Ordering::SeqCst);
+        self.fail_commit_message_after(0);
+    }
+
+    /// Fork: `commits` more `commit_message` calls succeed, then one fails with a storage error; later commits work.
+    pub fn fail_commit_message_after(&self, commits: usize) {
+        *self.fail_commit.lock_unpoisoned() = Some(commits);
     }
 
     pub fn messages(&self) -> Vec<Message> {
@@ -98,13 +103,18 @@ impl RunSink for RecordingSink {
     }
 
     async fn commit_message(&self, message: Message) -> Result<(), StoreError> {
-        if self
-            .fail_commit
-            .swap(false, std::sync::atomic::Ordering::SeqCst)
         {
-            return Err(StoreError::Storage {
-                message: "commit failed".to_owned(),
-            });
+            let mut left = self.fail_commit.lock_unpoisoned();
+            match *left {
+                Some(0) => {
+                    *left = None;
+                    return Err(StoreError::Storage {
+                        message: "commit failed".to_owned(),
+                    });
+                }
+                Some(commits) => *left = Some(commits - 1),
+                None => {}
+            }
         }
         self.messages.lock_unpoisoned().push(message);
         Ok(())

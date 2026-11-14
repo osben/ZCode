@@ -324,8 +324,10 @@ async fn an_acp_plan_replaces_the_root_list_and_signals_it() {
         (stored.tasks, stored.high_water_mark),
         (numbered.clone(), 4)
     );
-    // The same plan again writes nothing and keeps its IDs; the old list is still answered.
+    // The same plan again writes nothing, signals nothing and keeps its IDs; the old list is still answered.
     assert_eq!(writer.replace(&root, plan.clone()).await.unwrap(), numbered);
+    let nothing = tokio::time::timeout(std::time::Duration::from_millis(50), stream.next()).await;
+    assert!(nothing.is_err(), "an unchanged plan signalled {nothing:?}");
     let stored = harness.tasks.load(&root).await.unwrap();
     assert_eq!(
         (stored.tasks, stored.high_water_mark),

@@ -674,7 +674,11 @@ impl Turn<'_> {
         let usage = if self.segment.is_empty() {
             usage
         } else {
-            self.close_segment(usage).await?;
+            // A lost last segment fails the turn like a mid-turn commit failure: open rows settle on screen only.
+            if let Err(error) = self.close_segment(usage).await {
+                self.settle_open_live(ENDED_FAILED).await;
+                return Err(error);
+            }
             None
         };
         let mut closed = Vec::new();

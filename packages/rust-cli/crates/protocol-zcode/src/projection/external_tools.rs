@@ -13,7 +13,8 @@ const PLAN_COLLECTION_KEYS: [&str; 4] = ["todos", "plan", "steps", "items"];
 
 impl Projection {
     /// One `ExternalToolRow`: open the row (`inputStreaming`, or `running` once the agent started it), else take the
-    /// new input and title. A settled row is never reopened.
+    /// new input and title. A settled row is never reopened. A todo row projects its plan when it opens and when its
+    /// input changes before it settles (Node emits on each row's `ToolCallScheduled`), so a repeated event does not.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn external_tool_row(
         &mut self,
@@ -27,7 +28,8 @@ impl Projection {
         out: &mut Vec<Value>,
     ) {
         let key = tool_key(tool_use);
-        if !self.index.contains_key(&key) {
+        let fresh = !self.index.contains_key(&key);
+        if fresh {
             let turn = self
                 .turn
                 .as_ref()
@@ -38,12 +40,14 @@ impl Projection {
             row.insert("status".into(), json!(ToolStatus::InputStreaming.as_str()));
             self.append(key.clone(), row, out);
         }
+        let mut new_input = false;
         self.upsert(
             &key,
             |row| {
                 if ToolStatus::of(row).is_some_and(settled) {
                     return;
                 }
+                new_input = row.get("input") != Some(input);
                 if !title.is_empty() {
                     row.insert("title".into(), json!(title));
                 }
@@ -58,7 +62,9 @@ impl Projection {
             },
             out,
         );
-        self.todo_plan(name, input, now, out);
+        if fresh || new_input {
+            self.todo_plan(name, input, now, out);
+        }
     }
 
     /// A committed row: the live row (already settled by `ToolDone`) gets its reply message id; a cold read creates
@@ -116,9 +122,6 @@ impl Projection {
             return;
         };
         let plan = json!({"items": items, "updatedAt": now});
-        if self.plan_panel.as_ref() == Some(&plan) {
-            return;
-        }
         self.plan_panel = Some(plan.clone());
         out.push(json!({"op": "state.updated", "patch": {"plan": plan}}));
     }
