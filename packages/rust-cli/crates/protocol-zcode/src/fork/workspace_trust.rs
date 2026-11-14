@@ -15,6 +15,10 @@ use rust_cli_protocol_core::rpc::RpcError;
 use rust_cli_protocol_core::sessions::Bridged;
 use serde_json::{Value, json};
 
+use super::hook_review::REQUIRE_TRUST_CAPABLE_HOST;
+pub use super::hook_review::{
+    ReviewBundle, ReviewItem, ReviewLookup, ReviewSource, StoredTrust, ToggleError,
+};
 use crate::live::Live;
 use crate::server::{Server, kernel_error};
 
@@ -97,6 +101,39 @@ pub trait WorkspaceAdmin: Send + Sync {
     ) -> Value;
     /// The banners of a workspace now.
     async fn admission(&self, target: &WorkspaceTarget) -> Admission;
+    /// The workspace's hook bundle and its stored trust for a review (`fork/hook_review.rs`), or why there is none.
+    async fn hook_review(&self, _target: &WorkspaceTarget) -> ReviewLookup {
+        ReviewLookup::Nothing
+    }
+    /// Writes the trust records of `review_item_ids` in the bundle `bundle_digest` (Node
+    /// `createWorkspaceHookTrustRecords` + `store.grant`); `Err` is the reason code.
+    async fn hook_review_grant(
+        &self,
+        _target: &WorkspaceTarget,
+        _bundle_digest: &str,
+        _review_item_ids: &[String],
+    ) -> Result<(), &'static str> {
+        Err(REQUIRE_TRUST_CAPABLE_HOST)
+    }
+    /// Removes the workspace's records of `digests` (Node `store.revoke`); `Err` is the reason code.
+    async fn hook_review_revoke(
+        &self,
+        _target: &WorkspaceTarget,
+        _digests: &[String],
+    ) -> Result<(), &'static str> {
+        Err(REQUIRE_TRUST_CAPABLE_HOST)
+    }
+    /// Sets the configured `enabled` of one declaration in the workspace's `.zcode/config.json` (Node
+    /// `createWorkspaceHookReviewMutationPort().toggle`).
+    async fn hook_review_toggle(
+        &self,
+        _target: &WorkspaceTarget,
+        _bundle_digest: &str,
+        _review_item_id: &str,
+        _enabled: bool,
+    ) -> Result<(), ToggleError> {
+        Err(ToggleError::Rejected(REQUIRE_TRUST_CAPABLE_HOST))
+    }
 }
 
 fn admin(server: &Server) -> Option<Arc<dyn WorkspaceAdmin>> {
@@ -248,7 +285,7 @@ pub(crate) async fn refresh_session(server: &Server, live: &Bridged<Live>, sessi
     publish(live, admission, ticket);
 }
 
-fn publish(live: &Bridged<Live>, admission: Admission, ticket: u64) {
+pub(super) fn publish(live: &Bridged<Live>, admission: Admission, ticket: u64) {
     let sink = live.sink.clone();
     live.run(Box::pin(async move {
         sink.set_admission(admission, ticket).await;
@@ -257,4 +294,4 @@ fn publish(live: &Bridged<Live>, admission: Admission, ticket: u64) {
 
 #[cfg(test)]
 #[path = "workspace_trust_tests.rs"]
-mod tests;
+pub(super) mod tests;

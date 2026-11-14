@@ -19,6 +19,7 @@ mod commands;
 pub mod context;
 mod fork;
 pub mod headers;
+mod ids;
 mod inbound;
 mod inbox;
 mod index;
@@ -50,11 +51,15 @@ pub use attach::{HOST_ATTACH_ACK_ENV, serve_attached};
 pub use automation_port::HostAutomations;
 pub use cipher::HostCredentialCipher;
 pub use context::Context;
+pub use fork::hook_review::codes as hook_review_codes;
 pub use fork::node_helper::{
     NODE_HELPER_UNAVAILABLE, NodeHelper, NodeHelperLauncher, NodeHelperProcess,
     Timing as NodeHelperTiming,
 };
-pub use fork::{Admission, WorkspaceAdmin, WorkspaceTarget};
+pub use fork::{
+    Admission, ReviewBundle, ReviewItem, ReviewLookup, ReviewSource, StoredTrust, ToggleError,
+    WorkspaceAdmin, WorkspaceTarget,
+};
 pub use headers::HostHeaders;
 pub use network_capture::{NetworkCapture, with_network_capture};
 pub use server::Defaults;

@@ -381,7 +381,7 @@ async fn run_loop(
         Arc<dyn rust_cli_kernel_api::orchestration::ContextBuilder>,
     ) = if agent.fork_prefix.is_some() {
         let registry: Arc<dyn ToolRegistry> = if core.node_desktop {
-            Arc::new(crate::toolset::WithoutCron { inner: registry })
+            Arc::new(crate::toolset::NodeChild { inner: registry })
         } else {
             registry
         };
@@ -397,7 +397,7 @@ async fn run_loop(
                 inner: registry,
                 rule: ToolRule::new(&agent.definition, agent.background, agent.depth)
                     .with_questions(core.node_desktop)
-                    .without_cron(core.node_desktop),
+                    .node_child(core.node_desktop),
             }),
             Arc::new(SubagentContext {
                 inner: core.ports.context.clone(),

@@ -25,7 +25,9 @@ use rust_cli_kernel_api::mcp::McpTransport;
 use rust_cli_node_store::LOCAL_ENVIRONMENT;
 use rust_cli_paths::StoragePaths;
 use rust_cli_platform::local::{McpTrustError, McpTrustRecord, StillDeclared};
-use rust_cli_protocol_zcode::{Admission, WorkspaceAdmin, WorkspaceTarget};
+use rust_cli_protocol_zcode::{
+    Admission, ReviewLookup, ToggleError, WorkspaceAdmin, WorkspaceTarget,
+};
 use serde_json::{Map, Value, json};
 
 use crate::commands::hooks_trust::{self, TrustContext};
@@ -55,6 +57,8 @@ pub(crate) struct AppWorkspace {
     pub(crate) version: &'static str,
     lane: StdMutex<Option<Arc<Lane>>>,
     arrivals: AtomicU64,
+    /// Serializes the hook review's config writes (`app_hook_review.rs`).
+    toggles: tokio::sync::Semaphore,
 }
 
 /// The settings lane of one workspace key: the servers it connected and the ones it refused.
@@ -97,6 +101,7 @@ impl AppWorkspace {
             version: crate::VERSION,
             lane: StdMutex::new(None),
             arrivals: AtomicU64::new(0),
+            toggles: tokio::sync::Semaphore::new(1),
         }
     }
 
@@ -507,19 +512,8 @@ impl WorkspaceAdmin for AppWorkspace {
             declaration_digest,
         )
         .await;
-        // The process's hook snapshot belongs to its own workspace: only a grant there changes it.
-        let own = Target::new(self.process.workspace.root.as_str(), None);
-        if answer["accepted"] == json!(true) && trust == own {
-            let inputs = ConfigInputs {
-                files: self.files.as_ref(),
-                workspace: &self.process.workspace,
-                paths: &self.paths,
-                process_env: &self.process.process_env,
-                flag: self.process.flag.as_ref(),
-                project_is_local: self.process.project_is_local,
-            };
-            let hooks = crate::config::assemble(&inputs).await.hooks;
-            (self.replace_hooks)(hooks);
+        if answer["accepted"] == json!(true) {
+            self.rebuild_own_hooks(&trust).await;
         }
         answer
     }
@@ -553,7 +547,43 @@ impl WorkspaceAdmin for AppWorkspace {
         });
         Admission { mcp, hook }
     }
+
+    async fn hook_review(&self, target: &WorkspaceTarget) -> ReviewLookup {
+        self.review_bundle(target).await
+    }
+
+    async fn hook_review_grant(
+        &self,
+        target: &WorkspaceTarget,
+        bundle_digest: &str,
+        review_item_ids: &[String],
+    ) -> Result<(), &'static str> {
+        self.review_grant(target, bundle_digest, review_item_ids)
+            .await
+    }
+
+    async fn hook_review_revoke(
+        &self,
+        target: &WorkspaceTarget,
+        digests: &[String],
+    ) -> Result<(), &'static str> {
+        self.review_revoke(target, digests).await
+    }
+
+    async fn hook_review_toggle(
+        &self,
+        target: &WorkspaceTarget,
+        bundle_digest: &str,
+        review_item_id: &str,
+        enabled: bool,
+    ) -> Result<(), ToggleError> {
+        self.review_toggle(target, bundle_digest, review_item_id, enabled)
+            .await
+    }
 }
+
+#[path = "app_hook_review.rs"]
+mod hook_review;
 
 #[cfg(test)]
 #[path = "app_workspace_tests.rs"]
