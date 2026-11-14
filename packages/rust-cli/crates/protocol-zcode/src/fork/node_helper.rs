@@ -24,8 +24,9 @@ use tokio::time::Instant;
 /// The reason code of every helper-unavailable error (the Node helper's `proto.forkRustAgent.nodeHelperUnavailable`).
 pub const NODE_HELPER_UNAVAILABLE: &str = "proto.forkRustAgent.nodeHelperUnavailable";
 
-/// The helper protocol version, sent in `helper/initialize`.
-pub(crate) const PROTOCOL_VERSION: u64 = 1;
+/// The helper protocol version, sent in `helper/initialize`. Version 2 adds the F3 messages (helper MCP pipes, helper
+/// sessions, helper → Rust requests).
+pub(crate) const PROTOCOL_VERSION: u64 = 2;
 
 /// Methods Rust may forward (F1 plugin management, F2 saved workflows and run history). Forwarding also needs the
 /// method in the helper's advertised `methods`.
