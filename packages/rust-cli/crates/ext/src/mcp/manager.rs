@@ -354,6 +354,8 @@ impl Inner {
 
     /// 连接与重连（ext.md §3.3）：首次连接失败即失败；连上后断开时 stdio 失败，HTTP / SSE 退避重连。
     async fn connect(self: Arc<Self>, workspace: WorkspaceRef, config: McpServer, generation: u64) {
+        // Fork (F3): a NodeHelper server reconnects like a remote one, so a helper crash or reclaim is retried with backoff
+        // (each reconnect starts the next helper generation) instead of failing for good as a stdio server does.
         let remote = !matches!(config.transport, McpTransportConfig::Stdio { .. });
         let timeout = Duration::from_millis(self.settings.connect_timeout_for(config.options));
         let name = config.name.clone();
