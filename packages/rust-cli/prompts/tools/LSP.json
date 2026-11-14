@@ -1,0 +1,52 @@
+{
+  "name": "LSP",
+  "description": "Code intelligence from language servers: definition, references, implementations, hover, document and workspace symbols, and diagnostics for a file. Use it for symbols and types. Use Grep for plain text and configuration. Give line (1-based, as shown by Read) plus symbol (the identifier on that line, preferred) or character (1-based column). A status of pending means the server has not answered yet; it does not mean there are no errors.",
+  "input_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "operation": {
+        "description": "goToDefinition/findReferences/hover/goToImplementation need line plus symbol (preferred) or character; documentSymbol and diagnostics need only filePath; workspaceSymbol needs query.",
+        "type": "string",
+        "enum": [
+          "goToDefinition",
+          "findReferences",
+          "hover",
+          "documentSymbol",
+          "workspaceSymbol",
+          "goToImplementation",
+          "diagnostics"
+        ]
+      },
+      "filePath": {
+        "description": "File to query, absolute or relative to the working directory. For workspaceSymbol, any file of the target language (selects the server).",
+        "type": "string"
+      },
+      "line": {
+        "description": "1-based line number, as shown by Read.",
+        "type": "number"
+      },
+      "character": {
+        "description": "1-based column on the line. Prefer symbol instead; give exactly one of them.",
+        "type": "number"
+      },
+      "symbol": {
+        "description": "Identifier on the given line; its first whole-word occurrence is used.",
+        "type": "string"
+      },
+      "query": {
+        "description": "Symbol name to search for (workspaceSymbol).",
+        "type": "string"
+      },
+      "includeDeclaration": {
+        "description": "findReferences: also return the declaration. Defaults to false.",
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "operation",
+      "filePath"
+    ],
+    "additionalProperties": false
+  }
+}

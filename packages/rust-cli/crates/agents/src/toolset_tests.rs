@@ -274,7 +274,10 @@ fn a_desktop_subagent_gets_no_cron_tool() {
 
 #[test]
 fn a_desktop_fork_keeps_the_main_registry_without_the_cron_tools() {
-    let fork = super::WithoutCron { inner: registry() };
+    let fork = super::ForkChildTools {
+        inner: registry(),
+        without_cron: true,
+    };
     let listed: Vec<String> = fork
         .tools()
         .iter()
@@ -325,8 +328,9 @@ fn a_desktop_fork_withholds_none_of_the_five_cron_tools() {
         .iter()
         .map(|name| Arc::new(FakeTool::new(name, true, "")) as Arc<dyn Tool>)
         .collect();
-    let fork = super::WithoutCron {
+    let fork = super::ForkChildTools {
         inner: Arc::new(Withholding(tools)),
+        without_cron: true,
     };
     let session = rust_cli_kernel_api::ids::SessionId::new("s");
     for name in cron {
@@ -342,4 +346,50 @@ fn a_desktop_fork_withholds_none_of_the_five_cron_tools() {
         .collect();
     assert_eq!(listed, ["Read", "ScheduleWakeup"]);
     assert!(fork.withheld("Read").is_some());
+}
+
+/// specs/fork-rust-lsp.md "Tool (D2)": no subagent has `LSP`, even one whose definition names it.
+#[test]
+fn no_subagent_gets_the_lsp_tool() {
+    for definition in builtins() {
+        assert!(
+            !ToolRule::new(&definition, false, 1).allows("LSP"),
+            "{}",
+            definition.agent_type
+        );
+    }
+    let mut named = builtins()
+        .into_iter()
+        .find(|definition| definition.agent_type == GENERAL_PURPOSE)
+        .unwrap();
+    named.tools = Some(vec!["LSP".to_owned(), "Read".to_owned()]);
+    let rule = ToolRule::new(&named, false, 1);
+    assert!(!rule.allows("LSP"));
+    assert!(rule.allows("Read"));
+}
+
+/// A fork child shares the main registry, whose `LSP` is offered per session: the child never sees it, and outside the
+/// desktop it keeps the Cron tools.
+#[test]
+fn a_fork_child_never_sees_the_lsp_tool() {
+    let tools: Vec<Arc<dyn Tool>> = ["Read", "LSP", "CronCreate"]
+        .iter()
+        .map(|name| Arc::new(FakeTool::new(name, true, "")) as Arc<dyn Tool>)
+        .collect();
+    let fork = super::ForkChildTools {
+        inner: Arc::new(ListTools(tools)),
+        without_cron: false,
+    };
+    let session = rust_cli_kernel_api::ids::SessionId::new("s");
+    let listed: Vec<String> = fork
+        .snapshot(&session)
+        .tools
+        .iter()
+        .map(|tool| tool.name().to_owned())
+        .collect();
+    assert_eq!(listed, ["Read", "CronCreate"]);
+    assert!(fork.find_for(&session, "LSP").is_none());
+    assert!(fork.find("LSP").is_none());
+    assert!(fork.withheld("LSP").is_none());
+    assert!(fork.tools().iter().all(|tool| tool.name() != "LSP"));
 }

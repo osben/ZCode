@@ -47,6 +47,8 @@ mod grep_output;
 mod html_markdown;
 mod line_diff;
 mod lsp_range;
+// Fork: the `LSP` agent tool (specs/fork-rust-lsp.md "Tool (D2)").
+mod lsp_tool;
 mod mentions;
 mod monitor;
 mod monitor_input;
@@ -108,6 +110,7 @@ pub use file_state::ReadFileState;
 pub use file_state_restore::restore_file_state;
 pub use glob::GlobTool;
 pub use grep::GrepTool;
+pub use lsp_tool::{LspTool, LspTools};
 pub use monitor::MonitorTool;
 pub use notebook_edit::NotebookEditTool;
 pub use pipeline::Pipeline;

@@ -20,14 +20,15 @@ use rust_cli_kernel_api::env::{EnvPath, ReadFile, WorkspaceRef};
 use rust_cli_kernel_api::env_files::{PathStyle, StatFile};
 use rust_cli_kernel_api::ids::{EnvironmentId, SessionId};
 use rust_cli_kernel_api::lsp::{
-    CodeIntelligence, FileMutation, LanguageServers, LspPreferences, LspPreferencesPatch,
-    LspServerStatus, LspStatus, LspWorkspace,
+    CodeIntelligence, FileMutation, LanguageServers, LspOutput, LspPreferences,
+    LspPreferencesPatch, LspQuery, LspQueryError, LspServerStatus, LspStatus, LspWorkspace,
 };
 use rust_cli_kernel_api::machine::Files;
 use rust_cli_kernel_api::store::StoreQueries;
 use rust_cli_paths::StoragePaths;
 use serde_json::{Map, Value};
 use tokio::sync::OnceCell;
+use tokio_util::sync::CancellationToken;
 
 use self::preferences::PreferencesStore;
 use self::runtime::documents::{Disk, Documents, Snapshot};
@@ -35,7 +36,7 @@ use self::runtime::pool::{Limits, Pool, ServerKey, Status, merge_env};
 use self::runtime::process::Launcher;
 pub(crate) use self::runtime::process::LedgerLauncher;
 use self::runtime::server::Registry;
-use self::runtime::session::{SessionLsp, Shared, SharedPreferences};
+use self::runtime::session::{InstallProbe, SessionLsp, Shared, SharedPreferences};
 use crate::config::{ConfigInputs, plugin_view};
 
 /// What the host needs from the app-server assembly.
@@ -58,6 +59,19 @@ pub(crate) struct HostInputs {
 /// A session's runtime, created on its first prewarm or mutation; `None` inside: no server is declared there.
 type SessionSlot = (String, Arc<OnceCell<Option<Arc<SessionLsp>>>>);
 
+/// Node `isLspCommandInstalled` over the stdio-server env plus the server's own (the same probe as `lsp/status`).
+struct CommandProbe {
+    base_env: Vec<(String, String)>,
+}
+
+#[async_trait]
+impl InstallProbe for CommandProbe {
+    async fn installed(&self, server: &rust_cli_ext::plugins::lsp::ResolvedLspServer) -> bool {
+        let env = merge_env(&self.base_env, &server.env, cfg!(windows));
+        installed::installed(&server.command, &env).await
+    }
+}
+
 pub(crate) struct Host {
     inputs: HostInputs,
     preferences: PreferencesStore,
@@ -66,6 +80,9 @@ pub(crate) struct Host {
     shared: Shared,
     loaded: OnceCell<()>,
     sessions: Mutex<HashMap<SessionId, SessionSlot>>,
+    /// Whether each session is offered the `LSP` tool, and the workspace it was computed for (specs/fork-rust-lsp.md
+    /// "When the tool is offered"): written by `refresh_tool` and by every preference write, read by `tool_offered`.
+    tool_facts: Mutex<HashMap<SessionId, (WorkspaceRef, bool)>>,
 }
 
 impl Host {
@@ -85,6 +102,9 @@ impl Host {
             ),
             documents: Documents::new(windows),
             preferences: SharedPreferences::default(),
+            probe: Arc::new(CommandProbe {
+                base_env: base_env.clone(),
+            }),
         };
         Self {
             inputs,
@@ -93,6 +113,37 @@ impl Host {
             shared,
             loaded: OnceCell::new(),
             sessions: Mutex::default(),
+            tool_facts: Mutex::default(),
+        }
+    }
+
+    /// Node `isAvailable` for the session's runtime: enabled, and a declared server of the workspace is installed.
+    async fn tool_available(&self, session: &SessionId, workspace: &WorkspaceRef) -> bool {
+        if !self.current().await.enabled {
+            return false;
+        }
+        match self.session(session, workspace).await {
+            Some(runtime) => runtime.any_installed().await,
+            None => false,
+        }
+    }
+
+    /// Node `applyLspPreferences` for every runtime: each session's fact is recomputed before the write answers.
+    async fn refresh_tool_facts(&self) {
+        let known: Vec<(SessionId, WorkspaceRef)> = self
+            .tool_facts
+            .lock_unpoisoned()
+            .iter()
+            .map(|(session, (workspace, _))| (session.clone(), workspace.clone()))
+            .collect();
+        for (session, workspace) in known {
+            let available = self.tool_available(&session, &workspace).await;
+            if let Some(fact) = self.tool_facts.lock_unpoisoned().get_mut(&session) {
+                // A refresh for another workspace meanwhile owns the fact.
+                if fact.0 == workspace {
+                    fact.1 = available;
+                }
+            }
         }
     }
 
@@ -320,6 +371,7 @@ impl LanguageServers for Host {
         if !prefs.enabled {
             self.shared.pool.stop_all().await;
         }
+        self.refresh_tool_facts().await;
         Ok(prefs)
     }
 
@@ -399,6 +451,53 @@ impl CodeIntelligence for Host {
 
     fn session_closed(&self, session: &SessionId) {
         self.sessions.lock_unpoisoned().remove(session);
+        self.tool_facts.lock_unpoisoned().remove(session);
+    }
+
+    async fn refresh_tool(&self, session: &SessionId, workspace: &WorkspaceRef) {
+        let available = self.tool_available(session, workspace).await;
+        self.tool_facts
+            .lock_unpoisoned()
+            .insert(session.clone(), (workspace.clone(), available));
+    }
+
+    fn tool_offered(&self, session: &SessionId) -> bool {
+        self.shared.preferences.lock_unpoisoned().enabled
+            && self
+                .tool_facts
+                .lock_unpoisoned()
+                .get(session)
+                .is_some_and(|(_, available)| *available)
+    }
+
+    async fn query(
+        &self,
+        session: &SessionId,
+        workspace: &WorkspaceRef,
+        query: LspQuery,
+        cancel: &CancellationToken,
+    ) -> Result<LspOutput, LspQueryError> {
+        let failure = |error: runtime::LspError| LspQueryError {
+            code: error.code.to_owned(),
+            message: error.message,
+        };
+        if !self.current().await.enabled {
+            return Err(failure(runtime::LspError::new(
+                "lsp_disabled",
+                "Code intelligence is turned off",
+            )));
+        }
+        // No declared server: Node's runtime has an empty registry, so no file has a server.
+        let Some(runtime) = self.session(session, workspace).await else {
+            return Err(failure(runtime::LspError::new(
+                "lsp_no_server_for_file",
+                format!(
+                    "No language server is configured for {} on this file type",
+                    query.operation.as_str()
+                ),
+            )));
+        };
+        runtime.query(&query, cancel).await.map_err(failure)
     }
 }
 

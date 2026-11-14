@@ -591,3 +591,81 @@ async fn the_host_runs_a_server_for_a_session_and_stops_it_when_disabled() {
     assert!(fixture.launched.try_recv().is_err());
     fixture.host.session_closed(&session);
 }
+
+/// D2 "When the tool is offered": enabled and a declared server installed; preference writes recompute it.
+#[cfg(unix)]
+#[tokio::test]
+async fn the_tool_is_offered_while_enabled_with_an_installed_server() {
+    let fixture = fixture(&[]).await;
+    let session = SessionId::new("s1");
+    let root = reference("/Users/dev/a");
+    assert!(!fixture.host.tool_offered(&session), "never computed");
+    fixture.host.refresh_tool(&session, &root).await;
+    assert!(!fixture.host.tool_offered(&session), "nothing installed");
+
+    install(&fixture.bin, "typescript-language-server");
+    fixture.host.refresh_tool(&session, &root).await;
+    assert!(fixture.host.tool_offered(&session));
+
+    fixture
+        .host
+        .set_preferences(patch(Some(false), &[]))
+        .await
+        .unwrap();
+    assert!(!fixture.host.tool_offered(&session), "hidden at once");
+    fixture
+        .host
+        .set_preferences(patch(Some(true), &[]))
+        .await
+        .unwrap();
+    assert!(
+        fixture.host.tool_offered(&session),
+        "the write recomputed it"
+    );
+
+    fixture.host.session_closed(&session);
+    assert!(
+        !fixture.host.tool_offered(&session),
+        "dropped with the session"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_workspace_without_declared_servers_is_not_offered_and_has_no_server_for_a_file() {
+    let fixture = fixture(&[(
+        "/Users/dev/a/zcode.json",
+        json!({"plugins": {"enabledPlugins": {"typescript-lsp@zcode-plugins-official": false}}}),
+    )])
+    .await;
+    install(&fixture.bin, "typescript-language-server");
+    let session = SessionId::new("s1");
+    let root = reference("/Users/dev/a");
+    fixture.host.refresh_tool(&session, &root).await;
+    assert!(!fixture.host.tool_offered(&session));
+    let error = fixture
+        .host
+        .query(
+            &session,
+            &root,
+            rust_cli_kernel_api::lsp::LspQuery {
+                operation: rust_cli_kernel_api::lsp::LspOperation::Hover,
+                file_path: "/Users/dev/a/x.ts".to_owned(),
+                line: Some(1.0),
+                character: Some(1.0),
+                symbol: None,
+                query: None,
+                include_declaration: None,
+            },
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(
+        (error.code.as_str(), error.message.as_str()),
+        (
+            "lsp_no_server_for_file",
+            "No language server is configured for hover on this file type"
+        )
+    );
+}

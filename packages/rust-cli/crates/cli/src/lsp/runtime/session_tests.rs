@@ -15,12 +15,29 @@ use crate::lsp::runtime::pool::{Pool, State};
 use crate::lsp::runtime::server::Registry;
 use crate::lsp::runtime::test_server;
 
+/// A probe that answers installed until told otherwise.
+pub(crate) struct Installed(pub(crate) std::sync::atomic::AtomicBool);
+
+impl Default for Installed {
+    fn default() -> Self {
+        Self(std::sync::atomic::AtomicBool::new(true))
+    }
+}
+
+#[async_trait]
+impl super::InstallProbe for Installed {
+    async fn installed(&self, _server: &rust_cli_ext::plugins::lsp::ResolvedLspServer) -> bool {
+        self.0.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
 struct Harness {
     session: Arc<SessionLsp>,
     pool: Pool,
     preferences: Arc<Mutex<LspPreferences>>,
     launched: tokio::sync::mpsc::UnboundedReceiver<FakeProcess>,
     _launcher: Arc<crate::lsp::runtime::pool::tests::FakeLauncher>,
+    probe: Arc<Installed>,
 }
 
 fn harness() -> Harness {
@@ -30,10 +47,12 @@ fn harness() -> Harness {
 fn harness_with(disk: Arc<dyn Disk>) -> Harness {
     let (pool, launcher, launched) = fake_pool();
     let preferences = Arc::new(Mutex::new(LspPreferences::default()));
+    let probe = Arc::new(Installed::default());
     let shared = Shared {
         pool: pool.clone(),
         documents: Documents::new(false),
         preferences: Arc::clone(&preferences),
+        probe: Arc::clone(&probe) as Arc<dyn super::InstallProbe>,
     };
     let session = SessionLsp::new(shared, Registry::new(vec![test_server("ts")]), key(), disk);
     Harness {
@@ -42,14 +61,19 @@ fn harness_with(disk: Arc<dyn Disk>) -> Harness {
         preferences,
         launched,
         _launcher: launcher,
+        probe,
     }
 }
 
 impl Harness {
     async fn start(&mut self) -> FakeProcess {
+        self.start_with(json!({})).await
+    }
+
+    async fn start_with(&mut self, capabilities: Value) -> FakeProcess {
         self.session.prewarm("/w/a.ts");
         let mut process = self.launched.recv().await.unwrap();
-        process.initialize(json!({})).await;
+        process.initialize(capabilities).await;
         self.ready().await;
         process
     }
@@ -401,3 +425,6 @@ async fn prewarm_starts_nothing_when_code_intelligence_is_off() {
     tokio::time::sleep(Duration::from_millis(5)).await;
     assert!(harness.launched.try_recv().is_err());
 }
+
+#[path = "query_flow_tests.rs"]
+mod query_flow;

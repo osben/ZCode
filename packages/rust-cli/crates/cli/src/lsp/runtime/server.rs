@@ -257,6 +257,10 @@ impl Registry {
         }
     }
 
+    pub(crate) fn servers(&self) -> &[Arc<ResolvedLspServer>] {
+        &self.servers
+    }
+
     pub(crate) fn for_file(&self, path: &str) -> Option<Match> {
         let extension = extname(path);
         if extension.is_empty() {

@@ -23,6 +23,8 @@ const ALL_AGENT_DISALLOWED: &[&str] = &[
     tool_names::EXIT_PLAN_MODE,
     tool_names::ENTER_PLAN_MODE,
     tool_names::ASK_USER_QUESTION,
+    // Fork: Node builds subagent runtimes without the LSP service (specs/fork-rust-lsp.md "Tool (D2)").
+    tool_names::LSP,
 ];
 
 /// Fork: the desktop Cron tools (Node registers them for the main session only).
@@ -242,31 +244,43 @@ impl ToolRegistry for FilteredTools {
     }
 }
 
-/// Fork (node_desktop): a fork child keeps the main thread's registry but loses the Cron tools, which Node registers
-/// for the main session only (every subagent child, fork or not, has none).
-pub(crate) struct WithoutCron {
+/// Fork: a fork child keeps the main thread's registry but loses the tools Node registers for the main session only:
+/// `LSP` always (a subagent runtime has no LSP service), and the Cron tools under the desktop agent (every subagent
+/// child, fork or not, has none there).
+pub(crate) struct ForkChildTools {
     pub(crate) inner: Arc<dyn ToolRegistry>,
+    /// node_desktop: the Cron tools are main-session only.
+    pub(crate) without_cron: bool,
 }
 
-fn not_cron(tool: &Arc<dyn Tool>) -> bool {
-    !MAIN_SESSION_CRON.contains(&tool.name())
+impl ForkChildTools {
+    fn keeps(&self, tool: &Arc<dyn Tool>) -> bool {
+        let name = tool.name();
+        name != tool_names::LSP && !(self.without_cron && MAIN_SESSION_CRON.contains(&name))
+    }
 }
 
-impl ToolRegistry for WithoutCron {
+impl ToolRegistry for ForkChildTools {
     fn tools(&self) -> Vec<Arc<dyn Tool>> {
-        self.inner.tools().into_iter().filter(not_cron).collect()
+        self.inner
+            .tools()
+            .into_iter()
+            .filter(|tool| self.keeps(tool))
+            .collect()
     }
 
     fn find(&self, name: &str) -> Option<Arc<dyn Tool>> {
-        self.inner.find(name).filter(not_cron)
+        self.inner.find(name).filter(|tool| self.keeps(tool))
     }
 
     fn find_for(&self, session: &SessionId, name: &str) -> Option<Arc<dyn Tool>> {
-        self.inner.find_for(session, name).filter(not_cron)
+        self.inner
+            .find_for(session, name)
+            .filter(|tool| self.keeps(tool))
     }
 
     fn withheld(&self, name: &str) -> Option<Arc<dyn Tool>> {
-        self.inner.withheld(name).filter(not_cron)
+        self.inner.withheld(name).filter(|tool| self.keeps(tool))
     }
 
     fn hides(&self, name: &str) -> bool {
@@ -280,7 +294,11 @@ impl ToolRegistry for WithoutCron {
     fn snapshot(&self, session: &SessionId) -> ToolSnapshot {
         let snapshot = self.inner.snapshot(session);
         ToolSnapshot {
-            tools: snapshot.tools.into_iter().filter(not_cron).collect(),
+            tools: snapshot
+                .tools
+                .into_iter()
+                .filter(|tool| self.keeps(tool))
+                .collect(),
             mcp: snapshot.mcp,
         }
     }

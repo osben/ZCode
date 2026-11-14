@@ -301,12 +301,17 @@ pub(crate) fn query_parts(
     ),
     (late, operations): (&Arc<LateCompactor>, Operations),
     (defaults, traits): (&Defaults, SurfaceTraits),
+    code: Option<Arc<dyn rust_cli_kernel_api::lsp::CodeIntelligence>>,
 ) -> QueryParts {
     QueryParts {
         model: ports.model.clone(),
         context: context.clone(),
         tools: Arc::new(rust_cli_tools::PolicyFiltered::new(
-            ext.registry(),
+            match code {
+                // Fork: the `LSP` tool sits under the deny filter, offered per session (specs/fork-rust-lsp.md).
+                Some(code) => Arc::new(rust_cli_tools::LspTools::new(ext.registry(), code)),
+                None => ext.registry(),
+            },
             gate.clone(),
         )),
         // 管线直接拿判决链（F125：缺陷 D1 是以前包在外面的一层漏转发了“只批准这一次”）；按调用的 `machine` 选机器

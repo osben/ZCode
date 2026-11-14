@@ -4,22 +4,38 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
+use async_trait::async_trait;
 use rust_cli_base::sync::LockUnpoisoned;
 use rust_cli_ext::plugins::lsp::ResolvedLspServer;
-use rust_cli_kernel_api::lsp::{FileMutation, FileMutationKind, LspPreferences};
+use rust_cli_kernel_api::lsp::{
+    FileMutation, FileMutationKind, LspOperation, LspOutput, LspPreferences, LspQuery,
+    LspResultStatus,
+};
 use serde_json::Value;
 use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 use tokio::time::Instant;
+use tokio_util::sync::CancellationToken;
 
 use super::documents::{Disk, Documents, SyncContext};
-use super::edits::{Resolved, Tracker, report};
+use super::edits::{Resolved, Tracker, report, split_lines};
 use super::pool::{Acquired, Event, Pool, ServerConnection, ServerKey};
+use super::query::{self, LineReader, Projection};
 use super::server::{Match, Registry};
-use super::{EDIT_DIAGNOSTICS_MAX, EDIT_DIAGNOSTICS_MAX_CARRY_ROUNDS, EDIT_DIAGNOSTICS_WAIT};
+use super::{
+    DIAGNOSTICS_QUERY_WAIT, EDIT_DIAGNOSTICS_MAX, EDIT_DIAGNOSTICS_MAX_CARRY_ROUNDS,
+    EDIT_DIAGNOSTICS_WAIT, LspError,
+};
 
 /// The process's preferences as last loaded or set (Node `getPreferences`, synchronous).
 pub(crate) type SharedPreferences = Arc<Mutex<LspPreferences>>;
+
+/// Whether a server's command is installed (Node `LanguageServerPort.isInstalled`): the `LSP` tool's availability and
+/// its first check before an acquire.
+#[async_trait]
+pub(crate) trait InstallProbe: Send + Sync {
+    async fn installed(&self, server: &ResolvedLspServer) -> bool;
+}
 
 /// What one session's runtime shares with the process.
 #[derive(Clone)]
@@ -27,6 +43,7 @@ pub(crate) struct Shared {
     pub(crate) pool: Pool,
     pub(crate) documents: Documents,
     pub(crate) preferences: SharedPreferences,
+    pub(crate) probe: Arc<dyn InstallProbe>,
 }
 
 /// Node `LspService` for one session and workspace.
@@ -271,7 +288,7 @@ impl SessionLsp {
                     disk: session.disk.as_ref(),
                 };
                 match session.shared.documents.ensure_open(&context, &path).await {
-                    Ok(()) => session
+                    Ok(_) => session
                         .tracker
                         .lock_unpoisoned()
                         .settle(&path, None, ordinal),
@@ -286,6 +303,183 @@ impl SessionLsp {
             }
             session.shared.documents.wake();
         });
+    }
+
+    /// Node `isAvailable` after its enabled check: a declared server is installed.
+    pub(crate) async fn any_installed(&self) -> bool {
+        for server in self.registry.servers() {
+            if self.shared.probe.installed(server).await {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Node `runLspQuery`. `query.file_path` is absolute.
+    pub(crate) async fn query(
+        &self,
+        query: &LspQuery,
+        cancel: &CancellationToken,
+    ) -> Result<LspOutput, LspError> {
+        let disabled = || LspError::new("lsp_disabled", "Code intelligence is turned off");
+        if !self.enabled() {
+            return Err(disabled());
+        }
+        let operation = query.operation;
+        let found = self.registry.for_file(&query.file_path).ok_or_else(|| {
+            LspError::new(
+                "lsp_no_server_for_file",
+                format!(
+                    "No language server is configured for {} on this file type",
+                    operation.as_str()
+                ),
+            )
+        })?;
+        let server = &found.server;
+        if !self.shared.probe.installed(server).await {
+            return Err(LspError::new(
+                "lsp_server_not_installed",
+                format!(
+                    "Language server {} is not installed on this machine",
+                    server.id
+                ),
+            ));
+        }
+        let connection = match self
+            .shared
+            .pool
+            .acquire_when(server, &self.key, || self.enabled())
+            .ok_or_else(disabled)?
+        {
+            Acquired::Ready(connection) => connection,
+            Acquired::Starting => {
+                return Err(LspError::new(
+                    "lsp_server_starting",
+                    format!(
+                        "Language server {} is starting; retry shortly; use Grep meanwhile",
+                        server.id
+                    ),
+                ));
+            }
+            Acquired::Failed(error) => return Err(error),
+        };
+        if !query::supports(connection.capabilities(), operation) {
+            return Err(LspError::new(
+                "lsp_operation_unsupported",
+                format!(
+                    "Language server {} does not support {}",
+                    server.id,
+                    operation.as_str()
+                ),
+            ));
+        }
+        let documents = &self.shared.documents;
+        let windows = documents.windows();
+        let mut reader = LineReader::new(self.disk.as_ref());
+        let mut projection = Projection {
+            operation,
+            server_id: &server.id,
+            document_uri: "",
+            workspace: &self.key.workspace,
+            windows,
+            status: LspResultStatus::Ok,
+        };
+        if operation == LspOperation::WorkspaceSymbol {
+            let (method, params) =
+                query::request(operation, "", (0, 0), None, query.query.as_deref())
+                    .unwrap_or_else(|| unreachable!("workspaceSymbol has a request"));
+            let raw = connection
+                .request(method, Some(params), None, Some(cancel))
+                .await?;
+            return query::project(&projection, &raw, &mut reader).await;
+        }
+
+        let context = SyncContext {
+            key: &self.key,
+            connection: &connection,
+            language_id: &found.language_id,
+            disk: self.disk.as_ref(),
+        };
+        let text = documents
+            .ensure_open(&context, &query.file_path)
+            .await
+            .map_err(|error| LspError::new("lsp_document_unreadable", error))?;
+        let uri = documents.uri(&query.file_path);
+        if operation == LspOperation::Diagnostics {
+            return Ok(self
+                .diagnostics(&server.id, &query.file_path, &uri, cancel)
+                .await);
+        }
+        let position = if operation.positional() {
+            let line = query.line.ok_or_else(|| {
+                LspError::new(
+                    "lsp_invalid_position",
+                    "line is required for this operation",
+                )
+            })?;
+            query::resolve_position(
+                &split_lines(&text),
+                line,
+                query.character,
+                query.symbol.as_deref(),
+            )?
+        } else {
+            (0, 0)
+        };
+        let (method, params) =
+            query::request(operation, &uri, position, query.include_declaration, None)
+                .unwrap_or_else(|| unreachable!("every operation but diagnostics has a request"));
+        let raw = connection
+            .request(method, Some(params), None, Some(cancel))
+            .await?;
+        projection.document_uri = &uri;
+        query::project(&projection, &raw, &mut reader).await
+    }
+
+    /// Node `diagnosticsOperation`: waits for a result fresh for the current version, woken by the documents; a
+    /// cancelled call stops waiting.
+    async fn diagnostics(
+        &self,
+        server_id: &str,
+        path: &str,
+        uri: &str,
+        cancel: &CancellationToken,
+    ) -> LspOutput {
+        let documents = &self.shared.documents;
+        let deadline = Instant::now() + DIAGNOSTICS_QUERY_WAIT;
+        let mut wakeups = documents.wakeups();
+        let fresh = loop {
+            wakeups.borrow_and_update();
+            if let Some(items) = documents.fresh(server_id, &self.key, uri) {
+                break Some(items);
+            }
+            tokio::select! {
+                changed = wakeups.changed() => if changed.is_err() { break None },
+                () = tokio::time::sleep_until(deadline) => break None,
+                () = cancel.cancelled() => break None,
+            }
+        };
+        // The last check after the wait, as Node's `finish` re-reads the predicate.
+        let fresh = fresh.or_else(|| documents.fresh(server_id, &self.key, uri));
+        let windows = documents.windows();
+        match fresh {
+            Some(items) => query::project_diagnostics(
+                server_id,
+                path,
+                &items,
+                &self.key.workspace,
+                windows,
+                LspResultStatus::Ok,
+            ),
+            None => query::project_diagnostics(
+                server_id,
+                path,
+                &[],
+                &self.key.workspace,
+                windows,
+                LspResultStatus::Pending,
+            ),
+        }
     }
 
     /// Fresh diagnostics of a pending edit, or None while it is syncing or not fresh.
@@ -378,4 +572,4 @@ impl Drop for SessionLsp {
 
 #[cfg(test)]
 #[path = "session_tests.rs"]
-mod tests;
+pub(crate) mod tests;
