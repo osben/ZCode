@@ -57,6 +57,51 @@
     },
     {
       "input": {
+        "operation": "hover",
+        "filePath": "/Users/dev/work/src/",
+        "line": 1,
+        "symbol": "x"
+      },
+      "filePath": "/Users/dev/work/src/"
+    },
+    {
+      "input": {
+        "operation": "hover",
+        "filePath": "/Users/dev/work/src/../lib/./",
+        "line": 1,
+        "symbol": "x"
+      },
+      "filePath": "/Users/dev/work/lib/"
+    },
+    {
+      "input": {
+        "operation": "hover",
+        "filePath": "/Users/dev/work/src/..//",
+        "line": 1,
+        "symbol": "x"
+      },
+      "filePath": "/Users/dev/work/"
+    },
+    {
+      "input": {
+        "operation": "hover",
+        "filePath": "/",
+        "line": 1,
+        "symbol": "x"
+      },
+      "filePath": "/"
+    },
+    {
+      "input": {
+        "operation": "hover",
+        "filePath": "src/",
+        "line": 1,
+        "symbol": "x"
+      },
+      "filePath": "/Users/dev/work/src"
+    },
+    {
+      "input": {
         "operation": "documentSymbol",
         "filePath": "src/a.ts"
       },

@@ -521,7 +521,7 @@ async fn inputs_resolve_and_fail_as_node_handler() {
         "the context's directory is Node's"
     );
     let cases = goldens["cases"].as_array().unwrap();
-    assert_eq!(cases.len(), 17);
+    assert_eq!(cases.len(), 22);
     for case in cases {
         let input = &case["input"];
         let code = FakeCode::answering(Ok(definition_output()));
@@ -540,5 +540,24 @@ async fn inputs_resolve_and_fail_as_node_handler() {
                 );
             }
         }
+    }
+}
+
+/// Node `path.win32` for the same rule (`isAbsolute ? normalize : resolve`); the expected values are Node's.
+#[test]
+fn windows_tool_paths_keep_node_trailing_separators() {
+    for (input, expected) in [
+        ("C:\\w\\src\\", "C:\\w\\src\\"),
+        ("C:/w/src/", "C:\\w\\src\\"),
+        ("src\\", "C:\\w\\src"),
+        ("/c/x/", "\\c\\x\\"),
+        ("\\\\srv\\share\\d\\", "\\\\srv\\share\\d\\"),
+        ("C:\\", "C:\\"),
+    ] {
+        assert_eq!(
+            super::tool_path(super::PathStyle::Windows, "C:\\w", input),
+            expected,
+            "{input}"
+        );
     }
 }

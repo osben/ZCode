@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use rust_cli_kernel_api::env_files::PathStyle;
 use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::lsp::{CodeIntelligence, LspOperation, LspQuery};
 use rust_cli_kernel_api::mcp_state::McpConnections;
@@ -109,8 +110,7 @@ impl LspTool {
             return Err(failed(EMPTY_PATH.to_owned()));
         }
         let mut query = input.into_query();
-        // Node `path.resolve`: no `~` expansion.
-        query.file_path = style(context).resolve(&cwd(context).await, &query.file_path, None);
+        query.file_path = tool_path(style(context), &cwd(context).await, &query.file_path);
         let output = self
             .code
             .query(&context.session, &context.workspace, query, &context.cancel)
@@ -124,6 +124,19 @@ impl LspTool {
             display: serde_json::to_value(&output).unwrap_or(Value::Null),
         })
     }
+}
+
+/// Node `resolveToolWorkspacePath`: an absolute path through `path.normalize`, which keeps a trailing separator; any
+/// other through `path.resolve` against the working directory (no `~` expansion, no trailing separator).
+fn tool_path(style: PathStyle, cwd: &str, input: &str) -> String {
+    if !style.is_absolute(input) {
+        return style.resolve(cwd, input, None);
+    }
+    let mut path = style.normalize(input);
+    if input.ends_with(|c| style.is_separator(c)) && !path.ends_with(|c| style.is_separator(c)) {
+        path.push(style.separator());
+    }
+    path
 }
 
 #[async_trait]
