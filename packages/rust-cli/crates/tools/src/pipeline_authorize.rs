@@ -32,12 +32,18 @@ impl Pipeline {
         if let Some(message) = validate(tool.name(), &tool.input_schema(), &input) {
             return Err(AppToolRefusal::InvalidInput(message));
         }
-        let mut messages = HookMessages::default();
-        match self.admit(tool, input, context, &mut messages).await {
-            // A PreToolUse hook that stops the turn denies an App call (Node's `preventContinuation`).
-            Ok(_) if !messages.pre_stop.is_empty() => {
-                Err(AppToolRefusal::PermissionDenied(HOOK_STOPPED.to_owned()))
-            }
+        let mut messages = HookMessages {
+            app_call: true,
+            ..HookMessages::default()
+        };
+        let admitted = self.admit(tool, input, context, &mut messages).await;
+        // A PreToolUse hook that stops the turn denies an App call (Node's `preventContinuation`, before the gate).
+        if let Some(reason) = messages.pre_stopped {
+            return Err(AppToolRefusal::PermissionDenied(
+                reason.unwrap_or_else(|| HOOK_STOPPED.to_owned()),
+            ));
+        }
+        match admitted {
             Ok((input, _)) => Ok(input),
             Err(Rejection::ByHook(output) | Rejection::Other(output)) => {
                 Err(AppToolRefusal::PermissionDenied(text_of(&output)))

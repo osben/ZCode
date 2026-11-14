@@ -19,6 +19,11 @@ pub(crate) struct HookMessages {
     pub pre_stop: Vec<Message>,
     /// Fork: the tool itself asked to end the turn ([`rust_cli_kernel_api::tool::ToolCallOutput::stop_turn`]).
     pub stop_turn: bool,
+    /// Fork: a PreToolUse hook asked to stop (`continue: false`), with its `stopReason`; an MCP App call is denied then
+    /// (pipeline_authorize.rs, Node's `preventContinuation`).
+    pub pre_stopped: Option<Option<String>>,
+    /// Fork: the call is an MCP App call's authorization, which a stopping hook ends before the gate.
+    pub app_call: bool,
 }
 
 impl HookMessages {
@@ -149,4 +154,7 @@ pub(crate) fn replace_output(output: &mut ToolOutput, value: Value) {
 pub(crate) fn take_pre(messages: &mut HookMessages, outcome: &mut HookOutcome) {
     messages.before.append(&mut outcome.messages);
     messages.pre_stop.append(&mut outcome.after_result);
+    if outcome.prevent_continuation {
+        messages.pre_stopped = Some(outcome.stop_reason.clone());
+    }
 }

@@ -216,3 +216,37 @@ async fn an_incognito_gate_refuses_before_any_hook() {
     assert!(matches!(result, Err(AppToolRefusal::PermissionDenied(_))));
     assert!(hooks.seen.lock().unwrap().is_empty());
 }
+
+/// Node's `preventContinuation`: a PreToolUse hook that stops the turn denies an App call, with its stop reason.
+#[tokio::test]
+async fn a_hook_that_stops_the_turn_denies_with_its_reason() {
+    let stopping = |reason: Option<&str>| Hooks {
+        pre: HookOutcome {
+            prevent_continuation: true,
+            stop_reason: reason.map(str::to_owned),
+            ..HookOutcome::default()
+        },
+        ..Hooks::default()
+    };
+    // Denied before the gate: no prompt, though the gate would ask.
+    let ask = PermissionDecision::ask("search?", Vec::new());
+    let (result, seen) = authorize(
+        ask,
+        stopping(Some("stop now")),
+        allow(),
+        json!({"query": "q"}),
+    )
+    .await;
+    assert_eq!(seen, [HookEventName::PreToolUse]);
+    assert_eq!(
+        result,
+        Err(AppToolRefusal::PermissionDenied("stop now".to_owned()))
+    );
+    let (result, _) = authorize(allowed(), stopping(None), allow(), json!({"query": "q"})).await;
+    assert_eq!(
+        result,
+        Err(AppToolRefusal::PermissionDenied(
+            "Tool denied by host hook".to_owned()
+        ))
+    );
+}

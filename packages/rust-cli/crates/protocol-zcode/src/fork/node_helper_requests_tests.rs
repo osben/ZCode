@@ -26,11 +26,17 @@ impl HelperRequests for Answers {
     }
 }
 
-fn helper() -> (Rig, Arc<Answers>) {
-    let rig = rig(fake(&[], mcp_echo()), timing());
+/// A started helper (its generation is `1`) whose requests [`Answers`] answers.
+async fn helper() -> (Rig, Arc<Answers>) {
+    let rig = rig(fake(&["plugins/list"], mcp_echo()), timing());
     let answers = Arc::new(Answers);
     let weak: std::sync::Weak<dyn HelperRequests> = Arc::downgrade(&answers) as _;
     rig.helper.set_requests(weak);
+    rig.helper
+        .mcp_connect(&workspace_params(), "plugin:viewer:view")
+        .await
+        .expect("started");
+    assert!(rig.helper.with_running(1, |_| ()));
     (rig, answers)
 }
 
@@ -40,7 +46,7 @@ fn authorize(key: &str, input: Value) -> Value {
 
 #[tokio::test]
 async fn a_request_reaches_its_answerer_with_a_live_cancel() {
-    let (rig, _answers) = helper();
+    let (rig, _answers) = helper().await;
     let answer = rig
         .helper
         .helper_request(1, AUTHORIZE_APP_TOOL, authorize("k1", json!({})))
@@ -53,7 +59,7 @@ async fn a_request_reaches_its_answerer_with_a_live_cancel() {
 
 #[tokio::test]
 async fn a_cancel_fires_the_running_request_and_an_early_cancel_is_remembered() {
-    let (rig, _answers) = helper();
+    let (rig, _answers) = helper().await;
     let running = {
         let helper = rig.helper.clone();
         tokio::spawn(async move {
@@ -85,34 +91,37 @@ async fn a_cancel_fires_the_running_request_and_an_early_cancel_is_remembered() 
 }
 
 #[tokio::test]
-async fn a_lost_helper_abandons_only_its_generations_requests() {
-    let (rig, _answers) = helper();
-    let spawn = |generation: u64, key: &'static str| {
+async fn a_lost_helper_abandons_its_requests_and_a_late_request_starts_cancelled() {
+    let (rig, _answers) = helper().await;
+    let running = {
         let helper = rig.helper.clone();
         tokio::spawn(async move {
             helper
-                .helper_request(
-                    generation,
-                    AUTHORIZE_APP_TOOL,
-                    authorize(key, json!("wait")),
-                )
+                .helper_request(1, AUTHORIZE_APP_TOOL, authorize("k1", json!("wait")))
                 .await
         })
     };
-    let (old, new) = (spawn(1, "old"), spawn(2, "new"));
-    while rig.helper.requests.lock().unwrap().live.len() < 2 {
+    while rig.helper.requests.lock().unwrap().live.is_empty() {
         tokio::task::yield_now().await;
     }
+    // Another generation's loss leaves it running.
+    rig.helper.requests_lost(7);
+    tokio::task::yield_now().await;
+    assert!(!running.is_finished());
     rig.helper.requests_lost(1);
-    assert!(old.await.unwrap().is_err());
-    assert!(!new.is_finished());
-    rig.helper.requests_lost(2);
-    assert!(new.await.unwrap().is_err());
+    assert!(running.await.unwrap().is_err());
+    // A request of a generation that is not running (its link dropped before the request began) starts cancelled.
+    let late = rig
+        .helper
+        .helper_request(7, AUTHORIZE_APP_TOOL, authorize("k2", json!({})))
+        .await
+        .unwrap();
+    assert_eq!(late["cancelled"], json!(true));
 }
 
 #[tokio::test]
 async fn a_request_without_a_key_an_answerer_or_a_known_method_is_refused() {
-    let (rig, _answers) = helper();
+    let (rig, _answers) = helper().await;
     let error = rig
         .helper
         .helper_request(1, AUTHORIZE_APP_TOOL, json!({"sessionId": "s1"}))

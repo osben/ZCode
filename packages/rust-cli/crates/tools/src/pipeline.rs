@@ -349,6 +349,10 @@ impl Pipeline {
         let event = hooks::event(HookEventName::PreToolUse, &call.hooks, payload).await;
         let mut pre = self.hooks.run(event, context.cancel.clone()).await;
         hooks::take_pre(messages, &mut pre);
+        // Fork: an MCP App call a hook stopped is denied without a prompt (pipeline_authorize.rs).
+        if messages.app_call && messages.pre_stopped.is_some() {
+            return Err(Rejection::ByHook(error(String::new())));
+        }
         if let Some(updated) = pre.updated_input.take() {
             if let Some(message) = validate(tool.name(), &schema, &updated) {
                 return Err(Rejection::ByHook(error(format!(

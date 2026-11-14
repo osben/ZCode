@@ -80,11 +80,16 @@ impl NodeHelper {
             .and_then(Weak::upgrade)
     }
 
+    /// The request's cancel. It starts cancelled when its cancel came first, or when its process is already gone:
+    /// `serve` spawns the request, so the link can drop before it begins, after [`Self::requests_lost`] ran.
     fn begin(&self, generation: u64, key: &str) -> CancellationToken {
         let cancel = CancellationToken::new();
         let mut requests = self.requests.lock_unpoisoned();
         if let Some(position) = requests.cancelled.iter().position(|known| known == key) {
             requests.cancelled.remove(position);
+            cancel.cancel();
+        }
+        if !self.with_running(generation, |_| ()) {
             cancel.cancel();
         }
         requests

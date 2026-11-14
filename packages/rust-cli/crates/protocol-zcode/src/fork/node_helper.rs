@@ -427,8 +427,9 @@ impl NodeHelper {
             )
             .await;
             if let Some(helper) = weak.upgrade() {
-                helper.requests_lost(generation);
+                // The slot goes first, so a request that begins after it starts cancelled (requests::begin).
                 helper.link_lost(generation);
+                helper.requests_lost(generation);
             }
         }));
 
