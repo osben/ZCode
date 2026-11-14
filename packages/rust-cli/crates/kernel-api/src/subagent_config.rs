@@ -36,7 +36,9 @@ pub struct SubagentProfile {
     pub permission_mode: Option<PermissionMode>,
 }
 
-/// The Host's answer.
+/// The Host's answer. One value per root session, read at most once per root turn, so the unboxed `Ready` is not worth
+/// boxing (clippy `large_enum_variant`).
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SubagentSnapshot {
     /// The profiles replace the agent files; the overrides set the built-ins' model.
