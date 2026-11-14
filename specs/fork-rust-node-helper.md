@@ -242,7 +242,7 @@ Why plugin-level MCP Apps go through the helper too: the panel and the model mus
 | `helper/mcp/closed {connection, reason}`             | Notification, helper → Rust: the real server's connection closed                                                                  |
 | `helper/mcp/close {connection}`                      | Notification, Rust → helper: Rust closed the connection                                                                           |
 
-`workspace` is `{workspacePath, workspaceIdentity?}`. A helper serves one workspace (its Rust process's); a second workspace is refused.
+`workspace` is `{workspacePath, workspaceIdentity?}`. A helper serves one workspace (its Rust process's); a second workspace is refused. The helper protocol version is 2 from F3 on: a Rust build and a helper of different versions refuse each other at `initialize`.
 
 The helper answers Rust's MCP messages as a small MCP server facade over Node's port:
 
@@ -260,7 +260,8 @@ helper/session/open {sessionId, rootSessionId?, workspace, pluginIds: [...], ser
 
 - `pluginIds` are the plugins Rust admitted in this process. The helper freezes the session's reference catalog from its plugin resolution; an entry is enabled only when Rust admitted it, so the picker and Rust agree on one plugin set.
 - `servers` are the helper-hosted server names. The helper acquires a session lease from its MCP pool (`sessionId` isolation) and connects them before answering. A failed server is logged and left out; the session still opens.
-- `rootSessionId` is the root of a subagent session when Rust knows it (a foreground subagent chain); otherwise absent.
+- `rootSessionId` is the root of a subagent session when Rust knows it (a foreground subagent chain); otherwise absent. It goes into the session trace, so Node's adapter sends it to the server as `root_session_id` in `_meta["com.zcode/request-context"]`, next to `session_id` and `turn_id`.
+- The helper session has no Node session lifecycle: the helper sets a lifecycle that is always ready, because Rust owns the session and opened it before forwarding.
 - `helper/session/close {sessionId}` (notification) is sent when Rust closes a session it opened in this generation. The helper does Node's close steps: abort the session's panel tool calls, clear its app tools, unsubscribe its resources, close its lease.
 
 **Session-scoped forwarded methods.** Same params and result as Host ↔ Node:
@@ -271,7 +272,7 @@ helper/session/open {sessionId, rootSessionId?, workspace, pluginIds: [...], ser
 
 Rust forwards one only when the session is one of its own (open or resumable in this process), and, for a method that names a `serverName`, when that server is helper-hosted; `plugins/mentionItems` names a plugin, which must be helper-hosted. Otherwise Rust answers `proto.forkRustAgent.mcpUiServerNotHelperHosted`.
 
-**Helper → Rust requests (F3).**
+**Helper → Rust requests (F3).** Each carries a `requestKey` (the request id). When the helper abandons one (the panel call was aborted, the session closed), it sends the notification `helper/cancelRequest {requestKey}` and does not wait for the answer; Rust drops its work for that key (a pending prompt is withdrawn, a sampling request is cancelled).
 
 - `helper/authorizeAppTool {sessionId, serverName, toolName, input, tool: {description?, inputSchema, annotations?}}`
   - Node's `authorizeAppTool` for `mcp/uiCallTool` and `plugins/mentionItems`. App-only tools are not in Rust's tool list, so the helper sends the descriptor and Rust builds a transient MCP tool from it, as Node's `createMcpToolEntry` fallback does.
@@ -281,13 +282,16 @@ Rust forwards one only when the session is one of its own (open or resumable in 
 - `helper/sampleModel {sessionId, request}`
   - `mcp/uiSampling`: Rust runs one side request on the session's current model selection (source `mcpSampling`) and records the call's usage on the session as a `model_usage` row.
   - The answer is Node's `sampleModel` result shape.
-- `helper/appTools/replace {sessionId, tools: [{name, description, inputSchema}]}` → `{registered: [names]}`
+- `helper/appTools/replace {sessionId, tools: [{name, modelName, serverName, pluginId, toolName, title?, description?, inputSchema, readOnlyHint?, destructiveHint?, idempotentHint?}]}` → `{registered: [names]}`
+  - Node's `replaceMcpAppProvidedTools` is synchronous and returns the applied names at once, so the helper answers the panel with its own prediction (Node's registry, deduplicated) and sends the request without waiting. A name Rust skipped is only logged in the helper (`fork_rust_helper.app_tools.skipped`).
   - Rust replaces that session's app-provided tools (`app__…` names) in an overlay of its tool registry keyed by the exact session id. A name that clashes with an existing tool is skipped, as in Node. They are visible from the session's next tool round.
   - A model call of one sends `helper/appTools/call {sessionId, turnId, toolCallId, name, input}` (request) and gets `{content, isError}`. A cancelled call sends `helper/appTools/cancel {sessionId, toolCallId}`.
   - The claim/resolve mailbox stays in the helper (Node's `appToolsProtocol.ts`). The UI answers it through the forwarded `mcp/uiClaimAppToolCall` and `mcp/uiResolveAppToolCall`.
 - `helper/session/delta {sessionId, delta}` (notification)
   - One of `pluginUi.resourceUpdated`, `pluginUi.resourceListChanged`, `pluginUi.instanceClosed`, `pluginUi.appToolCall`, shaped by Node's projection mapping (`product-projection.ts`).
   - Rust appends it to that session's live stream only, in the session's frame order: not persisted, not in the snapshot, like Node's sequence-0 events. Other ops, and sessions Rust has no live projection for, are dropped.
+
+**Elicitation.** A helper-hosted server's elicitation request is declined by the helper. Not ported yet: relaying it to Rust's elicitation prompt.
 
 **Helper connection.** Pipe messages, `helper/session/*` and the responses to the helper's own requests bypass the helper connection's serial request queue, so a tool call or its cancel never waits behind a plugin install.
 
