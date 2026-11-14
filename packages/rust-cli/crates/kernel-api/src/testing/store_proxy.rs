@@ -172,10 +172,6 @@ impl<H: StoreHooks> StoreQueries for StoreProxy<H> {
         self.inner.register_runtime(session).await
     }
 
-    async fn release_runtimes(&self) {
-        self.inner.release_runtimes().await;
-    }
-
     async fn assert_not_deleting(&self, sessions: &[SessionId]) -> Result<(), StoreError> {
         self.inner.assert_not_deleting(sessions).await
     }

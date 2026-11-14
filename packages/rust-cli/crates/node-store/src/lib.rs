@@ -109,6 +109,27 @@ impl NodeStore {
         }
     }
 
+    /// Fork: Node `SqliteSessionStore.close()` for the session runtime presence (specs/fork-rust-agent-parity.md
+    /// "Session runtime presence on the shared database"): deletes every presence row this store still holds, inline
+    /// on the calling thread. The process entry calls it once the async runtime has shut down, so no session work is
+    /// left to write after the rows are gone. A row whose delete fails is logged and left to Node's pid probe.
+    pub fn release_presence_blocking(&self) {
+        if self.presence.lock_unpoisoned().is_empty() {
+            return;
+        }
+        let slot = self.connection.lock_unpoisoned();
+        let Some(conn) = slot.as_ref() else {
+            return;
+        };
+        if let Err(error) = presence::release_all(conn, &self.presence) {
+            tracing::warn!(
+                event = "session_presence.release_all_failed",
+                error = %error,
+                "releasing the session runtime presence rows failed"
+            );
+        }
+    }
+
     /// Fork: keep a new top-level interactive session in memory until its first real write, like
     /// the Node agent's deferred prewarm (specs/fork-agent-runtime-selection.md "Draft prewarm in
     /// Rust mode"). Only the app-server turns it on.
@@ -571,23 +592,6 @@ impl StoreQueries for NodeStore {
                 release.run();
             },
         ))
-    }
-
-    async fn release_runtimes(&self) {
-        let held = self.presence.clone();
-        if held.lock_unpoisoned().is_empty() {
-            return;
-        }
-        if let Err(error) = self
-            .with_db(move |conn, _| presence::release_all(conn, &held))
-            .await
-        {
-            tracing::warn!(
-                event = "session_presence.release_all_failed",
-                error = %error,
-                "releasing the session runtime presence rows failed"
-            );
-        }
     }
 
     async fn assert_not_deleting(&self, sessions: &[SessionId]) -> Result<(), StoreError> {

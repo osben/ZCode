@@ -7,6 +7,10 @@
 //! Node's `beginSessionDeletion` refuses a purge while a foreign row with a live pid exists. There is no heartbeat:
 //! Node's `kill(pid, 0)` probe deletes the rows of a process that is gone.
 //!
+//! A row stays in [`Held`] until its delete succeeds: a release that fails (the database locked past the busy timeout)
+//! is retried by the next presence operation and by the shutdown sweep, as Node's `close()` deletes every row of its
+//! owner whatever an earlier `unregisterSessionRuntime` did.
+//!
 //! Lock order: the connection, then [`Held`]. Every function here runs on the store's blocking thread.
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -17,8 +21,20 @@ use rust_cli_kernel_api::store::{SESSION_DATA_DELETING, StoreError};
 
 use crate::ids::{RandomUuids, UuidSource};
 
-/// The presence rows this process holds: owner id to session id.
-pub(crate) type Held = Arc<Mutex<HashMap<String, String>>>;
+/// Rust's presence insert, shared with the Node test that runs the real `beginSessionDeletion` against it
+/// (`apps/zcode-cli/packages/adapters/tests/fork-rust-runtime-presence.test.ts`).
+const INSERT: &str = include_str!("fixtures/runtime_presence_insert.sql");
+
+/// One presence row this process wrote.
+#[derive(Debug)]
+pub(crate) struct Entry {
+    pub(crate) session: String,
+    /// The runtime let go of it; the row is left because its delete failed.
+    pub(crate) released: bool,
+}
+
+/// The presence rows this process holds: owner id to entry.
+pub(crate) type Held = Arc<Mutex<HashMap<String, Entry>>>;
 
 /// A fresh owner id in Node's format (`${process.pid}:${randomUUID()}`). One per open, so the late release of a
 /// closed runtime can never delete the row of a reopen of the same session.
@@ -65,13 +81,16 @@ pub(crate) fn register(
     if !has_tables(conn).map_err(crate::storage)? {
         return Ok(false);
     }
-    conn.execute(
-        "insert or ignore into session_runtime_presence(session_id,owner_id,process_id) values(?,?,?)",
-        params![session, owner, std::process::id()],
-    )
-    .map_err(crate::storage)?;
-    held.lock_unpoisoned()
-        .insert(owner.to_owned(), session.to_owned());
+    retry_released(conn, held);
+    conn.execute(INSERT, params![session, owner, std::process::id()])
+        .map_err(crate::storage)?;
+    held.lock_unpoisoned().insert(
+        owner.to_owned(),
+        Entry {
+            session: session.to_owned(),
+            released: false,
+        },
+    );
     Ok(true)
 }
 
@@ -85,13 +104,53 @@ fn delete(conn: &Connection, session: &str, owner: &str) -> rusqlite::Result<()>
     Ok(())
 }
 
-/// Node `close()`: deletes every row this process still holds.
-pub(crate) fn release_all(conn: &Connection, held: &Held) -> Result<(), StoreError> {
-    let rows: Vec<(String, String)> = held.lock_unpoisoned().drain().collect();
+/// Deletes the rows `select` picks, forgetting each only once its delete succeeded. The first failure is returned
+/// after every row was tried.
+fn sweep(conn: &Connection, held: &Held, select: fn(&Entry) -> bool) -> rusqlite::Result<()> {
+    let rows: Vec<(String, String)> = held
+        .lock_unpoisoned()
+        .iter()
+        .filter(|(_, entry)| select(entry))
+        .map(|(owner, entry)| (owner.clone(), entry.session.clone()))
+        .collect();
+    let mut failed = None;
     for (owner, session) in rows {
-        delete(conn, &session, &owner).map_err(crate::storage)?;
+        match delete(conn, &session, &owner) {
+            Ok(()) => {
+                held.lock_unpoisoned().remove(&owner);
+            }
+            Err(error) => {
+                failed.get_or_insert(error);
+            }
+        }
     }
-    Ok(())
+    failed.map_or(Ok(()), Err)
+}
+
+/// Retries the releases that failed earlier. Best effort: a row that still cannot be deleted waits for the next try.
+fn retry_released(conn: &Connection, held: &Held) {
+    if let Err(error) = sweep(conn, held, |entry| entry.released) {
+        tracing::warn!(
+            event = "session_presence.release_retry_failed",
+            error = %error,
+            "retrying a failed session runtime presence release failed"
+        );
+    }
+}
+
+/// Node `close()`: deletes every row this process still holds. A row whose delete fails stays held.
+pub(crate) fn release_all(conn: &Connection, held: &Held) -> Result<(), StoreError> {
+    sweep(conn, held, |_| true).map_err(crate::storage)
+}
+
+/// Whether `session` has a purge row, in either state (`false` without 0025).
+pub(crate) fn is_purging(conn: &Connection, session: &str) -> Result<bool, StoreError> {
+    if !has_purge_table(conn).map_err(crate::storage)? {
+        return Ok(false);
+    }
+    conn.prepare_cached("select exists(select 1 from session_purge where session_id=?)")
+        .and_then(|mut statement| statement.query_row([session], |row| row.get(0)))
+        .map_err(crate::storage)
 }
 
 /// Node `assertSessionNotDeleting`: `Deleting` when any of `sessions` has a purge row, in either state.
@@ -136,20 +195,25 @@ impl Release {
 
     fn delete(&self) {
         let slot = self.connection.lock_unpoisoned();
-        // Released at shutdown already (`release_all`): nothing left to delete.
-        if self.held.lock_unpoisoned().remove(&self.owner).is_none() {
-            return;
+        match self.held.lock_unpoisoned().get_mut(&self.owner) {
+            // Released at shutdown already (`release_all`): nothing left to delete.
+            None => return,
+            Some(entry) => entry.released = true,
         }
         let Some(conn) = slot.as_ref() else {
             return;
         };
-        if let Err(error) = delete(conn, &self.session, &self.owner) {
-            tracing::warn!(
+        match delete(conn, &self.session, &self.owner) {
+            Ok(()) => {
+                self.held.lock_unpoisoned().remove(&self.owner);
+            }
+            // The row stays held: the next presence operation or the shutdown sweep deletes it.
+            Err(error) => tracing::warn!(
                 event = "session_presence.release_failed",
                 session = %self.session,
                 error = %error,
-                "releasing the session runtime presence failed"
-            );
+                "releasing the session runtime presence failed; it is retried"
+            ),
         }
     }
 }

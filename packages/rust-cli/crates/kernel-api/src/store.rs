@@ -936,10 +936,6 @@ pub trait StoreQueries: Send + Sync {
         Ok(RuntimePresence::none())
     }
 
-    /// Fork: deletes every presence row this process still holds (Node `SqliteSessionStore.close`). Frontends await
-    /// it at shutdown; guards dropped later find nothing to delete.
-    async fn release_runtimes(&self) {}
-
     /// Fork: `Deleting` when any of `sessions` has a purge row (Node `assertSessionNotDeleting`, the request gate).
     async fn assert_not_deleting(&self, _sessions: &[SessionId]) -> Result<(), StoreError> {
         Ok(())

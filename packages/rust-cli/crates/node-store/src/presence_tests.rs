@@ -76,9 +76,11 @@ fn node_owner_format(owner: &str) -> bool {
         && uuid.as_bytes()[14] == b'4'
 }
 
-/// What a Node process does to start a purge: the `session-data.running` decision of `beginSessionDeletion`
-/// (`repositories/sessions.ts` `inspectSessionDeletion`, transcribed for a root without children) inside
-/// `begin immediate`, then the `deleting` receipt. `node_owner` is the Node process's own owner id.
+/// A Rust transcription of the `session-data.running` decision of Node `beginSessionDeletion`
+/// (`repositories/sessions.ts` `inspectSessionDeletion`, for a root without children, without the revision check)
+/// inside `begin immediate`, then the `deleting` receipt. `node_owner` is the Node process's own owner id. The real
+/// Node code runs against Rust's insert statement in
+/// `apps/zcode-cli/packages/adapters/tests/fork-rust-runtime-presence.test.ts`.
 fn node_begin_session_deletion(
     conn: &Connection,
     root: &str,
@@ -312,7 +314,7 @@ async fn shutdown_releases_every_held_row() {
         .await
         .unwrap();
     assert_eq!(presence(&store).len(), 2);
-    store.store.release_runtimes().await;
+    store.store.release_presence_blocking();
     assert!(presence(&store).is_empty());
     // Guards dropped after the shutdown release find nothing to delete.
     drop((first, second));
@@ -332,10 +334,106 @@ async fn a_database_without_0025_has_no_protocol() {
     assert!(!guard.holds());
     assert_eq!(store.store.assert_not_deleting(&[sid()]).await, Ok(()));
     drop(guard);
-    store.store.release_runtimes().await;
+    store.store.release_presence_blocking();
     store
         .store
         .commit(&sid(), batch(None, vec![user("u1", "hello")]))
         .await
         .unwrap();
+}
+
+/// Shortens the store connection's busy timeout so a locked database fails fast.
+fn fail_fast_when_locked(store: &TestStore) {
+    store
+        .store
+        .connection
+        .lock()
+        .unwrap()
+        .as_ref()
+        .expect("the store connection is open")
+        .busy_timeout(Duration::from_millis(20))
+        .unwrap();
+}
+
+/// A release that hits a locked database (Node holding `begin immediate` for its inspection) keeps the row owned:
+/// Node `close()` deletes by owner, so a failed `unregisterSessionRuntime` is still cleaned up. The next presence
+/// operation retries it, and the shutdown sweep releases whatever is left.
+#[tokio::test]
+async fn a_release_that_hits_a_locked_database_is_retried() {
+    let store = migrated().await;
+    store
+        .store
+        .create(meta("sess_other", "/w", "t"))
+        .await
+        .unwrap();
+    let guard = store.store.register_runtime(&sid()).await.unwrap();
+    let owner = presence(&store)[0].1.clone();
+    fail_fast_when_locked(&store);
+    let node = store.connection();
+    node.execute_batch("begin immediate").unwrap();
+    drop(guard);
+    // The release ran and failed: its owner is marked released but still held.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !store.store.presence.lock().unwrap()[&owner].released {
+        assert!(Instant::now() < deadline, "the release never ran");
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(presence(&store).len(), 1, "the locked delete left the row");
+    node.execute_batch("commit").unwrap();
+    // The next register retries the failed release first.
+    let other = store
+        .store
+        .register_runtime(&SessionId::new("sess_other"))
+        .await
+        .unwrap();
+    let rows = presence(&store);
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0].0, "sess_other");
+    drop(other);
+    eventually(&store, <[_]>::is_empty).await;
+}
+
+/// The shutdown sweep keeps going past a failed delete and keeps every row it could not delete.
+#[tokio::test]
+async fn a_shutdown_sweep_on_a_locked_database_keeps_the_rows_for_the_next_sweep() {
+    let store = migrated().await;
+    store
+        .store
+        .create(meta("sess_other", "/w", "t"))
+        .await
+        .unwrap();
+    let first = store.store.register_runtime(&sid()).await.unwrap();
+    let second = store
+        .store
+        .register_runtime(&SessionId::new("sess_other"))
+        .await
+        .unwrap();
+    fail_fast_when_locked(&store);
+    let node = store.connection();
+    node.execute_batch("begin immediate").unwrap();
+    store.store.release_presence_blocking();
+    assert_eq!(presence(&store).len(), 2);
+    node.execute_batch("commit").unwrap();
+    store.store.release_presence_blocking();
+    assert!(presence(&store).is_empty());
+    drop((first, second));
+}
+
+/// Node `SqliteSessionStore.getSession` returns null for a session with a purge row (`sqlite-session-store.ts`);
+/// the store-level `load` is its counterpart.
+#[tokio::test]
+async fn a_cold_load_of_a_session_being_purged_is_not_found() {
+    let store = migrated().await;
+    store
+        .connection()
+        .execute(
+            "insert into session_purge(session_id,root_id,operation_id,retained_artifacts,workspace_path,state) values('sess_presence','sess_presence','op','[]','/w','deleting')",
+            [],
+        )
+        .unwrap();
+    assert_eq!(
+        store.store.load(&sid()).await.unwrap_err(),
+        StoreError::NotFound { session: sid() }
+    );
 }
