@@ -13,7 +13,7 @@ use rust_cli_kernel_api::lsp::{CodeIntelligence, LspOperation, LspQuery};
 use rust_cli_kernel_api::mcp_state::McpConnections;
 use rust_cli_kernel_api::message::ToolResultContent;
 use rust_cli_kernel_api::orchestration::{ToolRegistry, ToolSnapshot};
-use rust_cli_kernel_api::permission::{FileAccess, PermissionSubject};
+use rust_cli_kernel_api::permission::PermissionDecision;
 use rust_cli_kernel_api::tool::{
     PromptContext, Tool, ToolError, ToolOutput, ToolProgress, ToolUseContext, answers_to, failed,
     parse,
@@ -24,7 +24,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-use crate::common::{cwd, path_subject, style};
+use crate::common::{cwd, style};
 
 pub const NAME: &str = tool_names::LSP;
 /// Node `LSP_TOOL_TIMEOUT_MS`: one deadline for the whole handler.
@@ -160,8 +160,17 @@ impl Tool for LspTool {
         Some(MAX_RESULT_CHARS)
     }
 
-    fn permission_subject(&self, input: &Value) -> Option<PermissionSubject> {
-        path_subject(FileAccess::Read, input, "filePath")
+    /// Node `permission/service.ts`: whole-tool rules apply first; content rules match none of the tool's keys
+    /// (`filePath` is not a rule field), and `checkBuildMode` allows a read-only tool without approval in every mode.
+    /// So no path is asked, the workspace's outside included.
+    async fn check_permissions(
+        &self,
+        _input: &Value,
+        _context: &ToolUseContext,
+    ) -> PermissionDecision {
+        PermissionDecision::Allow {
+            updated_input: None,
+        }
     }
 
     async fn call(

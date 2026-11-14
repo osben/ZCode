@@ -289,7 +289,7 @@ session close ─▶ CodeIntelligence::session_closed ─▶ drop fact[session]
 
 - Name `LSP`. The description is Node's four sentences joined by a space. The input schema is `prompts/tools/LSP.json`, generated from Node's `LspInputJsonSchema` (`operation` enum of seven operations, `filePath` required; `line`, `character` numbers; `symbol`, `query` strings; `includeDeclaration` boolean). Unknown keys are stripped (`z.object`).
 - Deferred behind ToolSearch (`shouldDefer`), read-only, concurrency-safe, no search hint.
-- Permission: Node's `read` class with no approval. Rust gives the judgment chain a Read path subject on the resolved `filePath`, as Read, Glob and Grep do, so `LSP` deny rules and path rules apply.
+- Permission: Node's `read` class with no approval (`permission/service.ts`): whole-tool `LSP` deny and ask rules apply; content rules never match, since `ruleSubjects` reads only `command`, `url`, `file_path`, `path`, `pattern` and `patch_text` (the declared `patternSources` have no reader); then `checkBuildMode` allows a read-only tool without approval in every mode. Rust's tool has no permission subject and its own check allows, so the chain keeps whole-tool deny and ask rules and never asks for a path, the workspace's outside included.
 - Timeout 65 s: the call fails with "Tool execution timed out after 65000ms". Results above 100 000 characters go to an artifact with a preview.
 - `display` is Node's `LspOutput` object; the model sees the formatted text below.
 

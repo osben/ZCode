@@ -11,9 +11,7 @@ use rust_cli_kernel_api::lsp::{
     LspResultStatus,
 };
 use rust_cli_kernel_api::orchestration::ToolRegistry;
-use rust_cli_kernel_api::permission::{
-    FileAccess, PermissionDecision, PermissionMode, PermissionSubject,
-};
+use rust_cli_kernel_api::permission::{PermissionDecision, PermissionMode};
 use rust_cli_kernel_api::testing::{ListTools, ScriptedInteractions};
 use rust_cli_kernel_api::tool::{PromptContext, Tool, ToolError, ToolUseContext};
 use serde_json::{Value, json};
@@ -154,16 +152,61 @@ async fn the_contract_matches_node() {
     assert!(tool.is_concurrency_safe(&json!({})));
     assert!(!tool.is_destructive(&json!({})));
     assert_eq!(tool.max_result_size_chars(), Some(100_000));
+    // Node: content rules never match `filePath`, and a read-only tool without approval is allowed in every mode.
     assert_eq!(
         tool.permission_subject(&json!({"operation": "hover", "filePath": "src/a.ts"})),
-        Some(PermissionSubject::Path {
-            access: FileAccess::Read,
-            path: Some("src/a.ts".to_owned()),
-        })
+        None
     );
     assert!(matches!(
         tool.check_permissions(&json!({}), &context()).await,
-        PermissionDecision::Passthrough
+        PermissionDecision::Allow {
+            updated_input: None
+        }
+    ));
+}
+
+/// Node `permission/service.ts`: whole-tool deny and ask rules apply, then `checkBuildMode` allows a read-only tool
+/// without approval. A path outside the workspace, or one a Read deny rule covers, never prompts.
+#[tokio::test]
+async fn the_gate_allows_any_path_and_keeps_whole_tool_rules() {
+    use rust_cli_kernel_api::orchestration::PermissionGate;
+    use rust_cli_kernel_api::permission::syntax::parse_rule;
+    use rust_cli_kernel_api::permission::{PermissionRules, RuleBehavior, RuleSource, SourcedRule};
+    let gate = |rules: &[(RuleBehavior, &str)]| {
+        rust_cli_policy::PolicyGate::new(PermissionRules {
+            rules: rules
+                .iter()
+                .map(|(behavior, text)| SourcedRule {
+                    source: RuleSource::CliArg,
+                    behavior: *behavior,
+                    rule: parse_rule(text),
+                })
+                .collect(),
+            ..PermissionRules::default()
+        })
+    };
+    let tool = LspTool::new(Arc::new(FakeCode::default()));
+    let outside = json!({"operation": "diagnostics", "filePath": "/etc/hosts.ts"});
+    let decide = |gate: rust_cli_policy::PolicyGate| {
+        let tool = &tool;
+        let outside = &outside;
+        async move { gate.decide(tool, outside, &context()).await }
+    };
+    assert!(matches!(
+        decide(gate(&[])).await,
+        PermissionDecision::Allow { .. }
+    ));
+    assert!(matches!(
+        decide(gate(&[(RuleBehavior::Deny, "Read(/etc/**)")])).await,
+        PermissionDecision::Allow { .. }
+    ));
+    assert!(matches!(
+        decide(gate(&[(RuleBehavior::Ask, "LSP")])).await,
+        PermissionDecision::Ask { .. }
+    ));
+    assert!(matches!(
+        decide(gate(&[(RuleBehavior::Deny, "LSP")])).await,
+        PermissionDecision::Deny { .. }
     ));
 }
 
