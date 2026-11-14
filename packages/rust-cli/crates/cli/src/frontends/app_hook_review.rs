@@ -74,8 +74,9 @@ impl AppWorkspace {
     pub(super) async fn review_bundle(&self, target: &WorkspaceTarget) -> ReviewLookup {
         let trust = Self::trust_target(target);
         let (hooks, failures, sources) = self.review_hooks(&trust).await;
-        // Node `discoverSnapshot` throws on a config it cannot read.
-        if failures.any() {
+        // Like Node's session snapshot (`config-factory.ts`, `hookCandidates` from loaded files only), a project file
+        // that cannot be loaded is skipped. An unreadable user config could name another store: fail closed.
+        if failures.user {
             return ReviewLookup::Unreadable;
         }
         let Some(bundle) = hooks.bundle.as_ref() else {
@@ -124,7 +125,7 @@ impl AppWorkspace {
     ) -> Result<(), &'static str> {
         let trust = Self::trust_target(target);
         let (hooks, failures, _) = self.review_hooks(&trust).await;
-        let selected = current_items(&hooks, failures.any(), bundle_digest, review_item_ids)?;
+        let selected = current_items(&hooks, failures.user, bundle_digest, review_item_ids)?;
         let context = TrustContext {
             files: self.files.as_ref(),
             paths: &self.paths,
@@ -155,7 +156,7 @@ impl AppWorkspace {
         let trust = Self::trust_target(target);
         let (hooks, failures, _) = self.review_hooks(&trust).await;
         // An unreadable user config could name another store: write nothing.
-        if failures.any() {
+        if failures.user {
             return Err(codes::SNAPSHOT_MISMATCH);
         }
         hooks
@@ -186,6 +187,7 @@ impl AppWorkspace {
         };
         let trust = Self::trust_target(target);
         let (hooks, failures, sources) = self.review_hooks(&trust).await;
+        // Node `rebuildSnapshot` (`readWorkspaceHookProjectSources`) fails on any file that cannot be loaded.
         if failures.any() {
             return Err(ToggleError::Rejected(codes::CONFIG_UNREADABLE));
         }
