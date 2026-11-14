@@ -125,6 +125,12 @@ pub fn handler(
     spawner: Spawner,
 ) -> Arc<dyn connection::Service> {
     let server = Arc::new(server::Server::new(context, kernel, spawner, defaults));
+    // Fork: the Node helper's requests are answered by this server (specs/fork-rust-node-helper.md F3).
+    if let Some(helper) = server.context.node_helper() {
+        let answers: std::sync::Weak<dyn fork::node_helper::HelperRequests> =
+            Arc::downgrade(&server) as _;
+        helper.set_requests(answers);
+    }
     Arc::new(server::Handler(server))
 }
 

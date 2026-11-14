@@ -66,11 +66,11 @@ fn tool_call(id: u64, session: &str) -> Value {
 
 #[test]
 fn session_scoped_methods_are_forwarded() {
-    let ui: Vec<&&str> = FORWARDED_METHODS
+    let ui = FORWARDED_METHODS
         .iter()
         .filter(|method| method.starts_with("mcp/ui"))
-        .collect();
-    assert_eq!(ui.len(), 16);
+        .count();
+    assert_eq!(ui, 16);
     for method in ["mcp/readResource", "plugins/mentionItems"] {
         assert!(FORWARDED_METHODS.contains(&method));
         assert!(session_of(method, &json!({"sessionId": "s"})).is_some());

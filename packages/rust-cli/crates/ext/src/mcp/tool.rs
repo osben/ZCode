@@ -86,6 +86,22 @@ impl McpTool {
         manager: Weak<Inner>,
     ) -> Option<Self> {
         let original = listed.get("name").and_then(Value::as_str)?.to_owned();
+        Some(Self::named(
+            server,
+            original,
+            listed,
+            server_always_load,
+            manager,
+        ))
+    }
+
+    fn named(
+        server: &str,
+        original: String,
+        listed: &Value,
+        server_always_load: bool,
+        manager: Weak<Inner>,
+    ) -> Self {
         let meta = listed.get("_meta");
         let always_load = server_always_load
             || ALWAYS_LOAD_KEYS.iter().any(|key| {
@@ -93,7 +109,7 @@ impl McpTool {
                     .and_then(Value::as_bool)
                     == Some(true)
             });
-        Some(Self {
+        Self {
             name: tool_name(server, &original),
             description: listed
                 .get("description")
@@ -118,7 +134,7 @@ impl McpTool {
                 always_load,
             },
             manager,
-        })
+        }
     }
 }
 
@@ -250,13 +266,17 @@ impl Tool for McpTool {
 /// the helper's descriptor `{description?, inputSchema, annotations?}` as Node's `createMcpToolEntry` fallback does.
 /// App-only tools are not in Rust's tool list; this one is only authorized, never called (it has no manager).
 pub fn app_tool(server: &str, tool: &str, descriptor: &Value) -> Arc<dyn Tool> {
-    let mut listed = match descriptor {
+    let listed = match descriptor {
         Value::Object(_) => descriptor.clone(),
         _ => json!({}),
     };
-    listed["name"] = json!(tool);
-    let tool = McpTool::from_listed(server, &listed, false, Weak::new()).expect("named above");
-    Arc::new(tool)
+    Arc::new(McpTool::named(
+        server,
+        tool.to_owned(),
+        &listed,
+        false,
+        Weak::new(),
+    ))
 }
 
 /// The session a helper-hosted tool call runs for (specs/fork-rust-node-helper.md F3).

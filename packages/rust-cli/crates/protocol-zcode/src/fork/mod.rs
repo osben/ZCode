@@ -7,6 +7,8 @@ mod background_work;
 mod child_processes;
 pub(crate) mod commands;
 mod file_summary;
+// Fork: specs/fork-rust-node-helper.md F3, "Helper → Rust requests".
+mod helper_answers;
 mod helper_session_admit;
 pub(crate) mod legacy_session;
 mod lsp;

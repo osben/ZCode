@@ -1254,3 +1254,6 @@ async fn a_timed_out_call_drops_a_process_that_misses_the_ping_deadline() {
 
 #[path = "node_helper_sessions_tests.rs"]
 mod sessions;
+
+#[path = "node_helper_requests_tests.rs"]
+mod requests;

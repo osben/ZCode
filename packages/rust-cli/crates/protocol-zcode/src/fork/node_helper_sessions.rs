@@ -112,7 +112,7 @@ impl NodeHelper {
         session: &str,
     ) -> Result<(), RpcError> {
         let mut cell = None;
-        if !self.with_running(generation, |running| {
+        self.with_running(generation, |running| {
             cell = Some(
                 running
                     .sessions
@@ -120,14 +120,14 @@ impl NodeHelper {
                     .or_default()
                     .clone(),
             );
-        }) {
+        });
+        let Some(cell) = cell else {
             return Err(unavailable("the helper exited"));
-        }
-        let cell = cell.expect("set while running");
+        };
         let result = cell
             .get_or_try_init(|| self.open_session(generation, peer, session))
             .await
-            .map(|()| ());
+            .copied();
         if result.is_err() {
             self.with_running(generation, |running| {
                 if running

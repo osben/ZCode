@@ -183,6 +183,8 @@ pub struct NodeHelper {
     warned: AtomicBool,
     /// F3: what Rust admitted, sent with every session open (set once plugins are loaded).
     catalog: StdMutex<Option<Arc<sessions::HelperCatalog>>>,
+    /// F3: the helper's requests to Rust and who answers them.
+    requests: StdMutex<requests::Requests>,
 }
 
 struct State {
@@ -252,6 +254,7 @@ impl NodeHelper {
             }),
             warned: AtomicBool::new(false),
             catalog: StdMutex::new(None),
+            requests: StdMutex::default(),
         })
     }
 
@@ -424,6 +427,7 @@ impl NodeHelper {
             )
             .await;
             if let Some(helper) = weak.upgrade() {
+                helper.requests_lost(generation);
                 helper.link_lost(generation);
             }
         }));
@@ -786,14 +790,25 @@ impl Service for Relay {
         true
     }
 
-    async fn request(&self, method: &str, _params: Value) -> Result<Reply, RpcError> {
+    /// F3: the helper's requests to Rust (`helper/authorizeAppTool`).
+    async fn request(&self, method: &str, params: Value) -> Result<Reply, RpcError> {
         self.heard();
-        Err(RpcError::method_not_found(method))
+        let Some(helper) = self.helper.upgrade() else {
+            return Err(unavailable("the agent is shutting down"));
+        };
+        helper
+            .helper_request(self.generation, method, params)
+            .await
+            .map(Reply::new)
     }
 
     async fn notification(&self, method: &str, params: Value) {
         self.heard();
-        if RELAYED_NOTIFICATIONS.contains(&method) {
+        if method == requests::CANCEL_REQUEST {
+            if let Some(helper) = self.helper.upgrade() {
+                helper.cancel_request(&params);
+            }
+        } else if RELAYED_NOTIFICATIONS.contains(&method) {
             self.host.notify(method, &params).await;
         } else {
             tracing::debug!(
@@ -807,11 +822,14 @@ impl Service for Relay {
 
 #[path = "node_helper_mcp.rs"]
 mod mcp;
+#[path = "node_helper_requests.rs"]
+mod requests;
 #[path = "node_helper_sessions.rs"]
 mod sessions;
 #[cfg(test)]
 use mcp::HelperMcpConnection;
 pub use mcp::HelperRoutedMcp;
+pub(crate) use requests::HelperRequests;
 pub use sessions::HelperCatalog;
 pub(crate) use sessions::{close_listener, session_of};
 

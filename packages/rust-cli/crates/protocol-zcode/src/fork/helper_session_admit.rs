@@ -75,7 +75,7 @@ pub(crate) fn refusal(
     None
 }
 
-fn not_hosted(message: &str) -> RpcError {
+pub(crate) fn not_hosted(message: &str) -> RpcError {
     RpcError::invalid_params(format!("{message} ({MCP_UI_SERVER_NOT_HELPER_HOSTED})"))
         .with_data(json!({"reasonCode": MCP_UI_SERVER_NOT_HELPER_HOSTED}))
 }
