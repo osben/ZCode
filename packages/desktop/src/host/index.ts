@@ -131,6 +131,7 @@ import {
   parseRemoteWorkspaceIdentity,
   buildRemoteHostWorkspaceIdentity,
   resolveWorkspaceKey,
+  CREDENTIAL_KEY_SHARE_UNAVAILABLE_ERROR_CODE,
   REMOTE_BIND_CANCELED_ERROR_CODE,
   REMOTE_WORKSPACE_BIND_SESSION_MISSING_ERROR_CODE,
   formatModelPickerValue,
@@ -3457,7 +3458,7 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
     } else {
       pending.reject(
         Object.assign(new Error("System credential storage is unavailable"), {
-          code: msg.errorCode ?? "CREDENTIAL_SECURE_STORAGE_UNAVAILABLE",
+          code: msg.errorCode ?? CREDENTIAL_KEY_SHARE_UNAVAILABLE_ERROR_CODE,
         }),
       );
     }

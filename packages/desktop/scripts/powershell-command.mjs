@@ -60,6 +60,9 @@ export async function readWindowsAuthenticodeSignature(filePath) {
   const outputDir = await mkdtemp(join(tmpdir(), "zcode-signature-"));
   try {
     const outputPath = join(outputDir, "signature.json");
+    // Deliberately not built from the shared security bootstrap: the Authenticode query must keep running in
+    // Constrained Language mode, so the script avoids .NET type literals ([Text.Encoding]/[Convert]/[IO.Path])
+    // and base64 value bindings; powershell-command.test.ts pins this constraint.
     const script = [
       `$zcodeArg0=${filePathLiteral};`,
       `$zcodeSignatureOutput=${escapePowerShellLiteral(outputPath)};`,
