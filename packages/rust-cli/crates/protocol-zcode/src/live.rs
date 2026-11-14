@@ -125,6 +125,8 @@ pub struct Live {
     /// cannot overwrite the decision's banners.
     admission_tickets: std::sync::atomic::AtomicU64,
     admission_applied: std::sync::atomic::AtomicU64,
+    /// Fork: the session's workspace hook review flow (`fork/hook_review.rs`).
+    pub(crate) hook_review: crate::fork::hook_review::SessionReview,
     /// Fork: set while the store may still hold the session as a draft (specs/fork-agent-runtime-selection.md
     /// "Draft prewarm in Rust mode"). The store owns that fact; a draft never becomes one again, so the probe is
     /// dropped the first time the store says the session has its row.
@@ -199,6 +201,7 @@ impl Live {
             admissions: std::sync::atomic::AtomicU64::new(0),
             admission_tickets: std::sync::atomic::AtomicU64::new(0),
             admission_applied: std::sync::atomic::AtomicU64::new(0),
+            hook_review: crate::fork::hook_review::SessionReview::default(),
             draft_probe: Mutex::new(None),
             incognito: view
                 .meta
@@ -610,6 +613,25 @@ impl Live {
         let outgoing = {
             let mut state = self.state();
             let Some(delta) = state.projection.set_admission(admission) else {
+                return;
+            };
+            state.log.record(vec![delta]);
+            self.collect(&mut state)
+        };
+        self.write(outgoing).await;
+    }
+
+    /// Fork: publishes (`Some`) or removes (`None` with the id) the session's workspace hook review interaction. In
+    /// the session's pump task, like every other frame of the session.
+    pub async fn hook_review(&self, change: crate::fork::hook_review::Change) {
+        use crate::fork::hook_review::Change;
+        let outgoing = {
+            let mut state = self.state();
+            let delta = match change {
+                Change::Put(interaction) => Some(state.projection.put_hook_review(interaction)),
+                Change::Remove(id) => state.projection.remove_hook_review(&id),
+            };
+            let Some(delta) = delta else {
                 return;
             };
             state.log.record(vec![delta]);

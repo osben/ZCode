@@ -11,6 +11,7 @@ mod file_summary;
 mod helper_answers;
 mod helper_sampling;
 mod helper_session_admit;
+pub(crate) mod hook_review;
 pub(crate) mod legacy_session;
 mod lsp;
 pub(crate) mod methods;
@@ -28,4 +29,7 @@ mod usage;
 mod workspace_model;
 pub(crate) use workspace_model::Operations as WorkspaceOperations;
 pub(crate) mod workspace_trust;
-pub use workspace_trust::{Admission, WorkspaceAdmin, WorkspaceTarget};
+pub use workspace_trust::{
+    Admission, ReviewBundle, ReviewItem, ReviewLookup, ReviewSource, StoredTrust, ToggleError,
+    WorkspaceAdmin, WorkspaceTarget,
+};

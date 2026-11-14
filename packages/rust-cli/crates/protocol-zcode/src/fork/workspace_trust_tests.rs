@@ -32,7 +32,7 @@ use crate::projection::Projection;
 use crate::projection::state::Followup;
 use crate::server::Defaults;
 
-const ROOT: &str = "/fixture/repo";
+pub(crate) const ROOT: &str = "/fixture/repo";
 const DIGEST: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
 fn meta() -> SessionMeta {
@@ -51,7 +51,7 @@ fn meta() -> SessionMeta {
     }
 }
 
-fn view() -> SessionView {
+pub(crate) fn view() -> SessionView {
     SessionView::new(meta(), Vec::new(), selection(), PermissionMode::Default)
 }
 
@@ -273,17 +273,21 @@ impl WorkspaceAdmin for FakeAdmin {
 }
 
 fn fixture(admin: Option<Arc<FakeAdmin>>) -> (TaskScope, Arc<Server>) {
-    fixture_with(admin, false)
+    fixture_with(admin.map(|admin| admin as Arc<dyn WorkspaceAdmin>), false)
 }
 
-fn fixture_with(admin: Option<Arc<FakeAdmin>>, resumed: bool) -> (TaskScope, Arc<Server>) {
+/// Shared with `hook_review_tests.rs`.
+pub(crate) fn fixture_with(
+    admin: Option<Arc<dyn WorkspaceAdmin>>,
+    resumed: bool,
+) -> (TaskScope, Arc<Server>) {
     let (scope, server, _reader) = fixture_reading(admin, resumed);
     (scope, server)
 }
 
 /// [`fixture_with`] keeping the Host's end of the connection, to read the frames the server sends.
 pub(crate) fn fixture_reading(
-    admin: Option<Arc<FakeAdmin>>,
+    admin: Option<Arc<dyn WorkspaceAdmin>>,
     resumed: bool,
 ) -> (TaskScope, Arc<Server>, tokio::io::DuplexStream) {
     let scope = TaskScope::root("test", |_| {});
@@ -457,7 +461,7 @@ async fn a_banner_read_older_than_the_applied_one_is_dropped() {
 async fn a_resumed_session_shows_its_workspaces_banners_on_open() {
     let admin = Arc::new(FakeAdmin::default());
     *admin.banners.lock_unpoisoned() = admission(Some(mcp(1)), Some(hook(2)));
-    let (_scope, server) = fixture_with(Some(admin.clone()), true);
+    let (_scope, server) = fixture_with(Some(admin.clone() as Arc<dyn WorkspaceAdmin>), true);
     let live = server.live(&SessionId::new("s1")).await.unwrap();
     settled(&live).await;
     let snapshot = live.sink.snapshot();
@@ -479,7 +483,7 @@ async fn a_resumed_session_shows_its_workspaces_banners_on_open() {
 async fn a_new_session_reads_no_banners_on_open() {
     let admin = Arc::new(FakeAdmin::default());
     *admin.banners.lock_unpoisoned() = admission(Some(mcp(1)), None);
-    let (_scope, server) = fixture_with(Some(admin.clone()), false);
+    let (_scope, server) = fixture_with(Some(admin.clone() as Arc<dyn WorkspaceAdmin>), false);
     let live = server.live(&SessionId::new("s1")).await.unwrap();
     settled(&live).await;
     assert!(live.sink.snapshot().get("workspaceMcpAdmission").is_none());

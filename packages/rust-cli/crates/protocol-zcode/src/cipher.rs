@@ -75,7 +75,7 @@ impl HostCredentialCipher {
             }
             _ => {}
         }
-        let request_id = request_id();
+        let request_id = crate::ids::uuid_v4();
         let params = json!({
             "requestId": request_id,
             "operation": operation.name(),
@@ -151,25 +151,6 @@ fn unavailable(reason: &'static str) -> CipherError {
 /// JavaScript 的字符串长度（UTF-16 码元）。
 fn utf16_len(value: &str) -> usize {
     value.encode_utf16().count()
-}
-
-/// 随机 v4 uuid（zod `.uuid()` 要求）。`uuid::Uuid::new_v4` 被 clippy 禁用（统一经随机源），这里用 crate 的随机源
-/// 拼出 v4：版本位与变体位照 RFC 4122 设置。请求 ID 只用来对回复，不是秘密。
-fn request_id() -> String {
-    let mut bytes = [0u8; 16];
-    bytes[..8].copy_from_slice(&rust_cli_base::random::u64().to_be_bytes());
-    bytes[8..].copy_from_slice(&rust_cli_base::random::u64().to_be_bytes());
-    bytes[6] = (bytes[6] & 0x0f) | 0x40;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
-    format!(
-        "{}-{}-{}-{}-{}",
-        &hex[0..8],
-        &hex[8..12],
-        &hex[12..16],
-        &hex[16..20],
-        &hex[20..32]
-    )
 }
 
 #[async_trait]
