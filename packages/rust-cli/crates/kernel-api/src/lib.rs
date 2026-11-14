@@ -115,6 +115,8 @@ pub mod plan;
 pub mod prompt_attachment;
 pub mod provider;
 pub mod reminder_fold;
+// Fork: remote workspace identities (Node packages/shared remote-workspace-identity.ts).
+pub mod remote_identity;
 pub mod run_ledger;
 pub mod session_api;
 pub mod session_follow;

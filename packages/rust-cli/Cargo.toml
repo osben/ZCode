@@ -167,6 +167,9 @@ rcgen = { version = "0.14.10", default-features = false, features = ["crypto", "
 thiserror = "2"
 # rust-cli-platform：Provider 配置的 baseUrl 校验（与 Host 相同用 WHATWG URL 解析）。
 url = "2"
+# Fork: cli `lsp::runtime::uri` converts a UNC host like Node `domainToUnicode`. Cargo.lock already has it (url),
+# so it adds no package.
+idna = "1"
 uuid = { version = "1", features = ["v4"] }
 # 只打开不做 IO 的特性。做 IO 的特性（fs、process、io-std、net）由用到的 crate 自己声明，
 # scripts/rust-cli/check-boundaries.mjs 按 README §4 的表核对（F7，审查 R2-9：以前 process / fs / net 对全体打开）。

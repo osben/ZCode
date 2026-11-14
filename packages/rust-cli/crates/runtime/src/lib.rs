@@ -18,6 +18,8 @@ mod hook_transcripts;
 mod kernel;
 mod late;
 mod listings;
+// Fork: the `LSP` tool's availability before a main-thread run (specs/fork-rust-lsp.md "Tool (D2)").
+mod lsp_tool;
 mod permissions;
 mod projects;
 mod table;
@@ -273,6 +275,7 @@ impl LocalKernel {
             (&assembler, &ext, &gate, &hooks),
             (&late, operations),
             (&defaults, traits, extensions.node_desktop),
+            extensions.code_intelligence.clone(),
         );
         let agents = assemble::agents(
             &ports,
@@ -287,6 +290,7 @@ impl LocalKernel {
                 setup,
                 ports.store.clone(),
                 ports.ids.clone(),
+                agents.task_plan_writer(),
                 scope.spawner(),
             ))
         });
@@ -328,6 +332,14 @@ impl LocalKernel {
         let operations = parts.operations.clone();
         let parts = QueryParts { tools, ..parts };
         let main_loop: Arc<dyn QueryRunner> = Arc::new(QueryLoop::new(parts));
+        // Fork: the session's `LSP` tool fact is settled before the run's first tool snapshot.
+        let main_loop: Arc<dyn QueryRunner> = match extensions.code_intelligence.clone() {
+            Some(code) => Arc::new(lsp_tool::LspToolSettle {
+                inner: main_loop,
+                code,
+            }),
+            None => main_loop,
+        };
         // Fork: ACP selections run on the agent process (specs/fork-rust-agent-parity.md "ACP external agents").
         let main_loop: Arc<dyn QueryRunner> = match acp_host {
             Some(host) => Arc::new(acp::ExternalAgentRunner {
@@ -414,3 +426,7 @@ mod closing_tests;
 #[cfg(test)]
 #[path = "adopt_tests.rs"]
 mod adopt_tests;
+
+#[cfg(test)]
+#[path = "presence_tests.rs"]
+mod presence_tests;

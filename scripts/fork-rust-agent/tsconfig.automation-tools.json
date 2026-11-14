@@ -13,5 +13,5 @@
       "@zcode/contracts": ["../../apps/zcode-cli/packages/contracts/src/index.ts"]
     }
   },
-  "include": ["automation-tools.mts"]
+  "include": ["automation-tools.mts", "lsp-tool.mts"]
 }

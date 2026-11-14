@@ -301,6 +301,12 @@ pub trait Tool: Send + Sync {
         None
     }
 
+    /// Fork: a Node `resultBudget` with the artifact strategy: a result above this many UTF-8 bytes is persisted with
+    /// Node's generic envelope. It replaces [`Tool::max_result_size_chars`] and its shared 50 000 cap.
+    fn result_budget_bytes(&self) -> Option<usize> {
+        None
+    }
+
     async fn validate_input(&self, _input: &Value, _context: &ToolUseContext) -> Validation {
         Validation::Ok
     }

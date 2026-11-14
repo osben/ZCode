@@ -467,7 +467,7 @@ impl Pipeline {
                 budget::apply(
                     output,
                     tool.name(),
-                    tool.max_result_size_chars(),
+                    budget::Limit::of(tool),
                     &context.session,
                     context.artifacts.as_ref(),
                 )

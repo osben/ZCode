@@ -69,6 +69,27 @@ pub enum ContentBlock {
     File {
         file: AttachedFile,
     },
+    /// Fork: a settled tool or plan row of an ACP agent turn (specs/fork-rust-agent-parity.md "ACP external agents",
+    /// rule 5), stored as Node's `tool` part with `metadata.externalAgent`. It is a record for the App only: the model
+    /// never sees it (`query::normalize` drops it). Boxed: rare, and every message block pays for the variant's size.
+    ExternalTool(Box<ExternalTool>),
+}
+
+/// Fork: one ACP tool or plan row (Node `ExternalAgentToolRows`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExternalTool {
+    /// The row id minted for the agent's `toolCallId` (the part's `callID`).
+    pub id: ToolUseId,
+    /// `acp:<kind|other>`, or `TodoWrite` for a plan.
+    pub name: String,
+    /// The agent's title; empty when it gave none.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub title: String,
+    pub input: Value,
+    /// The result text, or the error text of a failed row.
+    pub output: String,
+    #[serde(default)]
+    pub is_error: bool,
 }
 
 /// Fork: an App file attachment of a user message (Node `file` part of `persistUserPrompt`).

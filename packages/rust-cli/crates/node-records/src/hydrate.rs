@@ -164,6 +164,10 @@ fn assistant(record: &WithParts, tools: &[&Value]) -> Option<Message> {
         .iter()
         .filter_map(|part| match part["type"].as_str() {
             Some("reasoning") => Some(thinking(part)),
+            // Fork: ACP rows in part order (specs/fork-rust-agent-parity.md "ACP external agents", rule 5).
+            Some("tool") if crate::external_tools::is_external(part) => {
+                Some(crate::external_tools::block(part))
+            }
             Some("text") if visible_text(part) => part["text"]
                 .as_str()
                 .filter(|text| !text.is_empty())

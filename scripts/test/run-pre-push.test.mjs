@@ -97,6 +97,7 @@ const allStages = [
   "db:migrations:check",
   "rust-agent:inbound-schema:check",
   "rust-agent:automation-tools:check",
+  "rust-agent:lsp-tool:check",
   "test:engineering:affected",
   "test:node",
 ];

@@ -124,3 +124,76 @@ fn a_tool_stopped_by_stop_settles_cancelled() {
     let declined = stopped_tool(TurnOutcome::Success);
     assert_eq!(declined["status"], "error");
 }
+
+/// Fork: a cold read keys each unstreamed reply by its message, so the replies of one turn (text, tool, text) are
+/// rows of their own; they used to share `(turn, u32::MAX, index)` and the last text overwrote the first.
+#[test]
+fn a_cold_turn_keeps_every_reply_text() {
+    use rust_cli_kernel_api::ids::ToolUseId;
+    use rust_cli_kernel_api::message::{ToolResultContent, UserMessage, UserOrigin};
+
+    let reply = |id: &str, content: Vec<ContentBlock>| {
+        Message::Assistant(AssistantMessage {
+            id: MessageId::new(id),
+            content,
+            model: "m".into(),
+            stop_reason: Some(StopReason::EndTurn),
+            usage: None,
+        })
+    };
+    let text = |text: &str| ContentBlock::Text { text: text.into() };
+    let cold = Projection::from_view(
+        &view(vec![
+            user("msg_u1", "go"),
+            reply(
+                "msg_a1",
+                vec![
+                    text("first"),
+                    ContentBlock::ToolUse {
+                        id: ToolUseId::new("toolu_1"),
+                        name: "Read".into(),
+                        input: serde_json::json!({}),
+                    },
+                ],
+            ),
+            Message::User(UserMessage {
+                stall_execution: None,
+                intent: None,
+                id: MessageId::new("msg_r1"),
+                content: vec![ContentBlock::ToolResult {
+                    tool_use_id: ToolUseId::new("toolu_1"),
+                    content: vec![ToolResultContent::Text { text: "r".into() }],
+                    is_error: false,
+                }],
+                origin: UserOrigin::ToolResult {
+                    assistant: MessageId::new("msg_a1"),
+                },
+            }),
+            reply("msg_a2", vec![text("second")]),
+        ]),
+        Followup::Queue,
+        Vec::new(),
+    );
+    let rows: Vec<(String, String)> = cold
+        .rows
+        .iter()
+        .filter(|row| row["kind"] == "assistantText" || row["kind"] == "toolCall")
+        .map(|row| {
+            let label = row
+                .get("text")
+                .or_else(|| row.get("toolName"))
+                .and_then(|value| value.as_str())
+                .unwrap_or_default();
+            (row["kind"].as_str().unwrap().to_owned(), label.to_owned())
+        })
+        .collect();
+    let pair = |kind: &str, label: &str| (kind.to_owned(), label.to_owned());
+    assert_eq!(
+        rows,
+        vec![
+            pair("assistantText", "first"),
+            pair("toolCall", "Read"),
+            pair("assistantText", "second"),
+        ]
+    );
+}

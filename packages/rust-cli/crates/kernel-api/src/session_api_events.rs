@@ -214,6 +214,14 @@ pub enum KernelEvent {
         tool_use: ToolUseId,
         output: ToolOutput,
     },
+    /// Fork: an ACP agent's tool or plan row before it settles ([`crate::orchestration::QueryEvent::ExternalToolRow`]).
+    ExternalToolRow {
+        tool_use: ToolUseId,
+        name: String,
+        title: String,
+        input: Value,
+        running: bool,
+    },
     FileChanges {
         turn: TurnId,
         files: Vec<FileChange>,

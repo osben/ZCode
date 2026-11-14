@@ -38,7 +38,7 @@ async fn persist(artifacts: &MemoryArtifacts, blocks: &[String]) -> String {
     let preview = budget::apply(
         output,
         "Grep",
-        Some(100),
+        Some(budget::Limit::Chars(100)),
         &SessionId::new("sess_1"),
         artifacts,
     )

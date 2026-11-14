@@ -17,7 +17,7 @@ use rust_cli_context::PromptAssembler;
 use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::machine::Files;
 use rust_cli_kernel_api::permission::ProjectRules;
-use rust_cli_kernel_api::store::LoadedSession;
+use rust_cli_kernel_api::store::{LoadedSession, RuntimePresence};
 use rust_cli_policy::PolicyGate;
 use rust_cli_session::{Opened, Session, SessionDeps, SessionState};
 use tokio_util::sync::CancellationToken;
@@ -28,6 +28,10 @@ use crate::LocalKernel;
 pub(crate) struct Open {
     pub(crate) session: Arc<Session>,
     _scope: TaskScope,
+    /// Fork: this process's row in Node's `session_runtime_presence` (specs/fork-rust-agent-parity.md "Session
+    /// runtime presence on the shared database"). It stays through Closing and is released when the slot leaves the
+    /// table, after the actor exited, and when the table drops with the kernel.
+    _presence: RuntimePresence,
 }
 
 /// 条目换掉时唤醒等它的调用：丢弃即取消。
@@ -258,7 +262,12 @@ impl LocalKernel {
 
     /// 启动会话 actor 并登记为 Open（`Session::spawn` 是同步调用，持锁期间不等待）。新建的会话 ID 是新的；冷加载时
     /// 这里换掉的是调用方自己登记的 Loading，它的令牌随之丢弃，等它的打开醒来拿到这个句柄。
-    pub(crate) fn start(&self, state: SessionState, opened: Opened) -> Arc<Session> {
+    pub(crate) fn start(
+        &self,
+        state: SessionState,
+        opened: Opened,
+        presence: RuntimePresence,
+    ) -> Arc<Session> {
         let id = state.meta.id.clone();
         let mut sessions = self.sessions();
         if let Some(Slot::Open(open)) = sessions.get(&id) {
@@ -301,6 +310,7 @@ impl LocalKernel {
             Slot::Open(Open {
                 session: session.clone(),
                 _scope: scope,
+                _presence: presence,
             }),
         );
         session
