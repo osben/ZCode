@@ -23,8 +23,8 @@ pub(crate) enum StopHook {
 }
 
 /// Fork: what continued the turn. Under [`StopContinuations::NodeTurn`] only [`Continuation::Hook`] counts toward
-/// the hook cap; an unmet `/goal` is a new Node turn (`goal-continuation`, core
-/// `runtime/methods/target-continuation-loop.ts`).
+/// the hook cap; an unmet `/goal` is a new Node turn (`inputSource: "goal-continuation"`, core
+/// `runtime/methods/target.ts` `executeTargetContinuationCommand`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Continuation {
     Hook,
@@ -167,11 +167,12 @@ pub(crate) async fn stop_hooks(
 }
 
 /// Fork: the Node desktop rule (specs/fork-rust-agent-parity.md "Stop continuation cap"). Node checks the goal only
-/// once the turn ends (after its Stop hooks, core `runtime/methods/target-continuation-loop.ts`), and an unmet goal
-/// starts a new turn with its own hook count. So the goal is evaluated only when the hooks let the turn end, and an
-/// unmet verdict always continues: it is never written and then ended. Past [`CONSECUTIVE_STOP_BLOCKS`] goal
-/// continuations in one run the goal is not evaluated (a bound Node does not have). Under `node_desktop` the session
-/// hands the query no goal (`session/src/turn.rs` `run_view`), so this branch runs only in the query's own tests.
+/// once the turn ends (after its Stop hooks, the loop in core `runtime/methods/target-continuation-loop.ts`), and an
+/// unmet goal starts a new turn with its own hook count (`target.ts` `executeTargetContinuationCommand`). So the goal
+/// is evaluated only when the hooks let the turn end, and an unmet verdict always continues: it is never written and
+/// then ended. Past [`CONSECUTIVE_STOP_BLOCKS`] goal continuations in one run the goal is not evaluated (a bound Node
+/// does not have). Under `node_desktop` the session hands the query no goal (`session/src/turn.rs` `run_view`), so this
+/// branch runs only in the query's own tests.
 async fn node_turn(
     scope: &RunScope,
     history: &mut Vec<Message>,

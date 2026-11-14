@@ -27,6 +27,9 @@ struct MemoryTranscripts {
     /// The removal runs this long in its own task, which a dropped caller does not stop (as tokio's `remove_dir_all`
     /// on `spawn_blocking`).
     remove_ms: u64,
+    /// The removal runs this long on the blocking pool (as tokio's `remove_dir_all`), which a shutting-down runtime
+    /// waits for.
+    remove_blocking_pool_ms: u64,
 }
 
 impl MemoryTranscripts {
@@ -71,6 +74,15 @@ impl HookTranscripts for MemoryTranscripts {
     async fn remove(&self, transcript: &HookTranscript) -> std::io::Result<()> {
         self.removed.lock_unpoisoned().push(transcript.clone());
         let order = self.order.clone();
+        if self.remove_blocking_pool_ms > 0 {
+            let wait = Duration::from_millis(self.remove_blocking_pool_ms);
+            let removal = tokio::task::spawn_blocking(move || {
+                std::thread::sleep(wait);
+                order.lock_unpoisoned().push("remove");
+            });
+            let _ = removal.await;
+            return Ok(());
+        }
         let remove_ms = self.remove_ms;
         let removal = tokio::spawn(async move {
             if remove_ms > 0 {
@@ -372,6 +384,36 @@ async fn a_removal_dropped_mid_way_removes_once() {
     assert!(ran.is_err(), "the run should still be removing");
     tokio::time::sleep(Duration::from_millis(100)).await;
     settle().await;
+    assert_eq!(transcripts.order(), ["create", "remove"]);
+}
+
+/// A removal in flight when the runtime shuts down is not repeated: the blocking removal goes on (the shutdown waits
+/// for it), and the dropped removal task does not remove the directory a second time.
+#[test]
+fn a_removal_in_flight_at_runtime_shutdown_removes_once() {
+    let env = Arc::new(ScriptedEnv::with(&[("stop.sh", script("", "", 0))]));
+    let transcripts = Arc::new(MemoryTranscripts {
+        remove_blocking_pool_ms: 100,
+        ..MemoryTranscripts::default()
+    });
+    let engine = engine(
+        env,
+        transcripts.clone(),
+        json!({"type": "command", "command": "stop.sh"}),
+    );
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .unwrap();
+    let ran = runtime.block_on(async {
+        tokio::time::timeout(
+            Duration::from_millis(20),
+            engine.run(stop(), CancellationToken::new()),
+        )
+        .await
+    });
+    assert!(ran.is_err(), "the run should still be removing");
+    drop(runtime);
     assert_eq!(transcripts.order(), ["create", "remove"]);
 }
 

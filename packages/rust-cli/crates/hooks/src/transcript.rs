@@ -36,6 +36,9 @@ struct Removal {
     /// The file's write runs in its own task: a dropped run cannot stop a write already under way, so the removal
     /// waits for it first (removing while it runs would leave the new file behind).
     write: Option<JoinHandle<std::io::Result<()>>>,
+    /// Set before the first await on [`HookTranscripts::remove`]: a removal dropped from then on (the runtime shutting
+    /// down with it in flight) leaves the directory to the blocking removal already under way.
+    started: bool,
 }
 
 /// Writes the transcript of one run, in its own directory (as Node). The guard exists before the file does, so a run
@@ -89,6 +92,7 @@ fn place(
             transcripts: transcripts.clone(),
             file: file.clone(),
             write: Some(write),
+            started: false,
         }),
     };
     Ok((guard, file))
@@ -127,6 +131,7 @@ impl Removal {
     async fn run(&mut self) {
         // A failed write already logged; the directory goes either way.
         let _ = self.written().await;
+        self.started = true;
         if let Err(error) = self.transcripts.remove(&self.file).await {
             tracing::warn!(error = %error, "hook transcript directory could not be removed");
         }
@@ -139,8 +144,8 @@ impl Removal {
     }
 }
 
-/// A removal handed to a spawned task. A runtime that shuts down drops the task without running it; the drop then
-/// removes the directory synchronously.
+/// A removal handed to a spawned task. A runtime that shuts down drops the task before it ran or while it waits; the
+/// drop then removes the directory synchronously, unless the removal already started (it is on the blocking pool).
 struct Pending(Option<Removal>);
 
 impl Pending {
@@ -154,7 +159,7 @@ impl Pending {
 
 impl Drop for Pending {
     fn drop(&mut self) {
-        if let Some(removal) = self.0.take() {
+        if let Some(removal) = self.0.take().filter(|removal| !removal.started) {
             removal.now();
         }
     }
