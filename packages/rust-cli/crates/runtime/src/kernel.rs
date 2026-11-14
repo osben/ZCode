@@ -424,6 +424,8 @@ impl LocalKernel {
         let loaded = self.ports.store.load(session).await?;
         // Fork: the incognito gates read the profile by session id from here on.
         self.incognito.record(session, loaded.meta.incognito);
+        // Fork: the per-workspace plugin/MCP views key this session by its row's frozen workspace.
+        self.workspaces.record(session, loaded.meta.workspace.clone());
         // Node 群协作会话（`permission.scope = session`）的规则只在会话行里：这个会话的判决用它代替本机项目
         // 规则集（修复线 F2，shell-permissions.md §5）。“总是允许”与改模式由存储按同一作用域落库。条目是这个调用
         // 的 Loading，期间不会有同一个会话的关闭插进来 `release` 它。
@@ -483,6 +485,7 @@ impl LocalKernel {
         let presence = self.ports.store.register_runtime(&id).await?;
         self.ports.store.create(meta.clone()).await?;
         self.incognito.record(&id, meta.incognito);
+        self.workspaces.record(&id, meta.workspace.clone());
         let in_worktree = execution.is_some();
         if let Some((worktree, branch)) = execution {
             if let Err(error) = self

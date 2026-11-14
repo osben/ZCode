@@ -152,6 +152,9 @@ pub struct LocalKernel {
     /// Fork: incognito profiles by session (specs/fork-rust-agent-parity.md, "Incognito sessions"): filled at create
     /// and open, read by every incognito gate.
     incognito: rust_cli_kernel_api::incognito::IncognitoProfiles,
+    /// Fork: each session's workspace, recorded at create and open, read by the per-workspace plugin
+    /// and MCP views (specs/fork-rust-workspace-plugins-mcp.md).
+    workspaces: rust_cli_kernel_api::workspace_key::SessionWorkspaces,
     /// 本机跨会话通信（cross-session.md §2.4）：每个会话 actor 共用这一份端口。
     peers: rust_cli_session::PeerDeps,
     /// 父会话关闭之后旧会话的询问入口（进程级，agents.md §4.1.2，工作线 F72）：每个会话 actor 共用这一份。
@@ -248,6 +251,9 @@ impl LocalKernel {
         let machine = ports.environments.primary_machine();
         // Fork: the one in-memory owner of the sessions' incognito profiles, read by every gate.
         let incognito = rust_cli_kernel_api::incognito::IncognitoProfiles::default();
+        // Fork: the one in-memory owner of the sessions' workspaces (specs/fork-rust-workspace-plugins-mcp.md),
+        // read by the per-workspace plugin and MCP views.
+        let workspaces = rust_cli_kernel_api::workspace_key::SessionWorkspaces::default();
         let hooks = assemble::hooks(
             &ports,
             &operations,
@@ -404,6 +410,7 @@ impl LocalKernel {
             sessions,
             closer,
             incognito,
+            workspaces,
             peers: extensions.peers,
             detached,
             one_input_per_turn: extensions.node_desktop,
