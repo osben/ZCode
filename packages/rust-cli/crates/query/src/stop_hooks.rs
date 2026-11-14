@@ -116,8 +116,10 @@ pub(crate) async fn stop_hooks(
     // Fork: Node writes the Stop context only when the turn continues (`turn-stop.ts`); at its cap the feedback is
     // dropped. zcode-rs commits it before the cap check.
     let keep = prevent || !over_cap || rule == StopContinuations::Consecutive;
-    for message in outcome.messages.into_iter().filter(|_| keep) {
-        commit(scope, history, message).await?;
+    if keep {
+        for message in outcome.messages {
+            commit(scope, history, message).await?;
+        }
     }
     // 中止时不报告判定（直接返回）。
     if let Some((condition, verdict)) = checked.filter(|_| !scope.abort.is_aborted()) {

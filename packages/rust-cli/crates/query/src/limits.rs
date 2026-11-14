@@ -37,10 +37,10 @@ pub struct RequestLimits {
 /// Fork: the Stop hook continuation rule of a run.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum StopContinuations {
-    /// zcode-rs: up to [`CONSECUTIVE_STOP_BLOCKS`] consecutive blocks; a tool round resets the count.
+    /// zcode-rs: up to 8 consecutive blocks (`CONSECUTIVE_STOP_BLOCKS`); a tool round resets the count.
     #[default]
     Consecutive,
-    /// The Node desktop agent (`MAX_STOP_HOOK_CONTINUATIONS`): at most [`NODE_STOP_CONTINUATIONS`] per run, never
+    /// The Node desktop agent (`MAX_STOP_HOOK_CONTINUATIONS`): at most 3 per run (`NODE_STOP_CONTINUATIONS`), never
     /// reset; a blocking outcome past the cap is not committed.
     NodeTurn,
 }

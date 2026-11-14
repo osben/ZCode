@@ -74,7 +74,8 @@ impl LoopState {
         }
     }
 
-    /// 工具结果之后进入下一轮：轮数加 1，恢复计数、连续阻塞次数与压缩的单轮状态清零，Stop hook 的状态保留。
+    /// 工具结果之后进入下一轮：轮数加 1，恢复计数与压缩的单轮状态清零，Stop hook 的状态保留。Fork: the Stop block count
+    /// resets only under [`StopContinuations::Consecutive`]; under `NodeTurn` it counts the whole run.
     fn next_turn(&mut self) {
         self.turn_count += 1;
         self.guards.next_turn();
