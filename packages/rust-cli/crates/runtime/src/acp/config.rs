@@ -86,10 +86,23 @@ impl AcpHost {
         if stored.offered.as_ref().and_then(options_from_json).as_ref() == Some(&snapshot) {
             return Ok(());
         }
-        self.store
+        match self
+            .store
             .set_acp_offered(session, &options_to_json(&snapshot))
             .await
-            .map_err(ReconcileError::Store)?;
+        {
+            Ok(()) => {}
+            // Rule 15: without Node's fork ACP tables there is no binding to hold the copy; the turn goes on and shows
+            // the options unstored, as the binding write lets the turn go on. Node always has the tables.
+            Err(StoreError::Unsupported { .. }) => {
+                tracing::debug!(
+                    event = "acp.config_unstored",
+                    agent,
+                    "ACP agent options shown without the fork tables"
+                );
+            }
+            Err(error) => return Err(ReconcileError::Store(error)),
+        }
         emit(sink, agent, snapshot).await;
         Ok(())
     }

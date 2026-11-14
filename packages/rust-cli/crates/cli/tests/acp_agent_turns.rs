@@ -978,3 +978,33 @@ fn an_agent_option_chosen_before_the_first_turn_is_applied_by_it() {
     );
     server.stop();
 }
+
+/// Rule 15: on a home without Node's fork ACP tables an agent that offers options still answers. The display copy
+/// cannot be stored, so the turn shows the options without storing them and goes on, as the binding write does.
+#[test]
+fn an_agent_with_options_answers_without_the_node_tables() {
+    let (dir, home, work) = dirs();
+    let state = dir.path().join("agent-state.json");
+    write_agents(
+        &home,
+        &mock_agent(),
+        true,
+        &["--state", state.to_str().unwrap(), "--config", "options"],
+    );
+    let model = ModelStub::start();
+    let mut server = Server::start(&home, &work, &model);
+    let session = open_session(&mut server, &work);
+    let finished = finish_turn(&mut server, &session, "c-hello", "hello");
+    assert!(
+        contains(&finished, "\"phase\":\"completedSuccess\""),
+        "{finished}"
+    );
+    assert!(
+        server
+            .seen
+            .iter()
+            .any(|frame| frame.contains("\"externalAgentConfig\":{\"agentId\":\"mock\"")),
+        "the options were not shown"
+    );
+    server.stop();
+}

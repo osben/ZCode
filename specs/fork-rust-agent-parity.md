@@ -1681,10 +1681,10 @@ failure    ─▶ rows closed "The agent turn failed before this tool finished" 
         - **Projection.** `KernelEvent::ExternalAgentConfig` sets `config.externalAgentConfig:
 
     {agentId, options}`with a`state.updated`patch, and an identical state patches nothing.
-      - A cold open of a session whose model is`acp:<agentId>`seeds it, without a delta, from
-        the stored display copy when the stored agent matches (Node
-       `getSessionExternalAgentConfigSeed`). - An event-set value always wins over the seed. - The field is absent until a seed or an event sets it. - The event is not stored (Node keeps it in its in-memory event log only). A reopen gets
-    the selects from the seed.
+    - A cold open of a session whose model is`acp:<agentId>`seeds it, without a delta, from
+      the stored display copy when the stored agent matches (Node
+      `getSessionExternalAgentConfigSeed`). - An event-set value always wins over the seed. - The field is absent until a seed or an event sets it. - The event is not stored (Node keeps it in its in-memory event log only). A reopen gets
+      the selects from the seed.
 
 14. **Resume (S5).** The binding is written after every acquire. A cold start resumes only when the
     agent, the cwd and the launch key all match. `launch_key` is
@@ -1741,7 +1741,9 @@ failure    ─▶ rows closed "The agent turn failed before this tool finished" 
       the rebuilt snapshot has none, like Node's cold merge, which drops a settled turn's stall.
 15. **No migrations.** `zcode-rs` checks that the tables and columns exist (Node's storage
     preparation creates them). Without them there is no binding and no resume, and a config write
-    answers `config.notAvailable`.
+    answers `config.notAvailable`. A turn whose agent offers options still runs: the reconcile shows
+    the options without storing them, as the binding write lets the turn go on (Node always has the
+    tables, so its `writeOffered` never meets this case).
 16. **Catalog.** `fork_acp_agent_catalog.json` next to `provider_config.json` (Node
     `NodeForkAcpAgentCatalogStore`, `acp-agent-derivation.ts`) holds `{schemaVersion: 1, agents:
 [{agentId, capturedAt, options}]}`. - **Reads** take no lock and are tolerant: a missing, unparsable or non-version-1 file reads
