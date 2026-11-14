@@ -430,3 +430,36 @@ async fn tool_search_loads_the_tool_only_while_offered() {
     code.offered.store(true, Ordering::Relaxed);
     assert_eq!(search(&catalog, "select:LSP").await, "<ref:LSP>");
 }
+
+/// The layer sits under the deny filter: a whole-tool `LSP` deny rule hides an offered tool from every session lookup.
+#[test]
+fn a_deny_rule_hides_the_offered_tool() {
+    use rust_cli_kernel_api::permission::syntax::parse_rule;
+    use rust_cli_kernel_api::permission::{PermissionRules, RuleBehavior, RuleSource, SourcedRule};
+    let code = Arc::new(FakeCode::default());
+    code.offered.store(true, Ordering::Relaxed);
+    let filtered = |denied: &[&str]| -> Arc<dyn ToolRegistry> {
+        let rules = PermissionRules {
+            rules: denied
+                .iter()
+                .map(|text| SourcedRule {
+                    source: RuleSource::CliArg,
+                    behavior: RuleBehavior::Deny,
+                    rule: parse_rule(text),
+                })
+                .collect(),
+            ..PermissionRules::default()
+        };
+        Arc::new(crate::PolicyFiltered::new(
+            layered(&code),
+            Arc::new(rust_cli_policy::PolicyGate::new(rules)),
+        ))
+    };
+    let session = SessionId::new("sess_1");
+    let open = filtered(&[]);
+    assert_eq!(snapshot_names(&open, &session), ["Glob", "LSP"]);
+    assert!(open.find_for(&session, "LSP").is_some());
+    let denied = filtered(&["LSP"]);
+    assert_eq!(snapshot_names(&denied, &session), ["Glob"]);
+    assert!(denied.find_for(&session, "LSP").is_none());
+}
