@@ -62,3 +62,46 @@ pub const WAIT_FOR_MCP_SERVERS: &str = "WaitForMcpServers";
 pub const WEB_FETCH: &str = "WebFetch";
 pub const WEB_SEARCH: &str = "WebSearch";
 pub const WRITE: &str = "Write";
+
+/// Fork: the message of a cancelled call of a built-in tool, under Node hooks (Node `entry.cancellation`
+/// `userVisibleMessage`, core `tool/executor/timeout.ts` `executeWithTimeout`; the texts are the handlers' own,
+/// `tool/handlers/*.ts` and contracts `tools/websearch.ts`). `None` for a tool Node has no handler for: the pipeline
+/// then sends Node's fallback, `Tool execution cancelled` (specs/fork-rust-agent-parity.md "Command hook stdin").
+pub fn node_cancel_message(name: &str) -> Option<&'static str> {
+    let message = match name {
+        AGENT => {
+            "Agent was cancelled before the subagent returned findings or background launch completed"
+        }
+        ASK_USER_QUESTION => "AskUserQuestion was cancelled before answers were returned",
+        BASH => "Bash was cancelled and the child process was asked to stop",
+        CRON_CREATE => "CronCreate was cancelled before the automation was created",
+        CRON_DELETE => "CronDelete was cancelled before the automation was deleted",
+        CRON_LIST => "CronList was cancelled before automations were returned",
+        CRON_PAUSE_SELF => "CronPauseSelf was cancelled before the automation was paused",
+        CRON_UPDATE => "CronUpdate was cancelled before the automation was updated",
+        EDIT => "Edit was cancelled before the file operation completed",
+        ENTER_PLAN_MODE => "EnterPlanMode was cancelled before plan mode was entered",
+        EXIT_PLAN_MODE => "ExitPlanMode was cancelled before plan mode was exited",
+        GLOB => "Glob was cancelled before file matches were returned",
+        GREP => "Grep was cancelled before search results were returned",
+        OFF_PEAK_CREATE => "OffPeakCreate was cancelled before the idle-time task was created",
+        OFF_PEAK_LIST => "OffPeakList was cancelled before idle-time tasks were returned",
+        READ => "Read was cancelled before file content was returned",
+        READ_TOPIC_RESOURCE => "ReadTopicResource was cancelled before the resource was saved",
+        SEND_MESSAGE => "SendMessage was cancelled before delivery status returned",
+        SKILL => "Skill loading was cancelled before content was returned",
+        TASK_OUTPUT => "TaskOutput was cancelled while waiting for the task",
+        TASK_STOP => "TaskStop was cancelled before the stop request completed",
+        TODO_WRITE => "TodoWrite was cancelled before todo state was updated",
+        TOOL_SEARCH => "ToolSearch was cancelled",
+        WEB_FETCH => "WebFetch was cancelled before the page could be processed",
+        WEB_SEARCH => "WebSearch was cancelled",
+        WRITE => "Write was cancelled before the file operation completed",
+        _ => return None,
+    };
+    Some(message)
+}
+
+#[cfg(test)]
+#[path = "tool_names_tests.rs"]
+mod tests;

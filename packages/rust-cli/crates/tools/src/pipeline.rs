@@ -5,6 +5,7 @@
 //! 都返回 `is_error` 的结果，不进入下一步。hook 的决定与判决链的先后、hook 消息的位置见
 //! docs/specs/rust-cli/hooks.md §6。
 
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -34,7 +35,8 @@ pub(crate) const REJECT_MESSAGE: &str = rust_cli_kernel_api::tool::REJECT_MESSAG
 pub(crate) const REJECT_WITH_REASON: &str = "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed. To tell you how to proceed, the user said:\n";
 /// 工具使用被中断时的文字（kernel-api 的定义，F55）。
 const INTERRUPT_FOR_TOOL_USE: &str = rust_cli_kernel_api::user_input::INTERRUPT_TEXTS[1];
-/// Node's message of a cancelled call (`timeout.ts` `executeWithTimeout`, `CoreErrorType.ToolCancelled`).
+/// Node's message of a cancelled call of a tool with no cancel message of its own (`timeout.ts` `executeWithTimeout`,
+/// `CoreErrorType.ToolCancelled`).
 const NODE_TOOL_CANCELLED: &str = "Tool execution cancelled";
 const NO_OUTPUT: &str = "Command failed with no output";
 /// `formatError` 超过这个长度（UTF-16 单元）时保留首尾各一半。
@@ -494,7 +496,10 @@ impl Pipeline {
                 // (`hook-flow.ts` `runPostToolUseFailureHooks`); only the model's text is trimmed and limited.
                 let hook_text = match &failure {
                     _ if !self.node_hooks => text.clone(),
-                    Ok(ToolError::Cancelled) => NODE_TOOL_CANCELLED.to_owned(),
+                    // Node's `cancellation.userVisibleMessage` of the tool, else its fallback (`timeout.ts`).
+                    Ok(ToolError::Cancelled) => tool
+                        .cancel_message()
+                        .map_or_else(|| NODE_TOOL_CANCELLED.to_owned(), Cow::into_owned),
                     Ok(ToolError::InvalidInput { message } | ToolError::Failed { message }) => {
                         message.clone()
                     }

@@ -656,10 +656,12 @@ async fn under_node_hooks_a_failure_names_its_error_type() {
             "tool_cancelled",
             "stopped".to_owned(),
         ),
+        // A cancel carries the tool's own message (Node `cancellation.userVisibleMessage`, `executor/timeout.ts`;
+        // `Failing` is named Agent, core `tool/handlers/agent.ts`).
         (
             ToolError::Cancelled,
             "tool_cancelled",
-            "Tool execution cancelled".to_owned(),
+            "Agent was cancelled before the subagent returned findings or background launch completed".to_owned(),
         ),
         (
             ToolError::InvalidInput {
@@ -728,6 +730,67 @@ async fn under_node_hooks_a_failure_names_its_error_type() {
                 }
             }
         }
+    }
+}
+
+/// Fork: a cancelled tool Node has no handler for sends Node's fallback, `Tool execution cancelled`
+/// (`executor/timeout.ts`).
+#[tokio::test]
+async fn under_node_hooks_a_cancel_without_a_tool_message_sends_the_fallback() {
+    let hooks = Arc::new(Hooks::default());
+    let pipeline = Pipeline::new(
+        Gate::new(
+            PermissionDecision::Allow {
+                updated_input: None,
+            },
+            None,
+        ),
+        hooks.clone(),
+    )
+    .with_node_hooks(true);
+    let (progress, _updates) = mpsc::channel(4);
+    pipeline
+        .execute(
+            Arc::new(Unnamed(Failing(Mutex::new(Some(ToolError::Cancelled))))),
+            json!({}),
+            context(Arc::new(ScriptedInteractions::allowing())),
+            progress,
+        )
+        .await;
+    let events = hooks.seen.lock().unwrap().clone();
+    let payload = &events
+        .iter()
+        .find(|event| event.name == HookEventName::PostToolUseFailure)
+        .expect("the failure hook ran")
+        .payload;
+    assert_eq!(payload["error"], "Tool execution cancelled");
+    assert_eq!(
+        payload["error_details"]["message"],
+        "Tool execution cancelled"
+    );
+}
+
+/// [`Failing`] under a name Node has no handler for.
+struct Unnamed(Failing);
+
+#[async_trait]
+impl Tool for Unnamed {
+    fn name(&self) -> &str {
+        "Monitor"
+    }
+    fn input_schema(&self) -> Value {
+        self.0.input_schema()
+    }
+    fn description(&self, context: &PromptContext) -> String {
+        self.0.description(context)
+    }
+    async fn call(
+        &self,
+        input: Value,
+        context: ToolUseContext,
+        progress: mpsc::Sender<ToolProgress>,
+    ) -> Result<ToolOutput, ToolError> {
+        self.0.call(input, context, progress).await
     }
 }
 
