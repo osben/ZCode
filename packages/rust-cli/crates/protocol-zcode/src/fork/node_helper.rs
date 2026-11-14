@@ -76,12 +76,21 @@ pub(crate) const RELAYED_NOTIFICATIONS: &[&str] = &["plugins/operationProgress"]
 /// since the operation it names may be the call that triggered the start.
 const CANCEL_OPERATION: &str = "plugins/cancelOperation";
 
-/// The timing of the client. The defaults are the Host's plugin-management request timeout and the idle reclaim
-/// period; tests shorten them.
+/// The liveness check after a timed-out forwarded call (F3, "Lifecycle changes").
+const PING: &str = "helper/ping";
+
+/// The timing of the client. The defaults are the Host's request timeouts and the idle reclaim period; tests shorten
+/// them.
 #[derive(Debug, Clone)]
 pub struct Timing {
-    /// Per forwarded call.
+    /// Per forwarded `plugins/*` and `workflows/*` call (the Host's plugin-management timeout).
     pub request: Duration,
+    /// Per forwarded `mcp/uiSampling` call (the Host's sampling timeout).
+    pub sampling: Duration,
+    /// Per forwarded call of any other method, and per `helper/mcp/connect` (the Host's default request timeout).
+    pub default_request: Duration,
+    /// How long a process whose call timed out has to answer `helper/ping` to be kept.
+    pub ping: Duration,
     /// For `helper/initialize`. Every call waits on a start, so a helper that never answers the handshake must fail
     /// fast instead of holding them for the call timeout (spawn to answer is about 0.6 s).
     pub initialize: Duration,
@@ -101,12 +110,28 @@ impl Default for Timing {
     fn default() -> Self {
         Self {
             request: Duration::from_secs(300),
+            sampling: Duration::from_secs(65),
+            default_request: Duration::from_secs(180),
+            ping: Duration::from_secs(5),
             initialize: Duration::from_secs(30),
             cancel: Duration::from_secs(5),
             idle: Duration::from_secs(300),
             crash_window: Duration::from_secs(60),
             crash_limit: 3,
             start_cooldown: Duration::from_secs(30),
+        }
+    }
+}
+
+impl Timing {
+    /// The Host's timeout for a forwarded `method`. Model tool calls on helper pipes are timed by Rust's MCP client.
+    pub fn timeout_for(&self, method: &str) -> Duration {
+        if method.starts_with("plugins/") || method.starts_with("workflows/") {
+            self.request
+        } else if method == "mcp/uiSampling" {
+            self.sampling
+        } else {
+            self.default_request
         }
     }
 }
@@ -164,9 +189,10 @@ struct Running {
     methods: HashSet<String>,
     in_flight: usize,
     last_used: Instant,
-    /// When the process last sent anything (an answer, a notification such as operation progress, a request): a
-    /// timed-out call keeps the process only if it was heard from since the call started.
-    last_heard: Instant,
+    /// Counts everything the process sent (an answer, a notification such as operation progress or pipe traffic, a
+    /// request): a timed-out call keeps the process when the count moved since the call started. A count, not a
+    /// timestamp, so an answer at the call's own instant is not mistaken for one after it.
+    heard: u64,
     /// F3: the helper MCP connections of this generation, by connection id. Dropped with the slot, each closes its
     /// connection's event stream (a crash, timeout or reclaim closes every pipe). An open pipe blocks idle reclaim.
     pipes: HashMap<String, mcp::Pipe>,
@@ -228,24 +254,24 @@ impl NodeHelper {
             helper: self,
             generation,
         };
-        let started = Instant::now();
-        let result =
-            match tokio::time::timeout(self.timing.request, peer.request(method, params)).await {
-                Err(_elapsed) => {
-                    if self.timed_out(generation, started) {
-                        self.cancel_abandoned(method, params, &peer);
-                    }
-                    Err(unavailable("the helper did not answer in time"))
+        let started = self.heard_count(generation);
+        let deadline = self.timing.timeout_for(method);
+        let result = match tokio::time::timeout(deadline, peer.request(method, params)).await {
+            Err(_elapsed) => {
+                if self.timed_out(generation, started, &peer).await {
+                    self.cancel_abandoned(method, params, &peer);
                 }
-                Ok(Err(error)) if error.code == CONNECTION_CLOSED && peer.is_closed() => {
-                    self.link_lost(generation);
-                    Err(unavailable("the helper connection closed"))
-                }
-                Ok(result) => {
-                    self.heard(generation);
-                    result
-                }
-            };
+                Err(unavailable("the helper did not answer in time"))
+            }
+            Ok(Err(error)) if error.code == CONNECTION_CLOSED && peer.is_closed() => {
+                self.link_lost(generation);
+                Err(unavailable("the helper connection closed"))
+            }
+            Ok(result) => {
+                self.heard(generation);
+                result
+            }
+        };
         Some(result)
     }
 
@@ -427,7 +453,7 @@ impl NodeHelper {
             methods,
             in_flight: 0,
             last_used: now,
-            last_heard: now,
+            heard: 0,
             pipes: HashMap::new(),
             _guard: guard,
         });
@@ -486,27 +512,40 @@ impl NodeHelper {
         if let Slot::Running(running) = &mut state.slot
             && running.generation == generation
         {
-            running.last_heard = Instant::now();
+            running.heard += 1;
         }
     }
 
-    /// A call of `generation` started at `started` timed out. The process is kept when other calls are in flight and
-    /// it was heard from since this call started (an answer or progress): it is alive and only this call is slow.
-    /// Otherwise it is hung and is dropped without counting a crash; a hung process with calls arriving all the time
-    /// would otherwise never be dropped. Returns whether the process was kept.
-    fn timed_out(&self, generation: u64, started: Instant) -> bool {
-        let mut state = self.state.lock_unpoisoned();
-        let Slot::Running(running) = &state.slot else {
-            return false;
+    /// How much `generation` was heard from so far (see [`Running::heard`]).
+    fn heard_count(&self, generation: u64) -> u64 {
+        match &self.state.lock_unpoisoned().slot {
+            Slot::Running(running) if running.generation == generation => running.heard,
+            _ => 0,
+        }
+    }
+
+    /// A call of `generation` timed out; `started` is [`Self::heard_count`] when it started. The process is kept when it was heard from since the
+    /// call started (an answer, progress or pipe traffic) or when it answers `helper/ping` in time: it is alive and only
+    /// this call is slow, and dropping it would close every session's helper pipes. Otherwise it is hung and is dropped
+    /// without counting a crash. Returns whether the process was kept.
+    async fn timed_out(&self, generation: u64, started: u64, peer: &Peer) -> bool {
+        let heard = match &self.state.lock_unpoisoned().slot {
+            Slot::Running(running) if running.generation == generation => running.heard != started,
+            _ => return false,
         };
-        if running.generation != generation {
+        let alive = heard || self.answers_ping(peer).await;
+        let mut state = self.state.lock_unpoisoned();
+        if !is_current(&state, generation) {
             return false;
         }
-        if running.in_flight > 1 && running.last_heard >= started {
+        if alive {
+            if let Slot::Running(running) = &mut state.slot {
+                running.heard += 1;
+            }
             tracing::warn!(
                 event = "helper.call_timed_out",
                 generation,
-                "a forwarded call timed out; the helper is kept for the calls still in flight"
+                "a forwarded call timed out; the helper is alive and is kept"
             );
             return true;
         }
@@ -519,6 +558,15 @@ impl NodeHelper {
             "the node helper was dropped"
         );
         false
+    }
+
+    /// Any answer to `helper/ping` within [`Timing::ping`] proves the process is alive, an error answer included.
+    async fn answers_ping(&self, peer: &Peer) -> bool {
+        match tokio::time::timeout(self.timing.ping, peer.request(PING, &json!({}))).await {
+            Ok(Ok(_)) => true,
+            Ok(Err(error)) => !(error.code == CONNECTION_CLOSED && peer.is_closed()),
+            Err(_elapsed) => false,
+        }
     }
 
     /// The kept process still runs a call its caller gave up on. A cancellable plugin operation is cancelled in the
@@ -677,7 +725,7 @@ fn unavailable(message: &str) -> RpcError {
 /// requests with method-not-found.
 struct Relay {
     host: Peer,
-    /// Anything the process sends marks it alive (see [`Running::last_heard`]), relayed or not: a dropped notification
+    /// Anything the process sends marks it alive (see [`Running::heard`]), relayed or not: a dropped notification
     /// is still proof that the process is running. A hung call on a live process is then left to its cancel (calls
     /// with an `operationId`) and to the idle reclaim.
     helper: Weak<NodeHelper>,

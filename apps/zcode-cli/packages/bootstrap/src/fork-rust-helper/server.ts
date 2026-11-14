@@ -189,6 +189,7 @@ export class ForkRustHelperServer {
       [FORK_RUST_HELPER_F3.mcpConnect, (params) => host.connect(params)],
       [FORK_RUST_HELPER_F3.sessionOpen, (params) => host.openSession(params)],
       [FORK_RUST_HELPER_F3.appToolsCall, (params) => host.callAppTool(params)],
+      [FORK_RUST_HELPER_F3.ping, async () => ({})],
     ]);
     this.helperNotifications = new Map<string, HelperRequestHandler>([
       [FORK_RUST_HELPER_F3.mcpSend, (params) => host.send(params)],

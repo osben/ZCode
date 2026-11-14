@@ -17,6 +17,8 @@ export const FORK_RUST_HELPER_F3 = {
   appToolsReplace: "helper/appTools/replace",
   appToolsCall: "helper/appTools/call",
   appToolsCancel: "helper/appTools/cancel",
+  /** Liveness check after a timed-out forwarded call; answers `{}`. */
+  ping: "helper/ping",
 } as const;
 
 export interface HelperWorkspace {

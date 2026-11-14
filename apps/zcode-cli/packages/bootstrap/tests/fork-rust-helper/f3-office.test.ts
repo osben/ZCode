@@ -234,6 +234,16 @@ describe("fork: Node helper F3 (Office tools and panels)", () => {
     await helper.done;
   });
 
+  it("answers helper/ping, the liveness check of Rust's timeout rule", async () => {
+    const home = await tempHome();
+    const helper = await initialized(home.env, home.workspace);
+    const reply = await helper.request("helper/ping", {});
+    expect(reply.error).toBeUndefined();
+    expect(reply.result).toEqual({});
+    helper.close();
+    await helper.done;
+  });
+
   it("serves a helper-hosted server to Rust's MCP client over the pipe", async () => {
     const home = await tempHome();
     const helper = await initialized(home.env, home.workspace);

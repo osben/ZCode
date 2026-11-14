@@ -80,9 +80,12 @@ impl NodeHelper {
         workspace: &Value,
         server: &str,
     ) -> Result<HelperMcpConnection, McpError> {
-        let (generation, peer) = self.acquire_link().await.map_err(|error| McpError::Connect {
-            message: error.message,
-        })?;
+        let (generation, peer) = self
+            .acquire_link()
+            .await
+            .map_err(|error| McpError::Connect {
+                message: error.message,
+            })?;
         let _in_flight = super::InFlight {
             helper: self,
             generation,
@@ -105,7 +108,11 @@ impl NodeHelper {
             return Err(closed("the helper exited"));
         }
         let params = json!({"connection": id, "server": server, "workspace": workspace});
-        let answer = tokio::time::timeout(self.timing.request, peer.request(CONNECT, &params)).await;
+        let answer = tokio::time::timeout(
+            self.timing.timeout_for(CONNECT),
+            peer.request(CONNECT, &params),
+        )
+        .await;
         let failure = match answer {
             Ok(Ok(_)) => {
                 self.heard(generation);

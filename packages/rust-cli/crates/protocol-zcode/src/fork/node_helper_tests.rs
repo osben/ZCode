@@ -250,6 +250,9 @@ fn fake(advertised: &[&str], behaviour: Arc<Behaviour>) -> Fake {
 fn timing() -> Timing {
     Timing {
         request: Duration::from_secs(5),
+        sampling: Duration::from_secs(5),
+        default_request: Duration::from_secs(5),
+        ping: Duration::from_secs(1),
         initialize: Duration::from_secs(2),
         cancel: Duration::from_secs(1),
         idle: Duration::from_secs(300),
@@ -949,11 +952,16 @@ async fn a_helper_mcp_connection_carries_messages_in_order() {
     let connects = received(&rig.fake, "helper/mcp/connect");
     assert_eq!(
         connects,
-        [json!({"connection": connection.id, "server": "plugin:viewer:view", "workspace": workspace_params()})]
+        [
+            json!({"connection": connection.id, "server": "plugin:viewer:view", "workspace": workspace_params()})
+        ]
     );
     for (id, method) in [(1, "initialize"), (2, "tools/list"), (3, "tools/call")] {
         rig.helper
-            .mcp_send(&connection.id, json!({"jsonrpc": "2.0", "id": id, "method": method}))
+            .mcp_send(
+                &connection.id,
+                json!({"jsonrpc": "2.0", "id": id, "method": method}),
+            )
             .await
             .expect("sent");
     }
@@ -986,7 +994,10 @@ async fn the_helper_reports_a_closed_server_and_rust_closes_its_own() {
     assert!(lost.events.recv().await.is_none(), "the stream ends");
     assert!(
         rig.helper
-            .mcp_send(&lost.id, json!({"jsonrpc": "2.0", "id": 9, "method": "ping"}))
+            .mcp_send(
+                &lost.id,
+                json!({"jsonrpc": "2.0", "id": 9, "method": "ping"})
+            )
             .await
             .is_err(),
         "a closed pipe refuses sends"
@@ -1074,10 +1085,18 @@ async fn an_open_pipe_keeps_the_helper_from_idle_reclaim() {
         .await
         .expect("connected");
     tokio::time::sleep(Duration::from_secs(301)).await;
-    assert_eq!(rig.fake.stopped.load(Ordering::SeqCst), 0, "kept by the pipe");
+    assert_eq!(
+        rig.fake.stopped.load(Ordering::SeqCst),
+        0,
+        "kept by the pipe"
+    );
     rig.helper.mcp_close(&connection.id).await;
     tokio::time::sleep(Duration::from_secs(301)).await;
-    assert_eq!(rig.fake.stopped.load(Ordering::SeqCst), 1, "reclaimed once idle");
+    assert_eq!(
+        rig.fake.stopped.load(Ordering::SeqCst),
+        1,
+        "reclaimed once idle"
+    );
     assert_eq!(rig.helper.crash_count(), 0);
 }
 
@@ -1106,7 +1125,10 @@ async fn the_routing_transport_sends_node_helper_servers_to_the_helper() {
         )
         .await;
     assert!(
-        matches!(local, Err(rust_cli_kernel_api::mcp::McpError::Unsupported { .. })),
+        matches!(
+            local,
+            Err(rust_cli_kernel_api::mcp::McpError::Unsupported { .. })
+        ),
         "other servers reach the inner transport"
     );
     let id = routed
@@ -1129,7 +1151,10 @@ async fn the_routing_transport_sends_node_helper_servers_to_the_helper() {
         "events are taken once"
     );
     routed
-        .send(&id, json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}))
+        .send(
+            &id,
+            json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}),
+        )
         .await
         .expect("sent");
     let event = tokio::time::timeout(Duration::from_secs(5), events.next())
@@ -1147,4 +1172,77 @@ async fn the_routing_transport_sends_node_helper_servers_to_the_helper() {
         Some(McpTransportEvent::Closed { .. })
     ));
     assert!(events.next().await.is_none());
+}
+
+#[test]
+fn each_forwarded_method_uses_the_hosts_timeout_for_it() {
+    let timing = Timing::default();
+    let secs = |method: &str| timing.timeout_for(method).as_secs();
+    assert_eq!(secs("plugins/list"), 300);
+    assert_eq!(secs("plugins/mentionItems"), 300);
+    assert_eq!(secs("workflows/save"), 300);
+    assert_eq!(secs("mcp/uiSampling"), 65);
+    assert_eq!(secs("mcp/uiCallTool"), 180);
+    assert_eq!(secs("mcp/readResource"), 180);
+    assert_eq!(secs("v4/conversation/workflowRuns"), 180);
+    assert_eq!(secs(mcp::CONNECT), 180);
+    assert_eq!(timing.ping.as_secs(), 5);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_timed_out_call_keeps_a_process_that_answers_ping_and_its_pipes() {
+    let pipes = mcp_echo();
+    let behaviour = behaviour(move |launch, method, params| match method {
+        "plugins/install" => Act::Hang,
+        "helper/ping" => Act::Reply {
+            notes: Vec::new(),
+            result: json!({}),
+        },
+        _ => pipes(launch, method, params),
+    });
+    let rig = rig(fake(&["plugins/install"], behaviour), timing());
+    let mut connection = rig
+        .helper
+        .mcp_connect(&workspace_params(), "plugin:a:s")
+        .await
+        .expect("connected");
+    // The only call in flight, and nothing is heard from the process until it times out.
+    expect_unavailable(&forward_err(&rig.helper, "plugins/install", json!({})).await);
+    assert_eq!(received(&rig.fake, "helper/ping").len(), 1);
+    assert_eq!(
+        rig.fake.stopped.load(Ordering::SeqCst),
+        0,
+        "a process that answers ping is kept"
+    );
+    rig.helper
+        .mcp_send(
+            &connection.id,
+            json!({"jsonrpc": "2.0", "id": 7, "method": "tools/list"}),
+        )
+        .await
+        .expect("the pipe is open");
+    match next_event(&mut connection).await {
+        rust_cli_kernel_api::mcp::McpTransportEvent::Message { message } => {
+            assert_eq!(message["id"], json!(7));
+        }
+        other => panic!("unexpected event: {other:?}"),
+    }
+    assert_eq!(rig.fake.launches.load(Ordering::SeqCst), 1);
+    assert_eq!(rig.helper.crash_count(), 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_timed_out_call_drops_a_process_that_misses_the_ping_deadline() {
+    let behaviour = behaviour(|_, method, _| match method {
+        "helper/ping" => Act::Delay {
+            after: Duration::from_secs(2),
+            result: json!({}),
+        },
+        _ => Act::Hang,
+    });
+    let rig = rig(fake(&["plugins/install"], behaviour), timing());
+    expect_unavailable(&forward_err(&rig.helper, "plugins/install", json!({})).await);
+    assert_eq!(received(&rig.fake, "helper/ping").len(), 1);
+    assert_eq!(rig.fake.stopped.load(Ordering::SeqCst), 1);
+    assert_eq!(rig.helper.crash_count(), 0);
 }
