@@ -8,8 +8,8 @@ use rust_cli_kernel_api::session_api::TurnOutcome;
 use serde_json::Value;
 
 use super::{ChildRuns, Plan};
+use crate::telemetry::Provider;
 use crate::telemetry::tests::assert_schema;
-use crate::telemetry::{Observed, Provider};
 
 const CHILD: &str = "sess_subagent_agent_1";
 
@@ -65,7 +65,7 @@ fn finished() -> ChildLive {
     ChildLive::Finished(TurnOutcome::Success)
 }
 
-fn entry(agent: &str, status: SubagentStatus, owner: Option<&str>) -> SubagentEntry {
+fn entry(agent: &str, status: SubagentStatus) -> SubagentEntry {
     SubagentEntry {
         execution_id: String::new(),
         execution: 0,
@@ -80,7 +80,7 @@ fn entry(agent: &str, status: SubagentStatus, owner: Option<&str>) -> SubagentEn
         elapsed_ms: 0,
         ended_ago_ms: None,
         version: 0,
-        owner: owner.map(AgentId::new),
+        owner: None,
         activity: None,
         parked: false,
         machine: MachineName::primary(),
@@ -106,23 +106,7 @@ impl Parent {
     }
 
     fn table(&mut self, entries: &[SubagentEntry]) -> Plan {
-        self.now += 1;
-        let provider = resolve(&selection("parent-model"));
-        let mut out = Vec::new();
-        let plan = self.runs.table(
-            entries,
-            &Observed {
-                scope: "table-",
-                // A nested agent's change moves no row of the parent, so the parent log sequence stays put.
-                seq: 7,
-                now: self.now,
-                provider: &provider,
-                automation: None,
-            },
-            &mut out,
-        );
-        self.facts.extend(out);
-        plan
+        self.runs.table(entries)
     }
 
     /// Feeds a watch's replay and live items; returns whether the watch asked to reopen.
@@ -176,7 +160,7 @@ const RUN: [&str; 5] = [
 fn a_run_that_finished_before_the_watch_is_read_once() {
     let mut parent = Parent::new();
     // The table first shows the child already finished.
-    let plan = parent.table(&[entry("agent_1", SubagentStatus::Completed, None)]);
+    let plan = parent.table(&[entry("agent_1", SubagentStatus::Completed)]);
     assert_eq!(plan.open, [(CHILD.to_owned(), false)]);
     let id = parent.runs.open(CHILD).expect("watch");
     parent.feed(
@@ -259,40 +243,9 @@ fn a_child_request_carries_the_child_runs_own_model() {
 }
 
 #[test]
-fn a_nested_agent_is_watched_and_reported_under_its_owner() {
-    let mut parent = Parent::new();
-    let owner = entry("agent_1", SubagentStatus::Running, None);
-    let plan = parent.table(&[
-        owner.clone(),
-        entry("agent_2", SubagentStatus::Running, Some("agent_1")),
-    ]);
-    assert_eq!(
-        plan.open,
-        [
-            (CHILD.to_owned(), true),
-            ("sess_subagent_agent_2".to_owned(), true)
-        ]
-    );
-    parent.table(&[
-        owner,
-        entry("agent_2", SubagentStatus::Completed, Some("agent_1")),
-    ]);
-
-    assert_eq!(
-        parent.kinds(),
-        ["subagent.lifecycle:running", "subagent.lifecycle:completed"]
-    );
-    assert_schema(&parent.facts);
-    let spawned = &parent.facts[0];
-    assert_eq!(spawned["sessionId"], CHILD);
-    assert_eq!(spawned["childSessionId"], "sess_subagent_agent_2");
-    assert!(spawned.get("parentToolCallId").is_none());
-}
-
-#[test]
 fn a_parked_agent_keeps_a_watch_for_its_wake() {
     let mut parent = Parent::new();
-    let mut parked = entry("agent_1", SubagentStatus::Completed, None);
+    let mut parked = entry("agent_1", SubagentStatus::Completed);
     parked.parked = true;
     assert_eq!(parent.table(&[parked]).open, [(CHILD.to_owned(), true)]);
 }
@@ -329,7 +282,7 @@ fn settled_agents_at_the_open_get_no_watch() {
     };
     // The first read after the open: an agent that ended before it is only recorded.
     assert_eq!(
-        parent.table(&[entry("agent_1", SubagentStatus::Completed, None)]),
+        parent.table(&[entry("agent_1", SubagentStatus::Completed)]),
         Plan::default()
     );
     assert!(parent.facts.is_empty());
@@ -338,13 +291,13 @@ fn settled_agents_at_the_open_get_no_watch() {
 #[test]
 fn a_watch_whose_agent_settles_before_its_run_is_read_still_reads_the_run() {
     let mut parent = Parent::new();
-    let plan = parent.table(&[entry("agent_1", SubagentStatus::Running, None)]);
+    let plan = parent.table(&[entry("agent_1", SubagentStatus::Running)]);
     assert_eq!(plan.open, [(CHILD.to_owned(), true)]);
     let id = parent.runs.open(CHILD).expect("watch");
     // The child finished right after the watch subscribed: its whole run waits in the feed when the settled table
     // reaches the pump first. The watch stays open.
     assert_eq!(
-        parent.table(&[entry("agent_1", SubagentStatus::Completed, None)]),
+        parent.table(&[entry("agent_1", SubagentStatus::Completed)]),
         Plan::default()
     );
     assert!(parent.runs.watching(CHILD));
@@ -437,61 +390,11 @@ fn a_watch_that_fell_behind_reads_the_end_of_a_run_that_finished_meanwhile() {
 }
 
 #[test]
-fn nested_lifecycle_facts_of_a_reopened_parent_keep_unique_ids() {
-    let read = |now: u64| {
-        let mut parent = Parent::new();
-        parent.now = now;
-        parent.table(&[
-            entry("agent_1", SubagentStatus::Running, None),
-            entry("agent_2", SubagentStatus::Running, Some("agent_1")),
-        ]);
-        parent.facts
-    };
-    let (before, after) = (read(1_000), read(2_000));
-    let mut facts = before;
-    facts.extend(after);
-    assert_eq!(facts.len(), 2);
-    assert_ne!(facts[0]["eventId"], facts[1]["eventId"]);
-    assert_schema(&facts);
-}
-
-#[test]
-fn nested_lifecycle_facts_of_two_reads_at_one_parent_sequence_keep_unique_ids() {
-    let mut parent = Parent::new();
-    let owner = entry("agent_1", SubagentStatus::Running, None);
-    parent.table(&[
-        owner.clone(),
-        entry("agent_2", SubagentStatus::Running, Some("agent_1")),
-    ]);
-    // The owner child's own run reports facts between the two reads.
-    let id = parent.runs.open(CHILD).expect("watch");
-    parent.feed(
-        CHILD,
-        id,
-        vec![],
-        vec![Some(started(1)), Some(assistant("m1"))],
-    );
-    parent.table(&[
-        owner,
-        entry("agent_2", SubagentStatus::Completed, Some("agent_1")),
-    ]);
-
-    let lifecycle: Vec<_> = parent
-        .facts
-        .iter()
-        .filter(|fact| fact["kind"] == "subagent.lifecycle")
-        .collect();
-    assert_eq!(lifecycle.len(), 2);
-    assert_ne!(lifecycle[0]["eventId"], lifecycle[1]["eventId"]);
-    assert_schema(&parent.facts);
-}
-
-#[test]
 fn after_the_open_a_settled_first_sight_reads_the_kept_run() {
     let mut runs = ChildRuns::default();
-    let mut running = entry("agent_0", SubagentStatus::Running, None);
+    let mut running = entry("agent_0", SubagentStatus::Running);
     running.child = SessionId::new("sess_subagent_agent_0");
-    let plan = runs.prime(&[entry("agent_9", SubagentStatus::Completed, None), running]);
+    let plan = runs.prime(&[entry("agent_9", SubagentStatus::Completed), running]);
     assert_eq!(plan.open, [("sess_subagent_agent_0".to_owned(), true)]);
     // A second prime (a change already read the table) does nothing.
     assert_eq!(runs.prime(&[]), Plan::default());
@@ -501,6 +404,6 @@ fn after_the_open_a_settled_first_sight_reads_the_kept_run() {
         facts: Vec::new(),
     };
     // The first change after the open sees a fast child that already finished: its kept run is read.
-    let plan = parent.table(&[entry("agent_1", SubagentStatus::Completed, None)]);
+    let plan = parent.table(&[entry("agent_1", SubagentStatus::Completed)]);
     assert_eq!(plan.open, [(CHILD.to_owned(), false)]);
 }

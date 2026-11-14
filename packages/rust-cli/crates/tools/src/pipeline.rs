@@ -5,6 +5,7 @@
 //! 都返回 `is_error` 的结果，不进入下一步。hook 的决定与判决链的先后、hook 消息的位置见
 //! docs/specs/rust-cli/hooks.md §6。
 
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -35,6 +36,9 @@ pub(crate) const REJECT_MESSAGE: &str = rust_cli_kernel_api::tool::REJECT_MESSAG
 pub(crate) const REJECT_WITH_REASON: &str = "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed. To tell you how to proceed, the user said:\n";
 /// 工具使用被中断时的文字（kernel-api 的定义，F55）。
 const INTERRUPT_FOR_TOOL_USE: &str = rust_cli_kernel_api::user_input::INTERRUPT_TEXTS[1];
+/// Node's message of a cancelled call of a tool with no cancel message of its own (`timeout.ts` `executeWithTimeout`,
+/// `CoreErrorType.ToolCancelled`).
+const NODE_TOOL_CANCELLED: &str = "Tool execution cancelled";
 const NO_OUTPUT: &str = "Command failed with no output";
 /// `formatError` 超过这个长度（UTF-16 单元）时保留首尾各一半。
 const ERROR_LIMIT: usize = 10_000;
@@ -48,6 +52,10 @@ pub struct Pipeline {
     /// Fork: the incognito tool gate; a tool the session's profile removes is not called even when the model names
     /// it (specs/fork-rust-agent-parity.md, "Incognito sessions").
     incognito: Option<Arc<dyn rust_cli_kernel_api::incognito::IncognitoToolGate>>,
+    /// Fork (node_desktop): Node's hook semantics. PreToolUse messages follow the tool result, as Node's post-batch
+    /// reminders, and the PermissionRequest input names the call (specs/fork-rust-agent-parity.md "Tool hook context
+    /// after the tool result", "Command hook stdin").
+    node_hooks: bool,
 }
 
 /// 子代理里的询问被拒时的结果文字（主线程是 [`REJECT_MESSAGE`]，docs/specs/rust-cli/agents.md §4.1.1）。
@@ -129,7 +137,16 @@ impl Pipeline {
             hooks,
             machines: Machines::default(),
             incognito: None,
+            node_hooks: false,
         }
+    }
+
+    /// Fork: Node's hook semantics (the Node desktop agent): PreToolUse messages after the tool result, before the
+    /// PostToolUse ones, and `tool_use_id` in the PermissionRequest input.
+    #[must_use]
+    pub fn with_node_hooks(mut self, node_hooks: bool) -> Self {
+        self.node_hooks = node_hooks;
+        self
     }
 
     /// Fork: check every call against the session's incognito profile.
@@ -180,10 +197,12 @@ impl Pipeline {
         // 不跑 PermissionRequest hooks，hook 不能替用户批准；没有“总是允许”（判决链不给建议规则）。工作线 F137：这个事实
         // 随判决给出（`Ask.once`），不再另问判决链（以前的 `ask_once` 又取一次执行环境的路径风格）。
         if !once {
-            let payload = tag(
-                hooks::permission_request(tool.name(), input, &suggestions),
-                &call.machine,
-            );
+            let mut payload = hooks::permission_request(tool.name(), input, &suggestions);
+            // Node's PermissionRequest input carries the call id (`toolCallId`, alias `tool_use_id`).
+            if self.node_hooks {
+                payload["tool_use_id"] = Value::from(context.tool_use.as_str());
+            }
+            let payload = tag(payload, &call.machine);
             let event = hooks::event(HookEventName::PermissionRequest, &call.hooks, payload).await;
             let request = self.hooks.run(event, context.cancel.clone()).await;
             match request.decision {
@@ -460,7 +479,7 @@ impl Pipeline {
                 budget::apply(
                     output,
                     tool.name(),
-                    tool.max_result_size_chars(),
+                    budget::Limit::of(tool),
                     &context.session,
                     context.artifacts.as_ref(),
                 )
@@ -474,15 +493,44 @@ impl Pipeline {
                     other => (Ok(other), Value::Null),
                 };
                 let interrupted = matches!(failure, Ok(ToolError::Cancelled) | Err(_));
+                // Node's CoreError type of the failure (`error_details.type`).
+                let kind = match &failure {
+                    Ok(ToolError::InvalidInput { .. }) => "invalid_input",
+                    Ok(ToolError::Cancelled) | Err(_) => "tool_cancelled",
+                    Ok(_) => "tool_execution_failed",
+                };
                 let text = match &failure {
                     Ok(ToolError::Cancelled) => INTERRUPT_FOR_TOOL_USE.to_owned(),
                     Ok(other) => format_error(&other.to_string()),
                     Err(message) => message.clone(),
                 };
-                let payload = tag(
-                    hooks::post_tool_use_failure(tool.name(), &input, &text, interrupted, &context),
-                    machine,
+                // Fork: Node's failure hook gets the raw `error.message` in `error` and `error_details`
+                // (`hook-flow.ts` `runPostToolUseFailureHooks`); only the model's text is trimmed and limited.
+                let hook_text = match &failure {
+                    _ if !self.node_hooks => text.clone(),
+                    // Node's `cancellation.userVisibleMessage` of the tool, else its fallback (`timeout.ts`).
+                    Ok(ToolError::Cancelled) => tool
+                        .cancel_message()
+                        .map_or_else(|| NODE_TOOL_CANCELLED.to_owned(), Cow::into_owned),
+                    Ok(ToolError::InvalidInput { message } | ToolError::Failed { message }) => {
+                        message.clone()
+                    }
+                    Ok(other) => other.to_string(),
+                    Err(message) => message.clone(),
+                };
+                let mut payload = hooks::post_tool_use_failure(
+                    tool.name(),
+                    &input,
+                    &hook_text,
+                    interrupted,
+                    &context,
                 );
+                // Node's failure input carries the error object next to its message (`error_details`).
+                if self.node_hooks {
+                    payload["error_details"] =
+                        serde_json::json!({"message": hook_text, "type": kind});
+                }
+                let payload = tag(payload, machine);
                 let event =
                     hooks::event(HookEventName::PostToolUseFailure, &session, payload).await;
                 let mut post = self.hooks.run(event, context.cancel.clone()).await;
@@ -536,7 +584,10 @@ impl ToolExecutor for Pipeline {
         if self.hidden(tool.as_ref(), &context).await {
             return ToolExecution::output(no_such_tool(tool.name()));
         }
-        let mut messages = HookMessages::default();
+        let mut messages = HookMessages {
+            pre_after_result: self.node_hooks,
+            ..HookMessages::default()
+        };
         let (input, call) = match self
             .admit(tool.as_ref(), input, context, &mut messages)
             .await

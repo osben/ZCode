@@ -161,6 +161,16 @@ pub async fn remove_dir_all_optional(path: &Path) -> io::Result<()> {
     }
 }
 
+/// Fork: [`remove_dir_all_optional`], synchronously (a drop guard's last resort when no runtime can run the async
+/// removal).
+pub fn remove_dir_all_optional_blocking(path: &Path) -> io::Result<()> {
+    match std::fs::remove_dir_all(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
 /// 在文件末尾追加 `bytes`（按需建父目录与文件）。只给"一个写者、按顺序追加"的日志类文件用
 /// （例如 TUI 输入历史）；调用方保证同一个文件只有一个写者。
 pub async fn append(path: &Path, bytes: &[u8]) -> io::Result<()> {
@@ -205,6 +215,37 @@ pub async fn atomic_write(path: &Path, bytes: &[u8], options: WriteOptions) -> i
         return Err(error);
     }
     sync_directory(directory).await;
+    Ok(())
+}
+
+/// Fork: [`atomic_write`], synchronously (for a caller already on the blocking pool, which must not split the write
+/// into several jobs).
+pub fn atomic_write_blocking(path: &Path, bytes: &[u8], options: WriteOptions) -> io::Result<()> {
+    let name = path.file_name().ok_or_else(|| {
+        io::Error::new(
+            ErrorKind::InvalidInput,
+            format!("atomic write target has no file name: {}", path.display()),
+        )
+    })?;
+    let directory = match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
+        Some(_) | None => PathBuf::from("."),
+    };
+    let temp = directory.join(temp_name(name, options.temp_name));
+    stage(&directory, &temp, bytes, options.mode, options.parent)?;
+    let mut delays = options.rename_retry.iter();
+    while let Err(error) = std::fs::rename(&temp, path) {
+        match delays.next() {
+            Some(delay) if retryable(&error) => std::thread::sleep(*delay),
+            Some(_) | None => {
+                let _ = std::fs::remove_file(&temp);
+                return Err(error);
+            }
+        }
+    }
+    if cfg!(unix) {
+        let _ = std::fs::File::open(&directory).and_then(|directory| directory.sync_all());
+    }
     Ok(())
 }
 
@@ -342,24 +383,27 @@ pub async fn create_dir_all(path: &Path) -> io::Result<()> {
 /// 0o700})` 后 `chmod(dir, 0o700)`，信任记录的 `security/`，config.md §4.2）。Windows 上同 [`create_dir_all`]。
 pub async fn create_private_dir_all(path: &Path) -> io::Result<()> {
     let path = path.to_path_buf();
-    rust_cli_base::blocking(move || {
-        let mut builder = std::fs::DirBuilder::new();
-        builder.recursive(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
-            builder.mode(rust_cli_base::proto::mode::PRIVATE_DIR);
-            builder.create(&path)?;
-            std::fs::set_permissions(
-                &path,
-                std::fs::Permissions::from_mode(rust_cli_base::proto::mode::PRIVATE_DIR),
-            )
-        }
-        #[cfg(not(unix))]
-        builder.create(&path)
-    })
-    .await
-    .map_err(io::Error::other)?
+    rust_cli_base::blocking(move || create_private_dir_all_blocking(&path))
+        .await
+        .map_err(io::Error::other)?
+}
+
+/// Fork: [`create_private_dir_all`], synchronously (for a caller already on the blocking pool).
+pub fn create_private_dir_all_blocking(path: &Path) -> io::Result<()> {
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+        builder.mode(rust_cli_base::proto::mode::PRIVATE_DIR);
+        builder.create(path)?;
+        std::fs::set_permissions(
+            path,
+            std::fs::Permissions::from_mode(rust_cli_base::proto::mode::PRIVATE_DIR),
+        )
+    }
+    #[cfg(not(unix))]
+    builder.create(path)
 }
 
 /// 把一个已有的文件（含 socket 文件）设成只有本用户能读写（Unix 0600；Windows 上什么都不做）：跨会话的收件箱

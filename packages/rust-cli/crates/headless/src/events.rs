@@ -161,6 +161,10 @@ pub(crate) fn block(block: &ContentBlock) -> Value {
         // Fork: an attached file is written as its metadata (the content stays in the session store).
         ContentBlock::File { file } => json!({"type": "file", "name": file.name, "mime": file.mime,
             "bytes": file.bytes}),
+        // Fork: an ACP row (rule 5 of the parity spec) is written as its record.
+        ContentBlock::ExternalTool(tool) => json!({"type": "external_tool", "id": tool.id.as_str(),
+            "name": tool.name, "title": tool.title, "input": tool.input, "output": tool.output,
+            "is_error": tool.is_error}),
         ContentBlock::ToolResult {
             tool_use_id,
             content,

@@ -9,6 +9,7 @@ mod background_shells;
 mod bash_progress;
 mod cold;
 pub mod elicitation;
+mod external_tools;
 mod goal_verify;
 mod kinds;
 mod markers;
@@ -187,6 +188,8 @@ pub struct Projection {
     /// Fork: per user message id, what each of its attachments reads from (the stored `file` parts), for
     /// `v4/conversation/attachmentRead` / `attachmentStat` (attachments.rs).
     attachment_sources: HashMap<String, Vec<AttachmentSource>>,
+    /// Fork: the snapshot `plan` (`{items, updatedAt}`) from the last todo tool row (projection/external_tools.rs).
+    plan_panel: Option<Value>,
 }
 
 /// Fork: one attachment of a `userInput` row as its stored `file` part has it.
@@ -212,7 +215,8 @@ pub(crate) fn text_of(content: &[ContentBlock]) -> String {
             | ContentBlock::ToolResult { .. }
             | ContentBlock::ServerToolUse { .. }
             | ContentBlock::WebSearchToolResult { .. }
-            | ContentBlock::File { .. } => None,
+            | ContentBlock::File { .. }
+            | ContentBlock::ExternalTool(_) => None,
         })
         .collect::<Vec<_>>()
         .join("\n")
@@ -347,6 +351,7 @@ impl Projection {
             subagents: subagent_rows::Subagents::default(),
             shells: background_shells::Shells::default(),
             attachment_sources: HashMap::new(),
+            plan_panel: None,
         };
         cold::rows(&mut projection, view);
         projection.adopt_turn_files(view);
@@ -854,6 +859,22 @@ impl Projection {
                     &mut out,
                 );
             }
+            KernelEvent::ExternalToolRow {
+                tool_use,
+                name,
+                title,
+                input,
+                running,
+            } => self.external_tool_row(
+                tool_use.as_str(),
+                name,
+                title,
+                input,
+                *running,
+                now,
+                seq,
+                &mut out,
+            ),
             KernelEvent::ToolDone { tool_use, output } => {
                 let text = text_of_result(&output.content);
                 self.remember_shell_title(tool_use.as_str(), &text);
@@ -1544,7 +1565,7 @@ impl Projection {
             "backgroundWorks": self.background_works_value(),
             "subagents": self.subagents.manifest.to_value(),
             "goal": self.goal_json(),
-            "plan": null,
+            "plan": self.plan_panel,
             "workspaceHookAdmission": self.banners.hook,
             "rows": {
                 "window": &self.rows[start..],

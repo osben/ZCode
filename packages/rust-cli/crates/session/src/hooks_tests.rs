@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use rust_cli_kernel_api::hooks::{HookEventName, HookOutcome};
 use rust_cli_kernel_api::message::{ContentBlock, Message, UserMessage, UserOrigin};
+use rust_cli_kernel_api::permission::PermissionMode;
 use rust_cli_kernel_api::session_api::{
     Command, EndReason, KernelEvent, SessionHandle, StartSource, TurnOutcome,
 };
@@ -273,6 +274,8 @@ async fn session_start_messages_come_before_the_first_input() {
     assert_eq!(start.name, HookEventName::SessionStart);
     assert_eq!(start.payload["source"], "clear");
     assert_eq!(start.payload["model"], "scripted");
+    // Fork: the Node stdin reads the session mode (Node sends `mode` on every event).
+    assert_eq!(start.context.session_mode, Some(PermissionMode::Default));
     assert_eq!(model.requests().len(), 2);
 }
 
@@ -293,6 +296,41 @@ async fn closing_runs_session_end_with_the_reason() {
     let notices = built.session.close(EndReason::PromptInputExit).await;
     assert_eq!(notices, ["SessionEnd hook [x] failed: boom"]);
     assert_eq!(hooks.seen()[0].payload["reason"], "prompt_input_exit");
+    assert_eq!(
+        hooks.seen()[0].context.session_mode,
+        Some(PermissionMode::Default)
+    );
+}
+
+/// Fork: the permission Notification carries the session mode for the Node stdin (Node sends `mode` on every event).
+#[test]
+fn the_permission_notification_names_the_session_mode() {
+    let meta = rust_cli_kernel_api::store::SessionMeta {
+        id: rust_cli_kernel_api::ids::SessionId::new("sess_1"),
+        kind: rust_cli_kernel_api::store::SessionKind::Interactive,
+        parent: None,
+        workspace: rust_cli_kernel_api::env::WorkspaceRef {
+            environment: rust_cli_kernel_api::ids::EnvironmentId::new("local"),
+            root: rust_cli_kernel_api::env::EnvPath::new("/work"),
+        },
+        title: String::new(),
+        trace: rust_cli_kernel_api::ids::TraceId::new("trace_1"),
+        created_at_ms: 0,
+        incognito: None,
+    };
+    let event = super::permission_notification(&meta, "Bash", PermissionMode::AcceptEdits);
+    assert_eq!(event.name, HookEventName::Notification);
+    assert_eq!(
+        event.payload["message"],
+        "ZCode needs your permission to use Bash"
+    );
+    assert_eq!(event.payload["notification_type"], "permission_prompt");
+    assert_eq!(
+        event.context.session_mode,
+        Some(PermissionMode::AcceptEdits)
+    );
+    // The Claude Code input keeps Notification without `permission_mode`.
+    assert_eq!(event.context.mode, None);
 }
 
 /// 输入在回合任务里提交（UserPromptSubmit 之后）：提交失败以 `TurnFinished(Failed)` 报告，

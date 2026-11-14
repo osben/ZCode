@@ -55,6 +55,7 @@ pub(crate) fn hooks(
     ports: &Ports,
     operations: &Operations,
     incognito: &rust_cli_kernel_api::incognito::IncognitoProfiles,
+    transcripts: Option<Arc<dyn rust_cli_kernel_api::hooks::HookTranscripts>>,
 ) -> Arc<HookEngine> {
     let machine = ports.environments.primary_machine();
     Arc::new(
@@ -67,6 +68,10 @@ pub(crate) fn hooks(
             operations: operations.clone(),
             // 大输出与工具结果落在同一个存储（hooks.md §4.5，修复线 F15）。
             artifacts: ports.artifacts.clone(),
+            node_stdin: transcripts.map(|transcripts| rust_cli_hooks::NodeStdinPorts {
+                transcripts,
+                clock: ports.clock.clone(),
+            }),
         })
         .with_incognito(incognito.clone()),
     )
@@ -299,11 +304,16 @@ pub(crate) fn pipeline(
     ext: &Ext,
     gate: &Arc<PolicyGate>,
     hooks: &Arc<HookEngine>,
+    node_desktop: bool,
 ) -> Arc<Pipeline> {
+    // 管线直接拿判决链（F125：缺陷 D1 是以前包在外面的一层漏转发了“只批准这一次”）；按调用的 `machine` 选机器
+    // （R3，remote-exec.md §20.6）。
     Arc::new(
         Pipeline::new(gate.clone(), hooks.clone())
             .with_machines(ports.environments.clone())
-            .with_incognito(ext.incognito_tools()),
+            .with_incognito(ext.incognito_tools())
+            // Fork (node_desktop): tool hook contexts after the tool result, like Node.
+            .with_node_hooks(node_desktop),
     )
 }
 
@@ -316,15 +326,21 @@ pub(crate) fn query_parts(
         &Arc<HookEngine>,
     ),
     (late, operations, pipeline): (&Arc<LateCompactor>, Operations, &Arc<Pipeline>),
-    (defaults, traits): (&Defaults, SurfaceTraits),
+    (defaults, traits, node_desktop): (&Defaults, SurfaceTraits, bool),
+    code: Option<Arc<dyn rust_cli_kernel_api::lsp::CodeIntelligence>>,
 ) -> QueryParts {
     QueryParts {
         model: ports.model.clone(),
         context: context.clone(),
         tools: Arc::new(rust_cli_tools::PolicyFiltered::new(
-            ext.registry(),
+            match code {
+                // Fork: the `LSP` tool sits under the deny filter, offered per session (specs/fork-rust-lsp.md).
+                Some(code) => Arc::new(rust_cli_tools::LspTools::new(ext.registry(), code)),
+                None => ext.registry(),
+            },
             gate.clone(),
         )),
+        // One pipeline for model calls and MCP App authorizations (pipeline_authorize.rs); see `pipeline`.
         executor: pipeline.clone(),
         compactor: late.clone(),
         hooks: hooks.clone(),
@@ -334,7 +350,15 @@ pub(crate) fn query_parts(
         artifacts: ports.artifacts.clone(),
         operations,
         non_interactive: traits.non_interactive,
-        limits: defaults.limits.request,
+        // Fork (node_desktop): Node's Stop continuation cap (specs/fork-rust-agent-parity.md "Stop continuation cap").
+        limits: rust_cli_query::RequestLimits {
+            stop_continuations: if node_desktop {
+                rust_cli_query::StopContinuations::NodeTurn
+            } else {
+                rust_cli_query::StopContinuations::Consecutive
+            },
+            ..defaults.limits.request
+        },
     }
 }
 

@@ -89,9 +89,11 @@ impl AgentActivity {
             } => self.stream(message, index, text, true),
             QueryEvent::ModelNotice { notice } => Notice::fold(&mut self.notice, notice, now_ms),
             // The TUI shows a tool when it starts (the desktop projection also shows the streaming input).
+            // Fork: ACP rows run only in a top-level desktop session, never in a subagent.
             QueryEvent::Delta { .. }
             | QueryEvent::ToolInputStarted { .. }
-            | QueryEvent::ToolProgress { .. } => {}
+            | QueryEvent::ToolProgress { .. }
+            | QueryEvent::ExternalToolRow { .. } => {}
         }
     }
 }

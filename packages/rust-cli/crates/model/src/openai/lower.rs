@@ -109,6 +109,10 @@ pub(crate) fn items(
                         | ContentBlock::ServerToolUse { .. }
                         | ContentBlock::WebSearchToolResult { .. }
                         | ContentBlock::File { .. } => {}
+                        // Fork: `query::normalize` drops ACP rows; one here is a bug, refused like the Anthropic writer.
+                        ContentBlock::ExternalTool(_) => {
+                            return Err(invalid("ACP rows never reach the model request"));
+                        }
                         ContentBlock::Image { .. }
                         | ContentBlock::Video { .. }
                         | ContentBlock::ToolResult { .. } => {
@@ -180,6 +184,9 @@ fn user(
             | ContentBlock::RedactedThinking { .. }
             | ContentBlock::ServerToolUse { .. }
             | ContentBlock::WebSearchToolResult { .. } => {}
+            ContentBlock::ExternalTool(_) => {
+                return Err(invalid("ACP rows never reach the model request"));
+            }
             ContentBlock::ToolUse { .. } => {
                 return Err(invalid("user messages cannot carry tool calls"));
             }

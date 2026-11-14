@@ -19,6 +19,8 @@ use super::*;
 mod background_result;
 #[path = "background_shells_tests.rs"]
 mod background_shells;
+#[path = "external_tools_tests.rs"]
+mod external_tools;
 #[path = "fork_notice_tests.rs"]
 mod fork_notice;
 #[path = "goal_verify_tests.rs"]

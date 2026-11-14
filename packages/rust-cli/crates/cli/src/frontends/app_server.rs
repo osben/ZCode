@@ -159,6 +159,9 @@ async fn serve(
     );
     spec.node_helper = node_helper;
     let opened = assemble::open(&spec, facts, (paths, clock)).await?;
+    // Fork: the process entry releases this store's session runtime presence after the runtime has shut down
+    // (specs/fork-rust-agent-parity.md "Session runtime presence on the shared database").
+    crate::process::release_presence_at_exit(opened.store.clone());
     // 修复（F133，modularity.md §7 的 P5）：以前 ID 取读配置之前的缺省库路径、在开端口之前就报 `checking`，配置或环境变量
     // 改了 `storage.sessionDbPath` 时 ID 不是实际打开的库。ID 又不能在首帧之后改（Host 丢掉 ID 变了的帧，app-protocol.md
     // §4.2），所以首帧等库的位置定了再发：ID 取会话库所用的同一份存储位置。

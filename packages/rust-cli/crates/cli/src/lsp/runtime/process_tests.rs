@@ -59,6 +59,7 @@ async fn a_real_server_reports_diagnostics_after_an_edit() {
             pool: pool.clone(),
             documents: Documents::new(false),
             preferences: Arc::new(Mutex::new(LspPreferences::default())),
+            probe: Arc::new(crate::lsp::runtime::session::tests::Installed::default()),
         },
         Registry::new(vec![server]),
         ServerKey {

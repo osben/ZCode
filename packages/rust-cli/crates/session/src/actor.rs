@@ -41,10 +41,11 @@ pub(crate) enum Request {
     Meta {
         reply: oneshot::Sender<SessionMeta>,
     },
-    /// Fork: the meta for SessionEnd, `None` while SessionStart is still held (a prepared execution worktree that
-    /// was never activated: Node has no runtime for it, so nothing ends).
+    /// Fork: the meta and mode for SessionEnd, `None` while SessionStart is still held (a prepared execution worktree
+    /// that was never activated: Node has no runtime for it, so nothing ends).
     EndMeta {
-        reply: oneshot::Sender<Option<SessionMeta>>,
+        reply:
+            oneshot::Sender<Option<(SessionMeta, rust_cli_kernel_api::permission::PermissionMode)>>,
     },
     RewindOptions {
         reply: oneshot::Sender<crate::rewind::Snapshot>,
@@ -612,7 +613,11 @@ impl Actor {
                 let _ = reply.send(self.meta.clone());
             }
             Request::EndMeta { reply } => {
-                let _ = reply.send(self.deferred_start.is_none().then(|| self.meta.clone()));
+                let _ = reply.send(
+                    self.deferred_start
+                        .is_none()
+                        .then(|| (self.meta.clone(), self.mode())),
+                );
             }
             Request::RewindOptions { reply } => {
                 let _ = reply.send(self.rewind_snapshot());

@@ -1,4 +1,5 @@
 [
+  "apps/zcode-cli/packages/adapters/tests/fork-rust-runtime-presence.test.ts",
   "apps/zcode-cli/packages/adapters/tests/fork-usage-rollup.test.ts",
   "apps/zcode-cli/packages/adapters/tests/runner-debug-stream-timing.test.ts",
   "apps/zcode-cli/packages/adapters/tests/upstream-migration-checksum-pin.test.ts",

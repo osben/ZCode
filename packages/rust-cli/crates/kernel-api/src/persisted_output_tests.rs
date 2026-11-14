@@ -106,3 +106,40 @@ async fn persist_stores_the_whole_text_and_returns_the_preview() {
         )]
     );
 }
+
+/// Fork: Node `formatDecimalBytes` (tool/result-persistence-format.ts), values printed by Node.
+#[test]
+fn decimal_sizes_match_node() {
+    for (bytes, text) in [
+        (999, "999 B"),
+        (1_000, "1 KB"),
+        (1_499, "1 KB"),
+        (1_500, "2 KB"),
+        (29_999, "30 KB"),
+        (120_000, "120 KB"),
+        (999_499, "999 KB"),
+        (999_500, "1000 KB"),
+        (1_000_000, "1 MB"),
+        (2_500_000_000, "3 GB"),
+    ] {
+        assert_eq!(format_decimal_bytes(bytes), text, "{bytes}");
+    }
+}
+
+/// Fork: Node `formatGenericPersistedOutputContent`: the size is the body's UTF-8 bytes in decimal units and the
+/// preview is the same 2000-unit head. Node prints 2117 UTF-16 units for this body.
+#[tokio::test]
+async fn the_generic_envelope_counts_utf8_bytes() {
+    let store = Recorded::default();
+    let body = "語".repeat(40_000);
+    let text = persist_generic(&store, &SessionId::new("sess_1"), &body, "text/plain")
+        .await
+        .unwrap();
+    assert!(text.starts_with(
+        "<persisted-output>\nOutput too large (120 KB). Full output saved to: zcode-artifact://sess_1/tool-result-1\n\nPreview (first 2 KB):\n語語"
+    ));
+    assert!(text.ends_with("語\n...\n</persisted-output>"));
+    let location_units = utf16_len("zcode-artifact://sess_1/tool-result-1") - utf16_len("P");
+    assert_eq!(utf16_len(&text), 2_117 + location_units);
+    assert_eq!(store.0.lock().unwrap()[0].2, body.as_bytes());
+}

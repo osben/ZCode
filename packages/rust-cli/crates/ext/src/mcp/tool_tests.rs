@@ -139,3 +139,22 @@ fn an_app_tool_is_shaped_like_a_listed_tool_of_its_server() {
     assert_eq!(bare.input_schema(), json!({"type": "object"}));
     assert!(!bare.is_read_only(&json!({})));
 }
+
+/// Fork: Node's MCP cancel message names the registered tool (core `mcp/index.ts` `createMcpToolEntry`,
+/// `MCP tool ${name} was cancelled`).
+#[test]
+fn a_cancelled_mcp_call_names_the_registered_tool() {
+    use rust_cli_kernel_api::tool::Tool;
+    let tool = McpTool::from_listed(
+        "files",
+        &json!({"name": "read", "inputSchema": {"type": "object"}}),
+        false,
+        Weak::new(),
+    )
+    .unwrap();
+    assert_eq!(tool.name(), "mcp__files__read");
+    assert_eq!(
+        tool.cancel_message().as_deref(),
+        Some("MCP tool mcp__files__read was cancelled")
+    );
+}

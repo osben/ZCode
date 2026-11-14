@@ -414,6 +414,10 @@ impl LocalKernel {
             table::Claim::Open(open) => return Ok(open),
             table::Claim::Load(loading) => loading,
         };
+        // Fork: the runtime presence comes before the cold load (Node `materializeSessionRecord`): from here a purge
+        // elsewhere refuses, and an open of a session whose purge started fails with `session-data.deleting`
+        // (specs/fork-rust-agent-parity.md "Session runtime presence on the shared database"). A failed open drops it.
+        let presence = self.ports.store.register_runtime(session).await?;
         // Fork: a subagent's live run is taken before the cold load, so nothing it stores falls between the two
         // (session crate `child_live`).
         let child_live = self.agents.child_live(session);
@@ -447,7 +451,7 @@ impl LocalKernel {
         // Only here, after every step that can fail or be dropped at an await, and in the same poll as `start`: an open
         // that fails leaves no actor and is never open for the agents, and no close can come before its actor exists.
         self.agents.session_opened(&state.meta);
-        Ok(self.start(state, Opened::Loaded))
+        Ok(self.start(state, Opened::Loaded, presence))
     }
 
     /// Creates a session; with `execution` (fork execution worktree) the row keeps the requested workspace and the
@@ -475,6 +479,8 @@ impl LocalKernel {
             created_at_ms: self.ports.clock.now_ms(),
             incognito: request.incognito,
         };
+        // Fork: as `open_in`, the presence comes before the row.
+        let presence = self.ports.store.register_runtime(&id).await?;
         self.ports.store.create(meta.clone()).await?;
         self.incognito.record(&id, meta.incognito);
         let in_worktree = execution.is_some();
@@ -512,7 +518,7 @@ impl LocalKernel {
         // Fork: a created top-level session is open for the agents' notice forwarders, as an opened one is (after
         // the fallible steps, in the same poll as `start`).
         self.agents.session_opened(&state.meta);
-        self.start(state, Opened::Created);
+        self.start(state, Opened::Created, presence);
         Ok(id)
     }
 }

@@ -82,7 +82,7 @@ async fn run(
 ) -> Vec<String> {
     tracing::info!(event = "session.close", session = %id, reason = ?reason, "session closed");
     let notices = match ask(&requests, |reply| Request::EndMeta { reply }).await {
-        Ok(Some(meta)) => hooks::session_end(&deps, &meta, reason).await,
+        Ok(Some((meta, mode))) => hooks::session_end(&deps, &meta, mode, reason).await,
         // Fork: a prepared session whose SessionStart is still held never started; SessionEnd does not run (in the
         // parent checkout) either, as Node never made a runtime for it.
         Ok(None) => Vec::new(),

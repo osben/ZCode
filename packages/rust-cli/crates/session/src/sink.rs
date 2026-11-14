@@ -78,6 +78,8 @@ pub(crate) enum SinkRequest {
     },
     /// hook 给出的会话标题（UserPromptSubmit / SessionStart 的 `sessionTitle`）。
     Title(String),
+    /// Fork: an ACP agent's title (`RunSink::external_title`), stored as a generated title.
+    ExternalTitle(String),
     /// 工具请求修改工作目录（docs/specs/rust-cli/tools-more.md §11.4）。
     SetWorkspace {
         root: rust_cli_kernel_api::env::EnvPath,
@@ -339,6 +341,10 @@ impl Interactions for SessionAsks {
 
 #[async_trait]
 impl RunSink for ActorSink {
+    async fn external_title(&self, title: String) {
+        let _ = self.sender.send(SinkRequest::ExternalTitle(title)).await;
+    }
+
     async fn commit_message(&self, message: Message) -> Result<(), StoreError> {
         self.call(|reply| SinkRequest::Message { message, reply })
             .await

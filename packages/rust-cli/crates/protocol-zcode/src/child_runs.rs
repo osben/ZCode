@@ -15,7 +15,7 @@ use rust_cli_kernel_api::panels::{SubagentEntry, SubagentStatus};
 use rust_cli_kernel_api::session_api::KernelEvent;
 use serde_json::Value;
 
-use crate::telemetry::{Observed, Provider, Role, SubagentLink, Telemetry, uuid_v7};
+use crate::telemetry::{Observed, Provider, Role, Telemetry, uuid_v7};
 
 /// Which watches to open after a table read. A watch is never closed from the table: when its entry settles, the
 /// run may already sit in the watch's feed unread (the mirror publishes `Finished` before the table settles), so a
@@ -77,12 +77,6 @@ pub(crate) struct ChildRuns {
     /// The first table read is done: entries settled before this `Live` opened are only recorded.
     primed: bool,
     watches: u64,
-    /// The table reads with nested lifecycle facts: their event sequence, so two reads at the same parent log
-    /// sequence never repeat an event ID.
-    nested_reads: u64,
-    /// The event ID scope of the nested lifecycle facts, fresh per record (`"table-{uuid}-"`), so a reopened parent
-    /// restarting `nested_reads` never repeats an event ID either.
-    nested_scope: Option<String>,
 }
 
 /// What one feed item did.
@@ -268,21 +262,11 @@ impl ChildRuns {
         plan
     }
 
-    /// A read of the kernel subagent table (nested agents included): the `subagent.lifecycle` facts of nested agents,
-    /// under the owning child's session, and the watches to open and close.
-    pub fn table(
-        &mut self,
-        entries: &[SubagentEntry],
-        at: &Observed<'_>,
-        out: &mut Vec<Value>,
-    ) -> Plan {
+    /// A read of the kernel subagent table: the watches to open. Under `node_desktop` subagents launch no subagents
+    /// (specs/fork-rust-agent-parity.md, "Subagents launch no subagents"), so no entry has an owner to report.
+    pub fn table(&mut self, entries: &[SubagentEntry]) -> Plan {
         let mut plan = Plan::default();
-        let mut nested_seq = None;
         let primed = std::mem::replace(&mut self.primed, true);
-        let child_of: HashMap<&str, &str> = entries
-            .iter()
-            .map(|entry| (entry.agent.as_str(), entry.child.as_str()))
-            .collect();
         for entry in entries {
             let child = entry.child.as_str();
             let alive = entry.status == SubagentStatus::Running || entry.parked;
@@ -295,52 +279,6 @@ impl ChildRuns {
             if record.watch.is_none() && (alive || (changed && primed)) {
                 plan.open.push((child.to_owned(), alive));
             }
-            // A nested agent (Rust only: Node's child runtimes cannot launch subagents) is reported by its owner.
-            let Some(owner) = entry
-                .owner
-                .as_ref()
-                .and_then(|owner| child_of.get(owner.as_str()))
-            else {
-                continue;
-            };
-            let status = match entry.status {
-                _ if entry.parked => "running",
-                SubagentStatus::Running => "running",
-                SubagentStatus::Completed => "success",
-                SubagentStatus::Failed => "failed",
-                SubagentStatus::Killed => "cancelled",
-            };
-            let link = SubagentLink {
-                agent: entry.agent.as_str().to_owned(),
-                agent_type: Some(entry.agent_type.clone()).filter(|kind| !kind.is_empty()),
-                child: child.to_owned(),
-                parent_tool: String::new(),
-                background: entry.background,
-                status: status.to_owned(),
-                turn: None,
-            };
-            if nested_seq.is_none() {
-                self.nested_reads += 1;
-                nested_seq = Some(self.nested_reads);
-            }
-            let scope = self
-                .nested_scope
-                .get_or_insert_with(|| format!("table-{}-", uuid_v7(at.now)))
-                .clone();
-            let owner = self
-                .children
-                .entry((*owner).to_owned())
-                .or_insert_with(|| Child::new(owner));
-            // The owner child's facts: the parent log sequence names no event of the child's session, and two table
-            // reads can share it, so the nested facts take this record's own sequence.
-            let at = Observed {
-                scope: &scope,
-                seq: nested_seq.unwrap_or_default(),
-                now: at.now,
-                provider: at.provider,
-                automation: None,
-            };
-            owner.telemetry.subagents(&[link], &at, out);
         }
         plan
     }

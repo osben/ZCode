@@ -5,6 +5,7 @@ pub(crate) mod documents;
 pub(crate) mod edits;
 pub(crate) mod pool;
 pub(crate) mod process;
+pub(crate) mod query;
 pub(crate) mod rpc;
 pub(crate) mod server;
 pub(crate) mod session;
@@ -28,6 +29,8 @@ pub(crate) const MAX_OPEN_DOCUMENTS: usize = 50;
 pub(crate) const EDIT_DIAGNOSTICS_MAX: usize = 20;
 /// Node `LSP_EDIT_DIAGNOSTICS_WAIT_MS`.
 pub(crate) const EDIT_DIAGNOSTICS_WAIT: Duration = Duration::from_millis(2_000);
+/// Node `LSP_DIAGNOSTICS_QUERY_WAIT_MS`.
+pub(crate) const DIAGNOSTICS_QUERY_WAIT: Duration = Duration::from_millis(2_000);
 /// Node `LSP_EDIT_DIAGNOSTICS_MAX_CARRY_ROUNDS`.
 pub(crate) const EDIT_DIAGNOSTICS_MAX_CARRY_ROUNDS: u32 = 3;
 

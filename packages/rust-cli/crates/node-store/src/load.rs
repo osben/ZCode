@@ -27,6 +27,13 @@ pub fn load(
     conn: &Connection,
     session: &SessionId,
 ) -> Result<(LoadedSession, Vec<crate::rewind::Active>), StoreError> {
+    // Fork: Node `SqliteSessionStore.getSession` hides a session with a purge row (specs/fork-rust-agent-parity.md
+    // "Session runtime presence on the shared database").
+    if crate::presence::is_purging(conn, session.as_str())? {
+        return Err(StoreError::NotFound {
+            session: session.clone(),
+        });
+    }
     let row = live_session(conn, session)?;
     let records = messages::messages(conn, session.as_str()).storage()?;
     let branch = Branch::from_revert(row.revert.as_ref());

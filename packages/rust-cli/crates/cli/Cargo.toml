@@ -92,6 +92,7 @@ tokio-util.workspace = true
 bytes.workspace = true
 # 账号服务地址的环境变量取 origin（Node `normalizeZCodeEndpointOrigin`）。
 url.workspace = true
+idna.workspace = true
 tracing.workspace = true
 
 # 系统时区（docs/specs/rust-cli/time-zone.md §1）：Unix 的 tzset / localtime_r。

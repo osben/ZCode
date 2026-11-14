@@ -63,9 +63,7 @@ impl State {
 pub(crate) enum Acquired {
     Ready(Arc<ServerConnection>),
     Starting,
-    Failed(
-        #[cfg_attr(not(test), expect(dead_code, reason = "the LSP tool (D2) reports it"))] LspError,
-    ),
+    Failed(LspError),
 }
 
 /// Node `LanguageServerEvent`.
@@ -132,6 +130,12 @@ impl ServerConnection {
             Some(Value::Number(number)) => number.as_f64().is_some_and(|n| n != 0.0),
             Some(_) => true,
         }
+    }
+
+    /// The initialize result's capabilities: what the `LSP` tool checks an operation against (Node
+    /// `connection.capabilities`; only `diagnosticProvider` differs there, which no operation needs).
+    pub(crate) fn capabilities(&self) -> &Map<String, Value> {
+        &self.initialize_capabilities
     }
 
     /// The caller's timeout is capped by the server's `requestTimeout`.

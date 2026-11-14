@@ -337,6 +337,7 @@ impl Actor {
                 let _ = reply.send(self.run_view());
             }
             SinkRequest::Title(title) => self.retitle(title).await,
+            SinkRequest::ExternalTitle(title) => self.external_title(title).await,
             SinkRequest::SetWorkspace { root, reply } => {
                 let _ = reply.send(self.change_workspace(root).await);
             }

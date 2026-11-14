@@ -117,6 +117,10 @@ jobs:
       - name: zcode-rs automation tool contracts
         run: pnpm rust-agent:automation-tools:check
 
+      # The LSP tool contract and the Rust golden results are generated from Node's own code (specs/fork-rust-lsp.md).
+      - name: zcode-rs LSP tool contract
+        run: pnpm rust-agent:lsp-tool:check
+
       - name: Pre-push runner regression tests
         run: pnpm test:pre-push
 

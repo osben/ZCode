@@ -47,6 +47,9 @@ pub struct Extensions {
     /// Fork: the language-server runtime (specs/fork-rust-lsp.md "Runtime"): Read, Edit and Write report to it and the
     /// context builder asks it for the post-edit diagnostics. Only the app-server gives it.
     pub code_intelligence: Option<Arc<dyn CodeIntelligence>>,
+    /// Fork: command hooks get Node's stdin and a transcript file (specs/fork-rust-agent-parity.md "Command hook
+    /// stdin"). Only the app-server gives it.
+    pub hook_transcripts: Option<Arc<dyn rust_cli_kernel_api::hooks::HookTranscripts>>,
 }
 
 impl Extensions {
@@ -63,6 +66,7 @@ impl Extensions {
             topic_resources: None,
             acp: None,
             code_intelligence: None,
+            hook_transcripts: None,
         }
     }
 }

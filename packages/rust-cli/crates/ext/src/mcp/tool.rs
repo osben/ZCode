@@ -144,6 +144,14 @@ impl Tool for McpTool {
         &self.name
     }
 
+    /// Fork: Node's MCP cancel message (core `mcp/index.ts` `createMcpToolEntry`), with the registered name.
+    fn cancel_message(&self) -> Option<std::borrow::Cow<'_, str>> {
+        Some(std::borrow::Cow::Owned(format!(
+            "MCP tool {} was cancelled",
+            self.name
+        )))
+    }
+
     fn input_schema(&self) -> Value {
         self.schema.clone()
     }
