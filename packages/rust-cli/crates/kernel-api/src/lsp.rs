@@ -121,6 +121,10 @@ pub trait CodeIntelligence: Send + Sync {
     async fn edit_diagnostics(&self, session: &crate::ids::SessionId) -> Option<String>;
     /// The session closed: its pending edits and its `LSP` tool fact are dropped.
     fn session_closed(&self, session: &crate::ids::SessionId);
+
+    /// Fork: the process's incognito profiles (specs/incognito-session.md "plugins": a session without plugins has no
+    /// language servers). Set once by the runtime that owns them.
+    fn set_incognito(&self, _profiles: crate::incognito::IncognitoProfiles) {}
     /// Settles whether the session is offered the `LSP` tool (Node `isAvailable`): code intelligence is enabled and a
     /// declared server of the workspace is installed. The first call for a session's workspace computes and stores it
     /// (Node builds the runtime); later calls for the same workspace keep it, since only a preference write recomputes

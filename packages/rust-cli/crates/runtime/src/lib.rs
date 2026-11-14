@@ -274,6 +274,9 @@ impl LocalKernel {
             machine.files().clone(),
         ));
         agent_catalog.set_incognito(incognito.clone());
+        if let Some(code) = &extensions.code_intelligence {
+            code.set_incognito(incognito.clone());
+        }
         if let Some(host) = &extensions.subagent_config {
             agent_catalog.set_host(host.clone());
         }

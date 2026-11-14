@@ -990,6 +990,71 @@ async fn a_remote_workspace_identity_has_no_language_servers() {
     }
 }
 
+/// specs/incognito-session.md "plugins": plugin discovery yields no LSP servers for an incognito session without
+/// plugins, so it is not offered the tool, a query finds no server and an edit starts nothing. An incognito session
+/// that keeps plugins keeps its servers.
+#[cfg(unix)]
+#[tokio::test]
+async fn an_incognito_session_without_plugins_has_no_language_servers() {
+    use rust_cli_kernel_api::incognito::{IncognitoProfile, IncognitoProfiles};
+    let mut fixture = fixture(&[]).await;
+    install(&fixture.bin, "typescript-language-server");
+    let profiles = IncognitoProfiles::default();
+    let (bare, kept) = (SessionId::new("bare"), SessionId::new("kept"));
+    profiles.record(&bare, Some(IncognitoProfile::LOCKDOWN));
+    profiles.record(
+        &kept,
+        Some(IncognitoProfile {
+            plugins: true,
+            ..IncognitoProfile::LOCKDOWN
+        }),
+    );
+    fixture.host.set_incognito(profiles);
+    let root = reference("/Users/dev/a");
+
+    fixture.host.settle_tool(&bare, &root).await;
+    assert!(!fixture.host.tool_offered(&bare));
+    let error = fixture
+        .host
+        .query(
+            &bare,
+            &root,
+            hover("/Users/dev/a/x.ts"),
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "lsp_no_server_for_file");
+    fixture
+        .host
+        .file_mutated(
+            &bare,
+            &root,
+            FileMutation {
+                path: "/Users/dev/a/x.ts".to_owned(),
+                kind: rust_cli_kernel_api::lsp::FileMutationKind::Created,
+                content: Some("let x = 1;\n".to_owned()),
+                changed_range: None,
+            },
+        )
+        .await;
+    let runtime = fixture
+        .host
+        .sessions
+        .lock_unpoisoned()
+        .get(&bare)
+        .and_then(|slot| slot.1.get().cloned())
+        .flatten();
+    assert!(
+        runtime.is_none(),
+        "the session has no language-server runtime"
+    );
+    assert!(fixture.launched.try_recv().is_err(), "no server started");
+
+    fixture.host.settle_tool(&kept, &root).await;
+    assert!(fixture.host.tool_offered(&kept));
+}
+
 /// A local identity (here a malformed remote one, which Node's parser rejects) keeps the servers.
 #[cfg(unix)]
 #[tokio::test]
