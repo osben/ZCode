@@ -548,3 +548,63 @@ async fn a_released_session_reads_again() {
         .expect("read");
     assert_eq!(host.reads(), 2);
 }
+
+/// Rule 14: a desktop catalog has no `Plan` on any path (the agent files, a `ready` snapshot, `built-in-fallback`,
+/// incognito without custom agents, the sessionless list); the TUI catalog keeps it.
+#[tokio::test]
+async fn a_desktop_catalog_has_no_plan_agent() {
+    let tui = catalog();
+    let files = tui
+        .prepared_definitions(&workspace(), &session(PARENT), Some(&run("run_1")))
+        .await
+        .expect("files");
+    assert!(names(&files).contains(&"Plan"));
+
+    let desktop = catalog();
+    desktop.set_node_desktop();
+    let no_plan = |found: &[AgentDefinition]| {
+        assert!(!names(found).contains(&"Plan"), "{:?}", names(found));
+        assert!(names(found).starts_with(&["general-purpose", "Explore"]));
+    };
+    no_plan(
+        &desktop
+            .prepared_definitions(&workspace(), &session(PARENT), Some(&run("run_1")))
+            .await
+            .expect("files"),
+    );
+    no_plan(&desktop.definitions(&workspace()).await);
+    let host = Host::new(Ok(Some(ready(vec![profile(
+        "team",
+        ProfileSource::Project,
+    )]))));
+    desktop.set_host(host.clone());
+    no_plan(
+        &desktop
+            .prepared_definitions(&workspace(), &session(PARENT), Some(&run("run_2")))
+            .await
+            .expect("read"),
+    );
+    host.answer(Ok(Some(SubagentSnapshot::BuiltInFallback)));
+    let fallback = desktop
+        .prepared_definitions(&workspace(), &session(PARENT), Some(&run("run_3")))
+        .await
+        .expect("read");
+    assert_eq!(names(&fallback), ["general-purpose", "Explore"]);
+
+    let incognito = catalog();
+    incognito.set_node_desktop();
+    let profiles = IncognitoProfiles::default();
+    incognito.set_incognito(profiles.clone());
+    profiles.record(
+        &session(PARENT),
+        Some(IncognitoProfile {
+            custom_agents: false,
+            ..keep_all()
+        }),
+    );
+    let found = incognito
+        .prepared_definitions(&workspace(), &session(PARENT), Some(&run("run_1")))
+        .await
+        .expect("built-ins");
+    assert_eq!(names(&found), ["general-purpose", "Explore"]);
+}

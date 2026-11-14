@@ -103,6 +103,9 @@ parent run R2 of S starts ──▶ a new read; cache[S] = (R2, snapshot')
     - When the type is found, the resumed run uses the current definition: its prompt, tools, maximum turns and permission mode, and the model from its selection (or the parent run's current model when it has none). Node's Agent tool has no `effort` input, so a resume keeps no per-call reasoning level.
     - A failed Host read returns the error as the tool's result (rule 4).
     - The TUI keeps the definition the agent started with. So do the restarts SendMessage does not start: a parked agent woken by a notice, and a message that arrived after a stop and resumes the stopped run once it settles.
+14. **No `Plan` agent on the desktop.** Node has two built-in agents, `general-purpose` and `Explore` (core `subagent/profile.ts` `normalizeAgentProfiles`). Under `node_desktop` the zcode-rs catalog leaves out its own built-in `Plan` on every path: a `ready` snapshot, `built-in-fallback`, the agent files and incognito without custom agents.
+    - `subagent_type: "Plan"` is then an unknown type, with Node's text `Agent type 'Plan' not found. Available agents: …` (core `subagent/runner.ts`). A profile named `Plan` is an ordinary agent.
+    - The TUI and headless runs keep `Plan`.
 
 ## Out of scope
 

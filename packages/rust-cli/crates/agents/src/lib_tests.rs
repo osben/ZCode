@@ -687,3 +687,29 @@ async fn a_desktop_resume_uses_the_current_profile_and_refuses_a_removed_one() {
     }
     assert_eq!(harness.seen().len(), 2);
 }
+
+/// Fork (specs/fork-rust-subagent-runtime-config.md rule 14): Node has no `Plan` agent, so on the desktop
+/// `subagent_type: "Plan"` is an unknown type with Node's text.
+#[tokio::test]
+async fn a_desktop_agent_call_does_not_know_plan() {
+    let harness = desktop_harness();
+    let tool = harness.agents.registry().find("Agent").unwrap();
+    let context = crate::test_support::tool_context(
+        &SessionId::new("sess_parent"),
+        &rust_cli_kernel_api::ids::RunId::new("r"),
+    );
+    let verdict = tool
+        .validate_input(
+            &json!({"description": "x", "prompt": "y", "subagent_type": "Plan"}),
+            &context,
+        )
+        .await;
+    assert_eq!(
+        verdict,
+        rust_cli_kernel_api::tool::Validation::Invalid {
+            message: "Agent type 'Plan' not found. Available agents: general-purpose, Explore"
+                .to_owned(),
+            error_code: None
+        }
+    );
+}

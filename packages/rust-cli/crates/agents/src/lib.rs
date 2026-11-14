@@ -272,6 +272,9 @@ impl Agents {
                 tree.upgrade()
                     .map_or_else(|| session.clone(), |live| live.root_of(session))
             }));
+        if config.node_desktop {
+            ports.catalog.set_node_desktop();
+        }
         let registry = Arc::new_cyclic(|registry: &Weak<AgentRegistry>| {
             let core = Arc::new(Core {
                 catalog: ports.catalog.clone(),

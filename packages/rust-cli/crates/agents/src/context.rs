@@ -25,7 +25,9 @@ use rust_cli_kernel_api::subagent_config::{
 };
 
 use crate::custom;
-use crate::definitions::{AgentDefinition, AgentSource, EXPLORE, GENERAL_PURPOSE, builtins, merge};
+use crate::definitions::{
+    AgentDefinition, AgentSource, EXPLORE, GENERAL_PURPOSE, PLAN, builtins, merge,
+};
 use crate::plugin::{self, PluginAgentFile};
 
 pub(crate) struct SubagentContext {
@@ -109,6 +111,8 @@ pub struct AgentCatalog {
     roots: OnceLock<RootOf>,
     /// Fork: per root session, the latest snapshot and the read in progress.
     snapshots: Mutex<HashMap<SessionId, Slot>>,
+    /// Fork: the desktop agent (`node_desktop`) has Node's built-ins only, without `Plan` (rule 14).
+    node_desktop: OnceLock<()>,
 }
 
 impl AgentCatalog {
@@ -121,6 +125,7 @@ impl AgentCatalog {
             host: OnceLock::new(),
             roots: OnceLock::new(),
             snapshots: Mutex::default(),
+            node_desktop: OnceLock::new(),
         }
     }
 
@@ -133,6 +138,20 @@ impl AgentCatalog {
     /// Fork: set once by the runtime when the frontend has a Host that owns the subagent config.
     pub fn set_host(&self, host: Arc<dyn SubagentConfigSource>) {
         let _ = self.host.set(host);
+    }
+
+    /// Fork: set once by `Agents::new` for the desktop agent: the catalog keeps Node's built-ins only (rule 14).
+    pub fn set_node_desktop(&self) {
+        let _ = self.node_desktop.set(());
+    }
+
+    /// Fork: the built-in agents of this frontend; the desktop has no `Plan` (Node `normalizeAgentProfiles`).
+    fn builtins(&self) -> Vec<AgentDefinition> {
+        let mut found = builtins();
+        if self.node_desktop.get().is_some() {
+            found.retain(|definition| definition.agent_type != PLAN);
+        }
+        found
     }
 
     /// Fork: set once by `Agents::new`, which owns the live subagent tree.
@@ -191,7 +210,7 @@ impl AgentCatalog {
         run: Option<&RunId>,
     ) -> Result<Vec<AgentDefinition>, String> {
         if self.excludes(Some(session), IncognitoKey::CustomAgents) {
-            return Ok(merge(vec![builtins()]));
+            return Ok(merge(vec![self.builtins()]));
         }
         let plugin_files = self.plugin_files(Some(session));
         let Some(host) = self.host.get() else {
@@ -199,14 +218,14 @@ impl AgentCatalog {
         };
         match self.snapshot(host, session, run).await? {
             None => Ok(self.file_definitions(workspace, plugin_files).await),
-            Some(SubagentSnapshot::BuiltInFallback) => Ok(merge(vec![builtins()])),
+            Some(SubagentSnapshot::BuiltInFallback) => Ok(merge(vec![self.builtins()])),
             Some(SubagentSnapshot::Ready {
                 profiles,
                 explore,
                 general_purpose,
                 plugins,
             }) => {
-                let mut built_in = builtins();
+                let mut built_in = self.builtins();
                 for definition in &mut built_in {
                     let wanted = match definition.agent_type.as_str() {
                         EXPLORE => &explore,
@@ -303,7 +322,7 @@ impl AgentCatalog {
         plugin_files: Vec<PluginAgentFile>,
     ) -> Vec<AgentDefinition> {
         let mut layers = vec![
-            builtins(),
+            self.builtins(),
             plugin::load(
                 self.files.as_ref(),
                 workspace,
