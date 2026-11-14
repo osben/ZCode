@@ -3,10 +3,7 @@
 
 use std::sync::Arc;
 
-use futures_util::StreamExt;
-use rust_cli_kernel_api::env::CommandEvent;
 use rust_cli_kernel_api::hooks::{HookTranscript, HookTranscripts};
-use rust_cli_kernel_api::machine::CommandEvents;
 use serde_json::{Map, Value};
 use tokio::task::JoinHandle;
 
@@ -111,16 +108,6 @@ impl TranscriptGuard {
             removal.run().await;
         }
         self.removal = None;
-    }
-
-    /// An async hook keeps its transcript until its process ends (Node removes it when the background run settles).
-    pub(crate) async fn remove_after(self, mut events: CommandEvents) {
-        while let Some(event) = events.next().await {
-            if matches!(event, Ok(CommandEvent::Finished { .. }) | Err(_)) {
-                break;
-            }
-        }
-        self.remove().await;
     }
 }
 

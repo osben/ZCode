@@ -17,7 +17,8 @@ pub(crate) enum StopHook {
     End,
     /// hook 阻止继续（`prevent_continuation`）：结束说明已提交，以 `stop_hook_prevented` 结束（query.md §3）。
     Prevented,
-    /// hook 阻塞了结束：反馈已提交，再请求一次（`stop_hook_blocking`）。
+    /// hook 阻塞了结束：反馈已提交，再请求一次（`stop_hook_blocking`）。Fork: or an unmet `/goal` continues the turn
+    /// ([`Continuation::Goal`]).
     Continue(Continuation),
 }
 
@@ -32,9 +33,9 @@ pub(crate) enum Continuation {
 /// The Stop counts of the run so far (see `LoopState` in `run.rs`).
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct StopCounts {
-    /// 这一轮已经因 Stop hook 续过。
+    /// The turn has already continued after a Stop hook (`stop_hook_active`).
     pub active: bool,
-    /// 此前（连续）阻塞的次数。
+    /// Stop hook blocks so far (consecutive, or the whole run under `NodeTurn`).
     pub blocked: u32,
     /// Fork: goal continuations under [`StopContinuations::NodeTurn`].
     pub goals: u32,
@@ -76,7 +77,7 @@ fn payload(scope: &RunScope, source: &QuerySource, active: bool, last: Option<St
     Value::Object(payload)
 }
 
-/// `counts`：这次运行的 Stop 计数。`selection` 是这次运行的模型（`/goal` 评估的对话记录按它 normalize）。
+/// `counts`: the run's Stop counts. `selection` is the run's model (the `/goal` transcript is normalized for it).
 pub(crate) async fn stop_hooks(
     scope: &RunScope,
     history: &mut Vec<Message>,
@@ -205,7 +206,7 @@ async fn node_turn(
         return Ok(StopHook::End);
     };
     let verdict = crate::goal::evaluate(scope, event, condition.clone(), history, selection).await;
-    // 中止时不报告判定。
+    // An aborted run reports no verdict.
     if scope.abort.is_aborted() {
         return Ok(StopHook::End);
     }

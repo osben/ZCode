@@ -229,7 +229,13 @@ async fn command(
         // async：不等待，结果不回送（D6）；丢掉流不影响命令。
         // Fork: the transcript stays until the process ends (Node keeps it for the background run).
         let transcript = transcript.take();
-        if run.cancel_background {
+        if run.cancel_background || transcript.is_some() {
+            // Without the Node rule the process is not tied to the turn (a token that never fires).
+            let cancel = if run.cancel_background {
+                cancel
+            } else {
+                CancellationToken::new()
+            };
             drop(tokio::spawn(follow_background(
                 run.commands.clone(),
                 operation,
@@ -237,8 +243,6 @@ async fn command(
                 cancel,
                 transcript,
             )));
-        } else if let Some(transcript) = transcript {
-            drop(tokio::spawn(transcript.remove_after(events)));
         }
         return Raw::Backgrounded;
     }
@@ -251,7 +255,7 @@ async fn command(
     raw
 }
 
-/// Fork: an async hook under the Node rules: cancelled when the turn is, its transcript removed when it ends.
+/// Fork: follows an async hook to its end: cancelled when `cancel` fires, its transcript removed once it ends.
 async fn follow_background(
     commands: Arc<dyn Commands>,
     operation: OperationId,
