@@ -29,6 +29,8 @@ mod fork_notice;
 mod goal_verify;
 #[path = "guided_steer_tests.rs"]
 mod guided_steer;
+#[path = "hook_rows_tests.rs"]
+mod hook_rows;
 #[path = "interrupted_reply_tests.rs"]
 mod interrupted_reply;
 #[path = "model_change_tests.rs"]

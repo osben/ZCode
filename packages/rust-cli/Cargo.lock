@@ -2174,6 +2174,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "futures-util",
+ "regex",
  "regress",
  "rust-cli-base",
  "rust-cli-kernel-api",

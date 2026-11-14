@@ -648,6 +648,10 @@ async fn commit_batch(
             break;
         }
     }
+    // Fork (node batch order): the batch's hook contexts after its last result, once the stream has ended.
+    for ready in batch.take_held() {
+        commit_ready(scope, history, ready).await?;
+    }
     Ok(())
 }
 

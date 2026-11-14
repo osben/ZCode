@@ -189,6 +189,73 @@ pub struct HookOutcome {
     /// PermissionDenied 的 `retry`。
     #[serde(default)]
     pub retry: bool,
+    /// Fork: the id of this dispatch (Node `hookInvocationId`); `None` when no hook ran.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub invocation: Option<String>,
+    /// Fork: one record per hook of this dispatch, in config order (Node's `HookRun*` lifecycle facts,
+    /// specs/fork-rust-agent-parity.md HK-UP-01).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub runs: Vec<HookRunRecord>,
+}
+
+/// Fork: one dispatch's hook runs as the session reports them (Node's `HookRun*` events of one `hookInvocationId`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HookInvocation {
+    pub id: String,
+    pub hook_event: HookEventName,
+    /// The tool call of a tool event (Node `toolCallId`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_use: Option<crate::ids::ToolUseId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_name: Option<String>,
+    pub runs: Vec<HookRunRecord>,
+}
+
+/// Fork: how one hook run ended (Node `HookOutcome`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HookRunOutcome {
+    Success,
+    Blocked,
+    Failed,
+    Cancelled,
+    TimedOut,
+}
+
+/// Fork: where a hook was configured (Node `descriptor.sourceKind`, without `internal`: those are never shown).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HookSourceKind {
+    User,
+    Project,
+    Plugin,
+}
+
+/// Fork: the facts of one hook run of a dispatch (Node's `HookRunStarted` and its terminal event).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HookRunRecord {
+    /// Node `hookRunId`.
+    pub run: String,
+    /// Node `hookIndex`: the run's position among the dispatch's hooks.
+    pub index: u32,
+    pub outcome: HookRunOutcome,
+    /// Masked; only for a blocked run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub block_reason: Option<String>,
+    /// Masked diagnostics of a blocked run (Node `sanitizeHookDiagnostics`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stderr_preview: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stdout_preview: Option<String>,
+    pub started_at_ms: u64,
+    pub duration_ms: u64,
+    pub source_kind: HookSourceKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugin_name: Option<String>,
+    /// The masked command display (Node `descriptor.commandDisplay`).
+    pub display: String,
 }
 
 #[async_trait]

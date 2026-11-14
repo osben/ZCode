@@ -329,6 +329,18 @@ pub enum KernelEvent {
         verification: crate::goal::GoalVerification,
         at_ms: u64,
     },
+    /// Fork: the hook runs of one dispatch in `turn` (Node's `HookRun*` events), for the App's `hookInvocation` row
+    /// and the blocked-prompt banner (specs/fork-rust-agent-parity.md HK-UP-01). Not stored.
+    HookInvocation {
+        turn: crate::ids::TurnId,
+        invocation: crate::hooks::HookInvocation,
+    },
+    /// Fork: the human input of `turn` a UserPromptSubmit hook blocked: the message it would have committed, shown as
+    /// the turn's `userInput` row. Not stored, not sent to the model.
+    PromptBlocked {
+        turn: crate::ids::TurnId,
+        message: crate::message::Message,
+    },
     /// 定时任务触发的界面行（tools-more.md §18.3，L22）：不进模型上下文、不落库，
     /// 紧接着是这次触发开的回合。`at` 是本地时间（`Oct 18 3:04pm`）；`fold` 有值时前端收起上一个 loop tick。
     ScheduledFire {

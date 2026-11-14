@@ -166,6 +166,10 @@ pub struct LocalKernel {
     error_holds_queue: bool,
     /// Fork: a SessionStart `session_title` and `initial_user_message` apply only outside the Node desktop agent, which reads neither.
     session_start_extras: bool,
+    /// Fork: a typed `/compact [instructions]` runs the manual compaction, like the Node desktop agent ([`Extensions::node_desktop`]).
+    typed_compact: bool,
+    /// Fork: hook run rows and the blocked-prompt banner, like the Node desktop agent ([`Extensions::node_desktop`]).
+    hook_rows: bool,
     /// Fork: the main loop's tool pipeline; MCP App calls are authorized with it (app_tool.rs).
     pipeline: Arc<rust_cli_tools::Pipeline>,
 }
@@ -396,6 +400,8 @@ impl LocalKernel {
             fork_while_running: extensions.node_desktop,
             error_holds_queue: extensions.node_desktop,
             session_start_extras: !extensions.node_desktop,
+            typed_compact: extensions.node_desktop,
+            hook_rows: extensions.node_desktop,
             pipeline,
         }
     }

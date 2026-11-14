@@ -72,14 +72,54 @@ pub(crate) enum TurnInput {
         /// Fork: the App input's intent (the text block is the typed text).
         intent: Option<Box<rust_cli_kernel_api::input_intent::InputIntent>>,
     },
-    /// Fork: a queued manual compaction (`Command::SubmitWith` with `QueuedKind::Compact`).
-    Compact { command: CommandId },
+    /// Fork: a queued manual compaction (`Command::SubmitWith` with `QueuedKind::Compact`), or a typed
+    /// `/compact [instructions]` under [`crate::SessionDeps::typed_compact`].
+    Compact {
+        command: CommandId,
+        instructions: Option<String>,
+    },
     /// Fork (desktop App): a resumed goal's continuation (Node `goal-continuation`, model-only):
     /// `text` is the wrapped continuation prompt, a meta user message.
     GoalContinuation { text: String },
 }
 
+/// Node `parseCompactCommand` (`core/src/runtime/helpers/commands.ts`): `Some(instructions)` for a typed
+/// `/compact [instructions]` (an empty rest is none), `None` for any other text.
+fn parse_compact(text: &str) -> Option<Option<String>> {
+    let trimmed = text.trim();
+    if trimmed == "/compact" {
+        return Some(None);
+    }
+    let rest = trimmed.strip_prefix("/compact ")?.trim();
+    Some((!rest.is_empty()).then(|| rest.to_owned()))
+}
+
 impl Actor {
+    /// Fork: under [`crate::SessionDeps::typed_compact`] a typed `/compact` text runs the manual compaction where
+    /// Node parses it, at the turn start after queue admission (specs/fork-rust-agent-parity.md HK-UP-01 item 2).
+    fn typed_compact(&self, input: TurnInput) -> TurnInput {
+        if !self.deps.typed_compact {
+            return input;
+        }
+        match input {
+            // A batch with later inputs (only without `one_input_per_turn`) stays a model turn.
+            TurnInput::Human {
+                command,
+                text,
+                more,
+                ..
+            } if more.is_empty()
+                && let Some(instructions) = parse_compact(&text) =>
+            {
+                TurnInput::Compact {
+                    command,
+                    instructions,
+                }
+            }
+            input => input,
+        }
+    }
+
     pub(crate) async fn start_turn(&mut self, input: TurnInput) -> Result<(), StoreError> {
         self.start_turn_with(input, Default::default()).await
     }
@@ -92,6 +132,7 @@ impl Actor {
         input: TurnInput,
         limits: rust_cli_kernel_api::turn_limits::TurnLimits,
     ) -> Result<(), StoreError> {
+        let input = self.typed_compact(input);
         // The held SessionStart result is written first: Node's `session_persistence` phase runs before the
         // turn's `TurnStarted`, the UserPromptSubmit hook and the input. Bash and compaction are not turns in Node
         // (`turn.ts` returns before that phase for `/compact`), so they do not write it.
@@ -133,8 +174,11 @@ impl Actor {
                 self.start_bash_turn(command, line);
                 return Ok(());
             }
-            TurnInput::Compact { command } => {
-                if let Err(reason) = self.start_compaction(command, None) {
+            TurnInput::Compact {
+                command,
+                instructions,
+            } => {
+                if let Err(reason) = self.start_compaction(command, instructions) {
                     tracing::warn!(%reason, "queued compaction could not start");
                 }
                 return Ok(());

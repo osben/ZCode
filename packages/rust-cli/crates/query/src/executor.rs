@@ -26,6 +26,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::RunScope;
+use crate::ToolHookContexts;
 use crate::mcp_wait;
 use crate::texts;
 
@@ -35,8 +36,9 @@ enum Status {
     Queued,
     Executing,
     /// tool_result 与执行管线排在它前后的消息（hook 的附加上下文、Skill 的正文，
-    /// docs/specs/rust-cli/ext.md §2.4），按提交顺序。
-    Completed(Vec<Ready>),
+    /// docs/specs/rust-cli/ext.md §2.4），按提交顺序。Fork: under the node batch order the call's hook contexts are
+    /// held apart (the second list) until the batch's last result.
+    Completed(Vec<Ready>, Vec<Message>),
     Yielded,
 }
 
@@ -89,6 +91,9 @@ pub(crate) struct ToolBatch {
     mcp_waited: Arc<AtomicU64>,
     /// 本批有工具的 hook 要求停止（`continue: false`，hooks.md §6）：结果都提交后以 `hook_stopped` 结束。
     stop_requested: bool,
+    /// Fork (node batch order): the hook contexts of the results handed out so far, in their order; committed after
+    /// the batch's last result ([`Self::take_held`]).
+    held: Vec<Message>,
 }
 
 fn text_output(text: String) -> ToolOutput {
@@ -119,6 +124,7 @@ impl ToolBatch {
             running: FuturesUnordered::new(),
             mcp_waited: Arc::default(),
             stop_requested: false,
+            held: Vec::new(),
         }
     }
 
@@ -136,10 +142,13 @@ impl ToolBatch {
                 let message = self.result(&id, &assistant, output);
                 (
                     true,
-                    Status::Completed(vec![Ready {
-                        message,
-                        call: Some(call),
-                    }]),
+                    Status::Completed(
+                        vec![Ready {
+                            message,
+                            call: Some(call),
+                        }],
+                        Vec::new(),
+                    ),
                 )
             }
         };
@@ -230,10 +239,13 @@ impl ToolBatch {
                 CallStatus::Cancelled,
             );
             let message = self.result(&tracked.id, &tracked.assistant, output);
-            self.tools[index].status = Status::Completed(vec![Ready {
-                message,
-                call: Some(call),
-            }]);
+            self.tools[index].status = Status::Completed(
+                vec![Ready {
+                    message,
+                    call: Some(call),
+                }],
+                Vec::new(),
+            );
             return;
         }
         let started_at = self.scope.parts.clock.now_ms();
@@ -263,7 +275,7 @@ impl ToolBatch {
     /// immediate result is not scheduled, so nothing waits for it to finish.
     pub(crate) fn scheduled(&self) -> Option<(ToolUseId, String, Value)> {
         let tracked = self.tools.last()?;
-        (!matches!(tracked.status, Status::Completed(_))).then(|| {
+        (!matches!(tracked.status, Status::Completed(..))).then(|| {
             (
                 tracked.id.clone(),
                 tracked.name.clone(),
@@ -357,8 +369,14 @@ impl ToolBatch {
             message,
             call: Some(call),
         });
+        // Fork (Node `toolBatchModelEntries`): the hook contexts wait for the batch's last result; the rest of `after`
+        // (blocking errors, the stop text, the tool's own follow-up messages) stays with this result.
+        let (contexts, after) = match self.scope.parts.limits.tool_hook_contexts {
+            ToolHookContexts::PerCall => (Vec::new(), after),
+            ToolHookContexts::NodeBatch => after.into_iter().partition(is_hook_context),
+        };
         messages.extend(after.into_iter().map(Ready::plain));
-        self.tools[index].status = Status::Completed(messages);
+        self.tools[index].status = Status::Completed(messages, contexts);
         self.process_queue();
     }
 
@@ -368,11 +386,12 @@ impl ToolBatch {
         for tool in &mut self.tools {
             match &tool.status {
                 Status::Yielded | Status::Queued => {}
-                Status::Completed(_) => {
-                    if let Status::Completed(messages) =
+                Status::Completed(..) => {
+                    if let Status::Completed(messages, contexts) =
                         std::mem::replace(&mut tool.status, Status::Yielded)
                     {
                         ready.extend(messages);
+                        self.held.extend(contexts);
                     }
                 }
                 Status::Executing if !tool.safe => break,
@@ -380,6 +399,14 @@ impl ToolBatch {
             }
         }
         ready
+    }
+
+    /// Fork (node batch order): the held hook contexts, once every result of the batch was committed.
+    pub(crate) fn take_held(&mut self) -> Vec<Ready> {
+        std::mem::take(&mut self.held)
+            .into_iter()
+            .map(Ready::plain)
+            .collect()
     }
 
     fn result(&self, id: &ToolUseId, assistant: &MessageId, output: ToolOutput) -> Message {
@@ -397,6 +424,11 @@ impl ToolBatch {
             },
         })
     }
+}
+
+/// A tool hook's additional context (the hooks' `hook_additional_context` attachment).
+fn is_hook_context(message: &Message) -> bool {
+    matches!(message, Message::Attachment(attachment) if attachment.source == "hook_additional_context")
 }
 
 /// 工具结束的日志（logging.md §4）：失败记 info，带错误文本的前 300 个字符（系统文字，不是用户内容）；

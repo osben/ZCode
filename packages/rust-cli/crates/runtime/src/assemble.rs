@@ -72,6 +72,7 @@ pub(crate) fn hooks(
                 transcripts,
                 clock: ports.clock.clone(),
             }),
+            clock: ports.clock.clone(),
         })
         .with_incognito(incognito.clone()),
     )
@@ -354,6 +355,12 @@ pub(crate) fn query_parts(
                 rust_cli_query::StopContinuations::NodeTurn
             } else {
                 rust_cli_query::StopContinuations::Consecutive
+            },
+            // Fork (node_desktop): a batch's tool hook contexts after its last result, like Node.
+            tool_hook_contexts: if node_desktop {
+                rust_cli_query::ToolHookContexts::NodeBatch
+            } else {
+                rust_cli_query::ToolHookContexts::PerCall
             },
             ..defaults.limits.request
         },
