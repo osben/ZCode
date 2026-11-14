@@ -1934,6 +1934,8 @@ sequenceDiagram
 
 First, before the rows: the multi-call batch order of tool hook contexts ("Tool hook context after the tool result", "Multi-call batches"). Under `node_desktop` the executor holds every call's hook contexts (and Node's batch notices) until the batch's results are all committed, then commits them in result order, so `foldRemindersIntoToolResults` folds them into the batch's last result as Node (`runtime/helpers/tool-result.ts` `toolBatchModelEntries`). The abort, steering and hook-stop paths keep their own order; tests first in `crates/query/src/executor_tests.rs`.
 
+Second, its own item: HK17 (`conversation-session-hooks-lifecycle`, a first-action `/compact` on a new draft) under zcode-rs never opens a session. The box run at fd837a3b8 (2026-11-14) times out waiting for the compact marker with `chat.sessionId` and `chat.taskId` null and no marker at all, while Node passes that step and fails later at the follow-up turn's SessionStart details (the rows below). The cause is not confirmed: the artifact holds no zcode-rs log. First a box run that keeps the agent log, then the draft's first-input path for a control command (`/compact` before any model turn).
+
 Then UserPromptSubmit on the human turn only. Each other event waits for a reason of its own:
 
 - **Stop and SubagentStop:** the sink is reachable (`scope.sink`); next change.
