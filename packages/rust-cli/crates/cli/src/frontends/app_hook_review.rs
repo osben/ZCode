@@ -446,3 +446,7 @@ fn display_path(path: &str) -> String {
 #[cfg(test)]
 #[path = "app_hook_review_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "app_hook_rebuild_tests.rs"]
+mod rebuild_tests;
