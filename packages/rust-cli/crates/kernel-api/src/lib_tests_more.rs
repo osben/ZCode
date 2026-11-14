@@ -355,6 +355,75 @@ fn model_notices_round_trip_in_query_and_kernel_events() {
     assert_eq!(serde_json::from_value::<KernelEvent>(value).unwrap(), event);
 }
 
+/// Fork: the ACP status events keep their exact JSON through both logs. `KernelEvent::ExternalAgentStatus` flattens
+/// the internally tagged status into the event (the first variant to do so); the query event nests it.
+#[test]
+fn external_agent_events_round_trip_in_query_and_kernel_events() {
+    use crate::orchestration::{ExternalAgentStatus, QueryEvent};
+    use crate::session_api::KernelEvent;
+    let stalled = ExternalAgentStatus::Stalled { silent_ms: 120_000 };
+    let cases: [(
+        QueryEvent,
+        serde_json::Value,
+        KernelEvent,
+        serde_json::Value,
+    ); 3] = [
+        (
+            QueryEvent::ExternalAgentStatus {
+                agent: "mock".into(),
+                status: stalled,
+            },
+            serde_json::json!({"type": "external_agent_status", "agent": "mock",
+                "status": {"status": "stalled", "silent_ms": 120_000}}),
+            KernelEvent::ExternalAgentStatus {
+                agent: "mock".into(),
+                status: stalled,
+            },
+            serde_json::json!({"type": "external_agent_status", "agent": "mock", "status": "stalled",
+                "silent_ms": 120_000}),
+        ),
+        (
+            QueryEvent::ExternalAgentStatus {
+                agent: "mock".into(),
+                status: ExternalAgentStatus::Resumed,
+            },
+            serde_json::json!({"type": "external_agent_status", "agent": "mock",
+                "status": {"status": "resumed"}}),
+            KernelEvent::ExternalAgentStatus {
+                agent: "mock".into(),
+                status: ExternalAgentStatus::Resumed,
+            },
+            serde_json::json!({"type": "external_agent_status", "agent": "mock", "status": "resumed"}),
+        ),
+        (
+            QueryEvent::ExternalAgentContextReset {
+                agent: "mock".into(),
+            },
+            serde_json::json!({"type": "external_agent_context_reset", "agent": "mock"}),
+            KernelEvent::ExternalAgentContextReset {
+                agent: "mock".into(),
+            },
+            serde_json::json!({"type": "external_agent_context_reset", "agent": "mock"}),
+        ),
+    ];
+    for (query, query_json, kernel, kernel_json) in cases {
+        assert_eq!(serde_json::to_value(&query).unwrap(), query_json);
+        assert_eq!(
+            serde_json::from_value::<QueryEvent>(query_json).unwrap(),
+            query
+        );
+        assert_eq!(serde_json::to_value(&kernel).unwrap(), kernel_json);
+        assert_eq!(
+            serde_json::from_value::<KernelEvent>(kernel_json).unwrap(),
+            kernel
+        );
+        assert_eq!(
+            query.into_kernel_event(crate::ids::TurnId::new("turn_1")),
+            kernel
+        );
+    }
+}
+
 /// `RunSink::take_absorbed` 缺省是先插话、后通知（子代理的输出端用它）。
 #[tokio::test]
 async fn run_sinks_absorb_nothing_by_default() {

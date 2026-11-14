@@ -50,6 +50,7 @@ pub(super) fn rows(projection: &mut Projection, view: &SessionView) {
                 let model = super::model_change::cold_turn_model(view, index, opens_turn);
                 projection.start_turn(&turn, command, model, at, 0, &mut out);
                 projection.message(message, at, 0, &mut out);
+                projection.cold_context_reset(user.id.as_str(), at, &mut out);
             }
             Message::User(user) if opening(message, turn_ended) => {
                 if projection.turn.is_some() {
@@ -132,6 +133,16 @@ pub(super) fn rows(projection: &mut Projection, view: &SessionView) {
         }
     }
     projection.seed_turn_model(turns);
+    // Fork: a rewind past a turn forgets its ACP context-reset divider.
+    let present: std::collections::HashSet<String> = view
+        .messages
+        .iter()
+        .filter_map(|message| match message {
+            Message::User(user) => Some(user.id.as_str().to_owned()),
+            _ => None,
+        })
+        .collect();
+    projection.retain_context_resets(&present);
     // Fork: a verification whose anchor message is not in the active history shows at the end.
     if let Some(goal) = &view.goal {
         for item in &goal.verifications {

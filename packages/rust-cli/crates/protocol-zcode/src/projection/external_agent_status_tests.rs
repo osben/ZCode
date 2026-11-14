@@ -178,3 +178,100 @@ fn a_stopped_or_failed_turn_clears_its_stall() {
         );
     }
 }
+
+fn reply_turn(feed: &mut Feed) {
+    feed.apply(started());
+    feed.apply(KernelEvent::MessageDone {
+        message: super::user("msg_u1", "hello"),
+    });
+    feed.apply(reset());
+    feed.apply(KernelEvent::MessageDone {
+        message: super::assistant(
+            "msg_a1",
+            vec![rust_cli_kernel_api::message::ContentBlock::Text {
+                text: "pong".into(),
+            }],
+        ),
+    });
+    feed.apply(finished(TurnOutcome::Success));
+}
+
+/// The kinds of the rows in order, and the turn of each.
+fn kinds(feed: &Feed) -> Vec<(String, String)> {
+    feed.projection
+        .rows
+        .iter()
+        .map(|row| {
+            (
+                row["kind"].as_str().unwrap_or_default().to_owned(),
+                row["turnId"].as_str().unwrap_or_default().to_owned(),
+            )
+        })
+        .collect()
+}
+
+/// A history rebuild (rewind, edit, retry) keeps the divider while the process lives, after the input that opened its
+/// turn and before the reply, as Node's cold merge re-inserts the in-memory notice before its turn's durable events.
+/// A rebuild whose history no longer has that turn drops it.
+#[test]
+fn a_rebuild_keeps_the_context_reset_divider_in_its_turn() {
+    let mut feed = Feed::new();
+    reply_turn(&mut feed);
+    let history = vec![
+        super::user("msg_u1", "hello"),
+        super::assistant(
+            "msg_a1",
+            vec![rust_cli_kernel_api::message::ContentBlock::Text {
+                text: "pong".into(),
+            }],
+        ),
+    ];
+    feed.projection = feed.projection.rebuilt(&super::view(history.clone()));
+    let rows = kinds(&feed);
+    let at = |kind: &str| rows.iter().position(|(row, _)| row == kind);
+    let (input, marker, reply) = (
+        at("userInput").expect("input"),
+        at("timelineMarker").expect("divider"),
+        at("assistantText").expect("reply"),
+    );
+    assert!(input < marker && marker < reply, "{rows:?}");
+    assert_eq!(rows[marker].1, rows[input].1, "{rows:?}");
+    assert_eq!(markers(&feed).len(), 1);
+    // A second rebuild still has it.
+    feed.projection = feed.projection.rebuilt(&super::view(history));
+    assert_eq!(markers(&feed).len(), 1);
+    // A rewind past the turn drops it.
+    feed.projection = feed.projection.rebuilt(&super::view(Vec::new()));
+    assert!(markers(&feed).is_empty());
+}
+
+/// A rebuild during the running turn keeps the stall shown.
+#[test]
+fn a_rebuild_keeps_the_stall() {
+    let mut feed = Feed::new();
+    feed.apply(started());
+    feed.apply(status(STALLED));
+    let shown = feed.projection.snapshot(0, "e")["control"]["externalAgentStall"].clone();
+    assert!(shown.is_object(), "{shown}");
+    let mut running = super::view(vec![super::user("msg_u1", "hello")]);
+    running.running = true;
+    running.running_turn = Some(TurnId::new("turn_1"));
+    feed.projection = feed.projection.rebuilt(&running);
+    assert_eq!(
+        feed.projection.snapshot(0, "e")["control"]["externalAgentStall"],
+        shown
+    );
+}
+
+/// A turn start clears a stall still shown (Node `onTurnStarted` `clearedExternalAgentStall`).
+#[test]
+fn a_turn_start_clears_a_stall() {
+    let mut feed = Feed::new();
+    feed.apply(started());
+    feed.apply(status(STALLED));
+    let next = feed.apply(KernelEvent::TurnStarted {
+        turn: TurnId::new("turn_2"),
+        command: None,
+    });
+    assert_eq!(stall_patches(&next), vec![Value::Null]);
+}

@@ -1610,19 +1610,27 @@ failure    ─▶ rows closed "The agent turn failed before this tool finished" 
       `created` start emits nothing. The projection appends a `timelineMarker` row in lane
       `lightBoundary`, `marker: {type: "agentContextReset", agentId}`, in the running turn (Node
       `onSystemMessage` for an `external_agent_context_reset` system message), key
-      `agent-context-reset:<turn>`. It is not stored: Node appends the system message to its
-      in-memory event log only (`acp-upstream-compat.test.ts` checks that no table holds it). So
-      the divider survives a resubscribe in the same process (both runtimes snapshot the live
-      projection), and neither runtime shows it after the session is closed and reopened or the app
-      relaunches.
+      `agent-context-reset:<turn>`. Difference kept: the row's `entityId` is that key, where Node's
+      `rowBase` uses the session event id; `zcode-rs` has no id for an event that is not stored,
+      and no row command or UI lookup targets a divider by its entity id. It is not stored: Node appends the
+      system message to its in-memory event log only (`acp-upstream-compat.test.ts` checks that no
+      table holds it). So the divider survives a resubscribe in the same process (both runtimes
+      snapshot the live projection) and a history rebuild (rewind, edit, retry): the projection
+      remembers it by the input that opened its turn and draws it again right after that input,
+      as Node's cold merge re-inserts the notice before its turn's durable events
+      (`cold-event-merge.ts`). A rewind past that input forgets it. Neither runtime shows it
+      after a relaunch.
+    - **Order.** The turn checks Stop after the acquire and before it takes the session start
+      (Node `acp-external-agent-host.ts`), so a turn stopped there leaves the reset to the next
+      turn.
     - **Stall status.** A prompt silent for the stall window (120 s) emits
       `QueryEvent::ExternalAgentStatus` `stalled` with the silence, and the next agent frame emits
       `resumed` (Node `StallWatch`, `appendExternalAgentStatus`). While a turn runs, the projection
       sets `control.externalAgentStall: {agentId, since, silentMs}` (`since` is the event time);
-      `resumed` and the turn's end set it to `null` (Node `onExternalAgentStatus`,
-      `clearedExternalAgentStall`). A `resumed` with no stall shown, and an event outside a running
-      turn, change nothing. The field is absent until the first stall, as in Node's snapshot. Like
-      the divider, it is not stored.
+      `resumed`, the turn's start and its end set it to `null` (Node `onExternalAgentStatus`,
+      `onTurnStarted`, `clearedExternalAgentStall`). A `resumed` with no stall shown, and an event
+      outside a running turn, change nothing. The field is absent until the first stall, as in
+      Node's snapshot. Like the divider, it is not stored; a history rebuild carries it over.
 15. **No migrations.** `zcode-rs` checks that the tables and columns exist (Node's storage
     preparation creates them). Without them there is no binding and no resume, and a config write
     answers `config.notAvailable`.

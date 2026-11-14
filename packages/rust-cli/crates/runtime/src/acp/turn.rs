@@ -81,6 +81,10 @@ pub(super) async fn run(
             });
         }
     };
+    // Node checks Stop before it takes the session start, so a stopped turn leaves the reset to the next one.
+    if abort.is_aborted() {
+        return turn.aborted(&abort).await;
+    }
     // The session start is read once. A new session that replaced one the agent could not load is a context reset,
     // shown before the agent's first output (rule 14; Node `takeSessionStart() === "reset"`).
     if runtime.take_session_start() == Some(rust_cli_acp::SessionStart::Reset) {
