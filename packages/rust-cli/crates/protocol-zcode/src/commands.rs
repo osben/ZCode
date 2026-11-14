@@ -1904,6 +1904,8 @@ impl Offered {
     /// A permission ask's offer and its tool use; `None` for any other ask.
     fn of(request: &InteractionRequest) -> Option<(Self, ToolUseId)> {
         let InteractionRequest::Permission {
+            tool,
+            input,
             suggestions,
             tool_use,
             once,
@@ -1913,11 +1915,37 @@ impl Offered {
         else {
             return None;
         };
+        let suggestions = if suggestions.is_empty() {
+            vec![default_rule(tool, input)]
+        } else {
+            suggestions.clone()
+        };
         let offered = Self {
-            suggestions: suggestions.clone(),
+            suggestions,
             always: !once && !independent,
         };
         Some((offered, tool_use.clone()))
+    }
+}
+
+/// Fork: the rule `allowAlways` remembers for an ask without suggestions (an MCP tool), Node
+/// `permission-options.ts` `defaultPermissionUpdates`: the tool, with the input as content when it is a non-blank
+/// string, otherwise its first non-blank string among these fields (specs/fork-rust-agent-parity.md, "Always allow
+/// without suggestions"). Without it nothing was remembered and the next call asked again.
+fn default_rule(tool: &str, input: &Value) -> rust_cli_kernel_api::permission::PermissionRule {
+    const FIELDS: &[&str] = &["command", "url", "file_path", "path", "pattern"];
+    fn non_blank(value: &Value) -> Option<&str> {
+        value.as_str().filter(|text| !text.trim().is_empty())
+    }
+    let content = non_blank(input).or_else(|| {
+        let fields = input.as_object()?;
+        FIELDS
+            .iter()
+            .find_map(|field| fields.get(*field).and_then(non_blank))
+    });
+    rust_cli_kernel_api::permission::PermissionRule {
+        tool: tool.to_owned(),
+        content: content.map(str::to_owned),
     }
 }
 

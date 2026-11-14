@@ -400,7 +400,7 @@ impl Actor {
 
     /// 会话现在的状态（[`SinkRequest::View`]）：判决用的模式（plan 开时是 plan）、计划模式的会话标志、工作目录、主模型与
     /// 目标，同一时刻的值。
-    fn run_view(&self) -> RunView {
+    pub(crate) fn run_view(&self) -> RunView {
         RunView {
             base_mode: self.execution.mode,
             plan_flags: self.plan_flags,

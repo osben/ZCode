@@ -76,7 +76,29 @@ async fn a_cold_open_runs_in_the_worktree_and_lists_under_the_parent() {
         .await
         .unwrap();
     assert_eq!(key.as_deref(), Some("/w"));
+    // The helper session opens in that workspace too, with no identity on a local row (F3 "Session open and close").
+    let workspace = rust_cli_kernel_api::store::StoreQueries::session_workspace(&t.store, &id)
+        .await
+        .unwrap();
+    let local = rust_cli_kernel_api::store::SessionWorkspace {
+        directory: "/w".to_owned(),
+        identity: None,
+    };
+    assert_eq!(workspace, Some(local.clone()));
+    conn.execute(
+        "update session set workspace_id = '' where id = 'sess_1'",
+        [],
+    )
+    .unwrap();
+    let blank = rust_cli_kernel_api::store::StoreQueries::session_workspace(&t.store, &id)
+        .await
+        .unwrap();
+    assert_eq!(blank, Some(local));
     let unknown = SessionId::new("sess_none");
+    let none = rust_cli_kernel_api::store::StoreQueries::session_workspace(&t.store, &unknown)
+        .await
+        .unwrap();
+    assert_eq!(none, None);
     let none = rust_cli_kernel_api::store::StoreQueries::session_workspace_key(&t.store, &unknown)
         .await
         .unwrap();
@@ -91,6 +113,16 @@ async fn a_cold_open_runs_in_the_worktree_and_lists_under_the_parent() {
         .await
         .unwrap();
     assert_eq!(key.as_deref(), Some("remote:ssh:box:/repo"));
+    let identified = rust_cli_kernel_api::store::StoreQueries::session_workspace(&t.store, &id)
+        .await
+        .unwrap();
+    assert_eq!(
+        identified,
+        Some(rust_cli_kernel_api::store::SessionWorkspace {
+            directory: "/w".to_owned(),
+            identity: Some("remote:ssh:box:/repo".to_owned()),
+        })
+    );
 }
 
 #[tokio::test]

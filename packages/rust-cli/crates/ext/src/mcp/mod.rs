@@ -24,4 +24,5 @@ pub use startup::{
     DEFAULT_CONNECT_WAIT_MS, DEFAULT_PREWAIT_MS, McpStartup, prewait_ms, required_servers,
     wait_for_deferrable,
 };
+pub use tool::app_tool;
 pub(crate) use wait_tool::WaitForMcpServers;

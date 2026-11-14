@@ -931,6 +931,21 @@ impl StoreQueries for MemoryStore {
             .map(|(meta, _)| stored.unwrap_or_else(|| meta.workspace.root.as_str().to_owned())))
     }
 
+    async fn session_workspace(
+        &self,
+        session: &SessionId,
+    ) -> Result<Option<crate::store::SessionWorkspace>, StoreError> {
+        let identity = self.workspace_keys.lock_unpoisoned().get(session).cloned();
+        Ok(self
+            .sessions
+            .lock_unpoisoned()
+            .get(session)
+            .map(|(meta, _)| crate::store::SessionWorkspace {
+                directory: meta.workspace.root.as_str().to_owned(),
+                identity,
+            }))
+    }
+
     async fn set_execution_worktree(
         &self,
         session: &SessionId,

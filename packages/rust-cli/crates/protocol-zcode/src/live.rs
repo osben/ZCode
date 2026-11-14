@@ -582,6 +582,18 @@ impl Live {
         self.write(outgoing).await;
     }
 
+    /// Fork (specs/fork-rust-node-helper.md F3, `helper/session/delta`): one of the helper's live-only plugin UI deltas.
+    /// It goes to the subscribers in the session's frame order and never into the projection, so a snapshot or rebuild
+    /// does not show it (Node's sequence-0 events). In the session's pump task.
+    pub async fn plugin_ui(&self, delta: Value) {
+        let outgoing = {
+            let mut state = self.state();
+            state.log.record(vec![delta]);
+            self.collect(&mut state)
+        };
+        self.write(outgoing).await;
+    }
+
     /// Fork: a ticket for a banner read, taken before the read (see [`Self::set_admission`]).
     pub fn admission_ticket(&self) -> u64 {
         self.admission_tickets

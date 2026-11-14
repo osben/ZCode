@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 
 use rust_cli_kernel_api::env::EnvPath;
+use rust_cli_kernel_api::mcp::McpTransportConfig;
 use rust_cli_kernel_api::testing::MemoryEnvironment;
 
 use super::*;
@@ -98,6 +99,7 @@ async fn enablement_follows_enabled_plugins_and_the_defaults() {
         enabled_plugins: enabled(&[("off@inline", false), ("on-kit@market", true)]),
         suppressed_builtins: vec![format!("zcode-guide@{OFFICIAL}")],
         view_host: false,
+        node_helper: false,
     };
     let loaded = load_all(&env(&files), &workspace(), &[], &sources).await;
     // 配置目录缺省启用；官方插件只有缺省名单里的启用；已安装插件要 `enabledPlugins` 打开。
@@ -404,4 +406,172 @@ async fn a_component_less_official_plugin_loads_after_a_same_named_one() {
             &SkipReason::DuplicateName
         )]
     );
+}
+
+fn transports<'a>(loaded: &'a Loaded, plugin: &str) -> Vec<(&'a str, &'a McpTransportConfig)> {
+    loaded
+        .plugins
+        .0
+        .iter()
+        .filter(|candidate| candidate.name == plugin)
+        .flat_map(|candidate| candidate.mcp_servers.iter())
+        .map(|server| (server.name.as_str(), &server.transport))
+        .collect()
+}
+
+const APP_SERVER: &str =
+    r#""mcpServers": {"view": {"type": "stdio", "command": "node", "args": ["server.mjs"]}}"#;
+
+/// Fork (specs/fork-rust-node-helper.md F3): with a helper, the PluginHost official plugins load and every MCP server
+/// of a helper-hosted plugin is served by the helper; the other Node dependencies stay skipped.
+#[tokio::test]
+async fn plugin_host_plugins_load_with_a_node_helper() {
+    let host_mcp = r#", "mcpServers": {"documents": {"type": "stdio", "command": "/opt/zcode/zcode", "args": ["__zcode-plugin-host", "/x/dist/mcp/server.js"]}, "extra": {"type": "stdio", "command": "node", "args": ["extra.js"]}}"#;
+    let files = [
+        official_manifest("documents", host_mcp),
+        official_manifest("browser-use", ""),
+        official_manifest("image-search", ""),
+        (
+            format!("{CACHE}/{OFFICIAL}/image-search/1.0.0/.mcp.json"),
+            r#"{"mcpServers": {"image_search": {"type": "http", "url": "https://x/mcp", "auth": {"type": "zcode_official"}}}}"#.to_owned(),
+        ),
+    ];
+    let sources = PluginSources {
+        candidates: vec![
+            official("documents"),
+            official("browser-use"),
+            official("image-search"),
+        ],
+        node_helper: true,
+        ..PluginSources::default()
+    };
+    let loaded = load_all(&env(&files), &workspace(), &[], &sources).await;
+    assert_eq!(names(&loaded), ["documents"]);
+    assert_eq!(
+        transports(&loaded, "documents"),
+        [
+            (
+                "plugin:documents:documents",
+                &McpTransportConfig::NodeHelper
+            ),
+            ("plugin:documents:extra", &McpTransportConfig::NodeHelper),
+        ]
+    );
+    assert_eq!(
+        reasons(&loaded),
+        [
+            (
+                Some("browser-use@zcode-plugins-official"),
+                &SkipReason::NodeRuntime(NodeDependency::NodeRepl)
+            ),
+            (
+                Some("image-search@zcode-plugins-official"),
+                &SkipReason::NodeRuntime(NodeDependency::OfficialAuth)
+            ),
+        ]
+    );
+}
+
+/// Fork (F3: OfficialAuth stays skipped): a PluginHost plugin with an official-auth server stays skipped with a
+/// helper, whichever server comes first, and says so.
+#[tokio::test]
+async fn a_plugin_host_plugin_with_an_auth_server_stays_skipped_with_a_node_helper() {
+    let host = r#"{"type": "stdio", "command": "/opt/zcode/zcode", "args": ["__zcode-plugin-host", "/x/dist/mcp/server.js"]}"#;
+    let auth = r#"{"type": "http", "url": "https://x/mcp", "auth": {"type": "zcode_official"}}"#;
+    // The names fix the order whether or not the JSON map keeps insertion order.
+    for servers in [
+        format!(r#""a_host": {host}, "b_auth": {auth}"#),
+        format!(r#""a_auth": {auth}, "b_host": {host}"#),
+    ] {
+        let mixed = format!(r#", "mcpServers": {{{servers}}}"#);
+        let files = [official_manifest("documents", &mixed)];
+        let sources = PluginSources {
+            candidates: vec![official("documents")],
+            node_helper: true,
+            ..PluginSources::default()
+        };
+        let loaded = load_all(&env(&files), &workspace(), &[], &sources).await;
+        assert!(names(&loaded).is_empty(), "{servers}");
+        assert_eq!(
+            reasons(&loaded),
+            [(
+                Some("documents@zcode-plugins-official"),
+                &SkipReason::NodeRuntime(NodeDependency::OfficialAuth)
+            )],
+            "{servers}"
+        );
+    }
+}
+
+/// Fork (F3): a plugin that declares an MCP App entry point (a non-empty `ui.surfaces`, or a `composer.mention` slot
+/// with a `target.tool`) is helper-hosted when a helper is configured, from any source; without a helper, or without
+/// such an entry point, its servers stay Rust's own.
+#[tokio::test]
+async fn mcp_app_plugins_are_helper_hosted_with_a_node_helper() {
+    let files = [
+        manifest(
+            "/Users/dev/viewer",
+            &format!(
+                r#"{{"name": "viewer", {APP_SERVER}, "ui": {{"surfaces": [{{"id": "panel"}}]}}}}"#
+            ),
+        ),
+        manifest(
+            "/Users/dev/mention",
+            &format!(
+                r#"{{"name": "mention", {APP_SERVER}, "slots": {{"composer.mention": [{{"id": "docs", "target": {{"tool": "search"}}}}]}}}}"#
+            ),
+        ),
+        manifest(
+            "/Users/dev/plain",
+            &format!(
+                r#"{{"name": "plain", {APP_SERVER}, "ui": {{"surfaces": []}}, "slots": {{"composer.mention": [{{"id": "x", "target": {{"command": "c"}}}}]}}}}"#
+            ),
+        ),
+        manifest(
+            "/Users/dev/session-app",
+            &format!(
+                r#"{{"name": "session-app", {APP_SERVER}, "ui": {{"surfaces": [{{"id": "s"}}]}}}}"#
+            ),
+        ),
+    ];
+    let candidates = vec![
+        candidate("/Users/dev/viewer", "inline", PluginOrigin::ConfigDir),
+        candidate("/Users/dev/mention", "inline", PluginOrigin::ConfigDir),
+        candidate("/Users/dev/plain", "inline", PluginOrigin::ConfigDir),
+    ];
+    let session = [EnvPath::new("/Users/dev/session-app")];
+    let helper = PluginSources {
+        candidates: candidates.clone(),
+        node_helper: true,
+        ..PluginSources::default()
+    };
+    let loaded = load_all(&env(&files), &workspace(), &session, &helper).await;
+    assert_eq!(
+        names(&loaded),
+        ["session-app", "viewer", "mention", "plain"]
+    );
+    for plugin in ["session-app", "viewer", "mention"] {
+        let found = transports(&loaded, plugin);
+        assert_eq!(found.len(), 1, "{plugin}");
+        assert_eq!(found[0].1, &McpTransportConfig::NodeHelper, "{plugin}");
+    }
+    assert!(matches!(
+        transports(&loaded, "plain")[0].1,
+        McpTransportConfig::Stdio { .. }
+    ));
+
+    let without = PluginSources {
+        candidates,
+        ..PluginSources::default()
+    };
+    let loaded = load_all(&env(&files), &workspace(), &session, &without).await;
+    for plugin in ["session-app", "viewer", "mention", "plain"] {
+        assert!(
+            matches!(
+                transports(&loaded, plugin)[0].1,
+                McpTransportConfig::Stdio { .. }
+            ),
+            "{plugin}"
+        );
+    }
 }

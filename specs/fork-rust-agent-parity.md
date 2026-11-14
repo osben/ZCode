@@ -25,9 +25,10 @@ A feature is at parity when all of these hold:
 
 These are JavaScript by nature or tied to Node-only runtimes. In Rust mode they are refused with a stable code or hidden by a capability flag, never silently dropped. Listed here so the matrix does not count them as gaps:
 
-- JS plugin runtimes and plugin UI surfaces (`plugins/*`, `mcp/ui*`) beyond what `zcode-rs` `ext` already serves. Plugin management (the `plugins/*` methods of "F1+F2 forwarded methods" in `specs/fork-rust-node-helper.md`) is forwarded to the Node helper when the Host configures one; `mcp/ui*` and `plugins/mentionItems` are later helper families.
+- JS plugin runtimes and plugin UI surfaces (`plugins/*`, `mcp/ui*`) beyond what `zcode-rs` `ext` already serves. Plugin management (the `plugins/*` methods of "F1+F2 forwarded methods" in `specs/fork-rust-node-helper.md`) is forwarded to the Node helper when the Host configures one. `mcp/ui*`, `mcp/readResource` and `plugins/mentionItems` are forwarded for helper-hosted plugin servers (F3); **not ported yet:** MCP Apps on MCP servers Rust runs itself (refused with `proto.forkRustAgent.mcpUiServerNotHelperHosted`; F7, "MCP Apps on Rust-hosted servers" in `specs/fork-rust-node-helper.md`), and app-provided tools (`helper/appTools/*`, F3b in `specs/fork-rust-node-helper.md`).
 - Dynamic workflows (`workflows/*`, `v4/conversation/workflowRun*`, `startSavedWorkflow`, `resumeWorkflowRun`, `amendWorkflowRunSettings`). Saved workflows (`workflows/*`) and run-history reads (`v4/conversation/workflowRun*`) are forwarded to the Node helper; running a workflow is the helper's last family (F5).
-- Office runtime, node-repl host.
+- Office runtime: served through the Node helper since F3 (`specs/fork-rust-node-helper.md`); without a helper command the Office plugins stay skipped.
+- node-repl host (F4, not ported yet).
 
 ChatGPT Plan account models run in Rust hosted mode: `specs/fork-rust-chatgpt-plan.md` (standalone `zcode-rs` refuses them; the Host owns sign-in and refresh).
 
@@ -333,6 +334,24 @@ Acceptance:
 - Hooks unit test: `continue: false` without `stopReason` stops with `reason` (Node `stopReason ?? reason`), except for Stop.
 - Projection unit test: an independent ask offers allow once and deny only.
 - E2E (when allowed): `conversation-session-plan-mode-mcp-permission` on both runtimes.
+
+## Always allow without suggestions, and content rules on MCP tools (Node `permission-options.ts`, `service.ts`)
+
+**Trigger.** In Rust mode, "Always allow in this project" on an MCP tool ask (for example a plugin's `mention_search`) asked again on the next call. The Rust log shows the resolution as `decision: allow, remembered: 0`. Found by `plugin-extension-mention` in the F3 box run.
+
+**Cause.** The Host answered `allowAlways` with the ask's suggestions. Policy gives no suggestions for a tool without a permission subject (MCP tools pass through), so nothing was remembered. Node's protocol projection (`buildProtocolPermissionOptions`) falls back to `defaultPermissionUpdates` when the suggestions are empty: one allow rule for the tool, with content taken from the input (a non-blank string input, otherwise the first non-blank string among `command`, `url`, `file_path`, `path`, `pattern`), or no content.
+
+**Rules.**
+
+- The Host (`commands.rs` `Offered::of`) applies the same fallback when an ask's suggestions are empty. Non-empty suggestions win. An ask that is `once` or `independent` still offers no always-allow, and `allowAlways` on it is a deny.
+- A content rule on a tool with no permission subject matches like Node (`ruleSubjects` and `matchesRuleContent`; `policy/src/generic.rs`):
+  - The subject is a string input, or the first string field among `command`, `url`, `file_path`, `path`, `pattern`, `patch_text`. With no subject, a content rule does not match.
+  - `x:*` matches `x` alone or followed by a space or tab. A `*` matches any text within one line (Node's `.*` has no `s` flag), so a rule never spans a line break the way `x:*` can. Anything else must be equal.
+  - Content deny, then ask, then allow rules. A whole-tool deny or ask still comes first. A content deny beats a whole-tool allow.
+- Before this, any content rule on an MCP tool was ignored in Rust, including one written by hand. Rules are stored in the shared project settings, so a remembered rule allows the same calls in both builds; the fallback never widens one call's approval to the whole tool when Node would not.
+- Known gap: the TUI's ask hides always-allow when there are no suggestions.
+
+**Tests.** Gateway unit tests in `commands_tests.rs` cover the fallback: no subject field gives a whole-tool rule, a `path` input and a string input give a content rule, and suggestions win. Policy unit tests in `lib_tests_generic.rs` cover the matcher: exact path, field order, `patch_text`, prefix, wildcard, content deny over whole-tool allow, and content ask. The E2E is `plugin-extension-mention` on Rust.
 
 ## Hook output for PermissionRequest and PostToolUse (Node `hooks/output.ts`, `hook-flow.ts`)
 

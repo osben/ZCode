@@ -41,11 +41,14 @@ pub enum SideSource {
     /// Fork (desktop App): `provider/testModelConnectivity`, the model settings probe (Node
     /// `provider_settings_connectivity`).
     ConnectivityProbe,
+    /// Fork (desktop App): an MCP App panel's `mcp/uiSampling`, run for the Node helper on the session's model
+    /// (`helper/sampleModel`, Node `mcp_app_sampling`; specs/fork-rust-node-helper.md F3).
+    McpSampling,
 }
 
 impl SideSource {
     /// 全部来源（`from_wire` 按它查；测试核对它列全了）。
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::SessionTitle,
         Self::Rename,
         Self::HookPrompt,
@@ -56,6 +59,7 @@ impl SideSource {
         Self::WorkspaceText,
         Self::GitCommitMessage,
         Self::ConnectivityProbe,
+        Self::McpSampling,
     ];
 
     /// 本工程的来源名（`QuerySource` 序列化后的 `name`；用量表与请求头另经 [`Self::node_name`]）。
@@ -71,6 +75,7 @@ impl SideSource {
             Self::WorkspaceText => "workspace_generate_text",
             Self::GitCommitMessage => "git_commit_message",
             Self::ConnectivityProbe => "provider_settings_connectivity",
+            Self::McpSampling => "mcp_app_sampling",
         }
     }
 
@@ -93,7 +98,8 @@ impl SideSource {
             | Self::GoalVerification
             | Self::WorkspaceText
             | Self::GitCommitMessage
-            | Self::ConnectivityProbe => self.as_wire(),
+            | Self::ConnectivityProbe
+            | Self::McpSampling => self.as_wire(),
         }
     }
 
@@ -106,7 +112,8 @@ impl SideSource {
             | Self::GoalVerification
             | Self::WorkspaceText
             | Self::GitCommitMessage
-            | Self::ConnectivityProbe => true,
+            | Self::ConnectivityProbe
+            | Self::McpSampling => true,
             Self::SessionTitle | Self::Rename | Self::GoalSummaryTitle => false,
         }
     }
@@ -122,7 +129,8 @@ impl SideSource {
             | Self::GoalSummaryTitle
             | Self::WorkspaceText
             | Self::GitCommitMessage
-            | Self::ConnectivityProbe => false,
+            | Self::ConnectivityProbe
+            | Self::McpSampling => false,
         }
     }
 
@@ -138,7 +146,8 @@ impl SideSource {
             | Self::GoalVerification
             | Self::WorkspaceText
             | Self::GitCommitMessage
-            | Self::ConnectivityProbe => false,
+            | Self::ConnectivityProbe
+            | Self::McpSampling => false,
         }
     }
 
@@ -146,7 +155,11 @@ impl SideSource {
     /// `x-zcode-session-type` is `other` even though the request names a requester session.
     pub const fn workspace_scoped(self) -> bool {
         match self {
-            Self::WorkspaceText | Self::GitCommitMessage | Self::ConnectivityProbe => true,
+            // Node `sampleModel` sends `modelRequestSessionType: "other"` too.
+            Self::WorkspaceText
+            | Self::GitCommitMessage
+            | Self::ConnectivityProbe
+            | Self::McpSampling => true,
             Self::SessionTitle
             | Self::Rename
             | Self::HookPrompt

@@ -36,6 +36,12 @@ fn transport_types_round_trip() {
         "https://mcp.example.com/sse".to_owned(),
         BTreeMap::new(),
     ));
+    // Fork (F3): the helper transport carries no fields.
+    round_trip(&McpTransportConfig::NodeHelper);
+    assert_eq!(
+        serde_json::to_value(McpTransportConfig::NodeHelper).unwrap(),
+        json!({"type": "node_helper"})
+    );
     round_trip(&McpTransportEvent::Message {
         message: json!({"jsonrpc": "2.0", "id": 0, "result": {}}),
     });
