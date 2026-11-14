@@ -518,7 +518,10 @@ impl Actor {
                         content,
                         intent: next.input.intent.clone(),
                     },
-                    InputKind::Compact => TurnInput::Compact { command },
+                    InputKind::Compact => TurnInput::Compact {
+                        command,
+                        instructions: None,
+                    },
                     InputKind::Text => self.human_turn(next),
                 };
                 Some((input, execution))
