@@ -260,11 +260,25 @@ async fn under_the_node_batch_order_hook_contexts_follow_the_last_result() {
     for (contexts, expected) in [
         (
             crate::ToolHookContexts::PerCall,
-            ["result t1", "ctx A", "note A", "result t2", "ctx B", "note B"],
+            [
+                "result t1",
+                "ctx A",
+                "note A",
+                "result t2",
+                "ctx B",
+                "note B",
+            ],
         ),
         (
             crate::ToolHookContexts::NodeBatch,
-            ["result t1", "note A", "result t2", "note B", "ctx A", "ctx B"],
+            [
+                "result t1",
+                "note A",
+                "result t2",
+                "note B",
+                "ctx A",
+                "ctx B",
+            ],
         ),
     ] {
         let model = Arc::new(ScriptedModel::new(vec![
@@ -346,6 +360,13 @@ async fn a_call_finished_while_the_reply_streams_keeps_its_context_to_the_batch_
     );
     assert_eq!(
         batch_order(&sink.messages()),
-        ["result t1", "note A", "result t2", "note B", "ctx A", "ctx B"]
+        [
+            "result t1",
+            "note A",
+            "result t2",
+            "note B",
+            "ctx A",
+            "ctx B"
+        ]
     );
 }

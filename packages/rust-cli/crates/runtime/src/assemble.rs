@@ -343,6 +343,12 @@ pub(crate) fn query_parts(
             } else {
                 rust_cli_query::StopContinuations::Consecutive
             },
+            // Fork (node_desktop): a batch's tool hook contexts after its last result, like Node.
+            tool_hook_contexts: if node_desktop {
+                rust_cli_query::ToolHookContexts::NodeBatch
+            } else {
+                rust_cli_query::ToolHookContexts::PerCall
+            },
             ..defaults.limits.request
         },
     }
