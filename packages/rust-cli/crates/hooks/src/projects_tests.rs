@@ -311,3 +311,15 @@ async fn paths_that_differ_only_in_whitespace_are_two_workspaces() {
     run(&hooks, prompt_in("/work/repo")).await;
     assert_eq!(started(&env), ["a.sh"]);
 }
+
+#[test]
+fn the_key_trims_only_the_separators_of_the_paths_style() {
+    // `PathStyle::infer`: on POSIX a backslash is a name character, and project-file discovery keeps it.
+    assert_ne!(project_key("/work/repo\\"), project_key("/work/repo"));
+    assert_eq!(project_key("/work/repo/"), project_key("/work/repo"));
+    assert_eq!(project_key("/work/a:/"), "/work/a:");
+    assert_eq!(project_key("C:\\repo\\"), project_key("C:\\repo"));
+    assert_eq!(project_key("C:\\repo/"), project_key("C:\\repo"));
+    assert_eq!(project_key("C:\\"), "C:\\");
+    assert_eq!(project_key("\\\\server\\share\\"), "\\\\server\\share");
+}
