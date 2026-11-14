@@ -689,3 +689,41 @@ fn rows_and_the_agent_title_survive_a_restart() {
     assert!(text.contains("Parser fix from ACP"), "{text}");
     server.stop();
 }
+
+/// Rule 8: an agent that names the session on its first turn keeps that title over the first-input title, live and
+/// after a restart (the admission title is adopted before the agent's title arrives).
+#[test]
+fn a_first_turn_agent_title_wins_over_the_first_input_title() {
+    let (_dir, home, work) = dirs();
+    write_agents(&home, &mock_agent(), true, &[]);
+    let model = ModelStub::start();
+    let mut server = Server::start(&home, &work, &model);
+    let session = open_session(&mut server, &work);
+
+    finish_turn(&mut server, &session, "c-title", "title");
+    let metas: Vec<&String> = server
+        .seen
+        .iter()
+        .filter(|frame| frame.contains("\"meta\":{\"title\""))
+        .collect();
+    assert!(
+        metas.last().is_some_and(|frame| frame
+            .contains(r#""meta":{"title":"Parser fix from ACP","titleSource":"generated"}"#)),
+        "{metas:?}"
+    );
+    server.stop();
+
+    let mut server = Server::start(&home, &work, &model);
+    server.request(
+        "v4/conversation/subscribe",
+        json!({"topic": format!("conversation/{session}"), "connectionId": "k2", "clientMode": "desktop-continuous"}),
+    );
+    let snapshot = server.wait_for(|frame| {
+        frame["method"] == "v4/conversation/frame" && contains(frame, "\"kind\":\"snapshot\"")
+    });
+    assert!(
+        contains(&snapshot, r#""title":"Parser fix from ACP""#),
+        "{snapshot}"
+    );
+    server.stop();
+}
