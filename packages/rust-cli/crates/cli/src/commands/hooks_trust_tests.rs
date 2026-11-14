@@ -219,3 +219,31 @@ async fn a_config_node_cannot_read_stops_every_trust_command() {
         }
     }
 }
+
+#[tokio::test]
+async fn a_user_config_node_cannot_read_stops_status_and_grant() {
+    // Node `discoverSnapshot` reads the user hooks after the project files (`readUserHooks`): any error but a missing
+    // file throws, a JSON one and a `hooks` value its strict schema rejects alike. The user config can name another
+    // trust store, so a grant against the default one must not go ahead.
+    for user in [r#"{"hooks": "#, r#"{"hooks": {"extra": 1, "events": {}}}"#] {
+        let home = tempfile::tempdir().unwrap();
+        let paths = StoragePaths::resolve(&Default::default(), home.path(), home.path());
+        let config = paths.cli_config();
+        std::fs::create_dir_all(config.as_path().parent().unwrap()).unwrap();
+        std::fs::write(config.as_path(), user).unwrap();
+        let expected = format!(
+            "Error: Unable to read the user config: {}\n",
+            config.as_path().display()
+        );
+        let env = env(HOOKS);
+        for line in ["hooks trust", "hooks trust grant --all-current"] {
+            let output = run_with(&env, &paths, line).await;
+            assert_eq!(output.code, 1, "{user} {line}");
+            assert_eq!(output.stderr, expected, "{user} {line}");
+        }
+        assert!(
+            !paths.hook_trust_store(None).as_path().exists(),
+            "{user}: a refused grant writes nothing"
+        );
+    }
+}

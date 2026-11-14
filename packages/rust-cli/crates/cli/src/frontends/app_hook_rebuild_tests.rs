@@ -5,7 +5,7 @@
     reason = "the fixture keeps the trust store in a temporary HOME"
 )]
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -213,4 +213,172 @@ async fn a_newer_ticket_of_another_workspace_never_drops_a_rebuild() {
     let (key, commands) = installed(&fixture);
     assert_eq!(key, rust_cli_hooks::project_key(ROOT));
     assert_eq!(commands, ["echo hi", "node check.js --fast"]);
+}
+
+/// Fails the project config reads after a write once `ok_reads` of them went through (none: the first one fails).
+struct FailsLater {
+    inner: Arc<dyn Files>,
+    gate: Arc<Gate>,
+    ok_reads: usize,
+    written: AtomicBool,
+    reads: AtomicUsize,
+}
+
+#[async_trait]
+impl Files for FailsLater {
+    async fn read_file(
+        &self,
+        workspace: &WorkspaceRef,
+        request: ReadFile,
+    ) -> Result<FileContent, EnvError> {
+        let project = request.path.as_str() == PROJECT_PATH;
+        if project
+            && self.written.load(Ordering::SeqCst)
+            && self.reads.fetch_add(1, Ordering::SeqCst) >= self.ok_reads
+        {
+            return Err(EnvError::Io {
+                message: "the config is gone".to_owned(),
+            });
+        }
+        let hold = project && self.gate.armed.swap(false, Ordering::SeqCst);
+        let content = self.inner.read_file(workspace, request).await;
+        if hold {
+            self.gate.held.notify_one();
+            self.gate.release.notified().await;
+        }
+        content
+    }
+
+    async fn write_file(
+        &self,
+        workspace: &WorkspaceRef,
+        context: OperationContext,
+        request: WriteFile,
+    ) -> Result<WriteReceipt, EnvError> {
+        self.inner.write_file(workspace, context, request).await
+    }
+
+    async fn stat(
+        &self,
+        workspace: &WorkspaceRef,
+        request: StatFile,
+    ) -> Result<Option<FileStat>, EnvError> {
+        self.inner.stat(workspace, request).await
+    }
+
+    async fn list_dir(
+        &self,
+        workspace: &WorkspaceRef,
+        request: ListDir,
+    ) -> Result<Vec<DirEntry>, EnvError> {
+        self.inner.list_dir(workspace, request).await
+    }
+
+    async fn read_text(
+        &self,
+        workspace: &WorkspaceRef,
+        request: ReadText,
+    ) -> Result<TextRead, EnvError> {
+        self.inner.read_text(workspace, request).await
+    }
+
+    async fn stat_many(
+        &self,
+        workspace: &WorkspaceRef,
+        request: StatMany,
+    ) -> Result<Vec<Result<Option<FileStat>, EnvError>>, EnvError> {
+        self.inner.stat_many(workspace, request).await
+    }
+
+    async fn put_file(
+        &self,
+        workspace: &WorkspaceRef,
+        context: OperationContext,
+        request: PutFile,
+    ) -> Result<FileWritten, EnvError> {
+        let written = self.inner.put_file(workspace, context, request).await;
+        if written.is_ok() {
+            self.written.store(true, Ordering::SeqCst);
+        }
+        written
+    }
+
+    async fn ensure_dir(
+        &self,
+        workspace: &WorkspaceRef,
+        request: EnsureDir,
+    ) -> Result<(), EnvError> {
+        self.inner.ensure_dir(workspace, request).await
+    }
+}
+
+fn fails_later(gate: &Arc<Gate>, ok_reads: usize) -> Fixture {
+    let gate = gate.clone();
+    fixture_files(PROJECT, json!({}), move |inner| {
+        Arc::new(FailsLater {
+            inner,
+            gate,
+            ok_reads,
+            written: AtomicBool::new(false),
+            reads: AtomicUsize::new(0),
+        })
+    })
+}
+
+#[tokio::test]
+async fn an_older_rebuild_never_replaces_a_later_toggles_invalid() {
+    // Node `admission.invalidate` holds until the next successful snapshot; a grant's rebuild that read the config
+    // before the toggle is not one.
+    let gate = Arc::new(Gate::default());
+    let fixture = fails_later(&gate, 0);
+    let review = bundle(&fixture).await;
+    fixture
+        .admin
+        .review_grant(&target(ROOT), &review.bundle_digest, &ids(&review))
+        .await
+        .unwrap();
+    gate.armed.store(true, Ordering::SeqCst);
+    let (own, at, ids) = (Target::new(ROOT, None), target(ROOT), ids(&review));
+    let earlier = fixture.admin.rebuild_hooks(&own);
+    let later = async {
+        gate.held.notified().await;
+        let toggled = fixture
+            .admin
+            .review_toggle(&at, &review.bundle_digest, &ids[0], false)
+            .await;
+        gate.release.notify_one();
+        toggled
+    };
+    let ((), toggled) = tokio::join!(earlier, later);
+    assert!(
+        matches!(toggled, Err(ToggleError::RebuildFailed)),
+        "{toggled:?}"
+    );
+    let last = fixture.hooks.lock().unwrap().last().cloned().unwrap();
+    assert_eq!(last.1, ProjectEntry::Invalid, "{last:?}");
+}
+
+#[tokio::test]
+async fn a_toggle_puts_the_entry_of_the_read_that_checked_it() {
+    // Node `rebuildSnapshot` reads the config once after the write, and that read is the snapshot it installs. A
+    // second read that finds the file broken must not turn the checked rebuild into a skip-only one.
+    let gate = Arc::new(Gate::default());
+    let fixture = fails_later(&gate, 1);
+    let review = bundle(&fixture).await;
+    fixture
+        .admin
+        .review_grant(&target(ROOT), &review.bundle_digest, &ids(&review))
+        .await
+        .unwrap();
+    fixture
+        .admin
+        .review_toggle(
+            &target(ROOT),
+            &review.bundle_digest,
+            &ids(&review)[0],
+            false,
+        )
+        .await
+        .unwrap();
+    assert_eq!(commands(&fixture), ["node check.js --fast"]);
 }

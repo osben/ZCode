@@ -238,3 +238,60 @@ fn the_key_ignores_a_trailing_separator() {
     assert_eq!(project_key("C:\\dev\\a\\"), project_key("C:\\dev\\a"));
     assert_eq!(project_key("/"), "/");
 }
+
+/// Each call loads a command named after its order, and waits for its own gate first.
+struct InOrder {
+    loads: AtomicUsize,
+    gates: [Arc<Notify>; 2],
+}
+
+#[async_trait]
+impl ProjectHookLoader for InOrder {
+    async fn load(&self, _workspace: &WorkspaceRef) -> ProjectEntry {
+        let call = self.loads.fetch_add(1, Ordering::SeqCst);
+        self.gates[call].notified().await;
+        project("UserPromptSubmit", ["first.sh", "second.sh"][call])
+    }
+}
+
+#[tokio::test]
+async fn the_later_started_load_wins_when_the_earlier_finishes_first() {
+    let env = Arc::new(ScriptedEnv::default());
+    let hooks = Arc::new(engine(env.clone(), &json!({})));
+    let loads = Arc::new(InOrder {
+        loads: AtomicUsize::new(0),
+        gates: [Arc::new(Notify::new()), Arc::new(Notify::new())],
+    });
+    hooks.set_project_loader(loads.clone());
+    let spawn = |hooks: Arc<HookEngine>| {
+        tokio::spawn(async move { hooks.run(prompt_in(A), CancellationToken::new()).await })
+    };
+    let loaded = |count: usize| {
+        let loads = loads.clone();
+        async move {
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                while loads.loads.load(Ordering::SeqCst) < count {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("the event loads the entry");
+        }
+    };
+    let first = spawn(hooks.clone());
+    loaded(1).await;
+    let second = spawn(hooks.clone());
+    loaded(2).await;
+    // The earlier read finishes first; the later one, which saw the newer files, finishes last.
+    loads.gates[0].notify_one();
+    first.await.unwrap();
+    loads.gates[1].notify_one();
+    second.await.unwrap();
+    run(&hooks, prompt_in(A)).await;
+    assert_eq!(
+        started(&env).last().map(String::as_str),
+        Some("second.sh"),
+        "{:?}",
+        started(&env)
+    );
+}
