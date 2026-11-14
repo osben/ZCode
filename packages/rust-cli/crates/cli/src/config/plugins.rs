@@ -182,6 +182,8 @@ pub(crate) async fn sources(
         suppressed_builtins: section.suppressed_builtins,
         // The app-server sets it for the desktop surface (assembly).
         view_host: false,
+        // The app-server sets it when the Host configured a Node helper (assembly).
+        node_helper: false,
     }
 }
 

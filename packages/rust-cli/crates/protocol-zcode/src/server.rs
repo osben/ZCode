@@ -130,7 +130,8 @@ impl Server {
         let topics = Arc::new(Topics::new(context.clone(), &spawner));
         Self {
             instance: context.fresh("instance"),
-            bridge: SessionBridge::new(kernel.clone(), spawner.clone(), EVENT_BATCH_WINDOW),
+            bridge: SessionBridge::new(kernel.clone(), spawner.clone(), EVENT_BATCH_WINDOW)
+                .with_close_listener(crate::fork::node_helper::close_listener(context.clone())),
             spawner,
             context,
             kernel,

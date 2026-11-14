@@ -8,6 +8,8 @@
 
 mod acp;
 mod agents;
+// Fork: specs/fork-rust-node-helper.md F3.
+mod app_tool;
 mod assemble;
 mod catalog;
 mod config;
@@ -22,6 +24,7 @@ mod listings;
 mod lsp_tool;
 mod permissions;
 mod projects;
+mod sampling;
 mod table;
 mod usage;
 mod workspace_sessions;
@@ -163,6 +166,8 @@ pub struct LocalKernel {
     error_holds_queue: bool,
     /// Fork: a SessionStart `session_title` and `initial_user_message` apply only outside the Node desktop agent, which reads neither.
     session_start_extras: bool,
+    /// Fork: the main loop's tool pipeline; MCP App calls are authorized with it (app_tool.rs).
+    pipeline: Arc<rust_cli_tools::Pipeline>,
 }
 
 impl LocalKernel {
@@ -273,10 +278,11 @@ impl LocalKernel {
             extensions.code_intelligence.clone(),
         );
         let sessions = OpenSessions::default();
+        let pipeline = assemble::pipeline(&ports, &ext, &gate, &hooks, extensions.node_desktop);
         let parts = assemble::query_parts(
             &ports,
             (&assembler, &ext, &gate, &hooks),
-            (&late, operations),
+            (&late, operations, &pipeline),
             (&defaults, traits, extensions.node_desktop),
             extensions.code_intelligence.clone(),
         );
@@ -386,16 +392,19 @@ impl LocalKernel {
             fork_while_running: extensions.node_desktop,
             error_holds_queue: extensions.node_desktop,
             session_start_extras: !extensions.node_desktop,
+            pipeline,
         }
     }
 
     /// 加载插件、开始连接 MCP 服务器（不等待连接完成，ext.md §3.3）。插件的 agent 文件交给 agent
     /// 目录、hooks 登记到 hooks 引擎（ext.md §4，L12）；返回时两者都已生效，之后才开会话。
-    pub async fn start_extensions(&self) {
+    /// Fork: returns the loaded plugins, for the Node helper's catalog (specs/fork-rust-node-helper.md F3).
+    pub async fn start_extensions(&self) -> rust_cli_ext::plugins::Plugins {
         let plugins = self.ext.start().await;
         let (agents, hooks) = ext::plugin_parts(&plugins);
         self.agent_catalog.set_plugins(agents);
         self.hooks.register_plugins(hooks);
+        plugins
     }
 
     /// `-p` 在第一个请求前的 MCP 等待（ext.md §3.3.1，修复线 F36）：alwaysLoad 的服务器与 prewait，到期就开跑，

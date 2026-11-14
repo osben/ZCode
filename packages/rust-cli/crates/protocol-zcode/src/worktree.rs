@@ -353,7 +353,7 @@ pub async fn stored_execution(server: &Server, session: &SessionId) -> Option<Ex
 }
 
 /// Node checks the directory on its own machine; zcode-rs checks a local workspace only.
-async fn missing(server: &Server, path: &str) -> bool {
+pub(crate) async fn missing(server: &Server, path: &str) -> bool {
     server.defaults.environment.as_str() == "local"
         && !rust_cli_fs::is_dir(std::path::Path::new(path)).await
 }

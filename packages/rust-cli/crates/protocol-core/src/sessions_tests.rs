@@ -239,3 +239,35 @@ impl Kernel for ViewKernel {
         self.0.list_sessions(filter).await
     }
 }
+
+/// Fork (specs/fork-rust-node-helper.md F3): the close listener hears every close of a session the table knew, once,
+/// and nothing for a session it did not know.
+#[tokio::test]
+async fn the_close_listener_hears_each_known_session_once() {
+    let handle = Arc::new(FakeHandle {
+        id: SessionId::new("s1"),
+        events: Vec::new(),
+        subscriptions: StdMutex::new(Vec::new()),
+    });
+    let kernel = Arc::new(FakeKernel {
+        handle,
+        opens: StdMutex::new(0),
+    });
+    let scope = TaskScope::root("test", |_| {});
+    let closed = Arc::new(StdMutex::new(Vec::<String>::new()));
+    let heard = closed.clone();
+    let bridge = SessionBridge::<Recorder>::new(
+        Arc::new(ViewKernel(kernel)),
+        scope.spawner(),
+        Duration::from_millis(30),
+    )
+    .with_close_listener(Arc::new(move |session: &SessionId| {
+        heard.lock().unwrap().push(session.as_str().to_owned());
+    }));
+    let id = SessionId::new("s1");
+    bridge.open(&id, |_, _| Recorder::default()).await.unwrap();
+    assert!(bridge.close(&id).is_some());
+    assert!(bridge.close(&id).is_none());
+    assert!(bridge.close(&SessionId::new("unknown")).is_none());
+    assert_eq!(*closed.lock().unwrap(), vec!["s1".to_owned()]);
+}

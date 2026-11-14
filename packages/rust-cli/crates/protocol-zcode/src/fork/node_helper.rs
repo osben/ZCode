@@ -4,9 +4,9 @@
 //! Owner: this type owns the helper's lifecycle (lazy start, crash and breaker, idle reclaim, kill on drop) and the
 //! forwarding allowlist. The process itself comes from an injected [`NodeHelperLauncher`], so this crate spawns nothing.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, Weak};
 use std::time::Duration;
 
@@ -24,11 +24,12 @@ use tokio::time::Instant;
 /// The reason code of every helper-unavailable error (the Node helper's `proto.forkRustAgent.nodeHelperUnavailable`).
 pub const NODE_HELPER_UNAVAILABLE: &str = "proto.forkRustAgent.nodeHelperUnavailable";
 
-/// The helper protocol version, sent in `helper/initialize`.
-pub(crate) const PROTOCOL_VERSION: u64 = 1;
+/// The helper protocol version, sent in `helper/initialize`. Version 2 adds the F3 messages (helper MCP pipes, helper
+/// sessions, helper → Rust requests).
+pub(crate) const PROTOCOL_VERSION: u64 = 2;
 
-/// Methods Rust may forward (F1 plugin management, F2 saved workflows and run history). Forwarding also needs the
-/// method in the helper's advertised `methods`.
+/// Methods Rust may forward (F1 plugin management, F2 saved workflows and run history, F3 session-scoped MCP App
+/// methods). Forwarding also needs the method in the helper's advertised `methods`.
 pub(crate) const FORWARDED_METHODS: &[&str] = &[
     "plugins/list",
     "plugins/overview",
@@ -65,6 +66,25 @@ pub(crate) const FORWARDED_METHODS: &[&str] = &[
     "v4/conversation/workflowRunArtifactRead",
     "v4/conversation/workflowRunWorkspace",
     "v4/conversation/workflowRunNodeResult",
+    // F3: the session-scoped methods (`node_helper_sessions.rs`).
+    "mcp/uiOpenInstance",
+    "mcp/uiValidateInstance",
+    "mcp/uiCloseInstance",
+    "mcp/uiReadResource",
+    "mcp/uiListResources",
+    "mcp/uiListResourceTemplates",
+    "mcp/uiSubscribeResource",
+    "mcp/uiUnsubscribeResource",
+    "mcp/uiCallTool",
+    "mcp/uiCancelCall",
+    "mcp/uiSampling",
+    "mcp/uiCancelSampling",
+    "mcp/uiRegisterAppTools",
+    "mcp/uiUnregisterAppTools",
+    "mcp/uiClaimAppToolCall",
+    "mcp/uiResolveAppToolCall",
+    "mcp/readResource",
+    "plugins/mentionItems",
 ];
 
 /// Helper notifications relayed to the Host verbatim. Any other notification from the helper is dropped.
@@ -75,12 +95,21 @@ pub(crate) const RELAYED_NOTIFICATIONS: &[&str] = &["plugins/operationProgress"]
 /// since the operation it names may be the call that triggered the start.
 const CANCEL_OPERATION: &str = "plugins/cancelOperation";
 
-/// The timing of the client. The defaults are the Host's plugin-management request timeout and the idle reclaim
-/// period; tests shorten them.
+/// The liveness check after a timed-out forwarded call (F3, "Lifecycle changes").
+const PING: &str = "helper/ping";
+
+/// The timing of the client. The defaults are the Host's request timeouts and the idle reclaim period; tests shorten
+/// them.
 #[derive(Debug, Clone)]
 pub struct Timing {
-    /// Per forwarded call.
+    /// Per forwarded `plugins/*` and `workflows/*` call (the Host's plugin-management timeout).
     pub request: Duration,
+    /// Per forwarded `mcp/uiSampling` call (the Host's sampling timeout).
+    pub sampling: Duration,
+    /// Per forwarded call of any other method, and per `helper/mcp/connect` (the Host's default request timeout).
+    pub default_request: Duration,
+    /// How long a process whose call timed out has to answer `helper/ping` to be kept.
+    pub ping: Duration,
     /// For `helper/initialize`. Every call waits on a start, so a helper that never answers the handshake must fail
     /// fast instead of holding them for the call timeout (spawn to answer is about 0.6 s).
     pub initialize: Duration,
@@ -100,12 +129,28 @@ impl Default for Timing {
     fn default() -> Self {
         Self {
             request: Duration::from_secs(300),
+            sampling: Duration::from_secs(65),
+            default_request: Duration::from_secs(180),
+            ping: Duration::from_secs(5),
             initialize: Duration::from_secs(30),
             cancel: Duration::from_secs(5),
             idle: Duration::from_secs(300),
             crash_window: Duration::from_secs(60),
             crash_limit: 3,
             start_cooldown: Duration::from_secs(30),
+        }
+    }
+}
+
+impl Timing {
+    /// The Host's timeout for a forwarded `method`. Model tool calls on helper pipes are timed by Rust's MCP client.
+    pub fn timeout_for(&self, method: &str) -> Duration {
+        if method.starts_with("plugins/") || method.starts_with("workflows/") {
+            self.request
+        } else if method == "mcp/uiSampling" {
+            self.sampling
+        } else {
+            self.default_request
         }
     }
 }
@@ -136,6 +181,12 @@ pub struct NodeHelper {
     state: StdMutex<State>,
     /// Set by the first launch or initialize failure, cleared by a successful start, so the warning is logged once.
     warned: AtomicBool,
+    /// F3: what Rust admitted, sent with every session open (set once plugins are loaded).
+    catalog: StdMutex<Option<Arc<sessions::HelperCatalog>>>,
+    /// F3: the helper's requests to Rust and who answers them.
+    requests: StdMutex<requests::Requests>,
+    /// F3: the last `openId` of a `helper/session/open`; a close names its open's id.
+    last_open: AtomicU64,
 }
 
 struct State {
@@ -163,12 +214,28 @@ struct Running {
     methods: HashSet<String>,
     in_flight: usize,
     last_used: Instant,
-    /// When the process last sent anything (an answer, a notification such as operation progress, a request): a
-    /// timed-out call keeps the process only if it was heard from since the call started.
-    last_heard: Instant,
+    /// Counts everything the process sent (an answer, a notification such as operation progress or pipe traffic, a
+    /// request): a timed-out call keeps the process when the count moved since the call started. A count, not a
+    /// timestamp, so an answer at the call's own instant is not mistaken for one after it.
+    heard: u64,
+    /// F3: the helper MCP connections of this generation, by connection id. Dropped with the slot, each closes its
+    /// connection's event stream (a crash, timeout or reclaim closes every pipe). An open pipe blocks idle reclaim.
+    pipes: HashMap<String, mcp::Pipe>,
+    /// F3: the helper sessions opened (or opening) in this generation. An open session blocks idle reclaim.
+    sessions: HashMap<String, sessions::Opening>,
+    /// F3: the panel instances this generation opened and nobody closed. Dropped with the slot, it closes them on
+    /// their sessions' streams.
+    panels: Box<panels::Panels>,
     /// Dropped with the slot: kills the process tree. Always dropped after the state lock is released, since it comes
     /// from an injected launcher.
     _guard: Box<dyn Send>,
+}
+
+impl Running {
+    /// Nothing keeps the process: no call in flight and no open helper resource (F3 "Open resources").
+    fn idle(&self) -> bool {
+        self.in_flight == 0 && self.pipes.is_empty() && self.sessions.is_empty()
+    }
 }
 
 impl NodeHelper {
@@ -191,6 +258,9 @@ impl NodeHelper {
                 retry_at: None,
             }),
             warned: AtomicBool::new(false),
+            catalog: StdMutex::new(None),
+            requests: StdMutex::default(),
+            last_open: AtomicU64::new(0),
         })
     }
 
@@ -217,30 +287,48 @@ impl NodeHelper {
             helper: self,
             generation,
         };
-        let started = Instant::now();
-        let result =
-            match tokio::time::timeout(self.timing.request, peer.request(method, params)).await {
-                Err(_elapsed) => {
-                    if self.timed_out(generation, started) {
-                        self.cancel_abandoned(method, params, &peer);
-                    }
-                    Err(unavailable("the helper did not answer in time"))
+        // F3: a session-scoped call runs in its helper session, opened first in this generation.
+        if let Some(session) = sessions::session_of(method, params)
+            && let Err(error) = self.ensure_session(generation, &peer, session).await
+        {
+            return Some(Err(error));
+        }
+        let started = self.heard_count(generation);
+        let deadline = self.timing.timeout_for(method);
+        let result = match tokio::time::timeout(deadline, peer.request(method, params)).await {
+            Err(_elapsed) => {
+                if self.timed_out(generation, started, &peer).await {
+                    self.cancel_abandoned(method, params, &peer);
                 }
-                Ok(Err(error)) if error.code == CONNECTION_CLOSED && peer.is_closed() => {
-                    self.link_lost(generation);
-                    Err(unavailable("the helper connection closed"))
-                }
-                Ok(result) => {
-                    self.heard(generation);
-                    result
-                }
-            };
-        Some(result)
+                Err(unavailable("the helper did not answer in time"))
+            }
+            Ok(Err(error)) if error.code == CONNECTION_CLOSED && peer.is_closed() => {
+                self.link_lost(generation);
+                Err(unavailable("the helper connection closed"))
+            }
+            Ok(result) => {
+                self.heard(generation);
+                result
+            }
+        };
+        Some(self.panel_answered(generation, method, params, result))
     }
 
     /// A ready link for `method`, starting the helper when it is not running. `Ok(None)` when the helper does not
     /// advertise `method`.
     async fn acquire(&self, method: &str) -> Result<Option<(u64, Peer)>, RpcError> {
+        self.acquire_for(Some(method)).await
+    }
+
+    /// [`Self::acquire`] for a helper message of Rust's own (`helper/*`, F3), which the helper never advertises.
+    async fn acquire_link(&self) -> Result<(u64, Peer), RpcError> {
+        match self.acquire_for(None).await? {
+            Some(link) => Ok(link),
+            None => Err(unavailable("the helper is not running")),
+        }
+    }
+
+    async fn acquire_for(&self, method: Option<&str>) -> Result<Option<(u64, Peer)>, RpcError> {
         loop {
             // Declared before the lock so a dropped process is released after the lock is.
             let mut retired = None;
@@ -257,7 +345,7 @@ impl NodeHelper {
                         return Err(unavailable("the helper is down after repeated crashes"));
                     }
                     Slot::Running(running) => {
-                        if !running.methods.contains(method) {
+                        if method.is_some_and(|method| !running.methods.contains(method)) {
                             return Ok(None);
                         }
                         running.in_flight += 1;
@@ -345,7 +433,9 @@ impl NodeHelper {
             )
             .await;
             if let Some(helper) = weak.upgrade() {
+                // The slot goes first, so a request that begins after it starts cancelled (requests::begin).
                 helper.link_lost(generation);
+                helper.requests_lost(generation);
             }
         }));
 
@@ -404,7 +494,13 @@ impl NodeHelper {
             methods,
             in_flight: 0,
             last_used: now,
-            last_heard: now,
+            heard: 0,
+            pipes: HashMap::new(),
+            sessions: HashMap::new(),
+            panels: Box::new(panels::Panels::new(
+                self.myself.clone(),
+                self.spawner.clone(),
+            )),
             _guard: guard,
         });
         state.retry_at = None;
@@ -462,27 +558,40 @@ impl NodeHelper {
         if let Slot::Running(running) = &mut state.slot
             && running.generation == generation
         {
-            running.last_heard = Instant::now();
+            running.heard += 1;
         }
     }
 
-    /// A call of `generation` started at `started` timed out. The process is kept when other calls are in flight and
-    /// it was heard from since this call started (an answer or progress): it is alive and only this call is slow.
-    /// Otherwise it is hung and is dropped without counting a crash; a hung process with calls arriving all the time
-    /// would otherwise never be dropped. Returns whether the process was kept.
-    fn timed_out(&self, generation: u64, started: Instant) -> bool {
-        let mut state = self.state.lock_unpoisoned();
-        let Slot::Running(running) = &state.slot else {
-            return false;
+    /// How much `generation` was heard from so far (see [`Running::heard`]).
+    fn heard_count(&self, generation: u64) -> u64 {
+        match &self.state.lock_unpoisoned().slot {
+            Slot::Running(running) if running.generation == generation => running.heard,
+            _ => 0,
+        }
+    }
+
+    /// A call of `generation` timed out; `started` is [`Self::heard_count`] when it started. The process is kept when it was heard from since the
+    /// call started (an answer, progress or pipe traffic) or when it answers `helper/ping` in time: it is alive and only
+    /// this call is slow, and dropping it would close every session's helper pipes. Otherwise it is hung and is dropped
+    /// without counting a crash. Returns whether the process was kept.
+    async fn timed_out(&self, generation: u64, started: u64, peer: &Peer) -> bool {
+        let heard = match &self.state.lock_unpoisoned().slot {
+            Slot::Running(running) if running.generation == generation => running.heard != started,
+            _ => return false,
         };
-        if running.generation != generation {
+        let alive = heard || self.answers_ping(peer).await;
+        let mut state = self.state.lock_unpoisoned();
+        if !is_current(&state, generation) {
             return false;
         }
-        if running.in_flight > 1 && running.last_heard >= started {
+        if alive {
+            if let Slot::Running(running) = &mut state.slot {
+                running.heard += 1;
+            }
             tracing::warn!(
                 event = "helper.call_timed_out",
                 generation,
-                "a forwarded call timed out; the helper is kept for the calls still in flight"
+                "a forwarded call timed out; the helper is alive and is kept"
             );
             return true;
         }
@@ -497,21 +606,27 @@ impl NodeHelper {
         false
     }
 
-    /// The kept process still runs a call its caller gave up on. A cancellable plugin operation is cancelled in the
-    /// helper, as the Host would, so it neither keeps running nor stays registered under its id. Fire and forget: the
-    /// answer does not matter, and a process dropped meanwhile ends the operation anyway.
-    fn cancel_abandoned(&self, method: &str, params: &Value, peer: &Peer) {
-        if method == CANCEL_OPERATION {
-            return;
+    /// Any answer to `helper/ping` within [`Timing::ping`] proves the process is alive, an error answer included.
+    async fn answers_ping(&self, peer: &Peer) -> bool {
+        match tokio::time::timeout(self.timing.ping, peer.request(PING, &json!({}))).await {
+            Ok(Ok(_)) => true,
+            Ok(Err(error)) => !(error.code == CONNECTION_CLOSED && peer.is_closed()),
+            Err(_elapsed) => false,
         }
-        let Some(operation_id) = operation_id(params) else {
+    }
+
+    /// The kept process still runs a call its caller gave up on. It is cancelled in the helper with that call's own
+    /// cancel, as the Host would, so it neither keeps running nor stays registered under its id: a panel tool call's
+    /// pending authorization is withdrawn, a sampling call ends. Fire and forget: the answer does not matter, and a
+    /// process dropped meanwhile ends the call anyway.
+    fn cancel_abandoned(&self, method: &str, params: &Value, peer: &Peer) {
+        let Some((cancel_method, cancel)) = abandoned_cancel(method, params) else {
             return;
         };
         let peer = peer.clone();
         let deadline = self.timing.cancel;
         drop(self.spawner.spawn("node-helper-cancel", async move {
-            let cancel = json!({"operationId": operation_id});
-            let _ = tokio::time::timeout(deadline, peer.request(CANCEL_OPERATION, &cancel)).await;
+            let _ = tokio::time::timeout(deadline, peer.request(cancel_method, &cancel)).await;
         }));
     }
 
@@ -613,7 +728,7 @@ async fn reclaim(weak: Weak<NodeHelper>, generation: u64, idle: Duration) {
             if running.generation != generation {
                 return;
             }
-            if running.in_flight > 0 {
+            if !running.idle() {
                 Some(Instant::now() + idle)
             } else if running.last_used.elapsed() >= idle {
                 let retired = std::mem::replace(&mut state.slot, Slot::Idle);
@@ -637,6 +752,46 @@ async fn reclaim(weak: Weak<NodeHelper>, generation: u64, idle: Duration) {
     }
 }
 
+const UI_CALL_TOOL: &str = "mcp/uiCallTool";
+const UI_SAMPLING: &str = "mcp/uiSampling";
+/// The plugin scope of an `mcp/ui*` call (`zcodeMcpUiPluginScopeShape`). The cancel schemas are strict: a cancel carries
+/// these and its id, nothing else.
+const UI_SCOPE: &[&str] = &[
+    "instance",
+    "workspace",
+    "sessionId",
+    "pluginId",
+    "serverName",
+];
+
+/// The cancel of an abandoned call: a panel tool call by its `callId` (`mcp/uiCancelCall`), a panel sampling call by
+/// its `operationId` (`mcp/uiCancelSampling`), any other call with an `operationId` as a plugin operation.
+fn abandoned_cancel(method: &str, params: &Value) -> Option<(&'static str, Value)> {
+    let ui_cancel = |cancel: &'static str, id: &str| {
+        let value = params
+            .get(id)
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())?;
+        let mut fields: serde_json::Map<String, Value> = UI_SCOPE
+            .iter()
+            .filter_map(|key| {
+                params
+                    .get(*key)
+                    .map(|value| ((*key).to_owned(), value.clone()))
+            })
+            .collect();
+        fields.insert(id.to_owned(), json!(value));
+        Some((cancel, Value::Object(fields)))
+    };
+    match method {
+        // A cancel is never cancelled: an abandoned one sends nothing.
+        CANCEL_OPERATION | "mcp/uiCancelCall" | "mcp/uiCancelSampling" => None,
+        UI_CALL_TOOL => ui_cancel("mcp/uiCancelCall", "callId"),
+        UI_SAMPLING => ui_cancel("mcp/uiCancelSampling", "operationId"),
+        _ => operation_id(params).map(|id| (CANCEL_OPERATION, json!({"operationId": id}))),
+    }
+}
+
 /// The id a cancellable plugin operation registers under in the helper: trimmed and non-empty, as Node's
 /// `getPluginOperationId`.
 fn operation_id(params: &Value) -> Option<String> {
@@ -653,7 +808,7 @@ fn unavailable(message: &str) -> RpcError {
 /// requests with method-not-found.
 struct Relay {
     host: Peer,
-    /// Anything the process sends marks it alive (see [`Running::last_heard`]), relayed or not: a dropped notification
+    /// Anything the process sends marks it alive (see [`Running::heard`]), relayed or not: a dropped notification
     /// is still proof that the process is running. A hung call on a live process is then left to its cancel (calls
     /// with an `operationId`) and to the idle reclaim.
     helper: Weak<NodeHelper>,
@@ -670,14 +825,44 @@ impl Relay {
 
 #[async_trait]
 impl Service for Relay {
-    async fn request(&self, method: &str, _params: Value) -> Result<Reply, RpcError> {
+    /// F3: pipe traffic is routed in the read loop, so a connection's messages reach Rust's MCP client in the order the
+    /// helper sent them (`serve` spawns every other notification as its own task).
+    /// `helper/session/delta` too, so a session's deltas keep the helper's order on its stream.
+    fn control(&self, method: &str, params: &Value) -> bool {
+        let pipe = mcp::PIPE_NOTIFICATIONS.contains(&method);
+        if !pipe && method != panels::SESSION_DELTA {
+            return false;
+        }
+        if let Some(helper) = self.helper.upgrade() {
+            helper.heard(self.generation);
+            if pipe {
+                helper.pipe_event(self.generation, method, params);
+            } else {
+                helper.session_delta(self.generation, params);
+            }
+        }
+        true
+    }
+
+    /// F3: the helper's requests to Rust (`helper/authorizeAppTool`).
+    async fn request(&self, method: &str, params: Value) -> Result<Reply, RpcError> {
         self.heard();
-        Err(RpcError::method_not_found(method))
+        let Some(helper) = self.helper.upgrade() else {
+            return Err(unavailable("the agent is shutting down"));
+        };
+        helper
+            .helper_request(self.generation, method, params)
+            .await
+            .map(Reply::new)
     }
 
     async fn notification(&self, method: &str, params: Value) {
         self.heard();
-        if RELAYED_NOTIFICATIONS.contains(&method) {
+        if method == requests::CANCEL_REQUEST {
+            if let Some(helper) = self.helper.upgrade() {
+                helper.cancel_request(&params);
+            }
+        } else if RELAYED_NOTIFICATIONS.contains(&method) {
             self.host.notify(method, &params).await;
         } else {
             tracing::debug!(
@@ -688,6 +873,21 @@ impl Service for Relay {
         }
     }
 }
+
+#[path = "node_helper_mcp.rs"]
+mod mcp;
+#[path = "node_helper_panels.rs"]
+mod panels;
+#[path = "node_helper_requests.rs"]
+mod requests;
+#[path = "node_helper_sessions.rs"]
+mod sessions;
+#[cfg(test)]
+use mcp::HelperMcpConnection;
+pub use mcp::HelperRoutedMcp;
+pub(crate) use requests::HelperRequests;
+pub use sessions::HelperCatalog;
+pub(crate) use sessions::{close_listener, session_of};
 
 #[cfg(test)]
 #[path = "node_helper_tests.rs"]

@@ -15,10 +15,16 @@ pub(crate) async fn dispatch(
 ) -> Option<Result<Reply, RpcError>> {
     // Fork: the Node helper answers the forwarded families when the Host configured one. `None` falls through, so
     // an unadvertised method keeps its answer (`-32601`, or `{"runs": []}` for the run list).
-    if let Some(helper) = server.context.node_helper()
-        && let Some(result) = helper.forward(method, &params).await
-    {
-        return Some(result.map(Reply::new));
+    if let Some(helper) = server.context.node_helper() {
+        // F3: a session-scoped call is forwarded only for an own session and a helper-hosted server.
+        if let Err(error) =
+            super::helper_session_admit::admit(server, helper, method, &params).await
+        {
+            return Some(Err(error));
+        }
+        if let Some(result) = helper.forward(method, &params).await {
+            return Some(result.map(Reply::new));
+        }
     }
     let result = match method {
         "v4/conversation/plans" => plans(server, &params).await,
