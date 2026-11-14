@@ -1594,14 +1594,35 @@ failure    ─▶ rows closed "The agent turn failed before this tool finished" 
     `acp:` model check, offered options from the snapshot or else the catalog, id and value
     validation, no-op when unchanged, then the choice write, the display copy and the
     `ExternalAgentConfig` event. The projection writes `config.externalAgentConfig` (Node
-    `externalAgentConfigStateSchema`), seeded from the binding's `config_options` on subscribe, and
-    `control.externalAgentStall` (`{agentId, since, silentMs}`), cleared by `resumed` and by the
-    turn's end. Error codes are Node's `config.invalid`, `config.notExternalAgent`,
+    `externalAgentConfigStateSchema`), seeded from the binding's `config_options` on subscribe (the
+    stall status, `control.externalAgentStall`, is rule 14). Error codes are Node's `config.invalid`, `config.notExternalAgent`,
     `config.notAvailable`, `config.unchanged`.
 14. **Resume (S5).** The binding is written after every acquire. A cold start resumes only when the
     agent, the cwd and the launch key all match. `launch_key` is
     `sha256(JSON.stringify({agentId, command, args, env, cwd}))` with `env` as sorted `[k, v]` pairs,
-    byte-identical to Node, so a session bound by one runtime resumes under the other.
+    byte-identical to Node, so a session bound by one runtime resumes under the other. A second
+    `zcode-rs` process (an app relaunch) resumes the bound session with `session/load` and sends no
+    `session/new`; the history the agent replays during the load is counted, never shown (Node
+    `performAcpHandshake`).
+    - **Reset divider.** A `reset` start (an earlier session could not be loaded and a new one
+      replaced it) emits `QueryEvent::ExternalAgentContextReset` once, before the agent's first
+      output, as Node's host emits `context_reset` from `takeSessionStart()`. A `loaded` or
+      `created` start emits nothing. The projection appends a `timelineMarker` row in lane
+      `lightBoundary`, `marker: {type: "agentContextReset", agentId}`, in the running turn (Node
+      `onSystemMessage` for an `external_agent_context_reset` system message), key
+      `agent-context-reset:<turn>`. It is not stored: Node appends the system message to its
+      in-memory event log only (`acp-upstream-compat.test.ts` checks that no table holds it). So
+      the divider survives a resubscribe in the same process (both runtimes snapshot the live
+      projection), and neither runtime shows it after the session is closed and reopened or the app
+      relaunches.
+    - **Stall status.** A prompt silent for the stall window (120 s) emits
+      `QueryEvent::ExternalAgentStatus` `stalled` with the silence, and the next agent frame emits
+      `resumed` (Node `StallWatch`, `appendExternalAgentStatus`). While a turn runs, the projection
+      sets `control.externalAgentStall: {agentId, since, silentMs}` (`since` is the event time);
+      `resumed` and the turn's end set it to `null` (Node `onExternalAgentStatus`,
+      `clearedExternalAgentStall`). A `resumed` with no stall shown, and an event outside a running
+      turn, change nothing. The field is absent until the first stall, as in Node's snapshot. Like
+      the divider, it is not stored.
 15. **No migrations.** `zcode-rs` checks that the tables and columns exist (Node's storage
     preparation creates them). Without them there is no binding and no resume, and a config write
     answers `config.notAvailable`.
@@ -1615,15 +1636,14 @@ failure    ─▶ rows closed "The agent turn failed before this tool finished" 
     `externalAgentTurns: true`, and refuses them with
     `proto.forkRustAgent.externalAgentUnsupported` otherwise.
 
-### Delivery status (2026-11-13)
+### Delivery status (2026-11-14)
 
-Delivered: rules 1–10, 12, 17, 18 (rows, plan and agent title in S3); rule 14 writes and reads the
-binding (resume when agent, cwd and launch key match).
+Delivered: rules 1–10, 12, 17, 18 (rows, plan and agent title in S3); rule 14 (S5): the binding,
+resume when agent, cwd and launch key match, a second process resuming with `session/load`, the
+context-reset divider and the stall status.
 
 Not yet ported, tracked as follow-ups:
 
-- **Resume and divider (S5).** No context-reset divider (`ExternalAgentContextReset`), no stall
-  status in the projection (a stall is logged only), no second-process `session/load` test.
 - **Config (S6), rules 13, 15, 16.** No `setExternalAgentConfigOption` handler, no pending-choice
   reconcile, no catalog write and no `config.externalAgentConfig` projection. The Host gate admits
   the command for a runtime with `externalAgentTurns`; `zcode-rs` answers it as an unknown command.

@@ -9,6 +9,7 @@ mod background_shells;
 mod bash_progress;
 mod cold;
 pub mod elicitation;
+mod external_agent_status;
 mod external_tools;
 mod goal_verify;
 mod kinds;
@@ -174,6 +175,9 @@ pub struct Projection {
     goal_verifier: Option<u64>,
     /// Fork: the last verification request failed (Node's phase `error` with `sessionEnded: false`).
     goal_verifier_failed: bool,
+    /// Fork: `control.externalAgentStall` (projection/external_agent_status.rs): absent until the first ACP stall,
+    /// then the stall or `null` once cleared.
+    external_agent_stall: Option<Value>,
     /// Fork: the model directory; `thoughtLevels` are the selected model's levels in it (Node `listThoughtLevels`).
     catalog: std::sync::Arc<[rust_cli_kernel_api::provider::CatalogModel]>,
     /// Fork: file changes per turn (`KernelEvent::FileChanges`): feed the turn header's `fileChanges` summary and
@@ -344,6 +348,7 @@ impl Projection {
             streaming_tools: HashMap::new(),
             goal_verifier: None,
             goal_verifier_failed: false,
+            external_agent_stall: None,
             catalog: std::sync::Arc::from(Vec::new()),
             auto_drain: true,
             pause_reason: None,
@@ -755,6 +760,9 @@ impl Projection {
         if self.goal_verifier_failed && self.phase == Phase::Error {
             control["sessionEnded"] = json!(false);
         }
+        if let Some(stall) = &self.external_agent_stall {
+            control["externalAgentStall"] = stall.clone();
+        }
         control
     }
 
@@ -875,6 +883,12 @@ impl Projection {
                 seq,
                 &mut out,
             ),
+            KernelEvent::ExternalAgentContextReset { agent } => {
+                self.external_agent_context_reset(agent, now, seq, &mut out);
+            }
+            KernelEvent::ExternalAgentStatus { agent, status } => {
+                self.external_agent_status(agent, *status, now, &mut patch);
+            }
             KernelEvent::ToolDone { tool_use, output } => {
                 let text = text_of_result(&output.content);
                 self.remember_shell_title(tool_use.as_str(), &text);
@@ -1242,6 +1256,8 @@ impl Projection {
         // A control turn made no request: the usage the kernel reports is an earlier response's.
         let control_only = self.turn.as_ref().is_some_and(|live| live.control_only);
         let usage = usage.filter(|_| !control_only);
+        // Fork: the turn's end clears its ACP stall (Node `clearedExternalAgentStall`); the phase patch carries it.
+        self.clear_external_agent_stall();
         if let Some(usage) = usage {
             self.total += *usage;
         }

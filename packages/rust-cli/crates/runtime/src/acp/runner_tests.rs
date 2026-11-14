@@ -76,17 +76,24 @@ struct Harness {
 
 impl Harness {
     fn new() -> Self {
+        Self::with(&[], None)
+    }
+
+    /// A harness whose mock agent gets `flags` after `--state`, and whose stall window is `stall` when given.
+    fn with(flags: &[&str], stall: Option<Duration>) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let records_file = dir.path().join("fork_acp_agents.json");
         let state = dir.path().join("agent-state.json");
+        let mut args = vec![json!("--state"), json!(state)];
+        args.extend(flags.iter().map(|flag| json!(flag)));
         let file = json!({"schemaVersion": 1, "agents": [{
             "agentId": "mock", "providerName": "Mock Agent", "enabled": true,
-            "command": mock_agent(), "args": ["--state", state],
+            "command": mock_agent(), "args": args,
         }]});
         std::fs::write(&records_file, file.to_string()).unwrap();
         let scope = TaskScope::root("acp-test", |_| {});
         let plans = Arc::new(Plans::default());
-        let host = AcpHost::new(
+        let mut host = AcpHost::new(
             AcpSetup {
                 records_file,
                 env: Arc::from(Vec::new()),
@@ -97,6 +104,12 @@ impl Harness {
             plans.clone(),
             scope.spawner(),
         );
+        if let Some(stall_warning) = stall {
+            host.pool.set_timeouts(rust_cli_acp::AcpTimeouts {
+                stall_warning,
+                ..rust_cli_acp::AcpTimeouts::default()
+            });
+        }
         let runner = Arc::new(ExternalAgentRunner {
             inner: Arc::new(NoModel),
             host: Arc::new(host),
@@ -447,6 +460,93 @@ async fn stop_with_a_failed_last_segment_commit_still_ends_interrupted() {
         Some(r#"done "Cancelled" error=true"#)
     );
     assert_eq!(texts(&sink.messages()), vec![INTERRUPT_TEXTS[0].to_owned()]);
+    harness.release().await;
+}
+
+/// The ACP status events a run emitted, in order, with the text deltas around them.
+fn statuses(events: &[QueryEvent]) -> Vec<String> {
+    use rust_cli_kernel_api::model::BlockDelta;
+    use rust_cli_kernel_api::orchestration::ExternalAgentStatus;
+    events
+        .iter()
+        .filter_map(|event| match event {
+            QueryEvent::ExternalAgentContextReset { agent } => Some(format!("reset {agent}")),
+            QueryEvent::ExternalAgentStatus {
+                agent,
+                status: ExternalAgentStatus::Stalled { .. },
+            } => Some(format!("stalled {agent}")),
+            QueryEvent::ExternalAgentStatus {
+                agent,
+                status: ExternalAgentStatus::Resumed,
+            } => Some(format!("resumed {agent}")),
+            QueryEvent::Delta {
+                delta: BlockDelta::Text(text),
+                ..
+            } => Some(format!("text {text}")),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Rule 14: a cold start whose earlier ACP session the agent cannot load starts a new one and says so once, before
+/// the agent's first output (Node `takeSessionStart() === "reset"`). The first turn (`created`) says nothing.
+#[tokio::test]
+async fn a_session_the_agent_cannot_load_is_a_context_reset() {
+    let harness = Harness::with(&["--refuse-load"], None);
+    let (_, first) = run(&harness, "hello").await;
+    assert_eq!(statuses(&first.events()), vec!["text pong".to_owned()]);
+    // The runtime goes; the binding stays, so the next turn is a cold start that asks for the earlier session.
+    harness.release().await;
+    let (stop, second) = run(&harness, "hello").await;
+    assert_eq!(stop, QueryStop::Completed);
+    assert!(harness.agent_got("session/load"));
+    assert_eq!(
+        statuses(&second.events()),
+        vec!["reset mock".to_owned(), "text pong".to_owned()]
+    );
+    harness.release().await;
+}
+
+/// Rule 14: a loaded session is no reset, and the history the agent replays while loading is never shown.
+#[tokio::test]
+async fn a_loaded_session_is_no_reset_and_its_replay_is_not_shown() {
+    let harness = Harness::new();
+    run(&harness, "hello").await;
+    harness.release().await;
+    let (_, second) = run(&harness, "hello").await;
+    assert!(harness.agent_got("session/load"));
+    assert_eq!(statuses(&second.events()), vec!["text pong".to_owned()]);
+    assert!(
+        texts(&second.messages())
+            .iter()
+            .all(|text| !text.contains("replayed history"))
+    );
+    harness.release().await;
+}
+
+/// Rule 14: a prompt silent for the stall window reports `stalled` once, and the next frame `resumed` (Node
+/// `StallWatch`). The window is shortened for the test; the mock pauses three times as long.
+#[tokio::test]
+async fn a_silent_prompt_stalls_then_resumes() {
+    let harness = Harness::with(&[], Some(Duration::from_millis(100)));
+    let (stop, sink) = run(&harness, "slow").await;
+    assert_eq!(stop, QueryStop::Completed);
+    assert_eq!(
+        statuses(&sink.events()),
+        vec![
+            "text partial".to_owned(),
+            "stalled mock".to_owned(),
+            "resumed mock".to_owned()
+        ]
+    );
+    let silent = sink.events().iter().find_map(|event| match event {
+        QueryEvent::ExternalAgentStatus {
+            status: rust_cli_kernel_api::orchestration::ExternalAgentStatus::Stalled { silent_ms },
+            ..
+        } => Some(*silent_ms),
+        _ => None,
+    });
+    assert!(silent.is_some_and(|silent| silent >= 100), "{silent:?}");
     harness.release().await;
 }
 

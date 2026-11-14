@@ -129,6 +129,24 @@ pub enum QueryEvent {
     },
     /// 模型端口的通知（重试、停顿、恢复），只供显示（docs/specs/rust-cli/stall-visibility.md §1）。
     ModelNotice { notice: crate::model::ModelNotice },
+    /// Fork: the ACP agent could not load the session's earlier ACP session, so a new one replaced it
+    /// (specs/fork-rust-agent-parity.md "ACP external agents", rule 14; Node `context_reset`). Display only.
+    ExternalAgentContextReset { agent: String },
+    /// Fork: the running ACP prompt went silent or spoke again (rule 14; Node `ExternalAgentStatus`). Display only.
+    ExternalAgentStatus {
+        agent: String,
+        status: ExternalAgentStatus,
+    },
+}
+
+/// Fork: an ACP prompt's liveness (Node `ExternalAgentStatusPayload.status`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum ExternalAgentStatus {
+    /// No output for the stall window; `silent_ms` is the silence so far.
+    Stalled { silent_ms: u64 },
+    /// Output arrived again after a stall.
+    Resumed,
 }
 
 impl QueryEvent {
@@ -187,6 +205,12 @@ impl QueryEvent {
             },
             // 模型通知只供显示，不落库（stall-visibility.md §1）。
             Self::ModelNotice { notice } => KernelEvent::ModelNotice { notice },
+            Self::ExternalAgentContextReset { agent } => {
+                KernelEvent::ExternalAgentContextReset { agent }
+            }
+            Self::ExternalAgentStatus { agent, status } => {
+                KernelEvent::ExternalAgentStatus { agent, status }
+            }
         }
     }
 }
