@@ -140,6 +140,9 @@ pub(crate) async fn load(
                 let (mut definition, bare) = parse(&raw, file, workspace.root.as_str());
                 if let Some(selection) = overrides.get(&state_id(file, &bare)) {
                     definition.selection = Some(selection.clone());
+                    // Node's profile has no effort: the Settings reasoning level is the whole intent, so the file's
+                    // `effort:` must not lower it at spawn or on a resume.
+                    definition.effort = None;
                 }
                 found.push(definition);
             }

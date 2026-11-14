@@ -220,7 +220,13 @@ impl Messaging {
             crate::shell_notices::start(&self.core, &agent.child, &agent.root, started);
         }
         let origin = rust_cli_kernel_api::message::UserOrigin::Human;
-        let opening = match spawn::resume(&self.core, &agent, &input.message, origin).await {
+        // The live entry after the restart: it holds the refreshed definition, model and mode the resume stores.
+        let Some(running) = self.core.live.get(&id) else {
+            return Err(ToolError::Failed {
+                message: "the agent disappeared".to_owned(),
+            });
+        };
+        let opening = match spawn::resume(&self.core, &running, &input.message, origin).await {
             Ok(opening) => opening,
             Err(error) => {
                 self.core.live.finish(&id, crate::report::Ending::Failed);
@@ -228,11 +234,6 @@ impl Messaging {
                     message: error.to_string(),
                 });
             }
-        };
-        let Some(running) = self.core.live.get(&id) else {
-            return Err(ToolError::Failed {
-                message: "the agent disappeared".to_owned(),
-            });
         };
         spawn::background(&self.core, running, opening);
         Ok(rust_cli_kernel_api::tool::text(resumed_text(

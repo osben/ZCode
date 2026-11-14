@@ -67,6 +67,7 @@ impl StepTools {
             default_machine: scope.default_machine.clone(),
             // Fork: the agent catalog reads the Host's subagent snapshot once per parent run.
             run: Some(scope.run.clone()),
+            inject_agents_md: scope.inject_agents_md,
             ..ContextRequest::new(
                 scope.session.clone(),
                 view.workspace,

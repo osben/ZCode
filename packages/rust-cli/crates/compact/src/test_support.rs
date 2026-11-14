@@ -179,6 +179,7 @@ pub(crate) fn request(messages: Vec<Message>, trigger: CompactTrigger) -> Compac
         mode: None,
         agent: None,
         initial_token_gap: None,
+        inject_agents_md: true,
     }
 }
 

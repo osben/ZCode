@@ -146,7 +146,7 @@ fn catalog() -> AgentCatalog {
             )
             .with_file(
                 &format!("{PLUGIN_ROOT}/agents/deep/audit.md"),
-                "---\nname: Audit \ndescription: Plugin audit.\nmodel: declared-model\n---\nA.",
+                "---\nname: Audit \ndescription: Plugin audit.\nmodel: declared-model\neffort: max\n---\nA.",
             )
             .with_file(
                 &format!("{OTHER_ROOT}/agents/review.md"),
@@ -417,6 +417,26 @@ async fn one_parent_run_reads_the_snapshot_once() {
         .await
         .expect("compaction listing");
     assert_eq!(host.reads(), 1);
+    // A compaction or side request runs with a fresh run id but is not a parent turn: it uses the cache, and the
+    // parent run's next lookup still does not read.
+    for source in [
+        QuerySource::Compact,
+        QuerySource::Side(rust_cli_kernel_api::side_request::SideSource::SessionTitle),
+    ] {
+        let request = ContextRequest {
+            source,
+            ..listing_request(PARENT, Some("run_compact"))
+        };
+        catalog
+            .listings(&request)
+            .await
+            .expect("compaction listing");
+    }
+    catalog
+        .prepared_definitions(&workspace(), &session(PARENT), Some(&run("run_1")))
+        .await
+        .expect("agent lookup after compaction");
+    assert_eq!(host.reads(), 1);
 
     host.answer(Ok(Some(ready(vec![profile(
         "second",
@@ -511,7 +531,11 @@ async fn plugin_overrides_set_the_plugin_agents_selection() {
         .await
         .expect("read");
     assert_eq!(find(&found, "kit:review").selection, Some(review));
-    assert_eq!(find(&found, "kit:deep:Audit").selection, Some(audit));
+    let overridden = find(&found, "kit:deep:Audit");
+    assert_eq!(overridden.selection, Some(audit));
+    // Node's profile has no effort: the Settings selection's reasoning level is the whole intent, so the file's
+    // `effort:` cannot lower it at spawn or on a resume.
+    assert_eq!(overridden.effort, None);
     let other = find(&found, "other:review");
     assert_eq!(other.selection, None);
     assert_eq!(other.model.as_deref(), Some("own-model"));
@@ -527,6 +551,7 @@ async fn plugin_agents_keep_their_model_without_a_snapshot() {
     let audit = find(&found, "kit:deep:Audit");
     assert_eq!(audit.selection, None);
     assert_eq!(audit.model.as_deref(), Some("declared-model"));
+    assert_eq!(audit.effort.as_deref(), Some("max"));
 }
 
 /// Rule 11: releasing a session drops its cached snapshot and tells the source to forget its gate; the next lookup in

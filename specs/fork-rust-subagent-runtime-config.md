@@ -69,6 +69,7 @@ parent run R2 of S starts ──▶ a new read; cache[S] = (R2, snapshot')
 3. **Cadence.** The snapshot is read at most once per parent run, at the run's first catalog lookup (the run-start listing). The rest of that run uses it: the tool-round listings, the Agent tool and the compaction listings.
    - A subagent's runs use the latest snapshot of their root session and never send a request. Node children read `get()` and do not prepare their own.
    - A lookup without a run (compaction, `/context` usage) uses the cached snapshot. Only when there is none does it read once.
+   - Only a main-thread run is a parent turn. A compaction's summary run and a side request (title, WebFetch summary, prompt hook) run with a fresh run id, but their lookups use the cached snapshot like a lookup without a run, and the parent run's next lookup still does not read.
    - This matches Node's order. Node's `get()` returns the last prepared snapshot and `prepareAgentDefinitions` runs at turn start (core `subagent/definitions.ts`, `runtime/methods/turn.ts`). A manual `/compact` returns before that step, and the `/context` preview reads the last snapshot (`runtime/context-composition/preview.ts`). In zcode-rs an in-run auto-compaction comes after the run-start listing (`query` `run`: `start` before the loop's `before_request`), so it reads that run's snapshot.
 4. **A failed read fails the turn.** The run-start listing returns the error (`OrchestrationError::Failed`), so the parent run ends with it, as in Node. The cached snapshot is kept and not used for that run. An Agent call that has to read (a cache miss) and fails returns the error as its tool result.
    - A lookup that cannot fail (`/context` usage, the runtime's agent catalog for the app) logs the failed read as a warning and uses the agent files.
@@ -99,6 +100,7 @@ parent run R2 of S starts ──▶ a new read; cache[S] = (R2, snapshot')
        - `mcpServers`: Node scopes the child's borrowed parent MCP servers to the listed names (`runtime/methods/subagent.ts`, `createBorrowedSubagentMcpAccess`).
 9. **Model selection of a subagent with a full selection.**
    - The child runs on that provider and model, with the selection's reasoning level. The Agent tool's `effort` input (when given) replaces the reasoning level.
+   - A plugin agent's file `effort:` does not: Node's profile has no effort, so a Settings override's reasoning level is the whole intent. The override clears the file's `effort` (at spawn and on a resume). Without an override the file's `effort` stays, as before.
    - The account connection follows the parent only when the provider is the same; otherwise it is left for the platform to pick, like an App selection.
    - **Up-front check (desktop).** Node resolves an agent's own selection before the child starts (core `runtime/helpers/subagent-selection.ts` `resolveSubagentSelection`, through the Host's `resolveEffectiveModelSelection`). On the desktop (`node_desktop`) zcode-rs checks the definition's selection (a Host profile's `modelSelection` or a built-in override, which Node also applies as the profile's `modelSelection`) against the model catalog, before the merge with the parent connection and the `effort` input:
      - no catalog entry with that provider: `provider-not-found`;
@@ -118,6 +120,7 @@ parent run R2 of S starts ──▶ a new read; cache[S] = (R2, snapshot')
     - It looks the agent type up in the parent's current catalog (the same lookup as the Agent tool, so in a parent run it uses that run's snapshot).
     - When the type is gone (removed, renamed or disabled in Settings), the call returns Node's text `Cannot resume local agent <agentId>: profile <agentType> is unavailable.`. The result is not an error, and no run starts.
     - When the type is found, the resumed run uses the current definition: its prompt, tools, maximum turns and permission mode, and the model from its selection (or the parent run's current model when it has none). Node's Agent tool has no `effort` input, so a resume keeps no per-call reasoning level.
+    - The resume stores the model and the permission mode it runs with in the child session when they differ from the stored ones (`ModelSelected`, `ModeChanged`), so reopening the child shows them. Node stores the resumed selection on every resume (`persistRuntimeModelSelection`, core `runtime/methods/subagent.ts`).
     - A failed Host read returns the error as the tool's result (rule 4).
     - The TUI keeps the definition the agent started with. So do the restarts SendMessage does not start: a parked agent woken by a notice, and a message that arrived after a stop and resumes the stopped run once it settles.
 14. **No `Plan` agent on the desktop.** Node has two built-in agents, `general-purpose` and `Explore` (core `subagent/profile.ts` `normalizeAgentProfiles`). Under `node_desktop` the zcode-rs catalog leaves out its own built-in `Plan` on every path: a `ready` snapshot, `built-in-fallback`, the agent files and incognito without custom agents.
@@ -127,7 +130,8 @@ parent run R2 of S starts ──▶ a new read; cache[S] = (R2, snapshot')
     - zcode-rs carries the flag on the agent definition: true for the built-in `general-purpose`, false for the built-in `Explore` (and the TUI's `Plan`); a Host profile or an agent file takes `injectAgentsMd` (a boolean or the strings `true`/`false`, as Node's parser), true when absent.
     - A child whose definition has it false gets no rule files, nested rules or git status, which is what the built-in `Explore` lost before by name. The decision no longer looks at the agent's name, so a profile named `Explore` keeps them.
     - It applies on both surfaces (the TUI as well), as in Node.
-    - Git status: Node gives no child the git status (the child's `createSubagentContextBuilder`, core `runtime/methods/context.ts`, has no project context). On the desktop (`node_desktop`, `ContextConfig::subagent_git_status` off) no zcode-rs subagent gets it either, whatever its `injectAgentsMd`; the main thread keeps it. The TUI keeps it for a child with the flag on.
+    - The child's auto-compaction follows it too. In Node the child runtime's context builder has no user instructions at all, compaction included. In zcode-rs the child run carries the flag (`QueryRequest::inject_agents_md`) into its compaction request and the summary run, so the summary request does not re-announce the rule files or the session context.
+    - Git status: Node gives no child the git status (the child's `createSubagentContextBuilder`, core `runtime/methods/context.ts`, has no project context). On the desktop (`node_desktop`, `ContextConfig::subagent_git_status` off) no zcode-rs subagent gets it either, whatever its `injectAgentsMd`, and neither does a child's summary request; the main thread keeps it. The TUI keeps it for a child with the flag on.
 
 ## Out of scope
 
@@ -159,13 +163,19 @@ Unit tests:
   - The next run reads again.
   - After the session is released, the next lookup reads again (catalog), and the gate is asked again (`protocol-zcode`).
   - A failed read fails the listing; an Agent lookup that misses the cache returns the error.
+  - A compaction or side lookup with a fresh run id does not read, and neither does the parent run's next lookup.
 - **`agents`, spawn selection.**
   - A full selection replaces the provider, model and reasoning.
   - The `effort` input wins over the selection's reasoning level.
   - The connection is kept only for the same provider.
+  - A plugin override clears the file's `effort`; without an override it stays.
 - **`agents`, resume (rule 13).**
   - After the profile changes, a SendMessage resume runs with the new prompt and model.
+  - The resume stores the new model and permission mode in the child session.
   - After the profile is removed, SendMessage returns Node's "profile is unavailable" text and starts no run.
+- **`query`, `compact`, `context`, child compaction (rule 15).**
+  - The run's `inject_agents_md` reaches its context requests and its compaction request; the summary run carries it.
+  - A child's summary request with the flag off announces only the date; a desktop child's has no git status.
 
 Desktop E2E: run each spec on both runtimes in the container runner.
 

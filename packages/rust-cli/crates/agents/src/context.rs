@@ -373,12 +373,13 @@ impl AgentCatalog {
     }
 }
 
-/// The run of a parent lookup (rule 3). A subagent's lookups never start a read of their own, even when the root of
-/// its session is not known.
+/// The run of a parent lookup (rule 3). Only a main-thread turn starts a read: a subagent's lookups never do, even
+/// when the root of its session is not known, and neither do a compaction's or a side request's, which run with a
+/// fresh run id but are not a parent turn.
 fn parent_run(request: &ContextRequest) -> Option<&RunId> {
     match request.source {
-        rust_cli_kernel_api::model::QuerySource::Subagent(_) => None,
-        _ => request.run.as_ref(),
+        rust_cli_kernel_api::model::QuerySource::MainThread => request.run.as_ref(),
+        _ => None,
     }
 }
 

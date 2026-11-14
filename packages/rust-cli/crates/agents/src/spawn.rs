@@ -182,18 +182,24 @@ pub(crate) async fn resume(
     origin: UserOrigin,
 ) -> Result<Opening, StoreError> {
     let loaded = core.ports.store.load(&agent.child).await?;
+    // Fork: the run's model and mode are stored when they changed (a desktop resume from the current profile, rule
+    // 13), so reopening the child shows what it ran with; Node's `persistRuntimeModelSelection` does the same.
+    let mut facts = Vec::new();
+    if loaded.model.as_ref() != Some(&agent.selection) {
+        facts.push(Fact::ModelSelected {
+            selection: agent.selection.clone(),
+        });
+    }
+    if loaded.mode != Some(agent.mode) {
+        facts.push(Fact::ModeChanged { mode: agent.mode });
+    }
     let mut messages = with_prefix(agent, loaded.messages);
     let next = user(core, message, origin);
     let mut ledger = RunLedger::new(loaded.turn);
-    commit(
-        core,
-        &agent.child,
-        &mut ledger,
-        vec![Fact::MessageAppended {
-            message: next.clone(),
-        }],
-    )
-    .await?;
+    facts.push(Fact::MessageAppended {
+        message: next.clone(),
+    });
+    commit(core, &agent.child, &mut ledger, facts).await?;
     messages.push(next);
     Ok(Opening { messages, ledger })
 }
@@ -419,6 +425,8 @@ async fn run_loop(
         max_turns: agent.definition.max_turns,
         // 子代理的缺省机器（R3，remote-exec.md §20.6）：派生时 Agent 的 `machine`。
         default_machine: agent.machine.clone(),
+        // Fork: the run carries the definition's `injectAgentsMd` into its compaction too (rule 15).
+        inject_agents_md: agent.definition.inject_agents_md,
         ..QueryRequest::new(
             agent.child.clone(),
             core.ports.ids.run(),

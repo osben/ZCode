@@ -758,7 +758,14 @@ async fn a_desktop_resume_uses_the_current_profile_and_refuses_a_removed_one() {
         "old-model"
     );
 
-    *host.0.lock_unpoisoned() = reviewer_snapshot(Some("new"));
+    let mut renewed = reviewer_snapshot(Some("new"));
+    if let rust_cli_kernel_api::subagent_config::SubagentSnapshot::Ready { profiles, .. } =
+        &mut renewed
+    {
+        profiles[0].permission_mode =
+            Some(rust_cli_kernel_api::permission::PermissionMode::AcceptEdits);
+    }
+    *host.0.lock_unpoisoned() = renewed;
     let resumed = harness
         .call(
             "sess_parent",
@@ -780,6 +787,24 @@ async fn a_desktop_resume_uses_the_current_profile_and_refuses_a_removed_one() {
             None => panic!("the signal stream ended before the resumed run's notice"),
         }
     }
+    // Like Node's `persistRuntimeModelSelection`, the resume stores the model and mode it ran with, so reopening the
+    // child shows them.
+    let facts = harness.store.facts(&seen[1].request.session);
+    let last_model = facts.iter().rev().find_map(|fact| match fact {
+        rust_cli_kernel_api::store::Fact::ModelSelected { selection } => {
+            Some(selection.model.clone())
+        }
+        _ => None,
+    });
+    let last_mode = facts.iter().rev().find_map(|fact| match fact {
+        rust_cli_kernel_api::store::Fact::ModeChanged { mode } => Some(*mode),
+        _ => None,
+    });
+    assert_eq!(last_model.as_deref(), Some("new-model"));
+    assert_eq!(
+        last_mode,
+        Some(rust_cli_kernel_api::permission::PermissionMode::AcceptEdits)
+    );
 
     *host.0.lock_unpoisoned() = reviewer_snapshot(None);
     // The harness names a parent run after its tool, so both SendMessage calls share one run: drop the cached
@@ -840,6 +865,13 @@ async fn a_child_context_follows_the_definitions_inject_agents_md() {
             .call("sess_parent", "Agent", json!({"description": "Find", "prompt": "List.", "subagent_type": agent_type, "run_in_background": false}))
             .await;
         assert_eq!(*harness.injected.lock().unwrap(), [inject], "{agent_type}");
+        // The child run carries it too, for the summary run of its auto-compaction.
+        let seen = harness.seen();
+        assert_eq!(
+            seen.last().unwrap().request.inject_agents_md,
+            inject,
+            "{agent_type}"
+        );
     }
 }
 
