@@ -98,6 +98,9 @@ pub struct AgentsPorts {
     pub operations: rust_cli_kernel_api::env::Operations,
     /// Fork: incognito profiles by session; a child session inherits its parent's.
     pub incognito: rust_cli_kernel_api::incognito::IncognitoProfiles,
+    /// Fork: each session's workspace; a spawned child records its own (its parent's workspace),
+    /// so it reads the same per-workspace MCP group.
+    pub sessions: rust_cli_kernel_api::workspace_key::SessionWorkspaces,
 }
 
 /// Task v2 四个工具开不开（[`task_tools_enabled`]）。

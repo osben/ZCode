@@ -145,7 +145,12 @@ impl Ext {
             config.workspace.clone(),
         ));
         skills.set_incognito(ports.incognito.clone());
-        let incognito = IncognitoTools::new(ports.incognito, mcp.clone());
+        let incognito = IncognitoTools::new(
+            ports.incognito,
+            mcp.clone(),
+            workspace_mcp.clone(),
+            ports.sessions.clone(),
+        );
         let registry = Arc::new(ExtRegistry {
             base,
             skill: skill_tool,
@@ -258,20 +263,29 @@ impl ExtRegistry {
     /// workspace's group when a loaded layer started one, else the process group (the TUI, `-p`,
     /// a session without a workspace, or a fail-closed Invalid slot).
     fn session_mcp(&self, session: &SessionId) -> Arc<McpManager> {
-        self.sessions
-            .get(session)
-            .map(|workspace| {
-                rust_cli_kernel_api::workspace_key::project_key(workspace.root.as_str())
-            })
-            .and_then(|key| self.workspace_mcp.group(&key))
-            .unwrap_or_else(|| self.mcp.clone())
+        self.workspace_mcp.for_session(&self.sessions, session)
     }
 
-    fn assemble(&self, wait: bool, mcp: Vec<Arc<dyn Tool>>) -> Vec<Arc<dyn Tool>> {
+    /// Fork: the wait tool bound to `manager` — the session's group when one is resolved, so its
+    /// pending servers are the ones waited on.
+    fn wait_of(&self, manager: &Arc<McpManager>) -> Arc<dyn Tool> {
+        if Arc::ptr_eq(manager, &self.mcp) {
+            self.wait.clone()
+        } else {
+            Arc::new(mcp::WaitForMcpServers::new(Arc::downgrade(manager)))
+        }
+    }
+
+    fn assemble_with(
+        &self,
+        wait_tool: Arc<dyn Tool>,
+        wait: bool,
+        mcp: Vec<Arc<dyn Tool>>,
+    ) -> Vec<Arc<dyn Tool>> {
         let mut tools = self.base.tools();
         tools.push(self.skill.clone());
         if wait {
-            tools.push(self.wait.clone());
+            tools.push(wait_tool);
         }
         tools.extend(mcp);
         tools
@@ -280,7 +294,7 @@ impl ExtRegistry {
 
 impl ToolRegistry for ExtRegistry {
     fn tools(&self) -> Vec<Arc<dyn Tool>> {
-        self.assemble(self.mcp.has_pending(), self.mcp.tools())
+        self.assemble_with(self.wait.clone(), self.mcp.has_pending(), self.mcp.tools())
     }
 
     fn find(&self, name: &str) -> Option<Arc<dyn Tool>> {
@@ -297,16 +311,19 @@ impl ToolRegistry for ExtRegistry {
     /// Fork: an incognito session looks MCP tools up among the servers its profile keeps, the same servers as its
     /// snapshot (`snapshot_where`), so a hidden plugin server whose tool name collides never answers.
     fn find_for(&self, session: &SessionId, name: &str) -> Option<Arc<dyn Tool>> {
-        let Some(profile) = self.incognito.profile(session) else {
-            return self.find(name);
-        };
+        // Fork: MCP tools resolve through the session's workspace group on both paths, so a
+        // project-only tool answers and a same-named user tool does not run against the process
+        // group's connection (specs/fork-rust-workspace-plugins-mcp.md).
         let mcp = self.session_mcp(session);
         if name == self.skill.name() {
             return Some(self.skill.clone());
         }
         if name == WAIT_FOR_MCP_SERVERS && mcp.has_servers() {
-            return Some(self.wait.clone());
+            return Some(self.wait_of(&mcp));
         }
+        let Some(profile) = self.incognito.profile(session) else {
+            return self.base.find_for(session, name).or_else(|| mcp.find(name));
+        };
         self.base.find_for(session, name).or_else(|| {
             mcp.snapshot_where(|scope| incognito::keeps_scope(&profile, scope))
                 .0
@@ -334,12 +351,13 @@ impl ToolRegistry for ExtRegistry {
         // Fork: the session reads its workspace's MCP group, not the process's
         // (specs/fork-rust-workspace-plugins-mcp.md).
         let mcp = self.session_mcp(session);
+        let wait_tool = self.wait_of(&mcp);
         if let Some(profile) = self.incognito.profile(session) {
             // Fork: an incognito session sees only the servers and tools its profile keeps.
             let (tools, view) = mcp.snapshot_where(|scope| incognito::keeps_scope(&profile, scope));
             let wait =
                 !view.pending().is_empty() || (mcp.declared(session) && !view.servers.is_empty());
-            let mut tools = self.assemble(wait, tools);
+            let mut tools = self.assemble_with(wait_tool, wait, tools);
             tools.retain(|tool| !self.incognito.hides(session, tool.as_ref()));
             return ToolSnapshot {
                 tools,
@@ -349,7 +367,7 @@ impl ToolRegistry for ExtRegistry {
         let (tools, view) = mcp.snapshot();
         let wait = !view.pending().is_empty() || mcp.declared(session);
         ToolSnapshot {
-            tools: self.assemble(wait, tools),
+            tools: self.assemble_with(wait_tool, wait, tools),
             mcp: Some(view),
         }
     }

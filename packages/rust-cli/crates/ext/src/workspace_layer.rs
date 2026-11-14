@@ -82,7 +82,6 @@ impl WorkspaceLayer {
 
     /// The slot of `key` (read by tests; the sessions resolve their MCP group through the
     /// manager, which only has a group for a `Loaded` slot).
-    #[cfg(test)]
     pub(crate) fn slot(&self, key: &str) -> Option<Slot> {
         self.slots.read_unpoisoned().get(key).copied()
     }
@@ -101,11 +100,18 @@ impl WorkspaceLayer {
             // group would duplicate every connection.
             return;
         }
+        // A loaded slot is reused: a second session of the same workspace must not replace the
+        // group (that would cancel the first session's connections mid-flight). A slot stays until
+        // the process ends; a later PR adds the config-change reload with epoch writes.
+        if self.slot(&key) == Some(Slot::Loaded) {
+            return;
+        }
         let Some(loader) = self.loader.get().cloned() else {
             return;
         };
-        // Loads are idempotent, so concurrent sessions of one workspace may race: both discover and
-        // start a group, the later `start` replaces the earlier group, and both put the same slot.
+        // Concurrent sessions of one workspace may race the first load: both discover and start a
+        // group, the later `start` replaces the earlier one (its connections were still
+        // connecting), and both put the same slot.
         let slot = match loader.load(workspace).await {
             Some(config) => {
                 let loaded = crate::plugins::load_all(

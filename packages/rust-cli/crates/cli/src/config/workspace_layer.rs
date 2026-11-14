@@ -18,6 +18,7 @@ use rust_cli_kernel_api::machine::Files as FilesPort;
 use rust_cli_paths::StoragePaths;
 use serde_json::Map;
 
+use super::mcp_trust;
 use super::merge;
 use super::{ConfigInputs, McpScope};
 
@@ -69,6 +70,43 @@ impl WorkspaceConfigLoader for Loader {
                     .is_some_and(|origin| !origin.user)
             })
             .collect();
+        // Fork: project MCP servers connect only with a workspace trust grant for their current
+        // declaration, exactly like the process assembly (`config::assemble`).
+        let user_object = super::object(&files.user_path, &files.user, &mut warnings);
+        let trust = mcp_trust::Inspection::read(
+            inputs.files,
+            inputs.workspace,
+            mcp_trust::Target::new(inputs.workspace.root.as_str(), None),
+            (user_object, &files.projects),
+            inputs.paths,
+        )
+        .await;
+        let admitted = trust.admitted();
+        let skipped: Vec<&str> = servers
+            .iter()
+            .filter(|server| !admitted.contains(&server.name))
+            .map(|server| server.name.as_str())
+            .collect();
+        if !skipped.is_empty() {
+            tracing::info!(servers = ?skipped, "workspace MCP servers wait for a trust grant");
+        }
+        servers.retain(|server| admitted.contains(&server.name));
+        // Fork: a workspace that turns `features.mcp` off connects none of its servers (the
+        // effective workspace config, `merge::mcp_enabled` like the process assembly).
+        if !merge::mcp_enabled(&layers) {
+            servers.clear();
+        }
+        // Fork: the controller's machine-binding sidecar applies before the cwd resolution (a
+        // server bound to another machine keeps its raw cwd; `resolve_project_cwds` localizes only
+        // primary ones).
+        let bindings_path = self.paths.mcp_machines().as_path().display().to_string();
+        let bindings = crate::assemble::mcp_machines::McpBindings::load(
+            self.files.as_ref(),
+            workspace,
+            &bindings_path,
+        )
+        .await;
+        bindings.bind(&mut servers);
         merge::resolve_project_cwds(&mut servers, &merged.origins);
         debug_assert!(
             servers

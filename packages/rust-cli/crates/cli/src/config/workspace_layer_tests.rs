@@ -61,9 +61,11 @@ fn stdio_cwd(server: &McpServer) -> Option<&str> {
 }
 
 #[tokio::test]
-async fn project_servers_load_with_resolved_cwds_and_the_enablement_overlay() {
-    // `read_cli_config` reads the controller's own disk (not the port), so the user layer is not
-    // exercised here: its name shadowing is `merge::mcp_layers`'s own tested semantics.
+async fn unadmitted_project_servers_are_dropped_the_overlay_still_loads() {
+    // No trust records exist for this workspace, so its project servers wait for a grant — the
+    // same admission as the process assembly (`config::assemble`). The plugin enablement overlay
+    // is independent of MCP trust and still loads. The granted path is covered end to end by the
+    // `plugin-extension-mention` E2E.
     let loader = loader(
         env(&[
             ("/Users/dev/repo/.git/HEAD", "ref"),
@@ -80,12 +82,9 @@ async fn project_servers_load_with_resolved_cwds_and_the_enablement_overlay() {
 
     let config = loader.load(&workspace("/Users/dev/repo")).await.unwrap();
 
-    let names: Vec<&str> = config.servers.iter().map(|s| s.name.as_str()).collect();
-    assert_eq!(names, ["project-server", "second"]);
-    assert_eq!(
-        stdio_cwd(&config.servers[0]),
-        Some("/Users/dev/repo/tools"),
-        "a project stdio cwd resolves against the declaring file's base dir"
+    assert!(
+        config.servers.is_empty(),
+        "unadmitted project servers must not connect"
     );
     assert_eq!(
         config.plugins.enabled_plugins.get("demo-plugin@official"),

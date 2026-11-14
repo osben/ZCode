@@ -72,6 +72,22 @@ impl WorkspaceMcp {
         self.groups.read_unpoisoned().get(key).cloned()
     }
 
+    /// Fork: the group a session reads — its workspace's group when a loaded layer started one,
+    /// else the process group (no workspace, an `Invalid` slot, or the TUI/`-p`).
+    pub(crate) fn for_session(
+        &self,
+        sessions: &rust_cli_kernel_api::workspace_key::SessionWorkspaces,
+        session: &rust_cli_kernel_api::ids::SessionId,
+    ) -> Arc<McpManager> {
+        sessions
+            .get(session)
+            .map(|workspace| {
+                rust_cli_kernel_api::workspace_key::project_key(workspace.root.as_str())
+            })
+            .and_then(|key| self.group(&key))
+            .unwrap_or_else(|| self.process.clone())
+    }
+
     /// Starts (or replaces) the group of `key` with the workspace's server list. A replaced group's
     /// connections stop ([`McpManager::shutdown`]), so a config change reloads the whole group like
     /// Node re-reads the app's config; the sessions of the workspace see the new set on their next

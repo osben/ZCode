@@ -123,6 +123,10 @@ pub(crate) async fn create(
     };
     core.ports.store.create(meta).await?;
     core.ports.incognito.record(&agent.child, incognito);
+    // Fork: the child reads its parent's workspace MCP group (the slot is already loaded).
+    core.ports
+        .sessions
+        .record(&agent.child, agent.workspace.clone());
     inherit_directory(core, &agent).await;
     let first = user(core, prompt, UserOrigin::Human);
     let mut facts = vec![

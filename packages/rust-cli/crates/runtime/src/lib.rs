@@ -317,7 +317,7 @@ impl LocalKernel {
             (&parts, tasks, &agent_catalog),
             (&late, scope.spawner(), &extensions.peers),
             (&defaults, traits, extensions.node_desktop),
-            &incognito,
+            (&incognito, &workspaces),
         );
         // Fork: ACP agent processes by session; a session close releases its process.
         let acp_host = extensions.acp.clone().map(|setup| {
