@@ -95,6 +95,9 @@ struct Server {
     generation: u64,
     /// 停掉当前连接任务的取消消息。
     cancel: CancellationToken,
+    /// Fork (F3 "Lazy start"): a helper-hosted server registered at start whose connection task waits for the first
+    /// tool snapshot or MCP status listing ([`Inner::wake_deferred`]).
+    deferred: bool,
 }
 
 impl Server {
@@ -110,6 +113,7 @@ impl Server {
             wake: Arc::new(Notify::new()),
             generation: 0,
             cancel: CancellationToken::new(),
+            deferred: false,
         }
     }
 }
@@ -135,11 +139,42 @@ pub(crate) struct Inner {
     print: AtomicBool,
     /// 有 resources 能力的服务器连上过：之后三个资源工具一直在（ext.md §3.3.3）。
     resources_seen: AtomicBool,
+    /// Fork (F3 "Lazy start"): some server waits in [`Server::deferred`].
+    deferred: AtomicBool,
 }
 
 impl Inner {
     fn servers(&self) -> MutexGuard<'_, BTreeMap<String, Server>> {
         self.servers.lock_unpoisoned()
+    }
+
+    /// Fork (F3 "Lazy start"): starts the connection tasks of the deferred helper-hosted servers, once.
+    pub(crate) fn wake_deferred(self: &Arc<Self>) {
+        if !self.deferred.swap(false, Ordering::AcqRel) {
+            return;
+        }
+        let Some(workspace) = self.workspace.lock_unpoisoned().clone() else {
+            return;
+        };
+        let woken: Vec<_> = self
+            .servers()
+            .values_mut()
+            .filter_map(|server| {
+                std::mem::take(&mut server.deferred).then(|| {
+                    (
+                        server.config.clone(),
+                        server.generation,
+                        server.cancel.clone(),
+                    )
+                })
+            })
+            .collect();
+        for (config, generation, cancel) in woken {
+            let task = self
+                .clone()
+                .run(workspace.clone(), config, generation, cancel);
+            self.spawner.spawn_resident("mcp-connection", task);
+        }
     }
 
     /// 只改仍是这个代号的服务器：重连或停用之后，旧连接任务的更新不覆盖新的状态。
@@ -459,6 +494,7 @@ impl McpManager {
             noted_names: Mutex::default(),
             print: AtomicBool::new(false),
             resources_seen: AtomicBool::new(false),
+            deferred: AtomicBool::new(false),
         }))
     }
 
@@ -488,9 +524,17 @@ impl McpManager {
                 if known.contains_key(&config.name) {
                     continue;
                 }
-                let server = Server::new(config.clone(), McpStatus::CONNECTING);
+                let mut server = Server::new(config.clone(), McpStatus::CONNECTING);
                 let cancel = server.cancel.clone();
+                // Fork (F3 "Lazy start"): a helper-hosted server connects when a session first needs its tools, so
+                // the helper does not start at boot.
+                server.deferred = config.transport == McpTransportConfig::NodeHelper;
+                let deferred = server.deferred;
                 known.insert(config.name.clone(), server);
+                if deferred {
+                    self.0.deferred.store(true, Ordering::Release);
+                    continue;
+                }
                 cancel
             };
             let task = self.0.clone().run(workspace.clone(), config, 0, cancel);
@@ -528,6 +572,7 @@ impl McpManager {
 
     /// `/mcp` 与 `/status` 的快照（docs/specs/rust-cli/tui-display.md §3.4）：状态、失败原因、已连接时的工具数。
     pub fn server_infos(&self) -> Vec<McpServerInfo> {
+        self.0.wake_deferred();
         self.0
             .servers()
             .values()
@@ -648,6 +693,10 @@ mod names_tests;
 #[cfg(test)]
 #[path = "manager_dormant_tests.rs"]
 mod dormant_tests;
+
+#[cfg(test)]
+#[path = "manager_lazy_tests.rs"]
+mod lazy_tests;
 
 #[cfg(test)]
 #[path = "manager_machines_tests.rs"]
