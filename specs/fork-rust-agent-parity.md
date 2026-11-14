@@ -1879,18 +1879,20 @@ sequenceDiagram
 - Nothing is written to a store or to the shared databases.
 
 1. **Per-hook records.** `HookOutcome.runs: Vec<HookRunRecord>` is a defaulted serde field, so the `HookRunner` trait does not change. One record per visible hook holds:
-   - `run` (id), `index` (visible index), `count`;
+   - `run` (id) and `index` (visible index); `hookCount` is the number of records;
    - `outcome`: `success`, `blocked`, `failed`, `cancelled` or `timed_out`, taken from the raw `Executed` before `interpret` collapses `TimedOut`;
    - `block_reason`;
    - `stderr_preview`, `stdout_preview` and `error_message`, using Node's rules: trimmed, capped at 4000 characters, stdout only on exit 2;
    - `started_at` and `duration_ms` from a `Clock` added to `HookPorts`;
-   - `source_kind` (`user`, `project` or `plugin`), `plugin_name`, `display` (the command display), and `background`.
+   - `source_kind` (`user`, `project` or `plugin`), `plugin_name`, and `display`: the masked command display (Node `commandDisplay`: a process hook's parts quoted by `quoteCommandPart`, a shell command as written).
+
+   Rust's hook config keeps no `statusMessage`, so `displayName` always comes from the command label (Node uses `statusMessage` first). The E2E hooks set none.
 
    The engine also sets `HookOutcome.invocation`, a new id per `run` call.
    - **Accepted cost:** rows appear only when the batch finishes, so there is no live `running` state. The trigger is hidden while the turn runs, so the E2E does not see the difference.
    - **Accepted divergence:** Rust starts hooks concurrently, so `started_at` values are close together. Executions are still sorted by index.
 
-2. **Source kind.** `HookCommand` gains an origin set where `effective.rs` flattens matchers:
+2. **Source kind.** `HookMatcher` gains an `origin`, set where `effective.rs` flattens matchers, and `matcher::select` keeps each selected hook's origin through the dedup (the kept definition's origin):
    - User and Policy map to `user`;
    - Project and Local map to `project`;
    - plugin matchers map to `plugin` with `plugin_name`.
