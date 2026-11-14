@@ -96,6 +96,36 @@ struct AbandonedOpen<'a> {
     open_id: Option<u64>,
 }
 
+/// A session call that its caller dropped before the open finished. When no other call waits on that open, its unset
+/// cell is forgotten: an entry keeps the helper from idle reclaim. A waiting call takes the open over instead.
+struct Waiting<'a> {
+    helper: &'a NodeHelper,
+    generation: u64,
+    session: &'a str,
+    cell: Opening,
+    done: bool,
+}
+
+impl Drop for Waiting<'_> {
+    fn drop(&mut self) {
+        if self.done {
+            return;
+        }
+        // Clones are taken only under this lock: two references are the map's and this call's.
+        self.helper.with_running(self.generation, |running| {
+            if running
+                .sessions
+                .get(self.session)
+                .is_some_and(|known| Arc::ptr_eq(known, &self.cell))
+                && !self.cell.initialized()
+                && Arc::strong_count(&self.cell) == 2
+            {
+                running.sessions.remove(self.session);
+            }
+        });
+    }
+}
+
 impl Drop for AbandonedOpen<'_> {
     fn drop(&mut self) {
         if let Some(open_id) = self.open_id.take()
@@ -136,6 +166,14 @@ impl NodeHelper {
         let Some(cell) = cell else {
             return Err(unavailable("the helper exited"));
         };
+        let mut waiting = Waiting {
+            helper: self,
+            generation,
+            session,
+            cell,
+            done: false,
+        };
+        let cell = &waiting.cell;
         let opened_here = std::sync::atomic::AtomicBool::new(false);
         let result = cell
             .get_or_try_init(|| {
@@ -149,7 +187,7 @@ impl NodeHelper {
             let current = running.sessions.get(session);
             match result {
                 Err(_) => {
-                    if current.is_some_and(|known| Arc::ptr_eq(known, &cell)) {
+                    if current.is_some_and(|known| Arc::ptr_eq(known, cell)) {
                         running.sessions.remove(session);
                     }
                 }
@@ -164,6 +202,7 @@ impl NodeHelper {
                 Ok(_) => {}
             }
         });
+        waiting.done = true;
         if let Some(open_id) = forgotten {
             self.send_close(peer, session, open_id);
         }

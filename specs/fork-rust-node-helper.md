@@ -252,7 +252,7 @@ A connect that Rust gives up on is closed in the helper too:
 - The Host's shared local task runtime is one agent process for every local workspace, run in the data root (`<home>/.zcode`, `SHARED_TASK_RUNTIME_KEY` in `zcodeAgentProcessManager.ts`).
 - The helper resolves plugins once per workspace and directory (a session in an execution worktree resolves in its worktree), and forgets a failed resolution so the next call retries.
 - A pipe keeps the workspace its connect named, for its server config and its lease's working directory. Rust's pipes name the workspace its MCP manager runs in.
-- A session keeps the workspace its open named: its server configs, its lease's working directory, its panel tool calls, and its model tool calls on that lease.
+- A session keeps the workspace its open named: its server configs, its lease's working directory, and its model tool calls on that lease. A panel tool call sends no workspace fields, as Node's does (`session-facade.ts:528-536`); it runs on the session's lease.
 
 The helper protocol version is 2 from F3 on: a Rust build and a helper of different versions refuse each other at `initialize`.
 

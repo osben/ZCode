@@ -530,6 +530,9 @@ async fn an_open_dropped_by_its_caller_is_closed_in_the_helper() {
         received(&rig.fake, "helper/session/close"),
         [json!({"sessionId": "s1", "openId": 1})]
     );
+    // The abandoned open keeps nothing: the helper is reclaimed once idle.
+    tokio::time::sleep(Duration::from_secs(301)).await;
+    assert_eq!(rig.fake.stopped.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]
@@ -565,4 +568,37 @@ fn an_abandoned_cancel_sends_no_cancel() {
             "{method}"
         );
     }
+}
+
+/// A dropped call leaves the open to a call still waiting on it: that call opens the session, and Rust's close ends it.
+#[tokio::test(start_paused = true)]
+async fn a_dropped_call_leaves_the_open_to_a_waiting_call() {
+    let rig = session_rig(sessions(|_| Act::Delay {
+        after: Duration::from_secs(2),
+        result: json!({}),
+    }));
+    let params = json!({"sessionId": "s1"});
+    let dropped = tokio::time::timeout(
+        Duration::from_secs(1),
+        forward_ok(&rig.helper, SESSION_METHOD, params.clone()),
+    );
+    let waiting = forward_ok(&rig.helper, SESSION_METHOD, params);
+    let (dropped, _) = tokio::join!(dropped, waiting);
+    assert!(dropped.is_err());
+    let ids = |method: &str| -> Vec<Value> {
+        received(&rig.fake, method)
+            .into_iter()
+            .map(|params| params["openId"].clone())
+            .collect()
+    };
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    // The waiting call's open stays open until Rust closes the session.
+    let open = ids("helper/session/open").last().cloned().unwrap();
+    assert!(!ids("helper/session/close").contains(&open));
+    rig.helper.session_closed("s1");
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    // Every open the helper saw is closed exactly once, whichever call made it.
+    assert_eq!(ids("helper/session/close"), ids("helper/session/open"));
+    tokio::time::sleep(Duration::from_secs(301)).await;
+    assert_eq!(rig.fake.stopped.load(Ordering::SeqCst), 1);
 }

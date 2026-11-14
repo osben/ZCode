@@ -15,7 +15,6 @@ import type { ZCodeProtocolSessionRecord } from "../zcode-protocol/server-types.
 import {
   errorMessage,
   FORK_RUST_HELPER_F3,
-  workspaceKeyOf,
   type HelperWorkspace,
 } from "./f3-protocol.js";
 import { toNodeError, type ForkRustHelperClient } from "./rust-client.js";
@@ -145,9 +144,9 @@ deps: HelperSessionRecordDeps,
           toolName,
           arguments: (input ?? {}) as Record<string, unknown>,
           trace: session.traceContext,
+          // Node's panel call sends no workspace fields (session-facade.ts:528-536): the session's
+          // lease already runs in its directory.
           runtimeScope: "main",
-          workspacePath: session.directory,
-          workspaceKey: workspaceKeyOf(workspace),
         },
         { ...(options?.signal ? { signal: options.signal } : {}), appConnection: snapshot },
       );
