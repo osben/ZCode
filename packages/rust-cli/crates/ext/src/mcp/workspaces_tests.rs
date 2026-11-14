@@ -67,7 +67,11 @@ async fn restarting_a_group_replaces_its_servers() {
     let mcp = groups(&fake, &scope);
 
     mcp.start("/work/a", workspace(), vec![server_config("one")]);
-    mcp.start("/work/a", workspace(), vec![server_config("two"), server_config("three")]);
+    mcp.start(
+        "/work/a",
+        workspace(),
+        vec![server_config("two"), server_config("three")],
+    );
 
     assert_eq!(names(&mcp.group("/work/a").unwrap()), ["three", "two"]);
 }

@@ -13,6 +13,7 @@ mod plugins;
 pub(crate) mod project_hooks;
 mod storage;
 pub(crate) mod trust;
+pub(crate) mod workspace_layer;
 pub(crate) mod workspace_schema;
 
 use rust_cli_ext::PluginSources;
@@ -192,7 +193,7 @@ pub(crate) async fn read_files(inputs: &ConfigInputs<'_>) -> Files {
 }
 
 /// 配置层：用户级、项目级每层、`--settings`（按优先级从低到高）。
-fn layers<'a>(
+pub(crate) fn layers<'a>(
     files: &'a Files,
     flag: Option<&'a Map<String, Value>>,
     empty: &'a Map<String, Value>,

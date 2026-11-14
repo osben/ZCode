@@ -119,8 +119,12 @@ official cache and `installed_plugins.json` all live under the storage root
 
 - Per-workspace `HelperCatalog` admission and helper-hosted plugin servers per workspace
   (`fork-rust-node-helper.md:312`).
+- The workspace plugin set's skills, agents and hooks (the slot already stores the loaded set; the
+  process-level `SkillCatalog::set_plugin_roots`, `AgentCatalog::set_plugins` and
+  `hooks.register_plugins` stay process-wide until each gains a session view).
 - MCP Apps on Rust-hosted servers (F7) and `helper/appTools/*` (F3b) — unchanged scope.
 - The TUI (single workspace by construction) keeps the process group; no per-workspace TUI surface.
+- `/mcp enable|disable|reconnect` stay process-group operations (TUI flows).
 
 ## Acceptance
 

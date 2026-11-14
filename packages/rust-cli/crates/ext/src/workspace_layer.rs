@@ -9,15 +9,15 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, OnceLock, RwLock};
 
+use crate::mcp::McpServer;
 use async_trait::async_trait;
 use rust_cli_base::sync::RwLockUnpoisoned;
 use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
 use rust_cli_kernel_api::machine::Files;
-use crate::mcp::McpServer;
 use rust_cli_kernel_api::workspace_key::project_key;
 
-use crate::plugins::PluginSources;
 use crate::mcp::workspaces::WorkspaceMcp;
+use crate::plugins::PluginSources;
 
 /// The project layer of one workspace: the effective plugin sources (the process candidates with
 /// the project `enabledPlugins`/`suppressedBuiltins` overlay applied — a project layer never
@@ -46,8 +46,9 @@ pub struct WorkspaceLayer {
     /// working directory, like Node's per-app config read.
     servers: Vec<McpServer>,
     loader: OnceLock<Arc<dyn WorkspaceConfigLoader>>,
-    loads: tokio::sync::Mutex<BTreeMap<String, ()>>,
     slots: RwLock<BTreeMap<String, Slot>>,
+    /// The process workspace (its sessions read the process group, which already serves it).
+    process: Option<WorkspaceRef>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -57,11 +58,12 @@ pub enum Slot {
 }
 
 impl WorkspaceLayer {
-    pub fn new(
+    pub(crate) fn new(
         files: Arc<dyn Files>,
         mcp: Arc<WorkspaceMcp>,
         plugin_dirs: Vec<EnvPath>,
         servers: Vec<McpServer>,
+        process: Option<WorkspaceRef>,
     ) -> Self {
         Self {
             files,
@@ -69,8 +71,8 @@ impl WorkspaceLayer {
             plugin_dirs,
             servers,
             loader: OnceLock::new(),
-            loads: tokio::sync::Mutex::new(BTreeMap::new()),
             slots: RwLock::new(BTreeMap::new()),
+            process,
         }
     }
 
@@ -78,23 +80,32 @@ impl WorkspaceLayer {
         let _ = self.loader.set(loader);
     }
 
-    /// The slot of `key` (read by tests and diagnostics; the sessions resolve their MCP group
-    /// through the manager, which only has a group for a `Loaded` slot).
-    pub fn slot(&self, key: &str) -> Option<Slot> {
+    /// The slot of `key` (read by tests; the sessions resolve their MCP group through the
+    /// manager, which only has a group for a `Loaded` slot).
+    #[cfg(test)]
+    pub(crate) fn slot(&self, key: &str) -> Option<Slot> {
         self.slots.read_unpoisoned().get(key).copied()
     }
 
     /// Loads (or reloads) the layer of `workspace`. Fail-closed: a project layer that cannot be
     /// read or parsed stops the workspace's group and marks the slot `Invalid`, so its sessions
     /// keep the process set until the next successful load.
-    pub async fn load(&self, workspace: &WorkspaceRef) {
+    pub(crate) async fn load(&self, workspace: &WorkspaceRef) {
         let key = project_key(workspace.root.as_str());
+        if self
+            .process
+            .as_ref()
+            .is_some_and(|process| project_key(process.root.as_str()) == key)
+        {
+            // The process group already serves exactly this workspace (the TUI and `-p`); a second
+            // group would duplicate every connection.
+            return;
+        }
         let Some(loader) = self.loader.get().cloned() else {
             return;
         };
-        // One load of a workspace at a time; a concurrent session's call waits and then finds the
-        // fresh slot. The guard is taken for the whole discovery so a reload cannot interleave.
-        let _guard = self.loads.lock().await;
+        // Loads are idempotent, so concurrent sessions of one workspace may race: both discover and
+        // start a group, the later `start` replaces the earlier group, and both put the same slot.
         let slot = match loader.load(workspace).await {
             Some(config) => {
                 let loaded = crate::plugins::load_all(
@@ -120,9 +131,14 @@ impl WorkspaceLayer {
                 Slot::Invalid
             }
         };
-        self.slots
-            .write_unpoisoned()
-            .insert(key, slot);
+        self.slots.write_unpoisoned().insert(key, slot);
+    }
+}
+
+#[async_trait]
+impl rust_cli_kernel_api::workspace_key::WorkspaceLayerHost for WorkspaceLayer {
+    async fn load(&self, workspace: &WorkspaceRef) {
+        WorkspaceLayer::load(self, workspace).await;
     }
 }
 

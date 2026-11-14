@@ -64,12 +64,7 @@ fn layer(fake: &Arc<FakeMcp>, scope: &TaskScope) -> (Arc<WorkspaceMcp>, Workspac
         None,
         process,
     ));
-    let layer = WorkspaceLayer::new(
-        files(),
-        mcp.clone(),
-        Vec::new(),
-        Vec::new(),
-    );
+    let layer = WorkspaceLayer::new(files(), mcp.clone(), Vec::new(), Vec::new(), None);
     (mcp, layer)
 }
 
@@ -107,12 +102,7 @@ async fn a_broken_project_layer_is_fail_closed() {
     layer.load(&workspace()).await;
 
     // The config turns unreadable: the group stops, the slot is Invalid, the process set stays.
-    let broken = WorkspaceLayer::new(
-        files(),
-        mcp.clone(),
-        Vec::new(),
-        Vec::new(),
-    );
+    let broken = WorkspaceLayer::new(files(), mcp.clone(), Vec::new(), Vec::new(), None);
     broken.set_loader(Arc::new(Fixed(None)));
     broken.load(&workspace()).await;
 

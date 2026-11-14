@@ -10,8 +10,8 @@ use std::sync::Arc;
 
 use std::sync::RwLock;
 
-use rust_cli_base::sync::RwLockUnpoisoned;
 use rust_cli_base::Spawner;
+use rust_cli_base::sync::RwLockUnpoisoned;
 use rust_cli_kernel_api::clock::Clock;
 use rust_cli_kernel_api::env::WorkspaceRef;
 use rust_cli_kernel_api::env_registry::EnvironmentRegistry;
@@ -58,7 +58,8 @@ impl WorkspaceMcp {
         }
     }
 
-    /// The process group (the TUI, `-p` and sessions without a workspace).
+    /// The process group (the TUI, `-p` and sessions without a workspace); read by the tests.
+    #[cfg(test)]
     pub(crate) fn process(&self) -> &Arc<McpManager> {
         &self.process
     }
@@ -92,8 +93,7 @@ impl WorkspaceMcp {
         manager.start(workspace, servers);
         if let Some(previous) = self
             .groups
-            .write()
-            .unwrap()
+            .write_unpoisoned()
             .insert(key.to_owned(), Arc::new(manager))
         {
             previous.shutdown();

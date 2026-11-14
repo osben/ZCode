@@ -236,7 +236,10 @@ pub(crate) fn ext(
     (gate, spawner): (&Arc<PolicyGate>, Spawner),
     base: Arc<dyn ToolRegistry>,
     (config, traits): (rust_cli_ext::ExtConfig, SurfaceTraits),
-    incognito: &rust_cli_kernel_api::incognito::IncognitoProfiles,
+    (incognito, sessions): (
+        &rust_cli_kernel_api::incognito::IncognitoProfiles,
+        &rust_cli_kernel_api::workspace_key::SessionWorkspaces,
+    ),
 ) -> Arc<Ext> {
     let machine = ports.environments.primary_machine();
     let ext = Arc::new(Ext::new(
@@ -250,6 +253,7 @@ pub(crate) fn ext(
             spawner,
             clock: ports.clock.clone(),
             incognito: incognito.clone(),
+            sessions: sessions.clone(),
         },
         base,
         config,

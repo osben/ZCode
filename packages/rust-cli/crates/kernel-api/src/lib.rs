@@ -127,7 +127,6 @@ pub mod session_follow;
 pub mod session_ops;
 pub mod side_request;
 pub mod store;
-pub mod workspace_key;
 pub mod subagent_config;
 pub mod title;
 pub mod tool;
@@ -139,6 +138,7 @@ pub mod turn_limits;
 pub mod unparsed_input;
 pub mod user_command;
 pub mod user_input;
+pub mod workspace_key;
 pub mod workspace_trust;
 
 #[cfg(any(test, feature = "testing"))]

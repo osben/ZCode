@@ -13,12 +13,12 @@
 #[cfg(test)]
 mod clock_tests;
 mod incognito;
-pub mod workspace_layer;
 pub mod mcp;
 pub mod plugins;
 pub mod skills;
 #[cfg(test)]
 mod test_support;
+pub mod workspace_layer;
 
 use std::sync::Arc;
 
@@ -95,9 +95,7 @@ pub struct Ext {
     skills: Arc<SkillCatalog>,
     commands: Arc<SkillCommands>,
     mcp: Arc<McpManager>,
-    workspace_mcp: Arc<crate::mcp::workspaces::WorkspaceMcp>,
     layer: Arc<WorkspaceLayer>,
-    sessions: rust_cli_kernel_api::workspace_key::SessionWorkspaces,
     registry: Arc<ExtRegistry>,
     incognito: IncognitoTools,
     /// 插件目录（`--plugin-dir` 与入口给的候选，都在本机）。
@@ -129,7 +127,8 @@ impl Ext {
             mcp.set_machines(machines);
         }
         // Fork: one MCP group per workspace of the shared task runtime; the process group is the
-        // manager above (specs/fork-rust-workspace-plugins-mcp.md).
+        // manager above (specs/fork-rust-workspace-plugins-mcp.md). The registry resolves a
+        // session's group through it.
         let workspace_mcp = Arc::new(crate::mcp::workspaces::WorkspaceMcp::new(
             ports.mcp.clone(),
             ports.spawner.clone(),
@@ -143,6 +142,7 @@ impl Ext {
             workspace_mcp.clone(),
             config.plugin_dirs.clone(),
             config.mcp.servers.clone(),
+            config.workspace.clone(),
         ));
         skills.set_incognito(ports.incognito.clone());
         let incognito = IncognitoTools::new(ports.incognito, mcp.clone());
@@ -151,7 +151,7 @@ impl Ext {
             skill: skill_tool,
             wait: Arc::new(mcp::WaitForMcpServers::new(Arc::downgrade(&mcp))),
             mcp: mcp.clone(),
-            workspace_mcp: workspace_mcp.clone(),
+            workspace_mcp,
             sessions: ports.sessions.clone(),
             incognito: incognito.clone(),
         });
@@ -159,9 +159,7 @@ impl Ext {
             skills,
             commands,
             mcp,
-            workspace_mcp,
             layer,
-            sessions: ports.sessions.clone(),
             registry,
             incognito,
             files: ports.files,
@@ -310,8 +308,7 @@ impl ToolRegistry for ExtRegistry {
             return Some(self.wait.clone());
         }
         self.base.find_for(session, name).or_else(|| {
-            mcp
-                .snapshot_where(|scope| incognito::keeps_scope(&profile, scope))
+            mcp.snapshot_where(|scope| incognito::keeps_scope(&profile, scope))
                 .0
                 .into_iter()
                 .find(|tool| rust_cli_kernel_api::tool::answers_to(tool.as_ref(), name))
@@ -340,8 +337,8 @@ impl ToolRegistry for ExtRegistry {
         if let Some(profile) = self.incognito.profile(session) {
             // Fork: an incognito session sees only the servers and tools its profile keeps.
             let (tools, view) = mcp.snapshot_where(|scope| incognito::keeps_scope(&profile, scope));
-            let wait = !view.pending().is_empty()
-                || (mcp.declared(session) && !view.servers.is_empty());
+            let wait =
+                !view.pending().is_empty() || (mcp.declared(session) && !view.servers.is_empty());
             let mut tools = self.assemble(wait, tools);
             tools.retain(|tool| !self.incognito.hides(session, tool.as_ref()));
             return ToolSnapshot {

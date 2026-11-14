@@ -4,7 +4,6 @@
 mod config;
 mod connection;
 mod manager;
-pub(crate) mod workspaces;
 mod node_config;
 mod notices;
 mod parse;
@@ -14,6 +13,7 @@ mod rpc;
 mod startup;
 mod tool;
 mod wait_tool;
+pub(crate) mod workspaces;
 
 pub use config::{
     McpScope, McpServer, McpServerOptions, McpServers, McpSettings, normalize_name, tool_name,

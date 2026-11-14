@@ -14,7 +14,9 @@ use crate::ids::SessionId;
 pub fn project_key(root: &str) -> String {
     let style = crate::env_files::PathStyle::infer(root);
     let trimmed = root.trim_end_matches(|c| style.is_separator(c));
-    if trimmed.is_empty() || (style == crate::env_files::PathStyle::Windows && trimmed.ends_with(':')) {
+    if trimmed.is_empty()
+        || (style == crate::env_files::PathStyle::Windows && trimmed.ends_with(':'))
+    {
         // `/` and `C:\` keep their separator: without it they name another path.
         return root.to_owned();
     }
@@ -32,14 +34,28 @@ pub struct SessionWorkspaces(Arc<RwLock<HashMap<SessionId, WorkspaceRef>>>);
 impl SessionWorkspaces {
     /// Record the workspace of `session`.
     pub fn record(&self, session: &SessionId, workspace: WorkspaceRef) {
-        let mut map = self.0.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut map = self
+            .0
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         map.insert(session.clone(), workspace);
     }
 
     pub fn get(&self, session: &SessionId) -> Option<WorkspaceRef> {
-        let map = self.0.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let map = self
+            .0
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         map.get(session).cloned()
     }
+}
+
+/// Loads (or reloads) a workspace's plugin/MCP layer (specs/fork-rust-workspace-plugins-mcp.md).
+/// Implemented by the ext layer; the kernel awaits it where a session's workspace is recorded, so
+/// the session's first snapshot sees its workspace's servers like Node's per-app construction.
+#[async_trait::async_trait]
+pub trait WorkspaceLayerHost: Send + Sync {
+    async fn load(&self, workspace: &WorkspaceRef);
 }
 
 #[cfg(test)]
