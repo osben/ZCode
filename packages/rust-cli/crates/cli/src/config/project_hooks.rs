@@ -9,19 +9,38 @@ use rust_cli_hooks::{ProjectEntry, ProjectHookLoader};
 use rust_cli_kernel_api::env::WorkspaceRef;
 use rust_cli_kernel_api::machine::Files;
 use rust_cli_paths::StoragePaths;
+use rust_cli_platform::local::read_cli_config;
 
-#[cfg_attr(not(test), expect(dead_code, reason = "red tests: wired in the fix"))]
+use super::files;
+use super::trust::WorkspaceHooks;
+
 /// The entry of `workspace`; trust records are read under `identity` when given (a remote workspace's identity).
 pub(crate) async fn entry(
-    _files: &dyn Files,
-    _paths: &StoragePaths,
-    _workspace: &WorkspaceRef,
-    _identity: Option<String>,
+    files: &dyn Files,
+    paths: &StoragePaths,
+    workspace: &WorkspaceRef,
+    identity: Option<String>,
 ) -> ProjectEntry {
-    ProjectEntry::Admitted(Vec::new())
+    let user = read_cli_config(paths).await;
+    let projects = files::discover(files, workspace).await;
+    let mut warnings = Vec::new();
+    let mut hooks = WorkspaceHooks::inspect(
+        workspace.root.as_str(),
+        user.object(),
+        &projects,
+        paths,
+        &mut warnings,
+    )
+    .await;
+    for warning in &warnings {
+        tracing::warn!(warning, "project hooks");
+    }
+    if let Some(identity) = identity {
+        hooks.identity = identity;
+    }
+    ProjectEntry::Admitted(hooks.admitted())
 }
 
-#[expect(dead_code, reason = "red tests: wired in the fix")]
 /// The engine's loader: assembles a workspace's entry at its first event and at each session start.
 pub(crate) struct Loader {
     pub(crate) files: Arc<dyn Files>,

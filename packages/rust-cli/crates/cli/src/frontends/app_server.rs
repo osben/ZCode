@@ -222,8 +222,6 @@ async fn serve(
         ProcessConfig {
             workspace: opened.workspace.clone(),
             process_env: facts.process.env.clone(),
-            flag: opened.resolved.settings.clone(),
-            project_is_local: opened.deployment.primary_is_local(),
         },
         {
             let kernel = built.kernel.clone();

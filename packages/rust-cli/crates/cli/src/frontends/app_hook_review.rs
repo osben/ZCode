@@ -42,30 +42,23 @@ impl AppWorkspace {
         hooks_trust::inspect_review(&context, trust.working_directory.clone(), identity).await
     }
 
-    /// The process's hook snapshot belongs to its own workspace: only a change there rebuilds it.
-    pub(super) async fn rebuild_own_hooks(&self, trust: &Target) {
-        let own = Target::new(self.process.workspace.root.as_str(), None);
-        if *trust != own {
-            tracing::info!(
-                event = "workspace.hooks.rebuild_skipped",
-                same_path = trust.working_directory == own.working_directory,
-                same_identity = trust.identity == own.identity,
-                "the trust change is not in the process's own workspace"
-            );
-            return;
-        }
-        let inputs = ConfigInputs {
-            files: self.files.as_ref(),
-            workspace: &self.process.workspace,
-            paths: &self.paths,
-            process_env: &self.process.process_env,
-            flag: self.process.flag.as_ref(),
-            project_is_local: self.process.project_is_local,
+    /// Rebuilds the project hook entry of the workspace a trust change is about, wherever the process runs.
+    pub(super) async fn rebuild_hooks(&self, trust: &Target) {
+        let workspace = WorkspaceRef {
+            environment: self.process.workspace.environment.clone(),
+            root: EnvPath::new(trust.working_directory.clone()),
         };
-        let entry = crate::config::assemble(&inputs).await.project_hooks;
+        let identity = (trust.identity != trust.working_directory).then(|| trust.identity.clone());
+        let entry = crate::config::project_hooks::entry(
+            self.files.as_ref(),
+            &self.paths,
+            &workspace,
+            identity,
+        )
+        .await;
         tracing::info!(
             event = "workspace.hooks.rebuilt",
-            "the process hook snapshot was rebuilt"
+            "the workspace's project hook entry was rebuilt"
         );
         (self.put_project_hooks)(rust_cli_hooks::project_key(&trust.working_directory), entry);
     }
@@ -143,7 +136,7 @@ impl AppWorkspace {
                 );
                 codes::TRUST_STORE_CORRUPT
             })?;
-        self.rebuild_own_hooks(&trust).await;
+        self.rebuild_hooks(&trust).await;
         Ok(())
     }
 
@@ -169,7 +162,7 @@ impl AppWorkspace {
                 );
                 codes::TRUST_STORE_CORRUPT
             })?;
-        self.rebuild_own_hooks(&trust).await;
+        self.rebuild_hooks(&trust).await;
         Ok(())
     }
 
@@ -200,7 +193,7 @@ impl AppWorkspace {
             .await
             .map_err(ToggleError::Rejected)?;
         let (after, failures, _) = self.review_hooks(&trust).await;
-        self.rebuild_own_hooks(&trust).await;
+        self.rebuild_hooks(&trust).await;
         if failures.any() || after.bundle.is_none() {
             return Err(ToggleError::RebuildFailed);
         }

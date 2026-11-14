@@ -108,8 +108,6 @@ pub(super) fn fixture_files(
                 root: EnvPath::new(ROOT),
             },
             process_env: EnvSnapshot::default(),
-            flag: None,
-            project_is_local: true,
         },
         Box::new(move |key, entry| recorded.lock().unwrap().push((key, entry))),
         (

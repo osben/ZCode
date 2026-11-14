@@ -113,7 +113,7 @@ fn outside(event: HookEventName) -> bool {
     )
 }
 
-struct Loaded {
+pub(crate) struct Loaded {
     config: HooksConfig,
     /// 插件的 hooks（与设置快照分开登记，hooks.md §2.2）。
     plugins: Vec<PluginHooks>,
@@ -125,7 +125,8 @@ struct Loaded {
 /// hook 引擎：持有当前快照，实现 [`HookRunner`]。
 pub struct HookEngine {
     ports: HookPorts,
-    loaded: RwLock<Arc<Loaded>>,
+    /// The process snapshot and the workspaces' project entries (`projects.rs`).
+    state: RwLock<projects::State>,
     /// Fork: the sessions' incognito profiles (specs/fork-rust-agent-parity.md, "Incognito sessions").
     incognito: rust_cli_kernel_api::incognito::IncognitoProfiles,
 }
@@ -139,7 +140,7 @@ impl HookEngine {
     pub fn with_config(ports: HookPorts, config: HooksConfig) -> Self {
         Self {
             ports,
-            loaded: RwLock::new(Arc::new(load(config, Vec::new()))),
+            state: RwLock::new(projects::State::new(load(config, Vec::new()))),
             incognito: Default::default(),
         }
     }
@@ -158,19 +159,22 @@ impl HookEngine {
     /// 换上新的快照；正在运行的事件用旧快照。插件 hooks
     /// 保留。
     pub fn replace(&self, config: HooksConfig) {
-        let mut loaded = self.loaded.write_unpoisoned();
-        *loaded = Arc::new(load(config, loaded.plugins.clone()));
+        let mut state = self.state.write_unpoisoned();
+        let plugins = state.process.plugins.clone();
+        state.set_process(load(config, plugins));
     }
 
     /// 登记插件的 hooks（runtime 在插件加载后调用，hooks.md §2.2）；设置快照保留。读改写在同一把
     /// 写锁里，与 [`HookEngine::replace`] 不会互相冲掉。
     pub fn register_plugins(&self, plugins: Vec<PluginHooks>) {
-        let mut loaded = self.loaded.write_unpoisoned();
-        *loaded = Arc::new(load(loaded.config.clone(), plugins));
+        let mut state = self.state.write_unpoisoned();
+        let config = state.process.config.clone();
+        state.set_process(load(config, plugins));
     }
 
-    fn snapshot(&self) -> Arc<Loaded> {
-        self.loaded.read_unpoisoned().clone()
+    /// The process snapshot (user, `--settings` and plugin hooks).
+    fn process(&self) -> Arc<Loaded> {
+        self.state.read_unpoisoned().process.clone()
     }
 
     /// hook 输入的 `cwd`：调用方给出的，或会话的 shell cwd，再没有时是工作区根。
@@ -189,7 +193,7 @@ impl HookEngine {
     }
 }
 
-fn load(config: HooksConfig, plugins: Vec<PluginHooks>) -> Loaded {
+pub(crate) fn load(config: HooksConfig, plugins: Vec<PluginHooks>) -> Loaded {
     let effective = config.effective_with(&plugins);
     let without_plugins = config.effective_with(&[]);
     Loaded {
@@ -203,15 +207,21 @@ fn load(config: HooksConfig, plugins: Vec<PluginHooks>) -> Loaded {
 #[async_trait]
 impl HookRunner for HookEngine {
     async fn run(&self, event: HookEvent, cancel: CancellationToken) -> HookOutcome {
-        let loaded = self.snapshot();
+        let profile = self.incognito.get(&event.session);
+        if !self.process().config.trusted
+            || cancel.is_cancelled()
+            || profile.as_ref().is_some_and(|profile| !profile.hooks)
+        {
+            return HookOutcome::default();
+        }
+        // Fork: the event's own workspace entry (`projects.rs`), assembled first when it has none yet.
+        let loaded = self.snapshot_for(&event).await;
         if !loaded.config.trusted || cancel.is_cancelled() {
             return HookOutcome::default();
         }
-        let effective = match self.incognito.get(&event.session) {
-            None => &loaded.effective,
-            Some(profile) if !profile.hooks => return HookOutcome::default(),
+        let effective = match profile {
             Some(profile) if !profile.plugins => &loaded.without_plugins,
-            Some(_) => &loaded.effective,
+            _ => &loaded.effective,
         };
         let Some(matchers) = effective.matchers.get(&event.name) else {
             return HookOutcome::default();
@@ -318,7 +328,7 @@ impl HookRunner for HookEngine {
         request: StopCondition,
         cancel: CancellationToken,
     ) -> StopVerdict {
-        let loaded = self.snapshot();
+        let loaded = self.process();
         let default_model = request
             .event
             .context
@@ -346,14 +356,20 @@ impl HookRunner for HookEngine {
 
     /// 快照里有这个事件的 matcher（不看 match query）；会话据此决定要不要进入等待
     /// （docs/specs/rust-cli/session-lifecycle.md §3.2）。
-    fn has_hooks(&self, event: HookEventName, _workspace: &WorkspaceRef) -> bool {
-        let loaded = self.snapshot();
-        loaded.config.trusted
-            && loaded
-                .effective
-                .matchers
-                .get(&event)
-                .is_some_and(|matchers| !matchers.is_empty())
+    fn has_hooks(&self, event: HookEventName, workspace: &WorkspaceRef) -> bool {
+        let state = self.state.read_unpoisoned();
+        if !state.process.config.trusted {
+            return false;
+        }
+        if state.unknown(event, workspace) {
+            return true;
+        }
+        state
+            .snapshot(workspace)
+            .effective
+            .matchers
+            .get(&event)
+            .is_some_and(|matchers| !matchers.is_empty())
     }
 }
 

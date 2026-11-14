@@ -263,18 +263,21 @@ async fn an_unreadable_config_refuses_a_revoke() {
 }
 
 #[tokio::test]
-async fn another_workspace_leaves_the_process_hooks_alone() {
+async fn each_workspace_rebuilds_its_own_entry() {
     let fixture = fixture_text(PROJECT, json!({}));
     fixture
         .admin
-        .rebuild_own_hooks(&Target::new("/Users/dev/other", None))
+        .rebuild_hooks(&Target::new("/Users/dev/other", None))
         .await;
-    assert!(fixture.hooks.lock().unwrap().is_empty());
-    fixture
-        .admin
-        .rebuild_own_hooks(&Target::new(ROOT, None))
-        .await;
-    assert_eq!(fixture.hooks.lock().unwrap().len(), 1);
+    fixture.admin.rebuild_hooks(&Target::new(ROOT, None)).await;
+    let keys: Vec<String> = fixture
+        .hooks
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(key, _)| key.clone())
+        .collect();
+    assert_eq!(keys, ["/Users/dev/other", ROOT]);
 }
 
 #[tokio::test]

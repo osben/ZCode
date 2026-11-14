@@ -95,7 +95,7 @@ async fn the_entry_holds_the_trusted_and_enabled_project_declarations() {
     let (_home, paths) = home();
     let env = env(&[(
         CONFIG,
-        json!({"hooks": {"events": {
+        json!({"hooks": {"enabled": true, "events": {
             "UserPromptSubmit": [{"hooks": [command("echo hi"), {"type": "command", "command": "off", "enabled": false}]}],
             "PreCompact": [{"hooks": [command("compact.sh")]}]
         }}}),
@@ -123,11 +123,11 @@ async fn a_file_node_cannot_load_adds_nothing_and_the_others_still_count() {
     let env = env(&[
         (
             ZCODE_JSON,
-            json!({"hooks": {"extra": 1, "events": {"Stop": [{"hooks": [command("bad.sh")]}]}}}),
+            json!({"hooks": {"enabled": true, "extra": 1, "events": {"Stop": [{"hooks": [command("bad.sh")]}]}}}),
         ),
         (
             CONFIG,
-            json!({"hooks": {"events": {"Stop": [{"hooks": [command("good.sh")]}]}}}),
+            json!({"hooks": {"enabled": true, "events": {"Stop": [{"hooks": [command("good.sh")]}]}}}),
         ),
     ]);
     grant_all(&env, &paths).await;
@@ -143,7 +143,7 @@ async fn a_corrupt_trust_store_admits_nothing() {
     let (_home, paths) = home();
     let env = env(&[(
         CONFIG,
-        json!({"hooks": {"events": {"Stop": [{"hooks": [command("good.sh")]}]}}}),
+        json!({"hooks": {"enabled": true, "events": {"Stop": [{"hooks": [command("good.sh")]}]}}}),
     )]);
     grant_all(&env, &paths).await;
     assert_eq!(
@@ -159,7 +159,7 @@ async fn the_process_snapshot_keeps_the_project_hooks_apart() {
     let (_home, paths) = home();
     let env = env(&[(
         CONFIG,
-        json!({"hooks": {"events": {"Stop": [{"hooks": [command("good.sh")]}]}}}),
+        json!({"hooks": {"enabled": true, "events": {"Stop": [{"hooks": [command("good.sh")]}]}}}),
     )]);
     grant_all(&env, &paths).await;
     let inputs = ConfigInputs {

@@ -34,13 +34,10 @@ use crate::commands::hooks_trust::{self, TrustContext};
 use crate::config::mcp_trust::{self, Inspection, Review, Target};
 use crate::config::{ConfigInputs, read_files};
 
-/// The inputs the app-server's own workspace was assembled from: an accepted hook grant for that workspace
-/// rebuilds the process's hook snapshot from them.
+/// The app-server's own workspace and process environment.
 pub(crate) struct ProcessConfig {
     pub(crate) workspace: WorkspaceRef,
     pub(crate) process_env: EnvSnapshot,
-    pub(crate) flag: Option<Map<String, Value>>,
-    pub(crate) project_is_local: bool,
 }
 
 pub(crate) struct AppWorkspace {
@@ -513,7 +510,7 @@ impl WorkspaceAdmin for AppWorkspace {
         )
         .await;
         if answer["accepted"] == json!(true) {
-            self.rebuild_own_hooks(&trust).await;
+            self.rebuild_hooks(&trust).await;
         }
         answer
     }
