@@ -1,4 +1,5 @@
-//! Fork: the helper's requests to Rust (specs/fork-rust-node-helper.md F3, "Helper → Rust requests"). Each carries a
+//! Fork: the helper's requests to Rust (specs/fork-rust-node-helper.md F3, "Helper → Rust requests":
+//! `helper/authorizeAppTool` and `helper/sampleModel`). Each carries a
 //! `requestKey`; `helper/cancelRequest {requestKey}` abandons one, and Rust drops its work for that key (a pending
 //! prompt is withdrawn). A cancel can overtake its request (`serve` runs each in its own task), so a key cancelled
 //! before its request began is remembered (a bounded tombstone list) and the request starts cancelled. A helper that
@@ -16,6 +17,7 @@ use tokio_util::sync::CancellationToken;
 use super::{NodeHelper, unavailable};
 
 pub(crate) const AUTHORIZE_APP_TOOL: &str = "helper/authorizeAppTool";
+pub(crate) const SAMPLE_MODEL: &str = "helper/sampleModel";
 pub(super) const CANCEL_REQUEST: &str = "helper/cancelRequest";
 
 /// Cancels remembered for requests that have not begun yet.
@@ -26,6 +28,13 @@ const TOMBSTONES: usize = 256;
 pub(crate) trait HelperRequests: Send + Sync {
     /// `helper/authorizeAppTool`; `cancel` fires when the helper abandons it.
     async fn authorize_app_tool(
+        &self,
+        params: Value,
+        cancel: CancellationToken,
+    ) -> Result<Value, RpcError>;
+
+    /// `helper/sampleModel`; `cancel` fires when the helper abandons it.
+    async fn sample_model(
         &self,
         params: Value,
         cancel: CancellationToken,
@@ -56,7 +65,7 @@ impl NodeHelper {
         method: &str,
         params: Value,
     ) -> Result<Value, RpcError> {
-        if method != AUTHORIZE_APP_TOOL {
+        if method != AUTHORIZE_APP_TOOL && method != SAMPLE_MODEL {
             return Err(RpcError::method_not_found(method));
         }
         let Some(key) = params
@@ -71,7 +80,11 @@ impl NodeHelper {
             return Err(unavailable("the agent does not answer helper requests yet"));
         };
         let cancel = self.begin(generation, &key);
-        let result = answers.authorize_app_tool(params, cancel).await;
+        let result = if method == SAMPLE_MODEL {
+            answers.sample_model(params, cancel).await
+        } else {
+            answers.authorize_app_tool(params, cancel).await
+        };
         self.requests.lock_unpoisoned().live.remove(&key);
         result
     }

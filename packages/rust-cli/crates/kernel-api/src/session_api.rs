@@ -782,6 +782,19 @@ pub trait Kernel: Send + Sync {
         .into())
     }
 
+    /// Fork: one model call of an MCP App panel on the session's model, outside any turn
+    /// (specs/fork-rust-node-helper.md F3, `helper/sampleModel`): stores the call's usage row and nothing else. The
+    /// session must be open. A kernel without it refuses.
+    async fn sample_model(
+        &self,
+        _call: crate::sampling::SamplingCall,
+    ) -> Result<crate::sampling::SamplingReply, crate::sampling::SamplingError> {
+        Err(KernelError::Unsupported {
+            what: "MCP App sampling".to_owned(),
+        }
+        .into())
+    }
+
     /// Fork: opens a stored session whose prepared execution worktree is not active yet (an agent restart before the
     /// activation): SessionStart waits for `Command::SetExecutionRoot`, as after [`Kernel::create_prepared_session`],
     /// so the hook never runs in the parent checkout. A session already open keeps its state. A kernel without it

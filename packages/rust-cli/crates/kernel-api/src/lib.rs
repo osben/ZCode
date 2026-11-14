@@ -118,6 +118,7 @@ pub mod prompt_attachment;
 pub mod provider;
 pub mod reminder_fold;
 pub mod run_ledger;
+pub mod sampling;
 pub mod session_api;
 pub mod session_follow;
 pub mod session_ops;

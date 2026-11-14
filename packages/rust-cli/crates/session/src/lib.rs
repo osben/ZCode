@@ -56,6 +56,7 @@ mod rewind;
 mod rewind_machines;
 mod rewind_plan;
 mod rules;
+mod sampling;
 mod sink;
 mod slash;
 mod steering;

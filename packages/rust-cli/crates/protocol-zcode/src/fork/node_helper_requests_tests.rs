@@ -6,7 +6,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::*;
 use crate::fork::node_helper::HelperRequests;
-use crate::fork::node_helper::requests::AUTHORIZE_APP_TOOL;
+use crate::fork::node_helper::requests::{AUTHORIZE_APP_TOOL, SAMPLE_MODEL};
 
 /// Answers with its params; a request whose input says `wait` waits for its cancel and then fails.
 struct Answers;
@@ -23,6 +23,18 @@ impl HelperRequests for Answers {
             return Err(RpcError::internal("withdrawn"));
         }
         Ok(json!({"cancelled": cancel.is_cancelled(), "params": params}))
+    }
+
+    async fn sample_model(
+        &self,
+        params: Value,
+        cancel: CancellationToken,
+    ) -> Result<Value, RpcError> {
+        if params["request"] == json!("wait") {
+            cancel.cancelled().await;
+            return Err(RpcError::internal("sampling withdrawn"));
+        }
+        Ok(json!({"sampled": true, "cancelled": cancel.is_cancelled()}))
     }
 
     fn session_delta(&self, _session: &str, _delta: Value) {}
@@ -154,4 +166,52 @@ async fn a_request_without_a_key_an_answerer_or_a_known_method_is_refused() {
 
 fn rig_without_answers() -> Rig {
     rig(fake(&[], mcp_echo()), timing())
+}
+
+fn sample(key: &str, request: Value) -> Value {
+    json!({"requestKey": key, "sessionId": "s1", "request": request})
+}
+
+/// `helper/sampleModel` goes through the same keys as `helper/authorizeAppTool`: a cancel, an early cancel and a lost
+/// helper all reach it.
+#[tokio::test]
+async fn a_sampling_request_is_keyed_cancelled_and_lost_like_an_authorization() {
+    let (rig, _answers) = helper().await;
+    let answer = rig
+        .helper
+        .helper_request(1, SAMPLE_MODEL, sample("s1", json!({})))
+        .await
+        .unwrap();
+    assert_eq!(answer, json!({"sampled": true, "cancelled": false}));
+    let spawn = |key: &'static str| {
+        let helper = rig.helper.clone();
+        tokio::spawn(async move {
+            helper
+                .helper_request(1, SAMPLE_MODEL, sample(key, json!("wait")))
+                .await
+        })
+    };
+    let running = spawn("s2");
+    while rig.helper.requests.lock().unwrap().live.is_empty() {
+        tokio::task::yield_now().await;
+    }
+    rig.helper.cancel_request(&json!({"requestKey": "s2"}));
+    assert_eq!(
+        running.await.unwrap().unwrap_err().message,
+        "sampling withdrawn"
+    );
+    rig.helper.cancel_request(&json!({"requestKey": "s3"}));
+    let early = rig
+        .helper
+        .helper_request(1, SAMPLE_MODEL, sample("s3", json!({})))
+        .await
+        .unwrap();
+    assert_eq!(early["cancelled"], json!(true));
+    let running = spawn("s4");
+    while rig.helper.requests.lock().unwrap().live.is_empty() {
+        tokio::task::yield_now().await;
+    }
+    rig.helper.requests_lost(1);
+    assert!(running.await.unwrap().is_err());
+    assert!(rig.helper.requests.lock().unwrap().live.is_empty());
 }

@@ -26,6 +26,14 @@ impl HelperRequests for Deltas {
         Err(RpcError::internal("not used"))
     }
 
+    async fn sample_model(
+        &self,
+        _params: Value,
+        _cancel: CancellationToken,
+    ) -> Result<Value, RpcError> {
+        Err(RpcError::internal("not used"))
+    }
+
     fn session_delta(&self, session: &str, delta: Value) {
         self.0.lock().unwrap().push((session.to_owned(), delta));
     }

@@ -151,7 +151,7 @@ The protocol is JSON-RPC 2.0 over the helper's stdio, with the same framing as H
 - **Relayed agent→Host requests.** Rust forwards these to the Host on its own connection and returns the Host's answer.
   - Allowlist: `interaction/browserList` and `interaction/browserExecute`.
   - Rust does not read their payloads, beyond requiring that the `sessionId` names a session it owns.
-- **`helper/sampleModel`** `{sessionId, request}`. Rust runs it through the session's model and records usage. Used by `mcp/uiSampling`.
+- **`helper/sampleModel`** `{sessionId, request, source}`. Rust runs it through the session's model and records usage. Used by `mcp/uiSampling`.
 - **`helper/appTools/replace`** `{sessionId, instanceId, tools}`. Rust replaces the app-provided tools of that session's registry, as Node's `replaceMcpAppProvidedTools` does.
 - **Relayed notifications.** The helper sends them under their Host method names. Rust forwards an allowlisted name to the Host or into the stream, and drops any other:
   - `plugins/operationProgress`: forwarded to the Host verbatim.
@@ -280,9 +280,15 @@ Rust forwards one only when the session is one of its own (open or resumable in 
   - The answer is `{input}` (the approved, possibly hook-updated input), or an error whose `data.type` is Node's `CoreErrorType` (`permission_denied`, `invalid_input`).
   - "Always allow" lands in Rust's rules, so later model calls of that tool are allowed too.
   - The prompt is session-level: a turn that ends while it waits neither cancels it nor hides it. The kernel resolves a turn's own asks before `TurnFinished`, so the projection keeps every ask still pending then (before, it cleared them all; `plugin-extension-mention` lost a mention prompt asked during a turn).
-- `helper/sampleModel {sessionId, request}`
-  - `mcp/uiSampling`: Rust runs one side request on the session's current model selection (source `mcpSampling`) and records the call's usage on the session as a `model_usage` row.
-  - The answer is Node's `sampleModel` result shape.
+- `helper/sampleModel {sessionId, request, source: {pluginId, serverName, appIdentity}}`
+  - `mcp/uiSampling`, Node's `sampleModel`. The helper has validated `request` against `mcpAppsSamplingParamsSchema`; Rust reads the part Node forwards to the model (`messages`, `systemPrompt`, `maxTokens`) and ignores `includeContext`, `modelPreferences`, `metadata` and `source`, as Node does.
+  - Rust opens the session, then runs one side request (source `mcp_app_sampling`) on the session's current model selection as it is: no small-model slot and no reasoning level. The output cap is `min(maxTokens, the model's max output)`, and the provider patch gets the same cap. `systemPrompt` is the system block; image blocks are base64 images.
+  - Headers: `x-zcode-session-type: other` (Node's `modelRequestSessionType: "other"`) and `x-zcode-query-source: mcp_app_sampling`. Overload retries follow the user-facing rule (Rust's `foreground`); the Node source list for this was not found, so this is inferred from "a panel waits for it".
+  - A model known to take no images refuses an image block with Node's "Selected model does not support image input", before any call and with no usage row. Unknown capabilities leave the block to the model adapter.
+  - The answer is `{role: "assistant", model, content: {type: "text", text}, stopReason}`. `stopReason` is Node's mapping of the AI SDK finish reason: `endTurn` (end turn, stop sequence, pause), `maxTokens` (max tokens, context window), `content-filter` (refusal). A tool call, a tool-use or unknown reason, or none is Node's "Sampling did not produce a supported completion".
+  - The call runs in the request's task, never in the session actor, and writes no message or event. A call that reached the model writes one `model_usage` row anchored to no turn: `cancelled` when the request was cancelled whatever else happened (Node's order), else `error` or `completed`. A draft session is stored by that row.
+  - Rust adds no timeout: the helper's 60 s timeout, a `helper/cancelRequest` or the helper's exit cancels it through the request key. An ACP session's model refuses with Rust's external-agent refusal, as Node's `assertNotExternalAgentModel`.
+  - Not ported: Node's `ensureSessionPersisted("MCP App sampling")` title seed. It only titles a session that never had a prompt, and a panel exists only after a turn's tool result.
 - `helper/appTools/replace {sessionId, tools: [{name, modelName, serverName, pluginId, toolName, title?, description?, inputSchema, readOnlyHint?, destructiveHint?, idempotentHint?}]}` → `{registered: [names]}`
   - Node's `replaceMcpAppProvidedTools` is synchronous and returns the applied names at once, so the helper answers the panel with its own prediction (Node's registry, deduplicated) and sends the request without waiting. A name Rust skipped is only logged in the helper (`fork_rust_helper.app_tools.skipped`).
   - Rust replaces that session's app-provided tools (`app__…` names) in an overlay of its tool registry keyed by the exact session id. A name that clashes with an existing tool is skipped, as in Node. They are visible from the session's next tool round.

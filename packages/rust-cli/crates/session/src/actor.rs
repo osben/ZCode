@@ -95,6 +95,16 @@ pub(crate) enum Request {
         cancel: CancellationToken,
         reply: oneshot::Sender<rust_cli_kernel_api::tool::ToolUseContext>,
     },
+    /// Fork: the model an MCP App sampling call runs on (specs/fork-rust-node-helper.md F3, `helper/sampleModel`); the
+    /// call runs in the caller's task.
+    SamplingSelection {
+        reply: oneshot::Sender<ModelSelection>,
+    },
+    /// Fork: a sampling call's usage row.
+    RecordModelCall {
+        call: Box<rust_cli_kernel_api::metering::ModelCall>,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
 }
 
 /// 待回答的交互属于谁：回合里的询问随回合结束取消；会话级的询问只随会话关闭取消。
@@ -631,6 +641,23 @@ impl Actor {
                 reply,
             } => {
                 let _ = reply.send(self.app_tool_context(tool_use, cancel));
+            }
+            // Closing: the reply is dropped and the caller answers that the session is closed.
+            Request::SamplingSelection { reply }
+                if self.closing.is_some() || self.shutting_down =>
+            {
+                drop(reply);
+            }
+            Request::SamplingSelection { reply } => {
+                let _ = reply.send(self.selection.clone());
+            }
+            Request::RecordModelCall { reply, .. }
+                if self.closing.is_some() || self.shutting_down =>
+            {
+                drop(reply);
+            }
+            Request::RecordModelCall { call, reply } => {
+                let _ = reply.send(self.record_model_call(*call).await);
             }
             Request::Close { reply, reason } => self.close(reply, reason).await,
             // 关闭中、要退出时不再登记询问：丢下回复，询问方按会话已关闭处理。

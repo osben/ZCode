@@ -1,7 +1,7 @@
 //! Fork: the protocol server answers the Node helper's requests (specs/fork-rust-node-helper.md F3, "Helper → Rust
 //! requests"). `helper/authorizeAppTool` opens the session's projection (its prompt reaches the Host on the session's
-//! stream), then has the kernel run its tool pipeline on the App call. `helper/session/delta` reaches the session's live
-//! stream.
+//! stream), then has the kernel run its tool pipeline on the App call. `helper/sampleModel` runs one model call on the
+//! session's model (helper_sampling.rs). `helper/session/delta` reaches the session's live stream.
 
 use async_trait::async_trait;
 use rust_cli_kernel_api::app_tool::{AppToolCall, AppToolError};
@@ -37,6 +37,17 @@ impl HelperRequests for Server {
         answer(self.kernel.authorize_app_tool(call).await)
     }
 
+    /// Opens the session, as Node's sampling runs on the session's runtime.
+    async fn sample_model(
+        &self,
+        params: Value,
+        cancel: CancellationToken,
+    ) -> Result<Value, RpcError> {
+        let call = super::helper_sampling::parse(&params, cancel)?;
+        self.live(&call.session).await.map_err(kernel_error)?;
+        super::helper_sampling::answer(self.kernel.sample_model(call).await)
+    }
+
     /// Appended in the session's pump order. A session without a live projection has no stream to show it on, so the
     /// delta is dropped, as Node drops a live-only event nobody subscribes to.
     fn session_delta(&self, session: &str, delta: Value) {
@@ -50,7 +61,7 @@ impl HelperRequests for Server {
     }
 }
 
-fn required<'a>(params: &'a Value, key: &str) -> Result<&'a str, RpcError> {
+pub(super) fn required<'a>(params: &'a Value, key: &str) -> Result<&'a str, RpcError> {
     params
         .get(key)
         .and_then(Value::as_str)
@@ -83,7 +94,7 @@ pub(crate) fn answer(result: Result<Value, AppToolError>) -> Result<Value, RpcEr
     }
 }
 
-fn kernel_error(error: KernelError) -> RpcError {
+pub(super) fn kernel_error(error: KernelError) -> RpcError {
     match error {
         KernelError::NotFound { .. } => RpcError::invalid_params(error.to_string()),
         other => RpcError::internal(other.to_string()),

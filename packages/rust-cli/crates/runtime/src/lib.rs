@@ -21,6 +21,7 @@ mod late;
 mod listings;
 mod permissions;
 mod projects;
+mod sampling;
 mod table;
 mod usage;
 mod workspace_sessions;

@@ -97,6 +97,16 @@ impl Kernel for LocalKernel {
         self.authorize_app(call).await
     }
 
+    async fn sample_model(
+        &self,
+        call: rust_cli_kernel_api::sampling::SamplingCall,
+    ) -> Result<
+        rust_cli_kernel_api::sampling::SamplingReply,
+        rust_cli_kernel_api::sampling::SamplingError,
+    > {
+        self.sample(call).await
+    }
+
     async fn list_sessions(
         &self,
         filter: SessionFilter,
