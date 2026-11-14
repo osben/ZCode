@@ -23,6 +23,61 @@ describe("resolveForkAgentRuntimeSelection", () => {
     ).resolves.toEqual({ selected: "node", effective: "node", source: "default" });
   });
 
+  it("uses the build default when nothing is stored (ZCode Preview RS)", async () => {
+    await expect(
+      resolveForkAgentRuntimeSelection({
+        envValue: undefined,
+        storedSetting: undefined,
+        buildDefault: "rust",
+        binaryCandidates: ["/bin/zcode-rs"],
+        isUsable: present(["/bin/zcode-rs"]),
+      }),
+    ).resolves.toEqual({
+      selected: "rust",
+      effective: "rust",
+      source: "default",
+      rustAgentPath: "/bin/zcode-rs",
+    });
+  });
+
+  it("lets an explicitly stored node win over the rust build default", async () => {
+    const selection = await resolveForkAgentRuntimeSelection({
+      envValue: undefined,
+      storedSetting: "node",
+      buildDefault: "rust",
+      binaryCandidates: ["/bin/zcode-rs"],
+      isUsable: present(["/bin/zcode-rs"]),
+    });
+    expect(selection).toEqual({ selected: "node", effective: "node", source: "setting" });
+  });
+
+  it("lets the shell value win over the setting and the build default", async () => {
+    const selection = await resolveForkAgentRuntimeSelection({
+      envValue: "node",
+      storedSetting: "rust",
+      buildDefault: "rust",
+      binaryCandidates: ["/bin/zcode-rs"],
+      isUsable: present(["/bin/zcode-rs"]),
+    });
+    expect(selection).toMatchObject({ selected: "node", effective: "node", source: "env" });
+  });
+
+  it("falls back to node when the rust build default has no binary", async () => {
+    const selection = await resolveForkAgentRuntimeSelection({
+      envValue: undefined,
+      storedSetting: undefined,
+      buildDefault: "rust",
+      binaryCandidates: ["/missing/zcode-rs"],
+      isUsable: present([]),
+    });
+    expect(selection).toEqual({
+      selected: "rust",
+      effective: "node",
+      source: "default",
+      fallbackReason: "binary_missing",
+    });
+  });
+
   it("uses the stored setting and the first usable binary", async () => {
     await expect(
       resolveForkAgentRuntimeSelection({
