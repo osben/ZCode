@@ -187,6 +187,26 @@ async fn inspect_read(
     path: String,
     identity: Option<String>,
 ) -> (WorkspaceHooks, bool) {
+    let (hooks, unreadable, _) = inspect_review(context, path, identity).await;
+    (hooks, unreadable)
+}
+
+/// A project file that declares hooks, in the order of the digest's `source_index`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct HookSourceFile {
+    pub(crate) path: String,
+    /// `zcode.json` or `.zcode/config.json`.
+    pub(crate) kind: &'static str,
+    pub(crate) order: usize,
+    pub(crate) editable: bool,
+}
+
+/// [`inspect_read`] with the project files that declare hooks (the App's hook review).
+pub(crate) async fn inspect_review(
+    context: &TrustContext<'_>,
+    path: String,
+    identity: Option<String>,
+) -> (WorkspaceHooks, bool, Vec<HookSourceFile>) {
     let workspace = WorkspaceRef {
         environment: EnvironmentId::new(rust_cli_node_store::LOCAL_ENVIRONMENT),
         root: EnvPath::new(path.clone()),
@@ -201,8 +221,20 @@ async fn inspect_read(
         project_is_local: true,
     };
     let files = read_files(&inputs).await;
-    // Node `discoverSnapshot` throws on a config it cannot read or parse.
-    let unreadable = matches!(files.user, ConfigFile::Invalid { .. })
+    // Node `discoverSnapshot` throws on a config it cannot read or parse, and `readWorkspaceHookProjectSources`
+    // reports a `hooks` value its strict schema rejects as unreadable too.
+    let rejected = files.projects.iter().any(|project| {
+        project
+            .file
+            .object()
+            .and_then(|object| object.get("hooks"))
+            .is_some_and(|hooks| crate::config::workspace_schema::check(hooks).is_err())
+    });
+    if rejected {
+        tracing::warn!("a project hook config does not match the workspace hooks schema");
+    }
+    let unreadable = rejected
+        || matches!(files.user, ConfigFile::Invalid { .. })
         || files
             .projects
             .iter()
@@ -219,7 +251,23 @@ async fn inspect_read(
     if let Some(identity) = identity {
         hooks.identity = identity;
     }
-    (hooks, unreadable)
+    // The same files `candidates` keeps: every project file with a `hooks` key.
+    let sources = files
+        .projects
+        .iter()
+        .filter(|file| {
+            file.file
+                .object()
+                .is_some_and(|object| object.contains_key("hooks"))
+        })
+        .map(|file| HookSourceFile {
+            path: file.path.clone(),
+            kind: file.kind.as_str(),
+            order: file.order,
+            editable: file.editable,
+        })
+        .collect();
+    (hooks, unreadable, sources)
 }
 
 #[path = "hooks_trust_status.rs"]
@@ -232,7 +280,7 @@ pub(crate) use status::run;
 mod tests;
 
 /// grant 的记录（Node `grantWorkspaceHookTrust` 的对象字面量）。
-fn records(
+pub(crate) fn records(
     hooks: &WorkspaceHooks,
     selected: &[usize],
     context: &TrustContext<'_>,

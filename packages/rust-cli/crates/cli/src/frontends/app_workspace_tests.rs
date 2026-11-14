@@ -18,7 +18,7 @@ use std::collections::BTreeSet;
 
 use super::*;
 
-const ROOT: &str = "/Users/dev/repo";
+pub(super) const ROOT: &str = "/Users/dev/repo";
 
 /// Records which servers the lane tried to start; every connect fails, so `wait_ready` settles at once.
 #[derive(Default)]
@@ -56,19 +56,20 @@ impl McpTransport for Recording {
     }
 }
 
-struct Fixture {
-    _home: tempfile::TempDir,
+/// Shared with `app_hook_review_tests.rs`.
+pub(super) struct Fixture {
+    pub(super) _home: tempfile::TempDir,
     _scope: TaskScope,
-    admin: AppWorkspace,
+    pub(super) admin: AppWorkspace,
     transport: Arc<Recording>,
-    hooks: Arc<StdMutex<Vec<HooksConfig>>>,
+    pub(super) hooks: Arc<StdMutex<Vec<HooksConfig>>>,
 }
 
 fn fixture(project: Value, user: Value) -> Fixture {
     fixture_text(&project.to_string(), user)
 }
 
-fn fixture_text(project: &str, user: Value) -> Fixture {
+pub(super) fn fixture_text(project: &str, user: Value) -> Fixture {
     let facts = EnvFacts {
         cwd: EnvPath::new(ROOT),
         platform: "linux".to_owned(),
@@ -117,7 +118,7 @@ fn fixture_text(project: &str, user: Value) -> Fixture {
     }
 }
 
-fn target(key: &str) -> WorkspaceTarget {
+pub(super) fn target(key: &str) -> WorkspaceTarget {
     WorkspaceTarget {
         path: ROOT.to_owned(),
         identity: None,

@@ -371,7 +371,7 @@ async fn run_loop(
     ) = if agent.fork_prefix.is_some() {
         let registry: Arc<dyn ToolRegistry> = Arc::new(crate::toolset::ForkChildTools {
             inner: registry,
-            without_cron: core.node_desktop,
+            node_child: core.node_desktop,
         });
         (
             registry,
@@ -385,7 +385,7 @@ async fn run_loop(
                 inner: registry,
                 rule: ToolRule::new(&agent.definition, agent.background, agent.depth)
                     .with_questions(core.node_desktop)
-                    .without_cron(core.node_desktop),
+                    .node_child(core.node_desktop),
             }),
             Arc::new(SubagentContext {
                 inner: core.ports.context.clone(),

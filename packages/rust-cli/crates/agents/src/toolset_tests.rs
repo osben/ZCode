@@ -258,7 +258,7 @@ fn a_desktop_subagent_gets_no_cron_tool() {
         .into_iter()
         .find(|definition| definition.agent_type == "general-purpose")
         .unwrap();
-    let desktop = ToolRule::new(&definition, false, 1).without_cron(true);
+    let desktop = ToolRule::new(&definition, false, 1).node_child(true);
     for name in [
         "CronCreate",
         "CronList",
@@ -273,10 +273,10 @@ fn a_desktop_subagent_gets_no_cron_tool() {
 }
 
 #[test]
-fn a_desktop_fork_keeps_the_main_registry_without_the_cron_tools() {
+fn a_desktop_fork_keeps_the_main_registry_without_the_cron_and_subagent_tools() {
     let fork = super::ForkChildTools {
         inner: registry(),
-        without_cron: true,
+        node_child: true,
     };
     let listed: Vec<String> = fork
         .tools()
@@ -286,10 +286,14 @@ fn a_desktop_fork_keeps_the_main_registry_without_the_cron_tools() {
     let expected: Vec<&str> = MAIN
         .iter()
         .copied()
-        .filter(|name| *name != "CronCreate")
+        .filter(|name| !["CronCreate", "Agent", "ListAgents", "SendMessage"].contains(name))
         .collect();
     assert_eq!(listed, expected);
     assert!(fork.find("CronCreate").is_none());
+    // Node's child runtimes have no subagent port (`subagents.enabled: false`): a fork child launches no subagents.
+    for name in ["Agent", "ListAgents", "SendMessage"] {
+        assert!(fork.find(name).is_none(), "{name}");
+    }
     let session = rust_cli_kernel_api::ids::SessionId::new("s");
     assert!(fork.find_for(&session, "CronCreate").is_none());
     assert!(
@@ -330,7 +334,7 @@ fn a_desktop_fork_withholds_none_of_the_five_cron_tools() {
         .collect();
     let fork = super::ForkChildTools {
         inner: Arc::new(Withholding(tools)),
-        without_cron: true,
+        node_child: true,
     };
     let session = rust_cli_kernel_api::ids::SessionId::new("s");
     for name in cron {
@@ -378,7 +382,7 @@ fn a_fork_child_never_sees_the_lsp_tool() {
         .collect();
     let fork = super::ForkChildTools {
         inner: Arc::new(ListTools(tools)),
-        without_cron: false,
+        node_child: false,
     };
     let session = rust_cli_kernel_api::ids::SessionId::new("s");
     let listed: Vec<String> = fork
@@ -392,4 +396,53 @@ fn a_fork_child_never_sees_the_lsp_tool() {
     assert!(fork.find("LSP").is_none());
     assert!(fork.withheld("LSP").is_none());
     assert!(fork.tools().iter().all(|tool| tool.name() != "LSP"));
+}
+
+/// Fork (node_desktop, specs/fork-rust-agent-parity.md "Subagents launch no subagents"): Node runs every child runtime
+/// with `subagents.enabled: false`, so no desktop subagent has Agent, SendMessage or ListAgents, whatever its agent type,
+/// background flag or `tools` list; TaskStop stays. The TUI keeps Agent and SendMessage above the depth limit.
+#[test]
+fn a_desktop_subagent_launches_no_subagents() {
+    let gone = ["Agent", "SendMessage", "ListAgents"];
+    for agent in [GENERAL_PURPOSE, EXPLORE] {
+        let definition = builtins()
+            .into_iter()
+            .find(|definition| definition.agent_type == agent)
+            .unwrap();
+        for background in [false, true] {
+            let desktop = FilteredTools {
+                inner: registry(),
+                rule: ToolRule::new(&definition, background, 1).node_child(true),
+            };
+            let listed = listed(&desktop);
+            for name in gone {
+                assert!(
+                    !listed.iter().any(|tool| tool == name),
+                    "{agent} {background} {name}"
+                );
+                assert!(desktop.find(name).is_none(), "{agent} {background} {name}");
+            }
+        }
+    }
+    // A `tools` list that names them does not bring them back.
+    let mut named = builtins().remove(0);
+    named.tools = Some(
+        ["Agent", "SendMessage", "ListAgents", "TaskStop", "Read"]
+            .iter()
+            .map(|name| (*name).to_owned())
+            .collect(),
+    );
+    let desktop = FilteredTools {
+        inner: registry(),
+        rule: ToolRule::new(&named, false, 1).node_child(true),
+    };
+    assert_eq!(listed(&desktop), ["TaskStop", "Read"]);
+    // The TUI: a general-purpose subagent below the depth limit still has them.
+    let general = builtins()
+        .into_iter()
+        .find(|definition| definition.agent_type == GENERAL_PURPOSE)
+        .unwrap();
+    let tui = ToolRule::new(&general, false, 1);
+    assert!(tui.allows("Agent") && tui.allows("SendMessage"));
+    assert!(ToolRule::new(&named, false, 1).allows("Agent"));
 }
