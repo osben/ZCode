@@ -1615,11 +1615,28 @@ failure    ─▶ rows closed "The agent turn failed before this tool finished" 
       and no row command or UI lookup targets a divider by its entity id. It is not stored: Node appends the
       system message to its in-memory event log only (`acp-upstream-compat.test.ts` checks that no
       table holds it). So the divider survives a resubscribe in the same process (both runtimes
-      snapshot the live projection) and a history rebuild (rewind, edit, retry): the projection
-      remembers it by the input that opened its turn and draws it again right after that input,
-      as Node's cold merge re-inserts the notice before its turn's durable events
-      (`cold-event-merge.ts`). A rewind past that input forgets it. Neither runtime shows it
-      after a relaunch.
+      snapshot the live projection) and a history rebuild (rewind, edit, retry). Its place in the
+      turn:
+      - Live, it follows the turn's header and input and precedes the reply. Node's notice
+        arrives during the agent run, after `TurnStarted` drew the header and the input
+        (`external-agent-turn.ts` `context_reset`, `product-projection.ts` `onTurnStarted`).
+      - On a history rebuild, the projection remembers it by the input that opened its turn and
+        draws it before that turn's header. Node's cold merge replays the in-memory notice before
+        the turn's first durable event (`cold-event-merge.ts` `insertAtDurableTurnBoundaries`;
+        Node's rows for `cold-external-agent-reset.test.ts`: marker, turnHeader, userInput,
+        assistantText).
+      - Difference kept: on the rebuild Node's marker carries a turn id of its own (the marker
+        is reduced before the turn's `TurnStarted`), so the App draws it as a separate unit
+        just above the turn. The Rust row keeps the turn's id, and the App draws it above that
+        turn's input as a leading `lightBoundary` (`conversationTurnRenderUnits.ts`), as it does
+        live in both runtimes. Node's cold-merge comment says the cold placement is where a live
+        reset sits; Node's live order (after the input) differs from it.
+      - Keying by the opening input is enough. ACP turns are opened only by a typed input: the
+        runner refuses automatic turns (notices, cron, continuations; Node
+        `externalAgentTurnRefusal`) before it acquires the agent, so such a turn never emits a
+        reset (`runner_tests` `a_notice_turn_draws_no_context_reset`).
+      - A rewind past that input forgets it. It is not shown after the session is closed and
+        reopened, or after a relaunch.
     - **Order.** The turn checks Stop after the acquire and before it takes the session start
       (Node `acp-external-agent-host.ts`), so a turn stopped there leaves the reset to the next
       turn.
@@ -1630,7 +1647,9 @@ failure    ─▶ rows closed "The agent turn failed before this tool finished" 
       `resumed`, the turn's start and its end set it to `null` (Node `onExternalAgentStatus`,
       `onTurnStarted`, `clearedExternalAgentStall`). A `resumed` with no stall shown, and an event
       outside a running turn, change nothing. The field is absent until the first stall, as in
-      Node's snapshot. Like the divider, it is not stored; a history rebuild carries it over.
+      Node's snapshot. Like the divider, it is not stored. A history rebuild carries it over
+      only while the same turn still runs (`SessionView::running` and `running_turn`); otherwise
+      the rebuilt snapshot has none, like Node's cold merge, which drops a settled turn's stall.
 15. **No migrations.** `zcode-rs` checks that the tables and columns exist (Node's storage
     preparation creates them). Without them there is no binding and no resume, and a config write
     answers `config.notAvailable`.

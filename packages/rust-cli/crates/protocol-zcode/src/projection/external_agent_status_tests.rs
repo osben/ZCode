@@ -210,9 +210,37 @@ fn kinds(feed: &Feed) -> Vec<(String, String)> {
         .collect()
 }
 
-/// A history rebuild (rewind, edit, retry) keeps the divider while the process lives, after the input that opened its
-/// turn and before the reply, as Node's cold merge re-inserts the in-memory notice before its turn's durable events.
-/// A rebuild whose history no longer has that turn drops it.
+/// The position of the first row of `kind`.
+fn position(rows: &[(String, String)], kind: &str) -> usize {
+    rows.iter()
+        .position(|(row, _)| row == kind)
+        .unwrap_or_else(|| panic!("no {kind} row in {rows:?}"))
+}
+
+/// Live, the divider follows the turn's header and input and precedes the reply: Node's notice arrives during the agent
+/// run, after `TurnStarted` drew the header and the input (`external-agent-turn.ts` `context_reset`).
+#[test]
+fn a_live_reset_divider_follows_the_turn_input() {
+    let mut feed = Feed::new();
+    reply_turn(&mut feed);
+    let rows = kinds(&feed);
+    let (header, input, marker, reply) = (
+        position(&rows, "turnHeader"),
+        position(&rows, "userInput"),
+        position(&rows, "timelineMarker"),
+        position(&rows, "assistantText"),
+    );
+    assert!(
+        header < input && input < marker && marker < reply,
+        "{rows:?}"
+    );
+    assert_eq!(rows[marker].1, rows[header].1, "{rows:?}");
+}
+
+/// A history rebuild (rewind, edit, retry) keeps the divider while the process lives. It is drawn before the turn's
+/// header, as Node's cold merge replays the in-memory notice before the turn's first durable event (Node's own rows
+/// for this case: marker, turnHeader, userInput, assistantText). It keeps the turn's id, so the App still draws it
+/// above that turn's input. A rebuild whose history no longer has that turn drops it.
 #[test]
 fn a_rebuild_keeps_the_context_reset_divider_in_its_turn() {
     let mut feed = Feed::new();
@@ -228,16 +256,19 @@ fn a_rebuild_keeps_the_context_reset_divider_in_its_turn() {
     ];
     feed.projection = feed.projection.rebuilt(&super::view(history.clone()));
     let rows = kinds(&feed);
-    let at = |kind: &str| rows.iter().position(|(row, _)| row == kind);
-    let (input, marker, reply) = (
-        at("userInput").expect("input"),
-        at("timelineMarker").expect("divider"),
-        at("assistantText").expect("reply"),
+    let (marker, header, input, reply) = (
+        position(&rows, "timelineMarker"),
+        position(&rows, "turnHeader"),
+        position(&rows, "userInput"),
+        position(&rows, "assistantText"),
     );
-    assert!(input < marker && marker < reply, "{rows:?}");
-    assert_eq!(rows[marker].1, rows[input].1, "{rows:?}");
+    assert!(
+        marker < header && header < input && input < reply,
+        "{rows:?}"
+    );
+    assert_eq!(rows[marker].1, rows[header].1, "{rows:?}");
     assert_eq!(markers(&feed).len(), 1);
-    // A second rebuild still has it.
+    // A second rebuild still has it, once.
     feed.projection = feed.projection.rebuilt(&super::view(history));
     assert_eq!(markers(&feed).len(), 1);
     // A rewind past the turn drops it.
@@ -245,22 +276,34 @@ fn a_rebuild_keeps_the_context_reset_divider_in_its_turn() {
     assert!(markers(&feed).is_empty());
 }
 
-/// A rebuild during the running turn keeps the stall shown.
-#[test]
-fn a_rebuild_keeps_the_stall() {
+/// A stall of turn_1 and a rebuild view: `running` and `running_turn` as given.
+fn rebuilt_stall(running: bool, running_turn: Option<&str>) -> (Value, Value) {
     let mut feed = Feed::new();
     feed.apply(started());
     feed.apply(status(STALLED));
     let shown = feed.projection.snapshot(0, "e")["control"]["externalAgentStall"].clone();
     assert!(shown.is_object(), "{shown}");
-    let mut running = super::view(vec![super::user("msg_u1", "hello")]);
-    running.running = true;
-    running.running_turn = Some(TurnId::new("turn_1"));
-    feed.projection = feed.projection.rebuilt(&running);
-    assert_eq!(
-        feed.projection.snapshot(0, "e")["control"]["externalAgentStall"],
-        shown
-    );
+    let mut view = super::view(vec![super::user("msg_u1", "hello")]);
+    view.running = running;
+    view.running_turn = running_turn.map(TurnId::new);
+    feed.projection = feed.projection.rebuilt(&view);
+    let after = feed.projection.snapshot(0, "e")["control"]["externalAgentStall"].clone();
+    (shown, after)
+}
+
+/// A rebuild during the running turn keeps the stall shown.
+#[test]
+fn a_rebuild_keeps_the_stall() {
+    let (shown, after) = rebuilt_stall(true, Some("turn_1"));
+    assert_eq!(after, shown);
+}
+
+/// A rebuild of a history that no longer runs, or runs another turn, shows no stall.
+#[test]
+fn a_rebuild_drops_the_stall_of_a_turn_no_longer_running() {
+    assert_eq!(rebuilt_stall(false, Some("turn_1")).1, Value::Null);
+    assert_eq!(rebuilt_stall(false, None).1, Value::Null);
+    assert_eq!(rebuilt_stall(true, Some("turn_2")).1, Value::Null);
 }
 
 /// A turn start clears a stall still shown (Node `onTurnStarted` `clearedExternalAgentStall`).

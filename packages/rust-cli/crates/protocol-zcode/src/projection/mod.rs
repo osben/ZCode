@@ -284,10 +284,20 @@ impl Projection {
             self.next_row,
             self.context_resets.clone(),
         );
-        // Fork: the stall of the running ACP prompt is not history.
-        projection
-            .external_agent_stall
-            .clone_from(&self.external_agent_stall);
+        // Fork: the stall of the running ACP prompt is not history; it is kept only while that same turn still runs.
+        let live_turn = self.turn.as_ref().map(|turn| turn.id.as_str());
+        if view.running
+            && live_turn.is_some()
+            && view
+                .running_turn
+                .as_ref()
+                .map(rust_cli_kernel_api::ids::TurnId::as_str)
+                == live_turn
+        {
+            projection
+                .external_agent_stall
+                .clone_from(&self.external_agent_stall);
+        }
         projection.inputs.clone_from(&self.inputs);
         projection.denied.clone_from(&self.denied);
         projection.catalog = self.catalog.clone();

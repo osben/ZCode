@@ -507,6 +507,41 @@ async fn a_session_the_agent_cannot_load_is_a_context_reset() {
     harness.release().await;
 }
 
+/// Rule 14: a turn opened by a notice never draws a reset divider, so the projection may key the divider by the input
+/// that opened its turn. The runner refuses the notice turn before it acquires the agent: no `session/load`, no reset.
+/// The reset still owed goes to the next typed turn.
+#[tokio::test]
+async fn a_notice_turn_draws_no_context_reset() {
+    let harness = Harness::with(&["--refuse-load"], None);
+    run(&harness, "hello").await;
+    harness.release().await;
+    let notice = harness.request(vec![user(
+        "n1",
+        "<task-notification>done</task-notification>",
+        UserOrigin::Meta {
+            source: rust_cli_kernel_api::hooks::queued_command::TASK_NOTIFICATION.to_owned(),
+        },
+    )]);
+    let sink = Arc::new(RecordingSink::default());
+    let stop = harness
+        .runner
+        .run(notice, sink.clone(), Abort::new())
+        .await
+        .expect("run");
+    assert!(
+        matches!(&stop, QueryStop::ApiError { message } if message.contains("background results")),
+        "{stop:?}"
+    );
+    assert!(statuses(&sink.events()).is_empty(), "{:?}", sink.events());
+    assert!(!harness.agent_got("session/load"));
+    let (_, typed) = run(&harness, "hello").await;
+    assert_eq!(
+        statuses(&typed.events()),
+        vec!["reset mock".to_owned(), "text pong".to_owned()]
+    );
+    harness.release().await;
+}
+
 /// Rule 14: a loaded session is no reset, and the history the agent replays while loading is never shown.
 #[tokio::test]
 async fn a_loaded_session_is_no_reset_and_its_replay_is_not_shown() {

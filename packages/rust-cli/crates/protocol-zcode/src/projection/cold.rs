@@ -48,9 +48,10 @@ pub(super) fn rows(projection: &mut Projection, view: &SessionView) {
                 // Fork: the stored submitting command, so the App settles its pending command after a restart.
                 let command = view.commands.get(&user.id).map(|c| c.as_str().to_owned());
                 let model = super::model_change::cold_turn_model(view, index, opens_turn);
+                // Fork: the ACP reset divider of this turn goes before its header, as Node's cold merge places it.
+                projection.cold_context_reset(user.id.as_str(), &turn, at, &mut out);
                 projection.start_turn(&turn, command, model, at, 0, &mut out);
                 projection.message(message, at, 0, &mut out);
-                projection.cold_context_reset(user.id.as_str(), at, &mut out);
             }
             Message::User(user) if opening(message, turn_ended) => {
                 if projection.turn.is_some() {
