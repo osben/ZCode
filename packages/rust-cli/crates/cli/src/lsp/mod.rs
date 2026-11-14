@@ -19,6 +19,7 @@ use rust_cli_ext::plugins::{Plugin, load_all};
 use rust_cli_kernel_api::env::{EnvPath, ReadFile, WorkspaceRef};
 use rust_cli_kernel_api::env_files::{PathStyle, StatFile};
 use rust_cli_kernel_api::ids::{EnvironmentId, SessionId};
+use rust_cli_kernel_api::incognito::{IncognitoKey, IncognitoProfiles};
 use rust_cli_kernel_api::lsp::{
     CodeIntelligence, FileMutation, LanguageServers, LspOutput, LspPreferences,
     LspPreferencesPatch, LspQuery, LspQueryError, LspServerStatus, LspStatus, LspWorkspace,
@@ -96,6 +97,8 @@ pub(crate) struct Host {
     /// computation (Node serializes them in `lspPreferenceQueues` "so an older availability result cannot win"): a
     /// settle that probed before a write would otherwise store its older answer after the write's refresh skipped it.
     tool_generation: std::sync::atomic::AtomicU64,
+    /// The runtime's incognito profiles (`CodeIntelligence::set_incognito`).
+    incognito: std::sync::OnceLock<IncognitoProfiles>,
 }
 
 impl Host {
@@ -128,6 +131,7 @@ impl Host {
             sessions: Mutex::default(),
             tool_facts: Mutex::default(),
             tool_generation: std::sync::atomic::AtomicU64::new(0),
+            incognito: std::sync::OnceLock::new(),
         }
     }
 
@@ -239,6 +243,14 @@ impl Host {
         cell.get_or_init(|| async {
             // The host serves its own machine only.
             if workspace.environment != self.inputs.environment {
+                return None;
+            }
+            // Node's plugin discovery yields no LSP servers for an incognito session without plugins.
+            if self
+                .incognito
+                .get()
+                .is_some_and(|profiles| profiles.excludes(session, IncognitoKey::Plugins))
+            {
                 return None;
             }
             let servers = self.servers(&root).await;
@@ -512,6 +524,11 @@ impl CodeIntelligence for Host {
             return None;
         }
         runtime.edit_diagnostics().await
+    }
+
+    fn set_incognito(&self, profiles: IncognitoProfiles) {
+        // The runtime sets it once; a second call keeps the first owner.
+        let _ = self.incognito.set(profiles);
     }
 
     fn session_closed(&self, session: &SessionId) {
