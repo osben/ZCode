@@ -1139,6 +1139,28 @@ export const hostCredentialCipherRequestResponseSchema = credentialCipherRequest
   })
   .strict();
 
+const CREDENTIAL_KEY_SHARE_TARGET_MAX_CHARS = 32_767;
+export const CREDENTIAL_SECURE_STORAGE_UNAVAILABLE = "CREDENTIAL_SECURE_STORAGE_UNAVAILABLE";
+
+/** Host → main: share the OS credential key with the credentials copied under a new data root. */
+export const hostCredentialKeyShareRequestResponseSchema = z
+  .object({
+    type: z.literal("credential-key-share-request"),
+    requestId: z.string().uuid(),
+    targetBaseDir: z.string().min(1).max(CREDENTIAL_KEY_SHARE_TARGET_MAX_CHARS),
+  })
+  .strict();
+
+/** main → host: key share outcome; failures carry only the controlled storage error code. */
+export const hostCredentialKeyShareResultMessageSchema = z
+  .object({
+    type: z.literal("credential-key-share-result"),
+    requestId: z.string().uuid(),
+    ok: z.boolean(),
+    errorCode: z.literal(CREDENTIAL_SECURE_STORAGE_UNAVAILABLE).optional(),
+  })
+  .strict();
+
 export const hostLocalMediaPreviewPathAuthorizeResultMessageSchema = z
   .object({
     type: z.literal("local-media-preview-path-authorize-result"),
@@ -1326,6 +1348,7 @@ export const hostIncomingMessageSchema = z.discriminatedUnion("type", [
   hostBrowserExecuteResultMessageSchema,
   hostLocalMediaPreviewPathAuthorizeResultMessageSchema,
   hostCredentialCipherResultMessageSchema,
+  hostCredentialKeyShareResultMessageSchema,
   hostPluginSandboxRegisterResultMessageSchema,
   hostCuaPipFocusChangedMessageSchema,
   hostApplicationLocaleChangedMessageSchema,
@@ -2049,6 +2072,7 @@ export const hostResponseMessageSchema = z.discriminatedUnion("type", [
   hostBrowserExecuteRequestResponseSchema,
   hostLocalMediaPreviewPathAuthorizeRequestResponseSchema,
   hostCredentialCipherRequestResponseSchema,
+  hostCredentialKeyShareRequestResponseSchema,
   hostPluginSandboxRegisterRequestResponseSchema,
   hostNetworkTelemetryBatchResponseSchema,
   hostProviderProvisioningSourceChangedResponseSchema,

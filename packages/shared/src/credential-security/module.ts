@@ -10,7 +10,9 @@ export {
   createLegacyServerCredentialCipher,
   prepareServerCredentialStorage,
   createLegacyCredentialCipher,
+  enablePrivateFileKeyFallback,
   migrateCredentialRecord,
+  type PrivateFileKeyFallbackOptions,
 } from "./systemCredentialCipher.js";
 export {
   createCredentialCipherBridge,

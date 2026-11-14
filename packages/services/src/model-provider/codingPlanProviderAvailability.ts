@@ -5,12 +5,17 @@ import {
   buildBigModelApiUrl,
   buildRuntimeZaiBusinessUrl,
   resolveBigModelApiOrigin,
+  resolveStartPlanFamilyFromOAuthProvider,
   ZAI_PROVIDER_ID,
   type ApiClient,
   type ProviderFamilyDomain,
   type ProviderFamilyConnectionSelectionSettings,
 } from "@zcode/shared";
-import type { OAuthAccountMaterial } from "#src/oauth/repo/oauthCredentialRepo.js";
+import {
+  isSameOAuthAccountMaterial,
+  type OAuthAccountMaterial,
+  type OAuthStartPlanMaterial,
+} from "#src/oauth/repo/oauthCredentialRepo.js";
 import { type BigModelTeamPlanBizContext } from "#src/bigmodel/teamPlanApiKey.js";
 import {
   fetchPersonalCodingPlanEntitlement,
@@ -55,6 +60,8 @@ interface CodingPlanAvailabilityCredentialService {
 interface CodingPlanAvailabilityContext {
   apiClient?: ApiClient;
   accountMaterial?: OAuthAccountMaterial | null;
+  /** Start Plan authorization follows the signed-in login, which may have no family material. */
+  startPlanMaterial?: OAuthStartPlanMaterial | null;
   credentialService?: CodingPlanAvailabilityCredentialService;
   providerFamilyConnectionSelections?: ProviderFamilyConnectionSelectionSettings;
 }
@@ -452,8 +459,8 @@ async function resolveStartPlanAuthorization(
   provider: CodingPlanAvailabilityProvider,
   context: CodingPlanAvailabilityContext,
 ): Promise<StartPlanAuthorization> {
-  if (context.accountMaterial !== undefined) {
-    const jwt = context.accountMaterial?.zcodeJwtToken;
+  if (context.startPlanMaterial !== undefined) {
+    const jwt = context.startPlanMaterial?.zcodeJwtToken;
     return { value: jwt ? `Bearer ${jwt}` : "", missingReason: "coding_plan_not_authenticated" };
   }
   if (provider.family === "bigmodel") {
@@ -573,4 +580,48 @@ function summarizeStartPlans(
     plan_id: plan.plan_id ?? null,
     status: plan.status ?? null,
   }));
+}
+
+// Upstream 3.18.2 (reconstructed): Start Plan follows the signed-in login.
+
+/**
+ * A Start Plan is current for the selected family domain or, when none is selected, for the family the
+ * signed-in login resolves to; a zai_cn login has no domain yet still owns the bigmodel Start Plan.
+ */
+export function isStartPlanFamilyCurrent(
+  providerFamilyDomain: ProviderFamilyDomain | null,
+  family: ProviderFamilyDomain,
+  material: OAuthStartPlanMaterial | null,
+): boolean {
+  return material?.accountIdentity.trim()
+    ? (providerFamilyDomain ?? resolveStartPlanFamilyFromOAuthProvider(material.loginProvider)) ===
+        family
+    : false;
+}
+
+/**
+ * Start Plan material read once per family for one resolver round; `unchanged()` re-reads it so a login
+ * switch during the round discards the result, like the family identity check.
+ */
+export function createStartPlanMaterialRound(
+  loadMaterial: (family: ProviderFamilyDomain) => Promise<OAuthStartPlanMaterial | null>,
+) {
+  const byFamily = new Map<ProviderFamilyDomain, Promise<OAuthStartPlanMaterial | null>>();
+  return {
+    load(family: ProviderFamilyDomain): Promise<OAuthStartPlanMaterial | null> {
+      const existing = byFamily.get(family);
+      if (existing) return existing;
+      const pending = loadMaterial(family);
+      byFamily.set(family, pending);
+      return pending;
+    },
+    async unchanged(): Promise<boolean> {
+      const results = await Promise.all(
+        [...byFamily].map(async ([family, captured]) =>
+          isSameOAuthAccountMaterial(await captured, await loadMaterial(family)),
+        ),
+      );
+      return results.every(Boolean);
+    },
+  };
 }

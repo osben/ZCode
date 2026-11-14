@@ -1,4 +1,7 @@
 import childProcess from "node:child_process";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const POWERSHELL_COMMON_ARGS = ["-NoLogo", "-NoProfile", "-NonInteractive"];
 
@@ -34,6 +37,14 @@ export function createEncodedPowerShellArgs(script, values = []) {
   return [...POWERSHELL_COMMON_ARGS, "-EncodedCommand", encodedCommand];
 }
 
+/** Single-quoted PowerShell literal: doubles straight and smart single quotes, which PowerShell treats alike. */
+export function escapePowerShellLiteral(value) {
+  if (["\0", "\r", "\n"].some((character) => value.includes(character))) {
+    throw new Error("PowerShell path literal cannot contain NUL or newline characters");
+  }
+  return `'${value.replace(/['\u2018\u2019\u201A\u201B]/g, "$&$&")}'`;
+}
+
 export function createWindowsPowerShellSecurityArgs(script, values = []) {
   // Node launched by pwsh inherits PowerShell 7's PSModulePath. When it later starts Windows
   // PowerShell 5.1, it may discover an incompatible Security module. Load system modules directly from
@@ -43,23 +54,41 @@ export function createWindowsPowerShellSecurityArgs(script, values = []) {
 }
 
 export async function readWindowsAuthenticodeSignature(filePath) {
-  const script = [
-    "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false);",
-    "$signature=Get-AuthenticodeSignature -LiteralPath $zcodeArg0;",
-    "@{status=[int]$signature.Status;subject=$signature.SignerCertificate.Subject}|ConvertTo-Json -Compress;",
-  ].join("");
-  const stdout = await new Promise((resolve, reject) => {
-    childProcess.execFile(
-      "powershell.exe",
-      createWindowsPowerShellSecurityArgs(script, [filePath]),
-      { encoding: "utf8", timeout: 30_000, windowsHide: true },
-      (error, output, stderr) => {
-        if (error || stderr) reject(error ?? new Error(stderr));
-        else resolve(output);
-      },
-    );
-  });
-  return JSON.parse(stdout.replace(/^\uFEFF/u, "").trim());
+  const filePathLiteral = escapePowerShellLiteral(filePath);
+  // The JSON goes through a private file, not stdout: console encoding and stray host output no longer
+  // decide whether the signature result parses.
+  const outputDir = await mkdtemp(join(tmpdir(), "zcode-signature-"));
+  try {
+    const outputPath = join(outputDir, "signature.json");
+    const script = [
+      `$zcodeArg0=${filePathLiteral};`,
+      `$zcodeSignatureOutput=${escapePowerShellLiteral(outputPath)};`,
+      "$ProgressPreference='SilentlyContinue';",
+      "$ErrorActionPreference='Stop';",
+      "try{",
+      "$securityModule=Join-Path $PSHOME 'Modules/Microsoft.PowerShell.Security/Microsoft.PowerShell.Security.psd1';",
+      "Import-Module -Name $securityModule -Force -ErrorAction Stop;",
+      "$signature=Microsoft.PowerShell.Security\\Get-AuthenticodeSignature -LiteralPath $zcodeArg0;",
+      "@{status=[int]$signature.Status;subject=$signature.SignerCertificate.Subject}|ConvertTo-Json -Compress|Out-File -LiteralPath $zcodeSignatureOutput -Encoding utf8 -NoNewline;",
+      "}catch{Write-Error ('Windows Authenticode query failed: ' + $_.Exception.Message) -ErrorAction Continue;exit 27};",
+    ].join("");
+    await new Promise((resolve, reject) => {
+      childProcess.execFile(
+        "powershell.exe",
+        createEncodedPowerShellArgs(script),
+        { encoding: "utf8", timeout: 30_000, windowsHide: true },
+        (error, _output, stderr) => {
+          if (error) reject(error);
+          else if (stderr) reject(new Error(stderr));
+          else resolve();
+        },
+      );
+    });
+    const text = await readFile(outputPath, "utf8");
+    return JSON.parse(text.replace(/^\uFEFF/u, "").trim());
+  } finally {
+    await rm(outputDir, { recursive: true, force: true });
+  }
 }
 
 export async function verifyWindowsAuthenticodeSignature(filePath) {

@@ -1,4 +1,9 @@
-import { BIGMODEL_PROVIDER_ID, type OAuthProviderId, ZAI_PROVIDER_ID } from "./oauth.js";
+import {
+  BIGMODEL_PROVIDER_ID,
+  type OAuthProviderId,
+  ZAI_CN_PROVIDER_ID,
+  ZAI_PROVIDER_ID,
+} from "./oauth.js";
 import { BUILTIN_MODEL_PROVIDER_IDS, type BuiltinModelProviderId } from "./model-provider-types.js";
 import { ZCODE_ENV } from "./env.js";
 import { buildBigModelCodingPlanTeamManageUrl } from "./zcodeEndpoint.js";
@@ -123,6 +128,18 @@ export function resolveProviderFamilyDomainFromOAuthProvider(
     return "bigmodel";
   }
   return null;
+}
+
+/**
+ * Family whose Start Plan a login unlocks. A China-region Z.ai login (`zai_cn`) carries no family
+ * credential, but its ZCode JWT is valid for the bigmodel Start Plan.
+ */
+export function resolveStartPlanFamilyFromOAuthProvider(
+  provider: OAuthProviderId | string | null | undefined,
+): ProviderFamilyDomain | null {
+  return provider === ZAI_CN_PROVIDER_ID
+    ? "bigmodel"
+    : resolveProviderFamilyDomainFromOAuthProvider(provider);
 }
 
 export function shouldShowModelProviderFamilyForDomain(params: {

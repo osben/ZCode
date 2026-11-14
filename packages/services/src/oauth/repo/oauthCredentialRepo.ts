@@ -19,6 +19,7 @@ import {
   OAUTH_LINKED_BIGMODEL_KEY,
   isZaiOAuthProvider,
   isBuiltinOAuthProvider,
+  resolveStartPlanFamilyFromOAuthProvider,
 } from "@zcode/shared";
 import type { ICredentialService } from "../../credential/credential.js";
 import type { LocalCredentialService } from "#src/credential/credentialService.js";
@@ -170,9 +171,12 @@ export interface OAuthAccountMaterial {
   zcodeJwtToken: string | null;
 }
 
+/** Start Plan authorization material: the account identity and ZCode JWT, never the family access token. */
+export type OAuthStartPlanMaterial = Omit<OAuthAccountMaterial, "accessToken">;
+
 export function isSameOAuthAccountMaterial(
-  left: OAuthAccountMaterial | null,
-  right: OAuthAccountMaterial | null,
+  left: OAuthAccountMaterial | OAuthStartPlanMaterial | null,
+  right: OAuthAccountMaterial | OAuthStartPlanMaterial | null,
 ): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
 }
@@ -329,6 +333,12 @@ export class OAuthCredentialRepo {
     return this.materialFromSnapshot(await this.loadSessionSnapshot(), family);
   }
 
+  async loadStartPlanMaterial(
+    family: ProviderFamilyDomain,
+  ): Promise<OAuthStartPlanMaterial | null> {
+    return this.startPlanMaterialFromSnapshot(await this.loadSessionSnapshot(), family);
+  }
+
   async loadWebsiteSession(): Promise<OAuthWebsiteSession | null> {
     const snapshot = await this.loadSessionSnapshot();
     const provider = snapshot[ACTIVE_PROVIDER_KEY];
@@ -382,6 +392,33 @@ export class OAuthCredentialRepo {
       sessionRevision: snapshot[SESSION_REVISION_KEY] ?? null,
       accountIdentity: linked?.customerId ?? profile.id,
       accessToken: linked?.accessToken ?? tokens.accessToken,
+      zcodeJwtToken: tokens.zcodeJwtToken ?? null,
+    };
+  }
+
+  private startPlanMaterialFromSnapshot(
+    snapshot: Readonly<Record<string, string | null>>,
+    family: ProviderFamilyDomain,
+  ): OAuthStartPlanMaterial | null {
+    const material = this.materialFromSnapshot(snapshot, family);
+    if (material) {
+      const { accessToken: _accessToken, ...startPlanMaterial } = material;
+      return startPlanMaterial;
+    }
+    // A zai_cn login has no family material, yet its ZCode identity authorizes the bigmodel Start Plan.
+    const loginProvider = snapshot[ACTIVE_PROVIDER_KEY];
+    if (!loginProvider || resolveStartPlanFamilyFromOAuthProvider(loginProvider) !== family) {
+      return null;
+    }
+    const profile = this.profileFromSnapshot(snapshot, loginProvider);
+    const tokens = this.tokenSetFromSnapshot(snapshot, loginProvider);
+    if (!profile || !tokens) return null;
+    return {
+      family,
+      loginProvider,
+      zcodeUserId: profile.id,
+      sessionRevision: snapshot[SESSION_REVISION_KEY] ?? null,
+      accountIdentity: profile.id,
       zcodeJwtToken: tokens.zcodeJwtToken ?? null,
     };
   }
