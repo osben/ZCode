@@ -38,7 +38,7 @@ async fn the_subject_is_the_first_string_field_in_nodes_order() {
     assert!(allowed(&decide(&rule, input).await));
     let patch = [(RuleBehavior::Allow, "mcp__docs__search(*** Begin Patch*)")];
     assert!(allowed(
-        &decide(&patch, json!({"patch_text": "*** Begin Patch\nx"})).await
+        &decide(&patch, json!({"patch_text": "*** Begin Patch x"})).await
     ));
     let text = [(RuleBehavior::Allow, "mcp__docs__search(hello)")];
     assert!(allowed(&decide(&text, json!("hello")).await));
@@ -55,6 +55,30 @@ async fn prefix_and_wildcard_contents_match_like_node() {
     ));
     assert!(!allowed(
         &decide(&prefix, json!({"command": "npm runner"})).await
+    ));
+    // Node's `.*` has no `s` flag: a `*` never spans a line terminator.
+    for multiline in [
+        "*** Begin Patch\nx",
+        "*** Begin Patch\rx",
+        "*** Begin Patch\u{2028}x",
+    ] {
+        let patch = [(RuleBehavior::Allow, "mcp__docs__search(*** Begin Patch*)")];
+        assert!(!allowed(
+            &decide(&patch, json!({"patch_text": multiline})).await
+        ));
+    }
+    let middle = [(RuleBehavior::Allow, "mcp__docs__search(a*b*c)")];
+    assert!(allowed(&decide(&middle, json!({"command": "a1b2c"})).await));
+    assert!(!allowed(
+        &decide(&middle, json!({"command": "a\nb2c"})).await
+    ));
+    assert!(!allowed(
+        &decide(&middle, json!({"command": "a1b\u{2029}c"})).await
+    ));
+    // `x:*` is `startsWith`, which does cross lines.
+    let prefix = [(RuleBehavior::Allow, "mcp__docs__search(git:*)")];
+    assert!(allowed(
+        &decide(&prefix, json!({"command": "git a\nb"})).await
     ));
     let wildcard = [(RuleBehavior::Allow, "mcp__docs__search(/docs/*.md)")];
     assert!(allowed(

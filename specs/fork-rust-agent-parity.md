@@ -335,7 +335,7 @@ Acceptance:
 - The Host (`commands.rs` `Offered::of`) applies the same fallback when an ask's suggestions are empty. Non-empty suggestions win. An ask that is `once` or `independent` still offers no always-allow, and `allowAlways` on it is a deny.
 - A content rule on a tool with no permission subject matches like Node (`ruleSubjects` and `matchesRuleContent`; `policy/src/generic.rs`):
   - The subject is a string input, or the first string field among `command`, `url`, `file_path`, `path`, `pattern`, `patch_text`. With no subject, a content rule does not match.
-  - `x:*` matches `x` alone or followed by a space or tab. A `*` matches any text. Anything else must be equal.
+  - `x:*` matches `x` alone or followed by a space or tab. A `*` matches any text within one line (Node's `.*` has no `s` flag), so a rule never spans a line break the way `x:*` can. Anything else must be equal.
   - Content deny, then ask, then allow rules. A whole-tool deny or ask still comes first. A content deny beats a whole-tool allow.
 - Before this, any content rule on an MCP tool was ignored in Rust, including one written by hand. Rules are stored in the shared project settings, so a remembered rule allows the same calls in both builds; the fallback never widens one call's approval to the whole tool when Node would not.
 - Known gap: the TUI's ask hides always-allow when there are no suggestions.

@@ -30,8 +30,8 @@ fn subject(input: &Value) -> Option<&str> {
         .find_map(|field| fields.get(*field).and_then(Value::as_str))
 }
 
-/// Node `matchesRuleContent`: `x:*` is `x` alone or followed by a space or tab, a `*` matches any text, otherwise the
-/// content must be equal.
+/// Node `matchesRuleContent`: `x:*` is `x` alone or followed by a space or tab, a `*` matches any text within one
+/// line, otherwise the content must be equal.
 fn matches(subject: &str, content: &str) -> bool {
     if let Some(prefix) = content.strip_suffix(":*") {
         return subject
@@ -44,8 +44,11 @@ fn matches(subject: &str, content: &str) -> bool {
     subject == content
 }
 
-/// `^part*part*part$` with literal parts (Node `wildcardToRegExp`).
+/// `^part*part*part$` with literal parts (Node `wildcardToRegExp`). Node's `.*` has no `s` flag, so the text a `*`
+/// stands for holds no line terminator. Taking each part at its first match is enough: a later match only makes the
+/// gap before it longer.
 fn wildcard(subject: &str, pattern: &str) -> bool {
+    let gap = |text: &str| !text.contains(['\n', '\r', '\u{2028}', '\u{2029}']);
     let mut parts = pattern.split('*');
     let first = parts.next().unwrap_or_default();
     let Some(mut rest) = subject.strip_prefix(first) else {
@@ -57,11 +60,11 @@ fn wildcard(subject: &str, pattern: &str) -> bool {
     };
     for part in middle {
         match rest.find(part) {
-            Some(at) => rest = &rest[at + part.len()..],
-            None => return false,
+            Some(at) if gap(&rest[..at]) => rest = &rest[at + part.len()..],
+            _ => return false,
         }
     }
-    rest.ends_with(last)
+    rest.strip_suffix(last).is_some_and(gap)
 }
 
 /// The built-in check of a tool with no subject: its content deny, ask and allow rules, in that order.
