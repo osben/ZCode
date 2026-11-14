@@ -21,6 +21,7 @@ use rust_cli_base::names::vars;
 
 use crate::config::{CommandHook, HookShell};
 use crate::result::Raw;
+use crate::transcript::TranscriptGuard;
 
 /// 项目目录的环境变量名（两套名字都给，同 Node）。
 const PROJECT_DIR_VARS: [&str; 2] = [vars::ZCODE_PROJECT_DIR, vars::CLAUDE_PROJECT_DIR];
@@ -140,9 +141,26 @@ pub(crate) struct CommandRun<'a> {
     pub hook: &'a CommandHook,
     pub input: &'a str,
     pub timeout_ms: u64,
+    /// Fork: the run's Node transcript file (specs/fork-rust-agent-parity.md "Command hook stdin").
+    pub transcript: Option<TranscriptGuard>,
 }
 
-pub(crate) async fn run(run: CommandRun<'_>, cancel: CancellationToken) -> Raw {
+pub(crate) async fn run(mut run: CommandRun<'_>, cancel: CancellationToken) -> Raw {
+    // Held across the run: if this future is dropped, the guard's drop removes the transcript.
+    let mut transcript = run.transcript.take();
+    let raw = command(run, cancel, &mut transcript).await;
+    // A foreground run is over (Node's callback `finally`); an async run took its guard.
+    if let Some(transcript) = transcript {
+        transcript.remove().await;
+    }
+    raw
+}
+
+async fn command(
+    run: CommandRun<'_>,
+    cancel: CancellationToken,
+    transcript: &mut Option<TranscriptGuard>,
+) -> Raw {
     let project_dir = run.workspace.root.as_str().to_owned();
     let operation = run.operation.operation.clone();
     let session = match &run.operation.origin {
@@ -178,6 +196,10 @@ pub(crate) async fn run(run: CommandRun<'_>, cancel: CancellationToken) -> Raw {
     };
     if run.hook.background {
         // async：不等待，结果不回送（D6）；丢掉流不影响命令。
+        // Fork: the transcript stays until the process ends (Node keeps it for the background run).
+        if let Some(transcript) = transcript.take() {
+            drop(tokio::spawn(transcript.remove_after(events)));
+        }
         return Raw::Backgrounded;
     }
     let mut captured = Captured::default();

@@ -48,6 +48,7 @@ async fn run_with(
             hook,
             input: "{\"hook_event_name\":\"Stop\"}",
             timeout_ms,
+            transcript: None,
         },
         cancel,
     )

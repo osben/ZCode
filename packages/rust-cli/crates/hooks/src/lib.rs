@@ -64,8 +64,9 @@ use tokio_util::sync::CancellationToken;
 
 pub use config::{HookSource, HooksConfig, HooksSettings};
 pub use plugin::PluginHooks;
-pub use run::HookPorts;
+pub use run::{HookPorts, NodeStdinPorts};
 
+use crate::config::HookCommand;
 use crate::effective::Effective;
 use crate::fold::Fold;
 use crate::http::HttpPolicy;
@@ -220,12 +221,18 @@ impl HookRunner for HookEngine {
         let hook_name = input::hook_name(event.name.as_str(), query.as_deref());
         let cwd = self.cwd(&event).await;
         let input = input::build(&event, &cwd).to_string();
+        // Only command hooks read the Node stdin (HTTP and prompt hooks keep the Claude Code input).
         let node = self
             .ports
-            .transcripts
-            .is_some()
-            .then(|| transcript::NodeStdin {
-                input: input::node_compatible(&event, &cwd),
+            .node_stdin
+            .as_ref()
+            .filter(|_| {
+                hooks
+                    .iter()
+                    .any(|hook| matches!(hook, HookCommand::Command(_)))
+            })
+            .map(|stdin| transcript::NodeStdin {
+                input: input::node_compatible(&event, &cwd, stdin.clock.now_ms()),
                 transcript: input::transcript_text(&event),
             });
         let batch = Batch {

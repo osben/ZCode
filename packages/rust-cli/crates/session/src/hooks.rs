@@ -55,6 +55,20 @@ fn event(
     }
 }
 
+/// The Notification of a permission prompt. Fork: the session mode goes to the Node stdin only (Node sends `mode` on
+/// every event; specs/fork-rust-agent-parity.md "Command hook stdin").
+fn permission_notification(meta: &SessionMeta, tool: &str, mode: PermissionMode) -> HookEvent {
+    let payload = json!({
+        "message": format!("ZCode needs your permission to use {tool}"),
+        "notification_type": "permission_prompt",
+    });
+    let context = HookContext {
+        session_mode: Some(mode),
+        ..HookContext::default()
+    };
+    event(meta, HookEventName::Notification, payload, context)
+}
+
 /// SessionStart 的载荷：`{source, model, session_title?}`（hooks.md §7）。
 pub(crate) fn session_start(
     meta: &SessionMeta,
@@ -249,16 +263,7 @@ impl Actor {
         if !self.deps.hooks.has_hooks(HookEventName::Notification) {
             return None;
         }
-        let payload = json!({
-            "message": format!("ZCode needs your permission to use {tool}"),
-            "notification_type": "permission_prompt",
-        });
-        let hook = event(
-            &self.meta,
-            HookEventName::Notification,
-            payload,
-            HookContext::default(),
-        );
+        let hook = permission_notification(&self.meta, tool, self.mode());
         let hooks = self.deps.hooks.clone();
         let cancel = CancellationToken::new();
         let token = cancel.clone();

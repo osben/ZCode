@@ -299,9 +299,14 @@ pub struct HookTranscript {
 /// hook stdin"). The hook engine gives command hooks the Node-compatible stdin only when it has this port.
 #[async_trait]
 pub trait HookTranscripts: Send + Sync {
-    /// Writes `text` to `transcript.jsonl` in a new private directory `name` under the temp root.
-    async fn create(&self, name: &str, text: &str) -> std::io::Result<HookTranscript>;
-    /// Removes the transcript's directory; a missing directory is not an error.
+    /// Where the transcript `name` goes (`<root>/<name>/transcript.jsonl`), without touching the disk. Refuses a
+    /// `name` that is not one plain path component. The caller holds the result as its removal guard before it
+    /// creates the file, so a run dropped mid-way still removes the directory.
+    fn locate(&self, name: &str) -> std::io::Result<HookTranscript>;
+    /// Writes `text` as the transcript file in a new private directory (the file is created new, mode 0600).
+    async fn create(&self, transcript: &HookTranscript, text: &str) -> std::io::Result<()>;
+    /// Removes the transcript's directory; a missing directory is not an error, a directory outside the root is
+    /// refused.
     async fn remove(&self, transcript: &HookTranscript) -> std::io::Result<()>;
 }
 

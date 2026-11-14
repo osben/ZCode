@@ -68,7 +68,10 @@ pub(crate) fn hooks(
             operations: operations.clone(),
             // 大输出与工具结果落在同一个存储（hooks.md §4.5，修复线 F15）。
             artifacts: ports.artifacts.clone(),
-            transcripts,
+            node_stdin: transcripts.map(|transcripts| rust_cli_hooks::NodeStdinPorts {
+                transcripts,
+                clock: ports.clock.clone(),
+            }),
         })
         .with_incognito(incognito.clone()),
     )

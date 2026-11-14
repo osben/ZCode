@@ -477,15 +477,24 @@ impl Pipeline {
                     other => (Ok(other), Value::Null),
                 };
                 let interrupted = matches!(failure, Ok(ToolError::Cancelled) | Err(_));
+                // Node's CoreError type of the failure (`error_details.type`).
+                let kind = match &failure {
+                    Ok(ToolError::InvalidInput { .. }) => "invalid_input",
+                    Ok(ToolError::Cancelled) | Err(_) => "tool_cancelled",
+                    Ok(_) => "tool_execution_failed",
+                };
                 let text = match &failure {
                     Ok(ToolError::Cancelled) => INTERRUPT_FOR_TOOL_USE.to_owned(),
                     Ok(other) => format_error(&other.to_string()),
                     Err(message) => message.clone(),
                 };
-                let payload = tag(
-                    hooks::post_tool_use_failure(tool.name(), &input, &text, interrupted, &context),
-                    machine,
-                );
+                let mut payload =
+                    hooks::post_tool_use_failure(tool.name(), &input, &text, interrupted, &context);
+                // Node's failure input carries the error object next to its message (`error_details`).
+                if self.node_hooks {
+                    payload["error_details"] = serde_json::json!({"message": text, "type": kind});
+                }
+                let payload = tag(payload, machine);
                 let event =
                     hooks::event(HookEventName::PostToolUseFailure, &session, payload).await;
                 let mut post = self.hooks.run(event, context.cancel.clone()).await;

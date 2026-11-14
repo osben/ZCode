@@ -339,12 +339,6 @@ async fn hook_messages_and_stops_surround_the_result() {
         ],
     )
     .await;
-    let ids = |messages: &[Message]| {
-        messages
-            .iter()
-            .map(|m| m.id().as_str().to_owned())
-            .collect::<Vec<_>>()
-    };
     assert_eq!(text(&ran.execution.output), "rewritten");
     assert_eq!(ids(&ran.execution.before), ["pre ctx"]);
     assert_eq!(ids(&ran.execution.after), ["post ctx", "pre stop"]);
@@ -403,6 +397,7 @@ async fn under_node_hooks_the_pre_tool_context_follows_the_result() {
         ids(&ran.execution.after),
         ["pre ctx", "post ctx", "pre stop"]
     );
+    assert!(ran.execution.prevent_continuation);
 }
 
 /// Fork: a refused call keeps its PreToolUse context after the refusal: a hook deny, an `updatedInput` that fails the
@@ -483,14 +478,7 @@ async fn a_pre_tool_use_stop_refuses_before_the_tool_runs() {
     };
     let ran = run(allow_gate, &[(HookEventName::PreToolUse, pre_outcome)]).await;
     assert_eq!(text(&ran.execution.output), "frozen");
-    assert_eq!(
-        ran.execution
-            .after
-            .iter()
-            .map(|m| m.id().as_str().to_owned())
-            .collect::<Vec<_>>(),
-        ["pre stop"]
-    );
+    assert_eq!(ids(&ran.execution.after), ["pre stop"]);
     assert!(ran.execution.prevent_continuation);
 }
 
@@ -642,9 +630,101 @@ async fn under_node_hooks_the_permission_request_names_the_tool_call() {
             ..HookOutcome::default()
         },
     );
-    let ran = run_ordered(ask_gate(), &[deny], true).await;
+    let ran = run_ordered(ask_gate(), std::slice::from_ref(&deny), true).await;
     assert_eq!(ran.events[1].name, HookEventName::PermissionRequest);
     let id = &ran.events[0].payload["tool_use_id"];
     assert!(id.is_string(), "{id:?}");
     assert_eq!(&ran.events[1].payload["tool_use_id"], id);
+    let claude = run_ordered(ask_gate(), &[deny], false).await;
+    assert_eq!(claude.events[1].name, HookEventName::PermissionRequest);
+    assert!(claude.events[1].payload.get("tool_use_id").is_none());
+}
+
+/// Fork: under Node hooks the failure input carries Node's `error_details` (`{message, type}`, the CoreError type);
+/// the Claude Code input has only `error` (specs/fork-rust-agent-parity.md "Command hook stdin").
+#[tokio::test]
+async fn under_node_hooks_a_failure_names_its_error_type() {
+    let failures = [
+        (
+            ToolError::Stopped {
+                message: "stopped".to_owned(),
+                display: Value::Null,
+            },
+            "tool_cancelled",
+        ),
+        (ToolError::Cancelled, "tool_cancelled"),
+        (
+            ToolError::InvalidInput {
+                message: "bad".to_owned(),
+            },
+            "invalid_input",
+        ),
+        (
+            ToolError::Failed {
+                message: "boom".to_owned(),
+            },
+            "tool_execution_failed",
+        ),
+    ];
+    for (failure, kind) in failures {
+        for node_hooks in [true, false] {
+            let hooks = Arc::new(Hooks::default());
+            let pipeline = Pipeline::new(
+                Gate::new(
+                    PermissionDecision::Allow {
+                        updated_input: None,
+                    },
+                    None,
+                ),
+                hooks.clone(),
+            )
+            .with_node_hooks(node_hooks);
+            let (progress, _updates) = mpsc::channel(4);
+            let tool = Arc::new(Failing(Mutex::new(Some(failure.clone()))));
+            let _ = pipeline
+                .execute(
+                    tool,
+                    json!({}),
+                    context(Arc::new(ScriptedInteractions::allowing())),
+                    progress,
+                )
+                .await;
+            let events = hooks.seen.lock().unwrap().clone();
+            let payload = &events
+                .iter()
+                .find(|event| event.name == HookEventName::PostToolUseFailure)
+                .expect("the failure hook ran")
+                .payload;
+            if node_hooks {
+                assert_eq!(payload["error_details"]["type"], kind);
+                assert_eq!(payload["error_details"]["message"], payload["error"]);
+            } else {
+                assert!(payload.get("error_details").is_none(), "{payload}");
+            }
+        }
+    }
+}
+
+/// A tool that fails once with the given error.
+struct Failing(Mutex<Option<ToolError>>);
+
+#[async_trait]
+impl Tool for Failing {
+    fn name(&self) -> &str {
+        "Agent"
+    }
+    fn input_schema(&self) -> Value {
+        json!({"type": "object"})
+    }
+    fn description(&self, _context: &PromptContext) -> String {
+        String::new()
+    }
+    async fn call(
+        &self,
+        _input: Value,
+        _context: ToolUseContext,
+        _progress: mpsc::Sender<ToolProgress>,
+    ) -> Result<ToolOutput, ToolError> {
+        Err(self.0.lock().unwrap().take().expect("called once"))
+    }
 }

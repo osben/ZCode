@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use futures_util::stream::{FuturesUnordered, StreamExt};
-use rust_cli_kernel_api::clock::Ids;
+use rust_cli_kernel_api::clock::{Clock, Ids};
 use rust_cli_kernel_api::env::{OperationContext, Operations, Origin, WorkspaceRef};
 use rust_cli_kernel_api::hooks::{HookContext, HookEventName, HookHttp, HookTranscripts};
 use rust_cli_kernel_api::ids::SessionId;
@@ -40,7 +40,16 @@ pub struct HookPorts {
     pub artifacts: Arc<dyn ArtifactStore>,
     /// Fork: command hooks get Node's stdin and a transcript file when set (the app-server sets it;
     /// specs/fork-rust-agent-parity.md "Command hook stdin").
-    pub transcripts: Option<Arc<dyn HookTranscripts>>,
+    pub node_stdin: Option<NodeStdinPorts>,
+}
+
+/// Fork: what Node's command hook stdin needs.
+#[derive(Clone)]
+pub struct NodeStdinPorts {
+    /// Each run's transcript file.
+    pub transcripts: Arc<dyn HookTranscripts>,
+    /// The input's `timestamp`.
+    pub clock: Arc<dyn Clock>,
 }
 
 /// 一次事件的执行参数。
@@ -53,7 +62,7 @@ pub(crate) struct Batch<'a> {
     pub default_timeout_ms: u64,
     pub http: HttpPolicy<'a>,
     pub prompt_model: Option<&'a ModelSelection>,
-    /// Fork: the Node stdin for command hooks; set with [`HookPorts::transcripts`].
+    /// Fork: the Node stdin for command hooks; set with [`HookPorts::node_stdin`].
     pub node: Option<NodeStdin>,
 }
 
@@ -94,27 +103,26 @@ async fn execute(
     let timeout = timeout_ms(hook, batch.default_timeout_ms);
     match hook {
         HookCommand::Command(command) => {
-            let staged = match (&ports.transcripts, &batch.node) {
-                (Some(transcripts), Some(node)) => {
-                    Some(transcript::stage(ports, transcripts, node, command.background).await)
+            let staged = match (&ports.node_stdin, &batch.node) {
+                (Some(stdin), Some(node)) => {
+                    Some(transcript::stage(ports, &stdin.transcripts, node).await)
                 }
                 _ => None,
+            };
+            let (text, transcript) = match staged {
+                Some(staged) => (Some(staged.text), staged.guard),
+                None => (None, None),
             };
             let run = CommandRun {
                 commands: ports.commands.as_ref(),
                 workspace: batch.workspace,
                 operation: operation(ports, batch),
                 hook: command,
-                input: staged
-                    .as_ref()
-                    .map_or(batch.input.as_str(), |staged| staged.text.as_str()),
+                input: text.as_deref().unwrap_or(batch.input.as_str()),
                 timeout_ms: timeout,
+                transcript,
             };
-            let raw = command::run(run, cancel).await;
-            if let Some(staged) = staged {
-                staged.remove().await;
-            }
-            Executed::Raw(raw)
+            Executed::Raw(command::run(run, cancel).await)
         }
         HookCommand::Http(hook) => Executed::Raw(
             http::run(
