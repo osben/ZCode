@@ -24,6 +24,8 @@ impl HelperRequests for Answers {
         }
         Ok(json!({"cancelled": cancel.is_cancelled(), "params": params}))
     }
+
+    fn session_delta(&self, _session: &str, _delta: Value) {}
 }
 
 /// A started helper (its generation is `1`) whose requests [`Answers`] answers.

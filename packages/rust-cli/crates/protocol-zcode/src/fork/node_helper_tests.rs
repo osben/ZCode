@@ -1257,3 +1257,6 @@ mod sessions;
 
 #[path = "node_helper_requests_tests.rs"]
 mod requests;
+
+#[path = "node_helper_panels_tests.rs"]
+mod panels;

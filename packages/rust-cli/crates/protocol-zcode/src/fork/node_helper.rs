@@ -221,6 +221,9 @@ struct Running {
     pipes: HashMap<String, mcp::Pipe>,
     /// F3: the helper sessions opened (or opening) in this generation. An open session blocks idle reclaim.
     sessions: HashMap<String, sessions::Opening>,
+    /// F3: the panel instances this generation opened and nobody closed. Dropped with the slot, it closes them on
+    /// their sessions' streams.
+    panels: Box<panels::Panels>,
     /// Dropped with the slot: kills the process tree. Always dropped after the state lock is released, since it comes
     /// from an injected launcher.
     _guard: Box<dyn Send>,
@@ -305,6 +308,7 @@ impl NodeHelper {
                 result
             }
         };
+        self.panel_answered(generation, method, params, &result);
         Some(result)
     }
 
@@ -491,6 +495,10 @@ impl NodeHelper {
             heard: 0,
             pipes: HashMap::new(),
             sessions: HashMap::new(),
+            panels: Box::new(panels::Panels::new(
+                self.myself.clone(),
+                self.spawner.clone(),
+            )),
             _guard: guard,
         });
         state.retry_at = None;
@@ -780,13 +788,19 @@ impl Relay {
 impl Service for Relay {
     /// F3: pipe traffic is routed in the read loop, so a connection's messages reach Rust's MCP client in the order the
     /// helper sent them (`serve` spawns every other notification as its own task).
+    /// `helper/session/delta` too, so a session's deltas keep the helper's order on its stream.
     fn control(&self, method: &str, params: &Value) -> bool {
-        if !mcp::PIPE_NOTIFICATIONS.contains(&method) {
+        let pipe = mcp::PIPE_NOTIFICATIONS.contains(&method);
+        if !pipe && method != panels::SESSION_DELTA {
             return false;
         }
         if let Some(helper) = self.helper.upgrade() {
             helper.heard(self.generation);
-            helper.pipe_event(self.generation, method, params);
+            if pipe {
+                helper.pipe_event(self.generation, method, params);
+            } else {
+                helper.session_delta(self.generation, params);
+            }
         }
         true
     }
@@ -823,6 +837,8 @@ impl Service for Relay {
 
 #[path = "node_helper_mcp.rs"]
 mod mcp;
+#[path = "node_helper_panels.rs"]
+mod panels;
 #[path = "node_helper_requests.rs"]
 mod requests;
 #[path = "node_helper_sessions.rs"]

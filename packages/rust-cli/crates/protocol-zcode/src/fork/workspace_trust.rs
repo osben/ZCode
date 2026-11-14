@@ -257,4 +257,4 @@ fn publish(live: &Bridged<Live>, admission: Admission, ticket: u64) {
 
 #[cfg(test)]
 #[path = "workspace_trust_tests.rs"]
-mod tests;
+pub(crate) mod tests;

@@ -30,6 +30,10 @@ pub(crate) trait HelperRequests: Send + Sync {
         params: Value,
         cancel: CancellationToken,
     ) -> Result<Value, RpcError>;
+
+    /// `helper/session/delta`: a live plugin UI delta for `session`'s stream (one of Node's four `pluginUi.*` ops).
+    /// Called in the helper connection's read loop, so it must not block.
+    fn session_delta(&self, session: &str, delta: Value);
 }
 
 #[derive(Default)]
@@ -72,7 +76,7 @@ impl NodeHelper {
         result
     }
 
-    fn answers(&self) -> Option<std::sync::Arc<dyn HelperRequests>> {
+    pub(super) fn answers(&self) -> Option<std::sync::Arc<dyn HelperRequests>> {
         self.requests
             .lock_unpoisoned()
             .answers

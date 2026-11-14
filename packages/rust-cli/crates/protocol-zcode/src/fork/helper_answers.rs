@@ -1,6 +1,7 @@
 //! Fork: the protocol server answers the Node helper's requests (specs/fork-rust-node-helper.md F3, "Helper → Rust
 //! requests"). `helper/authorizeAppTool` opens the session's projection (its prompt reaches the Host on the session's
-//! stream), then has the kernel run its tool pipeline on the App call.
+//! stream), then has the kernel run its tool pipeline on the App call. `helper/session/delta` reaches the session's live
+//! stream.
 
 use async_trait::async_trait;
 use rust_cli_kernel_api::app_tool::{AppToolCall, AppToolError};
@@ -34,6 +35,18 @@ impl HelperRequests for Server {
         }
         self.live(&call.session).await.map_err(kernel_error)?;
         answer(self.kernel.authorize_app_tool(call).await)
+    }
+
+    /// Appended in the session's pump order. A session without a live projection has no stream to show it on, so the
+    /// delta is dropped, as Node drops a live-only event nobody subscribes to.
+    fn session_delta(&self, session: &str, delta: Value) {
+        let Some(live) = self.bridge.get(&SessionId::new(session)) else {
+            return;
+        };
+        let sink = live.sink.clone();
+        live.run(Box::pin(async move {
+            sink.plugin_ui(delta).await;
+        }));
     }
 }
 
