@@ -30,6 +30,8 @@ pub struct RecordingSink {
     compaction_flags: Mutex<Vec<bool>>,
     /// Fork: the next `commit_message` fails ([`Self::fail_next_commit_message`]).
     fail_commit: std::sync::atomic::AtomicBool,
+    /// Fork: the ACP agent titles handed to `external_title`, in order.
+    titles: Mutex<Vec<String>>,
 }
 
 impl RecordingSink {
@@ -60,6 +62,11 @@ impl RecordingSink {
     pub fn compaction_flags(&self) -> Vec<bool> {
         self.compaction_flags.lock_unpoisoned().clone()
     }
+
+    /// Fork: the ACP agent titles the run handed over, in order.
+    pub fn titles(&self) -> Vec<String> {
+        self.titles.lock_unpoisoned().clone()
+    }
 }
 
 #[async_trait]
@@ -86,6 +93,10 @@ impl super::OpsOverride for RecordingSink {}
 
 #[async_trait]
 impl RunSink for RecordingSink {
+    async fn external_title(&self, title: String) {
+        self.titles.lock_unpoisoned().push(title);
+    }
+
     async fn commit_message(&self, message: Message) -> Result<(), StoreError> {
         if self
             .fail_commit

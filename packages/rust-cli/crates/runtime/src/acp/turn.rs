@@ -12,17 +12,20 @@ use rust_cli_acp::{
     AcpError, AcpErrorCode, AcpLaunch, PermissionAnswer, PermissionAsk, PromptResponse,
     RuntimeEvent,
 };
+use rust_cli_acp::{PlanEntry, ToolCallInfo};
 use rust_cli_kernel_api::abort::{Abort, AbortReason};
-use rust_cli_kernel_api::ids::ToolUseId;
+use rust_cli_kernel_api::agents::{TaskRecord, TaskStatus};
+use rust_cli_kernel_api::ids::{SessionId, ToolUseId};
 use rust_cli_kernel_api::interaction::{Answer, PermissionAnswer as UserAnswer};
 use rust_cli_kernel_api::message::{
-    AssistantMessage, ContentBlock, ImageSource, Message, StopReason, Usage, UserMessage,
-    UserOrigin,
+    AssistantMessage, ContentBlock, ExternalTool, ImageSource, Message, StopReason,
+    ToolResultContent, Usage, UserMessage, UserOrigin,
 };
 use rust_cli_kernel_api::model::BlockDelta;
 use rust_cli_kernel_api::orchestration::{
     InteractionRequest, QueryError, QueryEvent, QueryRequest, QueryStop, RunSink,
 };
+use rust_cli_kernel_api::tool::ToolOutput;
 use rust_cli_kernel_api::user_input::INTERRUPT_TEXTS;
 use serde_json::{Value, json};
 
@@ -43,10 +46,12 @@ pub(super) async fn run(
     let mut turn = Turn {
         host,
         sink,
+        session: request.session.clone(),
         model: request.selection.model.clone(),
         response: 0,
         segment: Vec::new(),
-        tools: HashMap::new(),
+        rows: HashMap::new(),
+        open: Vec::new(),
         halt: abort.token().child_token(),
         failed: None,
     };
@@ -126,23 +131,25 @@ pub(super) async fn run(
     }
     turn.withdraw_asks(&mut asks).await;
     drop(guard);
-    // A lost segment fails the turn like a failed commit in the query loop.
+    // A lost segment or row, or a failed plan write, fails the turn like a failed commit in the query loop. The open
+    // rows settle on screen; nothing more is written.
     if let Some(error) = turn.failed.take() {
+        turn.settle_open_live(ENDED_FAILED).await;
         return Err(error);
     }
     match outcome {
         // Node `external-agent-turn.ts`: after Stop the turn ends interrupted whatever the agent answered.
         _ if abort.is_aborted() => {
-            turn.close_segment(outcome.as_ref().ok().and_then(usage_of))
+            turn.end(outcome.as_ref().ok().and_then(usage_of), CANCELLED)
                 .await?;
             turn.aborted(&abort).await
         }
         Ok(response) => {
-            turn.close_segment(usage_of(&response)).await?;
+            turn.end(usage_of(&response), ENDED_OPEN).await?;
             Ok(QueryStop::Completed)
         }
         Err(error) => {
-            turn.close_segment(None).await?;
+            turn.end(None, ENDED_FAILED).await?;
             tracing::warn!(event = "acp.prompt_failed", agent = %agent_id, error = %error.message, "ACP agent turn failed");
             Ok(QueryStop::ApiError {
                 message: prompt_failure(&agent_id, &error),
@@ -273,6 +280,110 @@ fn usage_of(response: &PromptResponse) -> Option<Usage> {
     })
 }
 
+/// Node `closeOpen` reasons for rows still open at the turn end.
+const CANCELLED: &str = "Cancelled";
+const ENDED_FAILED: &str = "The agent turn failed before this tool finished";
+const ENDED_OPEN: &str = "The agent turn ended before this tool finished";
+
+/// Node `EXTERNAL_AGENT_TOOL_OUTPUT_MAX_CHARS` (a JS string length: UTF-16 units) and its marker.
+const OUTPUT_MAX_UNITS: usize = 32 * 1024;
+const TRUNCATION_MARKER: &str = "\n… [truncated]";
+
+/// Node `capToolOutput`, never splitting a character.
+fn cap_output(text: String) -> String {
+    let mut units = 0;
+    for (at, ch) in text.char_indices() {
+        units += ch.len_utf16();
+        if units > OUTPUT_MAX_UNITS {
+            return format!("{}{TRUNCATION_MARKER}", &text[..at]);
+        }
+    }
+    text
+}
+
+/// Node `toInput`: an object as is, `null` or missing as `{}`, anything else as `{value}`.
+fn to_input(raw: Option<&Value>) -> Value {
+    match raw {
+        None | Some(Value::Null) => json!({}),
+        Some(object @ Value::Object(_)) => object.clone(),
+        Some(other) => json!({"value": other}),
+    }
+}
+
+/// Node `toTodoItem`.
+fn todo_item(entry: &PlanEntry) -> Value {
+    let content = entry.content.trim();
+    let status = match entry.status.as_str() {
+        status @ ("pending" | "in_progress" | "completed") => status,
+        _ => "pending",
+    };
+    let priority = match entry.priority.as_str() {
+        priority @ ("high" | "medium" | "low") => priority,
+        _ => "medium",
+    };
+    json!({
+        "content": if content.is_empty() { "Untitled step" } else { content },
+        "status": status,
+        "priority": priority,
+    })
+}
+
+/// A todo as a Task v2 task (node-store `task_lists`: the `medium` priority is the placeholder, kept as no metadata).
+fn task_of(index: usize, todo: &Value) -> TaskRecord {
+    let text = |key: &str| todo[key].as_str().unwrap_or_default().to_owned();
+    let priority = text("priority");
+    TaskRecord {
+        id: (index + 1).to_string(),
+        subject: text("content"),
+        description: String::new(),
+        active_form: None,
+        owner: None,
+        status: match todo["status"].as_str() {
+            Some("in_progress") => TaskStatus::InProgress,
+            Some("completed") => TaskStatus::Completed,
+            _ => TaskStatus::Pending,
+        },
+        blocks: Vec::new(),
+        blocked_by: Vec::new(),
+        metadata: (priority != "medium")
+            .then(|| serde_json::Map::from_iter([("priority".to_owned(), json!(priority))])),
+    }
+}
+
+/// A task as Node's stored todo (`readTodos`).
+fn todo_of(task: &TaskRecord) -> Value {
+    let priority = task
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("priority"))
+        .and_then(Value::as_str)
+        .filter(|priority| ["high", "medium", "low"].contains(priority))
+        .unwrap_or("medium");
+    json!({"content": task.subject, "status": task.status.as_str(), "priority": priority})
+}
+
+/// Node `summarizeTodos`.
+fn summarize(todos: &[Value]) -> Value {
+    let count = |status: &str| todos.iter().filter(|todo| todo["status"] == status).count();
+    json!({
+        "total": todos.len(),
+        "pending": count("pending"),
+        "inProgress": count("in_progress"),
+        "completed": count("completed"),
+    })
+}
+
+/// One ACP tool or plan row of the turn (Node `ToolRow`).
+struct Row {
+    id: ToolUseId,
+    /// `acp:<kind|other>` at first sight, or `TodoWrite`; never changes.
+    name: String,
+    title: String,
+    input: Value,
+    started: bool,
+    finished: bool,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
     Text,
@@ -283,16 +394,19 @@ enum Kind {
 struct Turn<'a> {
     host: &'a AcpHost,
     sink: Arc<dyn RunSink>,
+    session: SessionId,
     model: String,
     /// The live rows of the open segment are keyed by this response number (the projection settles them by it).
     response: usize,
     /// Text and reasoning since the last tool or plan event, one block per kind in order of first appearance.
     segment: Vec<(Kind, String)>,
-    /// ACP `toolCallId` → its row id and kind, minted on first sight (rows and asks share it).
-    tools: HashMap<String, (ToolUseId, Option<String>)>,
+    /// ACP `toolCallId` → its row, opened on first sight (rows and asks share its id).
+    rows: HashMap<String, Row>,
+    /// The rows not settled yet, by ACP `toolCallId`, in the order they opened.
+    open: Vec<String>,
     /// Stop or a lost segment: cancels the prompt and withdraws the asks.
     halt: tokio_util::sync::CancellationToken,
-    /// The first segment commit that failed mid-turn; later segments are not written after it.
+    /// The first commit or plan write that failed mid-turn; nothing is written after it.
     failed: Option<QueryError>,
 }
 
@@ -303,13 +417,18 @@ impl Turn<'_> {
             RuntimeEvent::MessageChunk(text) => self.chunk(Kind::Text, text).await,
             RuntimeEvent::ThoughtChunk(text) => self.chunk(Kind::Thinking, text).await,
             RuntimeEvent::ToolCall(info) | RuntimeEvent::ToolCallUpdate(info) => {
-                if let Some(kind) = info.kind.clone() {
-                    self.tool(&info.tool_call_id).1 = Some(kind);
-                }
                 self.close_segment_logged().await;
+                self.tool_update(info).await;
             }
-            RuntimeEvent::Plan(_) => self.close_segment_logged().await,
-            RuntimeEvent::Permission { ask, reply } => return Some(self.permission(ask, reply)),
+            RuntimeEvent::Plan(entries) => {
+                self.close_segment_logged().await;
+                self.plan(&entries).await;
+            }
+            RuntimeEvent::Permission { ask, reply } => {
+                let row = self.ask_row(&ask.tool_call_id).await;
+                return Some(self.permission(row, ask, reply));
+            }
+            RuntimeEvent::SessionTitle(title) => self.sink.external_title(title).await,
             RuntimeEvent::AvailableCommands(count) => {
                 tracing::debug!(
                     event = "acp.commands",
@@ -324,15 +443,13 @@ impl Turn<'_> {
                     "ACP agent produced no output for a while"
                 );
             }
-            RuntimeEvent::SessionTitle(_)
-            | RuntimeEvent::ConfigOptions(_)
-            | RuntimeEvent::Resumed => {}
+            RuntimeEvent::ConfigOptions(_) | RuntimeEvent::Resumed => {}
         }
         None
     }
 
-    /// A tool or plan event closes the open text segment (rows follow in S3). A failed commit halts the turn, which
-    /// then fails with that error.
+    /// A tool or plan event closes the open text segment, so a row's message always follows the text before it. A
+    /// failed commit halts the turn, which then fails with that error.
     async fn close_segment_logged(&mut self) {
         if self.failed.is_some() {
             self.segment.clear();
@@ -340,27 +457,257 @@ impl Turn<'_> {
         }
         if let Err(error) = self.close_segment(None).await {
             tracing::warn!(event = "acp.segment_commit_failed", %error, "ACP text segment could not be committed");
-            self.failed = Some(error);
-            self.halt.cancel();
+            self.fail(error);
         }
     }
 
-    fn tool(&mut self, tool_call_id: &str) -> &mut (ToolUseId, Option<String>) {
-        let ids = &self.host.ids;
-        self.tools
-            .entry(tool_call_id.to_owned())
-            .or_insert_with(|| (ToolUseId::new(format!("acp_{}", ids.execution())), None))
+    fn fail(&mut self, error: QueryError) {
+        if self.failed.is_none() {
+            self.failed = Some(error);
+        }
+        self.halt.cancel();
+    }
+
+    /// Opens the row of an ACP tool call on first sight (Node `#createRow` + `#schedule`): its name is fixed from the
+    /// kind it first came with. A known row is left as it is; `false` then. The caller shows the row.
+    fn open_row(
+        &mut self,
+        tool_call_id: &str,
+        name: Option<String>,
+        title: String,
+        input: Value,
+    ) -> bool {
+        if self.rows.contains_key(tool_call_id) {
+            return false;
+        }
+        let row = Row {
+            id: ToolUseId::new(format!("acp_{}", self.host.ids.execution())),
+            name: name.unwrap_or_else(|| "acp:other".to_owned()),
+            title,
+            input,
+            started: false,
+            finished: false,
+        };
+        self.rows.insert(tool_call_id.to_owned(), row);
+        self.open.push(tool_call_id.to_owned());
+        true
+    }
+
+    /// Node `rowFor`: the row an ask anchors to, opened (`acp:other`, not started) when no update named it yet.
+    async fn ask_row(&mut self, tool_call_id: &str) -> (ToolUseId, String) {
+        if self.open_row(tool_call_id, None, String::new(), json!({})) {
+            self.show(tool_call_id).await;
+        }
+        let row = &self.rows[tool_call_id];
+        (row.id.clone(), row.name.clone())
+    }
+
+    /// The live row as it is now (`QueryEvent::ExternalToolRow`).
+    async fn show(&self, tool_call_id: &str) {
+        let Some(row) = self.rows.get(tool_call_id) else {
+            return;
+        };
+        let _ = self
+            .sink
+            .emit(QueryEvent::ExternalToolRow {
+                tool_use: row.id.clone(),
+                name: row.name.clone(),
+                title: row.title.clone(),
+                input: row.input.clone(),
+                running: row.started,
+            })
+            .await;
+    }
+
+    /// Node `ExternalAgentToolRows.apply`: a blank title keeps the last one, `rawInput` replaces the input, and a
+    /// `completed` / `failed` status settles the row. An update after it settled is ignored. Each update shows the
+    /// row once, so a first sight that is already running opens as running (Node's `Scheduled` + `Started`).
+    async fn tool_update(&mut self, info: ToolCallInfo) {
+        if !self.rows.contains_key(&info.tool_call_id) {
+            let name = format!("acp:{}", info.kind.as_deref().unwrap_or("other"));
+            let title = info.display_title().unwrap_or_default().to_owned();
+            self.open_row(
+                &info.tool_call_id,
+                Some(name),
+                title,
+                to_input(info.input()),
+            );
+        }
+        let Some(row) = self.rows.get_mut(&info.tool_call_id) else {
+            return;
+        };
+        if row.finished {
+            return;
+        }
+        if let Some(title) = info.display_title() {
+            title.clone_into(&mut row.title);
+        }
+        if info.input().is_some() {
+            row.input = to_input(info.input());
+        }
+        let status = info.known_status();
+        if matches!(status, Some("in_progress" | "completed" | "failed")) {
+            row.started = true;
+        }
+        self.show(&info.tool_call_id).await;
+        match status {
+            Some("completed") => {
+                self.finish(&info.tool_call_id, false, info.output_text())
+                    .await;
+            }
+            Some("failed") => {
+                self.finish(&info.tool_call_id, true, info.output_text())
+                    .await;
+            }
+            _ => {}
+        }
+    }
+
+    /// Node `applyPlan`: a `TodoWrite` row whose todos replace the session task list; it settles at once with the
+    /// old and new todos. A failed write fails the turn.
+    async fn plan(&mut self, entries: &[PlanEntry]) {
+        if self.failed.is_some() {
+            return;
+        }
+        let todos: Vec<Value> = entries.iter().map(todo_item).collect();
+        let key = format!("plan:{}", self.host.ids.execution());
+        self.open_row(
+            &key,
+            Some("TodoWrite".to_owned()),
+            "Plan".to_owned(),
+            json!({"todos": todos}),
+        );
+        if let Some(row) = self.rows.get_mut(&key) {
+            row.started = true;
+        }
+        self.show(&key).await;
+        let tasks = todos
+            .iter()
+            .enumerate()
+            .map(|(at, todo)| task_of(at, todo))
+            .collect();
+        let old = match self.host.plans.replace(&self.session, tasks).await {
+            Ok(old) => old,
+            Err(error) => {
+                tracing::warn!(event = "acp.plan_write_failed", %error, "the ACP agent plan could not be stored");
+                self.fail(QueryError::Store(error));
+                return;
+            }
+        };
+        let old: Vec<Value> = old.iter().map(todo_of).collect();
+        let summary = summarize(&todos);
+        let output = rust_cli_base::js::json::stringify(
+            &json!({"oldTodos": old, "todos": todos, "summary": summary}),
+        );
+        self.finish(&key, false, Some(output)).await;
+    }
+
+    /// Node `#finish`: the row settles live (`ToolFinished`) and is committed as an assistant message of its own. The
+    /// output is capped; a failure without text says the tool failed.
+    async fn finish(&mut self, key: &str, is_error: bool, text: Option<String>) {
+        let Some(block) = self.settle(key, is_error, text).await else {
+            return;
+        };
+        if let Err(error) = self.commit_rows(vec![block], None).await {
+            tracing::warn!(event = "acp.row_commit_failed", %error, "ACP tool row could not be committed");
+            self.fail(error);
+        }
+    }
+
+    /// Settles a row live and gives its committed block; `None` for a settled or unknown row.
+    async fn settle(
+        &mut self,
+        key: &str,
+        is_error: bool,
+        text: Option<String>,
+    ) -> Option<ContentBlock> {
+        let row = self.rows.get_mut(key).filter(|row| !row.finished)?;
+        row.finished = true;
+        row.started = true;
+        self.open.retain(|open| open != key);
+        let mut output = cap_output(text.unwrap_or_default());
+        if is_error && output.is_empty() {
+            output = format!("{} failed", row.name);
+        }
+        let block = ExternalTool {
+            id: row.id.clone(),
+            name: row.name.clone(),
+            title: row.title.clone(),
+            input: row.input.clone(),
+            output: output.clone(),
+            is_error,
+        };
+        let _ = self
+            .sink
+            .emit(QueryEvent::ToolFinished {
+                tool_use: block.id.clone(),
+                output: ToolOutput {
+                    content: vec![ToolResultContent::Text { text: output }],
+                    is_error,
+                    display: Value::Null,
+                },
+            })
+            .await;
+        Some(ContentBlock::ExternalTool(Box::new(block)))
+    }
+
+    /// Commits settled rows as one assistant message (nothing after a failed write).
+    async fn commit_rows(
+        &mut self,
+        rows: Vec<ContentBlock>,
+        usage: Option<Usage>,
+    ) -> Result<(), QueryError> {
+        if self.failed.is_some() {
+            return Ok(());
+        }
+        let message = Message::Assistant(AssistantMessage {
+            id: self.host.ids.message(),
+            content: rows,
+            model: self.model.clone(),
+            stop_reason: Some(StopReason::EndTurn),
+            usage,
+        });
+        self.sink.commit_message(message).await?;
+        Ok(())
+    }
+
+    /// The turn end: the last segment, then the rows still open closed as errors with `reason` (Node `closeOpen`), in
+    /// one message. The usage rides on the last segment, else on the closed rows, else on an empty reply.
+    async fn end(&mut self, usage: Option<Usage>, reason: &str) -> Result<(), QueryError> {
+        let usage = if self.segment.is_empty() {
+            usage
+        } else {
+            self.close_segment(usage).await?;
+            None
+        };
+        let mut closed = Vec::new();
+        for key in std::mem::take(&mut self.open) {
+            closed.extend(self.settle(&key, true, Some(reason.to_owned())).await);
+        }
+        if !closed.is_empty() {
+            return self.commit_rows(closed, usage).await;
+        }
+        if usage.is_some() {
+            return self.commit_rows(Vec::new(), usage).await;
+        }
+        Ok(())
+    }
+
+    /// A failing turn settles its open rows on screen only.
+    async fn settle_open_live(&mut self, reason: &str) {
+        for key in std::mem::take(&mut self.open) {
+            let _ = self.settle(&key, true, Some(reason.to_owned())).await;
+        }
     }
 
     /// Node `answerExternalAgentPermission`: a user-once ask (no mode or rule answers it). Allow selects the agent's
     /// `allow_once` option and deny its `reject_once`; an ask nobody answers is `cancelled`.
     fn permission(
         &mut self,
+        (tool_use, tool): (ToolUseId, String),
         ask: PermissionAsk,
         reply: tokio::sync::oneshot::Sender<PermissionAnswer>,
     ) -> BoxFuture<'static, ()> {
-        let (tool_use, kind) = self.tool(&ask.tool_call_id).clone();
-        let tool = format!("acp:{}", kind.as_deref().unwrap_or("other"));
         let message = if ask.title.trim().is_empty() {
             format!("{tool} needs your approval")
         } else {
@@ -407,8 +754,8 @@ impl Turn<'_> {
             return;
         }
         asks.clear();
-        for (tool_use, _) in self.tools.values() {
-            self.sink.cancel_ask(tool_use).await;
+        for row in self.rows.values() {
+            self.sink.cancel_ask(&row.id).await;
         }
     }
 

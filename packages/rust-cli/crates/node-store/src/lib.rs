@@ -871,6 +871,10 @@ mod records_tools_tests;
 mod hydrate_tests;
 
 #[cfg(test)]
+#[path = "external_tools_tests.rs"]
+mod external_tools_tests;
+
+#[cfg(test)]
 #[path = "title_tests.rs"]
 mod title_tests;
 

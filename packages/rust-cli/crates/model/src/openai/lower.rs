@@ -108,7 +108,8 @@ pub(crate) fn items(
                         ContentBlock::RedactedThinking { .. }
                         | ContentBlock::ServerToolUse { .. }
                         | ContentBlock::WebSearchToolResult { .. }
-                        | ContentBlock::File { .. } => {}
+                        | ContentBlock::File { .. }
+                        | ContentBlock::ExternalTool(_) => {}
                         ContentBlock::Image { .. }
                         | ContentBlock::Video { .. }
                         | ContentBlock::ToolResult { .. } => {
@@ -179,7 +180,8 @@ fn user(
             ContentBlock::Thinking { .. }
             | ContentBlock::RedactedThinking { .. }
             | ContentBlock::ServerToolUse { .. }
-            | ContentBlock::WebSearchToolResult { .. } => {}
+            | ContentBlock::WebSearchToolResult { .. }
+            | ContentBlock::ExternalTool(_) => {}
             ContentBlock::ToolUse { .. } => {
                 return Err(invalid("user messages cannot carry tool calls"));
             }

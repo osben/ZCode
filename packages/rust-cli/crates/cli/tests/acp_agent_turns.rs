@@ -648,3 +648,44 @@ fn stop_while_an_ask_waits_withdraws_it_and_the_agent_hears_cancelled() {
     );
     server.stop();
 }
+
+/// Rules 5 and 8 end to end: a tool call is a live row, the agent's title names the session, and a fresh app-server
+/// reads both back from the store (the cold projection keeps the row and every reply text).
+#[test]
+fn rows_and_the_agent_title_survive_a_restart() {
+    let (_dir, home, work) = dirs();
+    write_agents(&home, &mock_agent(), true, &[]);
+    let model = ModelStub::start();
+    let mut server = Server::start(&home, &work, &model);
+    let session = open_session(&mut server, &work);
+
+    finish_turn(&mut server, &session, "c-tool", "use a tool");
+    assert!(
+        server.seen.iter().any(
+            |frame| frame.contains("\"toolName\":\"acp:read\"") && frame.contains("Read a.txt")
+        ),
+        "no live ACP row"
+    );
+    finish_turn(&mut server, &session, "c-title", "title");
+    assert!(
+        server.seen.iter().any(|frame| frame
+            .contains(r#""meta":{"title":"Parser fix from ACP","titleSource":"generated"}"#)),
+        "no agent title"
+    );
+    server.stop();
+
+    let mut server = Server::start(&home, &work, &model);
+    server.request(
+        "v4/conversation/subscribe",
+        json!({"topic": format!("conversation/{session}"), "connectionId": "k2", "clientMode": "desktop-continuous"}),
+    );
+    let snapshot = server.wait_for(|frame| {
+        frame["method"] == "v4/conversation/frame" && contains(frame, "\"kind\":\"snapshot\"")
+    });
+    let text = snapshot.to_string();
+    assert!(text.contains("\"toolName\":\"acp:read\""), "{text}");
+    assert!(text.contains("file body"), "{text}");
+    assert!(text.contains("tool finished"), "{text}");
+    assert!(text.contains("Parser fix from ACP"), "{text}");
+    server.stop();
+}

@@ -1092,3 +1092,48 @@ fn an_earlier_input_merged_into_the_next_is_not_the_current_input() {
     );
     assert!(api[0].content.iter().all(|item| !item.meta));
 }
+
+/// Fork: ACP rows are record-only (specs/fork-rust-agent-parity.md "ACP external agents", rule 5): a later native
+/// request sends the turn's text, never a row, and a reply message left without blocks is not sent.
+#[test]
+fn acp_rows_never_reach_the_model() {
+    let row = |id: &str| {
+        ContentBlock::ExternalTool(Box::new(rust_cli_kernel_api::message::ExternalTool {
+            id: ToolUseId::new(id),
+            name: "acp:read".into(),
+            title: "Read a".into(),
+            input: serde_json::json!({}),
+            output: "A".into(),
+            is_error: false,
+        }))
+    };
+    let api = normalize(
+        &[
+            human("u1", "go"),
+            assistant("a1", vec![text("reading")]),
+            assistant("a2", vec![row("acp_1")]),
+            // A Node-written turn: text and rows in one message.
+            assistant("a3", vec![row("acp_2"), text("done")]),
+            assistant("a4", vec![]),
+            human("u2", "next"),
+        ],
+        &OFF,
+    );
+    let shape: Vec<(ApiRole, Vec<ContentBlock>)> = api
+        .into_iter()
+        .map(|message| {
+            (
+                message.role,
+                message.content.into_iter().map(|item| item.block).collect(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        shape,
+        vec![
+            (ApiRole::User, vec![text("go")]),
+            (ApiRole::Assistant, vec![text("reading"), text("done")]),
+            (ApiRole::User, vec![text("next")]),
+        ]
+    );
+}

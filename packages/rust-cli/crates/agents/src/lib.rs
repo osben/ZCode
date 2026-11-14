@@ -46,6 +46,7 @@ use std::sync::{Arc, Weak};
 use async_trait::async_trait;
 use futures_util::stream::BoxStream;
 use rust_cli_base::Spawner;
+use rust_cli_base::sync::LockUnpoisoned;
 use rust_cli_kernel_api::agents::{AgentSignal, AgentSignals, SubagentQueries, TaskListStore};
 use rust_cli_kernel_api::clock::{Clock, Ids};
 use rust_cli_kernel_api::ids::{AgentId, MachineName, SessionId};
@@ -324,6 +325,42 @@ impl Agents {
     /// 任务提醒读的任务清单（agents.md §7.4）：子会话读顶层会话的清单。
     pub fn task_reader(&self) -> Arc<dyn rust_cli_kernel_api::agents::TaskReader> {
         Arc::new(TaskLists(self.core.clone()))
+    }
+
+    /// Fork: the ACP plan writer (kernel-api `TaskPlanWriter`), through the same task board as the task tools.
+    pub fn task_plan_writer(&self) -> Arc<dyn rust_cli_kernel_api::agents::TaskPlanWriter> {
+        Arc::new(TaskLists(self.core.clone()))
+    }
+}
+
+#[async_trait]
+impl rust_cli_kernel_api::agents::TaskPlanWriter for TaskLists {
+    async fn replace(
+        &self,
+        session: &SessionId,
+        tasks: Vec<rust_cli_kernel_api::agents::TaskRecord>,
+    ) -> Result<Vec<rust_cli_kernel_api::agents::TaskRecord>, rust_cli_kernel_api::store::StoreError>
+    {
+        let list = self.0.live.root_of(session);
+        let replaced = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let slot = replaced.clone();
+        let count = tasks.len() as u64;
+        let change: tasks::Change = Box::new(move |current| {
+            let old = std::mem::replace(&mut current.tasks, tasks);
+            // IDs are never reused: the mark keeps the highest ID ever issued.
+            current.high_water_mark = current.high_water_mark.max(count);
+            let changed = old != current.tasks;
+            *slot.lock_unpoisoned() = old;
+            (String::new(), changed)
+        });
+        let (_, written) = self.0.board.update(&list, change).await?;
+        if let Some(written) = written {
+            let value = serde_json::to_value(&written.tasks).unwrap_or(serde_json::Value::Null);
+            self.0.hub.tasks_changed(&list, value);
+        }
+        let mut old = std::mem::take(&mut *replaced.lock_unpoisoned());
+        old.sort_by_key(|task| task.id.parse::<u64>().unwrap_or(u64::MAX));
+        Ok(old)
     }
 }
 

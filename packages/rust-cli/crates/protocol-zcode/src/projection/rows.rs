@@ -177,7 +177,7 @@ impl Projection {
                 if let Some(live) = self.turn.as_mut() {
                     live.unstopped.clear();
                 }
-                let response = turn.response.unwrap_or(u32::MAX);
+                let response = turn.response;
                 for (index, block) in assistant.content.iter().enumerate() {
                     match block {
                         ContentBlock::Text { text } => {
@@ -228,6 +228,9 @@ impl Projection {
                                 },
                                 out,
                             );
+                        }
+                        ContentBlock::ExternalTool(tool) => {
+                            self.external_tool_block(tool, assistant, now, seq, out);
                         }
                         // 不投成行的块（P1）。
                         ContentBlock::Image { .. }
@@ -318,7 +321,7 @@ impl Projection {
         &mut self,
         kind: RowKind,
         turn: &str,
-        response: u32,
+        response: Option<u32>,
         index: usize,
         text: &str,
         assistant: &rust_cli_kernel_api::message::AssistantMessage,
@@ -329,7 +332,12 @@ impl Projection {
         if text.is_empty() {
             return;
         }
-        let key = block_key(kind, turn, response, index);
+        // A streamed reply settles the row its deltas opened; an unstreamed one (a cold read, a reply without deltas)
+        // is keyed by its message, so the replies of one turn never share a row.
+        let key = match response {
+            Some(response) => block_key(kind, turn, response, index),
+            None => format!("{}:{turn}:{}:{index}", kind.as_str(), assistant.id.as_str()),
+        };
         if !self.index.contains_key(&key) {
             let mut row = self.base(
                 turn,

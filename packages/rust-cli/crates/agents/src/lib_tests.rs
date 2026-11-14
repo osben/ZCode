@@ -274,6 +274,54 @@ async fn task_tools_write_the_root_list_and_signal_the_root_session() {
     assert_eq!(listed, "#1 [pending] Write tests");
 }
 
+/// Fork: an ACP plan replaces the root list through the board (specs/fork-rust-agent-parity.md "ACP external agents",
+/// rule 7): the old tasks come back by ID, IDs are never reused, and the root session hears the new list once.
+#[tokio::test]
+async fn an_acp_plan_replaces_the_root_list_and_signals_it() {
+    use rust_cli_kernel_api::agents::{TaskRecord, TaskStatus};
+    let harness = harness(None);
+    let root = SessionId::new("sess_parent");
+    let signals = harness.agents.signals();
+    let mut stream = signals.signals(&root);
+    for subject in ["One", "Two", "Three"] {
+        harness
+            .call(
+                "sess_parent",
+                "TaskCreate",
+                json!({"subject": subject, "description": ""}),
+            )
+            .await;
+        stream.next().await;
+    }
+    let task = |id: &str, subject: &str, status: TaskStatus| TaskRecord {
+        id: id.into(),
+        subject: subject.into(),
+        description: String::new(),
+        active_form: None,
+        owner: None,
+        status,
+        blocks: Vec::new(),
+        blocked_by: Vec::new(),
+        metadata: Some(serde_json::Map::from_iter([(
+            "priority".to_owned(),
+            json!("high"),
+        )])),
+    };
+    let plan = vec![task("1", "Read", TaskStatus::InProgress)];
+    let writer = harness.agents.task_plan_writer();
+    let old = writer.replace(&root, plan.clone()).await.unwrap();
+    let subjects: Vec<&str> = old.iter().map(|task| task.subject.as_str()).collect();
+    assert_eq!(subjects, ["One", "Two", "Three"]);
+    let Some(AgentSignal::TasksChanged { tasks }) = stream.next().await else {
+        panic!("expected tasks");
+    };
+    assert_eq!(tasks, serde_json::to_value(&plan).unwrap());
+    let stored = harness.tasks.load(&root).await.unwrap();
+    assert_eq!((stored.tasks, stored.high_water_mark), (plan.clone(), 3));
+    // The same plan again writes nothing and signals nothing; the old list is still answered.
+    assert_eq!(writer.replace(&root, plan.clone()).await.unwrap(), plan);
+}
+
 /// 子会话的当前轮随每个批次交给存储（node-store.md §4，修复线 F6）；续跑的输入开新的一轮。以前都不带锚点。
 #[tokio::test]
 async fn child_batches_name_the_prompt_of_their_run() {

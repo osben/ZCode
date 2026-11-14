@@ -1344,7 +1344,7 @@ ExternalAgentRunner::run (runtime)  ── selection.provider starts with "acp:"
 session/prompt(latest user text + current-turn images)        state: ready ─▶ prompting
   │ agent_message_chunk / agent_thought_chunk ─▶ QueryEvent::Delta (text / thinking)
   │ tool_call / tool_call_update / plan       ─▶ close the open text segment (commit an assistant message)
-  │                                              ─▶ QueryEvent::ToolStarted / ToolProgress / ToolFinished
+  │                                              ─▶ QueryEvent::ExternalToolRow (open / update) / ToolFinished
   │                                              ─▶ settled row committed as ContentBlock::ExternalTool
   │ session/request_permission                ─▶ sink.ask(Permission, once) ─▶ allow_once | reject_once | cancelled
   │ session_info_update.title                 ─▶ generated title (custom kept)
@@ -1369,22 +1369,48 @@ failure    ─▶ rows closed "The agent turn failed before this tool finished" 
    other path keeps its own runner. `transcript` delegates to the loop.
 4. **Prompt.** The prompt is the newest human input's text and its images from this turn, like Node.
    Prompt hook messages are committed first, as in `QueryLoop`.
-5. **Rows are record-only.** An ACP tool or plan row is `ContentBlock::ExternalTool`, never
-   `ToolUse`. It is stored as Node's `tool` part (toolName `acp:<kind|other>`, or `TodoWrite` for a
-   plan; `state.title`; `metadata.externalAgent: true`) with a settled status, so the settle path
-   for tool results is not used. Hydration maps every part with `metadata.externalAgent` to
-   `ExternalTool`, including a Node-written session. Model normalization drops `ExternalTool`.
+5. **Rows are record-only.** An ACP tool or plan row is `ContentBlock::ExternalTool` (id, name,
+   title, input, output text, error flag), never `ToolUse`. It is stored as Node's `tool` part
+   (`ExternalAgentToolRows.#persist`/`#finish`): part `metadata: {externalAgent: true}`, toolName
+   `acp:<kind|other>` (fixed at first sight) or `TodoWrite` for a plan, and a settled state:
+   `completed` with `output`, `title` (the title, else the tool name), `metadata.externalAgent` and
+   `time`, or `error` with `error` (the output, else "<toolName> failed"), `metadata` and `time`.
+   The settle path for tool results is not used. Hydration maps every part with
+   `metadata.externalAgent` to `ExternalTool` in part order, including a Node-written session. Such
+   a part is never a `tool_use`; an unsettled one (a Node turn killed mid-tool) becomes an error row
+   with its stored error or no text, never a synthetic interrupted `tool_result`. Model
+   normalization drops `ExternalTool`, and an assistant message left without blocks is not sent.
    Text and reasoning of an ACP turn stay in model history (Node `selectToolPartsForHistory`).
 6. **Segments.** A tool or plan event closes the open text/reasoning segment, which is committed as
-   one assistant message. A row is committed when it settles: completed, failed, or closed at the
-   turn end. Live rows come from `QueryEvent::ToolStarted`/`ToolProgress`/`ToolFinished` keyed by a
-   `ToolUseId` minted per ACP `toolCallId`. Output is capped at 32 KiB plus "\n… [truncated]".
-   A process killed mid-turn loses only the open segment and open rows, like a regular Rust turn.
-7. **Plan.** An ACP `plan` is a `TodoWrite` row with input `{todos}` and writes the session todos
-   through the same owner as the `TodoWrite` tool. Status, priority and empty content follow Node.
-8. **Title.** An agent title is a generated title (`Fact::TitleGenerated`, `Source::Generated`); a
-   custom title is kept, an unchanged one is skipped. Title generation by a model is skipped for an
-   ACP session.
+   one assistant message. A row is committed, as an assistant message of its own, when it settles:
+   completed, failed, or closed at the turn end. The row id is a `ToolUseId` minted per ACP
+   `toolCallId`. Live rows come from `QueryEvent::ExternalToolRow` (name, title, input, running;
+   emitted at first sight and on every update before the row settles: Node's
+   `ToolCallScheduled`/`Started`/`Progress`) and `QueryEvent::ToolFinished` (output, error flag).
+   An update after the row settled is ignored; a blank title keeps the previous one; `rawInput`
+   replaces the input (Node `toInput`: an object as is, `null` or missing as `{}`, anything else as
+   `{value}`). Output is capped at 32768 UTF-16 units (Node's string length, never splitting a
+   character) plus "\n… [truncated]". A permission ask for an unseen `toolCallId` opens its row
+   (`acp:other`) first, so the ask has a row to land on (Node `rowFor`). Rows still open at the
+   turn end are closed as errors with Node's texts: "Cancelled" (Stop), "The agent turn failed
+   before this tool finished" (prompt failure), "The agent turn ended before this tool finished"
+   (completion). They are committed after the last segment and before the interrupt marker. A
+   process killed mid-turn loses only the open segment and open rows, like a regular Rust turn.
+7. **Plan.** An ACP `plan` is a `TodoWrite` row (title "Plan", input `{todos}`) that settles at
+   once with Node's output `{oldTodos, todos, summary}` (`summarizeTodos`). Each todo is Node's
+   `toTodoItem`: trimmed content or "Untitled step", status `pending`/`in_progress`/`completed`
+   (else `pending`), priority `high`/`medium`/`low` (else `medium`). The todos replace the session
+   task list through the agents task board (the one writer of the Task v2 file, which also
+   projects Node's `todo` table and announces `TasksChanged`); the turn never writes the store
+   itself. A failed write fails the turn like a failed commit. The projection sets `state.plan`
+   (`{items: [{id, content, status}], updatedAt}`, Node `todoPlanDeltas` over
+   `extractPlanStepsFromToolInput`) from a `TodoWrite` row's input, live and cold.
+8. **Title.** An agent `session_info_update` title (trimmed, non-empty) is a generated title
+   (`Fact::TitleGenerated` without a message, `Source::Generated`; Node
+   `setExternalAgentSessionTitle`). A custom title is kept, an unchanged one is skipped, and a
+   store that refuses the write (another writer set a custom title) drops it. The runner hands it
+   to the session actor through `RunSink::external_title`, never the hook title path (which marks
+   the title custom). Title generation by a model is skipped for an ACP session.
 9. **Permissions.** `session/request_permission` goes through `sink.ask` as a user-once permission
    (`once: true`), never through the permission policy, so no mode answers it. `allow` →
    `allow_once`, `deny` → `reject_once`; a cancelled or dropped ask answers `cancelled`. Asks that
@@ -1423,14 +1449,11 @@ failure    ─▶ rows closed "The agent turn failed before this tool finished" 
 
 ### Delivery status (2026-11-13)
 
-Delivered: rules 1–4, 9, 10, 12, 17, 18; rule 8 only for its last sentence (no model title for an
-ACP session); rule 14 writes and reads the binding (resume when agent, cwd and launch key match).
+Delivered: rules 1–10, 12, 17, 18 (rows, plan and agent title in S3); rule 14 writes and reads the
+binding (resume when agent, cwd and launch key match).
 
 Not yet ported, tracked as follow-ups:
 
-- **Rows (S3), rules 5–7.** Tool and plan events only close the open text segment; no
-  `ExternalTool` block, live tool rows, `TodoWrite` plan rows or todos yet. The agent's
-  `session_info_update` title is not applied (rule 8, first part).
 - **Resume and divider (S5).** No context-reset divider (`ExternalAgentContextReset`), no stall
   status in the projection (a stall is logged only), no second-process `session/load` test.
 - **Config (S6), rules 13, 15, 16.** No `setExternalAgentConfigOption` handler, no pending-choice
@@ -1447,8 +1470,19 @@ Divergences from Node, by design of `zcode-rs`:
   `ExternalAgentModelGuard` with "Model acp:X is an external agent; <caller> cannot run it
   (external_agent_unsupported)" instead of Node's per-feature text. Bash-mode input is not refused.
 - **Usage.** Usage is stored on the turn's final assistant message, not reported separately on
-  `TurnFinished`. A turn whose last event is a tool or plan has no open segment, so its usage is
-  dropped until S3 commits rows.
+  `TurnFinished`: on the last segment, else on the message of the rows closed at the turn end, else
+  on an assistant message without blocks (Node always writes the turn's assistant message,
+  `includeEmptyAssistant`). Such a message never reaches the model.
+- **One message per segment and row.** Node writes one assistant message per ACP turn and orders
+  its parts by first sight. `zcode-rs` commits each segment and each settled row as a message of
+  its own, so a cold read orders a row by when it settled: text streamed while a row was open is
+  stored before that row (live: after it), and rows still open at the turn end follow the last
+  segment (Node: before it).
+- **Plan panel and row title.** `state.plan` is set from `TodoWrite` rows only; the goal
+  iterations Node also writes there are not projected (an ACP session runs no goal: the verifier
+  and continuations refuse an ACP selection). A title change on a row update sets the row title
+  instead of Node's progress `message`. Native `TodoWrite` rows do not set `state.plan` yet; only
+  ACP rows do.
 - **Stream close.** A closed stdout fails the prompt as "stopped during the turn" at once; Node does so
   only when the process exits within the death grace and otherwise keeps the transport error text.
 - **Agent self-cancel.** An agent that answers `cancelled` without a Stop completes the turn; Node
@@ -1456,6 +1490,10 @@ Divergences from Node, by design of `zcode-rs`:
 
 Mechanics fixed on review (tests in `crates/acp/tests/runtime.rs`, `runtime/src/acp/runner_tests.rs` and
 `acp_agent_turns.rs`):
+
+- A cold projection keys an assistant reply that was never streamed by its message id, so several
+  reply texts in one turn each keep their row on reopen (before: they shared one key and the last
+  overwrote the others; native turns with a reply text on each side of a tool hit it too).
 
 - Stop during the agent start ends the turn at once. The start runs in a kernel-scope task (a start
   or restart is not safe to drop halfway) and finishes for the next turn.

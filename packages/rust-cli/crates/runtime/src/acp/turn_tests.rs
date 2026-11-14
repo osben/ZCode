@@ -3,7 +3,10 @@ use rust_cli_kernel_api::ids::MessageId;
 use rust_cli_kernel_api::message::{ContentBlock, ImageSource, Message, UserMessage, UserOrigin};
 use serde_json::json;
 
-use super::{prompt_blocks, prompt_failure, start_failure, usage_of};
+use super::{
+    OUTPUT_MAX_UNITS, TRUNCATION_MARKER, cap_output, prompt_blocks, prompt_failure, start_failure,
+    to_input, usage_of,
+};
 
 fn user(id: &str, origin: UserOrigin, content: Vec<ContentBlock>) -> Message {
     Message::User(UserMessage {
@@ -100,4 +103,28 @@ fn failures_use_the_node_texts() {
         prompt_failure("opencode", &error(AcpErrorCode::Rpc, "boom")),
         "opencode could not complete the turn: boom"
     );
+}
+
+/// Node `capToolOutput` counts UTF-16 units (a JS string length) and never splits a character.
+#[test]
+fn tool_output_is_capped_like_node() {
+    let fits = "a".repeat(OUTPUT_MAX_UNITS);
+    assert_eq!(cap_output(fits.clone()), fits);
+    let over = format!("{fits}b");
+    assert_eq!(cap_output(over), format!("{fits}{TRUNCATION_MARKER}"));
+    // A non-BMP character is two units: one unit short of the cap, it no longer fits.
+    let wide = format!("{}😀", "a".repeat(OUTPUT_MAX_UNITS - 1));
+    assert_eq!(
+        cap_output(wide),
+        format!("{}{TRUNCATION_MARKER}", "a".repeat(OUTPUT_MAX_UNITS - 1))
+    );
+}
+
+#[test]
+fn tool_input_follows_node_to_input() {
+    assert_eq!(to_input(None), json!({}));
+    assert_eq!(to_input(Some(&json!(null))), json!({}));
+    assert_eq!(to_input(Some(&json!({"a": 1}))), json!({"a": 1}));
+    assert_eq!(to_input(Some(&json!([1]))), json!({"value": [1]}));
+    assert_eq!(to_input(Some(&json!("x"))), json!({"value": "x"}));
 }

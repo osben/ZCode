@@ -106,6 +106,8 @@ fn assistant_kind(block: &ContentBlock) -> Kind {
         ContentBlock::ToolResult { .. } | ContentBlock::WebSearchToolResult { .. } => Kind::Results,
         // Fork: only user messages carry attached files.
         ContentBlock::File { .. } => Kind::Attachments,
+        // Fork: ACP rows never reach the model; they count no tokens (kernel-api `block_tokens`).
+        ContentBlock::ExternalTool(_) => Kind::Calls,
     }
 }
 
