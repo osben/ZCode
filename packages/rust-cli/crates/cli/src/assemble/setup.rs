@@ -6,7 +6,8 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use rust_cli_base::clock::SystemClock;
 use rust_cli_base::secret::{EnvSnapshot, RedactedString};
-use rust_cli_env_local::{LocalEnvironment, LocalMcpTransport};
+use rust_cli_env_local::LocalEnvironment;
+use rust_cli_kernel_api::mcp::McpTransport;
 use rust_cli_kernel_api::env::WorkspaceRef;
 use rust_cli_kernel_api::provider::CredentialCipher;
 use rust_cli_net::Egress;
@@ -150,7 +151,7 @@ pub(crate) async fn account(command: login::Command) -> Result<u8> {
 /// 端口与 controller 的取网页，MCP 传输是同一台机器的 `McpTransport` 端口。
 pub(crate) fn environments(
     env: Arc<LocalEnvironment>,
-    mcp: Arc<LocalMcpTransport>,
+    mcp: Arc<dyn McpTransport>,
 ) -> Arc<dyn EnvironmentRegistry> {
     Arc::new(PrimaryRegistry::new(
         MachineEnv::new(env.clone(), mcp),

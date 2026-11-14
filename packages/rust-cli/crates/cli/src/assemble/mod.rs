@@ -171,6 +171,9 @@ pub(crate) struct Controller {
     pub(crate) topic_resources: Option<Arc<dyn TopicResources>>,
     /// Fork: the language-server runtime (specs/fork-rust-lsp.md); only the app-server sets it, after opening the store.
     pub(crate) code_intelligence: Option<Arc<dyn CodeIntelligence>>,
+    /// Fork: the Node helper the Host configured (app-server only, specs/fork-rust-node-helper.md F3): helper-hosted
+    /// plugin MCP servers are selected and routed through it.
+    pub(crate) node_helper: Option<Arc<rust_cli_protocol_zcode::NodeHelper>>,
     pub(crate) cli: CliInputs,
 }
 
@@ -194,6 +197,7 @@ impl Controller {
             automation: None,
             topic_resources: None,
             code_intelligence: None,
+            node_helper: None,
             cli,
         }
     }
@@ -222,6 +226,7 @@ impl Controller {
             automation: None,
             topic_resources: None,
             code_intelligence: None,
+            node_helper: None,
             cli,
         }
     }
@@ -253,6 +258,7 @@ impl Controller {
             automation: Some(automation),
             topic_resources: Some(topic_resources),
             code_intelligence: None,
+            node_helper: None,
             cli: CliInputs::default(),
         }
     }
@@ -411,10 +417,19 @@ pub(crate) async fn open(
             .then_some(env_assembly::Loopback { find_and_grep }),
         Primary::LocalOnly => None,
     };
+    // Fork: with a Node helper, `NodeHelper` servers connect through it (F3); `mcp` stays the local transport, whose
+    // stdio processes `process/childProcesses` lists.
+    let routed: Arc<dyn rust_cli_kernel_api::mcp::McpTransport> = match &spec.node_helper {
+        Some(helper) => Arc::new(rust_cli_protocol_zcode::HelperRoutedMcp::new(
+            local.mcp,
+            helper.clone(),
+        )),
+        None => local.mcp,
+    };
     let environments = env_assembly::registry(
         &deployment,
         &facts.process,
-        (env.clone(), local.mcp),
+        (env.clone(), routed),
         loopback,
         executor_source.clone(),
     )
@@ -458,6 +473,8 @@ pub(crate) async fn open(
     env_assembly::drop_remote_plugins(&deployment, &mut config.plugins);
     // Fork: the desktop surface has the App's inline view host, so `visualize` loads (specs/fork-rust-agent-parity.md).
     config.plugins.view_host = spec.desktop_context;
+    // Fork: helper-hosted plugin servers exactly when the helper that routes them exists (F3).
+    config.plugins.node_helper = spec.node_helper.is_some();
     // 会话库与产物目录按 Node 的 `storage.sessionDbPath` / `storage.dir`（用户级 → 项目级 → 环境变量，
     // config.md §2.3）：先读配置再开库。修复线 F2：以前总在缺省位置，Node 设了这些值时两边各用一个库。
     let paths = facts.storage_paths(&config.storage.settings());

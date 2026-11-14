@@ -728,7 +728,9 @@ impl Service for Relay {
 
 #[path = "node_helper_mcp.rs"]
 mod mcp;
-pub use mcp::HelperMcpConnection;
+#[cfg(test)]
+use mcp::HelperMcpConnection;
+pub use mcp::HelperRoutedMcp;
 
 #[cfg(test)]
 #[path = "node_helper_tests.rs"]

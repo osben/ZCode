@@ -139,6 +139,14 @@ async fn serve(
             Options::default(),
         ),
     );
+    // Fork: the Node helper for the JS-only method families, when the Host set its command (Rust mode only). Installed
+    // before assembly: its helper-hosted MCP servers are routed through the same helper (F3).
+    let node_helper = node_helper::install(
+        &context,
+        facts.process.env.raw(node_helper::COMMAND_ENV),
+        &facts.process.temp,
+        &spawner,
+    );
     let mut spec = Controller::app(
         Arc::new(HostHeaders::new(context.clone())),
         Arc::new(HostCredentialCipher::new(context.clone())),
@@ -149,6 +157,7 @@ async fn serve(
         Arc::new(HostTopicResources::new(context.clone(), spawner.clone())),
         desktop_context,
     );
+    spec.node_helper = node_helper;
     let opened = assemble::open(&spec, facts, (paths, clock)).await?;
     // 修复（F133，modularity.md §7 的 P5）：以前 ID 取读配置之前的缺省库路径、在开端口之前就报 `checking`，配置或环境变量
     // 改了 `storage.sessionDbPath` 时 ID 不是实际打开的库。ID 又不能在首帧之后改（Host 丢掉 ID 变了的帧，app-protocol.md
@@ -177,13 +186,6 @@ async fn serve(
     }
     // Fork: session erase resolves per-session directories under `<storageRoot>/cli`.
     context.set_storage_root(opened.paths.root().as_path().to_path_buf());
-    // Fork: the Node helper for the JS-only method families, when the Host set its command (Rust mode only).
-    node_helper::install(
-        &context,
-        facts.process.env.raw(node_helper::COMMAND_ENV),
-        &facts.process.temp,
-        &spawner,
-    );
     // Fork: the Host's resource sampler reads the live stdio MCP servers (`process/childProcesses`).
     context.set_mcp_processes(opened.mcp.clone());
     // Fork: one language-server host per process, shared by all workspaces (specs/fork-rust-lsp.md "Owners"). The

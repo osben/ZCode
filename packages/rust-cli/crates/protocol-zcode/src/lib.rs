@@ -50,7 +50,7 @@ pub use automation_port::HostAutomations;
 pub use cipher::HostCredentialCipher;
 pub use context::Context;
 pub use fork::node_helper::{
-    NODE_HELPER_UNAVAILABLE, NodeHelper, NodeHelperLauncher, NodeHelperProcess,
+    HelperRoutedMcp, NODE_HELPER_UNAVAILABLE, NodeHelper, NodeHelperLauncher, NodeHelperProcess,
     Timing as NodeHelperTiming,
 };
 pub use fork::{Admission, WorkspaceAdmin, WorkspaceTarget};

@@ -9,8 +9,13 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use futures_util::StreamExt;
+use futures_util::stream::BoxStream;
 use rust_cli_base::sync::LockUnpoisoned;
-use rust_cli_kernel_api::mcp::{McpError, McpTransportEvent};
+use rust_cli_kernel_api::env::WorkspaceRef;
+use rust_cli_kernel_api::mcp::{
+    McpConnect, McpConnectionId, McpError, McpTransport, McpTransportConfig, McpTransportEvent,
+};
 use rust_cli_protocol_core::connection::CONNECTION_CLOSED;
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
@@ -214,4 +219,92 @@ impl NodeHelper {
             _ => false,
         }
     }
+}
+
+/// The process's MCP transport with a Node helper configured: [`McpTransportConfig::NodeHelper`] servers connect
+/// through the helper, every other server through `inner`. Connection ids with [`HELPER_CONNECTION_PREFIX`] belong to
+/// the helper.
+pub struct HelperRoutedMcp {
+    inner: std::sync::Arc<dyn McpTransport>,
+    helper: std::sync::Arc<NodeHelper>,
+    /// Event streams of helper connections not yet taken (`events` is taken once).
+    events: std::sync::Mutex<
+        std::collections::HashMap<String, mpsc::UnboundedReceiver<McpTransportEvent>>,
+    >,
+}
+
+impl HelperRoutedMcp {
+    pub fn new(
+        inner: std::sync::Arc<dyn McpTransport>,
+        helper: std::sync::Arc<NodeHelper>,
+    ) -> Self {
+        Self {
+            inner,
+            helper,
+            events: std::sync::Mutex::new(std::collections::HashMap::new()),
+        }
+    }
+}
+
+fn is_helper(connection: &McpConnectionId) -> bool {
+    connection.as_str().starts_with(HELPER_CONNECTION_PREFIX)
+}
+
+/// The helper's workspace for this process. Rust's app-server serves one local workspace, so its root is both the
+/// path and the identity key (`workspaceIdentity?.trim() || workspacePath`); helper sessions send the same value.
+pub(crate) fn helper_workspace(workspace: &WorkspaceRef) -> Value {
+    json!({"workspacePath": workspace.root.as_str()})
+}
+
+#[async_trait::async_trait]
+impl McpTransport for HelperRoutedMcp {
+    async fn connect(
+        &self,
+        workspace: &WorkspaceRef,
+        request: McpConnect,
+    ) -> Result<McpConnectionId, McpError> {
+        if request.transport != McpTransportConfig::NodeHelper {
+            return self.inner.connect(workspace, request).await;
+        }
+        let connection = self
+            .helper
+            .mcp_connect(&helper_workspace(workspace), &request.server)
+            .await?;
+        self.events
+            .lock_unpoisoned()
+            .insert(connection.id.clone(), connection.events);
+        Ok(McpConnectionId::new(connection.id))
+    }
+
+    async fn send(&self, connection: &McpConnectionId, message: Value) -> Result<(), McpError> {
+        if is_helper(connection) {
+            self.helper.mcp_send(connection.as_str(), message).await
+        } else {
+            self.inner.send(connection, message).await
+        }
+    }
+
+    fn events(&self, connection: &McpConnectionId) -> BoxStream<'static, McpTransportEvent> {
+        if !is_helper(connection) {
+            return self.inner.events(connection);
+        }
+        match self.events.lock_unpoisoned().remove(connection.as_str()) {
+            Some(events) => tokio_stream_from(events),
+            None => futures_util::stream::empty().boxed(),
+        }
+    }
+
+    async fn close(&self, connection: &McpConnectionId) -> Result<(), McpError> {
+        if !is_helper(connection) {
+            return self.inner.close(connection).await;
+        }
+        self.helper.mcp_close(connection.as_str()).await;
+        Ok(())
+    }
+}
+
+fn tokio_stream_from(
+    mut events: mpsc::UnboundedReceiver<McpTransportEvent>,
+) -> BoxStream<'static, McpTransportEvent> {
+    futures_util::stream::poll_fn(move |context| events.poll_recv(context)).boxed()
 }

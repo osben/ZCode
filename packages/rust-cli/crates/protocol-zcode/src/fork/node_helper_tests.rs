@@ -1080,3 +1080,71 @@ async fn an_open_pipe_keeps_the_helper_from_idle_reclaim() {
     assert_eq!(rig.fake.stopped.load(Ordering::SeqCst), 1, "reclaimed once idle");
     assert_eq!(rig.helper.crash_count(), 0);
 }
+
+#[tokio::test]
+async fn the_routing_transport_sends_node_helper_servers_to_the_helper() {
+    use futures_util::StreamExt;
+    use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
+    use rust_cli_kernel_api::ids::EnvironmentId;
+    use rust_cli_kernel_api::mcp::{
+        McpConnect, McpTransport, McpTransportConfig, McpTransportEvent, NoMcpTransport,
+    };
+
+    let rig = rig(fake(&["plugins/list"], mcp_echo()), timing());
+    let routed = HelperRoutedMcp::new(Arc::new(NoMcpTransport), rig.helper.clone());
+    let workspace = WorkspaceRef {
+        environment: EnvironmentId::new("primary"),
+        root: EnvPath::new("/w"),
+    };
+    let local = routed
+        .connect(
+            &workspace,
+            McpConnect {
+                server: "plain".to_owned(),
+                transport: McpTransportConfig::stdio("node", Vec::new()),
+            },
+        )
+        .await;
+    assert!(
+        matches!(local, Err(rust_cli_kernel_api::mcp::McpError::Unsupported { .. })),
+        "other servers reach the inner transport"
+    );
+    let id = routed
+        .connect(
+            &workspace,
+            McpConnect {
+                server: "plugin:viewer:view".to_owned(),
+                transport: McpTransportConfig::NodeHelper,
+            },
+        )
+        .await
+        .expect("connected through the helper");
+    assert_eq!(
+        received(&rig.fake, "helper/mcp/connect")[0]["workspace"],
+        json!({"workspacePath": "/w"})
+    );
+    let mut events = routed.events(&id);
+    assert!(
+        routed.events(&id).next().await.is_none(),
+        "events are taken once"
+    );
+    routed
+        .send(&id, json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}))
+        .await
+        .expect("sent");
+    let event = tokio::time::timeout(Duration::from_secs(5), events.next())
+        .await
+        .expect("in time");
+    assert_eq!(
+        event,
+        Some(McpTransportEvent::Message {
+            message: json!({"jsonrpc": "2.0", "id": 1, "result": {"method": "tools/list"}}),
+        })
+    );
+    routed.close(&id).await.expect("closed");
+    assert!(matches!(
+        events.next().await,
+        Some(McpTransportEvent::Closed { .. })
+    ));
+    assert!(events.next().await.is_none());
+}
