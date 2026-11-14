@@ -3,12 +3,12 @@
 //! hooks.rs 只留 hook 事件的组装与会话侧的 hook）。
 
 use rust_cli_kernel_api::abort::AbortReason;
-use rust_cli_kernel_api::hooks::HookOutcome;
+use rust_cli_kernel_api::hooks::{HookEventName, HookInvocation, HookOutcome};
 use rust_cli_kernel_api::ids::{CommandId, MessageId};
 use rust_cli_kernel_api::message::{
     AttachmentMessage, ContentBlock, Message, UserMessage, UserOrigin,
 };
-use rust_cli_kernel_api::orchestration::{QueryStop, RunSink};
+use rust_cli_kernel_api::orchestration::{QueryEvent, QueryStop, RunSink};
 use rust_cli_kernel_api::session_api::KernelEvent;
 
 use crate::actor::Actor;
@@ -67,6 +67,7 @@ impl Actor {
         let user_inputs = self.deps.inputs.clone();
         let signal = opening.abort.clone();
         let input_id = prompt.clone();
+        let hook_rows = self.deps.hook_rows;
         let task = self.deps.spawner.spawn("query-run", async move {
             // 斜杠命令先展开（UPS 在展开之后，ext.md §2.7）；不是命令时就是这条输入本身。
             let mut inputs = match goal {
@@ -116,12 +117,33 @@ impl Actor {
             if shutdown() {
                 return Ok(QueryStop::Aborted);
             }
+            let invocation = hook_rows.then(|| prompt_invocation(&outcome)).flatten();
             if outcome.blocking_error.is_some() {
+                // Fork: Node shows the blocked input in its turn, reports the hook runs and completes the turn as a
+                // success (`turn.ts`, specs/fork-rust-agent-parity.md HK-UP-01); the input is still not committed.
+                if hook_rows {
+                    let shown = inputs.messages.iter().find(|message| {
+                        matches!(message, Message::User(user) if user.origin == UserOrigin::Human)
+                    });
+                    if let Some(message) = shown {
+                        sink.emit(QueryEvent::PromptBlocked {
+                            message: message.clone(),
+                        })
+                        .await;
+                    }
+                    if let Some(invocation) = invocation {
+                        sink.emit(QueryEvent::HookInvocation { invocation }).await;
+                    }
+                    return Ok(QueryStop::Completed);
+                }
                 let message = outcome.notices.first().cloned().unwrap_or_default();
                 return Ok(QueryStop::Blocked { message });
             }
             for message in &inputs.messages {
                 sink.commit_message(message.clone()).await?;
+            }
+            if let Some(invocation) = invocation {
+                sink.emit(QueryEvent::HookInvocation { invocation }).await;
             }
             let mut hook_messages = outcome.messages.clone();
             for extra in more {
@@ -197,4 +219,16 @@ fn attach_intent(
         }
     }
     user.intent = Some(intent);
+}
+
+/// Fork: the UserPromptSubmit dispatch's runs as a `KernelEvent::HookInvocation` (HK-UP-01); none without a run.
+fn prompt_invocation(outcome: &HookOutcome) -> Option<HookInvocation> {
+    let id = outcome.invocation.clone()?;
+    (!outcome.runs.is_empty()).then(|| HookInvocation {
+        id,
+        hook_event: HookEventName::UserPromptSubmit,
+        tool_use: None,
+        tool_name: None,
+        runs: outcome.runs.clone(),
+    })
 }

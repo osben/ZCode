@@ -61,8 +61,27 @@ pub struct LastError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ErrorAttribution {
     /// `{source: "runtime", reason: "hook_blocked"}`.
-    #[expect(dead_code, reason = "the HK-UP-01 fix sets it")]
     HookBlocked,
+}
+
+fn last_error(error: &LastError) -> Value {
+    let mut value = json!({
+        "code": error.code.as_deref().unwrap_or("fault.turn.failed"),
+        "message": error.message,
+        "recoverable": error.recoverable,
+        "at": error.at,
+        "source": "runtime",
+    });
+    if let Some(detail) = &error.detail {
+        value["detail"] = json!(detail);
+    }
+    match error.attribution {
+        Some(ErrorAttribution::HookBlocked) => {
+            value["attribution"] = json!({"source": "runtime", "reason": "hook_blocked"});
+        }
+        None => {}
+    }
+    value
 }
 
 /// `verifier`: the start time of a running goal completion verification (Node `activeWorks` kind `goalVerifier`).
@@ -105,13 +124,7 @@ pub fn control(
         "stopState": if running { "stoppable" } else { "idle" },
         "stopTargetKind": target,
         "activeWorks": works,
-        "lastError": error.map(|error| json!({
-            "code": error.code.as_deref().unwrap_or("fault.turn.failed"),
-            "message": error.message,
-            "recoverable": true,
-            "at": error.at,
-            "source": "runtime",
-        })),
+        "lastError": error.map(last_error),
         "apiRetry": null,
     })
 }

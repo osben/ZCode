@@ -1073,8 +1073,14 @@ impl Projection {
                 self.goal_verification(verification, now, seq, &mut out);
                 self.phase_patch(&mut patch);
             }
-            // Fork: HK-UP-01 (specs/fork-rust-agent-parity.md); projected in the next commit.
-            KernelEvent::HookInvocation { .. } | KernelEvent::PromptBlocked { .. } => {}
+            // Fork: a blocked prompt's input row and its turn's hook rows and banner (specs/fork-rust-agent-parity.md
+            // HK-UP-01).
+            KernelEvent::PromptBlocked { message, .. } => self.message(message, now, seq, &mut out),
+            KernelEvent::HookInvocation { invocation, .. } => {
+                if self.hook_invocation(invocation, now, seq, &mut out) {
+                    self.phase_patch(&mut patch);
+                }
+            }
             KernelEvent::GoalChanged { goal } => {
                 self.goal.clone_from(goal);
                 patch.insert("goal".into(), self.goal_json());

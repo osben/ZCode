@@ -68,7 +68,7 @@ pub use config::{HookSource, HooksConfig, HooksSettings};
 pub use plugin::PluginHooks;
 pub use run::{HookPorts, NodeStdinPorts};
 
-use crate::config::HookCommand;
+use crate::config::{HookCommand, HookOrigin};
 use crate::effective::Effective;
 use crate::fold::Fold;
 use crate::http::HttpPolicy;
@@ -199,6 +199,38 @@ fn load(config: HooksConfig, plugins: Vec<PluginHooks>) -> Loaded {
     }
 }
 
+impl HookEngine {
+    /// Fork: the dispatch's id and a record per hook, in config order (specs/fork-rust-agent-parity.md HK-UP-01). The
+    /// ids are taken after the fold, so the ids the fold and the commands take do not move.
+    fn with_runs(
+        &self,
+        mut outcome: HookOutcome,
+        done: &[run::Timed],
+        hooks: &[HookCommand],
+        origins: &[HookOrigin],
+        results: Option<&[result::HookResult]>,
+    ) -> HookOutcome {
+        outcome.invocation = Some(format!("hookinv_{}", self.ports.ids.execution()));
+        outcome.runs = done
+            .iter()
+            .enumerate()
+            .map(|(at, timed)| {
+                records::record(records::Ran {
+                    run: format!("hookrun_{}", self.ports.ids.execution()),
+                    index: u32::try_from(timed.index).unwrap_or(u32::MAX),
+                    hook: &hooks[timed.index],
+                    origin: &origins[timed.index],
+                    executed: &timed.executed,
+                    result: results.and_then(|results| results.get(at)),
+                    started_at_ms: timed.started_at_ms,
+                    duration_ms: timed.duration_ms,
+                })
+            })
+            .collect();
+        outcome
+    }
+}
+
 #[async_trait]
 impl HookRunner for HookEngine {
     async fn run(&self, event: HookEvent, cancel: CancellationToken) -> HookOutcome {
@@ -215,7 +247,10 @@ impl HookRunner for HookEngine {
         let Some(matchers) = effective.matchers.get(&event.name) else {
             return HookOutcome::default();
         };
-        let hooks = matcher::select(event.name, matchers, &event.payload);
+        let (hooks, origins): (Vec<HookCommand>, Vec<HookOrigin>) =
+            matcher::select(event.name, matchers, &event.payload)
+                .into_iter()
+                .unzip();
         if hooks.is_empty() {
             return HookOutcome::default();
         }
@@ -256,18 +291,22 @@ impl HookRunner for HookEngine {
         // Node runs the hooks of one event one by one in config order (`runner.ts`) and folds each result as it
         // comes (`mergeHookRunResult`: last `updatedInput`, last reason, last decision). The concurrent run finishes
         // in any order, so every fold reads the results in config order.
-        done.sort_by_key(|(index, _)| *index);
+        done.sort_by_key(|timed| timed.index);
         let event_name = event.name.as_str();
         if outside(event.name) {
             let summaries: Vec<_> = done
-                .into_iter()
-                .map(|(index, executed)| interpret::outside(executed, &hooks[index].display()))
+                .iter()
+                .map(|timed| {
+                    interpret::outside(timed.executed.clone(), &hooks[timed.index].display())
+                })
                 .collect();
-            return fold_session::outside(event.name, &summaries);
+            let outcome = fold_session::outside(event.name, &summaries);
+            return self.with_runs(outcome, &done, &hooks, &origins, None);
         }
         let mut results: Vec<_> = done
-            .into_iter()
-            .map(|(index, executed)| {
+            .iter()
+            .map(|timed| {
+                let (index, executed) = (timed.index, timed.executed.clone());
                 let hook = &hooks[index];
                 let display = hook.display();
                 // Node 配置的 `onError: "deny"`（修复线 F68）：PreToolUse 的这个 hook 出错时拦下工具。
@@ -293,7 +332,7 @@ impl HookRunner for HookEngine {
             hook_name: &hook_name,
         };
         use HookEventName as E;
-        match event.name {
+        let outcome = match event.name {
             E::PreToolUse => fold::pre_tool_use(&fold, &results),
             E::PostToolUse => fold::post_tool_use(&fold, &results),
             E::PostToolUseFailure => fold::post_tool_use_failure(&fold, &results),
@@ -307,7 +346,8 @@ impl HookRunner for HookEngine {
             ),
             E::SessionStart | E::SubagentStart => fold_session::session_start(&fold, &results),
             _ => fold_session::generic(&fold, &results),
-        }
+        };
+        self.with_runs(outcome, &done, &hooks, &origins, Some(&results))
     }
 
     /// `/goal` 的停止条件（会话级 Stop prompt hook，docs/specs/rust-cli/goal.md §5）：不看配置与信任，
