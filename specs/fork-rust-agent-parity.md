@@ -25,9 +25,10 @@ A feature is at parity when all of these hold:
 
 These are JavaScript by nature or tied to Node-only runtimes. In Rust mode they are refused with a stable code or hidden by a capability flag, never silently dropped. Listed here so the matrix does not count them as gaps:
 
-- JS plugin runtimes and plugin UI surfaces (`plugins/*`, `mcp/ui*`) beyond what `zcode-rs` `ext` already serves. Plugin management (the `plugins/*` methods of "F1+F2 forwarded methods" in `specs/fork-rust-node-helper.md`) is forwarded to the Node helper when the Host configures one; `mcp/ui*` and `plugins/mentionItems` are later helper families.
+- JS plugin runtimes and plugin UI surfaces (`plugins/*`, `mcp/ui*`) beyond what `zcode-rs` `ext` already serves. Plugin management (the `plugins/*` methods of "F1+F2 forwarded methods" in `specs/fork-rust-node-helper.md`) is forwarded to the Node helper when the Host configures one. `mcp/ui*`, `mcp/readResource` and `plugins/mentionItems` are forwarded for helper-hosted plugin servers (F3); **not ported yet:** MCP Apps on MCP servers Rust runs itself (refused with `proto.forkRustAgent.mcpUiServerNotHelperHosted`).
 - Dynamic workflows (`workflows/*`, `v4/conversation/workflowRun*`, `startSavedWorkflow`, `resumeWorkflowRun`, `amendWorkflowRunSettings`). Saved workflows (`workflows/*`) and run-history reads (`v4/conversation/workflowRun*`) are forwarded to the Node helper; running a workflow is the helper's last family (F5).
-- Office runtime, node-repl host.
+- Office runtime: served through the Node helper since F3 (`specs/fork-rust-node-helper.md`); without a helper command the Office plugins stay skipped.
+- node-repl host (F4, not ported yet).
 
 ChatGPT Plan account models run in Rust hosted mode: `specs/fork-rust-chatgpt-plan.md` (standalone `zcode-rs` refuses them; the Host owns sign-in and refresh).
 
