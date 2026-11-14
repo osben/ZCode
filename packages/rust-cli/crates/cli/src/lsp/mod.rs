@@ -73,6 +73,14 @@ impl InstallProbe for CommandProbe {
     }
 }
 
+/// A session's `LSP` tool availability and the workspace it is computed for. The entry exists from the settle's start
+/// (`available: None` while it computes) until `session_closed`; a settle or refresh whose entry is gone neither
+/// stores an answer nor creates the session's runtime.
+struct ToolFact {
+    workspace: WorkspaceRef,
+    available: Option<bool>,
+}
+
 pub(crate) struct Host {
     inputs: HostInputs,
     preferences: PreferencesStore,
@@ -81,9 +89,9 @@ pub(crate) struct Host {
     shared: Shared,
     loaded: OnceCell<()>,
     sessions: Mutex<HashMap<SessionId, SessionSlot>>,
-    /// Whether each session is offered the `LSP` tool, and the workspace it was computed for (specs/fork-rust-lsp.md
-    /// "When the tool is offered"): computed by the first `settle_tool` for the session's workspace and by every preference write, read by `tool_offered`.
-    tool_facts: Mutex<HashMap<SessionId, (WorkspaceRef, bool)>>,
+    /// Whether each session is offered the `LSP` tool (specs/fork-rust-lsp.md "When the tool is offered"): computed by
+    /// the first `settle_tool` for the session's workspace and by every preference write, read by `tool_offered`.
+    tool_facts: Mutex<HashMap<SessionId, ToolFact>>,
     /// Bumped by every preference write. A settle or refresh stores its answer only while no write landed during its
     /// computation (Node serializes them in `lspPreferenceQueues` "so an older availability result cannot win"): a
     /// settle that probed before a write would otherwise store its older answer after the write's refresh skipped it.
@@ -128,10 +136,19 @@ impl Host {
         if !self.current().await.enabled {
             return false;
         }
-        match self.session(session, workspace).await {
+        let open = || self.tool_tracked(session, workspace);
+        match self.session_while(session, workspace, open).await {
             Some(runtime) => runtime.any_installed().await,
             None => false,
         }
+    }
+
+    /// The session still has a fact entry for the workspace (it was not closed and did not move meanwhile).
+    fn tool_tracked(&self, session: &SessionId, workspace: &WorkspaceRef) -> bool {
+        self.tool_facts
+            .lock_unpoisoned()
+            .get(session)
+            .is_some_and(|fact| fact.workspace == *workspace)
     }
 
     /// Node `applyLspPreferences` for every runtime: each session's fact is recomputed before the write answers.
@@ -140,7 +157,9 @@ impl Host {
             .tool_facts
             .lock_unpoisoned()
             .iter()
-            .map(|(session, (workspace, _))| (session.clone(), workspace.clone()))
+            // A pending settle sees the write's generation and computes again.
+            .filter(|(_, fact)| fact.available.is_some())
+            .map(|(session, fact)| (session.clone(), fact.workspace.clone()))
             .collect();
         for (session, workspace) in known {
             let generation = self.tool_generation();
@@ -151,9 +170,9 @@ impl Host {
                 return;
             }
             if let Some(fact) = facts.get_mut(&session)
-                && fact.0 == workspace
+                && fact.workspace == workspace
             {
-                fact.1 = available;
+                fact.available = Some(available);
             }
         }
     }
@@ -186,9 +205,23 @@ impl Host {
         session: &SessionId,
         workspace: &WorkspaceRef,
     ) -> Option<Arc<SessionLsp>> {
+        self.session_while(session, workspace, || true).await
+    }
+
+    /// [`Self::session`] while `open` holds, checked under the slot lock: `session_closed` removes what `open` reads
+    /// before the slot, so a closed session's slot is never created again.
+    async fn session_while(
+        &self,
+        session: &SessionId,
+        workspace: &WorkspaceRef,
+        open: impl Fn() -> bool,
+    ) -> Option<Arc<SessionLsp>> {
         let root = workspace.root.as_str().to_owned();
         let cell = {
             let mut sessions = self.sessions.lock_unpoisoned();
+            if !open() {
+                return None;
+            }
             let slot = sessions
                 .entry(session.clone())
                 .or_insert_with(|| (root.clone(), Arc::default()));
@@ -476,27 +509,43 @@ impl CodeIntelligence for Host {
     }
 
     fn session_closed(&self, session: &SessionId) {
-        self.sessions.lock_unpoisoned().remove(session);
+        // The fact first: a settle creates the runtime slot only while the fact is there (`session_while`).
         self.tool_facts.lock_unpoisoned().remove(session);
+        self.sessions.lock_unpoisoned().remove(session);
     }
 
     async fn settle_tool(&self, session: &SessionId, workspace: &WorkspaceRef) {
-        let settled = self
-            .tool_facts
-            .lock_unpoisoned()
-            .get(session)
-            .is_some_and(|(known, _)| known == workspace);
-        // Node computes availability when the runtime is built and on preference writes, never per turn.
-        if settled {
-            return;
+        {
+            let mut facts = self.tool_facts.lock_unpoisoned();
+            // Node computes availability when the runtime is built and on preference writes, never per turn.
+            if facts
+                .get(session)
+                .is_some_and(|fact| fact.workspace == *workspace && fact.available.is_some())
+            {
+                return;
+            }
+            facts.insert(
+                session.clone(),
+                ToolFact {
+                    workspace: workspace.clone(),
+                    available: None,
+                },
+            );
         }
         loop {
             let generation = self.tool_generation();
             let available = self.tool_available(session, workspace).await;
             let mut facts = self.tool_facts.lock_unpoisoned();
+            let Some(fact) = facts
+                .get_mut(session)
+                .filter(|fact| fact.workspace == *workspace)
+            else {
+                // Closed, or settled for another workspace, while probing.
+                return;
+            };
             // A write landed while probing: its refresh skipped this session, so the answer may predate it.
             if self.tool_generation() == generation {
-                facts.insert(session.clone(), (workspace.clone(), available));
+                fact.available = Some(available);
                 return;
             }
         }
@@ -508,7 +557,7 @@ impl CodeIntelligence for Host {
                 .tool_facts
                 .lock_unpoisoned()
                 .get(session)
-                .is_some_and(|(_, available)| *available)
+                .is_some_and(|fact| fact.available == Some(true))
     }
 
     async fn query(

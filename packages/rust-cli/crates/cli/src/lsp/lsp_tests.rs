@@ -732,6 +732,46 @@ async fn a_preference_write_during_the_first_settle_is_not_lost() {
     );
 }
 
+/// A session closed while its settle is probing gets no fact and no runtime back, even when a write during the probe
+/// makes the settle compute again.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_session_closed_during_its_settle_stays_closed() {
+    use std::sync::atomic::Ordering;
+    let mut fixture = fixture(&[]).await;
+    let probe = Arc::new(GatedProbe {
+        installed: true.into(),
+        calls: 0.into(),
+        entered: tokio::sync::Notify::new(),
+        release: tokio::sync::Notify::new(),
+    });
+    fixture.host.shared.probe = Arc::clone(&probe) as Arc<dyn InstallProbe>;
+    let session = SessionId::new("s1");
+    let root = reference("/Users/dev/a");
+    let host = &fixture.host;
+    let close = async {
+        probe.entered.notified().await;
+        host.session_closed(&session);
+        host.set_preferences(patch(Some(true), &[])).await.unwrap();
+        probe.release.notify_one();
+    };
+    tokio::join!(host.settle_tool(&session, &root), close);
+    assert!(!host.tool_offered(&session));
+    assert!(
+        !host.tool_facts.lock_unpoisoned().contains_key(&session),
+        "no fact"
+    );
+    assert!(
+        !host.sessions.lock_unpoisoned().contains_key(&session),
+        "no runtime slot"
+    );
+    assert_eq!(
+        probe.calls.load(Ordering::SeqCst),
+        1,
+        "no probe after the close"
+    );
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn a_workspace_without_declared_servers_is_not_offered_and_has_no_server_for_a_file() {
