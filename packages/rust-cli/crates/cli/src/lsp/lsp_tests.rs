@@ -679,6 +679,59 @@ async fn an_uninstall_mid_session_keeps_the_tool_and_queries_report_it() {
     );
 }
 
+/// Answers the install state at the time of the call; the first call then waits until the test releases it.
+struct GatedProbe {
+    installed: std::sync::atomic::AtomicBool,
+    calls: std::sync::atomic::AtomicUsize,
+    entered: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+}
+
+#[async_trait::async_trait]
+impl InstallProbe for GatedProbe {
+    async fn installed(&self, _server: &rust_cli_ext::plugins::lsp::ResolvedLspServer) -> bool {
+        use std::sync::atomic::Ordering;
+        let answer = self.installed.load(Ordering::SeqCst);
+        if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+            self.entered.notify_one();
+            self.release.notified().await;
+        }
+        answer
+    }
+}
+
+/// Node `lspPreferenceQueues`: a preference write that lands while a settle is probing wins over the settle's older
+/// answer. Here the server is installed and the preferences written while the first settle
+/// still holds its "not installed" answer.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_preference_write_during_the_first_settle_is_not_lost() {
+    use std::sync::atomic::Ordering;
+    let mut fixture = fixture(&[]).await;
+    let probe = Arc::new(GatedProbe {
+        installed: false.into(),
+        calls: 0.into(),
+        entered: tokio::sync::Notify::new(),
+        release: tokio::sync::Notify::new(),
+    });
+    fixture.host.shared.probe = Arc::clone(&probe) as Arc<dyn InstallProbe>;
+    let session = SessionId::new("s1");
+    let root = reference("/Users/dev/a");
+    let host = &fixture.host;
+    let settle = host.settle_tool(&session, &root);
+    let write = async {
+        probe.entered.notified().await;
+        probe.installed.store(true, Ordering::SeqCst);
+        host.set_preferences(patch(Some(true), &[])).await.unwrap();
+        probe.release.notify_one();
+    };
+    tokio::join!(settle, write);
+    assert!(
+        fixture.host.tool_offered(&session),
+        "the settle computed again after the write"
+    );
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn a_workspace_without_declared_servers_is_not_offered_and_has_no_server_for_a_file() {

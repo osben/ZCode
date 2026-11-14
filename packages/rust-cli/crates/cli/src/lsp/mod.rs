@@ -84,6 +84,10 @@ pub(crate) struct Host {
     /// Whether each session is offered the `LSP` tool, and the workspace it was computed for (specs/fork-rust-lsp.md
     /// "When the tool is offered"): computed by the first `settle_tool` for the session's workspace and by every preference write, read by `tool_offered`.
     tool_facts: Mutex<HashMap<SessionId, (WorkspaceRef, bool)>>,
+    /// Bumped by every preference write. A settle or refresh stores its answer only while no write landed during its
+    /// computation (Node serializes them in `lspPreferenceQueues` "so an older availability result cannot win"): a
+    /// settle that probed before a write would otherwise store its older answer after the write's refresh skipped it.
+    tool_generation: std::sync::atomic::AtomicU64,
 }
 
 impl Host {
@@ -115,6 +119,7 @@ impl Host {
             loaded: OnceCell::new(),
             sessions: Mutex::default(),
             tool_facts: Mutex::default(),
+            tool_generation: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -138,14 +143,24 @@ impl Host {
             .map(|(session, (workspace, _))| (session.clone(), workspace.clone()))
             .collect();
         for (session, workspace) in known {
+            let generation = self.tool_generation();
             let available = self.tool_available(&session, &workspace).await;
-            if let Some(fact) = self.tool_facts.lock_unpoisoned().get_mut(&session) {
-                // A refresh for another workspace meanwhile owns the fact.
-                if fact.0 == workspace {
-                    fact.1 = available;
-                }
+            let mut facts = self.tool_facts.lock_unpoisoned();
+            // A later write's refresh recomputes it; a settle for another workspace meanwhile owns the fact.
+            if self.tool_generation() != generation {
+                return;
+            }
+            if let Some(fact) = facts.get_mut(&session)
+                && fact.0 == workspace
+            {
+                fact.1 = available;
             }
         }
+    }
+
+    fn tool_generation(&self) -> u64 {
+        self.tool_generation
+            .load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Node `getPreferences`: the cached preferences, loaded from the sidecar on first use and refreshed by every
@@ -377,6 +392,8 @@ impl LanguageServers for Host {
             .preferences
             .update_and(&patch, |prefs| self.remember(prefs))
             .await?;
+        self.tool_generation
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         if !prefs.enabled {
             self.shared.pool.stop_all().await;
         }
@@ -473,10 +490,16 @@ impl CodeIntelligence for Host {
         if settled {
             return;
         }
-        let available = self.tool_available(session, workspace).await;
-        self.tool_facts
-            .lock_unpoisoned()
-            .insert(session.clone(), (workspace.clone(), available));
+        loop {
+            let generation = self.tool_generation();
+            let available = self.tool_available(session, workspace).await;
+            let mut facts = self.tool_facts.lock_unpoisoned();
+            // A write landed while probing: its refresh skipped this session, so the answer may predate it.
+            if self.tool_generation() == generation {
+                facts.insert(session.clone(), (workspace.clone(), available));
+                return;
+            }
+        }
     }
 
     fn tool_offered(&self, session: &SessionId) -> bool {
