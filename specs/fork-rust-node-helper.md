@@ -363,7 +363,7 @@ The ownership check does not compare workspace paths:
 
 **Elicitation.** A helper-hosted server's elicitation request is declined by the helper. Not ported yet: relaying it to Rust's elicitation prompt.
 
-**Helper connection.** Pipe messages, `helper/session/*` and the responses to the helper's own requests bypass the helper connection's serial request queue, so a tool call or its cancel never waits behind a plugin install.
+**Helper connection.** Pipe messages, `helper/session/*`, `helper/ping` and the responses to the helper's own requests bypass the helper connection's serial request queue, so a tool call or its cancel never waits behind a plugin install. The timeout rule's ping is sent while a request is overdue; queued behind that request, it would time out and drop a live helper.
 
 **Lifecycle changes (F3).**
 

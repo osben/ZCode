@@ -39,7 +39,8 @@ export interface RunForkRustHelperOptions {
 /**
  * F3 traffic that must not wait behind a queued request (spec "Helper connection"): MCP pipe
  * messages, helper sessions, app-tool calls and their cancels, and answers to the helper's own
- * requests (a queued mention request waits for its authorization answer).
+ * requests (a queued mention request waits for its authorization answer). `helper/ping` too: Rust
+ * pings while a request is overdue, and a ping queued behind it would get a live helper killed.
  */
 const CONCURRENT_METHODS: ReadonlySet<string> = new Set([
   FORK_RUST_HELPER_F3.mcpConnect,
@@ -49,9 +50,10 @@ const CONCURRENT_METHODS: ReadonlySet<string> = new Set([
   FORK_RUST_HELPER_F3.sessionClose,
   FORK_RUST_HELPER_F3.appToolsCall,
   FORK_RUST_HELPER_F3.appToolsCancel,
+  FORK_RUST_HELPER_F3.ping,
 ]);
 
-function isConcurrent(message: ZCodeProtocolMessage): boolean {
+export function isConcurrent(message: ZCodeProtocolMessage): boolean {
   return "method" in message ? CONCURRENT_METHODS.has(message.method) : true;
 }
 

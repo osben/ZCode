@@ -4,6 +4,7 @@
 import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
 import type { ZCodeProtocolMessage } from "@zcode/shared";
+import { isConcurrent } from "../../src/fork-rust-helper/runtime.js";
 import { ZCodeProtocolNdjsonConnection } from "../../src/zcode-protocol/transport.js";
 
 const frame = (message: unknown) => `${JSON.stringify(message)}\n`;
@@ -28,7 +29,7 @@ function connect(isConcurrent?: (message: ZCodeProtocolMessage) => boolean) {
     },
   });
   connection.start();
-  return { input, seen, release, connection };
+  return { input, output, seen, release, connection };
 }
 
 describe("fork: concurrent messages on the protocol connection", () => {
@@ -41,6 +42,24 @@ describe("fork: concurrent messages on the protocol connection", () => {
       expect([...link.seen].sort()).toEqual(["helper/mcp/send", "plugins/install"]),
     );
     link.release();
+    link.input.end();
+    await link.connection.waitForClose();
+  });
+
+  // Rust's timeout rule pings the helper while a request is overdue (spec "Per-method timeouts"): a ping
+  // queued behind that request would time out and get a live helper killed.
+  it("answers helper/ping while a serial request is still running", async () => {
+    const link = connect(isConcurrent);
+    const answers: unknown[] = [];
+    link.output.on("data", (chunk: Buffer) => {
+      for (const line of chunk.toString().split("\n").filter(Boolean)) answers.push(JSON.parse(line));
+    });
+    link.input.write(frame({ id: 1, method: "plugins/install", params: {} }));
+    link.input.write(frame({ id: 2, method: "helper/ping", params: {} }));
+    // The install is still blocked on `slow` here.
+    await vi.waitFor(() => expect(answers).toEqual([expect.objectContaining({ id: 2 })]));
+    link.release();
+    await vi.waitFor(() => expect(answers).toHaveLength(2));
     link.input.end();
     await link.connection.waitForClose();
   });
