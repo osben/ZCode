@@ -369,11 +369,10 @@ async fn run_loop(
         Arc<dyn ToolRegistry>,
         Arc<dyn rust_cli_kernel_api::orchestration::ContextBuilder>,
     ) = if agent.fork_prefix.is_some() {
-        let registry: Arc<dyn ToolRegistry> = if core.node_desktop {
-            Arc::new(crate::toolset::NodeChild { inner: registry })
-        } else {
-            registry
-        };
+        let registry: Arc<dyn ToolRegistry> = Arc::new(crate::toolset::ForkChildTools {
+            inner: registry,
+            node_child: core.node_desktop,
+        });
         (
             registry,
             Arc::new(crate::fork::ForkContext {

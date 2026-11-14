@@ -90,6 +90,8 @@
     "rust-agent:inbound-schema:check": "tsx scripts/fork-rust-agent/inbound-schema.mts --check",
     "rust-agent:automation-tools:check": "tsx --tsconfig scripts/fork-rust-agent/tsconfig.automation-tools.json scripts/fork-rust-agent/automation-tools.mts --check",
     "rust-agent:automation-tools:update": "tsx --tsconfig scripts/fork-rust-agent/tsconfig.automation-tools.json scripts/fork-rust-agent/automation-tools.mts",
+    "rust-agent:lsp-tool:check": "tsx --tsconfig scripts/fork-rust-agent/tsconfig.automation-tools.json scripts/fork-rust-agent/lsp-tool.mts --check",
+    "rust-agent:lsp-tool:update": "tsx --tsconfig scripts/fork-rust-agent/tsconfig.automation-tools.json scripts/fork-rust-agent/lsp-tool.mts",
     "db:migrations:baseline:update": "tsx scripts/check-upstream-migrations.ts --update",
     "docs:stale-phrases:check": "node scripts/check-stale-doc-phrases.mjs",
     "db:schema:check": "node --test scripts/test/sqlite-schema-contract.test.mjs && pnpm --dir apps/zcode-cli exec tsx ../../scripts/check-sqlite-schema.ts",

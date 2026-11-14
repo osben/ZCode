@@ -37,11 +37,28 @@ fn texts(output: &ToolOutput) -> Option<Vec<&str>> {
         .collect()
 }
 
-/// 按预算处理一个成功的工具结果。`declared` 是工具的 `max_result_size_chars`（None 不落盘）。
+/// A tool's result budget.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Limit {
+    /// `max_result_size_chars`: UTF-16 units, capped at the shared 50 000.
+    Chars(usize),
+    /// Fork: `result_budget_bytes`, a Node byte budget: UTF-8 bytes, no cap, Node's generic envelope.
+    Bytes(usize),
+}
+
+impl Limit {
+    pub fn of(tool: &dyn rust_cli_kernel_api::tool::Tool) -> Option<Self> {
+        tool.result_budget_bytes()
+            .map(Self::Bytes)
+            .or_else(|| tool.max_result_size_chars().map(Self::Chars))
+    }
+}
+
+/// 按预算处理一个成功的工具结果。`declared` 是工具的预算（[`Limit::of`]，None 不落盘）。
 pub async fn apply(
     output: ToolOutput,
     tool: &str,
-    declared: Option<usize>,
+    declared: Option<Limit>,
     session: &SessionId,
     artifacts: &dyn ArtifactStore,
 ) -> ToolOutput {
@@ -56,11 +73,16 @@ pub async fn apply(
             ..output
         };
     }
-    let Some(limit) = declared.map(|declared| declared.min(DEFAULT_MAX_CHARS)) else {
+    let Some(declared) = declared else {
         return output;
     };
-    let size: usize = parts.iter().map(|part| utf16_len(part)).sum();
-    if size <= limit {
+    let within = match declared {
+        Limit::Chars(limit) => {
+            parts.iter().map(|part| utf16_len(part)).sum::<usize>() <= limit.min(DEFAULT_MAX_CHARS)
+        }
+        Limit::Bytes(limit) => parts.iter().map(|part| part.len()).sum::<usize>() <= limit,
+    };
+    if within {
         return output;
     }
     // 单段文本存原文；多段存 JSON（`JSON.stringify(blocks, null, 2)` 的写法）。
@@ -75,14 +97,59 @@ pub async fn apply(
             (text, mime::JSON)
         }
     };
-    let Ok(text) = persisted_output::persist(artifacts, session, &body, media_type).await else {
+    let persisted = match declared {
+        Limit::Chars(_) => persisted_output::persist(artifacts, session, &body, media_type).await,
+        Limit::Bytes(_) => {
+            persisted_output::persist_generic(artifacts, session, &body, media_type).await
+        }
+    };
+    let text = match (persisted, declared) {
+        (Ok(text), _) => text,
+        // Node `serializeToolResult`: a byte budget that cannot persist falls back to its head truncation.
+        (Err(_), Limit::Bytes(limit)) => truncate_to_budget(&parts, limit),
         // 存不下时原样返回。
-        return output;
+        (Err(_), Limit::Chars(_)) => return output,
     };
     ToolOutput {
         content: vec![ToolResultContent::Text { text }],
         ..output
     }
+}
+
+/// Node `fitContentWithSuffix(content, maxModelBytes, suffix, "head")` over `modelMessageContentToText` (the non-empty
+/// text blocks joined by a blank line), with the `resultBudget` suffix of the artifact strategy.
+fn truncate_to_budget(parts: &[&str], limit: usize) -> String {
+    let content = parts
+        .iter()
+        .filter(|part| !part.is_empty())
+        .copied()
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let suffix = format!(
+        "\n\n[Tool output truncated by resultBudget: originalBytes={}, maxModelBytes={limit}, strategy=artifact]",
+        content.len()
+    );
+    if limit == 0 {
+        return String::new();
+    }
+    let suffix = head_within(&suffix, limit);
+    let remaining = limit - suffix.len();
+    if remaining == 0 {
+        return suffix.to_owned();
+    }
+    format!("{}{suffix}", head_within(&content, remaining))
+}
+
+/// The longest prefix of whole code points within `limit` UTF-8 bytes.
+fn head_within(text: &str, limit: usize) -> &str {
+    if text.len() <= limit {
+        return text;
+    }
+    let mut end = limit;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
 }
 
 #[cfg(test)]

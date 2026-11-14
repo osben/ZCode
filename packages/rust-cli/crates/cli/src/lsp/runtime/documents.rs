@@ -293,25 +293,31 @@ impl Documents {
             .unwrap_or_else(|| unreachable!("inserted above"))
     }
 
-    /// Node `ensureOpen`: opens the file from disk, or re-reads an open one whose mtime or size drifted.
+    /// Node `ensureOpen`: opens the file from disk, or re-reads an open one whose mtime or size drifted. Returns the
+    /// synced text (the `LSP` tool resolves positions against it).
     pub(crate) async fn ensure_open(
         &self,
         context: &SyncContext<'_>,
         path: &str,
-    ) -> Result<(), String> {
+    ) -> Result<String, String> {
         let uri = self.uri(path);
         let _lock = self.lock(&store_key(context), &uri).await;
         let open = {
             let mut stores = self.0.stores.lock_unpoisoned();
             let store = self.store_for(&mut stores, context);
-            store
-                .touch(&uri)
-                .map(|document| (document.id, document.path.clone(), document.snapshot))
+            store.touch(&uri).map(|document| {
+                (
+                    document.id,
+                    document.path.clone(),
+                    document.snapshot,
+                    document.text.clone(),
+                )
+            })
         };
-        if let Some((id, path, snapshot)) = open {
+        if let Some((id, path, snapshot, current)) = open {
             let stat = context.disk.stat(&path).await?;
             if stat.mtime_ms.is_some() && stat == snapshot {
-                return Ok(());
+                return Ok(current);
             }
             let text = context.disk.read(&path).await?;
             let mut stores = self.0.stores.lock_unpoisoned();
@@ -319,17 +325,22 @@ impl Documents {
             if let Some(document) = store.peek_mut(&uri).filter(|document| document.id == id) {
                 document.snapshot = stat;
                 if document.text != text {
-                    self.apply_change(context.connection, store_key(context), document, text);
+                    self.apply_change(
+                        context.connection,
+                        store_key(context),
+                        document,
+                        text.clone(),
+                    );
                 }
             }
-            return Ok(());
+            return Ok(text);
         }
         let snapshot = context.disk.stat(path).await?;
         let text = context.disk.read(path).await?;
         let mut stores = self.0.stores.lock_unpoisoned();
         let store = self.store_for(&mut stores, context);
-        self.open(context, store, path, &uri, text, snapshot);
-        Ok(())
+        self.open(context, store, path, &uri, text.clone(), snapshot);
+        Ok(text)
     }
 
     /// Node `applyMutation`: close a deleted file, change an open one, open a new one.

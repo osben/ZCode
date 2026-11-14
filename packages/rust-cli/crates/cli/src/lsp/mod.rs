@@ -20,14 +20,16 @@ use rust_cli_kernel_api::env::{EnvPath, ReadFile, WorkspaceRef};
 use rust_cli_kernel_api::env_files::{PathStyle, StatFile};
 use rust_cli_kernel_api::ids::{EnvironmentId, SessionId};
 use rust_cli_kernel_api::lsp::{
-    CodeIntelligence, FileMutation, LanguageServers, LspPreferences, LspPreferencesPatch,
-    LspServerStatus, LspStatus, LspWorkspace,
+    CodeIntelligence, FileMutation, LanguageServers, LspOutput, LspPreferences,
+    LspPreferencesPatch, LspQuery, LspQueryError, LspServerStatus, LspStatus, LspWorkspace,
 };
 use rust_cli_kernel_api::machine::Files;
+use rust_cli_kernel_api::remote_identity::is_remote_workspace_identity;
 use rust_cli_kernel_api::store::StoreQueries;
 use rust_cli_paths::StoragePaths;
 use serde_json::{Map, Value};
 use tokio::sync::OnceCell;
+use tokio_util::sync::CancellationToken;
 
 use self::preferences::PreferencesStore;
 use self::runtime::documents::{Disk, Documents, Snapshot};
@@ -35,7 +37,7 @@ use self::runtime::pool::{Limits, Pool, ServerKey, Status, merge_env};
 use self::runtime::process::Launcher;
 pub(crate) use self::runtime::process::LedgerLauncher;
 use self::runtime::server::Registry;
-use self::runtime::session::{SessionLsp, Shared, SharedPreferences};
+use self::runtime::session::{InstallProbe, SessionLsp, Shared, SharedPreferences};
 use crate::config::{ConfigInputs, plugin_view};
 
 /// What the host needs from the app-server assembly.
@@ -58,6 +60,27 @@ pub(crate) struct HostInputs {
 /// A session's runtime, created on its first prewarm or mutation; `None` inside: no server is declared there.
 type SessionSlot = (String, Arc<OnceCell<Option<Arc<SessionLsp>>>>);
 
+/// Node `isLspCommandInstalled` over the stdio-server env plus the server's own (the same probe as `lsp/status`).
+struct CommandProbe {
+    base_env: Vec<(String, String)>,
+}
+
+#[async_trait]
+impl InstallProbe for CommandProbe {
+    async fn installed(&self, server: &rust_cli_ext::plugins::lsp::ResolvedLspServer) -> bool {
+        let env = merge_env(&self.base_env, &server.env, cfg!(windows));
+        installed::installed(&server.command, &env).await
+    }
+}
+
+/// A session's `LSP` tool availability and the workspace it is computed for. The entry exists from the settle's start
+/// (`available: None` while it computes) until `session_closed`; a settle or refresh whose entry is gone neither
+/// stores an answer nor creates the session's runtime.
+struct ToolFact {
+    workspace: WorkspaceRef,
+    available: Option<bool>,
+}
+
 pub(crate) struct Host {
     inputs: HostInputs,
     preferences: PreferencesStore,
@@ -66,6 +89,13 @@ pub(crate) struct Host {
     shared: Shared,
     loaded: OnceCell<()>,
     sessions: Mutex<HashMap<SessionId, SessionSlot>>,
+    /// Whether each session is offered the `LSP` tool (specs/fork-rust-lsp.md "When the tool is offered"): computed by
+    /// the first `settle_tool` for the session's workspace and by every preference write, read by `tool_offered`.
+    tool_facts: Mutex<HashMap<SessionId, ToolFact>>,
+    /// Bumped by every preference write. A settle or refresh stores its answer only while no write landed during its
+    /// computation (Node serializes them in `lspPreferenceQueues` "so an older availability result cannot win"): a
+    /// settle that probed before a write would otherwise store its older answer after the write's refresh skipped it.
+    tool_generation: std::sync::atomic::AtomicU64,
 }
 
 impl Host {
@@ -85,6 +115,9 @@ impl Host {
             ),
             documents: Documents::new(windows),
             preferences: SharedPreferences::default(),
+            probe: Arc::new(CommandProbe {
+                base_env: base_env.clone(),
+            }),
         };
         Self {
             inputs,
@@ -93,7 +126,66 @@ impl Host {
             shared,
             loaded: OnceCell::new(),
             sessions: Mutex::default(),
+            tool_facts: Mutex::default(),
+            tool_generation: std::sync::atomic::AtomicU64::new(0),
         }
+    }
+
+    /// Node `isAvailable` for the session's runtime: enabled, and a declared server of the workspace is installed.
+    async fn tool_available(&self, session: &SessionId, workspace: &WorkspaceRef) -> bool {
+        if !self.current().await.enabled {
+            return false;
+        }
+        let open = || self.tool_tracked(session, workspace);
+        match self.session_while(session, workspace, open).await {
+            Some(runtime) => runtime.any_installed().await,
+            None => false,
+        }
+    }
+
+    /// The session still has a fact entry for the workspace (it was not closed and did not move meanwhile).
+    fn tool_tracked(&self, session: &SessionId, workspace: &WorkspaceRef) -> bool {
+        self.tool_facts
+            .lock_unpoisoned()
+            .get(session)
+            .is_some_and(|fact| fact.workspace == *workspace)
+    }
+
+    /// Node `applyLspPreferences` for every runtime: each session's fact is recomputed before the write answers. A
+    /// later write that lands while probing makes it compute again, so the stored answer is never older than this
+    /// write.
+    async fn refresh_tool_facts(&self) {
+        let known: Vec<(SessionId, WorkspaceRef)> = self
+            .tool_facts
+            .lock_unpoisoned()
+            .iter()
+            // A pending settle sees the write's generation and computes again.
+            .filter(|(_, fact)| fact.available.is_some())
+            .map(|(session, fact)| (session.clone(), fact.workspace.clone()))
+            .collect();
+        for (session, workspace) in known {
+            loop {
+                let generation = self.tool_generation();
+                let available = self.tool_available(&session, &workspace).await;
+                let mut facts = self.tool_facts.lock_unpoisoned();
+                let Some(fact) = facts
+                    .get_mut(&session)
+                    .filter(|fact| fact.workspace == workspace && fact.available.is_some())
+                else {
+                    // Closed, or a settle for another workspace owns the fact now.
+                    break;
+                };
+                if self.tool_generation() == generation {
+                    fact.available = Some(available);
+                    break;
+                }
+            }
+        }
+    }
+
+    fn tool_generation(&self) -> u64 {
+        self.tool_generation
+            .load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Node `getPreferences`: the cached preferences, loaded from the sidecar on first use and refreshed by every
@@ -119,9 +211,23 @@ impl Host {
         session: &SessionId,
         workspace: &WorkspaceRef,
     ) -> Option<Arc<SessionLsp>> {
+        self.session_while(session, workspace, || true).await
+    }
+
+    /// [`Self::session`] while `open` holds, checked under the slot lock: `session_closed` removes what `open` reads
+    /// before the slot, so a closed session's slot is never created again.
+    async fn session_while(
+        &self,
+        session: &SessionId,
+        workspace: &WorkspaceRef,
+        open: impl Fn() -> bool,
+    ) -> Option<Arc<SessionLsp>> {
         let root = workspace.root.as_str().to_owned();
         let cell = {
             let mut sessions = self.sessions.lock_unpoisoned();
+            if !open() {
+                return None;
+            }
             let slot = sessions
                 .entry(session.clone())
                 .or_insert_with(|| (root.clone(), Arc::default()));
@@ -131,6 +237,10 @@ impl Host {
             Arc::clone(&slot.1)
         };
         cell.get_or_init(|| async {
+            // The host serves its own machine only.
+            if workspace.environment != self.inputs.environment {
+                return None;
+            }
             let servers = self.servers(&root).await;
             if servers.is_empty() {
                 return None;
@@ -146,6 +256,10 @@ impl Host {
                 },
                 None => None,
             };
+            // Node `create-app.ts` declares no servers for a remote workspace identity (the raw value, untrimmed).
+            if identity.as_deref().is_some_and(is_remote_workspace_identity) {
+                return None;
+            }
             let key = ServerKey {
                 identity: identity
                     .map(|identity| identity.trim().to_owned())
@@ -317,9 +431,12 @@ impl LanguageServers for Host {
             .preferences
             .update_and(&patch, |prefs| self.remember(prefs))
             .await?;
+        self.tool_generation
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         if !prefs.enabled {
             self.shared.pool.stop_all().await;
         }
+        self.refresh_tool_facts().await;
         Ok(prefs)
     }
 
@@ -398,7 +515,85 @@ impl CodeIntelligence for Host {
     }
 
     fn session_closed(&self, session: &SessionId) {
+        // The fact first: a settle creates the runtime slot only while the fact is there (`session_while`).
+        self.tool_facts.lock_unpoisoned().remove(session);
         self.sessions.lock_unpoisoned().remove(session);
+    }
+
+    async fn settle_tool(&self, session: &SessionId, workspace: &WorkspaceRef) {
+        {
+            let mut facts = self.tool_facts.lock_unpoisoned();
+            // Node computes availability when the runtime is built and on preference writes, never per turn.
+            if facts
+                .get(session)
+                .is_some_and(|fact| fact.workspace == *workspace && fact.available.is_some())
+            {
+                return;
+            }
+            facts.insert(
+                session.clone(),
+                ToolFact {
+                    workspace: workspace.clone(),
+                    available: None,
+                },
+            );
+        }
+        loop {
+            let generation = self.tool_generation();
+            let available = self.tool_available(session, workspace).await;
+            let mut facts = self.tool_facts.lock_unpoisoned();
+            let Some(fact) = facts
+                .get_mut(session)
+                .filter(|fact| fact.workspace == *workspace)
+            else {
+                // Closed, or settled for another workspace, while probing.
+                return;
+            };
+            // A write landed while probing: its refresh skipped this session, so the answer may predate it.
+            if self.tool_generation() == generation {
+                fact.available = Some(available);
+                return;
+            }
+        }
+    }
+
+    fn tool_offered(&self, session: &SessionId) -> bool {
+        self.shared.preferences.lock_unpoisoned().enabled
+            && self
+                .tool_facts
+                .lock_unpoisoned()
+                .get(session)
+                .is_some_and(|fact| fact.available == Some(true))
+    }
+
+    async fn query(
+        &self,
+        session: &SessionId,
+        workspace: &WorkspaceRef,
+        query: LspQuery,
+        cancel: &CancellationToken,
+    ) -> Result<LspOutput, LspQueryError> {
+        let failure = |error: runtime::LspError| LspQueryError {
+            code: error.code.to_owned(),
+            message: error.message,
+        };
+        if !self.current().await.enabled {
+            return Err(failure(runtime::LspError::new(
+                "lsp_disabled",
+                "Code intelligence is turned off",
+            )));
+        }
+        // No declared server: Node's runtime has an empty registry, so no file has a server.
+        let Some(runtime) = self.session(session, workspace).await else {
+            return Err(failure(runtime::LspError::new(
+                "lsp_no_server_for_file",
+                format!(
+                    "No language server is configured for {} on this file type",
+                    query.operation.as_str()
+                ),
+            )));
+        };
+        runtime.query(&query, cancel).await.map_err(failure)
     }
 }
 

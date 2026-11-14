@@ -2,12 +2,27 @@
 //! Node adapters `lsp/paths.ts` `filePathToFileUri`; documents follow core `lsp/uri.ts` (`pathToFileURL`, then a
 //! lowercase drive letter). A URI a server sends is matched after decoding it to a path and encoding it again.
 
-/// The bytes Node's `pathToFileURL` percent-encodes in a path (checked against Node 26): tab, LF, CR, space and
-/// `"#%<>?[\]^`{|}~`, DEL, and every non-ASCII byte. Other C0 controls stay raw, as in Node.
+/// The bytes Node's `pathToFileURL` percent-encodes in a path (checked against Node 26): every C0 control
+/// (U+0000–U+001F), space and `"#%<>?[\]^`{|}~`, DEL, and every non-ASCII byte.
 fn document_byte_encoded(byte: u8, windows: bool) -> bool {
     match byte {
-        b'\t' | b'\n' | b'\r' | b' ' | b'"' | b'#' | b'%' | b'<' | b'>' | b'?' | b'[' | b']'
-        | b'^' | b'`' | b'{' | b'|' | b'}' | b'~' | 0x7f => true,
+        0x00..=0x1f
+        | b' '
+        | b'"'
+        | b'#'
+        | b'%'
+        | b'<'
+        | b'>'
+        | b'?'
+        | b'['
+        | b']'
+        | b'^'
+        | b'`'
+        | b'{'
+        | b'|'
+        | b'}'
+        | b'~'
+        | 0x7f => true,
         // A Windows backslash is a separator (turned into `/` first); a POSIX one is a file name character.
         b'\\' => !windows,
         _ => !byte.is_ascii(),
@@ -91,54 +106,115 @@ pub(crate) fn document_uri(path: &str, windows: bool) -> String {
     }
 }
 
-/// Node `fileURLToPath`, or `None` where it throws: not a `file:` URI, a host on POSIX, an encoded separator, or an
-/// escape that does not decode to UTF-8.
-pub(crate) fn path_of(uri: &str, windows: bool) -> Option<String> {
-    let rest = uri
-        .get(..7)?
-        .eq_ignore_ascii_case("file://")
-        .then(|| &uri[7..])?;
-    let rest = rest.split(['?', '#']).next().unwrap_or(rest);
-    let (host, path) = match rest.find('/') {
-        Some(at) => (&rest[..at], &rest[at..]),
-        None => (rest, ""),
-    };
-    let decoded = decode(path)?;
-    if !windows {
-        if !host.is_empty() && !host.eq_ignore_ascii_case("localhost") {
-            return None;
-        }
-        if path.to_ascii_lowercase().contains("%2f") {
-            return None;
-        }
-        return Some(decoded);
-    }
-    let lower = path.to_ascii_lowercase();
-    if lower.contains("%2f") || lower.contains("%5c") {
-        return None;
-    }
-    let windows_path = decoded.replace('/', "\\");
-    if !host.is_empty() && !host.eq_ignore_ascii_case("localhost") {
-        return Some(format!("\\\\{}{windows_path}", unc_host(host)?));
-    }
-    let without_slash = windows_path.strip_prefix('\\')?;
-    let bytes = without_slash.as_bytes();
-    (bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':')
-        .then(|| without_slash.to_owned())
+/// What Node's `fileURLToPath` throws: the error's `code` (`URIError` for a malformed escape, which has none) and its
+/// message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct UriError {
+    pub(crate) code: &'static str,
+    pub(crate) message: String,
 }
 
-/// The URL parser's host of a `file:` URL: percent-decoded, ASCII-lowercased, and invalid (Node throws) when it holds
-/// a forbidden domain code point.
-fn unc_host(host: &str) -> Option<String> {
-    let decoded = decode(host)?;
-    let forbidden = |c: char| {
-        c.is_ascii_control()
-            || matches!(
-                c,
-                ' ' | '#' | '%' | '/' | ':' | '<' | '>' | '?' | '@' | '[' | '\\' | ']' | '^' | '|'
-            )
-    };
-    (!decoded.chars().any(forbidden)).then(|| decoded.to_ascii_lowercase())
+impl UriError {
+    fn new(code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+        }
+    }
+
+    fn malformed() -> Self {
+        Self::new("URIError", "URI malformed")
+    }
+}
+
+/// Node `process.platform` for the host check's message.
+pub(crate) fn node_platform() -> &'static str {
+    match std::env::consts::OS {
+        "macos" => "darwin",
+        "windows" => "win32",
+        other => other,
+    }
+}
+
+/// Node `fileURLToPath` (lib/internal/url.js): the WHATWG URL parser, then `getPathFromURLPosix` or
+/// `getPathFromURLWin32`, in Node's order of checks.
+pub(crate) fn path_of(uri: &str, windows: bool) -> Result<String, UriError> {
+    let url = url::Url::parse(uri).map_err(|_| UriError::new("ERR_INVALID_URL", "Invalid URL"))?;
+    if url.scheme() != "file" {
+        return Err(UriError::new(
+            "ERR_INVALID_URL_SCHEME",
+            "The URL must be of scheme file",
+        ));
+    }
+    // The parser turns a `localhost` host into the empty one.
+    let host = url.host_str().unwrap_or("");
+    let pathname = drive_colon(url.path());
+    let pathname = pathname.as_str();
+    if !windows {
+        if !host.is_empty() {
+            return Err(UriError::new(
+                "ERR_INVALID_FILE_URL_HOST",
+                format!(
+                    "File URL host must be \"localhost\" or empty on {}",
+                    node_platform()
+                ),
+            ));
+        }
+        if encoded_separator(pathname, false) {
+            return Err(UriError::new(
+                "ERR_INVALID_FILE_URL_PATH",
+                "File URL path must not include encoded / characters",
+            ));
+        }
+        return decode(pathname).ok_or_else(UriError::malformed);
+    }
+    if encoded_separator(pathname, true) {
+        return Err(UriError::new(
+            "ERR_INVALID_FILE_URL_PATH",
+            "File URL path must not include encoded \\ or / characters",
+        ));
+    }
+    let path = decode(&pathname.replace('/', "\\")).ok_or_else(UriError::malformed)?;
+    if !host.is_empty() {
+        return Ok(format!("\\\\{}{path}", unicode_host(host)));
+    }
+    let bytes = path.as_bytes();
+    if bytes.len() < 3 || !bytes[1].is_ascii_alphabetic() || bytes[2] != b':' {
+        return Err(UriError::new(
+            "ERR_INVALID_FILE_URL_PATH",
+            "File URL path must be absolute",
+        ));
+    }
+    Ok(path[1..].to_owned())
+}
+
+/// Node `domainToUnicode` for a parsed host: punycode labels decoded; a host that does not decode stays as written.
+fn unicode_host(host: &str) -> String {
+    match idna::domain_to_unicode(host) {
+        (unicode, Ok(())) => unicode,
+        (_, Err(_)) => host.to_owned(),
+    }
+}
+
+/// The WHATWG parser normalizes a first segment `X|` (a Windows drive letter) to `X:`; the `url` crate keeps it.
+fn drive_colon(pathname: &str) -> String {
+    let bytes = pathname.as_bytes();
+    let drive = bytes.len() >= 3
+        && bytes[0] == b'/'
+        && bytes[1].is_ascii_alphabetic()
+        && bytes[2] == b'|'
+        && bytes.get(3).is_none_or(|next| *next == b'/');
+    if drive {
+        format!("{}:{}", &pathname[..2], &pathname[3..])
+    } else {
+        pathname.to_owned()
+    }
+}
+
+/// `%2F` (and on Windows `%5C`) in either case.
+fn encoded_separator(pathname: &str, windows: bool) -> bool {
+    let lower = pathname.to_ascii_lowercase();
+    lower.contains("%2f") || (windows && lower.contains("%5c"))
 }
 
 fn decode(text: &str) -> Option<String> {
@@ -170,7 +246,7 @@ fn hex_digit(byte: u8) -> Option<u8> {
 /// Windows drive letter is lowercased either way.
 pub(crate) fn normalize(uri: &str, windows: bool) -> String {
     let canonical =
-        path_of(uri, windows).map_or_else(|| uri.to_owned(), |path| document_uri(&path, windows));
+        path_of(uri, windows).map_or_else(|_| uri.to_owned(), |path| document_uri(&path, windows));
     lowercase_drive(&canonical)
 }
 

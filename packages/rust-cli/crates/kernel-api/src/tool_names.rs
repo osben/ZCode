@@ -29,6 +29,8 @@ pub const GLOB: &str = "Glob";
 pub const GREP: &str = "Grep";
 pub const LIST_AGENTS: &str = "ListAgents";
 pub const LIST_MCP_RESOURCES: &str = "ListMcpResourcesTool";
+/// Fork: code intelligence from language servers (specs/fork-rust-lsp.md "Tool (D2)"); main thread of the app-server only.
+pub const LSP: &str = "LSP";
 pub const MONITOR: &str = "Monitor";
 /// 本工程没有这个工具：界面显示 App 与旧会话记下的调用、工作区信任的授权表按名字认它。
 pub const MULTI_EDIT: &str = "MultiEdit";
