@@ -572,26 +572,31 @@ impl StoreQueries for NodeStore {
         &self,
         session: &SessionId,
     ) -> Result<rust_cli_kernel_api::store::RuntimePresence, StoreError> {
-        let owner = presence::owner();
-        let held = self.presence.clone();
-        let (id, key) = (session.as_str().to_owned(), owner.clone());
-        let registered = self
-            .with_db(move |conn, _| presence::register(conn, &held, &id, &key))
-            .await?;
-        if !registered {
-            return Ok(rust_cli_kernel_api::store::RuntimePresence::none());
-        }
+        let owner = presence::owner(&self.ids);
+        // The guard exists before the insert is queued: a caller dropped at the await below releases the row, or
+        // the insert sees the released entry and is skipped ([`presence`]).
+        presence::pending(&self.presence, session.as_str(), &owner);
         let release = presence::Release {
             connection: self.connection.clone(),
             held: self.presence.clone(),
             session: session.as_str().to_owned(),
-            owner,
+            owner: owner.clone(),
         };
-        Ok(rust_cli_kernel_api::store::RuntimePresence::new(
-            move || {
-                release.run();
-            },
-        ))
+        let guard = rust_cli_kernel_api::store::RuntimePresence::new(move || {
+            release.run();
+        });
+        let held = self.presence.clone();
+        let id = session.as_str().to_owned();
+        let registered = self
+            .with_db(move |conn, _| presence::register(conn, &held, &id, &owner))
+            .await?;
+        Ok(if registered {
+            guard
+        } else {
+            // The entry is forgotten: dropping the guard is a no-op.
+            drop(guard);
+            rust_cli_kernel_api::store::RuntimePresence::none()
+        })
     }
 
     async fn assert_not_deleting(&self, sessions: &[SessionId]) -> Result<(), StoreError> {

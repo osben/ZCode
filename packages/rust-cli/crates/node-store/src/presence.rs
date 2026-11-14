@@ -11,7 +11,12 @@
 //! is retried by the next presence operation and by the shutdown sweep, as Node's `close()` deletes every row of its
 //! owner whatever an earlier `unregisterSessionRuntime` did.
 //!
-//! Lock order: the connection, then [`Held`]. Every function here runs on the store's blocking thread.
+//! The entry, and the guard that releases it, exist before the insert is queued: an open or a create dropped while
+//! its insert waits for the connection leaves no row. The insert runs only while the entry is still unreleased, and
+//! the release deletes whatever the insert wrote; the connection orders the two.
+//!
+//! Lock order: the connection, then [`Held`]. Every function here except [`pending`] and [`Release::run`] runs on the
+//! store's blocking thread.
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -19,7 +24,7 @@ use rusqlite::{Connection, ErrorCode, params};
 use rust_cli_base::sync::LockUnpoisoned;
 use rust_cli_kernel_api::store::{SESSION_DATA_DELETING, StoreError};
 
-use crate::ids::{RandomUuids, UuidSource};
+use crate::ids::NodeIds;
 
 /// Rust's presence insert, shared with the Node test that runs the real `beginSessionDeletion` against it
 /// (`apps/zcode-cli/packages/adapters/tests/fork-rust-runtime-presence.test.ts`).
@@ -38,8 +43,19 @@ pub(crate) type Held = Arc<Mutex<HashMap<String, Entry>>>;
 
 /// A fresh owner id in Node's format (`${process.pid}:${randomUUID()}`). One per open, so the late release of a
 /// closed runtime can never delete the row of a reopen of the same session.
-pub(crate) fn owner() -> String {
-    format!("{}:{}", std::process::id(), RandomUuids.uuid())
+pub(crate) fn owner(ids: &NodeIds) -> String {
+    format!("{}:{}", std::process::id(), ids.uuid())
+}
+
+/// Records the entry of a registration about to be queued, before the guard that releases it is built.
+pub(crate) fn pending(held: &Held, session: &str, owner: &str) {
+    held.lock_unpoisoned().insert(
+        owner.to_owned(),
+        Entry {
+            session: session.to_owned(),
+            released: false,
+        },
+    );
 }
 
 /// Whether a Node build created 0025's tables in this database.
@@ -70,28 +86,33 @@ pub(crate) fn is_deleting(error: &rusqlite::Error) -> bool {
     )
 }
 
-/// Node `registerSessionRuntime`. The insert is the barrier: with a purge row, `session_purge_runtime_guard` aborts
-/// it inside the same write lock Node's inspection takes. `false` when the database has no protocol.
+/// Node `registerSessionRuntime` for the [`pending`] entry of `owner`. The insert is the barrier: with a purge row,
+/// `session_purge_runtime_guard` aborts it inside the same write lock Node's inspection takes. `false`, with the entry
+/// forgotten, when the database has no protocol or the guard was already dropped; on an error the entry is forgotten
+/// too, as no row was written.
 pub(crate) fn register(
     conn: &Connection,
     held: &Held,
     session: &str,
     owner: &str,
 ) -> Result<bool, StoreError> {
-    if !has_tables(conn).map_err(crate::storage)? {
-        return Ok(false);
+    let wanted = held
+        .lock_unpoisoned()
+        .get(owner)
+        .is_some_and(|entry| !entry.released);
+    let inserted = match has_tables(conn) {
+        Ok(true) if wanted => {
+            retry_released(conn, held);
+            conn.execute(INSERT, params![session, owner, std::process::id()])
+                .map(|_| true)
+        }
+        Ok(_) => Ok(false),
+        Err(error) => Err(error),
+    };
+    if !matches!(inserted, Ok(true)) {
+        held.lock_unpoisoned().remove(owner);
     }
-    retry_released(conn, held);
-    conn.execute(INSERT, params![session, owner, std::process::id()])
-        .map_err(crate::storage)?;
-    held.lock_unpoisoned().insert(
-        owner.to_owned(),
-        Entry {
-            session: session.to_owned(),
-            released: false,
-        },
-    );
-    Ok(true)
+    inserted.map_err(crate::storage)
 }
 
 fn delete(conn: &Connection, session: &str, owner: &str) -> rusqlite::Result<()> {
@@ -185,10 +206,27 @@ pub(crate) struct Release {
 }
 
 impl Release {
-    /// Deletes the row on a blocking thread (a drop cannot await), inline when no runtime is running.
+    /// Deletes the row on a blocking thread (a drop cannot await), inline when no runtime is running. Nothing to do
+    /// once the entry is gone: an owner is never held again after it is forgotten.
     pub(crate) fn run(self) {
+        if !self.held.lock_unpoisoned().contains_key(&self.owner) {
+            return;
+        }
         match tokio::runtime::Handle::try_current() {
-            Ok(runtime) => drop(runtime.spawn_blocking(move || self.delete())),
+            Ok(runtime) => {
+                let task = runtime.spawn_blocking(move || self.delete());
+                // A panicked delete is reported; one the runtime shutdown skipped leaves its entry held for the exit
+                // sweep.
+                drop(runtime.spawn(async move {
+                    if let Err(error) = task.await {
+                        tracing::warn!(
+                            event = "session_presence.release_task_failed",
+                            error = %error,
+                            "the session runtime presence release task did not finish"
+                        );
+                    }
+                }));
+            }
             Err(_) => self.delete(),
         }
     }

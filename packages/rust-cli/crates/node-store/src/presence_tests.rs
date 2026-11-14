@@ -437,3 +437,50 @@ async fn a_cold_load_of_a_session_being_purged_is_not_found() {
         StoreError::NotFound { session: sid() }
     );
 }
+
+/// The owner's uuid comes from the store's injected `NodeIds`, the crate's one uuid source.
+#[tokio::test]
+async fn an_owner_takes_its_uuid_from_the_injected_ids() {
+    let store = migrated().await;
+    let guard = store.store.register_runtime(&sid()).await.unwrap();
+    let owner = presence(&store)[0].1.clone();
+    let (pid, uuid) = owner.split_once(':').unwrap();
+    assert_eq!(pid, std::process::id().to_string());
+    assert!(
+        uuid.starts_with("00000000-0000-4000-8000-"),
+        "owner {owner} must use the injected uuids"
+    );
+    drop(guard);
+}
+
+/// An open or a create dropped while its presence insert waits for the connection: the guard already exists, so the
+/// insert is skipped or the row released, and no row outlives the dropped call.
+#[test]
+fn a_register_dropped_before_its_insert_ran_leaves_no_row() {
+    use std::future::Future;
+    use std::task::{Context, Poll, Waker};
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    let store = runtime.block_on(migrated());
+    // Hold the store connection: the insert's blocking task waits for it.
+    let slot = store.store.connection.lock().unwrap();
+    let id = sid();
+    runtime.block_on(async {
+        let mut register = std::pin::pin!(store.store.register_runtime(&id));
+        let pending = register
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop()));
+        assert!(matches!(pending, Poll::Pending));
+    });
+    // Let every spawned blocking task start and wait on the connection.
+    std::thread::sleep(Duration::from_millis(50));
+    drop(slot);
+    // Dropping the runtime waits for its blocking tasks.
+    drop(runtime);
+    assert!(presence(&store).is_empty(), "{:?}", presence(&store));
+    assert!(store.store.presence.lock().unwrap().is_empty());
+}
