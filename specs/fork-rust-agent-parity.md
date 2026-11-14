@@ -1786,9 +1786,9 @@ Known small gaps and follow-ups:
 - Desktop E2E: the ACP desktop specs run only on macOS (`acp-agent-e2e.ts` skips elsewhere), so the
   Linux E2E box does not cover them.
 
-## Hook invocation rows and the blocked-prompt banner (HK-UP-01, draft)
+## Hook invocation rows and the blocked-prompt banner (HK-UP-01)
 
-Status: draft. Nothing below is implemented yet. It closes HK-UP-01 in desktop E2E `hooks/conversation-session-hooks-lifecycle`. That case blocks a UserPromptSubmit with two hooks: an async command, and a process hook that writes stderr and returns `{continue:false, reason:"hooks_prompt_block"}`. It then checks three things:
+Status: items 1 and 2 of the delivery are implemented; the UserPromptSubmit rows and banner (Design 1–7) follow. It closes HK-UP-01 in desktop E2E `hooks/conversation-session-hooks-lifecycle`. That case blocks a UserPromptSubmit with two hooks: an async command, and a process hook that writes stderr and returns `{continue:false, reason:"hooks_prompt_block"}`. It then checks three things:
 
 1. The prompt's turn shows the text `E2E_HOOKS_PROMPT_BLOCK` and a Hook details trigger (`v4-hook-details-trigger-<turnId>`) inside the same `[data-turn-id]` element.
 2. The chat error banner reads `hooks_prompt_block: <stderr>`.
@@ -1862,10 +1862,10 @@ sequenceDiagram
   L->>A: record kept per session (in memory)
   L->>P: apply → row.appended hookInvocation
   alt blocked
-    I->>L: PromptBlocked { prompt text, attachments, command }
+    I->>L: PromptBlocked { message }
     L->>P: userInput row in the same turn
     P->>P: lastError fault.runtime.hookBlocked (state.updated)
-    I->>L: TurnEnded(PromptBlocked)
+    I->>L: TurnFinished(Success)
     P->>P: header completed, lastError kept, queue not paused
   end
   Note over A,P: resubscribe: from_view reads records from SessionView, anchors them to their turn
@@ -1899,7 +1899,7 @@ sequenceDiagram
    - **Collision risk:** the per-workspace HookEngine snapshot fix (a separate session) also changes this flattening. Whichever lands second rebases. The change here is limited to one added field.
 
 3. **Async hooks** (`Backgrounded`) are reported when they are spawned, as `success` with `duration_ms: 0`. Rust does not follow a background hook to its end ("Command hook stdin"). Node reports them `running` until they finish.
-4. **Kernel event.** `KernelEvent::HookInvocation { invocation, hook_event, tool_use: Option, runs }` goes to the log through the turn's sink. The session actor keeps it in a per-session list, bounded like the event log retention and cleared by a rewind of its turn. `SessionView.hook_invocations` exposes that list to `from_view`.
+4. **Kernel event.** `KernelEvent::HookInvocation { invocation, hook_event, tool_use: Option, runs }` goes to the log through the turn's sink, under `SessionDeps.hook_rows` only. The session actor keeps it in a per-session list, bounded like the event log retention and cleared by a rewind of its turn. `SessionView.hook_invocations` exposes that list to `from_view`.
 5. **Projection.**
    - **Row.** One `hookInvocation` row per invocation, keyed `hook:{invocation}`. `entityId` is the invocation id.
    - **Row fields:**
@@ -1919,10 +1919,10 @@ sequenceDiagram
      - `displayName`, using Node's `hookExecutionDisplayName` and `hookCommandLabel` rules, ported;
      - `sourceKind`;
      - `pluginName` and `toolName`, when present.
-6. **Blocked prompt** (human turn, node_desktop).
-   - The session emits `KernelEvent::PromptBlocked { text, attachments, command }` before it ends the turn. The projection appends the `userInput` row from it in the running turn. The prompt is still not committed to history or sent to the model.
-   - `QueryStop::Blocked` becomes a new `TurnOutcome::PromptBlocked`, which `-p` and the TUI keep reporting as they do today (to check against headless.md §3.6). The projection finishes the header as `completed`, like Node's success, does not overwrite `lastError`, and does not pause the queue.
-   - The projection sets `lastError` from the `HookInvocation` event: the first execution with `outcome: blocked` for UserPromptSubmit, using Node's message, `detail`, `recoverable:false` and `attribution` rules. `LastError` gains `detail`, `recoverable` and `attribution`. Other faults keep `recoverable: true`.
+6. **Blocked prompt** (human turn, under `SessionDeps.hook_rows`, which the app-server turns on with the other Node desktop switches; the TUI and `-p` keep today's behaviour and see none of the new events).
+   - The session emits `KernelEvent::PromptBlocked { message }` before it ends the turn: `message` is the user message the input would have committed (text, intent, file parts). The projection appends the `userInput` row from it through the same path as a committed human message, in the running turn. The prompt is still not committed to history or sent to the model.
+   - The turn finishes as `TurnOutcome::Success`, as Node's `TurnComplete(resultType:"success")` (`turn.ts:650-696`); no new `TurnOutcome` variant. So the header is `completed`, the projection keeps `lastError` (a success does not touch it), `error_holds_queue` does not hold the queue, and the turn's usage row is skipped (its prompt is not stored). **Accepted divergence:** Node's blocked path still writes its turn usage fact (`recordTurnUsageFact`, status `completed`, no model call); Rust writes none for a turn whose input is not stored.
+   - The projection sets `lastError` from the `HookInvocation` event: the last execution with `outcome: blocked` for UserPromptSubmit, in index order (Node emits one `state.updated` per `HookRunBlocked` and runs every hook, so the last block wins), using Node's message, `detail`, `recoverable:false` and `attribution` rules. `LastError` gains `detail`, `recoverable` and `attribution`. Other faults keep `recoverable: true`.
    - `traceId` is omitted, because Rust has no trace id ("Conversation telemetry facts").
 7. **Cold (in-process resubscribe or reopen).** `from_view` reads `hook_invocations`. A record whose turn is a stored turn is anchored to that cold turn through its user message id, like goal verification's `anchor_message`.
    - A record for a turn with no stored prompt (a blocked prompt) is dropped cold, together with that turn, which Rust never stores. This differs from Node.
@@ -1936,7 +1936,7 @@ First, before the rows: the multi-call batch order of tool hook contexts ("Tool 
 
 Second, its own item, after the batch order: HK17 (`conversation-session-hooks-lifecycle`, a first-action `/compact` on a new draft). Under zcode-rs a typed `/compact` sent as text is not the compact command: Node parses it in the runtime (`core/src/runtime/helpers/commands.ts:5-14` `parseCompactCommand`, called at `core/src/runtime/methods/turn.ts:183`; a non-null result runs `executeManualCompact` at `turn.ts:486-496`, so `/compact [instructions]` compacts and sends no model request), while zcode-rs compacts only on the `compact` envelope (`QueuedKind::Compact`) and has no text parse in `session`, `query` or `protocol-zcode`. The box run at fd837a3b8 (2026-11-14, agent log kept) shows it: the session's `main_turn` request carries `/compact` as the user text, the replay upstream answers 500 (no fixture for that request), and the model retries run until the test gives up waiting for the compact marker. Node passes that step and fails later at the follow-up turn's SessionStart details (the rows below). The fix parses the text where Node does, at the turn start after queue admission:
 
-- **Rule.** Under `SessionDeps.typed_compact` (the app-server turns it on, with the other Node desktop session switches) a human text input (`TurnInput::Human`) whose trimmed text is `/compact`, or starts with `/compact `, runs as the manual compaction when its turn would start (`start_turn_with`), with the trimmed rest as its instructions (an empty rest is none), as `parseCompactCommand`. That one place covers the immediate start, the queue drain and a new draft's first input. The queue item stays a text item (`sendText`), as Node's, and the manual compaction is the same one the `compact` command runs: `TurnStarted`, `CompactStarted { Manual }` (the protocol's compact marker), the summary, the `/compact` command record with the instructions as its args, `TurnFinished`. It does not write the held SessionStart result first, as Node's `turn.ts` returns before that phase.
+- **Rule.** Under `SessionDeps.typed_compact` (the app-server turns it on, with the other Node desktop session switches) a human text input (`TurnInput::Human`) whose trimmed text is `/compact`, or starts with `/compact `, runs as the manual compaction when its turn would start (`start_turn_with`), with the trimmed rest as its instructions (an empty rest is none), as `parseCompactCommand`. It parses the typed text, before an intent's quotes are joined, as Node parses `input` and joins `conversationQuotes` only when it records the input (`turn.ts:786`). That one place covers the immediate start, the queue drain and a new draft's first input. The queue item stays a text item (`sendText`), as Node's, and the manual compaction is the same one the `compact` command runs: `TurnStarted`, `CompactStarted { Manual }` (the protocol's compact marker), the summary, the `/compact` command record with the instructions as its args, `TurnFinished`. It does not write the held SessionStart result first, as Node's `turn.ts` returns before that phase.
 - **Not parsed.** `/compactx`, a content input (attachments or media), and every input under zcode-rs (default off: the TUI runs `/compact` as its own slash command; `-p` keeps sending the text).
 - **Tests first** in `crates/session/src/compact_tests.rs`: a typed `/compact focus` runs the manual compaction with `focus` and sends no model request; a typed `/compact` runs it with no instructions; `/compactx` and the switch off run a model turn.
 
@@ -1956,7 +1956,7 @@ HK-LC-01 (`assertHookTurnDetails`) needs all of these, and it also fails on Node
   - one record per selected hook, with index, count, outcome mapping (success, blocked, failed, cancelled, timed_out before collapse), block reason, and the stderr, stdout and error previews;
   - a background hook reported as success;
   - the source kind for user, project and plugin.
-- **`session` tests:** a blocked UserPromptSubmit logs `TurnStarted`, `HookInvocation`, `PromptBlocked` and `TurnEnded(PromptBlocked)` in that order. Nothing is committed and no request is sent.
+- **`session` tests:** under `hook_rows` a blocked UserPromptSubmit logs `TurnStarted`, `HookInvocation`, `PromptBlocked` and `TurnFinished(Success)` in that order; nothing is committed and no request is sent. With the switch off the log has neither new event and the turn fails as today. An allowed prompt logs `HookInvocation` before its input's `MessageDone`.
 - **`protocol-zcode` projection tests:**
   - The row content matches Node's for the HK-UP-01 fixture, checked against the shared zod `conversationRowSchema` (via the existing schema-check tooling), not only a Rust struct.
   - The `userInput` row sits in the same turn.
@@ -1969,12 +1969,12 @@ HK-LC-01 (`assertHookTurnDetails`) needs all of these, and it also fails on Node
   - HK-UP-ERR-01, HK-ST-01 and HK-EF-01 stay green;
   - Node is rerun on the same spec to confirm no change.
 
-### To check while implementing
+### Checked against Node
 
-- Whether Node pauses its queue after a blocked prompt.
-- What a UserPromptSubmit process failure (HK-UP-ERR-01: non-zero exit, not 2) maps to in Node's lifecycle, so Rust's `NonBlockingError` gets the same outcome.
-- Whether Node sanitizes previews beyond trimming and the cap.
-- How `-p` and the TUI report the new `TurnOutcome::PromptBlocked`. The intent is no visible change for them.
+- **Queue.** A blocked prompt completes Node's turn as a success (`turn.ts:650-696`, response `stopReason ?? "Prompt blocked by UserPromptSubmit hook."`), so the queue drains on; Rust's `Success` does the same.
+- **Process failure** (HK-UP-ERR-01: exit neither 0 nor 2). `processHookExecutionResult` throws `ToolExecutionFailed` with the cause `error.message ?? trimForPreview(stderr) ?? "Hook process exited with status <status>"` (`core/src/hooks/configured-runner-callback.ts:117-146`); the runner emits `HookRunFailed` with `outcome: failed` and the prompt continues. Rust's command `NonBlockingError` is `failed`, a Rust `Cancelled` is `cancelled`, a `TimedOut` is `timed_out`. The strict execution schema carries no error text, so only the outcome reaches the row.
+- **Previews.** `trimForPreview` trims and caps at 4000 characters plus `...`; `sanitizeHookDiagnostics` (`core/src/hooks/runner.ts`) trims again, masks with `sanitizeHookDisplayText` (`core/src/hooks/display-metadata.ts:35-67`: credentials in URLs, `authorization` headers and assignments, sensitive query parameters, quoted and bare sensitive keys, sensitive flags) and slices to 4000. Diagnostics are kept only for a blocked run; `stdoutPreview` only on exit 2. The `hooks` crate ports both, with Node's patterns, and `blockReason` is masked the same way.
+- **`-p` and the TUI.** `hook_rows` is off for them, so a blocked prompt stays `TurnOutcome::Failed` and no new event reaches them.
 
 ## Open gaps (not yet ported)
 
