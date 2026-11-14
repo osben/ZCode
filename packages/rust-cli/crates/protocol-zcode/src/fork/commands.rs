@@ -42,6 +42,13 @@ pub(crate) async fn decide(
         "applyQueueItemsConfig" => queue::apply_queue_items_config(live, envelope, revision).await,
         "pauseGoal" => goal(live, envelope, revision, Command::PauseGoal).await,
         "resumeGoal" => goal(live, envelope, revision, Command::ResumeGoal).await,
+        // Fork: the workspace hook review flow (fork/hook_review.rs).
+        "requestWorkspaceHookReview"
+        | "respondWorkspaceHookReview"
+        | "revokeWorkspaceHookTrust"
+        | "toggleWorkspaceHookReviewItem" => {
+            super::hook_review::decide(server, live, envelope, revision).await
+        }
         "cancelBackgroundWork" => background_work::cancel(live, envelope, revision).await,
         "stopSubagent" => background_work::stop_subagent(live, envelope, revision).await,
         // Fork: the prepared worktree's compare-and-set update (crate::worktree).

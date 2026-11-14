@@ -12,6 +12,7 @@ pub(crate) mod merge;
 mod plugins;
 mod storage;
 pub(crate) mod trust;
+pub(crate) mod workspace_schema;
 
 use rust_cli_ext::PluginSources;
 use rust_cli_ext::mcp::{McpScope, McpServer};
