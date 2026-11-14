@@ -660,7 +660,10 @@ impl StoreQueries for MemoryStore {
         &self,
         session: &SessionId,
     ) -> Result<crate::store::RuntimePresence, StoreError> {
-        if self.purging.lock_unpoisoned().contains(session) {
+        // One step under the `purging` lock, as the insert guard is node-store's barrier: a purge started elsewhere
+        // either refuses this registration or sees its presence.
+        let purging = self.purging.lock_unpoisoned();
+        if purging.contains(session) {
             return Err(StoreError::Deleting);
         }
         *self
@@ -668,6 +671,7 @@ impl StoreQueries for MemoryStore {
             .lock_unpoisoned()
             .entry(session.clone())
             .or_default() += 1;
+        drop(purging);
         let (presence, session) = (self.presence.clone(), session.clone());
         Ok(crate::store::RuntimePresence::new(move || {
             let mut presence = presence.lock_unpoisoned();

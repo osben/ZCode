@@ -486,7 +486,7 @@ pub enum StoreError {
     /// Fork: a purge of the session started elsewhere on the shared database (Node's `session_purge` row and its
     /// triggers). Displays as Node's message, [`SESSION_DATA_DELETING`] (specs/fork-rust-agent-parity.md "Session
     /// runtime presence on the shared database").
-    #[error("session-data.deleting")]
+    #[error("{}", SESSION_DATA_DELETING)]
     Deleting,
 }
 
