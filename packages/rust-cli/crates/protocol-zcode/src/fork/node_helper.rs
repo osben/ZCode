@@ -4,7 +4,7 @@
 //! Owner: this type owns the helper's lifecycle (lazy start, crash and breaker, idle reclaim, kill on drop) and the
 //! forwarding allowlist. The process itself comes from an injected [`NodeHelperLauncher`], so this crate spawns nothing.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, Weak};
@@ -167,9 +167,19 @@ struct Running {
     /// When the process last sent anything (an answer, a notification such as operation progress, a request): a
     /// timed-out call keeps the process only if it was heard from since the call started.
     last_heard: Instant,
+    /// F3: the helper MCP connections of this generation, by connection id. Dropped with the slot, each closes its
+    /// connection's event stream (a crash, timeout or reclaim closes every pipe). An open pipe blocks idle reclaim.
+    pipes: HashMap<String, mcp::Pipe>,
     /// Dropped with the slot: kills the process tree. Always dropped after the state lock is released, since it comes
     /// from an injected launcher.
     _guard: Box<dyn Send>,
+}
+
+impl Running {
+    /// Nothing keeps the process: no call in flight and no open helper resource (F3 "Open resources").
+    fn idle(&self) -> bool {
+        self.in_flight == 0 && self.pipes.is_empty()
+    }
 }
 
 impl NodeHelper {
@@ -242,6 +252,18 @@ impl NodeHelper {
     /// A ready link for `method`, starting the helper when it is not running. `Ok(None)` when the helper does not
     /// advertise `method`.
     async fn acquire(&self, method: &str) -> Result<Option<(u64, Peer)>, RpcError> {
+        self.acquire_for(Some(method)).await
+    }
+
+    /// [`Self::acquire`] for a helper message of Rust's own (`helper/*`, F3), which the helper never advertises.
+    async fn acquire_link(&self) -> Result<(u64, Peer), RpcError> {
+        match self.acquire_for(None).await? {
+            Some(link) => Ok(link),
+            None => Err(unavailable("the helper is not running")),
+        }
+    }
+
+    async fn acquire_for(&self, method: Option<&str>) -> Result<Option<(u64, Peer)>, RpcError> {
         loop {
             // Declared before the lock so a dropped process is released after the lock is.
             let mut retired = None;
@@ -258,7 +280,7 @@ impl NodeHelper {
                         return Err(unavailable("the helper is down after repeated crashes"));
                     }
                     Slot::Running(running) => {
-                        if !running.methods.contains(method) {
+                        if method.is_some_and(|method| !running.methods.contains(method)) {
                             return Ok(None);
                         }
                         running.in_flight += 1;
@@ -406,6 +428,7 @@ impl NodeHelper {
             in_flight: 0,
             last_used: now,
             last_heard: now,
+            pipes: HashMap::new(),
             _guard: guard,
         });
         state.retry_at = None;
@@ -614,7 +637,7 @@ async fn reclaim(weak: Weak<NodeHelper>, generation: u64, idle: Duration) {
             if running.generation != generation {
                 return;
             }
-            if running.in_flight > 0 {
+            if !running.idle() {
                 Some(Instant::now() + idle)
             } else if running.last_used.elapsed() >= idle {
                 let retired = std::mem::replace(&mut state.slot, Slot::Idle);
@@ -671,6 +694,19 @@ impl Relay {
 
 #[async_trait]
 impl Service for Relay {
+    /// F3: pipe traffic is routed in the read loop, so a connection's messages reach Rust's MCP client in the order the
+    /// helper sent them (`serve` spawns every other notification as its own task).
+    fn control(&self, method: &str, params: &Value) -> bool {
+        if !mcp::PIPE_NOTIFICATIONS.contains(&method) {
+            return false;
+        }
+        if let Some(helper) = self.helper.upgrade() {
+            helper.heard(self.generation);
+            helper.pipe_event(self.generation, method, params);
+        }
+        true
+    }
+
     async fn request(&self, method: &str, _params: Value) -> Result<Reply, RpcError> {
         self.heard();
         Err(RpcError::method_not_found(method))
@@ -689,6 +725,10 @@ impl Service for Relay {
         }
     }
 }
+
+#[path = "node_helper_mcp.rs"]
+mod mcp;
+pub use mcp::HelperMcpConnection;
 
 #[cfg(test)]
 #[path = "node_helper_tests.rs"]

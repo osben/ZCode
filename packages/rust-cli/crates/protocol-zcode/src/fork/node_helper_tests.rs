@@ -35,6 +35,8 @@ enum Act {
     },
     /// Sends a request of its own, then answers the forwarded call with `{}`.
     AskHost,
+    /// Sends the notifications and answers nothing (a notification from Rust, such as `helper/mcp/send`).
+    Notify(Vec<(&'static str, Value)>),
     /// Sends `count` `plugins/operationProgress` notifications `every` apart, then answers `result`, holding the
     /// helper's loop meanwhile (a long install reporting progress).
     Stream {
@@ -175,6 +177,11 @@ async fn run_helper(script: Script, input: DuplexStream, mut output: DuplexStrea
             }
             Act::Fail(error) => write_line(&mut output, rpc::response(&id, &Err(error))).await,
             Act::Crash => return,
+            Act::Notify(notes) => {
+                for (note, note_params) in notes {
+                    write_line(&mut output, rpc::notification(note, &note_params)).await;
+                }
+            }
             Act::Hang => {}
             Act::Delay { after, result } => {
                 tokio::time::sleep(after).await;
@@ -876,4 +883,200 @@ async fn cancel_operation_while_the_helper_starts_waits_for_it() {
     // Forwarded to the helper (the fake echoes the params), not answered `cancelled: false` locally.
     assert_eq!(cancel, json!({"operationId": "op-1"}));
     assert_eq!(rig.fake.launches.load(Ordering::SeqCst), 1);
+}
+
+// ── F3: helper MCP pipes ────────────────────────────────────────────────────────────────────────────────────────────
+
+/// A helper whose pipes answer every MCP request with `{"method": <its method>}`; `die` makes the helper report the
+/// real server closed, `crash` crashes the helper.
+fn mcp_echo() -> Arc<Behaviour> {
+    behaviour(|_, method, params| match method {
+        "helper/mcp/connect" => Act::Reply {
+            notes: Vec::new(),
+            result: json!({}),
+        },
+        "helper/mcp/send" => {
+            let connection = params["connection"].clone();
+            let message = &params["message"];
+            match message["method"].as_str() {
+                Some("crash") => Act::Crash,
+                Some("die") => Act::Notify(vec![(
+                    "helper/mcp/closed",
+                    json!({"connection": connection, "reason": "gone"}),
+                )]),
+                Some(name) if message.get("id").is_some() => Act::Notify(vec![(
+                    "helper/mcp/message",
+                    json!({"connection": connection, "message": {"jsonrpc": "2.0", "id": message["id"], "result": {"method": name}}}),
+                )]),
+                _ => Act::Notify(Vec::new()),
+            }
+        }
+        _ => Act::Notify(Vec::new()),
+    })
+}
+
+fn workspace_params() -> Value {
+    json!({"workspacePath": "/w", "workspaceIdentity": "id-w"})
+}
+
+async fn next_event(
+    connection: &mut HelperMcpConnection,
+) -> rust_cli_kernel_api::mcp::McpTransportEvent {
+    tokio::time::timeout(Duration::from_secs(5), connection.events.recv())
+        .await
+        .expect("an event in time")
+        .expect("the stream is open")
+}
+
+fn received(fake: &Fake, method: &str) -> Vec<Value> {
+    fake.received
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(name, _)| name == method)
+        .map(|(_, params)| params.clone())
+        .collect()
+}
+
+#[tokio::test]
+async fn a_helper_mcp_connection_carries_messages_in_order() {
+    let rig = rig(fake(&["plugins/list"], mcp_echo()), timing());
+    let mut connection = rig
+        .helper
+        .mcp_connect(&workspace_params(), "plugin:viewer:view")
+        .await
+        .expect("connected");
+    let connects = received(&rig.fake, "helper/mcp/connect");
+    assert_eq!(
+        connects,
+        [json!({"connection": connection.id, "server": "plugin:viewer:view", "workspace": workspace_params()})]
+    );
+    for (id, method) in [(1, "initialize"), (2, "tools/list"), (3, "tools/call")] {
+        rig.helper
+            .mcp_send(&connection.id, json!({"jsonrpc": "2.0", "id": id, "method": method}))
+            .await
+            .expect("sent");
+    }
+    for (id, method) in [(1, "initialize"), (2, "tools/list"), (3, "tools/call")] {
+        assert_eq!(
+            next_event(&mut connection).await,
+            rust_cli_kernel_api::mcp::McpTransportEvent::Message {
+                message: json!({"jsonrpc": "2.0", "id": id, "result": {"method": method}}),
+            }
+        );
+    }
+}
+
+#[tokio::test]
+async fn the_helper_reports_a_closed_server_and_rust_closes_its_own() {
+    let rig = rig(fake(&["plugins/list"], mcp_echo()), timing());
+    let mut lost = rig
+        .helper
+        .mcp_connect(&workspace_params(), "plugin:a:s")
+        .await
+        .expect("connected");
+    rig.helper
+        .mcp_send(&lost.id, json!({"jsonrpc": "2.0", "method": "die"}))
+        .await
+        .expect("sent");
+    assert!(matches!(
+        next_event(&mut lost).await,
+        rust_cli_kernel_api::mcp::McpTransportEvent::Closed { reason: Some(reason), .. } if reason == "gone"
+    ));
+    assert!(lost.events.recv().await.is_none(), "the stream ends");
+    assert!(
+        rig.helper
+            .mcp_send(&lost.id, json!({"jsonrpc": "2.0", "id": 9, "method": "ping"}))
+            .await
+            .is_err(),
+        "a closed pipe refuses sends"
+    );
+
+    let mut closed = rig
+        .helper
+        .mcp_connect(&workspace_params(), "plugin:a:s")
+        .await
+        .expect("connected");
+    rig.helper.mcp_close(&closed.id).await;
+    assert!(matches!(
+        next_event(&mut closed).await,
+        rust_cli_kernel_api::mcp::McpTransportEvent::Closed { .. }
+    ));
+    // The close notification reaches the helper (it is unanswered, so wait for it to arrive).
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while received(&rig.fake, "helper/mcp/close").is_empty() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the helper hears the close");
+    assert_eq!(
+        received(&rig.fake, "helper/mcp/close"),
+        [json!({"connection": closed.id})]
+    );
+}
+
+#[tokio::test]
+async fn a_helper_crash_closes_its_pipes_and_a_new_connection_starts_a_new_helper() {
+    let rig = rig(fake(&["plugins/list"], mcp_echo()), timing());
+    let mut first = rig
+        .helper
+        .mcp_connect(&workspace_params(), "plugin:a:s")
+        .await
+        .expect("connected");
+    let mut second = rig
+        .helper
+        .mcp_connect(&workspace_params(), "plugin:a:t")
+        .await
+        .expect("connected");
+    rig.helper
+        .mcp_send(&first.id, json!({"jsonrpc": "2.0", "method": "crash"}))
+        .await
+        .expect("sent");
+    for pipe in [&mut first, &mut second] {
+        assert!(matches!(
+            next_event(pipe).await,
+            rust_cli_kernel_api::mcp::McpTransportEvent::Closed { .. }
+        ));
+    }
+    assert_eq!(rig.helper.crash_count(), 1);
+    rig.helper
+        .mcp_connect(&workspace_params(), "plugin:a:s")
+        .await
+        .expect("a reconnect starts the next generation");
+    assert_eq!(rig.fake.launches.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn a_refused_connect_is_a_connect_error() {
+    let behaviour = behaviour(|_, method, _| match method {
+        "helper/mcp/connect" => Act::Fail(RpcError::internal("MCP server failed to start")),
+        _ => Act::Notify(Vec::new()),
+    });
+    let rig = rig(fake(&["plugins/list"], behaviour), timing());
+    let error = rig
+        .helper
+        .mcp_connect(&workspace_params(), "plugin:a:s")
+        .await
+        .expect_err("refused");
+    assert!(
+        matches!(&error, rust_cli_kernel_api::mcp::McpError::Connect { message } if message.contains("failed to start")),
+        "{error:?}"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_open_pipe_keeps_the_helper_from_idle_reclaim() {
+    let rig = rig(fake(&["plugins/list"], mcp_echo()), timing());
+    let connection = rig
+        .helper
+        .mcp_connect(&workspace_params(), "plugin:a:s")
+        .await
+        .expect("connected");
+    tokio::time::sleep(Duration::from_secs(301)).await;
+    assert_eq!(rig.fake.stopped.load(Ordering::SeqCst), 0, "kept by the pipe");
+    rig.helper.mcp_close(&connection.id).await;
+    tokio::time::sleep(Duration::from_secs(301)).await;
+    assert_eq!(rig.fake.stopped.load(Ordering::SeqCst), 1, "reclaimed once idle");
+    assert_eq!(rig.helper.crash_count(), 0);
 }

@@ -43,6 +43,10 @@ pub enum McpTransportConfig {
         #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
         headers: BTreeMap<String, String>,
     },
+    /// Fork: a server the Node helper hosts (specs/fork-rust-node-helper.md F3). Only the server name
+    /// (`McpConnect.server`) crosses to the helper, which takes the config from its own Node plugin resolution. Always
+    /// on the main env: the helper is a child of this process.
+    NodeHelper,
 }
 
 impl McpTransportConfig {

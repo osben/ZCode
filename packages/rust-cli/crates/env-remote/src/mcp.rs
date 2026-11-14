@@ -55,7 +55,7 @@ impl RemoteEnvironment {
     ) -> Result<Vec<String>, McpError> {
         let request = Request::McpDeclare {
             workspace: to_wire::workspace(workspace),
-            servers: servers.into_iter().map(to_wire::mcp_declared).collect(),
+            servers: servers.into_iter().filter_map(to_wire::mcp_declared).collect(),
         };
         match self.mcp_call(request).await {
             Ok(Reply::McpDeclare { closed }) => Ok(closed),
@@ -75,10 +75,15 @@ impl McpTransport for RemoteEnvironment {
         request: McpConnect,
     ) -> Result<McpConnectionId, McpError> {
         let McpConnect { server, transport } = request;
+        let Some(transport) = to_wire::mcp_transport(transport) else {
+            return Err(McpError::Unsupported {
+                what: "a Node helper MCP server on a remote machine".to_owned(),
+            });
+        };
         let request = Request::McpConnect {
             workspace: to_wire::workspace(workspace),
             server,
-            transport: to_wire::mcp_transport(transport),
+            transport,
         };
         match self.mcp_call(request).await {
             Ok(Reply::McpConnect { connection }) => Ok(McpConnectionId::new(connection)),
