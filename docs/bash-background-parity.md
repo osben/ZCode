@@ -35,7 +35,7 @@ This document records the current implementation boundaries of `local_bash` back
 - The provider-visible `background_tasks` control request.
 - Any real reachable path for `backgroundedByUser`.
 - A UI/UX hint after 2 seconds that the user can manually background.
-- A global `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` capability switch across Bash/Agent/schema.
+- A global background-task switch across Bash/Agent/schema.
 
 ## Multi-client boundaries
 

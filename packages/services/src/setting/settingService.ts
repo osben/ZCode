@@ -304,7 +304,12 @@ export function createSettingService(): ISettingService {
 }
 
 /** Host-private migration entry point, not part of Setting RPC; ordinary get/update never wait for OAuth queries. */
-export function createSettingServiceWithMigrations(): {
+export interface SettingServiceMigrationOptions {
+  /** Registers the OS credential key for the credentials copied under a new data root; rejects to abort the move. */
+  shareCredentialKeyWithDataRoot?: (targetBaseDir: string) => Promise<void>;
+}
+
+export function createSettingServiceWithMigrations(options: SettingServiceMigrationOptions = {}): {
   service: ISettingService;
   setWorkspaceProjection: (
     reader: (settings: AppSettings) => Promise<WorkspaceSettingsProjection>,
@@ -587,6 +592,9 @@ export function createSettingServiceWithMigrations(): {
       if (currentBaseDir !== targetBaseDir) {
         log("copying data directory from", currentBaseDir, "to", targetBaseDir);
         await copyDataDirectory(currentBaseDir, targetBaseDir);
+        // The OS keyring entry is keyed by the credentials path; without sharing it the copied
+        // credentials cannot be decrypted after restart, so a failed share keeps the old dataBaseDir.
+        await options.shareCredentialKeyWithDataRoot?.(targetBaseDir);
         log("data directory copy done");
       }
 

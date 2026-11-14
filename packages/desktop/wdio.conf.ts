@@ -73,6 +73,7 @@ import {
   seedProjectUpgradeOrderFixture,
 } from "./test/e2e/helpers/project-upgrade-order-fixture.js";
 import {
+  isNativeKeychainCredentialSpec,
   resolveAskUserQuestionClockScaleForWorker,
   resolveE2ECredentialSecret,
 } from "./test/e2e/helpers/e2e-worker-environment.js";
@@ -87,6 +88,10 @@ import {
   shouldReuseDesktopE2EBuild,
   isOffPeakTeamPlanSpec,
 } from "./test/e2e/helpers/coding-plan-mock-env.js";
+import {
+  CN_UNLINKED_E2E_ZCODE_JWT,
+  buildCnUnlinkedProfileResponse,
+} from "./test/e2e/helpers/start-plan-cn-unlinked-fixture.js";
 import {
   createCodingPlanDataPlaneResponse,
   type DataPlaneTurnFixture,
@@ -1519,6 +1524,16 @@ async function startCodingPlanTeamMockIfNeeded(specs: string[] = []) {
       path: url.pathname,
       query: Object.fromEntries(url.searchParams.entries()),
     });
+
+    if (
+      request.method === "GET" &&
+      url.pathname === "/api/v1/oauth/profile" &&
+      request.headers.authorization === `Bearer ${CN_UNLINKED_E2E_ZCODE_JWT}`
+    ) {
+      // 国内新账号没有注册 BigModel：profile 成功返回主体，但没有 bigmodel 关联块。
+      writeJson(response, buildCnUnlinkedProfileResponse());
+      return;
+    }
 
     if (presentation) {
       const fixture = presentationResponse(url.pathname, presentation);
@@ -5147,10 +5162,7 @@ export const config: WebdriverIO.Config = {
           startPluginCdnZipFixtureIfNeeded,
           startOffPeakMockIfNeeded: startOffPeakE2EMock,
         });
-        if (
-          process.platform === "darwin" &&
-          specs.some((spec) => spec.endsWith("system-credential-storage.test.ts"))
-        ) {
+        if (process.platform === "darwin" && specs.some(isNativeKeychainCredentialSpec)) {
           // Main first touches the keychain before the UI is ready, so the native suite must first prepare the system-library entry for the isolated HOME.
           await mkdir(resolve(E2E_HOME_DIR, "Library"), { recursive: true });
           await symlink(

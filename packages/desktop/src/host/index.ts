@@ -131,6 +131,7 @@ import {
   parseRemoteWorkspaceIdentity,
   buildRemoteHostWorkspaceIdentity,
   resolveWorkspaceKey,
+  CREDENTIAL_KEY_SHARE_UNAVAILABLE_ERROR_CODE,
   REMOTE_BIND_CANCELED_ERROR_CODE,
   REMOTE_WORKSPACE_BIND_SESSION_MISSING_ERROR_CODE,
   formatModelPickerValue,
@@ -358,6 +359,32 @@ function authorizeLocalMediaPreviewPath(path: string): Promise<string> {
       });
     } catch (error) {
       pendingLocalMediaPreviewPathAuthorizations.delete(requestId);
+      reject(error instanceof Error ? error : new Error(String(error)));
+    }
+  });
+}
+
+const pendingCredentialKeyShares = new Map<
+  string,
+  { resolve: () => void; reject: (error: Error) => void }
+>();
+
+/** Asks Main (the keyring owner) to register the OS credential key for the credentials copied under `targetBaseDir`. */
+function shareCredentialKeyWithDataRoot(targetBaseDir: string): Promise<void> {
+  if (!parentPort) {
+    return Promise.reject(new Error("parentPort unavailable"));
+  }
+  const requestId = randomUUID();
+  return new Promise<void>((resolve, reject) => {
+    pendingCredentialKeyShares.set(requestId, { resolve, reject });
+    try {
+      parentPort.postMessage({
+        type: HostResponseTypes.CredentialKeyShareRequest,
+        requestId,
+        targetBaseDir,
+      });
+    } catch (error) {
+      pendingCredentialKeyShares.delete(requestId);
       reject(error instanceof Error ? error : new Error(String(error)));
     }
   });
@@ -3422,6 +3449,22 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
     return;
   }
 
+  if (msg.type === HostMessageTypes.CredentialKeyShareResult) {
+    const pending = pendingCredentialKeyShares.get(msg.requestId);
+    if (!pending) return;
+    pendingCredentialKeyShares.delete(msg.requestId);
+    if (msg.ok) {
+      pending.resolve();
+    } else {
+      pending.reject(
+        Object.assign(new Error("System credential storage is unavailable"), {
+          code: msg.errorCode ?? CREDENTIAL_KEY_SHARE_UNAVAILABLE_ERROR_CODE,
+        }),
+      );
+    }
+    return;
+  }
+
   if (msg.type === HostMessageTypes.PluginSandboxRegisterResult) {
     pluginSandboxRegistrationBridge.accept(msg);
     return;
@@ -4068,7 +4111,7 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
           service: settingService,
           prepareLegacyAccountConnections,
           setWorkspaceProjection,
-        } = createSettingServiceWithMigrations();
+        } = createSettingServiceWithMigrations({ shareCredentialKeyWithDataRoot });
         // 不阻塞启动：读到持久化语言后作为 X-Client-Language 的兜底。
         void settingService.get().then(
           (settings) => {

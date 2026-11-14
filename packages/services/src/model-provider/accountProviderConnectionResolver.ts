@@ -1,6 +1,7 @@
 import {
   isSameOAuthAccountMaterial,
   type OAuthAccountMaterial,
+  type OAuthStartPlanMaterial,
 } from "#src/oauth/repo/oauthCredentialRepo.js";
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
@@ -13,6 +14,7 @@ import type {
 } from "@zcode/provider";
 import { AccountProviderService, createAccountProviderConfigResolver } from "@zcode/provider";
 import {
+  resolveStartPlanFamilyFromOAuthProvider,
   type ApiClient,
   type ProviderFamilyConnectionSelectionSettings,
   type ProviderFamilyDomain,
@@ -62,6 +64,10 @@ export interface AccountProviderConnectionResolverOptions {
     forceRefresh: boolean,
   ) => Promise<string | null>;
   readonly loadAccountIdentity: (family: ProviderFamilyDomain) => Promise<string | null>;
+  /** Start identity is separate from paid plans: a domestic unlinked account has only Start material. */
+  readonly loadStartPlanMaterial: (
+    family: ProviderFamilyDomain,
+  ) => Promise<OAuthStartPlanMaterial | null>;
   readonly resolveFamilyAvailability: AccountProviderFamilyAvailabilityResolver;
 }
 
@@ -70,6 +76,9 @@ export interface CodingPlanFamilyAvailabilityResolverOptions {
   readonly loadOAuthAccountMaterial: (
     family: ProviderFamilyDomain,
   ) => Promise<OAuthAccountMaterial | null>;
+  readonly loadStartPlanMaterial: (
+    family: ProviderFamilyDomain,
+  ) => Promise<OAuthStartPlanMaterial | null>;
   readonly credentialService?: {
     load(key: string): Promise<string | null>;
   };
@@ -87,6 +96,24 @@ export interface AccountProviderConfigSourceOptions extends AccountProviderConne
  */
 function isCodingPlanDerivedMode(mode: string | undefined): mode is "off-peak" | "highspeed" {
   return mode === "off-peak" || mode === "highspeed";
+}
+
+/**
+ * Whether Start belongs to the current account access context; an initialized family still follows providerFamilyDomain.
+ * Bug cause: for a domestic login not linked to BigModel, providerFamilyDomain stays empty, so Start is never current
+ * and the Registry does not publish its models. Decide by the Start family mapped from the login provider; only one
+ * Start is current at a time.
+ */
+function isStartPlanFamilyCurrent(
+  providerFamilyDomain: ProviderFamilyDomain | null,
+  family: ProviderFamilyDomain,
+  material: OAuthStartPlanMaterial | null,
+): boolean {
+  if (!material?.accountIdentity.trim()) return false;
+  return (
+    (providerFamilyDomain ?? resolveStartPlanFamilyFromOAuthProvider(material.loginProvider)) ===
+    family
+  );
 }
 
 /**
@@ -112,6 +139,17 @@ export function createAccountProviderConnectionResolver(
         return normalized || null;
       });
       accountIdentityByFamily.set(family, pending);
+      return pending;
+    };
+    const startPlanMaterialByFamily = new Map<
+      ProviderFamilyDomain,
+      Promise<OAuthStartPlanMaterial | null>
+    >();
+    const loadStartPlanMaterial = (family: ProviderFamilyDomain) => {
+      const existing = startPlanMaterialByFamily.get(family);
+      if (existing) return existing;
+      const pending = options.loadStartPlanMaterial(family);
+      startPlanMaterialByFamily.set(family, pending);
       return pending;
     };
     const availabilityByProviderId = new Map<string, CodingPlanAvailabilityResult>();
@@ -140,23 +178,29 @@ export function createAccountProviderConnectionResolver(
       if (queryable.length === 0) continue;
 
       const accountIdentity = await loadAccountIdentity(family);
-      if (!accountIdentity) {
-        for (const { providerId } of queryable) {
-          availabilityByProviderId.set(providerId, {
-            kind: "unavailable",
-            reason: "coding_plan_not_connected",
-          });
-        }
-        continue;
+      const startPlanIdentity =
+        (await loadStartPlanMaterial(family))?.accountIdentity.trim() || null;
+      // Bug cause: Start once shared the family identity with paid plans, so a domestic unlinked account judged the whole family disconnected.
+      // Start looks only at its own material; paid plans still require a direct login or linked material.
+      const identityOf = (planKind: string) =>
+        planKind === "start-plan" ? startPlanIdentity : accountIdentity;
+      const connected = queryable.filter(({ planKind }) => identityOf(planKind));
+      for (const { providerId, planKind } of queryable) {
+        if (identityOf(planKind)) continue;
+        availabilityByProviderId.set(providerId, {
+          kind: "unavailable",
+          reason: "coding_plan_not_connected",
+        });
       }
+      if (connected.length === 0) continue;
 
       const availabilityProviders = await Promise.all(
-        queryable.map(async ({ providerId, planKind }) => ({
+        connected.map(async ({ providerId, planKind }) => ({
           providerId,
           family,
           planKind,
           apiKey:
-            planKind !== "team-coding-plan"
+            planKind !== "team-coding-plan" && accountIdentity
               ? await options
                   .loadCodingPlanApiKey(providerId, family, accountIdentity, forceCredentialRefresh)
                   .catch(() => null)
@@ -168,7 +212,7 @@ export function createAccountProviderConnectionResolver(
         providers: availabilityProviders,
         selections: settings.selections,
       });
-      for (const { providerId } of queryable) {
+      for (const { providerId } of connected) {
         availabilityByProviderId.set(providerId, resolved[providerId] ?? { kind: "unknown" });
       }
     }
@@ -204,9 +248,16 @@ export function createAccountProviderConnectionResolver(
         continue;
       }
       const selection = settings.selections[access.accountType];
+      const startPlanMaterial =
+        access.mode === "start-plan" ? await loadStartPlanMaterial(access.accountType) : null;
+      // Start's scope and connection key use the Start identity; a domestic unlinked account has an empty paid identity, and two new accounts must not share a scope.
+      const identity =
+        access.mode === "start-plan"
+          ? (startPlanMaterial?.accountIdentity ?? null)
+          : await loadAccountIdentity(access.accountType);
       // last-known-good is valid only for the same account and Team identity. A network failure after switching accounts must not revive old entitlements.
       const scope = JSON.stringify([
-        await loadAccountIdentity(access.accountType),
+        identity,
         // 派生入口跟随当前套餐；它的 last-known-good 作用域也必须包含完整 Team 身份。
         // 否则切 Team 后母体会 fail-closed，派生入口却可能沿用旧 Team 权益。
         (access.mode === "team-coding-plan" || isCodingPlanDerivedMode(access.mode)) &&
@@ -258,16 +309,20 @@ export function createAccountProviderConnectionResolver(
           : {}),
         // Start follows the signed-in identity, while paid plans follow the selected connection; both can be current simultaneously without rewriting entitlements or configuration.
         current:
-          settings.providerFamilyDomain === access.accountType &&
-          (access.mode === "start-plan"
-            ? Boolean(await loadAccountIdentity(access.accountType))
-            : selection?.kind === access.mode),
+          access.mode === "start-plan"
+            ? isStartPlanFamilyCurrent(
+                settings.providerFamilyDomain,
+                access.accountType,
+                startPlanMaterial,
+              )
+            : settings.providerFamilyDomain === access.accountType &&
+              selection?.kind === access.mode,
         // Two Teams share a Provider ID, so the observer must compare their complete identities from the same snapshot;
         // do not mistake manually switching plans/accounts for the original plan becoming invalid. This belongs only in Account State, not Config.
         connectionKey: createHash("sha256")
           .update(
             JSON.stringify([
-              await loadAccountIdentity(access.accountType),
+              identity,
               access.accountType,
               access.mode === "start-plan" ? { kind: "start-plan" } : (selection ?? null),
             ]),
@@ -287,11 +342,17 @@ export function createAccountProviderConnectionResolver(
           (await captured) === ((await options.loadAccountIdentity(family))?.trim() || null),
       ),
     );
+    const startPlanMaterialsUnchanged = await Promise.all(
+      [...startPlanMaterialByFamily].map(async ([family, captured]) =>
+        isSameOAuthAccountMaterial(await captured, await options.loadStartPlanMaterial(family)),
+      ),
+    );
     const latestSettings = await options.readSettings();
     const latestSessionRevision = await options.loadSessionRevision();
     if (
       sessionRevision !== latestSessionRevision ||
       identitiesUnchanged.some((unchanged) => !unchanged) ||
+      startPlanMaterialsUnchanged.some((unchanged) => !unchanged) ||
       !isDeepStrictEqual(settings, latestSettings)
     ) {
       throw new Error("账号查询期间连接或身份发生变化，丢弃过期结果");
@@ -345,17 +406,23 @@ export function createCodingPlanFamilyAvailabilityResolver(
 ): AccountProviderFamilyAvailabilityResolver {
   return async ({ family, providers, selections }) => {
     const accountMaterial = await options.loadOAuthAccountMaterial(family);
+    const startPlanMaterial = await options.loadStartPlanMaterial(family);
     const context = {
       apiClient: options.apiClient,
       credentialService: options.credentialService,
       accountMaterial,
+      startPlanMaterial,
       providerFamilyConnectionSelections: selections,
     };
     const result = await (family === "zai"
       ? validateZaiAccountProviderAvailability(providers, context)
       : validateBigModelAccountProviderAvailability(providers, context));
     if (
-      !isSameOAuthAccountMaterial(accountMaterial, await options.loadOAuthAccountMaterial(family))
+      !isSameOAuthAccountMaterial(
+        accountMaterial,
+        await options.loadOAuthAccountMaterial(family),
+      ) ||
+      !isSameOAuthAccountMaterial(startPlanMaterial, await options.loadStartPlanMaterial(family))
     )
       throw new Error("project_token_scope_invalidated");
     return result;
@@ -372,14 +439,25 @@ export async function resolveCurrentAccountAccess(input: {
   readonly access: ZCodeProviderAccountAccess;
   readonly readSettings: () => Promise<AccountProviderConnectionSettings>;
   readonly loadAccountIdentity: (family: ProviderFamilyDomain) => Promise<string | null>;
+  readonly loadStartPlanMaterial: (
+    family: ProviderFamilyDomain,
+  ) => Promise<OAuthStartPlanMaterial | null>;
 }): Promise<ZCodeAccountAccess | null> {
   const settings = await input.readSettings();
   const { accountType, mode } = input.access;
-  if (settings.providerFamilyDomain !== accountType) return null;
   if (mode === "start-plan") {
-    if (!(await input.loadAccountIdentity(accountType))?.trim()) return null;
+    // The same decision as Account State's current, so model calls and quota queries do not diverge from the settings page.
+    if (
+      !isStartPlanFamilyCurrent(
+        settings.providerFamilyDomain,
+        accountType,
+        await input.loadStartPlanMaterial(accountType),
+      )
+    )
+      return null;
     return { type: "zhipu-account", family: accountType, planKind: "start-plan" };
   }
+  if (settings.providerFamilyDomain !== accountType) return null;
   const selection = settings.selections[accountType];
   if (!selection) return null;
   if (isCodingPlanDerivedMode(mode)) {

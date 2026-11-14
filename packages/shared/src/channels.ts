@@ -695,6 +695,8 @@ export const ZCODE_RPC_HOST_CAPABILITY_HEADER = "x-zcode-rpc-host-capability";
 export const HostMessageTypes = {
   /** Main → Host: returns encrypt/decrypt results only over the bound private channel; contains no system master key. */
   CredentialCipherResult: "credential-cipher-result",
+  /** main → Host: outcome of sharing the OS credential key with a copied data root. */
+  CredentialKeyShareResult: "credential-key-share-result",
   /** main → Host: prepare the mobile project directory, reusing only already-online physical Sources. */
   PrepareProjectWorkspace: "prepare-project-workspace",
   DatabaseStartupControl: "database-startup-control",
@@ -773,6 +775,8 @@ export const HostMessageTypes = {
 export const HostResponseTypes = {
   /** Host → Main: run encrypt/decrypt against the credential directory bound to this Host. */
   CredentialCipherRequest: "credential-cipher-request",
+  /** Host → main: share the OS credential key with the credentials copied under a new data root. */
+  CredentialKeyShareRequest: "credential-key-share-request",
   /** Host → main: admitted directories and scopes; main interprets no project business. */
   ProjectWorkspacePrepared: "project-workspace-prepared",
   DatabaseStartupState: "database-startup-state",

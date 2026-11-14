@@ -455,3 +455,7 @@ third-party/copied-components.json
 
 # Upstream file (24.8 KB upstream too); splitting it would conflict with every upstream sync.
 apps/zcode-cli/packages/adapters/src/storage/session-store/repositories/usage.ts
+
+# Union of the fork ChatGPT-plan wiring and upstream 3.18.2 Start Plan material; splitting the
+# resolver would recreate this conflict on every upstream sync.
+packages/services/src/model-provider/accountProviderConnectionResolver.ts
