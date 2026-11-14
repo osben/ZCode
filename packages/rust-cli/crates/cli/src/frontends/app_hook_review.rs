@@ -193,10 +193,21 @@ impl AppWorkspace {
             .await
             .map_err(ToggleError::Rejected)?;
         let (after, failures, _) = self.review_hooks(&trust).await;
-        self.rebuild_hooks(&trust).await;
+        // Node `admission.invalidate("workspace_hooks_config_rebuild_failed")`: once the write is committed and the
+        // config cannot be rebuilt, no project hook of the workspace runs until its next successful assembly. A
+        // skip-only rebuild here would keep running the hooks of the files that still load.
         if failures.any() || after.bundle.is_none() {
+            tracing::warn!(
+                event = "workspace.hooks.invalidated",
+                "the toggled workspace config cannot be rebuilt; its project hooks are blocked"
+            );
+            (self.put_project_hooks)(
+                rust_cli_hooks::project_key(&trust.working_directory),
+                rust_cli_hooks::ProjectEntry::Invalid,
+            );
             return Err(ToggleError::RebuildFailed);
         }
+        self.rebuild_hooks(&trust).await;
         Ok(())
     }
 
