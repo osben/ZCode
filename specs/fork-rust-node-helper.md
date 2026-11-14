@@ -277,13 +277,12 @@ helper/session/open {sessionId, rootSessionId?, workspace, pluginIds: [...], ser
 - `plugins/mentionItems`;
 - `plugins/referenceCatalog` and `plugins/referenceCatalogWithCategory` with a `sessionId` (the session's frozen catalog; drafts stay sessionless as in F1).
 
-Rust forwards one only when the session is one of its own, and, for a method that names a `serverName`, when that server is helper-hosted; `plugins/mentionItems` names a plugin, which must be helper-hosted. Otherwise Rust answers `proto.forkRustAgent.mcpUiServerNotHelperHosted`.
+Rust forwards one only when the session is one of its own (open or resumable in this process), and, for a method that names a `serverName`, when that server is helper-hosted; `plugins/mentionItems` names a plugin, which must be helper-hosted. Otherwise Rust answers `proto.forkRustAgent.mcpUiServerNotHelperHosted`.
 
-A session is one of Rust's own when its stored workspace key equals the helper catalog's workspace identity key (`workspaceIdentity?.trim() || workspacePath`), because a helper serves one workspace.
+The ownership check does not compare workspace paths:
 
-- The stored key is the store's `coalesce(nullif(workspace_id, ''), directory)`, or the draft's.
-- Rust stores its local sessions with no `workspace_id`, so their key is their directory. An execution-worktree session keeps its parent's directory and stays listed under it.
-- The shared session database also holds other workspaces' sessions and the upstream app's remote sessions. Being present in it does not make a session Rust's.
+- The agent's cwd is not its sessions' workspace. The Host may spawn it in a fixed directory (`ZCODE_AGENT_SERVER_CWD`, the spawn fallback cwd). The desktop E2E runs it in `<home>/.zcode`, while its sessions live in `<home>/ZCodeProject`. A comparison with the helper catalog's workspace (the agent's cwd) refused Rust's own mention and MCP App calls.
+- The Host routes a session's calls to the agent that owns it (owner/lease), so another workspace's session does not reach this check.
 
 **Helper → Rust requests (F3).** Each carries a `requestKey` (the request id). When the helper abandons one (the panel call was aborted, the session closed), it sends the notification `helper/cancelRequest {requestKey}` and does not wait for the answer; Rust drops its work for that key (a pending prompt is withdrawn, a sampling request is cancelled).
 
