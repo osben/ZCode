@@ -1236,8 +1236,8 @@ sequenceDiagram
 - Golden digests: Node `createWorkspaceMcpTrust(...).inspect()` and Rust produce the same `declarationDigest`, `sourcePaths` and `display` for fixtures with scrambled keys, aliases, inferred types, relative and absent `cwd`, non-ASCII env values, and an sse URL with credentials and a query (`cli` tests, fixtures generated from Node).
 - **Cross-runtime trust check**: a record written by Node admits the server in Rust (`mcp/list` shows `trusted: true` and the session gate keeps it), and a record written by Rust is read by Node's `inspect` as trusted; the store bytes have Node's shape.
 - `workspace/mcp/trust` with a stale digest is refused and writes nothing; a revoke removes only that record. A revoke takes effect on the next session or settings `connect`: servers a running session already connected stay connected, as in Node (`reloadWorkspaceMcpTrust` only refreshes the banner).
-- `workspace/hooks/trustGrant` writes one record with Node's fields and reloads the hook snapshot: the next UserPromptSubmit runs the trusted hook (E2E HK06, HK07).
-- E2E on both runtimes: `plugins/conversation-session-workspace-mcp-trust` (WMT-01..05: banner after the first prompt, trust and revoke from Settings, refresh connects only after trust, fallback file) and `hooks/conversation-session-hook-trust` (HK05..HK07).
+- `workspace/hooks/trustGrant` writes one record with Node's fields and reloads the hook snapshot when the workspace is the process's own. Under shared routing it is not, so the trusted hook does not run (see "Open gaps", per-workspace hook snapshots).
+- E2E on both runtimes: `plugins/conversation-session-workspace-mcp-trust` (WMT-01..05: banner after the first prompt, trust and revoke from Settings, refresh connects only after trust, fallback file) and `hooks/conversation-session-hook-trust` (HK05, HK06; HK07 is an open gap on Rust).
 
 ### Workspace hook review flow (Node `app/workspace-hook-review-controller.ts`)
 
@@ -1246,7 +1246,7 @@ The desktop Settings page trusts a workspace hook through a review interaction: 
 Owners:
 
 - **Protocol** (`protocol-zcode` `fork/hook_review.rs`), per session and in memory only, like Node's per-session controller: the review flow id (`workspace-hook-review:<uuid>`, one per session), the generation counter, the current request and its state (`pending`, `resolved`, `superseded`, `timed_out`, `cancelled`), the deadline timer, the set of digests this session revoked (Node coordinator `revokedKeys`), and one mutation at a time (Node `enqueueMutation`). The run id is `workspace-hook-run:<sessionId>:<uuid>`, fixed per session; the task id is the session id; the workspace label is the last path segment (Node `server-operations.ts` `workspaceHookReviewHost`).
-- **cli** (`frontends/app_workspace.rs`, the `WorkspaceAdmin` port): every command rediscovers the workspace's hook bundle and reads the trust store; it writes the grant and revoke records (the store and fields of `workspace/hooks/trustGrant`) and the toggle (`.zcode/config.json`). After every accepted write in the process's own workspace it rebuilds the process's hook snapshot, so a grant runs from the next natural event and a revoke stops the hook at once (Node's coordinator admits or blocks it in the running session).
+- **cli** (`frontends/app_workspace.rs`, the `WorkspaceAdmin` port): every command rediscovers the workspace's hook bundle and reads the trust store; it writes the grant and revoke records (the store and fields of `workspace/hooks/trustGrant`) and the toggle (`.zcode/config.json`). After every accepted write in the process's own workspace it rebuilds the process's hook snapshot, so a grant runs from the next natural event and a revoke stops the hook at once (Node's coordinator admits or blocks it in the running session). A session whose workspace is not the process root has no snapshot of its project hooks at all; see "Open gaps", per-workspace hook snapshots.
 
 Rules:
 
@@ -1305,7 +1305,7 @@ Acceptance:
   - a turn's end keeps the review interaction.
 - cli unit tests (`app_workspace_tests.rs`): trust states (stale slot, corrupt store, revoked); grant writes Node's record fields and rebuilds the hooks; revoke removes only the named records; the toggle writes only `enabled` with a version precondition and refuses a moved declaration; an unreadable config refuses a revoke.
 - Fork Vitest: a review interaction emitted by Rust parses with `pendingInteractionSchema`.
-- E2E: `hooks/conversation-session-hook-trust` HK05–HK07 pass on the rust runtime as on node.
+- E2E: `hooks/conversation-session-hook-trust` HK05 and HK06 pass on the rust runtime as on node (box run 2026-11-14). HK07 fails on Rust only; see "Open gaps", per-workspace hook snapshots.
 
 ## Workspace model calls (Node `workspace-generate-text.ts`, `workspace-model-runtime.ts`)
 
@@ -1592,6 +1592,11 @@ Known small gaps and follow-ups:
 
 ## Open gaps (not yet ported)
 
+- **Per-workspace hook snapshots (production-impacting, not cosmetic).** zcode-rs keeps one `HookEngine` snapshot per process. It is assembled from the process cwd at startup (`assemble` `replace_hooks`) and rebuilt only for that workspace (`rebuild_own_hooks`). Under shared task runtime routing (`sessionWorkspaceRouting`), the Desktop starts the agent with its cwd at `~/.zcode` (spawn preflight `cwdSource: "command"`), so a session's workspace is never the process root:
+  - Project `.zcode/config.json` hooks never run for such a session, before or after trust. The trust record is written correctly, but no snapshot holds that workspace's hooks.
+  - `workspace/hooks/trustGrant` and the review flow's grant and toggle have the same limit; their rebuild is skipped (log `workspace.hooks.rebuild_skipped`).
+  - HK05 passes on Rust only because no project hook is loaded at all. HK07 ("trusted UserPromptSubmit hook runs on the next natural prompt", and the next task's SessionStart) fails on Rust only.
+  - Planned fix: `HookEngine` keeps a snapshot per workspace, keyed by `workspaceIdentity?.trim() || workspacePath`. A session's events use its own workspace's snapshot, which is assembled at session open and rebuilt on every trust change (grant, revoke, toggle) and after `/cd`.
 - **Hooks lifecycle cases that fail only on Rust** (desktop E2E `hooks/conversation-session-hooks-lifecycle`, container run after the SessionStart pending slot; each passes on Node):
   - HK-EF-01: the tool hook contexts are not found after the tool result in the next model request (`expectToolHookContextsAfterResult`, index -1).
   - HK-ST-01: the timeline shows `STEP_0`..`STEP_3` and the turn stays running (`Working`) instead of returning to idle; cause not yet located. Node caps consecutive Stop continuations at three (`MAX_STOP_HOOK_CONTINUATIONS`, core `runtime/methods/hooks.ts`).
