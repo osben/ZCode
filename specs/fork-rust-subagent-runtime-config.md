@@ -153,3 +153,10 @@ Desktop E2E: run each spec on both runtimes in the container runner.
 A case that fails on Node too is not a parity gap.
 
 The refresh specs (`subagent-refresh-capture.ts`, and the explicit tool lists in the model-override and reasoning specs) expect Node's child tool list, which includes `RespondToCoordinator`. zcode-rs has no such tool. That is a separate parity gap, outside this spec, so on Rust these specs run from a copy without that one tool name.
+
+Results on Rust (2026-11-13). The following failures are not gaps of this spec:
+
+- `runtime-refresh` passes.
+- `catalog-refresh`: the `user` case passes. The `mcs` case fails afterwards, at the provider-prefix check. When a request ends with a mid-conversation system message, Rust puts the message cache breakpoint on that system message. Node puts it on the latest non-system message (`finalizeLatestNonSystemMessageCacheControl`, core `runtime/helpers/provider-request-messages.ts`); the Rust counterpart is `query` `normalize.rs`. That is a request-shaping gap, outside this spec.
+- `plugin-subagent-override-cold` passes on Node but fails on Rust: zcode-rs skips the whole `documents` plugin, because its MCP server runs in the Node CLI plugin host (`ext` `plugins/select.rs`, `NodeDependency::PluginHost`). Its agents are never loaded, so `documents:visual-judge` is not found. That gap belongs to the plugin host work. The override mapping itself is covered by the `agents` unit tests.
+- `built-in-subagent-model-overrides` (an E2E helper import is missing), `runtime-catalog-reasoning` (the custom form overflows horizontally) and `subagent-coding-plan-login-catalog-stale` (the OAuth URL is not captured) fail on Node too.
