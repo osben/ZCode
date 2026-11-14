@@ -269,14 +269,15 @@ Node computes this when the runtime is built and again after each preference cha
 Rust:
 
 - Only the app-server has the tool: it is registered when the assembly has the code-intelligence port (the `lsp::Host`), the same condition as D1.
-- **Owner.** The host keeps one availability fact per session: the workspace it was computed for and the answer. `CodeIntelligence::refresh_tool(session, workspace)` computes and stores it: off when code intelligence is disabled, off when the session's runtime has no declared server, else whether any declared server is installed (the same install probe and env as `lsp/status`).
-- **When it is computed.** The main thread's runner calls `refresh_tool` before every main-thread run, before the run's first tool snapshot (Node's turn-start settle). `lsp/preferences/set` recomputes the fact of every session that has one before it answers (Node's `applyLspPreferences` for every registered runtime). `session_closed` drops it.
+- **Owner.** The host keeps one availability fact per session: the workspace it was computed for and the answer. `CodeIntelligence::settle_tool(session, workspace)` computes and stores it: off when code intelligence is disabled, off when the session's runtime has no declared server (a workspace in another environment, or one whose workspace identity is remote, has none: Node `create-app.ts` declares no servers for a remote identity), else whether any declared server is installed (the same install probe and env as `lsp/status`).
+- **When it is computed.** The main thread's runner calls `settle_tool` before every main-thread run, before the run's first tool snapshot. Only the first call for the session's workspace computes the fact (Node computes it when the runtime is built); a later call for the same workspace keeps it, as Node's turn-start `settleLspPreferences` only awaits a pending computation. A move to another workspace computes it anew. `lsp/preferences/set` recomputes the fact of every session that has one before it answers (Node's `applyLspPreferences` for every registered runtime). `session_closed` drops it. So an install mid-session shows the tool only after a preference write, and an uninstall keeps it: the query then answers `lsp_server_not_installed`.
 - **Who reads it.** One registry layer under the permission filter owns the tool's visibility: it adds `LSP` to a session's snapshot and resolves it by name for that session (`find_for`) only while `CodeIntelligence::tool_offered(session)` is true. That sync read is "enabled now and the stored fact is true", so turning code intelligence off hides the tool at once. Every consumer of the session view goes through this layer: the main loop's step snapshot, ToolSearch (search and the deferred listing), the executor's lookup, `system/init` and `/context`. Lookups without a session (`tools`, `find`) never return it.
 - **Subagents.** The subagent tool filter and the fork child's registry hide `LSP` for every child, like the main-session-only Cron tools, because the session-keyed fact would otherwise reach a child of an offered session.
 
 ```
-main-thread input ─▶ runner: CodeIntelligence::refresh_tool(session, workspace) ── awaited
-                          │   (prefs enabled? → session runtime has servers? → any installed?) → host fact[session]
+main-thread input ─▶ runner: CodeIntelligence::settle_tool(session, workspace) ── awaited
+                          │   fact[session] for this workspace? keep it
+                          │   else (prefs enabled? → session runtime has servers? → any installed?) → host fact[session]
                           ▼
                      query loop: StepTools::refresh ─▶ registry snapshot(session)
                                                        └─ LSP layer: tool_offered(session) = enabled && fact[session]

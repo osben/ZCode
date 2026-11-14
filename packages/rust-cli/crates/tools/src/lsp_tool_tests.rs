@@ -62,7 +62,7 @@ impl CodeIntelligence for FakeCode {
 
     fn session_closed(&self, _session: &SessionId) {}
 
-    async fn refresh_tool(&self, _session: &SessionId, _workspace: &WorkspaceRef) {}
+    async fn settle_tool(&self, _session: &SessionId, _workspace: &WorkspaceRef) {}
 
     fn tool_offered(&self, _session: &SessionId) -> bool {
         self.offered.load(Ordering::Relaxed)

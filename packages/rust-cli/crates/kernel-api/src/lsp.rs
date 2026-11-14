@@ -121,9 +121,11 @@ pub trait CodeIntelligence: Send + Sync {
     async fn edit_diagnostics(&self, session: &crate::ids::SessionId) -> Option<String>;
     /// The session closed: its pending edits and its `LSP` tool fact are dropped.
     fn session_closed(&self, session: &crate::ids::SessionId);
-    /// Computes and stores whether the session is offered the `LSP` tool (Node `isAvailable`): code intelligence is
-    /// enabled and a declared server of the workspace is installed. The main thread's runner awaits it before a run.
-    async fn refresh_tool(
+    /// Settles whether the session is offered the `LSP` tool (Node `isAvailable`): code intelligence is enabled and a
+    /// declared server of the workspace is installed. The first call for a session's workspace computes and stores it
+    /// (Node builds the runtime); later calls for the same workspace keep it, since only a preference write recomputes
+    /// it. The main thread's runner awaits it before a run.
+    async fn settle_tool(
         &self,
         session: &crate::ids::SessionId,
         workspace: &crate::env::WorkspaceRef,

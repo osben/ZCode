@@ -16,7 +16,7 @@ use rust_cli_kernel_api::permission::PermissionMode;
 use rust_cli_kernel_api::testing::RecordingSink;
 use tokio_util::sync::CancellationToken;
 
-use super::LspToolRefresh;
+use super::LspToolSettle;
 
 type Events = Arc<Mutex<Vec<String>>>;
 
@@ -36,9 +36,9 @@ impl CodeIntelligence for Recorder {
         None
     }
     fn session_closed(&self, _session: &SessionId) {}
-    async fn refresh_tool(&self, session: &SessionId, workspace: &WorkspaceRef) {
+    async fn settle_tool(&self, session: &SessionId, workspace: &WorkspaceRef) {
         self.0.lock().unwrap().push(format!(
-            "refresh {} {}",
+            "settle {} {}",
             session.as_str(),
             workspace.root.as_str()
         ));
@@ -97,9 +97,9 @@ fn request() -> QueryRequest {
 }
 
 #[tokio::test]
-async fn a_main_thread_run_refreshes_the_fact_before_it_starts_and_a_child_run_does_not() {
+async fn a_main_thread_run_settles_the_fact_before_it_starts_and_a_child_run_does_not() {
     let events = Events::default();
-    let runner = LspToolRefresh {
+    let runner = LspToolSettle {
         inner: Arc::new(Inner(events.clone())),
         code: Arc::new(Recorder(events.clone())),
     };
@@ -113,5 +113,5 @@ async fn a_main_thread_run_refreshes_the_fact_before_it_starts_and_a_child_run_d
         .run(child, Arc::new(RecordingSink::default()), Abort::new())
         .await
         .unwrap();
-    assert_eq!(*events.lock().unwrap(), ["refresh s1 /w", "run", "run"]);
+    assert_eq!(*events.lock().unwrap(), ["settle s1 /w", "run", "run"]);
 }

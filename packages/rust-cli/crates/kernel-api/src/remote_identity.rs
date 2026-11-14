@@ -77,11 +77,13 @@ pub fn parse_remote_workspace_identity(identity: &str) -> Option<ParsedRemoteIde
         cursor = user_end + 1;
     }
     let workspace_path = &rest[cursor..];
-    workspace_path.starts_with('/').then(|| ParsedRemoteIdentity {
-        kind,
-        workspace_path: workspace_path.to_owned(),
-        source_server_id,
-    })
+    workspace_path
+        .starts_with('/')
+        .then(|| ParsedRemoteIdentity {
+            kind,
+            workspace_path: workspace_path.to_owned(),
+            source_server_id,
+        })
 }
 
 /// Node `isRemoteWorkspaceIdentity`.

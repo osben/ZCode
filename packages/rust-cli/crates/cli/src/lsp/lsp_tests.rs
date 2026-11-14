@@ -599,7 +599,9 @@ async fn the_host_runs_a_server_for_a_session_and_stops_it_when_disabled() {
     fixture.host.session_closed(&session);
 }
 
-/// D2 "When the tool is offered": enabled and a declared server installed; preference writes recompute it.
+/// D2 "When the tool is offered": enabled and a declared server installed. Like Node (the runtime's construction and
+/// `applyLspPreferences`), the fact is computed once per session and workspace and again by each preference write; a
+/// later run only settles it.
 #[cfg(unix)]
 #[tokio::test]
 async fn the_tool_is_offered_while_enabled_with_an_installed_server() {
@@ -607,12 +609,15 @@ async fn the_tool_is_offered_while_enabled_with_an_installed_server() {
     let session = SessionId::new("s1");
     let root = reference("/Users/dev/a");
     assert!(!fixture.host.tool_offered(&session), "never computed");
-    fixture.host.refresh_tool(&session, &root).await;
+    fixture.host.settle_tool(&session, &root).await;
     assert!(!fixture.host.tool_offered(&session), "nothing installed");
 
     install(&fixture.bin, "typescript-language-server");
-    fixture.host.refresh_tool(&session, &root).await;
-    assert!(fixture.host.tool_offered(&session));
+    fixture.host.settle_tool(&session, &root).await;
+    assert!(
+        !fixture.host.tool_offered(&session),
+        "a run does not probe the install again"
+    );
 
     fixture
         .host
@@ -637,6 +642,43 @@ async fn the_tool_is_offered_while_enabled_with_an_installed_server() {
     );
 }
 
+/// A server uninstalled mid-session keeps the tool (Node computes availability only at construction and on a
+/// preference write); its queries answer `lsp_server_not_installed`. A move to another workspace computes it anew.
+#[cfg(unix)]
+#[tokio::test]
+async fn an_uninstall_mid_session_keeps_the_tool_and_queries_report_it() {
+    let fixture = fixture(&[]).await;
+    install(&fixture.bin, "typescript-language-server");
+    let session = SessionId::new("s1");
+    let root = reference("/Users/dev/a");
+    fixture.host.settle_tool(&session, &root).await;
+    assert!(fixture.host.tool_offered(&session));
+
+    std::fs::remove_file(fixture.bin.join("typescript-language-server")).unwrap();
+    fixture.host.settle_tool(&session, &root).await;
+    assert!(fixture.host.tool_offered(&session), "still offered");
+    let error = fixture
+        .host
+        .query(
+            &session,
+            &root,
+            hover("/Users/dev/a/x.ts"),
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "lsp_server_not_installed");
+
+    fixture
+        .host
+        .settle_tool(&session, &reference("/Users/dev/b"))
+        .await;
+    assert!(
+        !fixture.host.tool_offered(&session),
+        "another workspace is computed anew"
+    );
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn a_workspace_without_declared_servers_is_not_offered_and_has_no_server_for_a_file() {
@@ -648,7 +690,7 @@ async fn a_workspace_without_declared_servers_is_not_offered_and_has_no_server_f
     install(&fixture.bin, "typescript-language-server");
     let session = SessionId::new("s1");
     let root = reference("/Users/dev/a");
-    fixture.host.refresh_tool(&session, &root).await;
+    fixture.host.settle_tool(&session, &root).await;
     assert!(!fixture.host.tool_offered(&session));
     let error = fixture
         .host
@@ -760,7 +802,7 @@ async fn a_remote_workspace_identity_has_no_language_servers() {
         install(&fixture.bin, "typescript-language-server");
         let session = SessionId::new("s1");
         let root = reference("/Users/dev/a");
-        fixture.host.refresh_tool(&session, &root).await;
+        fixture.host.settle_tool(&session, &root).await;
         assert!(!fixture.host.tool_offered(&session), "{identity}");
         let error = fixture
             .host
@@ -785,7 +827,7 @@ async fn a_local_workspace_identity_keeps_its_language_servers() {
     let session = SessionId::new("s1");
     fixture
         .host
-        .refresh_tool(&session, &reference("/Users/dev/a"))
+        .settle_tool(&session, &reference("/Users/dev/a"))
         .await;
     assert!(fixture.host.tool_offered(&session));
 }
@@ -801,7 +843,7 @@ async fn a_workspace_in_another_environment_has_no_language_servers() {
         environment: EnvironmentId::new("ssh:host"),
         root: EnvPath::new("/Users/dev/a"),
     };
-    fixture.host.refresh_tool(&session, &root).await;
+    fixture.host.settle_tool(&session, &root).await;
     assert!(!fixture.host.tool_offered(&session));
     let error = fixture
         .host

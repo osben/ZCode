@@ -326,7 +326,7 @@ impl LocalKernel {
         let main_loop: Arc<dyn QueryRunner> = Arc::new(QueryLoop::new(parts));
         // Fork: the session's `LSP` tool fact is settled before the run's first tool snapshot.
         let main_loop: Arc<dyn QueryRunner> = match extensions.code_intelligence.clone() {
-            Some(code) => Arc::new(lsp_tool::LspToolRefresh {
+            Some(code) => Arc::new(lsp_tool::LspToolSettle {
                 inner: main_loop,
                 code,
             }),

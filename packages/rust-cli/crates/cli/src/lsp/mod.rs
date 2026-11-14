@@ -82,7 +82,7 @@ pub(crate) struct Host {
     loaded: OnceCell<()>,
     sessions: Mutex<HashMap<SessionId, SessionSlot>>,
     /// Whether each session is offered the `LSP` tool, and the workspace it was computed for (specs/fork-rust-lsp.md
-    /// "When the tool is offered"): written by `refresh_tool` and by every preference write, read by `tool_offered`.
+    /// "When the tool is offered"): computed by the first `settle_tool` for the session's workspace and by every preference write, read by `tool_offered`.
     tool_facts: Mutex<HashMap<SessionId, (WorkspaceRef, bool)>>,
 }
 
@@ -463,7 +463,16 @@ impl CodeIntelligence for Host {
         self.tool_facts.lock_unpoisoned().remove(session);
     }
 
-    async fn refresh_tool(&self, session: &SessionId, workspace: &WorkspaceRef) {
+    async fn settle_tool(&self, session: &SessionId, workspace: &WorkspaceRef) {
+        let settled = self
+            .tool_facts
+            .lock_unpoisoned()
+            .get(session)
+            .is_some_and(|(known, _)| known == workspace);
+        // Node computes availability when the runtime is built and on preference writes, never per turn.
+        if settled {
+            return;
+        }
         let available = self.tool_available(session, workspace).await;
         self.tool_facts
             .lock_unpoisoned()
