@@ -221,3 +221,21 @@ fn an_empty_output_names_nothing() {
     };
     assert_eq!(output.model_text(), "No results");
 }
+
+/// ECMAScript `String.prototype.trim` strips exactly WhiteSpace and LineTerminator: the code points below are what
+/// Node 26 strips over the whole range. U+0085 (NEL) is White_Space in Unicode but not in ECMAScript.
+#[test]
+fn js_trim_strips_exactly_what_node_strips() {
+    const NODE: &[u32] = &[
+        0x9, 0xa, 0xb, 0xc, 0xd, 0x20, 0xa0, 0x1680, 0x2000, 0x2001, 0x2002, 0x2003, 0x2004,
+        0x2005, 0x2006, 0x2007, 0x2008, 0x2009, 0x200a, 0x2028, 0x2029, 0x202f, 0x205f, 0x3000,
+        0xfeff,
+    ];
+    let stripped: Vec<u32> = (0..=0x10_ffff_u32)
+        .filter_map(char::from_u32)
+        .filter(|char| super::js_trim(&format!("{char}x")) == "x")
+        .map(u32::from)
+        .collect();
+    assert_eq!(stripped, NODE);
+    assert_eq!(super::js_trim("\u{85}x\u{85}"), "\u{85}x\u{85}");
+}

@@ -372,9 +372,10 @@ fn collect_symbol(
     }
 }
 
-/// JS `String.prototype.trim`: Unicode white space plus the BOM.
+/// JS `String.prototype.trim`: ECMAScript WhiteSpace and LineTerminator, which is Unicode White_Space without NEL
+/// (U+0085, a control) plus the BOM.
 fn js_trim(text: &str) -> &str {
-    text.trim_matches(|char: char| char.is_whitespace() || char == '\u{feff}')
+    text.trim_matches(|char: char| (char.is_whitespace() && char != '\u{85}') || char == '\u{feff}')
 }
 
 /// Node `previewOf`.
