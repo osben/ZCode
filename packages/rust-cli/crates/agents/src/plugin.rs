@@ -115,6 +115,7 @@ pub(crate) fn parse(
         permission_mode: None,
         background: text("background") == Some("true"),
         selection: None,
+        inject_agents_md: frontmatter::inject_agents_md(text("injectAgentsMd")),
     };
     (definition, name.to_owned())
 }

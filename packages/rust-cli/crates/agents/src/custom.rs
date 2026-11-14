@@ -129,6 +129,7 @@ pub(crate) fn parse(raw: &str, source: AgentSource) -> Option<AgentDefinition> {
         permission_mode: text("permissionMode").and_then(permission_mode),
         background: text("background") == Some("true"),
         selection: None,
+        inject_agents_md: frontmatter::inject_agents_md(text("injectAgentsMd")),
     })
 }
 

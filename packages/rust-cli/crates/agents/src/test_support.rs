@@ -411,7 +411,27 @@ pub(crate) struct Harness {
     pub(crate) opened: Arc<Mutex<std::collections::HashSet<SessionId>>>,
     /// Fork: the agent catalog (a test installs a Host snapshot source on it).
     pub(crate) catalog: Arc<crate::AgentCatalog>,
+    /// Fork: `ContextRequest::inject_agents_md` of every context build, in order.
+    pub(crate) injected: Arc<Mutex<Vec<bool>>>,
     pub(crate) _scope: TaskScope,
+}
+
+/// Fork: the harness's context (no attachments, no system) that records each build's `inject_agents_md`.
+struct RecordingContext(Arc<Mutex<Vec<bool>>>);
+
+#[async_trait]
+impl rust_cli_kernel_api::orchestration::ContextBuilder for RecordingContext {
+    async fn build(
+        &self,
+        request: ContextRequest,
+        history: &[Message],
+    ) -> Result<
+        rust_cli_kernel_api::orchestration::BuiltContext,
+        rust_cli_kernel_api::orchestration::OrchestrationError,
+    > {
+        self.0.lock_unpoisoned().push(request.inject_agents_md);
+        FixedContext(Vec::new()).build(request, history).await
+    }
 }
 
 /// 只读快照用的压缩器替身（修复线 F112，tui-panels.md §1.7）：上下文用量是“历史条数 × 1000 / 10000”，提示是
@@ -682,6 +702,7 @@ fn built_full(
         .map(|name| Arc::new(FakeTool::new(name, true, "")) as Arc<dyn Tool>)
         .collect();
     let compactor = Arc::new(ContextFake::default());
+    let injected: Arc<Mutex<Vec<bool>>> = Arc::default();
     let catalog = Arc::new(crate::AgentCatalog::new(
         Arc::new(UnusedEnvironment),
         Arc::new(UnusedEnvironment),
@@ -703,7 +724,7 @@ fn built_full(
         tasks: tasks.clone() as Arc<dyn TaskListStore>,
         store_queries: children.clone(),
         queries: Arc::new(queries),
-        context: Arc::new(FixedContext(Vec::new())),
+        context: Arc::new(RecordingContext(injected.clone())),
         spawner: scope.spawner(),
         peers,
         operations: rust_cli_kernel_api::env::Operations::new(
@@ -744,6 +765,7 @@ fn built_full(
         compactor,
         opened: Arc::default(),
         catalog,
+        injected,
         _scope: scope,
     }
 }

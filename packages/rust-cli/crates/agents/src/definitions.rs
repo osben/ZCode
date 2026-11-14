@@ -56,6 +56,9 @@ pub struct AgentDefinition {
     /// Fork: the full model selection (provider, model, reasoning level) of a Host profile or a Settings override
     /// for a built-in; it wins over `model` (specs/fork-rust-subagent-runtime-config.md, rule 9).
     pub selection: Option<rust_cli_kernel_api::model::ModelSelection>,
+    /// Fork: `injectAgentsMd`: false (the built-in Explore and Plan) gives the child no rule files, nested rules or
+    /// git status (specs/fork-rust-subagent-runtime-config.md rule 15).
+    pub inject_agents_md: bool,
 }
 
 impl AgentDefinition {
@@ -63,11 +66,6 @@ impl AgentDefinition {
     pub fn one_shot(&self) -> bool {
         self.source == AgentSource::BuiltIn
             && (self.agent_type == EXPLORE || self.agent_type == PLAN)
-    }
-
-    /// 不带规则文件与 git 状态（按类型名）。
-    pub fn omits_context(&self) -> bool {
-        self.agent_type == EXPLORE || self.agent_type == PLAN
     }
 
     /// 清单行（`agent_listing_delta` 的 `addedLines`）。
@@ -121,6 +119,7 @@ fn built_in(agent_type: &str, when_to_use: &str, prompt: &str) -> AgentDefinitio
         permission_mode: None,
         background: false,
         selection: None,
+        inject_agents_md: true,
     }
 }
 
@@ -137,6 +136,7 @@ pub fn builtins() -> Vec<AgentDefinition> {
     let read_only = |agent_type, when_to_use, prompt| AgentDefinition {
         disallowed_tools: names(READ_ONLY_DISALLOWED),
         model: Some("inherit".to_owned()),
+        inject_agents_md: false,
         ..built_in(agent_type, when_to_use, prompt)
     };
     vec![

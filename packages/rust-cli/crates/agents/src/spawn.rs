@@ -405,6 +405,7 @@ async fn run_loop(
                     &agent.definition.prompt,
                     core.ports.incognito.get(&agent.child).as_ref(),
                 ),
+                inject_agents_md: agent.definition.inject_agents_md,
             }),
         )
     };

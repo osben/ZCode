@@ -169,6 +169,7 @@ fn profile(value: &Value) -> Result<SubagentProfile, String> {
             .as_u64()
             .and_then(|turns| u32::try_from(turns).ok()),
         background: value["background"] == true,
+        inject_agents_md: value["injectAgentsMd"] != false,
         permission_mode: value["permissionMode"]
             .as_str()
             .and_then(PermissionMode::from_cli_choice),

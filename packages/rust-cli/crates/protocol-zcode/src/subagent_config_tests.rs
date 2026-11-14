@@ -159,6 +159,7 @@ async fn an_open_gate_reads_and_maps_the_ready_snapshot() {
                     "tools": ["Read"],
                     "disallowedTools": ["Bash"],
                     "skills": ["s"],
+                    "injectAgentsMd": false,
                 },
                 {"name": "plain", "description": "", "source": "project", "systemPrompt": ""},
             ],
@@ -190,6 +191,7 @@ async fn an_open_gate_reads_and_maps_the_ready_snapshot() {
                     max_turns: Some(3),
                     background: true,
                     permission_mode: Some(PermissionMode::AcceptEdits),
+                    inject_agents_md: false,
                 },
                 SubagentProfile {
                     name: "plain".to_owned(),
@@ -202,6 +204,7 @@ async fn an_open_gate_reads_and_maps_the_ready_snapshot() {
                     max_turns: None,
                     background: false,
                     permission_mode: None,
+                    inject_agents_md: true,
                 },
             ],
             explore: Some(ModelSelection::new("zai", "glm-5.3")),

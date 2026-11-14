@@ -347,6 +347,23 @@ pub struct ContextRequest {
     /// (specs/fork-rust-subagent-runtime-config.md).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run: Option<crate::ids::RunId>,
+    /// Fork: false for a subagent whose definition says `injectAgentsMd: false` (the built-in Explore): no rule files,
+    /// nested rules or git status (specs/fork-rust-subagent-runtime-config.md rule 15). Only the subagent context
+    /// wrapper sets it.
+    #[serde(default = "inject_by_default", skip_serializing_if = "is_injected")]
+    pub inject_agents_md: bool,
+}
+
+fn inject_by_default() -> bool {
+    true
+}
+
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde's skip_serializing_if passes a reference"
+)]
+fn is_injected(inject: &bool) -> bool {
+    *inject
 }
 
 impl ContextRequest {
@@ -372,6 +389,7 @@ impl ContextRequest {
             mcp: None,
             default_machine: crate::ids::MachineName::default(),
             run: None,
+            inject_agents_md: true,
         }
     }
 }

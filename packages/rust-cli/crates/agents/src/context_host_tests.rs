@@ -79,6 +79,7 @@ fn profile(name: &str, source: ProfileSource) -> SubagentProfile {
         max_turns: Some(4),
         background: true,
         permission_mode: Some(PermissionMode::AcceptEdits),
+        inject_agents_md: true,
     }
 }
 
@@ -297,6 +298,8 @@ async fn overrides_set_the_built_ins_and_a_profile_replaces_a_built_in() {
         explore.selection,
         Some(full("custom-openai", "gpt-x", "low"))
     );
+    // Rule 15: a profile named Explore is not the built-in: it keeps the project instructions.
+    assert!(explore.inject_agents_md);
     assert_eq!(find(&found, "Plan").selection, None);
 }
 

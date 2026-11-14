@@ -87,7 +87,13 @@ parent run R2 of S starts ──▶ a new read; cache[S] = (R2, snapshot')
      - `tools`, `disallowedTools`, `maxTurns`, `background` and `permissionMode` carry over;
      - `modelSelection` becomes the agent's full selection.
    - A `permissionMode` value zcode-rs does not know is ignored.
-   - Not used (no Rust counterpart today): `path`, `color`, `memory`, `skills`, `mcpServers`, `injectAgentsMd`.
+   - `injectAgentsMd` carries over (rule 15).
+   - Not used:
+     - `path` and `color`: the Node runtime does not read them either (`color` is set only on the built-in profiles in core `subagent/profile.ts`; the Settings page reads it from its own files).
+     - `memory`, `skills` and `mcpServers`: open gaps. zcode-rs supports none of them for agent files either, so each is its own feature, not part of this snapshot:
+       - `memory`: Node loads the agent's persistent memory into its prompt (`loadPersistentAgentMemory`, core `runtime/methods/subagent.ts`) and adds the memory tools (`projectPersistentAgentMemoryTools`, `runtime/agent-runtime.ts`).
+       - `skills`: Node preloads the listed skills into the child (`runtime/methods/subagent.ts`, the `profile.skills` preload).
+       - `mcpServers`: Node scopes the child's MCP servers to the listed ones (`runtime/methods/subagent.ts`, `scopedServerNames`).
 9. **Model selection of a subagent with a full selection.**
    - The child runs on that provider and model, with the selection's reasoning level. The Agent tool's `effort` input (when given) replaces the reasoning level.
    - The account connection follows the parent only when the provider is the same; otherwise it is left for the platform to pick, like an App selection.
@@ -106,6 +112,11 @@ parent run R2 of S starts ──▶ a new read; cache[S] = (R2, snapshot')
 14. **No `Plan` agent on the desktop.** Node has two built-in agents, `general-purpose` and `Explore` (core `subagent/profile.ts` `normalizeAgentProfiles`). Under `node_desktop` the zcode-rs catalog leaves out its own built-in `Plan` on every path: a `ready` snapshot, `built-in-fallback`, the agent files and incognito without custom agents.
     - `subagent_type: "Plan"` is then an unknown type, with Node's text `Agent type 'Plan' not found. Available agents: …` (core `subagent/runner.ts`). A profile named `Plan` is an ordinary agent.
     - The TUI and headless runs keep `Plan`.
+15. **Project instructions of a subagent follow `injectAgentsMd`.** Node gives a child the AGENTS.md instructions unless its profile says `injectAgentsMd: false` (core `runtime/methods/subagent.ts`); only the built-in `Explore` says so (core `subagent/profile.ts`), and a user or project profile named `Explore` is not the built-in (`isBuiltInExploreAgentProfile` checks the source).
+    - zcode-rs carries the flag on the agent definition: true for the built-in `general-purpose`, false for the built-in `Explore` (and the TUI's `Plan`); a Host profile or an agent file takes `injectAgentsMd` (a boolean or the strings `true`/`false`, as Node's parser), true when absent.
+    - A child whose definition has it false gets no rule files, nested rules or git status, which is what the built-in `Explore` lost before by name. The decision no longer looks at the agent's name, so a profile named `Explore` keeps them.
+    - It applies on both surfaces (the TUI as well), as in Node.
+    - Remaining difference, not changed here: Node gives no child the git status (the child's `createSubagentContextBuilder`, core `runtime/methods/context.ts`, has no project context), while a zcode-rs child with the flag on still gets it.
 
 ## Out of scope
 

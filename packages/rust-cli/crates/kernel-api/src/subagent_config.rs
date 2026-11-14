@@ -34,6 +34,8 @@ pub struct SubagentProfile {
     pub max_turns: Option<u32>,
     pub background: bool,
     pub permission_mode: Option<PermissionMode>,
+    /// `injectAgentsMd`: false gives the child no project instructions; absent means true (Node `!== false`).
+    pub inject_agents_md: bool,
 }
 
 /// The Host's answer. One value per root session, read at most once per root turn, so the unboxed `Ready` is not worth

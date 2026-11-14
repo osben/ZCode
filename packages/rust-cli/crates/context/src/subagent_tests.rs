@@ -193,11 +193,17 @@ async fn general_purpose_starts_with_the_runsubagent_group_then_the_announcement
     );
 }
 
+/// Fork (specs/fork-rust-subagent-runtime-config.md rule 15): a child whose definition says `injectAgentsMd: false`
+/// (the built-in Explore) gets no rule files and no git status; the agent's name plays no part, so a profile named
+/// `Explore` that keeps the flag gets them.
 #[tokio::test]
-async fn explore_and_plan_omit_the_rule_files_and_the_git_status() {
-    for agent_type in ["Explore", "Plan"] {
+async fn inject_agents_md_false_omits_the_rule_files_and_the_git_status() {
+    for agent_type in ["Explore", "Plan", "reviewer"] {
         let assembler = assembler();
-        let request = request(agent_type);
+        let request = ContextRequest {
+            inject_agents_md: false,
+            ..request(agent_type)
+        };
         let (opening, announced, _) = start(&assembler, &request, vec![user("p", "Go.")]).await;
         assert_eq!(
             sources(&opening),
@@ -210,6 +216,17 @@ async fn explore_and_plan_omit_the_rule_files_and_the_git_status() {
         );
         assert_eq!(sources(&announced), ["date", "remote_session_change"]);
     }
+    let assembler = assembler();
+    let (_, announced, _) = start(&assembler, &request("Explore"), vec![user("p", "Go.")]).await;
+    assert_eq!(
+        sources(&announced),
+        [
+            "instructions",
+            "session_context",
+            "date",
+            "remote_session_change"
+        ]
+    );
 }
 
 /// 每个工具轮结束时产生当步的 attachment（agentId 是子代理）：第一次

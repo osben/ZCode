@@ -16,11 +16,12 @@ use serde_json::Value;
 
 use super::SubagentContext;
 
-fn attachment(source: &str) -> AttachmentMessage {
+/// `text` is the request's `inject_agents_md`, so a test sees what the wrapper passed on.
+fn attachment(source: &str, request: &ContextRequest) -> AttachmentMessage {
     AttachmentMessage {
         id: MessageId::new(source),
         source: source.to_owned(),
-        text: String::new(),
+        text: request.inject_agents_md.to_string(),
         data: Value::Null,
     }
 }
@@ -32,29 +33,29 @@ struct Inner;
 impl ContextBuilder for Inner {
     async fn build(
         &self,
-        _request: ContextRequest,
+        request: ContextRequest,
         _history: &[Message],
     ) -> Result<BuiltContext, OrchestrationError> {
         Ok(BuiltContext {
             system: Vec::new(),
-            attachments: vec![attachment("date")],
+            attachments: vec![attachment("date", &request)],
         })
     }
 
     async fn turn_attachments(
         &self,
-        _request: ContextRequest,
+        request: ContextRequest,
         _history: &[Message],
     ) -> Result<Vec<AttachmentMessage>, OrchestrationError> {
-        Ok(vec![attachment("total_tokens_reminder")])
+        Ok(vec![attachment("total_tokens_reminder", &request)])
     }
 
     async fn start_attachments(
         &self,
-        _request: ContextRequest,
+        request: ContextRequest,
         _history: &[Message],
     ) -> Result<Vec<AttachmentMessage>, OrchestrationError> {
-        Ok(vec![attachment("environment")])
+        Ok(vec![attachment("environment", &request)])
     }
 }
 
@@ -77,6 +78,7 @@ fn request() -> ContextRequest {
 async fn both_groups_and_the_announcements_come_from_the_inner_builder() {
     let context = SubagentContext {
         inner: Arc::new(Inner),
+        inject_agents_md: true,
         system: vec![SystemBlock {
             text: "Agent prompt.".to_owned(),
             cache_control: None,
@@ -89,4 +91,23 @@ async fn both_groups_and_the_announcements_come_from_the_inner_builder() {
     let built = context.build(request(), &[]).await.unwrap();
     assert_eq!(built.system[0].text, "Agent prompt.");
     assert_eq!(built.attachments[0].source, "date");
+}
+
+/// Fork (specs/fork-rust-subagent-runtime-config.md rule 15): the wrapper passes its definition's `injectAgentsMd` to
+/// all three groups.
+#[tokio::test]
+async fn the_wrapper_passes_inject_agents_md_on() {
+    for inject in [true, false] {
+        let context = SubagentContext {
+            inner: Arc::new(Inner),
+            inject_agents_md: inject,
+            system: Vec::new(),
+        };
+        let start = context.start_attachments(request(), &[]).await.unwrap();
+        let turn = context.turn_attachments(request(), &[]).await.unwrap();
+        let built = context.build(request(), &[]).await.unwrap();
+        for found in [&start[0], &turn[0], &built.attachments[0]] {
+            assert_eq!(found.text, inject.to_string());
+        }
+    }
 }

@@ -42,6 +42,7 @@ pub(crate) fn definition() -> AgentDefinition {
         permission_mode: None,
         background: true,
         selection: None,
+        inject_agents_md: true,
     }
 }
 

@@ -33,6 +33,17 @@ use crate::plugin::{self, PluginAgentFile};
 pub(crate) struct SubagentContext {
     pub(crate) inner: Arc<dyn ContextBuilder>,
     pub(crate) system: Vec<SystemBlock>,
+    /// Fork: the definition's `injectAgentsMd`, passed on to every request (rule 15).
+    pub(crate) inject_agents_md: bool,
+}
+
+impl SubagentContext {
+    fn own(&self, request: ContextRequest) -> ContextRequest {
+        ContextRequest {
+            inject_agents_md: self.inject_agents_md,
+            ..request
+        }
+    }
 }
 
 #[async_trait]
@@ -42,7 +53,7 @@ impl ContextBuilder for SubagentContext {
         request: ContextRequest,
         history: &[Message],
     ) -> Result<BuiltContext, OrchestrationError> {
-        let mut built = self.inner.build(request, history).await?;
+        let mut built = self.inner.build(self.own(request), history).await?;
         built.system = self.system.clone();
         Ok(built)
     }
@@ -53,7 +64,9 @@ impl ContextBuilder for SubagentContext {
         request: ContextRequest,
         history: &[Message],
     ) -> Result<Vec<AttachmentMessage>, OrchestrationError> {
-        self.inner.turn_attachments(request, history).await
+        self.inner
+            .turn_attachments(self.own(request), history)
+            .await
     }
 
     /// 运行开始的一组同样交给主线程的实现（子代理开头的那几项，agents.md §4.3，修复线 F16）。
@@ -63,7 +76,9 @@ impl ContextBuilder for SubagentContext {
         request: ContextRequest,
         history: &[Message],
     ) -> Result<Vec<AttachmentMessage>, OrchestrationError> {
-        self.inner.start_attachments(request, history).await
+        self.inner
+            .start_attachments(self.own(request), history)
+            .await
     }
 }
 
@@ -366,6 +381,7 @@ fn from_profile(profile: SubagentProfile) -> AgentDefinition {
         permission_mode: profile.permission_mode,
         background: profile.background,
         selection: profile.selection,
+        inject_agents_md: profile.inject_agents_md,
     }
 }
 

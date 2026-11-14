@@ -614,6 +614,7 @@ fn reviewer_snapshot(
                 max_turns: None,
                 background: false,
                 permission_mode: None,
+                inject_agents_md: true,
             })
             .into_iter()
             .collect(),
@@ -712,4 +713,18 @@ async fn a_desktop_agent_call_does_not_know_plan() {
             error_code: None
         }
     );
+}
+
+/// Fork (specs/fork-rust-subagent-runtime-config.md rule 15): the child's context gets the definition's
+/// `injectAgentsMd`: the built-in Explore leaves the project instructions out, general-purpose keeps them.
+#[tokio::test]
+async fn a_child_context_follows_the_definitions_inject_agents_md() {
+    let harness = harness(None);
+    for (agent_type, inject) in [("Explore", false), ("general-purpose", true)] {
+        harness.injected.lock().unwrap().clear();
+        harness
+            .call("sess_parent", "Agent", json!({"description": "Find", "prompt": "List.", "subagent_type": agent_type, "run_in_background": false}))
+            .await;
+        assert_eq!(*harness.injected.lock().unwrap(), [inject], "{agent_type}");
+    }
 }
