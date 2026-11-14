@@ -274,15 +274,22 @@ impl Admission<'_> {
             return reject(SkipReason::DuplicateName);
         }
         let tables = self.reader.mcp_tables(dir, &manifest).await;
-        let dependency = node_dependency(
+        let dependency = match node_dependency(
             &name,
             &candidate.marketplace,
             &tables,
             self.sources.view_host,
-        );
-        let served = dependency == Some(NodeDependency::PluginHost)
-            && self.sources.node_helper
-            && !needs_official_auth(&tables);
+        ) {
+            // With a helper the plugin host is served, so what keeps the plugin out is its auth server.
+            Some(NodeDependency::PluginHost)
+                if self.sources.node_helper && needs_official_auth(&tables) =>
+            {
+                Some(NodeDependency::OfficialAuth)
+            }
+            other => other,
+        };
+        // One of the two helper-hosting triggers (F3); the other, an MCP App entry point, is in `load_all`.
+        let served = dependency == Some(NodeDependency::PluginHost) && self.sources.node_helper;
         if let Some(dependency) = dependency.filter(|_| !served) {
             return reject(SkipReason::NodeRuntime(dependency));
         }
@@ -403,6 +410,8 @@ pub async fn load_all(
             }
         }
     }
+    // The other helper-hosting trigger (F3): an MCP App entry point, for every loaded plugin, session ones included
+    // (they bypass `admit`). A plugin `admit` skipped for a Node dependency (official auth among them) never gets here.
     if sources.node_helper {
         plugins = plugins
             .into_iter()

@@ -190,13 +190,35 @@ async fn a_hook_updated_input_is_the_answer_and_a_hook_denial_is_permission_deni
         },
         ..Hooks::default()
     };
+    // Node answers `hooks.stopReason ?? "Tool denied by host hook"`: a `permissionDecision: "deny"` sets only
+    // `hookPermissionDecisionReason`, never `stopReason` (`hooks/output.ts`), so its reason is not the answer.
     let (result, _) = authorize(allowed(), denying, allow(), json!({"query": "q"})).await;
     assert_eq!(
         result,
         Err(AppToolRefusal::PermissionDenied(
-            "blocked by policy".to_owned()
+            "Tool denied by host hook".to_owned()
         ))
     );
+}
+
+/// Node's `updatedInvalid` branch: a hook-updated input that fails validation is `invalid_input`, which callers
+/// report as a failed call, not a denied one.
+#[tokio::test]
+async fn a_hook_updated_input_that_fails_validation_is_invalid_input() {
+    let updated = Hooks {
+        pre: HookOutcome {
+            updated_input: Some(json!({"query": 1})),
+            ..HookOutcome::default()
+        },
+        ..Hooks::default()
+    };
+    let (result, _) = authorize(allowed(), updated, allow(), json!({"query": "q"})).await;
+    match result {
+        Err(AppToolRefusal::InvalidInput(message)) => {
+            assert!(message.contains("query"), "{message}")
+        }
+        other => panic!("unexpected: {other:?}"),
+    }
 }
 
 #[tokio::test]
@@ -213,7 +235,13 @@ async fn an_incognito_gate_refuses_before_any_hook() {
     let result = pipeline
         .authorize(&AppTool, json!({"query": "q"}), context(allow()))
         .await;
-    assert!(matches!(result, Err(AppToolRefusal::PermissionDenied(_))));
+    // The text a hidden tool gets in a model call (`no_such_tool`), without the `<tool_use_error>` wrapper.
+    assert_eq!(
+        result,
+        Err(AppToolRefusal::PermissionDenied(
+            "Error: No such tool available: mcp__plugin_viewer_view__search".to_owned()
+        ))
+    );
     assert!(hooks.seen.lock().unwrap().is_empty());
 }
 
@@ -243,6 +271,28 @@ async fn a_hook_that_stops_the_turn_denies_with_its_reason() {
         Err(AppToolRefusal::PermissionDenied("stop now".to_owned()))
     );
     let (result, _) = authorize(allowed(), stopping(None), allow(), json!({"query": "q"})).await;
+    assert_eq!(
+        result,
+        Err(AppToolRefusal::PermissionDenied(
+            "Tool denied by host hook".to_owned()
+        ))
+    );
+}
+
+/// Node checks the hook's denial before it validates the updated input.
+#[tokio::test]
+async fn a_hook_denial_wins_over_an_invalid_updated_input() {
+    let denying = Hooks {
+        pre: HookOutcome {
+            decision: Some(PermissionDecision::Deny {
+                message: "no".to_owned(),
+            }),
+            updated_input: Some(json!({"query": 1})),
+            ..HookOutcome::default()
+        },
+        ..Hooks::default()
+    };
+    let (result, _) = authorize(allowed(), denying, allow(), json!({"query": "q"})).await;
     assert_eq!(
         result,
         Err(AppToolRefusal::PermissionDenied(

@@ -770,8 +770,9 @@ pub trait Kernel: Send + Sync {
 
     /// Fork: runs the admission part of the tool pipeline on an MCP App tool call of a helper-hosted server
     /// (specs/fork-rust-node-helper.md F3, `helper/authorizeAppTool`): validation, PreToolUse hooks, the rules and the
-    /// gate, with a session-scoped prompt when it asks. Answers the approved input; never runs the tool. Opens the
-    /// session when it is stored but not open. A kernel without it refuses.
+    /// gate, with a session-scoped prompt when it asks. Answers the approved input; never runs the tool. The session
+    /// must be open: a stored session that is not is `NotFound` (the protocol server opens it first,
+    /// `helper_answers.rs`). A kernel without it refuses.
     async fn authorize_app_tool(
         &self,
         _call: crate::app_tool::AppToolCall,

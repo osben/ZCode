@@ -224,7 +224,7 @@ Status: in progress (PR after #447). This section replaces the F3 row's sketch w
 - official plugins whose MCP stdio args contain `__zcode-plugin-host`: today documents, spreadsheets, presentations and pdf. Without a helper they stay skipped (`NodeDependency::PluginHost`);
 - any plugin whose manifest declares an MCP App entry point: a non-empty `ui.surfaces`, or a `slots["composer.mention"]` entry with a `target.tool`. Without a helper these load as today, with servers Rust runs itself and no panel or mention items.
 
-All MCP servers of such a plugin are helper-hosted, because Node resolves a mention tool over all servers of the plugin and a panel may call any of them. OfficialAuth plugins stay skipped. The node_repl plugins are F4.
+All MCP servers of such a plugin are helper-hosted, because Node resolves a mention tool over all servers of the plugin and a panel may call any of them. OfficialAuth plugins stay skipped: a plugin-host plugin with any official-auth server is skipped as `OfficialAuth`, whatever the order of its servers. The node_repl plugins are F4.
 
 Why plugin-level MCP Apps go through the helper too: the panel and the model must reach the same server instance, and only Node's adapter and `mcp-ui` code speak the panel protocol. The two MCP App E2E fixtures (`e2e-mcp-viewer`, `e2e-mcp-mention`) are inline plugins of this kind.
 
@@ -321,7 +321,11 @@ The ownership check does not compare workspace paths:
   - `input` must be an object, and `tool` must be an object with an object `inputSchema`; otherwise the request is invalid params. The helper always sends both: Node's `input: args ?? {}` and the descriptor from its `listTools`. A defaulted descriptor would have no schema, so validation would accept any input.
   - Node's `authorizeAppTool` for `mcp/uiCallTool` and `plugins/mentionItems`. App-only tools are not in Rust's tool list, so the helper sends the descriptor and Rust builds a transient MCP tool from it, as Node's `createMcpToolEntry` fallback does.
   - Rust runs the admission part of its tool pipeline on it, named `mcp__<server>__<tool>`: schema validation, `validate_input`, PreToolUse hooks, the rules and the gate, with a session-scoped prompt when it asks. It does not run the tool or PostToolUse hooks.
-  - The answer is `{input}` (the approved, possibly hook-updated input), or an error whose `data.type` is Node's `CoreErrorType` (`permission_denied`, `invalid_input`).
+  - The answer is `{input}` (the approved, possibly hook-updated input), or an error whose `data.type` is Node's `CoreErrorType` (`permission_denied`, `invalid_input`). Node's order and texts (`tool/executor/impl.ts` `authorizeAppTool`):
+    - an invalid input is `invalid_input`, before any hook;
+    - a PreToolUse hook that stops the turn or denies the call is `permission_denied` with `hooks.stopReason ?? "Tool denied by host hook"`. Node sets `stopReason` only with `continue: false` or `decision: "block"` (`hooks/output.ts`); a `permissionDecision: "deny"` reason alone is not the answer;
+    - then a hook-updated input that fails validation is `invalid_input`, which callers report as a failed call, not a denied one;
+    - then the rules and the gate: `permission_denied`. A tool the session hides answers the text a model call gets, `Error: No such tool available: <name>`.
   - "Always allow" lands in Rust's rules, so later model calls of that tool are allowed too.
   - The prompt is session-level: a turn that ends while it waits neither cancels it nor hides it. The kernel resolves a turn's own asks before `TurnFinished` (`cancel_turn_asks`, each with `InteractionResolved`), so the projection keeps every ask still pending then (before, it cleared them all; `plugin-extension-mention` lost a mention prompt asked during a turn).
     - Node's turn end drops a pending entry whose `toolCallId` is a foreground tool row that the turn closes (`closeOpenToolRows`). In Rust those entries are the turn's own asks, already resolved by the kernel.

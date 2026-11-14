@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use rust_cli_base::js::string::utf16_prefix;
+use rust_cli_kernel_api::app_tool::AppToolRefusal;
 use rust_cli_kernel_api::message::ToolResultContent;
 use rust_cli_kernel_api::orchestration::{
     HookEventName, HookRunner, InteractionRequest, PermissionAnswer, PermissionGate, ToolExecution,
@@ -72,6 +73,8 @@ fn rejection(context: &ToolUseContext, feedback: Option<&str>) -> String {
 enum Rejection {
     ByHook(ToolOutput),
     Other(ToolOutput),
+    /// Fork: an MCP App call's refusal in Node's terms (`messages.app_call` only; pipeline_authorize.rs).
+    App(AppToolRefusal),
 }
 
 fn error(text: String) -> ToolOutput {
@@ -349,12 +352,17 @@ impl Pipeline {
         let event = hooks::event(HookEventName::PreToolUse, &call.hooks, payload).await;
         let mut pre = self.hooks.run(event, context.cancel.clone()).await;
         hooks::take_pre(messages, &mut pre);
-        // Fork: an MCP App call a hook stopped is denied without a prompt (pipeline_authorize.rs).
-        if messages.app_call && messages.pre_stopped.is_some() {
-            return Err(Rejection::ByHook(error(String::new())));
+        // Fork: an MCP App call follows Node's `authorizeAppTool` from here (pipeline_authorize.rs).
+        if messages.app_call
+            && let Some(refusal) = authorize::app_hook_refusal(messages, &pre)
+        {
+            return Err(Rejection::App(refusal));
         }
         if let Some(updated) = pre.updated_input.take() {
             if let Some(message) = validate(tool.name(), &schema, &updated) {
+                if messages.app_call {
+                    return Err(Rejection::App(AppToolRefusal::InvalidInput(message)));
+                }
                 return Err(Rejection::ByHook(error(format!(
                     "PreToolUse hook for {} returned updatedInput that failed schema validation: {message}",
                     tool.name()
@@ -536,6 +544,10 @@ impl ToolExecutor for Pipeline {
             Ok(admitted) => admitted,
             Err(Rejection::ByHook(output)) => return messages.finish(output, true),
             Err(Rejection::Other(output)) => return messages.finish(output, false),
+            // `execute` never sets `app_call`, so it never sees an App refusal; answer it as a refusal all the same.
+            Err(Rejection::App(refusal)) => {
+                return messages.finish(wrapped(refusal.message()), false);
+            }
         };
         let output = self
             .call(tool.as_ref(), input, call, progress, &mut messages)

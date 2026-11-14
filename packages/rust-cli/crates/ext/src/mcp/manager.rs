@@ -150,12 +150,13 @@ impl Inner {
 
     /// Fork (F3 "Lazy start"): starts the connection tasks of the deferred helper-hosted servers, once.
     pub(crate) fn wake_deferred(self: &Arc<Self>) {
-        if !self.deferred.swap(false, Ordering::AcqRel) {
-            return;
-        }
+        // The workspace first: a wake without one keeps the flag for the next wake.
         let Some(workspace) = self.workspace.lock_unpoisoned().clone() else {
             return;
         };
+        if !self.deferred.swap(false, Ordering::AcqRel) {
+            return;
+        }
         let woken: Vec<_> = self
             .servers()
             .values_mut()

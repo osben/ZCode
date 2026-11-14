@@ -7,7 +7,10 @@ use rust_cli_kernel_api::message::ToolResultContent;
 use rust_cli_kernel_api::tool::{Tool, ToolOutput, ToolUseContext};
 use serde_json::Value;
 
-use super::{HookMessages, Pipeline, Rejection};
+use rust_cli_kernel_api::hooks::HookOutcome;
+use rust_cli_kernel_api::permission::PermissionDecision;
+
+use super::{HookMessages, Pipeline, Rejection, no_such_tool};
 use crate::validate::validate;
 
 /// Node's text when a PreToolUse hook stops the call without a reason of its own.
@@ -23,10 +26,9 @@ impl Pipeline {
         context: ToolUseContext,
     ) -> Result<Value, AppToolRefusal> {
         if self.hidden(tool, &context).await {
-            return Err(AppToolRefusal::PermissionDenied(format!(
-                "No such tool available: {}",
-                tool.name()
-            )));
+            return Err(AppToolRefusal::PermissionDenied(text_of(&no_such_tool(
+                tool.name(),
+            ))));
         }
         // Node validates before the hooks and answers `invalid_input`; `admit` validates again, which then passes.
         if let Some(message) = validate(tool.name(), &tool.input_schema(), &input) {
@@ -36,20 +38,36 @@ impl Pipeline {
             app_call: true,
             ..HookMessages::default()
         };
-        let admitted = self.admit(tool, input, context, &mut messages).await;
-        // A PreToolUse hook that stops the turn denies an App call (Node's `preventContinuation`, before the gate).
-        if let Some(reason) = messages.pre_stopped {
-            return Err(AppToolRefusal::PermissionDenied(
-                reason.unwrap_or_else(|| HOOK_STOPPED.to_owned()),
-            ));
-        }
-        match admitted {
+        match self.admit(tool, input, context, &mut messages).await {
             Ok((input, _)) => Ok(input),
+            Err(Rejection::App(refusal)) => Err(refusal),
             Err(Rejection::ByHook(output) | Rejection::Other(output)) => {
                 Err(AppToolRefusal::PermissionDenied(text_of(&output)))
             }
         }
     }
+}
+
+/// Node `authorizeAppTool`: a PreToolUse hook that stops the turn or denies the call refuses it before the updated
+/// input is validated and before the gate, with `hooks.stopReason ?? "Tool denied by host hook"`. Node sets
+/// `stopReason` only with `continue: false` or `decision: "block"` (`hooks/output.ts`), which Rust folds into
+/// `prevent_continuation`; a `permissionDecision: "deny"` reason alone is not the answer.
+pub(super) fn app_hook_refusal(
+    messages: &HookMessages,
+    pre: &HookOutcome,
+) -> Option<AppToolRefusal> {
+    let denied = matches!(pre.decision, Some(PermissionDecision::Deny { .. }));
+    if messages.pre_stopped.is_none() && !denied {
+        return None;
+    }
+    let reason = messages
+        .pre_stopped
+        .clone()
+        .flatten()
+        .or_else(|| pre.stop_reason.clone());
+    Some(AppToolRefusal::PermissionDenied(
+        reason.unwrap_or_else(|| HOOK_STOPPED.to_owned()),
+    ))
 }
 
 /// The refusal's text without the model's `<tool_use_error>` wrapper.
