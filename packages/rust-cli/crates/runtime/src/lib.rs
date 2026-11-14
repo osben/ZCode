@@ -267,6 +267,12 @@ impl LocalKernel {
             machine.files().clone(),
         ));
         agent_catalog.set_incognito(incognito.clone());
+        if let Some(host) = &extensions.subagent_config {
+            agent_catalog.set_host(host.clone());
+        }
+        if let Some(models) = &extensions.models {
+            agent_catalog.set_models(models.clone());
+        }
         let assembler = assemble::context(
             &ports,
             context,
@@ -311,6 +317,7 @@ impl LocalKernel {
                 mcp: ext.mcp().clone(),
                 agents: agents.signals(),
                 acp: acp_host.clone().map(|host| acp::AcpRelease { host }),
+                agent_catalog: agent_catalog.clone(),
             },
         });
         // 两处晚绑定（late.rs）：ToolSearch 的目录看 agents 的注册表；任务提醒读 agents 的清单（agents 要用上下文）。

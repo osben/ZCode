@@ -55,6 +55,7 @@ fn request(
         mode: Some(scope.mode),
         agent: scope.agent.clone(),
         initial_token_gap: None,
+        inject_agents_md: scope.inject_agents_md,
     }
 }
 

@@ -457,3 +457,19 @@ async fn a_compaction_with_a_session_start_context_commits_with_the_flag() {
     assert_eq!(stop, QueryStop::Completed);
     assert_eq!(sink.compaction_flags(), [true]);
 }
+
+/// Fork (specs/fork-rust-subagent-runtime-config.md rule 15): a child's compaction request carries the run's
+/// `injectAgentsMd`, so the summary request leaves the project instructions out as the child's own requests do.
+#[tokio::test]
+async fn a_compaction_request_carries_the_runs_inject_agents_md() {
+    let model = Arc::new(ScriptedModel::new(Vec::new()));
+    for inject in [false, true] {
+        let request = rust_cli_kernel_api::orchestration::QueryRequest {
+            inject_agents_md: inject,
+            ..request("q")
+        };
+        let (scope, _) = scope(parts(model.clone(), Vec::new()), &request, Abort::new());
+        let compact = super::request(&scope, &[], &request.selection, CompactTrigger::Auto);
+        assert_eq!(compact.inject_agents_md, inject);
+    }
+}

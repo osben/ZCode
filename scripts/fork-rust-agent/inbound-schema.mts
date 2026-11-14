@@ -34,6 +34,7 @@ import {
   zcodeSessionListParamsSchema,
   zcodeSessionReadParamsSchema,
   zcodeSessionResumeParamsSchema,
+  zcodeSessionRuntimePreferencesResultSchema,
   zcodeSessionSetModeParamsSchema,
   zcodeSessionSetModelParamsSchema,
   zcodeSessionSetThoughtLevelParamsSchema,
@@ -58,6 +59,7 @@ import {
 } from "../../packages/shared/src/zcode-protocol-v4/command.ts";
 import { sessionsIndexReconcileParamsSchema } from "../../packages/shared/src/zcode-protocol-v4/sessions-index.ts";
 import { credentialCipherReplySchema } from "../../packages/shared/src/validation.ts";
+import { subagentRuntimeConfigSchema } from "../../packages/shared/src/subagent-runtime-config.ts";
 import {
   v4ConnectionFlowParamsSchema,
   v4ConversationResyncParamsSchema,
@@ -122,6 +124,9 @@ const REPLIES = {
   // Topic resources: the Host's answers to ReadTopicResource's read and cancel (specs/fork-rust-topic-resource.md).
   "topic/resource/read": zcodeTopicResourceReadResultSchema,
   "topic/resource/cancel": zcodeTopicResourceCancelResultSchema,
+  // Subagent runtime config: the gate and the Host's snapshot (specs/fork-rust-subagent-runtime-config.md).
+  "session/requestRuntimePreferences": zcodeSessionRuntimePreferencesResultSchema,
+  "subagents/readRuntimeConfig": subagentRuntimeConfigSchema,
 };
 
 const schemaPath = fileURLToPath(

@@ -47,6 +47,13 @@ pub struct Extensions {
     /// Fork: the language-server runtime (specs/fork-rust-lsp.md "Runtime"): Read, Edit and Write report to it and the
     /// context builder asks it for the post-edit diagnostics. Only the app-server gives it.
     pub code_intelligence: Option<Arc<dyn CodeIntelligence>>,
+    /// Fork: the Host's subagent snapshot (specs/fork-rust-subagent-runtime-config.md); only the desktop app-server
+    /// gives one. None: the agent files apply.
+    pub subagent_config:
+        Option<Arc<dyn rust_cli_kernel_api::subagent_config::SubagentConfigSource>>,
+    /// Fork: the platform's model catalog, which a desktop subagent's own selection is checked against before it
+    /// starts (specs/fork-rust-subagent-runtime-config.md rule 9). Only the desktop app-server gives it.
+    pub models: Option<Arc<dyn rust_cli_kernel_api::provider::ModelDirectory>>,
     /// Fork: command hooks get Node's stdin and a transcript file (specs/fork-rust-agent-parity.md "Command hook
     /// stdin"). Only the app-server gives it.
     pub hook_transcripts: Option<Arc<dyn rust_cli_kernel_api::hooks::HookTranscripts>>,
@@ -66,6 +73,8 @@ impl Extensions {
             topic_resources: None,
             acp: None,
             code_intelligence: None,
+            subagent_config: None,
+            models: None,
             hook_transcripts: None,
         }
     }
@@ -78,6 +87,7 @@ pub(crate) fn plugin_parts(plugins: &Plugins) -> (Vec<PluginAgentFile>, Vec<Plug
         .iter()
         .flat_map(|plugin| {
             plugin.agent_files.iter().map(|file| PluginAgentFile {
+                id: plugin.id.clone(),
                 plugin: plugin.name.clone(),
                 root: plugin.dir.clone(),
                 path: file.path.clone(),

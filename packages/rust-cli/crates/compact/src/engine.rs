@@ -216,6 +216,7 @@ impl Engine<'_> {
         let query = QueryRequest {
             agent: request.agent.clone(),
             max_turns: Some(1),
+            inject_agents_md: request.inject_agents_md,
             ..QueryRequest::new(
                 request.session.clone(),
                 self.ports.ids.run(),
