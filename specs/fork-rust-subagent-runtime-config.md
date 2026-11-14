@@ -125,7 +125,7 @@ parent run R2 of S starts ──▶ a new read; cache[S] = (R2, snapshot')
     - zcode-rs carries the flag on the agent definition: true for the built-in `general-purpose`, false for the built-in `Explore` (and the TUI's `Plan`); a Host profile or an agent file takes `injectAgentsMd` (a boolean or the strings `true`/`false`, as Node's parser), true when absent.
     - A child whose definition has it false gets no rule files, nested rules or git status, which is what the built-in `Explore` lost before by name. The decision no longer looks at the agent's name, so a profile named `Explore` keeps them.
     - It applies on both surfaces (the TUI as well), as in Node.
-    - Remaining difference, not changed here: Node gives no child the git status (the child's `createSubagentContextBuilder`, core `runtime/methods/context.ts`, has no project context), while a zcode-rs child with the flag on still gets it.
+    - Git status: Node gives no child the git status (the child's `createSubagentContextBuilder`, core `runtime/methods/context.ts`, has no project context). On the desktop (`node_desktop`, `ContextConfig::subagent_git_status` off) no zcode-rs subagent gets it either, whatever its `injectAgentsMd`; the main thread keeps it. The TUI keeps it for a child with the flag on.
 
 ## Out of scope
 

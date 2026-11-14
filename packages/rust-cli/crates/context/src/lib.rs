@@ -547,8 +547,11 @@ impl PromptAssembler {
                     .map(|found| self.attachment(instructions::SOURCE, found)),
             );
             // `--system-prompt` 时 systemContext 为空：不发 git 状态（cli-args.md §4.2）。Fork: nor without `environment`.
+            // Fork: on the desktop no subagent gets it (Node's child context has no project context, rule 15).
+            let child = matches!(request.source, QuerySource::Subagent(_));
             if self.prompt_overrides(request).0.is_none()
                 && !self.excludes(request, IncognitoKey::Environment)
+                && (self.config.subagent_git_status || !child)
             {
                 let git = self.ports.git.as_ref();
                 out.extend(

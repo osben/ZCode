@@ -42,6 +42,10 @@ fn assembler() -> PromptAssembler {
 
 /// `shell_cwd`：子会话 shell 的当前目录（agents 派生时设成父会话当时的目录，tools-files.md §3.3）。
 fn assembler_in(shell_cwd: Option<&str>) -> PromptAssembler {
+    assembler_with(shell_cwd, ContextConfig::new(Surface::Print))
+}
+
+fn assembler_with(shell_cwd: Option<&str>, config: ContextConfig) -> PromptAssembler {
     let facts = EnvFacts {
         cwd: EnvPath::new("/Users/dev/w"),
         platform: "linux".to_owned(),
@@ -74,7 +78,7 @@ fn assembler_in(shell_cwd: Option<&str>) -> PromptAssembler {
             ids: Arc::new(SequentialIds::default()),
             listings: Arc::new(Fixed),
         },
-        ContextConfig::new(Surface::Print),
+        config,
     )
 }
 
@@ -226,6 +230,41 @@ async fn inject_agents_md_false_omits_the_rule_files_and_the_git_status() {
             "date",
             "remote_session_change"
         ]
+    );
+}
+
+/// Fork (node_desktop, specs/fork-rust-subagent-runtime-config.md rule 15): Node's child context builder has no
+/// project context, so with `subagent_git_status` off no subagent gets the git status; the rule files still follow
+/// `injectAgentsMd`, and the main thread keeps the git status.
+#[tokio::test]
+async fn without_subagent_git_status_no_child_gets_the_git_status() {
+    let config = ContextConfig {
+        subagent_git_status: false,
+        ..ContextConfig::new(Surface::Print)
+    };
+    let assembler = assembler_with(None, config.clone());
+    let (_, announced, _) = start(
+        &assembler,
+        &request("general-purpose"),
+        vec![user("p", "Go.")],
+    )
+    .await;
+    assert_eq!(
+        sources(&announced),
+        ["instructions", "date", "remote_session_change"]
+    );
+    let assembler = assembler_with(None, config);
+    let main = ContextRequest {
+        agent: None,
+        source: QuerySource::MainThread,
+        session: SessionId::new("sess_main"),
+        ..request("general-purpose")
+    };
+    let built = assembler.build(main, &[user("p", "Go.")]).await.unwrap();
+    assert!(
+        sources(&built.attachments).contains(&"session_context"),
+        "{:?}",
+        sources(&built.attachments)
     );
 }
 

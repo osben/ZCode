@@ -655,6 +655,9 @@ pub(crate) async fn kernel(
     // 自动记忆目录先建好，提示词的记忆段才能说“目录已存在”（memory.md §2）；目录在主 env 上（deployment.md §8）。
     let mut context = ContextConfig::new(spec.surface);
     context.token_budget = spec.token_budget;
+    // Fork: the Node desktop agent gives no subagent the git status (rule 15 of
+    // specs/fork-rust-subagent-runtime-config.md).
+    context.subagent_git_status = !spec.node_desktop;
     // Fork: the Host decides the Gen UI output root for every agent it starts (`zcodeAgentProcessManager.ts`).
     context.desktop = spec.desktop_context.then(|| DesktopContext {
         gen_ui_root: env
