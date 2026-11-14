@@ -256,6 +256,9 @@ impl LocalKernel {
         if let Some(host) = &extensions.subagent_config {
             agent_catalog.set_host(host.clone());
         }
+        if let Some(models) = &extensions.models {
+            agent_catalog.set_models(models.clone());
+        }
         let assembler = assemble::context(
             &ports,
             context,

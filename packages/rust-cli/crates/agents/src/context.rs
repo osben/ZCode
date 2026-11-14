@@ -128,6 +128,8 @@ pub struct AgentCatalog {
     snapshots: Mutex<HashMap<SessionId, Slot>>,
     /// Fork: the desktop agent (`node_desktop`) has Node's built-ins only, without `Plan` (rule 14).
     node_desktop: OnceLock<()>,
+    /// Fork: the model catalog a desktop agent's own selection is checked against (rule 9); set by the runtime.
+    models: OnceLock<Arc<dyn rust_cli_kernel_api::provider::ModelDirectory>>,
 }
 
 impl AgentCatalog {
@@ -141,6 +143,7 @@ impl AgentCatalog {
             roots: OnceLock::new(),
             snapshots: Mutex::default(),
             node_desktop: OnceLock::new(),
+            models: OnceLock::new(),
         }
     }
 
@@ -153,6 +156,21 @@ impl AgentCatalog {
     /// Fork: set once by the runtime when the frontend has a Host that owns the subagent config.
     pub fn set_host(&self, host: Arc<dyn SubagentConfigSource>) {
         let _ = self.host.set(host);
+    }
+
+    /// Fork: set once by the runtime with the platform's model catalog (rule 9).
+    pub fn set_models(&self, models: Arc<dyn rust_cli_kernel_api::provider::ModelDirectory>) {
+        let _ = self.models.set(models);
+    }
+
+    /// Fork (node_desktop, rule 9): Node's `Cannot start subagent: …` when the catalog cannot serve the definition's
+    /// own selection; None without a selection, a catalog, or off the desktop.
+    pub(crate) async fn selection_refusal(&self, definition: &AgentDefinition) -> Option<String> {
+        self.node_desktop.get()?;
+        let selection = definition.selection.as_ref()?;
+        let catalog = self.models.get()?.catalog().await;
+        crate::selection_check::issue(&catalog, selection)
+            .map(|reason| crate::selection_check::refusal(reason, selection))
     }
 
     /// Fork: set once by `Agents::new` for the desktop agent: the catalog keeps Node's built-ins only (rule 14).

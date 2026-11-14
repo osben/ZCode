@@ -728,3 +728,148 @@ async fn a_child_context_follows_the_definitions_inject_agents_md() {
         assert_eq!(*harness.injected.lock().unwrap(), [inject], "{agent_type}");
     }
 }
+
+/// Fork: a model catalog with one entry, `e2e-provider/old-model` at `low`.
+struct OneModel;
+
+#[async_trait::async_trait]
+impl rust_cli_kernel_api::provider::ModelDirectory for OneModel {
+    async fn catalog(&self) -> rust_cli_kernel_api::provider::ModelCatalog {
+        rust_cli_kernel_api::provider::ModelCatalog {
+            revision: 1,
+            models: vec![rust_cli_kernel_api::provider::CatalogModel {
+                provider: "e2e-provider".to_owned(),
+                provider_name: "E2E".to_owned(),
+                model: "old-model".to_owned(),
+                protocol: rust_cli_kernel_api::provider::WireProtocol::OpenAiChatCompletions,
+                reasoning_levels: vec!["low".to_owned()],
+                context_window: 200_000,
+                max_output_tokens: 32_000,
+                capabilities: Default::default(),
+                connection: None,
+                host: None,
+            }],
+            default: None,
+        }
+    }
+}
+
+/// The reviewer profile on `e2e-provider/<model>` at `level`.
+fn reviewer_on(model: &str, level: &str) -> rust_cli_kernel_api::subagent_config::SubagentSnapshot {
+    let mut snapshot = reviewer_snapshot(Some("old"));
+    if let rust_cli_kernel_api::subagent_config::SubagentSnapshot::Ready { profiles, .. } =
+        &mut snapshot
+    {
+        profiles[0].selection = Some(rust_cli_kernel_api::model::ModelSelection {
+            reasoning: Some(level.to_owned()),
+            ..rust_cli_kernel_api::model::ModelSelection::new("e2e-provider", model)
+        });
+    }
+    snapshot
+}
+
+/// Fork (node_desktop, specs/fork-rust-subagent-runtime-config.md rule 9): like Node's `resolveSubagentSelection`, an
+/// own selection the catalog cannot serve fails the Agent call itself, in the foreground and in the background, with
+/// Node's text; no child run starts and the parent's model is not used instead.
+#[tokio::test]
+async fn a_desktop_agent_with_an_unservable_selection_does_not_start() {
+    let harness = desktop_harness();
+    harness.catalog.set_models(Arc::new(OneModel));
+    harness
+        .catalog
+        .set_host(Arc::new(ChangingHost(std::sync::Mutex::new(reviewer_on(
+            "gone-model",
+            "low",
+        )))));
+    for background in [false, true] {
+        let refused = harness
+            .call(
+                "sess_parent",
+                "Agent",
+                json!({"description": "Review", "prompt": "Review.", "subagent_type": "reviewer", "run_in_background": background}),
+            )
+            .await;
+        assert!(refused.is_error, "{}", text(&refused));
+        assert_eq!(
+            text(&refused),
+            "Cannot start subagent: Model unavailable / 模型不存在或不可用 [reason=model-not-found; selection=e2e-provider/gone-model]",
+            "background: {background}"
+        );
+    }
+    for _ in 0..100 {
+        tokio::task::yield_now().await;
+    }
+    assert!(harness.seen().is_empty());
+}
+
+/// Fork (rule 9): a servable own selection starts; an agent without a selection is not checked.
+#[tokio::test]
+async fn a_desktop_agent_with_a_servable_selection_starts() {
+    let harness = desktop_harness();
+    harness.catalog.set_models(Arc::new(OneModel));
+    harness
+        .catalog
+        .set_host(Arc::new(ChangingHost(std::sync::Mutex::new(reviewer_on(
+            "old-model",
+            "low",
+        )))));
+    let started = harness
+        .call(
+            "sess_parent",
+            "Agent",
+            json!({"description": "Review", "prompt": "Review.", "subagent_type": "reviewer"}),
+        )
+        .await;
+    assert!(!started.is_error, "{}", text(&started));
+    let inherited = harness
+        .call(
+            "sess_parent",
+            "Agent",
+            json!({"description": "Find", "prompt": "Find.", "subagent_type": "general-purpose"}),
+        )
+        .await;
+    assert!(!inherited.is_error, "{}", text(&inherited));
+    assert_eq!(harness.started(2).await.len(), 2);
+}
+
+/// Fork (rules 9 and 13): a SendMessage resume checks the current profile's selection and fails the call with Node's
+/// text; no run starts.
+#[tokio::test]
+async fn a_desktop_resume_with_an_unservable_selection_fails() {
+    use rust_cli_base::sync::LockUnpoisoned;
+    let harness = desktop_harness();
+    harness.catalog.set_models(Arc::new(OneModel));
+    let host = Arc::new(ChangingHost(std::sync::Mutex::new(reviewer_on(
+        "old-model",
+        "low",
+    ))));
+    harness.catalog.set_host(host.clone());
+    let spawned = harness
+        .call(
+            "sess_parent",
+            "Agent",
+            json!({"description": "Review", "prompt": "Review.", "subagent_type": "reviewer"}),
+        )
+        .await;
+    assert!(!spawned.is_error, "{}", text(&spawned));
+    harness.started(1).await;
+
+    *host.0.lock_unpoisoned() = reviewer_on("old-model", "max");
+    harness.catalog.forget(&SessionId::new("sess_parent"));
+    let refused = harness
+        .call(
+            "sess_parent",
+            "SendMessage",
+            json!({"to": "agent_1", "message": "Go on."}),
+        )
+        .await;
+    assert!(refused.is_error, "{}", text(&refused));
+    assert_eq!(
+        text(&refused),
+        "Cannot start subagent: Reasoning level unsupported / 不支持所选思考档位 [reason=reasoning-level-not-supported; selection=e2e-provider/old-model]"
+    );
+    for _ in 0..100 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(harness.seen().len(), 1);
+}

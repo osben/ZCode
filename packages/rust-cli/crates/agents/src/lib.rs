@@ -28,6 +28,7 @@ mod report;
 mod routes;
 mod routing;
 mod runs;
+mod selection_check;
 mod shell_notices;
 mod signals;
 mod spawn;

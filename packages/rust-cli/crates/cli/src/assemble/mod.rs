@@ -694,6 +694,11 @@ pub(crate) async fn kernel(
     extensions.monitor = opened.monitor;
     extensions.node_desktop = spec.node_desktop;
     extensions.subagent_config = spec.subagent_config.clone();
+    // Fork: a desktop subagent's own selection is checked against the catalog (rule 9 of
+    // specs/fork-rust-subagent-runtime-config.md); none under an explicit API key.
+    if spec.node_desktop {
+        extensions.models = opened.directory.clone();
+    }
     // The runtime derives `/loop` hiding and the storeless local cron from this port.
     extensions.automation = spec.automation.clone();
     extensions.topic_resources = spec.topic_resources.clone();

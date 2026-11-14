@@ -288,7 +288,15 @@ impl QueryRunner for ParentRunner {
                         display,
                     }
                 }
-                other => other.unwrap(),
+                // Any other failure: the bare message (the executor's `format_error` wraps it for the model).
+                Err(error) => ToolOutput {
+                    content: vec![ToolResultContent::Text {
+                        text: error.to_string(),
+                    }],
+                    is_error: true,
+                    display: Value::Null,
+                },
+                Ok(output) => output,
             },
         };
         *self.output.lock_unpoisoned() = Some(output);

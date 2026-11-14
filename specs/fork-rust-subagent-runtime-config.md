@@ -67,6 +67,7 @@ parent run R2 of S starts ──▶ a new read; cache[S] = (R2, snapshot')
 3. **Cadence.** The snapshot is read at most once per parent run, at the run's first catalog lookup (the run-start listing). The rest of that run uses it: the tool-round listings, the Agent tool and the compaction listings.
    - A subagent's runs use the latest snapshot of their root session and never send a request. Node children read `get()` and do not prepare their own.
    - A lookup without a run (compaction, `/context` usage) uses the cached snapshot. Only when there is none does it read once.
+   - This matches Node's order. Node's `get()` returns the last prepared snapshot and `prepareAgentDefinitions` runs at turn start (core `subagent/definitions.ts`, `runtime/methods/turn.ts`). A manual `/compact` returns before that step, and the `/context` preview reads the last snapshot (`runtime/context-composition/preview.ts`). In zcode-rs an in-run auto-compaction comes after the run-start listing (`query` `run`: `start` before the loop's `before_request`), so it reads that run's snapshot.
 4. **A failed read fails the turn.** The run-start listing returns the error (`OrchestrationError::Failed`), so the parent run ends with it, as in Node. The cached snapshot is kept and not used for that run. An Agent call that has to read (a cache miss) and fails returns the error as its tool result.
    - A lookup that cannot fail (`/context` usage, the runtime's agent catalog for the app) logs the failed read as a warning and uses the agent files.
 5. **Catalog from a `ready` snapshot.**
@@ -97,7 +98,15 @@ parent run R2 of S starts ──▶ a new read; cache[S] = (R2, snapshot')
 9. **Model selection of a subagent with a full selection.**
    - The child runs on that provider and model, with the selection's reasoning level. The Agent tool's `effort` input (when given) replaces the reasoning level.
    - The account connection follows the parent only when the provider is the same; otherwise it is left for the platform to pick, like an App selection.
-   - A selection the platform cannot serve fails the child's model request and is not replaced by the parent's model. Node refuses earlier ("Cannot start subagent: …"), so the text and timing differ.
+   - **Up-front check (desktop).** Node resolves an agent's own selection before the child starts (core `runtime/helpers/subagent-selection.ts` `resolveSubagentSelection`, through the Host's `resolveEffectiveModelSelection`). On the desktop (`node_desktop`) zcode-rs checks the definition's selection (a Host profile's `modelSelection` or a built-in override, which Node also applies as the profile's `modelSelection`) against the model catalog, before the merge with the parent connection and the `effort` input:
+     - no catalog entry with that provider: `provider-not-found`;
+     - the provider has no such model: `model-not-found`;
+     - no reasoning level: `reasoning-level-missing`;
+     - a level the model does not offer: `reasoning-level-not-supported`.
+   - On an issue the Agent call fails with Node's text `Cannot start subagent: <message> [reason=<reason>; selection=<provider>/<model>]`, with Node's messages (for example `Model unavailable / 模型不存在或不可用`). As in Node (the session-ready gate in core `subagent/runner.ts`), the call itself fails, in the foreground and in the background: no child session, no background task, no model request, and the parent's model is not used instead.
+   - A SendMessage resume (rule 13) checks the current definition the same way and fails the SendMessage call with the same text; the agent keeps its old state, as Node restores its previous task.
+   - Not checked, as in Node: an agent with no selection (it inherits the parent's) and a `model` from an agent file.
+   - Remaining differences: Node remaps an account-plan provider to the single current account (otherwise `account-connection-unavailable`) and maps a legacy reasoning level before it reports `reasoning-level-not-supported`; zcode-rs matches the catalog's provider and model as given and does neither. Node also hides a hidden provider; the zcode-rs catalog already leaves those out. There is no check outside the desktop or without a model catalog (an explicit API key).
 10. **Incognito.**
     - Without custom agents, a session sees the built-ins and no request is sent.
     - Without plugins, the snapshot is still read and the plugin layer is dropped.

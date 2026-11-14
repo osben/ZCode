@@ -71,7 +71,8 @@ impl Messaging {
     }
 
     /// Fork (node_desktop): the definition, model and mode a resume of `agent` runs with, from the parent's current
-    /// catalog. `Ok(Err(text))` is Node's refusal for a profile that is gone; `Err` is a failed Host read (rule 4).
+    /// catalog. `Ok(Err(text))` is Node's refusal for a profile that is gone; `Err` is a failed Host read (rule 4) or
+    /// a selection the catalog cannot serve (rule 9).
     async fn current_profile(
         &self,
         agent: &crate::live::LiveAgent,
@@ -101,6 +102,10 @@ impl Messaging {
                 agent.agent
             )));
         };
+        // Rule 9: Node fails the SendMessage call and keeps the old task.
+        if let Some(message) = self.core.catalog.selection_refusal(&definition).await {
+            return Err(ToolError::Failed { message });
+        }
         // The parent run's current model and mode, as Node reads the session's selection when the child starts.
         let (parent_selection, parent_mode) = match self.core.runs.get(&context.run) {
             Some(parent) => (parent.selection.clone(), parent.mode),

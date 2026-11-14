@@ -51,6 +51,9 @@ pub struct Extensions {
     /// gives one. None: the agent files apply.
     pub subagent_config:
         Option<Arc<dyn rust_cli_kernel_api::subagent_config::SubagentConfigSource>>,
+    /// Fork: the platform's model catalog, which a desktop subagent's own selection is checked against before it
+    /// starts (specs/fork-rust-subagent-runtime-config.md rule 9). Only the desktop app-server gives it.
+    pub models: Option<Arc<dyn rust_cli_kernel_api::provider::ModelDirectory>>,
 }
 
 impl Extensions {
@@ -68,6 +71,7 @@ impl Extensions {
             acp: None,
             code_intelligence: None,
             subagent_config: None,
+            models: None,
         }
     }
 }

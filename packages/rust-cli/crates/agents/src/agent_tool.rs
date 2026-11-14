@@ -192,6 +192,11 @@ impl Tool for AgentTool {
                 message: "the parent run is not registered".to_owned(),
             });
         };
+        // Fork (node_desktop, rule 9): Node refuses an unservable own selection before the child exists, in the
+        // foreground and in the background.
+        if let Some(message) = core.catalog.selection_refusal(&definition).await {
+            return Err(ToolError::Failed { message });
+        }
         // 子代理里派生时同样按参数（以前总在前台：子会话没有 actor 接收通知）。嵌套的后台子代理的
         // 通知送给派生它的子代理（owner），由 `routing` 投递（agents.md §5.1）。fork 打开时一律在后台（对照实现
         // 同样，修复线 L-A）。

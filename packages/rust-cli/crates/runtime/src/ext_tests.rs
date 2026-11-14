@@ -117,6 +117,7 @@ async fn plugin_agents_reach_the_agent_listing() {
             acp: None,
             code_intelligence: None,
             subagent_config: None,
+            models: None,
         },
     );
     kernel.start_extensions().await;
@@ -230,6 +231,7 @@ async fn the_session_catalog_follows_the_incognito_profile() {
             acp: None,
             code_intelligence: None,
             subagent_config: None,
+            models: None,
         },
     );
     kernel.start_extensions().await;
