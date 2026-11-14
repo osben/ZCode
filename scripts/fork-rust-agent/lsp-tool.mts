@@ -25,12 +25,7 @@ import {
   resolveModelPosition,
   splitLines,
 } from "../../apps/zcode-cli/packages/core/src/lsp/position.ts";
-import { runLspQuery } from "../../apps/zcode-cli/packages/core/src/lsp/query-runner.ts";
-import { LspServerRegistry } from "../../apps/zcode-cli/packages/core/src/lsp/registry.ts";
-import {
-  lspHandler,
-  lspToolEntry,
-} from "../../apps/zcode-cli/packages/core/src/tool/handlers/lsp.ts";
+import { lspToolEntry } from "../../apps/zcode-cli/packages/core/src/tool/handlers/lsp.ts";
 import { formatLspModelContent } from "../../apps/zcode-cli/packages/core/src/tool/handlers/lsp-format.ts";
 import { FLOW_SOURCE, flowGoldens, HANDLER_CWD, handlerGoldens } from "./lsp-tool-flow.mts";
 
