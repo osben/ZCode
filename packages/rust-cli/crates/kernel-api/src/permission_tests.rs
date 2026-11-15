@@ -125,6 +125,47 @@ fn plan_switch_messages_round_trip() {
     assert_eq!(created.mode, PermissionMode::Plan);
 }
 
+/// Fork: `PermissionRule::node_default` pins Node `defaultPermissionUpdates`' content choice (PR #474
+/// review): a non-blank top-level string input is the content verbatim (untrimmed); otherwise the first
+/// non-blank string field in Node's order wins — blank and non-string fields fall through to the next;
+/// nothing found leaves the rule whole-tool.
+#[test]
+fn node_default_pins_the_node_field_priority() {
+    let rule = |input: serde_json::Value| PermissionRule::node_default("mcp__server__tool", &input);
+    // A non-blank top-level string is the content verbatim, untrimmed.
+    let top_level = rule(serde_json::json!("  ls -la  "));
+    assert_eq!(top_level.tool, "mcp__server__tool");
+    assert_eq!(top_level.content.as_deref(), Some("  ls -la  "));
+    // A blank top-level string, and a top-level non-string, are no content (neither is an object).
+    assert_eq!(rule(serde_json::json!("  ")).content, None);
+    assert_eq!(rule(serde_json::json!(17)).content, None);
+    // Node's order: the first non-blank field among command, url, file_path, path, pattern wins;
+    // every earlier field blank (or non-string) falls through to the next one.
+    const FIELDS: [&str; 5] = ["command", "url", "file_path", "path", "pattern"];
+    for (blank, expected) in FIELDS.iter().enumerate() {
+        let mut object = serde_json::Map::new();
+        for (index, field) in FIELDS.iter().enumerate() {
+            let value = if index < blank { "  " } else { *field };
+            object.insert((*field).to_owned(), serde_json::json!(value));
+        }
+        assert_eq!(
+            rule(serde_json::Value::Object(object)).content.as_deref(),
+            Some(*expected),
+            "the first non-blank field is {expected}"
+        );
+    }
+    // A non-string field value is no candidate either.
+    assert_eq!(
+        rule(serde_json::json!({"command": 42, "url": "https://mcp.example.com"}))
+            .content
+            .as_deref(),
+        Some("https://mcp.example.com")
+    );
+    // No non-blank field anywhere: the rule stays whole-tool.
+    assert_eq!(rule(serde_json::json!({})).content, None);
+    assert_eq!(rule(serde_json::json!({"path": " \t "})).content, None);
+}
+
 /// 模式的名字表（F58）：命令行名与 serde 的写法相同；Node 名能读回（dontAsk 记 build，读回是 default）；命令行收的名字认
 /// `manual`、不认 guarded。
 #[test]
