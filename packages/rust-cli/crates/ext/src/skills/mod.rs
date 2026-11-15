@@ -124,6 +124,9 @@ pub struct SkillCatalog {
     info: Arc<dyn EnvInfo>,
     files: Arc<dyn Files>,
     plugins: Mutex<Vec<PluginSkillRoot>>,
+    /// Fork (specs/fork-rust-workspace-plugins-mcp.md): the per-workspace layer; a workspace
+    /// with a loaded slot replaces the process plugin roots.
+    layer: std::sync::OnceLock<Arc<crate::workspace_layer::WorkspaceLayer>>,
     cache: Mutex<Cache>,
     /// 单次的 `-p`（`singleShotPrintSession`）：内置 `/loop` 的 Monitor 超时随它（tools-more.md §17.1）。
     print: AtomicBool,
@@ -139,6 +142,7 @@ impl SkillCatalog {
             info,
             files,
             plugins: Mutex::default(),
+            layer: std::sync::OnceLock::new(),
             cache: Mutex::default(),
             print: AtomicBool::new(false),
             looping: true,
@@ -191,6 +195,19 @@ impl SkillCatalog {
         self.plugins.lock_unpoisoned().clone()
     }
 
+    /// Fork: the roots of the session's workspace when its layer is loaded (its own plugin set,
+    /// re-selected with the workspace's enablement overlay).
+    pub fn set_workspace_layer(&self, layer: Arc<crate::workspace_layer::WorkspaceLayer>) {
+        let _ = self.layer.set(layer);
+    }
+
+    fn workspace_roots(&self, workspace: &WorkspaceRef) -> Option<Vec<PluginSkillRoot>> {
+        let layer = self.layer.get()?;
+        layer
+            .plugins_of(workspace)
+            .map(|plugins| plugins.skill_roots())
+    }
+
     pub(crate) fn cached(&self, path: &str, version: &FileVersion) -> Option<Arc<Skill>> {
         let cache = self.cache.lock_unpoisoned();
         cache
@@ -234,7 +251,8 @@ impl SkillCatalog {
         plugins: bool,
     ) -> Vec<Arc<Skill>> {
         let roots = if plugins {
-            self.plugin_roots()
+            self.workspace_roots(workspace)
+                .unwrap_or_else(|| self.plugin_roots())
         } else {
             Vec::new()
         };

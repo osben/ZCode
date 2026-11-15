@@ -89,7 +89,11 @@ async fn a_loaded_layer_starts_the_workspace_group() {
 
     layer.load(&workspace()).await;
 
-    assert_eq!(layer.slot("/w"), Some(super::Slot::Loaded));
+    assert!(matches!(layer.slot("/w"), Some(super::Slot::Loaded(_))));
+    assert!(
+        layer.plugins_of(&workspace()).is_some(),
+        "a loaded slot carries the workspace's plugin set"
+    );
     assert_eq!(names(&mcp, "/w"), ["project-server"]);
 }
 
@@ -106,7 +110,8 @@ async fn a_broken_project_layer_is_fail_closed() {
     broken.set_loader(Arc::new(Fixed(None)));
     broken.load(&workspace()).await;
 
-    assert_eq!(broken.slot("/w"), Some(super::Slot::Invalid));
+    assert!(matches!(broken.slot("/w"), Some(super::Slot::Invalid)));
+    assert!(broken.plugins_of(&workspace()).is_none());
     assert!(mcp.group("/w").is_none());
 }
 
@@ -118,6 +123,6 @@ async fn without_a_loader_nothing_loads() {
 
     layer.load(&workspace()).await;
 
-    assert_eq!(layer.slot("/w"), None);
+    assert!(layer.slot("/w").is_none());
     assert!(mcp.group("/w").is_none());
 }

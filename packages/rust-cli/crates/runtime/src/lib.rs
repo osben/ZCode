@@ -287,6 +287,16 @@ impl LocalKernel {
             machine.files().clone(),
         ));
         agent_catalog.set_incognito(incognito.clone());
+        // Fork (specs/fork-rust-workspace-plugins-mcp.md): a loaded workspace layer replaces the
+        // process plugin agent files for that workspace's sessions.
+        {
+            let layer = ext.workspace_layer().clone();
+            agent_catalog.set_workspace_files(Box::new(move |workspace| {
+                layer
+                    .plugins_of(workspace)
+                    .map(|plugins| ext::plugin_parts(&plugins).0)
+            }));
+        }
         if let Some(code) = &extensions.code_intelligence {
             code.set_incognito(incognito.clone());
         }
