@@ -214,6 +214,14 @@ impl ToolRegistry for FilteredTools {
         self.inner.mcp()
     }
 
+    /// Fork (specs/fork-rust-workspace-plugins-mcp.md): forward the session's workspace group.
+    fn mcp_for(
+        &self,
+        session: &rust_cli_kernel_api::ids::SessionId,
+    ) -> Option<Arc<dyn McpConnections>> {
+        self.inner.mcp_for(session)
+    }
+
     fn find(&self, name: &str) -> Option<Arc<dyn Tool>> {
         if let Some(tool) = self
             .inner

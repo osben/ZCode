@@ -265,6 +265,14 @@ impl ToolRegistry for LspTools {
     fn mcp(&self) -> Option<Arc<dyn McpConnections>> {
         self.inner.mcp()
     }
+
+    /// Fork (specs/fork-rust-workspace-plugins-mcp.md): forward the session's workspace group.
+    fn mcp_for(
+        &self,
+        session: &rust_cli_kernel_api::ids::SessionId,
+    ) -> Option<Arc<dyn McpConnections>> {
+        self.inner.mcp_for(session)
+    }
 }
 
 #[cfg(test)]
