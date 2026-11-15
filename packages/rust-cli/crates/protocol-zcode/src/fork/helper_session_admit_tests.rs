@@ -267,10 +267,16 @@ async fn admission_resolves_the_sessions_workspace_catalog() {
         helper_plugins: vec!["docs@inline".to_owned()],
         servers: vec!["plugin:docs:documents".to_owned()],
     };
-    helper.set_catalog_resolver(std::sync::Arc::new(move |session| {
-        (session == "s1").then(|| std::sync::Arc::new(workspace.clone()))
+    let empty = HelperCatalog::default();
+    helper.set_catalog_resolver(std::sync::Arc::new(move |session| match session {
+        // s1's workspace set replaces the process one.
+        "s1" => Some(std::sync::Arc::new(workspace.clone())),
+        // A loaded-but-empty set denies everything: no fallback to the process catalog.
+        "empty-ws" => Some(std::sync::Arc::new(empty.clone())),
+        _ => None,
     }));
     let call = |session: &str, server: &str| json!({"sessionId": session, "serverName": server});
+
     // s1's workspace set replaces the process one for s1.
     assert!(
         admit(
@@ -281,6 +287,20 @@ async fn admission_resolves_the_sessions_workspace_catalog() {
         )
         .await
         .is_ok()
+    );
+    // A loaded-but-empty workspace denies even the process catalog's servers.
+    assert_eq!(
+        reason(
+            admit(
+                &server,
+                &helper,
+                "mcp/uiCallTool",
+                &call("empty-ws", "plugin:viewer:view")
+            )
+            .await
+            .err()
+        ),
+        not_hosted()
     );
     assert_eq!(
         reason(

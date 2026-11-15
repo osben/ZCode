@@ -137,6 +137,40 @@ fn session_scoped_methods_are_forwarded() {
 
 /// Fork (specs/fork-rust-node-helper.md F3, per-workspace admission): a session whose workspace
 /// resolves a catalog opens with it, and a session without one (the TUI and `-p`, or a workspace
+/// Fork: a store-resumable session — its row names a workspace whose layer is loaded, but the
+/// kernel has not opened it here, so the session-keyed resolver answers nothing. The open still
+/// carries the workspace's own catalog (the row is authoritative at open time).
+#[tokio::test]
+async fn a_store_session_opens_with_its_row_workspaces_catalog() {
+    let rig = session_rig(sessions(|_| opened()));
+    let workspace = HelperCatalog {
+        plugin_ids: vec!["docs@inline".to_owned()],
+        helper_plugins: vec!["docs@inline".to_owned()],
+        servers: vec!["plugin:docs:documents".to_owned()],
+    };
+    // The session resolver knows nothing (no kernel open); the workspace resolver answers by root.
+    rig.helper
+        .set_workspace_catalog_resolver(Arc::new(move |path| {
+            (path == PROJECT).then(|| Arc::new(workspace.clone()))
+        }));
+    forward_ok(
+        &rig.helper,
+        SESSION_METHOD,
+        json!({"sessionId": "resumed-1", "serverName": "plugin:docs:documents"}),
+    )
+    .await;
+    assert_eq!(
+        received(&rig.fake, "helper/session/open"),
+        [json!({
+            "sessionId": "resumed-1",
+            "openId": 1,
+            "workspace": {"workspacePath": PROJECT},
+            "pluginIds": ["docs@inline"],
+            "servers": ["plugin:docs:documents"],
+        })]
+    );
+}
+
 /// without a loaded layer) keeps the process catalog.
 #[tokio::test]
 async fn a_session_opens_with_its_workspace_catalog() {

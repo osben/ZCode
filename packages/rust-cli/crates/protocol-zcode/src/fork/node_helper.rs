@@ -174,6 +174,13 @@ pub trait NodeHelperLauncher: Send + Sync {
 /// layer's loaded slots).
 pub type HelperCatalogResolver = dyn Fn(&str) -> Option<Arc<sessions::HelperCatalog>> + Send + Sync;
 
+/// Resolves the catalog of the workspace a session's STORE ROW names, by workspace root path: the
+/// authoritative resolution at helper-session open time. A store-resumable session has no
+/// in-memory record yet (the kernel records its workspace at open/create), so the session-keyed
+/// resolver cannot answer for it — the row can.
+pub type WorkspaceCatalogResolver =
+    dyn Fn(&str) -> Option<Arc<sessions::HelperCatalog>> + Send + Sync;
+
 /// The Rust side of the helper connection, one per Rust process.
 pub struct NodeHelper {
     launcher: Arc<dyn NodeHelperLauncher>,
@@ -194,6 +201,9 @@ pub struct NodeHelper {
     /// installed, or no loaded layer for the session's workspace — falls back to the process
     /// catalog. The lock only clones the resolver out; it is never held across an await.
     catalog_resolver: StdMutex<Option<Arc<HelperCatalogResolver>>>,
+    /// F3: resolves the catalog of the workspace a session's store row names (open time). The
+    /// same lock discipline as [`Self::catalog_resolver`].
+    workspace_catalog_resolver: StdMutex<Option<Arc<WorkspaceCatalogResolver>>>,
     /// F3: the helper's requests to Rust and who answers them.
     requests: StdMutex<requests::Requests>,
     /// F3: the last `openId` of a `helper/session/open`; a close names its open's id.
@@ -271,6 +281,7 @@ impl NodeHelper {
             warned: AtomicBool::new(false),
             catalog: StdMutex::new(None),
             catalog_resolver: StdMutex::new(None),
+            workspace_catalog_resolver: StdMutex::new(None),
             requests: StdMutex::default(),
             last_open: AtomicU64::new(0),
         })
