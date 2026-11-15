@@ -133,12 +133,12 @@ entries are unchanged (a plugin registration is one synchronous write, like the 
 
 ## Not in this PR (follow-ups)
 
-- ~~Per-workspace `HelperCatalog` admission and helper-hosted plugin servers per workspace~~ — the
-  admission half is closed: `helper/session/open`, the session-scoped forwarding check and
-  `helper/authorizeAppTool` resolve the session's workspace catalog through the loaded layer
-  (`fork-rust-node-helper.md` F3, "Session open and close"). The helper MCP pipes still connect in
-  the process workspace (`node_helper_mcp.rs` `helper_workspace`); moving them per workspace, and
-  with it the pipe-workspace refusal, stays a follow-up.
+- ~~Per-workspace `HelperCatalog` admission and helper-hosted plugin servers per workspace~~ — closed:
+  the admission half landed with the store-row resolution (`fork-rust-node-helper.md` F3, "Session
+  open and close"), and the helper MCP pipes now connect per session workspace
+  (`fork-rust-node-helper.md` F3, "The pipe workspace is enforced": a connection's own pipe keeps its
+  manager group's workspace for listing, each further workspace key gets its own pipe for its
+  sessions' calls, and the pipe-workspace refusal is on).
 - ~~The workspace plugin set's hooks~~ — closed ("As built" above). The workspace's skills and agent
   files gained their views in the follow-up PR: `SkillCatalog` reads a loaded slot's `skill_roots()`
   through the layer, and `AgentCatalog` resolves a workspace's files through a layer-backed lookup

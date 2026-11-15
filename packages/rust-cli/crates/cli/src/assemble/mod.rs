@@ -431,6 +431,7 @@ pub(crate) async fn open(
         Some(helper) => Arc::new(rust_cli_protocol_zcode::HelperRoutedMcp::new(
             local.mcp,
             helper.clone(),
+            clock.clone(),
         )),
         None => local.mcp,
     };

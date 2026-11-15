@@ -204,6 +204,10 @@ pub struct NodeHelper {
     /// F3: resolves the catalog of the workspace a session's store row names (open time). The
     /// same lock discipline as [`Self::catalog_resolver`].
     workspace_catalog_resolver: StdMutex<Option<Arc<WorkspaceCatalogResolver>>>,
+    /// F3: the workspace (with its key) each session's pipe traffic runs in, as its store row holds it — the same
+    /// resolution the session open uses, cached for the process's life (a row never changes workspace). Read by the
+    /// pipe-workspace refusal and the routed transport's pipe choice; only cloned out under the lock.
+    pipe_workspaces: StdMutex<HashMap<String, (Value, String)>>,
     /// F3: the helper's requests to Rust and who answers them.
     requests: StdMutex<requests::Requests>,
     /// F3: the last `openId` of a `helper/session/open`; a close names its open's id.
@@ -282,6 +286,7 @@ impl NodeHelper {
             catalog: StdMutex::new(None),
             catalog_resolver: StdMutex::new(None),
             workspace_catalog_resolver: StdMutex::new(None),
+            pipe_workspaces: StdMutex::default(),
             requests: StdMutex::default(),
             last_open: AtomicU64::new(0),
         })
