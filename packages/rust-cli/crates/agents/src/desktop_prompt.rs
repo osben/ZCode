@@ -30,6 +30,32 @@ pub(crate) fn description(description: &str) -> String {
         .join("\n")
 }
 
+/// Node's SendMessage description (core `tool/handlers/send-message.ts`): no ListAgents anywhere
+/// (Node has no such tool), local agents addressed by agentId.
+const NODE_SEND_MESSAGE_DESCRIPTION: &str = "# SendMessage\n\nSend a message to another agent.\n\n```json\n{\"to\": \"agent_<uuid>\", \"summary\": \"assign task 1\", \"message\": \"start on task #1\"}\n```\n\nYour plain text output is NOT visible to other agents — to communicate with other agents, you MUST call this tool. Messages from agents are delivered automatically; you don't check an inbox. Refer to local agents by the `agentId` returned in the Agent spawn result. To resume a completed agent, use its `agentId`; it resumes in the background and you'll be notified when it finishes.";
+
+/// Node's `to` parameter description (contracts `tools/send-message.ts`).
+const NODE_SEND_MESSAGE_TO: &str =
+    "Recipient: local agent ID returned by Agent (format agent_<uuid>).";
+
+/// The SendMessage description Node serves on the desktop (the fork's cross-session text is
+/// TUI/`-p` only).
+pub(crate) fn send_message_description(_description: &str) -> String {
+    NODE_SEND_MESSAGE_DESCRIPTION.to_owned()
+}
+
+/// The SendMessage schema with Node's `to` description.
+pub(crate) fn send_message_schema(schema: &Value) -> Value {
+    let mut schema = schema.clone();
+    if let Some(parameter) = schema
+        .pointer_mut("/properties/to")
+        .and_then(Value::as_object_mut)
+    {
+        parameter.insert("description".to_owned(), json!(NODE_SEND_MESSAGE_TO));
+    }
+    schema
+}
+
 /// The input schema with Node's `run_in_background` description.
 pub(crate) fn input_schema(schema: &Value) -> Value {
     let mut schema = schema.clone();
