@@ -530,6 +530,11 @@ pub(crate) fn capabilities(node_helper: bool) -> Value {
         // editUserQuery), so a send that keeps the card owner is not rejected — the one thing the Host gates on the
         // flag. The runtime itself stages no highspeed credentials and copies no `highspeedMeta` onto the intent.
         "highspeedCardOwner": true,
+        // Fork: wave 2 B1 — managed-worktree session cwds (`createSession.cwd` / `worktreeCreation`,
+        // `forkAssistant.targetCwd`) are not run by this agent; the fields are refused instead of dropped
+        // (`commands.rs`, `fork/row_commands.rs`), and the Host hides managed worktrees on this flag. Node 3.18
+        // reports it true (docs/git/worktree.md).
+        "worktreeCwd": false,
         // Fork: `acp:<agentId>` selections run on the ACP agent, on macOS only like Node
         // (specs/fork-rust-agent-parity.md "ACP external agents", rule 2).
         "externalAgentTurns": cfg!(target_os = "macos"),

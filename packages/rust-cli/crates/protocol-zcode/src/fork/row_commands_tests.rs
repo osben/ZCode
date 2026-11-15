@@ -223,3 +223,33 @@ fn a_replay_carries_gen_ui_context_and_takes_the_envelopes_origin() {
     let replayed = replayed_intent((2, 3), &bare, Some(&stored), "x", None, None);
     assert_eq!(replayed.get("inputOrigin"), None);
 }
+
+/// Wave 2 B1 (specs/fork-rust-agent-parity.md): `forkAssistant.targetCwd` is the managed-worktree fork
+/// (Node `command.ts` `forkTargetCwdSchema`); this agent does not run it (`worktreeCwd` stays false), so
+/// the field is refused instead of dropped — dropping it would fork into the parent directory.
+#[test]
+fn a_fork_target_cwd_is_refused_instead_of_dropped() {
+    let plain: TargetPayload = serde_json::from_value(json!({
+        "target": {"rowId": 3, "entityId": "msg_u1"}
+    }))
+    .unwrap();
+    assert!(refuse_target_cwd(&envelope(), &plain, 7).is_none());
+    let worktree: TargetPayload = serde_json::from_value(json!({
+        "target": {"rowId": 3, "entityId": "msg_u1"},
+        "targetCwd": {
+            "cwd": "/w/.zcode-worktrees/one",
+            "childSessionId": "child-1",
+            "worktreeCreation": {
+                "path": "/w/.zcode-worktrees/one", "sha": "a1b2c3d4", "ref": null, "output": ""
+            }
+        }
+    }))
+    .unwrap();
+    let ack = refuse_target_cwd(&envelope(), &worktree, 7).expect("targetCwd is refused");
+    assert_eq!(ack.status, Status::Rejected);
+    assert_eq!(ack.reason_code.as_deref(), Some("proto.invalidPayload"));
+    assert_eq!(
+        ack.message.as_deref(),
+        Some("targetCwd is not supported by this agent")
+    );
+}
