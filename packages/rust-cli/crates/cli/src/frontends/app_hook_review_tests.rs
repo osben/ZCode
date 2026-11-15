@@ -273,6 +273,7 @@ fn ws_target(path: &str) -> WorkspaceTarget {
     WorkspaceTarget {
         path: path.to_owned(),
         identity: None,
+        key: path.to_owned(),
     }
 }
 
