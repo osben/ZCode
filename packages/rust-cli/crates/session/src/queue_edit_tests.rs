@@ -200,9 +200,10 @@ async fn holding_stops_the_drain_and_releasing_starts_the_head() {
 /// "A1 and A2"). Lock, release and edit are the actor's; the protocol's reservation is not part of these tests.
 mod edit_lock {
     use super::*;
+    use rust_cli_kernel_api::permission::{ExecutionState, PermissionMode};
     use rust_cli_kernel_api::session_api::{
         QUEUE_EDIT_LOCK_LOST, QUEUE_EDIT_LOCK_MISSING, QUEUE_ITEM_EDIT_LOCKED, QUEUE_ITEM_MISSING,
-        QueueEditLock, QueuedEdit,
+        QueueEditLock, QueuedEdit, QueuedKind,
     };
 
     fn lock_by(id: &str, command: &str, editor: &str) -> CommandEnvelope {
@@ -256,6 +257,38 @@ mod edit_lock {
             id: CommandId::new(id),
             command: Command::ClearQueued {
                 command: CommandId::new(command),
+            },
+        }
+    }
+
+    fn compact(id: &str) -> CommandEnvelope {
+        CommandEnvelope {
+            id: CommandId::new(id),
+            command: Command::SubmitWith {
+                intent: None,
+                kind: QueuedKind::Compact,
+                text: "/compact".to_owned(),
+                content: Vec::new(),
+                delivery: Delivery::Queue,
+                execution: None,
+                behind_held: true,
+                lease: None,
+            },
+        }
+    }
+
+    fn apply_config(id: &str, commands: &[&str]) -> CommandEnvelope {
+        CommandEnvelope {
+            id: CommandId::new(id),
+            command: Command::ApplyQueuedConfig {
+                commands: commands
+                    .iter()
+                    .map(|command| CommandId::new(*command))
+                    .collect(),
+                edit: QueuedEdit {
+                    mode: Some("edit".to_owned()),
+                    ..QueuedEdit::default()
+                },
             },
         }
     }
@@ -426,5 +459,76 @@ mod edit_lock {
         assert!(lock_of(&session, "c2").await.is_none());
         session.send(answer("c9", interaction)).await;
         until_finished(&mut events, 2).await;
+    }
+
+    /// `Command::ApplyQueuedConfig` (Node `applyQueueItemsConfig`, rules 20-21): the config edit applies in place to
+    /// the queued inputs that can take it; locked, compact and missing items are skipped, and none applied is the
+    /// noop reason. The frozen states are read from the queue view (the session stays busy with the pending ask, so
+    /// the released lock does not start the drain).
+    #[tokio::test]
+    async fn apply_queue_items_config_skips_locked_compact_and_missing_items() {
+        let scope = TaskScope::root("test", |_| {});
+        let (_store, _model, session) = asking_session(&scope).await;
+        let mut events = session.subscribe(Some(0));
+        session.send(submit("c1", "ask me")).await;
+        asked(&mut events).await;
+        session.send(submit("c2", "alpha")).await;
+        // A queued compaction is maintenance: it never takes the config.
+        assert!(matches!(
+            session.send(compact("c3")).await,
+            Ack::Accepted { .. }
+        ));
+        session.send(lock_by("l1", "c2", "ed1")).await;
+        // Locked, compact and missing: none applied, nothing changed.
+        assert_eq!(
+            session
+                .send(apply_config("a1", &["c2", "c3", "missing"]))
+                .await,
+            rejected(QUEUE_ITEM_MISSING)
+        );
+        assert_eq!(
+            states_of(&session).await,
+            [("c2".to_owned(), None), ("c3".to_owned(), None)]
+        );
+        assert_eq!(queue_texts(&session).await, ["alpha", "/compact"]);
+        // The lock released, the text input takes the mode in place; the compaction is still skipped.
+        assert_eq!(session.send(release("r1", "c2")).await, accepted());
+        assert_eq!(
+            session
+                .send(apply_config("a2", &["c2", "c3", "missing"]))
+                .await,
+            accepted()
+        );
+        assert_eq!(
+            states_of(&session).await,
+            [
+                (
+                    "c2".to_owned(),
+                    Some(ExecutionState {
+                        mode: PermissionMode::AcceptEdits,
+                        plan: false
+                    })
+                ),
+                ("c3".to_owned(), None)
+            ]
+        );
+        assert_eq!(queue_texts(&session).await, ["alpha", "/compact"]);
+    }
+
+    /// The queued inputs' frozen execution states, by command id (the queue view).
+    async fn states_of(session: &Session) -> Vec<(String, Option<ExecutionState>)> {
+        session
+            .view()
+            .await
+            .unwrap()
+            .queue
+            .iter()
+            .map(|item| {
+                (
+                    item.command.as_str().to_owned(),
+                    item.execution.as_ref().map(|execution| execution.state),
+                )
+            })
+            .collect()
     }
 }
