@@ -164,6 +164,7 @@ async fn a_session_resolves_its_workspaces_plugin_set() {
             .plugins_of_session(&sessions, &rust_cli_kernel_api::ids::SessionId::new("s1"))
             .is_none()
     );
+}
 
 /// Fork (specs/fork-rust-workspace-plugins-mcp.md, "As built: plugin hooks per workspace"): installing a
 /// `Loaded` slot hands the workspace's plugin set to the hooks sink (the runtime registers its hooks with the
