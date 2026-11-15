@@ -153,30 +153,49 @@ fn an_extension_source_is_checked_by_the_shipped_schema() {
 /// exactly that). A wrong-typed owner is still refused before the handler runs.
 #[test]
 fn highspeed_meta_owner_key_is_accepted() {
+    // The `highspeedCardOwner` capability claims acceptance on every send that can carry the
+    // owner (the Host strips it per command type-agnostically), so all three commands are pinned,
+    // each with its own minimal payload: a regeneration dropping `ownerKey` from only one of the
+    // three generated copies must fail here, not reject real sends.
     let inbound = Inbound::get();
-    let envelope = |payload: Value| {
-        json!({"commandId": "c1", "clientId": "k", "sessionId": "s", "type": "sendText",
-            "payload": payload, "issuedAt": 1})
+    let envelope = |kind: &str, payload: Value| {
+        // sendQueuedNow and editUserQuery are CAS commands (baseRevision/baseLogEpoch on the
+        // envelope); the ownerKey acceptance itself lives in the payload schema.
+        let cas = matches!(kind, "sendQueuedNow" | "editUserQuery");
+        let mut envelope = json!({"commandId": "c1", "clientId": "k", "sessionId": "s", "type": kind,
+            "payload": payload, "issuedAt": 1});
+        if cas {
+            envelope["baseRevision"] = json!("r1");
+            envelope["baseLogEpoch"] = json!(1);
+        }
+        envelope
     };
     let owner = format!("v1:{}", "0".repeat(64));
     let meta = |owner_key: Value| {
         json!({"schemaVersion": 1, "cardId": "card", "ownerKey": owner_key, "taskId": "task",
             "provider": "zai", "model": "glm-4.7", "issuedAt": 1, "expiresAt": 2})
     };
-    assert!(
-        inbound
-            .command(&envelope(
-                json!({"text": "hi", "highspeedMeta": meta(owner.into())})
-            ))
-            .is_ok()
-    );
-    assert!(
-        inbound
-            .command(&envelope(
-                json!({"text": "hi", "highspeedMeta": meta(1.into())})
-            ))
-            .is_err()
-    );
+    for (kind, base) in [
+        ("sendText", json!({"text": "hi"})),
+        ("sendQueuedNow", json!({"queueItemId": "q1"})),
+        (
+            "editUserQuery",
+            json!({"target": {"rowId": 0, "entityId": "e1"}, "newText": "edited"}),
+        ),
+    ] {
+        let mut ok_payload = base.clone();
+        ok_payload["highspeedMeta"] = meta(owner.clone().into());
+        assert!(
+            inbound.command(&envelope(kind, ok_payload)).is_ok(),
+            "{kind}: a valid ownerKey must be accepted"
+        );
+        let mut err_payload = base;
+        err_payload["highspeedMeta"] = meta(1.into());
+        assert!(
+            inbound.command(&envelope(kind, err_payload)).is_err(),
+            "{kind}: a wrong-typed ownerKey must be refused"
+        );
+    }
 }
 
 #[test]
