@@ -171,7 +171,15 @@ pub(crate) async fn send(
     message: &str,
     context: &ToolUseContext,
 ) -> String {
-    let unknown = || render(texts::send_unknown(), &[("to", to)]);
+    // Fork (node_desktop): no ListAgents tool exists on the desktop, so the peers' unknown-text
+    // must not point the model at one (Node has no such tool on any surface).
+    let unknown = || {
+        if core.node_desktop {
+            format!("No agent named {to} was found.")
+        } else {
+            render(texts::send_unknown(), &[("to", to)])
+        }
+    };
     let Some(own) = core.ports.peers.identity().await else {
         return unknown();
     };
@@ -216,7 +224,11 @@ pub(crate) async fn send(
             text
         }
         Err(PeerSendError::Gone | PeerSendError::Refused { .. } | PeerSendError::Failed { .. }) => {
-            render(texts::send_failed(), &[("name", name.as_str())])
+            if core.node_desktop {
+                format!("Failed to send to {name} — that session may have just exited.")
+            } else {
+                render(texts::send_failed(), &[("name", name.as_str())])
+            }
         }
     }
 }

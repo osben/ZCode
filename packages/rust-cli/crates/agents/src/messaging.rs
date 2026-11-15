@@ -288,15 +288,24 @@ impl Tool for Messaging {
     }
 
     fn input_schema(&self) -> Value {
-        rust_cli_prompts::definition(self.kind.name())
+        let schema = rust_cli_prompts::definition(self.kind.name())
             .schema
-            .clone()
+            .clone();
+        if self.core.node_desktop && self.kind == Kind::SendMessage {
+            return crate::desktop_prompt::send_message_schema(&schema);
+        }
+        schema
     }
 
     fn description(&self, _context: &PromptContext) -> String {
-        rust_cli_prompts::definition(self.kind.name())
+        let description = rust_cli_prompts::definition(self.kind.name())
             .description
-            .clone()
+            .clone();
+        if self.core.node_desktop && self.kind == Kind::SendMessage {
+            // Node's SendMessage text: no ListAgents references (Node has no such tool).
+            return crate::desktop_prompt::send_message_description(&description);
+        }
+        description
     }
 
     fn is_read_only(&self, _input: &Value) -> bool {

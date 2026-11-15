@@ -1077,4 +1077,26 @@ async fn a_desktop_main_session_has_no_listagents_tool() {
     );
     let tui = harness(None);
     assert!(tui.agents.registry().find("ListAgents").is_some());
+    // The retained SendMessage must not point the desktop model at the removed tool: Node's
+    // description and `to` text name agentId, never ListAgents.
+    let desktop_send = desktop
+        .agents
+        .registry()
+        .find("SendMessage")
+        .expect("SendMessage stays");
+    let context = rust_cli_kernel_api::tool::PromptContext {
+        tool_names: Vec::new(),
+        mode: rust_cli_kernel_api::permission::PermissionMode::Default,
+    };
+    assert!(!desktop_send.description(&context).contains("ListAgents"));
+    assert!(
+        !desktop_send
+            .input_schema()
+            .pointer("/properties/to/description")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .contains("ListAgents")
+    );
+    let tui_send = tui.agents.registry().find("SendMessage").expect("stays");
+    assert!(tui_send.description(&context).contains("ListAgents"));
 }
