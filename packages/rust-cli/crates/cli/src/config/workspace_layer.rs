@@ -38,6 +38,9 @@ pub(crate) struct Loader {
     pub(crate) project_is_local: bool,
     /// The process plugin sources: the workspace overlay keeps their `view_host`/`node_helper`.
     pub(crate) process: PluginSources,
+    /// `--strict-mcp-config`: only the `--mcp-config` servers run, so a workspace's project
+    /// declarations stay out (the process assembly's `flags.strict` rule).
+    pub(crate) strict: bool,
 }
 
 #[async_trait]
@@ -95,8 +98,9 @@ impl WorkspaceConfigLoader for Loader {
         }
         servers.retain(|server| admitted.contains(&server.name));
         // Fork: a workspace that turns `features.mcp` off connects none of its servers (the
-        // effective workspace config, `merge::mcp_enabled` like the process assembly).
-        if !merge::mcp_enabled(&layers) {
+        // effective workspace config, `merge::mcp_enabled` like the process assembly), and
+        // `--strict-mcp-config` keeps the workspace's project declarations out as well.
+        if !merge::mcp_enabled(&layers) || self.strict {
             servers.clear();
         }
         // Fork: the controller's machine-binding sidecar applies before the cwd resolution (a

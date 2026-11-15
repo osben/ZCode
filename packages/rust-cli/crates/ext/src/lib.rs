@@ -192,6 +192,7 @@ impl Ext {
     pub fn set_print_session(&self, print: bool) {
         self.skills.set_print_session(print);
         self.mcp.set_print_session(print);
+        self.layer.set_print_session(print);
     }
 
     pub fn registry(&self) -> Arc<dyn ToolRegistry> {

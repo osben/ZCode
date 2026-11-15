@@ -821,6 +821,7 @@ pub(crate) async fn kernel(
         flag: None,
         project_is_local: opened.deployment.primary_is_local(),
         process: opened.config.plugins.clone(),
+        strict: cli.mcp.strict,
     }));
     let local = config::local_rules(kernel.ports().store.as_ref(), &opened.workspace).await;
     kernel.replace_permission_rules(

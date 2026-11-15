@@ -90,6 +90,11 @@ impl WorkspaceLayer {
         self.slots.read_unpoisoned().get(key).copied()
     }
 
+    /// Fork: print mode reaches every group of the composite.
+    pub(crate) fn set_print_session(&self, print: bool) {
+        self.mcp.set_print_session(print);
+    }
+
     /// Registers `key` for loading; `Err` carries the in-flight load's Notify to wait on.
     fn begin(&self, key: &str) -> Result<(), Arc<tokio::sync::Notify>> {
         let mut loading = self.loading.write_unpoisoned();
@@ -147,6 +152,13 @@ impl WorkspaceLayer {
                 return;
             }
         }
+        // A cancelled open must not leave the claim behind: the guard releases it on drop unless
+        // the normal path disarms it after `finish` (built before the first `.await`).
+        let mut claim = Claim {
+            layer: self,
+            key: key.clone(),
+            armed: true,
+        };
         let slot = match loader.load(workspace).await {
             Some(config) => {
                 let loaded = crate::plugins::load_all(
@@ -174,6 +186,23 @@ impl WorkspaceLayer {
         };
         self.slots.write_unpoisoned().insert(key.clone(), slot);
         self.finish(&key);
+        claim.armed = false;
+    }
+}
+
+/// Releases an abandoned load's claim: a session open cancelled mid-load must not leave the
+/// workspace's waiters waiting until the process ends.
+struct Claim<'a> {
+    layer: &'a WorkspaceLayer,
+    key: String,
+    armed: bool,
+}
+
+impl Drop for Claim<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            self.layer.finish(&self.key);
+        }
     }
 }
 

@@ -36,6 +36,8 @@ pub(crate) struct WorkspaceMcp {
     machines: Option<Arc<dyn EnvironmentRegistry>>,
     process: Arc<McpManager>,
     groups: RwLock<HashMap<String, Arc<McpManager>>>,
+    /// Fork: print mode is process-wide; groups created later inherit it.
+    print: std::sync::atomic::AtomicBool,
 }
 
 impl WorkspaceMcp {
@@ -55,7 +57,14 @@ impl WorkspaceMcp {
             machines,
             process,
             groups: RwLock::default(),
+            print: std::sync::atomic::AtomicBool::new(false),
         }
+    }
+
+    /// Fork: print mode is process-wide; groups created later inherit it.
+    pub(crate) fn set_print_session(&self, print: bool) {
+        self.print
+            .store(print, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// The process group (the TUI, `-p` and sessions without a workspace); read by the tests.
@@ -105,6 +114,9 @@ impl WorkspaceMcp {
         );
         if let Some(machines) = self.machines.clone() {
             manager.set_machines(machines);
+        }
+        if self.print.load(std::sync::atomic::Ordering::Relaxed) {
+            manager.set_print_session(true);
         }
         manager.start(workspace, servers);
         if let Some(previous) = self

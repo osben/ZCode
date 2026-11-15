@@ -44,6 +44,7 @@ fn loader(files: MemoryEnvironment, user_config: &str) -> Loader {
         flag: None,
         project_is_local: true,
         process: PluginSources::default(),
+        strict: false,
     }
 }
 
