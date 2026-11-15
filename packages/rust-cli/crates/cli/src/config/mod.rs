@@ -277,7 +277,10 @@ pub(crate) async fn plugin_view_of(inputs: &ConfigInputs<'_>, files: &Files) -> 
             path: layer.path,
         })
         .collect();
-    section.dirs = plugins::merge(&userish, &mut warnings).dirs;
+    // The userish merge re-walks layers the full merge above already warned about; a throwaway
+    // sink keeps each warning logged once.
+    let mut sink = Vec::new();
+    section.dirs = plugins::merge(&userish, &mut sink).dirs;
     let options = std::mem::take(&mut section.options);
     // The inventory roots (plugin cache, installed_plugins.json) resolve from the trusted layers
     // too: a project's storage.dir must not redirect them to a checked-in directory.

@@ -439,14 +439,48 @@ async fn each_workspace_resolves_its_own_plugins() {
     );
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn a_project_storage_dir_does_not_redirect_the_inventory() {
+    // Fork: the plugin inventory roots resolve from the trusted layers only; a project's
+    // storage.dir pointing at a checked-in directory changes nothing (rule (a) of
+    // specs/fork-rust-workspace-plugins-mcp.md).
+    let fixture = fixture(&[(
+        "/Users/dev/b/zcode.json",
+        json!({"storage": {"dir": "/Users/dev/b/inventory"}}),
+    )])
+    .await;
+    let servers = fixture.host.servers("/Users/dev/b").await;
+    let official = servers
+        .iter()
+        .find(|server| server.id == "typescript-lsp@zcode-plugins-official/typescript")
+        .unwrap_or_else(|| panic!("{servers:?}"));
+    assert!(
+        official.command.contains("typescript-language-server"),
+        "the official plugin still resolves from the trusted cache"
+    );
+}
+
 /// Node `resolve(workingDirectory)`: the requested path is normalized before config discovery and templates.
 #[cfg(unix)]
 #[tokio::test]
 async fn the_workspace_path_is_normalized_and_options_reach_the_templates() {
-    // Fork: the kit comes from the user config's plugin dirs (a project layer's dirs never load).
-    let fixture = fixture_user_dirs(&[]).await;
+    // Fork: the kit comes from the user config's plugin dirs (a project layer's dirs never load),
+    // and the project config still has to be DISCOVERED through each normalized form — its
+    // enabledPlugins override hides the official server only when the path resolved to /Users/dev/b.
+    let fixture = fixture_user_dirs(&[(
+        "/Users/dev/b/zcode.json",
+        json!({"plugins": {"enabledPlugins": {"typescript-lsp@zcode-plugins-official": false}}}),
+    )])
+    .await;
     for path in ["/Users/dev/b", "/Users/dev/b/", "/Users/dev/./b/../b//"] {
         let servers = fixture.host.servers(path).await;
+        assert!(
+            !servers
+                .iter()
+                .any(|server| server.id.starts_with("typescript-lsp@")),
+            "{path}: the project config was not discovered through this form: {servers:?}"
+        );
         let kit = servers
             .iter()
             .find(|server| server.id == "kit@inline/vue")
