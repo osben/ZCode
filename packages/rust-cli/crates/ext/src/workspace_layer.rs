@@ -54,9 +54,11 @@ pub struct WorkspaceLayer {
     process: Option<WorkspaceRef>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Clone)]
 pub enum Slot {
-    Loaded,
+    /// The workspace's re-selected plugin set (its skill roots, agent files, hooks and MCP
+    /// servers), kept for the session views that replace the process set for this workspace.
+    Loaded(Arc<crate::plugins::Plugins>),
     Invalid,
 }
 
@@ -87,7 +89,17 @@ impl WorkspaceLayer {
     /// The slot of `key`: the load guard reuses a `Loaded` slot, and the sessions resolve their
     /// MCP group through the manager, which only has a group for a `Loaded` slot.
     pub(crate) fn slot(&self, key: &str) -> Option<Slot> {
-        self.slots.read_unpoisoned().get(key).copied()
+        self.slots.read_unpoisoned().get(key).cloned()
+    }
+
+    /// The workspace's plugin set when a layer is loaded for it (the process set otherwise, by
+    /// the caller's `None`).
+    pub fn plugins_of(&self, workspace: &WorkspaceRef) -> Option<Arc<crate::plugins::Plugins>> {
+        let key = project_key(workspace.root.as_str());
+        match self.slot(&key) {
+            Some(Slot::Loaded(plugins)) => Some(plugins),
+            _ => None,
+        }
     }
 
     /// Fork: print mode reaches every group of the composite.
@@ -134,7 +146,7 @@ impl WorkspaceLayer {
         // A loaded slot is reused: a second session of the same workspace must not replace the
         // group (that would cancel the first session's connections mid-flight). A slot stays until
         // the process ends; a later PR adds the config-change reload with epoch writes.
-        if self.slot(&key) == Some(Slot::Loaded) {
+        if matches!(self.slot(&key), Some(Slot::Loaded(_))) {
             return;
         }
         let Some(loader) = self.loader.get().cloned() else {
@@ -178,7 +190,7 @@ impl WorkspaceLayer {
                 servers.extend(loaded.mcp_servers());
                 servers.extend(config.servers);
                 self.mcp.start(&key, workspace.clone(), servers);
-                Slot::Loaded
+                Slot::Loaded(Arc::new(loaded))
             }
             None => {
                 tracing::warn!(

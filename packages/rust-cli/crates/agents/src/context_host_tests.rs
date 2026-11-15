@@ -187,6 +187,80 @@ fn catalog() -> AgentCatalog {
     catalog
 }
 
+#[tokio::test]
+async fn a_loaded_workspace_replaces_the_process_plugin_agents() {
+    // Fork (specs/fork-rust-workspace-plugins-mcp.md): a workspace with a loaded layer reads its
+    // own plugin agent files; every other workspace keeps the process set.
+    let facts = EnvFacts {
+        cwd: EnvPath::new("/Users/dev/repo"),
+        platform: "darwin".to_owned(),
+        os_version: "Darwin 24".to_owned(),
+        shell: "zsh".to_owned(),
+        is_git_repo: false,
+        home: Some(EnvPath::new("/Users/dev")),
+        uid: None,
+    };
+    let env = Arc::new(
+        MemoryEnvironment::new(facts)
+            .with_file(
+                "/Users/dev/plugins/kit/agents/review.md",
+                "---\nname: review\ndescription: The kit reviewer.\n---\nO.",
+            )
+            .with_file(
+                "/Users/dev/plugins/base/agents/audit.md",
+                "---\nname: audit\ndescription: The process auditor.\n---\nA.",
+            ),
+    );
+    let catalog = AgentCatalog::new(env.clone(), env);
+    // The process set carries its own plugin; a loaded workspace replaces it, not merges it.
+    catalog.set_plugins(vec![PluginAgentFile {
+        id: "base@market".to_owned(),
+        plugin: "base".to_owned(),
+        root: "/Users/dev/plugins/base".to_owned(),
+        path: "/Users/dev/plugins/base/agents/audit.md".to_owned(),
+        namespace: Vec::new(),
+    }]);
+    catalog.set_workspace_files(Box::new(|workspace: &WorkspaceRef| {
+        (workspace.root.as_str() == "/Users/dev/ws-a").then(|| {
+            vec![PluginAgentFile {
+                id: "kit@market".to_owned(),
+                plugin: "kit".to_owned(),
+                root: "/Users/dev/plugins/kit".to_owned(),
+                path: "/Users/dev/plugins/kit/agents/review.md".to_owned(),
+                namespace: Vec::new(),
+            }]
+        })
+    }));
+    let a = catalog
+        .definitions_in(
+            &WorkspaceRef {
+                environment: EnvironmentId::new("local"),
+                root: EnvPath::new("/Users/dev/ws-a"),
+            },
+            None,
+        )
+        .await;
+    let b = catalog
+        .definitions_in(
+            &WorkspaceRef {
+                environment: EnvironmentId::new("local"),
+                root: EnvPath::new("/Users/dev/ws-b"),
+            },
+            None,
+        )
+        .await;
+    assert!(names(&a).contains(&"kit:review"));
+    assert!(
+        !names(&a).contains(&"base:audit"),
+        "a loaded workspace replaces the process plugin set, not merges it"
+    );
+    assert!(
+        names(&b).contains(&"base:audit"),
+        "a workspace without a layer keeps the process plugin set"
+    );
+    assert!(!names(&b).contains(&"kit:review"));
+}
+
 fn workspace() -> WorkspaceRef {
     WorkspaceRef {
         environment: EnvironmentId::new("local"),

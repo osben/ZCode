@@ -112,12 +112,20 @@ struct Cached {
 ///
 /// 主线程的 agent 清单（context）与 Agent 工具共用同一个实例（runtime 组装），两处看到的插件 agent
 /// 总是同一组。
+/// Fork (specs/fork-rust-workspace-plugins-mcp.md): the agent files of a workspace whose layer is
+/// loaded; `None` keeps the process plugin set.
+pub type WorkspaceAgentFiles =
+    Box<dyn Fn(&WorkspaceRef) -> Option<Vec<PluginAgentFile>> + Send + Sync>;
+
 pub struct AgentCatalog {
     /// agent 定义是本机的文件（用户级与项目级目录、插件），经本机的端口读。
     info: Arc<dyn EnvInfo>,
     files: Arc<dyn Files>,
     /// 插件 agent 文件；只由 runtime 在插件加载后设置（agents.md §3）。
     plugins: RwLock<Vec<PluginAgentFile>>,
+    /// Fork (specs/fork-rust-workspace-plugins-mcp.md): the workspace layer's agent files; a
+    /// workspace with a loaded slot replaces the process plugin set for its sessions.
+    workspace_files: OnceLock<WorkspaceAgentFiles>,
     /// Fork: the sessions' incognito profiles (specs/fork-rust-agent-parity.md, "Incognito sessions").
     incognito: OnceLock<rust_cli_kernel_api::incognito::IncognitoProfiles>,
     /// Fork: the Host's subagent snapshot; only the desktop app-server sets it.
@@ -138,6 +146,7 @@ impl AgentCatalog {
             info,
             files,
             plugins: RwLock::default(),
+            workspace_files: OnceLock::new(),
             incognito: OnceLock::new(),
             host: OnceLock::new(),
             roots: OnceLock::new(),
@@ -206,6 +215,11 @@ impl AgentCatalog {
         *self.plugins.write_unpoisoned() = files;
     }
 
+    /// Fork: registers the workspace layer lookup (the runtime wires ext's layer through it).
+    pub fn set_workspace_files(&self, files: WorkspaceAgentFiles) {
+        let _ = self.workspace_files.set(files);
+    }
+
     /// 当前可用的 agent 类型（`/context` 的自定义 agent 也用它，context-usage.md §3）。Fork: no session to key a
     /// Host snapshot on, so the agent files apply (rule 12).
     pub async fn definitions(&self, workspace: &WorkspaceRef) -> Vec<AgentDefinition> {
@@ -221,14 +235,14 @@ impl AgentCatalog {
     ) -> Vec<AgentDefinition> {
         let Some(session) = session else {
             return self
-                .file_definitions(workspace, self.plugin_files(None))
+                .file_definitions(workspace, self.plugin_files(workspace, None))
                 .await;
         };
         match self.prepared_definitions(workspace, session, None).await {
             Ok(found) => found,
             Err(error) => {
                 tracing::warn!(%error, "the subagent runtime config is not available; using the agent files");
-                self.file_definitions(workspace, self.plugin_files(Some(session)))
+                self.file_definitions(workspace, self.plugin_files(workspace, Some(session)))
                     .await
             }
         }
@@ -245,7 +259,7 @@ impl AgentCatalog {
         if self.excludes(Some(session), IncognitoKey::CustomAgents) {
             return Ok(merge(vec![self.builtins()]));
         }
-        let plugin_files = self.plugin_files(Some(session));
+        let plugin_files = self.plugin_files(workspace, Some(session));
         let Some(host) = self.host.get() else {
             return Ok(self.file_definitions(workspace, plugin_files).await);
         };
@@ -341,12 +355,24 @@ impl AgentCatalog {
             .is_some_and(|(session, profiles)| profiles.excludes(session, key))
     }
 
-    fn plugin_files(&self, session: Option<&SessionId>) -> Vec<PluginAgentFile> {
+    fn plugin_files(
+        &self,
+        workspace: &WorkspaceRef,
+        session: Option<&SessionId>,
+    ) -> Vec<PluginAgentFile> {
         if self.excludes(session, IncognitoKey::Plugins) {
-            Vec::new()
-        } else {
-            self.plugins.read_unpoisoned().clone()
+            return Vec::new();
         }
+        // Fork: a loaded workspace layer replaces the process plugin set (the workspace's own
+        // re-selection, like Node's per-app plugin discovery).
+        if let Some(files) = self
+            .workspace_files
+            .get()
+            .and_then(|files| files(workspace))
+        {
+            return files;
+        }
+        self.plugins.read_unpoisoned().clone()
     }
 
     /// The agents of the agent files: built-ins, plugins, user, project.

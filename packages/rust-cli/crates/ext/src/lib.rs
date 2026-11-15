@@ -154,6 +154,8 @@ impl Ext {
             user_servers,
             config.workspace.clone(),
         ));
+        // Fork: the skill catalog reads a loaded workspace's own plugin roots.
+        skills.set_workspace_layer(layer.clone());
         skills.set_incognito(ports.incognito.clone());
         let incognito = IncognitoTools::new(
             ports.incognito,
