@@ -327,6 +327,105 @@ async fn a_soft_deleted_id_is_refused_before_any_write() {
     assert_eq!(*kernel.creates.lock().unwrap(), ["s2"]);
 }
 
+/// Wave 2 B1 (specs/fork-rust-agent-parity.md): `createSession.cwd` / `worktreeCreation` ride only on the
+/// `worktreeCwd` capability, which this agent does not report. An ungated sender is refused before any
+/// branch runs (a reservation included), instead of the fields being dropped and the session created in
+/// the workspace directory — Node's own admission check (`worktreeCreation requires cwd`,
+/// `session-mgmt.ts`) refuses before `runActivation` the same way.
+#[tokio::test]
+async fn a_managed_worktree_cwd_is_refused_before_any_branch() {
+    let scope = rust_cli_base::TaskScope::root("test", |_| {});
+    let (out, _reader) = tokio::io::duplex(1 << 16);
+    let (peer, _writer) = rust_cli_protocol_core::connection::start(
+        out,
+        &scope.spawner(),
+        rust_cli_protocol_core::connection::Options::default(),
+    );
+    let context = std::sync::Arc::new(crate::context::Context::new(
+        peer,
+        std::sync::Arc::new(rust_cli_kernel_api::testing::FixedClock(5)),
+    ));
+    let kernel = std::sync::Arc::new(DeletedKernel::default());
+    let server = Server::new(
+        context,
+        kernel.clone(),
+        scope.spawner(),
+        crate::server::Defaults {
+            selection: rust_cli_kernel_api::testing::selection().into(),
+            mode: rust_cli_kernel_api::permission::PermissionMode::Default,
+            environment: rust_cli_kernel_api::ids::EnvironmentId::new("local"),
+        },
+    );
+    let create = |payload: serde_json::Value| Envelope {
+        command_id: "c1".to_owned(),
+        client_id: "client".to_owned(),
+        session_id: None,
+        base_revision: None,
+        kind: "createSession".to_owned(),
+        payload,
+        input_origin: None,
+    };
+    let creation = json!({
+        "path": "/w/.zcode-worktrees/one", "sha": "a1b2c3d4", "ref": null, "output": "worktree added"
+    });
+    let cwd = create_session(
+        &server,
+        &create(json!({
+            "workspaceId": "/w",
+            "sessionId": "s2",
+            "cwd": "/w/.zcode-worktrees/one",
+            "worktreeCreation": creation,
+        })),
+    )
+    .await;
+    assert_eq!(cwd.status, Status::Rejected);
+    assert_eq!(cwd.reason_code.as_deref(), Some("proto.invalidPayload"));
+    assert_eq!(
+        cwd.message.as_deref(),
+        Some("cwd is not supported by this agent")
+    );
+    // Node refuses `worktreeCreation` without `cwd`; without the capability both halves are refused.
+    let marker = create_session(
+        &server,
+        &create(json!({
+            "workspaceId": "/w",
+            "sessionId": "s2",
+            "worktreeCreation": creation,
+        })),
+    )
+    .await;
+    assert_eq!(marker.status, Status::Rejected);
+    assert_eq!(marker.reason_code.as_deref(), Some("proto.invalidPayload"));
+    assert_eq!(
+        marker.message.as_deref(),
+        Some("worktreeCreation is not supported by this agent")
+    );
+    // A reservation is refused too: nothing is persisted from an envelope that claims a worktree cwd.
+    let reserved = create_session(
+        &server,
+        &create(json!({
+            "workspaceId": "/w",
+            "sessionId": "s2",
+            "submissionPreparation": {"submissionId": "sub-1"},
+            "cwd": "/w/.zcode-worktrees/one",
+        })),
+    )
+    .await;
+    assert_eq!(reserved.status, Status::Rejected);
+    assert_eq!(
+        reserved.reason_code.as_deref(),
+        Some("proto.invalidPayload")
+    );
+    assert!(kernel.creates.lock().unwrap().is_empty());
+    // Without the fields the create is unchanged: it reaches the kernel.
+    create_session(
+        &server,
+        &create(json!({"workspaceId": "/w", "sessionId": "s2"})),
+    )
+    .await;
+    assert_eq!(*kernel.creates.lock().unwrap(), ["s2"]);
+}
+
 /// B9 (fork spec `fork-rust-credential-cipher.md` F3): the default is read at each session creation, so a degraded
 /// default revised later reaches only the sessions created after the revision.
 #[tokio::test]

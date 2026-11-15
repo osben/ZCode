@@ -198,6 +198,57 @@ fn highspeed_meta_owner_key_is_accepted() {
     }
 }
 
+/// Wave 2 B1 (specs/fork-rust-agent-parity.md): the shipped 3.18.0 schema accepts the managed-worktree fields
+/// (`createSession.cwd` / `worktreeCreation`, `forkAssistant.targetCwd`), so validation lets them through and the
+/// refusal is the handler's (`commands.rs`, `fork/row_commands.rs`) — the capability stays false, the fields must
+/// not be dropped. A wrong-typed half is still refused here, before the handler runs.
+#[test]
+fn managed_worktree_cwd_fields_are_accepted_by_the_shipped_schema() {
+    let inbound = Inbound::get();
+    let envelope = |kind: &str, payload: Value| {
+        // forkAssistant is a CAS command (baseRevision/baseLogEpoch on the envelope).
+        let mut envelope = json!({"commandId": "c1", "clientId": "k", "sessionId": "s", "type": kind,
+            "payload": payload, "issuedAt": 1});
+        if kind == "forkAssistant" {
+            envelope["baseRevision"] = json!("r1");
+            envelope["baseLogEpoch"] = json!(1);
+        }
+        envelope
+    };
+    let creation = json!({"path": "/w/.zcode-worktrees/one", "sha": "a1b2c3d4", "ref": null,
+        "output": "worktree added"});
+    assert!(
+        inbound
+            .command(&envelope(
+                "createSession",
+                json!({"workspaceId": "/w", "cwd": "/w/.zcode-worktrees/one",
+                    "worktreeCreation": creation}),
+            ))
+            .is_ok()
+    );
+    let mut malformed = creation.clone();
+    malformed["sha"] = json!(1);
+    assert!(
+        inbound
+            .command(&envelope(
+                "createSession",
+                json!({"workspaceId": "/w", "cwd": "/w/.zcode-worktrees/one",
+                    "worktreeCreation": malformed}),
+            ))
+            .is_err()
+    );
+    assert!(
+        inbound
+            .command(&envelope(
+                "forkAssistant",
+                json!({"target": {"rowId": 0, "entityId": "e1"},
+                    "targetCwd": {"cwd": "/w/.zcode-worktrees/one", "childSessionId": "child-1",
+                        "worktreeCreation": creation}}),
+            ))
+            .is_ok()
+    );
+}
+
 #[test]
 fn reverse_request_replies_follow_the_app_schema() {
     let inbound = Inbound::get();
