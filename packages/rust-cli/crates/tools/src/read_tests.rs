@@ -89,7 +89,7 @@ async fn a_node_read_over_the_token_cap_returns_the_partial_view_and_its_notice(
 
     use crate::ReadTool;
     use crate::common::FileTools;
-    use crate::read::READ_TRUNCATION_NOTICE;
+    use rust_cli_kernel_api::message::READ_TRUNCATION_NOTICE;
     use tokio::sync::mpsc;
 
     const PATH: &str = "/Users/dev/work/big.rs";

@@ -11,7 +11,9 @@ use rust_cli_kernel_api::env_files::{ReadText, TextRead};
 use rust_cli_kernel_api::env_path;
 use rust_cli_kernel_api::ids::{ArtifactId, SessionId};
 use rust_cli_kernel_api::machine_param::MachineParam;
-use rust_cli_kernel_api::message::{AttachmentMessage, ImageSource, Message, ToolResultContent};
+use rust_cli_kernel_api::message::{
+    AttachmentMessage, ImageSource, Message, READ_TRUNCATION_NOTICE, ToolResultContent,
+};
 use rust_cli_kernel_api::tool::{
     PromptContext, Tool, ToolCallOutput, ToolError, ToolOutput, ToolProgress, ToolUseContext,
     Validation,
@@ -479,10 +481,6 @@ impl Tool for ReadTool {
         })
     }
 }
-
-/// Fork (node_desktop): the source of the Read partial-view batch attachment (Node
-/// `system-reminder` source `read_truncation_notice`).
-pub(crate) const READ_TRUNCATION_NOTICE: &str = "read_truncation_notice";
 
 fn done(output: ToolOutput) -> ToolCallOutput {
     ToolCallOutput {

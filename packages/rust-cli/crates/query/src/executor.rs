@@ -16,7 +16,7 @@ use rust_cli_kernel_api::checkpoint::DISPLAY_KEY;
 use rust_cli_kernel_api::env::Origin;
 use rust_cli_kernel_api::ids::{MessageId, ToolUseId};
 use rust_cli_kernel_api::message::{
-    ContentBlock, Message, ToolResultContent, UserMessage, UserOrigin,
+    ContentBlock, Message, READ_TRUNCATION_NOTICE, ToolResultContent, UserMessage, UserOrigin,
 };
 use rust_cli_kernel_api::metering::{CallStatus, ToolCall};
 use rust_cli_kernel_api::orchestration::{QueryEvent, ToolExecution};
@@ -457,10 +457,11 @@ fn is_hook_context(message: &Message) -> bool {
     matches!(message, Message::Attachment(attachment) if attachment.source == "hook_additional_context")
 }
 
-/// A tool's batch notice (Node `formatBatchNotice`; the tools crate sends Read's partial view as
-/// `read_truncation_notice`). Like a hook context it is held to the batch's end, after every held context.
+/// A tool's batch notice (Node `formatBatchNotice`; the tools crate sends Read's partial view as the
+/// [`READ_TRUNCATION_NOTICE`] attachment). Like a hook context it is held to the batch's end, after every
+/// held context.
 fn is_batch_notice(message: &Message) -> bool {
-    matches!(message, Message::Attachment(attachment) if attachment.source == "read_truncation_notice")
+    matches!(message, Message::Attachment(attachment) if attachment.source == READ_TRUNCATION_NOTICE)
 }
 
 /// 工具结束的日志（logging.md §4）：失败记 info，带错误文本的前 300 个字符（系统文字，不是用户内容）；
