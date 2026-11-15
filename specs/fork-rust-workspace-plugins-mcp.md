@@ -127,6 +127,9 @@ official cache and `installed_plugins.json` all live under the storage root
 - MCP Apps on Rust-hosted servers (F7) and `helper/appTools/*` (F3b) — unchanged scope.
 - The TUI (single workspace by construction) keeps the process group; no per-workspace TUI surface.
 - `/mcp enable|disable|reconnect` stay process-group operations (TUI flows).
+- ~~The LSP path's project `plugins.dirs`~~ — closed: `plugin_view` applies the Node rule (project
+  dirs never load; the inventory roots resolve from the trusted layers only), and the workspace
+  loader reuses the view instead of its own copy.
 
 ## Acceptance
 

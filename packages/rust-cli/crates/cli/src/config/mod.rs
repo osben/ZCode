@@ -255,8 +255,24 @@ pub(crate) async fn plugin_view(inputs: &ConfigInputs<'_>) -> PluginView {
     let empty = Map::new();
     let layers = layers(&files, inputs.flag, &empty, &mut warnings);
     let mut section = plugins::merge(&layers, &mut warnings);
+    // Fork (specs/fork-rust-workspace-plugins-mcp.md): Node strips `plugins.dirs` from project
+    // configs (`project-config.adapter.ts`): a project layer must not load plugin roots, or merely
+    // opening a repository would run its plugin commands. The dirs come from the user and
+    // `--settings` layers only.
+    let userish: Vec<merge::Layer<'_>> = layers
+        .iter()
+        .filter(|layer| layer.source != RuleSource::ProjectSettings)
+        .map(|layer| merge::Layer {
+            source: layer.source,
+            object: layer.object,
+            path: layer.path,
+        })
+        .collect();
+    section.dirs = plugins::merge(&userish, &mut warnings).dirs;
     let options = std::mem::take(&mut section.options);
-    let storage_layers = storage_layers(inputs, &layers, &mut warnings);
+    // The inventory roots (plugin cache, installed_plugins.json) resolve from the trusted layers
+    // too: a project's storage.dir must not redirect them to a checked-in directory.
+    let storage_layers = storage_layers(inputs, &userish, &mut warnings);
     let root = inputs.workspace.root.as_str();
     let storage = inputs
         .paths
