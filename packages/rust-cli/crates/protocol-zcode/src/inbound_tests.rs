@@ -148,6 +148,37 @@ fn an_extension_source_is_checked_by_the_shipped_schema() {
     }
 }
 
+/// Wave 2 (specs/fork-rust-agent-parity.md, `highspeedCardOwner`): the Host keeps `ownerKey` on `highspeedMeta`
+/// only when this schema accepts the field instead of rejecting the send (`capabilities` reports the flag for
+/// exactly that). A wrong-typed owner is still refused before the handler runs.
+#[test]
+fn highspeed_meta_owner_key_is_accepted() {
+    let inbound = Inbound::get();
+    let envelope = |payload: Value| {
+        json!({"commandId": "c1", "clientId": "k", "sessionId": "s", "type": "sendText",
+            "payload": payload, "issuedAt": 1})
+    };
+    let owner = format!("v1:{}", "0".repeat(64));
+    let meta = |owner_key: Value| {
+        json!({"schemaVersion": 1, "cardId": "card", "ownerKey": owner_key, "taskId": "task",
+            "provider": "zai", "model": "glm-4.7", "issuedAt": 1, "expiresAt": 2})
+    };
+    assert!(
+        inbound
+            .command(&envelope(
+                json!({"text": "hi", "highspeedMeta": meta(owner.into())})
+            ))
+            .is_ok()
+    );
+    assert!(
+        inbound
+            .command(&envelope(
+                json!({"text": "hi", "highspeedMeta": meta(1.into())})
+            ))
+            .is_err()
+    );
+}
+
 #[test]
 fn reverse_request_replies_follow_the_app_schema() {
     let inbound = Inbound::get();
