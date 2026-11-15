@@ -587,6 +587,11 @@ pub(super) async fn retry(live: &Bridged<Live>, envelope: &Envelope, revision: u
         Ok(body) => body,
         Err(ack) => return *ack,
     };
+    // Wave 2 B1: the same ungated-sender guard as fork — a retryTurn envelope must not carry the
+    // managed-worktree field either (uniform fail-closed contract; retry creates no session).
+    if let Some(ack) = refuse_target_cwd(envelope, &body, revision) {
+        return ack;
+    }
     let target =
         match live
             .sink
