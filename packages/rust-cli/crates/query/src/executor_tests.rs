@@ -370,3 +370,84 @@ async fn a_call_finished_while_the_reply_streams_keeps_its_context_to_the_batch_
         ]
     );
 }
+
+/// Fork (Node `toolBatchModelEntries`): a batch notice (Read's `read_truncation_notice`) is held with the node batch
+/// order like a hook context, but after every held context: results, then the contexts, then the notices. The
+/// default order keeps it right after its own result.
+#[tokio::test]
+async fn under_the_node_batch_order_a_read_notice_follows_the_held_contexts() {
+    struct NoticeExecutor;
+    #[async_trait::async_trait]
+    impl rust_cli_kernel_api::orchestration::ToolExecutor for NoticeExecutor {
+        async fn execute(
+            &self,
+            tool: Arc<dyn Tool>,
+            input: Value,
+            context: rust_cli_kernel_api::tool::ToolUseContext,
+            progress: tokio::sync::mpsc::Sender<rust_cli_kernel_api::tool::ToolProgress>,
+        ) -> rust_cli_kernel_api::orchestration::ToolExecution {
+            let name = tool.name().to_owned();
+            let attachment = |source: &str, text: String| {
+                Message::Attachment(rust_cli_kernel_api::message::AttachmentMessage {
+                    id: rust_cli_kernel_api::ids::MessageId::new(format!("{source}_{name}")),
+                    source: source.to_owned(),
+                    text,
+                    data: Value::Null,
+                })
+            };
+            let mut execution = rust_cli_kernel_api::testing::DirectExecutor
+                .execute(tool, input, context, progress)
+                .await;
+            execution.after = vec![
+                attachment("hook_additional_context", format!("ctx {name}")),
+                attachment("read_truncation_notice", format!("notice {name}")),
+            ];
+            execution
+        }
+    }
+    for (contexts, expected) in [
+        (
+            crate::ToolHookContexts::PerCall,
+            [
+                "result t1",
+                "ctx A",
+                "notice A",
+                "result t2",
+                "ctx B",
+                "notice B",
+            ],
+        ),
+        (
+            crate::ToolHookContexts::NodeBatch,
+            [
+                "result t1",
+                "result t2",
+                "ctx A",
+                "ctx B",
+                "notice A",
+                "notice B",
+            ],
+        ),
+    ] {
+        let model = Arc::new(ScriptedModel::new(vec![
+            tool_uses(&[("t1", "A", json!({})), ("t2", "B", json!({}))]),
+            text_response(&["ok"]),
+        ]));
+        let mut parts = parts(
+            model,
+            vec![
+                Arc::new(FakeTool::new("A", false, "a")),
+                Arc::new(FakeTool::new("B", false, "b")),
+            ],
+        );
+        parts.executor = Arc::new(NoticeExecutor);
+        parts.limits.tool_hook_contexts = contexts;
+        let request = request("go");
+        let (scope, sink) = scope(parts, &request, Abort::new());
+        assert_eq!(
+            crate::run::run(scope, request).await.unwrap(),
+            QueryStop::Completed
+        );
+        assert_eq!(batch_order(&sink.messages()), expected, "{contexts:?}");
+    }
+}

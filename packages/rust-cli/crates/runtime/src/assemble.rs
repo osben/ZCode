@@ -162,11 +162,22 @@ pub(crate) fn base_tools(
         model: ports.model.clone(),
         selection: defaults.selection.clone(),
     };
-    let builtin = rust_cli_tools::builtin_with_code(
-        gate.clone(),
-        Some(side_model()),
-        extensions.code_intelligence.clone(),
-    );
+    let builtin = if extensions.node_desktop {
+        // Fork (node_desktop): Read falls back to Node's partial view, with the `read_truncation_notice` batch
+        // attachment.
+        rust_cli_tools::builtin_with_node_read(
+            gate.clone(),
+            Some(side_model()),
+            extensions.code_intelligence.clone(),
+            ports.ids.clone(),
+        )
+    } else {
+        rust_cli_tools::builtin_with_code(
+            gate.clone(),
+            Some(side_model()),
+            extensions.code_intelligence.clone(),
+        )
+    };
     let read_files: Arc<ReadFileState> = builtin.file_state().cloned().unwrap_or_default();
     let worktrees = Arc::new(WorktreeBoard::default());
     // Monitor（工作线 F83，tools-more.md §19）：单次的 `-p` 上限 10 分钟，其余 30 分钟。

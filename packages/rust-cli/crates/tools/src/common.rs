@@ -24,6 +24,9 @@ pub struct FileTools {
     pub(crate) model: Option<crate::web_fetch::SideModel>,
     /// Fork: the language-server runtime (specs/fork-rust-lsp.md "Runtime"); only the app-server gives one.
     pub(crate) code: Option<Arc<dyn CodeIntelligence>>,
+    /// Fork (node_desktop): Node's Read partial view of a whole-file read over the token cap, with the ids naming its
+    /// `read_truncation_notice` attachment; only the app-server turns it on.
+    pub(crate) node_read: Option<Arc<dyn rust_cli_kernel_api::clock::Ids>>,
 }
 
 impl FileTools {
@@ -33,6 +36,7 @@ impl FileTools {
             gate,
             model: None,
             code: None,
+            node_read: None,
         }
     }
 
@@ -40,6 +44,13 @@ impl FileTools {
     #[must_use]
     pub fn with_code_intelligence(mut self, code: Arc<dyn CodeIntelligence>) -> Self {
         self.code = Some(code);
+        self
+    }
+
+    /// Fork (node_desktop): see [`FileTools::node_read`].
+    #[must_use]
+    pub fn with_node_read(mut self, ids: Arc<dyn rust_cli_kernel_api::clock::Ids>) -> Self {
+        self.node_read = Some(ids);
         self
     }
 

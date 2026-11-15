@@ -9,7 +9,7 @@ use rust_cli_kernel_api::tool::failed;
 /// 不加 limit 时允许读的最大字节数。
 pub(crate) const MAX_BYTES: u64 = 262_144;
 /// 一次读取允许的最大 token 数。
-const MAX_TOKENS: u64 = 25_000;
+pub(crate) const MAX_TOKENS: u64 = 25_000;
 /// 图片原样内联的上限（字节）：kernel-api 的一个常量，TUI 的粘贴也用它（F58）。
 pub(crate) const MAX_IMAGE_BYTES: usize = rust_cli_kernel_api::image::MAX_IMAGE_BYTES;
 
@@ -93,7 +93,7 @@ pub(crate) fn number_lines(content: &str, start: u64) -> String {
 }
 
 /// 粗估 token 数：JSON 类每 2 个字符一个 token，其余 4 个。
-fn estimate_tokens(content: &str, extension: &str) -> u64 {
+pub(crate) fn estimate_tokens(content: &str, extension: &str) -> u64 {
     // 每 token 的字符数与 Math.round 只定义在 base 的 `tokens`。
     let per_token = if matches!(extension, ".json" | ".jsonl" | ".jsonc") {
         tokens::JSON_CHARS_PER_TOKEN
@@ -110,6 +110,100 @@ pub(crate) fn check_tokens(content: &str, extension: &str) -> Result<(), ToolErr
         return Err(failed(texts::too_many_tokens(tokens, MAX_TOKENS)));
     }
     Ok(())
+}
+
+/// Fork (node_desktop): Node `READ_PARTIAL_VIEW_FIT_RATIO`（core `tool/handlers/read-text.ts`）。
+const PARTIAL_VIEW_FIT_RATIO: f64 = 0.85;
+/// Fork (node_desktop): Node `READ_PARTIAL_VIEW_SHRINK_RATIO` / `READ_PARTIAL_VIEW_SHRINK_STEPS`.
+const PARTIAL_VIEW_SHRINK_RATIO: f64 = 0.7;
+const PARTIAL_VIEW_SHRINK_STEPS: usize = 6;
+/// Fork (node_desktop): Node `READ_TRUNCATION_BANNER_PREFIX`.
+const READ_TRUNCATION_BANNER_PREFIX: &str = "[Truncated: PARTIAL view \u{2014} ";
+
+/// Fork (node_desktop): the partial view of a whole-file read over the token cap (Node
+/// `createTokenCapPartialView`): the head that fits, how many lines it shows, and the truncation
+/// notice. The notice is not part of the tool_result — it reaches the model as the
+/// `read_truncation_notice` batch attachment (Node `formatReadBatchNotice`). `None` when even the
+/// character slice does not fit (Node then reports the token overflow instead).
+pub(crate) struct PartialView {
+    pub(crate) content: String,
+    pub(crate) shown_lines: u64,
+    pub(crate) notice: String,
+}
+
+pub(crate) fn partial_view(
+    content: &str,
+    token_count: u64,
+    total_lines: u64,
+    start_line: u64,
+    extension: &str,
+    file_path: &str,
+) -> Option<PartialView> {
+    let lines: Vec<&str> = content
+        .split('\n')
+        .map(|line| line.strip_suffix('\r').unwrap_or(line))
+        .collect();
+    if lines.is_empty() {
+        return None;
+    }
+    let content_units = crate::common::utf16_len(content);
+    let chars_per_token = (content_units as f64 / token_count as f64).max(0.5);
+    let fits = |text: &str| estimate_tokens(text, extension) <= MAX_TOKENS;
+    let mut count = ((lines.len() as f64 * MAX_TOKENS as f64 / token_count as f64)
+        * PARTIAL_VIEW_FIT_RATIO)
+        .floor()
+        .min(lines.len() as f64)
+        .max(1.0) as usize;
+    let mut view = lines[..count].join("\n");
+    for _ in 0..PARTIAL_VIEW_SHRINK_STEPS {
+        if fits(&view) || count <= 1 {
+            break;
+        }
+        count = ((count as f64 * PARTIAL_VIEW_SHRINK_RATIO).floor() as usize).max(1);
+        view = lines[..count].join("\n");
+    }
+    let mut by_characters = false;
+    if !fits(&view) || view.trim().is_empty() {
+        let mut units = ((MAX_TOKENS as f64 * chars_per_token * PARTIAL_VIEW_FIT_RATIO).floor()
+            as usize)
+            .max(1);
+        for _ in 0..PARTIAL_VIEW_SHRINK_STEPS {
+            // JS `slice` then `dropTrailingHighSurrogate`: a cut surrogate pair is dropped whole.
+            view = rust_cli_base::js::string::utf16_prefix(content, units).to_owned();
+            if fits(&view) {
+                break;
+            }
+            units = ((units as f64 * PARTIAL_VIEW_SHRINK_RATIO).floor() as usize).max(1);
+        }
+        if !fits(&view) {
+            return None;
+        }
+        by_characters = true;
+    }
+    let shown_lines = if by_characters {
+        u64::try_from(view.split('\n').count()).unwrap_or(u64::MAX)
+    } else {
+        count as u64
+    };
+    let last_shown_line = start_line + shown_lines.saturating_sub(1);
+    let tokens = format!("{token_count} tokens, cap {MAX_TOKENS}");
+    // The notice text is Node's, byte for byte (read-text.ts `createTokenCapPartialView`).
+    let notice = if !by_characters && last_shown_line < total_lines {
+        format!(
+            "{READ_TRUNCATION_BANNER_PREFIX}{file_path}: showing lines {start_line}-{last_shown_line} of {total_lines} total ({tokens}). Call Read with offset={} limit={shown_lines} for the next page, or Grep to find a specific section. Do NOT answer from this page alone if the answer may be further in the file.]",
+            last_shown_line + 1
+        )
+    } else {
+        format!(
+            "{READ_TRUNCATION_BANNER_PREFIX}{file_path}: showing the first {} of {content_units} characters ({tokens}); this file has very long lines and cannot be paginated by line. Use Grep to find a specific section, or Read with offset/limit to page through it. Do NOT answer from this excerpt alone if the answer may be elsewhere in the file.]",
+            crate::common::utf16_len(&view)
+        )
+    };
+    Some(PartialView {
+        content: view,
+        shown_lines,
+        notice,
+    })
 }
 
 /// 文件头的格式（kernel-api `image::media_type`）。修复线 F58：以前自己判断，`GIF8` 开头就算 GIF、不足 4 字节
