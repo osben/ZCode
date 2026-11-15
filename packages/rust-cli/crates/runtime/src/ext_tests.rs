@@ -507,3 +507,102 @@ fn host_automations_follow_the_automation_port() {
     };
     assert!(crate::assemble::ext_config(&desktop).host_automations);
 }
+
+/// A workspace layer loader that always answers one fixed config (the fail-closed case is `None`).
+struct FixedLayer(Option<rust_cli_ext::WorkspaceConfig>);
+
+#[async_trait::async_trait]
+impl rust_cli_ext::WorkspaceConfigLoader for FixedLayer {
+    async fn load(
+        &self,
+        _workspace: &rust_cli_kernel_api::env::WorkspaceRef,
+    ) -> Option<rust_cli_ext::WorkspaceConfig> {
+        self.0.clone()
+    }
+}
+
+/// Fork (specs/fork-rust-node-helper.md F3, per-workspace admission): a session of a workspace with
+/// a loaded layer resolves that workspace's plugin set; the process workspace and unknown sessions
+/// resolve none, so the helper's catalog falls back to the process one for them.
+#[tokio::test]
+async fn a_session_resolves_its_workspaces_plugins() {
+    let env = MemoryEnvironment::new(EnvFacts {
+        cwd: EnvPath::new("/Users/dev/work"),
+        platform: "darwin".to_owned(),
+        os_version: "Darwin 24".to_owned(),
+        shell: "zsh".to_owned(),
+        is_git_repo: false,
+        home: Some(EnvPath::new("/Users/dev")),
+        uid: None,
+    });
+    let store = Arc::new(MemoryStore::default());
+    let kernel = LocalKernel::with_extensions(
+        Ports {
+            model: Arc::new(ScriptedModel::new(Vec::new())),
+            environments: environments(Arc::new(env)),
+            store: store.clone(),
+            artifacts: store,
+            clock: Arc::new(FixedClock(1_000)),
+            ids: Arc::new(SequentialIds::default()),
+        },
+        Defaults {
+            selection: selection().into(),
+            mode: PermissionMode::Default,
+            max_turns: None,
+            search_tools: false,
+            task_tools: None,
+            limits: Default::default(),
+        },
+        ContextConfig::new(Surface::Print),
+        CompactConfig::default(),
+        Arc::new(MemoryTaskLists::default()),
+        Extensions {
+            config: ExtConfig {
+                workspace: Some(workspace()),
+                ..ExtConfig::default()
+            },
+            ..Extensions::none()
+        },
+    );
+    kernel.set_workspace_config_loader(Arc::new(FixedLayer(Some(rust_cli_ext::WorkspaceConfig {
+        plugins: Default::default(),
+        servers: Vec::new(),
+    }))));
+    let other = WorkspaceRef {
+        environment: workspace().environment,
+        root: EnvPath::new("/Users/dev/other"),
+    };
+    let session = kernel
+        .create_session(CreateSession {
+            id: None,
+            workspace: other,
+            selection: selection(),
+            mode: PermissionMode::Default,
+            plan: false,
+            incognito: None,
+        })
+        .await
+        .unwrap();
+    assert!(
+        kernel.plugins_for_session(&session).is_some(),
+        "a session of the loaded workspace resolves that workspace's set"
+    );
+    // The process workspace's own sessions resolve none: the process group already serves them.
+    let process = kernel
+        .create_session(CreateSession {
+            id: None,
+            workspace: workspace(),
+            selection: selection(),
+            mode: PermissionMode::Default,
+            plan: false,
+            incognito: None,
+        })
+        .await
+        .unwrap();
+    assert!(kernel.plugins_for_session(&process).is_none());
+    assert!(
+        kernel
+            .plugins_for_session(&rust_cli_kernel_api::ids::SessionId::new("unknown"))
+            .is_none()
+    );
+}

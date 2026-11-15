@@ -199,6 +199,18 @@ impl Ext {
         self.registry.session_mcp(session)
     }
 
+    /// Fork: the plugin set a session's helper admission resolves (specs/fork-rust-node-helper.md
+    /// F3, per-workspace admission): its workspace's loaded layer's set, when one is loaded for the
+    /// recorded workspace; `None` keeps the process catalog (the TUI and `-p`, a session whose
+    /// workspace has no loaded layer).
+    pub fn plugins_for_session(
+        &self,
+        session: &rust_cli_kernel_api::ids::SessionId,
+    ) -> Option<Arc<Plugins>> {
+        self.layer
+            .plugins_of_session(&self.registry.sessions, session)
+    }
+
     /// 主线程的工具注册表：基础工具、Skill、MCP 工具（ext.md §1）。
     /// 单次的 `-p`：内置 `/loop` 的 Monitor 超时随它（tools-more.md §17.1）。
     pub fn set_print_session(&self, print: bool) {

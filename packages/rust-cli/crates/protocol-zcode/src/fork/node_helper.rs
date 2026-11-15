@@ -168,6 +168,19 @@ pub trait NodeHelperLauncher: Send + Sync {
     async fn launch(&self) -> io::Result<NodeHelperProcess>;
 }
 
+/// Resolves a session's workspace catalog (F3, per-workspace admission): the catalog of the plugins
+/// the session's workspace layer admitted, or `None` when no layer is loaded for it, in which case
+/// the process catalog answers. Installed once at assembly; sync and cheap (it reads the workspace
+/// layer's loaded slots).
+pub type HelperCatalogResolver = dyn Fn(&str) -> Option<Arc<sessions::HelperCatalog>> + Send + Sync;
+
+/// Resolves the catalog of the workspace a session's STORE ROW names, by workspace root path: the
+/// authoritative resolution at helper-session open time. A store-resumable session has no
+/// in-memory record yet (the kernel records its workspace at open/create), so the session-keyed
+/// resolver cannot answer for it — the row can.
+pub type WorkspaceCatalogResolver =
+    dyn Fn(&str) -> Option<Arc<sessions::HelperCatalog>> + Send + Sync;
+
 /// The Rust side of the helper connection, one per Rust process.
 pub struct NodeHelper {
     launcher: Arc<dyn NodeHelperLauncher>,
@@ -181,8 +194,16 @@ pub struct NodeHelper {
     state: StdMutex<State>,
     /// Set by the first launch or initialize failure, cleared by a successful start, so the warning is logged once.
     warned: AtomicBool,
-    /// F3: what Rust admitted, sent with every session open (set once plugins are loaded).
+    /// F3: what Rust admitted process-wide — the fallback catalog of a session whose workspace has
+    /// no loaded layer (set once plugins are loaded).
     catalog: StdMutex<Option<Arc<sessions::HelperCatalog>>>,
+    /// F3: resolves a session's workspace catalog (per-workspace admission). `None` — no resolver
+    /// installed, or no loaded layer for the session's workspace — falls back to the process
+    /// catalog. The lock only clones the resolver out; it is never held across an await.
+    catalog_resolver: StdMutex<Option<Arc<HelperCatalogResolver>>>,
+    /// F3: resolves the catalog of the workspace a session's store row names (open time). The
+    /// same lock discipline as [`Self::catalog_resolver`].
+    workspace_catalog_resolver: StdMutex<Option<Arc<WorkspaceCatalogResolver>>>,
     /// F3: the helper's requests to Rust and who answers them.
     requests: StdMutex<requests::Requests>,
     /// F3: the last `openId` of a `helper/session/open`; a close names its open's id.
@@ -259,6 +280,8 @@ impl NodeHelper {
             }),
             warned: AtomicBool::new(false),
             catalog: StdMutex::new(None),
+            catalog_resolver: StdMutex::new(None),
+            workspace_catalog_resolver: StdMutex::new(None),
             requests: StdMutex::default(),
             last_open: AtomicU64::new(0),
         })

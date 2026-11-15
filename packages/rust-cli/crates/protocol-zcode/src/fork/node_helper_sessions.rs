@@ -60,8 +60,10 @@ pub(crate) fn session_of<'a>(method: &str, params: &'a Value) -> Option<&'a str>
     None
 }
 
-/// What Rust admitted in this process, sent with every session open. It names no workspace: a session opens with its
-/// own, never the agent's cwd.
+/// What Rust admitted: the plugin ids and the helper-hosted server names one session is opened and admitted against.
+/// The process-wide set is installed once its plugins are loaded; a session whose workspace has a loaded layer resolves
+/// its own catalog instead (per-workspace admission, the resolver of [`NodeHelper::set_catalog_resolver`]). It names no
+/// workspace itself: a session opens with its own, never the agent's cwd.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct HelperCatalog {
     /// Every plugin Rust admitted (the helper enables only these in the session's reference catalog).
@@ -153,8 +155,47 @@ impl NodeHelper {
         *self.catalog.lock_unpoisoned() = Some(Arc::new(catalog));
     }
 
+    /// Sets how a session's workspace catalog is resolved (per-workspace admission): installed once at
+    /// assembly, before any session opens. The process catalog stays the fallback of a session whose
+    /// workspace has no loaded layer.
+    pub fn set_catalog_resolver(&self, resolver: Arc<super::HelperCatalogResolver>) {
+        *self.catalog_resolver.lock_unpoisoned() = Some(resolver);
+    }
+
+    /// Sets how the catalog of the workspace a session's STORE ROW names is resolved (by root
+    /// path): the authoritative resolution at helper-session open. Installed once at assembly.
+    pub fn set_workspace_catalog_resolver(&self, resolver: Arc<super::WorkspaceCatalogResolver>) {
+        *self.workspace_catalog_resolver.lock_unpoisoned() = Some(resolver);
+    }
+
     pub(crate) fn catalog(&self) -> Option<Arc<HelperCatalog>> {
         self.catalog.lock_unpoisoned().clone()
+    }
+
+    /// The catalog `session` is admitted against: its workspace's when a layer is loaded for it, else
+    /// the process one. The forwarding check and the app-tool authorization read this one view (a
+    /// session carrying traffic is open in the kernel, so its workspace is recorded).
+    pub(crate) fn catalog_for(&self, session: &str) -> Option<Arc<HelperCatalog>> {
+        let resolver = self.catalog_resolver.lock_unpoisoned().clone();
+        resolver
+            .and_then(|resolve| resolve(session))
+            .or_else(|| self.catalog())
+    }
+
+    /// The open-time catalog of a session whose store row names `workspace_path`: the workspace's
+    /// own when its layer is loaded, else the session-keyed view (an opened session), else the
+    /// process one. The store row is authoritative: a store-resumable session has no in-memory
+    /// workspace record until the kernel opens it, and the helper session lives for a whole
+    /// generation, so its open params must not depend on that record existing yet.
+    pub(crate) fn catalog_for_open(
+        &self,
+        session: &str,
+        workspace_path: &str,
+    ) -> Option<Arc<HelperCatalog>> {
+        let resolver = self.workspace_catalog_resolver.lock_unpoisoned().clone();
+        resolver
+            .and_then(|resolve| resolve(workspace_path))
+            .or_else(|| self.catalog_for(session))
     }
 
     /// Opens `session` on `generation` unless it is open there.
@@ -256,15 +297,18 @@ impl NodeHelper {
         peer: &Peer,
         session: &str,
     ) -> Result<u64, RpcError> {
-        let Some(catalog) = self.catalog() else {
-            return Err(unavailable("the helper has no plugin catalog yet"));
-        };
         let Some(answers) = self.answers() else {
             return Err(unavailable("the agent does not answer helper requests yet"));
         };
         // The session's own workspace: one agent may serve several (the Host's shared local task runtime).
         let Some(workspace) = answers.session_workspace(session).await else {
             return Err(unavailable("the session's workspace is unknown"));
+        };
+        // The catalog resolves through the store row's workspace: the row exists for a store-resumable
+        // session too, while the in-memory record appears only at the kernel's open.
+        let workspace_path = workspace["workspacePath"].as_str().unwrap_or_default();
+        let Some(catalog) = self.catalog_for_open(session, workspace_path) else {
+            return Err(unavailable("the helper has no plugin catalog yet"));
         };
         let open_id = self.last_open.fetch_add(1, Ordering::Relaxed) + 1;
         let mut params = json!({

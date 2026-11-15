@@ -472,6 +472,25 @@ impl LocalKernel {
         plugins
     }
 
+    /// Fork: the plugin set a session's helper admission resolves (specs/fork-rust-node-helper.md
+    /// F3, per-workspace admission): its workspace's loaded layer's set; `None` keeps the process
+    /// catalog. Read by the Node helper's session-keyed resolver, which holds this kernel weakly.
+    pub fn plugins_for_session(
+        &self,
+        session: &rust_cli_kernel_api::ids::SessionId,
+    ) -> Option<Arc<rust_cli_ext::plugins::Plugins>> {
+        self.ext.plugins_for_session(session)
+    }
+
+    /// Fork: the plugin set a workspace ROOT's loaded layer admitted (the open-time helper
+    /// resolution; the store row names the root, so no session record is needed).
+    pub fn plugins_for_workspace(
+        &self,
+        workspace: &rust_cli_kernel_api::env::WorkspaceRef,
+    ) -> Option<Arc<rust_cli_ext::plugins::Plugins>> {
+        self.ext.workspace_layer().plugins_of(workspace)
+    }
+
     /// `-p` 在第一个请求前的 MCP 等待（ext.md §3.3.1，修复线 F36）：alwaysLoad 的服务器与 prewait，到期就开跑，
     /// 没连上的服务器在后台继续连。
     pub async fn wait_for_extensions(&self) {

@@ -842,6 +842,43 @@ pub(crate) async fn kernel(
     let plugins = kernel.start_extensions().await;
     if let Some(helper) = &spec.node_helper {
         helper.set_catalog(helper_catalog(&plugins));
+        // Fork (specs/fork-rust-node-helper.md F3, per-workspace admission): a session whose workspace has a loaded
+        // layer is admitted against that set (same conversion as the process catalog). The kernel is held weakly: it
+        // already reaches the helper through the routed MCP transport, and a strong edge back would keep both alive
+        // for the process's life.
+        let session_kernel = Arc::downgrade(&kernel);
+        helper.set_catalog_resolver(Arc::new(move |session| {
+            session_kernel
+                .upgrade()
+                .and_then(|kernel| {
+                    kernel.plugins_for_session(&rust_cli_kernel_api::ids::SessionId::new(session))
+                })
+                .map(|plugins| Arc::new(helper_catalog(&plugins)))
+        }));
+        // The open-time resolution goes through the store row's workspace (a store-resumable
+        // session has no in-memory record yet); the converted catalog is cached per workspace,
+        // validated by the slot's plugin-set pointer (a reload installs a new Arc).
+        let weak_kernel = Arc::downgrade(&kernel);
+        let converted: WorkspaceCatalogCache = Arc::default();
+        helper.set_workspace_catalog_resolver(Arc::new(move |workspace_path| {
+            let workspace = rust_cli_kernel_api::env::WorkspaceRef {
+                environment: rust_cli_kernel_api::ids::EnvironmentId::new("local"),
+                root: rust_cli_kernel_api::env::EnvPath::new(workspace_path),
+            };
+            let plugins = weak_kernel.upgrade()?.plugins_for_workspace(&workspace)?;
+            let key = rust_cli_kernel_api::workspace_key::project_key(workspace_path);
+            let mut cache = converted
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some((known, catalog)) = cache.get(&key)
+                && Arc::ptr_eq(known, &plugins)
+            {
+                return Some(catalog.clone());
+            }
+            let catalog = Arc::new(helper_catalog(&plugins));
+            cache.insert(key, (plugins, catalog.clone()));
+            Some(catalog)
+        }));
     }
     Ok(Built {
         opened,
@@ -855,6 +892,20 @@ pub(crate) async fn kernel(
         mcp_machines,
     })
 }
+
+/// Fork: the open-time workspace catalog cache — the converted catalog per workspace,
+/// validated by the slot's plugin-set pointer (a reload installs a new Arc).
+type WorkspaceCatalogCache = Arc<
+    std::sync::Mutex<
+        std::collections::HashMap<
+            String,
+            (
+                Arc<rust_cli_ext::plugins::Plugins>,
+                Arc<rust_cli_protocol_zcode::HelperCatalog>,
+            ),
+        >,
+    >,
+>;
 
 /// Fork (specs/fork-rust-node-helper.md F3): what this process admitted, sent with every helper session open.
 fn helper_catalog(
