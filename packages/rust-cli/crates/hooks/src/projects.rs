@@ -1,7 +1,8 @@
 //! Fork: the project hooks of each workspace (specs/fork-rust-agent-parity.md, "Per-workspace hook snapshots and
 //! strict project hook discovery"). The process snapshot holds the user, `--settings` and plugin hooks; each workspace
-//! key holds the admitted project sources of that workspace, or `Invalid` after a failed toggle rebuild. An event
-//! combines the process sources with the entry of its own workspace.
+//! key holds the admitted project sources of that workspace — and, when its layer loaded its own plugin set
+//! (specs/fork-rust-workspace-plugins-mcp.md, "As built"), that set's plugin hooks instead of the process ones — or
+//! `Invalid` after a failed toggle rebuild. An event combines the process sources with the entry of its own workspace.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -12,6 +13,7 @@ use rust_cli_kernel_api::env::WorkspaceRef;
 use rust_cli_kernel_api::hooks::{HookEvent, HookEventName};
 
 use crate::config::{HookSource, HooksSettings};
+use crate::plugin::PluginHooks;
 use crate::{HookEngine, Loaded, load};
 
 /// The project hooks of one workspace.
@@ -62,6 +64,10 @@ struct Slot {
 pub(crate) struct State {
     pub(crate) process: Arc<Loaded>,
     projects: BTreeMap<String, Slot>,
+    /// Fork (specs/fork-rust-workspace-plugins-mcp.md, "As built"): the plugin hooks of the workspaces whose layer
+    /// loaded their own plugin set; a workspace keyed here runs them instead of the process plugin hooks. An empty
+    /// vec is a set without hooks (a workspace may disable the plugins that carry them), so it differs from no entry.
+    workspace_plugins: BTreeMap<String, Vec<PluginHooks>>,
     /// Counts slot writes, taken when a write starts (a put when it is made, a load before it reads): a slot is
     /// replaced only by a write that started later.
     epoch: u64,
@@ -73,6 +79,7 @@ impl State {
         Self {
             process: Arc::new(process),
             projects: BTreeMap::new(),
+            workspace_plugins: BTreeMap::new(),
             epoch: 0,
             loader: None,
         }
@@ -81,9 +88,44 @@ impl State {
     /// Swaps the process snapshot and recombines every entry with it.
     pub(crate) fn set_process(&mut self, process: Loaded) {
         self.process = Arc::new(process);
-        for slot in self.projects.values_mut() {
-            slot.loaded = combine(&self.process, &slot.entry);
+        for (key, slot) in self.projects.iter_mut() {
+            slot.loaded = combine(
+                &self.process,
+                self.workspace_plugins.get(key).map(Vec::as_slice),
+                &slot.entry,
+            );
         }
+    }
+
+    /// Swaps the process plugin hooks; an entry with its own plugin sources does not read them, so it keeps its
+    /// snapshot.
+    pub(crate) fn set_process_plugins(&mut self, process: Loaded) {
+        self.process = Arc::new(process);
+        for (key, slot) in self.projects.iter_mut() {
+            if !self.workspace_plugins.contains_key(key) {
+                slot.loaded = combine(&self.process, None, &slot.entry);
+            }
+        }
+    }
+
+    /// Sets the plugin sources of `key`, replacing the set that was there; an event already running keeps the
+    /// snapshot it started with.
+    pub(crate) fn put_workspace_plugins(&mut self, key: String, plugins: Vec<PluginHooks>) {
+        self.workspace_plugins.insert(key.clone(), plugins);
+        self.recombine(&key);
+    }
+
+    /// Recombines `key`'s slot with the state as it is now; a slot without an entry yet picks the sources up at
+    /// its own write.
+    fn recombine(&mut self, key: &str) {
+        let Some(slot) = self.projects.get_mut(key) else {
+            return;
+        };
+        slot.loaded = combine(
+            &self.process,
+            self.workspace_plugins.get(key).map(Vec::as_slice),
+            &slot.entry,
+        );
     }
 
     fn reserve(&mut self) -> u64 {
@@ -105,7 +147,11 @@ impl State {
         {
             return false;
         }
-        let loaded = combine(&self.process, &entry);
+        let loaded = combine(
+            &self.process,
+            self.workspace_plugins.get(&key).map(Vec::as_slice),
+            &entry,
+        );
         self.projects.insert(
             key,
             Slot {
@@ -117,11 +163,20 @@ impl State {
         true
     }
 
-    /// The snapshot of a workspace: its entry's, or the process sources alone.
+    /// The snapshot of a workspace: its entry's, or the process sources with the workspace's own plugin hooks when
+    /// only those have registered (the project sources load at the entry's own write).
     pub(crate) fn snapshot(&self, workspace: &WorkspaceRef) -> Arc<Loaded> {
-        self.projects
-            .get(&project_key(workspace.root.as_str()))
-            .map_or_else(|| self.process.clone(), |slot| slot.loaded.clone())
+        let key = project_key(workspace.root.as_str());
+        self.projects.get(&key).map_or_else(
+            || {
+                combine(
+                    &self.process,
+                    self.workspace_plugins.get(&key).map(Vec::as_slice),
+                    &ProjectEntry::Admitted(Vec::new()),
+                )
+            },
+            |slot| slot.loaded.clone(),
+        )
     }
 
     /// `/hooks`: the process sources and every admitted project source, by workspace key.
@@ -163,16 +218,30 @@ fn with_projects<'a>(
     sources
 }
 
-fn combine(process: &Arc<Loaded>, entry: &ProjectEntry) -> Arc<Loaded> {
-    let ProjectEntry::Admitted(admitted) = entry else {
-        return process.clone();
+/// The snapshot of one workspace: the process sources with the entry's admitted project sources, run by the plugin
+/// hooks of the workspace's own set when it has one (`workspace`), else the process plugin hooks.
+fn combine(
+    process: &Arc<Loaded>,
+    workspace: Option<&[PluginHooks]>,
+    entry: &ProjectEntry,
+) -> Arc<Loaded> {
+    let admitted: &[(HookSource, HooksSettings)] = match entry {
+        ProjectEntry::Admitted(admitted) => admitted,
+        // Plugin hooks are not project hooks: an invalid entry drops the project sources only.
+        ProjectEntry::Invalid => &[],
     };
-    if admitted.is_empty() {
+    if admitted.is_empty() && workspace.is_none() {
         return process.clone();
     }
     let mut config = process.config.clone();
-    config.sources = with_projects(&process.config.sources, admitted);
-    Arc::new(load(config, process.plugins.clone()))
+    if !admitted.is_empty() {
+        config.sources = with_projects(&process.config.sources, admitted);
+    }
+    let plugins = match workspace {
+        Some(plugins) => plugins.to_vec(),
+        None => process.plugins.clone(),
+    };
+    Arc::new(load(config, plugins))
 }
 
 /// A session start other than the one after a compaction reassembles the entry (Node builds the snapshot when a
@@ -195,6 +264,15 @@ impl HookEngine {
     /// Swaps the entry of `key`; an event already running keeps the snapshot it started with.
     pub fn put_project(&self, key: &str, entry: ProjectEntry) {
         self.state.write_unpoisoned().put(project_key(key), entry);
+    }
+
+    /// Fork (specs/fork-rust-workspace-plugins-mcp.md, "As built"): registers the hooks of `key`'s own plugin set
+    /// (its loaded workspace layer), replacing the set that was there; the workspace's events run them instead of
+    /// the process plugin hooks. One synchronous write under the engine's lock, like the process registration.
+    pub fn register_workspace_plugins(&self, key: &str, plugins: Vec<PluginHooks>) {
+        self.state
+            .write_unpoisoned()
+            .put_workspace_plugins(project_key(key), plugins);
     }
 
     /// The snapshot `event` runs with, assembling its workspace's entry first when it has none yet or the event

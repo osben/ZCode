@@ -351,3 +351,95 @@ impl ProjectHookLoader for Fixed {
         self.0.clone()
     }
 }
+
+// Fork (specs/fork-rust-workspace-plugins-mcp.md, "As built: plugin hooks per workspace"): a workspace whose
+// layer loaded its own plugin set runs that set's hooks instead of the process plugin hooks.
+
+/// One plugin (`kit`) with a single `command` hook on UserPromptSubmit.
+fn kit(command: &str) -> PluginHooks {
+    let (hooks, warnings) = PluginHooks::from_json(
+        "kit",
+        "/Users/dev/plugins/kit",
+        &[
+            json!({"hooks": {"UserPromptSubmit": [{"hooks": [{"type": "command", "command": command}]}]}}),
+        ],
+    );
+    assert!(warnings.is_empty(), "{warnings:?}");
+    hooks
+}
+
+#[tokio::test]
+async fn a_workspaces_own_plugin_hooks_replace_the_process_ones() {
+    let env = Arc::new(ScriptedEnv::default());
+    let hooks = engine(env.clone(), &user_prompt());
+    hooks.register_plugins(vec![kit("process-kit.sh")]);
+    hooks.register_workspace_plugins(A, vec![kit("ws-kit.sh")]);
+    run(&hooks, prompt_in(A)).await;
+    // The user source first, then the workspace's own plugin hooks; the process plugin hooks do not run.
+    assert_eq!(started(&env), ["user.sh", "ws-kit.sh"]);
+    run(&hooks, prompt_in(B)).await;
+    // A workspace without its own set keeps the process plugin hooks.
+    assert_eq!(
+        started(&env),
+        ["user.sh", "ws-kit.sh", "user.sh", "process-kit.sh"]
+    );
+}
+
+#[tokio::test]
+async fn a_later_registration_replaces_the_workspaces_plugin_hooks() {
+    let env = Arc::new(ScriptedEnv::default());
+    let hooks = engine(env.clone(), &user_prompt());
+    hooks.register_workspace_plugins(A, vec![kit("first.sh")]);
+    hooks.put_project(&project_key(A), project("UserPromptSubmit", "a.sh"));
+    hooks.register_workspace_plugins(A, vec![kit("second.sh")]);
+    run(&hooks, prompt_in(A)).await;
+    assert_eq!(started(&env), ["user.sh", "a.sh", "second.sh"]);
+}
+
+#[tokio::test]
+async fn a_process_plugin_registration_keeps_a_workspaces_own_sources() {
+    let env = Arc::new(ScriptedEnv::default());
+    let hooks = engine(env.clone(), &user_prompt());
+    hooks.register_workspace_plugins(A, vec![kit("ws-kit.sh")]);
+    hooks.register_plugins(vec![kit("process-kit.sh")]);
+    run(&hooks, prompt_in(A)).await;
+    run(&hooks, prompt_in(B)).await;
+    assert_eq!(
+        started(&env),
+        ["user.sh", "ws-kit.sh", "user.sh", "process-kit.sh"]
+    );
+}
+
+#[tokio::test]
+async fn the_own_plugin_sources_combine_with_the_workspaces_project_sources() {
+    let env = Arc::new(ScriptedEnv::default());
+    let hooks = engine(env.clone(), &user_prompt());
+    // The layer load (which registers the plugin sources) runs before the session's first event
+    // loads the project entry: the entry's write must keep the registered sources.
+    hooks.register_workspace_plugins(A, vec![kit("ws-kit.sh")]);
+    hooks.put_project(&project_key(A), project("UserPromptSubmit", "a.sh"));
+    run(&hooks, prompt_in(A)).await;
+    assert_eq!(started(&env), ["user.sh", "a.sh", "ws-kit.sh"]);
+}
+
+#[tokio::test]
+async fn an_invalid_project_entry_still_runs_the_workspaces_own_plugin_hooks() {
+    // Plugin hooks are not project hooks: an untrusted project layer drops the project sources only.
+    let env = Arc::new(ScriptedEnv::default());
+    let hooks = engine(env.clone(), &user_prompt());
+    hooks.register_workspace_plugins(A, vec![kit("ws-kit.sh")]);
+    hooks.put_project(&project_key(A), ProjectEntry::Invalid);
+    run(&hooks, prompt_in(A)).await;
+    assert_eq!(started(&env), ["user.sh", "ws-kit.sh"]);
+}
+
+#[tokio::test]
+async fn a_process_snapshot_change_keeps_the_workspaces_own_plugin_hooks() {
+    let env = Arc::new(ScriptedEnv::default());
+    let hooks = engine(env.clone(), &user_prompt());
+    hooks.register_workspace_plugins(A, vec![kit("ws-kit.sh")]);
+    hooks.put_project(&project_key(A), project("UserPromptSubmit", "a.sh"));
+    hooks.replace(crate::test_support::config(&user_prompt()));
+    run(&hooks, prompt_in(A)).await;
+    assert_eq!(started(&env), ["user.sh", "a.sh", "ws-kit.sh"]);
+}

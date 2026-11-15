@@ -297,6 +297,17 @@ impl LocalKernel {
                     .map(|plugins| ext::plugin_agent_files(&plugins))
             }));
         }
+        // Fork (specs/fork-rust-workspace-plugins-mcp.md, "As built"): the layer hands an installed set's
+        // hooks to the engine for that workspace's key, so the workspace's events run them instead of the
+        // process plugin hooks.
+        {
+            let layer = ext.workspace_layer().clone();
+            let engine = hooks.clone();
+            layer.set_plugin_hooks_sink(Box::new(move |key, plugins| {
+                let (_, plugin_hooks) = ext::plugin_parts(plugins);
+                engine.register_workspace_plugins(key, plugin_hooks);
+            }));
+        }
         if let Some(code) = &extensions.code_intelligence {
             code.set_incognito(incognito.clone());
         }

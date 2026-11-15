@@ -44,7 +44,9 @@ pub use plugins::{Plugin, PluginAgentFile, PluginSources, Plugins};
 use rust_cli_kernel_api::incognito::{IncognitoKey, IncognitoProfiles, IncognitoToolGate};
 use rust_cli_kernel_api::tool_names;
 pub use skills::{Skill, SkillCatalog, SkillCommands, SkillSource, SkillTool};
-pub use workspace_layer::{WorkspaceConfig, WorkspaceConfigLoader, WorkspaceLayer};
+pub use workspace_layer::{
+    PluginHooksSink, WorkspaceConfig, WorkspaceConfigLoader, WorkspaceLayer,
+};
 
 /// ext 用到的端口，由 runtime 注入。
 #[derive(Clone)]
