@@ -32,3 +32,22 @@ fn external_agent_turns_are_reported_on_macos_only() {
         );
     }
 }
+
+/// Wave 2 (specs/fork-rust-agent-parity.md): the Host lets a V4 command wait on `provider/refreshRegistry` only
+/// when the agent answers it. zcode-rs does (`server.rs` dispatch), independent of the Node helper.
+#[test]
+fn provider_registry_refresh_is_reported() {
+    for node_helper in [false, true] {
+        assert_eq!(capabilities(node_helper)["providerRegistryRefresh"], true);
+    }
+}
+
+/// Wave 2 (specs/fork-rust-agent-parity.md): the Host keeps `highspeedMeta.ownerKey` on a send only when the
+/// agent's schema accepts the field instead of rejecting the command. The shipped 3.18.0 schema does
+/// (`highspeed_meta_owner_key_is_accepted`), independent of the Node helper.
+#[test]
+fn highspeed_card_owner_is_reported() {
+    for node_helper in [false, true] {
+        assert_eq!(capabilities(node_helper)["highspeedCardOwner"], true);
+    }
+}

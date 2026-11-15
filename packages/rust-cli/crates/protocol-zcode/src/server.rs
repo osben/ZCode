@@ -523,6 +523,13 @@ pub(crate) fn capabilities(node_helper: bool) -> Value {
         // Fork: the App's extension input source (`{kind: "extension"}`) is accepted on sendText and createSession
         // firstInput and kept on the intent, the row and the queue item (specs/fork-rust-agent-parity.md, B4).
         "extensionInputSource": true,
+        // Fork: `provider/refreshRegistry` is answered above over the file-backed registry, so the Host may let a
+        // V4 command wait on the refresh (specs/fork-rust-agent-parity.md, wave 2). Node sets it unconditionally.
+        "providerRegistryRefresh": true,
+        // Fork: the 3.18.0-generated inbound schema accepts `highspeedMeta.ownerKey` (sendText, sendQueuedNow,
+        // editUserQuery), so a send that keeps the card owner is not rejected — the one thing the Host gates on the
+        // flag. The runtime itself stages no highspeed credentials and copies no `highspeedMeta` onto the intent.
+        "highspeedCardOwner": true,
         // Fork: `acp:<agentId>` selections run on the ACP agent, on macOS only like Node
         // (specs/fork-rust-agent-parity.md "ACP external agents", rule 2).
         "externalAgentTurns": cfg!(target_os = "macos"),
