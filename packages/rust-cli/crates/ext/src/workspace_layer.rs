@@ -38,7 +38,9 @@ pub trait WorkspaceConfigLoader: Send + Sync {
 
 /// Fork (specs/fork-rust-workspace-plugins-mcp.md, "As built"): receives a workspace's own plugin set when its
 /// layer installs a `Loaded` slot; the runtime converts the set's hooks and registers them with the hooks engine
-/// for that key. `ext` keeps no hooks types of its own, so the sink hands the set over.
+/// for that key. `ext` keeps no hooks types of its own, so the sink hands the set over. The sink runs INSIDE the
+/// layer's slots write lock: it must not re-enter the layer (the runtime's registration only touches the hooks
+/// engine, so it does not).
 pub type PluginHooksSink = Box<dyn Fn(&str, &Arc<crate::plugins::Plugins>) + Send + Sync>;
 
 /// The per-workspace slots and the MCP groups they start. One load of a workspace runs at a
@@ -219,11 +221,16 @@ impl WorkspaceLayer {
             Slot::Loaded(plugins) => Some(plugins.clone()),
             Slot::Invalid => None,
         };
-        self.slots.write_unpoisoned().insert(key.clone(), slot);
-        // The sink runs after the slot is visible but before the waiters wake: a session that
-        // proceeds on the new slot finds its plugin hooks already registered.
-        if let (Some(sink), Some(plugins)) = (self.hooks.get(), installed) {
-            sink(&key, &plugins);
+        // The sink runs INSIDE the slots write guard: no `slot()` read (the waiters' fast path
+        // checks the slot before awaiting) can observe the new slot before its plugin hooks are
+        // registered, so a session proceeding on the slot never runs the process hooks of the
+        // plugins its own set disables.
+        {
+            let mut slots = self.slots.write_unpoisoned();
+            slots.insert(key.clone(), slot);
+            if let (Some(sink), Some(plugins)) = (self.hooks.get(), installed) {
+                sink(&key, &plugins);
+            }
         }
         self.finish(&key);
         claim.armed = false;
