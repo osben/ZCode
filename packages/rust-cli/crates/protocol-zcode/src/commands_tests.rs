@@ -327,13 +327,15 @@ async fn a_soft_deleted_id_is_refused_before_any_write() {
     assert_eq!(*kernel.creates.lock().unwrap(), ["s2"]);
 }
 
-/// Wave 2 B1 (specs/fork-rust-agent-parity.md): `createSession.cwd` / `worktreeCreation` ride only on the
-/// `worktreeCwd` capability, which this agent does not report. An ungated sender is refused before any
-/// branch runs (a reservation included), instead of the fields being dropped and the session created in
-/// the workspace directory — Node's own admission check (`worktreeCreation requires cwd`,
-/// `session-mgmt.ts`) refuses before `runActivation` the same way.
+/// B1.1 (specs/fork-rust-agent-parity.md): the managed-worktree create fields are accepted and mapped onto
+/// the fork's execution worktree. Node's admission order (`session-mgmt.ts`, `zcode-protocol/workspace.ts`):
+/// the payload parses — a present `null` is not `undefined` (Node's zod `z.string().optional()` and the
+/// generated inbound schema take a string only, so the typed parse refuses one) — then `worktreeCreation`
+/// cannot ride without `cwd`, then a `cwd` on a remote workspace identity is structured refusal
+/// (`guard.worktreeCwdLocalOnly`; a malformed `remote:` key is refused at resolution, like
+/// `resolveWorkspaceRefFromId`). Nothing is persisted from a refused envelope.
 #[tokio::test]
-async fn a_managed_worktree_cwd_is_refused_before_any_branch() {
+async fn managed_worktree_cwd_fields_parse_and_admit_like_node() {
     let scope = rust_cli_base::TaskScope::root("test", |_| {});
     let (out, _reader) = tokio::io::duplex(1 << 16);
     let (peer, _writer) = rust_cli_protocol_core::connection::start(
@@ -368,23 +370,40 @@ async fn a_managed_worktree_cwd_is_refused_before_any_branch() {
     let creation = json!({
         "path": "/w/.zcode-worktrees/one", "sha": "a1b2c3d4", "ref": null, "output": "worktree added"
     });
-    let cwd = create_session(
-        &server,
-        &create(json!({
+    // A present null is not an absent field: Node's schema refuses it, so the typed parse does too.
+    for field in ["cwd", "worktreeCreation"] {
+        let mut payload = json!({
             "workspaceId": "/w",
             "sessionId": "s2",
             "cwd": "/w/.zcode-worktrees/one",
             "worktreeCreation": creation,
-        })),
-    )
-    .await;
-    assert_eq!(cwd.status, Status::Rejected);
-    assert_eq!(cwd.reason_code.as_deref(), Some("proto.invalidPayload"));
-    assert_eq!(
-        cwd.message.as_deref(),
-        Some("cwd is not supported by this agent")
-    );
-    // Node refuses `worktreeCreation` without `cwd`; without the capability both halves are refused.
+        });
+        payload[field] = Value::Null;
+        let null = create_session(&server, &create(payload)).await;
+        assert_eq!(null.status, Status::Rejected, "{field}: {null:?}");
+        assert_eq!(null.reason_code.as_deref(), Some("proto.invalidPayload"));
+    }
+    // The record is Node's strict shape: a missing member or an extra key refuses the payload.
+    for wrong in [
+        json!({"path": "/w/.zcode-worktrees/one", "sha": "a1b2c3d4", "ref": null}),
+        json!({"path": "/w/.zcode-worktrees/one", "sha": "a1b2c3d4", "ref": null,
+               "output": "worktree added", "base": "main"}),
+        json!({"path": "/w/.zcode-worktrees/one", "sha": "a1b2c3d4", "ref": 1, "output": "o"}),
+    ] {
+        let typed = create_session(
+            &server,
+            &create(json!({
+                "workspaceId": "/w",
+                "sessionId": "s2",
+                "cwd": "/w/.zcode-worktrees/one",
+                "worktreeCreation": wrong,
+            })),
+        )
+        .await;
+        assert_eq!(typed.status, Status::Rejected, "{wrong}: {typed:?}");
+        assert_eq!(typed.reason_code.as_deref(), Some("proto.invalidPayload"));
+    }
+    // Node `session-mgmt.ts`: "worktreeCreation requires cwd", before `runActivation`.
     let marker = create_session(
         &server,
         &create(json!({
@@ -398,23 +417,45 @@ async fn a_managed_worktree_cwd_is_refused_before_any_branch() {
     assert_eq!(marker.reason_code.as_deref(), Some("proto.invalidPayload"));
     assert_eq!(
         marker.message.as_deref(),
-        Some("worktreeCreation is not supported by this agent")
+        Some("worktreeCreation requires cwd")
     );
-    // A reservation is refused too: nothing is persisted from an envelope that claims a worktree cwd.
-    let reserved = create_session(
+    // Node `workspaceRefWithCwd`: a remote workspace identity is structured refusal, not a remote resolve.
+    let remote = create_session(
         &server,
         &create(json!({
-            "workspaceId": "/w",
+            "workspaceId": "remote:ssh:h:22:u:/w",
             "sessionId": "s2",
-            "submissionPreparation": {"submissionId": "sub-1"},
             "cwd": "/w/.zcode-worktrees/one",
         })),
     )
     .await;
-    assert_eq!(reserved.status, Status::Rejected);
+    assert_eq!(remote.status, Status::Failed, "{remote:?}");
     assert_eq!(
-        reserved.reason_code.as_deref(),
-        Some("proto.invalidPayload")
+        remote.reason_code.as_deref(),
+        Some("guard.worktreeCwdLocalOnly")
+    );
+    assert_eq!(
+        remote.message.as_deref(),
+        Some("session cwd override only supports local workspaces: remote:ssh:h:22:u:/w")
+    );
+    // A malformed `remote:` key is refused at resolution, fail-closed like `resolveWorkspaceRefFromId`.
+    let malformed = create_session(
+        &server,
+        &create(json!({
+            "workspaceId": "remote:not-an-identity",
+            "sessionId": "s2",
+            "cwd": "/w/.zcode-worktrees/one",
+        })),
+    )
+    .await;
+    assert_eq!(malformed.status, Status::Failed, "{malformed:?}");
+    assert_eq!(
+        malformed.reason_code.as_deref(),
+        Some("fault.command.executionFailed")
+    );
+    assert_eq!(
+        malformed.message.as_deref(),
+        Some("Invalid remote workspace identity: remote:not-an-identity")
     );
     assert!(kernel.creates.lock().unwrap().is_empty());
     // Without the fields the create is unchanged: it reaches the kernel.

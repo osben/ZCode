@@ -203,6 +203,9 @@ pub struct Projection {
     attachment_sources: HashMap<String, Vec<AttachmentSource>>,
     /// Fork: the snapshot `plan` (`{items, updatedAt}`) from the last todo tool row (projection/external_tools.rs).
     plan_panel: Option<Value>,
+    /// B1.1: the managed-worktree creation fact (crate::worktree's stored record): the first turn draws Node's
+    /// `worktreeCreated` timeline marker from it (projection/markers.rs), and a rebuilt history draws it again.
+    worktree_created: Option<Value>,
 }
 
 /// Fork: one attachment of a `userInput` row as its stored `file` part has it.
@@ -276,8 +279,22 @@ fn tool_key(tool_use: &str) -> String {
 
 impl Projection {
     /// 从视图建投影（冷打开或第一次订阅）。`followup` 与 `levels` 是协议自己保存的配置（不在内核里）。
+    /// B1.1: the live path always names its stored creation fact ([`Self::from_view_with_creation`]); this
+    /// no-fact form is the tests'.
+    #[cfg(test)]
     pub fn from_view(view: &SessionView, followup: Followup, levels: Vec<String>) -> Self {
-        Self::from_view_at(view, followup, levels, 1, HashMap::new())
+        Self::from_view_at(view, followup, levels, 1, HashMap::new(), None)
+    }
+
+    /// B1.1: a cold open (or the create route's first open) with the stored managed-worktree creation fact: the
+    /// history's first turn draws the `worktreeCreated` marker as it is built (crate::worktree).
+    pub fn from_view_with_creation(
+        view: &SessionView,
+        followup: Followup,
+        levels: Vec<String>,
+        worktree_created: Option<Value>,
+    ) -> Self {
+        Self::from_view_at(view, followup, levels, 1, HashMap::new(), worktree_created)
     }
 
     /// Fork: the projection of a rewritten history (rewind, edit, retry). Keeps what the protocol remembers outside the
@@ -289,6 +306,9 @@ impl Projection {
             self.levels.clone(),
             self.next_row,
             self.context_resets.clone(),
+            // B1.1: the creation fact outlives the rows (it is a stored record), so the rebuilt history draws
+            // the marker again.
+            self.worktree_created.clone(),
         );
         // Fork: the stall of the running ACP prompt is not history; it is kept only while that same turn still runs.
         let live_turn = self.turn.as_ref().map(|turn| turn.id.as_str());
@@ -333,6 +353,7 @@ impl Projection {
         levels: Vec<String>,
         first_row: u64,
         context_resets: HashMap<String, String>,
+        worktree_created: Option<Value>,
     ) -> Self {
         let mut projection = Self {
             banners: Banners::default(),
@@ -393,6 +414,7 @@ impl Projection {
             shells: background_shells::Shells::default(),
             attachment_sources: HashMap::new(),
             plan_panel: None,
+            worktree_created,
         };
         cold::rows(&mut projection, view);
         projection.adopt_turn_files(view);
@@ -1265,6 +1287,9 @@ impl Projection {
             unstopped: Vec::new(),
             rejected: Vec::new(),
         });
+        // B1.1: the worktreeCreated marker leads the turn (Node flushes its pending marker before the model
+        // divider and the header).
+        self.worktree_created(turn, now, seq, out);
         self.model_change(turn, selection, now, seq, out);
         let mut row = self.base(turn, turn, RowKind::TurnHeader, now, seq);
         row.insert("origin".into(), json!(RowKind::UserInput.as_str()));

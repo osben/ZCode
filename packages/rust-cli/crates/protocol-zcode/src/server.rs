@@ -192,6 +192,13 @@ impl Server {
                     Ok(Some(marker)) => marker.exposed(),
                     _ => None,
                 },
+                // B1.1: the stored managed-worktree creation fact seeds the `worktreeCreated` marker row
+                // (crate::worktree). The direct create stores the record before it opens, so its open reads it
+                // here too — the same path as a cold restore. Accepted gap (ocr, B1.1): a createSession that
+                // repeats an already-resident untouched prewarm finds the session open and takes the
+                // `Restored::default` arm below, so its stored fact reaches the projection only after the
+                // next close/reopen — the resident prewarm itself was made by an earlier envelope.
+                worktree_creation: crate::worktree::creation_fact(self, session).await,
             }
         } else {
             crate::live::Restored::default()
@@ -530,10 +537,11 @@ pub(crate) fn capabilities(node_helper: bool) -> Value {
         // editUserQuery), so a send that keeps the card owner is not rejected — the one thing the Host gates on the
         // flag. The runtime itself stages no highspeed credentials and copies no `highspeedMeta` onto the intent.
         "highspeedCardOwner": true,
-        // Fork: wave 2 B1 — managed-worktree session cwds (`createSession.cwd` / `worktreeCreation`,
-        // `forkAssistant.targetCwd`) are not run by this agent; the fields are refused instead of dropped
-        // (`commands.rs`, `fork/row_commands.rs`), and the Host hides managed worktrees on this flag. Node 3.18
-        // reports it true (docs/git/worktree.md).
+        // Fork: wave 2 B1 — `createSession.cwd` / `worktreeCreation` are accepted and run in the worktree
+        // (`commands.rs`, B1.1: the fork execution-worktree route plus the `worktreeCreated` marker), but
+        // `forkAssistant.targetCwd` is still refused (`fork/row_commands.rs`), so the flag stays false until the
+        // series completes (B1.5 flips it). The Host hides managed worktrees on this flag. Node 3.18 reports it
+        // true (docs/git/worktree.md).
         "worktreeCwd": false,
         // Fork: `acp:<agentId>` selections run on the ACP agent, on macOS only like Node
         // (specs/fork-rust-agent-parity.md "ACP external agents", rule 2).

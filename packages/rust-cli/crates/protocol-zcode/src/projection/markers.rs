@@ -67,6 +67,40 @@ impl Projection {
             .unwrap_or_default()
     }
 
+    /// B1.1: Node's pending `worktreeCreated` flush at the turn header (product-projection.ts
+    /// `onTurnStarted`): the creation fact the create stored becomes a `timelineMarker` row leading the first
+    /// turn, before the turn's model divider and header — the fact is recorded before TurnStarted, so the marker
+    /// rides the `lightBoundary` lane like Node's flush. The row key is Node's `worktree-created:<path>`; the
+    /// index keeps one marker per session, and a rebuilt history (fresh index) draws it again.
+    pub(super) fn worktree_created(
+        &mut self,
+        turn: &str,
+        now: u64,
+        seq: u64,
+        out: &mut Vec<Value>,
+    ) {
+        let Some(fact) = self.worktree_created.as_ref() else {
+            return;
+        };
+        let path = fact["path"].as_str().unwrap_or_default();
+        let key = format!("worktree-created:{path}");
+        if self.index.contains_key(&key) {
+            // The fact stays borrowed: a turn that draws no row clones nothing.
+            return;
+        }
+        let fact = fact.clone();
+        let mut row = self.base(turn, &key, RowKind::TimelineMarker, now, seq);
+        row.insert("lane".into(), json!("lightBoundary"));
+        let mut marker = json!({"type": "worktreeCreated"});
+        if let Value::Object(fields) = fact {
+            for (field, value) in fields {
+                marker[field.as_str()] = value.clone();
+            }
+        }
+        row.insert("marker".into(), marker);
+        self.append(key, row, out);
+    }
+
     fn append_compact_marker(
         &mut self,
         trigger: CompactTrigger,

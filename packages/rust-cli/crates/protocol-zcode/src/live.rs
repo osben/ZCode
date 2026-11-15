@@ -148,6 +148,9 @@ pub struct Restored {
     pub worktree: crate::worktree::Facts,
     /// A still-preparing first submission (crate::preparation), as exposed in the snapshot.
     pub preparation: Option<Value>,
+    /// B1.1: the stored managed-worktree creation fact (crate::worktree `CREATION_KIND`), seeding the
+    /// `worktreeCreated` marker row the first turn draws.
+    pub worktree_creation: Option<Value>,
 }
 
 impl Live {
@@ -164,6 +167,7 @@ impl Live {
             listed,
             worktree,
             preparation,
+            worktree_creation,
         } = restored;
         let levels = view.selection.reasoning.iter().cloned().collect();
         // A subagent's child session (`sess_subagent_<agentId>`) is reported by its parent.
@@ -178,7 +182,15 @@ impl Live {
             created_at: view.meta.created_at_ms,
             handle,
             state: Mutex::new(State {
-                projection: Projection::from_view(view, followup, levels).with_catalog(catalog),
+                // B1.1: the stored creation fact seeds the worktreeCreated marker (crate::worktree); the
+                // history's first turn draws it as the view is read.
+                projection: Projection::from_view_with_creation(
+                    view,
+                    followup,
+                    levels,
+                    worktree_creation,
+                )
+                .with_catalog(catalog),
                 log: TopicLog::with_base(epoch, view.last_seq),
                 summary: None,
                 preparation,
