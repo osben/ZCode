@@ -128,6 +128,21 @@ pub(crate) async fn session_end(
 /// SessionStart 给的首条输入的命令 ID 前缀。
 pub(crate) const SESSION_START_INPUT: &str = rust_cli_kernel_api::session_api::SESSION_START_INPUT;
 
+/// Fork: the UserPromptSubmit dispatch's runs as a `hooks::HookInvocation` (HK-UP-01); none without a run. The
+/// human turn and a steered input's screening both use it.
+pub(crate) fn prompt_invocation(
+    outcome: &HookOutcome,
+) -> Option<rust_cli_kernel_api::hooks::HookInvocation> {
+    let id = outcome.invocation.clone()?;
+    (!outcome.runs.is_empty()).then(|| rust_cli_kernel_api::hooks::HookInvocation {
+        id,
+        hook_event: HookEventName::UserPromptSubmit,
+        tool_use: None,
+        tool_name: None,
+        runs: outcome.runs.clone(),
+    })
+}
+
 /// Fork: the SessionStart dispatch's runs as a `hooks::HookInvocation` (HK-UP-01); none without a run.
 fn startup_invocation(outcome: &HookOutcome) -> Option<rust_cli_kernel_api::hooks::HookInvocation> {
     let id = outcome.invocation.clone()?;
