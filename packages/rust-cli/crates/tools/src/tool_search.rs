@@ -91,9 +91,13 @@ impl ToolCatalog {
             .ok_or_else(|| "the main tool registry has been released".to_owned())
     }
 
-    /// 主线程注册表的 MCP 连接（连接中的服务器，tools-more.md §3.5.1）；没有时 None。
-    fn mcp(&self) -> Option<Arc<dyn McpConnections>> {
-        self.registry().ok()?.mcp()
+    /// Fork (specs/fork-rust-workspace-plugins-mcp.md): the connections of the session's workspace
+    /// group, so a still-connecting project server is waited on, not skipped.
+    fn mcp_for(
+        &self,
+        session: &rust_cli_kernel_api::ids::SessionId,
+    ) -> Option<Arc<dyn McpConnections>> {
+        self.registry().ok()?.mcp_for(session)
     }
 
     /// 这些名字里延迟的工具名，按 UTF-16 码元序（`deferred_tools_delta` 的清单顺序）。
@@ -330,7 +334,7 @@ impl Tool for ToolSearchTool {
             None => (Self::search(query, None, max_results, &all), Vec::new()),
         };
         // 搜不到时看连接中的 MCP 服务器：等它们、再搜一次（tools-more.md §3.5.1，修复线 F36）。
-        let mcp = self.catalog.mcp();
+        let mcp = self.catalog.mcp_for(&context.session);
         let retry = if select.is_some() {
             !missing.is_empty()
         } else {

@@ -27,6 +27,20 @@ impl McpManager {
         self.0.changed.send_modify(|version| *version += 1);
     }
 
+    /// Fork (specs/fork-rust-workspace-plugins-mcp.md): stops every connection task of this group
+    /// (a workspace layer that turned `Invalid`, or a replaced group). The cancelled tasks drop
+    /// their sessions, which ends the stdio children; late status updates find no entry and no-op.
+    pub fn shutdown(&self) {
+        {
+            let mut servers = self.0.servers();
+            for (_, server) in servers.iter_mut() {
+                server.cancel.cancel();
+            }
+            servers.clear();
+        }
+        self.0.changed.send_modify(|version| *version += 1);
+    }
+
     /// 停掉当前连接任务并换成 `status`；返回旧客户端（由调用方关闭）与新的代号和取消消息。
     fn retire(
         &self,

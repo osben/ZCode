@@ -13,6 +13,7 @@ mod plugins;
 pub(crate) mod project_hooks;
 mod storage;
 pub(crate) mod trust;
+pub(crate) mod workspace_layer;
 pub(crate) mod workspace_schema;
 
 use rust_cli_ext::PluginSources;
@@ -192,7 +193,7 @@ pub(crate) async fn read_files(inputs: &ConfigInputs<'_>) -> Files {
 }
 
 /// 配置层：用户级、项目级每层、`--settings`（按优先级从低到高）。
-fn layers<'a>(
+pub(crate) fn layers<'a>(
     files: &'a Files,
     flag: Option<&'a Map<String, Value>>,
     empty: &'a Map<String, Value>,
@@ -225,7 +226,7 @@ fn layers<'a>(
 }
 
 /// 存储位置的层：项目级配置不在本机时只认用户级与环境变量（deployment.md §21）。
-fn storage_layers(
+pub(crate) fn storage_layers(
     inputs: &ConfigInputs<'_>,
     layers: &[Layer<'_>],
     warnings: &mut Vec<String>,

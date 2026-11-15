@@ -14,7 +14,7 @@ use rust_cli_kernel_api::incognito::{IncognitoProfile, IncognitoProfiles, Incogn
 use rust_cli_kernel_api::tool::Tool;
 use rust_cli_kernel_api::tool_names;
 
-use crate::mcp::{McpManager, McpScope};
+use crate::mcp::McpScope;
 
 /// Tools that read every server instead of one.
 const GLOBAL_MCP_TOOLS: [&str; 4] = [
@@ -43,12 +43,23 @@ pub(crate) fn keeps_scope(profile: &IncognitoProfile, scope: McpScope) -> bool {
 #[derive(Clone)]
 pub struct IncognitoTools {
     profiles: IncognitoProfiles,
-    mcp: Arc<McpManager>,
+    /// Fork (specs/fork-rust-workspace-plugins-mcp.md): the workspace groups; a session's scope
+    /// checks resolve its group, so an allowed workspace server is not judged by the process set.
+    workspace_mcp: Arc<crate::mcp::workspaces::WorkspaceMcp>,
+    sessions: rust_cli_kernel_api::workspace_key::SessionWorkspaces,
 }
 
 impl IncognitoTools {
-    pub(crate) fn new(profiles: IncognitoProfiles, mcp: Arc<McpManager>) -> Self {
-        Self { profiles, mcp }
+    pub(crate) fn new(
+        profiles: IncognitoProfiles,
+        workspace_mcp: Arc<crate::mcp::workspaces::WorkspaceMcp>,
+        sessions: rust_cli_kernel_api::workspace_key::SessionWorkspaces,
+    ) -> Self {
+        Self {
+            profiles,
+            workspace_mcp,
+            sessions,
+        }
     }
 
     pub(crate) fn profile(&self, session: &SessionId) -> Option<IncognitoProfile> {
@@ -70,9 +81,10 @@ impl IncognitoToolGate for IncognitoTools {
             return hidden;
         }
         if let Some(info) = tool.mcp_info() {
-            // A server that is gone has no scope to admit it.
-            return !self
-                .mcp
+            // A server that is gone has no scope to admit it. Fork: the lookup goes through the
+            // session's workspace group, falling back to the process manager.
+            let mcp = self.workspace_mcp.for_session(&self.sessions, session);
+            return !mcp
                 .scope_of(&info.server)
                 .is_some_and(|scope| keeps_scope(&profile, scope));
         }

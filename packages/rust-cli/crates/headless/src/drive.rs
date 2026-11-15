@@ -106,7 +106,9 @@ impl<W: AsyncWrite + Unpin> Driver<'_, '_, W> {
             })
             .await
             .unwrap_or_default();
-        let servers = self.kernel.mcp_servers().await;
+        // Fork: the session's workspace group (specs/fork-rust-workspace-plugins-mcp.md), so a
+        // resumed workspace's servers report their own statuses in system/init.
+        let servers = self.kernel.mcp_servers_for(self.session.id()).await;
         // 权限模式的名字；plan 开时是 `plan`（F20 的独立开关）。
         let mode = ExecutionState::from_parts(view.mode, view.plan).effective();
         let uuid = self.printer.uuid();

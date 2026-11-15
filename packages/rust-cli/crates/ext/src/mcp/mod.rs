@@ -13,6 +13,7 @@ mod rpc;
 mod startup;
 mod tool;
 mod wait_tool;
+pub(crate) mod workspaces;
 
 pub use config::{
     McpScope, McpServer, McpServerOptions, McpServers, McpSettings, normalize_name, tool_name,

@@ -175,6 +175,15 @@ impl Kernel for LocalKernel {
         self.ext.mcp().server_infos()
     }
 
+    /// Fork: the statuses of the session's workspace group (print/system-init and the mobile web
+    /// remote read them for the session that is running).
+    async fn mcp_servers_for(
+        &self,
+        session: &rust_cli_kernel_api::ids::SessionId,
+    ) -> Vec<rust_cli_kernel_api::manage::McpServerInfo> {
+        self.ext.mcp_for_session(session).server_infos()
+    }
+
     /// `/plan open`：计划文件的位置（与 ExitPlanMode 同一个来源）与它有没有内容（tui-manage.md §8）。
     async fn plan_file(
         &self,
@@ -424,6 +433,15 @@ impl LocalKernel {
         let loaded = self.ports.store.load(session).await?;
         // Fork: the incognito gates read the profile by session id from here on.
         self.incognito.record(session, loaded.meta.incognito);
+        // Fork: the per-workspace plugin/MCP views key this session by its row's frozen workspace.
+        self.workspaces
+            .record(session, loaded.meta.workspace.clone());
+        let layer = self
+            .workspace_layer
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        layer.load(&loaded.meta.workspace).await;
         // Node 群协作会话（`permission.scope = session`）的规则只在会话行里：这个会话的判决用它代替本机项目
         // 规则集（修复线 F2，shell-permissions.md §5）。“总是允许”与改模式由存储按同一作用域落库。条目是这个调用
         // 的 Loading，期间不会有同一个会话的关闭插进来 `release` 它。
@@ -483,6 +501,24 @@ impl LocalKernel {
         let presence = self.ports.store.register_runtime(&id).await?;
         self.ports.store.create(meta.clone()).await?;
         self.incognito.record(&id, meta.incognito);
+        // Fork: an execution worktree runs the session in the worktree, and its workspace group
+        // must bind that root from the start — a relative user-server cwd resolves inside the
+        // worktree, and a cold reopen (which substitutes the stored execution directory) selects
+        // the same group. The meta's own root change stays below, where it always was.
+        let effective = match &execution {
+            Some((worktree, _)) => rust_cli_kernel_api::env::WorkspaceRef {
+                root: worktree.clone(),
+                ..meta.workspace.clone()
+            },
+            None => meta.workspace.clone(),
+        };
+        self.workspaces.record(&id, effective.clone());
+        let layer = self
+            .workspace_layer
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        layer.load(&effective).await;
         let in_worktree = execution.is_some();
         if let Some((worktree, branch)) = execution {
             if let Err(error) = self

@@ -236,7 +236,10 @@ pub(crate) fn ext(
     (gate, spawner): (&Arc<PolicyGate>, Spawner),
     base: Arc<dyn ToolRegistry>,
     (config, traits): (rust_cli_ext::ExtConfig, SurfaceTraits),
-    incognito: &rust_cli_kernel_api::incognito::IncognitoProfiles,
+    (incognito, sessions): (
+        &rust_cli_kernel_api::incognito::IncognitoProfiles,
+        &rust_cli_kernel_api::workspace_key::SessionWorkspaces,
+    ),
 ) -> Arc<Ext> {
     let machine = ports.environments.primary_machine();
     let ext = Arc::new(Ext::new(
@@ -250,6 +253,7 @@ pub(crate) fn ext(
             spawner,
             clock: ports.clock.clone(),
             incognito: incognito.clone(),
+            sessions: sessions.clone(),
         },
         base,
         config,
@@ -374,7 +378,10 @@ pub(crate) fn agents(
     (parts, tasks, agent_catalog): (&QueryParts, Arc<dyn TaskListStore>, &Arc<AgentCatalog>),
     (late, spawner, peers): (&Arc<LateCompactor>, Spawner, &rust_cli_session::PeerDeps),
     (defaults, traits, node_desktop): (&Defaults, SurfaceTraits, bool),
-    incognito: &rust_cli_kernel_api::incognito::IncognitoProfiles,
+    (incognito, sessions): (
+        &rust_cli_kernel_api::incognito::IncognitoProfiles,
+        &rust_cli_kernel_api::workspace_key::SessionWorkspaces,
+    ),
 ) -> Agents {
     Agents::new(
         AgentsPorts {
@@ -391,6 +398,7 @@ pub(crate) fn agents(
             compactor: late.clone(),
             catalog: agent_catalog.clone(),
             spawner,
+            sessions: sessions.clone(),
             peers: peers.port.clone(),
             operations: parts.operations.clone(),
             incognito: incognito.clone(),

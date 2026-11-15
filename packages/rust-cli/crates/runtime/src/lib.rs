@@ -152,6 +152,14 @@ pub struct LocalKernel {
     /// Fork: incognito profiles by session (specs/fork-rust-agent-parity.md, "Incognito sessions"): filled at create
     /// and open, read by every incognito gate.
     incognito: rust_cli_kernel_api::incognito::IncognitoProfiles,
+    /// Fork: each session's workspace, recorded at create and open, read by the per-workspace plugin
+    /// and MCP views (specs/fork-rust-workspace-plugins-mcp.md).
+    workspaces: rust_cli_kernel_api::workspace_key::SessionWorkspaces,
+    /// Fork: the per-workspace plugin/MCP layer, awaited where a session's workspace is recorded.
+    /// Behind a lock: set at assembly after the kernel exists, read at every session open.
+    workspace_layer: std::sync::RwLock<
+        std::sync::Arc<dyn rust_cli_kernel_api::workspace_key::WorkspaceLayerHost>,
+    >,
     /// 本机跨会话通信（cross-session.md §2.4）：每个会话 actor 共用这一份端口。
     peers: rust_cli_session::PeerDeps,
     /// 父会话关闭之后旧会话的询问入口（进程级，agents.md §4.1.2，工作线 F72）：每个会话 actor 共用这一份。
@@ -248,6 +256,9 @@ impl LocalKernel {
         let machine = ports.environments.primary_machine();
         // Fork: the one in-memory owner of the sessions' incognito profiles, read by every gate.
         let incognito = rust_cli_kernel_api::incognito::IncognitoProfiles::default();
+        // Fork: the one in-memory owner of the sessions' workspaces (specs/fork-rust-workspace-plugins-mcp.md),
+        // read by the per-workspace plugin and MCP views.
+        let workspaces = rust_cli_kernel_api::workspace_key::SessionWorkspaces::default();
         let hooks = assemble::hooks(
             &ports,
             &operations,
@@ -266,8 +277,10 @@ impl LocalKernel {
             (&gate, scope.spawner()),
             base.registry.clone(),
             (assemble::ext_config(&extensions), traits),
-            &incognito,
+            (&incognito, &workspaces),
         );
+        // Fork: the kernel's session opens await this layer host (the ext layer).
+        let workspace_layer = ext.workspace_layer().clone();
         // agent 清单（context）与 Agent 工具共用一个目录：插件 agent 设置一次，两处同时看到（L12）。
         let agent_catalog = Arc::new(AgentCatalog::new(
             machine.info().clone(),
@@ -304,7 +317,7 @@ impl LocalKernel {
             (&parts, tasks, &agent_catalog),
             (&late, scope.spawner(), &extensions.peers),
             (&defaults, traits, extensions.node_desktop),
-            &incognito,
+            (&incognito, &workspaces),
         );
         // Fork: ACP agent processes by session; a session close releases its process.
         let acp_host = extensions.acp.clone().map(|setup| {
@@ -404,6 +417,8 @@ impl LocalKernel {
             sessions,
             closer,
             incognito,
+            workspaces,
+            workspace_layer: std::sync::RwLock::new(workspace_layer),
             peers: extensions.peers,
             detached,
             one_input_per_turn: extensions.node_desktop,

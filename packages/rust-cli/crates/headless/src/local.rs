@@ -51,7 +51,8 @@ pub(crate) async fn finish<W: AsyncWrite + Unpin>(
             })
             .await
             .unwrap_or_default();
-        let servers = kernel.mcp_servers().await;
+        // Fork: the session's workspace group (specs/fork-rust-workspace-plugins-mcp.md).
+        let servers = kernel.mcp_servers_for(&SessionId::new(session_id)).await;
         let uuid = printer.uuid();
         let init = events::init(
             &events::Init {

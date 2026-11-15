@@ -96,7 +96,9 @@ impl StepTools {
         {
             return;
         }
-        if let Some(mcp) = scope.parts.tools.mcp() {
+        // Fork (specs/fork-rust-workspace-plugins-mcp.md): the declaration lands on the session's
+        // workspace group, whose snapshot decides whether the wait tool stays advertised.
+        if let Some(mcp) = scope.parts.tools.mcp_for(&scope.session) {
             mcp.declare_wait_tool(&scope.session);
         }
     }

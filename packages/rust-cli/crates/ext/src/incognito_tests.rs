@@ -76,6 +76,7 @@ async fn started_with(
             spawner: scope.spawner(),
             clock: crate::clock_tests::clock(),
             incognito: profiles.clone(),
+            sessions: Default::default(),
         },
         base,
         ExtConfig {

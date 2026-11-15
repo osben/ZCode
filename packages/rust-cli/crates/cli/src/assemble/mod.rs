@@ -811,6 +811,18 @@ pub(crate) async fn kernel(
         &rust_cli_hooks::project_key(opened.workspace.root.as_str()),
         opened.config.project_hooks.clone(),
     );
+    // Fork: the per-workspace plugin/MCP layer (specs/fork-rust-workspace-plugins-mcp.md): the same
+    // readers as the process config, discovered under each session's workspace.
+    kernel.set_workspace_config_loader(Arc::new(config::workspace_layer::Loader {
+        files: opened.primary.files().clone(),
+        controller: opened.env.clone(),
+        paths: opened.paths.clone(),
+        process_env: facts.process.env.clone(),
+        flag: None,
+        project_is_local: opened.deployment.primary_is_local(),
+        process: opened.config.plugins.clone(),
+        strict: cli.mcp.strict,
+    }));
     let local = config::local_rules(kernel.ports().store.as_ref(), &opened.workspace).await;
     kernel.replace_permission_rules(
         opened

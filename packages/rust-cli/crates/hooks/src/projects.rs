@@ -9,7 +9,6 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use rust_cli_base::sync::RwLockUnpoisoned;
 use rust_cli_kernel_api::env::WorkspaceRef;
-use rust_cli_kernel_api::env_files::PathStyle;
 use rust_cli_kernel_api::hooks::{HookEvent, HookEventName};
 
 use crate::config::{HookSource, HooksSettings};
@@ -47,13 +46,8 @@ pub trait ProjectHookLoader: Send + Sync {
 /// separator of the path's own style does not make another workspace (on POSIX a backslash is a name character);
 /// whitespace does, because only an explicit identity is trimmed.
 pub fn project_key(root: &str) -> String {
-    let style = PathStyle::infer(root);
-    let trimmed = root.trim_end_matches(|c| style.is_separator(c));
-    if trimmed.is_empty() || (style == PathStyle::Windows && trimmed.ends_with(':')) {
-        // `/` and `C:\` keep their separator: without it they name another path.
-        return root.to_owned();
-    }
-    trimmed.to_owned()
+    // Moved to kernel-api (workspace_key) so plugins and MCP derive the same key; kept as the hooks entry point.
+    rust_cli_kernel_api::workspace_key::project_key(root)
 }
 
 /// One workspace's entry and the snapshot its events read.
