@@ -270,3 +270,57 @@ fn from_view_drops_a_dispatch_without_a_stored_anchor() {
             .all(|row| row["kind"] != "hookInvocation")
     );
 }
+
+/// Fork: a SessionStart dispatch that waited for its turn (HK-UP-01, Node's pending SessionStart rows) is reported
+/// when that turn starts, so cold places its row before the turn's input row, where the live flush appended it.
+#[test]
+fn from_view_places_a_waiting_session_start_dispatch_before_its_turns_input() {
+    let mut cold = view(vec![
+        user("msg_u1", "hello"),
+        assistant("msg_a1", vec![ContentBlock::Text { text: "hi".into() }]),
+    ]);
+    let mut dispatch = blocked_dispatch();
+    dispatch.hook_event = HookEventName::SessionStart;
+    cold.hook_invocations = vec![HookInvocationRecord {
+        anchor_message: Some(MessageId::new("msg_u1")),
+        invocation: dispatch,
+    }];
+    let projection = Projection::from_view(&cold, Followup::Queue, Vec::new());
+    let snapshot = projection.snapshot(0, "e");
+    let rows = snapshot["rows"]["window"].as_array().unwrap();
+    let input_at = rows
+        .iter()
+        .position(|row| row["kind"] == "userInput")
+        .expect("the input's row");
+    let hook_at = rows
+        .iter()
+        .position(|row| row["kind"] == "hookInvocation")
+        .expect("the waiting hook row");
+    assert!(hook_at < input_at, "rows: {rows:?}");
+    assert_eq!(rows[hook_at]["turnId"], rows[input_at]["turnId"]);
+    assert_eq!(rows[hook_at]["hookEventName"], "SessionStart");
+}
+
+/// The live flush position: a SessionStart dispatch arriving right after a turn started lands inside that turn.
+#[test]
+fn a_session_start_dispatch_flushes_into_the_turn_that_started() {
+    let mut feed = Feed::new();
+    feed.apply(KernelEvent::TurnStarted {
+        turn: TurnId::new("turn_1"),
+        command: Some(CommandId::new("c1")),
+    });
+    let mut dispatch = blocked_dispatch();
+    dispatch.hook_event = HookEventName::SessionStart;
+    let deltas = feed.apply(KernelEvent::HookInvocation {
+        turn: TurnId::new("turn_1"),
+        invocation: dispatch,
+    });
+    let row = deltas
+        .iter()
+        .find(|delta| delta["op"] == "row.appended")
+        .map(|delta| &delta["row"])
+        .expect("the hook row");
+    assert_eq!(row["turnId"], "turn_1");
+    assert_eq!(row["hookEventName"], "SessionStart");
+    assert!(last_error(&deltas).is_none_or(Value::is_null));
+}

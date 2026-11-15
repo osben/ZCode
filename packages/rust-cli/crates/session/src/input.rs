@@ -55,6 +55,18 @@ impl Actor {
             self.log
                 .append(KernelEvent::TurnControlOnly { turn: turn.clone() });
         }
+        // Fork: the SessionStart dispatches that waited for this turn report their rows now (HK-UP-01, Node's pending
+        // SessionStart rows): after the turn's header and before its input, like Node's flush on the next user-intent
+        // TurnStarted. Their records anchor to this turn's prompt, so the view keeps them with it.
+        for record in &mut self.hook_invocations {
+            if record.anchor_message.is_none() {
+                record.anchor_message = Some(prompt.clone());
+                self.log.append(KernelEvent::HookInvocation {
+                    turn: turn.clone(),
+                    invocation: record.invocation.clone(),
+                });
+            }
+        }
         let hook = self.user_prompt_submit(&text);
         let (opening, request) = self.open_main_turn(turn);
         let hooks = self.deps.hooks.clone();

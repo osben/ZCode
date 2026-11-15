@@ -128,6 +128,18 @@ pub(crate) async fn session_end(
 /// SessionStart 给的首条输入的命令 ID 前缀。
 pub(crate) const SESSION_START_INPUT: &str = rust_cli_kernel_api::session_api::SESSION_START_INPUT;
 
+/// Fork: the SessionStart dispatch's runs as a `hooks::HookInvocation` (HK-UP-01); none without a run.
+fn startup_invocation(outcome: &HookOutcome) -> Option<rust_cli_kernel_api::hooks::HookInvocation> {
+    let id = outcome.invocation.clone()?;
+    (!outcome.runs.is_empty()).then(|| rust_cli_kernel_api::hooks::HookInvocation {
+        id,
+        hook_event: HookEventName::SessionStart,
+        tool_use: None,
+        tool_name: None,
+        runs: outcome.runs.clone(),
+    })
+}
+
 fn attachment_text(message: &Message) -> Option<&str> {
     match message {
         Message::Attachment(attachment) => Some(attachment.text.as_str()),
@@ -165,6 +177,14 @@ impl Actor {
     /// 只保留最新一次非空的结果（Node `stageSessionStartContext`）。以前这里写库：会话刚建的预热会话就有消息，
     /// 发第一条时 `createSession` 的预留被拒（`it already has a conversation`）。
     pub(crate) async fn finish_startup(&mut self, outcome: HookOutcome) {
+        // Fork: keep the dispatch for the cold projection (HK-UP-01): a SessionStart dispatch has no turn yet, so it
+        // waits (no anchor) for the session's next human turn to report its row (input.rs), like Node's pending
+        // SessionStart rows.
+        if self.deps.hook_rows
+            && let Some(invocation) = startup_invocation(&outcome)
+        {
+            self.keep_hook_invocation(None, invocation);
+        }
         if !outcome.messages.is_empty() {
             self.pending_session_start = outcome.messages;
         }

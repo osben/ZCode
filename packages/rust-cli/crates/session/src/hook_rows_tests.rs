@@ -264,3 +264,83 @@ async fn a_rewind_of_its_turn_drops_the_recorded_dispatch() {
             .is_empty()
     );
 }
+
+/// Fork: a SessionStart dispatch has no turn, so it waits for the session's next human turn (Node's pending
+/// SessionStart rows, HK-UP-01): its row is reported when that turn starts — after its header, before its input —
+/// and the view anchors the record to that turn's stored prompt. The startup title is only the test's wait for the
+/// result to be held (`wait_for_startup_title` in hooks_tests).
+async fn wait_for_title(session: &crate::Session, title: &str) {
+    for _ in 0..500 {
+        if session.view().await.unwrap().meta.title == title {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("the startup title was never set");
+}
+
+async fn startup_setup(hook_rows: bool) -> crate::test_support::Built {
+    let model = Arc::new(ScriptedModel::new(vec![text_response(&["ok"])]));
+    let mut setup = Setup::new(model);
+    setup.hooks = Arc::new(ScriptedHooks::with(
+        HookEventName::SessionStart,
+        HookOutcome {
+            session_title: Some("startup title".into()),
+            invocation: Some("inv_start".into()),
+            runs: vec![run(HookRunOutcome::Success)],
+            ..HookOutcome::default()
+        },
+    ));
+    setup.hook_rows = hook_rows;
+    setup.build().await
+}
+
+#[tokio::test]
+async fn a_session_start_dispatch_waits_for_the_next_human_turn() {
+    let built = startup_setup(true).await;
+    wait_for_title(&built.session, "startup title").await;
+    let mut events = built.session.subscribe(Some(0));
+    built.session.send(submit("c1", "hello")).await;
+    let seen = until(&mut events, finished).await;
+    assert_eq!(
+        kinds(&seen)[..3],
+        ["turn_started", "hook_invocation", "message_done"]
+    );
+    let invocation = seen
+        .iter()
+        .find_map(|event| match event {
+            KernelEvent::HookInvocation { invocation, .. } => Some(invocation),
+            _ => None,
+        })
+        .expect("the waiting dispatch");
+    assert_eq!(invocation.id, "inv_start");
+    assert_eq!(invocation.hook_event, HookEventName::SessionStart);
+    assert_eq!(invocation.runs, [run(HookRunOutcome::Success)]);
+    let view = built.session.view().await.unwrap();
+    let [record] = view.hook_invocations.as_slice() else {
+        panic!("the anchored record: {:?}", view.hook_invocations);
+    };
+    let prompt = view.messages[0].id().clone();
+    assert_eq!(record.anchor_message.as_ref(), Some(&prompt));
+}
+
+/// The TUI and `-p` see none of it: no waiting row and no kept record.
+#[tokio::test]
+async fn without_the_switch_a_session_start_dispatch_reports_nothing() {
+    let built = startup_setup(false).await;
+    wait_for_title(&built.session, "startup title").await;
+    let mut events = built.session.subscribe(Some(0));
+    built.session.send(submit("c1", "hello")).await;
+    let seen = until(&mut events, finished).await;
+    let kinds = kinds(&seen);
+    assert!(!kinds.contains(&"hook_invocation".to_owned()), "{kinds:?}");
+    assert!(
+        built
+            .session
+            .view()
+            .await
+            .unwrap()
+            .hook_invocations
+            .is_empty()
+    );
+}

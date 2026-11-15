@@ -471,16 +471,27 @@ impl Actor {
         // Fork: keep the dispatch for the cold projection (HK-UP-01 Design 4): anchored to the turn's user message,
         // bounded like the event log retention; the view drops a record whose anchor is not stored any more.
         if let QueryEvent::HookInvocation { invocation } = &event {
-            if self.hook_invocations.len() >= crate::log::RETAIN as usize {
-                self.hook_invocations.remove(0);
-            }
-            self.hook_invocations
-                .push(rust_cli_kernel_api::hooks::HookInvocationRecord {
-                    anchor_message: prompt,
-                    invocation: invocation.clone(),
-                });
+            self.keep_hook_invocation(prompt, invocation.clone());
         }
         self.log.append(kernel_event(turn, event));
+    }
+
+    /// Fork: keep a dispatch for the cold projection (HK-UP-01 Design 4), bounded like the event log retention. A
+    /// dispatch without a turn (a SessionStart dispatch, recorded by `finish_startup`) waits with no anchor until the
+    /// next human turn takes it (input.rs).
+    pub(crate) fn keep_hook_invocation(
+        &mut self,
+        anchor_message: Option<rust_cli_kernel_api::ids::MessageId>,
+        invocation: rust_cli_kernel_api::hooks::HookInvocation,
+    ) {
+        if self.hook_invocations.len() >= crate::log::RETAIN as usize {
+            self.hook_invocations.remove(0);
+        }
+        self.hook_invocations
+            .push(rust_cli_kernel_api::hooks::HookInvocationRecord {
+                anchor_message,
+                invocation,
+            });
     }
 
     pub(crate) async fn finish_turn(&mut self) {
