@@ -252,26 +252,45 @@ pub fn pages_of(questions: &Value) -> Vec<QuestionPage> {
         .collect()
 }
 
-/// Always allow 记住的规则：Bash 改过前缀时是前缀得出的规则（`seed`），否则是全部建议规则。
-pub fn always_rules(suggestions: &[PermissionRule], seed: Option<&str>) -> Vec<PermissionRule> {
+/// Always allow 记住的规则：Bash 改过前缀时是前缀得出的规则（`seed`），否则是全部建议规则；没有建议时是 Node
+/// `defaultPermissionUpdates` 的缺省规则（整个工具，或输入作内容；`PermissionRule::node_default`）。
+pub fn always_rules(
+    tool: &str,
+    input: &Value,
+    suggestions: &[PermissionRule],
+    seed: Option<&str>,
+) -> Vec<PermissionRule> {
     match seed {
         Some(seed) => super::interaction::remember::rules(seed),
+        None if suggestions.is_empty() => vec![PermissionRule::node_default(tool, input)],
         None => suggestions.to_vec(),
     }
 }
 
-fn options_of(suggestions: &[PermissionRule], seed: Option<&str>) -> Vec<AskOption> {
+/// 这个询问给不给 Always allow：`once`（受管的危险命令）与独立确认不给，与 Host 的 `Offered` 一致（Node
+/// `approvalMode: "user-once"` / `optionsPolicy: "no-always-allow"`）；与建议无关。
+fn always_offered(once: bool, independent: bool) -> bool {
+    !once && !independent
+}
+
+fn options_of(
+    tool: &str,
+    input: &Value,
+    suggestions: &[PermissionRule],
+    seed: Option<&str>,
+    always: bool,
+) -> Vec<AskOption> {
     let option = |id: &str, kind, rules| AskOption {
         id: id.to_owned(),
         kind,
         rules,
     };
     let mut options = vec![option(ALLOW_ONCE, AskOptionKind::AllowOnce, Vec::new())];
-    if !suggestions.is_empty() {
+    if always {
         options.push(option(
             ALLOW_ALWAYS,
             AskOptionKind::AllowAlways,
-            always_rules(suggestions, seed)
+            always_rules(tool, input, suggestions, seed)
                 .iter()
                 .map(rule_text)
                 .collect(),
@@ -336,6 +355,8 @@ pub fn ask_of(
             suggestions,
             asked_by,
             machine,
+            once,
+            independent,
             ..
         } => Ask {
             id: id.to_string(),
@@ -348,7 +369,13 @@ pub fn ask_of(
             machine: machine.remote().map(str::to_owned),
             body: AskBody::Permission {
                 preview: preview_of(tool, input),
-                options: options_of(suggestions, seed),
+                options: options_of(
+                    tool,
+                    input,
+                    suggestions,
+                    seed,
+                    always_offered(*once, *independent),
+                ),
             },
         },
         InteractionRequest::Question {
@@ -393,7 +420,13 @@ pub fn option_answer(
     free_text: Option<&str>,
     seed: Option<&str>,
 ) -> Option<Answer> {
-    let InteractionRequest::Permission { suggestions, .. } = request else {
+    let InteractionRequest::Permission {
+        tool,
+        input,
+        suggestions,
+        ..
+    } = request
+    else {
         return None;
     };
     Some(Answer::Permission(match option {
@@ -401,7 +434,7 @@ pub fn option_answer(
             remember: Vec::new(),
         },
         ALLOW_ALWAYS => PermissionAnswer::Allow {
-            remember: always_rules(suggestions, seed),
+            remember: always_rules(tool, input, suggestions, seed),
         },
         DENY => {
             let feedback = free_text
@@ -475,3 +508,7 @@ pub fn question_answer(
         afk_timeout_ms,
     })
 }
+
+#[cfg(test)]
+#[path = "interaction_ask_tests.rs"]
+mod ask_tests;

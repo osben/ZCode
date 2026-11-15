@@ -179,6 +179,30 @@ pub struct PermissionRule {
     pub content: Option<String>,
 }
 
+impl PermissionRule {
+    /// Fork: the rule `allowAlways` remembers for an ask without suggestions (an MCP tool), Node
+    /// `permission-options.ts` `defaultPermissionUpdates`: the tool, with the input as content when it is a
+    /// non-blank string, otherwise its first non-blank string among `command`, `url`, `file_path`, `path`,
+    /// `pattern` (specs/fork-rust-agent-parity.md, "Always allow without suggestions"). The Host's answer
+    /// projection and the TUI's ask share it.
+    pub fn node_default(tool: &str, input: &serde_json::Value) -> Self {
+        const FIELDS: &[&str] = &["command", "url", "file_path", "path", "pattern"];
+        fn non_blank(value: &serde_json::Value) -> Option<&str> {
+            value.as_str().filter(|text| !text.trim().is_empty())
+        }
+        let content = non_blank(input).or_else(|| {
+            let fields = input.as_object()?;
+            FIELDS
+                .iter()
+                .find_map(|field| fields.get(*field).and_then(non_blank))
+        });
+        Self {
+            tool: tool.to_owned(),
+            content: content.map(str::to_owned),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuleBehavior {

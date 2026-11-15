@@ -1929,24 +1929,11 @@ impl Offered {
 }
 
 /// Fork: the rule `allowAlways` remembers for an ask without suggestions (an MCP tool), Node
-/// `permission-options.ts` `defaultPermissionUpdates`: the tool, with the input as content when it is a non-blank
-/// string, otherwise its first non-blank string among these fields (specs/fork-rust-agent-parity.md, "Always allow
-/// without suggestions"). Without it nothing was remembered and the next call asked again.
+/// `permission-options.ts` `defaultPermissionUpdates` (specs/fork-rust-agent-parity.md, "Always allow without
+/// suggestions"). Without it nothing was remembered and the next call asked again. The rule itself is defined once
+/// beside `PermissionRule`, shared with the TUI's ask.
 fn default_rule(tool: &str, input: &Value) -> rust_cli_kernel_api::permission::PermissionRule {
-    const FIELDS: &[&str] = &["command", "url", "file_path", "path", "pattern"];
-    fn non_blank(value: &Value) -> Option<&str> {
-        value.as_str().filter(|text| !text.trim().is_empty())
-    }
-    let content = non_blank(input).or_else(|| {
-        let fields = input.as_object()?;
-        FIELDS
-            .iter()
-            .find_map(|field| fields.get(*field).and_then(non_blank))
-    });
-    rust_cli_kernel_api::permission::PermissionRule {
-        tool: tool.to_owned(),
-        content: content.map(str::to_owned),
-    }
+    rust_cli_kernel_api::permission::PermissionRule::node_default(tool, input)
 }
 
 /// The answer to a permission ask for an option that is not a mode switch. `allowAlways` on an ask that does not offer

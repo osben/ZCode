@@ -135,9 +135,16 @@ fn permission_answers_by_digit_enter_or_typing() {
         answered(bash("rm -rf build", &[]), &[KeyCode::Enter]),
         resolve("i1", json!({"decision": "allow"}))
     );
-    // 没有建议规则：Allow once、Full access、Deny。
+    // 没有建议规则：Always allow 也给（记住 Node `defaultPermissionUpdates` 的缺省规则），Deny 是第 4 项。
     assert_eq!(
-        answered(bash("rm -rf build", &[]), &[KeyCode::Char('3')]),
+        answered(bash("rm -rf build", &[]), &[KeyCode::Char('2')]),
+        resolve(
+            "i1",
+            json!({"decision": "allow", "remember": [{"tool": "Bash", "content": "rm -rf build"}]})
+        )
+    );
+    assert_eq!(
+        answered(bash("rm -rf build", &[]), &[KeyCode::Char('4')]),
         resolve("i1", deny.clone())
     );
     assert_eq!(
@@ -191,7 +198,7 @@ fn full_access_asks_first() {
     let mut app = app(Lang::En);
     ask(&mut app, "i1", bash("rm -rf build", &[]), start);
     let at = start + ARMED;
-    assert_eq!(press(&mut app, &[KeyCode::Char('2')], at), None);
+    assert_eq!(press(&mut app, &[KeyCode::Char('3')], at), None);
     assert!(matches!(
         app.overlay,
         Some(crate::ui::app::Overlay::YoloConfirm(_))
