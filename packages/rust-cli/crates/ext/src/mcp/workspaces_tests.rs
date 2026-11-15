@@ -74,7 +74,8 @@ async fn restarting_a_group_replaces_its_servers() {
         "/work/a",
         workspace(),
         vec![server_config("two"), server_config("three")],
-    );
+    )
+    .await;
 
     assert_eq!(names(&mcp.group("/work/a").unwrap()), ["three", "two"]);
 }
