@@ -226,7 +226,7 @@ pub(crate) fn layers<'a>(
 }
 
 /// 存储位置的层：项目级配置不在本机时只认用户级与环境变量（deployment.md §21）。
-fn storage_layers(
+pub(crate) fn storage_layers(
     inputs: &ConfigInputs<'_>,
     layers: &[Layer<'_>],
     warnings: &mut Vec<String>,

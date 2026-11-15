@@ -31,6 +31,18 @@ impl LocalKernel {
         self.hooks.clone()
     }
 
+    /// Fork (specs/fork-rust-workspace-plugins-mcp.md): loads (or reuses) a workspace's plugin/MCP
+    /// layer; the print entry prewarms a resumed session's workspace with it before its startup
+    /// wait, so the group's alwaysLoad servers are covered by that (cancellable) wait.
+    pub async fn load_workspace_layer(&self, workspace: &rust_cli_kernel_api::env::WorkspaceRef) {
+        let layer = self
+            .workspace_layer
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        layer.load(workspace).await;
+    }
+
     /// Fork: the cli loader that assembles a workspace's plugin/MCP layer
     /// (specs/fork-rust-workspace-plugins-mcp.md); forwarded to the ext layer.
     pub fn set_workspace_config_loader(

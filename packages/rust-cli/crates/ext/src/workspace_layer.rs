@@ -95,6 +95,11 @@ impl WorkspaceLayer {
         self.mcp.set_print_session(print);
     }
 
+    /// Fork: the print startup wait covers the process group and every workspace group.
+    pub(crate) async fn wait_for_print(&self) {
+        self.mcp.wait_for_print_all().await;
+    }
+
     /// Registers `key` for loading; `Err` carries the in-flight load's Notify to wait on.
     fn begin(&self, key: &str) -> Result<(), Arc<tokio::sync::Notify>> {
         let mut loading = self.loading.write_unpoisoned();
@@ -172,7 +177,7 @@ impl WorkspaceLayer {
                 let mut servers = self.servers.clone();
                 servers.extend(loaded.mcp_servers());
                 servers.extend(config.servers);
-                self.mcp.start(&key, workspace.clone(), servers).await;
+                self.mcp.start(&key, workspace.clone(), servers);
                 Slot::Loaded
             }
             None => {

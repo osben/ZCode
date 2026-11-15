@@ -250,7 +250,7 @@ impl Ext {
 
     /// `-p` 在第一个请求前的等待（ext.md §3.3.1）：alwaysLoad 的服务器与第一条命令前的 prewait，到期就开跑。
     pub async fn wait_for_print(&self) {
-        self.mcp.wait_for_print().await;
+        self.layer.wait_for_print().await;
     }
 }
 

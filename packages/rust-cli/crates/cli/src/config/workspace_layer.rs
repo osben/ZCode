@@ -20,6 +20,7 @@ use serde_json::Map;
 
 use super::mcp_trust;
 use super::merge;
+use super::plugins;
 use super::{ConfigInputs, McpScope};
 
 /// The process inputs the workspace layer re-uses: the file port, the storage paths, the
@@ -54,14 +55,36 @@ impl WorkspaceConfigLoader for Loader {
             flag: self.flag.as_ref(),
             project_is_local: self.project_is_local,
         };
-        let mut sources = super::plugin_view(&inputs).await.sources;
-        sources.view_host = self.process.view_host;
-        sources.node_helper = self.process.node_helper;
-
         let mut warnings = Vec::new();
         let files = super::read_files(&inputs).await;
         let empty = Map::new();
         let layers = super::layers(&files, inputs.flag, &empty, &mut warnings);
+        // The same plugin view the LSP path builds (`plugin_view`), with one Node rule it keeps as
+        // a known difference for its own path: a project layer's `plugins.dirs` never load here
+        // (`project-config.adapter.ts` strips them), or merely opening a repository in the shared
+        // runtime would run its plugin commands without any trust grant. The dirs come from the
+        // user and `--settings` layers only.
+        let userish: Vec<super::merge::Layer<'_>> = layers
+            .iter()
+            .filter(|layer| {
+                layer.source != rust_cli_kernel_api::permission::RuleSource::ProjectSettings
+            })
+            .map(|layer| super::merge::Layer {
+                source: layer.source,
+                object: layer.object,
+                path: layer.path,
+            })
+            .collect();
+        let storage_layers = super::storage_layers(&inputs, &layers, &mut warnings);
+        let root = workspace.root.as_str();
+        let storage = inputs
+            .paths
+            .plugin_storage(storage_layers.dir.as_deref(), std::path::Path::new(root));
+        let mut section = plugins::merge(&layers, &mut warnings);
+        section.dirs = plugins::merge(&userish, &mut warnings).dirs;
+        let mut sources = plugins::sources(section, root, &storage).await;
+        sources.view_host = self.process.view_host;
+        sources.node_helper = self.process.node_helper;
         let merged = merge::mcp_layers(&layers, &mut warnings);
         // Only the project-origin servers: the layer's group runs the user servers itself (with the
         // workspace as their cwd base, Node `resolve(workingDirectory, cwd)`); a user server that
