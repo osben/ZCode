@@ -136,21 +136,23 @@ async fn a_granted_project_server_loads_through_the_trust_store() {
     );
 
     // The grant: a record for the declaration's current digest, written through the store's decide.
+    // Every field mirrors the Loader's own inputs (the same source Loader::load assembles), so a
+    // loader change cannot silently desynchronize the seeding from the read under test.
     let inputs = ConfigInputs {
-        files: files.as_ref(),
+        files: loader.files.as_ref(),
         workspace: &workspace,
-        paths: &paths,
+        paths: &loader.paths,
         process_env: &loader.process_env,
-        flag: None,
-        project_is_local: true,
+        flag: loader.flag.as_ref(),
+        project_is_local: loader.project_is_local,
     };
     let read = super::super::read_files(&inputs).await;
     let inspection = mcp_trust::Inspection::read(
-        files.as_ref(),
+        loader.files.as_ref(),
         &workspace,
         mcp_trust::Target::new(workspace.root.as_str(), None),
         (read.user.object(), &read.projects),
-        &paths,
+        &loader.paths,
     )
     .await;
     let digest = inspection
