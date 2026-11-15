@@ -1038,3 +1038,43 @@ async fn a_desktop_subagent_gets_no_subagent_tools() {
     }
     assert!(tools.iter().any(|tool| tool == "TaskStop"), "{tools:?}");
 }
+
+/// Fork (node_desktop, specs/fork-rust-agent-parity.md "Subagents launch no subagents"): the desktop main session has
+/// no ListAgents either — Node has no such tool on any surface (core `tool/handlers/index.ts`
+/// `registerBuiltInTools` registers none), so the model cannot list agents by tool, only beside the `Agent` tool.
+/// A lookup by the legacy `ListPeers` name is gone with it. SendMessage and TaskStop stay (Node registers SendMessage
+/// for the main session, `runtime-tools.ts` `includeSendMessage`); the TUI keeps ListAgents.
+#[tokio::test]
+async fn a_desktop_main_session_has_no_listagents_tool() {
+    let desktop = desktop_harness();
+    let registry = desktop.agents.registry();
+    let names: Vec<String> = registry
+        .tools()
+        .into_iter()
+        .map(|tool| tool.name().to_owned())
+        .collect();
+    assert!(!names.iter().any(|name| name == "ListAgents"), "{names:?}");
+    assert!(registry.find("ListAgents").is_none());
+    assert!(registry.find("ListPeers").is_none());
+    for name in ["Agent", "SendMessage", "TaskStop"] {
+        assert!(
+            names.iter().any(|listed| listed == name),
+            "{name}: {names:?}"
+        );
+    }
+    let snapshot = registry.snapshot(&SessionId::new("sess_parent"));
+    assert!(
+        snapshot
+            .tools
+            .iter()
+            .all(|tool| tool.name() != "ListAgents"),
+        "{:?}",
+        snapshot
+            .tools
+            .iter()
+            .map(|tool| tool.name())
+            .collect::<Vec<_>>()
+    );
+    let tui = harness(None);
+    assert!(tui.agents.registry().find("ListAgents").is_some());
+}

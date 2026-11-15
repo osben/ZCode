@@ -22,8 +22,18 @@ use crate::task_stop::TaskStopTool;
 use rust_cli_kernel_api::tool_names;
 
 pub(crate) fn tools(core: &Arc<Core>) -> Vec<Arc<dyn Tool>> {
-    let mut tools: Vec<Arc<dyn Tool>> = [Kind::ListAgents, Kind::SendMessage]
-        .into_iter()
+    // Fork (node_desktop): Node has no ListAgents tool on any surface (core `tool/handlers/index.ts`
+    // `registerBuiltInTools` registers none; the model reads the agent listing beside the `Agent` tool), so the
+    // desktop main session must not offer one. Subagent children already lose it through `ToolRule::node_child`
+    // (`toolset.rs`); the TUI and `-p` keep it (cross-session.md).
+    let kinds: &[Kind] = if core.node_desktop {
+        &[Kind::SendMessage]
+    } else {
+        &[Kind::ListAgents, Kind::SendMessage]
+    };
+    let mut tools: Vec<Arc<dyn Tool>> = kinds
+        .iter()
+        .copied()
         .map(|kind| {
             Arc::new(Messaging {
                 core: core.clone(),
