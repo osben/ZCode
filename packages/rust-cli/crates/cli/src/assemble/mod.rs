@@ -815,6 +815,7 @@ pub(crate) async fn kernel(
     // readers as the process config, discovered under each session's workspace.
     kernel.set_workspace_config_loader(Arc::new(config::workspace_layer::Loader {
         files: opened.primary.files().clone(),
+        controller: opened.env.clone(),
         paths: opened.paths.clone(),
         process_env: facts.process.env.clone(),
         flag: None,

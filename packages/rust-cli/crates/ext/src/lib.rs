@@ -157,7 +157,6 @@ impl Ext {
         skills.set_incognito(ports.incognito.clone());
         let incognito = IncognitoTools::new(
             ports.incognito,
-            mcp.clone(),
             workspace_mcp.clone(),
             ports.sessions.clone(),
         );
@@ -323,23 +322,28 @@ impl ToolRegistry for ExtRegistry {
     fn find_for(&self, session: &SessionId, name: &str) -> Option<Arc<dyn Tool>> {
         // Fork: MCP tools resolve through the session's workspace group on both paths, so a
         // project-only tool answers and a same-named user tool does not run against the process
-        // group's connection (specs/fork-rust-workspace-plugins-mcp.md).
-        let mcp = self.session_mcp(session);
+        // group's connection (specs/fork-rust-workspace-plugins-mcp.md). The group resolves only
+        // after the cheap hits miss (the skill and the base registry take no locks).
         if name == self.skill.name() {
             return Some(self.skill.clone());
         }
-        if name == WAIT_FOR_MCP_SERVERS && mcp.has_servers() {
-            return Some(self.wait_of(&mcp));
+        if name == WAIT_FOR_MCP_SERVERS {
+            let mcp = self.session_mcp(session);
+            return mcp.has_servers().then(|| self.wait_of(&mcp));
         }
-        let Some(profile) = self.incognito.profile(session) else {
-            return self.base.find_for(session, name).or_else(|| mcp.find(name));
-        };
-        self.base.find_for(session, name).or_else(|| {
-            mcp.snapshot_where(|scope| incognito::keeps_scope(&profile, scope))
+        let base = self.base.find_for(session, name);
+        if base.is_some() {
+            return base;
+        }
+        let mcp = self.session_mcp(session);
+        match self.incognito.profile(session) {
+            None => mcp.find(name),
+            Some(profile) => mcp
+                .snapshot_where(|scope| incognito::keeps_scope(&profile, scope))
                 .0
                 .into_iter()
-                .find(|tool| rust_cli_kernel_api::tool::answers_to(tool.as_ref(), name))
-        })
+                .find(|tool| rust_cli_kernel_api::tool::answers_to(tool.as_ref(), name)),
+        }
     }
 
     fn withheld(&self, name: &str) -> Option<Arc<dyn Tool>> {

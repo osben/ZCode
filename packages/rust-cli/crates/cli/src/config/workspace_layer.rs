@@ -27,6 +27,9 @@ use super::{ConfigInputs, McpScope};
 /// re-selection inherits.
 pub(crate) struct Loader {
     pub(crate) files: Arc<dyn FilesPort>,
+    /// The controller's own port: the machine-binding sidecar is the controller's config
+    /// (deployment.md §21), never the primary env's disk.
+    pub(crate) controller: Arc<dyn FilesPort>,
     pub(crate) paths: StoragePaths,
     pub(crate) process_env: rust_cli_base::secret::EnvSnapshot,
     /// The `--settings` flag layer is the process's own CLI input; other workspaces' layers do not
@@ -72,7 +75,7 @@ impl WorkspaceConfigLoader for Loader {
             .collect();
         // Fork: project MCP servers connect only with a workspace trust grant for their current
         // declaration, exactly like the process assembly (`config::assemble`).
-        let user_object = super::object(&files.user_path, &files.user, &mut warnings);
+        let user_object = files.user.object();
         let trust = mcp_trust::Inspection::read(
             inputs.files,
             inputs.workspace,
@@ -101,7 +104,7 @@ impl WorkspaceConfigLoader for Loader {
         // primary ones).
         let bindings_path = self.paths.mcp_machines().as_path().display().to_string();
         let bindings = crate::assemble::mcp_machines::McpBindings::load(
-            self.files.as_ref(),
+            self.controller.as_ref(),
             workspace,
             &bindings_path,
         )

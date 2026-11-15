@@ -740,6 +740,7 @@ fn built_full(
             ids,
         ),
         incognito: Default::default(),
+        sessions: Default::default(),
     };
     let agents = Agents::new(
         ports,

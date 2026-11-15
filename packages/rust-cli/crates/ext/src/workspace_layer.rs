@@ -36,8 +36,9 @@ pub trait WorkspaceConfigLoader: Send + Sync {
     async fn load(&self, workspace: &WorkspaceRef) -> Option<WorkspaceConfig>;
 }
 
-/// The per-workspace slots and the MCP groups they start. Loads serialize on one mutex: two
-/// sessions of one workspace load it once, and a reload (a config change epoch) replaces the group.
+/// The per-workspace slots and the MCP groups they start. One load of a workspace runs at a
+/// time: a concurrent session of the same workspace waits for the first load's slot, so a group
+/// is never replaced mid-flight by a racing second load.
 pub struct WorkspaceLayer {
     files: Arc<dyn Files>,
     mcp: Arc<WorkspaceMcp>,
@@ -47,6 +48,8 @@ pub struct WorkspaceLayer {
     servers: Vec<McpServer>,
     loader: OnceLock<Arc<dyn WorkspaceConfigLoader>>,
     slots: RwLock<BTreeMap<String, Slot>>,
+    /// The keys with a load in flight; the Notify wakes the waiters when it finishes.
+    loading: RwLock<std::collections::HashMap<String, Arc<tokio::sync::Notify>>>,
     /// The process workspace (its sessions read the process group, which already serves it).
     process: Option<WorkspaceRef>,
 }
@@ -72,6 +75,7 @@ impl WorkspaceLayer {
             servers,
             loader: OnceLock::new(),
             slots: RwLock::new(BTreeMap::new()),
+            loading: RwLock::new(std::collections::HashMap::new()),
             process,
         }
     }
@@ -80,10 +84,27 @@ impl WorkspaceLayer {
         let _ = self.loader.set(loader);
     }
 
-    /// The slot of `key` (read by tests; the sessions resolve their MCP group through the
-    /// manager, which only has a group for a `Loaded` slot).
+    /// The slot of `key`: the load guard reuses a `Loaded` slot, and the sessions resolve their
+    /// MCP group through the manager, which only has a group for a `Loaded` slot.
     pub(crate) fn slot(&self, key: &str) -> Option<Slot> {
         self.slots.read_unpoisoned().get(key).copied()
+    }
+
+    /// Registers `key` for loading; `Err` carries the in-flight load's Notify to wait on.
+    fn begin(&self, key: &str) -> Result<(), Arc<tokio::sync::Notify>> {
+        let mut loading = self.loading.write_unpoisoned();
+        if let Some(notify) = loading.get(key) {
+            return Err(notify.clone());
+        }
+        loading.insert(key.to_owned(), Arc::new(tokio::sync::Notify::new()));
+        Ok(())
+    }
+
+    /// The load of `key` finished: its waiters wake and read the slot it put.
+    fn finish(&self, key: &str) {
+        if let Some(notify) = self.loading.write_unpoisoned().remove(key) {
+            notify.notify_waiters();
+        }
     }
 
     /// Loads (or reloads) the layer of `workspace`. Fail-closed: a project layer that cannot be
@@ -109,9 +130,23 @@ impl WorkspaceLayer {
         let Some(loader) = self.loader.get().cloned() else {
             return;
         };
-        // Concurrent sessions of one workspace may race the first load: both discover and start a
-        // group, the later `start` replaces the earlier one (its connections were still
-        // connecting), and both put the same slot.
+        // One load at a time: the caller that registers the key loads; every other caller waits for
+        // the slot it puts (the notified future is created before the slot check, so a finish in
+        // between cannot be missed).
+        loop {
+            let waiter = match self.begin(&key) {
+                Ok(()) => break,
+                Err(waiter) => waiter,
+            };
+            let notified = waiter.notified();
+            if self.slot(&key).is_some() {
+                return;
+            }
+            notified.await;
+            if self.slot(&key).is_some() {
+                return;
+            }
+        }
         let slot = match loader.load(workspace).await {
             Some(config) => {
                 let loaded = crate::plugins::load_all(
@@ -137,7 +172,8 @@ impl WorkspaceLayer {
                 Slot::Invalid
             }
         };
-        self.slots.write_unpoisoned().insert(key, slot);
+        self.slots.write_unpoisoned().insert(key.clone(), slot);
+        self.finish(&key);
     }
 }
 

@@ -37,7 +37,8 @@ fn loader(files: MemoryEnvironment, user_config: &str) -> Loader {
         user_config,
     ));
     Loader {
-        files,
+        files: files.clone(),
+        controller: files,
         paths,
         process_env: Default::default(),
         flag: None,
@@ -53,19 +54,13 @@ fn workspace(root: &str) -> WorkspaceRef {
     }
 }
 
-fn stdio_cwd(server: &McpServer) -> Option<&str> {
-    match &server.transport {
-        rust_cli_kernel_api::mcp::McpTransportConfig::Stdio { cwd, .. } => cwd.as_deref(),
-        _ => None,
-    }
-}
-
 #[tokio::test]
 async fn unadmitted_project_servers_are_dropped_the_overlay_still_loads() {
     // No trust records exist for this workspace, so its project servers wait for a grant — the
     // same admission as the process assembly (`config::assemble`). The plugin enablement overlay
-    // is independent of MCP trust and still loads. The granted path is covered end to end by the
-    // `plugin-extension-mention` E2E.
+    // is independent of MCP trust and still loads. The granted path (a trust record in the store)
+    // needs a store fixture; the store read goes to the controller's real disk, so a positive test
+    // arrives with the trust-store test harness follow-up.
     let loader = loader(
         env(&[
             ("/Users/dev/repo/.git/HEAD", "ref"),
