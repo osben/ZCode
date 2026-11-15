@@ -492,13 +492,24 @@ impl LocalKernel {
         let presence = self.ports.store.register_runtime(&id).await?;
         self.ports.store.create(meta.clone()).await?;
         self.incognito.record(&id, meta.incognito);
-        self.workspaces.record(&id, meta.workspace.clone());
+        // Fork: an execution worktree runs the session in the worktree, and its workspace group
+        // must bind that root from the start — a relative user-server cwd resolves inside the
+        // worktree, and a cold reopen (which substitutes the stored execution directory) selects
+        // the same group. The meta's own root change stays below, where it always was.
+        let effective = match &execution {
+            Some((worktree, _)) => rust_cli_kernel_api::env::WorkspaceRef {
+                root: worktree.clone(),
+                ..meta.workspace.clone()
+            },
+            None => meta.workspace.clone(),
+        };
+        self.workspaces.record(&id, effective.clone());
         let layer = self
             .workspace_layer
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
-        layer.load(&meta.workspace).await;
+        layer.load(&effective).await;
         let in_worktree = execution.is_some();
         if let Some((worktree, branch)) = execution {
             if let Err(error) = self

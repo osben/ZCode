@@ -75,7 +75,10 @@ impl WorkspaceConfigLoader for Loader {
                 path: layer.path,
             })
             .collect();
-        let storage_layers = super::storage_layers(&inputs, &layers, &mut warnings);
+        // The inventory roots (the plugin cache and installed_plugins.json) resolve from the
+        // trusted layers only: a project's storage.dir must not redirect the inventory to a
+        // checked-in directory and run its plugins (the dirs rule above is not enough).
+        let storage_layers = super::storage_layers(&inputs, &userish, &mut warnings);
         let root = workspace.root.as_str();
         let storage = inputs
             .paths
