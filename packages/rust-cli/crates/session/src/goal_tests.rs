@@ -656,6 +656,68 @@ async fn a_later_desktop_goal_asks_for_its_summary_only() {
     assert_eq!(built.session.view().await.unwrap().meta.title, "Seed chat");
 }
 
+/// Fork (desktop App): a goal set while the session title request is still running waits for it — Node runs its
+/// `goal_summary_title` sidecar beside a running session title request (`control-only-turn.ts` `afterTurnBoundary`
+/// has no in-flight gate), and the actor's one title slot parks the summary until the title request settled, instead
+/// of falling back to the objective.
+#[tokio::test]
+async fn a_later_desktop_goal_waits_for_the_running_title_request() {
+    use rust_cli_kernel_api::model::QuerySource;
+    use rust_cli_kernel_api::side_request::SideSource;
+    // The first title response waits for the gate, so the /goal meets a title request that is still running.
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let title_model = Arc::new(
+        ScriptedModel::new(vec![
+            text_response(&["{\"title\":\"Seed chat\"}"]),
+            text_response(&["{\"title\":\"Green test suite\"}"]),
+        ])
+        .gated_at(0, gate.clone()),
+    );
+    let model = Arc::new(ScriptedModel::new(
+        (0..2)
+            .map(|index| text_response(&[&format!("reply {index}")]))
+            .collect(),
+    ));
+    let mut setup = Setup::new(model.clone());
+    setup.hooks = Evaluator::with(Vec::new());
+    setup.desktop_goals = true;
+    setup.titles = Some(crate::TitleModel {
+        model: title_model.clone(),
+        directory: None,
+        node_prompt: true,
+    });
+    let built = setup.build().await;
+    let mut events = built.session.subscribe(None);
+    built
+        .session
+        .send(submit("c1", "Explain the seed conversation please"))
+        .await;
+    // The /goal is queued behind the running turn, so its summary meets the title request the turn's
+    // completion starts (or the deferred one just before it). Only once the goal is set is the title answered.
+    built
+        .session
+        .send(submit("c2", "/goal make the whole test suite pass"))
+        .await;
+    until(&mut events, |event| {
+        matches!(event, KernelEvent::GoalChanged { goal: Some(goal) }
+            if goal.summary_title.is_none())
+    })
+    .await;
+    gate.notify_one();
+    until(&mut events, |event| {
+        matches!(event, KernelEvent::GoalChanged { goal: Some(goal) }
+            if goal.summary_title.as_deref() == Some("Green test suite"))
+    })
+    .await;
+    let requests = title_model.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        requests[1].source,
+        QuerySource::Side(SideSource::GoalSummaryTitle)
+    );
+    assert_eq!(built.session.view().await.unwrap().meta.title, "Seed chat");
+}
+
 fn stored_goal(target: &str, summary: &str, seconds: u64) -> rust_cli_kernel_api::goal::GoalState {
     rust_cli_kernel_api::goal::GoalState {
         target: target.to_owned(),

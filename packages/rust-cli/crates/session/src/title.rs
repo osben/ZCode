@@ -69,6 +69,18 @@ pub(crate) struct TitleState {
     /// Fork (Node desktop titles): no turn completed yet after a deferred title was dropped, so the next input is
     /// still the first (Node counts `turnNumber` on completed turns only).
     rearmed: bool,
+    /// Fork (desktop App): a goal summary waiting for the running title request to settle (Node runs its
+    /// `goal_summary_title` sidecar beside a session title request; this actor has one title slot, so the summary
+    /// waits instead of falling back to the objective).
+    pending_goal_summary: Option<PendingGoalSummary>,
+}
+
+/// Fork (desktop App): the parked goal summary — the objective is taken when it parks, because the goal may finish
+/// (or be replaced) while it waits, and a finished goal no longer names one.
+struct PendingGoalSummary {
+    target: String,
+    objective: String,
+    prompt: Option<MessageId>,
 }
 
 /// Fork: Node's desktop agent always has a provider runtime-headers port, so `shouldDeferSessionTitleForRuntimeHeaders`
@@ -316,6 +328,7 @@ impl Actor {
             self.start_title(title);
         } else {
             self.titles.rearmed = true;
+            self.start_pending_goal_summary();
         }
     }
 
@@ -379,17 +392,54 @@ impl Actor {
 
     /// Fork (desktop App): Node `maybeStartGoalSummaryTitleGeneration`: a goal set after the first input asks the
     /// title model for its summary only (`goal_summary_title`); when that cannot start, the objective is the summary.
+    /// A title request still running (or waiting for its turn) is no such case: the summary waits for it
+    /// ([`TitleState::pending_goal_summary`]) instead of falling back, as Node's sidecar still runs its request.
     fn start_goal_summary(&mut self, target: String) {
-        let eligible = self.titles.task.is_none()
-            && self.meta.kind == SessionKind::Interactive
-            && self.meta.parent.is_none();
-        let objective = self.goal_objective(&target);
-        let (Some(objective), true) = (objective, eligible) else {
-            self.goal_summarized(&target, None);
+        if self.titles.in_flight() {
+            match self.goal_objective(&target) {
+                Some(objective) => {
+                    self.titles.pending_goal_summary = Some(PendingGoalSummary {
+                        target,
+                        objective,
+                        prompt: self.messages.last().map(|message| message.id().clone()),
+                    });
+                }
+                None => self.goal_summarized(&target, None),
+            }
             return;
-        };
-        let prompt = self.messages.last().map(|message| message.id().clone());
-        let Some(prompt) = prompt else {
+        }
+        match self.goal_objective(&target) {
+            Some(objective) => self.launch_goal_summary(
+                target,
+                objective,
+                self.messages.last().map(|message| message.id().clone()),
+            ),
+            None => self.goal_summarized(&target, None),
+        }
+    }
+
+    /// Fork (desktop App): the parked goal summary, once the title slot is free ([`TitleState::pending_goal_summary`]).
+    fn start_pending_goal_summary(&mut self) {
+        if let Some(PendingGoalSummary {
+            target,
+            objective,
+            prompt,
+        }) = self.titles.pending_goal_summary.take()
+        {
+            self.launch_goal_summary(target, objective, prompt);
+        }
+    }
+
+    /// Fork (desktop App): the `goal_summary_title` request itself; the objective is already resolved by the caller
+    /// (a parked summary carries the one from when it parked).
+    fn launch_goal_summary(
+        &mut self,
+        target: String,
+        objective: String,
+        prompt: Option<MessageId>,
+    ) {
+        let eligible = self.meta.kind == SessionKind::Interactive && self.meta.parent.is_none();
+        let Some(prompt) = prompt.filter(|_| eligible) else {
             self.goal_summarized(&target, None);
             return;
         };
@@ -407,8 +457,14 @@ impl Actor {
         });
     }
 
-    /// 标题任务回到 actor：先提交这次请求的用量行，候选标题仍可写时再提交、改内存、发事件。
+    /// 标题任务回到 actor：先提交这次请求的用量行，候选标题仍可写时再提交、改内存、发事件。之后释放等着的
+    /// goal summary（[`Self::start_pending_goal_summary`]）。
     pub(crate) async fn on_title(&mut self, done: TitleDone) {
+        self.settle_title(done).await;
+        self.start_pending_goal_summary();
+    }
+
+    async fn settle_title(&mut self, done: TitleDone) {
         self.titles.task = None;
         let TitleDone {
             prompt,
