@@ -187,6 +187,14 @@ impl Ext {
         &self.layer
     }
 
+    /// Fork: the MCP group a session reads (its workspace's, else the process one).
+    pub fn mcp_for_session(
+        &self,
+        session: &rust_cli_kernel_api::ids::SessionId,
+    ) -> Arc<McpManager> {
+        self.registry.session_mcp(session)
+    }
+
     /// 主线程的工具注册表：基础工具、Skill、MCP 工具（ext.md §1）。
     /// 单次的 `-p`：内置 `/loop` 的 Monitor 超时随它（tools-more.md §17.1）。
     pub fn set_print_session(&self, print: bool) {

@@ -57,6 +57,21 @@ impl WorkspaceConfigLoader for Loader {
         };
         let mut warnings = Vec::new();
         let files = super::read_files(&inputs).await;
+        // A discovered project file that cannot be read or parsed is not skipped (that would cache
+        // a partial layer as Loaded forever): the load fails closed, the slot turns Invalid and the
+        // workspace's next open retries (specs/fork-rust-workspace-plugins-mcp.md).
+        if files.projects.iter().any(|project| {
+            matches!(
+                project.file,
+                rust_cli_platform::local::ConfigFile::Invalid { .. }
+            )
+        }) {
+            tracing::warn!(
+                workspace = workspace.root.as_str(),
+                "a project config file is unreadable; the workspace layer fails closed"
+            );
+            return None;
+        }
         let empty = Map::new();
         let layers = super::layers(&files, inputs.flag, &empty, &mut warnings);
         // The same plugin view the LSP path builds (`plugin_view`), with one Node rule it keeps as

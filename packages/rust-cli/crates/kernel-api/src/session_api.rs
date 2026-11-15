@@ -863,6 +863,16 @@ pub trait Kernel: Send + Sync {
     }
 
     /// MCP 服务器的状态（`/mcp`、`/status`，tui-display.md §3.4，L28）。默认没有。
+    /// Fork (specs/fork-rust-workspace-plugins-mcp.md): the statuses of the session's workspace
+    /// group; the default keeps the process set.
+    async fn mcp_servers_for(
+        &self,
+        session: &crate::ids::SessionId,
+    ) -> Vec<crate::manage::McpServerInfo> {
+        let _ = session;
+        self.mcp_servers().await
+    }
+
     async fn mcp_servers(&self) -> Vec<crate::manage::McpServerInfo> {
         Vec::new()
     }

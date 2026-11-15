@@ -175,6 +175,15 @@ impl Kernel for LocalKernel {
         self.ext.mcp().server_infos()
     }
 
+    /// Fork: the statuses of the session's workspace group (print/system-init and the mobile web
+    /// remote read them for the session that is running).
+    async fn mcp_servers_for(
+        &self,
+        session: &rust_cli_kernel_api::ids::SessionId,
+    ) -> Vec<rust_cli_kernel_api::manage::McpServerInfo> {
+        self.ext.mcp_for_session(session).server_infos()
+    }
+
     /// `/plan open`：计划文件的位置（与 ExitPlanMode 同一个来源）与它有没有内容（tui-manage.md §8）。
     async fn plan_file(
         &self,
