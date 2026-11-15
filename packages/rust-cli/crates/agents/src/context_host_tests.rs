@@ -200,11 +200,26 @@ async fn a_loaded_workspace_replaces_the_process_plugin_agents() {
         home: Some(EnvPath::new("/Users/dev")),
         uid: None,
     };
-    let env = Arc::new(MemoryEnvironment::new(facts).with_file(
-        "/Users/dev/plugins/kit/agents/review.md",
-        "---\nname: review\ndescription: The kit reviewer.\n---\nO.",
-    ));
+    let env = Arc::new(
+        MemoryEnvironment::new(facts)
+            .with_file(
+                "/Users/dev/plugins/kit/agents/review.md",
+                "---\nname: review\ndescription: The kit reviewer.\n---\nO.",
+            )
+            .with_file(
+                "/Users/dev/plugins/base/agents/audit.md",
+                "---\nname: audit\ndescription: The process auditor.\n---\nA.",
+            ),
+    );
     let catalog = AgentCatalog::new(env.clone(), env);
+    // The process set carries its own plugin; a loaded workspace replaces it, not merges it.
+    catalog.set_plugins(vec![PluginAgentFile {
+        id: "base@market".to_owned(),
+        plugin: "base".to_owned(),
+        root: "/Users/dev/plugins/base".to_owned(),
+        path: "/Users/dev/plugins/base/agents/audit.md".to_owned(),
+        namespace: Vec::new(),
+    }]);
     catalog.set_workspace_files(Box::new(|workspace: &WorkspaceRef| {
         (workspace.root.as_str() == "/Users/dev/ws-a").then(|| {
             vec![PluginAgentFile {
@@ -235,7 +250,15 @@ async fn a_loaded_workspace_replaces_the_process_plugin_agents() {
         )
         .await;
     assert!(names(&a).contains(&"kit:review"));
-    assert!(!names(&b).contains(&"review"));
+    assert!(
+        !names(&a).contains(&"base:audit"),
+        "a loaded workspace replaces the process plugin set, not merges it"
+    );
+    assert!(
+        names(&b).contains(&"base:audit"),
+        "a workspace without a layer keeps the process plugin set"
+    );
+    assert!(!names(&b).contains(&"kit:review"));
 }
 
 fn workspace() -> WorkspaceRef {

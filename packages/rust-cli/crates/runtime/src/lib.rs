@@ -294,7 +294,7 @@ impl LocalKernel {
             agent_catalog.set_workspace_files(Box::new(move |workspace| {
                 layer
                     .plugins_of(workspace)
-                    .map(|plugins| ext::plugin_parts(&plugins).0)
+                    .map(|plugins| ext::plugin_agent_files(&plugins))
             }));
         }
         if let Some(code) = &extensions.code_intelligence {

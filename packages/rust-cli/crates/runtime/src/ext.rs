@@ -81,8 +81,10 @@ impl Extensions {
 }
 
 /// 插件里的 agent 文件与 hooks（ext.md §4）；hooks 里的坏项跳过并记警告（hooks.md D1）。
-pub(crate) fn plugin_parts(plugins: &Plugins) -> (Vec<PluginAgentFile>, Vec<PluginHooks>) {
-    let agents = plugins
+/// Fork (specs/fork-rust-workspace-plugins-mcp.md): the agent files alone, for the workspace
+/// lookups that must not re-parse the plugin hooks on every call.
+pub(crate) fn plugin_agent_files(plugins: &Plugins) -> Vec<PluginAgentFile> {
+    plugins
         .0
         .iter()
         .flat_map(|plugin| {
@@ -94,7 +96,11 @@ pub(crate) fn plugin_parts(plugins: &Plugins) -> (Vec<PluginAgentFile>, Vec<Plug
                 namespace: file.namespace.clone(),
             })
         })
-        .collect();
+        .collect()
+}
+
+pub(crate) fn plugin_parts(plugins: &Plugins) -> (Vec<PluginAgentFile>, Vec<PluginHooks>) {
+    let agents = plugin_agent_files(plugins);
     let hooks = plugins
         .0
         .iter()
