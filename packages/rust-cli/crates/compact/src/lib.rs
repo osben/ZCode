@@ -254,8 +254,9 @@ impl Compaction {
             }
             // 被 PreCompact hook 拦下不算失败，照常发请求。
             Err(Failure::Blocked(_)) => AutoCompactOutcome::NotNeeded,
-            // Fork: on the desktop too little history is Node's `skipped` compaction: a marker, not a failure.
-            Err(Failure::NotEnough) if !self.config.blocking => {
+            // Fork: on the desktop too little history (or none) is Node's `skipped` compaction: a
+            // marker, not a failure.
+            Err(Failure::NotEnough | Failure::NoMessages) if !self.config.blocking => {
                 if let Some(progress) = progress {
                     progress.skipped(request.trigger).await;
                 }
@@ -369,10 +370,14 @@ impl Compactor for Compaction {
         }
         // 手动与反应式压缩许“全部摘要”（没有媒体超限错误时）。
         match self.run(&request, true, &cancel, None).await {
-            // Fork: on the desktop a `/compact` with too little history is Node's healthy no-op, not a failure.
-            Err(Failure::NotEnough) if !self.config.blocking => Err(OrchestrationError::Skipped {
-                message: UP_TO_DATE.to_owned(),
-            }),
+            // Fork: on the desktop a `/compact` with too little history — or none at all, a typed
+            // /compact as the very first action of a draft (HK17) — is Node's healthy no-op, not a
+            // failure.
+            Err(Failure::NotEnough | Failure::NoMessages) if !self.config.blocking => {
+                Err(OrchestrationError::Skipped {
+                    message: UP_TO_DATE.to_owned(),
+                })
+            }
             result => result.map_err(|f| failed(&f)),
         }
     }
