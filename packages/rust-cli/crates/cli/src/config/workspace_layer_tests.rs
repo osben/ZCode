@@ -60,8 +60,7 @@ async fn unadmitted_project_servers_are_dropped_the_overlay_still_loads() {
     // No trust records exist for this workspace, so its project servers wait for a grant — the
     // same admission as the process assembly (`config::assemble`). The plugin enablement overlay
     // is independent of MCP trust and still loads. The granted path (a trust record in the store)
-    // needs a store fixture; the store read goes to the controller's real disk, so a positive test
-    // arrives with the trust-store test harness follow-up.
+    // is covered by `a_granted_project_server_loads_through_the_trust_store` below.
     let loader = loader(
         env(&[
             ("/Users/dev/repo/.git/HEAD", "ref"),
@@ -99,4 +98,90 @@ async fn a_workspace_without_project_config_loads_empty() {
     let config = loader.load(&workspace("/Users/dev/repo")).await.unwrap();
 
     assert!(config.servers.is_empty());
+}
+
+/// The loader's granted path (#467 review): a trust record in the store admits the workspace's project
+/// server. The store is the controller's real disk beside the hook trust store (`Inspection::read`
+/// bypasses the Files port), so the fixture resolves the storage paths at a temp home (the LSP tests'
+/// `fixture_config` pattern) and seeds the grant through the store's own `decide`, with the digest the
+/// workspace's declaration has now — the same shape `config/mod_tests.rs` seeds for the process assembly.
+#[tokio::test]
+async fn a_granted_project_server_loads_through_the_trust_store() {
+    let home = tempfile::tempdir().unwrap();
+    let files: Arc<dyn FilesPort> = Arc::new(env(&[
+        ("/Users/dev/repo/.git/HEAD", "ref"),
+        (
+            "/Users/dev/repo/.zcode/config.json",
+            r#"{"mcp": {"servers": {"project-server": {"type": "stdio", "command": "node", "args": ["s.js"]}}}}"#,
+        ),
+    ]));
+    let paths = StoragePaths::resolve(&Default::default(), home.path(), home.path());
+    let loader = Loader {
+        files: files.clone(),
+        controller: files.clone(),
+        paths: paths.clone(),
+        process_env: Default::default(),
+        flag: None,
+        project_is_local: true,
+        process: PluginSources::default(),
+        strict: false,
+    };
+    let workspace = workspace("/Users/dev/repo");
+
+    // Without a grant the same config drops the server (the contrast case above).
+    let config = loader.load(&workspace).await.unwrap();
+    assert!(
+        config.servers.is_empty(),
+        "an ungranted project server must not connect"
+    );
+
+    // The grant: a record for the declaration's current digest, written through the store's decide.
+    // Every field mirrors the Loader's own inputs (the same source Loader::load assembles), so a
+    // loader change cannot silently desynchronize the seeding from the read under test.
+    let inputs = ConfigInputs {
+        files: loader.files.as_ref(),
+        workspace: &workspace,
+        paths: &loader.paths,
+        process_env: &loader.process_env,
+        flag: loader.flag.as_ref(),
+        project_is_local: loader.project_is_local,
+    };
+    let read = super::super::read_files(&inputs).await;
+    let inspection = mcp_trust::Inspection::read(
+        loader.files.as_ref(),
+        &workspace,
+        mcp_trust::Target::new(workspace.root.as_str(), None),
+        (read.user.object(), &read.projects),
+        &loader.paths,
+    )
+    .await;
+    let digest = inspection
+        .discovery()
+        .unwrap()
+        .get("project-server")
+        .unwrap()
+        .digest
+        .clone();
+    inspection
+        .store
+        .decide(
+            async || rust_cli_platform::local::StillDeclared::Yes,
+            rust_cli_platform::local::McpTrustRecord {
+                workspace_identity: inspection.target.identity.clone(),
+                server_name: "project-server".to_owned(),
+                declaration_digest: digest,
+                granted_at: "2026-11-13T00:00:00.000Z".to_owned(),
+            },
+            true,
+        )
+        .await
+        .unwrap();
+
+    let config = loader.load(&workspace).await.unwrap();
+    let loaded: Vec<_> = config
+        .servers
+        .iter()
+        .map(|server| (server.name.as_str(), server.scope))
+        .collect();
+    assert_eq!(loaded, [("project-server", McpScope::Project)]);
 }

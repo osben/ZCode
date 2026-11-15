@@ -414,6 +414,12 @@ pub struct AttachmentMessage {
     pub data: Value,
 }
 
+/// Fork (node_desktop): the source of the Read partial-view batch attachment (Node `formatReadBatchNotice`'s
+/// `system-reminder` source). It is contract-coupled across crates — the tools crate names the attachment it
+/// sends, the query executor the batch notices it holds to the batch's end — so the name lives here beside
+/// [`AttachmentMessage`], the crate both sides already depend on.
+pub const READ_TRUNCATION_NOTICE: &str = "read_truncation_notice";
+
 /// attachment 发给模型时的角色。
 ///
 /// System：支持对话中间 system 消息的模型上，折叠进紧跟 user 消息的 `role: system` 消息；
