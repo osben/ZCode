@@ -205,9 +205,10 @@ pub struct NodeHelper {
     /// same lock discipline as [`Self::catalog_resolver`].
     workspace_catalog_resolver: StdMutex<Option<Arc<WorkspaceCatalogResolver>>>,
     /// F3: the workspace (with its key) each session's pipe traffic runs in, as its store row holds it — the same
-    /// resolution the session open uses, cached for the process's life (a row never changes workspace). Read by the
-    /// pipe-workspace refusal and the routed transport's pipe choice; only cloned out under the lock.
-    pipe_workspaces: StdMutex<HashMap<String, (Value, String)>>,
+    /// resolution the session open uses, cached with the oldest evicted at [`mcp::REMEMBERED_WORKSPACES`] (a row never
+    /// changes workspace, so an evicted entry is only re-resolved, never wrong). Read by the pipe-workspace refusal
+    /// and the routed transport's pipe choice; only cloned out under the lock.
+    pipe_workspaces: StdMutex<mcp::PipeWorkspaces>,
     /// F3: the helper's requests to Rust and who answers them.
     requests: StdMutex<requests::Requests>,
     /// F3: the last `openId` of a `helper/session/open`; a close names its open's id.
