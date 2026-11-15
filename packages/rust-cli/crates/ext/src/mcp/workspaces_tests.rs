@@ -51,10 +51,8 @@ async fn a_workspace_group_holds_its_own_servers() {
     let fake: Arc<FakeMcp> = Arc::new(FakeMcp::default());
     let mcp = groups(&fake, &scope);
 
-    mcp.start(PROCESS, workspace(), vec![server_config("user-server")])
-        .await;
-    mcp.start("/work/a", workspace(), vec![server_config("project-of-a")])
-        .await;
+    mcp.start(PROCESS, workspace(), vec![server_config("user-server")]);
+    mcp.start("/work/a", workspace(), vec![server_config("project-of-a")]);
 
     assert_eq!(names(&mcp.group("/work/a").unwrap()), ["project-of-a"]);
     assert!(mcp.group("/work/b").is_none());
@@ -68,14 +66,12 @@ async fn restarting_a_group_replaces_its_servers() {
     let fake: Arc<FakeMcp> = Arc::new(FakeMcp::default());
     let mcp = groups(&fake, &scope);
 
-    mcp.start("/work/a", workspace(), vec![server_config("one")])
-        .await;
+    mcp.start("/work/a", workspace(), vec![server_config("one")]);
     mcp.start(
         "/work/a",
         workspace(),
         vec![server_config("two"), server_config("three")],
-    )
-    .await;
+    );
 
     assert_eq!(names(&mcp.group("/work/a").unwrap()), ["three", "two"]);
 }
@@ -86,10 +82,8 @@ async fn stopping_a_group_removes_it_the_process_stays() {
     let fake: Arc<FakeMcp> = Arc::new(FakeMcp::default());
     let mcp = groups(&fake, &scope);
 
-    mcp.start(PROCESS, workspace(), vec![server_config("user-server")])
-        .await;
-    mcp.start("/work/a", workspace(), vec![server_config("one")])
-        .await;
+    mcp.start(PROCESS, workspace(), vec![server_config("user-server")]);
+    mcp.start("/work/a", workspace(), vec![server_config("one")]);
     mcp.stop("/work/a");
 
     assert!(mcp.group("/work/a").is_none());
