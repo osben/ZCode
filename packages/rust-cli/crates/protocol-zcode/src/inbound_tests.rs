@@ -247,6 +247,20 @@ fn managed_worktree_cwd_fields_are_accepted_by_the_shipped_schema() {
             ))
             .is_ok()
     );
+    // The fork half's wrong-typed refusal is pinned too (the forkAssistant top-level schema has no
+    // additionalProperties guard, so a loosened regeneration must fail here, not pass silently).
+    let mut bad_fork = creation;
+    bad_fork["sha"] = json!(1);
+    assert!(
+        inbound
+            .command(&envelope(
+                "forkAssistant",
+                json!({"target": {"rowId": 0, "entityId": "e1"},
+                    "targetCwd": {"cwd": "/w/.zcode-worktrees/one", "childSessionId": "child-1",
+                        "worktreeCreation": bad_fork}}),
+            ))
+            .is_err()
+    );
 }
 
 #[test]
