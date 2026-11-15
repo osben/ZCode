@@ -45,7 +45,8 @@ pub type PluginHooksSink = Box<dyn Fn(&str, &Arc<crate::plugins::Plugins>) + Sen
 
 /// The per-workspace slots and the MCP groups they start. One load of a workspace runs at a
 /// time: a concurrent session of the same workspace waits for the first load's slot, so a group
-/// is never replaced mid-flight by a racing second load.
+/// is never replaced mid-flight by a racing second load. A reload (a config or trust write a caller
+/// committed) does not queue behind that: epoch-ordered writes arbitrate the two.
 pub struct WorkspaceLayer {
     files: Arc<dyn Files>,
     mcp: Arc<WorkspaceMcp>,
@@ -56,11 +57,32 @@ pub struct WorkspaceLayer {
     loader: OnceLock<Arc<dyn WorkspaceConfigLoader>>,
     /// The sink that receives an installed set's hooks (the runtime wires the engine behind it).
     hooks: OnceLock<PluginHooksSink>,
-    slots: RwLock<BTreeMap<String, Slot>>,
+    slots: RwLock<Slots>,
     /// The keys with a load in flight; the Notify wakes the waiters when it finishes.
     loading: RwLock<std::collections::HashMap<String, Arc<tokio::sync::Notify>>>,
     /// The process workspace (its sessions read the process group, which already serves it).
     process: Option<WorkspaceRef>,
+}
+
+/// The installed slots with the epoch of the write that put each. An epoch is taken (reserved)
+/// before a write reads, and a put is refused when a later reservation already installed — the
+/// hooks engine's `reserve_project`/`put_project_at` shape (specs/fork-rust-workspace-plugins-mcp.md,
+/// "As built: layer reload").
+struct Slots {
+    /// Counts writes: a session's load reserves when it claims the key, a reload before it reads.
+    epoch: u64,
+    map: BTreeMap<String, (Slot, u64)>,
+}
+
+/// One assembled layer, ready to install: the slot plus what its group needs. The group itself
+/// starts (or stops) at the install ([`WorkspaceLayer::put_at`]), under the epoch acceptance check.
+enum Install {
+    Loaded {
+        workspace: WorkspaceRef,
+        servers: Vec<McpServer>,
+        plugins: Arc<crate::plugins::Plugins>,
+    },
+    Invalid,
 }
 
 #[derive(Clone)]
@@ -86,7 +108,10 @@ impl WorkspaceLayer {
             servers,
             loader: OnceLock::new(),
             hooks: OnceLock::new(),
-            slots: RwLock::new(BTreeMap::new()),
+            slots: RwLock::new(Slots {
+                epoch: 0,
+                map: BTreeMap::new(),
+            }),
             loading: RwLock::new(std::collections::HashMap::new()),
             process,
         }
@@ -105,7 +130,11 @@ impl WorkspaceLayer {
     /// The slot of `key`: the load guard reuses a `Loaded` slot, and the sessions resolve their
     /// MCP group through the manager, which only has a group for a `Loaded` slot.
     pub(crate) fn slot(&self, key: &str) -> Option<Slot> {
-        self.slots.read_unpoisoned().get(key).cloned()
+        self.slots
+            .read_unpoisoned()
+            .map
+            .get(key)
+            .map(|(slot, _)| slot.clone())
     }
 
     /// The workspace's plugin set when a layer is loaded for it (the process set otherwise, by
@@ -160,9 +189,9 @@ impl WorkspaceLayer {
         }
     }
 
-    /// Loads (or reloads) the layer of `workspace`. Fail-closed: a project layer that cannot be
-    /// read or parsed stops the workspace's group and marks the slot `Invalid`, so its sessions
-    /// keep the process set until the next successful load.
+    /// Loads the layer of `workspace` at the first need of one of its sessions. Fail-closed: a
+    /// project layer that cannot be read or parsed stops the workspace's group and marks the slot
+    /// `Invalid`, so its sessions keep the process set until the next successful load.
     pub(crate) async fn load(&self, workspace: &WorkspaceRef) {
         let key = project_key(workspace.root.as_str());
         if self
@@ -175,8 +204,8 @@ impl WorkspaceLayer {
             return;
         }
         // A loaded slot is reused: a second session of the same workspace must not replace the
-        // group (that would cancel the first session's connections mid-flight). A slot stays until
-        // the process ends; a later PR adds the config-change reload with epoch writes.
+        // group (that would cancel the first session's connections mid-flight). The config-change
+        // path is [`Self::reload`], which reserves an epoch and re-reads past this guard.
         if matches!(self.slot(&key), Some(Slot::Loaded(_))) {
             return;
         }
@@ -207,7 +236,61 @@ impl WorkspaceLayer {
             key: key.clone(),
             armed: true,
         };
-        let slot = match loader.load(workspace).await {
+        // The epoch is reserved when the key is claimed, before the read: a reload triggered while
+        // this load runs reserved after it, so whichever finishes first the later read wins.
+        let epoch = self.reserve();
+        let install = self.assemble(&loader, workspace).await;
+        self.put_or_superseded(&key, workspace, epoch, install);
+        self.finish(&key);
+        claim.armed = false;
+    }
+
+    /// Fork (specs/fork-rust-workspace-plugins-mcp.md, "As built: layer reload"): re-reads
+    /// `workspace`'s project layer past the loaded-slot reuse, for a config or trust write the
+    /// caller committed (Node's per-session re-read has no file-watcher equivalent here). The
+    /// epoch is reserved before the read, so a session load that started earlier never installs
+    /// its older read over this slot — nor replaces the group, which swaps under the same
+    /// acceptance check. The reload stays lazy: a workspace with neither a slot nor a load in
+    /// flight does not load here (nothing in this process uses it yet; its next session open reads
+    /// the post-write config directly). Fail-closed like the first load: a read that now fails
+    /// installs `Invalid` and stops the group.
+    pub(crate) async fn reload(&self, workspace: &WorkspaceRef) {
+        let key = project_key(workspace.root.as_str());
+        if self
+            .process
+            .as_ref()
+            .is_some_and(|process| project_key(process.root.as_str()) == key)
+        {
+            // The process group serves exactly this workspace; it has no slot to replace.
+            return;
+        }
+        if self.slot(&key).is_none() && !self.loading.read_unpoisoned().contains_key(&key) {
+            return;
+        }
+        let Some(loader) = self.loader.get().cloned() else {
+            return;
+        };
+        let epoch = self.reserve();
+        let install = self.assemble(&loader, workspace).await;
+        self.put_or_superseded(&key, workspace, epoch, install);
+    }
+
+    /// The next epoch, taken before the write reads (the hooks engine's `reserve_project`).
+    fn reserve(&self) -> u64 {
+        let mut slots = self.slots.write_unpoisoned();
+        slots.epoch += 1;
+        slots.epoch
+    }
+
+    /// Reads `workspace`'s project layer and builds the install: the re-selected plugin set and
+    /// the group's full server list. The group itself starts (or stops) at the install, so a
+    /// superseded read never touches it.
+    async fn assemble(
+        &self,
+        loader: &Arc<dyn WorkspaceConfigLoader>,
+        workspace: &WorkspaceRef,
+    ) -> Install {
+        match loader.load(workspace).await {
             Some(config) => {
                 let loaded = crate::plugins::load_all(
                     self.files.as_ref(),
@@ -220,35 +303,64 @@ impl WorkspaceLayer {
                 let mut servers = self.servers.clone();
                 servers.extend(loaded.mcp_servers());
                 servers.extend(config.servers);
-                self.mcp.start(&key, workspace.clone(), servers);
-                Slot::Loaded(Arc::new(loaded))
+                Install::Loaded {
+                    workspace: workspace.clone(),
+                    servers,
+                    plugins: Arc::new(loaded),
+                }
             }
             None => {
                 tracing::warn!(
                     workspace = workspace.root.as_str(),
                     "the workspace plugin/MCP layer could not be loaded; the process set stays"
                 );
-                self.mcp.stop(&key);
-                Slot::Invalid
-            }
-        };
-        let installed = match &slot {
-            Slot::Loaded(plugins) => Some(plugins.clone()),
-            Slot::Invalid => None,
-        };
-        // The sink runs INSIDE the slots write guard: no `slot()` read (the waiters' fast path
-        // checks the slot before awaiting) can observe the new slot before its plugin hooks are
-        // registered, so a session proceeding on the slot never runs the process hooks of the
-        // plugins its own set disables.
-        {
-            let mut slots = self.slots.write_unpoisoned();
-            slots.insert(key.clone(), slot);
-            if let (Some(sink), Some(plugins)) = (self.hooks.get(), installed) {
-                sink(&key, &plugins);
+                Install::Invalid
             }
         }
-        self.finish(&key);
-        claim.armed = false;
+    }
+
+    /// Installs at `epoch`, or drops the read when a write that reserved after it already
+    /// installed (the hooks engine's `put_project_at` shape).
+    fn put_or_superseded(&self, key: &str, workspace: &WorkspaceRef, epoch: u64, install: Install) {
+        if !self.put_at(key, epoch, install) {
+            tracing::info!(
+                workspace = workspace.root.as_str(),
+                "a later write already put the workspace plugin/MCP layer; the older read is dropped"
+            );
+        }
+    }
+
+    /// Sets the slot of `key` at `epoch` unless a write that reserved after `epoch` already set
+    /// it. The group swap and the plugin-hooks sink run INSIDE the slots write guard and under the
+    /// same acceptance check: no `slot()` read (the waiters' fast path checks the slot before
+    /// awaiting) can observe the new slot before its group and hooks are in place, and a
+    /// superseded write replaces neither the slot nor the group.
+    fn put_at(&self, key: &str, epoch: u64, install: Install) -> bool {
+        let mut slots = self.slots.write_unpoisoned();
+        if slots.map.get(key).is_some_and(|(_, at)| *at > epoch) {
+            return false;
+        }
+        match install {
+            Install::Loaded {
+                workspace,
+                servers,
+                plugins,
+            } => {
+                // A replaced group's connections stop inside `start` (`McpManager::shutdown`).
+                self.mcp.start(key, workspace, servers);
+                if let Some(sink) = self.hooks.get() {
+                    sink(key, &plugins);
+                }
+                slots
+                    .map
+                    .insert(key.to_owned(), (Slot::Loaded(plugins), epoch));
+            }
+            Install::Invalid => {
+                self.mcp.stop(key);
+                slots.map.insert(key.to_owned(), (Slot::Invalid, epoch));
+            }
+        }
+        true
     }
 }
 
@@ -272,6 +384,10 @@ impl Drop for Claim<'_> {
 impl rust_cli_kernel_api::workspace_key::WorkspaceLayerHost for WorkspaceLayer {
     async fn load(&self, workspace: &WorkspaceRef) {
         WorkspaceLayer::load(self, workspace).await;
+    }
+
+    async fn reload(&self, workspace: &WorkspaceRef) {
+        WorkspaceLayer::reload(self, workspace).await;
     }
 }
 

@@ -70,7 +70,8 @@ impl AppWorkspace {
     }
 
     /// Rebuilds the project hook entry of the workspace a trust change is about, wherever the process runs, from the
-    /// same read the review answers from.
+    /// same read the review answers from. The committed trust write also reloads the workspace's plugin/MCP layer
+    /// (specs/fork-rust-workspace-plugins-mcp.md, "As built: layer reload"): its read starts after the write.
     pub(super) async fn rebuild_hooks(&self, trust: &Target) {
         let epoch = self.reserve_rebuild();
         let (hooks, _, _) = self.review_hooks(trust).await;
@@ -81,6 +82,7 @@ impl AppWorkspace {
                 "the workspace's project hook entry was rebuilt"
             );
         }
+        self.reload_layer(trust).await;
     }
 
     pub(super) async fn review_bundle(&self, target: &WorkspaceTarget) -> ReviewLookup {
@@ -212,6 +214,10 @@ impl AppWorkspace {
         self.write_toggle(&trust, &hooks, &sources, review_item_id, enabled)
             .await
             .map_err(ToggleError::Rejected)?;
+        // The committed config write reloads the workspace's plugin/MCP layer ("As built: layer
+        // reload"): both outcomes below — the rebuilt entry and the invalidated one — follow it,
+        // and a layer read that now fails is fail-closed like a first load.
+        self.reload_layer(&trust).await;
         // Node `rebuildSnapshot`: one read after the write decides the outcome and is the snapshot that lands.
         let epoch = self.reserve_rebuild();
         let (after, failures, _) = self.review_hooks(&trust).await;

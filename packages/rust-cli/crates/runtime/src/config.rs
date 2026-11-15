@@ -43,6 +43,29 @@ impl LocalKernel {
         layer.load(workspace).await;
     }
 
+    /// Fork (specs/fork-rust-workspace-plugins-mcp.md, "As built: layer reload"): re-reads a
+    /// workspace's plugin/MCP layer past the loaded-slot reuse — the App's committed config/trust
+    /// writes go through here, so the workspace's group and plugin admission follow without a
+    /// process restart.
+    pub async fn reload_workspace_layer(&self, workspace: &rust_cli_kernel_api::env::WorkspaceRef) {
+        let layer = self
+            .workspace_layer
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        layer.reload(workspace).await;
+    }
+
+    /// Fork: the layer host, for the App's admin (its trust paths reload a workspace's layer).
+    pub fn workspace_layer_host(
+        &self,
+    ) -> std::sync::Arc<dyn rust_cli_kernel_api::workspace_key::WorkspaceLayerHost> {
+        self.workspace_layer
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
     /// Fork: the cli loader that assembles a workspace's plugin/MCP layer
     /// (specs/fork-rust-workspace-plugins-mcp.md); forwarded to the ext layer.
     pub fn set_workspace_config_loader(

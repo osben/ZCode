@@ -315,6 +315,8 @@ async fn a_toggle_rewrites_only_enabled_as_node_writes_the_config() {
     assert!(after.items[0].configured_enabled);
     assert!(!after.items[1].configured_enabled);
     assert_eq!(fixture.hooks.lock().unwrap().len(), 1);
+    // The committed config write reloads the workspace's plugin/MCP layer ("As built: layer reload").
+    assert_eq!(fixture.layer.reloaded(), [ROOT.to_owned()]);
 }
 
 #[tokio::test]
@@ -348,6 +350,8 @@ async fn a_toggle_is_refused_like_node() {
     );
     assert_eq!(project(&fixture).await, b"{ not json");
     assert!(fixture.hooks.lock().unwrap().is_empty());
+    // Every refusal came before the write: nothing reloaded.
+    assert!(fixture.layer.reloaded().is_empty());
 }
 
 /// The re-check of the declaration read for the write: a different command, or one at another position, is not the

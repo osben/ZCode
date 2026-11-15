@@ -22,6 +22,70 @@ impl WorkspaceConfigLoader for Fixed {
     }
 }
 
+/// Answers a scripted sequence, one config per call: the test drives a load then a reload.
+struct Seq(std::sync::Mutex<std::collections::VecDeque<Option<WorkspaceConfig>>>);
+
+#[async_trait]
+impl WorkspaceConfigLoader for Seq {
+    async fn load(&self, _workspace: &WorkspaceRef) -> Option<WorkspaceConfig> {
+        self.0
+            .lock()
+            .unwrap()
+            .pop_front()
+            .expect("every call has a scripted answer")
+    }
+}
+
+/// A loader whose calls answer through channels the test holds: each call pops the next receiver,
+/// so the test decides when a concurrent load or reload proceeds (and `calls` shows it entered).
+struct Gated {
+    answers: std::sync::Mutex<
+        std::collections::VecDeque<tokio::sync::oneshot::Receiver<Option<WorkspaceConfig>>>,
+    >,
+    calls: std::sync::atomic::AtomicUsize,
+}
+
+impl Gated {
+    fn calls(&self) -> usize {
+        self.calls.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+#[async_trait]
+impl WorkspaceConfigLoader for Gated {
+    async fn load(&self, _workspace: &WorkspaceRef) -> Option<WorkspaceConfig> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let receiver = self
+            .answers
+            .lock()
+            .unwrap()
+            .pop_front()
+            .expect("every call has a gated answer");
+        match receiver.await {
+            Ok(answer) => answer,
+            Err(_) => panic!("the test answers every gated call"),
+        }
+    }
+}
+
+fn gated(
+    answers: usize,
+) -> (
+    Arc<Gated>,
+    Vec<tokio::sync::oneshot::Sender<Option<WorkspaceConfig>>>,
+) {
+    let (senders, receivers) = (0..answers)
+        .map(|_| tokio::sync::oneshot::channel())
+        .unzip();
+    (
+        Arc::new(Gated {
+            answers: std::sync::Mutex::new(receivers),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        }),
+        senders,
+    )
+}
+
 // WorkspaceConfig is not Clone-sensitive here; build one with a project server.
 fn config_with_server(name: &str) -> WorkspaceConfig {
     WorkspaceConfig {
@@ -255,4 +319,153 @@ async fn an_invalid_slot_does_not_reach_the_hooks_sink() {
     // Fail-closed: the workspace keeps the process set, so nothing registers.
     assert!(matches!(layer.slot("/w"), Some(super::Slot::Invalid)));
     assert!(seen.lock().unwrap().is_empty());
+}
+
+/// Fork (specs/fork-rust-workspace-plugins-mcp.md, "As built: layer reload"): a reload past the
+/// loaded-slot reuse replaces the slot and the group (the replaced group's connections stop) and
+/// re-fires the hooks sink for the new set.
+#[tokio::test]
+async fn a_reload_replaces_the_slot_the_group_and_refires_the_sink() {
+    let scope = TaskScope::root("test", |_| {});
+    let fake: Arc<FakeMcp> = Arc::new(FakeMcp::default());
+    let (mcp, layer) = layer(&fake, &scope);
+    let seen: Arc<std::sync::Mutex<Vec<String>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+    layer.set_plugin_hooks_sink({
+        let seen = seen.clone();
+        Box::new(move |key, _plugins| seen.lock().unwrap().push(key.to_owned()))
+    });
+    layer.set_loader(Arc::new(Seq(std::sync::Mutex::new(
+        [
+            Some(config_with_server("first")),
+            Some(config_with_server("second")),
+        ]
+        .into(),
+    ))));
+
+    layer.load(&workspace()).await;
+    let before = layer.plugins_of(&workspace()).expect("the slot is loaded");
+    assert_eq!(names(&mcp, "/w"), ["first"]);
+
+    layer.reload(&workspace()).await;
+
+    let after = layer.plugins_of(&workspace()).expect("the slot is loaded");
+    assert!(
+        !Arc::ptr_eq(&before, &after),
+        "the reload replaced the slot, it did not reuse it"
+    );
+    assert_eq!(names(&mcp, "/w"), ["second"]);
+    assert_eq!(
+        seen.lock().unwrap().clone(),
+        ["/w".to_owned(), "/w".to_owned()],
+        "the sink re-fires once for the reloaded set"
+    );
+}
+
+/// The epoch ordering (the hooks engine's `put_project_at` shape): a session load that started
+/// before a reload never installs its older read over the newer slot — and it must not replace the
+/// group either, so the acceptance check covers the group swap.
+#[tokio::test]
+async fn an_older_load_never_installs_over_a_newer_reload() {
+    let scope = TaskScope::root("test", |_| {});
+    let fake: Arc<FakeMcp> = Arc::new(FakeMcp::default());
+    let (mcp, owned) = layer(&fake, &scope);
+    let layer = Arc::new(owned);
+    let seen: Arc<std::sync::Mutex<Vec<String>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+    layer.set_plugin_hooks_sink({
+        let seen = seen.clone();
+        Box::new(move |key, _plugins| seen.lock().unwrap().push(key.to_owned()))
+    });
+    let (loader, mut answers) = gated(2);
+    layer.set_loader(loader.clone());
+
+    // The session-open load claims the workspace and enters its gated read first.
+    let older = {
+        let layer = layer.clone();
+        tokio::spawn(async move { layer.load(&workspace()).await })
+    };
+    let entered = async {
+        while loader.calls() < 1 {
+            tokio::task::yield_now().await;
+        }
+    };
+    tokio::time::timeout(std::time::Duration::from_millis(500), entered)
+        .await
+        .expect("the older load started reading");
+
+    // The reload (a config write committed meanwhile) reserves after it and installs first.
+    let reload_answer = answers.pop().expect("two answers");
+    reload_answer
+        .send(Some(config_with_server("second")))
+        .unwrap_or_else(|_| panic!("the reload's answer was not awaited"));
+    layer.reload(&workspace()).await;
+    assert_eq!(names(&mcp, "/w"), ["second"]);
+
+    // The older read finishes last: its put is refused, the group keeps the reload's set.
+    let older_answer = answers.pop().expect("two answers");
+    older_answer
+        .send(Some(config_with_server("first")))
+        .unwrap_or_else(|_| panic!("the older load's answer was not awaited"));
+    older.await.expect("the older load finished");
+    assert_eq!(names(&mcp, "/w"), ["second"]);
+    assert_eq!(
+        seen.lock().unwrap().clone(),
+        ["/w".to_owned()],
+        "only the reload's set reached the sink"
+    );
+}
+
+/// A reload whose read fails is fail-closed exactly like a first load (`Invalid`, the group stops,
+/// nothing registers), and a later reload recovers; a workspace that never loaded stays unloaded.
+#[tokio::test]
+async fn a_broken_reload_is_fail_closed_and_recovers() {
+    let scope = TaskScope::root("test", |_| {});
+    let fake: Arc<FakeMcp> = Arc::new(FakeMcp::default());
+    let (mcp, layer) = layer(&fake, &scope);
+    let seen: Arc<std::sync::Mutex<Vec<String>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+    layer.set_plugin_hooks_sink({
+        let seen = seen.clone();
+        Box::new(move |key, _plugins| seen.lock().unwrap().push(key.to_owned()))
+    });
+    layer.set_loader(Arc::new(Seq(std::sync::Mutex::new(
+        [
+            Some(config_with_server("first")),
+            None,
+            Some(config_with_server("second")),
+        ]
+        .into(),
+    ))));
+
+    layer.load(&workspace()).await;
+    assert_eq!(names(&mcp, "/w"), ["first"]);
+
+    layer.reload(&workspace()).await;
+    assert!(matches!(layer.slot("/w"), Some(super::Slot::Invalid)));
+    assert!(layer.plugins_of(&workspace()).is_none());
+    assert!(mcp.group("/w").is_none());
+    assert_eq!(
+        seen.lock().unwrap().clone(),
+        ["/w".to_owned()],
+        "an invalid reload does not reach the sink"
+    );
+
+    layer.reload(&workspace()).await;
+    assert!(matches!(layer.slot("/w"), Some(super::Slot::Loaded(_))));
+    assert_eq!(names(&mcp, "/w"), ["second"]);
+}
+
+/// The reload stays lazy: a workspace with neither a slot nor a load in flight does not load on a
+/// reload (nothing in this process uses it yet; its next session open reads the config directly).
+#[tokio::test]
+async fn a_reload_of_a_never_loaded_workspace_loads_nothing() {
+    let scope = TaskScope::root("test", |_| {});
+    let fake: Arc<FakeMcp> = Arc::new(FakeMcp::default());
+    let (mcp, layer) = layer(&fake, &scope);
+    // Any loader call panics ("a gated answer"): the reload must not read.
+    let (loader, _answers) = gated(0);
+    layer.set_loader(loader);
+
+    layer.reload(&workspace()).await;
+
+    assert!(layer.slot("/w").is_none());
+    assert!(mcp.group("/w").is_none());
 }

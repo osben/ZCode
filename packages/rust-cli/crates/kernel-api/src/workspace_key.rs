@@ -56,6 +56,11 @@ impl SessionWorkspaces {
 #[async_trait::async_trait]
 pub trait WorkspaceLayerHost: Send + Sync {
     async fn load(&self, workspace: &WorkspaceRef);
+
+    /// Re-reads the workspace's layer past the loaded-slot reuse, after a config or trust write
+    /// the caller committed (specs/fork-rust-workspace-plugins-mcp.md, "As built: layer reload");
+    /// epoch-ordered against a load that is still in flight.
+    async fn reload(&self, workspace: &WorkspaceRef);
 }
 
 #[cfg(test)]
