@@ -325,10 +325,15 @@ impl AppWorkspace {
     /// write this admin committed reloads the workspace's plugin/MCP layer, so its sessions' group
     /// and plugin admission follow without a process restart. The layer itself stays lazy (a
     /// workspace this process never loaded does not load here).
-    async fn reload_layer(&self, trust: &Target) {
+    async fn reload_layer(&self, target: &WorkspaceTarget) {
+        // The RAW target path — the same string the session side records as its workspace root
+        // (`Server::workspace(path)` stores it verbatim). `Target::new` normalizes (it folds `.`/`..`
+        // and unifies Windows separators), while `project_key` only trims trailing separators, so a
+        // normalized root can miss the session-side key on Windows-style paths and the reload would
+        // silently do nothing.
         let workspace = WorkspaceRef {
             environment: EnvironmentId::new(LOCAL_ENVIRONMENT),
-            root: EnvPath::new(trust.working_directory.clone()),
+            root: EnvPath::new(target.path.clone()),
         };
         self.workspace_layer.reload(&workspace).await;
     }
@@ -497,7 +502,7 @@ impl WorkspaceAdmin for AppWorkspace {
             Ok(()) => {
                 // The layer's server admission reads that store, so the committed decision
                 // reloads the workspace's layer (its project servers wait for exactly this grant).
-                self.reload_layer(&read.inspection.target).await;
+                self.reload_layer(target).await;
                 json!({"accepted": true})
             }
             Err(error) => {
@@ -532,7 +537,7 @@ impl WorkspaceAdmin for AppWorkspace {
         )
         .await;
         if answer["accepted"] == json!(true) {
-            self.rebuild_hooks(&trust).await;
+            self.rebuild_hooks(target, &trust).await;
         }
         answer
     }

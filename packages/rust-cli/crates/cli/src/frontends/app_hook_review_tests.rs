@@ -269,14 +269,27 @@ async fn an_unreadable_config_refuses_a_revoke() {
     assert_eq!(std::fs::read(store_file(&fixture)).unwrap(), before);
 }
 
+fn ws_target(path: &str) -> WorkspaceTarget {
+    WorkspaceTarget {
+        path: path.to_owned(),
+        identity: None,
+    }
+}
+
 #[tokio::test]
 async fn each_workspace_rebuilds_its_own_entry() {
     let fixture = fixture_text(PROJECT, json!({}));
     fixture
         .admin
-        .rebuild_hooks(&Target::new("/Users/dev/other", None))
+        .rebuild_hooks(
+            &ws_target("/Users/dev/other"),
+            &Target::new("/Users/dev/other", None),
+        )
         .await;
-    fixture.admin.rebuild_hooks(&Target::new(ROOT, None)).await;
+    fixture
+        .admin
+        .rebuild_hooks(&ws_target(ROOT), &Target::new(ROOT, None))
+        .await;
     let keys: Vec<String> = fixture
         .hooks
         .lock()
