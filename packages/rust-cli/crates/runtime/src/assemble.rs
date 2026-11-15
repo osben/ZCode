@@ -377,6 +377,8 @@ pub(crate) fn query_parts(
             } else {
                 rust_cli_query::ToolHookContexts::PerCall
             },
+            // Fork (node_desktop): the run reports its Stop / SubagentStop dispatches (HK-UP-01 hook rows).
+            hook_rows: node_desktop,
             ..defaults.limits.request
         },
     }

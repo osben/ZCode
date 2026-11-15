@@ -2001,7 +2001,7 @@ Known small gaps and follow-ups:
 
 ## Hook invocation rows and the blocked-prompt banner (HK-UP-01)
 
-Status: items 1–3 of the delivery are implemented: batch order, the typed `/compact`, and the human-turn UserPromptSubmit rows and banner (Design 1–3, 5, 6). The record-keeping half of Design 4 (the session actor's per-session list and `SessionView.hook_invocations`) and the cold rebuild (Design 7) are implemented as well; see their as-built notes. Cold drops a blocked turn anyway, so HK-UP-01 did not need them; they matter for allowed dispatches after a resubscribe. It closes HK-UP-01 in desktop E2E `hooks/conversation-session-hooks-lifecycle`. That case blocks a UserPromptSubmit with two hooks: an async command, and a process hook that writes stderr and returns `{continue:false, reason:"hooks_prompt_block"}`. It then checks three things:
+Status: items 1–3 of the delivery are implemented: batch order, the typed `/compact`, and the human-turn UserPromptSubmit rows and banner (Design 1–3, 5, 6). The record-keeping half of Design 4 (the session actor's per-session list and `SessionView.hook_invocations`) and the cold rebuild (Design 7) are implemented as well; see their as-built notes. The Stop / SubagentStop dispatch rows are implemented too (the waiting list below marks what still waits). Cold drops a blocked turn anyway, so HK-UP-01 did not need them; they matter for allowed dispatches after a resubscribe. It closes HK-UP-01 in desktop E2E `hooks/conversation-session-hooks-lifecycle`. That case blocks a UserPromptSubmit with two hooks: an async command, and a process hook that writes stderr and returns `{continue:false, reason:"hooks_prompt_block"}`. It then checks three things:
 
 1. The prompt's turn shows the text `E2E_HOOKS_PROMPT_BLOCK` and a Hook details trigger (`v4-hook-details-trigger-<turnId>`) inside the same `[data-turn-id]` element.
 2. The chat error banner reads `hooks_prompt_block: <stderr>`.
@@ -2162,7 +2162,7 @@ Second, its own item, after the batch order: HK17 (`conversation-session-hooks-l
 
 Then UserPromptSubmit on the human turn only. Each other event waits for a reason of its own:
 
-- **Stop and SubagentStop:** the sink is reachable (`scope.sink`); next change.
+- **Stop and SubagentStop:** implemented. The sink is reachable (`scope.sink`), so `stop_hooks.rs` reports the dispatch through a `report` helper right after the run finishes and before its Stop context commits (Node appends the row at the dispatch's first event), under `RequestLimits::hook_rows` (set from `node_desktop` in runtime `assemble.rs`, like the Stop continuation cap). A dispatch without runs reports nothing; a subagent's dispatch mirrors into its child session's log with the run's other events.
 - **Tool events** (PreToolUse, PermissionRequest, PostToolUse, PostToolUseFailure): the pipeline has no emit. The records would travel back in `ToolExecution`.
 - **SessionStart:** no turn exists yet, so it needs Node's pending queue.
 - **Compact hooks:** they run under `CollectSink`.
