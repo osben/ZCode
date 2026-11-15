@@ -102,6 +102,9 @@ official cache and `installed_plugins.json` all live under the storage root
 - (a) A project layer never contributes plugin `dirs` (Node `project-config.adapter.ts`); a project
   layer's `enabledPlugins` overlays the user view by id, `suppressedBuiltins` replaces whole (the
   existing layer-merge semantics of `config/plugins.rs`).
+  The same boundary holds for the inventory: a project's `storage.dir` never redirects the
+  plugin cache or `installed_plugins.json` (trusted user/env/`--settings` layers only), in the
+  workspace layer and the LSP plugin view alike.
 - (b) Server names collide the Node way inside one group: user shadows project by name; disabled
   (user or project) shadows enabled. Across groups names are independent (two workspaces may run
   same-named servers, as Node's per-app pools do).
@@ -133,6 +136,9 @@ official cache and `installed_plugins.json` all live under the storage root
 
 ## Acceptance
 
+- Acceptance: a project config declaring `plugins.dirs` or a `storage.dir` into a checked-in
+  directory changes neither the workspace layer's nor `lsp/status`'s plugin set (the trusted-layer
+  resolution of `plugin_view`).
 - Rust unit tests (ext, cli, protocol-zcode):
   - a session with a registered workspace sees its project `mcp.servers` (name, cwd per base dir)
     and its `enabledPlugins` overlay; another workspace's servers and enablement are invisible to it;

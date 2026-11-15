@@ -76,7 +76,7 @@ impl WorkspaceConfigLoader for Loader {
         // The LSP path's plugin view is already the trusted workspace view: project plugins.dirs
         // never load and the inventory roots resolve from the trusted layers only
         // (`plugin_view`, specs/fork-rust-workspace-plugins-mcp.md).
-        let mut sources = super::plugin_view(&inputs).await.sources;
+        let mut sources = super::plugin_view_of(&inputs, &files).await.sources;
         sources.view_host = self.process.view_host;
         sources.node_helper = self.process.node_helper;
 

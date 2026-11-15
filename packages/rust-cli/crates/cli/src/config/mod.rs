@@ -239,9 +239,11 @@ pub(crate) fn storage_layers(
     }
 }
 
-/// Fork: what a workspace's plugins resolve against (specs/fork-rust-lsp.md "Owners"). The same layers,
-/// storage rule and candidates as [`assemble`], without hooks, trust, MCP or warning logs, so it can run for
-/// every `lsp/status` request.
+/// Fork: what a workspace's plugins resolve against (specs/fork-rust-lsp.md "Owners",
+/// specs/fork-rust-workspace-plugins-mcp.md). Like [`assemble`] without hooks, trust, MCP or
+/// warning logs, so it can run for every `lsp/status` request — with one deliberate difference:
+/// the plugin dirs and the inventory roots resolve from the trusted (user/env/`--settings`)
+/// layers only; a project layer's `plugins.dirs` and `storage.dir` never reach them.
 pub(crate) struct PluginView {
     pub(crate) sources: PluginSources,
     pub(crate) options: std::collections::BTreeMap<String, Map<String, Value>>,
@@ -250,10 +252,17 @@ pub(crate) struct PluginView {
 }
 
 pub(crate) async fn plugin_view(inputs: &ConfigInputs<'_>) -> PluginView {
-    let mut warnings = Vec::new();
     let files = read_files(inputs).await;
+    plugin_view_of(inputs, &files).await
+}
+
+/// [`plugin_view`] over files the caller already read and validated: the workspace layer fails
+/// closed on an invalid project file and then builds plugins and MCP from this same snapshot, so
+/// the two can never mix revisions of a config that changed in between.
+pub(crate) async fn plugin_view_of(inputs: &ConfigInputs<'_>, files: &Files) -> PluginView {
+    let mut warnings = Vec::new();
     let empty = Map::new();
-    let layers = layers(&files, inputs.flag, &empty, &mut warnings);
+    let layers = layers(files, inputs.flag, &empty, &mut warnings);
     let mut section = plugins::merge(&layers, &mut warnings);
     // Fork (specs/fork-rust-workspace-plugins-mcp.md): Node strips `plugins.dirs` from project
     // configs (`project-config.adapter.ts`): a project layer must not load plugin roots, or merely
