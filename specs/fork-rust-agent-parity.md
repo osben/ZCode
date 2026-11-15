@@ -2001,7 +2001,7 @@ Known small gaps and follow-ups:
 
 ## Hook invocation rows and the blocked-prompt banner (HK-UP-01)
 
-Status: items 1–3 of the delivery are implemented: batch order, the typed `/compact`, and the human-turn UserPromptSubmit rows and banner (Design 1–3, 5, 6). Deferred: the per-session record list and `SessionView.hook_invocations` (the record-keeping half of Design 4) and the cold rebuild (Design 7). Cold drops a blocked turn anyway, so HK-UP-01 does not need them, and they only matter for allowed dispatches after a resubscribe. It closes HK-UP-01 in desktop E2E `hooks/conversation-session-hooks-lifecycle`. That case blocks a UserPromptSubmit with two hooks: an async command, and a process hook that writes stderr and returns `{continue:false, reason:"hooks_prompt_block"}`. It then checks three things:
+Status: items 1–3 of the delivery are implemented: batch order, the typed `/compact`, and the human-turn UserPromptSubmit rows and banner (Design 1–3, 5, 6). The record-keeping half of Design 4 is implemented (the session actor keeps each dispatch in a per-session list and `SessionView.hook_invocations` exposes it; see Design 4's as-built note). Deferred: the cold rebuild (Design 7). Cold drops a blocked turn anyway, so HK-UP-01 does not need them, and they only matter for allowed dispatches after a resubscribe. It closes HK-UP-01 in desktop E2E `hooks/conversation-session-hooks-lifecycle`. That case blocks a UserPromptSubmit with two hooks: an async command, and a process hook that writes stderr and returns `{continue:false, reason:"hooks_prompt_block"}`. It then checks three things:
 
 1. The prompt's turn shows the text `E2E_HOOKS_PROMPT_BLOCK` and a Hook details trigger (`v4-hook-details-trigger-<turnId>`) inside the same `[data-turn-id]` element.
 2. The chat error banner reads `hooks_prompt_block: <stderr>`.
@@ -2117,6 +2117,7 @@ sequenceDiagram
 
 3. **Async hooks** (`Backgrounded`) are reported when they are spawned, as `success` with `duration_ms: 0`. Rust does not follow a background hook to its end ("Command hook stdin"). Node reports them `running` until they finish.
 4. **Kernel event.** `KernelEvent::HookInvocation { invocation, hook_event, tool_use: Option, runs }` goes to the log through the turn's sink, under `SessionDeps.hook_rows` only. The session actor keeps it in a per-session list, bounded like the event log retention and cleared by a rewind of its turn. `SessionView.hook_invocations` exposes that list to `from_view`.
+   - **As built (record-keeping half):** the actor records the dispatch where the event reaches the log (`turn.rs` `forward`), as a `hooks::HookInvocationRecord { anchor_message, invocation }` anchored to the running turn's prompt, capped at the event log's `RETAIN`. Instead of an eager rewind clear, `Actor::view` keeps only records whose anchor is still in `earlier`/`messages` — a blocked prompt (never committed) and a rewound turn drop with their turn, the same visible contract.
 5. **Projection.**
    - **Row.** One `hookInvocation` row per invocation, keyed `hook:{invocation}`. `entityId` is the invocation id.
    - **Row fields:**

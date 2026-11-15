@@ -214,6 +214,17 @@ pub struct HookInvocation {
     pub runs: Vec<HookRunRecord>,
 }
 
+/// Fork: a dispatch the session kept for the cold projection (`SessionView::hook_invocations`,
+/// specs/fork-rust-agent-parity.md HK-UP-01 Design 4): the invocation and the user message of the turn it ran in
+/// (like goal verification's `anchor_message`), so a cold rebuild can anchor its row to that turn. A record whose
+/// anchor is not stored any more (a blocked prompt is never committed; a rewind cuts its turn) is dropped.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HookInvocationRecord {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor_message: Option<crate::ids::MessageId>,
+    pub invocation: HookInvocation,
+}
+
 /// Fork: how one hook run ended (Node `HookOutcome`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

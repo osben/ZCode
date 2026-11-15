@@ -180,3 +180,87 @@ async fn without_the_switch_a_blocked_prompt_fails_as_before() {
         })
     ));
 }
+
+/// Fork: the dispatch is kept for the cold projection (`SessionView::hook_invocations`, HK-UP-01 Design 4): anchored
+/// to the stored user message of its turn, like goal verification's `anchor_message`.
+#[tokio::test]
+async fn an_allowed_prompt_records_its_dispatch_for_the_view() {
+    let model = Arc::new(ScriptedModel::new(vec![text_response(&["ok"])]));
+    let outcome = HookOutcome {
+        invocation: Some("inv_1".into()),
+        runs: vec![run(HookRunOutcome::Success)],
+        ..HookOutcome::default()
+    };
+    let built = setup(model, outcome, true).build().await;
+    let mut events = built.session.subscribe(Some(0));
+    built.session.send(submit("c1", "hello")).await;
+    until(&mut events, finished).await;
+    let view = built.session.view().await.unwrap();
+    let prompt = view.messages[0].id().clone();
+    assert_eq!(view.hook_invocations.len(), 1);
+    let record = &view.hook_invocations[0];
+    assert_eq!(record.anchor_message.as_ref(), Some(&prompt));
+    assert_eq!(record.invocation.id, "inv_1");
+    assert_eq!(
+        record.invocation.hook_event,
+        HookEventName::UserPromptSubmit
+    );
+    assert_eq!(record.invocation.runs, [run(HookRunOutcome::Success)]);
+}
+
+/// A blocked prompt's input is never stored, so its record has no anchor left and the view drops it (a cold reopen
+/// loses the turn with it, as the design accepts).
+#[tokio::test]
+async fn a_blocked_prompt_leaves_no_record_the_view_can_anchor() {
+    let model = Arc::new(ScriptedModel::new(Vec::new()));
+    let built = setup(model, blocking(), true).build().await;
+    let mut events = built.session.subscribe(Some(0));
+    built.session.send(submit("c1", "blocked text")).await;
+    until(&mut events, finished).await;
+    let view = built.session.view().await.unwrap();
+    assert!(view.messages.is_empty());
+    assert!(view.hook_invocations.is_empty());
+}
+
+/// A rewind that cuts its turn's messages clears the record with them.
+#[tokio::test]
+async fn a_rewind_of_its_turn_drops_the_recorded_dispatch() {
+    let model = Arc::new(ScriptedModel::new(vec![text_response(&["ok"])]));
+    let outcome = HookOutcome {
+        invocation: Some("inv_1".into()),
+        runs: vec![run(HookRunOutcome::Success)],
+        ..HookOutcome::default()
+    };
+    let built = setup(model, outcome, true).build().await;
+    let mut events = built.session.subscribe(Some(0));
+    built.session.send(submit("c1", "hello")).await;
+    until(&mut events, finished).await;
+    let prompt = built.session.view().await.unwrap().messages[0].id().clone();
+    assert_eq!(
+        built.session.view().await.unwrap().hook_invocations.len(),
+        1
+    );
+    let ack = built
+        .session
+        .send(crate::test_support::envelope(
+            "r1",
+            rust_cli_kernel_api::session_api::Command::Rewind {
+                target: prompt,
+                scope: rust_cli_kernel_api::session_api::RewindScope::Conversation,
+            },
+        ))
+        .await;
+    assert!(matches!(
+        ack,
+        rust_cli_kernel_api::session_api::Ack::Accepted { .. }
+    ));
+    assert!(
+        built
+            .session
+            .view()
+            .await
+            .unwrap()
+            .hook_invocations
+            .is_empty()
+    );
+}

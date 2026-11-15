@@ -461,11 +461,24 @@ impl Actor {
     }
 
     fn forward(&mut self, event: QueryEvent) {
-        let Some(turn) = self.running.as_ref().map(|running| running.turn.clone()) else {
+        let Some(running) = self.running.as_ref() else {
             return;
         };
+        let (turn, prompt) = (running.turn.clone(), running.prompt.clone());
         if let QueryEvent::ToolFinished { tool_use, output } = &event {
             self.ledger.tool_finished(tool_use, output);
+        }
+        // Fork: keep the dispatch for the cold projection (HK-UP-01 Design 4): anchored to the turn's user message,
+        // bounded like the event log retention; the view drops a record whose anchor is not stored any more.
+        if let QueryEvent::HookInvocation { invocation } = &event {
+            if self.hook_invocations.len() >= crate::log::RETAIN as usize {
+                self.hook_invocations.remove(0);
+            }
+            self.hook_invocations
+                .push(rust_cli_kernel_api::hooks::HookInvocationRecord {
+                    anchor_message: prompt,
+                    invocation: invocation.clone(),
+                });
         }
         self.log.append(kernel_event(turn, event));
     }
