@@ -331,18 +331,19 @@ describe("fork: Node helper F3 (Office tools and panels)", () => {
     await helper.done;
   }, 60_000);
 
-  // The Host's shared local task runtime is one Rust agent for every local workspace, run in the data root: its
-  // pipes name `<home>/.zcode` while its sessions live in their own workspaces (spec F3 "Session open and close").
+  // The Host's shared local task runtime is one Rust agent for every local workspace, run in the data root. A
+  // session's calls travel a pipe of its own workspace (Rust connects one per key); a pipe of another key —
+  // the agent's cwd above all — refuses them (spec F3, "The pipe workspace is enforced").
   for (const order of ["pipe first", "session first"] as const)
     it(`keeps each pipe's and each session's own workspace (${order})`, async () => {
       const home = await tempHome();
       const agentCwd = home.env.ZCODE_STORAGE_DIR!;
       const helper = await initialized(home.env, agentCwd);
-      const connectPipe = () =>
+      const connectPipe = (connection: string, workspacePath: string) =>
         helper.request("helper/mcp/connect", {
-          connection: "c1",
+          connection,
           server: SERVER,
-          workspace: { workspacePath: agentCwd },
+          workspace: { workspacePath },
         });
       const openSession = () =>
         helper.request("helper/session/open", {
@@ -353,7 +354,9 @@ describe("fork: Node helper F3 (Office tools and panels)", () => {
           servers: [SERVER],
         });
       const [first, second] =
-        order === "pipe first" ? [connectPipe, openSession] : [openSession, connectPipe];
+        order === "pipe first"
+          ? [() => connectPipe("c1", agentCwd), openSession]
+          : [openSession, () => connectPipe("c1", agentCwd)];
       expect((await first()).error).toBeUndefined();
       expect((await second()).error).toBeUndefined();
       await helper.mcp("c1", {
@@ -361,8 +364,20 @@ describe("fork: Node helper F3 (Office tools and panels)", () => {
         method: "initialize",
         params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "rs" } },
       });
-      // A model tool call runs on the session's lease, in the session's workspace.
-      const called = await helper.mcp("c1", {
+      // The agent-cwd pipe refuses the session of another workspace.
+      const refused = (await helper.mcp("c1", {
+        id: 2,
+        method: "tools/call",
+        params: {
+          name: "open_doc",
+          arguments: { query: "cwd" },
+          _meta: { "zcode/helperContext": { sessionId: SESSION, runtimeScope: "main" } },
+        },
+      })) as { error?: { code: number; message: string } };
+      expect(refused.error?.message).toMatch(/another workspace/);
+      // A pipe of the session's own workspace runs the call on its lease, in its cwd.
+      expect((await connectPipe("c2", home.workspace)).error).toBeUndefined();
+      const called = await helper.mcp("c2", {
         id: 2,
         method: "tools/call",
         params: {

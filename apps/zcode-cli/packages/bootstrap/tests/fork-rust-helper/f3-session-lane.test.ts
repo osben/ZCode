@@ -189,8 +189,9 @@ describe("fork: Node helper session open and close", () => {
     expect(context.sessions.has(SESSION)).toBe(false);
   });
 
-  // Spec F3 "Session open and close", the pipe workspace limit: the key is stored, not yet enforced.
-  it("stores each pipe's workspace key and still serves another workspace's session", async () => {
+  // Spec F3 "The pipe workspace is enforced": the connect's key is stored, and a call of a session of
+  // another key is refused without reaching the session's lease.
+  it("stores each pipe's workspace key and refuses another workspace's session", async () => {
     const { host, sessionLeases, notifications } = rig();
     const DATA_ROOT = "/home/.zcode";
     await host.connect({
@@ -213,8 +214,16 @@ describe("fork: Node helper session open and close", () => {
         },
       },
     });
-    expect(notifications.at(-1)?.params).toMatchObject({ message: { id: 1, result: {} } });
-    expect(sessionLeases()[0]?.calls[0]).toMatchObject({ workspaceKey: PROJECT });
+    expect(notifications.at(-1)?.params).toMatchObject({
+      message: {
+        id: 1,
+        error: {
+          code: -32602,
+          message: `Session is in another workspace than the MCP connection: ${SESSION}`,
+        },
+      },
+    });
+    expect(sessionLeases()[0]?.calls ?? []).toEqual([]);
   });
 
   it("runs an execution worktree session in its worktree, under its workspace's key", async () => {

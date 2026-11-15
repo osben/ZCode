@@ -51,3 +51,13 @@ fn highspeed_card_owner_is_reported() {
         assert_eq!(capabilities(node_helper)["highspeedCardOwner"], true);
     }
 }
+
+/// Wave 2 B1 (specs/fork-rust-agent-parity.md): this agent runs no managed-worktree sessions, so the
+/// capability stays false and the Host keeps hiding managed worktrees for Rust workspaces; the fields that
+/// ride on it are refused by the handlers instead of being dropped.
+#[test]
+fn worktree_cwd_stays_false() {
+    for node_helper in [false, true] {
+        assert_eq!(capabilities(node_helper)["worktreeCwd"], false);
+    }
+}

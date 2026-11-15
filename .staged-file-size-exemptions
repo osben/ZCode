@@ -459,3 +459,7 @@ apps/zcode-cli/packages/adapters/src/storage/session-store/repositories/usage.ts
 # Union of the fork ChatGPT-plan wiring and upstream 3.18.2 Start Plan material; splitting the
 # resolver would recreate this conflict on every upstream sync.
 packages/services/src/model-provider/accountProviderConnectionResolver.ts
+
+# Fork-owned F3 helper host, 19878 bytes before the pipe-workspace refusal (specs/fork-rust-node-helper.md);
+# split the pipe/session halves apart before growing it further.
+apps/zcode-cli/packages/bootstrap/src/fork-rust-helper/mcp-host.ts
