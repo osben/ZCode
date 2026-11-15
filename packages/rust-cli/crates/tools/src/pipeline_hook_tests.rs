@@ -817,3 +817,131 @@ impl Tool for Failing {
         Err(self.0.lock().unwrap().take().expect("called once"))
     }
 }
+
+// Fork: under `hook_rows` the execution carries its dispatches back (specs/fork-rust-agent-parity.md HK-UP-01): each
+// tool event's runs travel in `ToolExecution::hook_invocations`, in dispatch order, with the call's id and tool
+// name; without the switch the execution carries none.
+
+fn dispatch_outcome(id: &str) -> HookOutcome {
+    HookOutcome {
+        invocation: Some(id.to_owned()),
+        runs: vec![rust_cli_kernel_api::hooks::HookRunRecord {
+            run: "run_1".to_owned(),
+            index: 0,
+            outcome: rust_cli_kernel_api::hooks::HookRunOutcome::Success,
+            block_reason: None,
+            error_message: None,
+            stderr_preview: None,
+            stdout_preview: None,
+            started_at_ms: 10,
+            duration_ms: 5,
+            source_kind: rust_cli_kernel_api::hooks::HookSourceKind::User,
+            plugin_name: None,
+            display: "node block.js".to_owned(),
+        }],
+        ..HookOutcome::default()
+    }
+}
+
+async fn run_rows(
+    gate: Arc<Gate>,
+    outcomes: &[(HookEventName, HookOutcome)],
+    hook_rows: bool,
+) -> Ran {
+    let hooks = Arc::new(Hooks {
+        outcomes: outcomes.iter().cloned().collect(),
+        ..Hooks::default()
+    });
+    let asked = Arc::new(ScriptedInteractions::allowing());
+    let pipeline = Pipeline::new(gate.clone(), hooks.clone()).with_hook_rows(hook_rows);
+    let (progress, _updates) = mpsc::channel(4);
+    let execution = pipeline
+        .execute(
+            Arc::new(Echo),
+            json!({"command": "ls"}),
+            context(asked.clone()),
+            progress,
+        )
+        .await;
+    let events = hooks.seen.lock().unwrap().drain(..).collect();
+    let decided = *gate.decided.lock().unwrap();
+    Ran {
+        execution,
+        asked: Vec::new(),
+        decided,
+        events,
+    }
+}
+
+/// An independent ask runs the PermissionRequest hooks before the user answers, so one call reports its PreToolUse,
+/// PermissionRequest and PostToolUse dispatches, in that order.
+#[tokio::test]
+async fn under_hook_rows_the_execution_carries_its_dispatches() {
+    let gate = Gate::new(
+        PermissionDecision::Ask {
+            message: "Plan mode requires approval".to_owned(),
+            suggestions: Vec::new(),
+            once: false,
+            independent: true,
+        },
+        None,
+    );
+    let allow = (
+        HookEventName::PermissionRequest,
+        HookOutcome {
+            decision: Some(PermissionDecision::Allow {
+                updated_input: None,
+            }),
+            invocation: Some("inv_perm".to_owned()),
+            runs: dispatch_outcome("inv_perm").runs,
+            ..HookOutcome::default()
+        },
+    );
+    let ran = run_rows(
+        gate.clone(),
+        &[
+            (HookEventName::PreToolUse, dispatch_outcome("inv_pre")),
+            allow,
+            (HookEventName::PostToolUse, dispatch_outcome("inv_post")),
+        ],
+        true,
+    )
+    .await;
+    let ids: Vec<&str> = ran
+        .execution
+        .hook_invocations
+        .iter()
+        .map(|invocation| invocation.id.as_str())
+        .collect();
+    assert_eq!(ids, ["inv_pre", "inv_perm", "inv_post"]);
+    for invocation in &ran.execution.hook_invocations {
+        assert_eq!(
+            invocation.tool_use,
+            Some(rust_cli_kernel_api::ids::ToolUseId::new("toolu_1"))
+        );
+        assert_eq!(invocation.tool_name.as_deref(), Some("Bash"));
+        assert_eq!(invocation.runs.len(), 1);
+        assert_eq!(invocation.runs[0].run, "run_1");
+    }
+}
+
+/// Without the switch the execution carries no dispatch, whatever its hooks returned.
+#[tokio::test]
+async fn without_the_switch_the_execution_carries_no_dispatch() {
+    let gate = Gate::new(
+        PermissionDecision::Allow {
+            updated_input: None,
+        },
+        None,
+    );
+    let ran = run_rows(
+        gate,
+        &[
+            (HookEventName::PreToolUse, dispatch_outcome("inv_pre")),
+            (HookEventName::PostToolUse, dispatch_outcome("inv_post")),
+        ],
+        false,
+    )
+    .await;
+    assert!(ran.execution.hook_invocations.is_empty());
+}

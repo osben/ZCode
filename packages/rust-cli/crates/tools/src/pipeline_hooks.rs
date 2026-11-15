@@ -27,6 +27,9 @@ pub(crate) struct HookMessages {
     /// Fork (node_desktop): `before` goes to the front of `after`, so a PreToolUse context reaches the model after the
     /// tool result like Node's post-batch reminders; the call's outcome does not matter.
     pub pre_after_result: bool,
+    /// Fork: the dispatches this call's hooks ran, in dispatch order (specs/fork-rust-agent-parity.md HK-UP-01);
+    /// filled only under `hook_rows`, so the executor can report them around the call's result.
+    pub dispatches: Vec<rust_cli_kernel_api::hooks::HookInvocation>,
 }
 
 impl HookMessages {
@@ -51,6 +54,7 @@ impl HookMessages {
             before,
             after,
             prevent_continuation,
+            hook_invocations: self.dispatches,
         }
     }
 }

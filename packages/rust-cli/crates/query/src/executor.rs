@@ -335,6 +335,7 @@ impl ToolBatch {
             before,
             after,
             prevent_continuation,
+            hook_invocations,
         } = execution;
         // 被中止的调用只交付拒绝结果，不带执行管线的其他消息与停止请求；写入的 checkpoint 保留。
         let (output, before, after, status) = match self.abort_text(&self.tools[index]) {
@@ -363,6 +364,24 @@ impl ToolBatch {
             status,
         );
         log_finished(&self.scope, tracked, &output, &call);
+        // Fork: the call's hook dispatches are reported around its result (HK-UP-01): the toolBefore lane
+        // (PreToolUse, PermissionRequest) before it, the toolAfter lane (PostToolUse, PostToolUseFailure) after it.
+        // An aborted call keeps its dispatches: its hooks still ran.
+        for invocation in hook_invocations.iter().filter(|invocation| {
+            matches!(
+                invocation.hook_event,
+                rust_cli_kernel_api::hooks::HookEventName::PreToolUse
+                    | rust_cli_kernel_api::hooks::HookEventName::PermissionRequest
+            )
+        }) {
+            let _ = self
+                .scope
+                .sink
+                .emit(QueryEvent::HookInvocation {
+                    invocation: invocation.clone(),
+                })
+                .await;
+        }
         let _ = self
             .scope
             .sink
@@ -371,6 +390,21 @@ impl ToolBatch {
                 output: output.clone(),
             })
             .await;
+        for invocation in hook_invocations.iter().filter(|invocation| {
+            !matches!(
+                invocation.hook_event,
+                rust_cli_kernel_api::hooks::HookEventName::PreToolUse
+                    | rust_cli_kernel_api::hooks::HookEventName::PermissionRequest
+            )
+        }) {
+            let _ = self
+                .scope
+                .sink
+                .emit(QueryEvent::HookInvocation {
+                    invocation: invocation.clone(),
+                })
+                .await;
+        }
         let message = self.result(&tracked.id, &tracked.assistant, output);
         let mut messages: Vec<Ready> = before.into_iter().map(Ready::plain).collect();
         messages.push(Ready {
