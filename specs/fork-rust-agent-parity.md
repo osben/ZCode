@@ -2001,7 +2001,7 @@ Known small gaps and follow-ups:
 
 ## Hook invocation rows and the blocked-prompt banner (HK-UP-01)
 
-Status: items 1–3 of the delivery are implemented: batch order, the typed `/compact`, and the human-turn UserPromptSubmit rows and banner (Design 1–3, 5, 6). The record-keeping half of Design 4 is implemented (the session actor keeps each dispatch in a per-session list and `SessionView.hook_invocations` exposes it; see Design 4's as-built note). Deferred: the cold rebuild (Design 7). Cold drops a blocked turn anyway, so HK-UP-01 does not need them, and they only matter for allowed dispatches after a resubscribe. It closes HK-UP-01 in desktop E2E `hooks/conversation-session-hooks-lifecycle`. That case blocks a UserPromptSubmit with two hooks: an async command, and a process hook that writes stderr and returns `{continue:false, reason:"hooks_prompt_block"}`. It then checks three things:
+Status: items 1–3 of the delivery are implemented: batch order, the typed `/compact`, and the human-turn UserPromptSubmit rows and banner (Design 1–3, 5, 6). The record-keeping half of Design 4 (the session actor's per-session list and `SessionView.hook_invocations`) and the cold rebuild (Design 7) are implemented as well; see their as-built notes. Cold drops a blocked turn anyway, so HK-UP-01 did not need them; they matter for allowed dispatches after a resubscribe. It closes HK-UP-01 in desktop E2E `hooks/conversation-session-hooks-lifecycle`. That case blocks a UserPromptSubmit with two hooks: an async command, and a process hook that writes stderr and returns `{continue:false, reason:"hooks_prompt_block"}`. It then checks three things:
 
 1. The prompt's turn shows the text `E2E_HOOKS_PROMPT_BLOCK` and a Hook details trigger (`v4-hook-details-trigger-<turnId>`) inside the same `[data-turn-id]` element.
 2. The chat error banner reads `hooks_prompt_block: <stderr>`.
@@ -2148,6 +2148,7 @@ sequenceDiagram
    - SessionStart records go before the first turn that follows them.
    - `lastError` is not rebuilt cold, as today.
    - After a process restart nothing is restored, as in Node.
+   - **As built:** `cold.rs` appends the anchored records right after their turn's input row (the live order: the input commits before the dispatch is reported), through `hook_rows.rs` `cold_hook_invocation`, which builds the same row as the live dispatch but never the banner. The SessionStart rule stays moot while no SessionStart dispatch is recorded (each other event waits, above); a restart loses the actor's in-memory list, as Node loses its event store.
 
 ### Delivery in this change
 

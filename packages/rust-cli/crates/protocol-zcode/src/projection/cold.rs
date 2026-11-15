@@ -52,6 +52,15 @@ pub(super) fn rows(projection: &mut Projection, view: &SessionView) {
                 projection.cold_context_reset(user.id.as_str(), &turn, at, &mut out);
                 projection.start_turn(&turn, command, model, at, 0, &mut out);
                 projection.message(message, at, 0, &mut out);
+                // Fork: this turn's stored hook dispatches follow their input's row (HK-UP-01 Design 7), anchored by
+                // the user message, like the live order; a dispatch without a stored anchor never reaches here.
+                for record in view
+                    .hook_invocations
+                    .iter()
+                    .filter(|record| record.anchor_message.as_ref() == Some(&user.id))
+                {
+                    projection.cold_hook_invocation(&record.invocation, at, &mut out);
+                }
             }
             Message::User(user) if opening(message, turn_ended) => {
                 if projection.turn.is_some() {
