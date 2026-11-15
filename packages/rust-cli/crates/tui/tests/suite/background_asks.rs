@@ -149,7 +149,7 @@ async fn denying_a_background_ask_gives_the_subagent_the_denial() {
     let script = model.clone();
     with_ui(model.clone(), Setup::default(), |mut ui| async move {
         ask_after_the_turn(&mut ui, &script).await;
-        ui.key(KeyCode::Char('3'));
+        ui.key(KeyCode::Char('4'));
         ui.wait_for("Noted.").await;
     })
     .await;
@@ -194,7 +194,7 @@ async fn a_foreground_agent_ask_names_the_agent() {
         let screen = ui.wait_for("Run this command?").await;
         asks_from(&screen, "general-purpose asks");
         ui.settle().await;
-        ui.key(KeyCode::Char('3'));
+        ui.key(KeyCode::Char('4'));
         ui.wait_for("Main done.").await;
     })
     .await;
@@ -299,7 +299,7 @@ async fn denying_an_ask_of_a_cleared_session() {
         script.release();
         ui.wait_for("Run this command?").await;
         ui.settle().await;
-        ui.key(KeyCode::Char('3'));
+        ui.key(KeyCode::Char('4'));
         child_requests(&script, 2).await;
     })
     .await;

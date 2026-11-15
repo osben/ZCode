@@ -36,10 +36,16 @@ async fn an_approved_command_reaches_the_tool() {
             Some("│ create a file"),
             "{ask}"
         );
-        for answer in ["1  Allow once", "2  Full access", "3  Deny"] {
+        // Always-allow numbers second without suggestions too.
+        for answer in [
+            "1  Allow once",
+            "2  Always allow",
+            "3  Full access",
+            "4  Deny",
+        ] {
             assert!(ask.contains(answer), "{answer}: {ask}");
         }
-        assert!(ask.contains("1–3 answer  esc stop"), "{ask}");
+        assert!(ask.contains("1–4 answer  esc stop"), "{ask}");
         ui.settle().await;
         ui.key(KeyCode::Enter);
         ui.wait_for("file step done").await;
@@ -80,7 +86,7 @@ async fn the_deny_number_rejects_without_feedback() {
         ui.submit("make a file");
         ui.wait_for("Run this command?").await;
         ui.settle().await;
-        ui.key(KeyCode::Char('3'));
+        ui.key(KeyCode::Char('4'));
         ui.wait_for("file step done").await;
     })
     .await;

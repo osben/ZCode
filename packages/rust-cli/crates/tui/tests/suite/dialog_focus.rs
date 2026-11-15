@@ -156,16 +156,19 @@ async fn the_permission_ask_has_no_bar_and_typing_chooses_deny() {
             ui.wait_for("Run this command?").await;
             ui.settle().await;
             let buffer = frame(&ui);
+            // Always-allow is offered without suggestions too, so it numbers second.
             assert_focused(&buffer, "1  Allow once", inks);
-            assert_plain(&buffer, "2  Full access", inks);
-            assert_plain(&buffer, "3  Deny", inks);
+            assert_plain(&buffer, "2  Always allow", inks);
+            assert_plain(&buffer, "3  Full access", inks);
+            assert_plain(&buffer, "4  Deny", inks);
+            ui.key(KeyCode::Down);
             ui.key(KeyCode::Down);
             until(&ui, "the focus on Full access", |b| {
-                focused(b, "2  Full access", inks.brand)
+                focused(b, "3  Full access", inks.brand)
             })
             .await;
             let buffer = frame(&ui);
-            assert_focused(&buffer, "2  Full access", inks);
+            assert_focused(&buffer, "3  Full access", inks);
             assert_plain(&buffer, "1  Allow once", inks);
             // 打字：字进输入框，Deny 选中，槽说 ⏎ 做什么。
             ui.type_text("use make");
@@ -177,10 +180,10 @@ async fn the_permission_ask_has_no_bar_and_typing_chooses_deny() {
             assert_eq!(x, 3);
             assert_eq!(ui.cursor(), Some((x + 8, y)));
             until(&ui, "the focus on Deny", |b| {
-                focused(b, "3  Deny", inks.brand)
+                focused(b, "4  Deny", inks.brand)
             })
             .await;
-            assert_plain(&frame(&ui), "2  Full access", inks);
+            assert_plain(&frame(&ui), "3  Full access", inks);
             ui.key(KeyCode::Enter);
             ui.wait_for("done").await;
         })

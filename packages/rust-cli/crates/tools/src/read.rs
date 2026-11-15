@@ -11,9 +11,10 @@ use rust_cli_kernel_api::env_files::{ReadText, TextRead};
 use rust_cli_kernel_api::env_path;
 use rust_cli_kernel_api::ids::{ArtifactId, SessionId};
 use rust_cli_kernel_api::machine_param::MachineParam;
-use rust_cli_kernel_api::message::{ImageSource, ToolResultContent};
+use rust_cli_kernel_api::message::{AttachmentMessage, ImageSource, Message, ToolResultContent};
 use rust_cli_kernel_api::tool::{
-    PromptContext, Tool, ToolError, ToolOutput, ToolProgress, ToolUseContext, Validation,
+    PromptContext, Tool, ToolCallOutput, ToolError, ToolOutput, ToolProgress, ToolUseContext,
+    Validation,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -25,8 +26,8 @@ use crate::common::{
 };
 use crate::file_state::{Baseline, FileState};
 use crate::read_support::{
-    IMAGES, MAX_BYTES, MAX_IMAGE_BYTES, check_tokens, image_type, is_binary, is_device,
-    number_lines,
+    IMAGES, MAX_BYTES, MAX_IMAGE_BYTES, MAX_TOKENS, PartialView, check_tokens, estimate_tokens,
+    image_type, is_binary, is_device, number_lines, partial_view,
 };
 use crate::{base64, budget, notebook, read_pdf, texts};
 use rust_cli_kernel_api::tool::{failed, invalid, parse, text};
@@ -322,11 +323,23 @@ impl Tool for ReadTool {
         &self,
         input: Value,
         context: ToolUseContext,
-        _progress: mpsc::Sender<ToolProgress>,
+        progress: mpsc::Sender<ToolProgress>,
     ) -> Result<ToolOutput, ToolError> {
+        Ok(self
+            .call_with_messages(input, context, progress)
+            .await?
+            .output)
+    }
+
+    async fn call_with_messages(
+        &self,
+        input: Value,
+        context: ToolUseContext,
+        _progress: mpsc::Sender<ToolProgress>,
+    ) -> Result<ToolCallOutput, ToolError> {
         let input: Input = parse(&input)?;
         if let Some(location) = input.file_path.strip_prefix(budget::ARTIFACT_SCHEME) {
-            return read_artifact(&context, location, &input).await;
+            return read_artifact(&context, location, &input).await.map(done);
         }
         let cwd = cwd(&context).await;
         let path = stable_path(&context, &cwd, NAME, "file_path", &input.file_path).await?;
@@ -339,21 +352,23 @@ impl Tool for ReadTool {
                 ..input
             };
             if self.unchanged(&context, &path, &whole).await {
-                return Ok(text(texts::FILE_UNCHANGED.to_owned()));
+                return Ok(done(text(texts::FILE_UNCHANGED.to_owned())));
             }
-            return self.read_notebook(&context, &path).await;
+            return self.read_notebook(&context, &path).await.map(done);
         }
         if IMAGES.contains(&extension.as_str()) {
-            return self.read_image(&context, &path).await;
+            return self.read_image(&context, &path).await.map(done);
         }
         // PDF 不写 readFileState，所以排在“未变”判断之前。
         if extension == ".pdf" {
             let model = self.files.model.as_ref();
             let pages = input.pages.as_deref();
-            return read_pdf::read(&context, (&cwd, &path), pages, model).await;
+            return read_pdf::read(&context, (&cwd, &path), pages, model)
+                .await
+                .map(done);
         }
         if self.unchanged(&context, &path, &input).await {
-            return Ok(text(texts::FILE_UNCHANGED.to_owned()));
+            return Ok(done(text(texts::FILE_UNCHANGED.to_owned())));
         }
         // Fork: Node `lsp.prewarm(path)`, after the unchanged check and before the text read.
         if let Some(code) = self.files.code_for(&context) {
@@ -386,9 +401,37 @@ impl Tool for ReadTool {
             }
             Err(error) => return Err(env_failure(error)),
         };
-        check_tokens(&slice.content, &extension)?;
-        let body = if !slice.content.is_empty() {
-            number_lines(&slice.content, offset)
+        // Fork (node_desktop): Node's partial view (core `read-text.ts` `isInitialWholeFileRead` /
+        // `createTokenCapPartialView`): the initial whole-file read over the token cap returns its head, and the
+        // truncation notice follows as the `read_truncation_notice` batch attachment (Node `formatReadBatchNotice`)
+        // instead of erroring. Every other read over the cap keeps the error.
+        let tokens = estimate_tokens(&slice.content, &extension);
+        let whole = input.limit.is_none() && input.offset.is_none_or(|offset| offset <= 1);
+        let view = match (self.files.node_read.as_ref(), whole, tokens > MAX_TOKENS) {
+            (Some(_), true, true) => partial_view(
+                &slice.content,
+                tokens,
+                slice.total_lines,
+                offset,
+                &extension,
+                &input.file_path,
+            ),
+            _ => None,
+        };
+        let (content, num_lines, notice) = match view {
+            Some(PartialView {
+                content,
+                shown_lines,
+                notice,
+            }) => (content, shown_lines, Some(notice)),
+            None => {
+                check_tokens(&slice.content, &extension)?;
+                (slice.content, slice.line_count, None)
+            }
+        };
+        let partial = notice.is_some();
+        let body = if !content.is_empty() {
+            number_lines(&content, offset)
         } else if slice.line_count >= 1 && slice.total_lines > 1 {
             format!("{offset}\t")
         } else if slice.line_count >= 1 || slice.total_lines == 0 {
@@ -397,7 +440,7 @@ impl Tool for ReadTool {
             texts::shorter_than_offset(offset, slice.total_lines)
         };
         let display = json!({"type": "text", "file": {
-            "filePath": input.file_path, "numLines": slice.line_count,
+            "filePath": input.file_path, "numLines": num_lines,
             "startLine": offset, "totalLines": slice.total_lines,
         }});
         self.files.state.set_at(
@@ -405,18 +448,47 @@ impl Tool for ReadTool {
             context.machine.name(),
             &path,
             FileState {
-                content: slice.content,
+                content,
                 baseline: Baseline::Version(slice.version),
                 offset: Some(offset),
                 limit: input.limit,
-                partial: false,
+                partial,
                 not_in_context: false,
             },
         );
-        Ok(ToolOutput {
-            display,
-            ..text(body)
+        // The notice attachment is committed after the tool result and held to the batch's end under the node
+        // batch order (query `executor.rs`, Node `toolBatchModelEntries`).
+        let new_messages = notice
+            .zip(self.files.node_read.clone())
+            .map(|(notice, ids)| {
+                vec![Message::Attachment(AttachmentMessage {
+                    id: ids.message(),
+                    source: READ_TRUNCATION_NOTICE.to_owned(),
+                    text: rust_cli_base::reminder::wrap(&notice),
+                    data: Value::Null,
+                })]
+            })
+            .unwrap_or_default();
+        Ok(ToolCallOutput {
+            output: ToolOutput {
+                display,
+                ..text(body)
+            },
+            new_messages,
+            stop_turn: false,
         })
+    }
+}
+
+/// Fork (node_desktop): the source of the Read partial-view batch attachment (Node
+/// `system-reminder` source `read_truncation_notice`).
+pub(crate) const READ_TRUNCATION_NOTICE: &str = "read_truncation_notice";
+
+fn done(output: ToolOutput) -> ToolCallOutput {
+    ToolCallOutput {
+        output,
+        new_messages: Vec::new(),
+        stop_turn: false,
     }
 }
 

@@ -183,6 +183,28 @@ pub fn builtin_with_code(
     model: Option<SideModel>,
     code: Option<Arc<dyn rust_cli_kernel_api::lsp::CodeIntelligence>>,
 ) -> BuiltinTools {
+    let (files, state) = builtin_files(gate, model, code);
+    BuiltinTools::new(file_tools(&files)).with_file_state(state)
+}
+
+/// Fork (node_desktop): [`builtin_with_code`] plus Node's Read partial view of a whole-file read over the token cap
+/// (`FileTools::with_node_read`); `ids` names the `read_truncation_notice` attachment.
+pub fn builtin_with_node_read(
+    gate: Arc<dyn PermissionGate>,
+    model: Option<SideModel>,
+    code: Option<Arc<dyn rust_cli_kernel_api::lsp::CodeIntelligence>>,
+    ids: Arc<dyn rust_cli_kernel_api::clock::Ids>,
+) -> BuiltinTools {
+    let (files, state) = builtin_files(gate, model, code);
+    let files = files.with_node_read(ids);
+    BuiltinTools::new(file_tools(&files)).with_file_state(state)
+}
+
+fn builtin_files(
+    gate: Arc<dyn PermissionGate>,
+    model: Option<SideModel>,
+    code: Option<Arc<dyn rust_cli_kernel_api::lsp::CodeIntelligence>>,
+) -> (FileTools, Arc<ReadFileState>) {
     let state = Arc::new(ReadFileState::default());
     let mut files = FileTools::new(state.clone(), gate);
     if let Some(model) = model {
@@ -191,5 +213,5 @@ pub fn builtin_with_code(
     if let Some(code) = code {
         files = files.with_code_intelligence(code);
     }
-    BuiltinTools::new(file_tools(&files)).with_file_state(state)
+    (files, state)
 }

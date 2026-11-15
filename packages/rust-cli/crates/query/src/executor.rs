@@ -36,10 +36,18 @@ enum Status {
     Queued,
     Executing,
     /// tool_result 与执行管线排在它前后的消息（hook 的附加上下文、Skill 的正文，
-    /// docs/specs/rust-cli/ext.md §2.4），按提交顺序。Fork: under the node batch order the call's hook contexts are
-    /// held apart (the second list) until the batch's last result.
-    Completed(Vec<Ready>, Vec<Message>),
+    /// docs/specs/rust-cli/ext.md §2.4），按提交顺序。Fork: under the node batch order the call's held
+    /// attachments (hook contexts, batch notices) are kept apart until the batch's last result.
+    Completed(Vec<Ready>, Held),
     Yielded,
+}
+
+/// Fork (Node `toolBatchModelEntries`): the attachments held until the batch's last result — the hook contexts first,
+/// then the batch notices (Read's partial view), both in result order.
+#[derive(Default)]
+struct Held {
+    contexts: Vec<Message>,
+    notices: Vec<Message>,
 }
 
 /// 可以交付的一条消息；tool_result 带这次调用的计量，与它同批提交（docs/specs/rust-cli/usage.md §2.3）。
@@ -91,9 +99,9 @@ pub(crate) struct ToolBatch {
     mcp_waited: Arc<AtomicU64>,
     /// 本批有工具的 hook 要求停止（`continue: false`，hooks.md §6）：结果都提交后以 `hook_stopped` 结束。
     stop_requested: bool,
-    /// Fork (node batch order): the hook contexts of the results handed out so far, in their order; committed after
-    /// the batch's last result ([`Self::take_held`]).
-    held: Vec<Message>,
+    /// Fork (node batch order): the held attachments of the results handed out so far, in their order; committed
+    /// after the batch's last result ([`Self::take_held`]).
+    held: Held,
 }
 
 fn text_output(text: String) -> ToolOutput {
@@ -124,7 +132,7 @@ impl ToolBatch {
             running: FuturesUnordered::new(),
             mcp_waited: Arc::default(),
             stop_requested: false,
-            held: Vec::new(),
+            held: Held::default(),
         }
     }
 
@@ -147,7 +155,7 @@ impl ToolBatch {
                             message,
                             call: Some(call),
                         }],
-                        Vec::new(),
+                        Held::default(),
                     ),
                 )
             }
@@ -244,7 +252,7 @@ impl ToolBatch {
                     message,
                     call: Some(call),
                 }],
-                Vec::new(),
+                Held::default(),
             );
             return;
         }
@@ -369,14 +377,28 @@ impl ToolBatch {
             message,
             call: Some(call),
         });
-        // Fork (Node `toolBatchModelEntries`): the hook contexts wait for the batch's last result; the rest of `after`
-        // (blocking errors, the stop text, the tool's own follow-up messages) stays with this result.
-        let (contexts, after) = match self.scope.parts.limits.tool_hook_contexts {
-            ToolHookContexts::PerCall => (Vec::new(), after),
-            ToolHookContexts::NodeBatch => after.into_iter().partition(is_hook_context),
+        // Fork (Node `toolBatchModelEntries`): the hook contexts and the batch notices wait for the batch's last
+        // result, the notices after every context; the rest of `after` (blocking errors, the stop text, the tool's
+        // own follow-up messages) stays with this result.
+        let mut held = Held::default();
+        let after = match self.scope.parts.limits.tool_hook_contexts {
+            ToolHookContexts::PerCall => after,
+            ToolHookContexts::NodeBatch => {
+                let mut rest = Vec::new();
+                for message in after {
+                    if is_hook_context(&message) {
+                        held.contexts.push(message);
+                    } else if is_batch_notice(&message) {
+                        held.notices.push(message);
+                    } else {
+                        rest.push(message);
+                    }
+                }
+                rest
+            }
         };
         messages.extend(after.into_iter().map(Ready::plain));
-        self.tools[index].status = Status::Completed(messages, contexts);
+        self.tools[index].status = Status::Completed(messages, held);
         self.process_queue();
     }
 
@@ -387,11 +409,12 @@ impl ToolBatch {
             match &tool.status {
                 Status::Yielded | Status::Queued => {}
                 Status::Completed(..) => {
-                    if let Status::Completed(messages, contexts) =
+                    if let Status::Completed(messages, held) =
                         std::mem::replace(&mut tool.status, Status::Yielded)
                     {
                         ready.extend(messages);
-                        self.held.extend(contexts);
+                        self.held.contexts.extend(held.contexts);
+                        self.held.notices.extend(held.notices);
                     }
                 }
                 Status::Executing if !tool.safe => break,
@@ -401,10 +424,13 @@ impl ToolBatch {
         ready
     }
 
-    /// Fork (node batch order): the held hook contexts, once every result of the batch was committed.
+    /// Fork (node batch order): the held hook contexts and then the batch notices, once every result of the batch
+    /// was committed (Node `toolBatchModelEntries`: `[...hookContexts, ...batchNotices]`).
     pub(crate) fn take_held(&mut self) -> Vec<Ready> {
-        std::mem::take(&mut self.held)
+        let held = std::mem::take(&mut self.held);
+        held.contexts
             .into_iter()
+            .chain(held.notices)
             .map(Ready::plain)
             .collect()
     }
@@ -429,6 +455,12 @@ impl ToolBatch {
 /// A tool hook's additional context (the hooks' `hook_additional_context` attachment).
 fn is_hook_context(message: &Message) -> bool {
     matches!(message, Message::Attachment(attachment) if attachment.source == "hook_additional_context")
+}
+
+/// A tool's batch notice (Node `formatBatchNotice`; the tools crate sends Read's partial view as
+/// `read_truncation_notice`). Like a hook context it is held to the batch's end, after every held context.
+fn is_batch_notice(message: &Message) -> bool {
+    matches!(message, Message::Attachment(attachment) if attachment.source == "read_truncation_notice")
 }
 
 /// 工具结束的日志（logging.md §4）：失败记 info，带错误文本的前 300 个字符（系统文字，不是用户内容）；
