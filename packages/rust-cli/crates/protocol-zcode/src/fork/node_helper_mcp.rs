@@ -560,6 +560,8 @@ impl PipeLink {
 pub struct HelperRoutedMcp {
     inner: std::sync::Arc<dyn McpTransport>,
     helper: std::sync::Arc<NodeHelper>,
+    /// The cooldown's time source (repo rule: take the time from the injected Clock).
+    clock: std::sync::Arc<dyn rust_cli_kernel_api::clock::Clock>,
     /// Event streams of helper connections not yet taken (`events` is taken once).
     events: std::sync::Mutex<
         std::collections::HashMap<String, mpsc::UnboundedReceiver<McpTransportEvent>>,
@@ -572,10 +574,12 @@ impl HelperRoutedMcp {
     pub fn new(
         inner: std::sync::Arc<dyn McpTransport>,
         helper: std::sync::Arc<NodeHelper>,
+        clock: std::sync::Arc<dyn rust_cli_kernel_api::clock::Clock>,
     ) -> Self {
         Self {
             inner,
             helper,
+            clock,
             events: std::sync::Mutex::new(std::collections::HashMap::new()),
             routes: std::sync::Mutex::new(std::collections::HashMap::new()),
         }
@@ -598,15 +602,28 @@ impl HelperRoutedMcp {
             .clone();
         // A permit, not a lock guard: it travels across the connect's awaits.
         let _one_at_a_time = gate.clone().acquire_owned().await.ok();
-        if let Some(connected) = route.state.lock_unpoisoned().workspaces.get(key) {
-            return Ok(connected.clone());
+        // The guard lives in its own block: nothing of it may reach the connect's await below.
+        {
+            let mut state = route.state.lock_unpoisoned();
+            if let Some(connected) = state.workspaces.get(key) {
+                return Ok(connected.clone());
+            }
+            // Fail fast inside the cooldown: a key whose connect keeps failing must not turn every
+            // call into a fresh Node-side spawn attempt that pays the whole CONNECT timeout.
+            let now = self.clock.now_ms();
+            if let Some((failure, at)) = state.failed.get(key).cloned()
+                && now.saturating_sub(at) < FAILED_CONNECT_COOLDOWN_MS
+            {
+                return Err(closed(&failure));
+            }
+            state.failed.remove(key);
         }
         let closed = {
             let route = route.clone();
             let key = key.to_owned();
             move |reason: Option<&str>| workspace_closed(&route, &key, reason)
         };
-        let pipe = self
+        let pipe = match self
             .helper
             .mcp_connect_pipe(
                 workspace,
@@ -614,7 +631,28 @@ impl HelperRoutedMcp {
                 route.events.clone(),
                 Some(Box::new(closed)),
             )
-            .await?;
+            .await
+        {
+            Ok(pipe) => pipe,
+            Err(error) => {
+                // Remember the failure for the cooldown, then surface it to this caller as-is.
+                route
+                    .state
+                    .lock_unpoisoned()
+                    .failed
+                    .insert(key.to_owned(), (error.to_string(), self.clock.now_ms()));
+                return Err(error);
+            }
+        };
+        if route.state.lock_unpoisoned().dead {
+            // The connection closed while this connect ran: its route is gone, so nothing would
+            // ever close this pipe. Close it here and fail the caller (it reconnects if the
+            // connection is opened again).
+            let _ = self.helper.mcp_close(pipe.as_str()).await;
+            return Err(McpError::Closed {
+                message: "the helper connection is closed".to_owned(),
+            });
+        }
         route
             .state
             .lock_unpoisoned()
@@ -643,6 +681,9 @@ struct RouteState {
     dead: bool,
     /// The connected pipe of each workspace key beyond the own one.
     workspaces: std::collections::HashMap<String, String>,
+    /// A key whose connect failed inside the cooldown, with the failure and when it was recorded:
+    /// later calls fail fast instead of re-running the whole connect (a spawn attempt per call).
+    failed: std::collections::HashMap<String, (String, u64)>,
     /// One connect at a time per key.
     connecting: std::collections::HashMap<String, std::sync::Arc<tokio::sync::Semaphore>>,
     /// The recent id'd messages that took a workspace pipe, for their cancels and a closed pipe's answers.
@@ -652,6 +693,10 @@ struct RouteState {
 /// How many of a connection's recent messages the route remembers, to route a cancel after its call and answer the
 /// calls a closed workspace pipe left in flight.
 const REMEMBERED_MESSAGES: usize = 1024;
+
+/// How long a failed workspace connect is remembered before a call may retry it. The own pipe's
+/// failures go through the MCP manager's reconnect policy; this is the workspace path's equivalent.
+const FAILED_CONNECT_COOLDOWN_MS: u64 = 30_000;
 
 /// The workspace key each recent id'd message went to, oldest first. Keyed by the id as JSON text, the shape of a
 /// `notifications/cancelled` `requestId`.
@@ -676,6 +721,13 @@ impl RecentMessages {
                 self.keys.remove(&oldest);
             }
         }
+    }
+
+    /// Forgets an id whose call was answered on this side (a closed pipe must not answer it again).
+    fn forget(&mut self, id: &Value) {
+        let text = id.to_string();
+        self.keys.remove(&text);
+        self.order.retain(|held| held != &text);
     }
 
     fn key_of(&self, id: &str) -> Option<String> {
@@ -703,7 +755,13 @@ fn workspace_closed(route: &std::sync::Arc<Route>, key: &str, reason: Option<&st
     let answered = {
         let mut state = route.state.lock_unpoisoned();
         state.workspaces.remove(key);
-        state.recent.take_ids_of(key)
+        // Once dead, the manager fails every in-flight call on the coming Closed: synthesizing
+        // more answers after it would break the stream's terminal contract.
+        if state.dead {
+            Vec::new()
+        } else {
+            state.recent.take_ids_of(key)
+        }
     };
     for id in answered {
         let message = json!({"jsonrpc": "2.0", "id": id,
@@ -783,10 +841,14 @@ impl McpTransport for HelperRoutedMcp {
         }
         let own = connection.as_str().to_owned();
         let Some(route) = self.routes.lock_unpoisoned().get(&own).cloned() else {
-            return Err(closed("the helper connection is closed"));
+            return Err(McpError::Closed {
+                message: "the helper connection is closed".to_owned(),
+            });
         };
         if route.state.lock_unpoisoned().dead {
-            return Err(closed("the helper connection is closed"));
+            return Err(McpError::Closed {
+                message: "the helper connection is closed".to_owned(),
+            });
         }
         // The pipe the message travels on: a session's call takes its workspace's pipe, a cancel follows its call,
         // everything else (initialize, tools/list, answers to the server's requests) takes the own one. A session
@@ -840,6 +902,9 @@ impl McpTransport for HelperRoutedMcp {
                     .workspaces
                     .retain(|_, held| *held != pipe);
                 if let Some(id) = id {
+                    // The call is answered here: forget it, so a later close of that workspace's
+                    // pipe does not synthesize a second answer for a resolved id.
+                    route.state.lock_unpoisoned().recent.forget(&id);
                     refused(&route.events, &id, error.to_string());
                 }
                 Ok(())
@@ -867,18 +932,23 @@ impl McpTransport for HelperRoutedMcp {
             self.helper.mcp_close(connection.as_str()).await;
             return Ok(());
         };
-        let mut pipes = vec![connection.as_str().to_owned()];
-        pipes.extend(
-            route
-                .state
-                .lock_unpoisoned()
-                .workspaces
-                .drain()
-                .map(|(_, id)| id),
-        );
-        for pipe in pipes {
+        // Dead before draining: an in-flight workspace connect that lands after the drain sees it
+        // and closes its late pipe itself, so no Node-side lease outlives the connection.
+        route.state.lock_unpoisoned().dead = true;
+        // Workspace pipes first: their close callbacks answer in-flight calls with -32603 events,
+        // which must land on the stream BEFORE the own pipe's terminal Closed (the transport
+        // contract: after Closed there are no more events).
+        let workspace_pipes: Vec<String> = route
+            .state
+            .lock_unpoisoned()
+            .workspaces
+            .drain()
+            .map(|(_, id)| id)
+            .collect();
+        for pipe in workspace_pipes {
             self.helper.mcp_close(&pipe).await;
         }
+        self.helper.mcp_close(connection.as_str()).await;
         Ok(())
     }
 }

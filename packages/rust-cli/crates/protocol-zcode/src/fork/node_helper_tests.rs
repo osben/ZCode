@@ -266,6 +266,7 @@ struct Rig {
     helper: Arc<NodeHelper>,
     fake: Arc<Fake>,
     host: Lines<BufReader<DuplexStream>>,
+    clock: Arc<rust_cli_kernel_api::testing::FixedClock>,
     _writer: Task<()>,
     _scope: TaskScope,
 }
@@ -284,6 +285,7 @@ fn rig(fake: Fake, timing: Timing) -> Rig {
         helper,
         fake,
         host: BufReader::new(host_in).lines(),
+        clock: Arc::new(rust_cli_kernel_api::testing::FixedClock(0)),
         _writer: writer,
         _scope: scope,
     }
@@ -1115,7 +1117,11 @@ async fn the_routing_transport_sends_node_helper_servers_to_the_helper() {
     };
 
     let rig = rig(fake(&["plugins/list"], mcp_echo()), timing());
-    let routed = HelperRoutedMcp::new(Arc::new(NoMcpTransport), rig.helper.clone());
+    let routed = HelperRoutedMcp::new(
+        Arc::new(NoMcpTransport),
+        rig.helper.clone(),
+        rig.clock.clone(),
+    );
     let workspace = WorkspaceRef {
         environment: EnvironmentId::new("primary"),
         root: EnvPath::new("/w"),
@@ -1262,7 +1268,11 @@ async fn each_workspaces_calls_travel_a_pipe_connected_in_that_workspace() {
     use rust_cli_kernel_api::mcp::{McpConnect, McpTransport, McpTransportConfig, NoMcpTransport};
 
     let rig = pipe_rig(pipes_with_sessions());
-    let routed = HelperRoutedMcp::new(Arc::new(NoMcpTransport), rig.helper.clone());
+    let routed = HelperRoutedMcp::new(
+        Arc::new(NoMcpTransport),
+        rig.helper.clone(),
+        rig.clock.clone(),
+    );
     let group = WorkspaceRef {
         environment: EnvironmentId::new("primary"),
         root: EnvPath::new("/w"),
@@ -1432,7 +1442,11 @@ async fn a_closed_workspace_pipe_answers_its_calls_and_the_connection_lives_on()
     });
     let rig = pipe_rig(hanging);
 
-    let routed = HelperRoutedMcp::new(Arc::new(NoMcpTransport), rig.helper.clone());
+    let routed = HelperRoutedMcp::new(
+        Arc::new(NoMcpTransport),
+        rig.helper.clone(),
+        rig.clock.clone(),
+    );
     let group = WorkspaceRef {
         environment: EnvironmentId::new("primary"),
         root: EnvPath::new("/w"),
