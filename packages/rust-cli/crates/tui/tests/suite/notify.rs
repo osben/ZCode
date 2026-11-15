@@ -77,7 +77,8 @@ async fn an_ask_rings_while_the_terminal_is_away_and_the_title_follows() {
             "{shown:?}"
         );
         past_arming();
-        ui.key(KeyCode::Char('3'));
+        // Always-allow numbers second without suggestions, Deny is 4.
+        ui.key(KeyCode::Char('4'));
         ui.wait_for("file step done").await;
         tick().await;
         // 请求离开了：标题换回会话的名字（没有名字时弹回终端原来的）。
@@ -120,7 +121,8 @@ async fn a_focused_terminal_gets_no_ring_and_no_title() {
         tick().await;
         assert!(rings(&ui).is_empty());
         past_arming();
-        ui.key(KeyCode::Char('3'));
+        // Always-allow numbers second without suggestions, Deny is 4.
+        ui.key(KeyCode::Char('4'));
         ui.wait_for("file step done").await;
     })
     .await;
@@ -132,7 +134,8 @@ async fn a_focused_terminal_gets_no_ring_and_no_title() {
         tick().await;
         assert_eq!(rings(&ui), ["\u{7}"]);
         past_arming();
-        ui.key(KeyCode::Char('3'));
+        // Always-allow numbers second without suggestions, Deny is 4.
+        ui.key(KeyCode::Char('4'));
         ui.wait_for("file step done").await;
     })
     .await;

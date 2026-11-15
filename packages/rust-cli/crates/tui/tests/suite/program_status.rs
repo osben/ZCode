@@ -51,7 +51,7 @@ async fn one_turn(setup: Setup) -> Vec<String> {
         ui.wait_for("Run this command?").await;
         // 回答的按键在请求打开 12 个 tick 之后才算（`ARM_TICKS`，真实时间）。
         ui.settle().await;
-        ui.key(KeyCode::Char('3'));
+        ui.key(KeyCode::Char('4'));
         ui.wait_for("file step done").await;
         ui.settle().await;
     })
@@ -110,7 +110,7 @@ async fn a_supporting_terminal_hears_the_turn_and_the_ask() {
         ui.wait_for("Run this command?").await;
         until_root(&written, "blocked").await;
         ui.settle().await;
-        ui.key(KeyCode::Char('3'));
+        ui.key(KeyCode::Char('4'));
         until_root(&written, "working").await;
         finish(second, text_response(&["file step done"]));
         ui.wait_for("file step done").await;
