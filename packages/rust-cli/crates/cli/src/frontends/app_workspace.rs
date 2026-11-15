@@ -22,6 +22,7 @@ use rust_cli_kernel_api::ids::EnvironmentId;
 use rust_cli_kernel_api::machine::Files;
 use rust_cli_kernel_api::manage::{McpAction, McpServerInfo, McpServerState};
 use rust_cli_kernel_api::mcp::McpTransport;
+use rust_cli_kernel_api::workspace_key::WorkspaceLayerHost;
 use rust_cli_node_store::LOCAL_ENVIRONMENT;
 use rust_cli_paths::StoragePaths;
 use rust_cli_platform::local::{McpTrustError, McpTrustRecord, StillDeclared};
@@ -45,6 +46,9 @@ pub(crate) struct AppWorkspace {
     pub(crate) process: ProcessConfig,
     /// The engine's ordered writes of workspace entries (a seam: tests record the entries instead).
     pub(crate) project_hooks: Arc<dyn ProjectHookSlots>,
+    /// Fork: the workspace layer this admin's committed trust writes reload (a seam, like
+    /// `project_hooks`; specs/fork-rust-workspace-plugins-mcp.md, "As built: layer reload").
+    pub(crate) workspace_layer: Arc<dyn WorkspaceLayerHost>,
     pub(crate) transport: Arc<dyn McpTransport>,
     pub(crate) spawner: Spawner,
     pub(crate) clock: Arc<dyn Clock>,
@@ -80,6 +84,7 @@ impl AppWorkspace {
         (files, paths): (Arc<dyn Files>, StoragePaths),
         process: ProcessConfig,
         project_hooks: Arc<dyn ProjectHookSlots>,
+        workspace_layer: Arc<dyn WorkspaceLayerHost>,
         (transport, spawner, clock): (Arc<dyn McpTransport>, Spawner, Arc<dyn Clock>),
     ) -> Self {
         Self {
@@ -87,6 +92,7 @@ impl AppWorkspace {
             paths,
             process,
             project_hooks,
+            workspace_layer,
             transport,
             spawner,
             clock,
@@ -315,6 +321,23 @@ impl AppWorkspace {
         fresh.manager.wait_ready().await;
     }
 
+    /// Fork (specs/fork-rust-workspace-plugins-mcp.md, "As built: layer reload"): a config or trust
+    /// write this admin committed reloads the workspace's plugin/MCP layer, so its sessions' group
+    /// and plugin admission follow without a process restart. The layer itself stays lazy (a
+    /// workspace this process never loaded does not load here).
+    async fn reload_layer(&self, target: &WorkspaceTarget) {
+        // The RAW target path — the same string the session side records as its workspace root
+        // (`Server::workspace(path)` stores it verbatim). `Target::new` normalizes (it folds `.`/`..`
+        // and unifies Windows separators), while `project_key` only trims trailing separators, so a
+        // normalized root can miss the session-side key on Windows-style paths and the reload would
+        // silently do nothing.
+        let workspace = WorkspaceRef {
+            environment: EnvironmentId::new(LOCAL_ENVIRONMENT),
+            root: EnvPath::new(target.path.clone()),
+        };
+        self.workspace_layer.reload(&workspace).await;
+    }
+
     /// `mcp/list`; `arrival` is set for a connect ([`Self::arrival`]), `None` for a status read.
     pub(crate) async fn list(
         &self,
@@ -476,7 +499,12 @@ impl WorkspaceAdmin for AppWorkspace {
             .decide(still_declared, record, trusted)
             .await
         {
-            Ok(()) => json!({"accepted": true}),
+            Ok(()) => {
+                // The layer's server admission reads that store, so the committed decision
+                // reloads the workspace's layer (its project servers wait for exactly this grant).
+                self.reload_layer(target).await;
+                json!({"accepted": true})
+            }
             Err(error) => {
                 if !matches!(error, McpTrustError::Changed) {
                     tracing::warn!(error = ?error, "workspace MCP trust decision failed");
@@ -509,7 +537,7 @@ impl WorkspaceAdmin for AppWorkspace {
         )
         .await;
         if answer["accepted"] == json!(true) {
-            self.rebuild_hooks(&trust).await;
+            self.rebuild_hooks(target, &trust).await;
         }
         answer
     }

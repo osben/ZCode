@@ -152,7 +152,8 @@ async fn an_earlier_rebuild_never_installs_over_a_later_mutation() {
     // The earlier rebuild reads the config with both declarations enabled, then stalls before it installs.
     gate.armed.store(true, Ordering::SeqCst);
     let (own, at, ids) = (Target::new(ROOT, None), target(ROOT), ids(&review));
-    let earlier = fixture.admin.rebuild_hooks(&own);
+    let own_target = target(ROOT);
+    let earlier = fixture.admin.rebuild_hooks(&own_target, &own);
     let later = async {
         gate.held.notified().await;
         let before = fixture.hooks.lock().unwrap().len();
@@ -199,10 +200,12 @@ async fn a_later_epoch_of_another_workspace_never_drops_a_rebuild() {
         Target::new(ROOT, None),
         Target::new("/Users/dev/other", None),
     );
-    let earlier = fixture.admin.rebuild_hooks(&own);
+    let own_target = target(ROOT);
+    let earlier = fixture.admin.rebuild_hooks(&own_target, &own);
     let later = async {
         gate.held.notified().await;
-        fixture.admin.rebuild_hooks(&other).await;
+        let other_target = target("/Users/dev/other");
+        fixture.admin.rebuild_hooks(&other_target, &other).await;
         assert_eq!(
             installed(&fixture).0,
             rust_cli_hooks::project_key("/Users/dev/other")
@@ -339,7 +342,8 @@ async fn an_older_rebuild_never_replaces_a_later_toggles_invalid() {
         .unwrap();
     gate.armed.store(true, Ordering::SeqCst);
     let (own, at, ids) = (Target::new(ROOT, None), target(ROOT), ids(&review));
-    let earlier = fixture.admin.rebuild_hooks(&own);
+    let own_target = target(ROOT);
+    let earlier = fixture.admin.rebuild_hooks(&own_target, &own);
     let later = async {
         gate.held.notified().await;
         let toggled = fixture
@@ -402,7 +406,8 @@ async fn a_stalled_review_rebuild_never_replaces_a_later_session_load() {
         .unwrap();
     gate.armed.store(true, Ordering::SeqCst);
     let own = Target::new(ROOT, None);
-    let stalled = fixture.admin.rebuild_hooks(&own);
+    let stalled_target = target(ROOT);
+    let stalled = fixture.admin.rebuild_hooks(&stalled_target, &own);
     let session = async {
         gate.held.notified().await;
         let epoch = fixture.slots.reserve_project();

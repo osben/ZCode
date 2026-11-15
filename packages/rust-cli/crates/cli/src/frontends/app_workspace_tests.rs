@@ -87,6 +87,31 @@ impl ProjectHookSlots for Slots {
     }
 }
 
+/// The layer host seam (specs/fork-rust-workspace-plugins-mcp.md, "As built: layer reload"): records
+/// the workspaces whose plugin/MCP layer the admin's committed trust writes reloaded.
+#[derive(Default)]
+pub(super) struct Layer {
+    reloaded: StdMutex<Vec<String>>,
+}
+
+impl Layer {
+    pub(super) fn reloaded(&self) -> Vec<String> {
+        self.reloaded.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl rust_cli_kernel_api::workspace_key::WorkspaceLayerHost for Layer {
+    async fn load(&self, _workspace: &WorkspaceRef) {}
+
+    async fn reload(&self, workspace: &WorkspaceRef) {
+        self.reloaded
+            .lock()
+            .unwrap()
+            .push(workspace.root.as_str().to_owned());
+    }
+}
+
 /// Shared with `app_hook_review_tests.rs`.
 pub(super) struct Fixture {
     pub(super) _home: tempfile::TempDir,
@@ -95,6 +120,7 @@ pub(super) struct Fixture {
     transport: Arc<Recording>,
     pub(super) hooks: Arc<StdMutex<Vec<(String, ProjectEntry)>>>,
     pub(super) slots: Arc<Slots>,
+    pub(super) layer: Arc<Layer>,
 }
 
 fn fixture(project: Value, user: Value) -> Fixture {
@@ -131,6 +157,7 @@ pub(super) fn fixture_files(
     let scope = TaskScope::root("app-workspace-test", |_| {});
     let transport = Arc::new(Recording::default());
     let slots = Arc::new(Slots::default());
+    let layer = Arc::new(Layer::default());
     let hooks = slots.accepted.clone();
     let admin = AppWorkspace::new(
         (wrap(Arc::new(env)), paths),
@@ -138,6 +165,7 @@ pub(super) fn fixture_files(
             process_env: EnvSnapshot::default(),
         },
         slots.clone(),
+        layer.clone(),
         (
             transport.clone(),
             scope.spawner(),
@@ -151,6 +179,7 @@ pub(super) fn fixture_files(
         transport,
         hooks,
         slots,
+        layer,
     }
 }
 
@@ -220,6 +249,8 @@ async fn a_trust_grant_admits_the_declaration_and_clears_the_banner() {
         .mcp_trust(&target("k"), "alpha", &digest, true)
         .await;
     assert_eq!(answer, json!({"accepted": true}));
+    // The layer's server admission reads that store, so the committed decision reloads the layer.
+    assert_eq!(fixture.layer.reloaded(), [ROOT.to_owned()]);
 
     let statuses = list(&fixture, "k", true).await;
     assert_eq!(fixture.transport.started(), ["alpha"]);
@@ -309,6 +340,8 @@ async fn a_hook_grant_is_persisted_and_rebuilds_the_process_hooks() {
         .await;
     assert_eq!(refused["accepted"], false);
     assert!(fixture.hooks.lock().unwrap().is_empty());
+    // A refused grant wrote nothing, so nothing reloads.
+    assert!(fixture.layer.reloaded().is_empty());
 
     let answer = fixture
         .admin
@@ -317,6 +350,8 @@ async fn a_hook_grant_is_persisted_and_rebuilds_the_process_hooks() {
     assert_eq!(answer, json!({"accepted": true}));
     assert_eq!(fixture.hooks.lock().unwrap().len(), 1);
     assert_eq!(fixture.admin.admission(&target(ROOT)).await.hook, None);
+    // The accepted grant rebuilt the hooks entry and reloaded the workspace's plugin/MCP layer.
+    assert_eq!(fixture.layer.reloaded(), [ROOT.to_owned()]);
 }
 
 /// The current hook bundle and its first pending digest.

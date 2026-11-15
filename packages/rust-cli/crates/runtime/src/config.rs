@@ -35,12 +35,22 @@ impl LocalKernel {
     /// layer; the print entry prewarms a resumed session's workspace with it before its startup
     /// wait, so the group's alwaysLoad servers are covered by that (cancellable) wait.
     pub async fn load_workspace_layer(&self, workspace: &rust_cli_kernel_api::env::WorkspaceRef) {
-        let layer = self
-            .workspace_layer
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone();
-        layer.load(workspace).await;
+        self.workspace_layer_host().load(workspace).await;
+    }
+
+    /// Fork (specs/fork-rust-workspace-plugins-mcp.md, "As built: layer reload"): re-reads a
+    /// workspace's plugin/MCP layer past the loaded-slot reuse — the App's committed config/trust
+    /// writes go through here, so the workspace's group and plugin admission follow without a
+    /// process restart.
+    pub async fn reload_workspace_layer(&self, workspace: &rust_cli_kernel_api::env::WorkspaceRef) {
+        self.workspace_layer_host().reload(workspace).await;
+    }
+
+    /// Fork: the layer host, for the App's admin (its trust paths reload a workspace's layer).
+    pub fn workspace_layer_host(
+        &self,
+    ) -> std::sync::Arc<dyn rust_cli_kernel_api::workspace_key::WorkspaceLayerHost> {
+        self.workspace_layer.read_unpoisoned().clone()
     }
 
     /// Fork: the cli loader that assembles a workspace's plugin/MCP layer

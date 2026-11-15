@@ -226,6 +226,7 @@ async fn serve(
             process_env: facts.process.env.clone(),
         },
         built.kernel.project_hook_slots(),
+        built.kernel.workspace_layer_host(),
         (opened.primary.mcp().clone(), spawner.clone(), clock.clone()),
     )));
     // Fork: the ACP agents' session config behind `setExternalAgentConfigOption` and the subscribe seed.

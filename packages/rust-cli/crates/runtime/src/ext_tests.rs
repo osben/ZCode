@@ -521,6 +521,19 @@ impl rust_cli_ext::WorkspaceConfigLoader for FixedLayer {
     }
 }
 
+/// A loader the test flips between answers, for the kernel's layer reload.
+struct SwitchingLayer(std::sync::Mutex<Option<rust_cli_ext::WorkspaceConfig>>);
+
+#[async_trait::async_trait]
+impl rust_cli_ext::WorkspaceConfigLoader for SwitchingLayer {
+    async fn load(
+        &self,
+        _workspace: &rust_cli_kernel_api::env::WorkspaceRef,
+    ) -> Option<rust_cli_ext::WorkspaceConfig> {
+        self.0.lock().unwrap().clone()
+    }
+}
+
 /// Fork (specs/fork-rust-node-helper.md F3, per-workspace admission): a session of a workspace with
 /// a loaded layer resolves that workspace's plugin set; the process workspace and unknown sessions
 /// resolve none, so the helper's catalog falls back to the process one for them.
@@ -605,4 +618,91 @@ async fn a_session_resolves_its_workspaces_plugins() {
             .plugins_for_session(&rust_cli_kernel_api::ids::SessionId::new("unknown"))
             .is_none()
     );
+}
+
+/// Fork (specs/fork-rust-workspace-plugins-mcp.md, "As built: layer reload"): the kernel's reload
+/// re-reads a session workspace's layer past the loaded-slot reuse — the App's committed trust
+/// writes go through it — and a read that now fails is fail-closed (`Invalid`, the process set).
+#[tokio::test]
+async fn a_workspace_layer_reload_replaces_the_loaded_slot() {
+    let env = MemoryEnvironment::new(EnvFacts {
+        cwd: EnvPath::new("/Users/dev/work"),
+        platform: "darwin".to_owned(),
+        os_version: "Darwin 24".to_owned(),
+        shell: "zsh".to_owned(),
+        is_git_repo: false,
+        home: Some(EnvPath::new("/Users/dev")),
+        uid: None,
+    });
+    let store = Arc::new(MemoryStore::default());
+    let kernel = LocalKernel::with_extensions(
+        Ports {
+            model: Arc::new(ScriptedModel::new(Vec::new())),
+            environments: environments(Arc::new(env)),
+            store: store.clone(),
+            artifacts: store,
+            clock: Arc::new(FixedClock(1_000)),
+            ids: Arc::new(SequentialIds::default()),
+        },
+        Defaults {
+            selection: selection().into(),
+            mode: PermissionMode::Default,
+            max_turns: None,
+            search_tools: false,
+            task_tools: None,
+            limits: Default::default(),
+        },
+        ContextConfig::new(Surface::Print),
+        CompactConfig::default(),
+        Arc::new(MemoryTaskLists::default()),
+        Extensions {
+            config: ExtConfig {
+                workspace: Some(workspace()),
+                ..ExtConfig::default()
+            },
+            ..Extensions::none()
+        },
+    );
+    let config = || {
+        Some(rust_cli_ext::WorkspaceConfig {
+            plugins: Default::default(),
+            servers: Vec::new(),
+        })
+    };
+    let loader = Arc::new(SwitchingLayer(std::sync::Mutex::new(config())));
+    kernel.set_workspace_config_loader(loader.clone());
+    let other = WorkspaceRef {
+        environment: workspace().environment,
+        root: EnvPath::new("/Users/dev/other"),
+    };
+    let session = kernel
+        .create_session(CreateSession {
+            id: None,
+            workspace: other.clone(),
+            selection: selection(),
+            mode: PermissionMode::Default,
+            plan: false,
+            incognito: None,
+        })
+        .await
+        .unwrap();
+    let loaded = kernel
+        .plugins_for_session(&session)
+        .expect("the session's workspace loaded a layer");
+
+    kernel.reload_workspace_layer(&other).await;
+    assert!(
+        !Arc::ptr_eq(
+            &loaded,
+            &kernel
+                .plugins_for_session(&session)
+                .expect("the reload installed a loaded slot")
+        ),
+        "the reload re-read the layer, it did not reuse the slot"
+    );
+
+    // The re-read fails: the slot turns Invalid and the session falls back to the process set.
+    *loader.0.lock().unwrap() = None;
+    kernel.reload_workspace_layer(&other).await;
+    assert!(kernel.plugins_for_session(&session).is_none());
 }

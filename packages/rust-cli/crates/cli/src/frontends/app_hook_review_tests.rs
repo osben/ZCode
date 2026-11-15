@@ -269,14 +269,28 @@ async fn an_unreadable_config_refuses_a_revoke() {
     assert_eq!(std::fs::read(store_file(&fixture)).unwrap(), before);
 }
 
+fn ws_target(path: &str) -> WorkspaceTarget {
+    WorkspaceTarget {
+        path: path.to_owned(),
+        identity: None,
+        key: path.to_owned(),
+    }
+}
+
 #[tokio::test]
 async fn each_workspace_rebuilds_its_own_entry() {
     let fixture = fixture_text(PROJECT, json!({}));
     fixture
         .admin
-        .rebuild_hooks(&Target::new("/Users/dev/other", None))
+        .rebuild_hooks(
+            &ws_target("/Users/dev/other"),
+            &Target::new("/Users/dev/other", None),
+        )
         .await;
-    fixture.admin.rebuild_hooks(&Target::new(ROOT, None)).await;
+    fixture
+        .admin
+        .rebuild_hooks(&ws_target(ROOT), &Target::new(ROOT, None))
+        .await;
     let keys: Vec<String> = fixture
         .hooks
         .lock()
@@ -315,6 +329,8 @@ async fn a_toggle_rewrites_only_enabled_as_node_writes_the_config() {
     assert!(after.items[0].configured_enabled);
     assert!(!after.items[1].configured_enabled);
     assert_eq!(fixture.hooks.lock().unwrap().len(), 1);
+    // The committed config write reloads the workspace's plugin/MCP layer ("As built: layer reload").
+    assert_eq!(fixture.layer.reloaded(), [ROOT.to_owned()]);
 }
 
 #[tokio::test]
@@ -348,6 +364,8 @@ async fn a_toggle_is_refused_like_node() {
     );
     assert_eq!(project(&fixture).await, b"{ not json");
     assert!(fixture.hooks.lock().unwrap().is_empty());
+    // Every refusal came before the write: nothing reloaded.
+    assert!(fixture.layer.reloaded().is_empty());
 }
 
 /// The re-check of the declaration read for the write: a different command, or one at another position, is not the

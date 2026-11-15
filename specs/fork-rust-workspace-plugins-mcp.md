@@ -93,9 +93,9 @@ official cache and `installed_plugins.json` all live under the storage root
 4. Model turn: the session's tool snapshot, `SessionCatalog` (`mcp_servers`), WaitForMcpServers and
    ToolSearch read the session's group (the same snapshot path they read today, parity spec
    "session keeps a snapshot of the tool profile"), so they follow without new owners.
-5. Config change for a workspace (`/mcp enable|disable`, project config write): an epoch write
-   replaces only that workspace's slot; connections of its group reconnect, other groups and the
-   process group do not notice.
+5. Config change for a workspace (a trust write the App committed, `/mcp enable|disable`): an epoch
+   write replaces only that workspace's slot ("As built: layer reload" below); connections of its
+   group reconnect, other groups and the process group do not notice.
 
 ## Rules
 
@@ -131,6 +131,36 @@ entries without their own sources. The sink runs before the layer's waiters wake
 opens on the new slot finds the hooks registered; the one lock and the epoch writes of the project
 entries are unchanged (a plugin registration is one synchronous write, like the process one).
 
+## As built: layer reload
+
+The load-once guard is closed: `WorkspaceLayer::reload(workspace)` (wired through
+`WorkspaceLayerHost::reload` and the kernel's `reload_workspace_layer`) re-runs the loader for one
+workspace past the `Loaded`-reuse guard. Node's equivalent is each session app re-reading config at
+construction; the Rust side keeps the explicit-trigger model — the App's config-write paths call the
+reload after the write they committed, never a file watcher:
+
+- `workspace/hooks/trustGrant` and the hook review's grant and revoke (`rebuild_hooks`, the same
+  place that rebuilds the hooks entry), the review toggle's committed write, and an accepted
+  `workspace/mcp/trust` decision (the layer's server admission reads that store) —
+  `frontends/app_workspace.rs`.
+- `/mcp enable|disable` is NOT wired (follow-up below): the TUI is their only surface, and the
+  TUI's workspace is the process workspace, for which no layer ever loads (the load guard), so no
+  reachable surface has a loaded non-process layer today.
+
+The mechanism mirrors the hooks engine's `reserve_project`/`put_project_at`: every slot carries the
+epoch of the write that put it, a write reserves its epoch before it reads, and `put_at` refuses a
+write whose epoch a later write already superseded — an in-flight session load that started before a
+reload cannot install its older read over the newer slot, and (the group swap runs inside the same
+acceptance check) it cannot replace the group either. A plain `load` reserves when it claims the
+single-flight key, so a reload triggered while it runs always reserves after it; a reload does not
+queue behind the claim (the epochs arbitrate). Reload stays lazy: a workspace with neither a slot nor
+a load in flight does not load on reload — nothing in this process uses it yet, and the next session
+open reads the post-write config directly. A reload whose read fails installs `Invalid` and stops
+the group exactly like a first load (fail-closed, rule (d)); a later reload or session retry
+recovers. The replaced slot needs no new owners: the skill roots, agent files and helper admission
+read `plugins_of` (the slot) per call, and the MCP view resolves the group per snapshot, so both
+follow a replaced slot.
+
 ## Not in this PR (follow-ups)
 
 - ~~Per-workspace `HelperCatalog` admission and helper-hosted plugin servers per workspace~~ — closed:
@@ -145,7 +175,13 @@ entries are unchanged (a plugin registration is one synchronous write, like the 
   before the process set.
 - MCP Apps on Rust-hosted servers (F7) and `helper/appTools/*` (F3b) — unchanged scope.
 - The TUI (single workspace by construction) keeps the process group; no per-workspace TUI surface.
-- `/mcp enable|disable|reconnect` stay process-group operations (TUI flows).
+- `/mcp enable|disable|reconnect` stay process-group operations (TUI flows). ~~Wiring them into the
+  layer reload~~ stays a follow-up with a reason: their only surface is the TUI (`mcp_control` has
+  no other caller), and the TUI's workspace is the process workspace, whose layer never loads (the
+  load guard) — there is no reachable surface with a loaded non-process layer today. The reload
+  mechanism itself is built ("As built: layer reload"); wiring a new surface means resolving that
+  session's group in `mcp_control` and reloading its workspace when the toggled server's origin is
+  a project file.
 - ~~The LSP path's project `plugins.dirs`~~ — closed: `plugin_view` applies the Node rule (project
   dirs never load; the inventory roots resolve from the trusted layers only), and the workspace
   loader reuses the view instead of its own copy.
@@ -164,6 +200,10 @@ entries are unchanged (a plugin registration is one synchronous write, like the 
   - user shadows project by name inside a group; two groups run the same name independently;
   - an unreadable/broken project layer → `Invalid`: the session keeps the process set, the next
     successful assembly recovers;
+  - a reload after a committed write replaces the slot, the group and the plugin-hook registration
+    for that workspace only; an in-flight load that started earlier never installs over it; a reload
+    of a never-loaded workspace loads nothing; the App's trust paths (`workspace/hooks/trustGrant`,
+    review grant/revoke/toggle, an accepted `workspace/mcp/trust`) trigger the reload (cli);
   - without a registered workspace (TUI/`-p`) the snapshot equals today's;
   - incognito + workspace filtering compose (a profile-hidden server never answers through any
     group).
