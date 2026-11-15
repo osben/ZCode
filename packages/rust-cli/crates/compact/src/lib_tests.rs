@@ -461,6 +461,41 @@ async fn the_desktop_skips_a_compaction_with_too_little_history() {
     assert_eq!(said, ["skipped Auto"]);
 }
 
+/// Fork (HK17, specs/fork-rust-agent-parity.md): a typed `/compact` as the very first action of a
+/// draft has no history at all; on the desktop it is Node's healthy no-op (skipped), like too
+/// little history. The TUI keeps the failure.
+#[tokio::test]
+async fn a_desktop_manual_compaction_with_no_history_is_skipped() {
+    for (blocking, skipped) in [(false, true), (true, false)] {
+        let runner = ScriptedRunner::new(vec![summary()]);
+        let compaction = Compaction::new(
+            ports(runner.clone(), no_tools()),
+            CompactConfig {
+                blocking,
+                ..config()
+            },
+        );
+        let error = compaction
+            .compact(
+                request(vec![], CompactTrigger::Manual),
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap_err();
+        assert!(runner.requests().is_empty());
+        if skipped {
+            assert_eq!(
+                error,
+                rust_cli_kernel_api::orchestration::OrchestrationError::Skipped {
+                    message: "Context is up to date; no compression needed".to_owned()
+                }
+            );
+        } else {
+            assert_eq!(error.to_string(), "No messages to compact");
+        }
+    }
+}
+
 /// Fork: a desktop `/compact` with too little history is skipped with Node's text; the TUI keeps the failure.
 #[tokio::test]
 async fn a_desktop_manual_compaction_with_too_little_history_is_skipped() {

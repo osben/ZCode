@@ -164,4 +164,94 @@ async fn a_session_resolves_its_workspaces_plugin_set() {
             .plugins_of_session(&sessions, &rust_cli_kernel_api::ids::SessionId::new("s1"))
             .is_none()
     );
+
+/// Fork (specs/fork-rust-workspace-plugins-mcp.md, "As built: plugin hooks per workspace"): installing a
+/// `Loaded` slot hands the workspace's plugin set to the hooks sink (the runtime registers its hooks with the
+/// engine under the same key).
+#[tokio::test]
+async fn a_loaded_slot_hands_its_plugin_set_to_the_hooks_sink() {
+    let scope = TaskScope::root("test", |_| {});
+    let fake: Arc<FakeMcp> = Arc::new(FakeMcp::default());
+    let process = Arc::new(McpManager::new(
+        fake.clone(),
+        scope.spawner(),
+        McpSettings::default(),
+        crate::clock_tests::clock(),
+    ));
+    let mcp = Arc::new(WorkspaceMcp::new(
+        fake.clone(),
+        scope.spawner(),
+        McpSettings::default(),
+        crate::clock_tests::clock(),
+        None,
+        process,
+    ));
+    let files = Arc::new(
+        rust_cli_kernel_api::testing::MemoryEnvironment::new(crate::test_support::facts())
+            .with_file(
+                "/plugins/kit/hooks/hooks.json",
+                r#"{"hooks": {"UserPromptSubmit": [{"hooks": [{"type": "command", "command": "kit.sh"}]}]}}"#,
+            ),
+    );
+    let layer = WorkspaceLayer::new(
+        files,
+        mcp,
+        vec![crate::EnvPath::new("/plugins/kit")],
+        Vec::new(),
+        None,
+    );
+    let seen: Arc<std::sync::Mutex<Vec<String>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+    layer.set_plugin_hooks_sink({
+        let seen = seen.clone();
+        Box::new(move |key, plugins| {
+            let names: Vec<&str> = plugins
+                .0
+                .iter()
+                .map(|plugin| plugin.name.as_str())
+                .collect();
+            seen.lock()
+                .unwrap()
+                .push(format!("{}:{}", key, names.join(",")));
+        })
+    });
+    layer.set_loader(Arc::new(Fixed(Some(WorkspaceConfig {
+        plugins: PluginSources::default(),
+        servers: Vec::new(),
+    }))));
+
+    layer.load(&workspace()).await;
+
+    assert_eq!(seen.lock().unwrap().clone(), ["/w:kit".to_owned()]);
+    // The set the sink saw carries the plugin's hooks file.
+    let plugins = layer.plugins_of(&workspace()).expect("the slot is loaded");
+    assert_eq!(
+        plugins
+            .0
+            .iter()
+            .map(|plugin| plugin.hooks.len())
+            .collect::<Vec<_>>(),
+        [1]
+    );
+    // A loaded slot is reused, not installed again: the sink does not fire a second time.
+    layer.load(&workspace()).await;
+    assert_eq!(seen.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn an_invalid_slot_does_not_reach_the_hooks_sink() {
+    let scope = TaskScope::root("test", |_| {});
+    let fake: Arc<FakeMcp> = Arc::new(FakeMcp::default());
+    let (_mcp, layer) = layer(&fake, &scope);
+    let seen: Arc<std::sync::Mutex<Vec<String>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+    layer.set_plugin_hooks_sink({
+        let seen = seen.clone();
+        Box::new(move |key, _plugins| seen.lock().unwrap().push(key.to_owned()))
+    });
+    layer.set_loader(Arc::new(Fixed(None)));
+
+    layer.load(&workspace()).await;
+
+    // Fail-closed: the workspace keeps the process set, so nothing registers.
+    assert!(matches!(layer.slot("/w"), Some(super::Slot::Invalid)));
+    assert!(seen.lock().unwrap().is_empty());
 }

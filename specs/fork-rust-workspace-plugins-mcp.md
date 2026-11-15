@@ -118,6 +118,19 @@ official cache and `installed_plugins.json` all live under the storage root
 - (f) The trap from the handoff holds: nothing derives a workspace from the process cwd or from
   `HelperCatalog`; only the session's `WorkspaceRef` (protocol `params.workspace`) does.
 
+## As built: plugin hooks per workspace
+
+The hooks engine (`hooks/src/projects.rs`) carries per-workspace plugin sources beside the project
+entries. When the layer installs a `Loaded` slot it hands the set's hooks to the engine for that
+workspace key (a sink on `WorkspaceLayer`; the conversion reuses the hooks half of
+`runtime/src/ext.rs::plugin_parts`), and a later install replaces them. A workspace with its own
+sources runs them — combined with the process settings sources and its admitted project sources
+exactly as before — instead of the process plugin hooks; every other entry, the process workspace
+above all, keeps the process plugin hooks, and `register_plugins` (process) recombines only the
+entries without their own sources. The sink runs before the layer's waiters wake, so a session that
+opens on the new slot finds the hooks registered; the one lock and the epoch writes of the project
+entries are unchanged (a plugin registration is one synchronous write, like the process one).
+
 ## Not in this PR (follow-ups)
 
 - ~~Per-workspace `HelperCatalog` admission and helper-hosted plugin servers per workspace~~ — the
@@ -126,11 +139,10 @@ official cache and `installed_plugins.json` all live under the storage root
   (`fork-rust-node-helper.md` F3, "Session open and close"). The helper MCP pipes still connect in
   the process workspace (`node_helper_mcp.rs` `helper_workspace`); moving them per workspace, and
   with it the pipe-workspace refusal, stays a follow-up.
-- The workspace plugin set's hooks (`hooks.register_plugins` stays process-wide until the engine's
-  per-workspace entries can carry plugin sources; the slot already stores the loaded set). The
-  workspace's skills and agent files gained their views in the follow-up PR: `SkillCatalog` reads a
-  loaded slot's `skill_roots()` through the layer, and `AgentCatalog` resolves a workspace's files
-  through a layer-backed lookup before the process set.
+- ~~The workspace plugin set's hooks~~ — closed ("As built" above). The workspace's skills and agent
+  files gained their views in the follow-up PR: `SkillCatalog` reads a loaded slot's `skill_roots()`
+  through the layer, and `AgentCatalog` resolves a workspace's files through a layer-backed lookup
+  before the process set.
 - MCP Apps on Rust-hosted servers (F7) and `helper/appTools/*` (F3b) — unchanged scope.
 - The TUI (single workspace by construction) keeps the process group; no per-workspace TUI surface.
 - `/mcp enable|disable|reconnect` stay process-group operations (TUI flows).
@@ -146,6 +158,9 @@ official cache and `installed_plugins.json` all live under the storage root
 - Rust unit tests (ext, cli, protocol-zcode):
   - a session with a registered workspace sees its project `mcp.servers` (name, cwd per base dir)
     and its `enabledPlugins` overlay; another workspace's servers and enablement are invisible to it;
+  - a workspace whose layer loaded its own plugin set runs that set's hooks, not the process plugin
+    hooks (hooks, ext); the process workspace and workspaces without a loaded set keep the process
+    hooks;
   - user shadows project by name inside a group; two groups run the same name independently;
   - an unreadable/broken project layer → `Invalid`: the session keeps the process set, the next
     successful assembly recovers;
