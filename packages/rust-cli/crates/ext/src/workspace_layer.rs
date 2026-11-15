@@ -36,6 +36,11 @@ pub trait WorkspaceConfigLoader: Send + Sync {
     async fn load(&self, workspace: &WorkspaceRef) -> Option<WorkspaceConfig>;
 }
 
+/// Fork (specs/fork-rust-workspace-plugins-mcp.md, "As built"): receives a workspace's own plugin set when its
+/// layer installs a `Loaded` slot; the runtime converts the set's hooks and registers them with the hooks engine
+/// for that key. `ext` keeps no hooks types of its own, so the sink hands the set over.
+pub type PluginHooksSink = Box<dyn Fn(&str, &Arc<crate::plugins::Plugins>) + Send + Sync>;
+
 /// The per-workspace slots and the MCP groups they start. One load of a workspace runs at a
 /// time: a concurrent session of the same workspace waits for the first load's slot, so a group
 /// is never replaced mid-flight by a racing second load.
@@ -47,6 +52,8 @@ pub struct WorkspaceLayer {
     /// working directory, like Node's per-app config read.
     servers: Vec<McpServer>,
     loader: OnceLock<Arc<dyn WorkspaceConfigLoader>>,
+    /// The sink that receives an installed set's hooks (the runtime wires the engine behind it).
+    hooks: OnceLock<PluginHooksSink>,
     slots: RwLock<BTreeMap<String, Slot>>,
     /// The keys with a load in flight; the Notify wakes the waiters when it finishes.
     loading: RwLock<std::collections::HashMap<String, Arc<tokio::sync::Notify>>>,
@@ -76,6 +83,7 @@ impl WorkspaceLayer {
             plugin_dirs,
             servers,
             loader: OnceLock::new(),
+            hooks: OnceLock::new(),
             slots: RwLock::new(BTreeMap::new()),
             loading: RwLock::new(std::collections::HashMap::new()),
             process,
@@ -84,6 +92,12 @@ impl WorkspaceLayer {
 
     pub fn set_loader(&self, loader: Arc<dyn WorkspaceConfigLoader>) {
         let _ = self.loader.set(loader);
+    }
+
+    /// Registers the sink that receives a workspace's plugin set at its layer's install (set once by the
+    /// runtime, which owns the hooks engine).
+    pub fn set_plugin_hooks_sink(&self, sink: PluginHooksSink) {
+        let _ = self.hooks.set(sink);
     }
 
     /// The slot of `key`: the load guard reuses a `Loaded` slot, and the sessions resolve their
@@ -201,7 +215,16 @@ impl WorkspaceLayer {
                 Slot::Invalid
             }
         };
+        let installed = match &slot {
+            Slot::Loaded(plugins) => Some(plugins.clone()),
+            Slot::Invalid => None,
+        };
         self.slots.write_unpoisoned().insert(key.clone(), slot);
+        // The sink runs after the slot is visible but before the waiters wake: a session that
+        // proceeds on the new slot finds its plugin hooks already registered.
+        if let (Some(sink), Some(plugins)) = (self.hooks.get(), installed) {
+            sink(&key, &plugins);
+        }
         self.finish(&key);
         claim.armed = false;
     }

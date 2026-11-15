@@ -167,11 +167,13 @@ impl HookEngine {
     }
 
     /// 登记插件的 hooks（runtime 在插件加载后调用，hooks.md §2.2）；设置快照保留。读改写在同一把
-    /// 写锁里，与 [`HookEngine::replace`] 不会互相冲掉。
+    /// 写锁里，与 [`HookEngine::replace`] 不会互相冲掉。Fork: an entry with its own plugin sources
+    /// (specs/fork-rust-workspace-plugins-mcp.md, "As built") does not read the process ones, so it keeps
+    /// its snapshot.
     pub fn register_plugins(&self, plugins: Vec<PluginHooks>) {
         let mut state = self.state.write_unpoisoned();
         let config = state.process.config.clone();
-        state.set_process(load(config, plugins));
+        state.set_process_plugins(load(config, plugins));
     }
 
     /// The process snapshot (user, `--settings` and plugin hooks).
