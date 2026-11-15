@@ -21,7 +21,7 @@ use rust_cli_protocol_core::sessions::Bridged;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::commands::{payload, send};
+use crate::commands::{payload, present, send};
 use crate::inbox::{Ack, Envelope, Status};
 use crate::live::Live;
 use crate::projection::{InputMeta, RowAction, TargetMiss};
@@ -37,8 +37,14 @@ struct Target {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct TargetPayload {
     target: Target,
+    /// Wave 2 B1 (specs/fork-rust-agent-parity.md): the managed-worktree fork. This agent runs no worktree
+    /// sessions (`worktreeCwd` stays false), so a present field refuses the command ([`refuse_target_cwd`])
+    /// instead of being dropped and forking into the parent directory.
+    #[serde(default, deserialize_with = "present")]
+    target_cwd: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -179,6 +185,21 @@ fn refused(envelope: &Envelope, code: &str, message: impl Into<String>, revision
         message,
         revision,
     )
+}
+
+/// Wave 2 B1 (specs/fork-rust-agent-parity.md): `forkAssistant.targetCwd` moves the child session into a
+/// managed worktree (Node `v4-bridge.ts` `forkStableConversation`), a shape this agent does not run
+/// (`worktreeCwd` stays false). The field rides only on that capability, so seeing it means an ungated
+/// sender: refuse instead of dropping it and forking into the parent directory.
+fn refuse_target_cwd(envelope: &Envelope, body: &TargetPayload, revision: u64) -> Option<Ack> {
+    body.target_cwd.is_some().then(|| {
+        refused(
+            envelope,
+            "proto.invalidPayload",
+            "targetCwd is not supported by this agent",
+            revision,
+        )
+    })
 }
 
 /// A row action command whose target missed: stale when the projection no longer holds the row,
@@ -566,6 +587,11 @@ pub(super) async fn retry(live: &Bridged<Live>, envelope: &Envelope, revision: u
         Ok(body) => body,
         Err(ack) => return *ack,
     };
+    // Wave 2 B1: the same ungated-sender guard as fork — a retryTurn envelope must not carry the
+    // managed-worktree field either (uniform fail-closed contract; retry creates no session).
+    if let Some(ack) = refuse_target_cwd(envelope, &body, revision) {
+        return ack;
+    }
     let target =
         match live
             .sink
@@ -632,6 +658,9 @@ pub(super) async fn fork(
         Ok(body) => body,
         Err(ack) => return *ack,
     };
+    if let Some(ack) = refuse_target_cwd(envelope, &body, revision) {
+        return ack;
+    }
     let assistant = match live
         .sink
         .fork_target(body.target.row_id, &body.target.entity_id)

@@ -133,10 +133,19 @@ struct CreateSessionPayload {
     worktree_preparation: Option<crate::worktree::Request>,
     expected_attempt_id: Option<String>,
     execution_worktree: Option<crate::worktree::Requested>,
+    /// Wave 2 B1 (specs/fork-rust-agent-parity.md): the managed-worktree create fields. This agent runs no
+    /// worktree sessions (`worktreeCwd` stays false), so a present field refuses the command in
+    /// [`create_session_with`] instead of being dropped and creating the session in the workspace directory.
+    #[serde(default, deserialize_with = "present")]
+    cwd: Option<Value>,
+    #[serde(default, deserialize_with = "present")]
+    worktree_creation: Option<Value>,
 }
 
 /// Fork: a field that is present, `null` included, reads as `Some` (a missing field takes the serde default).
-fn present<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<Value>, D::Error> {
+pub(crate) fn present<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Value>, D::Error> {
     Value::deserialize(deserializer).map(Some)
 }
 
@@ -375,6 +384,25 @@ pub(crate) async fn create_session_with(
         Ok(payload) => payload,
         Err(ack) => return *ack,
     };
+    // Wave 2 B1 (specs/fork-rust-agent-parity.md): a session cwd beside the workspace is the managed-worktree
+    // shape, which this agent does not run (`worktreeCwd` stays false). The fields ride only on that capability,
+    // so seeing one means an ungated sender: refuse before any branch runs (a reservation included), instead of
+    // dropping the field and creating the session in the workspace directory. Node refuses `worktreeCreation`
+    // without `cwd` at the same place, before `runActivation` (`session-mgmt.ts`).
+    if payload.cwd.is_some() || payload.worktree_creation.is_some() {
+        let field = if payload.cwd.is_some() {
+            "cwd"
+        } else {
+            "worktreeCreation"
+        };
+        return Ack::refused(
+            &envelope.command_id,
+            Status::Rejected,
+            "proto.invalidPayload",
+            format!("{field} is not supported by this agent"),
+            0,
+        );
+    }
     let incognito = match incognito_of(envelope, &payload) {
         Ok(incognito) => incognito,
         Err(ack) => return *ack,
