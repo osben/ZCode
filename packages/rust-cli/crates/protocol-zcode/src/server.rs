@@ -194,7 +194,10 @@ impl Server {
                 },
                 // B1.1: the stored managed-worktree creation fact seeds the `worktreeCreated` marker row
                 // (crate::worktree). The direct create stores the record before it opens, so its open reads it
-                // here too — the same path as a cold restore.
+                // here too — the same path as a cold restore. Accepted gap (ocr, B1.1): a createSession that
+                // repeats an already-resident untouched prewarm finds the session open and takes the
+                // `Restored::default` arm below, so its stored fact reaches the projection only after the
+                // next close/reopen — the resident prewarm itself was made by an earlier envelope.
                 worktree_creation: crate::worktree::creation_fact(self, session).await,
             }
         } else {

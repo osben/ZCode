@@ -170,18 +170,32 @@ where
         .map_err(serde::de::Error::custom)
 }
 
-/// B1.1: [`typed`] for `cwd` (a string).
+/// B1.1: [`typed`] for `cwd` — Node `z.string().trim().min(1)`: the trimmed non-empty string, refused
+/// empty/whitespace-only, and named in the message when refused (the shared wrapper stays generic).
 fn typed_cwd<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<String>, D::Error> {
-    typed(deserializer)
+    let value: Option<String> = typed(deserializer)?;
+    match value {
+        Some(cwd) => {
+            let trimmed = cwd.trim();
+            if trimmed.is_empty() {
+                Err(serde::de::Error::custom("cwd must be a non-empty string"))
+            } else {
+                Ok(Some(trimmed.to_owned()))
+            }
+        }
+        None => Ok(None),
+    }
 }
 
 /// B1.1: [`typed`] for `worktreeCreation` (crate::worktree::Creation).
 fn typed_creation<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<crate::worktree::Creation>, D::Error> {
+    // The field is named in the message: the shared wrapper's raw serde text is ambiguous here.
     typed(deserializer)
+        .map_err(|error| serde::de::Error::custom(format!("worktreeCreation: {error}")))
 }
 
 /// Fork: the requested incognito profile. An invalid profile refuses the command before any row exists, so it never
@@ -451,6 +465,20 @@ pub(crate) async fn create_session_with(
                 )
             };
         return Ack::refused(&envelope.command_id, Status::Failed, reason, message, 0);
+    }
+    // The activation routes (preparedSessionId) name their own worktree in the marker's data; an
+    // admitted cwd is silently dropped there and its creation fact never persists, so a sender
+    // combining the two shapes is refused instead (B1.1; unreachable while worktreeCwd is false).
+    if payload.prepared_session_id.is_some()
+        && (payload.cwd.is_some() || payload.worktree_creation.is_some())
+    {
+        return Ack::refused(
+            &envelope.command_id,
+            Status::Rejected,
+            "proto.invalidPayload",
+            "cwd/worktreeCreation cannot ride a preparedSessionId activation".to_owned(),
+            0,
+        );
     }
     let incognito = match incognito_of(envelope, &payload) {
         Ok(incognito) => incognito,

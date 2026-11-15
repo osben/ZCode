@@ -854,6 +854,75 @@ async fn a_managed_worktree_cwd_creates_the_session_in_the_worktree() {
     );
 }
 
+/// B1.1 (ocr): Node's `z.string().trim().min(1)` — whitespace-only is refused with the field named,
+/// a null is refused (not read as absent), and a padded cwd trims before use.
+#[tokio::test]
+async fn an_empty_or_padded_cwd_is_refused_or_trimmed() {
+    let (_scope, server, kernel) = server();
+    let blank = create(
+        &server,
+        "c1",
+        json!({"workspaceId": "/w", "sessionId": "s-blank", "cwd": "   "}),
+    )
+    .await;
+    assert_eq!(blank.status, Status::Rejected);
+    assert!(blank.message.as_deref().unwrap_or_default().contains("cwd"));
+    let null_cwd = create(
+        &server,
+        "c2",
+        json!({"workspaceId": "/w", "sessionId": "s-null", "cwd": null}),
+    )
+    .await;
+    assert_eq!(null_cwd.status, Status::Rejected);
+    assert!(kernel.store.meta(&SessionId::new("s-blank")).is_none());
+
+    let worktree = tempfile::tempdir().unwrap();
+    let padded = format!(" {} ", worktree.path().to_str().unwrap());
+    let ack = create(
+        &server,
+        "c3",
+        json!({"workspaceId": "/w", "sessionId": "s-pad", "cwd": padded}),
+    )
+    .await;
+    assert_eq!(ack.status, Status::Accepted, "{ack:?}");
+    let execution = kernel
+        .store
+        .execution_worktree(&SessionId::new("s-pad"))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        execution.path.as_str(),
+        worktree.path().to_str().unwrap(),
+        "the padded cwd trims before use"
+    );
+}
+
+/// B1.1 (ocr): the activation routes name their own worktree — a `cwd` riding a `preparedSessionId` is
+/// refused instead of being silently dropped (its creation fact would never persist).
+#[tokio::test]
+async fn a_cwd_riding_a_prepared_activation_is_refused() {
+    let (_scope, server, kernel) = server();
+    let worktree = tempfile::tempdir().unwrap();
+    let ack = create(
+        &server,
+        "c1",
+        json!({"workspaceId": "/w", "sessionId": "s-ride",
+            "preparedSessionId": "prep-1",
+            "cwd": worktree.path().to_str().unwrap()}),
+    )
+    .await;
+    assert_eq!(ack.status, Status::Rejected);
+    assert_eq!(ack.reason_code.as_deref(), Some("proto.invalidPayload"));
+    assert!(
+        ack.message
+            .as_deref()
+            .unwrap_or_default()
+            .contains("preparedSessionId")
+    );
+    assert!(kernel.store.meta(&SessionId::new("s-ride")).is_none());
+}
+
 /// B1.1: Node does not tie `worktreeCreation.path` to `cwd` (`workspaceRefWithCwd` reads only `cwd`; the record
 /// is stored as sent), so a differing path is accepted and noted, not refused — the session runs in `cwd`. The
 /// fork's own `executionWorktree` (the richer shape: it names a branch) wins when both ride.
