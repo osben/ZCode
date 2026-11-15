@@ -800,6 +800,176 @@ async fn the_direct_route_runs_a_new_session_in_the_worktree() {
     );
 }
 
+/// B1.1 (specs/fork-rust-agent-parity.md): a managed-worktree `cwd` takes the direct execution-worktree route —
+/// the same kernel create (`create_session_in_worktree`, no branch: the Host created the worktree) — and the
+/// `worktreeCreation` fact is stored as the session's creation record. A `cwd` that is not a directory is
+/// refused with the route's text. The marker row the record draws is tested at the projection and on a cold
+/// open below (this double's handle produces no turn events).
+#[tokio::test]
+async fn a_managed_worktree_cwd_creates_the_session_in_the_worktree() {
+    let (_scope, server, kernel) = server();
+    let ack = create(
+        &server,
+        "c1",
+        json!({"workspaceId": "/w", "sessionId": "s-mw",
+            "cwd": "/w/.zcode-worktrees/gone"}),
+    )
+    .await;
+    assert_eq!(ack.status, Status::Rejected);
+    assert_eq!(
+        ack.message.as_deref(),
+        Some(
+            "Execution worktree path does not exist or is not a directory: /w/.zcode-worktrees/gone"
+        )
+    );
+    assert!(kernel.store.meta(&SessionId::new("s-mw")).is_none());
+
+    let worktree = tempfile::tempdir().unwrap();
+    let path = worktree.path().to_str().unwrap().to_owned();
+    let creation = json!({
+        "path": path, "sha": "a1b2c3d4", "ref": null, "output": "worktree added"
+    });
+    let ack = create(
+        &server,
+        "c2",
+        json!({"workspaceId": "/w", "sessionId": "s-mw", "cwd": path,
+            "worktreeCreation": creation}),
+    )
+    .await;
+    assert_eq!(ack.status, Status::Accepted, "{ack:?}");
+    let id = SessionId::new("s-mw");
+    // The fork columns, not Node's directory override: the row keeps the workspace and names the worktree.
+    let execution = kernel.store.execution_worktree(&id).await.unwrap().unwrap();
+    assert_eq!(execution.directory.as_str(), "/w");
+    assert_eq!(execution.path.as_str(), path);
+    assert_eq!(execution.branch, None);
+    let live = server.bridge.get(&id).unwrap();
+    let summary = live.sink.summary();
+    assert_eq!(summary["workspaceId"], "/w");
+    assert_eq!(summary["executionWorktree"], json!({"path": path}));
+    // The creation fact is durable (the fork-shaped storage of Node's timeline part), as the marker reads it.
+    assert_eq!(
+        crate::worktree::creation_fact(&server, &id).await,
+        Some(json!({"path": path, "sha": "a1b2c3d4", "ref": null, "output": "worktree added"}))
+    );
+}
+
+/// B1.1: Node does not tie `worktreeCreation.path` to `cwd` (`workspaceRefWithCwd` reads only `cwd`; the record
+/// is stored as sent), so a differing path is accepted and noted, not refused — the session runs in `cwd`. The
+/// fork's own `executionWorktree` (the richer shape: it names a branch) wins when both ride.
+#[tokio::test]
+async fn a_creation_record_is_untied_and_execution_worktree_wins() {
+    let (_scope, server, kernel) = server();
+    let worktree = tempfile::tempdir().unwrap();
+    let path = worktree.path().to_str().unwrap().to_owned();
+    // A differing record path: accepted, and the execution follows cwd, as in Node.
+    let ack = create(
+        &server,
+        "c1",
+        json!({"workspaceId": "/w", "sessionId": "s-untied", "cwd": path,
+            "worktreeCreation": {
+                "path": "/elsewhere/other-worktree", "sha": "a1b2c3d4",
+                "ref": "feature-branch", "output": "worktree added"}}),
+    )
+    .await;
+    assert_eq!(ack.status, Status::Accepted, "{ack:?}");
+    let id = SessionId::new("s-untied");
+    let execution = kernel.store.execution_worktree(&id).await.unwrap().unwrap();
+    assert_eq!(execution.path.as_str(), path);
+    assert_eq!(
+        crate::worktree::creation_fact(&server, &id).await,
+        Some(
+            json!({"path": "/elsewhere/other-worktree", "sha": "a1b2c3d4",
+            "ref": "feature-branch", "output": "worktree added"})
+        )
+    );
+    // The fork's executionWorktree wins over cwd when both ride (Node never combines the two shapes).
+    let ack = create(
+        &server,
+        "c2",
+        json!({"workspaceId": "/w", "sessionId": "s-both", "cwd": "/w/.zcode-worktrees/one",
+            "executionWorktree": {"path": path, "branchName": "feat/d"}}),
+    )
+    .await;
+    assert_eq!(ack.status, Status::Accepted, "{ack:?}");
+    let id = SessionId::new("s-both");
+    let execution = kernel.store.execution_worktree(&id).await.unwrap().unwrap();
+    assert_eq!(execution.path.as_str(), path);
+    assert_eq!(execution.branch.as_deref(), Some("feat/d"));
+    assert_eq!(crate::worktree::creation_fact(&server, &id).await, None);
+}
+
+/// B1.1: a cold open of a managed-worktree session draws the `worktreeCreated` marker from the stored record,
+/// like Node's cold hydration of the timeline part. No first input yet: the marker waits for a turn, as Node's
+/// pending marker does.
+#[tokio::test]
+async fn a_cold_open_draws_the_stored_creation_marker() {
+    let (_scope, server, kernel) = server();
+    let id = SessionId::new("s-cold");
+    rust_cli_kernel_api::session_api::Kernel::create_session(
+        kernel.as_ref(),
+        CreateSession {
+            id: Some(id.clone()),
+            workspace: rust_cli_kernel_api::env::WorkspaceRef {
+                environment: EnvironmentId::new("local"),
+                root: EnvPath::new("/w"),
+            },
+            selection: selection(),
+            mode: PermissionMode::Default,
+            plan: false,
+            incognito: None,
+        },
+    )
+    .await
+    .unwrap();
+    let worktree = tempfile::tempdir().unwrap();
+    let path = worktree.path().to_str().unwrap().to_owned();
+    kernel
+        .store
+        .set_execution_worktree(&id, &EnvPath::new(&path), None)
+        .await
+        .unwrap();
+    crate::worktree::record_creation(
+        &server,
+        &id,
+        &crate::worktree::Creation {
+            path: path.clone(),
+            sha: "a1b2c3d4".to_owned(),
+            start: None,
+            output: "worktree added".to_owned(),
+        },
+    )
+    .await
+    .unwrap();
+    // The turn that the stored history carries (a user message) draws the marker on the cold open.
+    kernel
+        .handle(&id)
+        .unwrap()
+        .view
+        .lock()
+        .unwrap()
+        .messages
+        .push(rust_cli_kernel_api::message::Message::User(
+            rust_cli_kernel_api::message::UserMessage {
+                stall_execution: None,
+                intent: None,
+                id: rust_cli_kernel_api::ids::MessageId::new("m1"),
+                content: vec![rust_cli_kernel_api::message::ContentBlock::Text {
+                    text: "hello".to_owned(),
+                }],
+                origin: rust_cli_kernel_api::message::UserOrigin::Human,
+            },
+        ));
+    let live = server.live(&id).await.unwrap();
+    let snapshot = live.sink.snapshot();
+    let rows = snapshot["rows"]["window"].as_array().unwrap();
+    let marker = rows
+        .iter()
+        .find(|row| row["marker"]["type"] == "worktreeCreated")
+        .expect("the stored creation fact draws its marker");
+    assert_eq!(marker["marker"]["path"], json!(path));
+}
+
 /// A stored worktree session (as the Node agent leaves one) whose directory was deleted: the cold row and the
 /// opened session report it missing and the session stays listed under the parent. That the root stays the
 /// worktree is tested on a real cold open (cli `tests/worktree_resume.rs`).

@@ -43,6 +43,8 @@ mod rebuild_running;
 mod streaming_tool;
 #[path = "subagent_rows_tests.rs"]
 mod subagent_rows;
+#[path = "worktree_created_tests.rs"]
+mod worktree_created;
 
 fn view(messages: Vec<Message>) -> SessionView {
     SessionView::new(

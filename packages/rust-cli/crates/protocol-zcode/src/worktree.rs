@@ -29,6 +29,10 @@ use crate::server::Server;
 
 pub const KIND: &str = "v4/worktree_preparation";
 
+/// B1.1: the managed-worktree creation fact's record kind (the fork-shaped durable storage of Node's
+/// `worktree_creation` timeline part).
+pub const CREATION_KIND: &str = "v4/worktree_creation";
+
 /// Node's text for a prepared session that cannot be activated or updated.
 pub const UNAVAILABLE: &str = "Prepared worktree session is unavailable";
 pub const MISMATCH: &str = "Prepared worktree session does not match the requested workspace";
@@ -96,6 +100,39 @@ pub struct Update {
 pub struct Requested {
     pub path: String,
     pub branch_name: Option<String>,
+}
+
+/// B1.1: `createSession.worktreeCreation` (Node `worktreeCreationRecordSchema`, `.strict()` — the generated
+/// inbound schema mirrors the shape). The Host worktree service's creation result for the `cwd` worktree; Node
+/// writes it as the first turn's `worktree_creation` timeline part (`timeline-persistence.ts`
+/// `recordPendingWorktreeCreation` / `persistPendingWorktreeCreationTimeline`) and projects a `worktreeCreated`
+/// marker. The fork stores the same fact as a session record ([`CREATION_KIND`], the preparation marker's
+/// pattern) and projects Node's marker row from it.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Creation {
+    /// Worktree root directory.
+    pub path: String,
+    /// Checked-out commit.
+    pub sha: String,
+    /// The start point the user chose; null is the current HEAD of the source directory
+    /// (Node: `z.string().min(1).nullable()`).
+    #[serde(rename = "ref")]
+    pub start: Option<String>,
+    /// Tail of the git and copy output.
+    pub output: String,
+}
+
+impl Creation {
+    /// The stored record's data — and the marker payload's fields beside `type` — in Node's wire shape.
+    fn wire(&self) -> Value {
+        json!({
+            "path": self.path,
+            "sha": self.sha,
+            "ref": self.start,
+            "output": self.output,
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -338,6 +375,51 @@ async fn save(server: &Server, session: &SessionId, marker: &Marker) -> Result<(
         .await
         // No error text: a storage error can name the storage path.
         .map_err(|_| "storing the worktree preparation failed")
+}
+
+/// B1.1: stores the creation fact once, after the session's row exists and before its first turn (Node persists
+/// the `worktree_creation` timeline part between the first turn's session persistence and TurnStarted,
+/// `turn.ts`; the create here is that persistence, the first input below it the turn). One record per session,
+/// keyed like the preparation marker; the create path is the only writer.
+pub async fn record_creation(
+    server: &Server,
+    session: &SessionId,
+    creation: &Creation,
+) -> Result<(), String> {
+    server
+        .kernel
+        .queries()
+        .put_record(
+            session,
+            &FrontendRecord {
+                kind: CREATION_KIND.to_owned(),
+                key: format!("{CREATION_KIND}:{}", session.as_str()),
+                data: creation.wire(),
+            },
+        )
+        .await
+        .map_err(|error| error.to_string())
+}
+
+/// B1.1: the stored creation fact, as the `worktreeCreated` marker's payload (the fields beside `type`). A read
+/// failure logs and reads as none: only the marker row is missing then, never the session's worktree.
+pub async fn creation_fact(server: &Server, session: &SessionId) -> Option<Value> {
+    match server
+        .kernel
+        .queries()
+        .records(session, CREATION_KIND)
+        .await
+    {
+        Ok(records) => records.last().map(|record| record.data.clone()),
+        Err(error) => {
+            tracing::warn!(
+                event = "protocol.worktree.creation_read_failed",
+                error = %error,
+                "reading the worktree creation fact failed"
+            );
+            None
+        }
+    }
 }
 
 /// The stored execution worktree; a read failure is logged and reads as none (the session then lists and runs

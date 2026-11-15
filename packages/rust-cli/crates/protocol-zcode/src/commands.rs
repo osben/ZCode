@@ -133,13 +133,19 @@ struct CreateSessionPayload {
     worktree_preparation: Option<crate::worktree::Request>,
     expected_attempt_id: Option<String>,
     execution_worktree: Option<crate::worktree::Requested>,
-    /// Wave 2 B1 (specs/fork-rust-agent-parity.md): the managed-worktree create fields. This agent runs no
-    /// worktree sessions (`worktreeCwd` stays false), so a present field refuses the command in
-    /// [`create_session_with`] instead of being dropped and creating the session in the workspace directory.
-    #[serde(default, deserialize_with = "present")]
-    cwd: Option<Value>,
-    #[serde(default, deserialize_with = "present")]
-    worktree_creation: Option<Value>,
+    /// B1.1 (specs/fork-rust-agent-parity.md): the managed-worktree create fields (upstream 3.18's wire shape,
+    /// `create-session-command.ts`). `cwd` is the session's worktree root — the Host worktree service created it
+    /// (`git worktree add` runs there, never here) — and maps onto the execution-worktree route in
+    /// [`create_session_with`]. A present `null` is not an absent field: Node's zod takes
+    /// `z.string().trim().min(1).optional()` (undefined only; the generated inbound schema agrees: type string),
+    /// so the typed parse refuses one instead of reading it as absent.
+    #[serde(default, deserialize_with = "typed_cwd")]
+    cwd: Option<String>,
+    /// `worktreeCreation` (Node `worktreeCreationRecordSchema`, strict): the creation fact the session stores as
+    /// its `worktree_creation` timeline marker (crate::worktree). `ref` is nullable — the user's start point, null
+    /// for the source directory's HEAD.
+    #[serde(default, deserialize_with = "typed_creation")]
+    worktree_creation: Option<crate::worktree::Creation>,
 }
 
 /// Fork: a field that is present, `null` included, reads as `Some` (a missing field takes the serde default).
@@ -147,6 +153,35 @@ pub(crate) fn present<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<Value>, D::Error> {
     Value::deserialize(deserializer).map(Some)
+}
+
+/// B1.1: a typed field that is present — a missing field takes the serde default (`None`), while any value the
+/// type refuses fails the payload parse. A present `null` is refused, not read as absent: Node's zod
+/// `.optional()` takes `undefined` only, and the generated inbound schema (type string / object) agrees, so a
+/// null never reaches a handler there either.
+fn typed<'de, T, D>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    T: serde::de::DeserializeOwned,
+    D: serde::Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    serde_json::from_value(value)
+        .map(Some)
+        .map_err(serde::de::Error::custom)
+}
+
+/// B1.1: [`typed`] for `cwd` (a string).
+fn typed_cwd<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error> {
+    typed(deserializer)
+}
+
+/// B1.1: [`typed`] for `worktreeCreation` (crate::worktree::Creation).
+fn typed_creation<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<crate::worktree::Creation>, D::Error> {
+    typed(deserializer)
 }
 
 /// Fork: the requested incognito profile. An invalid profile refuses the command before any row exists, so it never
@@ -384,24 +419,38 @@ pub(crate) async fn create_session_with(
         Ok(payload) => payload,
         Err(ack) => return *ack,
     };
-    // Wave 2 B1 (specs/fork-rust-agent-parity.md): a session cwd beside the workspace is the managed-worktree
-    // shape, which this agent does not run (`worktreeCwd` stays false). The fields ride only on that capability,
-    // so seeing one means an ungated sender: refuse before any branch runs (a reservation included), instead of
-    // dropping the field and creating the session in the workspace directory. Node refuses `worktreeCreation`
-    // without `cwd` at the same place, before `runActivation` (`session-mgmt.ts`).
-    if payload.cwd.is_some() || payload.worktree_creation.is_some() {
-        let field = if payload.cwd.is_some() {
-            "cwd"
-        } else {
-            "worktreeCreation"
-        };
+    // B1.1 (specs/fork-rust-agent-parity.md): the managed-worktree fields are admitted in Node's order. First
+    // `session-mgmt.ts`: "worktreeCreation requires cwd" — the record names the directory `cwd` points at, so it
+    // cannot ride without one (Node refuses before `runActivation`; nothing is persisted from the envelope).
+    if payload.worktree_creation.is_some() && payload.cwd.is_none() {
         return Ack::refused(
             &envelope.command_id,
             Status::Rejected,
             "proto.invalidPayload",
-            format!("{field} is not supported by this agent"),
+            "worktreeCreation requires cwd".to_owned(),
             0,
         );
+    }
+    // Then Node `workspaceRefWithCwd` (`zcode-protocol/workspace.ts`): a session cwd is a local directory, so a
+    // remote workspace identity is structured refusal, not an attempt to resolve the remote directory. Node
+    // resolves the id first (`resolveWorkspaceRefFromId`): a malformed `remote:` key fails there, fail-closed.
+    if payload.cwd.is_some()
+        && let Some(workspace) = payload.workspace_id.as_deref()
+        && workspace.starts_with("remote:")
+    {
+        let (reason, message) =
+            if rust_cli_kernel_api::remote_identity::is_remote_workspace_identity(workspace) {
+                (
+                    "guard.worktreeCwdLocalOnly",
+                    format!("session cwd override only supports local workspaces: {workspace}"),
+                )
+            } else {
+                (
+                    "fault.command.executionFailed",
+                    format!("Invalid remote workspace identity: {workspace}"),
+                )
+            };
+        return Ack::refused(&envelope.command_id, Status::Failed, reason, message, 0);
     }
     let incognito = match incognito_of(envelope, &payload) {
         Ok(incognito) => incognito,
@@ -473,8 +522,22 @@ pub(crate) async fn create_session_with(
         )
         .await;
     }
+    // B1.1: a session `cwd` is the managed-worktree shape, mapped onto the fork's direct execution-worktree route:
+    // the worktree already exists (the Host ran `git worktree add` before sending; this agent never runs git), so
+    // `cwd` is `executionWorktree {path, branchName: None}` — the session runs in the worktree while its row and
+    // listing keep the workspace (`create_session_in_worktree`, `set_execution_worktree`). The fork's own
+    // `executionWorktree` wins when both ride: it is the richer shape (it names a branch), and Node never combines
+    // the two (its managed-worktree create carries no executionWorktree). Node does not tie
+    // `worktreeCreation.path` to `cwd` (`workspaceRefWithCwd` reads only `cwd`; the record is stored as sent), so a
+    // differing path is accepted and noted, not refused.
+    let requested = payload.execution_worktree.clone().or_else(|| {
+        payload.cwd.as_ref().map(|cwd| crate::worktree::Requested {
+            path: cwd.clone(),
+            branch_name: None,
+        })
+    });
     // Fork: the direct route refuses a dead worktree before the session exists.
-    if let Some(requested) = &payload.execution_worktree
+    if let Some(requested) = &requested
         && let Err(ack) = crate::worktree::check_directory(server, envelope, requested).await
     {
         return *ack;
@@ -620,7 +683,7 @@ pub(crate) async fn create_session_with(
     };
     // Fork: the direct route starts the session in its worktree (SessionStart included); the row keeps the
     // parent workspace, and opening it below picks up the stored worktree facts.
-    let created = match &payload.execution_worktree {
+    let created = match &requested {
         Some(requested) => {
             server
                 .kernel
@@ -647,6 +710,20 @@ pub(crate) async fn create_session_with(
         Ok(id) => id,
         Err(error) => return refused(error.to_string()),
     };
+    // B1.1: the creation fact is durable before the session opens on it, so the open below seeds the projection
+    // with the marker like a cold restore does. Node persists its `worktree_creation` timeline part after the
+    // first turn's session persistence and before TurnStarted (`turn.ts`); here the row's creation is that first
+    // persistence and the first input below is the turn. Best effort like the activation's active receipt: the
+    // session runs in its worktree regardless, and only the marker row would be missing after a restart.
+    if let Some(creation) = &payload.worktree_creation
+        && let Err(error) = crate::worktree::record_creation(server, &id, creation).await
+    {
+        tracing::warn!(
+            event = "protocol.worktree.creation_record_failed",
+            error = %error,
+            "storing the worktree creation fact failed"
+        );
+    }
     let live = match server.live(&id).await {
         Ok(live) => live,
         Err(error) => return refused(error.to_string()),
