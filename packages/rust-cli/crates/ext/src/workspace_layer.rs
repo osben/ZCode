@@ -172,7 +172,7 @@ impl WorkspaceLayer {
                 let mut servers = self.servers.clone();
                 servers.extend(loaded.mcp_servers());
                 servers.extend(config.servers);
-                self.mcp.start(&key, workspace.clone(), servers);
+                self.mcp.start(&key, workspace.clone(), servers).await;
                 Slot::Loaded
             }
             None => {

@@ -100,8 +100,10 @@ impl WorkspaceMcp {
     /// Starts (or replaces) the group of `key` with the workspace's server list. A replaced group's
     /// connections stop ([`McpManager::shutdown`]), so a config change reloads the whole group like
     /// Node re-reads the app's config; the sessions of the workspace see the new set on their next
-    /// snapshot.
-    pub(crate) fn start(&self, key: &str, workspace: WorkspaceRef, servers: Vec<McpServer>) {
+    /// snapshot. In print mode the start also applies the print startup wait (alwaysLoad servers
+    /// connect before the first request): the group starts at a session open, after the frontend's
+    /// own `wait_for_extensions`, so its wait must run here.
+    pub(crate) async fn start(&self, key: &str, workspace: WorkspaceRef, servers: Vec<McpServer>) {
         if key == PROCESS {
             self.process.start(workspace, servers);
             return;
@@ -115,10 +117,14 @@ impl WorkspaceMcp {
         if let Some(machines) = self.machines.clone() {
             manager.set_machines(machines);
         }
-        if self.print.load(std::sync::atomic::Ordering::Relaxed) {
+        let print = self.print.load(std::sync::atomic::Ordering::Relaxed);
+        if print {
             manager.set_print_session(true);
         }
         manager.start(workspace, servers);
+        if print {
+            manager.wait_for_print().await;
+        }
         if let Some(previous) = self
             .groups
             .write_unpoisoned()
