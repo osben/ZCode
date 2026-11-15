@@ -57,9 +57,12 @@ impl Actor {
         }
         // Fork: the SessionStart dispatches that waited for this turn report their rows now (HK-UP-01, Node's pending
         // SessionStart rows): after the turn's header and before its input, like Node's flush on the next user-intent
-        // TurnStarted. Their records anchor to this turn's prompt, so the view keeps them with it.
+        // TurnStarted. Their records anchor to this turn's prompt, so the view keeps them with it. Only a SessionStart
+        // dispatch waits (finish_startup records it); every dispatched event already landed in its own turn.
         for record in &mut self.hook_invocations {
-            if record.anchor_message.is_none() {
+            if record.anchor_message.is_none()
+                && record.invocation.hook_event == HookEventName::SessionStart
+            {
                 record.anchor_message = Some(prompt.clone());
                 self.log.append(KernelEvent::HookInvocation {
                     turn: turn.clone(),

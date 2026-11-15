@@ -139,7 +139,11 @@ impl Engine<'_> {
         let discovered: Vec<String> = tool_search::loaded(refs.iter().copied())
             .into_iter()
             .collect();
-        let instructions = hooks::pre_compact(self.ports.hooks.as_ref(), request, cancel).await?;
+        // Fork: the dispatches the compaction's hooks ran travel out in the result (HK-UP-01); the caller reports
+        // them, the engine having no sink.
+        let mut dispatches = Vec::new();
+        let instructions =
+            hooks::pre_compact(self.ports.hooks.as_ref(), request, cancel, &mut dispatches).await?;
         let groups = groups::group(&messages);
         if groups.len() < groups::MIN_GROUPS {
             return Err(Failure::NotEnough);
@@ -161,12 +165,14 @@ impl Engine<'_> {
                     &announce,
                 )
                 .await?;
-            self.finalize(request, pre_tokens, raw, split, cancel).await
+            self.finalize(request, pre_tokens, raw, split, cancel, &mut dispatches)
+                .await
         }
         .await;
         match summarized {
             Ok(mut result) => {
                 result.boundary.discovered_tools = discovered;
+                result.hook_invocations = dispatches;
                 Ok(result)
             }
             Err(failure) => {
@@ -393,6 +399,7 @@ impl Engine<'_> {
         raw: String,
         split: Split<'_>,
         cancel: &CancellationToken,
+        dispatches: &mut Vec<rust_cli_kernel_api::hooks::HookInvocation>,
     ) -> Result<CompactResult, Failure> {
         let ids = self.ports.ids.as_ref();
         let boundary_id = ids.message();
@@ -444,7 +451,8 @@ impl Engine<'_> {
             .collect();
         restored.extend(self.listings(request, &split.keep).await);
         // SessionStart（`compact`）的消息排在附件之后，三种触发都跑。
-        let started = hooks::session_start(self.ports.hooks.as_ref(), request, cancel).await;
+        let started =
+            hooks::session_start(self.ports.hooks.as_ref(), request, cancel, dispatches).await;
         let session_start_context = started.iter().any(is_session_start_context);
         // Node `runCompactSessionStartHooks`: a context equal to the latest one the compaction keeps is not restored
         // (`preservedEntries`), and its hook group goes with it. The kept history is the only comparison.
@@ -461,7 +469,7 @@ impl Engine<'_> {
         if !duplicate {
             restored.extend(started);
         }
-        hooks::post_compact(self.ports.hooks.as_ref(), request, &raw, cancel).await;
+        hooks::post_compact(self.ports.hooks.as_ref(), request, &raw, cancel, dispatches).await;
         Ok(CompactResult {
             boundary: CompactBoundary {
                 id: boundary_id,
@@ -474,6 +482,7 @@ impl Engine<'_> {
             summary,
             restored,
             session_start_context,
+            hook_invocations: Vec::new(),
         })
     }
 }

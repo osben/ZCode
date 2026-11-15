@@ -35,6 +35,8 @@ struct FakeCompactor {
     fail: Option<String>,
     /// The instructions the compaction must receive.
     instructions: Option<String>,
+    /// Fork: the dispatches the result carries (HK-UP-01), reported under `hook_rows`.
+    dispatches: Vec<rust_cli_kernel_api::hooks::HookInvocation>,
 }
 
 #[async_trait]
@@ -98,6 +100,7 @@ impl Compactor for FakeCompactor {
         // 冷加载的历史以没有回答的输入结束：补了一条 assistant（session-lifecycle.md §6.3.1）。
         assert_eq!(request.messages.len(), 2);
         Ok(CompactResult {
+            hook_invocations: self.dispatches.clone(),
             boundary: CompactBoundary {
                 id: MessageId::new("msg_b"),
                 trigger: CompactTrigger::Manual,
@@ -141,11 +144,46 @@ async fn session(fail: Option<&str>) -> (TaskScope, Arc<MemoryStore>, Session) {
     session_with(fail, false, Some("focus")).await
 }
 
+/// Fork: the dispatch a compacting hook would report (HK-UP-01 tests): one PreCompact run.
+fn compact_dispatch() -> rust_cli_kernel_api::hooks::HookInvocation {
+    rust_cli_kernel_api::hooks::HookInvocation {
+        id: "inv_pre".to_owned(),
+        hook_event: rust_cli_kernel_api::hooks::HookEventName::PreCompact,
+        tool_use: None,
+        tool_name: None,
+        runs: vec![rust_cli_kernel_api::hooks::HookRunRecord {
+            run: "run_1".to_owned(),
+            index: 0,
+            outcome: rust_cli_kernel_api::hooks::HookRunOutcome::Success,
+            block_reason: None,
+            error_message: None,
+            stderr_preview: None,
+            stdout_preview: None,
+            started_at_ms: 10,
+            duration_ms: 5,
+            source_kind: rust_cli_kernel_api::hooks::HookSourceKind::User,
+            plugin_name: None,
+            display: "node block.js".to_owned(),
+        }],
+    }
+}
+
 /// Fork: `typed_compact` is `SessionDeps::typed_compact`; `instructions` are what the compaction must receive.
 async fn session_with(
     fail: Option<&str>,
     typed_compact: bool,
     instructions: Option<&str>,
+) -> (TaskScope, Arc<MemoryStore>, Session) {
+    session_with_hooks(fail, typed_compact, instructions, false).await
+}
+
+/// Fork: `hook_rows` is `SessionDeps::hook_rows`; the compactor's result always carries a dispatch, so the switch
+/// gates only the reporting (HK-UP-01).
+async fn session_with_hooks(
+    fail: Option<&str>,
+    typed_compact: bool,
+    instructions: Option<&str>,
+    hook_rows: bool,
 ) -> (TaskScope, Arc<MemoryStore>, Session) {
     let scope = TaskScope::root("test", |_| {});
     let store = Arc::new(MemoryStore::default());
@@ -190,6 +228,7 @@ async fn session_with(
             compactor: Arc::new(FakeCompactor {
                 fail: fail.map(str::to_owned),
                 instructions: instructions.map(str::to_owned),
+                dispatches: vec![compact_dispatch()],
             }),
             machines: rust_cli_kernel_api::testing::environments(env),
             max_turns: None,
@@ -216,7 +255,7 @@ async fn session_with(
             error_holds_queue: false,
             session_start_extras: true,
             typed_compact,
-            hook_rows: false,
+            hook_rows,
         },
         SessionState {
             commands: Default::default(),
@@ -571,5 +610,61 @@ async fn changing_the_model_recomputes_the_context() {
                 window_tokens: None,
             }
         ]
+    );
+}
+
+// Fork: under `hook_rows` a manual compaction reports the dispatches its hooks ran (HK-UP-01): their events land in
+// the compact turn, before the committed batch; the records are not kept for the view (the compact turn stores no
+// user message to anchor them). Without the switch none is reported.
+
+#[tokio::test]
+async fn under_hook_rows_a_manual_compaction_reports_its_dispatches() {
+    let (_scope, _store, session) = session_with_hooks(None, false, Some("focus"), true).await;
+    assert!(matches!(
+        session.send(compact()).await,
+        Ack::Accepted { .. }
+    ));
+    let events = events_until_finished(&session).await;
+    let dispatches: Vec<&rust_cli_kernel_api::hooks::HookInvocation> = events
+        .iter()
+        .filter_map(|event| match event {
+            KernelEvent::HookInvocation { invocation, .. } => Some(invocation),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(dispatches.len(), 1, "{events:?}");
+    assert_eq!(dispatches[0].id, "inv_pre");
+    assert_eq!(
+        dispatches[0].hook_event,
+        rust_cli_kernel_api::hooks::HookEventName::PreCompact
+    );
+    // The dispatch is reported inside the compact turn, before its committed batch.
+    let position = |kind: &str| {
+        events
+            .iter()
+            .position(|event| serde_json::to_value(event).unwrap()["type"] == kind)
+            .unwrap_or_else(|| panic!("no {kind} event: {events:?}"))
+    };
+    assert!(
+        position("turn_started") < position("hook_invocation")
+            && position("hook_invocation") < position("compact_done")
+    );
+    // The compact turn stores no user message, so nothing is kept for the cold projection.
+    assert!(session.view().await.unwrap().hook_invocations.is_empty());
+}
+
+#[tokio::test]
+async fn without_the_switch_a_manual_compaction_reports_no_dispatch() {
+    let (_scope, _store, session) = session_with_hooks(None, false, Some("focus"), false).await;
+    assert!(matches!(
+        session.send(compact()).await,
+        Ack::Accepted { .. }
+    ));
+    let events = events_until_finished(&session).await;
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, KernelEvent::HookInvocation { .. })),
+        "{events:?}"
     );
 }

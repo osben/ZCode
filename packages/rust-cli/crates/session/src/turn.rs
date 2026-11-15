@@ -469,9 +469,10 @@ impl Actor {
             self.ledger.tool_finished(tool_use, output);
         }
         // Fork: keep the dispatch for the cold projection (HK-UP-01 Design 4): anchored to the turn's user message,
-        // bounded like the event log retention; the view drops a record whose anchor is not stored any more.
-        if let QueryEvent::HookInvocation { invocation } = &event {
-            self.keep_hook_invocation(prompt, invocation.clone());
+        // bounded like the event log retention; the view drops a record whose anchor is not stored any more. A
+        // dispatch of a turn without a stored prompt (the compact turn) is live-only, like a blocked prompt's.
+        if let (Some(prompt), QueryEvent::HookInvocation { invocation }) = (prompt, &event) {
+            self.keep_hook_invocation(Some(prompt), invocation.clone());
         }
         self.log.append(kernel_event(turn, event));
     }
