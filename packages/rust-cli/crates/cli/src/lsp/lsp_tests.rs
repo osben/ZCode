@@ -218,11 +218,25 @@ struct Fixture {
 const KIT: &str = "/Users/dev/kit";
 
 async fn fixture(project_files: &[(&str, serde_json::Value)]) -> Fixture {
-    fixture_with(project_files, None).await
+    fixture_config(project_files, false, None).await
+}
+
+/// Fork: the kit loads through the user config's plugin dirs (a project layer's dirs never load,
+/// like Node's project-config adapter).
+async fn fixture_user_dirs(project_files: &[(&str, serde_json::Value)]) -> Fixture {
+    fixture_config(project_files, true, None).await
 }
 
 async fn fixture_with(
     project_files: &[(&str, serde_json::Value)],
+    store: Option<Arc<dyn StoreQueries>>,
+) -> Fixture {
+    fixture_config(project_files, false, store).await
+}
+
+async fn fixture_config(
+    project_files: &[(&str, serde_json::Value)],
+    user_dirs: bool,
     store: Option<Arc<dyn StoreQueries>>,
 ) -> Fixture {
     let home = tempfile::tempdir().unwrap();
@@ -233,11 +247,12 @@ async fn fixture_with(
     let bin = home.path().join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     let user_config = home.path().join(".zcode/cli/config.json");
-    std::fs::write(
-        &user_config,
-        json!({"plugins": {"options": {"kit@inline": {"flag": "--fast"}}}}).to_string(),
-    )
-    .unwrap();
+    let user_plugins = if user_dirs {
+        json!({"plugins": {"dirs": [KIT], "options": {"kit@inline": {"flag": "--fast"}}}})
+    } else {
+        json!({"plugins": {"options": {"kit@inline": {"flag": "--fast"}}}})
+    };
+    std::fs::write(&user_config, user_plugins.to_string()).unwrap();
     let facts = EnvFacts {
         cwd: EnvPath::new("/Users/dev/a"),
         platform: "darwin".to_owned(),
@@ -396,7 +411,8 @@ async fn each_workspace_resolves_its_own_plugins() {
         .await
         .unwrap();
     assert_eq!(c.servers.len(), 1);
-    // Workspace b adds a config-dir plugin: it loads first, so it keeps `.ts` and typescript keeps the rest.
+    // Fork: workspace b declares a plugin dir in its project config — it never loads (Node strips
+    // project plugins.dirs, `project-config.adapter.ts`), so b sees only the official server.
     let b = fixture
         .host
         .status(&workspace("/Users/dev/b"))
@@ -415,14 +431,33 @@ async fn each_workspace_resolves_its_own_plugins() {
         .collect();
     assert_eq!(
         summary,
-        [
-            ("kit@inline/vue", vec![".vue", ".ts"], false),
-            (
-                "typescript-lsp@zcode-plugins-official/typescript",
-                vec![".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"],
-                true
-            ),
-        ]
+        [(
+            "typescript-lsp@zcode-plugins-official/typescript",
+            vec![".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"],
+            true
+        )]
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_project_storage_dir_does_not_redirect_the_inventory() {
+    // Fork: the plugin inventory roots resolve from the trusted layers only; a project's
+    // storage.dir pointing at a checked-in directory changes nothing (rule (a) of
+    // specs/fork-rust-workspace-plugins-mcp.md).
+    let fixture = fixture(&[(
+        "/Users/dev/b/zcode.json",
+        json!({"storage": {"dir": "/Users/dev/b/inventory"}}),
+    )])
+    .await;
+    let servers = fixture.host.servers("/Users/dev/b").await;
+    let official = servers
+        .iter()
+        .find(|server| server.id == "typescript-lsp@zcode-plugins-official/typescript")
+        .unwrap_or_else(|| panic!("{servers:?}"));
+    assert!(
+        official.command.contains("typescript-language-server"),
+        "the official plugin still resolves from the trusted cache"
     );
 }
 
@@ -430,13 +465,22 @@ async fn each_workspace_resolves_its_own_plugins() {
 #[cfg(unix)]
 #[tokio::test]
 async fn the_workspace_path_is_normalized_and_options_reach_the_templates() {
-    let fixture = fixture(&[(
+    // Fork: the kit comes from the user config's plugin dirs (a project layer's dirs never load),
+    // and the project config still has to be DISCOVERED through each normalized form — its
+    // enabledPlugins override hides the official server only when the path resolved to /Users/dev/b.
+    let fixture = fixture_user_dirs(&[(
         "/Users/dev/b/zcode.json",
-        json!({"plugins": {"dirs": [KIT]}}),
+        json!({"plugins": {"enabledPlugins": {"typescript-lsp@zcode-plugins-official": false}}}),
     )])
     .await;
     for path in ["/Users/dev/b", "/Users/dev/b/", "/Users/dev/./b/../b//"] {
         let servers = fixture.host.servers(path).await;
+        assert!(
+            !servers
+                .iter()
+                .any(|server| server.id.starts_with("typescript-lsp@")),
+            "{path}: the project config was not discovered through this form: {servers:?}"
+        );
         let kit = servers
             .iter()
             .find(|server| server.id == "kit@inline/vue")

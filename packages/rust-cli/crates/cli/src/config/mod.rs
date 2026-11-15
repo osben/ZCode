@@ -239,9 +239,11 @@ pub(crate) fn storage_layers(
     }
 }
 
-/// Fork: what a workspace's plugins resolve against (specs/fork-rust-lsp.md "Owners"). The same layers,
-/// storage rule and candidates as [`assemble`], without hooks, trust, MCP or warning logs, so it can run for
-/// every `lsp/status` request.
+/// Fork: what a workspace's plugins resolve against (specs/fork-rust-lsp.md "Owners",
+/// specs/fork-rust-workspace-plugins-mcp.md). Like [`assemble`] without hooks, trust, MCP or
+/// warning logs, so it can run for every `lsp/status` request — with one deliberate difference:
+/// the plugin dirs and the inventory roots resolve from the trusted (user/env/`--settings`)
+/// layers only; a project layer's `plugins.dirs` and `storage.dir` never reach them.
 pub(crate) struct PluginView {
     pub(crate) sources: PluginSources,
     pub(crate) options: std::collections::BTreeMap<String, Map<String, Value>>,
@@ -250,13 +252,39 @@ pub(crate) struct PluginView {
 }
 
 pub(crate) async fn plugin_view(inputs: &ConfigInputs<'_>) -> PluginView {
-    let mut warnings = Vec::new();
     let files = read_files(inputs).await;
+    plugin_view_of(inputs, &files).await
+}
+
+/// [`plugin_view`] over files the caller already read and validated: the workspace layer fails
+/// closed on an invalid project file and then builds plugins and MCP from this same snapshot, so
+/// the two can never mix revisions of a config that changed in between.
+pub(crate) async fn plugin_view_of(inputs: &ConfigInputs<'_>, files: &Files) -> PluginView {
+    let mut warnings = Vec::new();
     let empty = Map::new();
-    let layers = layers(&files, inputs.flag, &empty, &mut warnings);
+    let layers = layers(files, inputs.flag, &empty, &mut warnings);
     let mut section = plugins::merge(&layers, &mut warnings);
+    // Fork (specs/fork-rust-workspace-plugins-mcp.md): Node strips `plugins.dirs` from project
+    // configs (`project-config.adapter.ts`): a project layer must not load plugin roots, or merely
+    // opening a repository would run its plugin commands. The dirs come from the user and
+    // `--settings` layers only.
+    let userish: Vec<merge::Layer<'_>> = layers
+        .iter()
+        .filter(|layer| layer.source != RuleSource::ProjectSettings)
+        .map(|layer| merge::Layer {
+            source: layer.source,
+            object: layer.object,
+            path: layer.path,
+        })
+        .collect();
+    // The userish merge re-walks layers the full merge above already warned about; a throwaway
+    // sink keeps each warning logged once.
+    let mut sink = Vec::new();
+    section.dirs = plugins::merge(&userish, &mut sink).dirs;
     let options = std::mem::take(&mut section.options);
-    let storage_layers = storage_layers(inputs, &layers, &mut warnings);
+    // The inventory roots (plugin cache, installed_plugins.json) resolve from the trusted layers
+    // too: a project's storage.dir must not redirect them to a checked-in directory.
+    let storage_layers = storage_layers(inputs, &userish, &mut warnings);
     let root = inputs.workspace.root.as_str();
     let storage = inputs
         .paths
