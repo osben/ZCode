@@ -337,8 +337,10 @@ impl Actor {
             return;
         };
         // Fork: an ACP agent names the session itself; no model title runs for its turns (Node skips the title
-        // sidecar for external-agent turns).
+        // sidecar for external-agent turns). The deferred title is dropped without a task, so a parked
+        // goal summary must be released here too (the slot ends up free).
         if self.selection.external_agent().is_some() {
+            self.start_pending_goal_summary();
             return;
         }
         let DeferredTitle {
@@ -359,6 +361,9 @@ impl Actor {
                 || !self.messages.iter().any(|message| message.id() == &prompt);
             if stale && goal.is_none() {
                 self.titles.settled = true;
+                // The stale drop starts no task, so the slot frees now: a parked goal summary
+                // runs (Node's sidecar still runs beside a custom title).
+                self.start_pending_goal_summary();
                 return;
             }
             self.titles.attempts += 1;
@@ -395,25 +400,24 @@ impl Actor {
     /// A title request still running (or waiting for its turn) is no such case: the summary waits for it
     /// ([`TitleState::pending_goal_summary`]) instead of falling back, as Node's sidecar still runs its request.
     fn start_goal_summary(&mut self, target: String) {
+        // A pure read: resolving once keeps the park/launch arms symmetric.
+        let objective = self.goal_objective(&target);
+        let prompt = self.messages.last().map(|message| message.id().clone());
         if self.titles.in_flight() {
-            match self.goal_objective(&target) {
+            match objective {
                 Some(objective) => {
                     self.titles.pending_goal_summary = Some(PendingGoalSummary {
                         target,
                         objective,
-                        prompt: self.messages.last().map(|message| message.id().clone()),
+                        prompt,
                     });
                 }
                 None => self.goal_summarized(&target, None),
             }
             return;
         }
-        match self.goal_objective(&target) {
-            Some(objective) => self.launch_goal_summary(
-                target,
-                objective,
-                self.messages.last().map(|message| message.id().clone()),
-            ),
+        match objective {
+            Some(objective) => self.launch_goal_summary(target, objective, prompt),
             None => self.goal_summarized(&target, None),
         }
     }

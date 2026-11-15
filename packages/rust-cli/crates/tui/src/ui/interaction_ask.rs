@@ -424,6 +424,8 @@ pub fn option_answer(
         tool,
         input,
         suggestions,
+        once,
+        independent,
         ..
     } = request
     else {
@@ -433,7 +435,9 @@ pub fn option_answer(
         ALLOW_ONCE | FULL_ACCESS => PermissionAnswer::Allow {
             remember: Vec::new(),
         },
-        ALLOW_ALWAYS => PermissionAnswer::Allow {
+        // The policy lives with the decision, not only with the rendering: an ask that does not
+        // offer always (once/independent) answers Deny for it, like the Host's counterpart.
+        ALLOW_ALWAYS if always_offered(*once, *independent) => PermissionAnswer::Allow {
             remember: always_rules(tool, input, suggestions, seed),
         },
         DENY => {

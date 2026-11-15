@@ -163,18 +163,21 @@ pub(crate) fn partial_view(
         view = lines[..count].join("\n");
     }
     let mut by_characters = false;
-    if !fits(&view) || view.trim().is_empty() {
+    if !fits(&view) || rust_cli_base::js::string::trim(&view).is_empty() {
         let mut units = ((MAX_TOKENS as f64 * chars_per_token * PARTIAL_VIEW_FIT_RATIO).floor()
             as usize)
             .max(1);
         for _ in 0..PARTIAL_VIEW_SHRINK_STEPS {
-            // JS `slice` then `dropTrailingHighSurrogate`: a cut surrogate pair is dropped whole.
-            view = rust_cli_base::js::string::utf16_prefix(content, units).to_owned();
-            if fits(&view) {
+            // Node checks `fits` on the RAW slice (before `dropTrailingHighSurrogate`); the
+            // extension-aware estimate is monotone in the UTF-16 length, so fitting on `units`
+            // keeps the loop faithful at the surrogate boundary.
+            if estimate_tokens(&content[..units], extension) <= MAX_TOKENS {
                 break;
             }
             units = ((units as f64 * PARTIAL_VIEW_SHRINK_RATIO).floor() as usize).max(1);
         }
+        // JS `slice` then `dropTrailingHighSurrogate`: a cut surrogate pair is dropped whole.
+        view = rust_cli_base::js::string::utf16_prefix(content, units).to_owned();
         if !fits(&view) {
             return None;
         }
