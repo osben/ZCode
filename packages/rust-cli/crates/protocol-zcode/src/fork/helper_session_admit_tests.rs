@@ -4,7 +4,7 @@
 use serde_json::json;
 
 use super::*;
-use crate::fork::node_helper::HelperCatalog;
+use crate::fork::node_helper::{HelperCatalog, NodeHelper, NodeHelperLauncher};
 
 fn catalog() -> HelperCatalog {
     HelperCatalog {
@@ -167,32 +167,32 @@ impl rust_cli_kernel_api::session_api::Kernel for StoreKernel {
     }
 }
 
-/// The agent's cwd is not its sessions' workspace: the Host may spawn it in a fixed internal directory
-/// (`ZCODE_AGENT_SERVER_CWD`, the spawn fallback), and the desktop E2E runs it in `<home>/.zcode` while its sessions live
-/// in `<home>/ZCodeProject`. A session of this process's store is Rust's whatever its directory; an unknown one is not.
-#[tokio::test]
-async fn a_stored_session_is_owned_whatever_the_agents_cwd() {
+/// A stored session row, as `owns` and the workspace queries read it.
+async fn stored(store: &rust_cli_kernel_api::testing::MemoryStore, id: &str) {
     use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
-    use rust_cli_kernel_api::ids::{EnvironmentId, TraceId};
     use rust_cli_kernel_api::store::{SessionKind, SessionMeta, SessionStore};
-
-    let store = std::sync::Arc::new(rust_cli_kernel_api::testing::MemoryStore::default());
     store
         .create(SessionMeta {
-            id: SessionId::new("s1"),
+            id: SessionId::new(id),
             kind: SessionKind::Interactive,
             parent: None,
             workspace: WorkspaceRef {
-                environment: EnvironmentId::new("local"),
+                environment: rust_cli_kernel_api::ids::EnvironmentId::new("local"),
                 root: EnvPath::new("/home/ZCodeProject"),
             },
             title: String::new(),
-            trace: TraceId::new("trace"),
+            trace: rust_cli_kernel_api::ids::TraceId::new("trace"),
             created_at_ms: 1000,
             incognito: None,
         })
         .await
         .unwrap();
+}
+
+/// A server over a store-only kernel, with a live task scope for its connections.
+fn store_server(
+    store: std::sync::Arc<rust_cli_kernel_api::testing::MemoryStore>,
+) -> (Server, rust_cli_base::TaskScope) {
     let scope = rust_cli_base::TaskScope::root("test", |_| {});
     let (out, _reader) = tokio::io::duplex(1 << 16);
     let (peer, _writer) = rust_cli_protocol_core::connection::start(
@@ -211,9 +211,99 @@ async fn a_stored_session_is_owned_whatever_the_agents_cwd() {
         crate::server::Defaults {
             selection: rust_cli_kernel_api::testing::selection().into(),
             mode: rust_cli_kernel_api::permission::PermissionMode::Default,
-            environment: EnvironmentId::new("local"),
+            environment: rust_cli_kernel_api::ids::EnvironmentId::new("local"),
         },
     );
+    (server, scope)
+}
+
+/// The agent's cwd is not its sessions' workspace: the Host may spawn it in a fixed internal directory
+/// (`ZCODE_AGENT_SERVER_CWD`, the spawn fallback), and the desktop E2E runs it in `<home>/.zcode` while its sessions live
+/// in `<home>/ZCodeProject`. A session of this process's store is Rust's whatever its directory; an unknown one is not.
+#[tokio::test]
+async fn a_stored_session_is_owned_whatever_the_agents_cwd() {
+    let store = std::sync::Arc::new(rust_cli_kernel_api::testing::MemoryStore::default());
+    stored(&store, "s1").await;
+    let (server, _scope) = store_server(store);
     assert!(owns(&server, &SessionId::new("s1")).await);
     assert!(!owns(&server, &SessionId::new("unknown")).await);
+}
+
+/// Admission never starts the helper; the launcher only satisfies the constructor.
+struct NoLaunch;
+
+#[async_trait::async_trait]
+impl NodeHelperLauncher for NoLaunch {
+    async fn launch(&self) -> std::io::Result<crate::NodeHelperProcess> {
+        Err(std::io::Error::other("admission never launches the helper"))
+    }
+}
+
+/// Fork (specs/fork-rust-node-helper.md F3, per-workspace admission): the forwarding check resolves
+/// the session's workspace catalog — a helper-hosted server of the workspace set passes, the process
+/// set's own does not for that session, and a session without a workspace layer keeps the process
+/// catalog.
+#[tokio::test]
+async fn admission_resolves_the_sessions_workspace_catalog() {
+    let store = std::sync::Arc::new(rust_cli_kernel_api::testing::MemoryStore::default());
+    stored(&store, "s1").await;
+    stored(&store, "s2").await;
+    let (server, scope) = store_server(store);
+    let (out, _reader) = tokio::io::duplex(1 << 16);
+    let (host, _writer) = rust_cli_protocol_core::connection::start(
+        out,
+        &scope.spawner(),
+        rust_cli_protocol_core::connection::Options::default(),
+    );
+    let helper = NodeHelper::new(
+        std::sync::Arc::new(NoLaunch),
+        scope.spawner(),
+        host,
+        crate::fork::node_helper::Timing::default(),
+    );
+    helper.set_catalog(catalog());
+    let workspace = HelperCatalog {
+        plugin_ids: vec!["docs@inline".to_owned()],
+        helper_plugins: vec!["docs@inline".to_owned()],
+        servers: vec!["plugin:docs:documents".to_owned()],
+    };
+    helper.set_catalog_resolver(std::sync::Arc::new(move |session| {
+        (session == "s1").then(|| std::sync::Arc::new(workspace.clone()))
+    }));
+    let call = |session: &str, server: &str| json!({"sessionId": session, "serverName": server});
+    // s1's workspace set replaces the process one for s1.
+    assert!(
+        admit(
+            &server,
+            &helper,
+            "mcp/uiCallTool",
+            &call("s1", "plugin:docs:documents")
+        )
+        .await
+        .is_ok()
+    );
+    assert_eq!(
+        reason(
+            admit(
+                &server,
+                &helper,
+                "mcp/uiCallTool",
+                &call("s1", "plugin:viewer:view")
+            )
+            .await
+            .err()
+        ),
+        not_hosted()
+    );
+    // s2 has no workspace layer: the process catalog answers.
+    assert!(
+        admit(
+            &server,
+            &helper,
+            "mcp/uiCallTool",
+            &call("s2", "plugin:viewer:view")
+        )
+        .await
+        .is_ok()
+    );
 }

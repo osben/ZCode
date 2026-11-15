@@ -120,8 +120,12 @@ official cache and `installed_plugins.json` all live under the storage root
 
 ## Not in this PR (follow-ups)
 
-- Per-workspace `HelperCatalog` admission and helper-hosted plugin servers per workspace
-  (`fork-rust-node-helper.md:312`).
+- ~~Per-workspace `HelperCatalog` admission and helper-hosted plugin servers per workspace~~ — the
+  admission half is closed: `helper/session/open`, the session-scoped forwarding check and
+  `helper/authorizeAppTool` resolve the session's workspace catalog through the loaded layer
+  (`fork-rust-node-helper.md` F3, "Session open and close"). The helper MCP pipes still connect in
+  the process workspace (`node_helper_mcp.rs` `helper_workspace`); moving them per workspace, and
+  with it the pipe-workspace refusal, stays a follow-up.
 - The workspace plugin set's hooks (`hooks.register_plugins` stays process-wide until the engine's
   per-workspace entries can carry plugin sources; the slot already stores the loaded set). The
   workspace's skills and agent files gained their views in the follow-up PR: `SkillCatalog` reads a

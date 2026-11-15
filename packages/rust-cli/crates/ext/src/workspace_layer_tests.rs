@@ -126,3 +126,42 @@ async fn without_a_loader_nothing_loads() {
     assert!(layer.slot("/w").is_none());
     assert!(mcp.group("/w").is_none());
 }
+
+/// Fork (specs/fork-rust-node-helper.md F3, per-workspace admission): a session resolves its
+/// workspace's plugin set through its recorded workspace, mirroring the MCP group resolution — the
+/// helper catalog of a session whose workspace has a loaded layer comes from that set, and any
+/// other session resolves none (the caller keeps the process catalog).
+#[tokio::test]
+async fn a_session_resolves_its_workspaces_plugin_set() {
+    let scope = TaskScope::root("test", |_| {});
+    let fake: Arc<FakeMcp> = Arc::new(FakeMcp::default());
+    let (mcp, layer) = layer(&fake, &scope);
+    layer.set_loader(Arc::new(Fixed(Some(config_with_server("project-server")))));
+
+    let sessions = rust_cli_kernel_api::workspace_key::SessionWorkspaces::default();
+    sessions.record(&rust_cli_kernel_api::ids::SessionId::new("s1"), workspace());
+    layer.load(&workspace()).await;
+
+    assert!(
+        layer
+            .plugins_of_session(&sessions, &rust_cli_kernel_api::ids::SessionId::new("s1"))
+            .is_some(),
+        "a session of the loaded workspace resolves that workspace's set"
+    );
+    // A session without a recorded workspace (never opened in this process) resolves none.
+    assert!(
+        layer
+            .plugins_of_session(&sessions, &rust_cli_kernel_api::ids::SessionId::new("s2"))
+            .is_none()
+    );
+
+    // Fail-closed: a workspace whose layer is Invalid resolves none, like its MCP group.
+    let broken = WorkspaceLayer::new(files(), mcp.clone(), Vec::new(), Vec::new(), None);
+    broken.set_loader(Arc::new(Fixed(None)));
+    broken.load(&workspace()).await;
+    assert!(
+        broken
+            .plugins_of_session(&sessions, &rust_cli_kernel_api::ids::SessionId::new("s1"))
+            .is_none()
+    );
+}

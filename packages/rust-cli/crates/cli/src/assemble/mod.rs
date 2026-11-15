@@ -842,6 +842,19 @@ pub(crate) async fn kernel(
     let plugins = kernel.start_extensions().await;
     if let Some(helper) = &spec.node_helper {
         helper.set_catalog(helper_catalog(&plugins));
+        // Fork (specs/fork-rust-node-helper.md F3, per-workspace admission): a session whose workspace has a loaded
+        // layer is admitted against that set (same conversion as the process catalog). The kernel is held weakly: it
+        // already reaches the helper through the routed MCP transport, and a strong edge back would keep both alive
+        // for the process's life.
+        let session_kernel = Arc::downgrade(&kernel);
+        helper.set_catalog_resolver(Arc::new(move |session| {
+            session_kernel
+                .upgrade()
+                .and_then(|kernel| {
+                    kernel.plugins_for_session(&rust_cli_kernel_api::ids::SessionId::new(session))
+                })
+                .map(|plugins| Arc::new(helper_catalog(&plugins)))
+        }));
     }
     Ok(Built {
         opened,

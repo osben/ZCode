@@ -60,8 +60,10 @@ pub(crate) fn session_of<'a>(method: &str, params: &'a Value) -> Option<&'a str>
     None
 }
 
-/// What Rust admitted in this process, sent with every session open. It names no workspace: a session opens with its
-/// own, never the agent's cwd.
+/// What Rust admitted: the plugin ids and the helper-hosted server names one session is opened and admitted against.
+/// The process-wide set is installed once its plugins are loaded; a session whose workspace has a loaded layer resolves
+/// its own catalog instead (per-workspace admission, the resolver of [`NodeHelper::set_catalog_resolver`]). It names no
+/// workspace itself: a session opens with its own, never the agent's cwd.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct HelperCatalog {
     /// Every plugin Rust admitted (the helper enables only these in the session's reference catalog).
@@ -153,8 +155,25 @@ impl NodeHelper {
         *self.catalog.lock_unpoisoned() = Some(Arc::new(catalog));
     }
 
+    /// Sets how a session's workspace catalog is resolved (per-workspace admission): installed once at
+    /// assembly, before any session opens. The process catalog stays the fallback of a session whose
+    /// workspace has no loaded layer.
+    pub fn set_catalog_resolver(&self, resolver: Arc<super::HelperCatalogResolver>) {
+        *self.catalog_resolver.lock_unpoisoned() = Some(resolver);
+    }
+
     pub(crate) fn catalog(&self) -> Option<Arc<HelperCatalog>> {
         self.catalog.lock_unpoisoned().clone()
+    }
+
+    /// The catalog `session` is admitted against: its workspace's when a layer is loaded for it, else
+    /// the process one. The session open, the forwarding check and the app-tool authorization read this
+    /// one view, so all three name the same set.
+    pub(crate) fn catalog_for(&self, session: &str) -> Option<Arc<HelperCatalog>> {
+        let resolver = self.catalog_resolver.lock_unpoisoned().clone();
+        resolver
+            .and_then(|resolve| resolve(session))
+            .or_else(|| self.catalog())
     }
 
     /// Opens `session` on `generation` unless it is open there.
@@ -256,7 +275,7 @@ impl NodeHelper {
         peer: &Peer,
         session: &str,
     ) -> Result<u64, RpcError> {
-        let Some(catalog) = self.catalog() else {
+        let Some(catalog) = self.catalog_for(session) else {
             return Err(unavailable("the helper has no plugin catalog yet"));
         };
         let Some(answers) = self.answers() else {

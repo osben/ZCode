@@ -2,7 +2,8 @@
 //! (specs/fork-rust-node-helper.md F3, "Session-scoped forwarded methods"). Rust forwards one only when the session is
 //! one of its own (open or resumable in this process) and, for a method that names a `serverName`, when that server
 //! is helper-hosted; `plugins/mentionItems` names a plugin, which must be helper-hosted. Otherwise it answers
-//! [`MCP_UI_SERVER_NOT_HELPER_HOSTED`].
+//! [`MCP_UI_SERVER_NOT_HELPER_HOSTED`]. The hosted check reads the session's workspace catalog (per-workspace
+//! admission): the set of its workspace's loaded layer, else the process catalog.
 
 use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_protocol_core::rpc::RpcError;
@@ -24,7 +25,8 @@ pub(crate) async fn admit(
         return Ok(());
     };
     let owned = !session.is_empty() && owns(server, &SessionId::new(session)).await;
-    match refusal(method, params, owned, helper.catalog().as_deref()) {
+    let catalog = helper.catalog_for(session);
+    match refusal(method, params, owned, catalog.as_deref()) {
         Some(error) => Err(error),
         None => Ok(()),
     }

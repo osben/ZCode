@@ -102,6 +102,21 @@ impl WorkspaceLayer {
         }
     }
 
+    /// Fork: the plugin set a session's workspace carries — its loaded layer's set, when one is
+    /// loaded for the recorded workspace (specs/fork-rust-node-helper.md F3, per-workspace
+    /// admission). `None` for a session without a recorded workspace or whose workspace has no
+    /// loaded layer: the same resolution and fallback as the session's MCP group
+    /// ([`WorkspaceMcp::for_session`]).
+    pub fn plugins_of_session(
+        &self,
+        sessions: &rust_cli_kernel_api::workspace_key::SessionWorkspaces,
+        session: &rust_cli_kernel_api::ids::SessionId,
+    ) -> Option<Arc<crate::plugins::Plugins>> {
+        sessions
+            .get(session)
+            .and_then(|workspace| self.plugins_of(&workspace))
+    }
+
     /// Fork: print mode reaches every group of the composite.
     pub(crate) fn set_print_session(&self, print: bool) {
         self.mcp.set_print_session(print);

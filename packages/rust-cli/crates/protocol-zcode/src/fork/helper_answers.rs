@@ -89,7 +89,7 @@ impl HelperRequests for Server {
         let hosted = self
             .context
             .node_helper()
-            .and_then(|helper| helper.catalog())
+            .and_then(|helper| helper.catalog_for(call.session.as_str()))
             .is_some_and(|catalog| catalog.servers.contains(&call.server));
         if !hosted {
             return Err(not_hosted(
