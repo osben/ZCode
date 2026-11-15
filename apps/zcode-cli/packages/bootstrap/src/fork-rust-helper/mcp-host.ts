@@ -62,7 +62,7 @@ interface HelperContextMeta {
 
 interface PipeConnection {
   server: string;
-  /** The connect's workspace key. Not yet enforced against a session's (spec F3, pipe workspace limit). */
+  /** The connect's workspace key; a call of a session of another key is refused (spec F3, pipe workspace). */
   workspaceKey: string;
   port: McpPort;
   inflight: Map<string | number, AbortController>;
@@ -282,6 +282,13 @@ export class ForkRustHelperMcpHost {
       throw new ProtocolRequestError(
         SESSION_NOT_OPEN,
         `Session is not open in the Node helper: ${String(sessionId)}`,
+      );
+    // Spec F3 "The pipe workspace is enforced": a session runs only through a pipe of its own workspace key.
+    // The wording was pinned nowhere, so it follows the session-not-open refusal next to it.
+    if (workspaceKeyOf(session.workspace) !== pipe.workspaceKey)
+      throw new ProtocolRequestError(
+        SESSION_NOT_OPEN,
+        `Session is in another workspace than the MCP connection: ${String(sessionId)}`,
       );
     const workspace = session.workspace;
     const turnId = helperContext?.turnId;

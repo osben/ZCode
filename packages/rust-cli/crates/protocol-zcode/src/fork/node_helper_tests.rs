@@ -1179,6 +1179,374 @@ async fn the_routing_transport_sends_node_helper_servers_to_the_helper() {
     assert!(events.next().await.is_none());
 }
 
+/// The agent's session rows for the pipe-workspace tests: `a` lives in `/home/One`, `b` in `/home/Two` under the
+/// identity `two`, `gone` has no row.
+struct PipeRows;
+
+#[async_trait]
+impl HelperRequests for PipeRows {
+    async fn authorize_app_tool(
+        &self,
+        _params: Value,
+        _cancel: tokio_util::sync::CancellationToken,
+    ) -> Result<Value, RpcError> {
+        Err(RpcError::internal("not used"))
+    }
+
+    async fn sample_model(
+        &self,
+        _params: Value,
+        _cancel: tokio_util::sync::CancellationToken,
+    ) -> Result<Value, RpcError> {
+        Err(RpcError::internal("not used"))
+    }
+
+    fn session_delta(&self, _session: &str, _delta: Value) {}
+
+    async fn session_workspace(&self, session: &str) -> Option<Value> {
+        match session {
+            "a" => Some(json!({"workspacePath": "/home/One"})),
+            "b" => Some(json!({"workspacePath": "/home/Two", "workspaceIdentity": "two"})),
+            _ => None,
+        }
+    }
+}
+
+/// Pipes echo as [`mcp_echo`]; `helper/session/open` answers `{}`; every other request echoes its params.
+fn pipes_with_sessions() -> Arc<Behaviour> {
+    let pipes = mcp_echo();
+    behaviour(move |launch, method, params| match method {
+        "helper/session/open" => Act::Reply {
+            notes: Vec::new(),
+            result: json!({}),
+        },
+        "helper/mcp/connect" | "helper/mcp/send" | "helper/mcp/close" => {
+            pipes(launch, method, params)
+        }
+        _ => Act::Reply {
+            notes: Vec::new(),
+            result: params.clone(),
+        },
+    })
+}
+
+/// A rig whose helper answers through [`PipeRows`], scripted by `behaviour` ([`pipes_with_sessions`] is the usual).
+fn pipe_rig(behaviour: Arc<Behaviour>) -> Rig {
+    static ROWS: std::sync::LazyLock<Arc<PipeRows>> =
+        std::sync::LazyLock::new(|| Arc::new(PipeRows));
+    let rig = rig(fake(&["plugins/list"], behaviour), timing());
+    rig.helper.set_catalog(HelperCatalog {
+        plugin_ids: vec!["a@inline".to_owned()],
+        helper_plugins: vec!["a@inline".to_owned()],
+        servers: vec!["plugin:a:s".to_owned()],
+    });
+    let rows: Weak<dyn HelperRequests> = Arc::downgrade(&*ROWS) as _;
+    rig.helper.set_requests(rows);
+    rig
+}
+
+/// One `tools/call` of `session`, as Rust's MCP client sends it through a pipe.
+fn helper_tool_call(id: u64, session: &str) -> Value {
+    json!({"jsonrpc": "2.0", "id": id, "method": "tools/call", "params": {"name": "open_doc", "arguments": {},
+        "_meta": {"zcode/helperContext": {"sessionId": session, "turnId": "run_1", "runtimeScope": "main"}}}})
+}
+
+/// F3, "The pipe workspace is enforced": a session's call travels a pipe connected in its own row's workspace — the
+/// store-row resolution the session open uses, identity included — so two workspaces get distinct pipes on one
+/// connection, and the sessionless traffic keeps the connection's own pipe (its manager group's workspace).
+#[tokio::test]
+async fn each_workspaces_calls_travel_a_pipe_connected_in_that_workspace() {
+    use futures_util::StreamExt;
+    use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
+    use rust_cli_kernel_api::ids::EnvironmentId;
+    use rust_cli_kernel_api::mcp::{McpConnect, McpTransport, McpTransportConfig, NoMcpTransport};
+
+    let rig = pipe_rig(pipes_with_sessions());
+    let routed = HelperRoutedMcp::new(Arc::new(NoMcpTransport), rig.helper.clone());
+    let group = WorkspaceRef {
+        environment: EnvironmentId::new("primary"),
+        root: EnvPath::new("/w"),
+    };
+    let connection = routed
+        .connect(
+            &group,
+            McpConnect {
+                server: "plugin:a:s".to_owned(),
+                transport: McpTransportConfig::NodeHelper,
+            },
+        )
+        .await
+        .expect("connected");
+    let mut events = routed.events(&connection);
+    let answered = |id: u64| {
+        let expected = json!(id);
+        move |message: &Value| {
+            assert_eq!(message["id"], expected, "{message:?}");
+            assert!(message.get("error").is_none(), "{message:?}");
+        }
+    };
+    for (id, message) in [
+        (
+            1u64,
+            json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}),
+        ),
+        (2, helper_tool_call(2, "a")),
+        (3, helper_tool_call(3, "b")),
+    ] {
+        routed.send(&connection, message).await.expect("sent");
+        match tokio::time::timeout(Duration::from_secs(5), events.next()).await {
+            Ok(Some(rust_cli_kernel_api::mcp::McpTransportEvent::Message { message })) => {
+                answered(id)(&message)
+            }
+            other => panic!("no answer for {id}: {other:?}"),
+        }
+    }
+    let connects = received(&rig.fake, "helper/mcp/connect");
+    let workspaces: Vec<Value> = connects
+        .iter()
+        .map(|params| params["workspace"].clone())
+        .collect();
+    assert_eq!(
+        workspaces,
+        [
+            json!({"workspacePath": "/w"}),
+            json!({"workspacePath": "/home/One"}),
+            json!({"workspacePath": "/home/Two", "workspaceIdentity": "two"}),
+        ]
+    );
+    let mut ids: Vec<&str> = connects
+        .iter()
+        .filter_map(|params| params["connection"].as_str())
+        .collect();
+    ids.sort();
+    ids.dedup();
+    assert_eq!(ids.len(), 3, "each workspace gets its own pipe");
+
+    // Closing the connection closes every pipe it connected, its own and the workspaces'.
+    routed.close(&connection).await.expect("closed");
+    assert!(matches!(
+        tokio::time::timeout(Duration::from_secs(5), events.next())
+            .await
+            .expect("closed in time"),
+        Some(rust_cli_kernel_api::mcp::McpTransportEvent::Closed { .. })
+    ));
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while received(&rig.fake, "helper/mcp/close").len() < 3 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the helper hears every close");
+    let mut closed: Vec<String> = received(&rig.fake, "helper/mcp/close")
+        .iter()
+        .filter_map(|params| params["connection"].as_str().map(str::to_owned))
+        .collect();
+    closed.sort();
+    let mut ids: Vec<String> = ids.into_iter().map(str::to_owned).collect();
+    ids.sort();
+    assert_eq!(closed, ids);
+}
+
+/// F3: a pipe refuses the call of a session of another workspace; the call never reaches the helper.
+#[tokio::test]
+async fn a_pipe_refuses_the_call_of_a_session_of_another_workspace() {
+    let rig = pipe_rig(pipes_with_sessions());
+    let mut connection = rig
+        .helper
+        .mcp_connect(&json!({"workspacePath": "/w"}), "plugin:a:s")
+        .await
+        .expect("connected");
+    rig.helper
+        .mcp_send(&connection.id, helper_tool_call(5, "a"))
+        .await
+        .expect("sent");
+    match next_event(&mut connection).await {
+        rust_cli_kernel_api::mcp::McpTransportEvent::Message { message } => {
+            assert_eq!(message["id"], json!(5));
+            assert_eq!(message["error"]["code"], json!(-32603));
+            assert_eq!(
+                message["error"]["message"],
+                json!("the session is in another workspace than the MCP connection")
+            );
+        }
+        other => panic!("unexpected event: {other:?}"),
+    }
+    assert!(
+        received(&rig.fake, "helper/mcp/send").is_empty(),
+        "the call never reaches the helper"
+    );
+}
+
+/// F3: a session whose workspace cannot be resolved gets no pipe — its call is refused fail-closed, as its session
+/// open is, and nothing of it reaches the helper.
+#[tokio::test]
+async fn a_call_of_a_session_whose_workspace_is_unknown_is_refused() {
+    let rig = pipe_rig(pipes_with_sessions());
+    let mut connection = rig
+        .helper
+        .mcp_connect(&json!({"workspacePath": "/w"}), "plugin:a:s")
+        .await
+        .expect("connected");
+    rig.helper
+        .mcp_send(&connection.id, helper_tool_call(6, "gone"))
+        .await
+        .expect("sent");
+    match next_event(&mut connection).await {
+        rust_cli_kernel_api::mcp::McpTransportEvent::Message { message } => {
+            assert_eq!(message["id"], json!(6));
+            assert!(
+                message["error"]["message"].as_str().is_some_and(
+                    |message| message.starts_with("the session's workspace is unknown")
+                ),
+                "{}",
+                message
+            );
+        }
+        other => panic!("unexpected event: {other:?}"),
+    }
+    assert!(
+        received(&rig.fake, "helper/mcp/send").is_empty()
+            && received(&rig.fake, "helper/session/open").is_empty(),
+        "neither the call nor an open reaches the helper"
+    );
+}
+
+/// F3: a workspace pipe closing answers only its own in-flight calls on the connection — the connection lives on, a
+/// cancel of the call follows its pipe, and the next call of that workspace reconnects the pipe.
+#[tokio::test]
+async fn a_closed_workspace_pipe_answers_its_calls_and_the_connection_lives_on() {
+    use futures_util::StreamExt;
+    use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
+    use rust_cli_kernel_api::ids::EnvironmentId;
+    use rust_cli_kernel_api::mcp::{
+        McpConnect, McpTransport, McpTransportConfig, McpTransportEvent, NoMcpTransport,
+    };
+
+    // The call of id 2 never answers; everything else answers as [`pipes_with_sessions`] does.
+    let sessions = pipes_with_sessions();
+    let hanging = behaviour(move |_, method, params| {
+        if method == "helper/mcp/send" && params["message"]["id"] == json!(2) {
+            return Act::Hang;
+        }
+        sessions(0, method, params)
+    });
+    let rig = pipe_rig(hanging);
+
+    let routed = HelperRoutedMcp::new(Arc::new(NoMcpTransport), rig.helper.clone());
+    let group = WorkspaceRef {
+        environment: EnvironmentId::new("primary"),
+        root: EnvPath::new("/w"),
+    };
+    let connection = routed
+        .connect(
+            &group,
+            McpConnect {
+                server: "plugin:a:s".to_owned(),
+                transport: McpTransportConfig::NodeHelper,
+            },
+        )
+        .await
+        .expect("connected");
+    let mut events = routed.events(&connection);
+    routed
+        .send(&connection, helper_tool_call(2, "a"))
+        .await
+        .expect("sent");
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while received(&rig.fake, "helper/mcp/send").is_empty() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the call is out");
+    // The call and its cancel travel the workspace's pipe, not the connection's own.
+    routed
+        .send(
+            &connection,
+            json!({"jsonrpc": "2.0", "method": "notifications/cancelled",
+                "params": {"requestId": 2, "reason": "User interrupted"}}),
+        )
+        .await
+        .expect("sent");
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while received(&rig.fake, "helper/mcp/send").len() < 2 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the cancel is out");
+    let satellite = received(&rig.fake, "helper/mcp/connect")
+        .iter()
+        .find(|params| params["workspace"] == json!({"workspacePath": "/home/One"}))
+        .and_then(|params| params["connection"].as_str())
+        .expect("the workspace's pipe")
+        .to_owned();
+    let on_satellite = |message: &Value| {
+        received(&rig.fake, "helper/mcp/send")
+            .iter()
+            .any(|params| params["connection"] == json!(satellite) && params["message"] == *message)
+    };
+    assert!(on_satellite(&helper_tool_call(2, "a")));
+    assert!(
+        on_satellite(
+            &json!({"jsonrpc": "2.0", "method": "notifications/cancelled",
+            "params": {"requestId": 2, "reason": "User interrupted"}})
+        ),
+        "the cancel follows its call's pipe"
+    );
+
+    // The helper closes the workspace's pipe: the in-flight call is answered on the connection, which stays open.
+    rig.helper
+        .mcp_send(&satellite, json!({"jsonrpc": "2.0", "method": "die"}))
+        .await
+        .expect("sent");
+    match tokio::time::timeout(Duration::from_secs(5), events.next()).await {
+        Ok(Some(McpTransportEvent::Message { message })) => {
+            assert_eq!(message["id"], json!(2));
+            assert!(
+                message["error"]["message"]
+                    .as_str()
+                    .is_some_and(|message| message.starts_with("connection closed: gone")),
+                "{}",
+                message
+            );
+        }
+        other => panic!("no synthesized answer: {other:?}"),
+    }
+    routed
+        .send(
+            &connection,
+            json!({"jsonrpc": "2.0", "id": 3, "method": "tools/list"}),
+        )
+        .await
+        .expect("the connection still sends");
+    match tokio::time::timeout(Duration::from_secs(5), events.next()).await {
+        Ok(Some(McpTransportEvent::Message { message })) => assert_eq!(message["id"], json!(3)),
+        other => panic!("no answer through the own pipe: {other:?}"),
+    }
+
+    // The next call of that workspace reconnects its pipe.
+    routed
+        .send(&connection, helper_tool_call(4, "a"))
+        .await
+        .expect("sent");
+    match tokio::time::timeout(Duration::from_secs(5), events.next()).await {
+        Ok(Some(McpTransportEvent::Message { message })) => {
+            assert_eq!(message["id"], json!(4));
+            assert!(message.get("error").is_none(), "{message:?}");
+        }
+        other => panic!("no answer after the reconnect: {other:?}"),
+    }
+    assert_eq!(
+        received(&rig.fake, "helper/mcp/connect")
+            .iter()
+            .filter(|params| params["workspace"] == json!({"workspacePath": "/home/One"}))
+            .count(),
+        2,
+        "the workspace's pipe reconnected"
+    );
+}
+
 #[test]
 fn each_forwarded_method_uses_the_hosts_timeout_for_it() {
     let timing = Timing::default();

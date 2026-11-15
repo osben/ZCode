@@ -115,6 +115,12 @@ fn tool_call(id: u64, session: &str) -> Value {
         "runtimeScope": "main"}}}})
 }
 
+/// The workspace the test sessions' rows name: a pipe carrying them connects in it (F3, "The pipe workspace is
+/// enforced" — the sessions live in [`PROJECT`] while the agent itself runs elsewhere).
+fn project_workspace() -> Value {
+    json!({"workspacePath": PROJECT})
+}
+
 #[test]
 fn session_scoped_methods_are_forwarded() {
     let ui = FORWARDED_METHODS
@@ -331,7 +337,7 @@ async fn a_helper_tool_call_opens_its_session_first_without_holding_its_cancel()
     }));
     let connection = rig
         .helper
-        .mcp_connect(&workspace_params(), "plugin:viewer:view")
+        .mcp_connect(&project_workspace(), "plugin:viewer:view")
         .await
         .expect("connected");
     let started = tokio::time::Instant::now();
@@ -383,7 +389,7 @@ async fn a_pending_open_holds_only_its_own_sessions_pipe_traffic() {
     ));
     let connection = rig
         .helper
-        .mcp_connect(&workspace_params(), "plugin:viewer:view")
+        .mcp_connect(&project_workspace(), "plugin:viewer:view")
         .await
         .expect("connected");
     let cancel = |id: u64| {
@@ -426,7 +432,7 @@ async fn a_failed_session_open_answers_the_tool_call_with_an_error() {
     }));
     let mut connection = rig
         .helper
-        .mcp_connect(&workspace_params(), "plugin:viewer:view")
+        .mcp_connect(&project_workspace(), "plugin:viewer:view")
         .await
         .expect("connected");
     rig.helper
