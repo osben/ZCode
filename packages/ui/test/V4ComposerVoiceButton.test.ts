@@ -88,8 +88,9 @@ describe("V4ComposerVoiceButton toolbar cluster", () => {
     expect(cluster.className).not.toContain("pointer-events-auto");
     expect(cluster.className).not.toContain("w-56");
     expect(cluster.className).toContain("bg-voice-input-surface");
-    // The stop/mic button is a sibling of the capsule, not inside it.
+    // The stop button lives INSIDE the capsule (upstream shape); the capsule never contains itself.
     expect(screen.getByTestId("v4-composer-voice-entry").contains(cluster)).toBe(false);
+    expect(cluster.contains(screen.getByTestId("v4-composer-voice-entry"))).toBe(true);
   });
 
   it("hides the waveform and capsule after recording stops", () => {

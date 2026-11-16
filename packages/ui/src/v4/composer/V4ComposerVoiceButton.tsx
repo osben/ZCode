@@ -63,7 +63,8 @@ const SILENT_WAVE_LEVELS: readonly number[] = Array.from({ length: WAVEFORM_BARS
 /**
  * Rolling peak-history waveform (specs/voice-dictation.md): one bar per recorder chunk, the last
  * WAVEFORM_BARS chunks visible, new data entering from the right. Bars map −50…−10 dBFS to 3–14 px.
- * Owns the level state so composer re-renders never depend on audio cadence.
+ * Owns the level state so composer re-renders never depend on audio cadence. While not recording
+ * (connecting/transcribing/processing) the bars rest at the 3 px dots, upstream-style.
  */
 const VoiceWaveform = memo(function VoiceWaveform({
   subscribeLevel,
@@ -93,6 +94,34 @@ const VoiceWaveform = memo(function VoiceWaveform({
         />
       ))}
     </span>
+  );
+});
+
+/**
+ * The capsule's expandable waveform slot: the pill grows from the stop button leftwards over
+ * 200 ms via a 0fr→1fr grid track transition (no width measuring), and the content fades in.
+ * Reduced motion shows the full waveform immediately.
+ */
+const CapsuleWaveform = memo(function CapsuleWaveform({
+  subscribeLevel,
+}: {
+  subscribeLevel: (listener: VoiceLevelListener) => () => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setExpanded(true));
+    return () => cancelAnimationFrame(frame);
+  }, []);
+  return (
+    <div
+      className="grid overflow-hidden transition-[grid-template-columns,opacity] duration-200 ease-out motion-reduce:transition-none"
+      style={{ gridTemplateColumns: expanded ? "1fr" : "0fr", opacity: expanded ? 1 : 0 }}
+    >
+      {/* min-w-0 lets the 1fr track actually shrink inside the grid wrapper. */}
+      <div className="min-w-0">
+        <VoiceWaveform subscribeLevel={subscribeLevel} />
+      </div>
+    </div>
   );
 });
 
@@ -182,6 +211,9 @@ function V4ComposerVoiceButtonImpl({
   const shortcutLabel = useShortcutCommandLabel("voiceDictation");
   const recording = phase === "recording";
   const busy = phase === "loading" || phase === "transcribing" || phase === "processing";
+  // Every non-idle phase shows the capsule (upstream: connecting/recording/recognizing all live
+  // inside it); only an idle composer shows the plain mic button.
+  const active = phase !== "idle";
   const label = intl.formatMessage({ id: phaseLabelId(phase, loadingLabelId) });
   // The dot only adds information while the button is otherwise idle.
   const statusDot =
@@ -206,17 +238,18 @@ function V4ComposerVoiceButtonImpl({
           className="relative inline-flex shrink-0 items-center"
           data-testid="voice-dictation-control"
         >
-          {recording ? (
-            // Recording capsule (VD-CLU-*): in the toolbar flow, never an overlay, so no covered actions.
-            // The mousedown default is prevented so pressing it never moves focus out of the editor,
-            // which the composer-scoped dictation shortcut depends on.
+          {active ? (
+            // Voice capsule (upstream shape, VD-CLU-*): one rounded pill that replaces the mic
+            // button while dictation runs — waveform on the left, the stop action on the right,
+            // with Cancel kept before it. In the toolbar flow, never an overlay; the mousedown
+            // default is prevented so pressing it never moves focus out of the editor.
             <div
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-voice-input-surface py-0.5 pl-3 pr-1 text-voice-input-wave animate-in fade-in slide-in-from-left-1 duration-200 ease-out motion-reduce:animate-none"
+              className="inline-flex shrink-0 items-center gap-1 rounded-full bg-voice-input-surface py-0.5 pl-3 pr-1 text-voice-input-wave animate-in fade-in duration-200 ease-out motion-reduce:animate-none"
               data-testid="voice-dictation-cluster"
               onMouseDown={(event) => event.preventDefault()}
             >
-              <VoiceWaveform subscribeLevel={subscribeLevel} />
-              {onCancel ? (
+              <CapsuleWaveform subscribeLevel={subscribeLevel} />
+              {recording && onCancel ? (
                 <Button
                   type="button"
                   variant="ghost"
@@ -229,33 +262,51 @@ function V4ComposerVoiceButtonImpl({
                   <X aria-hidden />
                 </Button>
               ) : null}
+              <ControlHintTooltip title={label} shortcut={shortcutLabel || undefined}>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className="shrink-0 text-voice-input-wave hover:text-voice-input-wave"
+                  data-testid={TID_V4_COMPOSER_VOICE_ENTRY}
+                  data-voice-phase={phase}
+                  aria-label={label}
+                  aria-pressed={recording}
+                  aria-disabled={busy || disabled || undefined}
+                  onClick={busy || disabled ? undefined : onToggle}
+                >
+                  {busy ? (
+                    <LoaderCircle
+                      className="size-3.5 animate-spin motion-reduce:animate-none"
+                      aria-hidden
+                    />
+                  ) : (
+                    // Upstream's stop affordance: a solid rounded square in the wave color.
+                    <span className="block size-2.5 rounded-[3px] bg-current" aria-hidden />
+                  )}
+                </Button>
+              </ControlHintTooltip>
             </div>
-          ) : null}
-          <ControlHintTooltip
-            title={statusText ? `${label} · ${statusText}` : label}
-            shortcut={shortcutLabel || undefined}
-          >
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-md"
-              data-testid={TID_V4_COMPOSER_VOICE_ENTRY}
-              data-voice-phase={phase}
-              aria-label={label}
-              aria-describedby={statusText ? "voice-model-status-text" : undefined}
-              aria-pressed={recording}
-              aria-disabled={busy || disabled || undefined}
-              className={recording ? "text-voice-input-wave" : undefined}
-              onClick={busy || disabled ? undefined : onToggle}
+          ) : (
+            <ControlHintTooltip
+              title={statusText ? `${label} · ${statusText}` : label}
+              shortcut={shortcutLabel || undefined}
             >
-              <Icon
-                className={
-                  recording ? "size-3.5 fill-current" : busy ? "size-4 animate-spin" : "size-4"
-                }
-                aria-hidden
-              />
-            </Button>
-          </ControlHintTooltip>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-md"
+                data-testid={TID_V4_COMPOSER_VOICE_ENTRY}
+                data-voice-phase={phase}
+                aria-label={label}
+                aria-describedby={statusText ? "voice-model-status-text" : undefined}
+                aria-disabled={busy || disabled || undefined}
+                onClick={busy || disabled ? undefined : onToggle}
+              >
+                <Mic className="size-4" aria-hidden />
+              </Button>
+            </ControlHintTooltip>
+          )}
           {statusDot ? (
             <span
               aria-hidden
