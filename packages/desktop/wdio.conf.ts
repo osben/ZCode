@@ -4814,12 +4814,6 @@ export const config: WebdriverIO.Config = {
         appArgs: [
           ...(E2E_PACKAGED_APP_BINARY_PATH ? [] : [`--app=${E2E_APP_ENTRY_POINT}`]),
           "--no-sandbox",
-          // Fix reason: the suite's UI assertions pin the zh-CN labels the original environment produced
-          // (hook rows filter by the 用户 source line, negative assertions on 已完成, …); a container or an
-          // en-US dev machine otherwise resolves the navigator locale to en-US and those rows lose their
-          // user-source marker. Chromium's --lang pins navigator.language and app.getLocale() to zh-CN for
-          // every run, matching the locale the assertions were written against.
-          "--lang=zh-CN",
           // Voice input E2E (docs/chat/composer-voice-input.md): use Chromium's fake microphone device,
           // without touching a real device or showing a system prompt; other cases never call getUserMedia and are unaffected.
           "--use-fake-device-for-media-stream",
