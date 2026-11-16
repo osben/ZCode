@@ -110,6 +110,8 @@ pub struct MemoryStore {
     fail_execution: std::sync::atomic::AtomicBool,
     /// Fork: the next `records` read fails ([`Self::fail_next_records`]).
     fail_records: std::sync::atomic::AtomicBool,
+    /// Fork: the next `reconcile_row` read fails ([`Self::fail_next_reconcile_row`]).
+    fail_reconcile: std::sync::atomic::AtomicBool,
     /// Fork: the next `put_record` of this kind fails ([`Self::fail_next_put_record`]).
     fail_put_kind: Mutex<Option<String>>,
     /// Fork: rows a Node agent wrote with a `workspace_id` (a remote identity) besides their directory.
@@ -182,6 +184,11 @@ impl MemoryStore {
     /// Fork: the next `records` read fails (a storage error), later ones work.
     pub fn fail_next_records(&self) {
         self.fail_records.store(true, Ordering::SeqCst);
+    }
+
+    /// Fork: the next `reconcile_row` read fails (a storage error), later ones work.
+    pub fn fail_next_reconcile_row(&self) {
+        self.fail_reconcile.store(true, Ordering::SeqCst);
     }
 
     /// 下一次 `load` 等到测试放行（`notify_one`）才读，之后的照常：让测试停在“会话正在打开”的窗口里（titles.md §4）。
@@ -861,6 +868,47 @@ impl StoreQueries for MemoryStore {
                     .collect()
             })
             .unwrap_or_default())
+    }
+
+    /// Fork: the reconcile row, in node-store's shape (`reconcile_row::row`): the session row's listing fields.
+    /// A missing row is `None`; the next read can be made to fail ([`Self::fail_next_reconcile_row`]).
+    async fn reconcile_row(
+        &self,
+        session: &SessionId,
+    ) -> Result<Option<serde_json::Value>, StoreError> {
+        if self.fail_reconcile.swap(false, Ordering::SeqCst) {
+            return Err(StoreError::Storage {
+                message: "database or disk is full".to_owned(),
+            });
+        }
+        let sessions = self.sessions.lock_unpoisoned();
+        let Some((meta, _)) = sessions.get(session) else {
+            return Ok(None);
+        };
+        let identity = self.workspace_keys.lock_unpoisoned().get(session).cloned();
+        // The memory store keeps only the fact, not the time; the readers check null versus non-null.
+        let deleted = self
+            .deleted
+            .lock_unpoisoned()
+            .contains(session)
+            .then_some(1);
+        let time_updated = self
+            .updated
+            .lock_unpoisoned()
+            .get(session)
+            .copied()
+            .unwrap_or(meta.created_at_ms);
+        Ok(Some(serde_json::json!({
+            "directory": meta.workspace.root.as_str(),
+            "workspaceId": identity,
+            "title": meta.title,
+            "titleSource": serde_json::Value::Null,
+            "timeCreated": meta.created_at_ms,
+            "timeUpdated": time_updated,
+            "timeTitleUpdated": serde_json::Value::Null,
+            "timeDeleted": deleted,
+            "lastOutcome": serde_json::Value::Null,
+        })))
     }
 
     /// Fork: `session/subagents` rows for the protocol tests: the parent lookup answers Node's

@@ -482,9 +482,35 @@ impl rust_cli_kernel_api::session_api::Kernel for WorktreeKernel {
 
     async fn list_sessions(
         &self,
-        _filter: SessionFilter,
+        filter: SessionFilter,
     ) -> Result<Vec<SessionSummary>, KernelError> {
-        Ok(Vec::new())
+        // node-store's listing (`directory = ?`, soft-deleted out, `order by time_updated desc, id desc`,
+        // `limit ?`), for the sessions-index seed.
+        let (root, limit) = (filter.workspace.root.as_str().to_owned(), filter.limit);
+        let mut summaries: Vec<SessionSummary> = self
+            .store
+            .list(filter)
+            .await
+            .map_err(|error| KernelError::Failed {
+                message: error.to_string(),
+            })?
+            .into_iter()
+            .filter(|summary| {
+                self.store
+                    .meta(&summary.id)
+                    .is_some_and(|meta| meta.workspace.root.as_str() == root)
+            })
+            .collect();
+        summaries.sort_by(|left, right| {
+            right
+                .updated_at_ms
+                .cmp(&left.updated_at_ms)
+                .then_with(|| right.id.as_str().cmp(left.id.as_str()))
+        });
+        if limit > 0 {
+            summaries.truncate(limit);
+        }
+        Ok(summaries)
     }
 
     async fn session_snapshot(&self, session: &SessionId) -> Result<SessionView, KernelError> {
@@ -2375,4 +2401,422 @@ async fn activations_compare_the_listed_workspace_key_not_the_directory() {
     );
     let ack = run(&server, activate("w2", &identity)).await;
     assert_eq!(ack["status"], "accepted", "{ack}");
+}
+
+/// A session row built the fork way: the parent workspace as its `directory`, the worktree in the execution
+/// columns, and nothing open (a stored session a restarted agent finds).
+async fn stored_worktree_session(
+    kernel: &WorktreeKernel,
+    id: &str,
+    workspace: &str,
+    worktree: &str,
+) -> SessionId {
+    rust_cli_kernel_api::session_api::Kernel::create_session(
+        kernel,
+        CreateSession {
+            id: Some(SessionId::new(id)),
+            workspace: rust_cli_kernel_api::env::WorkspaceRef {
+                environment: EnvironmentId::new("local"),
+                root: EnvPath::new(workspace),
+            },
+            selection: selection(),
+            mode: PermissionMode::Default,
+            plan: false,
+            incognito: None,
+        },
+    )
+    .await
+    .unwrap();
+    let id = SessionId::new(id);
+    kernel
+        .store
+        .set_execution_worktree(&id, &EnvPath::new(worktree), None)
+        .await
+        .unwrap();
+    id
+}
+
+/// The cold-restore subscribe of a conversation topic (Node: the cold branch of
+/// `ensureColdReadyPublisher` → `resumePersistedSession` consumes the request's `workspace`).
+async fn resume_subscribe(server: &Server, session: &str, workspace: Value) -> Result<(), String> {
+    crate::subscribe::subscribe(
+        server,
+        &json!({
+            "topic": format!("conversation/{session}"),
+            "connectionId": "conn",
+            "clientMode": "desktop-continuous",
+            "workspace": workspace,
+        }),
+    )
+    .await
+    .map(|_| ())
+    .map_err(|error| format!("{} ({})", error.message, error.code))
+}
+
+/// B1.2: the cold-restore `workspace` override (Node `resolveResumeWorkspaceRef` + the lineage check of
+/// `validateSessionActivationWorkspace`). A request naming the stored worktree or its parent (the row's
+/// `directory`) opens the session with the request's key as its listed identity; the stored execution root
+/// is what the session keeps running in (Node: the execution path comes from the stored directory, never the
+/// request). Node keeps the request's `workspaceKey` in both cases, so a worktree-naming request lists the
+/// session under the worktree key.
+#[tokio::test]
+async fn a_cold_resume_workspace_naming_the_worktree_or_its_parent_opens_the_session() {
+    let (_scope, server, kernel) = server();
+    let parent = tempfile::tempdir().unwrap();
+    let worktree = parent.path().join("wt");
+    rust_cli_fs::create_dir_all(&worktree).await.unwrap();
+    let (workspace, path) = (
+        parent.path().to_str().unwrap().to_owned(),
+        worktree.to_str().unwrap().to_owned(),
+    );
+    let id = stored_worktree_session(&kernel, "s-cold-wt", &workspace, &path).await;
+    for named in [workspace.clone(), path.clone()] {
+        resume_subscribe(
+            &server,
+            id.as_str(),
+            json!({"workspacePath": named, "workspaceKey": named}),
+        )
+        .await
+        .unwrap_or_else(|error| panic!("a request naming {named} is accepted: {error}"));
+        let live = server.bridge.get(&id).unwrap();
+        // The identity (the listed key) comes from the Host request.
+        assert_eq!(live.sink.summary()["workspaceId"], json!(named));
+        // The execution root stays the stored one: the request never rewrites the columns.
+        let execution = kernel.store.execution_worktree(&id).await.unwrap().unwrap();
+        assert_eq!(execution.directory.as_str(), workspace.as_str());
+        assert_eq!(execution.path.as_str(), path.as_str());
+        // Cold again for the next case.
+        server.bridge.close(&id);
+    }
+}
+
+/// B1.2: one String-equal directory compares lexically like Node's `resolve(a) === resolve(b)`, so a
+/// trailing separator or a padded request still names the parent.
+#[tokio::test]
+async fn a_cold_resume_workspace_compares_paths_lexically() {
+    let (_scope, server, kernel) = server();
+    let parent = tempfile::tempdir().unwrap();
+    let worktree = parent.path().join("wt");
+    rust_cli_fs::create_dir_all(&worktree).await.unwrap();
+    let (workspace, path) = (
+        parent.path().to_str().unwrap().to_owned(),
+        worktree.to_str().unwrap().to_owned(),
+    );
+    let id = stored_worktree_session(&kernel, "s-lex", &workspace, &path).await;
+    let padded = format!("{workspace}/");
+    resume_subscribe(
+        &server,
+        id.as_str(),
+        json!({"workspacePath": padded, "workspaceKey": workspace}),
+    )
+    .await
+    .expect("a trailing separator names the same directory");
+}
+
+/// B1.2: anything the stored facts cannot prove fails the subscribe fail-closed with Node's wire text (the
+/// lineage error thrown by the resume, wrapped by the cold-resume coordinator as `fault.subscribe.resumeFailed`),
+/// and nothing opens. A remote `workspaceIdentity` fails the same way (Node's `isSameSessionWorkspacePath`
+/// answers false for remote requests on a locally stored session). Node proves a worktree-of relation with a
+/// git resolver (`classifyLocalSessionDirectory`); the fork's proof is the exact stored columns, so a
+/// worktree-naming request is accepted only when the columns name that worktree.
+#[tokio::test]
+async fn a_cold_resume_workspace_naming_something_else_fails_fail_closed() {
+    let (_scope, server, kernel) = server();
+    let parent = tempfile::tempdir().unwrap();
+    let worktree = parent.path().join("wt");
+    rust_cli_fs::create_dir_all(&worktree).await.unwrap();
+    let (workspace, path) = (
+        parent.path().to_str().unwrap().to_owned(),
+        worktree.to_str().unwrap().to_owned(),
+    );
+    let id = stored_worktree_session(&kernel, "s-refused", &workspace, &path).await;
+    // A sibling of the worktree: under the parent, but neither the worktree nor the parent. A
+    // whitespace-only identity trims to absent (Node `requested.workspaceIdentity?.trim()`), so the
+    // path alone decides that case.
+    let sibling = parent.path().join("other");
+    let cases = [
+        json!({"workspacePath": "/elsewhere", "workspaceKey": "/elsewhere"}),
+        json!({"workspacePath": sibling.to_str().unwrap(), "workspaceKey": workspace}),
+        json!({"workspacePath": workspace, "workspaceKey": workspace,
+               "workspaceIdentity": "remote:1:u@h:/w"}),
+        json!({"workspacePath": "/elsewhere", "workspaceKey": "/elsewhere",
+               "workspaceIdentity": "  "}),
+    ];
+    for workspace_ref in cases {
+        let shown = workspace_ref.to_string();
+        let error = match crate::subscribe::subscribe(
+            &server,
+            &json!({
+                "topic": format!("conversation/{}", id.as_str()),
+                "connectionId": "conn",
+                "clientMode": "desktop-continuous",
+                "workspace": workspace_ref,
+            }),
+        )
+        .await
+        {
+            Err(error) => error,
+            Ok(_) => panic!("the request is refused fail-closed: {shown}"),
+        };
+        assert_eq!(error.code, -32603, "{shown}: {error}");
+        assert_eq!(
+            error.message,
+            format!(
+                "Failed to resume persisted session {}: project.session-lineage-invalid \
+                 (fault.subscribe.resumeFailed)",
+                id.as_str()
+            ),
+            "{shown}"
+        );
+        assert!(
+            server.bridge.get(&id).is_none(),
+            "the refusal opens nothing"
+        );
+    }
+}
+
+/// B1.2: an ordinary session (no execution columns) accepts only its own directory, like Node's same-dir
+/// branch; a foreign workspace is refused with the lineage error.
+#[tokio::test]
+async fn an_ordinary_session_refuses_a_foreign_resume_workspace() {
+    let (_scope, server, kernel) = server();
+    let parent = tempfile::tempdir().unwrap();
+    let workspace = parent.path().to_str().unwrap().to_owned();
+    rust_cli_kernel_api::session_api::Kernel::create_session(
+        kernel.as_ref(),
+        CreateSession {
+            id: Some(SessionId::new("s-plain")),
+            workspace: rust_cli_kernel_api::env::WorkspaceRef {
+                environment: EnvironmentId::new("local"),
+                root: EnvPath::new(&workspace),
+            },
+            selection: selection(),
+            mode: PermissionMode::Default,
+            plan: false,
+            incognito: None,
+        },
+    )
+    .await
+    .unwrap();
+    let id = SessionId::new("s-plain");
+    resume_subscribe(
+        &server,
+        id.as_str(),
+        json!({"workspacePath": workspace, "workspaceKey": workspace}),
+    )
+    .await
+    .expect("its own directory is the same directory");
+    server.bridge.close(&id);
+    let error = resume_subscribe(
+        &server,
+        id.as_str(),
+        json!({"workspacePath": "/elsewhere", "workspaceKey": "/elsewhere"}),
+    )
+    .await
+    .unwrap_err();
+    assert!(error.contains("project.session-lineage-invalid"), "{error}");
+}
+
+/// B1.2: the shared transport contract — "live paths do not consume it". A subscribe of an already-open
+/// session never reads the workspace (Node's live `hydratePublisher` path has no resume admission), so a
+/// workspace that the cold path would refuse still subscribes.
+#[tokio::test]
+async fn a_live_subscribe_does_not_consume_the_workspace() {
+    let (_scope, server, _kernel) = server();
+    let parent = tempfile::tempdir().unwrap();
+    let workspace = parent.path().to_str().unwrap().to_owned();
+    let ack = create(
+        &server,
+        "c1",
+        json!({"workspaceId": workspace, "sessionId": "s-live"}),
+    )
+    .await;
+    assert_eq!(ack.status, Status::Accepted, "{ack:?}");
+    resume_subscribe(
+        &server,
+        "s-live",
+        json!({"workspacePath": "/elsewhere", "workspaceKey": "/elsewhere"}),
+    )
+    .await
+    .expect("a live subscribe does not consume the workspace");
+}
+
+/// B1.2: `subscribe.worktreeSessionIds` (Node `loadWorktreeSessionSummaries` + `ensureIndexPublisher`): the
+/// Host names the sessions whose task rows carry a worktree root; each id is read read-only (the
+/// `reconcileSessions` row read) and seeds the stored half only when the row proves it belongs to the
+/// workspace. Nothing opens, nothing is persisted, an id the scan already listed is not duplicated (Node
+/// merges missing only), and the seeded row carries the worktree facts like a scanned row.
+#[tokio::test]
+async fn worktree_session_ids_seed_read_only_rows_for_ids_the_scan_cannot_see() {
+    let (_scope, server, kernel) = server();
+    let parent = tempfile::tempdir().unwrap();
+    let worktree = parent.path().join("wt");
+    rust_cli_fs::create_dir_all(&worktree).await.unwrap();
+    let (workspace, path) = (
+        parent.path().to_str().unwrap().to_owned(),
+        worktree.to_str().unwrap().to_owned(),
+    );
+    let named = stored_worktree_session(&kernel, "s-named", &workspace, &path).await;
+    let foreign = stored_worktree_session(&kernel, "s-foreign", "/elsewhere", "/elsewhere").await;
+    let deleted = stored_worktree_session(&kernel, "s-deleted", &workspace, &workspace).await;
+    rust_cli_kernel_api::store::SessionStore::delete(kernel.store.as_ref(), &deleted)
+        .await
+        .unwrap();
+
+    let rows = crate::subscribe::stored_rows(
+        &server,
+        &workspace,
+        &["s-named", "s-named", "s-foreign", "s-deleted", "s-missing"],
+    )
+    .await;
+    let count = |rows: &[Value], id: &str| {
+        rows.iter()
+            .filter(|row| row["sessionId"] == json!(id))
+            .count()
+    };
+    assert_eq!(count(&rows, "s-named"), 1, "merged missing, not duplicated");
+    assert_eq!(count(&rows, "s-foreign"), 0, "another workspace's row");
+    assert_eq!(count(&rows, "s-deleted"), 0, "a soft-deleted row");
+    assert_eq!(count(&rows, "s-missing"), 0, "no row at all");
+    let row = rows
+        .iter()
+        .find(|row| row["sessionId"] == json!("s-named"))
+        .unwrap();
+    assert_eq!(row["workspaceId"], json!(workspace));
+    assert_eq!(row["executionWorktree"], json!({"path": path}));
+    // Read-only: the reads never open the named sessions and never touch their stored facts.
+    {
+        let handles = kernel.handles.lock().unwrap();
+        assert!(
+            handles.get(&named).is_none() && handles.get(&foreign).is_none(),
+            "the ids are read from their rows, not opened"
+        );
+    }
+    let execution = kernel
+        .store
+        .execution_worktree(&named)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(execution.path.as_str(), path, "nothing was persisted");
+}
+
+/// B1.2: the one row the scan window cannot see (node-store lists at most 200 by activity, id desc; the
+/// Host's id list names it exactly) is seeded from its row — the read-side value of the ids (Node: upstream
+/// worktree sessions are scan-invisible; the fork: the window, until B1.5's sessions make both paths agree).
+#[tokio::test]
+async fn a_worktree_id_names_the_row_the_scan_window_missed() {
+    let (_scope, server, kernel) = server();
+    let parent = tempfile::tempdir().unwrap();
+    let worktree = parent.path().join("wt");
+    rust_cli_fs::create_dir_all(&worktree).await.unwrap();
+    let (workspace, path) = (
+        parent.path().to_str().unwrap().to_owned(),
+        worktree.to_str().unwrap().to_owned(),
+    );
+    let create_plain = |id: String| {
+        let (kernel, root) = (kernel.clone(), workspace.clone());
+        async move {
+            rust_cli_kernel_api::session_api::Kernel::create_session(
+                kernel.as_ref(),
+                CreateSession {
+                    id: Some(SessionId::new(&id)),
+                    workspace: rust_cli_kernel_api::env::WorkspaceRef {
+                        environment: EnvironmentId::new("local"),
+                        root: EnvPath::new(&root),
+                    },
+                    selection: selection(),
+                    mode: PermissionMode::Default,
+                    plan: false,
+                    incognito: None,
+                },
+            )
+            .await
+            .unwrap();
+        }
+    };
+    for index in 1..=200 {
+        create_plain(format!("s-{index:03}")).await;
+    }
+    let missed = stored_worktree_session(&kernel, "s-000", &workspace, &path).await;
+
+    let scanned = crate::subscribe::stored_rows(&server, &workspace, &[]).await;
+    assert_eq!(scanned.len(), 200, "the window is node-store's");
+    assert!(
+        !scanned.iter().any(|row| row["sessionId"] == json!("s-000")),
+        "the window missed the named row"
+    );
+    let rows = crate::subscribe::stored_rows(&server, &workspace, &["s-000"]).await;
+    let row = rows
+        .iter()
+        .find(|row| row["sessionId"] == json!("s-000"))
+        .expect("the id seeds the row the window missed");
+    assert_eq!(row["executionWorktree"], json!({"path": path}));
+    assert!(
+        kernel.handles.lock().unwrap().get(&missed).is_none(),
+        "the row was read, never opened"
+    );
+}
+
+/// B1.2: a row read that fails skips the id with a warn (Node logs each failed summary read) instead of
+/// failing the subscribe. The named row sits outside the scan's directory, so only the id path could seed it.
+#[tokio::test]
+async fn a_failed_worktree_row_read_skips_the_id() {
+    let (_scope, server, kernel) = server();
+    let parent = tempfile::tempdir().unwrap();
+    let workspace = parent.path().to_str().unwrap().to_owned();
+    let foreign = parent.path().join("foreign");
+    let named = stored_worktree_session(
+        &kernel,
+        "s-fail",
+        foreign.to_str().unwrap(),
+        foreign.to_str().unwrap(),
+    )
+    .await;
+    kernel.store.fail_next_reconcile_row();
+    let rows = crate::subscribe::stored_rows(&server, &workspace, &["s-fail"]).await;
+    assert!(
+        !rows.iter().any(|row| row["sessionId"] == json!("s-fail")),
+        "a failed read seeds nothing"
+    );
+    assert!(kernel.handles.lock().unwrap().get(&named).is_none());
+}
+
+/// B1.2: the generated inbound schema keeps Node's subscribe contract for the two fields (the workspace ref
+/// and the bounded id list), so a wire request that Node would refuse never reaches the handler.
+#[tokio::test]
+async fn a_subscribe_validates_workspace_and_worktree_ids_like_the_app_schema() {
+    let (_scope, server, _kernel) = server();
+    let request = |params: Value| async {
+        use rust_cli_protocol_core::connection::Service;
+        crate::server::Handler(server.clone())
+            .request("v4/conversation/subscribe", params)
+            .await
+    };
+    let base = json!({"topic": "sessions-index//w", "connectionId": "conn",
+                      "clientMode": "desktop-continuous"});
+    let mut valid = base.clone();
+    valid["workspace"] = json!({"workspacePath": "/w", "workspaceKey": "/w"});
+    valid["worktreeSessionIds"] = json!(["s-1", "s-2"]);
+    request(valid).await.expect("Node's own shape passes");
+
+    let mut missing_key = base.clone();
+    missing_key["workspace"] = json!({"workspacePath": "/w"});
+    assert!(request(missing_key).await.is_err());
+
+    let mut empty_id = base.clone();
+    empty_id["worktreeSessionIds"] = json!(["s-1", ""]);
+    assert!(request(empty_id).await.is_err());
+
+    let mut too_many = base.clone();
+    too_many["worktreeSessionIds"] = json!(
+        (0..201)
+            .map(|index| format!("s-{index}"))
+            .collect::<Vec<_>>()
+    );
+    assert!(request(too_many).await.is_err());
+
+    let mut extra = base.clone();
+    extra["unknownField"] = json!(1);
+    assert!(request(extra).await.is_err());
 }

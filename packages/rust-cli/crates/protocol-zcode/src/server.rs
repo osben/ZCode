@@ -161,6 +161,50 @@ impl Server {
         &self,
         session: &SessionId,
     ) -> Result<Arc<Bridged<Live>>, KernelError> {
+        self.open_session(session, None).await
+    }
+
+    /// B1.2: the cold-restore entry (a conversation subscribe; crate::subscribe). `workspace` is the request's
+    /// workspace ref, consumed only when the session opens cold (crate::worktree::ResumeWorkspace): a live
+    /// conversation does not consume it (the shared transport contract), so an already-open session subscribes
+    /// without the admission. An accepted override becomes the opened session's listed key (Node's record key:
+    /// the identity comes from the Host request); the refusal is Node's wire text, and nothing opens.
+    pub(crate) async fn live_resumed(
+        &self,
+        session: &SessionId,
+        workspace: Option<&Value>,
+    ) -> Result<Arc<Bridged<Live>>, KernelError> {
+        let resume = workspace.and_then(crate::worktree::ResumeWorkspace::parse);
+        if resume.is_some() && self.bridge.get(session).is_none() {
+            // The same stored facts the open below reads, so the admission and the open cannot disagree.
+            let execution = crate::worktree::stored_execution(self, session).await;
+            let listed = crate::worktree::listed_key(self, session)
+                .await
+                .or_else(|| {
+                    execution
+                        .as_ref()
+                        .map(|worktree| worktree.directory.as_str().to_owned())
+                });
+            if let (Some(resume), Some(listed)) = (resume, listed) {
+                // The stored cwd is the execution worktree when the columns hold one (the cold open runs
+                // there); an ordinary session's cwd is its listed directory.
+                let cwd = execution.as_ref().map(|worktree| worktree.path.as_str());
+                resume
+                    .admit(cwd, &listed)
+                    .map_err(|reason| crate::worktree::resume_refused(session, reason))?;
+                return self.open_session(session, Some(resume.key)).await;
+            }
+        }
+        self.open_session(session, None).await
+    }
+
+    /// The open behind [`Self::live`]; `listed` overrides the workspace the opened session is listed under
+    /// (an accepted cold-restore override; `None` keeps the stored one).
+    async fn open_session(
+        &self,
+        session: &SessionId,
+        listed_override: Option<String>,
+    ) -> Result<Arc<Bridged<Live>>, KernelError> {
         let followup = self
             .followups
             .lock_unpoisoned()
@@ -180,9 +224,13 @@ impl Server {
         let restored = if opening {
             let execution = crate::worktree::stored_execution(self, session).await;
             crate::live::Restored {
-                listed: execution
-                    .as_ref()
-                    .map(|worktree| worktree.directory.as_str().to_owned()),
+                // B1.2: an accepted cold-restore override wins (the request's key); the stored worktree's
+                // directory is the default a worktree session lists under.
+                listed: listed_override.or_else(|| {
+                    execution
+                        .as_ref()
+                        .map(|worktree| worktree.directory.as_str().to_owned())
+                }),
                 worktree: crate::worktree::facts(self, session, execution.as_ref())
                     .await
                     .map_err(|reason| KernelError::Failed {
