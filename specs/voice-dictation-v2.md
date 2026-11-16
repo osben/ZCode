@@ -162,10 +162,31 @@ the draft; one undo record per dictation. One-shot models write the span only at
 finalize. Detailed spec (state machine + editor invariants + tests) to be written
 before implementation; upstream's matrix is the reference.
 
-## Track F — Engine abstraction (after the 3.18 sync)
+## Track F — Local whisper behind the upstream voice-input UI (in flight)
 
-One composer entry behind the existing engine seam in `V4ComposerDictationControl`:
-local whisper (fork), server ASR (upstream, z.ai login required), Web Speech
-(web remote). Track B/E/D UI is shared across engines; upstream's transport contract
-(`start/sendAudio/finish/cancel/onEvent`, `subscribeLevel`) is the shape our engines
-expose to that UI.
+The upstream 3.18 sync left its full voice-input stack in the fork with the hook disabled
+("one mic" decision): cloud ASR service, capsule button, permission guide, and the editor
+voice-text span. Track F turns that UI on and drives it with the local whisper engine, so
+the composer gets upstream's interaction matrix (typing soft-finish, submit-wait, Escape
+cancel, draft persistence) over fork-owned, login-free, private transcription.
+
+**Service adapter.** `packages/services/src/voice-input/localWhisperVoiceInput.ts` implements
+`IVoiceInputService` on top of the existing `IVoiceDictationService` (managed module
+`voice-input-service`): `start` resolves the model from the new optional `start.model` and
+`beginStream`s (buffering audio that arrives before `started`), `sendAudio` feeds the stream,
+`finish` finalizes and emits `completed`, `cancel` cancels the stream; `result` events carry the
+streaming preview's committed text (models without streaming simply emit no `result`). One
+session at a time; a new `start` cancels the previous attempt. Errors map to the upstream codes
+plus one fork addition, `no_model`, so the UI can offer the voice settings page.
+
+**Hook (fork changes inside `useComposerVoiceInput`).** The engine is local: the login gate
+drops, the language comes from the fork dictation settings (`resolveEngineLanguage`) instead of
+the zh/en-US cloud pair, `start` carries `{ modelId, quant }` from `voiceDictation` settings, and
+a `no_model` failure offers "open voice settings". Post-processing stays UI-owned: on `completed`
+the hook runs the configured rewrite through `IVoiceDictationService.postProcess` before the
+final voice text lands.
+
+**Composer.** Desktop renders upstream's `VoiceInputButton` (capsule, waveform, permission
+guide) with the hook enabled; the fork `V4ComposerDictationControl` keeps serving Web Speech on
+web remote and stays in the codebase otherwise unreferenced. Warm-up on composer focus is a
+follow-up; the requesting state covers model load in the meantime.

@@ -23,8 +23,8 @@ import { useBaseWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import type { LexicalChatInputHandle } from "@/LexicalChatInput.js";
 import { logger } from "@/logger.js";
-import { useZCodeStore } from "@/store/StoreProvider.js";
 import { toast } from "@/components/ui/toast.js";
+import { useSettings } from "@/hooks/useSettingService.js";
 import type {
   ComposerVoiceInput,
   VoiceInputState,
@@ -61,12 +61,31 @@ export function useComposerVoiceInput(options: {
   const { inputApiRef, sessionId } = options;
   const platform = useOptionalPlatform();
   const microphone = platform?.microphone;
-  const { voiceInputService } = useBaseWorkspaceServices();
-  const isLoggedIn = useZCodeStore((state) => state.user !== null);
-  const { intl, locale } = useZCodeIntl();
-  const available = Boolean(options.enabled && microphone && voiceInputService && isLoggedIn);
+  const { voiceInputService, voiceDictationService } = useBaseWorkspaceServices();
+  const { intl } = useZCodeIntl();
+  // Fork (Track F): the engine is the local whisper adapter — no ZCode account needed, so the
+  // upstream login gate drops. The service is only registered on the desktop-local host.
+  const available = Boolean(options.enabled && microphone && voiceInputService);
   const permissionGuide = useMicrophonePermissionGuide();
   const showPermissionGuide = permissionGuide.show;
+  // Fork: engine inputs live in the fork voice-dictation settings (model, quant, language).
+  const { settings: voiceSettingsRaw } = useSettings();
+  const voiceSettings = voiceSettingsRaw?.voiceDictation;
+  // Same rule as resolveEngineLanguage (services voice-dictation), inlined: the module's ui layer
+  // must not import the services implementation barrel (architecture ui-implementation-import).
+  const selectedLanguages = [
+    ...new Set((voiceSettings?.languages ?? []).map((code) => code.trim()).filter(Boolean)),
+  ];
+  const engineLanguage =
+    voiceSettings?.languages === undefined && voiceSettings?.language?.trim()
+      ? voiceSettings.language.trim()
+      : selectedLanguages.length === 1
+        ? selectedLanguages[0]
+        : "auto";
+  const voicePostProcess =
+    voiceSettings?.postProcessEnabled === true && voiceSettings.postProcessPrompt?.trim()
+      ? { prompt: voiceSettings.postProcessPrompt, provider: voiceSettings.postProcessProvider }
+      : null;
 
   const [state, setState] = useState<VoiceInputState>("idle");
   const attemptRef = useRef<Attempt | null>(null);
@@ -182,43 +201,74 @@ export function useComposerVoiceInput(options: {
   useEffect(() => {
     if (!voiceInputService) return;
     const subscription = voiceInputService.onEvent((event) => {
-      const attempt = attemptRef.current;
-      if (!attempt || attempt.id !== event.attemptId) return;
-      switch (event.type) {
-        case "started":
-          attempt.started = true;
-          if (!attempt.finishing) setState("recording");
-          return;
-        case "result":
-          // 用户接管后不再写临时结果，避免和用户输入争抢编辑器；最终结果在 completed 时写入。
-          if (attempt.userTookOver) return;
-          // 写入被拒说明用户改过语音文字（与写入合并在同一次提交、onUserInputStart 识别不到的情况）：
-          // 按用户接管处理，和点击停止一样结束录音并等待最终结果。
-          if (!inputApiRef.current?.setVoiceText(event.text)) {
-            attempt.userTookOver = true;
-            if (!attempt.finishing) void finish(attempt);
+      void (async () => {
+        const attempt = attemptRef.current;
+        if (!attempt || attempt.id !== event.attemptId) return;
+        switch (event.type) {
+          case "started":
+            attempt.started = true;
+            if (!attempt.finishing) setState("recording");
+            return;
+          case "result":
+            // 用户接管后不再写临时结果，避免和用户输入争抢编辑器；最终结果在 completed 时写入。
+            if (attempt.userTookOver) return;
+            // 写入被拒说明用户改过语音文字（与写入合并在同一次提交、onUserInputStart 识别不到的情况）：
+            // 按用户接管处理，和点击停止一样结束录音并等待最终结果。
+            if (!inputApiRef.current?.setVoiceText(event.text)) {
+              attempt.userTookOver = true;
+              if (!attempt.finishing) void finish(attempt);
+            }
+            return;
+          case "completed": {
+            let text = event.text.trim();
+            logger.lifecycle.info("[voice-input] completed", {
+              attemptId: attempt.id,
+              length: text.length,
+            });
+            // Fork: the local engine's optional rewrite (voice settings post-processing) runs on the
+            // final transcript before it lands in the editor; a failed rewrite keeps the raw text.
+            if (text && voicePostProcess) {
+              try {
+                const result = await voiceDictationService?.postProcess({
+                  text,
+                  prompt: voicePostProcess.prompt,
+                  provider: voicePostProcess.provider,
+                });
+                if (result?.text) text = result.text;
+              } catch (error) {
+                logger.lifecycle.warn(
+                  "[voice-input] post-process failed; inserting raw transcript",
+                  {
+                    attemptId: attempt.id,
+                    error: error instanceof Error ? error.message : String(error),
+                  },
+                );
+              }
+            }
+            // 最终文本只替换语音文字本身：用户在其后追加的文字保留，用户接管时不移动光标。
+            // 最终文本为空时删除语音文字；语音文字被用户改过时拒绝写入，保留用户版本。
+            inputApiRef.current?.setVoiceText(text, { preserveSelection: attempt.userTookOver });
+            reset(attempt);
+            if (!text) notify("no_speech");
+            return;
           }
-          return;
-        case "completed": {
-          const text = event.text.trim();
-          logger.lifecycle.info("[voice-input] completed", {
-            attemptId: attempt.id,
-            length: text.length,
-          });
-          // 最终文本只替换语音文字本身：用户在其后追加的文字保留，用户接管时不移动光标。
-          // 最终文本为空时删除语音文字；语音文字被用户改过时拒绝写入，保留用户版本。
-          inputApiRef.current?.setVoiceText(text, { preserveSelection: attempt.userTookOver });
-          reset(attempt);
-          if (!text) notify("no_speech");
-          return;
+          case "error":
+            fail(attempt, event.code, { source: "host" });
+            return;
         }
-        case "error":
-          fail(attempt, event.code, { source: "host" });
-          return;
-      }
+      })();
     });
     return () => subscription.dispose();
-  }, [fail, finish, inputApiRef, notify, reset, voiceInputService]);
+  }, [
+    fail,
+    finish,
+    inputApiRef,
+    notify,
+    reset,
+    voiceDictationService,
+    voiceInputService,
+    voicePostProcess,
+  ]);
 
   const begin = useCallback(async () => {
     if (!microphone || !voiceInputService) return;
@@ -247,9 +297,15 @@ export function useComposerVoiceInput(options: {
       return;
     }
     // 先建立 Host 会话再开始采集：started 之前的音频由 Host 按顺序缓存。
+    // Fork: the local engine takes the fork dictation language (single code or auto) and the
+    // selected model + quantization straight from the voice settings.
+    const voice = voiceSettings;
     await voiceInputService.start({
       attemptId: attempt.id,
-      language: locale.startsWith("zh") ? "zh-CN" : "en-US",
+      language: engineLanguage ?? "auto",
+      model: voice?.modelId
+        ? { modelId: voice.modelId, quant: voice?.quantByModel?.[voice.modelId] }
+        : undefined,
     });
     try {
       const capture = await startPcmCapture({
@@ -276,7 +332,7 @@ export function useComposerVoiceInput(options: {
         message: error instanceof Error ? error.message : String(error),
       });
     }
-  }, [fail, inputApiRef, locale, microphone, voiceInputService]);
+  }, [engineLanguage, fail, inputApiRef, microphone, voiceInputService, voiceSettings]);
 
   const toggle = useCallback(() => {
     const attempt = attemptRef.current;

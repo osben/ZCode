@@ -106,7 +106,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog.js";
 import { Spinner } from "@/components/ui/spinner.js";
-import { useComposerVoiceInput } from "@/voice-input/index.js";
+import { useComposerVoiceInput, VoiceInputButton } from "@/voice-input/index.js";
 import { ImagePreviewDialog } from "@/components/ai-elements/image-preview-dialog.js";
 import {
   ChatMediaAttachmentPreviewDialog,
@@ -1060,13 +1060,13 @@ function ConversationComposerImpl({
     api.insertTextAtSelection(text);
     api.focus();
   }, []);
-  // Fork: the composer has one mic, fork voice dictation (owner decision 5 of the upstream 3.18.0
-  // sync, specs/upstream-sync-3.18.0.md). Upstream voice input (ASR through zcode-server, needs a
-  // ZCode account) stays in the codebase but is never enabled here; its hook still provides settle().
+  // Fork (Track F, specs/voice-dictation-v2.md): the composer mic runs the upstream voice-input
+  // UI over the LOCAL whisper engine (no z.ai login; audio stays on-device). Web remote keeps the
+  // fork control below (Web Speech); the cloud ASR service stays in the codebase unused.
   const voiceInput = useComposerVoiceInput({
     inputApiRef,
     sessionId,
-    enabled: false,
+    enabled: voiceDictationEnabled && !isWebRemoteControl,
   });
   const settleVoiceInput = voiceInput.settle;
   const composerMountedRef = useRef(true);
@@ -4514,13 +4514,21 @@ function ConversationComposerImpl({
             />
           </span>
         ) : null}
-        {voiceDictationEnabled ? (
+        {voiceDictationEnabled && isWebRemoteControl ? (
           <V4ComposerDictationControl
             disabled={disabled}
             onTranscript={insertVoiceTranscript}
             onPreviewChange={setVoicePreview}
             scopeRef={voiceScopeRef}
-            webRemote={isWebRemoteControl}
+            webRemote
+          />
+        ) : null}
+        {voiceInput.available ? (
+          <VoiceInputButton
+            state={voiceInput.state}
+            onToggle={voiceInput.toggle}
+            subscribeLevel={voiceInput.subscribeLevel}
+            permissionGuide={voiceInput.permissionGuide}
           />
         ) : null}
         {showStopControl ? (

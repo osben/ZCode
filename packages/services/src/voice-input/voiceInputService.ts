@@ -16,6 +16,7 @@ const TICKET_TIMEOUT_MS = 10_000;
 
 interface Session {
   attemptId: string;
+  /** The Volcano realtime ASR only accepts these two locales (docs/asr.md). */
   language: "zh-CN" | "en-US";
   startedAt: number;
   socket: WebSocket | null;
@@ -283,6 +284,9 @@ export function createVoiceInputService(options: {
   return {
     onEvent: emitter.event,
     async start({ attemptId, language }) {
+      // The contract's language is open (the fork local engine passes any resolved code); the
+      // cloud ASR narrows it to the two locales Volcano supports, defaulting to en-US.
+      const cloudLanguage: "zh-CN" | "en-US" = language === "zh-CN" ? "zh-CN" : "en-US";
       if (current) {
         log.info(undefined, "voice input replaced", summary(current));
         const previous = current;
@@ -293,7 +297,7 @@ export function createVoiceInputService(options: {
       }
       const session: Session = {
         attemptId,
-        language,
+        language: cloudLanguage,
         startedAt: Date.now(),
         socket: null,
         viaProxy: false,

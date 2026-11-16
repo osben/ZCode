@@ -16,7 +16,9 @@ export type VoiceInputErrorCode =
   | "upstream_timeout"
   | "audio_limit_exceeded"
   | "audio_too_short"
-  | "failed";
+  | "failed"
+  /** Fork: no local dictation model selected (or not downloaded) — offer the voice settings page. */
+  | "no_model";
 
 export type VoiceInputEvent =
   | { attemptId: string; type: "started" }
@@ -31,12 +33,20 @@ export type VoiceInputEvent =
  */
 export interface IVoiceInputService {
   readonly onEvent: Event<VoiceInputEvent>;
-  /** 立即返回；连接结果通过 onEvent 的 started / error 通知 */
-  start(params: { attemptId: string; language: "zh-CN" | "en-US" }): Promise<void>;
+  /**
+   * 立即返回；连接结果通过 onEvent 的 started / error 通知。
+   * Fork: 本地 whisper 引擎时 language 是 fork 设置解析出的单码（或 "auto"），
+   * model 携带 voiceDictation 设置的 modelId 与可选 quant；云端引擎忽略两者。
+   */
+  start(params: {
+    attemptId: string;
+    language: string;
+    model?: { modelId: string; quant?: string };
+  }): Promise<void>;
   /** 16kHz 单声道 PCM16LE；started 之前到达的音频按顺序缓存 */
   sendAudio(params: { attemptId: string; chunk: Uint8Array }): Promise<void>;
-  /** 结束录音，等待 completed */
-  finish(params: { attemptId: string }): Promise<void>;
+  /** 结束录音，等待 completed；model 与 start 一致（本地 one-shot 路径在 finish 时才转录）。 */
+  finish(params: { attemptId: string; model?: { modelId: string; quant?: string } }): Promise<void>;
   /** 取消识别，不再发出该 attempt 的事件 */
   cancel(params: { attemptId: string }): Promise<void>;
 }
