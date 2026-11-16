@@ -620,6 +620,8 @@ async function assertHookTurnDetails(
   expect(text).not.toContain("×");
   expect(text).not.toContain("已完成");
   expect(text).toMatch(/\b\d+(?:\.\d+)?(?:ms|s)\b/);
+  const detailRows = await details.$$("li");
+  const detailRowTexts = await detailRows.map((row) => row.getText());
   // 内置插件也会产生 SessionStart 摘要；只统计夹具的用户来源，避免把插件误判为重复执行。
   // 修复原因：按本地化的「用户」文字过滤在 en-US 界面下一行都匹配不到（行渲染英文来源标签）；
   // 行现在携带 data-source-kind，按属性过滤与界面语言无关。
