@@ -56,6 +56,9 @@ pub struct Pipeline {
     /// reminders, and the PermissionRequest input names the call (specs/fork-rust-agent-parity.md "Tool hook context
     /// after the tool result", "Command hook stdin").
     node_hooks: bool,
+    /// Fork (node_desktop): the call's hook dispatches travel back in [`ToolExecution`] for the executor to report
+    /// (specs/fork-rust-agent-parity.md HK-UP-01).
+    hook_rows: bool,
 }
 
 /// 子代理里的询问被拒时的结果文字（主线程是 [`REJECT_MESSAGE`]，docs/specs/rust-cli/agents.md §4.1.1）。
@@ -138,6 +141,7 @@ impl Pipeline {
             machines: Machines::default(),
             incognito: None,
             node_hooks: false,
+            hook_rows: false,
         }
     }
 
@@ -147,6 +151,42 @@ impl Pipeline {
     pub fn with_node_hooks(mut self, node_hooks: bool) -> Self {
         self.node_hooks = node_hooks;
         self
+    }
+
+    /// Fork: the call's hook dispatches travel back in [`ToolExecution`] (the Node desktop agent's hook rows,
+    /// specs/fork-rust-agent-parity.md HK-UP-01).
+    #[must_use]
+    pub fn with_hook_rows(mut self, hook_rows: bool) -> Self {
+        self.hook_rows = hook_rows;
+        self
+    }
+
+    /// Fork: keep a dispatch for the executor to report (HK-UP-01): the runs of one tool event of this call, with
+    /// the call's id and tool name; only under `hook_rows`, and only when a hook ran.
+    fn record(
+        &self,
+        dispatches: &mut Vec<rust_cli_kernel_api::hooks::HookInvocation>,
+        name: HookEventName,
+        outcome: &rust_cli_kernel_api::hooks::HookOutcome,
+        tool_use: &rust_cli_kernel_api::ids::ToolUseId,
+        tool: &str,
+    ) {
+        if !self.hook_rows {
+            return;
+        }
+        if let Some(id) = outcome
+            .invocation
+            .as_ref()
+            .filter(|_| !outcome.runs.is_empty())
+        {
+            dispatches.push(rust_cli_kernel_api::hooks::HookInvocation {
+                id: id.clone(),
+                hook_event: name,
+                tool_use: Some(tool_use.clone()),
+                tool_name: Some(tool.to_owned()),
+                runs: outcome.runs.clone(),
+            });
+        }
     }
 
     /// Fork: check every call against the session's incognito profile.
@@ -179,12 +219,15 @@ impl Pipeline {
 
     /// 询问用户；先跑 PermissionRequest hooks（D10：跑完再决定是否询问）。返回 hook 改过的输入。
     /// 取消时按拒绝处理（中断的结果由执行器统一替换）。
+    ///
+    /// Fork: `dispatches` 收走 PermissionRequest 的 hook runs（HK-UP-01），拒绝时也带上。
     async fn ask(
         &self,
         tool: &dyn Tool,
         input: &Value,
         asking: Asking,
         call: &Routed,
+        dispatches: &mut Vec<rust_cli_kernel_api::hooks::HookInvocation>,
     ) -> Result<Option<Value>, ToolOutput> {
         let context = &call.context;
         let Asking {
@@ -205,6 +248,14 @@ impl Pipeline {
             let payload = tag(payload, &call.machine);
             let event = hooks::event(HookEventName::PermissionRequest, &call.hooks, payload).await;
             let request = self.hooks.run(event, context.cancel.clone()).await;
+            // Fork: the dispatch is kept even when the hook denies the call (HK-UP-01): its runs still ran.
+            self.record(
+                dispatches,
+                HookEventName::PermissionRequest,
+                &request,
+                &context.tool_use,
+                tool.name(),
+            );
             match request.decision {
                 Some(PermissionDecision::Allow { .. }) => return Ok(request.updated_input),
                 Some(PermissionDecision::Deny { message }) => return Err(error(message)),
@@ -263,8 +314,9 @@ impl Pipeline {
         input: Value,
         asking: Asking,
         call: &Routed,
+        dispatches: &mut Vec<rust_cli_kernel_api::hooks::HookInvocation>,
     ) -> Result<Value, ToolOutput> {
-        match self.ask(tool, &input, asking, call).await? {
+        match self.ask(tool, &input, asking, call, dispatches).await? {
             Some(updated) => Self::revalidate(tool, schema, updated),
             None => Ok(input),
         }
@@ -277,6 +329,7 @@ impl Pipeline {
         schema: &Value,
         input: Value,
         call: &Routed,
+        dispatches: &mut Vec<rust_cli_kernel_api::hooks::HookInvocation>,
     ) -> Result<Value, ToolOutput> {
         match self.gate.decide(tool, &input, &call.context).await {
             PermissionDecision::Allow {
@@ -298,7 +351,8 @@ impl Pipeline {
                     once,
                     independent,
                 };
-                self.ask_for(tool, schema, input, asking, call).await
+                self.ask_for(tool, schema, input, asking, call, dispatches)
+                    .await
             }
             // 没有理由的询问文字只在 policy 的 `texts`（F132 的 T15：以前这里内联了同一句）。
             PermissionDecision::Passthrough => {
@@ -308,7 +362,8 @@ impl Pipeline {
                     once: false,
                     independent: false,
                 };
-                self.ask_for(tool, schema, input, asking, call).await
+                self.ask_for(tool, schema, input, asking, call, dispatches)
+                    .await
             }
         }
     }
@@ -370,6 +425,14 @@ impl Pipeline {
         );
         let event = hooks::event(HookEventName::PreToolUse, &call.hooks, payload).await;
         let mut pre = self.hooks.run(event, context.cancel.clone()).await;
+        // Fork: the dispatch is kept even when the hook denies or stops the call (HK-UP-01): its runs still ran.
+        self.record(
+            &mut messages.dispatches,
+            HookEventName::PreToolUse,
+            &pre,
+            &context.tool_use,
+            tool.name(),
+        );
         hooks::take_pre(messages, &mut pre);
         // Fork: an MCP App call follows Node's `authorizeAppTool` from here (pipeline_authorize.rs).
         if messages.app_call
@@ -397,7 +460,7 @@ impl Pipeline {
                 match self.gate.check_rules(tool, &input, context).await {
                     Some(PermissionDecision::Deny { message }) => Err(other(error(message))),
                     Some(PermissionDecision::Ask { .. }) => self
-                        .decide(tool, &schema, input, &call)
+                        .decide(tool, &schema, input, &call, &mut messages.dispatches)
                         .await
                         .map_err(other),
                     Some(PermissionDecision::Allow { .. } | PermissionDecision::Passthrough)
@@ -414,7 +477,7 @@ impl Pipeline {
             }) => match self.gate.check_rules(tool, &input, context).await {
                 Some(PermissionDecision::Deny { message }) => Err(other(error(message))),
                 Some(PermissionDecision::Ask { .. }) => self
-                    .decide(tool, &schema, input, &call)
+                    .decide(tool, &schema, input, &call, &mut messages.dispatches)
                     .await
                     .map_err(other),
                 Some(PermissionDecision::Allow { .. } | PermissionDecision::Passthrough) | None => {
@@ -424,13 +487,20 @@ impl Pipeline {
                         once,
                         independent,
                     };
-                    self.ask_for(tool, &schema, input, asking, &call)
-                        .await
-                        .map_err(other)
+                    self.ask_for(
+                        tool,
+                        &schema,
+                        input,
+                        asking,
+                        &call,
+                        &mut messages.dispatches,
+                    )
+                    .await
+                    .map_err(other)
                 }
             },
             Some(PermissionDecision::Passthrough) | None => self
-                .decide(tool, &schema, input, &call)
+                .decide(tool, &schema, input, &call, &mut messages.dispatches)
                 .await
                 .map_err(other),
         }?;
@@ -468,6 +538,14 @@ impl Pipeline {
                 );
                 let event = hooks::event(HookEventName::PostToolUse, &session, payload).await;
                 let mut post = self.hooks.run(event, context.cancel.clone()).await;
+                // Fork: the dispatch is kept with the call's runs (HK-UP-01).
+                self.record(
+                    &mut messages.dispatches,
+                    HookEventName::PostToolUse,
+                    &post,
+                    &context.tool_use,
+                    tool.name(),
+                );
                 messages.after.append(&mut post.messages);
                 // 工具自己的后续消息（Skill 的正文）排在 PostToolUse 的消息之后
                 // （docs/specs/rust-cli/ext.md §2.4）。
@@ -534,6 +612,14 @@ impl Pipeline {
                 let event =
                     hooks::event(HookEventName::PostToolUseFailure, &session, payload).await;
                 let mut post = self.hooks.run(event, context.cancel.clone()).await;
+                // Fork: the dispatch is kept with the call's runs (HK-UP-01).
+                self.record(
+                    &mut messages.dispatches,
+                    HookEventName::PostToolUseFailure,
+                    &post,
+                    &context.tool_use,
+                    tool.name(),
+                );
                 messages.after.append(&mut post.messages);
                 ToolOutput {
                     display,

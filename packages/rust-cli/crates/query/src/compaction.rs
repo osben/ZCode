@@ -8,7 +8,7 @@ use rust_cli_kernel_api::message::{CompactTrigger, Message};
 use rust_cli_kernel_api::model::{ModelSelection, QuerySource};
 use rust_cli_kernel_api::orchestration::{
     AutoCompactOutcome, CompactRequest, CompactResult, CompactTracking, Compactor, QueryError,
-    QueryStop,
+    QueryEvent, QueryStop,
 };
 
 use crate::RunScope;
@@ -70,7 +70,18 @@ async fn commit(
         summary,
         restored,
         session_start_context,
+        hook_invocations,
     } = result;
+    // Fork: report the compaction's hook dispatches in the running turn (HK-UP-01), before the committed batch; the
+    // engine has no sink, so they travelled in the result.
+    if scope.parts.limits.hook_rows {
+        for invocation in hook_invocations {
+            let _ = scope
+                .sink
+                .emit(QueryEvent::HookInvocation { invocation })
+                .await;
+        }
+    }
     let mut messages = vec![
         Message::System(rust_cli_kernel_api::message::SystemMessage::CompactBoundary(boundary)),
         Message::User(summary),

@@ -35,6 +35,9 @@ pub struct RequestLimits {
     /// Fork: where a batch's tool hook contexts are committed (specs/fork-rust-agent-parity.md "Tool hook context
     /// after the tool result", Multi-call batches).
     pub tool_hook_contexts: ToolHookContexts,
+    /// Fork: the run reports its hook dispatches (Stop / SubagentStop here) as `HookInvocation` events, for the App's
+    /// `hookInvocation` rows (specs/fork-rust-agent-parity.md HK-UP-01).
+    pub hook_rows: bool,
 }
 
 /// Fork: the commit place of the tool hook contexts (`hook_additional_context`) of one batch.

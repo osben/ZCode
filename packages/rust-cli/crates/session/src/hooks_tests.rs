@@ -660,6 +660,7 @@ impl rust_cli_kernel_api::orchestration::Compactor for FixedCompact {
         rust_cli_kernel_api::orchestration::OrchestrationError,
     > {
         Ok(rust_cli_kernel_api::orchestration::CompactResult {
+            hook_invocations: Vec::new(),
             boundary: rust_cli_kernel_api::message::CompactBoundary {
                 id: rust_cli_kernel_api::ids::MessageId::new("msg_b"),
                 trigger: request.trigger,

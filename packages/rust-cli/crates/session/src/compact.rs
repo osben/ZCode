@@ -7,7 +7,9 @@ use crate::actor::Actor;
 use rust_cli_kernel_api::compaction::{ContextNotice, ContextOccupancy};
 use rust_cli_kernel_api::ids::CommandId;
 use rust_cli_kernel_api::message::{CompactTrigger, Message, SystemMessage};
-use rust_cli_kernel_api::orchestration::{CompactRequest, OrchestrationError, QueryStop, RunSink};
+use rust_cli_kernel_api::orchestration::{
+    CompactRequest, OrchestrationError, QueryEvent, QueryStop, RunSink,
+};
 use rust_cli_kernel_api::session_api::KernelEvent;
 use rust_cli_kernel_api::user_command::{LocalCommandOutput, LocalCommandRecord, dim};
 
@@ -67,10 +69,18 @@ impl Actor {
         let signal = opening.abort.clone();
         // SessionStart（`compact`）在压缩器里跑，消息已在 `restored` 末尾（compact.md §7），与边界、
         // 摘要一个事务提交；这里不再单独跑（以前只有 `/compact` 跑，自动 / 反应式压缩漏掉了）。
+        let hook_rows = self.deps.hook_rows;
         let task = self.deps.spawner.spawn("compact-run", async move {
             match compactor.compact(request, signal.token().clone()).await {
                 Ok(result) => {
                     let session_start_context = result.session_start_context;
+                    // Fork: report the compaction's hook dispatches in this turn (HK-UP-01), before the committed
+                    // batch. The compact turn stores no user message, so the records are not kept for the view.
+                    if hook_rows {
+                        for invocation in result.hook_invocations {
+                            let _ = sink.emit(QueryEvent::HookInvocation { invocation }).await;
+                        }
+                    }
                     let mut messages = vec![
                         Message::System(SystemMessage::CompactBoundary(result.boundary)),
                         Message::User(result.summary),

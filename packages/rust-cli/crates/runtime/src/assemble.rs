@@ -325,7 +325,9 @@ pub(crate) fn pipeline(
             .with_machines(ports.environments.clone())
             .with_incognito(ext.incognito_tools())
             // Fork (node_desktop): tool hook contexts after the tool result, like Node.
-            .with_node_hooks(node_desktop),
+            .with_node_hooks(node_desktop)
+            // Fork (node_desktop): the call's hook dispatches travel back for the executor to report (HK-UP-01).
+            .with_hook_rows(node_desktop),
     )
 }
 
@@ -377,6 +379,8 @@ pub(crate) fn query_parts(
             } else {
                 rust_cli_query::ToolHookContexts::PerCall
             },
+            // Fork (node_desktop): the run reports its Stop / SubagentStop dispatches (HK-UP-01 hook rows).
+            hook_rows: node_desktop,
             ..defaults.limits.request
         },
     }
