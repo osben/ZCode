@@ -644,6 +644,13 @@ impl HelperRoutedMcp {
             }
             return ParkedOrPipe::Pipe(connected);
         }
+        // Dead under the same lock (as answer_parked): a route whose own pipe closed while the
+        // caller awaited the store-row answer answers nothing and opens no mailbox — an answer after
+        // the terminal Closed breaks the stream's contract, and a mailbox for a dead route would pay
+        // a full connect only to close it again.
+        if state.dead {
+            return ParkedOrPipe::Dead;
+        }
         let now = self.clock.now_ms();
         if let Some((failure, at)) = state.failed.get(key).cloned()
             && now.saturating_sub(at) < FAILED_CONNECT_COOLDOWN_MS
@@ -667,6 +674,8 @@ impl HelperRoutedMcp {
 
 /// What [`HelperRoutedMcp::park_or_pipe`] did with a session call of a workspace key beyond the connection's own one.
 enum ParkedOrPipe {
+    /// The route died while the caller awaited the session's workspace: answer nothing, park nothing.
+    Dead,
     /// The key's connected pipe; the message (left with the caller) travels it in `send`.
     Pipe(String),
     /// The message is parked on the key's mailbox until its connect resolves; `opened` when this call started the
@@ -756,6 +765,39 @@ async fn workspace_pipe(
 /// Connects a workspace key's pipe and flushes its mailbox through it, as the key's own task: `send` parks the key's
 /// messages and returns, because the client's cancel watch starts only after its `send` — the first call of a key must
 /// not hold its cancel behind a connect that may take the whole CONNECT timeout.
+/// The mailbox's orphan guard: whatever ends the connect-and-flush task (an error path return, a
+/// panic-unwind, or the scope aborting the task at an await) answers the calls still parked in the
+/// key's mailbox and removes the entry — without it, a fire-and-forget spawn that never runs (a
+/// closed scope) or is aborted mid-`mcp_send` strands the mailbox with no owner, and every later
+/// call of the key parks forever behind a task that will never flush it.
+struct MailboxGuard {
+    route: std::sync::Arc<Route>,
+    key: String,
+}
+
+impl Drop for MailboxGuard {
+    fn drop(&mut self) {
+        let (parked, dead) = {
+            let mut state = self.route.state.lock_unpoisoned();
+            let parked = state
+                .mailbox
+                .remove(&self.key)
+                .map(|queue| queue.into_iter().collect::<Vec<_>>())
+                .unwrap_or_default();
+            (parked, state.dead)
+        };
+        if dead {
+            return;
+        }
+        let ids = parked
+            .iter()
+            .filter(|message| message.get("id").is_some())
+            .map(|message| message["id"].clone())
+            .collect::<Vec<_>>();
+        answer_parked(&self.route, &self.key, "the Node helper exited", ids);
+    }
+}
+
 async fn connect_mailbox(
     helper: std::sync::Arc<NodeHelper>,
     clock: std::sync::Arc<dyn rust_cli_kernel_api::clock::Clock>,
@@ -763,6 +805,12 @@ async fn connect_mailbox(
     key: String,
     workspace: Value,
 ) {
+    // Dropped at EVERY exit of this task (including a scope abort at an await): the guard answers
+    // what is still parked in the key's mailbox and removes the entry.
+    let _orphan = MailboxGuard {
+        route: route.clone(),
+        key: key.clone(),
+    };
     match workspace_pipe(&helper, clock.as_ref(), &route, &workspace, &key).await {
         Ok(pipe) => {
             // The mailbox empties through the pipe in arrival order; a message that arrives mid-flush parks behind
@@ -772,6 +820,12 @@ async fn connect_mailbox(
             loop {
                 let next = {
                     let mut state = route.state.lock_unpoisoned();
+                    // The terminal Closed of a dead route already fails every in-flight call: the
+                    // drain stops there instead of sending more parked calls past the terminal event.
+                    if state.dead {
+                        state.mailbox.remove(&key);
+                        return;
+                    }
                     let next = state
                         .mailbox
                         .get_mut(&key)
@@ -1096,9 +1150,12 @@ impl McpTransport for HelperRoutedMcp {
                         ));
                         return Ok(());
                     }
-                    // Parked behind the key's in-flight connect (its task flushes the mailbox), or refused inside
-                    // the cooldown (answered in `park_or_pipe`): nothing of the call travels in `send`.
-                    ParkedOrPipe::Parked { opened: false } | ParkedOrPipe::Refused => return Ok(()),
+                    // Parked behind the key's in-flight connect (its task flushes the mailbox), refused inside
+                    // the cooldown (answered in `park_or_pipe`), or the route died while the store-row answer ran
+                    // (the caller's dead-route refusal answers it): nothing of the call travels in `send`.
+                    ParkedOrPipe::Parked { opened: false }
+                    | ParkedOrPipe::Refused
+                    | ParkedOrPipe::Dead => return Ok(()),
                 }
             }
         } else if let Some(cancelled) = cancelled_request(&message) {
