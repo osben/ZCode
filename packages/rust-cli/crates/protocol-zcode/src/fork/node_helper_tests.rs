@@ -1678,6 +1678,126 @@ async fn a_workspaces_first_call_parks_instead_of_holding_its_cancel() {
     }
 }
 
+/// F3: one key's parked backlog is capped — a parked call is answered by its id through the route's
+/// recent map, so a backlog past the cap could evict the very ids it owes (a pipelining client's
+/// calls would hang, their `send` already returned Ok). The overflow is refused inline, at once,
+/// while the within-cap calls still park and later flush through the key's pipe in order.
+#[tokio::test(start_paused = true)]
+async fn a_parked_backlog_beyond_its_cap_is_refused_inline() {
+    use futures_util::StreamExt;
+    use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
+    use rust_cli_kernel_api::ids::EnvironmentId;
+    use rust_cli_kernel_api::mcp::{McpConnect, McpTransport, McpTransportConfig, NoMcpTransport};
+
+    // The workspace pipe's connect takes 2 s; everything else answers at once.
+    let sessions = pipes_with_sessions();
+    let gated = behaviour(move |_, method, params| {
+        if method == "helper/mcp/connect" && params["workspace"] == one_workspace() {
+            return Act::Delay {
+                after: Duration::from_secs(2),
+                result: json!({}),
+            };
+        }
+        sessions(0, method, params)
+    });
+    let rig = pipe_rig(gated);
+    let routed = HelperRoutedMcp::new(
+        Arc::new(NoMcpTransport),
+        rig.helper.clone(),
+        rig.clock.clone(),
+    );
+    let group = WorkspaceRef {
+        environment: EnvironmentId::new("primary"),
+        root: EnvPath::new("/w"),
+    };
+    let connection = routed
+        .connect(
+            &group,
+            McpConnect {
+                server: "plugin:a:s".to_owned(),
+                transport: McpTransportConfig::NodeHelper,
+            },
+        )
+        .await
+        .expect("connected");
+    let mut events = routed.events(&connection);
+
+    // The key's connect is gated, so every id'd call of the key parks: the cap fills...
+    for id in 1..=mcp::PARKED_BACKLOG_CAP as u64 {
+        routed
+            .send(&connection, helper_tool_call(id, "a"))
+            .await
+            .expect("parked within the cap");
+    }
+    let started = tokio::time::Instant::now();
+    // ...and the call past the cap is refused inline, without waiting for the connect.
+    let overflow = mcp::PARKED_BACKLOG_CAP as u64 + 1;
+    routed
+        .send(&connection, helper_tool_call(overflow, "a"))
+        .await
+        .expect("sent");
+    match tokio::time::timeout(Duration::from_secs(5), events.next()).await {
+        Ok(Some(rust_cli_kernel_api::mcp::McpTransportEvent::Message { message })) => {
+            assert_eq!(message["id"], json!(overflow));
+            assert_eq!(message["error"]["code"], json!(-32603));
+            assert_eq!(
+                message["error"]["message"],
+                json!("the workspace's parked backlog is full")
+            );
+        }
+        other => panic!("no inline refusal: {other:?}"),
+    }
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "the refusal did not wait for the gated connect"
+    );
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while received(&rig.fake, "helper/mcp/connect")
+            .iter()
+            .filter(|params| params["workspace"] == one_workspace())
+            .count()
+            < 1
+        {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the workspace's connect is in flight");
+    assert!(
+        received(&rig.fake, "helper/mcp/send").is_empty(),
+        "nothing of the key travels while its connect is gated"
+    );
+
+    // Past the gate, the within-cap calls flush through the key's pipe in arrival order; the
+    // refused overflow never reaches the helper.
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    let satellite = received(&rig.fake, "helper/mcp/connect")
+        .iter()
+        .find(|params| params["workspace"] == one_workspace())
+        .and_then(|params| params["connection"].as_str())
+        .expect("the workspace's pipe")
+        .to_owned();
+    let on_satellite: Vec<Value> = received(&rig.fake, "helper/mcp/send")
+        .into_iter()
+        .filter(|params| params["connection"] == json!(satellite))
+        .map(|params| params["message"].clone())
+        .collect();
+    let parked: Vec<Value> = (1..=mcp::PARKED_BACKLOG_CAP as u64)
+        .map(|id| helper_tool_call(id, "a"))
+        .collect();
+    assert_eq!(
+        on_satellite, parked,
+        "the within-cap calls flush in arrival order, the overflow is not among them"
+    );
+    match tokio::time::timeout(Duration::from_secs(5), events.next()).await {
+        Ok(Some(rust_cli_kernel_api::mcp::McpTransportEvent::Message { message })) => {
+            assert_eq!(message["id"], json!(1), "the answers arrive in flush order");
+            assert!(message.get("error").is_none(), "{message:?}");
+        }
+        other => panic!("no answer for the within-cap calls: {other:?}"),
+    }
+}
+
 /// F3: a workspace key whose connect fails answers its parked calls on the connection with the failure, and the 30 s
 /// cooldown refuses a later call of that key at once — no message of it reaches the helper, and no second connect runs.
 #[tokio::test(start_paused = true)]
@@ -1739,10 +1859,8 @@ async fn a_failed_workspace_connect_answers_its_parked_calls_and_cools_down() {
         other => panic!("no answer for the parked call: {other:?}"),
     }
     assert!(
-        !received(&rig.fake, "helper/mcp/send")
-            .iter()
-            .any(|params| params["message"] == helper_tool_call(7, "a")),
-        "the call never reaches the helper"
+        received(&rig.fake, "helper/mcp/send").is_empty(),
+        "neither the call nor the cancel parked behind it reaches the helper"
     );
 
     // The cooldown (the rig's clock never moves) refuses the next call of that key at once.
@@ -1767,6 +1885,273 @@ async fn a_failed_workspace_connect_answers_its_parked_calls_and_cools_down() {
             .count(),
         1,
         "no second connect inside the cooldown"
+    );
+}
+
+/// F3: the 30 s cooldown of a failed workspace connect EXPIRES — only its refusing half was pinned
+/// before (the rig's FixedClock cannot move). A ManualClock drives both halves: a call inside the
+/// cooldown is refused at once, and the first call past it runs a second `helper/mcp/connect` that
+/// reaches the helper and answers through the key's new pipe.
+#[tokio::test(start_paused = true)]
+async fn a_failed_workspace_connects_cooldown_expires_and_the_next_call_connects() {
+    use futures_util::StreamExt;
+    use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
+    use rust_cli_kernel_api::ids::EnvironmentId;
+    use rust_cli_kernel_api::mcp::{McpConnect, McpTransport, McpTransportConfig, NoMcpTransport};
+
+    // The key's first connect fails; every later one answers (the expiry is what must let a retry
+    // through, so the second connect must be able to succeed).
+    let sessions = pipes_with_sessions();
+    let failures = Arc::new(AtomicUsize::new(0));
+    let failing_first = behaviour(move |_, method, params| {
+        if method == "helper/mcp/connect" && params["workspace"] == one_workspace() {
+            if failures.fetch_add(1, Ordering::SeqCst) == 0 {
+                return Act::Fail(RpcError::internal("MCP server failed to start"));
+            }
+            return Act::Reply {
+                notes: Vec::new(),
+                result: json!({}),
+            };
+        }
+        sessions(0, method, params)
+    });
+    let rig = pipe_rig(failing_first);
+    let clock = Arc::new(rust_cli_kernel_api::testing::ManualClock::new(0));
+    let routed = HelperRoutedMcp::new(Arc::new(NoMcpTransport), rig.helper.clone(), clock.clone());
+    let group = WorkspaceRef {
+        environment: EnvironmentId::new("primary"),
+        root: EnvPath::new("/w"),
+    };
+    let connection = routed
+        .connect(
+            &group,
+            McpConnect {
+                server: "plugin:a:s".to_owned(),
+                transport: McpTransportConfig::NodeHelper,
+            },
+        )
+        .await
+        .expect("connected");
+    let mut events = routed.events(&connection);
+    let key_connects = || {
+        received(&rig.fake, "helper/mcp/connect")
+            .iter()
+            .filter(|params| params["workspace"] == one_workspace())
+            .count()
+    };
+
+    // The first call parks, its connect fails, and the call is answered with the failure.
+    routed
+        .send(&connection, helper_tool_call(7, "a"))
+        .await
+        .expect("parked");
+    match tokio::time::timeout(Duration::from_secs(5), events.next()).await {
+        Ok(Some(rust_cli_kernel_api::mcp::McpTransportEvent::Message { message })) => {
+            assert_eq!(message["id"], json!(7));
+            assert_eq!(
+                message["error"]["message"],
+                json!("MCP server failed to start")
+            );
+        }
+        other => panic!("no answer for the parked call: {other:?}"),
+    }
+    assert_eq!(key_connects(), 1);
+
+    // Inside the cooldown (the clock has not moved) the next call is refused at once.
+    routed
+        .send(&connection, helper_tool_call(8, "a"))
+        .await
+        .expect("sent");
+    match tokio::time::timeout(Duration::from_secs(5), events.next()).await {
+        Ok(Some(rust_cli_kernel_api::mcp::McpTransportEvent::Message { message })) => {
+            assert_eq!(message["id"], json!(8));
+            assert_eq!(
+                message["error"]["message"],
+                json!("connection closed: MCP server failed to start")
+            );
+        }
+        other => panic!("no fail-fast answer: {other:?}"),
+    }
+    assert_eq!(key_connects(), 1, "no second connect inside the cooldown");
+
+    // The cooldown refuses while `now - at < 30 s`, so exactly 30 s later it is past: the next call
+    // is not refused — it runs a second connect that reaches the helper, and it is answered through
+    // the key's new pipe.
+    clock.advance(mcp::FAILED_CONNECT_COOLDOWN_MS);
+    routed
+        .send(&connection, helper_tool_call(9, "a"))
+        .await
+        .expect("sent");
+    match tokio::time::timeout(Duration::from_secs(5), events.next()).await {
+        Ok(Some(rust_cli_kernel_api::mcp::McpTransportEvent::Message { message })) => {
+            assert_eq!(message["id"], json!(9));
+            assert!(message.get("error").is_none(), "{message:?}");
+        }
+        other => panic!("no answer past the cooldown: {other:?}"),
+    }
+    assert_eq!(
+        key_connects(),
+        2,
+        "the cooldown's expiry lets a retry connect"
+    );
+    let satellite = received(&rig.fake, "helper/mcp/connect")
+        .iter()
+        .filter(|params| params["workspace"] == one_workspace())
+        .nth(1)
+        .and_then(|params| params["connection"].as_str())
+        .expect("the key's second pipe")
+        .to_owned();
+    assert!(
+        received(&rig.fake, "helper/mcp/send")
+            .iter()
+            .any(|params| params["connection"] == json!(satellite)
+                && params["message"] == helper_tool_call(9, "a")),
+        "the call past the cooldown reaches the helper"
+    );
+}
+
+/// F3: a message of a key whose flush is in flight parks behind what the mailbox still holds — it never
+/// overtakes the parked calls ahead — and leaves through the same pipe in arrival order; the entry's removal
+/// (under the same lock that finds the mailbox empty) races nothing, so the key's next call after the flush
+/// takes the published pipe and stays ordered behind them.
+#[tokio::test(start_paused = true)]
+async fn a_message_arriving_while_the_key_flushes_parks_behind_and_keeps_order() {
+    use futures_util::StreamExt;
+    use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
+    use rust_cli_kernel_api::ids::EnvironmentId;
+    use rust_cli_kernel_api::mcp::{McpConnect, McpTransport, McpTransportConfig, NoMcpTransport};
+
+    // The workspace pipe's connect takes 2 s: the key's connect-and-flush task is in flight from the
+    // first parked call until the gate passes, holding the mailbox open for what arrives meanwhile.
+    let sessions = pipes_with_sessions();
+    let gated = behaviour(move |_, method, params| {
+        if method == "helper/mcp/connect" && params["workspace"] == one_workspace() {
+            return Act::Delay {
+                after: Duration::from_secs(2),
+                result: json!({}),
+            };
+        }
+        sessions(0, method, params)
+    });
+    let rig = pipe_rig(gated);
+    let routed = HelperRoutedMcp::new(
+        Arc::new(NoMcpTransport),
+        rig.helper.clone(),
+        rig.clock.clone(),
+    );
+    let group = WorkspaceRef {
+        environment: EnvironmentId::new("primary"),
+        root: EnvPath::new("/w"),
+    };
+    let connection = routed
+        .connect(
+            &group,
+            McpConnect {
+                server: "plugin:a:s".to_owned(),
+                transport: McpTransportConfig::NodeHelper,
+            },
+        )
+        .await
+        .expect("connected");
+    let mut events = routed.events(&connection);
+    for id in [2u64, 3] {
+        routed
+            .send(&connection, helper_tool_call(id, "a"))
+            .await
+            .expect("parked");
+    }
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while received(&rig.fake, "helper/mcp/connect")
+            .iter()
+            .filter(|params| params["workspace"] == one_workspace())
+            .count()
+            < 1
+        {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the key's connect is in flight");
+    // The flush task is mid-flight (its connect gated, the mailbox holding two calls): a further
+    // call of the same key parks behind them instead of travelling anywhere yet.
+    routed
+        .send(&connection, helper_tool_call(4, "a"))
+        .await
+        .expect("parked behind the flush");
+    assert!(
+        received(&rig.fake, "helper/mcp/send").is_empty(),
+        "nothing of the key travels while its flush is in flight — the late call overtakes nothing"
+    );
+
+    // Past the gate the mailbox empties through the key's pipe in arrival order: the late call is
+    // flushed after the two ahead of it, and all three are answered in that order.
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    let satellite = received(&rig.fake, "helper/mcp/connect")
+        .iter()
+        .find(|params| params["workspace"] == one_workspace())
+        .and_then(|params| params["connection"].as_str())
+        .expect("the workspace's pipe")
+        .to_owned();
+    let on_satellite = || -> Vec<Value> {
+        received(&rig.fake, "helper/mcp/send")
+            .into_iter()
+            .filter(|params| params["connection"] == json!(satellite))
+            .map(|params| params["message"].clone())
+            .collect()
+    };
+    assert_eq!(
+        on_satellite(),
+        [
+            helper_tool_call(2, "a"),
+            helper_tool_call(3, "a"),
+            helper_tool_call(4, "a")
+        ],
+        "the parked calls and the mid-flush arrival leave in arrival order"
+    );
+    for id in [2u64, 3, 4] {
+        match tokio::time::timeout(Duration::from_secs(5), events.next()).await {
+            Ok(Some(rust_cli_kernel_api::mcp::McpTransportEvent::Message { message })) => {
+                assert_eq!(
+                    message["id"],
+                    json!(id),
+                    "the answers follow the flush order"
+                );
+                assert!(message.get("error").is_none(), "{message:?}");
+            }
+            other => panic!("no answer for {id}: {other:?}"),
+        }
+    }
+
+    // The mailbox entry is gone after the flush: the key's next call takes the published pipe
+    // directly, still behind everything that left before it — the removal races nothing.
+    routed
+        .send(&connection, helper_tool_call(5, "a"))
+        .await
+        .expect("sent");
+    match tokio::time::timeout(Duration::from_secs(5), events.next()).await {
+        Ok(Some(rust_cli_kernel_api::mcp::McpTransportEvent::Message { message })) => {
+            assert_eq!(message["id"], json!(5));
+            assert!(message.get("error").is_none(), "{message:?}");
+        }
+        other => panic!("no answer for the post-flush call: {other:?}"),
+    }
+    assert_eq!(
+        on_satellite(),
+        [
+            helper_tool_call(2, "a"),
+            helper_tool_call(3, "a"),
+            helper_tool_call(4, "a"),
+            helper_tool_call(5, "a")
+        ],
+        "the post-flush call follows the flushed ones on the same pipe"
+    );
+    assert_eq!(
+        received(&rig.fake, "helper/mcp/connect")
+            .iter()
+            .filter(|params| params["workspace"] == one_workspace())
+            .count(),
+        1,
+        "the whole sequence ran on one workspace pipe"
     );
 }
 

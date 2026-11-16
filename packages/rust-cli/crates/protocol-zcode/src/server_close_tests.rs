@@ -407,12 +407,12 @@ async fn the_sessions_index_seed_skips_an_open_draft() {
     };
     let (_scope, server, _handle, queries) = open(true).await;
     assert_eq!(
-        ids(crate::subscribe::stored_rows(&server, "/w").await),
+        ids(crate::subscribe::stored_rows(&server, "/w", &[]).await),
         vec!["stored".to_owned()]
     );
     queries.drafts.lock_unpoisoned().clear();
     assert_eq!(
-        ids(crate::subscribe::stored_rows(&server, "/w").await),
+        ids(crate::subscribe::stored_rows(&server, "/w", &[]).await),
         vec!["stored".to_owned(), "s1".to_owned()]
     );
 }

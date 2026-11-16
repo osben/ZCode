@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::panels::WorkspaceSession;
-use rust_cli_kernel_api::store::SessionFilter;
+use rust_cli_kernel_api::store::{SessionFilter, SessionSummary};
 use rust_cli_kernel_api::title::Source;
 use rust_cli_protocol_core::connection::Reply;
 use rust_cli_protocol_core::rpc::RpcError;
@@ -23,12 +23,21 @@ use rust_cli_protocol_core::sessions::Bridged;
 const STORED_SESSIONS_LIMIT: usize = 200;
 
 /// 存储里一个工作区的会话 → 会话列表的行。
-pub(crate) async fn stored_rows(server: &Server, workspace: &str) -> Vec<Value> {
+///
+/// B1.2: `worktree_ids` are the Host's `worktreeSessionIds` (Node `loadWorktreeSessionSummaries` +
+/// `ensureIndexPublisher`): ids of sessions whose task rows carry a worktree root. Each is read read-only
+/// from its session row and seeds the stored half when it proves it belongs to the workspace (below), so the
+/// ids the directory scan cannot see — its window, or another runtime's worktree rows — still list.
+pub(crate) async fn stored_rows(
+    server: &Server,
+    workspace: &str,
+    worktree_ids: &[&str],
+) -> Vec<Value> {
     let filter = SessionFilter {
         workspace: server.workspace(workspace),
         limit: STORED_SESSIONS_LIMIT,
     };
-    match server.kernel.workspace_sessions(filter).await {
+    let mut rows = match server.kernel.workspace_sessions(filter).await {
         Ok(sessions) => {
             let queries = server.kernel.queries();
             let mut rows = Vec::with_capacity(sessions.len());
@@ -54,7 +63,82 @@ pub(crate) async fn stored_rows(server: &Server, workspace: &str) -> Vec<Value> 
             tracing::warn!(event = "protocol.index.read_failed", error = %error, "listing the workspace sessions failed");
             Vec::new()
         }
+    };
+    seed_worktree_rows(server, workspace, worktree_ids, &mut rows).await;
+    rows
+}
+
+/// B1.2: the rows of the Host's worktree ids (Node `loadWorktreeSessionSummaries`). Read-only: each id is
+/// answered from its session row (`reconcile_row`, the `reconcileSessions` read — nothing opens, nothing is
+/// persisted), a row the scan already listed is not duplicated (Node merges missing only, never overwriting),
+/// and a read failure skips the id with a warn, as Node logs each failed summary.
+async fn seed_worktree_rows(server: &Server, workspace: &str, ids: &[&str], rows: &mut Vec<Value>) {
+    let queries = server.kernel.queries();
+    for id in ids {
+        if rows
+            .iter()
+            .any(|row| row["sessionId"].as_str() == Some(*id))
+        {
+            continue;
+        }
+        let row = match queries.reconcile_row(&SessionId::new(*id)).await {
+            Ok(row) => row,
+            Err(error) => {
+                tracing::warn!(event = "protocol.index.worktree_read_failed", session = *id, error = %error, "reading a worktree session row failed");
+                continue;
+            }
+        };
+        // The membership `reconcileSessions` checks here (`stored_entry`): the row's directory is the
+        // workspace, its identity is not a foreign one, and it is not soft-deleted. Node also proves a git
+        // worktree-of relation (`isLocalSessionDirectoryInWorkspace`); Rust has no such classifier, so a row
+        // the columns do not prove is skipped, like the resume admission (crate::worktree::ResumeWorkspace).
+        let Some(row) = row.filter(|row| {
+            row["directory"].as_str() == Some(workspace)
+                && row["workspaceId"]
+                    .as_str()
+                    .is_none_or(|stored| stored == workspace)
+                && row["timeDeleted"].is_null()
+        }) else {
+            continue;
+        };
+        // Node's stored summary shape, minus `parentSessionId` (the row read carries no parent; a
+        // managed-worktree task is a root session).
+        let mut seeded = cold_row(
+            workspace,
+            &WorkspaceSession {
+                summary: SessionSummary {
+                    id: SessionId::new(*id),
+                    title: row["title"].as_str().unwrap_or_default().to_owned(),
+                    updated_at_ms: row["timeUpdated"].as_u64().unwrap_or_default(),
+                    created_at_ms: row["timeCreated"].as_u64().unwrap_or_default(),
+                    last_outcome: row["lastOutcome"].as_str().map(str::to_owned),
+                    parent: None,
+                    title_source: row["titleSource"].as_str().map(str::to_owned),
+                    incognito: false,
+                },
+                activity: None,
+                last_reply: None,
+            },
+        );
+        // The worktree facts of the stored row, like a scanned row (the strict `executionWorktree`).
+        crate::worktree::decorate_cold_row(server, &SessionId::new(*id), &mut seeded).await;
+        rows.push(seeded);
     }
+}
+
+/// B1.2: `worktreeSessionIds`, deduped in order like Node's `new Set(sessionIds)` (the inbound schema bounds
+/// the list at 200 and keeps every id a non-empty string).
+fn worktree_ids(params: &Value) -> Vec<&str> {
+    let Some(ids) = params["worktreeSessionIds"].as_array() else {
+        return Vec::new();
+    };
+    let mut seen: Vec<&str> = Vec::new();
+    for id in ids.iter().filter_map(Value::as_str) {
+        if !seen.contains(&id) {
+            seen.push(id);
+        }
+    }
+    seen
 }
 
 /// A stored session with no live projection → its sessions-index row.
@@ -118,7 +202,7 @@ pub async fn subscribe(server: &Server, params: &Value) -> Result<Reply, RpcErro
         .to_owned();
     if let Some(session) = topic.strip_prefix(CONVERSATION_PREFIX) {
         let live = server
-            .live(&SessionId::new(session))
+            .live_resumed(&SessionId::new(session), params.get("workspace"))
             .await
             .map_err(|error| kernel_error(&error))?;
         let subscription = server.context.fresh("sub");
@@ -132,8 +216,11 @@ pub async fn subscribe(server: &Server, params: &Value) -> Result<Reply, RpcErro
     if index.is_none() && !topic.starts_with(CONFIG_PREFIX) {
         return Err(RpcError::invalid_params(format!("unknown topic {topic}")));
     }
+    // B1.2: the Host's worktree ids ride the sessions-index subscribe only (Node's conversation branch
+    // ignores them), consumed here as read-only seed rows.
+    let ids = worktree_ids(params);
     let stored = match index {
-        Some(workspace) => stored_rows(server, workspace).await,
+        Some(workspace) => stored_rows(server, workspace, &ids).await,
         None => Vec::new(),
     };
     let subscription = server
@@ -187,8 +274,10 @@ pub async fn resync(server: &Server, params: &Value) -> Result<Reply, RpcError> 
         .topics
         .restart(&topic, &subscription)
         .ok_or_else(gone)?;
+    // B1.2: no worktree ids here — a resync carries only the topic and the subscription, like Node's; the
+    // ids are subscribe-time facts and only an id-carrying subscribe re-reads them.
     let stored = match topic.strip_prefix(INDEX_PREFIX) {
-        Some(workspace) => stored_rows(server, workspace).await,
+        Some(workspace) => stored_rows(server, workspace, &[]).await,
         None => Vec::new(),
     };
     let topics = server.topics.clone();
