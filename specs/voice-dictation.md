@@ -13,7 +13,7 @@ Desktop voice dictation captures microphone audio with the browser media API and
 - Model cards: one card per model, name and description above a metadata/action footer. Clicking a ready card selects it; a not-downloaded card starts its download; an in-progress download card marks or unmarks use-when-ready, with no separate `Use when ready` button. Progress shows when available, else an indeterminate starting state. The current model stays selected until the requested model is fully ready; cancel or failure keeps the current selection. The selected model uses the shared settings badge style with the short `Active` label; the loaded/transcribing status stays distinct, no unload countdown.
 - Idle unload delay (minutes an idle model stays in memory after transcription) is a user preference applied to the Desktop Host timer — see "Selected versus loaded model status".
 - Every voice-dictation setting, model action, state, confirmation, and error message is translated in Ukrainian.
-- While recording, the microphone-level meter and Cancel sit in the toolbar beside the stop button; streaming transcript text shows as ghost text at the caret ("Live recording feedback and streaming transcription").
+- While recording, the peak-history waveform capsule and Cancel sit in the toolbar beside the stop button; streaming transcript text shows as ghost text at the caret ("Live recording feedback and streaming transcription").
 
 ### Compatibility with an older local Host
 
@@ -61,7 +61,7 @@ sequenceDiagram
 | VD-13 | Open Desktop voice-dictation settings                                       | Review the model list                            | Models appear as separate cards with description and metadata/actions; the selected model is clearly labeled and subtly highlighted.                                                                                                   |
 | VD-14 | One ready model is selected; another is downloading                         | Click the downloading model card                 | Same as VD-12: keep the selected model; switch only after the download succeeds.                                                                                                                                                       |
 | VD-15 | Desktop voice dictation settings are open                                   | Change idle unload delay                         | Persist a supported minute value and apply it to the Host timer; no remaining-time countdown is shown.                                                                                                                                 |
-| VD-16 | Composer microphone starts recording                                        | Review the toolbar cluster and the ghost preview | Listening status and microphone level are clear, transcript preview is optional, and the mic button stays anchored without shifting composer actions.                                                                                  |
+| VD-16 | Composer microphone starts recording                                        | Review the toolbar capsule and the ghost preview | Listening status and microphone level are clear, transcript preview is optional, and the mic button stays anchored without shifting composer actions.                                                                                  |
 
 ## Handy discovery roots
 
@@ -85,15 +85,62 @@ Applies to Desktop voice dictation. Web keeps the existing Desktop-only explanat
 
 ### UX
 
-- **Level meter and Cancel in the toolbar.** While recording, a cluster sits immediately left of the microphone/stop button and holds the microphone-level meter and a Cancel button. The meter reuses the recorder's per-buffer peak level; no raw-audio waveform is drawn or retained. Active only while recording; returns to zero on stop or cancel.
-- **No overlay, no shift of the stop button.** The cluster is in the toolbar flow, present only while recording. The stop button keeps its position; the send button is untouched. Actions left of the cluster keep their left edges; the shrinkable model-controls group absorbs the width (truncating, not covered). Nothing overlays the toolbar.
+- **Recording capsule with a peak-history waveform and Cancel.** While recording, a capsule (`rounded-full`, `voice-input` tokens) sits immediately left of the microphone/stop button and holds a rolling waveform and a Cancel button. The waveform shows the last 10 recorder chunks' peak levels (≈ 256 ms per bar at the recorder's cadence), each mapped from −50…−10 dBFS to a 3–14 px rounded bar; only per-chunk peaks are kept, no raw audio is stored or replayed. The capsule appears with a 200 ms ease-out fade/slide and is shown statically when the system reduces motion; it is active only while recording.
+- **Waveform updates never re-render the composer.** Level values reach the waveform through a subscription (`subscribeLevel`), not React state: only the waveform component re-renders on each chunk. The waveform is `aria-hidden`; recording state stays announced by the persistent status live region.
+- **No overlay, no shift of the stop button.** The capsule is in the toolbar flow, present only while recording. The stop button keeps its position; the send button is untouched. Actions left of the capsule keep their left edges; the shrinkable model-controls group absorbs the width (truncating, not covered). Nothing overlays the toolbar.
 - **Cluster interaction rules.**
   1. Passive status UI: no `autoFocus`, no `aria-modal`, no tab stop except the Cancel button.
-  2. A mousedown on the cluster calls `preventDefault`, so focus and the editor selection stay in the composer; the composer-scoped dictation shortcut keeps working afterwards.
+  2. A mousedown on the capsule calls `preventDefault`, so focus and the editor selection stay in the composer; the composer-scoped dictation shortcut keeps working afterwards.
   3. Cancel fires the same silent cancel path as Escape.
 - **Ghost preview.** For a runtime-verified streaming model, committed and tentative transcript text is drawn as ghost text at the caret ("Ghost preview").
 - Keep recording, transcribing, and idle visually distinct.
-- Models without verified streaming support keep record-then-transcribe: no ghost text, but the toolbar level meter and Cancel still show while recording.
+- Models without verified streaming support keep record-then-transcribe: no ghost text, but the recording capsule with waveform and Cancel still shows while recording.
+- **Silence diagnostics on stop.** The recorder tracks the session's per-chunk peaks. A recording that is long enough but captured only digital silence (every chunk peak is exactly 0) ends with a "no microphone signal" message and is not transcribed; a session whose peak stays below −50 dBFS ends with a "voice too quiet" message and is not transcribed. Both keep the too-short tap guard unchanged, cancel the Host stream, and return to idle without a transcript insertion.
+
+### Voice text span (replaces the ghost overlay; not yet implemented)
+
+Design accepted; implementation pending. The ghost overlay (display-only, outside the document) is
+replaced by live text inside the document, so a draft in progress shows and persists real words.
+
+**Node.** A `VoiceTextNode extends TextNode` (mode "immutable" while live): drafts and markdown
+serialize it as plain text, so restored drafts contain ordinary text nodes only. Style while live:
+committed part `text-foreground-subtle`, tentative suffix italic `text-foreground-subtlest`
+(the tentative suffix stays a separate child text node updated independently).
+
+**State machine (per recording).**
+
+1. First preview update (streaming engines) or the final transcript (one-shot engines) inserts the
+   span at the caret; with no stored selection, at the end of the last paragraph.
+2. Every later preview update replaces the span's content in place, never appending elsewhere; the
+   caret stays at the span end only if the user had not moved it.
+3. `finalizeStream`/`transcribe` result replaces the span with normal text; an empty final removes
+   the span. Post-processing shows the existing processing phase before the rewrite lands.
+4. Escape/cancel (before any text): silent removal, existing behaviour. Cancel during processing:
+   the raw span text stays (matches the current discard-processing rule).
+5. User typing, pasting, or deleting while the span is live soft-finishes the recording (stop
+   capture, send tail+finalize for streams; one-shot models stop immediately). The final result
+   replaces ONLY the span's own committed prefix; user text before/after the span is untouched,
+   and a final that no longer starts with the span's last committed text is dropped (user edited
+   inside the span). Send while live: wait for the final (bounded by the stream finalize), then
+   send; switching session/unmount cancels the wait and keeps the span in the draft.
+
+**Undo.** All span updates merge into one history entry per recording (Lexical history merge tag);
+the finalize replacement joins that entry, so one Cmd/Z removes the whole dictation.
+
+**Ownership.** The editor owns the span node and its replacement operations; the hook still owns
+capture/phases and only emits previews/finals through the existing callbacks. The caret-geometry
+layer of VoiceGhostPreview (layout measuring, resize/scroll anchoring) is deleted together with
+the overlay; the Web Speech engine shares the same span path (it already emits the same preview
+shape).
+
+### Microphone permission guide
+
+- Before any capture, the hook checks the system-level permission through optional `IPlatformService` capabilities (`getMicrophoneAccessStatus`, `askMicrophoneAccess`); without them (Web remote, Linux) the previous `getUserMedia` failure path stays.
+- `not-determined` triggers the OS prompt; `denied`/`restricted` (or a declined prompt) opens a popover guide anchored to the voice button instead of recording. The guide never moves focus out of the editor.
+- Guide content: macOS offers "Re-authorize" (main-process `tccutil reset Microphone <own bundle id>`; dev builds skip tccutil) plus "Open System Settings"; Windows offers only the settings link; a still-denied record after a reset switches the guide to "Restart ZCode" (`RelaunchApp`), because TCC re-reads on next launch.
+- While the guide is open, regaining window focus re-checks the permission and closes the guide with a toast when it became granted — event-driven, no polling.
+- `getUserMedia` throwing `NotAllowedError` while the system reports granted (Windows "allow desktop apps" off) also opens the guide instead of the generic failure toast.
+- The digital-silence stop message carries an "Open sound settings" toast action where the platform can open one.
 
 ### Ghost preview
 
@@ -178,16 +225,18 @@ sequenceDiagram
 
 | Case       | Action                                                  | Expected result                                                                                                                                             |
 | ---------- | ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| VD-LIVE-01 | Start recording and speak                               | Composer level meter responds to microphone input; no raw waveform is stored or shown.                                                                      |
+| VD-LIVE-01 | Start recording and speak                               | The capsule waveform's bars track recent chunk peaks; no raw audio is stored or shown.                                                                      |
 | VD-LIVE-02 | Use a runtime-verified streaming model                  | Preview updates during recording; committed and tentative text are visually distinct and cannot be submitted as draft text.                                 |
 | VD-LIVE-03 | Stop a streaming recording                              | Stream finalizes; preview becomes one final insertion with no duplicate text.                                                                               |
 | VD-LIVE-04 | Cancel, blur, unmount, or fail during streaming         | Capture stops, preview disappears, existing draft remains intact, and the model stream lease is released.                                                   |
 | VD-LIVE-05 | Use an unsupported or unverified model                  | Existing one-shot transcription behavior remains available; no streaming UI is advertised.                                                                  |
 | VD-LIVE-06 | Edit the composer while a preview is visible            | User edits are preserved; final dictation text is inserted once according to the existing append behavior.                                                  |
 | VD-LIVE-07 | Start a second transcription while one stream is active | The service serializes or rejects it explicitly; no concurrent model use or silent audio loss occurs.                                                       |
-| VD-LIVE-08 | Start recording while composer toolbar is visible       | Stop button stays in its original position; the meter and Cancel cluster appears immediately to its left and does not overlay toolbar actions.              |
+| VD-LIVE-08 | Start recording while composer toolbar is visible       | Stop button stays in its original position; the capsule with waveform and Cancel appears immediately to its left and does not overlay toolbar actions.      |
 | VD-CLU-01  | Hover or click the toolbar cluster while recording      | Nothing overlays the toolbar: actions remain clickable and keep their positions; the cluster never covers the stop or send button.                          |
 | VD-CLU-02  | Click Cancel in the toolbar cluster while recording     | Cancel fires (same as VD-OUT-03); the editor keeps focus and the draft is unchanged.                                                                        |
+| VD-SIL-01  | Record with a muted/disallowed microphone long enough   | "No microphone signal" message; no transcription runs; the app returns to idle without inserting text.                                                      |
+| VD-SIL-02  | Record speech with the input far too quiet              | "Voice too quiet" message; no transcription runs; the app returns to idle without inserting text.                                                           |
 | VD-CLU-03  | Mousedown on the cluster while the editor has focus     | Editor focus and caret are kept (default prevented); the dictation shortcut still stops recording afterwards.                                               |
 | VD-GHO-01  | Stream a runtime-verified model; preview updates        | Committed and tentative text appear as grey ghost text at the caret, visually distinct; the layer is aria-hidden.                                           |
 | VD-GHO-02  | Ghost visible; press Enter, click Send, or undo         | The ghost is never submitted, never saved in the draft, and never added to undo history.                                                                    |

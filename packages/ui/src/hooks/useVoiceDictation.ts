@@ -8,6 +8,7 @@ import { postProcessOrRaw, readPostProcessSettings } from "@/lib/voicePostProces
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useServices } from "@/hooks/useServices.js";
 import { useSettings } from "@/hooks/useSettingService.js";
+import { useOptionalPlatform } from "@/hooks/usePlatform.js";
 import { useOpenVoiceDictationSettings } from "@/hooks/useOpenVoiceDictationSettings.js";
 import { useVoiceDictationShortcut } from "@/hooks/useVoiceDictationShortcut.js";
 import { useVoiceDictationEscapeCancel } from "@/hooks/useVoiceDictationEscapeCancel.js";
@@ -15,9 +16,11 @@ import { useVoiceDictationRecordingAudio } from "@/hooks/useVoiceDictationRecord
 import { logger } from "@/logger.js";
 import {
   VOICE_MIN_RECORDING_MS,
+  classifyRecordingSilence,
   concatFloat32Chunks,
   float32ToPcm16Le,
   samplesToMilliseconds,
+  type VoiceRecordingPeakStats,
 } from "@/lib/voiceDictationAudio.js";
 import { VoiceDictationRecorder } from "@/lib/voiceDictationRecorder.js";
 import {
@@ -26,6 +29,12 @@ import {
 } from "@/lib/voiceDictationSessionLease.js";
 
 export type VoiceDictationPhase = "idle" | "loading" | "recording" | "transcribing" | "processing";
+
+/** Receives every recorder chunk peak (0..1); used by the waveform, which re-renders on its own. */
+export type VoiceLevelListener = (peak: number) => void;
+
+/** Which microphone-permission guide the composer is showing (see specs/voice-dictation.md). */
+export type VoicePermissionGuidePhase = "denied" | "restart-required";
 
 /**
  * Backlog cap: about 30 seconds at 16 kHz mono. Under normal jitter the backlog stays far below
@@ -56,9 +65,12 @@ interface UseVoiceDictationOptions {
 export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceDictationOptions) {
   const { intl } = useZCodeIntl();
   const { voiceDictationService } = useServices();
+  const platform = useOptionalPlatform();
   const { settings } = useSettings();
   const voice = settings?.voiceDictation;
   const modelId = voice?.modelId ?? null;
+  // Per-model quantization choice; absent falls back to the catalog default inside the Host.
+  const quant = (modelId && voice?.quantByModel?.[modelId]) || undefined;
   const microphoneDeviceId = voice?.microphoneDeviceId ?? null;
   // One selected language is forced on the engine; none or several leave detection to the model.
   const language = resolveEngineLanguage(voice ?? {});
@@ -73,8 +85,12 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
   const openVoiceSettings = useOpenVoiceDictationSettings();
 
   const [phase, setPhase] = useState<VoiceDictationPhase>("idle");
-  const [level, setLevel] = useState(0);
   const [preview, setPreview] = useState<VoiceTranscriptionPreview | null>(null);
+  const [permissionGuide, setPermissionGuide] = useState<VoicePermissionGuidePhase | null>(null);
+  // Chunk peaks fan out to subscribers (the waveform) without React state, so level updates never
+  // re-render the composer; the same peaks feed the stop-time silence statistics.
+  const levelListenersRef = useRef(new Set<VoiceLevelListener>());
+  const peakStatsRef = useRef<VoiceRecordingPeakStats>({ chunks: 0, maxPeak: 0 });
   const [recorder] = useState(() => new VoiceDictationRecorder());
   const phaseRef = useRef<VoiceDictationPhase>("idle");
   const startedAtRef = useRef(0);
@@ -93,6 +109,9 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
   const heldBindingRef = useRef<string | null>(null);
   const onTranscriptRef = useRef(onTranscript);
   onTranscriptRef.current = onTranscript;
+  /** Latest platform capabilities for stable callbacks (same pattern as onTranscriptRef). */
+  const platformRef = useRef(platform);
+  platformRef.current = platform;
   /** Identifies this composer in the app-wide session lease; stable for the life of the hook. */
   const sessionOwnerRef = useRef<symbol>(Symbol("voice-dictation-composer"));
 
@@ -104,6 +123,54 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
       releaseVoiceDictationSession(sessionOwnerRef.current);
     }
     setPhase(next);
+  }, []);
+
+  /** Fan-out for recorder chunk peaks: subscribers update without composer re-renders. */
+  const subscribeLevel = useCallback((listener: VoiceLevelListener) => {
+    levelListenersRef.current.add(listener);
+    return () => {
+      levelListenersRef.current.delete(listener);
+    };
+  }, []);
+
+  const handleChunkPeak = useCallback((peak: number) => {
+    const stats = peakStatsRef.current;
+    stats.chunks += 1;
+    if (peak > stats.maxPeak) stats.maxPeak = peak;
+    for (const listener of levelListenersRef.current) listener(peak);
+  }, []);
+
+  /**
+   * System permission gate before any capture or Host call. Returns false when the permission
+   * guide replaced the recording attempt (denied state or a declined prompt). Without the
+   * platform capability (Web remote, Linux) recording keeps the getUserMedia failure path.
+   */
+  const gateMicrophonePermission = useCallback(async (): Promise<boolean> => {
+    const currentPlatform = platformRef.current;
+    const readStatus = currentPlatform?.getMicrophoneAccessStatus?.bind(currentPlatform);
+    if (!readStatus) return true;
+    try {
+      const status = await readStatus();
+      if (status === "not-determined") {
+        const ask = currentPlatform?.askMicrophoneAccess?.bind(currentPlatform);
+        if (!ask) return true;
+        if (!(await ask())) {
+          setPermissionGuide("denied");
+          logger.info("voice dictation start refused: microphone prompt declined");
+          return false;
+        }
+      } else if (status === "denied" || status === "restricted") {
+        setPermissionGuide("denied");
+        logger.info("voice dictation start refused: microphone permission denied");
+        return false;
+      }
+    } catch (error) {
+      // A failed status read must not block recording: getUserMedia still reports real failures.
+      logger.warn("voice dictation permission read failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return true;
   }, []);
 
   const cancelServiceStream = useCallback(
@@ -143,7 +210,6 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
   const abortRecording = useCallback(() => {
     recorder.cancel();
     void recordingAudio.releaseSystemMute();
-    setLevel(0);
     setPreview(null);
     updatePhase("idle");
   }, [recorder, recordingAudio, updatePhase]);
@@ -240,14 +306,19 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
     streamBacklogRef.current = [];
     streamFlushScheduledRef.current = false;
     streamQueueRef.current = Promise.resolve();
-    setLevel(0);
+    peakStatsRef.current = { chunks: 0, maxPeak: 0 };
     setPreview(null);
     updatePhase("loading");
     const pending = (async () => {
       let streamId: string | null;
       try {
+        if (!(await gateMicrophonePermission())) {
+          if (generation === startGenerationRef.current) updatePhase("idle");
+          return;
+        }
+        if (generation !== startGenerationRef.current) return;
         await applyIdleUnloadPreference(voiceDictationService, idleUnloadMinutes);
-        streamId = await voiceDictationService.beginStream({ modelId, language });
+        streamId = await voiceDictationService.beginStream({ modelId, quant, language });
       } catch (error) {
         logger.warn("voice dictation model stream initialization failed", {
           error: error instanceof Error ? error.message : String(error),
@@ -267,7 +338,7 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
       try {
         await recorder.start({
           deviceId: microphoneDeviceId,
-          onLevel: setLevel,
+          onLevel: handleChunkPeak,
           onChunk: enqueueStreamChunk,
           collectSamples: streamId === null,
         });
@@ -300,10 +371,27 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
         recorder.cancel();
         if (streamIdRef.current === streamId) streamIdRef.current = null;
         if (streamId) cancelServiceStream(streamId);
-        setLevel(0);
         setPreview(null);
         if (generation === startGenerationRef.current) {
           updatePhase("idle");
+          // NotAllowedError with a system-level grant is the Windows "allow desktop apps"
+          // case: the system privacy page is off while this app's own state says granted.
+          if (error instanceof DOMException && error.name === "NotAllowedError") {
+            const readStatus = platformRef.current?.getMicrophoneAccessStatus?.bind(
+              platformRef.current,
+            );
+            if (readStatus) {
+              try {
+                if ((await readStatus()) !== "granted") {
+                  setPermissionGuide("denied");
+                  logger.info("voice dictation start refused: getUserMedia denied by the system");
+                  return;
+                }
+              } catch {
+                // Fall through to the generic failure toast.
+              }
+            }
+          }
           logger.warn("voice dictation microphone unavailable", {
             error: error instanceof Error ? error.message : String(error),
           });
@@ -321,6 +409,7 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
     cancelServiceStream,
     enabled,
     enqueueStreamChunk,
+    gateMicrophonePermission,
     intl,
     idleUnloadMinutes,
     language,
@@ -328,6 +417,7 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
     modelId,
     muteWhileRecording,
     openVoiceSettings,
+    quant,
     recorder,
     recordingAudio,
     updatePhase,
@@ -377,10 +467,13 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
     if (!recorder.isRecording) return;
     const durationMs = Date.now() - startedAtRef.current;
     const samples = recorder.stop();
-    setLevel(0);
     // Release the system mute before the stop chime so the chime is not swallowed by the mute.
     recordingAudio.handleRecordingStopped();
     const streamId = streamIdRef.current;
+    // Silence diagnostics (VD-SIL-*): classified from the session's chunk peaks before any
+    // transcription runs, so a dead or unusably quiet input explains itself instead of producing
+    // an empty or hallucinated transcript.
+    const silence = classifyRecordingSilence(peakStatsRef.current);
     if (
       releasedWhileLoading ||
       durationMs < VOICE_MIN_RECORDING_MS ||
@@ -400,6 +493,31 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
       }
       return;
     }
+    if (silence !== "ok") {
+      streamIdRef.current = null;
+      if (streamId) cancelServiceStream(streamId);
+      setPreview(null);
+      updatePhase("idle");
+      // Digital silence is a permission/device problem: offer the sound settings page where the
+      // platform can open one (Desktop); quiet-but-real audio gets no settings shortcut.
+      const openSoundSettings = platformRef.current?.openSystemSettings?.bind(platformRef.current);
+      toast(
+        intl.formatMessage({
+          id:
+            silence === "digitalSilence"
+              ? "voiceDictation.silence.digital"
+              : "voiceDictation.silence.tooQuiet",
+        }),
+        silence === "digitalSilence" && openSoundSettings
+          ? {
+              actionLabel: intl.formatMessage({ id: "voiceDictation.silence.openSoundSettings" }),
+              onAction: () => void openSoundSettings("sound-input"),
+            }
+          : undefined,
+      );
+      logger.info("voice dictation stopped: captured audio was silent", { outcome: silence });
+      return;
+    }
     updatePhase("transcribing");
     try {
       let result;
@@ -414,6 +532,7 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
       } else {
         result = await voiceDictationService.transcribe({
           modelId: modelId ?? "",
+          quant,
           pcm: float32ToPcm16Le(samples),
           language,
         });
@@ -466,6 +585,7 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
     postProcessEnabled,
     postProcessPrompt,
     postProcessProvider,
+    quant,
     recorder,
     recordingAudio,
     updatePhase,
@@ -503,5 +623,58 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
   // Never leave a capture or a stream lease behind when the owning composer disappears.
   useEffect(() => tearDownRecording, [tearDownRecording]);
 
-  return { phase, level, preview, start, stop, cancel, toggle };
+  /** Runs the macOS "re-authorize" flow; the guide reacts to the returned outcome. */
+  const reauthorizeMicrophone = useCallback(async (): Promise<void> => {
+    const currentPlatform = platformRef.current;
+    const reset = currentPlatform?.resetMicrophoneAccess?.bind(currentPlatform);
+    if (!reset) return;
+    try {
+      const result = await reset();
+      if (result === "granted") {
+        setPermissionGuide(null);
+        toast(intl.formatMessage({ id: "voiceDictation.permission.grantedToast" }));
+      } else if (result === "restart-required") {
+        setPermissionGuide("restart-required");
+      }
+      // denied / failed: the guide keeps its current content (spec: a failed reset opens System
+      // Settings from the popover button, not from here).
+    } catch (error) {
+      logger.warn("voice dictation microphone re-authorization failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }, [intl]);
+
+  // While the guide is open, regaining window focus re-checks the permission: the user enabling
+  // it in System Settings closes the guide, event-driven rather than polled.
+  useEffect(() => {
+    if (permissionGuide === null) return;
+    const recheck = async () => {
+      const readStatus = platformRef.current?.getMicrophoneAccessStatus?.bind(platformRef.current);
+      if (!readStatus) return;
+      try {
+        if ((await readStatus()) === "granted") {
+          setPermissionGuide(null);
+          toast(intl.formatMessage({ id: "voiceDictation.permission.grantedToast" }));
+        }
+      } catch {
+        // The next focus event retries.
+      }
+    };
+    window.addEventListener("focus", recheck);
+    return () => window.removeEventListener("focus", recheck);
+  }, [intl, permissionGuide]);
+
+  return {
+    phase,
+    preview,
+    subscribeLevel,
+    permissionGuide,
+    reauthorizeMicrophone,
+    dismissPermissionGuide: useCallback(() => setPermissionGuide(null), []),
+    start,
+    stop,
+    cancel,
+    toggle,
+  };
 }

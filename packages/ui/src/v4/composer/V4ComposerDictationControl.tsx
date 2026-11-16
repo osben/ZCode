@@ -53,12 +53,14 @@ export function V4ComposerDictationControl({
   return (
     <V4ComposerVoiceButton
       phase={engine.phase}
-      level={engine.level}
+      subscribeLevel={engine.subscribeLevel}
       loadingLabelId={webRemote ? "voiceDictation.composer.starting" : undefined}
       disabled={disabled}
       onToggle={handleToggle}
       modelStatus={modelStatus}
       onCancel={engine.cancel}
+      permissionGuide={voiceDictation.permissionGuide}
+      onReauthorizeMicrophone={() => void voiceDictation.reauthorizeMicrophone()}
     />
   );
 }

@@ -41,7 +41,7 @@ overrides:
   electron-to-chromium: "1.5.452"
   react: "19.3.0"
   react-dom: "19.3.0"
-  koffi: "2.15.6"
+  koffi: "3.0.2"
   builder-util-runtime: "9.7.0"
   extract-zip>yauzl: "3.4.0"
 patchedDependencies:

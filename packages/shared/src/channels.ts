@@ -231,6 +231,14 @@ export const PlatformChannels = {
   GetAppWorktreesDir: "zcode:get-app-worktrees-dir",
   /** Renderer → Main: apply/release the system-wide output mute used while voice dictation records */
   SetDictationSystemMute: "zcode:set-dictation-system-mute",
+  /** Renderer → Main: read the system-level microphone permission state for voice dictation */
+  GetMicrophoneAccessStatus: "zcode:get-microphone-access-status",
+  /** Renderer → Main: trigger the OS microphone permission prompt (macOS only) */
+  AskMicrophoneAccess: "zcode:ask-microphone-access",
+  /** Renderer → Main: reset this app's own microphone TCC record and re-ask (macOS only) */
+  ResetMicrophoneAccess: "zcode:reset-microphone-access",
+  /** Renderer → Main: open a fixed system settings page (microphone privacy or sound input) */
+  OpenSystemSettings: "zcode:open-system-settings",
   /** Open the system multi-directory picker */
   SelectDirectories: "zcode:select-directories",
   /** Open the system file picker */
@@ -839,6 +847,22 @@ export interface PlatformChannelMap {
   };
   [PlatformChannels.SetDictationSystemMute]: {
     request: { active: boolean };
+    response: void;
+  };
+  [PlatformChannels.GetMicrophoneAccessStatus]: {
+    request: void;
+    response: import("./platform.js").MicrophoneAccessStatus;
+  };
+  [PlatformChannels.AskMicrophoneAccess]: {
+    request: void;
+    response: boolean;
+  };
+  [PlatformChannels.ResetMicrophoneAccess]: {
+    request: void;
+    response: import("./platform.js").MicrophoneResetResult;
+  };
+  [PlatformChannels.OpenSystemSettings]: {
+    request: { target: import("./platform.js").SystemSettingsTarget };
     response: void;
   };
   [PlatformChannels.SelectDirectories]: {

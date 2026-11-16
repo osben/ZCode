@@ -1,11 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button.js";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select.js";
 import { AudioLines, Globe2, HardDrive, LoaderCircle, Trash2 } from "lucide-react";
 import { SettingsBadge } from "@/settings/SettingsPageParts.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useConfirmDialog } from "@/hooks/useConfirmDialog.js";
 import {
   isLiveStreamingModel,
+  voiceModelQuantFile,
+  type VoiceModelState,
   type VoiceDictationRuntimeState,
   type VoiceModelListItem,
 } from "@zcode/services";
@@ -14,6 +23,10 @@ interface VoiceModelRowProps {
   item: VoiceModelListItem;
   selected: boolean;
   runtimeState: VoiceDictationRuntimeState;
+  /** Quantization the row acts on; omitted uses the descriptor's default. */
+  quant?: string;
+  /** Switches the model's quantization (a settings write); the picker is hidden when absent. */
+  onQuantChange?: (quant: string) => void;
   startingDownload?: boolean;
   pendingUse?: boolean;
   /** The best covering model for the selected languages (see recommendVoiceModel). */
@@ -55,6 +68,8 @@ export function VoiceModelRow({
   item,
   selected,
   runtimeState,
+  quant,
+  onQuantChange,
   startingDownload = false,
   pendingUse = false,
   recommended = false,
@@ -68,7 +83,11 @@ export function VoiceModelRow({
 }: VoiceModelRowProps) {
   const { intl } = useZCodeIntl();
   const confirmDialog = useConfirmDialog();
-  const { descriptor, state } = item;
+  const { descriptor, states } = item;
+  const selectedQuant = quant ?? descriptor.defaultQuant;
+  const quantIds = Object.keys(descriptor.quants);
+  const file = voiceModelQuantFile(descriptor, selectedQuant);
+  const state: VoiceModelState = states[selectedQuant] ?? { status: "not_downloaded" };
   const ready = state.status === "ready";
   const downloading = state.status === "downloading";
   const showDownloadProgress = downloading || startingDownload;
@@ -202,20 +221,27 @@ export function VoiceModelRow({
               {intl.formatMessage({ id: "voiceDictation.models.recommended" })}
             </SettingsBadge>
           ) : null}
+          {descriptor.curated ? (
+            <SettingsBadge>
+              {intl.formatMessage({ id: "voiceDictation.models.curated" })}
+            </SettingsBadge>
+          ) : null}
           {(downloading || startingDownload) && pendingUse ? (
             <SettingsBadge>
               {intl.formatMessage({ id: "voiceDictation.models.useWhenReady" })}
             </SettingsBadge>
           ) : null}
         </div>
-        <p className="mt-1 text-ui-base leading-6 text-foreground-subtle">
-          {descriptionMessageId
-            ? intl.formatMessage(
-                { id: descriptionMessageId },
-                { languages: descriptor.languages.length },
-              )
-            : descriptor.description}
-        </p>
+        {descriptionMessageId || descriptor.description ? (
+          <p className="mt-1 text-ui-base leading-6 text-foreground-subtle">
+            {descriptionMessageId
+              ? intl.formatMessage(
+                  { id: descriptionMessageId },
+                  { languages: descriptor.languages.length },
+                )
+              : descriptor.description}
+          </p>
+        ) : null}
         <LanguageChips
           languages={descriptor.languages}
           selected={selectedLanguages}
@@ -232,8 +258,8 @@ export function VoiceModelRow({
               { count: descriptor.languages.length },
             )}
           </span>
-          {/* The catalog flag is set only for models whose live stream was verified at runtime
-              (VoiceTranscriber picks the stream family from the loaded model), so it is safe to advertise. */}
+          {/* The catalog publishes the streaming capability and the runtime probes the loaded model
+              before opening a stream, so a wrong flag degrades to one-shot, never to a failure. */}
           {isLiveStreamingModel(descriptor) ? (
             <span className="inline-flex items-center gap-1.5">
               <AudioLines className="size-4" aria-hidden />
@@ -246,12 +272,40 @@ export function VoiceModelRow({
               { license: descriptor.license },
             )}
           </span>
+          {descriptor.parameters ? <span>{descriptor.parameters}</span> : null}
         </div>
 
         <div className="flex flex-wrap items-center justify-end gap-3">
+          {quantIds.length > 1 && onQuantChange && !showDownloadProgress ? (
+            <div className="pointer-events-auto">
+              <Select value={selectedQuant} onValueChange={onQuantChange}>
+                <SelectTrigger
+                  aria-label={intl.formatMessage({ id: "voiceDictation.models.quant" })}
+                  className="h-8 w-36"
+                  data-testid="voice-model-quant-select"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {quantIds.map((quantId) => {
+                    const quantFile = descriptor.quants[quantId]!;
+                    const quantReady = states[quantId]?.status === "ready";
+                    return (
+                      <SelectItem key={quantId} value={quantId}>
+                        {quantId} · {formatVoiceModelSize(quantFile.sizeBytes)}
+                        {quantReady
+                          ? ` · ${intl.formatMessage({ id: "voiceDictation.models.quantReady" })}`
+                          : ""}
+                      </SelectItem>
+                    );
+                  })}
+                </SelectContent>
+              </Select>
+            </div>
+          ) : null}
           <span className="inline-flex items-center gap-1.5 text-ui-base text-foreground-subtle">
             <HardDrive className="size-4" aria-hidden />
-            {formatVoiceModelSize(descriptor.sizeBytes)}
+            {formatVoiceModelSize(file.sizeBytes)}
           </span>
           <div className="pointer-events-auto">{control}</div>
         </div>

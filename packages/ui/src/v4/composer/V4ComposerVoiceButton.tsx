@@ -1,11 +1,25 @@
-import { memo } from "react";
+import { memo, useEffect, useState } from "react";
 import { LoaderCircle, Mic, Square, X } from "lucide-react";
-import { TID_V4_COMPOSER_VOICE_ENTRY } from "@zcode/shared";
+import { DesktopCommandIds, TID_V4_COMPOSER_VOICE_ENTRY } from "@zcode/shared";
 import { Button } from "@/components/ui/button.js";
+import {
+  Popover,
+  PopoverAnchor,
+  PopoverContent,
+  PopoverDescription,
+  PopoverHeader,
+  PopoverTitle,
+} from "@/components/ui/popover.js";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import { useOptionalPlatform } from "@/hooks/usePlatform.js";
 import { useShortcutCommandLabel } from "@/shortcuts/useShortcutBindings.js";
-import type { VoiceDictationPhase } from "@/hooks/useVoiceDictation.js";
+import type {
+  VoiceDictationPhase,
+  VoiceLevelListener,
+  VoicePermissionGuidePhase,
+} from "@/hooks/useVoiceDictation.js";
+import { peakToWaveformLevel } from "@/lib/voiceDictationAudio.js";
 import type { VoiceModelStatus } from "@/lib/voiceModelStatus.js";
 
 /** i18n id of the button label: the action the button performs in this phase. */
@@ -27,7 +41,8 @@ function phaseStatusId(phase: VoiceDictationPhase, loadingLabelId: string | unde
 
 interface V4ComposerVoiceButtonProps {
   phase: VoiceDictationPhase;
-  level: number;
+  /** Chunk-peak subscription for the waveform; updates re-render only the waveform component. */
+  subscribeLevel: (listener: VoiceLevelListener) => () => void;
   /** i18n id for the loading phase; desktop loads a model, the web engine only starts the recognizer. */
   loadingLabelId?: string;
   disabled?: boolean;
@@ -36,21 +51,132 @@ interface V4ComposerVoiceButtonProps {
   modelStatus?: VoiceModelStatus;
   /** Abandons the recording without transcribing; the Cancel button renders only when provided. */
   onCancel?: () => void;
+  /** Open microphone permission guide (null closes it); Desktop only. */
+  permissionGuide?: VoicePermissionGuidePhase | null;
+  /** Runs the macOS re-authorize flow; absent hides the Re-authorize button. */
+  onReauthorizeMicrophone?: () => void;
 }
+
+const WAVEFORM_BARS = 10;
+const SILENT_WAVE_LEVELS: readonly number[] = Array.from({ length: WAVEFORM_BARS }, () => 0);
+
+/**
+ * Rolling peak-history waveform (specs/voice-dictation.md): one bar per recorder chunk, the last
+ * WAVEFORM_BARS chunks visible, new data entering from the right. Bars map −50…−10 dBFS to 3–14 px.
+ * Owns the level state so composer re-renders never depend on audio cadence.
+ */
+const VoiceWaveform = memo(function VoiceWaveform({
+  subscribeLevel,
+}: {
+  subscribeLevel: (listener: VoiceLevelListener) => () => void;
+}) {
+  const [levels, setLevels] = useState<number[]>(SILENT_WAVE_LEVELS as number[]);
+  useEffect(
+    () =>
+      subscribeLevel((peak) =>
+        setLevels((previous) => [...previous.slice(1), peakToWaveformLevel(peak)]),
+      ),
+    [subscribeLevel],
+  );
+  return (
+    <span
+      aria-hidden
+      data-testid="voice-dictation-waveform"
+      data-voice-active-bars={levels.filter((level) => level > 0).length}
+      className="flex h-3.5 shrink-0 items-center gap-1"
+    >
+      {levels.map((level, index) => (
+        <span
+          key={index}
+          className="w-0.75 rounded-full bg-voice-input-wave transition-[height] duration-100 ease-out motion-reduce:transition-none"
+          style={{ height: `${3 + 11 * level}px` }}
+        />
+      ))}
+    </span>
+  );
+});
 
 /**
  * Voice input button inside the composer: click to start/stop recording (shares the same recording
- * state as the shortcut). While recording, the level meter and Cancel sit in a toolbar cluster to
+ * state as the shortcut). While recording, the peak-history waveform and Cancel sit in a capsule to
  * the left of the stop button. The transcript preview is drawn in the editor (ghost preview), not here.
  */
+/**
+ * Microphone permission guide anchored to the voice button (specs/voice-dictation.md). macOS can
+ * re-authorize (tccutil-backed) and relaunch; Windows only links to its settings page. Opening or
+ * closing the popover never moves focus out of the editor, matching the capsule's rule.
+ */
+function VoicePermissionGuideContent({
+  phase,
+  onReauthorize,
+}: {
+  phase: VoicePermissionGuidePhase;
+  onReauthorize?: () => void;
+}) {
+  const { intl } = useZCodeIntl();
+  const platform = useOptionalPlatform();
+  const mac = typeof navigator !== "undefined" && /mac/i.test(navigator.platform);
+  const restart = phase === "restart-required";
+  const bodyId = restart
+    ? "voiceDictation.permission.restart"
+    : mac
+      ? "voiceDictation.permission.macDenied"
+      : "voiceDictation.permission.windowsDenied";
+  return (
+    <PopoverContent
+      side="top"
+      align="end"
+      className="w-80 gap-3"
+      onOpenAutoFocus={(event) => event.preventDefault()}
+      data-testid="voice-permission-guide"
+      data-voice-permission-phase={phase}
+    >
+      <PopoverHeader>
+        <PopoverTitle>{intl.formatMessage({ id: "voiceDictation.permission.title" })}</PopoverTitle>
+        <PopoverDescription>{intl.formatMessage({ id: bodyId })}</PopoverDescription>
+      </PopoverHeader>
+      <div className="flex justify-end gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => void platform?.openSystemSettings?.("microphone-privacy")}
+        >
+          {intl.formatMessage({ id: "voiceDictation.permission.openSettings" })}
+        </Button>
+        {!restart && mac && onReauthorize ? (
+          <Button type="button" size="sm" onClick={onReauthorize}>
+            {intl.formatMessage({ id: "voiceDictation.permission.reauthorize" })}
+          </Button>
+        ) : null}
+        {restart ? (
+          <Button
+            type="button"
+            size="sm"
+            onClick={() =>
+              void platform
+                ?.executeDesktopCommand(DesktopCommandIds.RelaunchApp)
+                .catch(() => undefined)
+            }
+          >
+            {intl.formatMessage({ id: "voiceDictation.permission.relaunch" })}
+          </Button>
+        ) : null}
+      </div>
+    </PopoverContent>
+  );
+}
+
 function V4ComposerVoiceButtonImpl({
   phase,
-  level,
+  subscribeLevel,
   loadingLabelId,
   disabled,
   onToggle,
   modelStatus,
   onCancel,
+  permissionGuide = null,
+  onReauthorizeMicrophone,
 }: V4ComposerVoiceButtonProps) {
   const { intl } = useZCodeIntl();
   const shortcutLabel = useShortcutCommandLabel("voiceDictation");
@@ -69,106 +195,96 @@ function V4ComposerVoiceButtonImpl({
       ? intl.formatMessage({ id: "voiceDictation.composer.modelStatus.loading" })
       : null;
   const Icon = recording ? Square : busy ? LoaderCircle : Mic;
-  const levelPercent = Math.round(Math.max(0, Math.min(1, level)) * 100);
   // Persistent polite live region: announces phase changes even when focus is elsewhere
   // (e.g. while recording); it is not the ghost preview, so transcript words are never announced.
   const statusAnnouncement = intl.formatMessage({ id: phaseStatusId(phase, loadingLabelId) });
 
   return (
-    <div
-      className="relative inline-flex shrink-0 items-center"
-      data-testid="voice-dictation-control"
-    >
-      {recording ? (
-        // Toolbar cluster (VD-CLU-*): in the toolbar flow, never an overlay, so no covered actions.
-        // The mousedown default is prevented so pressing it never moves focus out of the editor,
-        // which the composer-scoped dictation shortcut depends on.
+    <Popover open={permissionGuide !== null}>
+      <PopoverAnchor asChild>
         <div
-          className="inline-flex shrink-0 items-center gap-1.5 pr-1 text-destructive animate-in fade-in duration-150 ease-out motion-reduce:animate-none"
-          data-testid="voice-dictation-cluster"
-          onMouseDown={(event) => event.preventDefault()}
+          className="relative inline-flex shrink-0 items-center"
+          data-testid="voice-dictation-control"
         >
-          <div
-            className="inline-flex h-6 shrink-0 items-center gap-0.5"
-            role="meter"
-            aria-label={intl.formatMessage({ id: "voiceDictation.composer.level" })}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={levelPercent}
-            data-testid="voice-dictation-level"
+          {recording ? (
+            // Recording capsule (VD-CLU-*): in the toolbar flow, never an overlay, so no covered actions.
+            // The mousedown default is prevented so pressing it never moves focus out of the editor,
+            // which the composer-scoped dictation shortcut depends on.
+            <div
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-voice-input-surface py-0.5 pl-3 pr-1 text-voice-input-wave animate-in fade-in slide-in-from-left-1 duration-200 ease-out motion-reduce:animate-none"
+              data-testid="voice-dictation-cluster"
+              onMouseDown={(event) => event.preventDefault()}
+            >
+              <VoiceWaveform subscribeLevel={subscribeLevel} />
+              {onCancel ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className="shrink-0 text-voice-input-wave hover:text-voice-input-wave"
+                  aria-label={intl.formatMessage({ id: "voiceDictation.composer.cancel" })}
+                  data-testid="voice-dictation-cancel"
+                  onClick={onCancel}
+                >
+                  <X aria-hidden />
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
+          <ControlHintTooltip
+            title={statusText ? `${label} · ${statusText}` : label}
+            shortcut={shortcutLabel || undefined}
           >
-            {[0, 1, 2, 3, 4, 5, 6].map((index) => {
-              const barLevel = Math.max(0.1, level - Math.abs(index - 3) * 0.055);
-              return (
-                <span
-                  key={index}
-                  className="w-0.5 rounded-full bg-current transition-[height] duration-100"
-                  style={{ height: `${Math.max(2, Math.round(barLevel * 20))}px` }}
-                />
-              );
-            })}
-          </div>
-          {onCancel ? (
             <Button
               type="button"
               variant="ghost"
-              size="icon-sm"
-              className="shrink-0"
-              aria-label={intl.formatMessage({ id: "voiceDictation.composer.cancel" })}
-              data-testid="voice-dictation-cancel"
-              onClick={onCancel}
+              size="icon-md"
+              data-testid={TID_V4_COMPOSER_VOICE_ENTRY}
+              data-voice-phase={phase}
+              aria-label={label}
+              aria-describedby={statusText ? "voice-model-status-text" : undefined}
+              aria-pressed={recording}
+              aria-disabled={busy || disabled || undefined}
+              className={recording ? "text-voice-input-wave" : undefined}
+              onClick={busy || disabled ? undefined : onToggle}
             >
-              <X aria-hidden />
+              <Icon
+                className={
+                  recording ? "size-3.5 fill-current" : busy ? "size-4 animate-spin" : "size-4"
+                }
+                aria-hidden
+              />
             </Button>
+          </ControlHintTooltip>
+          {statusDot ? (
+            <span
+              aria-hidden
+              data-testid="voice-model-status-dot"
+              data-status={statusDot}
+              className={`pointer-events-none absolute right-1 top-1 size-1.5 rounded-full ${
+                statusDot === "loading"
+                  ? "animate-pulse bg-warning motion-reduce:animate-none"
+                  : "bg-success"
+              }`}
+            />
           ) : null}
+          {statusText ? (
+            <span id="voice-model-status-text" className="sr-only">
+              {statusText}
+            </span>
+          ) : null}
+          <span className="sr-only" role="status" aria-live="polite">
+            {statusAnnouncement}
+          </span>
         </div>
-      ) : null}
-      <ControlHintTooltip
-        title={statusText ? `${label} · ${statusText}` : label}
-        shortcut={shortcutLabel || undefined}
-      >
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-md"
-          data-testid={TID_V4_COMPOSER_VOICE_ENTRY}
-          data-voice-phase={phase}
-          aria-label={label}
-          aria-describedby={statusText ? "voice-model-status-text" : undefined}
-          aria-pressed={recording}
-          aria-disabled={busy || disabled || undefined}
-          className={recording ? "text-destructive" : undefined}
-          onClick={busy || disabled ? undefined : onToggle}
-        >
-          <Icon
-            className={
-              recording ? "size-3.5 fill-current" : busy ? "size-4 animate-spin" : "size-4"
-            }
-            aria-hidden
-          />
-        </Button>
-      </ControlHintTooltip>
-      {statusDot ? (
-        <span
-          aria-hidden
-          data-testid="voice-model-status-dot"
-          data-status={statusDot}
-          className={`pointer-events-none absolute right-1 top-1 size-1.5 rounded-full ${
-            statusDot === "loading"
-              ? "animate-pulse bg-warning motion-reduce:animate-none"
-              : "bg-success"
-          }`}
+      </PopoverAnchor>
+      {permissionGuide !== null ? (
+        <VoicePermissionGuideContent
+          phase={permissionGuide}
+          onReauthorize={onReauthorizeMicrophone}
         />
       ) : null}
-      {statusText ? (
-        <span id="voice-model-status-text" className="sr-only">
-          {statusText}
-        </span>
-      ) : null}
-      <span className="sr-only" role="status" aria-live="polite">
-        {statusAnnouncement}
-      </span>
-    </div>
+    </Popover>
   );
 }
 

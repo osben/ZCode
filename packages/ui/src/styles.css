@@ -195,6 +195,9 @@ html[data-document-hidden] *::after {
   --color-background-alt: color-mix(in oklab, var(--color-neutral-100) 60%, transparent);
   --color-background-win-alt: var(--color-neutral-200);
   --color-brand: var(--color-sky-400);
+  /* Voice input recording capsule (specs/voice-dictation.md): soft sky so recording does not read as an error. */
+  --color-voice-input-surface: var(--color-sky-100);
+  --color-voice-input-wave: var(--color-sky-600);
   --color-resize-handle: var(--color-sky-500);
   --color-icon-blue: var(--color-terminal-bright-blue);
   --color-icon-purple: var(--color-terminal-bright-magenta);
@@ -392,6 +395,8 @@ html[data-document-hidden] *::after {
   --color-background-alt: color-mix(in oklab, var(--color-neutral-800) 60%, transparent);
   --color-background-win-alt: var(--color-neutral-800);
   --color-brand: var(--color-sky-500);
+  --color-voice-input-surface: var(--color-sky-950);
+  --color-voice-input-wave: var(--color-sky-300);
   --color-resize-handle: var(--color-sky-400);
   --color-trajectory-user: #60a5fa;
   --color-trajectory-assistant: #2dd4bf;

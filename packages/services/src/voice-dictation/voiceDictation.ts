@@ -10,11 +10,14 @@ export type VoiceModelState =
 
 export interface VoiceModelListItem {
   descriptor: VoiceModelDescriptor;
-  state: VoiceModelState;
+  /** Per-quantization state, keyed by quant id (e.g. `Q8_0`). */
+  states: Readonly<Record<string, VoiceModelState>>;
 }
 
 export interface VoiceTranscriptionRequest {
   modelId: string;
+  /** Quantization to load; omitted uses the descriptor's default. */
+  quant?: string;
   /** 16 kHz mono PCM16 little-endian bytes. */
   pcm: Uint8Array;
   /** Omitted or `auto` means the model detects the language automatically. */
@@ -33,11 +36,15 @@ export interface VoiceTranscriptionPreview {
 
 export interface VoiceStreamRequest {
   modelId: string;
+  /** Quantization to load; omitted uses the descriptor's default. */
+  quant?: string;
   language?: string;
 }
 
 export interface VoiceWarmUpRequest {
   modelId: string;
+  /** Quantization to load; omitted uses the descriptor's default. */
+  quant?: string;
 }
 
 export type VoicePostProcessProvider = "apple-fm";
@@ -89,9 +96,9 @@ export interface IVoiceDictationService {
   getPostProcessAvailability(): Promise<VoicePostProcessAvailability>;
   /** Rewrites a transcript with the provider; rejects on any failure so the caller can fall back to the raw text. */
   postProcess(request: VoicePostProcessRequest): Promise<VoicePostProcessResponse>;
-  /** Download progress is read via listModels()'s downloading state; repeated calls for the same model share one task. */
-  downloadModel(modelId: string): Promise<void>;
-  cancelDownload(modelId: string): Promise<void>;
+  /** Download progress is read via listModels()'s downloading state; repeated calls for the same model quantization share one task. */
+  downloadModel(modelId: string, quant?: string): Promise<void>;
+  cancelDownload(modelId: string, quant?: string): Promise<void>;
   removeModel(modelId: string): Promise<void>;
   transcribe(request: VoiceTranscriptionRequest): Promise<VoiceTranscriptionResponse>;
   /** Starts a supported local stream, or returns null when the loaded model lacks a compatible stream slot. */

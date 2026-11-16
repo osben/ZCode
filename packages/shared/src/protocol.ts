@@ -267,6 +267,11 @@ export interface VoiceDictationSettings {
    * when present; exactly one entry is forced on the engine, several leave detection to the model.
    */
   languages?: string[];
+  /**
+   * Per-model quantization choice (model id → quant id such as `Q8_0`); a missing entry uses the
+   * catalog default for that model.
+   */
+  quantByModel?: Record<string, string>;
   /** true: hold the shortcut to record, release to transcribe; false: press once to start, press again to stop. */
   pushToTalk?: boolean;
   /** Minutes an idle model waits in memory before being unloaded automatically. */

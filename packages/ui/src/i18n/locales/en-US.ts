@@ -8714,6 +8714,9 @@ const enUS: Record<string, string> = {
   "voiceDictation.models.languages.showFewer": "Show fewer languages",
   "voiceDictation.models.streaming": "Streaming",
   "voiceDictation.models.license": "License: {license}",
+  "voiceDictation.models.curated": "Handy pick",
+  "voiceDictation.models.quant": "Quantization",
+  "voiceDictation.models.quantReady": "downloaded",
   "voiceDictation.models.download": "Download",
   "voiceDictation.models.cancel": "Cancel",
   "voiceDictation.models.use": "Use",
@@ -8740,6 +8743,22 @@ const enUS: Record<string, string> = {
     "Choose a transcription model in Settings → Voice dictation first.",
   "voiceDictation.openSettings": "Open settings",
   "voiceDictation.tooShort": "Recording too short. Keep recording until you finish speaking.",
+  "voiceDictation.silence.digital":
+    "No microphone signal was captured. Check the microphone permission or the selected input device.",
+  "voiceDictation.silence.tooQuiet":
+    "No voice detected. The microphone may be muted or too far away.",
+  "voiceDictation.silence.openSoundSettings": "Open sound settings",
+  "voiceDictation.permission.title": "Microphone access needed",
+  "voiceDictation.permission.macDenied":
+    "Click Re-authorize and choose Allow in the system prompt. If ZCode is missing from the list, use Open System Settings.",
+  "voiceDictation.permission.windowsDenied":
+    'Enable both "Microphone access" and "Allow desktop apps to access your microphone" in System Settings.',
+  "voiceDictation.permission.restart":
+    "ZCode needs to restart to pick up the new microphone permission.",
+  "voiceDictation.permission.openSettings": "Open System Settings",
+  "voiceDictation.permission.reauthorize": "Re-authorize",
+  "voiceDictation.permission.relaunch": "Restart ZCode",
+  "voiceDictation.permission.grantedToast": "Microphone access enabled.",
   "voiceDictation.stillLoading":
     "The speech model was still loading. Start speaking once recording begins.",
   "voiceDictation.sessionBusyInOtherComposer":

@@ -3,9 +3,12 @@ import test from "node:test";
 import { getDefaultShortcutBindings, SHORTCUT_COMMANDS } from "@zcode/shared";
 import {
   VOICE_SAMPLE_RATE,
+  VOICE_WAVE_SILENCE_PEAK,
+  classifyRecordingSilence,
   concatFloat32Chunks,
   float32ToPcm16Le,
   peakLevel,
+  peakToWaveformLevel,
   samplesToMilliseconds,
 } from "../src/lib/voiceDictationAudio.js";
 import { isVoiceShortcutReleased } from "../src/lib/voiceDictationShortcut.js";
@@ -97,3 +100,28 @@ function expectDeviceIds(devices: MediaDeviceInfo[], expected: string[]) {
     expected,
   );
 }
+
+test("classifyRecordingSilence separates dead input, quiet input, and usable audio (VD-SIL-*)", () => {
+  // Digital silence: every chunk peak exactly zero means the microphone delivered no signal.
+  assert.equal(classifyRecordingSilence({ chunks: 4, maxPeak: 0 }), "digitalSilence");
+  // Real but unusably quiet: below -50 dBFS across the whole session.
+  assert.equal(
+    classifyRecordingSilence({ chunks: 4, maxPeak: VOICE_WAVE_SILENCE_PEAK / 2 }),
+    "tooQuiet",
+  );
+  // The -50 dBFS boundary itself already counts as audible.
+  assert.equal(classifyRecordingSilence({ chunks: 4, maxPeak: VOICE_WAVE_SILENCE_PEAK }), "ok");
+  assert.equal(classifyRecordingSilence({ chunks: 4, maxPeak: 0.4 }), "ok");
+  // No chunk observed (stop before the first callback) cannot be judged as silence.
+  assert.equal(classifyRecordingSilence({ chunks: 0, maxPeak: 0 }), "ok");
+});
+
+test("peakToWaveformLevel maps chunk peaks over the -50..-10 dBFS waveform range", () => {
+  assert.equal(peakToWaveformLevel(0), 0);
+  // -50 dBFS is the silence floor, -10 dBFS and above saturate.
+  assert.equal(peakToWaveformLevel(VOICE_WAVE_SILENCE_PEAK), 0);
+  assert.equal(peakToWaveformLevel(1), 1);
+  assert.equal(peakToWaveformLevel(2), 1);
+  // Halfway in dB: -30 dBFS maps to 0.5 (within float tolerance).
+  assert.ok(Math.abs(peakToWaveformLevel(10 ** (-30 / 20)) - 0.5) < 1e-9);
+});

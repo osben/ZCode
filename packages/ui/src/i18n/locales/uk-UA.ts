@@ -7360,6 +7360,9 @@ const ukUA: Record<string, string> = {
   "voiceDictation.models.languages.showFewer": "Показати менше мов",
   "voiceDictation.models.streaming": "Потокова",
   "voiceDictation.models.license": "Ліцензія: {license}",
+  "voiceDictation.models.curated": "Вибір Handy",
+  "voiceDictation.models.quant": "Квантизація",
+  "voiceDictation.models.quantReady": "завантажено",
   "voiceDictation.models.download": "Завантажити",
   "voiceDictation.models.cancel": "Скасувати",
   "voiceDictation.models.use": "Використовувати",
@@ -7386,6 +7389,22 @@ const ukUA: Record<string, string> = {
     "Спочатку виберіть модель розпізнавання в Налаштуваннях → Голосове введення.",
   "voiceDictation.openSettings": "Відкрити налаштування",
   "voiceDictation.tooShort": "Запис закороткий. Записуйте, доки не закінчите говорити.",
+  "voiceDictation.silence.digital":
+    "Мікрофон не дав сигналу. Перевірте дозвіл на мікрофон або вибраний пристрій введення.",
+  "voiceDictation.silence.tooQuiet":
+    "Голос не розпізнано. Мікрофон може бути вимкнено або він занадто далеко.",
+  "voiceDictation.silence.openSoundSettings": "Відкрити налаштування звуку",
+  "voiceDictation.permission.title": "Потрібен доступ до мікрофона",
+  "voiceDictation.permission.macDenied":
+    "Натисніть «Повторно авторизувати» та дозвольте в системному запиті. Якщо ZCode немає в списку — відкрийте системні налаштування.",
+  "voiceDictation.permission.windowsDenied":
+    "У налаштуваннях системи увімкніть і «Доступ до мікрофона», і «Дозволити програмам робочого столу доступ до мікрофона».",
+  "voiceDictation.permission.restart":
+    "ZCode потрібно перезапустити, щоб застосувати новий дозвіл на мікрофон.",
+  "voiceDictation.permission.openSettings": "Відкрити системні налаштування",
+  "voiceDictation.permission.reauthorize": "Повторно авторизувати",
+  "voiceDictation.permission.relaunch": "Перезапустити ZCode",
+  "voiceDictation.permission.grantedToast": "Доступ до мікрофона увімкнено.",
   "voiceDictation.stillLoading":
     "Модель розпізнавання ще завантажувалась. Говоріть, коли почнеться запис.",
   "voiceDictation.sessionBusyInOtherComposer":

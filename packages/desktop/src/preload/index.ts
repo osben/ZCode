@@ -322,6 +322,14 @@ contextBridge.exposeInMainWorld("zcode", {
     ipcRenderer.invoke(PlatformChannels.GetAppWorktreesDir),
   setDictationSystemMute: (active: boolean): Promise<void> =>
     ipcRenderer.invoke(PlatformChannels.SetDictationSystemMute, { active }),
+  getMicrophoneAccessStatus: (): Promise<import("@zcode/shared").MicrophoneAccessStatus> =>
+    ipcRenderer.invoke(PlatformChannels.GetMicrophoneAccessStatus),
+  askMicrophoneAccess: (): Promise<boolean> =>
+    ipcRenderer.invoke(PlatformChannels.AskMicrophoneAccess),
+  resetMicrophoneAccess: (): Promise<import("@zcode/shared").MicrophoneResetResult> =>
+    ipcRenderer.invoke(PlatformChannels.ResetMicrophoneAccess),
+  openSystemSettings: (target: import("@zcode/shared").SystemSettingsTarget): Promise<void> =>
+    ipcRenderer.invoke(PlatformChannels.OpenSystemSettings, { target }),
   startWebRemoteControl: (context: WebRemoteControlContext) =>
     ipcRenderer.invoke(PlatformChannels.StartWebRemoteControl, context),
   stopWebRemoteControl: (): Promise<void> =>

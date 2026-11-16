@@ -33,6 +33,16 @@ export function createDesktopPlatform(options: {
           setDictationSystemMute: (active: boolean) => window.zcode.setDictationSystemMute!(active),
         }
       : {}),
+    ...(window.zcode.getMicrophoneAccessStatus
+      ? {
+          getMicrophoneAccessStatus: () => window.zcode.getMicrophoneAccessStatus!(),
+          askMicrophoneAccess: () => window.zcode.askMicrophoneAccess?.() ?? Promise.resolve(false),
+          resetMicrophoneAccess: () =>
+            window.zcode.resetMicrophoneAccess?.() ?? Promise.resolve("failed"),
+          openSystemSettings: (target: import("@zcode/shared").SystemSettingsTarget) =>
+            window.zcode.openSystemSettings?.(target) ?? Promise.resolve(),
+        }
+      : {}),
     materializeWorkflowArtifactFile: (payload) =>
       window.zcode.materializeWorkflowArtifactFile(payload),
     onRemoteConnectionLog: (handler) => window.zcode.onRemoteConnectionLog(handler),

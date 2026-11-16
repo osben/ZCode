@@ -1335,6 +1335,18 @@ modules:
     layers:
       adapters: .
     owner: cli
+  # desktop-microphone-access：由 architecture:adopt 登记
+  - id: desktop-microphone-access
+    roots:
+      - packages/desktop/src/main/microphone-access
+    managed: true
+    requires:
+      - shared
+    publicEntrypoints:
+      - packages/desktop/src/main/microphone-access/index.ts
+      - packages/desktop/src/main/microphone-access/contract.ts
+    layers:
+      adapters: .
 
 global:
   # 临时时间戳（2026-09-10）：unmanaged-new-file 只约束此日期之后首次入库的文件。

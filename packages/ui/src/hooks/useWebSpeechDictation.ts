@@ -133,6 +133,21 @@ export function useWebSpeechDictation({ enabled, onTranscript }: UseWebSpeechDic
     [engine],
   );
 
-  // SpeechRecognition exposes no audio level; 0 keeps the shared button's meter at its baseline.
-  return { supported, phase, level: 0, preview, start, stop, cancel, toggle };
+  // SpeechRecognition exposes no audio level, so no subscriber is ever notified: the shared
+  // waveform stays at its baseline dots for the whole web remote session.
+  const subscribeLevel = useCallback(() => () => undefined, []);
+  // The browser engine has no system permission guide; its failures surface as toasts.
+  const reauthorizeMicrophone = useCallback(async () => undefined, []);
+  return {
+    supported,
+    phase,
+    preview,
+    subscribeLevel,
+    permissionGuide: null,
+    reauthorizeMicrophone,
+    start,
+    stop,
+    cancel,
+    toggle,
+  };
 }

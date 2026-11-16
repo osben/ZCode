@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { createElement } from "react";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip.js";
 
@@ -16,37 +16,68 @@ import { V4ComposerVoiceButton } from "@/v4/composer/V4ComposerVoiceButton.js";
 
 afterEach(cleanup);
 
+/** A level subscription the test controls: emits nothing until the test pushes peaks. */
+function manualLevelSubscription() {
+  let listener: ((peak: number) => void) | undefined;
+  return {
+    subscribeLevel: (callback: (peak: number) => void) => {
+      listener = callback;
+      return () => {
+        listener = undefined;
+      };
+    },
+    emit: (peak: number) => listener?.(peak),
+  };
+}
+
+const silentSubscription = () => () => undefined;
+
 describe("V4ComposerVoiceButton toolbar cluster", () => {
-  it("shows the microphone level in the toolbar cluster; the transcript preview is not rendered here (VD-LIVE-01, VD-GHO-01)", () => {
+  it("shows the peak-history waveform in the capsule; the transcript preview is not rendered here (VD-LIVE-01, VD-GHO-01)", () => {
+    const level = manualLevelSubscription();
     render(
       createElement(
         TooltipProvider,
         null,
         createElement(V4ComposerVoiceButton, {
           phase: "recording",
-          level: 0.6,
+          subscribeLevel: level.subscribeLevel,
           onToggle: () => undefined,
         }),
       ),
     );
 
-    expect(screen.getByRole("meter").getAttribute("aria-valuenow")).toBe("60");
+    // Silent start: all bars rest at the 3 px floor and none counts as active.
+    const waveform = screen.getByTestId("voice-dictation-waveform");
+    expect(waveform.getAttribute("aria-hidden")).toBe("true");
+    expect(waveform.getAttribute("data-voice-active-bars")).toBe("0");
+
+    // Audible peaks light bars one per chunk; silence afterwards adds no active bar.
+    act(() => {
+      level.emit(0.5);
+      level.emit(0.5);
+      level.emit(0);
+    });
+    expect(
+      screen.getByTestId("voice-dictation-waveform").getAttribute("data-voice-active-bars"),
+    ).toBe("2");
+
     // The ghost preview lives in the editor layer; the button must never render transcript text.
     expect(screen.queryByTestId("voice-dictation-preview")).toBeNull();
-    // Only the persistent live region is a status; the cluster adds no second announcement.
+    // Only the persistent live region is a status; the capsule adds no second announcement.
     expect(screen.getAllByRole("status").length).toBe(1);
     expect(screen.getByRole("status").textContent).toBe("voiceDictation.composer.listening");
     expect(screen.queryByRole("textbox")).toBeNull();
   });
 
-  it("does not render an overlay: the cluster is in flow and never absolutely positioned (VD-CLU-01)", () => {
+  it("does not render an overlay: the capsule is in flow and never absolutely positioned (VD-CLU-01)", () => {
     render(
       createElement(
         TooltipProvider,
         null,
         createElement(V4ComposerVoiceButton, {
           phase: "recording",
-          level: 0.2,
+          subscribeLevel: silentSubscription,
           onToggle: () => undefined,
           onCancel: () => undefined,
         }),
@@ -56,30 +87,31 @@ describe("V4ComposerVoiceButton toolbar cluster", () => {
     expect(cluster.className).not.toContain("absolute");
     expect(cluster.className).not.toContain("pointer-events-auto");
     expect(cluster.className).not.toContain("w-56");
-    // The stop/mic button is a sibling of the cluster, not inside it.
+    expect(cluster.className).toContain("bg-voice-input-surface");
+    // The stop/mic button is a sibling of the capsule, not inside it.
     expect(screen.getByTestId("v4-composer-voice-entry").contains(cluster)).toBe(false);
   });
 
-  it("hides the level meter and cluster after recording stops", () => {
+  it("hides the waveform and capsule after recording stops", () => {
     render(
       createElement(
         TooltipProvider,
         null,
         createElement(V4ComposerVoiceButton, {
           phase: "idle",
-          level: 0,
+          subscribeLevel: silentSubscription,
           onToggle: () => undefined,
         }),
       ),
     );
 
-    expect(screen.queryByRole("meter")).toBeNull();
+    expect(screen.queryByTestId("voice-dictation-waveform")).toBeNull();
     expect(screen.queryByTestId("voice-dictation-cluster")).toBeNull();
     // Постоянный live region объявляет и не-Recording фазы.
     expect(screen.getByRole("status").textContent).toBe("voiceDictation.composer.status.idle");
   });
 
-  it("offers a clickable Cancel in the cluster only when a handler is given (VD-CLU-02)", () => {
+  it("offers a clickable Cancel in the capsule only when a handler is given (VD-CLU-02)", () => {
     const onCancel = vi.fn();
     const renderCluster = (handler?: () => void) =>
       render(
@@ -88,7 +120,7 @@ describe("V4ComposerVoiceButton toolbar cluster", () => {
           null,
           createElement(V4ComposerVoiceButton, {
             phase: "recording",
-            level: 0.2,
+            subscribeLevel: silentSubscription,
             onToggle: () => undefined,
             onCancel: handler,
           }),
@@ -106,7 +138,7 @@ describe("V4ComposerVoiceButton toolbar cluster", () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps editor focus when the cluster is pressed (VD-CLU-03)", () => {
+  it("keeps editor focus when the capsule is pressed (VD-CLU-03)", () => {
     render(
       createElement(
         TooltipProvider,
@@ -117,7 +149,7 @@ describe("V4ComposerVoiceButton toolbar cluster", () => {
           createElement("textarea", { "data-testid": "editor-stub" }),
           createElement(V4ComposerVoiceButton, {
             phase: "recording",
-            level: 0.2,
+            subscribeLevel: silentSubscription,
             onToggle: () => undefined,
             onCancel: () => undefined,
           }),
@@ -134,7 +166,7 @@ describe("V4ComposerVoiceButton toolbar cluster", () => {
     expect(notPrevented).toBe(false);
     expect(document.activeElement).toBe(editor);
 
-    // The cluster is passive status UI: it must not become a focus target itself.
+    // The capsule is passive status UI: it must not become a focus target itself.
     expect(cluster.hasAttribute("tabindex")).toBe(false);
   });
 
@@ -145,7 +177,7 @@ describe("V4ComposerVoiceButton toolbar cluster", () => {
         null,
         createElement(V4ComposerVoiceButton, {
           phase,
-          level: 0,
+          subscribeLevel: silentSubscription,
           modelStatus: modelStatus as never,
           onToggle: () => undefined,
         }),
@@ -201,6 +233,41 @@ describe("V4ComposerVoiceButton toolbar cluster", () => {
     }
   });
 
+  it("renders the microphone permission guide instead of recording when permissionGuide is set", () => {
+    const renderGuide = (phase: "denied" | "restart-required") =>
+      render(
+        createElement(
+          TooltipProvider,
+          null,
+          createElement(V4ComposerVoiceButton, {
+            phase: "idle",
+            subscribeLevel: silentSubscription,
+            onToggle: () => undefined,
+            permissionGuide: phase,
+            onReauthorizeMicrophone: () => undefined,
+          }),
+        ),
+      );
+
+    // jsdom reports no Mac platform, so the denied guide shows the Windows copy without
+    // Re-authorize; Open System Settings is always available.
+    renderGuide("denied");
+    const guide = screen.getByTestId("voice-permission-guide");
+    expect(guide.getAttribute("data-voice-permission-phase")).toBe("denied");
+    expect(screen.getByText("voiceDictation.permission.windowsDenied")).toBeTruthy();
+    expect(screen.getByText("voiceDictation.permission.openSettings")).toBeTruthy();
+    expect(screen.queryByText("voiceDictation.permission.reauthorize")).toBeNull();
+    cleanup();
+
+    // Restart-required swaps the copy and offers the relaunch action instead.
+    renderGuide("restart-required");
+    expect(
+      screen.getByTestId("voice-permission-guide").getAttribute("data-voice-permission-phase"),
+    ).toBe("restart-required");
+    expect(screen.getByText("voiceDictation.permission.restart")).toBeTruthy();
+    expect(screen.getByText("voiceDictation.permission.relaunch")).toBeTruthy();
+  });
+
   it("shows a busy, non-clickable state labelled Processing while the transcript is post-processed", () => {
     const onToggle = vi.fn();
     render(
@@ -209,7 +276,7 @@ describe("V4ComposerVoiceButton toolbar cluster", () => {
         null,
         createElement(V4ComposerVoiceButton, {
           phase: "processing",
-          level: 0,
+          subscribeLevel: silentSubscription,
           onToggle,
         }),
       ),

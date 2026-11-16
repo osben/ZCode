@@ -62,6 +62,8 @@ export {
   resolveEngineLanguage,
   filterVoiceModels,
   isLiveStreamingModel,
+  isVoiceModelDownloading,
+  isVoiceModelReady,
   languageSettingsPatch,
   missingVoiceLanguages,
   recommendVoiceModel,
@@ -70,6 +72,11 @@ export {
   toNativeLanguage,
   type VoiceModelFilter,
 } from "./voice-dictation/voiceModelLanguages.js";
+export {
+  voiceModelQuantFile,
+  type VoiceModelDescriptor,
+  type VoiceModelQuantFile,
+} from "./voice-dictation/voiceModelCatalog.js";
 export {
   collectServiceMemoryDiagnostics,
   memoryDiagnosticsRegistry,

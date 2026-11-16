@@ -31,17 +31,26 @@ const firstModel: VoiceModelListItem = {
     license: "mit",
     huggingFaceRepo: "owner/model-one",
     revision: "abc123",
-    fileName: "model-one.gguf",
-    sizeBytes: 10,
-    sha256: "test",
+    minEngine: "0.2.4",
+    defaultQuant: "Q8_0",
+    quants: {
+      Q8_0: { fileName: "model-one.gguf", sizeBytes: 10, sha256: "test" },
+      Q4_K_M: { fileName: "model-one-Q4_K_M.gguf", sizeBytes: 6, sha256: "test" },
+    },
   },
-  state: { status: "ready", path: "/models/model-one.gguf", sizeBytes: 10, source: "zcode" },
+  states: {
+    Q8_0: { status: "ready", path: "/models/model-one.gguf", sizeBytes: 10, source: "zcode" },
+    Q4_K_M: { status: "not_downloaded" },
+  },
 };
 
 const secondModel: VoiceModelListItem = {
   ...firstModel,
   descriptor: { ...firstModel.descriptor, id: "model-two", name: "Model Two" },
-  state: { status: "ready", path: "/models/model-two.gguf", sizeBytes: 10, source: "zcode" },
+  states: {
+    Q8_0: { status: "ready", path: "/models/model-two.gguf", sizeBytes: 10, source: "zcode" },
+    Q4_K_M: { status: "not_downloaded" },
+  },
 };
 
 function renderRows(runtimeState: VoiceDictationRuntimeState) {
@@ -104,7 +113,10 @@ function renderDownloadingRow(downloadedBytes: number, totalBytes = 1000, onCanc
       createElement(VoiceModelRow, {
         item: {
           ...firstModel,
-          state: { status: "downloading", downloadedBytes: bytes, totalBytes },
+          states: {
+            Q8_0: { status: "downloading", downloadedBytes: bytes, totalBytes },
+            Q4_K_M: { status: "not_downloaded" },
+          },
         },
         selected: false,
         runtimeState: { loadedModelId: null, activeModelId: null, activePhase: null },
@@ -240,7 +252,8 @@ describe("VoiceModelRow model actions", () => {
     expect(untranslated).toEqual([]);
   });
 
-  it("localizes catalog descriptions and advertises streaming only for models flagged as runtime-verified", () => {
+  it("localizes catalog descriptions and advertises streaming only for catalog-flagged models", () => {
+    const quantFile = { fileName: "model.gguf", sizeBytes: 10, sha256: "test" };
     const parakeetModel: VoiceModelListItem = {
       descriptor: {
         id: "parakeet-unified-en-0.6b",
@@ -252,13 +265,15 @@ describe("VoiceModelRow model actions", () => {
         license: "cc-by-4.0",
         huggingFaceRepo: "owner/parakeet",
         revision: "rev1",
-        fileName: "parakeet.gguf",
-        sizeBytes: 10,
-        sha256: "test",
+        minEngine: "0.2.4",
+        defaultQuant: "Q8_0",
+        quants: { Q8_0: quantFile },
       },
-      state: { status: "ready", path: "/models/parakeet.gguf", sizeBytes: 10, source: "zcode" },
+      states: {
+        Q8_0: { status: "ready", path: "/models/parakeet.gguf", sizeBytes: 10, source: "zcode" },
+      },
     };
-    // A model not verified to stream must not show the badge, whatever its family.
+    // A model the catalog does not flag as streaming must not show the badge, whatever its family.
     const nemotronModel: VoiceModelListItem = {
       ...parakeetModel,
       descriptor: {
@@ -377,17 +392,104 @@ describe("VoiceModelRow languages and recommendation", () => {
   });
 });
 
-describe("model descriptions are localized for every catalog model", () => {
-  it("maps each catalog id to a message that exists in every locale", () => {
-    for (const { id } of VOICE_MODEL_CATALOG) {
-      const messageId = MODEL_DESCRIPTION_MESSAGE_IDS[id];
-      expect(messageId, `${id} has no localized description`).toBeTruthy();
+describe("model descriptions are localized for the models we translate", () => {
+  /** Models that predate the Handy catalog refresh keep localized descriptions (VD-11). */
+  const LEGACY_MODEL_IDS = [
+    "whisper-tiny",
+    "whisper-base",
+    "whisper-small",
+    "whisper-medium",
+    "whisper-large-v3",
+    "whisper-large-v3-turbo",
+    "parakeet-unified-en-0.6b",
+    "parakeet-tdt-0.6b-v3",
+    "canary-180m-flash",
+    "canary-1b-v2",
+    "nemotron-speech-streaming-en-0.6b",
+    "nemotron-3.5-asr-streaming-0.6b",
+    "gigaam-v3-e2e-rnnt",
+  ];
+
+  it("maps each translated id to a message that exists in every locale", () => {
+    for (const [id, messageId] of Object.entries(MODEL_DESCRIPTION_MESSAGE_IDS)) {
+      expect(messageId, `${id} has no message id`).toBeTruthy();
       for (const catalog of [enUS, ukUA]) {
-        expect(
-          (catalog as Record<string, string>)[messageId!],
-          `${id} / ${messageId}`,
-        ).toBeTruthy();
+        expect((catalog as Record<string, string>)[messageId], `${id} / ${messageId}`).toBeTruthy();
       }
     }
+    const catalogIds = new Set(VOICE_MODEL_CATALOG.map(({ id }) => id));
+    const translatedIds = new Set(Object.keys(MODEL_DESCRIPTION_MESSAGE_IDS));
+    for (const id of LEGACY_MODEL_IDS) {
+      expect(catalogIds.has(id), `${id} disappeared from the catalog`).toBeTruthy();
+      expect(translatedIds.has(id), `${id} lost its localized description`).toBeTruthy();
+    }
+  });
+});
+
+describe("VoiceModelRow quantization", () => {
+  const runtimeState = { loadedModelId: null, activeModelId: null, activePhase: null };
+
+  function renderRow(props: Record<string, unknown> = {}) {
+    return render(
+      createElement(
+        ZCodeIntlProvider,
+        { initialLocale: "en-US" },
+        createElement(VoiceModelRow, {
+          item: firstModel,
+          selected: false,
+          runtimeState,
+          onSelect: () => undefined,
+          onUseWhenReady: () => undefined,
+          onDownload: () => undefined,
+          onCancel: () => undefined,
+          onRemove: () => undefined,
+          ...props,
+        }),
+      ),
+    );
+  }
+
+  it("shows the quantization picker only for models with several quantizations", () => {
+    const onQuantChange = vi.fn();
+    const view = renderRow({ onQuantChange });
+    const select = view.container.querySelector("[data-testid='voice-model-quant-select']");
+    expect(select).toBeTruthy();
+    expect(select?.textContent).toContain("Q8_0");
+    cleanup();
+
+    const singleQuant = {
+      ...firstModel,
+      descriptor: {
+        ...firstModel.descriptor,
+        quants: { Q8_0: firstModel.descriptor.quants.Q8_0! },
+      },
+    };
+    const single = renderRow({ item: singleQuant, onQuantChange });
+    expect(single.container.querySelector("[data-testid='voice-model-quant-select']")).toBeNull();
+  });
+
+  it("acts on the selected quantization, not just the default", () => {
+    const onDownload = vi.fn();
+    const onRemove = vi.fn();
+    const onQuantChange = vi.fn();
+    const q4Selected = renderRow({ quant: "Q4_K_M", onDownload, onRemove, onQuantChange });
+
+    // Q4_K_M is not downloaded: the primary action downloads that quantization.
+    fireEvent.click(q4Selected.getByRole("button", { name: /Model One: Download/i }));
+    expect(onDownload).toHaveBeenCalledOnce();
+    expect(onQuantChange).not.toHaveBeenCalled();
+  });
+
+  it("shows the curated badge only for curated models", () => {
+    const curated = renderRow({
+      item: {
+        ...firstModel,
+        descriptor: { ...firstModel.descriptor, curated: true },
+      },
+    });
+    expect(curated.getByText("Handy pick")).toBeTruthy();
+    cleanup();
+    const plain = renderRow();
+    expect(plain.queryByText("Handy pick")).toBeNull();
   });
 });

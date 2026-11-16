@@ -16,7 +16,11 @@ import {
   VoiceModelStore,
   buildModelUrl,
 } from "../src/voice-dictation/voiceModelStore.js";
-import type { VoiceModelDescriptor } from "../src/voice-dictation/voiceModelCatalog.js";
+import type {
+  VoiceModelDescriptor,
+  VoiceModelQuantFile,
+} from "../src/voice-dictation/voiceModelCatalog.js";
+import { voiceModelQuantFile } from "../src/voice-dictation/voiceModelCatalog.js";
 import { VoicePostProcessor } from "../src/voice-dictation/voicePostProcessor.js";
 import {
   VoiceTranscriber,
@@ -27,6 +31,15 @@ import {
 
 const MODEL_BYTES = Buffer.from("fake-gguf-payload-".repeat(4096));
 const MODEL_SHA256 = createHash("sha256").update(MODEL_BYTES).digest("hex");
+
+function makeQuantFile(overrides: Partial<VoiceModelQuantFile> = {}): VoiceModelQuantFile {
+  return {
+    fileName: "model.gguf",
+    sizeBytes: MODEL_BYTES.length,
+    sha256: MODEL_SHA256,
+    ...overrides,
+  };
+}
 
 function makeDescriptor(overrides: Partial<VoiceModelDescriptor> = {}): VoiceModelDescriptor {
   return {
@@ -39,9 +52,9 @@ function makeDescriptor(overrides: Partial<VoiceModelDescriptor> = {}): VoiceMod
     license: "mit",
     huggingFaceRepo: "owner/repo",
     revision: "abc123",
-    fileName: "model.gguf",
-    sizeBytes: MODEL_BYTES.length,
-    sha256: MODEL_SHA256,
+    minEngine: "0.2.4",
+    defaultQuant: "Q8_0",
+    quants: { Q8_0: makeQuantFile() },
     ...overrides,
   };
 }
@@ -92,10 +105,12 @@ async function withTempDir(run: (dir: string) => Promise<void>): Promise<void> {
 async function installFakeModel(
   modelsDir: string,
   descriptor: VoiceModelDescriptor,
+  quant?: string,
 ): Promise<void> {
+  const file = voiceModelQuantFile(descriptor, quant);
   const dir = join(modelsDir, descriptor.id);
   await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, descriptor.fileName), Buffer.alloc(descriptor.sizeBytes));
+  await writeFile(join(dir, file.fileName), Buffer.alloc(file.sizeBytes));
 }
 
 async function listPartFiles(dir: string): Promise<string[]> {
@@ -134,13 +149,99 @@ async function installHandyModel(
   bytes: Buffer = MODEL_BYTES,
 ): Promise<string> {
   await mkdir(modelsDir, { recursive: true });
-  const path = join(modelsDir, descriptor.fileName);
+  const path = join(modelsDir, voiceModelQuantFile(descriptor).fileName);
   await writeFile(path, bytes);
   return path;
 }
 
-test("buildModelUrl pins the catalog revision", () => {
-  const url = buildModelUrl("https://huggingface.co/", makeDescriptor());
+test("quantizations download and report their state independently", async () => {
+  await withTempDir(async (dir) => {
+    const smallBytes = Buffer.from("q5-payload-".repeat(16));
+    const descriptor = makeDescriptor({
+      quants: {
+        Q8_0: makeQuantFile(),
+        Q5_K_M: makeQuantFile({
+          fileName: "model-Q5_K_M.gguf",
+          sizeBytes: smallBytes.length,
+          sha256: createHash("sha256").update(smallBytes).digest("hex"),
+        }),
+      },
+    });
+    const source = await startServer((req, res) => {
+      if (req.url === `/owner/repo/resolve/abc123/model.gguf`) {
+        res.writeHead(200, { "content-length": MODEL_BYTES.length });
+        res.end(MODEL_BYTES);
+        return;
+      }
+      if (req.url === `/owner/repo/resolve/abc123/model-Q5_K_M.gguf`) {
+        res.writeHead(200, { "content-length": smallBytes.length });
+        res.end(smallBytes);
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    try {
+      const store = makeStore(dir, { catalog: [descriptor], sources: [source.base] });
+
+      await store.download(descriptor.id, "Q5_K_M");
+
+      assert.equal((await store.getState(descriptor.id, "Q5_K_M")).status, "ready");
+      assert.equal((await store.getState(descriptor.id)).status, "not_downloaded");
+      const states = await store.getStates(descriptor.id);
+      assert.deepEqual(
+        Object.entries(states).map(([quant, state]) => [quant, state.status]),
+        [
+          ["Q8_0", "not_downloaded"],
+          ["Q5_K_M", "ready"],
+        ],
+      );
+
+      // Removing the model clears every quantization's files.
+      await store.remove(descriptor.id);
+      assert.equal((await store.getState(descriptor.id, "Q5_K_M")).status, "not_downloaded");
+    } finally {
+      await source.close();
+    }
+  });
+});
+
+test("transcriber reloads the file when the selected model's quantization changes", async () => {
+  await withTempDir(async (dir) => {
+    const descriptor = makeDescriptor({
+      quants: {
+        Q8_0: makeQuantFile(),
+        Q4_K_M: makeQuantFile({ fileName: "model-Q4_K_M.gguf" }),
+      },
+    });
+    await installFakeModel(dir, descriptor, "Q8_0");
+    await installFakeModel(dir, descriptor, "Q4_K_M");
+    const store = makeStore(dir, { catalog: [descriptor] });
+
+    const loadedFiles: string[] = [];
+    const transcriber = new VoiceTranscriber({
+      store,
+      loadEngine: async (path) => {
+        loadedFiles.push(path.split("/").pop() ?? path);
+        return makeFakeEngine([]);
+      },
+    });
+    const samples = new Float32Array(2);
+
+    await transcriber.transcribe(descriptor.id, samples, { quant: "Q4_K_M" });
+    // Same quantization again: the loaded engine is reused, no reload.
+    await transcriber.transcribe(descriptor.id, samples, { quant: "Q4_K_M" });
+    // Falling back to the default quantization is a different file: reload.
+    await transcriber.transcribe(descriptor.id, samples, {});
+
+    assert.deepEqual(loadedFiles, ["model-Q4_K_M.gguf", "model.gguf"]);
+    await transcriber.unload();
+  });
+});
+
+test("buildModelUrl pins the catalog revision and quantization file", () => {
+  const descriptor = makeDescriptor();
+  const url = buildModelUrl("https://huggingface.co/", descriptor, voiceModelQuantFile(descriptor));
   assert.equal(url, "https://huggingface.co/owner/repo/resolve/abc123/model.gguf");
 });
 
@@ -223,7 +324,10 @@ test("prefers ZCode's verified model when the same model is also in Handy", asyn
       assert.equal(state.status, "ready");
       if (state.status === "ready") {
         assert.equal(state.source, "zcode");
-        assert.equal(state.path, join(dir, "zcode", descriptor.id, descriptor.fileName));
+        assert.equal(
+          state.path,
+          join(dir, "zcode", descriptor.id, voiceModelQuantFile(descriptor).fileName),
+        );
       }
     } finally {
       await source.close();
@@ -250,7 +354,7 @@ test("checksum mismatch is rejected and leaves no installed or partial file", as
     const source = await startServer(serveModel());
     try {
       const store = makeStore(dir, {
-        catalog: [makeDescriptor({ sha256: "0".repeat(64) })],
+        catalog: [makeDescriptor({ quants: { Q8_0: makeQuantFile({ sha256: "0".repeat(64) }) } })],
         sources: [source.base],
       });
 
@@ -273,7 +377,11 @@ test("size mismatch is rejected before checksum", async () => {
     const source = await startServer(serveModel());
     try {
       const store = makeStore(dir, {
-        catalog: [makeDescriptor({ sizeBytes: MODEL_BYTES.length + 1 })],
+        catalog: [
+          makeDescriptor({
+            quants: { Q8_0: makeQuantFile({ sizeBytes: MODEL_BYTES.length + 1 }) },
+          }),
+        ],
         sources: [source.base],
       });
 
@@ -405,14 +513,17 @@ test("remove deletes an installed model", async () => {
 
 test("list reports ready and not-downloaded models", async () => {
   await withTempDir(async (dir) => {
-    const catalog = [makeDescriptor({ id: "a" }), makeDescriptor({ id: "b", fileName: "b.gguf" })];
+    const catalog = [
+      makeDescriptor({ id: "a" }),
+      makeDescriptor({ id: "b", quants: { Q8_0: makeQuantFile({ fileName: "b.gguf" }) } }),
+    ];
     await installFakeModel(dir, catalog[0]);
     const store = makeStore(dir, { catalog });
 
     const items = await store.list();
 
     assert.deepEqual(
-      items.map((item) => [item.descriptor.id, item.state.status]),
+      items.map((item) => [item.descriptor.id, item.states[item.descriptor.defaultQuant]?.status]),
       [
         ["a", "ready"],
         ["b", "not_downloaded"],
@@ -947,7 +1058,14 @@ test("selectStreamFamily stays one-shot when the model cannot stream or accepts 
   // Observed: parakeet-tdt and canary report supportsStreaming false and accept neither family.
   assert.equal(selectStreamFamily(fakeFamilyModel(false, [])), null);
   assert.equal(selectStreamFamily(fakeFamilyModel(false, ["parakeet"])), null);
-  assert.equal(selectStreamFamily(fakeFamilyModel(true, ["voxtral"])), null);
+  // sortformer_diarize is a family extension, but not a streamable ASR family in our list.
+  assert.equal(selectStreamFamily(fakeFamilyModel(true, ["sortformer_diarize"])), null);
+});
+
+test("selectStreamFamily picks the streaming families transcribe-cpp 0.4 exposes", () => {
+  // Voxtral realtime and moonshine-streaming models accept their own families.
+  assert.equal(selectStreamFamily(fakeFamilyModel(true, ["voxtral"])), "voxtral");
+  assert.equal(selectStreamFamily(fakeFamilyModel(true, ["moonshine"])), "moonshine");
 });
 
 test("transcriber resolves the engine language from the model's locale map for one-shot and streams", async () => {
@@ -1116,10 +1234,10 @@ test("warmUp yields without an error when a stream starts while the model state 
       releaseFirstRead = resolve;
     });
     let stateReads = 0;
-    store.getState = async (modelId: string) => {
+    store.getState = async (modelId: string, quant?: string) => {
       stateReads += 1;
       if (stateReads === 1) await firstReadGate;
-      return readState(modelId);
+      return readState(modelId, quant);
     };
 
     const warming = service.warmUp({ modelId: descriptor.id });

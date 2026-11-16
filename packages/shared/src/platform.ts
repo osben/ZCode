@@ -728,6 +728,21 @@ export type CuaOsSupport =
  * such as native dialogs and window-lifecycle control.
  * Business services (files, terminal, credentials, etc.) use the IServiceAccessor RPC channel.
  */
+
+/** System-level microphone permission state (Electron getMediaAccessStatus values plus `unsupported`). */
+export type MicrophoneAccessStatus =
+  | "granted"
+  | "denied"
+  | "restricted"
+  | "not-determined"
+  | "unsupported";
+
+/** Outcome of the macOS microphone "re-authorize" flow (see IPlatformService.resetMicrophoneAccess). */
+export type MicrophoneResetResult = "granted" | "denied" | "restart-required" | "failed";
+
+/** Fixed system settings pages the platform service may open; never a free-form URL. */
+export type SystemSettingsTarget = "microphone-privacy" | "sound-input";
+
 export interface IPlatformService {
   /** Whether default-app and directory operations on the local client's files are supported; Web does not have this capability. */
   canOpenLocalFiles?: boolean;
@@ -756,6 +771,31 @@ export interface IPlatformService {
    * state and restores it on release, quit, or renderer loss. Web/mobile leave it undefined.
    */
   setDictationSystemMute?(active: boolean): Promise<void>;
+
+  /**
+   * System-level microphone permission for voice dictation, from the OS privacy store.
+   * `unsupported` on platforms without a system API (Linux). Desktop only.
+   */
+  getMicrophoneAccessStatus?(): Promise<MicrophoneAccessStatus>;
+
+  /**
+   * Show the OS microphone permission prompt. macOS only (only `not-determined` can be asked);
+   * resolves false when denied or unsupported. Desktop only.
+   */
+  askMicrophoneAccess?(): Promise<boolean>;
+
+  /**
+   * Reset this app's own microphone TCC record and ask again (macOS "re-authorize"): lets the
+   * system prompt reappear after it was denied, which `askMicrophoneAccess` cannot do. Dev builds
+   * skip the tccutil step. Desktop only.
+   */
+  resetMicrophoneAccess?(): Promise<MicrophoneResetResult>;
+
+  /**
+   * Open a fixed system settings page. Only the listed targets exist; the renderer cannot pass a
+   * free-form URL. Desktop only.
+   */
+  openSystemSettings?(target: SystemSettingsTarget): Promise<void>;
 
   /**
    * Open the system multi-directory picker and return local paths accessible to the Host.

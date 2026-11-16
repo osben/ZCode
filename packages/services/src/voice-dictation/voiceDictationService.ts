@@ -75,14 +75,14 @@ export class VoiceDictationService implements IVoiceDictationService {
     // Warm-up is best-effort: a model that is not installed (or still downloading) has nothing to load,
     // so it resolves here without touching the transcriber and without an error log. Recording still
     // reports the missing model when it needs it.
-    const state = await this.store.getState(request.modelId);
+    const state = await this.store.getState(request.modelId, request.quant);
     if (state.status !== "ready") return;
     // A stream may have started while the state was read; the transcriber rejects loads under a live stream,
     // so the warm-up yields without an error.
     if (this.activeStreamId) return;
     // The countdown is only touched once the load succeeded, so a failed warm-up cannot strand an
     // already loaded model without its idle timer.
-    await this.transcriber.load(request.modelId);
+    await this.transcriber.load(request.modelId, request.quant);
     if (!this.activeStreamId) this.scheduleIdleUnload();
   }
 
@@ -94,12 +94,12 @@ export class VoiceDictationService implements IVoiceDictationService {
     return this.postProcessor.postProcess(request);
   }
 
-  downloadModel(modelId: string): Promise<void> {
-    return this.store.download(modelId);
+  downloadModel(modelId: string, quant?: string): Promise<void> {
+    return this.store.download(modelId, quant);
   }
 
-  async cancelDownload(modelId: string): Promise<void> {
-    this.store.cancelDownload(modelId);
+  async cancelDownload(modelId: string, quant?: string): Promise<void> {
+    this.store.cancelDownload(modelId, quant);
   }
 
   async removeModel(modelId: string): Promise<void> {
@@ -124,7 +124,7 @@ export class VoiceDictationService implements IVoiceDictationService {
       const result = await this.transcriber.transcribe(
         request.modelId,
         decodePcm16LeToFloat32(request.pcm),
-        { language: normalizeLanguage(request.language) },
+        { quant: request.quant, language: normalizeLanguage(request.language) },
       );
       return { text: result.text, language: result.language };
     } finally {
@@ -139,6 +139,7 @@ export class VoiceDictationService implements IVoiceDictationService {
     this.activeStreamId = streamId;
     try {
       const started = await this.transcriber.beginStream(request.modelId, {
+        quant: request.quant,
         language: normalizeLanguage(request.language),
       });
       if (this.activeStreamId !== streamId) {

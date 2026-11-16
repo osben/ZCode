@@ -68,6 +68,7 @@ import { registerDesktopPrintToPdfIpcHandler } from "./desktopPrintToPdf.js";
 import { registerDesktopCommandIpcHandler } from "./desktopCommandIpc.js";
 import { registerCuaPipActiveSessionIpc } from "./desktopCuaPipIpc.js";
 import { registerDesktopDictationSystemAudioIpc } from "./desktopDictationSystemAudio.js";
+import { registerDesktopMicrophoneAccessIpc } from "./microphone-access/index.js";
 
 export function registerPlatformIpcHandlers(options: {
   fetchHelpConfig?: () => Promise<unknown>;
@@ -162,6 +163,7 @@ export function registerPlatformIpcHandlers(options: {
   registerDesktopSaveFileIpcHandler(options.logger);
   registerDesktopPrintToPdfIpcHandler(options.logger);
   registerDesktopDictationSystemAudioIpc({ logger: options.logger });
+  registerDesktopMicrophoneAccessIpc({ logger: options.logger });
 
   ipcMain.handle(
     PlatformChannels.CreateTempTextAttachment,
