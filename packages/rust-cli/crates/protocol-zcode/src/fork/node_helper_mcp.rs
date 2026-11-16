@@ -632,12 +632,19 @@ impl HelperRoutedMcp {
     ) -> ParkedOrPipe {
         let id = message.get("id").cloned();
         let mut state = route.state.lock_unpoisoned();
+        // Dead before anything answers (the cap refusal included): the terminal Closed already fails
+        // the call client-side, and an answer after it breaks the stream's contract — the same rule
+        // as every other answer site, checked first because send awaited the store-row answer.
+        if state.dead {
+            return ParkedOrPipe::Dead;
+        }
         if let Some(mailbox) = state.mailbox.get_mut(key) {
             if mailbox.len() >= PARKED_BACKLOG_CAP {
-                // The key's connect is still running and its backlog is at the cap: answer the call here
-                // instead of parking it — a parked call is answered by its id through `recent`, and a
-                // backlog past the cap could evict the very ids it owes (the calls would hang, their
-                // `send` already returned Ok).
+                // The key's connect is still running and its parked CALLS are at the cap: answer the
+                // call here instead of parking it — a parked call is answered by its id through
+                // `recent`, and a backlog past the cap could evict the very ids it owes (the calls
+                // would hang, their `send` already returned Ok). The cancels of parked calls park
+                // behind them uncounted (no id, no recent slot, must follow their call).
                 drop(state);
                 if let Some(id) = id {
                     refused(
@@ -968,7 +975,8 @@ pub(super) const FAILED_CONNECT_COOLDOWN_MS: u64 = 30_000;
 /// its id through the route's `recent` map ([`REMEMBERED_MESSAGES`], shared by every key of the
 /// connection), so an unbounded backlog could evict the very ids it owes — a pipelining client's
 /// calls would hang, their `send` already returned Ok. The cap keeps one key's backlog far inside
-/// that map; the overflow is refused inline instead ([`HelperRoutedMcp::park_or_pipe`]).
+/// that map; the overflow is refused inline instead ([`HelperRoutedMcp::park_or_pipe`]). The cap
+/// bounds parked CALLS; a parked call's cancel parks behind it uncounted (no id, no recent slot).
 pub(super) const PARKED_BACKLOG_CAP: usize = 64;
 
 /// How many sessions' workspaces the pipe-workspace cache keeps, oldest evicted first — the size of the neighboring
