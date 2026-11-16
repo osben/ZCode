@@ -28,7 +28,9 @@ allowBuilds:
   electron-winstaller: true
   esbuild: true
   geckodriver: true
-  koffi: true
+  # koffi 3 loads its prebuilt addon straight from the @koromix platform package; its cnoke
+  # install script is unnecessary and hangs macos CI runners, so it is deliberately not run.
+  koffi: false
   msw: true
   node-pty: true
   protobufjs: true
