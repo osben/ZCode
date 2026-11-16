@@ -2460,6 +2460,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "futures-util",
+ "rusqlite",
  "rust-cli-acp",
  "rust-cli-agents",
  "rust-cli-base",
@@ -2469,6 +2470,8 @@ dependencies = [
  "rust-cli-fs",
  "rust-cli-hooks",
  "rust-cli-kernel-api",
+ "rust-cli-node-store",
+ "rust-cli-paths",
  "rust-cli-policy",
  "rust-cli-proc",
  "rust-cli-prompts",
