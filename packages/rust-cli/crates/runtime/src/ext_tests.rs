@@ -753,17 +753,19 @@ fn gated_layer(
     answers: usize,
 ) -> (
     Arc<GatedLayer>,
-    Vec<tokio::sync::oneshot::Sender<Option<rust_cli_ext::WorkspaceConfig>>>,
+    std::collections::VecDeque<tokio::sync::oneshot::Sender<Option<rust_cli_ext::WorkspaceConfig>>>,
 ) {
+    // FIFO on BOTH ends: the loader answers calls with pop_front, so the senders must leave with
+    // pop_front too — a LIFO drain pairs answers with the wrong calls once more than one rides.
     let (senders, receivers) = (0..answers)
         .map(|_| tokio::sync::oneshot::channel())
-        .unzip();
+        .unzip::<_, _, Vec<_>, std::collections::VecDeque<_>>();
     (
         Arc::new(GatedLayer {
             answers: std::sync::Mutex::new(receivers),
             roots: std::sync::Mutex::new(Vec::new()),
         }),
-        senders,
+        senders.into(),
     )
 }
 
@@ -776,7 +778,10 @@ fn layer_config() -> rust_cli_ext::WorkspaceConfig {
 
 /// The print entry's shape for the prewarm tests: the process workspace is `workspace()`
 /// (`/Users/dev/work`), the workspace layer's loader is the test's gated one.
-fn prewarm_kernel(store: Arc<MemoryStore>, loader: Arc<GatedLayer>) -> LocalKernel {
+fn prewarm_kernel<S>(store: Arc<S>, loader: Arc<GatedLayer>) -> LocalKernel
+where
+    S: rust_cli_kernel_api::store::Store + rust_cli_kernel_api::store::ArtifactStore + 'static,
+{
     let env = MemoryEnvironment::new(EnvFacts {
         cwd: EnvPath::new("/Users/dev/work"),
         platform: "darwin".to_owned(),
@@ -907,11 +912,17 @@ async fn a_continue_prewarm_starts_the_layer_load_before_the_open_loads_it() {
     );
 
     answers
-        .pop()
+        .pop_front()
         .expect("one gated answer")
         .send(Some(layer_config()))
         .unwrap_or_else(|_| panic!("the prewarm's read was awaiting its answer"));
-    opening.await.unwrap().unwrap();
+    // Bounded: a regression that parks the join (a missed finish notification) fails the test
+    // here instead of hanging the suite until the CI timeout.
+    tokio::time::timeout(Duration::from_secs(5), opening)
+        .await
+        .expect("the joined open completes")
+        .unwrap()
+        .unwrap();
     assert_eq!(loader.calls(), 1);
     assert!(
         kernel.plugins_for_session(&id).is_some(),
@@ -948,12 +959,14 @@ async fn a_failing_continue_prewarm_does_not_break_the_session_open() {
 
     // The read fails: the slot turns Invalid, the joined open returns over it, the run is intact.
     answers
-        .pop()
+        .pop_front()
         .expect("the prewarm's answer")
         .send(None)
         .unwrap_or_else(|_| panic!("the prewarm's read was awaiting its answer"));
-    opening
+    // Bounded like the join above: a parked join fails fast instead of hanging the suite.
+    tokio::time::timeout(Duration::from_secs(5), opening)
         .await
+        .expect("the joined open completes over the failed load")
         .unwrap()
         .expect("a failed prewarm leaves the print run intact");
     assert_eq!(loader.calls(), 1, "the failing read was never repeated");
@@ -961,6 +974,154 @@ async fn a_failing_continue_prewarm_does_not_break_the_session_open() {
         kernel.plugins_for_session(&id).is_none(),
         "the workspace keeps the process set (fail-closed)"
     );
+}
+
+/// Fork (ocr on the print `--continue` prewarm): the derivation's cross-crate contract — the
+/// prewarm's target equals the workspace the cold open computes — pinned against the REAL
+/// node-store, whose `list` / `session_workspace` / `execution_worktree` invariants the
+/// MemoryStore tests above cannot speak for. Two row shapes: a plain local row (directory = the
+/// workspace root) and a fork-shape row with execution worktree columns (the B1.3 shape — the
+/// open's root substitution must match the prewarm's worktree read). The remote-identity branch
+/// mirrors `meta`'s fallback one-to-one and stays pinned by the MemoryStore tests.
+#[allow(
+    clippy::disallowed_methods,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "integration-shaped test: temporary directories and direct sqlite DDL"
+)]
+#[tokio::test]
+async fn continue_prewarm_targets_match_the_node_store_cold_open() {
+    use rust_cli_kernel_api::ids::TraceId;
+    use rust_cli_kernel_api::store::{
+        ExecutionWorktree, SessionKind, SessionMeta, SessionStore as _, StoreQueries as _,
+    };
+    use rust_cli_node_store::{NodeIds, NodeStore};
+
+    let dir = tempfile::tempdir().unwrap();
+    let base = std::fs::canonicalize(dir.path()).unwrap();
+    let home = base.join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let paths = rust_cli_paths::StoragePaths::resolve(
+        &rust_cli_paths::StorageSettings::default(),
+        &home,
+        &base,
+    );
+    let clock = Arc::new(rust_cli_base::clock::SystemClock::utc());
+    let store = Arc::new(NodeStore::new(
+        paths.clone(),
+        Arc::new(NodeIds::new(clock.clone())),
+    ));
+
+    // The scan workspace must differ from the process workspace: the layer never loads a group
+    // for the process key (its servers come from the process assembly), so a prewarm of that key
+    // is correctly a no-op.
+    let scan = WorkspaceRef {
+        environment: workspace().environment,
+        root: EnvPath::new("/Users/dev/other"),
+    };
+    let seed = |id: &str, created_at_ms: u64| {
+        let id = SessionId::new(id);
+        SessionMeta {
+            id: id.clone(),
+            kind: SessionKind::Interactive,
+            parent: None,
+            workspace: scan.clone(),
+            title: "continued".to_owned(),
+            trace: TraceId::new(id.as_str()),
+            created_at_ms,
+            incognito: None,
+        }
+    };
+
+    // A plain local row: the prewarm loads the row's workspace root, and the open joins that
+    // exact load (one loader call, one root).
+    {
+        let (loader, mut answers) = gated_layer(1);
+        store.create(seed("sess_plain", 1)).await.unwrap();
+        let kernel = Arc::new(prewarm_kernel(store.clone(), loader.clone()));
+        kernel.prewarm_continue_layer(&scan).await;
+        settles(Duration::from_millis(500), || loader.calls() >= 1).await;
+        assert_eq!(loader.roots(), [scan.root.as_str()]);
+
+        let opening = tokio::spawn({
+            let kernel = kernel.clone();
+            async move { kernel.open_session(&SessionId::new("sess_plain")).await }
+        });
+        answers
+            .pop_front()
+            .expect("one gated answer")
+            .send(Some(layer_config()))
+            .unwrap_or_else(|_| panic!("the prewarm's read was awaiting its answer"));
+        tokio::time::timeout(Duration::from_secs(5), opening)
+            .await
+            .expect("the joined open completes")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            loader.roots(),
+            [scan.root.as_str()],
+            "the open joined the prewarm's load of the same root"
+        );
+    }
+
+    // A fork-shape row with execution worktree columns: the prewarm loads the WORKTREE root, and
+    // the open's own root substitution joins the same worktree load. The columns are the Node
+    // agent's 9002 migration (zcode-rs does not migrate a fresh db itself), so the test adds the
+    // DDL the Node agent runs before writing one.
+    {
+        let worktree_root = EnvPath::new("/Users/dev/work-wt");
+        store.create(seed("sess_wt", 2)).await.unwrap();
+        {
+            let conn = rusqlite::Connection::open(paths.database().as_path()).unwrap();
+            conn.execute_batch(
+                "alter table session add column execution_directory text;
+                 alter table session add column execution_branch text;",
+            )
+            .unwrap();
+        }
+        store
+            .set_execution_worktree(&SessionId::new("sess_wt"), &worktree_root, None)
+            .await
+            .unwrap();
+        let (loader, mut answers) = gated_layer(1);
+        let kernel = Arc::new(prewarm_kernel(store.clone(), loader.clone()));
+        kernel.prewarm_continue_layer(&scan).await;
+        settles(Duration::from_millis(500), || loader.calls() >= 1).await;
+        assert_eq!(
+            loader.roots(),
+            [worktree_root.as_str()],
+            "the prewarm targets the row's execution worktree, not the parent directory"
+        );
+
+        let opening = tokio::spawn({
+            let kernel = kernel.clone();
+            async move { kernel.open_session(&SessionId::new("sess_wt")).await }
+        });
+        answers
+            .pop_front()
+            .expect("one gated answer")
+            .send(Some(layer_config()))
+            .unwrap_or_else(|_| panic!("the prewarm's read was awaiting its answer"));
+        tokio::time::timeout(Duration::from_secs(5), opening)
+            .await
+            .expect("the joined open completes")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            loader.roots(),
+            [worktree_root.as_str()],
+            "the open's root substitution joined the prewarm's worktree load"
+        );
+        // The pinned store shape really carries the columns (the pin is about node-store reads).
+        assert_eq!(
+            store
+                .execution_worktree(&SessionId::new("sess_wt"))
+                .await
+                .unwrap()
+                .map(|ExecutionWorktree { path, .. }| path),
+            Some(worktree_root)
+        );
+    }
 }
 
 /// Fork (print `--continue` prewarm): no resumable row (a benchmark harness's first `-c` run)
@@ -1011,7 +1172,7 @@ async fn a_continue_prewarm_targets_the_rows_execution_worktree() {
         "the prewarm read the worktree's layer, not the process workspace's"
     );
     answers
-        .pop()
+        .pop_front()
         .expect("one gated answer")
         .send(Some(layer_config()))
         .unwrap_or_else(|_| panic!("the prewarm's read was awaiting its answer"));

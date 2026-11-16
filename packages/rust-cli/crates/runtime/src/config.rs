@@ -111,7 +111,11 @@ impl LocalKernel {
 /// the scan's own environment, and the execution worktree's path when the row has one (a fork
 /// row's cold open runs in the worktree), else the row's `directory`. Fail-closed: no row, or a
 /// read that failed, answers `None` and the caller prewarms nothing (the open then loads
-/// serially as before — no guessed key).
+/// serially as before — no guessed key). The scan here runs BEFORE the headless path's own scan
+/// (the print entry kicks the prewarm ahead of `wait_for_extensions`); a session committed in
+/// between supersedes the newest row and this target goes stale — accepted: the cost is one
+/// wasted layer read plus a group for a key this run never opens, and the open still loads the
+/// real target itself.
 async fn continue_layer_target(
     store: &dyn rust_cli_kernel_api::store::Store,
     workspace: &rust_cli_kernel_api::env::WorkspaceRef,
@@ -130,8 +134,14 @@ async fn continue_layer_target(
         .id;
     let row = store.session_workspace(&latest).await.ok()??;
     // A row with an execution worktree runs the session in the worktree; its group must bind that
-    // root from the start (as the cold open's root substitution does).
-    let root = match store.execution_worktree(&latest).await.ok().flatten() {
+    // root from the start (as the cold open's root substitution does). A FAILED read answers None
+    // like the reads above — it must not degrade to the parent directory, which would load (and
+    // start a group for) the wrong key.
+    let worktree = match store.execution_worktree(&latest).await {
+        Ok(worktree) => worktree,
+        Err(_) => return None,
+    };
+    let root = match worktree {
         Some(worktree) => worktree.path,
         None => rust_cli_kernel_api::env::EnvPath::new(row.directory),
     };
