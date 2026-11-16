@@ -35,6 +35,15 @@ function makeState(): VoiceSpanState {
   return createVoiceSpanState();
 }
 
+/** Reads the root text outside an update (assertions between operations). */
+function readText(editor: LexicalEditor): string {
+  let text = "";
+  editor.getEditorState().read(() => {
+    text = $getRoot().getTextContent();
+  });
+  return text;
+}
+
 /** Runs one span operation and returns the resulting root text. */
 function apply(editor: LexicalEditor, state: VoiceSpanState, run: () => void): string {
   editor.update(
@@ -138,6 +147,54 @@ describe("voice span operations (specs/voice-dictation.md)", () => {
     expect(apply(editor, state, () => $cancelVoiceSpan(state))).toBe("");
     expect(state.committedKey).toBeNull();
     expect(state.tentativeKey).toBeNull();
+  });
+
+  it("restores the draft text a span replaced when the recording is cancelled", () => {
+    const editor = makeTestEditor();
+    const state = makeState();
+    editor.update(
+      () => {
+        const paragraph = $createParagraphNode();
+        const text = $createTextNode("hello world");
+        paragraph.append(text);
+        $getRoot().append(paragraph);
+        // Dictation starts with "world" selected (offsets 6..11).
+        text.select(6, 11);
+      },
+      { discrete: true },
+    );
+
+    apply(editor, state, () => $updateVoiceSpan({ committed: "there", tentative: "" }, state));
+    // The span replaced the selection: "world" is gone while dictation runs.
+    expect(readText(editor)).not.toContain("world");
+
+    apply(editor, state, () => $cancelVoiceSpan(state));
+    expect(readText(editor)).toContain("hello world");
+    expect(state.replacedText).toBeNull();
+  });
+
+  it("restores the replaced draft on an empty final, but not on a successful one", () => {
+    const editor = makeTestEditor();
+    const state = makeState();
+    editor.update(
+      () => {
+        const paragraph = $createParagraphNode();
+        const text = $createTextNode("keep me");
+        paragraph.append(text);
+        $getRoot().append(paragraph);
+        text.select(0, 7);
+      },
+      { discrete: true },
+    );
+    apply(editor, state, () => $updateVoiceSpan({ committed: "x", tentative: "" }, state));
+
+    expect(apply(editor, state, () => $finalizeVoiceSpan("", state))).toContain("keep me");
+
+    apply(editor, state, () => $updateVoiceSpan({ committed: "y", tentative: "" }, state));
+    expect(apply(editor, state, () => $finalizeVoiceSpan("final text", state))).toContain(
+      "final text",
+    );
+    expect(readText(editor)).not.toContain("keep me");
   });
 
   it("stale keys from a removed span do not break the next update", () => {

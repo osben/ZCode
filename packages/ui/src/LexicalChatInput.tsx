@@ -29,6 +29,7 @@ import { ContentEditable } from "@lexical/react/LexicalContentEditable";
 import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import {
+  HISTORY_MERGE_TAG,
   $createParagraphNode,
   $createTextNode,
   $getSelection,
@@ -1618,21 +1619,27 @@ function EditorApiPlugin({
           () => {
             $updateVoiceSpan(preview, voiceSpanStateRef.current);
           },
-          { tag: VOICE_SPAN_UPDATE_TAG },
+          // history-merge chains every span update and the final swap into ONE undo entry, so a
+          // single Cmd+Z removes the whole dictation (spec: "Voice text span" undo rule).
+          { tag: [VOICE_SPAN_UPDATE_TAG, HISTORY_MERGE_TAG] },
         ),
       finalizeVoiceSpan: (text: string) =>
         editor.update(
           () => {
             $finalizeVoiceSpan(text, voiceSpanStateRef.current);
           },
-          { tag: VOICE_SPAN_UPDATE_TAG },
+          // history-merge chains every span update and the final swap into ONE undo entry, so a
+          // single Cmd+Z removes the whole dictation (spec: "Voice text span" undo rule).
+          { tag: [VOICE_SPAN_UPDATE_TAG, HISTORY_MERGE_TAG] },
         ),
       cancelVoiceSpan: () =>
         editor.update(
           () => {
             $cancelVoiceSpan(voiceSpanStateRef.current);
           },
-          { tag: VOICE_SPAN_UPDATE_TAG },
+          // history-merge chains every span update and the final swap into ONE undo entry, so a
+          // single Cmd+Z removes the whole dictation (spec: "Voice text span" undo rule).
+          { tag: [VOICE_SPAN_UPDATE_TAG, HISTORY_MERGE_TAG] },
         ),
       registerVoiceSpanUserInput: (listener) => {
         spanUserInputListenersRef.current.add(listener);

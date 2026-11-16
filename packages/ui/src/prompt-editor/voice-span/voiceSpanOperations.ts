@@ -20,6 +20,11 @@ export interface VoiceSpanState {
   committedKey: NodeKey | null;
   tentativeKey: NodeKey | null;
   /**
+   * Draft text the span's creation replaced (a non-collapsed selection at dictation start).
+   * Cancel paths and an empty final restore it, so a failed recording never deletes user text.
+   */
+  replacedText: string | null;
+  /**
    * True once a span was created this recording. A finalize with no attached committed node then
    * means the USER deleted the span: the late result is dropped instead of being re-inserted at
    * the caret, which is only correct for recordings that never created a span (one-shot engines).
@@ -28,7 +33,7 @@ export interface VoiceSpanState {
 }
 
 export function createVoiceSpanState(): VoiceSpanState {
-  return { committedKey: null, tentativeKey: null, created: false };
+  return { committedKey: null, tentativeKey: null, created: false, replacedText: null };
 }
 
 function attachedNode(key: NodeKey | null): import("lexical").LexicalNode | null {
@@ -80,6 +85,7 @@ export function $updateVoiceSpan(
     if ($isRangeSelection(selection)) {
       const before = $charBeforePoint(selection.anchor);
       if (before && !/\s/.test(before)) node.setTextContent(` ${preview.committed}`);
+      if (!selection.isCollapsed()) state.replacedText = selection.getTextContent();
       selection.insertNodes([node]);
     } else {
       const root = $getRoot();
@@ -160,21 +166,39 @@ export function $finalizeVoiceSpan(text: string, state: VoiceSpanState): void {
   state.created = false;
   state.committedKey = null;
   if (text === "") {
-    committed.remove();
+    // An empty final is a failed recognition: the user's replaced draft comes back.
+    restoreReplacedText(committed, state);
     return;
   }
   const previous = committed.getPreviousSibling()?.getTextContent().slice(-1) ?? "";
   const next = committed.getNextSibling()?.getTextContent().charAt(0) ?? "";
+  state.replacedText = null;
   committed.replace($createTextNode(pad(text, previous, next)));
 }
 
-/** Removes the span without inserting anything (cancel paths). */
+/** Removes the span (cancel paths); draft text the span replaced comes back in its place. */
 export function $cancelVoiceSpan(state: VoiceSpanState): void {
   const attachedCommitted = attachedNode(state.committedKey);
   const tentative = attachedNode(state.tentativeKey);
   if (tentative instanceof VoiceTentativeTextNode) tentative.remove();
-  if (attachedCommitted !== null) attachedCommitted.remove();
+  if (attachedCommitted !== null) {
+    restoreReplacedText(attachedCommitted, state);
+  }
   state.committedKey = null;
   state.tentativeKey = null;
   state.created = false;
+}
+
+/** Swaps the committed node for the draft text it replaced (or removes it when nothing was replaced). */
+function restoreReplacedText(
+  committed: import("lexical").LexicalNode,
+  state: VoiceSpanState,
+): void {
+  const replaced = state.replacedText;
+  state.replacedText = null;
+  if (replaced === null || replaced === "") {
+    committed.remove();
+    return;
+  }
+  committed.replace($createTextNode(replaced));
 }
