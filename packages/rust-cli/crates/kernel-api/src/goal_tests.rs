@@ -176,24 +176,14 @@ fn forks_round_trip() {
             "target_cwd": {"child": "sess_9", "root": "/repo/.wt/task-1"},
         })
     );
-    // execution 的 Some 一侧（B1.3）：子会话的执行 worktree 根随回执序列化。
-    round_trip(&SessionFork {
+    // execution 的 Some 一侧（B1.3）：子会话的执行 worktree 根随回执序列化 —— 裸字符串（EnvPath
+    // transparent），None 侧整个字段不出现（serde skip）。
+    let targeted_receipt = round_trip(&SessionFork {
         execution: Some(EnvPath::new("/repo/.wt/task-1")),
         ..plain_fork()
     });
-    round_trip(&SessionFork {
-        parent: SessionId::new("sess_1"),
-        child: SessionId::new("sess_2"),
-        created_at_ms: 5,
-        through: MessageId::new("msg_1"),
-        selection: ModelSelection::new(
-            "anthropic".to_owned(),
-            rust_cli_base::models::GLM_5_3.to_owned(),
-        ),
-        mode: PermissionMode::Default,
-        plan: true,
-        execution: None,
-    });
+    assert_eq!(targeted_receipt["execution"], "/repo/.wt/task-1");
+    assert!(round_trip(&plain_fork()).get("execution").is_none());
     round_trip(&ForkReceipt { copied: 3 });
 }
 
