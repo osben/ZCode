@@ -451,3 +451,106 @@ async fn under_the_node_batch_order_a_read_notice_follows_the_held_contexts() {
         assert_eq!(batch_order(&sink.messages()), expected, "{contexts:?}");
     }
 }
+
+// Fork: the executor reports a call's carried dispatches (specs/fork-rust-agent-parity.md HK-UP-01): the toolBefore
+// lane (PreToolUse, PermissionRequest) around its ToolFinished first, the toolAfter lane (PostToolUse,
+// PostToolUseFailure) after it.
+
+/// An executor that gives each call its recorded dispatches, as the pipeline does under `hook_rows`.
+struct DispatchesExecutor;
+
+fn dispatch(
+    id: &str,
+    name: rust_cli_kernel_api::hooks::HookEventName,
+) -> rust_cli_kernel_api::hooks::HookInvocation {
+    rust_cli_kernel_api::hooks::HookInvocation {
+        id: id.to_owned(),
+        hook_event: name,
+        tool_use: Some(rust_cli_kernel_api::ids::ToolUseId::new("t1")),
+        tool_name: Some("A".to_owned()),
+        runs: vec![rust_cli_kernel_api::hooks::HookRunRecord {
+            run: "run_1".to_owned(),
+            index: 0,
+            outcome: rust_cli_kernel_api::hooks::HookRunOutcome::Success,
+            block_reason: None,
+            error_message: None,
+            stderr_preview: None,
+            stdout_preview: None,
+            started_at_ms: 10,
+            duration_ms: 5,
+            source_kind: rust_cli_kernel_api::hooks::HookSourceKind::User,
+            plugin_name: None,
+            display: "node block.js".to_owned(),
+        }],
+    }
+}
+
+#[async_trait::async_trait]
+impl rust_cli_kernel_api::orchestration::ToolExecutor for DispatchesExecutor {
+    async fn execute(
+        &self,
+        tool: Arc<dyn Tool>,
+        input: Value,
+        context: rust_cli_kernel_api::tool::ToolUseContext,
+        progress: tokio::sync::mpsc::Sender<rust_cli_kernel_api::tool::ToolProgress>,
+    ) -> rust_cli_kernel_api::orchestration::ToolExecution {
+        let mut execution = rust_cli_kernel_api::testing::DirectExecutor
+            .execute(tool, input, context, progress)
+            .await;
+        execution.hook_invocations = vec![
+            dispatch(
+                "inv_pre",
+                rust_cli_kernel_api::hooks::HookEventName::PreToolUse,
+            ),
+            dispatch(
+                "inv_perm",
+                rust_cli_kernel_api::hooks::HookEventName::PermissionRequest,
+            ),
+            dispatch(
+                "inv_post",
+                rust_cli_kernel_api::hooks::HookEventName::PostToolUse,
+            ),
+        ];
+        execution
+    }
+}
+
+#[tokio::test]
+async fn a_calls_dispatches_are_reported_around_its_result() {
+    use rust_cli_kernel_api::orchestration::QueryEvent;
+    let model = Arc::new(ScriptedModel::new(vec![
+        tool_uses(&[("t1", "A", json!({}))]),
+        text_response(&["ok"]),
+    ]));
+    let mut parts = parts(
+        model,
+        vec![Arc::new(rust_cli_kernel_api::testing::FakeTool::new(
+            "A", false, "a",
+        ))],
+    );
+    parts.executor = Arc::new(DispatchesExecutor);
+    let request = request("go");
+    let (scope, sink) = scope(parts, &request, Abort::new());
+    assert_eq!(
+        crate::run::run(scope, request).await.unwrap(),
+        QueryStop::Completed
+    );
+    let events = sink.events();
+    let position = |predicate: &dyn Fn(&QueryEvent) -> bool| {
+        events
+            .iter()
+            .position(predicate)
+            .unwrap_or_else(|| panic!("no such event: {events:?}"))
+    };
+    let finished = position(
+        &|event| matches!(event, QueryEvent::ToolFinished { tool_use, .. } if tool_use.as_str() == "t1"),
+    );
+    let invocation = |id: &str| {
+        position(
+            &|event| matches!(event, QueryEvent::HookInvocation { invocation } if invocation.id == id),
+        )
+    };
+    assert!(invocation("inv_pre") < finished);
+    assert!(invocation("inv_perm") < finished);
+    assert!(invocation("inv_post") > finished);
+}

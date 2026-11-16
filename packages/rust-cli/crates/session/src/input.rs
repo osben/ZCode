@@ -3,7 +3,7 @@
 //! hooks.rs 只留 hook 事件的组装与会话侧的 hook）。
 
 use rust_cli_kernel_api::abort::AbortReason;
-use rust_cli_kernel_api::hooks::{HookEventName, HookInvocation, HookOutcome};
+use rust_cli_kernel_api::hooks::{HookEventName, HookOutcome};
 use rust_cli_kernel_api::ids::{CommandId, MessageId};
 use rust_cli_kernel_api::message::{
     AttachmentMessage, ContentBlock, Message, UserMessage, UserOrigin,
@@ -54,6 +54,21 @@ impl Actor {
         if self.deps.desktop_goals && goal.as_ref().is_some_and(|inputs| !inputs.query) {
             self.log
                 .append(KernelEvent::TurnControlOnly { turn: turn.clone() });
+        }
+        // Fork: the SessionStart dispatches that waited for this turn report their rows now (HK-UP-01, Node's pending
+        // SessionStart rows): after the turn's header and before its input, like Node's flush on the next user-intent
+        // TurnStarted. Their records anchor to this turn's prompt, so the view keeps them with it. Only a SessionStart
+        // dispatch waits (finish_startup records it); every dispatched event already landed in its own turn.
+        for record in &mut self.hook_invocations {
+            if record.anchor_message.is_none()
+                && record.invocation.hook_event == HookEventName::SessionStart
+            {
+                record.anchor_message = Some(prompt.clone());
+                self.log.append(KernelEvent::HookInvocation {
+                    turn: turn.clone(),
+                    invocation: record.invocation.clone(),
+                });
+            }
         }
         let hook = self.user_prompt_submit(&text);
         let (opening, request) = self.open_main_turn(turn);
@@ -117,7 +132,9 @@ impl Actor {
             if shutdown() {
                 return Ok(QueryStop::Aborted);
             }
-            let invocation = hook_rows.then(|| prompt_invocation(&outcome)).flatten();
+            let invocation = hook_rows
+                .then(|| crate::hooks::prompt_invocation(&outcome))
+                .flatten();
             if outcome.blocking_error.is_some() {
                 // Fork: Node shows the blocked input in its turn, reports the hook runs and completes the turn as a
                 // success (`turn.ts`, specs/fork-rust-agent-parity.md HK-UP-01); the input is still not committed.
@@ -219,16 +236,4 @@ fn attach_intent(
         }
     }
     user.intent = Some(intent);
-}
-
-/// Fork: the UserPromptSubmit dispatch's runs as a `KernelEvent::HookInvocation` (HK-UP-01); none without a run.
-fn prompt_invocation(outcome: &HookOutcome) -> Option<HookInvocation> {
-    let id = outcome.invocation.clone()?;
-    (!outcome.runs.is_empty()).then(|| HookInvocation {
-        id,
-        hook_event: HookEventName::UserPromptSubmit,
-        tool_use: None,
-        tool_name: None,
-        runs: outcome.runs.clone(),
-    })
 }

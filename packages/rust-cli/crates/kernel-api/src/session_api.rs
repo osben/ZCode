@@ -515,6 +515,11 @@ pub struct SessionView {
     /// model switch dividers between turns. Empty when unknown.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub message_models: std::collections::BTreeMap<MessageId, crate::model::ModelSelection>,
+    /// Fork: the hook dispatches the session kept in memory for the cold projection (specs/fork-rust-agent-parity.md
+    /// HK-UP-01 Design 4): each anchored to the user message of its turn. In memory only: a process restart loses
+    /// them, as Node loses its event store.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hook_invocations: Vec<crate::hooks::HookInvocationRecord>,
 }
 
 /// The command id prefix of the input a SessionStart hook gives (`initial_user_message`): it is not typed input, so

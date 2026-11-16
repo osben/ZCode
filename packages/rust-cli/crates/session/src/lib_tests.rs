@@ -247,6 +247,30 @@ async fn asking_session_with(
     asking_session_input(scope, hooks, serde_json::json!({"question": "which?"})).await
 }
 
+/// Fork: same as [`asking_session_with`], with `SessionDeps::hook_rows` on (HK-UP-01 tests).
+async fn asking_session_rows(
+    scope: &TaskScope,
+    hooks: Arc<dyn rust_cli_kernel_api::hooks::HookRunner>,
+) -> (Arc<MemoryStore>, Arc<ScriptedModel>, Session) {
+    let model = Arc::new(ScriptedModel::new(vec![
+        rust_cli_kernel_api::testing::tool_use_response(
+            "toolu_1",
+            "AskUserQuestion",
+            &serde_json::json!({"question": "which?"}),
+        ),
+        text_response(&["thanks"]),
+    ]));
+    let (store, session) = tool_session_with(
+        scope,
+        hooks,
+        model.clone(),
+        vec![Arc::new(AskingTool)],
+        true,
+    )
+    .await;
+    (store, model, session)
+}
+
 /// Same as [`asking_session_with`], the [`AskingTool`] call taking `input`.
 async fn asking_session_input(
     scope: &TaskScope,
@@ -268,6 +292,17 @@ pub(super) async fn tool_session(
     hooks: Arc<dyn rust_cli_kernel_api::hooks::HookRunner>,
     model: Arc<dyn rust_cli_kernel_api::model::ModelPort>,
     tools: Vec<Arc<dyn rust_cli_kernel_api::tool::Tool>>,
+) -> (Arc<MemoryStore>, Session) {
+    tool_session_with(scope, hooks, model, tools, false).await
+}
+
+/// Fork: [`tool_session`] with `SessionDeps::hook_rows` set (HK-UP-01 tests).
+pub(super) async fn tool_session_with(
+    scope: &TaskScope,
+    hooks: Arc<dyn rust_cli_kernel_api::hooks::HookRunner>,
+    model: Arc<dyn rust_cli_kernel_api::model::ModelPort>,
+    tools: Vec<Arc<dyn rust_cli_kernel_api::tool::Tool>>,
+    hook_rows: bool,
 ) -> (Arc<MemoryStore>, Session) {
     let store = Arc::new(MemoryStore::default());
     store.create(meta()).await.unwrap();
@@ -319,7 +354,7 @@ pub(super) async fn tool_session(
             error_holds_queue: false,
             session_start_extras: true,
             typed_compact: false,
-            hook_rows: false,
+            hook_rows,
         },
         SessionState {
             commands: Default::default(),

@@ -69,6 +69,14 @@ impl FakeCompactor {
 fn result(trigger: CompactTrigger) -> CompactResult {
     CompactResult {
         session_start_context: false,
+        // Fork: the dispatch a compacting hook would report (HK-UP-01 tests); the switch gates only the reporting.
+        hook_invocations: vec![rust_cli_kernel_api::hooks::HookInvocation {
+            id: "inv_pre".to_owned(),
+            hook_event: rust_cli_kernel_api::hooks::HookEventName::PreCompact,
+            tool_use: None,
+            tool_name: None,
+            runs: Vec::new(),
+        }],
         boundary: CompactBoundary {
             id: MessageId::new("msg_boundary"),
             trigger,
@@ -472,4 +480,64 @@ async fn a_compaction_request_carries_the_runs_inject_agents_md() {
         let compact = super::request(&scope, &[], &request.selection, CompactTrigger::Auto);
         assert_eq!(compact.inject_agents_md, inject);
     }
+}
+
+// Fork: under `hook_rows` the run reports the dispatches a compaction's hooks ran (HK-UP-01): the events go out
+// with the compact turn's rows, before the committed batch; without the switch none is reported.
+
+#[tokio::test]
+async fn under_hook_rows_an_auto_compaction_reports_its_dispatches() {
+    let model = Arc::new(ScriptedModel::new(vec![text_response(&["done"])]));
+    let compactor = FakeCompactor::new(vec![AutoCompactOutcome::Compacted {
+        result: Box::new(result(CompactTrigger::Auto)),
+    }]);
+    let mut parts = parts(model, Vec::new());
+    parts.compactor = compactor;
+    parts.limits.hook_rows = true;
+    let request = request("old question");
+    let (scope, sink) = scope(parts, &request, Abort::new());
+    assert_eq!(
+        crate::run::run(scope, request).await.unwrap(),
+        QueryStop::Completed
+    );
+    let events = sink.events();
+    let dispatches: Vec<&rust_cli_kernel_api::hooks::HookInvocation> = events
+        .iter()
+        .filter_map(|event| match event {
+            rust_cli_kernel_api::orchestration::QueryEvent::HookInvocation { invocation } => {
+                Some(invocation)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(dispatches.len(), 1, "{:?}", sink.events());
+    assert_eq!(dispatches[0].id, "inv_pre");
+    assert_eq!(
+        dispatches[0].hook_event,
+        rust_cli_kernel_api::hooks::HookEventName::PreCompact
+    );
+}
+
+#[tokio::test]
+async fn without_the_switch_an_auto_compaction_reports_no_dispatch() {
+    let model = Arc::new(ScriptedModel::new(vec![text_response(&["done"])]));
+    let compactor = FakeCompactor::new(vec![AutoCompactOutcome::Compacted {
+        result: Box::new(result(CompactTrigger::Auto)),
+    }]);
+    let mut parts = parts(model, Vec::new());
+    parts.compactor = compactor;
+    let request = request("old question");
+    let (scope, sink) = scope(parts, &request, Abort::new());
+    assert_eq!(
+        crate::run::run(scope, request).await.unwrap(),
+        QueryStop::Completed
+    );
+    assert!(
+        !sink.events().iter().any(|event| matches!(
+            event,
+            rust_cli_kernel_api::orchestration::QueryEvent::HookInvocation { .. }
+        )),
+        "{:?}",
+        sink.events()
+    );
 }

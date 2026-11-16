@@ -51,7 +51,26 @@ pub(super) fn rows(projection: &mut Projection, view: &SessionView) {
                 // Fork: the ACP reset divider of this turn goes before its header, as Node's cold merge places it.
                 projection.cold_context_reset(user.id.as_str(), &turn, at, &mut out);
                 projection.start_turn(&turn, command, model, at, 0, &mut out);
+                // Fork: a SessionStart dispatch waited for this turn (HK-UP-01 Design 7, Node's pending SessionStart
+                // rows): its row goes before the turn's input, where the live flush reported it.
+                for record in view.hook_invocations.iter().filter(|record| {
+                    record.anchor_message.as_ref() == Some(&user.id)
+                        && record.invocation.hook_event
+                            == rust_cli_kernel_api::hooks::HookEventName::SessionStart
+                }) {
+                    projection.cold_hook_invocation(&record.invocation, at, &mut out);
+                }
                 projection.message(message, at, 0, &mut out);
+                // Fork: this turn's other stored hook dispatches follow their input's row (HK-UP-01 Design 7),
+                // anchored by the user message, like the live order; a dispatch without a stored anchor never
+                // reaches here.
+                for record in view.hook_invocations.iter().filter(|record| {
+                    record.anchor_message.as_ref() == Some(&user.id)
+                        && record.invocation.hook_event
+                            != rust_cli_kernel_api::hooks::HookEventName::SessionStart
+                }) {
+                    projection.cold_hook_invocation(&record.invocation, at, &mut out);
+                }
             }
             Message::User(user) if opening(message, turn_ended) => {
                 if projection.turn.is_some() {

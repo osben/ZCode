@@ -296,6 +296,10 @@ pub(crate) struct Actor {
     /// The SessionStart result waiting for the first turn to write it (Node `pendingSessionStartContexts`, hooks.rs).
     /// Empty when there is none. Kept in memory only: a reopen runs SessionStart again.
     pub(crate) pending_session_start: Vec<Message>,
+    /// Fork: the hook dispatches kept for the cold projection (specs/fork-rust-agent-parity.md HK-UP-01 Design 4):
+    /// in memory only, bounded like the event log retention ([`crate::log::RETAIN`]); the view drops a record whose
+    /// turn is no longer stored. Only [`Self::view`] reads it.
+    pub(crate) hook_invocations: Vec<rust_cli_kernel_api::hooks::HookInvocationRecord>,
 }
 
 /// 拒绝的回执：原因是给前端的文字（存储的错误按它的原文）。
@@ -396,6 +400,7 @@ impl Actor {
             asks,
             deferred_start: None,
             pending_session_start: Vec::new(),
+            hook_invocations: Vec::new(),
             execution_worktree,
         };
         if defer_start {
@@ -943,6 +948,21 @@ impl Actor {
             goal: self.goal_state(),
             title_source: Some(self.title_source),
             permission_grant: self.permission_grant.clone(),
+            // Fork: only dispatches whose turn is still in the shown history survive (HK-UP-01 Design 4): a blocked
+            // prompt is never committed, and a rewind cuts its turn, so their records go with them.
+            hook_invocations: self
+                .hook_invocations
+                .iter()
+                .filter(|record| {
+                    record.anchor_message.as_ref().is_some_and(|anchor| {
+                        self.earlier
+                            .iter()
+                            .chain(self.messages.iter())
+                            .any(|message| message.id() == anchor)
+                    })
+                })
+                .cloned()
+                .collect(),
             ..SessionView::new(
                 self.meta.clone(),
                 [self.earlier.as_slice(), self.messages.as_slice()].concat(),

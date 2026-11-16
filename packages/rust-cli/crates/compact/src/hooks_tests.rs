@@ -273,3 +273,75 @@ async fn no_compact_context_leaves_the_flag_off() {
     assert!(restored_contexts(&result).is_empty());
     assert!(!result.session_start_context);
 }
+
+// Fork: the engine hands its hook dispatches back in the result (specs/fork-rust-agent-parity.md HK-UP-01):
+// PreCompact, SessionStart(`compact`) and PostCompact, in run order, for the caller to report under its hook-rows
+// switch. The engine itself has no sink (its interactions run under a CollectSink).
+
+/// A runner whose every run finished a dispatch with one recorded run.
+struct Dispatching;
+
+#[async_trait]
+impl HookRunner for Dispatching {
+    async fn run(&self, event: HookEvent, _cancel: CancellationToken) -> HookOutcome {
+        HookOutcome {
+            invocation: Some(format!("inv_{}", event.name.as_str())),
+            runs: vec![rust_cli_kernel_api::hooks::HookRunRecord {
+                run: "run_1".to_owned(),
+                index: 0,
+                outcome: rust_cli_kernel_api::hooks::HookRunOutcome::Success,
+                block_reason: None,
+                error_message: None,
+                stderr_preview: None,
+                stdout_preview: None,
+                started_at_ms: 10,
+                duration_ms: 5,
+                source_kind: rust_cli_kernel_api::hooks::HookSourceKind::User,
+                plugin_name: None,
+                display: "node block.js".to_owned(),
+            }],
+            ..HookOutcome::default()
+        }
+    }
+}
+
+#[tokio::test]
+async fn the_result_carries_the_hook_dispatches_in_run_order() {
+    let runner = ScriptedRunner::new(vec![Reply::Text("<summary>S</summary>".to_owned())]);
+    let mut ports = ports(runner, no_tools());
+    ports.hooks = Arc::new(Dispatching);
+    let request = request(
+        vec![human("u1", "hi"), reply("a1", "ok", None)],
+        CompactTrigger::Manual,
+    );
+    let result = Engine { ports: &ports }
+        .run(&request, true, &CancellationToken::new(), None)
+        .await
+        .unwrap();
+    let dispatches = &result.hook_invocations;
+    let names: Vec<HookEventName> = dispatches
+        .iter()
+        .map(|invocation| invocation.hook_event)
+        .collect();
+    assert_eq!(
+        names,
+        [
+            HookEventName::PreCompact,
+            HookEventName::SessionStart,
+            HookEventName::PostCompact
+        ]
+    );
+    let ids: Vec<&str> = dispatches
+        .iter()
+        .map(|invocation| invocation.id.as_str())
+        .collect();
+    assert_eq!(
+        ids,
+        ["inv_PreCompact", "inv_SessionStart", "inv_PostCompact"]
+    );
+    for invocation in dispatches {
+        assert!(invocation.tool_use.is_none());
+        assert!(invocation.tool_name.is_none());
+        assert_eq!(invocation.runs.len(), 1);
+    }
+}

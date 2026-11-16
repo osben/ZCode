@@ -37,6 +37,7 @@ impl SessionView {
             turn_files: Default::default(),
             goal: None,
             message_models: Default::default(),
+            hook_invocations: Vec::new(),
         }
     }
 }

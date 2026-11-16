@@ -1,7 +1,8 @@
 //! Fork: `hookInvocation` rows and the blocked-prompt banner (specs/fork-rust-agent-parity.md HK-UP-01).
 
 use rust_cli_kernel_api::hooks::{
-    HookEventName, HookInvocation, HookRunOutcome, HookRunRecord, HookSourceKind,
+    HookEventName, HookInvocation, HookInvocationRecord, HookRunOutcome, HookRunRecord,
+    HookSourceKind,
 };
 
 use super::*;
@@ -218,4 +219,108 @@ fn a_failed_turn_keeps_the_recoverable_turn_fault() {
     assert_eq!(error["code"], "fault.turn.failed");
     assert!(error.get("detail").is_none());
     assert!(error.get("attribution").is_none());
+}
+
+/// Fork: a resubscribe rebuilds a stored turn's dispatch through its user message (HK-UP-01 Design 7): the row sits in
+/// that turn, after its input's row, and the banner of a blocked run is not rebuilt cold.
+#[test]
+fn from_view_re_anchors_a_stored_turns_dispatch() {
+    let mut cold = view(vec![
+        user("msg_u1", "hello"),
+        assistant("msg_a1", vec![ContentBlock::Text { text: "hi".into() }]),
+    ]);
+    cold.hook_invocations = vec![HookInvocationRecord {
+        anchor_message: Some(MessageId::new("msg_u1")),
+        invocation: blocked_dispatch(),
+    }];
+    let projection = Projection::from_view(&cold, Followup::Queue, Vec::new());
+    let snapshot = projection.snapshot(0, "e");
+    let rows = snapshot["rows"]["window"].as_array().unwrap();
+    let input_at = rows
+        .iter()
+        .position(|row| row["kind"] == "userInput")
+        .expect("the input's row");
+    let hook_at = rows
+        .iter()
+        .position(|row| row["kind"] == "hookInvocation")
+        .expect("the re-anchored hook row");
+    assert!(hook_at > input_at);
+    assert_eq!(rows[hook_at]["turnId"], rows[input_at]["turnId"]);
+    assert_eq!(rows[hook_at]["entityId"], "hookinv_1");
+    assert_eq!(rows[hook_at]["state"], "completed");
+    assert_eq!(rows[hook_at]["executions"].as_array().unwrap().len(), 2);
+    assert!(snapshot["control"]["lastError"].is_null());
+}
+
+/// A record whose turn stored no prompt (a blocked prompt, dropped with its turn) yields no row cold.
+#[test]
+fn from_view_drops_a_dispatch_without_a_stored_anchor() {
+    let mut cold = view(vec![user("msg_u1", "hello")]);
+    cold.hook_invocations = vec![HookInvocationRecord {
+        anchor_message: Some(MessageId::new("msg_gone")),
+        invocation: blocked_dispatch(),
+    }];
+    let projection = Projection::from_view(&cold, Followup::Queue, Vec::new());
+    let snapshot = projection.snapshot(0, "e");
+    assert!(
+        snapshot["rows"]["window"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row["kind"] != "hookInvocation")
+    );
+}
+
+/// Fork: a SessionStart dispatch that waited for its turn (HK-UP-01, Node's pending SessionStart rows) is reported
+/// when that turn starts, so cold places its row before the turn's input row, where the live flush appended it.
+#[test]
+fn from_view_places_a_waiting_session_start_dispatch_before_its_turns_input() {
+    let mut cold = view(vec![
+        user("msg_u1", "hello"),
+        assistant("msg_a1", vec![ContentBlock::Text { text: "hi".into() }]),
+    ]);
+    let mut dispatch = blocked_dispatch();
+    dispatch.hook_event = HookEventName::SessionStart;
+    cold.hook_invocations = vec![HookInvocationRecord {
+        anchor_message: Some(MessageId::new("msg_u1")),
+        invocation: dispatch,
+    }];
+    let projection = Projection::from_view(&cold, Followup::Queue, Vec::new());
+    let snapshot = projection.snapshot(0, "e");
+    let rows = snapshot["rows"]["window"].as_array().unwrap();
+    let input_at = rows
+        .iter()
+        .position(|row| row["kind"] == "userInput")
+        .expect("the input's row");
+    let hook_at = rows
+        .iter()
+        .position(|row| row["kind"] == "hookInvocation")
+        .expect("the waiting hook row");
+    assert!(hook_at < input_at, "rows: {rows:?}");
+    assert_eq!(rows[hook_at]["turnId"], rows[input_at]["turnId"]);
+    assert_eq!(rows[hook_at]["hookEventName"], "SessionStart");
+}
+
+/// The live flush position: a SessionStart dispatch arriving right after a turn started lands inside that turn.
+#[test]
+fn a_session_start_dispatch_flushes_into_the_turn_that_started() {
+    let mut feed = Feed::new();
+    feed.apply(KernelEvent::TurnStarted {
+        turn: TurnId::new("turn_1"),
+        command: Some(CommandId::new("c1")),
+    });
+    let mut dispatch = blocked_dispatch();
+    dispatch.hook_event = HookEventName::SessionStart;
+    let deltas = feed.apply(KernelEvent::HookInvocation {
+        turn: TurnId::new("turn_1"),
+        invocation: dispatch,
+    });
+    let row = deltas
+        .iter()
+        .find(|delta| delta["op"] == "row.appended")
+        .map(|delta| &delta["row"])
+        .expect("the hook row");
+    assert_eq!(row["turnId"], "turn_1");
+    assert_eq!(row["hookEventName"], "SessionStart");
+    assert!(last_error(&deltas).is_none_or(Value::is_null));
 }
