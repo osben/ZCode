@@ -471,12 +471,7 @@ impl LocalKernel {
                 self.machine().files().as_ref(),
             )
             .await;
-        let mut state = SessionState::from_loaded(
-            loaded,
-            &self.defaults.selection.current(),
-            self.defaults.mode,
-            start,
-        );
+        let mut state = SessionState::from_loaded(loaded, self.defaults.mode, start);
         state.child_live = child_live;
         state.start_held = held;
         // Fork: a reopened top-level session adopts its persisted subagent children's notices (one forwarder each).

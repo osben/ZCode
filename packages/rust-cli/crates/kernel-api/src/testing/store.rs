@@ -387,7 +387,12 @@ impl SessionStore for MemoryStore {
             meta,
             messages,
             earlier,
-            model: None,
+            // 最后一次模型选择，像 node-store 的 `state::selection`（会话的恢复只认库里存的，测试替身以前永远给
+            // `None`，靠运行时的缺省补，掩盖了“没有选择的历史会话不得拿缺省当自己的选择”）。
+            model: facts.iter().rev().find_map(|fact| match fact {
+                Fact::ModelSelected { selection } => Some(selection.clone()),
+                _ => None,
+            }),
             mode: None,
             plan: false,
             checkpoints,

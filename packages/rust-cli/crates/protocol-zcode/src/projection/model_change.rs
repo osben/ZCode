@@ -82,9 +82,14 @@ impl Projection {
     }
 
     /// After a cold projection: a session whose stored turns name no model (older Rust sessions) takes the current
-    /// selection as the previous model, so a switch made after reopening still draws the divider.
+    /// selection as the previous model, so a switch made after reopening still draws the divider. A restored session
+    /// with no selection at all (DB109 rollback shape) has no previous model: an empty id would draw a broken divider.
     pub(super) fn seed_turn_model(&mut self, turns: u64) {
-        if turns > 0 && self.last_turn_model.is_none() {
+        if turns > 0
+            && self.last_turn_model.is_none()
+            && !self.selection.provider.is_empty()
+            && !self.selection.model.is_empty()
+        {
             self.last_turn_model = Some((
                 self.selection.provider.clone(),
                 self.selection.model.clone(),

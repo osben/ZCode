@@ -7,7 +7,7 @@ use rust_cli_kernel_api::ids::{
 use rust_cli_kernel_api::message::{
     AssistantMessage, Message, ToolResultContent, UserMessage, UserOrigin,
 };
-use rust_cli_kernel_api::model::BlockDelta;
+use rust_cli_kernel_api::model::{BlockDelta, ModelSelection};
 use rust_cli_kernel_api::orchestration::InteractionRequest;
 use rust_cli_kernel_api::store::{SessionKind, SessionMeta};
 use rust_cli_kernel_api::testing::selection;
@@ -47,6 +47,10 @@ mod subagent_rows;
 mod worktree_created;
 
 fn view(messages: Vec<Message>) -> SessionView {
+    view_with_selection(messages, selection())
+}
+
+fn view_with_selection(messages: Vec<Message>, selection: ModelSelection) -> SessionView {
     SessionView::new(
         SessionMeta {
             id: SessionId::new("session_1"),
@@ -62,7 +66,7 @@ fn view(messages: Vec<Message>) -> SessionView {
             incognito: None,
         },
         messages,
-        selection(),
+        selection,
         PermissionMode::Default,
     )
 }
@@ -99,6 +103,22 @@ impl Feed {
         Self {
             projection: Projection::from_view(
                 &view(Vec::new()),
+                Followup::Queue,
+                vec!["high".into()],
+            ),
+            seq: 0,
+            revision: 0,
+        }
+    }
+
+    /// A cold-opened session: the stored history projected with the session's own selection.
+    fn restored(
+        messages: Vec<Message>,
+        selection: rust_cli_kernel_api::model::ModelSelection,
+    ) -> Self {
+        Self {
+            projection: Projection::from_view(
+                &view_with_selection(messages, selection),
                 Followup::Queue,
                 vec!["high".into()],
             ),
@@ -237,6 +257,35 @@ fn a_text_turn_becomes_rows_and_control_states() {
     assert_eq!(snapshot["revision"], feed.revision);
     assert_eq!(snapshot["config"]["followupMode"], "queue");
     assert_eq!(feed.projection.last_reply().as_deref(), Some("hi there"));
+}
+
+/// Fork (node_desktop DB109)：重开的会话没有存储的模型选择（回滚/残缺历史）时，配置投影是空的——
+/// 不写 `modelSelection`（Node 的种子 `cloneModelSelection(undefined)`；schema 对出现的它要求非空 id），
+/// `model` / `thought` 是空串，`thoughtLevels` 为空：没有“当前模型”就没有档位，更不能拿目录缺省的
+/// 档位当成用户在这会话里选过的。存了身份没存档位的选择照常投影（`options` 不写）。
+#[test]
+fn a_restored_session_without_a_selection_projects_an_empty_config() {
+    let empty = Feed::restored(
+        Vec::new(),
+        ModelSelection::new(String::new(), String::new()),
+    );
+    let config = &empty.projection.snapshot(0, "epoch-1")["config"];
+    assert!(config.get("modelSelection").is_none());
+    assert_eq!(config["provider"], "");
+    assert_eq!(config["model"], "");
+    assert_eq!(config["thought"], "");
+    assert_eq!(config["thoughtLevels"], json!([]));
+
+    let identity_only = Feed::restored(
+        Vec::new(),
+        ModelSelection::new("upstream".to_owned(), "pro".to_owned()),
+    );
+    let config = &identity_only.projection.snapshot(0, "epoch-1")["config"];
+    assert_eq!(
+        config["modelSelection"],
+        json!({"providerId": "upstream", "modelId": "pro"})
+    );
+    assert_eq!(config["thought"], "");
 }
 
 #[test]

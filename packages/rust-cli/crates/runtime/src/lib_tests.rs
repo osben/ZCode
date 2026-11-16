@@ -209,6 +209,76 @@ async fn sessions_wait_for_the_default_model_to_settle() {
     opening.await.unwrap().unwrap();
 }
 
+/// Fork (node_desktop DB109, Node `resolveInitialRegistrySelection` 的 resume 分支)：重开会话只认库里存的
+/// 模型选择。存过选择（`Fact::ModelSelected`）的会话重开还是它自己，不换成缺省；什么都没存过的库行
+/// （回滚/残缺历史把 `runtime/model_selection` 弄丢）重开是空选择——缺省（带档位）冒充会话自己的选择，
+/// 投影就会显示一个用户在这会话里从没选过的档位。执行等用户重选，与 Node 一致。
+#[tokio::test]
+async fn a_reopened_session_keeps_only_its_stored_selection() {
+    use rust_cli_kernel_api::default_model::unselected;
+    use rust_cli_kernel_api::store::SessionStore;
+
+    let store = Arc::new(MemoryStore::default());
+    let mut chosen = selection();
+    chosen.reasoning = Some("high".to_owned());
+    let first = kernel(store.clone(), Arc::new(ScriptedModel::new(Vec::new())));
+    let id = first
+        .create_session(CreateSession {
+            id: None,
+            workspace: workspace(),
+            selection: chosen.clone(),
+            mode: PermissionMode::Default,
+            plan: false,
+            incognito: None,
+        })
+        .await
+        .unwrap();
+    drop(first);
+
+    // A different kernel default: the reopen must not adopt it as the session's selection.
+    let mut other = selection();
+    other.provider = "upstream".to_owned();
+    other.model = "pro".to_owned();
+    other.reasoning = Some("max".to_owned());
+    let second = kernel_with(
+        store.clone(),
+        Arc::new(ScriptedModel::new(Vec::new())),
+        other.into(),
+    );
+    let view = second
+        .open_session(&id)
+        .await
+        .unwrap()
+        .view()
+        .await
+        .unwrap();
+    assert_eq!(view.selection, chosen);
+
+    // A stored row with no `Fact::ModelSelected` at all (the DB109 rollback shape).
+    let bare = SessionId::new("sess_bare");
+    store
+        .create(SessionMeta {
+            id: bare.clone(),
+            kind: SessionKind::Interactive,
+            parent: None,
+            workspace: workspace(),
+            title: "Rolled back".to_owned(),
+            trace: rust_cli_kernel_api::ids::TraceId::new("trace_bare"),
+            created_at_ms: 1_000,
+            incognito: None,
+        })
+        .await
+        .unwrap();
+    let view = second
+        .open_session(&bare)
+        .await
+        .unwrap()
+        .view()
+        .await
+        .unwrap();
+    assert_eq!(view.selection, unselected());
+}
+
 /// Fork (specs/fork-rust-agent-parity.md, "Incognito sessions"): a prepared execution worktree runs nothing before its
 /// activation (no model request, no message, no title), and the profile its activation freezes gates the first
 /// request exactly like a session created incognito: no environment and no identity reach the model.

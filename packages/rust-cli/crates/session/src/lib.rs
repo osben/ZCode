@@ -280,11 +280,12 @@ impl SessionState {
     }
 
     /// 冷加载的会话（工作线 F130，审查 C10：冷加载的恢复在会话这一侧只有这一个入口，以前由 runtime 逐个字段拼）：库里
-    /// 没有模型选择时用 `selection`，没有执行状态时用 `mode`（新会话的缺省）。续跑时要补的消息、定时任务与目标的恢复
-    /// 在 [`Session::spawn`] 里按 [`Opened::Loaded`] 做。
+    /// 没有执行状态时用 `mode`（新会话的缺省）。模型选择只认库里存的：没有时是空选择，不拿新会话的缺省补——Node
+    /// `resolveInitialRegistrySelection` 的 resume 分支（"Restoring history does not start execution: an invalid or
+    /// missing selection remains unbound and must not be filled from the configured default"），残缺/缺失的历史选择照原样
+    /// 投影，用户重选后才执行。续跑时要补的消息、定时任务与目标的恢复在 [`Session::spawn`] 里按 [`Opened::Loaded`] 做。
     pub fn from_loaded(
         loaded: rust_cli_kernel_api::store::LoadedSession,
-        selection: &ModelSelection,
         mode: rust_cli_kernel_api::permission::PermissionMode,
         start: StartSource,
     ) -> Self {
@@ -293,7 +294,9 @@ impl SessionState {
             messages: loaded.messages,
             earlier: loaded.earlier,
             commands: loaded.commands,
-            selection: loaded.model.unwrap_or_else(|| selection.clone()),
+            selection: loaded
+                .model
+                .unwrap_or_else(rust_cli_kernel_api::default_model::unselected),
             mode: loaded.mode.map_or_else(
                 || mode.into(),
                 |stored| {
