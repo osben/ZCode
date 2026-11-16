@@ -284,6 +284,7 @@ pub enum Command {
     /// directory with a locally allocated id, as before.
     ForkFromAssistant {
         assistant: MessageId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         target_cwd: Option<ForkTarget>,
     },
     /// 批准或拒绝一条扣住的同伴消息（docs/specs/rust-cli/cross-session.md §2.4，F28）：`message` 是

@@ -83,17 +83,10 @@ fn trimmed<'de, D: serde::Deserializer<'de>>(
     field: &str,
 ) -> Result<String, D::Error> {
     let text = String::deserialize(deserializer)?;
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        Err(serde::de::Error::custom(format!(
-            "{field} must be a non-empty string"
-        )))
-    } else {
-        Ok(trimmed.to_owned())
-    }
+    crate::commands::trimmed_non_empty(&text, field)
 }
 
-/// `forkAssistant` 的 payload。
+/// The `forkAssistant` payload.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ForkPayload {
@@ -737,25 +730,7 @@ pub(super) async fn fork(
             }
         };
         if key.starts_with("remote:") {
-            let (reason, message) =
-                if rust_cli_kernel_api::remote_identity::is_remote_workspace_identity(&key) {
-                    (
-                        "guard.worktreeCwdLocalOnly",
-                        format!("session cwd override only supports local workspaces: {key}"),
-                    )
-                } else {
-                    (
-                        EXECUTION_FAILED,
-                        format!("Invalid remote workspace identity: {key}"),
-                    )
-                };
-            return Ack::refused(
-                &envelope.command_id,
-                Status::Failed,
-                reason,
-                message,
-                revision,
-            );
+            return crate::commands::refuse_remote_cwd(envelope, &key);
         }
         // Then the route's not-a-directory pre-check (B1.1's `check_directory`): the Host created the
         // worktree before sending; a root that is not a directory refuses before anything is forked.
@@ -790,6 +765,48 @@ pub(super) async fn fork(
                 child: SessionId::new(&target.child_session_id),
                 root: rust_cli_kernel_api::env::EnvPath::new(&target.cwd),
             });
+    // B1.3 (ocr): the pre-allocated child id is guarded like B1.1's create — a taken id (stored,
+    // live, or soft-deleted) or the parent's own id would otherwise be upserted in place, silently
+    // rewriting the existing row and duplicating the copied history.
+    if let Some(target) = &target_cwd {
+        if target.child.as_str() == live.handle.id().as_str() {
+            return Ack::refused(
+                &envelope.command_id,
+                Status::Rejected,
+                "proto.invalidPayload",
+                "childSessionId must differ from the parent session".to_owned(),
+                revision,
+            );
+        }
+        let existing = match crate::preparation::absent_if_not_found(
+            server.kernel.session_snapshot(&target.child).await,
+        ) {
+            Ok(view) => view,
+            Err(_) => {
+                return Ack::refused(
+                    &envelope.command_id,
+                    Status::Failed,
+                    "fault.command.executionFailed",
+                    "reading the session failed".to_owned(),
+                    revision,
+                );
+            }
+        };
+        if existing.is_some()
+            || server.bridge.get(&target.child).is_some()
+            || crate::preparation::deleted(server, &target.child)
+                .await
+                .unwrap_or(true)
+        {
+            return Ack::refused(
+                &envelope.command_id,
+                Status::Rejected,
+                "proto.invalidPayload",
+                "childSessionId already exists".to_owned(),
+                revision,
+            );
+        }
+    }
     let command = Command::ForkFromAssistant {
         assistant: MessageId::new(&assistant),
         target_cwd,

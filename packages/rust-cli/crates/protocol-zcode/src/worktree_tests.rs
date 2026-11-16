@@ -347,6 +347,8 @@ impl HandleOverride for TestHandle {
                     || SessionId::new(format!("{}_forked", self.id.as_str())),
                     |target| target.child.clone(),
                 );
+                // A fixed stamp, not the test clock's now(): nothing asserts timestamps, and the
+                // double only needs a stable value the copied facts carry.
                 let fork = rust_cli_kernel_api::store::SessionFork {
                     parent: self.id.clone(),
                     child: child.clone(),
