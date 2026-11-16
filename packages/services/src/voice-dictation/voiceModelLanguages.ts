@@ -13,9 +13,24 @@ export interface VoiceModelLike {
   recommendRank?: number;
 }
 
+export interface VoiceModelStateLike {
+  status: string;
+}
+
 export interface VoiceModelItemLike {
   descriptor: VoiceModelLike;
-  state: { status: string };
+  /** Per-quantization state, keyed by quant id; the shape mirrors VoiceModelListItem. */
+  states: Readonly<Record<string, VoiceModelStateLike>>;
+}
+
+/** Whether any quantization of the model is installed and ready. */
+export function isVoiceModelReady(item: VoiceModelItemLike): boolean {
+  return Object.values(item.states).some((state) => state.status === "ready");
+}
+
+/** Whether any quantization of the model is currently downloading. */
+export function isVoiceModelDownloading(item: VoiceModelItemLike): boolean {
+  return Object.values(item.states).some((state) => state.status === "downloading");
 }
 
 export interface VoiceLanguageSettingsLike {
@@ -130,8 +145,9 @@ export function filterVoiceModels<T extends VoiceModelItemLike>(
   languageName: (code: string) => string,
 ): T[] {
   const query = filter.query.trim().toLowerCase();
-  return items.filter(({ descriptor, state }) => {
-    if (filter.downloadedOnly && state.status !== "ready") return false;
+  return items.filter((item) => {
+    const { descriptor } = item;
+    if (filter.downloadedOnly && !isVoiceModelReady(item)) return false;
     if (filter.streamingOnly && !isLiveStreamingModel(descriptor)) return false;
     if (!modelSupportsVoiceLanguages(descriptor, filter.languages)) return false;
     if (!query) return true;

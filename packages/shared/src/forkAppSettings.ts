@@ -37,6 +37,9 @@ const voiceDictationSettingsSchema = z.object({
   microphoneDeviceId: nonEmptyStringSchema.nullable().optional(),
   language: nonEmptyStringSchema.optional(),
   languages: z.array(nonEmptyStringSchema).max(100).optional(),
+  // Model id → quantization id (e.g. "whisper-large-v3" → "Q5_K_M"); unknown ids drop on read and
+  // the UI falls back to the catalog default.
+  quantByModel: z.record(z.string(), nonEmptyStringSchema).optional(),
   pushToTalk: z.boolean().optional(),
   idleUnloadMinutes: z
     .union([z.literal(1), z.literal(5), z.literal(10), z.literal(15), z.literal(30)])

@@ -25,9 +25,11 @@ const h = vi.hoisted(() => {
     license: "mit",
     huggingFaceRepo: "owner/model-one",
     revision: "abc123",
-    fileName: "model-one.gguf",
-    sizeBytes: 10,
-    sha256: "test",
+    minEngine: "0.2.4",
+    defaultQuant: "Q8_0",
+    quants: {
+      Q8_0: { fileName: "model-one.gguf", sizeBytes: 10, sha256: "test" },
+    },
   };
   const secondDescriptor = { ...descriptor, id: "model-two", name: "Model Two" };
   const settings = { voiceDictation: { modelId: "model-one" } as Record<string, unknown> };
@@ -53,26 +55,30 @@ const h = vi.hoisted(() => {
         return [
           {
             descriptor,
-            state: {
-              status: "ready" as const,
-              path: "/models/model-one.gguf",
-              sizeBytes: 10,
-              source: "zcode" as const,
+            states: {
+              Q8_0: {
+                status: "ready" as const,
+                path: "/models/model-one.gguf",
+                sizeBytes: 10,
+                source: "zcode" as const,
+              },
             },
           },
           {
             descriptor: secondDescriptor,
-            state:
-              state.downloadStatus === "downloading"
-                ? { status: "downloading" as const, downloadedBytes: 0, totalBytes: 10 }
-                : state.downloadStatus === "ready"
-                  ? {
-                      status: "ready" as const,
-                      path: "/models/model-two.gguf",
-                      sizeBytes: 10,
-                      source: "zcode" as const,
-                    }
-                  : { status: "not_downloaded" as const },
+            states: {
+              Q8_0:
+                state.downloadStatus === "downloading"
+                  ? { status: "downloading" as const, downloadedBytes: 0, totalBytes: 10 }
+                  : state.downloadStatus === "ready"
+                    ? {
+                        status: "ready" as const,
+                        path: "/models/model-two.gguf",
+                        sizeBytes: 10,
+                        source: "zcode" as const,
+                      }
+                    : { status: "not_downloaded" as const },
+            },
           },
         ];
       }),
@@ -940,7 +946,8 @@ describe("VoiceDictationSection languages and model filters", () => {
     fireEvent.click(screen.getByRole("button", { name: "voiceDictation.language.useModel" }));
     // Not downloaded yet: the recommended model starts downloading and is selected once ready.
     await waitFor(() =>
-      expect(h.voiceDictationService.downloadModel).toHaveBeenCalledWith("model-two"),
+      // The second argument is the quantization; undefined means the catalog default.
+      expect(h.voiceDictationService.downloadModel).toHaveBeenCalledWith("model-two", undefined),
     );
     delete (h.descriptors.second as { recommendRank?: number }).recommendRank;
   });

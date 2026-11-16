@@ -5,6 +5,7 @@ import { LoaderCircle } from "lucide-react";
 import type { VoiceDictationSettings, VoiceModelIdleUnloadMinutes } from "@zcode/shared";
 import {
   filterVoiceModels,
+  isVoiceModelDownloading,
   languageSettingsPatch,
   missingVoiceLanguages,
   recommendVoiceModel,
@@ -129,6 +130,7 @@ function DesktopVoiceDictationSection() {
   } = resolveVoiceDictationPreferences(voice);
 
   const [models, setModels] = useState<VoiceModelListItem[]>([]);
+  // Keys are `${modelId}:${quant ?? ""}`: a click starting a download is per quantization.
   const [startingDownloadIds, setStartingDownloadIds] = useState<Set<string>>(() => new Set());
   const [pendingUseModelId, setPendingUseModelId] = useState<string | null>(null);
   const pendingUseModelIdRef = useRef<string | null>(null);
@@ -182,7 +184,7 @@ function DesktopVoiceDictationSection() {
     };
   }, [refreshDevices, refreshModels]);
 
-  const anyDownloading = models.some((item) => item.state.status === "downloading");
+  const anyDownloading = models.some(isVoiceModelDownloading);
   const hasPendingDownloadRequests = startingDownloadIds.size > 0;
   useEffect(() => {
     if (!anyDownloading && !hasPendingDownloadRequests) return;
@@ -296,6 +298,11 @@ function DesktopVoiceDictationSection() {
     selectedLanguages,
   );
   const recommendedId = recommendedModel?.id ?? null;
+  /** The model's chosen quantization, or undefined for the catalog default (read through the optimistic overlay). */
+  const quantFor = useCallback(
+    (id: string) => voiceRef.current.quantByModel?.[id] || undefined,
+    [],
+  );
   const visibleModels = useMemo(() => {
     const matching = filterVoiceModels(
       models,
@@ -307,8 +314,8 @@ function DesktopVoiceDictationSection() {
     const pinned = (item: VoiceModelListItem) =>
       item.descriptor.id === modelId ||
       item.descriptor.id === pendingUseModelId ||
-      item.state.status === "downloading" ||
-      startingDownloadIds.has(item.descriptor.id);
+      isVoiceModelDownloading(item) ||
+      startingDownloadIds.has(`${item.descriptor.id}:${quantFor(item.descriptor.id) ?? ""}`);
     return sortVoiceModels(
       models.filter((item) => matching.includes(item) || pinned(item)),
       recommendedId,
@@ -319,6 +326,7 @@ function DesktopVoiceDictationSection() {
     modelId,
     models,
     pendingUseModelId,
+    quantFor,
     recommendedId,
     selectedLanguages,
     startingDownloadIds,
@@ -383,18 +391,19 @@ function DesktopVoiceDictationSection() {
     }
   };
 
-  const handleDownload = (id: string) => {
+  const handleDownload = (id: string, quant?: string) => {
     if (!voiceDictationService) {
       toast(intl.formatMessage({ id: "voiceDictation.downloadFailed" }));
       return;
     }
-    setStartingDownloadIds((current) => new Set(current).add(id));
+    const startKey = `${id}:${quant ?? ""}`;
+    setStartingDownloadIds((current) => new Set(current).add(startKey));
     // The first listModels may run before the Host writes the download state; keep the starting state
     // during polling so the user does not think the click did nothing.
     void refreshModels();
     // Downloading is a long task: do not await; progress is refreshed by the refreshModels polling.
     void Promise.resolve()
-      .then(() => voiceDictationService.downloadModel(id))
+      .then(() => voiceDictationService.downloadModel(id, quant))
       .then(async () => {
         if (pendingUseModelIdRef.current === id) {
           // modelId must not be written before the download finishes, otherwise recording would hand an
@@ -408,6 +417,7 @@ function DesktopVoiceDictationSection() {
       .catch((error: unknown) => {
         logger.warn("voice model download failed", {
           id,
+          quant: quant ?? "",
           error: error instanceof Error ? error.message : String(error),
         });
         if (pendingUseModelIdRef.current === id) {
@@ -419,7 +429,7 @@ function DesktopVoiceDictationSection() {
       .finally(() => {
         setStartingDownloadIds((current) => {
           const next = new Set(current);
-          next.delete(id);
+          next.delete(startKey);
           return next;
         });
         void refreshModels();
@@ -438,6 +448,15 @@ function DesktopVoiceDictationSection() {
     void patchVoice({ modelId: id });
   };
 
+  /** Saves a per-model quantization choice; choosing the catalog default removes the entry again. */
+  const handleQuantChange = (id: string, quant: string) => {
+    const descriptor = models.find((item) => item.descriptor.id === id)?.descriptor;
+    const next = { ...voiceRef.current.quantByModel };
+    if (descriptor && quant === descriptor.defaultQuant) delete next[id];
+    else next[id] = quant;
+    void patchVoice({ quantByModel: next });
+  };
+
   const handleToggleLanguage = (code: string) => {
     // Read the latest value, not the rendered one: voiceRef already holds a pending optimistic edit.
     const current = resolveVoiceLanguages(voiceRef.current);
@@ -447,15 +466,20 @@ function DesktopVoiceDictationSection() {
 
   const handleUseRecommended = () => {
     if (!recommendedModel) return;
-    const item = models.find((candidate) => candidate.descriptor.id === recommendedModel.id);
-    if (item?.state.status === "ready") {
-      handleSelectModel(recommendedModel.id);
+    const id = recommendedModel.id;
+    const quant = quantFor(id);
+    const item = models.find((candidate) => candidate.descriptor.id === id);
+    const quantReady = item
+      ? item.states[quant ?? item.descriptor.defaultQuant]?.status
+      : undefined;
+    if (quantReady === "ready") {
+      handleSelectModel(id);
       return;
     }
     // Not downloaded: download it and switch once it is ready (the current model stays active until then).
-    pendingUseModelIdRef.current = recommendedModel.id;
-    setPendingUseModelId(recommendedModel.id);
-    if (item?.state.status !== "downloading") handleDownload(recommendedModel.id);
+    pendingUseModelIdRef.current = id;
+    setPendingUseModelId(id);
+    if (quantReady !== "downloading") handleDownload(id, quant);
   };
 
   const handleRemove = async (id: string) => {
@@ -473,17 +497,18 @@ function DesktopVoiceDictationSection() {
     }
   };
 
-  const handleCancel = (id: string) => {
+  const handleCancel = (id: string, quant?: string) => {
     if (pendingUseModelIdRef.current === id) {
       pendingUseModelIdRef.current = null;
       setPendingUseModelId(null);
     }
     // A failed cancel must stay visible: the download may still be running, and swallowing it silently would make the user think it stopped.
     void voiceDictationService
-      ?.cancelDownload(id)
+      ?.cancelDownload(id, quant)
       .catch((error: unknown) => {
         logger.warn("voice model download cancellation failed", {
           id,
+          quant: quant ?? "",
           error: error instanceof Error ? error.message : String(error),
         });
         toast(intl.formatMessage({ id: "voiceDictation.cancelDownloadFailed" }));
@@ -725,24 +750,30 @@ function DesktopVoiceDictationSection() {
                 </Button>
               </div>
             ) : null}
-            {visibleModels.map((item) => (
-              <VoiceModelRow
-                key={item.descriptor.id}
-                item={item}
-                selected={modelId === item.descriptor.id}
-                runtimeState={runtimeState}
-                startingDownload={startingDownloadIds.has(item.descriptor.id)}
-                pendingUse={pendingUseModelId === item.descriptor.id}
-                recommended={recommendedId === item.descriptor.id}
-                selectedLanguages={selectedLanguages}
-                languageName={languageName}
-                onSelect={() => handleSelectModel(item.descriptor.id)}
-                onUseWhenReady={() => handleUseWhenReady(item.descriptor.id)}
-                onDownload={() => handleDownload(item.descriptor.id)}
-                onCancel={() => handleCancel(item.descriptor.id)}
-                onRemove={() => void handleRemove(item.descriptor.id)}
-              />
-            ))}
+            {visibleModels.map((item) => {
+              const id = item.descriptor.id;
+              const quant = quantFor(id);
+              return (
+                <VoiceModelRow
+                  key={id}
+                  item={item}
+                  selected={modelId === id}
+                  runtimeState={runtimeState}
+                  quant={quant}
+                  onQuantChange={(nextQuant) => handleQuantChange(id, nextQuant)}
+                  startingDownload={startingDownloadIds.has(`${id}:${quant ?? ""}`)}
+                  pendingUse={pendingUseModelId === id}
+                  recommended={recommendedId === id}
+                  selectedLanguages={selectedLanguages}
+                  languageName={languageName}
+                  onSelect={() => handleSelectModel(id)}
+                  onUseWhenReady={() => handleUseWhenReady(id)}
+                  onDownload={() => handleDownload(id, quant)}
+                  onCancel={() => handleCancel(id, quant)}
+                  onRemove={() => void handleRemove(id)}
+                />
+              );
+            })}
           </div>
           <div className="border-t border-border px-4 pb-1 pt-3">
             <h4 className="text-ui-base font-medium text-foreground">
@@ -896,7 +927,21 @@ export function isSameVoiceSettingValue(a: unknown, b: unknown): boolean {
   if (Array.isArray(a) && Array.isArray(b)) {
     return a.length === b.length && a.every((value, index) => value === b[index]);
   }
+  if (isPlainRecord(a) && isPlainRecord(b)) {
+    const aKeys = Object.keys(a);
+    const bKeys = Object.keys(b);
+    return aKeys.length === bKeys.length && aKeys.every((key) => a[key] === b[key]);
+  }
   return a === b;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.getPrototypeOf(value) === Object.prototype
+  );
 }
 
 function MicLevelBar({ level }: { level: number }) {

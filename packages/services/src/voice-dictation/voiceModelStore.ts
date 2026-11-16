@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
-import { mkdir, rename, rm, stat } from "node:fs/promises";
+import { mkdir, readdir, rename, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -9,7 +9,9 @@ import { createServiceLogger } from "#src/logger/serviceLogger.js";
 import {
   VOICE_MODEL_CATALOG,
   findVoiceModelDescriptor,
+  voiceModelQuantFile,
   type VoiceModelDescriptor,
+  type VoiceModelQuantFile,
 } from "./voiceModelCatalog.js";
 import type { VoiceModelListItem, VoiceModelState } from "./voiceDictation.js";
 
@@ -39,6 +41,8 @@ export interface VoiceModelStoreOptions {
   getModelsDir: () => string;
   /** Read-only model roots owned by another application. */
   handyModelDirs?: readonly string[];
+  /** HuggingFace hub cache roots (…/huggingface/hub); Handy ≥0.10 stores downloads there. */
+  hfHubDirs?: readonly string[];
   catalog?: readonly VoiceModelDescriptor[];
   /** Download sources, tried in order; each source's URL looks like `${source}/${repo}/resolve/${revision}/${file}`. */
   sources?: readonly string[];
@@ -55,11 +59,13 @@ interface ActiveDownload {
 /**
  * Sole state owner for voice models: installed files on disk and in-progress downloads are maintained only here.
  * Files are written to `.part` first and atomically renamed to the final name only after size and sha256 verification, so the `ready` state always refers to a complete file.
+ * Every operation addresses one quantization of a model; `remove` is the only whole-model operation.
  */
 export class VoiceModelStore {
   private readonly getModelsDir: () => string;
   private readonly catalog: readonly VoiceModelDescriptor[];
   private readonly handyModelDirs: readonly string[];
+  private readonly hfHubDirs: readonly string[];
   private readonly sources: readonly string[];
   private readonly fetchImpl: typeof fetch;
   private readonly active = new Map<string, ActiveDownload>();
@@ -68,6 +74,7 @@ export class VoiceModelStore {
   constructor(options: VoiceModelStoreOptions) {
     this.getModelsDir = options.getModelsDir;
     this.handyModelDirs = options.handyModelDirs ?? [];
+    this.hfHubDirs = options.hfHubDirs ?? [];
     this.catalog = options.catalog ?? VOICE_MODEL_CATALOG;
     this.sources = options.sources ?? DEFAULT_VOICE_MODEL_SOURCES;
     this.fetchImpl = options.fetchImpl ?? fetch;
@@ -77,14 +84,25 @@ export class VoiceModelStore {
     return Promise.all(
       this.catalog.map(async (descriptor) => ({
         descriptor,
-        state: await this.getState(descriptor.id),
+        states: await this.getStates(descriptor.id),
       })),
     );
   }
 
-  async getState(id: string): Promise<VoiceModelState> {
+  /** State of every quantization of a model, keyed by quant id; a missing quant entry never occurs. */
+  async getStates(id: string): Promise<Record<string, VoiceModelState>> {
     const descriptor = this.requireDescriptor(id);
-    const inFlight = this.active.get(id);
+    const states: Record<string, VoiceModelState> = {};
+    for (const quant of Object.keys(descriptor.quants)) {
+      states[quant] = await this.getState(id, quant);
+    }
+    return states;
+  }
+
+  async getState(id: string, quant?: string): Promise<VoiceModelState> {
+    const descriptor = this.requireDescriptor(id);
+    const file = voiceModelQuantFile(descriptor, quant);
+    const inFlight = this.active.get(downloadKey(id, resolvedQuant(descriptor, quant)));
     if (inFlight) {
       return {
         status: "downloading",
@@ -92,35 +110,34 @@ export class VoiceModelStore {
         totalBytes: inFlight.totalBytes,
       };
     }
-    const path = this.modelFilePath(descriptor);
+    const path = this.modelFilePath(descriptor, file);
     try {
       const info = await stat(path);
       // The listing only checks size; full sha256 was verified at download time, avoiding reading hundreds of MB every time settings opens.
-      if (info.isFile() && info.size === descriptor.sizeBytes) {
+      if (info.isFile() && info.size === file.sizeBytes) {
         return { status: "ready", path, sizeBytes: info.size, source: "zcode" };
       }
     } catch (error) {
       if (!isNotFound(error)) throw error;
     }
-    for (const handyDir of this.handyModelDirs) {
-      const handyPath = join(handyDir, descriptor.fileName);
+    for (const externalPath of await this.externalModelPaths(descriptor, file)) {
       try {
-        const info = await stat(handyPath, { throwIfNoEntry: true });
-        if (!info.isFile() || info.size !== descriptor.sizeBytes) continue;
+        const info = await stat(externalPath, { throwIfNoEntry: true });
+        if (!info.isFile() || info.size !== file.sizeBytes) continue;
 
-        const cacheKey = `${handyPath}:${info.size}:${info.mtimeMs}:${info.ctimeMs}:${info.ino}`;
+        const cacheKey = `${externalPath}:${info.size}:${info.mtimeMs}:${info.ctimeMs}:${info.ino}`;
         let digest = this.handyHashCache.get(cacheKey);
         if (!digest) {
-          digest = hashFileSha256(handyPath);
+          digest = hashFileSha256(externalPath);
           this.handyHashCache.set(cacheKey, digest);
         }
         try {
-          const verified = (await digest) === descriptor.sha256;
-          const latestInfo = await stat(handyPath, { throwIfNoEntry: true });
+          const verified = (await digest) === file.sha256;
+          const latestInfo = await stat(externalPath, { throwIfNoEntry: true });
           if (verified && sameFileVersion(info, latestInfo)) {
             return {
               status: "ready",
-              path: handyPath,
+              path: externalPath,
               sizeBytes: info.size,
               source: "handy",
             };
@@ -136,44 +153,47 @@ export class VoiceModelStore {
     return { status: "not_downloaded" };
   }
 
-  /** Returns the installed model's file path; throws when the model is not ready, so callers should download first. */
-  async getReadyModelPath(id: string): Promise<string> {
-    const state = await this.getState(id);
+  /** Returns the installed model file's path; throws when the file is not ready, so callers should download first. */
+  async getReadyModelPath(id: string, quant?: string): Promise<string> {
+    const state = await this.getState(id, quant);
     if (state.status !== "ready") {
       throw new Error(`voice model ${id} is not ready (${state.status})`);
     }
     return state.path;
   }
 
-  /** Concurrent calls for the same model share a single download task. */
-  download(id: string): Promise<void> {
+  /** Concurrent calls for the same model quantization share a single download task. */
+  download(id: string, quant?: string): Promise<void> {
     const descriptor = this.requireDescriptor(id);
-    const inFlight = this.active.get(id);
+    const file = voiceModelQuantFile(descriptor, quant);
+    const key = downloadKey(id, resolvedQuant(descriptor, quant));
+    const inFlight = this.active.get(key);
     if (inFlight) return inFlight.promise;
 
     const controller = new AbortController();
     const entry: ActiveDownload = {
       controller,
       downloadedBytes: 0,
-      totalBytes: descriptor.sizeBytes,
+      totalBytes: file.sizeBytes,
       promise: Promise.resolve(),
     };
-    entry.promise = this.runDownload(descriptor, entry).finally(() => {
-      if (this.active.get(id) === entry) this.active.delete(id);
+    entry.promise = this.runDownload(descriptor, file, entry).finally(() => {
+      if (this.active.get(key) === entry) this.active.delete(key);
     });
-    this.active.set(id, entry);
+    this.active.set(key, entry);
     return entry.promise;
   }
 
-  cancelDownload(id: string): void {
-    this.active.get(id)?.controller.abort();
+  cancelDownload(id: string, quant?: string): void {
+    const descriptor = this.requireDescriptor(id);
+    this.active.get(downloadKey(id, resolvedQuant(descriptor, quant)))?.controller.abort();
   }
 
-  /** Removes installed files; cancels and waits for an in-progress download first. */
+  /** Removes installed files for every quantization; cancels and waits for in-progress downloads first. */
   async remove(id: string): Promise<void> {
     const descriptor = this.requireDescriptor(id);
-    const inFlight = this.active.get(id);
-    if (inFlight) {
+    for (const [key, inFlight] of this.active) {
+      if (!key.startsWith(`${id}:`)) continue;
       inFlight.controller.abort();
       await inFlight.promise.catch(() => undefined);
     }
@@ -183,10 +203,11 @@ export class VoiceModelStore {
 
   private async runDownload(
     descriptor: VoiceModelDescriptor,
+    file: VoiceModelQuantFile,
     entry: ActiveDownload,
   ): Promise<void> {
     const dir = this.modelDir(descriptor);
-    const finalPath = this.modelFilePath(descriptor);
+    const finalPath = this.modelFilePath(descriptor, file);
     // Each download task uses a unique temp name: different windows each own a VoiceModelStore process, and sharing `${finalPath}.part`
     // would overwrite each other's bytes, while one side's failure cleanup would delete the other's half-written file and break the rename.
     const partPath = `${finalPath}.${randomUUID()}.part`;
@@ -195,9 +216,9 @@ export class VoiceModelStore {
     let lastError: unknown;
     for (const source of this.sources) {
       if (entry.controller.signal.aborted) break;
-      const url = buildModelUrl(source, descriptor);
+      const url = buildModelUrl(source, descriptor, file);
       try {
-        await this.fetchToPartFile(url, partPath, descriptor, entry);
+        await this.fetchToPartFile(url, partPath, descriptor, file, entry);
         try {
           await rename(partPath, finalPath);
         } catch (error) {
@@ -205,13 +226,17 @@ export class VoiceModelStore {
           // rename does not overwrite an existing target. When the target is already a same-size file (sha256-verified
           // at download time), treat it as success and clean up this task's leftover .part instead of reporting a false failure.
           const installed = await stat(finalPath).then(
-            (info) => info.isFile() && info.size === descriptor.sizeBytes,
+            (info) => info.isFile() && info.size === file.sizeBytes,
             () => false,
           );
           if (!installed) throw error;
           await rm(partPath, { force: true });
         }
-        logger.info(undefined, "voice model downloaded", { id: descriptor.id, source });
+        logger.info(undefined, "voice model downloaded", {
+          id: descriptor.id,
+          quant: file.fileName,
+          source,
+        });
         return;
       } catch (error) {
         lastError = error;
@@ -220,6 +245,7 @@ export class VoiceModelStore {
         if (error instanceof VoiceModelDownloadError && error.reason === "cancelled") break;
         logger.warn(undefined, "voice model download source failed", {
           id: descriptor.id,
+          quant: file.fileName,
           source,
           error: error instanceof Error ? error.message : String(error),
         });
@@ -241,6 +267,7 @@ export class VoiceModelStore {
     url: string,
     partPath: string,
     descriptor: VoiceModelDescriptor,
+    file: VoiceModelQuantFile,
     entry: ActiveDownload,
   ): Promise<void> {
     const signal = entry.controller.signal;
@@ -295,14 +322,14 @@ export class VoiceModelStore {
       );
     }
 
-    if (entry.downloadedBytes !== descriptor.sizeBytes) {
+    if (entry.downloadedBytes !== file.sizeBytes) {
       throw new VoiceModelDownloadError(
         "size_mismatch",
-        `${descriptor.id}: expected ${descriptor.sizeBytes} bytes, got ${entry.downloadedBytes}`,
+        `${descriptor.id}: expected ${file.sizeBytes} bytes, got ${entry.downloadedBytes}`,
       );
     }
     const digest = hash.digest("hex");
-    if (digest !== descriptor.sha256) {
+    if (digest !== file.sha256) {
       throw new VoiceModelDownloadError("checksum_mismatch", `${descriptor.id}: sha256 mismatch`);
     }
   }
@@ -318,20 +345,64 @@ export class VoiceModelStore {
     return descriptor;
   }
 
+  /**
+   * Candidate read-only paths for an externally downloaded model file: Handy's legacy flat models
+   * directory, and HuggingFace hub caches (Handy ≥0.10 stores downloads there) where the repo's
+   * snapshot revision is tried first, then any other snapshot (ref pins) with the same file name.
+   */
+  private async externalModelPaths(
+    descriptor: VoiceModelDescriptor,
+    file: VoiceModelQuantFile,
+  ): Promise<string[]> {
+    const candidates: string[] = [];
+    for (const handyDir of this.handyModelDirs) {
+      candidates.push(join(handyDir, file.fileName));
+    }
+    const repoFolder = `models--${descriptor.huggingFaceRepo.split("/").join("--")}`;
+    for (const hubDir of this.hfHubDirs) {
+      const snapshotsDir = join(hubDir, repoFolder, "snapshots");
+      candidates.push(join(snapshotsDir, descriptor.revision, file.fileName));
+      try {
+        for (const entry of await readdir(snapshotsDir, { withFileTypes: true })) {
+          if (entry.isDirectory()) {
+            candidates.push(join(snapshotsDir, entry.name, file.fileName));
+          }
+        }
+      } catch (error) {
+        if (!isNotFound(error)) throw error;
+      }
+    }
+    return [...new Set(candidates)];
+  }
+
   private modelDir(descriptor: VoiceModelDescriptor): string {
     return join(this.getModelsDir(), descriptor.id);
   }
 
-  private modelFilePath(descriptor: VoiceModelDescriptor): string {
-    return join(this.modelDir(descriptor), descriptor.fileName);
+  private modelFilePath(descriptor: VoiceModelDescriptor, file: VoiceModelQuantFile): string {
+    return join(this.modelDir(descriptor), file.fileName);
   }
 }
 
-export function buildModelUrl(source: string, descriptor: VoiceModelDescriptor): string {
+/** The quantization a call acts on: an omitted quant means the descriptor's default, so downloads, progress, and cancels share one key. */
+function resolvedQuant(descriptor: VoiceModelDescriptor, quant?: string): string {
+  return quant ?? descriptor.defaultQuant;
+}
+
+/** Active-download and progress identity: the model id plus the resolved quantization. */
+function downloadKey(id: string, quant: string): string {
+  return `${id}:${quant}`;
+}
+
+export function buildModelUrl(
+  source: string,
+  descriptor: VoiceModelDescriptor,
+  file: VoiceModelQuantFile,
+): string {
   // CodeQL flags backtracking regexes on library input; this hand-written loop strips trailing slashes equivalently with linear complexity.
   let base = source;
   while (base.endsWith("/")) base = base.slice(0, -1);
-  return `${base}/${descriptor.huggingFaceRepo}/resolve/${descriptor.revision}/${descriptor.fileName}`;
+  return `${base}/${descriptor.huggingFaceRepo}/resolve/${descriptor.revision}/${file.fileName}`;
 }
 
 function isNotFound(error: unknown): boolean {

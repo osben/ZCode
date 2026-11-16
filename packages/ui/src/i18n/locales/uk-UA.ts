@@ -7795,6 +7795,9 @@ const ukUA: Record<string, string> = {
   "voiceDictation.models.languages.showFewer": "Показати менше мов",
   "voiceDictation.models.streaming": "Потокова",
   "voiceDictation.models.license": "Ліцензія: {license}",
+  "voiceDictation.models.curated": "Вибір Handy",
+  "voiceDictation.models.quant": "Квантизація",
+  "voiceDictation.models.quantReady": "завантажено",
   "voiceDictation.models.download": "Завантажити",
   "voiceDictation.models.cancel": "Скасувати",
   "voiceDictation.models.use": "Використовувати",
@@ -7821,6 +7824,10 @@ const ukUA: Record<string, string> = {
     "Спочатку виберіть модель розпізнавання в Налаштуваннях → Голосове введення.",
   "voiceDictation.openSettings": "Відкрити налаштування",
   "voiceDictation.tooShort": "Запис закороткий. Записуйте, доки не закінчите говорити.",
+  "voiceDictation.silence.digital":
+    "Мікрофон не дав сигналу. Перевірте дозвіл на мікрофон або вибраний пристрій введення.",
+  "voiceDictation.silence.tooQuiet":
+    "Голос не розпізнано. Мікрофон може бути вимкнено або він занадто далеко.",
   "voiceDictation.stillLoading":
     "Модель розпізнавання ще завантажувалась. Говоріть, коли почнеться запис.",
   "voiceDictation.sessionBusyInOtherComposer":

@@ -5,6 +5,8 @@ import {
   engineLanguageFor,
   filterVoiceModels,
   isLiveStreamingModel,
+  isVoiceModelDownloading,
+  isVoiceModelReady,
   languageSettingsPatch,
   missingVoiceLanguages,
   modelSupportsVoiceLanguages,
@@ -93,9 +95,14 @@ test("isLiveStreamingModel follows the runtime-verified catalog flag, not the fa
   assert.equal(isLiveStreamingModel(TDT), false);
 });
 
-test("catalog streaming flags match the runtime-verified models", () => {
+test("catalog streaming flags match the Handy-published streaming models", () => {
   const streaming = VOICE_MODEL_CATALOG.filter(isLiveStreamingModel).map((m) => m.id);
   assert.deepEqual(streaming.sort(), [
+    "Voxtral-Mini-4B-Realtime-2602",
+    "moonshine-streaming-medium",
+    "moonshine-streaming-small",
+    "moonshine-streaming-tiny",
+    "multitalker-parakeet-streaming-0.6b-v1",
     "nemotron-3.5-asr-streaming-0.6b",
     "nemotron-speech-streaming-en-0.6b",
     "parakeet-unified-en-0.6b",
@@ -130,7 +137,19 @@ test("toNativeLanguage maps codes to locales only for models that need them", ()
 
 const items = CATALOG.map((descriptor, index) => ({
   descriptor,
-  state: index === 1 ? { status: "ready" as const } : { status: "not_downloaded" as const },
+  states: {
+    Q8_0: {
+      status: index === 1 ? ("ready" as const) : ("not_downloaded" as const),
+    },
+    Q4_K_M: {
+      status:
+        index === 0
+          ? ("ready" as const)
+          : index === 1
+            ? ("downloading" as const)
+            : ("not_downloaded" as const),
+    },
+  },
 }));
 const languageName = (code: string) =>
   ({ en: "English", uk: "Ukrainian", ru: "Russian" })[code] ?? code;
@@ -145,7 +164,8 @@ test("filterVoiceModels narrows by language, downloaded, streaming, and text", (
   assert.deepEqual(ids({}), ["whisper", "tdt", "en-live", "nemotron"]);
   assert.deepEqual(ids({ languages: ["uk"] }), ["whisper", "tdt"]);
   assert.deepEqual(ids({ languages: ["uk", "ja"] }), ["whisper"]);
-  assert.deepEqual(ids({ downloadedOnly: true }), ["tdt"]);
+  // "Downloaded" means any quantization is ready: whisper is ready on Q4_K_M, tdt on its default.
+  assert.deepEqual(ids({ downloadedOnly: true }), ["whisper", "tdt"]);
   assert.deepEqual(ids({ streamingOnly: true }), ["en-live"]);
   assert.deepEqual(ids({ query: "  UKRAINIAN " }), ["whisper", "tdt"]);
   assert.deepEqual(ids({ query: "nemo" }), ["nemotron"]);
@@ -166,12 +186,11 @@ test("sortVoiceModels puts the recommendation first and keeps catalog order othe
 
 test("catalog entries are well-formed and expose explicit unique language codes", () => {
   const ids = new Set<string>();
+  const quantPattern = /^(F32|F16|BF16|Q8_0|Q6_K|Q5_K_M|Q4_K_M)$/;
   for (const entry of VOICE_MODEL_CATALOG) {
     assert.ok(!ids.has(entry.id), `duplicate id ${entry.id}`);
     ids.add(entry.id);
-    assert.match(entry.sha256, /^[0-9a-f]{64}$/, entry.id);
     assert.match(entry.revision, /^[0-9a-f]{40}$/, entry.id);
-    assert.ok(entry.sizeBytes > 0, entry.id);
     assert.ok(entry.languages.length > 0, `${entry.id} has no languages`);
     assert.equal(
       new Set(entry.languages).size,
@@ -179,7 +198,44 @@ test("catalog entries are well-formed and expose explicit unique language codes"
       `${entry.id} repeats a code`,
     );
     for (const code of entry.languages) assert.match(code, /^[a-z]{2,3}$/, `${entry.id}: ${code}`);
+    assert.ok(entry.defaultQuant in entry.quants, `${entry.id}: defaultQuant missing from quants`);
+    assert.match(entry.minEngine, /^\d+\.\d+\.\d+$/, `${entry.id}: minEngine`);
+    for (const [quant, file] of Object.entries(entry.quants)) {
+      assert.match(quant, quantPattern, `${entry.id}: ${quant}`);
+      assert.match(file.sha256, /^[0-9a-f]{64}$/, `${entry.id}/${quant}: sha256`);
+      assert.ok(file.sizeBytes > 0, `${entry.id}/${quant}: size`);
+      assert.ok(file.fileName.length > 0, `${entry.id}/${quant}: fileName`);
+    }
   }
+});
+
+test("the catalog keeps every legacy model id so stored selections stay valid", () => {
+  const ids = new Set(VOICE_MODEL_CATALOG.map((entry) => entry.id));
+  for (const id of [
+    "whisper-tiny",
+    "whisper-base",
+    "whisper-small",
+    "whisper-medium",
+    "whisper-large-v3",
+    "whisper-large-v3-turbo",
+    "parakeet-unified-en-0.6b",
+    "parakeet-tdt-0.6b-v3",
+    "canary-180m-flash",
+    "canary-1b-v2",
+    "nemotron-speech-streaming-en-0.6b",
+    "nemotron-3.5-asr-streaming-0.6b",
+    "gigaam-v3-e2e-rnnt",
+  ]) {
+    assert.ok(ids.has(id), `missing legacy model id ${id}`);
+  }
+});
+
+test("ready and downloading helpers look across every quantization", () => {
+  const [readyOnOtherQuant, mixed] = items;
+  assert.equal(isVoiceModelReady(readyOnOtherQuant!), true);
+  assert.equal(isVoiceModelDownloading(readyOnOtherQuant!), false);
+  assert.equal(isVoiceModelReady(mixed!), true);
+  assert.equal(isVoiceModelDownloading(mixed!), true);
 });
 
 test("catalog language data matches the model cards for the models users pick for uk/ru/en", () => {

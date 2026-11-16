@@ -75,7 +75,9 @@ async function loadWindowsJobObjectApi(): Promise<WindowsJobObjectApi | undefine
 async function createWindowsJobObjectApi(): Promise<WindowsJobObjectApi | undefined> {
   try {
     const koffiModule = await import("koffi");
-    const koffi = ("default" in koffiModule ? koffiModule.default : koffiModule) as typeof Koffi;
+    // koffi 3's module type declares internal helpers plus DefaultObject that the runtime CJS/ESM
+    // interop shape does not carry, so the interop cast goes through unknown on purpose.
+    const koffi = ("default" in koffiModule ? koffiModule.default : koffiModule) as unknown as typeof Koffi;
     const kernel32 = koffi.load("kernel32.dll");
     const handleType = koffi.pointer("HANDLE", koffi.opaque());
     const basicLimitInformation = koffi.struct("JOBOBJECT_BASIC_LIMIT_INFORMATION", {

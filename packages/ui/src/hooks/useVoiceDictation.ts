@@ -15,9 +15,11 @@ import { useVoiceDictationRecordingAudio } from "@/hooks/useVoiceDictationRecord
 import { logger } from "@/logger.js";
 import {
   VOICE_MIN_RECORDING_MS,
+  classifyRecordingSilence,
   concatFloat32Chunks,
   float32ToPcm16Le,
   samplesToMilliseconds,
+  type VoiceRecordingPeakStats,
 } from "@/lib/voiceDictationAudio.js";
 import { VoiceDictationRecorder } from "@/lib/voiceDictationRecorder.js";
 import {
@@ -59,6 +61,8 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
   const { settings } = useSettings();
   const voice = settings?.voiceDictation;
   const modelId = voice?.modelId ?? null;
+  // Per-model quantization choice; absent falls back to the catalog default inside the Host.
+  const quant = (modelId && voice?.quantByModel?.[modelId]) || undefined;
   const microphoneDeviceId = voice?.microphoneDeviceId ?? null;
   // One selected language is forced on the engine; none or several leave detection to the model.
   const language = resolveEngineLanguage(voice ?? {});
@@ -75,6 +79,7 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
   const [phase, setPhase] = useState<VoiceDictationPhase>("idle");
   const [level, setLevel] = useState(0);
   const [preview, setPreview] = useState<VoiceTranscriptionPreview | null>(null);
+  const peakStatsRef = useRef<VoiceRecordingPeakStats>({ chunks: 0, maxPeak: 0 });
   const [recorder] = useState(() => new VoiceDictationRecorder());
   const phaseRef = useRef<VoiceDictationPhase>("idle");
   const startedAtRef = useRef(0);
@@ -104,6 +109,13 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
       releaseVoiceDictationSession(sessionOwnerRef.current);
     }
     setPhase(next);
+  }, []);
+
+  const handleChunkPeak = useCallback((peak: number) => {
+    const stats = peakStatsRef.current;
+    stats.chunks += 1;
+    if (peak > stats.maxPeak) stats.maxPeak = peak;
+    setLevel(peak);
   }, []);
 
   const cancelServiceStream = useCallback(
@@ -209,7 +221,7 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
       if (streamFlushScheduledRef.current) return;
       flushStreamBacklog(streamId);
     },
-    [flushStreamBacklog, voiceDictationService],
+    [failStream, flushStreamBacklog, voiceDictationService],
   );
 
   const start = useCallback(async (): Promise<void> => {
@@ -240,6 +252,7 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
     streamBacklogRef.current = [];
     streamFlushScheduledRef.current = false;
     streamQueueRef.current = Promise.resolve();
+    peakStatsRef.current = { chunks: 0, maxPeak: 0 };
     setLevel(0);
     setPreview(null);
     updatePhase("loading");
@@ -247,7 +260,7 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
       let streamId: string | null;
       try {
         await applyIdleUnloadPreference(voiceDictationService, idleUnloadMinutes);
-        streamId = await voiceDictationService.beginStream({ modelId, language });
+        streamId = await voiceDictationService.beginStream({ modelId, quant, language });
       } catch (error) {
         logger.warn("voice dictation model stream initialization failed", {
           error: error instanceof Error ? error.message : String(error),
@@ -267,7 +280,7 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
       try {
         await recorder.start({
           deviceId: microphoneDeviceId,
-          onLevel: setLevel,
+          onLevel: handleChunkPeak,
           onChunk: enqueueStreamChunk,
           collectSamples: streamId === null,
         });
@@ -300,7 +313,6 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
         recorder.cancel();
         if (streamIdRef.current === streamId) streamIdRef.current = null;
         if (streamId) cancelServiceStream(streamId);
-        setLevel(0);
         setPreview(null);
         if (generation === startGenerationRef.current) {
           updatePhase("idle");
@@ -321,6 +333,7 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
     cancelServiceStream,
     enabled,
     enqueueStreamChunk,
+    handleChunkPeak,
     intl,
     idleUnloadMinutes,
     language,
@@ -328,6 +341,7 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
     modelId,
     muteWhileRecording,
     openVoiceSettings,
+    quant,
     recorder,
     recordingAudio,
     updatePhase,
@@ -352,8 +366,11 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
   const cancel = useCallback((): void => {
     heldBindingRef.current = null;
     if (phaseRef.current === "processing") {
-      // The transcript exists but is discarded: bumping the generation makes stop() drop its result.
+      // The rewrite is discarded and the live span goes with it (VD-OUT-03: nothing is inserted).
+      // Bumping the generation also makes the pending stop() drop its result, so its finally
+      // clear never races this one.
       startGenerationRef.current += 1;
+      setPreview(null);
       updatePhase("idle");
       return;
     }
@@ -381,6 +398,10 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
     // Release the system mute before the stop chime so the chime is not swallowed by the mute.
     recordingAudio.handleRecordingStopped();
     const streamId = streamIdRef.current;
+    // Silence diagnostics (VD-SIL-*): classified from the session's chunk peaks before any
+    // transcription runs, so a dead or unusably quiet input explains itself instead of producing
+    // an empty or hallucinated transcript.
+    const silence = classifyRecordingSilence(peakStatsRef.current);
     if (
       releasedWhileLoading ||
       durationMs < VOICE_MIN_RECORDING_MS ||
@@ -400,6 +421,22 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
       }
       return;
     }
+    if (silence !== "ok") {
+      streamIdRef.current = null;
+      if (streamId) cancelServiceStream(streamId);
+      setPreview(null);
+      updatePhase("idle");
+      toast(
+        intl.formatMessage({
+          id:
+            silence === "digitalSilence"
+              ? "voiceDictation.silence.digital"
+              : "voiceDictation.silence.tooQuiet",
+        }),
+      );
+      logger.info("voice dictation stopped: captured audio was silent", { outcome: silence });
+      return;
+    }
     updatePhase("transcribing");
     try {
       let result;
@@ -408,12 +445,13 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
         if (streamErrorRef.current) throw streamErrorRef.current;
         result = await voiceDictationService.finalizeStream(streamId);
         streamIdRef.current = null;
-        // The final transcript replaces the ghost preview; clear it before any rewrite wait so the
-        // preview never lingers next to the processing state.
-        setPreview(null);
+        // The voice span stays live through post-processing: onTranscript replaces it with the
+        // final text, and only then does the finally-block clear reach the editor (a premature
+        // clear would cancel the span before the replace could reuse its position).
       } else {
         result = await voiceDictationService.transcribe({
           modelId: modelId ?? "",
+          quant,
           pcm: float32ToPcm16Le(samples),
           language,
         });
@@ -466,6 +504,7 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
     postProcessEnabled,
     postProcessPrompt,
     postProcessProvider,
+    quant,
     recorder,
     recordingAudio,
     updatePhase,

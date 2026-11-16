@@ -9,13 +9,14 @@ export interface VoiceTranscriptionResult {
 }
 
 /** Stream-slot extensions tried in order; the first one the loaded model accepts is used. */
-const STREAM_FAMILY_KINDS = ["parakeet_buffered", "parakeet"] as const;
+const STREAM_FAMILY_KINDS = ["parakeet_buffered", "parakeet", "moonshine", "voxtral"] as const;
 export type VoiceStreamFamilyKind = (typeof STREAM_FAMILY_KINDS)[number];
 
 /**
  * Chooses the stream family from what the loaded model declares: none when it cannot stream, otherwise
  * the first stream extension it accepts. Hard-coding one family silently kept parakeet-unified (buffered
- * only) on the one-shot path, while Nemotron accepts only `parakeet`.
+ * only) on the one-shot path, while Nemotron accepts only `parakeet`; moonshine/voxtral cover the
+ * streaming families transcribe-cpp 0.4 exposes.
  */
 export function selectStreamFamily(model: {
   supportsStreaming: boolean;
@@ -46,12 +47,13 @@ export interface VoiceTranscriberOptions {
 /**
  * Sole owner of the currently loaded model and the active stream lease. Loading, transcription, stream
  * operations, and unloading all execute serially through one queue, preventing the model from being
- * replaced or released mid-computation.
+ * replaced or released mid-computation. The loaded identity is the model id plus quantization: switching
+ * the quantization of the same model reloads the file.
  */
 export class VoiceTranscriber {
   private readonly store: VoiceModelStore;
   private readonly loadEngine: (modelPath: string) => Promise<VoiceEngineModel>;
-  private loaded: { id: string; engine: VoiceEngineModel } | null = null;
+  private loaded: { id: string; quant: string | undefined; engine: VoiceEngineModel } | null = null;
   private activeModelIdValue: string | null = null;
   private activePhaseValue: "loading" | "transcribing" | "streaming" | null = null;
   private activeStreamModelId: string | null = null;
@@ -74,7 +76,7 @@ export class VoiceTranscriber {
     return this.activePhaseValue;
   }
 
-  load(id: string): Promise<void> {
+  load(id: string, quant?: string): Promise<void> {
     return this.enqueue(async () => {
       if (this.activeStreamModelId)
         throw new Error("cannot load a model while a voice stream is active");
@@ -82,7 +84,7 @@ export class VoiceTranscriber {
       this.activeModelIdValue = id;
       this.activePhaseValue = "loading";
       try {
-        await this.ensureLoaded(id);
+        await this.ensureLoaded(id, quant);
       } finally {
         this.activeModelIdValue = null;
         this.activePhaseValue = null;
@@ -94,7 +96,7 @@ export class VoiceTranscriber {
   transcribe(
     modelId: string,
     samples: Float32Array,
-    options: { language?: string } = {},
+    options: { quant?: string; language?: string } = {},
   ): Promise<VoiceTranscriptionResult> {
     return this.enqueue(async () => {
       if (this.activeStreamModelId) {
@@ -104,7 +106,7 @@ export class VoiceTranscriber {
       this.activeModelIdValue = modelId;
       this.activePhaseValue = "loading";
       try {
-        await this.ensureLoaded(modelId);
+        await this.ensureLoaded(modelId, options.quant);
         this.activePhaseValue = "transcribing";
         return await this.loaded!.engine.transcribe(samples, {
           language: toNativeLanguage(this.store.findDescriptor(modelId), options.language),
@@ -116,13 +118,16 @@ export class VoiceTranscriber {
     });
   }
 
-  beginStream(modelId: string, options: { language?: string } = {}): Promise<boolean> {
+  beginStream(
+    modelId: string,
+    options: { quant?: string; language?: string } = {},
+  ): Promise<boolean> {
     return this.enqueue(async () => {
       if (this.activeStreamModelId) throw new Error("a voice dictation stream is already active");
       this.activeModelIdValue = modelId;
       this.activePhaseValue = "loading";
       try {
-        await this.ensureLoaded(modelId);
+        await this.ensureLoaded(modelId, options.quant);
         const engine = this.loaded!.engine;
         if (
           !engine.supportsStreaming?.() ||
@@ -188,12 +193,12 @@ export class VoiceTranscriber {
     });
   }
 
-  private async ensureLoaded(id: string): Promise<void> {
-    if (this.loaded?.id === id) return;
+  private async ensureLoaded(id: string, quant?: string): Promise<void> {
+    if (this.loaded?.id === id && this.loaded?.quant === quant) return;
     this.disposeLoaded();
-    const modelPath = await this.store.getReadyModelPath(id);
+    const modelPath = await this.store.getReadyModelPath(id, quant);
     const engine = await this.loadEngine(modelPath);
-    this.loaded = { id, engine };
+    this.loaded = { id, quant, engine };
   }
 
   private disposeLoaded(): void {

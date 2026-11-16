@@ -24,7 +24,9 @@ export {
 export {
   VOICE_MODEL_CATALOG,
   findVoiceModelDescriptor,
+  voiceModelQuantFile,
   type VoiceModelDescriptor,
+  type VoiceModelQuantFile,
 } from "./voiceModelCatalog.js";
 export {
   DEFAULT_POST_PROCESS_PROMPT,
@@ -43,6 +45,8 @@ export {
   resolveEngineLanguage,
   filterVoiceModels,
   isLiveStreamingModel,
+  isVoiceModelDownloading,
+  isVoiceModelReady,
   languageSettingsPatch,
   missingVoiceLanguages,
   recommendVoiceModel,

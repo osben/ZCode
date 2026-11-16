@@ -585,7 +585,7 @@ describe("useVoiceDictation post-processing", () => {
     expect(hook.result.current.phase).toBe("idle");
   });
 
-  it("clears the ghost preview as soon as finalization returns, before the rewrite wait (VD-GHO-05)", async () => {
+  it("keeps the voice span through the rewrite wait; cancel during processing removes it (VD-GHO-05, VD-OUT-03)", async () => {
     let finish!: (value: { text: string }) => void;
     mocks.service!.postProcess!.mockImplementation(
       () => new Promise((resolve) => (finish = resolve)),
@@ -601,7 +601,8 @@ describe("useVoiceDictation post-processing", () => {
       stopping = hook.result.current.stop();
     });
     await waitFor(() => expect(hook.result.current.phase).toBe("processing"));
-    expect(hook.result.current.preview).toBeNull();
+    // The span stays live through post-processing: the final transcript replaces it in place.
+    expect(hook.result.current.preview).not.toBeNull();
     expect(onTranscript).not.toHaveBeenCalled();
 
     await act(async () => {
@@ -609,6 +610,28 @@ describe("useVoiceDictation post-processing", () => {
       await stopping;
     });
     expect(onTranscript).toHaveBeenCalledTimes(1);
+    expect(hook.result.current.preview).toBeNull();
+
+    // Cancelling during the rewrite discards the result AND removes the live span immediately.
+    let cancelledFinish!: (value: { text: string }) => void;
+    mocks.service!.postProcess!.mockImplementation(
+      () => new Promise((resolve) => (cancelledFinish = resolve)),
+    );
+    const secondRun = renderDictation(vi.fn());
+    await speak(secondRun);
+    await act(async () => mocks.recorder?.options?.onChunk?.(new Float32Array([0.5, 0.25])));
+    await waitFor(() => expect(secondRun.result.current.preview).not.toBeNull());
+    let cancelling!: Promise<void>;
+    act(() => {
+      cancelling = secondRun.result.current.stop();
+    });
+    await waitFor(() => expect(secondRun.result.current.phase).toBe("processing"));
+    act(() => {
+      secondRun.result.current.cancel();
+    });
+    expect(secondRun.result.current.preview).toBeNull();
+    void cancelling;
+    void cancelledFinish;
   });
 
   it("inserts the raw transcript without an availability probe when the provider is unavailable (VD-PPR-09)", async () => {
