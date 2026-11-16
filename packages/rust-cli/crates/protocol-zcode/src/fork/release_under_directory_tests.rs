@@ -23,7 +23,7 @@ use rust_cli_kernel_api::session_api::{
     SESSION_BUSY, SequencedEvent, SessionHandle, SessionView,
 };
 use rust_cli_kernel_api::store::{
-    SessionFilter, SessionKind, SessionMeta, SessionSummary, StoreQueries,
+    SessionFilter, SessionKind, SessionMeta, SessionStore, SessionSummary, StoreQueries,
 };
 use rust_cli_kernel_api::testing::{FixedClock, HandleOverride, MemoryStore, selection};
 use rust_cli_protocol_core::connection::{self, Options};
@@ -104,15 +104,17 @@ impl HandleOverride for TestHandle {
     }
 }
 
-/// The kernel double: opens the handle of the requested session.
+/// The kernel double: opens the handle of the requested session, over the store the cold open reads (the fork
+/// execution-worktree columns live there).
 struct ReleaseKernel {
     handles: HashMap<String, Arc<TestHandle>>,
+    store: Arc<MemoryStore>,
 }
 
 #[async_trait]
 impl Kernel for ReleaseKernel {
     fn queries(&self) -> Arc<dyn StoreQueries> {
-        Arc::new(MemoryStore::default())
+        self.store.clone()
     }
 
     async fn create_session(&self, _request: CreateSession) -> Result<SessionId, KernelError> {
@@ -205,12 +207,21 @@ async fn fixture(
 async fn serve(
     handles: HashMap<String, Arc<TestHandle>>,
 ) -> (TaskScope, Arc<Server>, HashMap<String, Arc<TestHandle>>) {
+    serve_over(handles, Arc::new(MemoryStore::default())).await
+}
+
+/// Builds the server over the given handles and store, every handle open (the cold open reads the store's rows).
+async fn serve_over(
+    handles: HashMap<String, Arc<TestHandle>>,
+    store: Arc<MemoryStore>,
+) -> (TaskScope, Arc<Server>, HashMap<String, Arc<TestHandle>>) {
     let scope = TaskScope::root("test", |_| {});
     let (out, _reader) = tokio::io::duplex(1 << 16);
     let (peer, _writer) = connection::start(out, &scope.spawner(), Options::default());
     let context = Arc::new(Context::new(peer, Arc::new(FixedClock(5))));
     let kernel = Arc::new(ReleaseKernel {
         handles: handles.clone(),
+        store,
     });
     let server = Arc::new(Server::new(
         context,
@@ -304,6 +315,42 @@ async fn a_worktree_session_is_matched_by_its_execution_cwd_not_its_listed_proje
         json!({"released": ["wt"], "busy": []})
     );
     assert_eq!(closes(&handles, "wt"), vec![EndReason::Other]);
+}
+
+/// A session whose stored execution root (the fork columns, Node `execution_directory` / `execution_branch`) is under
+/// the target: the cold open restores them into the live cwd, so the worktree directory releases it and its listed
+/// directory (the parent project) does not.
+#[tokio::test]
+async fn a_stored_execution_worktree_row_is_matched_at_the_cold_open() {
+    let store = Arc::new(MemoryStore::default());
+    let stored = SessionId::new("row");
+    store.create(meta("row", PROJECT)).await.unwrap();
+    store
+        .set_execution_worktree(
+            &stored,
+            &EnvPath::new(format!("{WORKTREE}/packages/ui")),
+            Some("feat"),
+        )
+        .await
+        .unwrap();
+    let handle = Arc::new(TestHandle::of(idle("row", PROJECT)));
+    let (_scope, server, handles) =
+        serve_over(HashMap::from([("row".to_owned(), handle)]), store).await;
+    let live = server.live(&stored).await.unwrap();
+    assert_eq!(
+        live.sink.cwd(),
+        format!("{WORKTREE}/packages/ui"),
+        "the cold open read the stored columns"
+    );
+    assert_eq!(
+        release(&server, PROJECT).await,
+        json!({"released": [], "busy": []})
+    );
+    assert_eq!(
+        release(&server, WORKTREE).await,
+        json!({"released": ["row"], "busy": []})
+    );
+    assert_eq!(closes(&handles, "row"), vec![EndReason::Other]);
 }
 
 /// `/x/repo2` is not inside `/x/repo`, and `/x/rep` does not contain `/x/repo`.
