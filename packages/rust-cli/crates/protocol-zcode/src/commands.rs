@@ -480,7 +480,8 @@ pub(crate) async fn create_session_with(
     }
     // The activation routes (preparedSessionId) name their own worktree in the marker's data; an
     // admitted cwd is silently dropped there and its creation fact never persists, so a sender
-    // combining the two shapes is refused instead (B1.1; unreachable while worktreeCwd is false).
+    // combining the two shapes is refused instead (B1.1; the Host never combines the shapes, so the
+    // refusal guards only a sender that does).
     if payload.prepared_session_id.is_some()
         && (payload.cwd.is_some() || payload.worktree_creation.is_some())
     {
