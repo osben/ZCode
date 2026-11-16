@@ -1200,7 +1200,6 @@ async fn mcp_enable_and_disable_reload_the_named_workspaces_layer() {
         uid: None,
     });
     let store = Arc::new(MemoryStore::default());
-    let store = Arc::new(MemoryStore::default());
     let kernel = LocalKernel::with_extensions(
         Ports {
             model: Arc::new(ScriptedModel::new(Vec::new())),
