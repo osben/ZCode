@@ -117,8 +117,8 @@ describe("desktop native package policy", () => {
         "@transcribe-cpp",
         "linux-x64-cpu-vulkan",
       );
-      const koffiTargetDir = join(stagingNodeModulesDir, "koffi", "build", "koffi", "darwin_arm64");
-      const koffiOtherDir = join(stagingNodeModulesDir, "koffi", "build", "koffi", "linux_x64");
+      const koffiTargetDir = join(stagingNodeModulesDir, "@koromix", "koffi-darwin-arm64");
+      const koffiOtherDir = join(stagingNodeModulesDir, "@koromix", "koffi-linux-x64");
       for (const dir of [transcribeTargetDir, transcribeOtherDir, koffiTargetDir, koffiOtherDir]) {
         mkdirSync(dir, { recursive: true });
       }

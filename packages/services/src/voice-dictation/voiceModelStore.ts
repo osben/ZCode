@@ -102,7 +102,7 @@ export class VoiceModelStore {
   async getState(id: string, quant?: string): Promise<VoiceModelState> {
     const descriptor = this.requireDescriptor(id);
     const file = voiceModelQuantFile(descriptor, quant);
-    const inFlight = this.active.get(downloadKey(id, quant));
+    const inFlight = this.active.get(downloadKey(id, resolvedQuant(descriptor, quant)));
     if (inFlight) {
       return {
         status: "downloading",
@@ -166,7 +166,7 @@ export class VoiceModelStore {
   download(id: string, quant?: string): Promise<void> {
     const descriptor = this.requireDescriptor(id);
     const file = voiceModelQuantFile(descriptor, quant);
-    const key = downloadKey(id, quant);
+    const key = downloadKey(id, resolvedQuant(descriptor, quant));
     const inFlight = this.active.get(key);
     if (inFlight) return inFlight.promise;
 
@@ -185,7 +185,8 @@ export class VoiceModelStore {
   }
 
   cancelDownload(id: string, quant?: string): void {
-    this.active.get(downloadKey(id, quant))?.controller.abort();
+    const descriptor = this.requireDescriptor(id);
+    this.active.get(downloadKey(id, resolvedQuant(descriptor, quant)))?.controller.abort();
   }
 
   /** Removes installed files for every quantization; cancels and waits for in-progress downloads first. */
@@ -383,9 +384,14 @@ export class VoiceModelStore {
   }
 }
 
+/** The quantization a call acts on: an omitted quant means the descriptor's default, so downloads, progress, and cancels share one key. */
+function resolvedQuant(descriptor: VoiceModelDescriptor, quant?: string): string {
+  return quant ?? descriptor.defaultQuant;
+}
+
 /** Active-download and progress identity: the model id plus the resolved quantization. */
-function downloadKey(id: string, quant?: string): string {
-  return quant === undefined ? `${id}:` : `${id}:${quant}`;
+function downloadKey(id: string, quant: string): string {
+  return `${id}:${quant}`;
 }
 
 export function buildModelUrl(

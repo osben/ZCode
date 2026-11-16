@@ -374,15 +374,17 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
         setPreview(null);
         if (generation === startGenerationRef.current) {
           updatePhase("idle");
-          // NotAllowedError with a system-level grant is the Windows "allow desktop apps"
-          // case: the system privacy page is off while this app's own state says granted.
+          // NotAllowedError with a system-level denial/restriction is the Windows "allow desktop
+          // apps" case. Only those open the guide: "granted" is an app-level failure and
+          // "unsupported" (Linux) has no system page to link — both keep the generic toast.
           if (error instanceof DOMException && error.name === "NotAllowedError") {
             const readStatus = platformRef.current?.getMicrophoneAccessStatus?.bind(
               platformRef.current,
             );
             if (readStatus) {
               try {
-                if ((await readStatus()) !== "granted") {
+                const status = await readStatus();
+                if (status === "denied" || status === "restricted") {
                   setPermissionGuide("denied");
                   logger.info("voice dictation start refused: getUserMedia denied by the system");
                   return;

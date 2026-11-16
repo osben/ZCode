@@ -95,10 +95,15 @@ function normalizeAsarPath(path) {
 // neither injected nor allowed in app.asar (enforced by files pruning and the violation checks); both the
 // dependency closure injection and the bundle verification must filter by target platform prefix.
 export function isTargetTranscribePlatformPackage(moduleName, targetPlatformKey) {
-  return (
-    !moduleName.startsWith("@transcribe-cpp/") ||
-    moduleName.startsWith(`@transcribe-cpp/${targetPlatformKey}-`)
-  );
+  if (moduleName.startsWith("@transcribe-cpp/")) {
+    return moduleName.startsWith(`@transcribe-cpp/${targetPlatformKey}-`);
+  }
+  // koffi 3 ships one native package per optional @koromix/koffi-<os>-<arch> dependency; the
+  // post-injection filter must prune non-target ones exactly like @transcribe-cpp.
+  if (moduleName.startsWith("@koromix/koffi-")) {
+    return moduleName === `@koromix/koffi-${targetPlatformKey}`;
+  }
+  return true;
 }
 
 export function parseAsarListWithPackState(output) {
@@ -210,12 +215,12 @@ export function removeNonTargetPlatformNativePackages({ nodeModulesDir, targetPl
     }
   }
 
-  const koffiNativeDir = resolve(nodeModulesDir, "koffi", "build", "koffi");
-  if (existsSync(koffiNativeDir)) {
-    const targetPlatformDir = targetPlatformKey.replaceAll("-", "_");
-    for (const entry of readdirSync(koffiNativeDir)) {
-      if (entry !== targetPlatformDir) {
-        rmSync(join(koffiNativeDir, entry), { recursive: true, force: true });
+  const koromixScopeDir = resolve(nodeModulesDir, "@koromix");
+  if (existsSync(koromixScopeDir)) {
+    const targetKoffiPackage = `koffi-${targetPlatformKey}`;
+    for (const entry of readdirSync(koromixScopeDir)) {
+      if (entry.startsWith("koffi-") && entry !== targetKoffiPackage) {
+        rmSync(join(koromixScopeDir, entry), { recursive: true, force: true });
       }
     }
   }

@@ -23,6 +23,7 @@
   "packages/desktop/test/desktopDictationSystemAudio.test.ts",
   "packages/desktop/test/desktopHostProcess.test.ts",
   "packages/desktop/test/desktopMainIpcHelpersOpenExternal.test.ts",
+  "packages/desktop/test/desktopMicrophoneAccess.test.ts",
   "packages/desktop/test/desktopResourceSystemWindow.test.ts",
   "packages/desktop/test/desktopResourceTelemetry.test.ts",
   "packages/desktop/test/desktopTaskDraftDeepLink.test.ts",

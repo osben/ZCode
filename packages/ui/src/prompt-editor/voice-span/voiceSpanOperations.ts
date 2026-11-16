@@ -2,13 +2,13 @@ import {
   $createParagraphNode,
   $createTextNode,
   $isElementNode,
+  $isRangeSelection,
   $getNodeByKey,
   $getRoot,
   $getSelection,
-  $isRangeSelection,
 } from "lexical";
-import type { NodeKey } from "lexical";
-import { $createVoiceTextNode, VoiceTextNode, VoiceTentativeTextNode } from "./VoiceTextNode.js";
+import type { NodeKey, PointType } from "lexical";
+import { $createVoiceTextNode, VoiceTentativeTextNode, VoiceTextNode } from "./VoiceTextNode.js";
 
 /**
  * Voice span operations (specs/voice-dictation.md "Voice text span"). Pure Lexical helpers; the
@@ -19,19 +19,54 @@ import { $createVoiceTextNode, VoiceTextNode, VoiceTentativeTextNode } from "./V
 export interface VoiceSpanState {
   committedKey: NodeKey | null;
   tentativeKey: NodeKey | null;
+  /**
+   * True once a span was created this recording. A finalize with no attached committed node then
+   * means the USER deleted the span: the late result is dropped instead of being re-inserted at
+   * the caret, which is only correct for recordings that never created a span (one-shot engines).
+   */
+  created: boolean;
 }
 
-/** Returns the attached node for a span key, or null when it was removed (stale key). */
+export function createVoiceSpanState(): VoiceSpanState {
+  return { committedKey: null, tentativeKey: null, created: false };
+}
+
 function attachedNode(key: NodeKey | null): import("lexical").LexicalNode | null {
   if (key === null) return null;
   const node = $getNodeByKey(key);
   return node && node.isAttached() ? node : null;
 }
 
+function $charBeforePoint(point: PointType): string {
+  if (point.type === "text") {
+    return point
+      .getNode()
+      .getTextContent()
+      .charAt(point.offset - 1);
+  }
+  const sibling = point.getNode().getPreviousSibling();
+  return sibling?.getTextContent().slice(-1) ?? "";
+}
+
+function $charAfterPoint(point: PointType): string {
+  if (point.type === "text") {
+    return point.getNode().getTextContent().charAt(point.offset);
+  }
+  const sibling = point.getNode().getNextSibling();
+  return sibling?.getTextContent().charAt(0) ?? "";
+}
+
+/** Boundary padding shared with insertEditorPlainTextAtSelection: a space only next to word characters. */
+function pad(text: string, before: string, after: string): string {
+  const leading = before && !/\s/.test(before) && !text.startsWith(" ") ? " " : "";
+  const trailing = after && !/\s/.test(after) && !text.endsWith(" ") ? " " : "";
+  return `${leading}${text}${trailing}`;
+}
+
 /**
  * Creates the span at the caret on the first update and replaces its content in place afterwards.
- * The committed node keeps its key; the tentative suffix node exists only while tentative text is
- * non-empty.
+ * The insert goes through the range selection (element anchors, text offsets, and selection
+ * replacement all handled); without a selection the span joins (or creates) the last paragraph.
  */
 export function $updateVoiceSpan(
   preview: { committed: string; tentative: string },
@@ -41,17 +76,12 @@ export function $updateVoiceSpan(
   const committed = attachedCommitted instanceof VoiceTextNode ? attachedCommitted : null;
   if (committed === null) {
     const selection = $getSelection();
-    const anchor = $isRangeSelection(selection)
-      ? selection.isBackward()
-        ? selection.focus
-        : selection.anchor
-      : null;
     const node = $createVoiceTextNode(preview.committed);
-    if (anchor) {
-      anchor.getNode().insertAfter(node);
+    if ($isRangeSelection(selection)) {
+      const before = $charBeforePoint(selection.anchor);
+      if (before && !/\s/.test(before)) node.setTextContent(` ${preview.committed}`);
+      selection.insertNodes([node]);
     } else {
-      // Text nodes cannot sit at the root: without a selection the span joins (or creates) the
-      // last paragraph, matching where a plain insert would land.
       const root = $getRoot();
       const last = root.getLastChild();
       if (last && $isElementNode(last)) {
@@ -63,6 +93,7 @@ export function $updateVoiceSpan(
       }
     }
     state.committedKey = node.getKey();
+    state.created = true;
     if (preview.tentative) {
       const tentative = new VoiceTentativeTextNode(preview.tentative);
       node.insertAfter(tentative);
@@ -87,9 +118,10 @@ export function $updateVoiceSpan(
 }
 
 /**
- * Replaces the live span with the final plain text; an empty final removes it. Without a live
- * span (one-shot engines never streamed) the text inserts at the caret like a normal insert,
- * keeping today's finalize behaviour.
+ * Replaces the live span with the final plain text, keeping the neighbour-aware boundary spaces
+ * the plain insert path applies. An empty final removes the span. Without a live span the text
+ * inserts at the caret like a normal insert; if the user DELETED the span during the recording,
+ * the late result is dropped instead.
  */
 export function $finalizeVoiceSpan(text: string, state: VoiceSpanState): void {
   const attachedCommitted = attachedNode(state.committedKey);
@@ -98,13 +130,23 @@ export function $finalizeVoiceSpan(text: string, state: VoiceSpanState): void {
   if (tentative instanceof VoiceTentativeTextNode) tentative.remove();
   state.tentativeKey = null;
   if (committed === null) {
+    const userDeletedSpan = state.created;
+    state.created = false;
+    state.committedKey = null;
+    if (userDeletedSpan) {
+      // The user removed the span while the recording ran: respect the deletion.
+      return;
+    }
     const selection = $getSelection();
     if ($isRangeSelection(selection)) {
-      selection.insertText(text);
+      const [start, end] = selection.isBackward()
+        ? [selection.focus, selection.anchor]
+        : [selection.anchor, selection.focus];
+      selection.insertText(pad(text, $charBeforePoint(start), $charAfterPoint(end)));
     } else {
+      const plain = $createTextNode(text);
       const root = $getRoot();
       const last = root.getLastChild();
-      const plain = $createTextNode(text);
       if (last && $isElementNode(last)) {
         last.append(plain);
       } else {
@@ -115,12 +157,15 @@ export function $finalizeVoiceSpan(text: string, state: VoiceSpanState): void {
     }
     return;
   }
+  state.created = false;
+  state.committedKey = null;
   if (text === "") {
     committed.remove();
-  } else {
-    committed.replace($createTextNode(text));
+    return;
   }
-  state.committedKey = null;
+  const previous = committed.getPreviousSibling()?.getTextContent().slice(-1) ?? "";
+  const next = committed.getNextSibling()?.getTextContent().charAt(0) ?? "";
+  committed.replace($createTextNode(pad(text, previous, next)));
 }
 
 /** Removes the span without inserting anything (cancel paths). */
@@ -131,4 +176,5 @@ export function $cancelVoiceSpan(state: VoiceSpanState): void {
   if (attachedCommitted !== null) attachedCommitted.remove();
   state.committedKey = null;
   state.tentativeKey = null;
+  state.created = false;
 }

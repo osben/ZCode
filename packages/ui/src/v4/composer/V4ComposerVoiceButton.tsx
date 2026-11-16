@@ -53,6 +53,8 @@ interface V4ComposerVoiceButtonProps {
   permissionGuide?: VoicePermissionGuidePhase | null;
   /** Runs the macOS re-authorize flow; absent hides the Re-authorize button. */
   onReauthorizeMicrophone?: () => void;
+  /** Closes the guide when the popover asks for it (Escape / outside click). */
+  onDismissPermissionGuide?: () => void;
 }
 
 const WAVEFORM_BARS = 10;
@@ -203,6 +205,7 @@ function V4ComposerVoiceButtonImpl({
   modelStatus,
   permissionGuide = null,
   onReauthorizeMicrophone,
+  onDismissPermissionGuide,
 }: V4ComposerVoiceButtonProps) {
   const { intl } = useZCodeIntl();
   const shortcutLabel = useShortcutCommandLabel("voiceDictation");
@@ -228,7 +231,12 @@ function V4ComposerVoiceButtonImpl({
   const statusAnnouncement = intl.formatMessage({ id: phaseStatusId(phase, loadingLabelId) });
 
   return (
-    <Popover open={permissionGuide !== null}>
+    <Popover
+      open={permissionGuide !== null}
+      onOpenChange={(open) => {
+        if (!open) onDismissPermissionGuide?.();
+      }}
+    >
       <PopoverAnchor asChild>
         <div
           className="relative inline-flex shrink-0 items-center"

@@ -104,6 +104,8 @@ export interface LexicalChatInputHandle {
   cancelVoiceSpan: () => void;
   /** Notifies user typing while a voice span is live (the soft-finish trigger). */
   registerVoiceSpanUserInput: (listener: () => void) => () => void;
+  /** Whether a live voice span is in the document (submission gates on it). */
+  hasVoiceSpan: () => boolean;
   appendFileMention: (
     label: string,
     value: string,
@@ -175,6 +177,7 @@ import {
   $cancelVoiceSpan,
   $finalizeVoiceSpan,
   $updateVoiceSpan,
+  createVoiceSpanState,
   type VoiceSpanState,
 } from "./prompt-editor/voice-span/voiceSpanOperations.js";
 
@@ -1579,15 +1582,19 @@ function EditorApiPlugin({
 }) {
   const [editor] = useLexicalComposerContext();
   // Live voice span node keys (specs/voice-dictation.md "Voice text span"); null when no span is live.
-  const voiceSpanStateRef = useRef<VoiceSpanState>({ committedKey: null, tentativeKey: null });
+  const voiceSpanStateRef = useRef<VoiceSpanState>(createVoiceSpanState());
   const spanUserInputListenersRef = useRef(new Set<() => void>());
   // User typing while a span is live is any editor update without our programmatic tags; the
   // dictation hook uses the signal to soft-finish the recording instead of overwriting the user.
   useEffect(() => {
-    return editor.registerUpdateListener(({ dirtyLeaves, tags }) => {
-      if (!dirtyLeaves || tags.has(VOICE_SPAN_UPDATE_TAG) || tags.has(PROGRAMMATIC_UPDATE_TAG)) {
-        return;
-      }
+    return editor.registerUpdateListener(({ dirtyElements, dirtyLeaves, tags }) => {
+      if (tags.has(VOICE_SPAN_UPDATE_TAG) || tags.has(PROGRAMMATIC_UPDATE_TAG)) return;
+      // Selection-only updates (caret moves, clicks) leave both dirty sets empty: the span
+      // design allows repositioning the caret during a recording, so those must not soft-finish.
+      const structuralChange =
+        (dirtyLeaves !== null && dirtyLeaves.size > 0) ||
+        (dirtyElements !== null && dirtyElements.size > 0);
+      if (!structuralChange) return;
       if (voiceSpanStateRef.current.committedKey === null) return;
       for (const listener of spanUserInputListenersRef.current) listener();
     });
@@ -1633,6 +1640,7 @@ function EditorApiPlugin({
           spanUserInputListenersRef.current.delete(listener);
         };
       },
+      hasVoiceSpan: () => voiceSpanStateRef.current.committedKey !== null,
       appendFileMention: (
         label: string,
         value: string,

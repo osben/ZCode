@@ -42,10 +42,11 @@ export function V4ComposerDictationControl({
   const modelStatus = useVoiceModelStatus({ enabled: !webRemote });
   const engine = webRemote ? webSpeech : voiceDictation;
   const enginePreview = engine.preview;
-  // Hand the preview to the editor layer; clearing on unmount keeps no ghost after the composer goes away.
+  // Hand the preview to the editor layer. No null on cleanup between previews: the span must be
+  // UPDATED in place, not cancelled and recreated at whatever caret position follows (a real null
+  // arrives whenever the engine itself reports no preview, which cancels the span).
   useEffect(() => {
     onPreviewChange?.(enginePreview);
-    return () => onPreviewChange?.(null);
   }, [enginePreview, onPreviewChange]);
   // V4ComposerVoiceButton is a memo component; an inline arrow function would defeat the memo (see the reactStableReferences tests).
   const handleToggle = useCallback(() => void engine.toggle(), [engine.toggle]);
@@ -66,6 +67,7 @@ export function V4ComposerDictationControl({
       modelStatus={modelStatus}
       permissionGuide={voiceDictation.permissionGuide}
       onReauthorizeMicrophone={() => void voiceDictation.reauthorizeMicrophone()}
+      onDismissPermissionGuide={voiceDictation.dismissPermissionGuide}
     />
   );
 }

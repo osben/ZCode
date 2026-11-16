@@ -3735,6 +3735,12 @@ function ConversationComposerImpl({
   // 由 submit 成功后经 inputApiRef.clear() 清空——失败时草稿留在输入框。
   const handleEditorSubmit = useCallback(
     (value: string) => {
+      // A live voice span means dictation is still running: finish it first (the finalize lands
+      // in the editor) and ignore THIS submission — the user's next Enter sends the final text.
+      if (inputApiRef.current?.hasVoiceSpan()) {
+        void voiceStopRef.current?.();
+        return false;
+      }
       textRef.current = value;
       const reverseDelivery = reversePointerDeliveryRef.current;
       reversePointerDeliveryRef.current = false;

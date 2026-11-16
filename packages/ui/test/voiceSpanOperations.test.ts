@@ -17,6 +17,7 @@ import {
   $cancelVoiceSpan,
   $finalizeVoiceSpan,
   $updateVoiceSpan,
+  createVoiceSpanState,
   type VoiceSpanState,
 } from "../src/prompt-editor/voice-span/voiceSpanOperations.js";
 
@@ -31,7 +32,7 @@ function makeTestEditor(): LexicalEditor {
 }
 
 function makeState(): VoiceSpanState {
-  return { committedKey: null, tentativeKey: null };
+  return createVoiceSpanState();
 }
 
 /** Runs one span operation and returns the resulting root text. */
@@ -141,7 +142,7 @@ describe("voice span operations (specs/voice-dictation.md)", () => {
 
   it("stale keys from a removed span do not break the next update", () => {
     const editor = makeTestEditor();
-    const state: VoiceSpanState = { committedKey: "stale", tentativeKey: null };
+    const state: VoiceSpanState = { ...createVoiceSpanState(), committedKey: "stale" };
     expect(
       apply(editor, state, () => $updateVoiceSpan({ committed: "fresh", tentative: "" }, state)),
     ).toContain("fresh");
