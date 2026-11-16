@@ -3737,7 +3737,7 @@ function ConversationComposerImpl({
     (value: string) => {
       // A live voice span means dictation is still running: finish it first (the finalize lands
       // in the editor) and ignore THIS submission — the user's next Enter sends the final text.
-      if (inputApiRef.current?.hasVoiceSpan()) {
+      if (inputApiRef.current?.hasVoiceSpan?.()) {
         void voiceStopRef.current?.();
         return false;
       }

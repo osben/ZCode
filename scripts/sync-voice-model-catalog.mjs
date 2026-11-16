@@ -14,10 +14,9 @@ import { fileURLToPath } from "node:url";
 
 const DEFAULT_SOURCE =
   "https://raw.githubusercontent.com/cjpais/Handy/main/src-tauri/src/catalog/catalog.json";
-const OUTPUT_PATH = new URL(
-  "../packages/services/src/voice-dictation/voiceModelCatalog.ts",
-  import.meta.url,
-).pathname;
+const OUTPUT_PATH = fileURLToPath(
+  new URL("../packages/services/src/voice-dictation/voiceModelCatalog.ts", import.meta.url),
+);
 
 /**
  * Fork-only recommendation ranks (lower shows first among models covering the selected
@@ -321,7 +320,7 @@ async function main() {
   writeFileSync(OUTPUT_PATH, moduleText);
   // The renderer does not replicate oxfmt's line-width decisions; format the output so a
   // regeneration is byte-identical to the committed file.
-  const oxfmt = new URL("../node_modules/.bin/oxfmt", import.meta.url).pathname;
+  const oxfmt = fileURLToPath(new URL("../node_modules/.bin/oxfmt", import.meta.url));
   const formatted = spawnSync(oxfmt, [OUTPUT_PATH], { stdio: "inherit" });
   if (formatted.status !== 0) {
     throw new Error(`oxfmt failed with exit code ${formatted.status}`);

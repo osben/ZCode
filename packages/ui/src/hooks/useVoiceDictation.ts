@@ -444,8 +444,11 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
   const cancel = useCallback((): void => {
     heldBindingRef.current = null;
     if (phaseRef.current === "processing") {
-      // The transcript exists but is discarded: bumping the generation makes stop() drop its result.
+      // The rewrite is discarded and the live span goes with it (VD-OUT-03: nothing is inserted).
+      // Bumping the generation also makes the pending stop() drop its result, so its finally
+      // clear never races this one.
       startGenerationRef.current += 1;
+      setPreview(null);
       updatePhase("idle");
       return;
     }
