@@ -837,4 +837,27 @@ async fn mcp_enable_and_disable_reload_the_named_workspaces_layer() {
         ),
         "the reload replaces only the named workspace's layer"
     );
+
+    // The enable arm of the kernel's Enable|Disable match reloads too: a second control with Enable
+    // (the reverse committed write) replaces the named workspace's slot again.
+    let after_disable = kernel
+        .plugins_for_session(&a)
+        .expect("the disable installed a loaded slot");
+    kernel
+        .mcp_control(rust_cli_kernel_api::manage::McpControl {
+            action: rust_cli_kernel_api::manage::McpAction::Enable,
+            servers: vec!["docs".to_owned()],
+            workspace: other.clone(),
+        })
+        .await
+        .unwrap();
+    assert!(
+        !Arc::ptr_eq(
+            &after_disable,
+            &kernel
+                .plugins_for_session(&a)
+                .expect("the enable installed a loaded slot")
+        ),
+        "the enable's config write reloads the named workspace's layer"
+    );
 }
