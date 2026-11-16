@@ -1859,10 +1859,8 @@ async fn a_failed_workspace_connect_answers_its_parked_calls_and_cools_down() {
         other => panic!("no answer for the parked call: {other:?}"),
     }
     assert!(
-        !received(&rig.fake, "helper/mcp/send")
-            .iter()
-            .any(|params| params["message"] == helper_tool_call(7, "a")),
-        "the call never reaches the helper"
+        received(&rig.fake, "helper/mcp/send").is_empty(),
+        "neither the call nor the cancel parked behind it reaches the helper"
     );
 
     // The cooldown (the rig's clock never moves) refuses the next call of that key at once.
