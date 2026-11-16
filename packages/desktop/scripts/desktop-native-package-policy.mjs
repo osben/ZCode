@@ -73,11 +73,11 @@ export function createDesktopNativePackagePrunePatterns(targetPlatformKey) {
     ...SUPPORTED_DESKTOP_PLATFORM_KEYS.filter((key) => key !== targetPlatformKey).map(
       (key) => `!node_modules/@transcribe-cpp/${key}-*/**`,
     ),
-    // Bugfix: koffi ships all platform binaries in a single package (build/koffi/<os>_<arch>/koffi.node,
-    // directory names use underscores). Exclude the whole tree first, then re-allow the target platform,
-    // so a koffi upgrade adding a new platform cannot escape pruning through an enumerated directory list.
-    "!node_modules/koffi/build/koffi/**",
-    `node_modules/koffi/build/koffi/${targetPlatformKey.replaceAll("-", "_")}/**`,
+    // koffi 3 ships one native addon per optional @koromix/koffi-<os>-<arch> package (dashed
+    // names). Exclude all of them first, then re-allow the target platform, so a koffi upgrade
+    // adding a new platform cannot escape pruning through an enumerated package list.
+    "!node_modules/@koromix/koffi-*/**",
+    `node_modules/@koromix/koffi-${targetPlatformKey}/**`,
     // Prune @img/sharp variants for non-target platforms; the target variant is verified by the violation check below.
     ...SHARP_VARIANT_PACKAGES.filter(
       (name) => !SHARP_VARIANTS_BY_PLATFORM[targetPlatformKey].includes(name),
@@ -177,10 +177,10 @@ export function findDesktopNativePackageViolations(entries, targetPlatformKey) {
       continue;
     }
 
-    const koffiPlatformDirMatch = /^\/node_modules\/koffi\/build\/koffi\/([^/]+)/.exec(path);
+    const koffiPlatformPackageMatch = /^\/node_modules\/@koromix\/(koffi-[^/]+)\//.exec(path);
     if (
-      koffiPlatformDirMatch &&
-      koffiPlatformDirMatch[1] !== targetPlatformKey.replaceAll("-", "_")
+      koffiPlatformPackageMatch &&
+      koffiPlatformPackageMatch[1] !== `koffi-${targetPlatformKey}`
     ) {
       violations.push(`koffi contains non-target platform binaries: ${path}`);
       continue;

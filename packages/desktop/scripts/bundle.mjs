@@ -125,7 +125,7 @@ const requiredRuntimeModules = [
   "bcrypt-pbkdf",
   "tweetnacl",
   // Bug fix: voice dictation keeps transcribe-cpp external in the Host bundle, so the installed app
-  // must resolve it (plus koffi, unified to 2.15.6 by the pnpm override) from app.asar at runtime.
+  // must resolve it (plus koffi, unified to 3.0.2 by the pnpm override) from app.asar at runtime.
   // The @transcribe-cpp platform packages are covered by the native package policy checks.
   "transcribe-cpp",
   "koffi",

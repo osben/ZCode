@@ -159,7 +159,7 @@ const REQUIRED_ASAR_RUNTIME_MODULES = [
   // bundled into out/, electron-builder's files rules exclude node_modules/@zcode/** — leaving the installer
   // without any transcribe-cpp / koffi / @transcribe-cpp platform packages, so clicking Use after downloading a
   // model failed with "Voice transcription failed" (confirmed on fork.5: packages missing from asar).
-  // The desktop package now depends on transcribe-cpp directly and injects the closure (koffi unified to 2.15.6
+  // The desktop package now depends on transcribe-cpp directly and injects the closure (koffi unified to 3.0.2
   // via the pnpm override; platform packages are optionalDependencies) into the verification list; non-target
   // platform directories are removed by the post-injection pruning and the files rules.
   "transcribe-cpp",
@@ -665,10 +665,10 @@ export default {
     // package via koffi; dlopen cannot read asar virtual paths, so native files must be unpacked to
     // app.asar.unpacked (the main process then points TRANSCRIBE_LIBRARY at the real path).
     // @transcribe-cpp platform package names carry a suffix (e.g. darwin-arm64-metal) and are matched by
-    // target platform prefix; koffi binary directory names use underscores (e.g. darwin_arm64). The files
-    // rules already prune the other platform directories.
+    // target platform prefix; koffi 3 ships its native addon inside one @koromix/koffi-<os>-<arch>
+    // package per platform. The files rules already prune the other platform packages.
     `node_modules/@transcribe-cpp/${targetPlatform.key}-*/**`,
-    `node_modules/koffi/build/koffi/${targetPlatform.os}_${targetPlatform.arch}/**`,
+    `node_modules/@koromix/koffi-${targetPlatform.key}/**`,
   ],
   beforePack: async (context) => {
     runTimedSync("beforePack:restoreTargetNodePtyPrebuild", () =>
