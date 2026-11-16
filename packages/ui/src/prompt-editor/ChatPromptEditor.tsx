@@ -8,7 +8,6 @@ import type {
   ReactNode,
 } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { VoiceTranscriptionPreview } from "@zcode/services";
 import { TID_CHAT_SEND_BUTTON } from "@zcode/shared/test-ids";
 import { ArrowUpIcon, Hand, XIcon } from "lucide-react";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
@@ -41,7 +40,6 @@ function runAfterFrame(callback: () => void) {
 }
 
 export function ChatPromptEditor({
-  voicePreview,
   workspacePath,
   workspaceIdentity,
   taskId,
@@ -140,7 +138,6 @@ export function ChatPromptEditor({
   submitControl?: ReactNode;
   /** Hosts that own the submit action elsewhere (e.g. a dialog footer) render no send button. */
   hideSubmit?: boolean;
-  voicePreview?: VoiceTranscriptionPreview | null;
   inputTestId?: string;
   submitTestId?: string;
   cancelTestId?: string;
@@ -369,7 +366,6 @@ export function ChatPromptEditor({
     // With a single line, the input area takes at least half the width; vertical padding aligns it with the h-7 controls. In the two-line layout, contents leaves the original layout unchanged.
     <div className={isInline ? "min-w-1/2 flex-1 py-1 [&_[contenteditable]]:min-h-5" : "contents"}>
       <LexicalChatInput
-        voicePreview={voicePreview}
         placeholder={placeholder}
         disabled={disabled}
         submitDisabled={submitDisabled}

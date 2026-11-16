@@ -133,6 +133,23 @@ layer of VoiceGhostPreview (layout measuring, resize/scroll anchoring) is delete
 the overlay; the Web Speech engine shares the same span path (it already emits the same preview
 shape).
 
+**Implementation map (studied, verified against the current tree).**
+
+- Editor core: `packages/ui/src/LexicalChatInput.tsx` — `LexicalChatInputHandle` (line ~93) gains
+  `updateVoiceSpan(preview)`, `finalizeVoiceSpan(text)`, `cancelVoiceSpan()`; the nodes registry
+  (`nodes: [PromptMentionNode]`, line ~1798) registers `VoiceTextNode` + tentative sibling node.
+  Programmatic span updates use `editor.update(..., { tag: "history-merge" })`.
+- User-typing detection: the input exposes an `onUserInputStart` callback (update listener without
+  the span's own update tag while a span is live) → the dictation hook soft-finishes.
+- Composer wiring (`packages/ui/src/v4/ConversationComposer.tsx` ~1056): `setVoicePreview` state and
+  the ghost mount in `ChatPromptEditor.tsx` are removed; preview updates call
+  `api.updateVoiceSpan`, `insertVoiceTranscript` becomes `api.finalizeVoiceSpan` (a finalize with no
+  live span inserts at the caret — one-shot parity), preview-null/cancel calls `api.cancelVoiceSpan`.
+- `VoiceGhostPreview.tsx` + `lib/voiceGhostPreviewLayout.ts` and their tests/manifest entries are
+  deleted with the overlay.
+- Drafts stay plain text: the node subclasses TextNode, so text extraction and restore treat it as
+  text; restored drafts contain no voice nodes.
+
 ### Microphone permission guide
 
 - Before any capture, the hook checks the system-level permission through optional `IPlatformService` capabilities (`getMicrophoneAccessStatus`, `askMicrophoneAccess`); without them (Web remote, Linux) the previous `getUserMedia` failure path stays.

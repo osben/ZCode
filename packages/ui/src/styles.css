@@ -198,6 +198,7 @@ html[data-document-hidden] *::after {
   /* Voice input recording capsule (specs/voice-dictation.md): soft sky so recording does not read as an error. */
   --color-voice-input-surface: var(--color-sky-100);
   --color-voice-input-wave: var(--color-sky-600);
+  /* Live voice-dictation text (specs/voice-dictation.md "Voice text span") in the light theme. */
   --color-resize-handle: var(--color-sky-500);
   --color-icon-blue: var(--color-terminal-bright-blue);
   --color-icon-purple: var(--color-terminal-bright-magenta);
@@ -386,6 +387,14 @@ html[data-document-hidden] *::after {
   --color-plugin-node-foreground: var(--color-amber-600);
   --color-plugin-paid-plan-badge: #ffe3c8;
   --color-plugin-paid-plan-badge-foreground: #4b280f;
+}
+
+.zcode-voice-text {
+  color: var(--color-foreground-subtle);
+}
+.zcode-voice-tentative {
+  color: var(--color-foreground-subtlest);
+  font-style: italic;
 }
 
 .dark {

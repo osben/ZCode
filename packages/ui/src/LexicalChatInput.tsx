@@ -74,9 +74,6 @@ import { navigatePromptHistory } from "./lib/promptHistory.js";
 import { resolveMobileInputTextSizeClassName } from "@/lib/mobileTextInput.js";
 import type { MentionItemData } from "@/mentions/mentionTypes.js";
 import type { ComposerMentionPrefill } from "@/store/zcodeSessionStoreTypes.js";
-import type { VoiceTranscriptionPreview } from "@zcode/services";
-import { VoiceGhostPreview } from "@/prompt-editor/VoiceGhostPreview.js";
-import { hasVoicePreviewText } from "@/lib/voiceGhostPreviewLayout.js";
 
 /** The old useChatComposer has been removed; the paste event uses a minimal structural type compatible with ClipboardEvent. */
 export interface ChatComposerPasteEvent {
@@ -99,6 +96,14 @@ export interface LexicalChatInputHandle {
   appendText: (text: string) => void;
   /** Inserts at the caret / over the selection; falls back to appending when the editor has no selection. */
   insertTextAtSelection: (text: string) => void;
+  /** Creates or replaces the live voice-dictation span at the caret (specs/voice-dictation.md). */
+  updateVoiceSpan: (preview: { committed: string; tentative: string }) => void;
+  /** Replaces the live voice span with the final text (inserts at the caret when no span is live). */
+  finalizeVoiceSpan: (text: string) => void;
+  /** Removes the live voice span without inserting anything. */
+  cancelVoiceSpan: () => void;
+  /** Notifies user typing while a voice span is live (the soft-finish trigger). */
+  registerVoiceSpanUserInput: (listener: () => void) => () => void;
   appendFileMention: (
     label: string,
     value: string,
@@ -160,7 +165,18 @@ interface LeadingChineseSlashAliasInputOptions {
 const CHINESE_SLASH_ALIAS = "、";
 const STANDARD_SLASH_TRIGGER = "/";
 
-import { HISTORY_NAVIGATION_UPDATE_TAG, PROGRAMMATIC_UPDATE_TAG } from "./lib/editorUpdateTags.js";
+import {
+  HISTORY_NAVIGATION_UPDATE_TAG,
+  PROGRAMMATIC_UPDATE_TAG,
+  VOICE_SPAN_UPDATE_TAG,
+} from "./lib/editorUpdateTags.js";
+import { VoiceTentativeTextNode, VoiceTextNode } from "./prompt-editor/voice-span/VoiceTextNode.js";
+import {
+  $cancelVoiceSpan,
+  $finalizeVoiceSpan,
+  $updateVoiceSpan,
+  type VoiceSpanState,
+} from "./prompt-editor/voice-span/voiceSpanOperations.js";
 
 export function shouldSubmitLexicalEnter({
   allowSubmitWhenEmpty = false,
@@ -1562,6 +1578,20 @@ function EditorApiPlugin({
   editorApiRef?: React.MutableRefObject<LexicalChatInputHandle | null>;
 }) {
   const [editor] = useLexicalComposerContext();
+  // Live voice span node keys (specs/voice-dictation.md "Voice text span"); null when no span is live.
+  const voiceSpanStateRef = useRef<VoiceSpanState>({ committedKey: null, tentativeKey: null });
+  const spanUserInputListenersRef = useRef(new Set<() => void>());
+  // User typing while a span is live is any editor update without our programmatic tags; the
+  // dictation hook uses the signal to soft-finish the recording instead of overwriting the user.
+  useEffect(() => {
+    return editor.registerUpdateListener(({ dirtyLeaves, tags }) => {
+      if (!dirtyLeaves || tags.has(VOICE_SPAN_UPDATE_TAG) || tags.has(PROGRAMMATIC_UPDATE_TAG)) {
+        return;
+      }
+      if (voiceSpanStateRef.current.committedKey === null) return;
+      for (const listener of spanUserInputListenersRef.current) listener();
+    });
+  }, [editor]);
 
   useEffect(() => {
     if (!editorApiRef) {
@@ -1576,6 +1606,33 @@ function EditorApiPlugin({
       getText: () => getEditorMarkdown(editor.getEditorState()),
       appendText: (text: string) => appendEditorPlainText(editor, text),
       insertTextAtSelection: (text: string) => insertEditorPlainTextAtSelection(editor, text),
+      updateVoiceSpan: (preview) =>
+        editor.update(
+          () => {
+            $updateVoiceSpan(preview, voiceSpanStateRef.current);
+          },
+          { tag: VOICE_SPAN_UPDATE_TAG },
+        ),
+      finalizeVoiceSpan: (text: string) =>
+        editor.update(
+          () => {
+            $finalizeVoiceSpan(text, voiceSpanStateRef.current);
+          },
+          { tag: VOICE_SPAN_UPDATE_TAG },
+        ),
+      cancelVoiceSpan: () =>
+        editor.update(
+          () => {
+            $cancelVoiceSpan(voiceSpanStateRef.current);
+          },
+          { tag: VOICE_SPAN_UPDATE_TAG },
+        ),
+      registerVoiceSpanUserInput: (listener) => {
+        spanUserInputListenersRef.current.add(listener);
+        return () => {
+          spanUserInputListenersRef.current.delete(listener);
+        };
+      },
       appendFileMention: (
         label: string,
         value: string,
@@ -1647,7 +1704,6 @@ interface LexicalChatInputProps {
   /** Toggle for the mention (@/#) panel. Explicitly disable it while the v4 data plane is unavailable, while keeping the entry point. */
   enableMentionPanel?: boolean;
   /** Streaming voice preview drawn as ghost text at the caret; never part of the editor document. */
-  voicePreview?: VoiceTranscriptionPreview | null;
   /** Quick prompts offered in the "/" panel; omitted where they must not be offered (the quick prompt body). */
   quickPrompts?: readonly QuickPromptSlashItem[];
 }
@@ -1685,7 +1741,6 @@ export function LexicalChatInput({
   excludedSlashCommandNames,
   appSlashCommands,
   enableMentionPanel = true,
-  voicePreview,
   quickPrompts,
 }: LexicalChatInputProps) {
   const inputMountedAtRef = useRef(Date.now());
@@ -1758,7 +1813,7 @@ export function LexicalChatInput({
   // Lexical's ContentEditable props are a mutually exclusive union type;
   // when aria-placeholder is present, placeholder must also be present.
   // Writing a JSX ternary directly previously caused TypeScript to lose this relationship while merging branches and falsely report a missing placeholder.
-  const visiblePlaceholder = hasVoicePreviewText(voicePreview) ? undefined : placeholder;
+  const visiblePlaceholder = placeholder;
   const contentEditableProps: React.ComponentProps<typeof ContentEditable> = visiblePlaceholder
     ? {
         "aria-placeholder": visiblePlaceholder,
@@ -1795,7 +1850,7 @@ export function LexicalChatInput({
     () => ({
       namespace: "ChatInput",
       theme: EDITOR_THEME,
-      nodes: [PromptMentionNode],
+      nodes: [PromptMentionNode, VoiceTextNode, VoiceTentativeTextNode],
       // Creating LexicalComposer initialConfig on every render marks the input subtree as having changed props.
       // The configuration is static, so a stable reference prevents unrelated state updates from propagating through the composer subtree.
       onError: (error: Error) => {
@@ -1810,7 +1865,6 @@ export function LexicalChatInput({
       <LexicalComposer initialConfig={initialConfig}>
         <div className="relative">
           <PlainTextPlugin contentEditable={contentEditable} ErrorBoundary={LexicalErrorBoundary} />
-          <VoiceGhostPreview preview={voicePreview ?? null} />
           <HistoryPlugin />
           <PromptClipboardPlugin />
           <TextContentPlugin

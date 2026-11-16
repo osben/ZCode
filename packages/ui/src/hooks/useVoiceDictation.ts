@@ -526,9 +526,9 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
         if (streamErrorRef.current) throw streamErrorRef.current;
         result = await voiceDictationService.finalizeStream(streamId);
         streamIdRef.current = null;
-        // The final transcript replaces the ghost preview; clear it before any rewrite wait so the
-        // preview never lingers next to the processing state.
-        setPreview(null);
+        // The voice span stays live through post-processing: onTranscript replaces it with the
+        // final text, and only then does the finally-block clear reach the editor (a premature
+        // clear would cancel the span before the replace could reuse its position).
       } else {
         result = await voiceDictationService.transcribe({
           modelId: modelId ?? "",

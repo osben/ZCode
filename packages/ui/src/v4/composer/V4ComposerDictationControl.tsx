@@ -20,6 +20,7 @@ export function V4ComposerDictationControl({
   onPreviewChange,
   scopeRef,
   webRemote,
+  registerStopHandler,
 }: {
   disabled: boolean;
   onTranscript: (text: string) => void;
@@ -27,6 +28,8 @@ export function V4ComposerDictationControl({
   onPreviewChange?: (preview: VoiceTranscriptionPreview | null) => void;
   scopeRef: RefObject<HTMLElement | null>;
   webRemote: boolean;
+  /** Receives the engine's stop so the editor can soft-finish on user typing. */
+  registerStopHandler?: (stop: () => void) => void;
 }) {
   const handleTranscript = useDictationTranscriptHandler(onTranscript);
   const webSpeech = useWebSpeechDictation({ enabled: webRemote, onTranscript: handleTranscript });
@@ -46,6 +49,9 @@ export function V4ComposerDictationControl({
   }, [enginePreview, onPreviewChange]);
   // V4ComposerVoiceButton is a memo component; an inline arrow function would defeat the memo (see the reactStableReferences tests).
   const handleToggle = useCallback(() => void engine.toggle(), [engine.toggle]);
+  useEffect(() => {
+    registerStopHandler?.(() => void engine.stop());
+  }, [engine.stop, registerStopHandler]);
   if (webRemote && !webSpeech.supported) {
     // Web Speech API missing (e.g. Firefox): hide the entry instead of showing a dead control.
     return null;

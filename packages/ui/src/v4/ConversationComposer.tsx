@@ -1051,14 +1051,30 @@ function ConversationComposerImpl({
     [quickPrompts.snapshot],
   );
   const voiceScopeRef = useRef<HTMLDivElement | null>(null);
-  // Streaming ghost preview (specs/voice-dictation.md, "Ghost preview"): display state only; it is
-  // drawn by the editor and never enters the draft text, submission, or undo history.
-  const [voicePreview, setVoicePreview] = useState<VoiceTranscriptionPreview | null>(null);
+  // Live voice span (specs/voice-dictation.md "Voice text span"): previews replace the span's
+  // content in place, the final transcript swaps it for plain text, and a null preview cancels it.
+  // Typing while the span is live soft-finishes the recording through the registered stop handler.
+  const voiceStopRef = useRef<(() => void) | null>(null);
+  const voiceSpanInputRegisteredRef = useRef(false);
+  const handleVoicePreviewChange = useCallback((preview: VoiceTranscriptionPreview | null) => {
+    const api = inputApiRef.current;
+    if (!api) return;
+    if (preview === null) {
+      api.cancelVoiceSpan();
+      return;
+    }
+    api.updateVoiceSpan(preview);
+    // The input API becomes available with the editor mount; register the typing signal once.
+    if (!voiceSpanInputRegisteredRef.current && api.registerVoiceSpanUserInput) {
+      voiceSpanInputRegisteredRef.current = true;
+      api.registerVoiceSpanUserInput(() => voiceStopRef.current?.());
+    }
+  }, []);
   const insertVoiceTranscript = useCallback((text: string) => {
     const api = inputApiRef.current;
     if (!api) return;
-    // Must go through the editor transaction API: getText/setText rebuild the editor as plain text nodes, flattening existing structured mentions.
-    api.insertTextAtSelection(text);
+    // Finalize reuses the live span's position when one exists and inserts at the caret otherwise.
+    api.finalizeVoiceSpan(text);
     api.focus();
   }, []);
   const commandResolutionCleanupsRef = useRef(new Set<() => void>());
@@ -4352,7 +4368,8 @@ function ConversationComposerImpl({
           <V4ComposerDictationControl
             disabled={disabled}
             onTranscript={insertVoiceTranscript}
-            onPreviewChange={setVoicePreview}
+            onPreviewChange={handleVoicePreviewChange}
+            registerStopHandler={(stop) => (voiceStopRef.current = stop)}
             scopeRef={voiceScopeRef}
             webRemote={isWebRemoteControl}
           />
@@ -4691,7 +4708,6 @@ function ConversationComposerImpl({
           </div>
         ) : null}
         <ChatPromptEditor
-          voicePreview={voicePreview}
           workspacePath={workspacePath}
           workspaceIdentity={workspaceIdentity}
           taskId={sessionId}

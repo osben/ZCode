@@ -1347,6 +1347,17 @@ modules:
       - packages/desktop/src/main/microphone-access/contract.ts
     layers:
       adapters: .
+  # ui-voice-span：由 architecture:adopt 登记
+  - id: ui-voice-span
+    roots:
+      - packages/ui/src/prompt-editor/voice-span
+    managed: true
+    requires: []
+    publicEntrypoints:
+      - packages/ui/src/prompt-editor/voice-span/index.ts
+      - packages/ui/src/prompt-editor/voice-span/contract.ts
+    layers:
+      adapters: .
 
 global:
   # 临时时间戳（2026-09-10）：unmanaged-new-file 只约束此日期之后首次入库的文件。

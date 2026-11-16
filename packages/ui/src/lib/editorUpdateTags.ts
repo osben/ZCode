@@ -10,3 +10,6 @@ export const PROGRAMMATIC_UPDATE_TAG = "zcode-programmatic";
  * With a dedicated tag, SlashCommandPlugin can skip history-restoration updates precisely without affecting normal panel behavior when users type /.
  */
 export const HISTORY_NAVIGATION_UPDATE_TAG = "zcode-history-navigation";
+
+/** Voice span (specs/voice-dictation.md): programmatic span updates; user typing is detected by its absence. */
+export const VOICE_SPAN_UPDATE_TAG = "voice-span-update";
