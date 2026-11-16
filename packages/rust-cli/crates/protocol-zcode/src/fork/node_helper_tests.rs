@@ -1890,6 +1890,128 @@ async fn a_failed_workspace_connect_answers_its_parked_calls_and_cools_down() {
     );
 }
 
+/// F3: the 30 s cooldown of a failed workspace connect EXPIRES — only its refusing half was pinned
+/// before (the rig's FixedClock cannot move). A ManualClock drives both halves: a call inside the
+/// cooldown is refused at once, and the first call past it runs a second `helper/mcp/connect` that
+/// reaches the helper and answers through the key's new pipe.
+#[tokio::test(start_paused = true)]
+async fn a_failed_workspace_connects_cooldown_expires_and_the_next_call_connects() {
+    use futures_util::StreamExt;
+    use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
+    use rust_cli_kernel_api::ids::EnvironmentId;
+    use rust_cli_kernel_api::mcp::{McpConnect, McpTransport, McpTransportConfig, NoMcpTransport};
+
+    // The key's first connect fails; every later one answers (the expiry is what must let a retry
+    // through, so the second connect must be able to succeed).
+    let sessions = pipes_with_sessions();
+    let failures = Arc::new(AtomicUsize::new(0));
+    let failing_first = behaviour(move |_, method, params| {
+        if method == "helper/mcp/connect" && params["workspace"] == one_workspace() {
+            if failures.fetch_add(1, Ordering::SeqCst) == 0 {
+                return Act::Fail(RpcError::internal("MCP server failed to start"));
+            }
+            return Act::Reply {
+                notes: Vec::new(),
+                result: json!({}),
+            };
+        }
+        sessions(0, method, params)
+    });
+    let rig = pipe_rig(failing_first);
+    let clock = Arc::new(rust_cli_kernel_api::testing::ManualClock::new(0));
+    let routed = HelperRoutedMcp::new(Arc::new(NoMcpTransport), rig.helper.clone(), clock.clone());
+    let group = WorkspaceRef {
+        environment: EnvironmentId::new("primary"),
+        root: EnvPath::new("/w"),
+    };
+    let connection = routed
+        .connect(
+            &group,
+            McpConnect {
+                server: "plugin:a:s".to_owned(),
+                transport: McpTransportConfig::NodeHelper,
+            },
+        )
+        .await
+        .expect("connected");
+    let mut events = routed.events(&connection);
+    let key_connects = || {
+        received(&rig.fake, "helper/mcp/connect")
+            .iter()
+            .filter(|params| params["workspace"] == one_workspace())
+            .count()
+    };
+
+    // The first call parks, its connect fails, and the call is answered with the failure.
+    routed
+        .send(&connection, helper_tool_call(7, "a"))
+        .await
+        .expect("parked");
+    match tokio::time::timeout(Duration::from_secs(5), events.next()).await {
+        Ok(Some(rust_cli_kernel_api::mcp::McpTransportEvent::Message { message })) => {
+            assert_eq!(message["id"], json!(7));
+            assert_eq!(
+                message["error"]["message"],
+                json!("MCP server failed to start")
+            );
+        }
+        other => panic!("no answer for the parked call: {other:?}"),
+    }
+    assert_eq!(key_connects(), 1);
+
+    // Inside the cooldown (the clock has not moved) the next call is refused at once.
+    routed
+        .send(&connection, helper_tool_call(8, "a"))
+        .await
+        .expect("sent");
+    match tokio::time::timeout(Duration::from_secs(5), events.next()).await {
+        Ok(Some(rust_cli_kernel_api::mcp::McpTransportEvent::Message { message })) => {
+            assert_eq!(message["id"], json!(8));
+            assert_eq!(
+                message["error"]["message"],
+                json!("connection closed: MCP server failed to start")
+            );
+        }
+        other => panic!("no fail-fast answer: {other:?}"),
+    }
+    assert_eq!(key_connects(), 1, "no second connect inside the cooldown");
+
+    // The cooldown refuses while `now - at < 30 s`, so exactly 30 s later it is past: the next call
+    // is not refused — it runs a second connect that reaches the helper, and it is answered through
+    // the key's new pipe.
+    clock.advance(mcp::FAILED_CONNECT_COOLDOWN_MS);
+    routed
+        .send(&connection, helper_tool_call(9, "a"))
+        .await
+        .expect("sent");
+    match tokio::time::timeout(Duration::from_secs(5), events.next()).await {
+        Ok(Some(rust_cli_kernel_api::mcp::McpTransportEvent::Message { message })) => {
+            assert_eq!(message["id"], json!(9));
+            assert!(message.get("error").is_none(), "{message:?}");
+        }
+        other => panic!("no answer past the cooldown: {other:?}"),
+    }
+    assert_eq!(
+        key_connects(),
+        2,
+        "the cooldown's expiry lets a retry connect"
+    );
+    let satellite = received(&rig.fake, "helper/mcp/connect")
+        .iter()
+        .filter(|params| params["workspace"] == one_workspace())
+        .nth(1)
+        .and_then(|params| params["connection"].as_str())
+        .expect("the key's second pipe")
+        .to_owned();
+    assert!(
+        received(&rig.fake, "helper/mcp/send")
+            .iter()
+            .any(|params| params["connection"] == json!(satellite)
+                && params["message"] == helper_tool_call(9, "a")),
+        "the call past the cooldown reaches the helper"
+    );
+}
+
 /// F3: the session → workspace cache is bounded — a desktop-continuous agent serves sessions without end, so an
 /// insert-only map would grow for the process's life. At the cap the oldest entry is evicted and only re-resolved
 /// (a row never changes workspace, so an eviction is never wrong).

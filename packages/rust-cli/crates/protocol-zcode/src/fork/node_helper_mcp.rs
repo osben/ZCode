@@ -962,7 +962,7 @@ const REMEMBERED_MESSAGES: usize = 1024;
 
 /// How long a failed workspace connect is remembered before a call may retry it. The own pipe's
 /// failures go through the MCP manager's reconnect policy; this is the workspace path's equivalent.
-const FAILED_CONNECT_COOLDOWN_MS: u64 = 30_000;
+pub(super) const FAILED_CONNECT_COOLDOWN_MS: u64 = 30_000;
 
 /// How many messages one key's mailbox parks while its connect runs. A parked call is answered by
 /// its id through the route's `recent` map ([`REMEMBERED_MESSAGES`], shared by every key of the
