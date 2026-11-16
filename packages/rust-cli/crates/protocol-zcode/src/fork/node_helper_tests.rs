@@ -2012,6 +2012,151 @@ async fn a_failed_workspace_connects_cooldown_expires_and_the_next_call_connects
     );
 }
 
+/// F3: a message of a key whose flush is in flight parks behind what the mailbox still holds — it never
+/// overtakes the parked calls ahead — and leaves through the same pipe in arrival order; the entry's removal
+/// (under the same lock that finds the mailbox empty) races nothing, so the key's next call after the flush
+/// takes the published pipe and stays ordered behind them.
+#[tokio::test(start_paused = true)]
+async fn a_message_arriving_while_the_key_flushes_parks_behind_and_keeps_order() {
+    use futures_util::StreamExt;
+    use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
+    use rust_cli_kernel_api::ids::EnvironmentId;
+    use rust_cli_kernel_api::mcp::{McpConnect, McpTransport, McpTransportConfig, NoMcpTransport};
+
+    // The workspace pipe's connect takes 2 s: the key's connect-and-flush task is in flight from the
+    // first parked call until the gate passes, holding the mailbox open for what arrives meanwhile.
+    let sessions = pipes_with_sessions();
+    let gated = behaviour(move |_, method, params| {
+        if method == "helper/mcp/connect" && params["workspace"] == one_workspace() {
+            return Act::Delay {
+                after: Duration::from_secs(2),
+                result: json!({}),
+            };
+        }
+        sessions(0, method, params)
+    });
+    let rig = pipe_rig(gated);
+    let routed = HelperRoutedMcp::new(
+        Arc::new(NoMcpTransport),
+        rig.helper.clone(),
+        rig.clock.clone(),
+    );
+    let group = WorkspaceRef {
+        environment: EnvironmentId::new("primary"),
+        root: EnvPath::new("/w"),
+    };
+    let connection = routed
+        .connect(
+            &group,
+            McpConnect {
+                server: "plugin:a:s".to_owned(),
+                transport: McpTransportConfig::NodeHelper,
+            },
+        )
+        .await
+        .expect("connected");
+    let mut events = routed.events(&connection);
+    for id in [2u64, 3] {
+        routed
+            .send(&connection, helper_tool_call(id, "a"))
+            .await
+            .expect("parked");
+    }
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while received(&rig.fake, "helper/mcp/connect")
+            .iter()
+            .filter(|params| params["workspace"] == one_workspace())
+            .count()
+            < 1
+        {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the key's connect is in flight");
+    // The flush task is mid-flight (its connect gated, the mailbox holding two calls): a further
+    // call of the same key parks behind them instead of travelling anywhere yet.
+    routed
+        .send(&connection, helper_tool_call(4, "a"))
+        .await
+        .expect("parked behind the flush");
+    assert!(
+        received(&rig.fake, "helper/mcp/send").is_empty(),
+        "nothing of the key travels while its flush is in flight — the late call overtakes nothing"
+    );
+
+    // Past the gate the mailbox empties through the key's pipe in arrival order: the late call is
+    // flushed after the two ahead of it, and all three are answered in that order.
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    let satellite = received(&rig.fake, "helper/mcp/connect")
+        .iter()
+        .find(|params| params["workspace"] == one_workspace())
+        .and_then(|params| params["connection"].as_str())
+        .expect("the workspace's pipe")
+        .to_owned();
+    let on_satellite = || -> Vec<Value> {
+        received(&rig.fake, "helper/mcp/send")
+            .into_iter()
+            .filter(|params| params["connection"] == json!(satellite))
+            .map(|params| params["message"].clone())
+            .collect()
+    };
+    assert_eq!(
+        on_satellite(),
+        [
+            helper_tool_call(2, "a"),
+            helper_tool_call(3, "a"),
+            helper_tool_call(4, "a")
+        ],
+        "the parked calls and the mid-flush arrival leave in arrival order"
+    );
+    for id in [2u64, 3, 4] {
+        match tokio::time::timeout(Duration::from_secs(5), events.next()).await {
+            Ok(Some(rust_cli_kernel_api::mcp::McpTransportEvent::Message { message })) => {
+                assert_eq!(
+                    message["id"],
+                    json!(id),
+                    "the answers follow the flush order"
+                );
+                assert!(message.get("error").is_none(), "{message:?}");
+            }
+            other => panic!("no answer for {id}: {other:?}"),
+        }
+    }
+
+    // The mailbox entry is gone after the flush: the key's next call takes the published pipe
+    // directly, still behind everything that left before it — the removal races nothing.
+    routed
+        .send(&connection, helper_tool_call(5, "a"))
+        .await
+        .expect("sent");
+    match tokio::time::timeout(Duration::from_secs(5), events.next()).await {
+        Ok(Some(rust_cli_kernel_api::mcp::McpTransportEvent::Message { message })) => {
+            assert_eq!(message["id"], json!(5));
+            assert!(message.get("error").is_none(), "{message:?}");
+        }
+        other => panic!("no answer for the post-flush call: {other:?}"),
+    }
+    assert_eq!(
+        on_satellite(),
+        [
+            helper_tool_call(2, "a"),
+            helper_tool_call(3, "a"),
+            helper_tool_call(4, "a"),
+            helper_tool_call(5, "a")
+        ],
+        "the post-flush call follows the flushed ones on the same pipe"
+    );
+    assert_eq!(
+        received(&rig.fake, "helper/mcp/connect")
+            .iter()
+            .filter(|params| params["workspace"] == one_workspace())
+            .count(),
+        1,
+        "the whole sequence ran on one workspace pipe"
+    );
+}
+
 /// F3: the session → workspace cache is bounded — a desktop-continuous agent serves sessions without end, so an
 /// insert-only map would grow for the process's life. At the cap the oldest entry is evicted and only re-resolved
 /// (a row never changes workspace, so an eviction is never wrong).
