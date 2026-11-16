@@ -17,7 +17,7 @@ use rust_cli_base::sync::LockUnpoisoned;
 use rust_cli_kernel_api::env::EnvPath;
 use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::incognito::IncognitoProfile;
-use rust_cli_kernel_api::session_api::{Ack as KernelAck, Command};
+use rust_cli_kernel_api::session_api::{Ack as KernelAck, Command, KernelError};
 use rust_cli_kernel_api::store::{ExecutionWorktree, FrontendRecord};
 use rust_cli_protocol_core::sessions::Bridged;
 use serde::Deserialize;
@@ -32,6 +32,10 @@ pub const KIND: &str = "v4/worktree_preparation";
 /// B1.1: the managed-worktree creation fact's record kind (the fork-shaped durable storage of Node's
 /// `worktree_creation` timeline part).
 pub const CREATION_KIND: &str = "v4/worktree_creation";
+
+/// B1.2: Node's lineage refusal (`validateSessionActivationWorkspace` throws it; the cold-resume coordinator
+/// wraps it for the wire — see [`resume_refused`]).
+pub const LINEAGE_INVALID: &str = "project.session-lineage-invalid";
 
 /// Node's text for a prepared session that cannot be activated or updated.
 pub const UNAVAILABLE: &str = "Prepared worktree session is unavailable";
@@ -820,6 +824,72 @@ pub(crate) async fn listed_key(server: &Server, id: &SessionId) -> Option<String
         .await
         .ok()
         .flatten()
+}
+
+/// B1.2: the cold-restore workspace override of a conversation subscribe (Node `resolveResumeWorkspaceRef`,
+/// `zcode-protocol/workspace.ts`, plus the lineage check of `validateSessionActivationWorkspace` that runs
+/// before Node materializes the record). The identity — the key the resumed session lists under — comes from
+/// the Host request; the execution path comes from the stored row, which here is the stored
+/// `execution_directory` the cold open already runs in, so the request never moves the session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResumeWorkspace {
+    /// The request's `workspaceKey` (Node's record key; the local fallback is the path itself).
+    pub key: String,
+    path: String,
+    identity: Option<String>,
+}
+
+impl ResumeWorkspace {
+    /// `None` when the request carries no workspace ref (Node's `!requested` branch keeps the stored
+    /// identity) or one without a usable path — the wire shape is the inbound schema's to guarantee.
+    pub fn parse(requested: &Value) -> Option<Self> {
+        let object = requested.as_object()?;
+        let text = |key: &str| object.get(key).and_then(Value::as_str).map(str::to_owned);
+        let path = text("workspacePath").filter(|path| !path.trim().is_empty())?;
+        Some(Self {
+            key: text("workspaceKey")
+                .filter(|key| !key.is_empty())
+                .unwrap_or_else(|| path.clone()),
+            path,
+            identity: text("workspaceIdentity"),
+        })
+    }
+
+    /// Node's rule, against the fork's stored facts. The requested path must name the session's stored cwd
+    /// (the execution worktree when the columns hold one — upstream's resolver accepts a request naming the
+    /// stored worktree for its shape, where `directory` is the worktree) or its listed key (the parent).
+    /// A remote `workspaceIdentity` fails the same way: Node's `isSameSessionWorkspacePath` answers false
+    /// for remote requests on a locally stored session. Node also proves a git worktree-of relation
+    /// (`classifyLocalSessionDirectory`); Rust has no such classifier, so what the stored columns cannot
+    /// prove is refused fail-closed rather than guessed.
+    pub fn admit(&self, stored_cwd: Option<&str>, listed: &str) -> Result<(), &'static str> {
+        if self
+            .identity
+            .as_deref()
+            .is_some_and(|identity| !identity.trim().is_empty())
+        {
+            return Err(LINEAGE_INVALID);
+        }
+        // Node compares `resolve(a) === resolve(b)`; `same` is the lexical, case-folding equivalent.
+        let style = rust_cli_kernel_api::env_files::PathStyle::infer(&self.path);
+        let names = |candidate: &str| style.same(&self.path, candidate);
+        if names(listed) || stored_cwd.is_some_and(names) {
+            return Ok(());
+        }
+        Err(LINEAGE_INVALID)
+    }
+}
+
+/// B1.2: a refused override as Node's cold-resume coordinator words it on the wire
+/// (`V4SubscribeSessionUnavailableError` wrapping the thrown lineage error): JSON-RPC `-32603` with
+/// `fault.subscribe.resumeFailed` in the message.
+pub fn resume_refused(session: &SessionId, reason: &str) -> KernelError {
+    KernelError::Failed {
+        message: format!(
+            "Failed to resume persisted session {}: {reason} (fault.subscribe.resumeFailed)",
+            session.as_str()
+        ),
+    }
 }
 
 /// What an activation names: the prepared session, the attempt, the parent workspace and the worktree.
