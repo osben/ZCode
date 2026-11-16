@@ -110,9 +110,22 @@ fn paths(value: Option<&Value>) -> Vec<String> {
     }
 }
 
+/// Node `ENVIRONMENT_VARIABLE_NAME_PATTERN`（`template.ts`）：`^[A-Za-z_][A-Za-z0-9_]*$`。只有这样的名字才查进程
+/// 环境；别的写法保持原样（missing 记名）。
+fn valid_env_name(name: &str) -> bool {
+    let mut characters = name.chars();
+    characters
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+        && characters.all(|character| character.is_ascii_alphanumeric() || character == '_')
+}
+
 struct Reader<'a> {
     files: &'a dyn Files,
     workspace: &'a WorkspaceRef,
+    /// Fork: the process environment the MCP servers' `${NAME}` references resolve against (Node
+    /// `adapters/src/plugins/template.ts`; carried by [`PluginSources`](self::PluginSources)).
+    env: &'a rust_cli_base::secret::EnvSnapshot,
 }
 
 impl Reader<'_> {
@@ -228,10 +241,24 @@ impl Reader<'_> {
 
     /// `project` 是工作区根：stdio 服务器的环境按 Node（`adapters/src/plugins/mcp.ts`）给插件目录与项目目录，两套
     /// 名字，配置里的 `env` 优先（修复线 F42，config.md §2.5.1；以前不给）。数据目录与插件 ID 不给（ext.md D13）。
-    fn mcp_servers(plugin: &str, dir: &str, project: &str, tables: &[Value]) -> Vec<McpServer> {
+    /// Fork: 其它合法环境变量名从入口给的进程环境展开（Node `template.ts` `resolveTemplate` 的敏感位路径）；
+    /// 环境里没有的名字保持原样并记 missing（插件表既有的容错约定，不像 Node 抛错）。
+    fn mcp_servers(
+        &self,
+        plugin: &str,
+        dir: &str,
+        project: &str,
+        tables: &[Value],
+    ) -> Vec<McpServer> {
         let root = dir.to_owned();
-        let lookup = move |name: &str| {
-            matches!(name, vars::CLAUDE_PLUGIN_ROOT | vars::ZCODE_PLUGIN_ROOT).then(|| root.clone())
+        let project_dir = project.to_owned();
+        let snapshot = &self.env;
+        let lookup = move |name: &str| match name {
+            vars::CLAUDE_PLUGIN_ROOT | vars::ZCODE_PLUGIN_ROOT => Some(root.clone()),
+            vars::CLAUDE_PROJECT_DIR | vars::ZCODE_PROJECT_DIR => Some(project_dir.clone()),
+            other => valid_env_name(other)
+                .then(|| snapshot.get(other).map(str::to_owned))
+                .flatten(),
         };
         let provided = [
             (vars::CLAUDE_PLUGIN_ROOT, dir),
@@ -339,7 +366,7 @@ impl Reader<'_> {
                 }
             }
         }
-        let mcp_servers = Self::mcp_servers(&name, dir, self.workspace.root.as_str(), tables);
+        let mcp_servers = self.mcp_servers(&name, dir, self.workspace.root.as_str(), tables);
         Plugin {
             id,
             name,

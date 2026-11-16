@@ -62,7 +62,7 @@ pub struct PluginCandidate {
 }
 
 /// 入口层组装的插件来源（配置快照的一部分，config.md §2.1）。
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct PluginSources {
     /// 按 Node 的顺序：配置目录、官方内置缓存、已安装插件。`plugins.enabled` 为 false 时为空。
     pub candidates: Vec<PluginCandidate>,
@@ -76,6 +76,23 @@ pub struct PluginSources {
     /// Fork: the Host configured a Node helper (specs/fork-rust-node-helper.md F3). The PluginHost official plugins then
     /// load, and the MCP servers of helper-hosted plugins are served by the helper ([`McpTransportConfig::NodeHelper`]).
     pub node_helper: bool,
+    /// Fork: the entry-captured process environment the plugin MCP servers' `${NAME}` references resolve against
+    /// (Node `adapters/src/plugins/template.ts` `resolveTemplate`; the empty default keeps unknown names literal).
+    /// Secret values: the field never prints (base R2-13, the manual `Debug` below).
+    pub env: rust_cli_base::secret::EnvSnapshot,
+}
+
+impl std::fmt::Debug for PluginSources {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PluginSources")
+            .field("candidates", &self.candidates)
+            .field("enabled_plugins", &self.enabled_plugins)
+            .field("suppressed_builtins", &self.suppressed_builtins)
+            .field("view_host", &self.view_host)
+            .field("node_helper", &self.node_helper)
+            .field("env", &"[Redacted]")
+            .finish()
+    }
 }
 
 /// 官方插件依赖的 Node 运行时或宿主（ext.md §4.4）。
@@ -389,7 +406,11 @@ pub async fn load_all(
     session_dirs: &[EnvPath],
     sources: &PluginSources,
 ) -> Loaded {
-    let reader = Reader { files, workspace };
+    let reader = Reader {
+        files,
+        workspace,
+        env: &sources.env,
+    };
     let mut plugins = Vec::new();
     for dir in session_dirs {
         plugins.extend(reader.session_plugin(dir.as_str()).await);

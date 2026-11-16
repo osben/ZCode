@@ -76,13 +76,20 @@ fn warn(plugin: &Plugin, message: &str) {
 }
 
 /// Node `loadPluginLspServerDefinitions` for one loaded plugin, read through the files port. Read on demand: the
-/// session catalogs do not carry language servers.
+/// session catalogs do not carry language servers. The language-server declarations read no `${NAME}`
+/// references, so the Reader's process environment stays empty here.
 pub async fn declared(
     files: &dyn Files,
     workspace: &WorkspaceRef,
     plugin: &Plugin,
 ) -> Vec<(String, LspServerConfig)> {
-    Reader { files, workspace }.lsp_definitions(plugin).await
+    Reader {
+        files,
+        workspace,
+        env: &rust_cli_base::secret::EnvSnapshot::default(),
+    }
+    .lsp_definitions(plugin)
+    .await
 }
 
 impl Reader<'_> {

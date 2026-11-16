@@ -127,3 +127,34 @@ async fn configured_env_wins_over_the_provided_variables() {
     assert_eq!(env["TOKEN"], "x");
     assert_eq!(env["ZCODE_PLUGIN_ROOT"], root);
 }
+
+/// Fork (Node 对齐，`adapters/src/plugins/template.ts` 的 `resolveTemplate`）：插件 MCP 的 `env` 值里的 `${NAME}` 除
+/// 插件目录与项目目录的专用名字外，合法环境变量名从入口给的进程环境展开（Node 的敏感位 `allowSensitive` 路径）；
+/// 环境里没有的名字保持原样并记 missing（本工程对插件表既有约定，不像 Node 抛错）。
+#[tokio::test]
+async fn plugin_env_values_expand_process_environment_references() {
+    let root = "/Users/dev/plugins/secrets";
+    let env = MemoryEnvironment::new(facts()).with_file(
+        &format!("{root}/.claude-plugin/plugin.json"),
+        r#"{"name": "secrets", "mcpServers": {"verify": {"command": "node", "args": ["server.mjs"], "env": {"E2E_PLUGIN_SECRET": "${E2E_PLUGIN_SECRET}", "PROJECT": "${ZCODE_PROJECT_DIR}", "ABSENT": "${E2E_ABSENT}"}}}}"#,
+    );
+    let sources = PluginSources {
+        env: [("E2E_PLUGIN_SECRET".to_owned(), "s3cret".to_owned())]
+            .into_iter()
+            .collect(),
+        ..PluginSources::default()
+    };
+    let plugins = load_all(&env, &workspace(), &[EnvPath::new(root)], &sources)
+        .await
+        .plugins;
+    let McpTransportConfig::Stdio { env, .. } = &plugins.0[0].mcp_servers[0].transport else {
+        panic!("verify is stdio");
+    };
+    assert_eq!(env["E2E_PLUGIN_SECRET"], "s3cret");
+    assert_eq!(
+        env["PROJECT"],
+        workspace().root.as_str(),
+        "the project directory names resolve like the plugin root ones"
+    );
+    assert_eq!(env["ABSENT"], "${E2E_ABSENT}");
+}

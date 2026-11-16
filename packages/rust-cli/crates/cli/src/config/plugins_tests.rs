@@ -149,7 +149,13 @@ async fn candidates_follow_the_node_order() {
         suppressed_builtins: vec!["zcode-guide@zcode-plugins-official".to_owned()],
         options: BTreeMap::new(),
     };
-    let sources = sources(section.clone(), "/Users/dev/repo", &root).await;
+    let sources = sources(
+        section.clone(),
+        "/Users/dev/repo",
+        &root,
+        &Default::default(),
+    )
+    .await;
     let candidates: Vec<(String, &str, PluginOrigin)> = sources
         .candidates
         .iter()
@@ -195,7 +201,7 @@ async fn sources_of(
     section: PluginSection,
     root: &rust_cli_paths::StoragePath,
 ) -> rust_cli_ext::plugins::PluginSources {
-    sources(section, "/Users/dev/repo", root).await
+    sources(section, "/Users/dev/repo", root, &Default::default()).await
 }
 
 #[test]
