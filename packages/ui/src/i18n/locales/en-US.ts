@@ -10252,6 +10252,7 @@ const enUS: Record<string, string> = {
     "No sound came from the microphone. Usually the system microphone permission is off or the wrong input device is selected.",
   "voiceInput.error.silent.linux":
     "No sound came from the microphone. Check the PulseAudio / PipeWire input device and volume.",
+  "voiceInput.error.noModel": "No transcription model selected. Pick one in the voice settings.",
   "voiceInput.error.noDevice": "No microphone found. Connect a microphone and try again.",
   "voiceInput.error.noDevice.linux":
     "No microphone found. Connect a microphone and check the PulseAudio / PipeWire input device.",

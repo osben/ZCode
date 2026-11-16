@@ -148,12 +148,19 @@ afterEach(() => {
 });
 
 describe("composer mic", () => {
+  // Track F (specs/voice-dictation-v2.md) replaced the 3.18.0 sync's "one mic" decision: the
+  // upstream voice-input UI drives the LOCAL whisper engine, so it is enabled on the desktop
+  // composer whenever dictation is on; the button itself renders only when the hook reports
+  // availability (a voice-input service on the base connection — mocked false here).
   it.each([false, true])(
-    "never enables or renders the upstream voice input (dictation on: %s)",
+    "enables the upstream voice input exactly when dictation is on (dictation on: %s)",
     (voiceDictationEnabled) => {
       render(voiceDictationEnabled);
       expect(state.voiceInputEnabled.length).toBeGreaterThan(0);
-      expect(state.voiceInputEnabled.every((enabled) => !enabled)).toBe(true);
+      expect(state.voiceInputEnabled.every((enabled) => enabled === voiceDictationEnabled)).toBe(
+        true,
+      );
+      // The mocked hook reports unavailable, so the upstream button never renders.
       expect(state.voiceButtonRendered).toBe(false);
     },
   );

@@ -71,6 +71,10 @@ export function resolveVoiceInputFailureNotice(
   ): VoiceInputFailureNotice =>
     os === "linux" ? { messageId: `${messageId}.linux` } : { messageId, settingsTarget };
   switch (failure) {
+    // Fork: the local engine reports a missing/undownloaded model; the fix lives in the fork
+    // voice settings, not the system settings pages the notice framework links to.
+    case "no_model":
+      return { messageId: "voiceInput.error.noModel" };
     case "permission_denied":
       // mac / Windows 用引导浮层（docs/chat/composer-voice-input.md「权限引导浮层」）；Linux 没有设置页，只提示文字。
       return os === "linux"

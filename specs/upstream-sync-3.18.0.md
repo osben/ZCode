@@ -115,7 +115,7 @@ the fork behaviour active; it does not pick a winner. The owner's choices are un
 ### UI (packages/ui)
 
 - 31 comment-only files: upstream code with fork English comments; 118 three-way merged.
-- ConversationComposer / LexicalChatInput: fork dictation, quick prompts, first-submission flow + upstream voice input (upstream voice input disabled while fork dictation is on — OPEN).
+- ConversationComposer / LexicalChatInput: fork dictation, quick prompts, first-submission flow + upstream voice input. The original sync disabled the upstream voice input while fork dictation was on; Track F (specs/voice-dictation-v2.md, PR #499) resolved the OPEN item the other way: the upstream UI now runs on the local whisper engine on desktop, and the fork control keeps serving Web Speech on web remote.
 - SessionPane: fork incognito prewarm and create-route send; fork inline queue edit dropped (upstream moved editing into composer edit mode). Attachment ref trust must be re-applied on the composer edit submit path (follow-up check).
 - task-row / TaskListItem: fork two-step archive and hover card + upstream rename, archive-blocked-while-running. Upstream TaskRowIdentityHoverCard not mounted (OPEN).
 - useArchiveManagement: fork permanent-delete dialog (upstream inline delete preview not used — OPEN).

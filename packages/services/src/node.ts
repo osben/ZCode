@@ -109,6 +109,7 @@ import { IMarketingTouchService } from "#src/marketing-touch/marketingTouch.js";
 import { createMarketingTouchService } from "#src/marketing-touch/marketingTouchService.js";
 import { IVoiceInputService } from "#src/voice-input/contract.js";
 import { createVoiceInputService } from "#src/voice-input/voiceInputService.js";
+import { createLocalWhisperVoiceInput } from "#src/voice-input/localWhisperVoiceInput.js";
 import { createMarketingAssetRegistry } from "#src/marketing-touch/marketingAssetRegistry.js";
 import type { IChannel } from "@zcode/rpc";
 import {
@@ -3145,15 +3146,6 @@ export function createLocalServices(options: {
         onSnapshot: (snapshot) => marketingAssets.accept(snapshot),
       }),
     )
-    .register(
-      IVoiceInputService,
-      createVoiceInputService({
-        apiClient,
-        getToken: () => credentialService.load("zcodejwttoken"),
-        resolveOrigin: resolveCurrentZCodeEndpointOrigin,
-        createSocket: (url) => hostApiNetworkTransport.createWebSocket(url),
-      }),
-    )
     .register(IFileService, fileService)
     .register(IMediaPreviewService, mediaPreviewService)
     .register(
@@ -3507,10 +3499,15 @@ export function createLocalServices(options: {
   // Downloads go through the host's unified network stack, inheriting proxy and self-signed certificate settings; otherwise
   // users who need a proxy cannot download models at all.
   if (options?.serviceAuthorityMode === "desktop-local") {
-    services.register(
-      IVoiceDictationService,
-      createVoiceDictationService({ fetchImpl: hostApiNetworkTransport.fetch }),
-    );
+    const voiceDictation = createVoiceDictationService({
+      fetchImpl: hostApiNetworkTransport.fetch,
+    });
+    services.register(IVoiceDictationService, voiceDictation);
+    // Fork (specs/voice-dictation-v2.md "Track F"): the composer voice-input UI drives the local
+    // whisper engine, not the zcode-server ASR — dictation needs no login and the audio never
+    // leaves the machine. The cloud service stays in the codebase for a future engine setting;
+    // non-desktop hosts register no voice-input service and the composer entry stays hidden.
+    services.register(IVoiceInputService, createLocalWhisperVoiceInput(voiceDictation));
   }
 
   // Register the lifecycle disposer even when initially disabled. The terminal fence must precede any

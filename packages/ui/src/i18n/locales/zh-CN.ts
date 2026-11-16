@@ -9678,6 +9678,7 @@ const zhCN: Record<string, string> = {
   "voiceInput.error.silent": "没有收到麦克风声音。通常是系统麦克风权限未开启或选错了输入设备。",
   "voiceInput.error.silent.linux":
     "没有收到麦克风声音。请检查 PulseAudio / PipeWire 的输入设备和音量。",
+  "voiceInput.error.noModel": "未选择识别模型。请在语音设置中选择。",
   "voiceInput.error.noDevice": "未检测到麦克风，请连接麦克风后重试。",
   "voiceInput.error.noDevice.linux":
     "未检测到麦克风。请连接麦克风，并检查 PulseAudio / PipeWire 输入设备。",
