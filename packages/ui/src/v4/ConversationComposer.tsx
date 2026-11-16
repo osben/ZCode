@@ -2566,6 +2566,11 @@ function ConversationComposerImpl({
           removeConversationSelectionReference(reference.id),
         );
         onSubmissionSettled?.(submittedScopeId);
+        // Root cause (upstream 3.17.1 merge): this terminal finalize was dropped, so an accepted
+        // settlement never cleared activeSubmissionDraftTransactionRef. persistDraftNow then
+        // early-returns forever for the sending incarnation (root→session promotion keeps the
+        // token), and the debounced session-scope draft autosave stays dead after every send.
+        finalizeSubmittedDraft();
       };
       const subscribeToCommandResolution = (commandId: string) => {
         let active = true;
