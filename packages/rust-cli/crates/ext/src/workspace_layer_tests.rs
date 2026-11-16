@@ -161,6 +161,54 @@ async fn a_loaded_layer_starts_the_workspace_group() {
     assert_eq!(names(&mcp, "/w"), ["project-server"]);
 }
 
+/// Fork (PLM-LC-010, Node parity): the load settles the group's FIRST connections before it returns, so the loading
+/// session's first request carries the freshly loaded plugins' tools (`McpManager::wait_for_first_connections`). The
+/// server here has no handler, so its `initialize` stays unanswered (a first connection in flight) until the test
+/// releases it; without the wait the load would return while the server is still connecting.
+#[tokio::test]
+async fn a_load_settles_the_groups_first_connections() {
+    let scope = TaskScope::root("test", |_| {});
+    let fake: Arc<FakeMcp> = Arc::new(FakeMcp::default().with(
+        "slow-server",
+        crate::test_support::held(|method, _| {
+            (method == "tools/list").then(|| Ok(serde_json::json!({"tools": []})))
+        }),
+    ));
+    let (mcp, layer) = layer(&fake, &scope);
+    layer.set_loader(Arc::new(Fixed(Some(config_with_server("slow-server")))));
+    let releaser = {
+        let fake = fake.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            fake.release("slow-server", serde_json::json!({"tools": {}}), None);
+        })
+    };
+
+    let started = std::time::Instant::now();
+    layer.load(&workspace()).await;
+
+    assert!(
+        started.elapsed() >= std::time::Duration::from_millis(100),
+        "the load waited for the first connection to settle"
+    );
+    assert!(matches!(layer.slot("/w"), Some(super::Slot::Loaded(_))));
+    let states: Vec<_> = mcp
+        .group("/w")
+        .expect("the group started")
+        .server_infos()
+        .into_iter()
+        .map(|info| (info.name, info.state))
+        .collect();
+    assert_eq!(
+        states,
+        [(
+            "slow-server".to_owned(),
+            rust_cli_kernel_api::manage::McpServerState::Connected
+        )]
+    );
+    releaser.abort();
+}
+
 #[tokio::test]
 async fn a_broken_project_layer_is_fail_closed() {
     let scope = TaskScope::root("test", |_| {});

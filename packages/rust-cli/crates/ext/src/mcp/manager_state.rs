@@ -193,6 +193,44 @@ impl McpManager {
                 .await;
         }
     }
+
+    /// Fork (PLM-LC-010, Node parity): waits until every server of this group that is on its FIRST connection has
+    /// settled (connected or failed), bounded by the connect wait. A workspace's layer loads and starts its group's
+    /// connections at the session's start without waiting ([`super::manager::McpManager::start`]), so the session's
+    /// first request would otherwise omit a freshly installed plugin's tools — the desktop's turn (Node
+    /// `toolSearchMode: "off"`) advertises them inline like Node's first request does. Print sessions keep the startup
+    /// wait's own policy ([`Self::wait_for_print`]); deferred helper-hosted servers and later reconnects never wait
+    /// here (their turns proceed; a call to a still-pending server waits at dispatch, `mcp_wait`).
+    pub async fn wait_for_first_connections(&self) {
+        let inner = &self.0;
+        if inner.print.load(std::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
+        let first = |server: &Server| {
+            matches!(
+                server.status,
+                McpStatus::Pending {
+                    reconnecting: false,
+                    ..
+                }
+            ) && !server.deferred
+        };
+        let deadline = inner
+            .clock
+            .now_ms()
+            .saturating_add(inner.settings.startup.connect_wait_ms);
+        if !inner
+            .wait_until(deadline, || {
+                inner.check(|servers| !servers.values().any(&first))
+            })
+            .await
+        {
+            tracing::info!(
+                waited_ms = inner.settings.startup.connect_wait_ms,
+                "MCP servers of a workspace group not ready at the session's start; proceeding, background connection continues"
+            );
+        }
+    }
 }
 
 #[async_trait]
