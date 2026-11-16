@@ -922,7 +922,9 @@ pub trait Kernel: Send + Sync {
     }
 
     /// `/mcp reconnect|enable|disable`（tui-manage.md §6，L29）：经 ext 的连接管理改连接，返回这些服务器
-    /// 改动后的状态。默认 `Unsupported`。
+    /// 改动后的状态。Fork (specs/fork-rust-workspace-plugins-mcp.md, "As built: layer reload"): an
+    /// enable/disable follows a config write the caller committed, and also reloads the control's
+    /// workspace layer, so its group re-merges with the new enabled state。默认 `Unsupported`。
     async fn mcp_control(
         &self,
         _control: crate::manage::McpControl,

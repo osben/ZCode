@@ -706,3 +706,158 @@ async fn a_workspace_layer_reload_replaces_the_loaded_slot() {
     kernel.reload_workspace_layer(&other).await;
     assert!(kernel.plugins_for_session(&session).is_none());
 }
+
+/// Fork (specs/fork-rust-workspace-plugins-mcp.md, "As built: layer reload"): `/mcp enable|disable`
+/// persists its config write before the control, so the control reloads the workspace it names —
+/// only that workspace's slot, not another workspace's — while the process manager still restarts
+/// only the servers it owns (a name it does not know never reaches the receipt). Reconnect writes
+/// no config and reloads nothing.
+#[tokio::test]
+async fn mcp_enable_and_disable_reload_the_named_workspaces_layer() {
+    let env = MemoryEnvironment::new(EnvFacts {
+        cwd: EnvPath::new("/Users/dev/work"),
+        platform: "darwin".to_owned(),
+        os_version: "Darwin 24".to_owned(),
+        shell: "zsh".to_owned(),
+        is_git_repo: false,
+        home: Some(EnvPath::new("/Users/dev")),
+        uid: None,
+    });
+    let store = Arc::new(MemoryStore::default());
+    let kernel = LocalKernel::with_extensions(
+        Ports {
+            model: Arc::new(ScriptedModel::new(Vec::new())),
+            environments: environments(Arc::new(env)),
+            store: store.clone(),
+            artifacts: store,
+            clock: Arc::new(FixedClock(1_000)),
+            ids: Arc::new(SequentialIds::default()),
+        },
+        Defaults {
+            selection: selection().into(),
+            mode: PermissionMode::Default,
+            max_turns: None,
+            search_tools: false,
+            task_tools: None,
+            limits: Default::default(),
+        },
+        ContextConfig::new(Surface::Print),
+        CompactConfig::default(),
+        Arc::new(MemoryTaskLists::default()),
+        Extensions {
+            config: ExtConfig {
+                workspace: Some(workspace()),
+                ..ExtConfig::default()
+            },
+            ..Extensions::none()
+        },
+    );
+    let config = || {
+        Some(rust_cli_ext::WorkspaceConfig {
+            plugins: Default::default(),
+            servers: Vec::new(),
+        })
+    };
+    kernel.set_workspace_config_loader(Arc::new(SwitchingLayer(std::sync::Mutex::new(config()))));
+    let other = WorkspaceRef {
+        environment: workspace().environment,
+        root: EnvPath::new("/Users/dev/other"),
+    };
+    let second = WorkspaceRef {
+        environment: workspace().environment,
+        root: EnvPath::new("/Users/dev/second"),
+    };
+    let open = |workspace: &WorkspaceRef| {
+        kernel.create_session(CreateSession {
+            id: None,
+            workspace: workspace.clone(),
+            selection: selection(),
+            mode: PermissionMode::Default,
+            plan: false,
+            incognito: None,
+        })
+    };
+    let (a, b) = (open(&other).await.unwrap(), open(&second).await.unwrap());
+    let first = kernel
+        .plugins_for_session(&a)
+        .expect("the first workspace loaded a layer");
+    let another = kernel
+        .plugins_for_session(&b)
+        .expect("the second workspace loaded a layer");
+
+    // Reconnect writes no config: the named workspace's slot stays.
+    kernel
+        .mcp_control(rust_cli_kernel_api::manage::McpControl {
+            action: rust_cli_kernel_api::manage::McpAction::Reconnect,
+            servers: vec!["docs".to_owned()],
+            workspace: other.clone(),
+        })
+        .await
+        .unwrap();
+    assert!(
+        Arc::ptr_eq(
+            &first,
+            &kernel
+                .plugins_for_session(&a)
+                .expect("the reconnect kept the loaded slot")
+        ),
+        "reconnect is not a config write; it must not reload the layer"
+    );
+
+    // Disable (equally enable) follows a committed `enabled` write: the named workspace's slot is
+    // replaced by the re-read, the other workspace's slot is not, and a server the process group
+    // does not own never appears in the receipt.
+    let infos = kernel
+        .mcp_control(rust_cli_kernel_api::manage::McpControl {
+            action: rust_cli_kernel_api::manage::McpAction::Disable,
+            servers: vec!["docs".to_owned()],
+            workspace: other.clone(),
+        })
+        .await
+        .unwrap();
+    assert!(
+        infos.is_empty(),
+        "the process manager restarts only the servers it owns"
+    );
+    assert!(
+        !Arc::ptr_eq(
+            &first,
+            &kernel
+                .plugins_for_session(&a)
+                .expect("the disable installed a loaded slot")
+        ),
+        "the disable's config write reloads the named workspace's layer"
+    );
+    assert!(
+        Arc::ptr_eq(
+            &another,
+            &kernel
+                .plugins_for_session(&b)
+                .expect("the other workspace kept its slot")
+        ),
+        "the reload replaces only the named workspace's layer"
+    );
+
+    // The enable arm of the kernel's Enable|Disable match reloads too: a second control with Enable
+    // (the reverse committed write) replaces the named workspace's slot again.
+    let after_disable = kernel
+        .plugins_for_session(&a)
+        .expect("the disable installed a loaded slot");
+    kernel
+        .mcp_control(rust_cli_kernel_api::manage::McpControl {
+            action: rust_cli_kernel_api::manage::McpAction::Enable,
+            servers: vec!["docs".to_owned()],
+            workspace: other.clone(),
+        })
+        .await
+        .unwrap();
+    assert!(
+        !Arc::ptr_eq(
+            &after_disable,
+            &kernel
+                .plugins_for_session(&a)
+                .expect("the enable installed a loaded slot")
+        ),
+        "the enable's config write reloads the named workspace's layer"
+    );
+}
