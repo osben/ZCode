@@ -317,9 +317,13 @@ impl Sources {
                     .preferences
                     .save_mcp_enabled(name.clone(), enabled)
                     .await?;
+                // Fork (specs/fork-rust-workspace-plugins-mcp.md, "As built: layer reload"): the
+                // control names the current workspace, so the kernel reloads its layer after the
+                // write just committed.
                 let control = McpControl {
                     action,
                     servers: vec![name],
+                    workspace: self.workspace.clone(),
                 };
                 let reload = self.kernel.mcp_control(control).await;
                 Ok(reload.err().map(|error| error.to_string()))
@@ -328,6 +332,7 @@ impl Sources {
                 let control = McpControl {
                     action: McpAction::Reconnect,
                     servers: vec![name],
+                    workspace: self.workspace.clone(),
                 };
                 self.kernel
                     .mcp_control(control)

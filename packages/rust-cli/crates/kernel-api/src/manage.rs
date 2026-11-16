@@ -83,10 +83,15 @@ pub enum McpAction {
 }
 
 /// 对这些服务器做一个动作；回执是它们改动后的状态（reconnect 与 enable 等到离开 connecting）。
+/// Fork (specs/fork-rust-workspace-plugins-mcp.md, "As built: layer reload"): `workspace` is the
+/// calling surface's current workspace — an enable/disable follows a config write the caller
+/// committed, so the kernel reloads that workspace's plugin/MCP layer (the shared-runtime
+/// equivalent of Node's per-app config re-read at every session app's construction).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct McpControl {
     pub action: McpAction,
     pub servers: Vec<String>,
+    pub workspace: crate::env::WorkspaceRef,
 }
 
 /// 一个 MCP 服务器的状态快照。

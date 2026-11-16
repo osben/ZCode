@@ -143,9 +143,10 @@ reload after the write they committed, never a file watcher:
   place that rebuilds the hooks entry), the review toggle's committed write, and an accepted
   `workspace/mcp/trust` decision (the layer's server admission reads that store) —
   `frontends/app_workspace.rs`.
-- `/mcp enable|disable` is NOT wired (follow-up below): the TUI is their only surface, and the
-  TUI's workspace is the process workspace, for which no layer ever loads (the load guard), so no
-  reachable surface has a loaded non-process layer today.
+- `/mcp enable|disable` (both TUI surfaces: the slash command and the settings page): the kernel's
+  `mcp_control` names the calling surface's current workspace, and an enable/disable — which the
+  TUI issues only after its `enabled` write committed — reloads that workspace's layer through the
+  same path (`runtime/src/kernel.rs`). Reconnect writes no config and does not reload.
 
 The mechanism mirrors the hooks engine's `reserve_project`/`put_project_at`: every slot carries the
 epoch of the write that put it, a write reserves its epoch before it reads, and `put_at` refuses a
@@ -175,13 +176,18 @@ follow a replaced slot.
   before the process set.
 - MCP Apps on Rust-hosted servers (F7) and `helper/appTools/*` (F3b) — unchanged scope.
 - The TUI (single workspace by construction) keeps the process group; no per-workspace TUI surface.
-- `/mcp enable|disable|reconnect` stay process-group operations (TUI flows). ~~Wiring them into the
-  layer reload~~ stays a follow-up with a reason: their only surface is the TUI (`mcp_control` has
-  no other caller), and the TUI's workspace is the process workspace, whose layer never loads (the
-  load guard) — there is no reachable surface with a loaded non-process layer today. The reload
-  mechanism itself is built ("As built: layer reload"); wiring a new surface means resolving that
-  session's group in `mcp_control` and reloading its workspace when the toggled server's origin is
-  a project file.
+- ~~`/mcp enable|disable|reconnect` stay process-group operations (TUI flows). Wiring them into the
+  layer reload~~ — closed: `McpControl` carries the calling surface's current workspace, and the
+  kernel's `mcp_control` reloads it after an enable/disable (the TUI persists `enabled` before the
+  control, so the reload reads the committed file; the process manager still restarts only the
+  servers it owns, and reconnect reloads nothing). The TUI's slash surface and settings page both
+  pass the session's current workspace. Deliberate divergence from Node, recorded: Node's `/mcp`
+  has no enable/disable verbs at all (`handlers/mcp.ts` usage line) — the Rust verbs are a fork
+  extension, and the layer reload is the shared-runtime equivalent of Node's per-app config
+  re-read at every session app construction, not a Node behavior copy. The reload is unconditional
+  for enable/disable (the App's trust triggers are too): a toggled user-scope server still reaches
+  workspace groups only with its startup-snapshot state, because the layer's user-scope server
+  list is a process-startup read.
 - ~~The LSP path's project `plugins.dirs`~~ — closed: `plugin_view` applies the Node rule (project
   dirs never load; the inventory roots resolve from the trusted layers only), and the workspace
   loader reuses the view instead of its own copy.
@@ -203,7 +209,9 @@ follow a replaced slot.
   - a reload after a committed write replaces the slot, the group and the plugin-hook registration
     for that workspace only; an in-flight load that started earlier never installs over it; a reload
     of a never-loaded workspace loads nothing; the App's trust paths (`workspace/hooks/trustGrant`,
-    review grant/revoke/toggle, an accepted `workspace/mcp/trust`) trigger the reload (cli);
+    review grant/revoke/toggle, an accepted `workspace/mcp/trust`) and `/mcp enable|disable`
+    (enable/disable reload the control's workspace; reconnect does not) trigger the reload (cli,
+    runtime);
   - without a registered workspace (TUI/`-p`) the snapshot equals today's;
   - incognito + workspace filtering compose (a profile-hidden server never answers through any
     group).
