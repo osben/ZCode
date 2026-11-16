@@ -5,10 +5,14 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use rust_cli_kernel_api::abort::Abort;
-use rust_cli_kernel_api::hooks::{HookEvent, HookEventName, HookOutcome, HookRunner};
+use rust_cli_kernel_api::hooks::{
+    HookEvent, HookEventName, HookInvocation, HookOutcome, HookRunOutcome, HookRunRecord,
+    HookRunner, HookSourceKind,
+};
 use rust_cli_kernel_api::ids::MessageId;
 use rust_cli_kernel_api::message::{ContentBlock, Message, UserMessage, UserOrigin};
-use rust_cli_kernel_api::orchestration::QueryStop;
+use rust_cli_kernel_api::model::QuerySource;
+use rust_cli_kernel_api::orchestration::{QueryEvent, QueryStop};
 use rust_cli_kernel_api::testing::{ScriptedModel, text_response};
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
@@ -218,4 +222,127 @@ async fn under_node_a_tool_round_does_not_reset_the_continuation_count() {
     assert_eq!(requests, 5);
     assert_eq!(events.len(), 4);
     assert!(!messages.contains(&feedback("Stop hook feedback:\nstep 4")));
+}
+
+// Fork: under `hook_rows` the Stop dispatch reports its hook runs (specs/fork-rust-agent-parity.md HK-UP-01): one
+// `HookInvocation` event per dispatch, emitted when the dispatch finished; none without the switch.
+
+/// A Stop outcome that finished a dispatch with one recorded run.
+fn recorded(outcome: HookOutcome) -> HookOutcome {
+    HookOutcome {
+        invocation: Some("inv_stop".to_owned()),
+        runs: vec![HookRunRecord {
+            run: "run_1".to_owned(),
+            index: 0,
+            outcome: HookRunOutcome::Success,
+            block_reason: None,
+            error_message: None,
+            stderr_preview: None,
+            stdout_preview: None,
+            started_at_ms: 10,
+            duration_ms: 5,
+            source_kind: HookSourceKind::User,
+            plugin_name: None,
+            display: "node block.js".to_owned(),
+        }],
+        ..outcome
+    }
+}
+
+async fn run_rows(
+    responses: usize,
+    outcomes: Vec<HookOutcome>,
+    hook_rows: bool,
+    source: rust_cli_kernel_api::model::QuerySource,
+) -> (
+    QueryStop,
+    Vec<rust_cli_kernel_api::orchestration::QueryEvent>,
+) {
+    let model = Arc::new(ScriptedModel::new(
+        (0..responses)
+            .map(|index| text_response(&[&format!("reply {index}")]))
+            .collect(),
+    ));
+    let hooks = Arc::new(ScriptedHooks {
+        outcomes: Mutex::new(outcomes.into()),
+        events: Mutex::default(),
+    });
+    let mut parts = parts(model, Vec::new());
+    parts.hooks = hooks;
+    parts.limits.hook_rows = hook_rows;
+    let mut request = request("go");
+    request.source = source;
+    let (scope, sink) = scope(parts, &request, Abort::new());
+    let stop = crate::run::run(scope, request).await.unwrap();
+    (stop, sink.events())
+}
+
+fn dispatches(events: &[rust_cli_kernel_api::orchestration::QueryEvent]) -> Vec<HookInvocation> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            QueryEvent::HookInvocation { invocation } => Some(invocation.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn the_stop_dispatch_reports_its_hook_runs_under_the_switch() {
+    let (stop, events) = run_rows(
+        1,
+        vec![recorded(HookOutcome::default())],
+        true,
+        QuerySource::MainThread,
+    )
+    .await;
+    assert_eq!(stop, QueryStop::Completed);
+    let dispatches = dispatches(&events);
+    let [invocation] = dispatches.as_slice() else {
+        panic!("expected one dispatch: {events:?}");
+    };
+    assert_eq!(invocation.id, "inv_stop");
+    assert_eq!(invocation.hook_event, HookEventName::Stop);
+    assert_eq!(invocation.tool_use, None);
+    assert_eq!(invocation.runs.len(), 1);
+    assert_eq!(invocation.runs[0].run, "run_1");
+}
+
+#[tokio::test]
+async fn without_the_switch_the_stop_dispatch_reports_nothing() {
+    let (_stop, events) = run_rows(
+        1,
+        vec![recorded(HookOutcome::default())],
+        false,
+        QuerySource::MainThread,
+    )
+    .await;
+    assert!(
+        dispatches(&events).is_empty(),
+        "unexpected dispatches: {events:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_subagent_stop_dispatch_reports_subagent_stop() {
+    let source = QuerySource::Subagent("general-purpose".to_owned());
+    let (_stop, events) = run_rows(1, vec![recorded(HookOutcome::default())], true, source).await;
+    let dispatches = dispatches(&events);
+    let [invocation] = dispatches.as_slice() else {
+        panic!("expected one dispatch: {events:?}");
+    };
+    assert_eq!(invocation.hook_event, HookEventName::SubagentStop);
+}
+
+#[tokio::test]
+async fn a_dispatch_without_runs_reports_nothing() {
+    let bare = HookOutcome {
+        invocation: Some("inv_stop".to_owned()),
+        ..HookOutcome::default()
+    };
+    let (_stop, events) = run_rows(1, vec![bare], true, QuerySource::MainThread).await;
+    assert!(
+        dispatches(&events).is_empty(),
+        "unexpected dispatches: {events:?}"
+    );
 }

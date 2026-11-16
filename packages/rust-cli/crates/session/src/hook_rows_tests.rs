@@ -180,3 +180,167 @@ async fn without_the_switch_a_blocked_prompt_fails_as_before() {
         })
     ));
 }
+
+/// Fork: the dispatch is kept for the cold projection (`SessionView::hook_invocations`, HK-UP-01 Design 4): anchored
+/// to the stored user message of its turn, like goal verification's `anchor_message`.
+#[tokio::test]
+async fn an_allowed_prompt_records_its_dispatch_for_the_view() {
+    let model = Arc::new(ScriptedModel::new(vec![text_response(&["ok"])]));
+    let outcome = HookOutcome {
+        invocation: Some("inv_1".into()),
+        runs: vec![run(HookRunOutcome::Success)],
+        ..HookOutcome::default()
+    };
+    let built = setup(model, outcome, true).build().await;
+    let mut events = built.session.subscribe(Some(0));
+    built.session.send(submit("c1", "hello")).await;
+    until(&mut events, finished).await;
+    let view = built.session.view().await.unwrap();
+    let prompt = view.messages[0].id().clone();
+    assert_eq!(view.hook_invocations.len(), 1);
+    let record = &view.hook_invocations[0];
+    assert_eq!(record.anchor_message.as_ref(), Some(&prompt));
+    assert_eq!(record.invocation.id, "inv_1");
+    assert_eq!(
+        record.invocation.hook_event,
+        HookEventName::UserPromptSubmit
+    );
+    assert_eq!(record.invocation.runs, [run(HookRunOutcome::Success)]);
+}
+
+/// A blocked prompt's input is never stored, so its record has no anchor left and the view drops it (a cold reopen
+/// loses the turn with it, as the design accepts).
+#[tokio::test]
+async fn a_blocked_prompt_leaves_no_record_the_view_can_anchor() {
+    let model = Arc::new(ScriptedModel::new(Vec::new()));
+    let built = setup(model, blocking(), true).build().await;
+    let mut events = built.session.subscribe(Some(0));
+    built.session.send(submit("c1", "blocked text")).await;
+    until(&mut events, finished).await;
+    let view = built.session.view().await.unwrap();
+    assert!(view.messages.is_empty());
+    assert!(view.hook_invocations.is_empty());
+}
+
+/// A rewind that cuts its turn's messages clears the record with them.
+#[tokio::test]
+async fn a_rewind_of_its_turn_drops_the_recorded_dispatch() {
+    let model = Arc::new(ScriptedModel::new(vec![text_response(&["ok"])]));
+    let outcome = HookOutcome {
+        invocation: Some("inv_1".into()),
+        runs: vec![run(HookRunOutcome::Success)],
+        ..HookOutcome::default()
+    };
+    let built = setup(model, outcome, true).build().await;
+    let mut events = built.session.subscribe(Some(0));
+    built.session.send(submit("c1", "hello")).await;
+    until(&mut events, finished).await;
+    let prompt = built.session.view().await.unwrap().messages[0].id().clone();
+    assert_eq!(
+        built.session.view().await.unwrap().hook_invocations.len(),
+        1
+    );
+    let ack = built
+        .session
+        .send(crate::test_support::envelope(
+            "r1",
+            rust_cli_kernel_api::session_api::Command::Rewind {
+                target: prompt,
+                scope: rust_cli_kernel_api::session_api::RewindScope::Conversation,
+            },
+        ))
+        .await;
+    assert!(matches!(
+        ack,
+        rust_cli_kernel_api::session_api::Ack::Accepted { .. }
+    ));
+    assert!(
+        built
+            .session
+            .view()
+            .await
+            .unwrap()
+            .hook_invocations
+            .is_empty()
+    );
+}
+
+/// Fork: a SessionStart dispatch has no turn, so it waits for the session's next human turn (Node's pending
+/// SessionStart rows, HK-UP-01): its row is reported when that turn starts — after its header, before its input —
+/// and the view anchors the record to that turn's stored prompt. The startup title is only the test's wait for the
+/// result to be held (`wait_for_startup_title` in hooks_tests).
+async fn wait_for_title(session: &crate::Session, title: &str) {
+    for _ in 0..500 {
+        if session.view().await.unwrap().meta.title == title {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("the startup title was never set");
+}
+
+async fn startup_setup(hook_rows: bool) -> crate::test_support::Built {
+    let model = Arc::new(ScriptedModel::new(vec![text_response(&["ok"])]));
+    let mut setup = Setup::new(model);
+    setup.hooks = Arc::new(ScriptedHooks::with(
+        HookEventName::SessionStart,
+        HookOutcome {
+            session_title: Some("startup title".into()),
+            invocation: Some("inv_start".into()),
+            runs: vec![run(HookRunOutcome::Success)],
+            ..HookOutcome::default()
+        },
+    ));
+    setup.hook_rows = hook_rows;
+    setup.build().await
+}
+
+#[tokio::test]
+async fn a_session_start_dispatch_waits_for_the_next_human_turn() {
+    let built = startup_setup(true).await;
+    wait_for_title(&built.session, "startup title").await;
+    let mut events = built.session.subscribe(Some(0));
+    built.session.send(submit("c1", "hello")).await;
+    let seen = until(&mut events, finished).await;
+    assert_eq!(
+        kinds(&seen)[..3],
+        ["turn_started", "hook_invocation", "message_done"]
+    );
+    let invocation = seen
+        .iter()
+        .find_map(|event| match event {
+            KernelEvent::HookInvocation { invocation, .. } => Some(invocation),
+            _ => None,
+        })
+        .expect("the waiting dispatch");
+    assert_eq!(invocation.id, "inv_start");
+    assert_eq!(invocation.hook_event, HookEventName::SessionStart);
+    assert_eq!(invocation.runs, [run(HookRunOutcome::Success)]);
+    let view = built.session.view().await.unwrap();
+    let [record] = view.hook_invocations.as_slice() else {
+        panic!("the anchored record: {:?}", view.hook_invocations);
+    };
+    let prompt = view.messages[0].id().clone();
+    assert_eq!(record.anchor_message.as_ref(), Some(&prompt));
+}
+
+/// The TUI and `-p` see none of it: no waiting row and no kept record.
+#[tokio::test]
+async fn without_the_switch_a_session_start_dispatch_reports_nothing() {
+    let built = startup_setup(false).await;
+    wait_for_title(&built.session, "startup title").await;
+    let mut events = built.session.subscribe(Some(0));
+    built.session.send(submit("c1", "hello")).await;
+    let seen = until(&mut events, finished).await;
+    let kinds = kinds(&seen);
+    assert!(!kinds.contains(&"hook_invocation".to_owned()), "{kinds:?}");
+    assert!(
+        built
+            .session
+            .view()
+            .await
+            .unwrap()
+            .hook_invocations
+            .is_empty()
+    );
+}

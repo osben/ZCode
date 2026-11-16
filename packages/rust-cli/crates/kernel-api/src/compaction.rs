@@ -447,6 +447,11 @@ pub struct CompactResult {
     /// pending slot"). Off when the hook gave no context.
     #[serde(default)]
     pub session_start_context: bool,
+    /// Fork: the hook dispatches this compaction ran, in run order (specs/fork-rust-agent-parity.md HK-UP-01); the
+    /// caller reports them under its hook-rows switch, the engine having no sink. A compaction a PreCompact hook
+    /// blocked returns no result, so that dispatch is not reported.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hook_invocations: Vec<crate::hooks::HookInvocation>,
 }
 
 #[cfg(test)]

@@ -627,6 +627,11 @@ pub struct ToolExecution {
     /// hook 要求这批工具结束后停止本轮（`continue: false`）。
     #[serde(default)]
     pub prevent_continuation: bool,
+    /// Fork: the hook dispatches this call ran, in dispatch order (specs/fork-rust-agent-parity.md HK-UP-01); the
+    /// executor reports them as `HookInvocation` events around the call's result. Only the tool pipeline fills it,
+    /// under its `hook_rows` switch.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hook_invocations: Vec<crate::hooks::HookInvocation>,
 }
 
 impl ToolExecution {
@@ -636,6 +641,7 @@ impl ToolExecution {
             before: Vec::new(),
             after: Vec::new(),
             prevent_continuation: false,
+            hook_invocations: Vec::new(),
         }
     }
 }

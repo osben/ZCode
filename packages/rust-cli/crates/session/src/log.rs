@@ -30,7 +30,8 @@ use tokio::sync::broadcast;
 const LIVE_CAPACITY: usize = 1024;
 /// 不管订阅方，至少留这么多个 seq 的补发（工作线 F120）：新订阅方从 `view()` 的 `last_seq`（刚取的快照）或新会话的 0
 /// 开始，都在这个范围里。是广播缓冲的 4 倍，超出它的四分之一时才整理一次。
-const RETAIN: u64 = 4 * LIVE_CAPACITY as u64;
+/// Fork: also the bound of the actor's kept hook dispatches (HK-UP-01 Design 4, `Actor::hook_invocations`).
+pub(crate) const RETAIN: u64 = 4 * LIVE_CAPACITY as u64;
 /// 被取代的空位至少这么多、且占到三分之一时整理一次（每个空位后面通常跟着一段被它隔开的增量，空位到不了一半）。
 const COMPACT_AFTER: usize = 64;
 /// 被替代的条目至少占全部的这么多分之一时才整理。

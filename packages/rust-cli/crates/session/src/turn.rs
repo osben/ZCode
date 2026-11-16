@@ -461,13 +461,38 @@ impl Actor {
     }
 
     fn forward(&mut self, event: QueryEvent) {
-        let Some(turn) = self.running.as_ref().map(|running| running.turn.clone()) else {
+        let Some(running) = self.running.as_ref() else {
             return;
         };
+        let (turn, prompt) = (running.turn.clone(), running.prompt.clone());
         if let QueryEvent::ToolFinished { tool_use, output } = &event {
             self.ledger.tool_finished(tool_use, output);
         }
+        // Fork: keep the dispatch for the cold projection (HK-UP-01 Design 4): anchored to the turn's user message,
+        // bounded like the event log retention; the view drops a record whose anchor is not stored any more. A
+        // dispatch of a turn without a stored prompt (the compact turn) is live-only, like a blocked prompt's.
+        if let (Some(prompt), QueryEvent::HookInvocation { invocation }) = (prompt, &event) {
+            self.keep_hook_invocation(Some(prompt), invocation.clone());
+        }
         self.log.append(kernel_event(turn, event));
+    }
+
+    /// Fork: keep a dispatch for the cold projection (HK-UP-01 Design 4), bounded like the event log retention. A
+    /// dispatch without a turn (a SessionStart dispatch, recorded by `finish_startup`) waits with no anchor until the
+    /// next human turn takes it (input.rs).
+    pub(crate) fn keep_hook_invocation(
+        &mut self,
+        anchor_message: Option<rust_cli_kernel_api::ids::MessageId>,
+        invocation: rust_cli_kernel_api::hooks::HookInvocation,
+    ) {
+        if self.hook_invocations.len() >= crate::log::RETAIN as usize {
+            self.hook_invocations.remove(0);
+        }
+        self.hook_invocations
+            .push(rust_cli_kernel_api::hooks::HookInvocationRecord {
+                anchor_message,
+                invocation,
+            });
     }
 
     pub(crate) async fn finish_turn(&mut self) {

@@ -230,9 +230,10 @@ pub(super) fn block_error(invocation: &HookInvocation, now: u64) -> Option<LastE
 }
 
 impl Projection {
-    /// One dispatch's row in the running turn (Node appends it at the dispatch's first event; Rust reports the
-    /// dispatch once it finished), and the banner of a blocked prompt.
-    pub(super) fn hook_invocation(
+    /// One dispatch's row in the turn that is open (Node appends it at the dispatch's first event; Rust reports the
+    /// dispatch once it finished). Returns whether the row was appended; a duplicate dispatch or one without runs
+    /// or an open turn is not reported.
+    pub(super) fn hook_invocation_row(
         &mut self,
         invocation: &HookInvocation,
         now: u64,
@@ -292,6 +293,20 @@ impl Projection {
         }
         row.insert("executions".into(), Value::Array(executions));
         self.append(key, row, out);
+        true
+    }
+
+    /// The live dispatch: its row in the running turn and the banner of a blocked prompt.
+    pub(super) fn hook_invocation(
+        &mut self,
+        invocation: &HookInvocation,
+        now: u64,
+        seq: u64,
+        out: &mut Vec<Value>,
+    ) -> bool {
+        if !self.hook_invocation_row(invocation, now, seq, out) {
+            return false;
+        }
         match block_error(invocation, now) {
             Some(error) => {
                 self.error = Some(error);
@@ -299,5 +314,16 @@ impl Projection {
             }
             None => false,
         }
+    }
+
+    /// Fork: the cold row of a stored dispatch (HK-UP-01 Design 7), after its turn's input row, like the live order
+    /// (the input commits before the dispatch is reported). The banner is not rebuilt cold.
+    pub(super) fn cold_hook_invocation(
+        &mut self,
+        invocation: &HookInvocation,
+        now: u64,
+        out: &mut Vec<Value>,
+    ) {
+        self.hook_invocation_row(invocation, now, 0, out);
     }
 }

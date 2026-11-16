@@ -1,5 +1,7 @@
 //! 插话（`Delivery::Steer`）在工具边界并入当前回合（docs/specs/rust-cli/query.md §4）。
 
+use rust_cli_kernel_api::hooks::{HookEventName, HookOutcome};
+
 use super::*;
 
 fn steer(id: &str, text: &str) -> CommandEnvelope {
@@ -311,4 +313,97 @@ mod user_prompt_submit {
             "{texts}"
         );
     }
+}
+
+// Fork: under `hook_rows` a blocked steer reports its dispatch in the running turn (HK-UP-01): the row's event goes
+// out with the steer's warning, and its record anchors to the running turn's stored prompt; the steer itself is
+// still dropped. Without the switch nothing is reported.
+
+/// One blocked run of the steer's UserPromptSubmit dispatch.
+fn steer_run() -> rust_cli_kernel_api::hooks::HookRunRecord {
+    rust_cli_kernel_api::hooks::HookRunRecord {
+        run: "run_1".to_owned(),
+        index: 0,
+        outcome: rust_cli_kernel_api::hooks::HookRunOutcome::Blocked,
+        block_reason: Some("hooks_prompt_block".to_owned()),
+        error_message: None,
+        stderr_preview: Some("no".to_owned()),
+        stdout_preview: None,
+        started_at_ms: 10,
+        duration_ms: 5,
+        source_kind: rust_cli_kernel_api::hooks::HookSourceKind::User,
+        plugin_name: None,
+        display: "node block.js".to_owned(),
+    }
+}
+
+async fn blocked_steer_rows(
+    scope: &TaskScope,
+    hook_rows: bool,
+) -> (Session, Vec<rust_cli_kernel_api::session_api::KernelEvent>) {
+    let hooks: Arc<crate::test_support::ScriptedHooks> =
+        Arc::new(crate::test_support::ScriptedHooks::default());
+    let (_store, _model, session) = if hook_rows {
+        asking_session_rows(scope, hooks.clone()).await
+    } else {
+        asking_session_with(scope, hooks.clone()).await
+    };
+    let mut events = session.subscribe(Some(0));
+    session.send(submit("c1", "ask me")).await;
+    let interaction = asked(&mut events).await;
+    hooks.set(
+        HookEventName::UserPromptSubmit,
+        HookOutcome {
+            blocking_error: Some("no".to_owned()),
+            invocation: Some("inv_steer".to_owned()),
+            runs: vec![steer_run()],
+            ..HookOutcome::default()
+        },
+    );
+    session.send(steer("c2", "also b")).await;
+    session.send(answer("c3", interaction)).await;
+    let seen = until_finished(&mut events, 1).await;
+    (session, seen)
+}
+
+#[tokio::test]
+async fn under_hook_rows_a_blocked_steer_reports_its_dispatch_in_the_running_turn() {
+    let scope = TaskScope::root("test", |_| {});
+    let (session, seen) = blocked_steer_rows(&scope, true).await;
+    let invocation = seen
+        .iter()
+        .find_map(|event| match event {
+            KernelEvent::HookInvocation { invocation, .. } => Some(invocation),
+            _ => None,
+        })
+        .expect("the blocked steer's dispatch");
+    assert_eq!(invocation.id, "inv_steer");
+    assert_eq!(invocation.hook_event, HookEventName::UserPromptSubmit);
+    assert_eq!(invocation.runs, [steer_run()]);
+    // The steer is still dropped: nothing of it is queued or stored.
+    let view = session.view().await.unwrap();
+    assert!(view.queue.is_empty());
+    assert!(!view.messages.iter().any(|message| {
+        matches!(message, Message::Attachment(a) if a.source == "queued_command")
+    }));
+    // The record anchors to the running turn's prompt (the stored "ask me" input).
+    let prompt = view.messages[0].id().clone();
+    assert_eq!(view.hook_invocations.len(), 1);
+    assert_eq!(
+        view.hook_invocations[0].anchor_message.as_ref(),
+        Some(&prompt)
+    );
+}
+
+#[tokio::test]
+async fn without_the_switch_a_blocked_steer_reports_no_dispatch() {
+    let scope = TaskScope::root("test", |_| {});
+    let (session, seen) = blocked_steer_rows(&scope, false).await;
+    assert!(
+        !seen
+            .iter()
+            .any(|event| matches!(event, KernelEvent::HookInvocation { .. })),
+        "{seen:?}"
+    );
+    assert!(session.view().await.unwrap().hook_invocations.is_empty());
 }

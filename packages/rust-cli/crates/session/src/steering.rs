@@ -53,8 +53,12 @@ pub(crate) struct Settled {
 pub(crate) enum Fate {
     /// 并入本回合：出队。
     Absorbed,
-    /// UPS 阻塞：出队，不并入；带给界面的提示（query.md §4.2）。
-    Dropped(Option<String>),
+    /// UPS 阻塞：出队，不并入；带给界面的提示（query.md §4.2）。Fork: the dispatch's runs travel along (HK-UP-01),
+    /// for the actor to report under `hook_rows`; the steer itself has no turn of its own.
+    Dropped(
+        Option<String>,
+        Option<rust_cli_kernel_api::hooks::HookInvocation>,
+    ),
     /// 留到回合结束后作为独立回合；有结果时那个回合直接用它，不再跑 hook。
     Waits(Option<Box<HookOutcome>>),
 }
@@ -132,9 +136,19 @@ impl Actor {
                     }
                     absorbed.push(command);
                 }
-                Fate::Dropped(notice) => {
+                Fate::Dropped(notice, invocation) => {
                     self.inbox
                         .remove_input(&command, crate::inbox::Left::Cancelled("hook_blocked"));
+                    // Fork: report the blocked steer's dispatch in the running turn it tried to join (HK-UP-01),
+                    // anchored to that turn's prompt, so the row and the record behave like an allowed dispatch's.
+                    if let (true, Some(running), Some(invocation)) =
+                        (self.deps.hook_rows, self.running.as_ref(), invocation)
+                    {
+                        let (turn, prompt) = (running.turn.clone(), running.prompt.clone());
+                        self.keep_hook_invocation(prompt, invocation.clone());
+                        self.log
+                            .append(KernelEvent::HookInvocation { turn, invocation });
+                    }
                     // 只供显示，排在本次工具边界的 queued_command 之前（先给出 notices）。
                     if let Some(text) = notice {
                         self.log.append(KernelEvent::SystemNotice {
@@ -220,7 +234,13 @@ impl ActorSink {
                 break;
             }
             if outcome.blocking_error.is_some() {
-                fates.push((command, Fate::Dropped(outcome.notices.first().cloned())));
+                fates.push((
+                    command,
+                    Fate::Dropped(
+                        outcome.notices.first().cloned(),
+                        crate::hooks::prompt_invocation(&outcome),
+                    ),
+                ));
                 continue;
             }
             if outcome.prevent_continuation {

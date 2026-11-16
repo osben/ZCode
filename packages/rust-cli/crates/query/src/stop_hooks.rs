@@ -1,7 +1,9 @@
 //! Stop / SubagentStop hooks（docs/specs/rust-cli/hooks.md §7）：回合要正常结束时运行。hooks crate 已把要提交的文本渲染成消息，这里只提交并
 //! 决定继续还是结束。
 
-use rust_cli_kernel_api::hooks::{HookContext, HookEvent, HookEventName};
+use rust_cli_kernel_api::hooks::{
+    HookContext, HookEvent, HookEventName, HookInvocation, HookOutcome,
+};
 use rust_cli_kernel_api::message::{ContentBlock, Message};
 use rust_cli_kernel_api::model::{ModelSelection, QuerySource};
 use rust_cli_kernel_api::orchestration::QueryError;
@@ -78,6 +80,33 @@ fn payload(scope: &RunScope, source: &QuerySource, active: bool, last: Option<St
     Value::Object(payload)
 }
 
+/// Fork: the Stop / SubagentStop dispatch's runs as a `QueryEvent::HookInvocation` (HK-UP-01), reported when the
+/// dispatch finished, before its context commits; none without a run.
+fn invocation(name: HookEventName, outcome: &HookOutcome) -> Option<HookInvocation> {
+    let id = outcome.invocation.clone()?;
+    (!outcome.runs.is_empty()).then(|| HookInvocation {
+        id,
+        hook_event: name,
+        tool_use: None,
+        tool_name: None,
+        runs: outcome.runs.clone(),
+    })
+}
+
+/// Fork: report the dispatch under `hook_rows` (HK-UP-01): Node appends the row at the dispatch's first event, so the
+/// event goes out before the Stop context commits.
+async fn report(scope: &RunScope, name: HookEventName, outcome: &HookOutcome) {
+    if !scope.parts.limits.hook_rows {
+        return;
+    }
+    if let Some(invocation) = invocation(name, outcome) {
+        let _ = scope
+            .sink
+            .emit(rust_cli_kernel_api::orchestration::QueryEvent::HookInvocation { invocation })
+            .await;
+    }
+}
+
 /// `counts`: the run's Stop counts. `selection` is the run's model (the `/goal` transcript is normalized for it).
 pub(crate) async fn stop_hooks(
     scope: &RunScope,
@@ -138,6 +167,7 @@ pub(crate) async fn stop_hooks(
     let prevent = outcome.prevent_continuation;
     let mut block = !prevent && !outcome.messages.is_empty();
     let over_cap = blocked + 1 > StopContinuations::Consecutive.cap();
+    report(scope, name, &outcome).await;
     for message in outcome.messages {
         commit(scope, history, message).await?;
     }
@@ -186,6 +216,7 @@ async fn node_turn(
         .hooks
         .run(event.clone(), scope.abort.token().clone())
         .await;
+    report(scope, event.name, &outcome).await;
     if outcome.prevent_continuation {
         for message in outcome.messages {
             commit(scope, history, message).await?;
