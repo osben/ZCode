@@ -63,15 +63,30 @@ async fn print(invocation: Invocation, run: &ControllerRun) -> Result<u8> {
     // Fork (specs/fork-rust-workspace-plugins-mcp.md): a resumed session may live in another
     // workspace; its plugin/MCP group starts at the session open, which happens after this wait.
     // Prewarm the row's workspace so the wait below covers its alwaysLoad servers and stays
-    // cancellable against the stop token (a `--continue` target resolves its row later; its group
-    // starts inside the open and connects in the background, like a non-alwaysLoad server).
-    if let rust_cli_headless::SessionTarget::Resume(id) = &target
-        && let Ok(loaded) = built.opened.store.load(id).await
-    {
-        built
-            .kernel
-            .load_workspace_layer(&loaded.meta.workspace)
-            .await;
+    // cancellable against the stop token.
+    match &target {
+        rust_cli_headless::SessionTarget::Resume(id) => {
+            if let Ok(loaded) = built.opened.store.load(id).await {
+                built
+                    .kernel
+                    .load_workspace_layer(&loaded.meta.workspace)
+                    .await;
+            }
+        }
+        // A `--continue` target resolves its row only inside the run's scan; kick its workspace's
+        // layer load NOW (cheap row reads resolve the same workspace the open will — a fork row's
+        // execution worktree included), so the load overlaps the scan and the session open instead
+        // of running inside it: Node composes its per-app config at app construction, before the
+        // core resume, and the open's serial layer step was latency Node does not pay. The open's
+        // own load joins the in-flight one; nothing here waits for the group (a continue run's
+        // non-alwaysLoad servers connect in the background, as before).
+        rust_cli_headless::SessionTarget::Continue => {
+            built
+                .kernel
+                .prewarm_continue_layer(&built.opened.workspace)
+                .await;
+        }
+        rust_cli_headless::SessionTarget::New => {}
     }
     // 等 MCP 连接期间收到退出信号：不再等（headless 看到令牌已取消就不开回合）。
     tokio::select! {

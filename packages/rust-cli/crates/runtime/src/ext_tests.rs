@@ -6,7 +6,7 @@ use std::time::Duration;
 use futures_util::StreamExt;
 use rust_cli_ext::{Plugin, PluginAgentFile as ExtAgentFile, Plugins};
 use rust_cli_kernel_api::env::{EnvFacts, EnvPath, WorkspaceRef};
-use rust_cli_kernel_api::ids::{CommandId, EnvironmentId};
+use rust_cli_kernel_api::ids::{CommandId, EnvironmentId, SessionId};
 use rust_cli_kernel_api::message::Message;
 use rust_cli_kernel_api::session_api::{
     Command, CommandEnvelope, CreateSession, Delivery, Kernel, KernelEvent,
@@ -705,4 +705,319 @@ async fn a_workspace_layer_reload_replaces_the_loaded_slot() {
     *loader.0.lock().unwrap() = None;
     kernel.reload_workspace_layer(&other).await;
     assert!(kernel.plugins_for_session(&session).is_none());
+}
+
+/// Fork (print `--continue` prewarm, Node parity — `frontends/print.rs` kicks it): a loader whose
+/// calls the test gates; each call records the workspace root it was asked for and answers through
+/// a oneshot the test holds, so the test decides when the layer's read proceeds.
+struct GatedLayer {
+    answers: std::sync::Mutex<
+        std::collections::VecDeque<
+            tokio::sync::oneshot::Receiver<Option<rust_cli_ext::WorkspaceConfig>>,
+        >,
+    >,
+    roots: std::sync::Mutex<Vec<String>>,
+}
+
+impl GatedLayer {
+    fn calls(&self) -> usize {
+        self.roots.lock().unwrap().len()
+    }
+
+    fn roots(&self) -> Vec<String> {
+        self.roots.lock().unwrap().clone()
+    }
+}
+
+#[async_trait::async_trait]
+impl rust_cli_ext::WorkspaceConfigLoader for GatedLayer {
+    async fn load(&self, workspace: &WorkspaceRef) -> Option<rust_cli_ext::WorkspaceConfig> {
+        self.roots
+            .lock()
+            .unwrap()
+            .push(workspace.root.as_str().to_owned());
+        let answer = self
+            .answers
+            .lock()
+            .unwrap()
+            .pop_front()
+            .expect("every call has a gated answer");
+        match answer.await {
+            Ok(config) => config,
+            Err(_) => panic!("the test answers every gated call"),
+        }
+    }
+}
+
+fn gated_layer(
+    answers: usize,
+) -> (
+    Arc<GatedLayer>,
+    Vec<tokio::sync::oneshot::Sender<Option<rust_cli_ext::WorkspaceConfig>>>,
+) {
+    let (senders, receivers) = (0..answers)
+        .map(|_| tokio::sync::oneshot::channel())
+        .unzip();
+    (
+        Arc::new(GatedLayer {
+            answers: std::sync::Mutex::new(receivers),
+            roots: std::sync::Mutex::new(Vec::new()),
+        }),
+        senders,
+    )
+}
+
+fn layer_config() -> rust_cli_ext::WorkspaceConfig {
+    rust_cli_ext::WorkspaceConfig {
+        plugins: Default::default(),
+        servers: Vec::new(),
+    }
+}
+
+/// The print entry's shape for the prewarm tests: the process workspace is `workspace()`
+/// (`/Users/dev/work`), the workspace layer's loader is the test's gated one.
+fn prewarm_kernel(store: Arc<MemoryStore>, loader: Arc<GatedLayer>) -> LocalKernel {
+    let env = MemoryEnvironment::new(EnvFacts {
+        cwd: EnvPath::new("/Users/dev/work"),
+        platform: "darwin".to_owned(),
+        os_version: "Darwin 24".to_owned(),
+        shell: "zsh".to_owned(),
+        is_git_repo: false,
+        home: Some(EnvPath::new("/Users/dev")),
+        uid: None,
+    });
+    let kernel = LocalKernel::with_extensions(
+        Ports {
+            model: Arc::new(ScriptedModel::new(Vec::new())),
+            environments: environments(Arc::new(env)),
+            store: store.clone(),
+            artifacts: store,
+            clock: Arc::new(FixedClock(1_000)),
+            ids: Arc::new(SequentialIds::default()),
+        },
+        Defaults {
+            selection: selection().into(),
+            mode: PermissionMode::Default,
+            max_turns: None,
+            search_tools: false,
+            task_tools: None,
+            limits: Default::default(),
+        },
+        ContextConfig::new(Surface::Print),
+        CompactConfig::default(),
+        Arc::new(MemoryTaskLists::default()),
+        Extensions {
+            config: ExtConfig {
+                workspace: Some(workspace()),
+                ..ExtConfig::default()
+            },
+            ..Extensions::none()
+        },
+    );
+    kernel.set_workspace_config_loader(loader);
+    kernel
+}
+
+/// Seeds a session row straight into the store — a kernel create would load the row's layer
+/// itself — like a stored session a later `--continue` run resolves.
+async fn seeded_row(store: &MemoryStore, id: &str, root: &str) -> SessionId {
+    use rust_cli_kernel_api::ids::TraceId;
+    use rust_cli_kernel_api::store::{SessionKind, SessionMeta, SessionStore as _};
+    let id = SessionId::new(id);
+    store
+        .create(SessionMeta {
+            id: id.clone(),
+            kind: SessionKind::Interactive,
+            parent: None,
+            workspace: WorkspaceRef {
+                environment: workspace().environment,
+                root: EnvPath::new(root),
+            },
+            title: "continued".to_owned(),
+            trace: TraceId::new(id.as_str()),
+            created_at_ms: 1,
+            incognito: None,
+        })
+        .await
+        .unwrap();
+    id
+}
+
+/// Waits (bounded, on the single-threaded test runtime) until `condition` holds.
+async fn settles(within: Duration, condition: impl Fn() -> bool) {
+    tokio::time::timeout(within, async {
+        while !condition() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the condition settled in time");
+}
+
+/// Fork (print `--continue` prewarm, Node parity): the kicked layer load starts before the session
+/// open completes — the store's `load` gate holds the open inside its cold read, and only the
+/// prewarm's load has entered the loader (with the prewarm removed, a serial open stays behind the
+/// store gate and the loader is never entered). Past the gate the open joins the in-flight load —
+/// one read, not a second — and awaits the installed slot.
+#[tokio::test]
+async fn a_continue_prewarm_starts_the_layer_load_before_the_open_loads_it() {
+    let store = Arc::new(MemoryStore::default());
+    let (loader, mut answers) = gated_layer(1);
+    let kernel = Arc::new(prewarm_kernel(store.clone(), loader.clone()));
+    let id = seeded_row(store.as_ref(), "sess_continue", "/Users/dev/other").await;
+    // The open's cold read waits at this gate, before its layer step.
+    let gate = store.hold_next_load();
+
+    kernel.prewarm_continue_layer(&workspace()).await;
+    settles(Duration::from_millis(500), || loader.calls() >= 1).await;
+    assert_eq!(loader.roots(), ["/Users/dev/other".to_owned()]);
+
+    // The open runs concurrently and reaches the store gate; the prewarm's read is still the
+    // only one the layer has started.
+    let opening = tokio::spawn({
+        let (kernel, id) = (kernel.clone(), id.clone());
+        async move { kernel.open_session(&id).await }
+    });
+    for _ in 0..16 {
+        tokio::task::yield_now().await;
+    }
+    assert!(
+        !opening.is_finished(),
+        "the open waits inside its cold read"
+    );
+    assert_eq!(
+        loader.calls(),
+        1,
+        "the layer load started before the session open completed"
+    );
+
+    // Past the store gate the open joins the in-flight load instead of reading again.
+    gate.notify_one();
+    for _ in 0..16 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(
+        loader.calls(),
+        1,
+        "the open joined the in-flight prewarm load; the read was not duplicated"
+    );
+    assert!(
+        !opening.is_finished(),
+        "the open waits for the joined load to install the slot"
+    );
+
+    answers
+        .pop()
+        .expect("one gated answer")
+        .send(Some(layer_config()))
+        .unwrap_or_else(|_| panic!("the prewarm's read was awaiting its answer"));
+    opening.await.unwrap().unwrap();
+    assert_eq!(loader.calls(), 1);
+    assert!(
+        kernel.plugins_for_session(&id).is_some(),
+        "the opened session resolves the loaded slot's plugin set"
+    );
+}
+
+/// Fork (print `--continue` prewarm): a prewarm whose read fails is fail-closed and breaks
+/// nothing upward — the open joins the in-flight load, takes the `Invalid` slot it installed (the
+/// workspace keeps the process set until a later load) and completes as if nothing failed.
+#[tokio::test]
+async fn a_failing_continue_prewarm_does_not_break_the_session_open() {
+    let store = Arc::new(MemoryStore::default());
+    let (loader, mut answers) = gated_layer(1);
+    let kernel = Arc::new(prewarm_kernel(store.clone(), loader.clone()));
+    let id = seeded_row(store.as_ref(), "sess_continue", "/Users/dev/other").await;
+
+    kernel.prewarm_continue_layer(&workspace()).await;
+    settles(Duration::from_millis(500), || loader.calls() >= 1).await;
+
+    // The open joins the still-in-flight prewarm load; its read is never duplicated.
+    let opening = tokio::spawn({
+        let (kernel, id) = (kernel.clone(), id.clone());
+        async move { kernel.open_session(&id).await }
+    });
+    for _ in 0..16 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(loader.calls(), 1, "the open joined the prewarm's read");
+    assert!(
+        !opening.is_finished(),
+        "the open waits for the joined load to finish"
+    );
+
+    // The read fails: the slot turns Invalid, the joined open returns over it, the run is intact.
+    answers
+        .pop()
+        .expect("the prewarm's answer")
+        .send(None)
+        .unwrap_or_else(|_| panic!("the prewarm's read was awaiting its answer"));
+    opening
+        .await
+        .unwrap()
+        .expect("a failed prewarm leaves the print run intact");
+    assert_eq!(loader.calls(), 1, "the failing read was never repeated");
+    assert!(
+        kernel.plugins_for_session(&id).is_none(),
+        "the workspace keeps the process set (fail-closed)"
+    );
+}
+
+/// Fork (print `--continue` prewarm): no resumable row (a benchmark harness's first `-c` run)
+/// prewarms nothing — any loader call would trip the gated loader's missing answer.
+#[tokio::test]
+async fn a_continue_prewarm_without_a_row_loads_nothing() {
+    let store = Arc::new(MemoryStore::default());
+    let (loader, _answers) = gated_layer(0);
+    let kernel = prewarm_kernel(store.clone(), loader.clone());
+
+    kernel.prewarm_continue_layer(&workspace()).await;
+    for _ in 0..16 {
+        tokio::task::yield_now().await;
+    }
+
+    assert_eq!(
+        loader.calls(),
+        0,
+        "nothing loaded without a continue target"
+    );
+}
+
+/// Fork (print `--continue` prewarm): a fork row's cold open runs in its execution worktree, so
+/// the prewarm targets the WORKTREE's root — the row's own directory (here the process workspace)
+/// would be the layer's no-op and never enter the loader.
+#[tokio::test]
+async fn a_continue_prewarm_targets_the_rows_execution_worktree() {
+    use rust_cli_kernel_api::store::StoreQueries as _;
+    let store = Arc::new(MemoryStore::default());
+    let (loader, mut answers) = gated_layer(1);
+    let kernel = prewarm_kernel(store.clone(), loader.clone());
+    // The row sits in the process workspace; its stored worktree is where the session runs.
+    let id = seeded_row(store.as_ref(), "sess_forked", "/Users/dev/work").await;
+    let worktree = WorkspaceRef {
+        environment: workspace().environment,
+        root: EnvPath::new("/Users/dev/work-tree"),
+    };
+    store
+        .set_execution_worktree(&id, &worktree.root, None)
+        .await
+        .unwrap();
+
+    kernel.prewarm_continue_layer(&workspace()).await;
+    settles(Duration::from_millis(500), || loader.calls() >= 1).await;
+    assert_eq!(
+        loader.roots(),
+        ["/Users/dev/work-tree".to_owned()],
+        "the prewarm read the worktree's layer, not the process workspace's"
+    );
+    answers
+        .pop()
+        .expect("one gated answer")
+        .send(Some(layer_config()))
+        .unwrap_or_else(|_| panic!("the prewarm's read was awaiting its answer"));
+    settles(Duration::from_millis(500), || {
+        kernel.plugins_for_workspace(&worktree).is_some()
+    })
+    .await;
+    assert_eq!(loader.calls(), 1);
 }
