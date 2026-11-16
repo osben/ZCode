@@ -21,6 +21,7 @@ fn request(through: &str) -> SessionFork {
         selection: selection(),
         mode: PermissionMode::AcceptEdits,
         plan: false,
+        execution: None,
     }
 }
 
@@ -334,4 +335,43 @@ async fn a_fork_through_the_last_answer_of_a_tool_turn_keeps_its_tool_results() 
         "{}",
         notice.text
     );
+}
+
+/// B1.3 (specs/fork-rust-agent-parity.md): a managed-worktree fork (`forkAssistant.targetCwd`) writes the
+/// child's execution columns in the fork's own transaction — the row keeps the parent's directory, no branch
+/// (the Host created the worktree) — and a database without Node's columns refuses the whole fork, leaving
+/// no child row (fail-closed, like the create route's `set_execution_worktree`).
+#[tokio::test]
+async fn a_fork_with_an_execution_root_writes_the_child_columns_in_the_transaction() {
+    let t = TestStore::new();
+    three_turns(&t).await;
+    let with_root = |through: &str| SessionFork {
+        execution: Some(rust_cli_kernel_api::env::EnvPath::new("/w/.worktrees/one")),
+        ..request(through)
+    };
+    // Without Node's fork columns the fork refuses; no child row is left.
+    assert!(matches!(
+        t.store.fork(with_root("msg_3_u2")).await,
+        Err(rust_cli_kernel_api::store::StoreError::Unsupported { .. })
+    ));
+    assert!(
+        t.rows("select id from session where id = 'sess_2'")
+            .is_empty()
+    );
+    // With the columns, the child carries the root and keeps the parent directory.
+    t.connection()
+        .execute_batch(
+            "alter table session add column execution_directory text;
+             alter table session add column execution_branch text;",
+        )
+        .unwrap();
+    let receipt = t.store.fork(with_root("msg_3_u2")).await.unwrap();
+    assert_eq!(receipt.copied, 3);
+    let row = &t.rows(
+        "select directory, execution_directory, execution_branch
+         from session where id = 'sess_2'",
+    )[0];
+    assert_eq!(row[0], json!("/w"));
+    assert_eq!(row[1], json!("/w/.worktrees/one"));
+    assert_eq!(row[2], Value::Null);
 }

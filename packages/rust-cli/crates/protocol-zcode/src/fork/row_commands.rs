@@ -29,7 +29,7 @@ use crate::server::Server;
 
 const EXECUTION_FAILED: &str = "fault.command.executionFailed";
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Target {
     row_id: u64,
@@ -40,11 +40,67 @@ struct Target {
 #[serde(rename_all = "camelCase")]
 struct TargetPayload {
     target: Target,
-    /// Wave 2 B1 (specs/fork-rust-agent-parity.md): the managed-worktree fork. This agent runs no worktree
-    /// sessions (`worktreeCwd` stays false), so a present field refuses the command ([`refuse_target_cwd`])
-    /// instead of being dropped and forking into the parent directory.
+    /// B1.3 (specs/fork-rust-agent-parity.md): `retryTurn` keeps the managed-worktree guard (#478) — a retry
+    /// creates no session, so a `targetCwd` envelope is an ungated sender and the field is refused
+    /// ([`refuse_target_cwd`]) instead of being dropped and retried into the parent directory. `forkAssistant`
+    /// parses its own typed shape ([`ForkPayload`]).
     #[serde(default, deserialize_with = "present")]
     target_cwd: Option<Value>,
+}
+
+/// B1.3: `forkAssistant.targetCwd` (Node `forkTargetCwdSchema`, `.strict()`): the fork moves the child session
+/// into a managed worktree of the same workspace — the Host created the worktree and pre-allocated the child
+/// id, and `worktreeCreation` is the creation fact the child stores (Node `v4-bridge.ts`
+/// `forkStableConversation` → `forkStableConversationAtMessage`, `builders.ts` `buildAtomicForkNotice`'s
+/// `worktree_creation` part). A present `null` is refused by the typed parse, like B1.1's fields.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ForkTargetCwd {
+    /// The worktree root the child executes in (Node maps `workspaceRefWithCwd` onto it; here it is the fork's
+    /// execution root — `EnvPath` of this, branch None like B1.1's `cwd`).
+    #[serde(deserialize_with = "trimmed_cwd")]
+    cwd: String,
+    /// The Host's pre-allocated child session id (Node's `forkedSessionId`).
+    #[serde(deserialize_with = "trimmed_child")]
+    child_session_id: String,
+    /// The creation record the child stores (`worktreeCreationRecordSchema`, strict).
+    worktree_creation: crate::worktree::Creation,
+}
+
+/// Node `z.string().trim().min(1)` for `targetCwd.cwd`: the trimmed non-empty string, refused
+/// empty/whitespace-only, named in the message (the shared wrapper's raw serde text is ambiguous).
+fn trimmed_cwd<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+    trimmed(deserializer, "targetCwd.cwd")
+}
+
+/// [`trimmed_cwd`] for `targetCwd.childSessionId`.
+fn trimmed_child<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+    trimmed(deserializer, "targetCwd.childSessionId")
+}
+
+fn trimmed<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+    field: &str,
+) -> Result<String, D::Error> {
+    let text = String::deserialize(deserializer)?;
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        Err(serde::de::Error::custom(format!(
+            "{field} must be a non-empty string"
+        )))
+    } else {
+        Ok(trimmed.to_owned())
+    }
+}
+
+/// `forkAssistant` 的 payload。
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ForkPayload {
+    target: Target,
+    /// B1.3: the managed-worktree target, parsed typed; absent forks in the session's own directory.
+    #[serde(default, deserialize_with = "crate::commands::typed")]
+    target_cwd: Option<ForkTargetCwd>,
 }
 
 #[derive(Deserialize)]
@@ -187,10 +243,10 @@ fn refused(envelope: &Envelope, code: &str, message: impl Into<String>, revision
     )
 }
 
-/// Wave 2 B1 (specs/fork-rust-agent-parity.md): `forkAssistant.targetCwd` moves the child session into a
-/// managed worktree (Node `v4-bridge.ts` `forkStableConversation`), a shape this agent does not run
-/// (`worktreeCwd` stays false). The field rides only on that capability, so seeing it means an ungated
-/// sender: refuse instead of dropping it and forking into the parent directory.
+/// B1.3 (specs/fork-rust-agent-parity.md): `forkAssistant.targetCwd` executes (the fork's own typed
+/// admission in [`fork`]); `retryTurn` keeps this guard (#478) — a retry creates no session, so the field
+/// riding on it is an ungated sender and is refused instead of dropped and retried into the parent
+/// directory.
 fn refuse_target_cwd(envelope: &Envelope, body: &TargetPayload, revision: u64) -> Option<Ack> {
     body.target_cwd.is_some().then(|| {
         refused(
@@ -654,12 +710,64 @@ pub(super) async fn fork(
     envelope: &Envelope,
     revision: u64,
 ) -> Ack {
-    let body: TargetPayload = match payload(envelope) {
+    let body: ForkPayload = match payload(envelope) {
         Ok(body) => body,
         Err(ack) => return *ack,
     };
-    if let Some(ack) = refuse_target_cwd(envelope, &body, revision) {
-        return ack;
+    // B1.3: the managed-worktree target is admitted in Node's order (`forkStableConversation` reads the
+    // workspace before anything persists). First `workspaceRefWithCwd` (`zcode-protocol/workspace.ts`): the
+    // forked session's workspace — the row's listed key, a remote session's `remote:` identity — must be
+    // local (B1.1's guard shape: a well-formed identity refuses `guard.worktreeCwdLocalOnly`, a malformed
+    // one refuses at resolution), and a key that cannot be read refuses fail-closed.
+    if let Some(target) = body.target_cwd.as_ref() {
+        let key = match server
+            .kernel
+            .queries()
+            .session_workspace_key(live.handle.id())
+            .await
+        {
+            Ok(Some(key)) => key,
+            Ok(None) | Err(_) => {
+                return refused(
+                    envelope,
+                    EXECUTION_FAILED,
+                    "the session's workspace could not be read",
+                    revision,
+                );
+            }
+        };
+        if key.starts_with("remote:") {
+            let (reason, message) =
+                if rust_cli_kernel_api::remote_identity::is_remote_workspace_identity(&key) {
+                    (
+                        "guard.worktreeCwdLocalOnly",
+                        format!("session cwd override only supports local workspaces: {key}"),
+                    )
+                } else {
+                    (
+                        EXECUTION_FAILED,
+                        format!("Invalid remote workspace identity: {key}"),
+                    )
+                };
+            return Ack::refused(
+                &envelope.command_id,
+                Status::Failed,
+                reason,
+                message,
+                revision,
+            );
+        }
+        // Then the route's not-a-directory pre-check (B1.1's `check_directory`): the Host created the
+        // worktree before sending; a root that is not a directory refuses before anything is forked.
+        let requested = crate::worktree::Requested {
+            path: target.cwd.clone(),
+            branch_name: None,
+        };
+        if let Err(ack) =
+            crate::worktree::check_directory(server, envelope, &requested, revision).await
+        {
+            return *ack;
+        }
     }
     let assistant = match live
         .sink
@@ -675,8 +783,16 @@ pub(super) async fn fork(
             );
         }
     };
+    let target_cwd =
+        body.target_cwd
+            .as_ref()
+            .map(|target| rust_cli_kernel_api::session_api::ForkTarget {
+                child: SessionId::new(&target.child_session_id),
+                root: rust_cli_kernel_api::env::EnvPath::new(&target.cwd),
+            });
     let command = Command::ForkFromAssistant {
         assistant: MessageId::new(&assistant),
+        target_cwd,
     };
     let forked = match send(live.handle.as_ref(), &envelope.command_id, command).await {
         KernelAck::Accepted {
@@ -694,6 +810,22 @@ pub(super) async fn fork(
             return refused(envelope, "guard.forkTargetNotStable", reason, revision);
         }
     };
+    // B1.3: the creation fact is durable before the child opens on it, so the open below seeds the
+    // projection with the `worktreeCreated` marker like a cold restore does (B1.1's placement: Node writes
+    // its `worktree_creation` timeline part beside the fork notice turn, `builders.ts`
+    // `buildAtomicForkNotice`; the record here is the fork-shaped storage of that part). Best effort like
+    // the create route: the forked session runs in its worktree regardless.
+    if let Some(target) = body.target_cwd.as_ref()
+        && let Err(error) =
+            crate::worktree::record_creation(server, &forked.session, &target.worktree_creation)
+                .await
+    {
+        tracing::warn!(
+            event = "protocol.worktree.creation_record_failed",
+            error = %error,
+            "storing the worktree creation fact failed"
+        );
+    }
     // The child is opened now, so the sessions index lists it before the App switches to it.
     match server.live(&forked.session).await {
         Ok(child) => crate::subscribe::announce(&child),

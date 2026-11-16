@@ -517,6 +517,14 @@ impl SessionStore for MemoryStore {
                     message: message.clone(),
                 }),
         );
+        // B1.3: the child's execution worktree, as node-store's fork transaction writes it (no branch: the
+        // Host created the worktree).
+        if let Some(root) = fork.execution {
+            self.execution
+                .lock_unpoisoned()
+                .entry(fork.child.clone())
+                .or_insert_with(|| (root, None));
+        }
         sessions.insert(fork.child, (meta, copied));
         Ok(ForkReceipt { copied: end })
     }

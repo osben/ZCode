@@ -447,6 +447,7 @@ async fn forking_a_draft_is_not_found_and_keeps_it_a_draft() {
         selection: picked(),
         mode: PermissionMode::Default,
         plan: false,
+        execution: None,
     };
     assert!(t.store.fork(fork).await.is_err());
     assert!(t.store.is_draft(&sid()).await.unwrap());

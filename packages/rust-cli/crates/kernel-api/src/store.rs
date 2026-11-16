@@ -360,7 +360,7 @@ pub struct LoadedSession {
 }
 
 /// `/fork` 的新会话（docs/specs/rust-cli/session-lifecycle.md §6.5.2，Node 分叉对话的形状）：存储在一个事务里写完会话行、
-/// 模型与模式、复制的消息、目标状态、时间线与分叉提示。
+/// 模型与模式、复制的消息、目标状态、时间线与分叉提示；B1.3 的受管 worktree 分叉在同一事务里写执行 worktree 列。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SessionFork {
     pub parent: SessionId,
@@ -373,6 +373,11 @@ pub struct SessionFork {
     /// plan 开关（修复线 F20；serde 缺省 false）。
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub plan: bool,
+    /// B1.3: the managed-worktree root the child executes in (Node `forkStableConversation`'s `targetCwd`;
+    /// [`crate::session_api::ForkTarget`]). The store writes it as the child's execution worktree columns in the
+    /// fork's own transaction — the row keeps the parent's workspace. Absent forks in the parent's directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution: Option<crate::env::EnvPath>,
 }
 
 /// [`SessionStore::fork`] 的回执。

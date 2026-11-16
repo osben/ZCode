@@ -791,11 +791,13 @@ fn input_admitted(view: &rust_cli_kernel_api::session_api::SessionView) -> bool 
     view.commands.values().any(typed) || view.queue.iter().any(|queued| typed(&queued.command))
 }
 
-/// Refuses a worktree path that is not a directory (Node's exact text).
+/// Refuses a worktree path that is not a directory (Node's exact text). `revision` is the refusing
+/// command's (`0` for the create routes, the CAS revision for a row action).
 pub async fn check_directory(
     server: &Server,
     envelope: &Envelope,
     requested: &Requested,
+    revision: u64,
 ) -> Result<(), Box<Ack>> {
     if missing(server, &requested.path).await {
         return Err(Box::new(Ack::refused(
@@ -806,7 +808,7 @@ pub async fn check_directory(
                 "Execution worktree path does not exist or is not a directory: {}",
                 requested.path
             ),
-            0,
+            revision,
         )));
     }
     Ok(())
@@ -975,7 +977,7 @@ pub async fn activate(
         },
         None => requested.clone(),
     };
-    if let Err(ack) = check_directory(server, envelope, &target).await {
+    if let Err(ack) = check_directory(server, envelope, &target, 0).await {
         return *ack;
     }
     let live = match server.live(&id).await {

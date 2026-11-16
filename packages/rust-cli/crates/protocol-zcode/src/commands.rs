@@ -159,7 +159,7 @@ pub(crate) fn present<'de, D: serde::Deserializer<'de>>(
 /// type refuses fails the payload parse. A present `null` is refused, not read as absent: Node's zod
 /// `.optional()` takes `undefined` only, and the generated inbound schema (type string / object) agrees, so a
 /// null never reaches a handler there either.
-fn typed<'de, T, D>(deserializer: D) -> Result<Option<T>, D::Error>
+pub(crate) fn typed<'de, T, D>(deserializer: D) -> Result<Option<T>, D::Error>
 where
     T: serde::de::DeserializeOwned,
     D: serde::Deserializer<'de>,
@@ -566,7 +566,7 @@ pub(crate) async fn create_session_with(
     });
     // Fork: the direct route refuses a dead worktree before the session exists.
     if let Some(requested) = &requested
-        && let Err(ack) = crate::worktree::check_directory(server, envelope, requested).await
+        && let Err(ack) = crate::worktree::check_directory(server, envelope, requested, 0).await
     {
         return *ack;
     }

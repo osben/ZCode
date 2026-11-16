@@ -3,13 +3,13 @@ use std::sync::Arc;
 
 use futures_util::StreamExt;
 use futures_util::stream::BoxStream;
-use rust_cli_kernel_api::ids::{MessageId, OwnerEpoch, ToolUseId};
+use rust_cli_kernel_api::ids::{MessageId, OwnerEpoch, SessionId, ToolUseId};
 use rust_cli_kernel_api::message::{
     AssistantMessage, ContentBlock, Message, ToolResultContent, UserMessage, UserOrigin,
 };
 use rust_cli_kernel_api::model::{ModelError, ModelEvent, ModelPort, ModelRequest};
 use rust_cli_kernel_api::session_api::{Ack, Command, CommandEnvelope, SessionHandle};
-use rust_cli_kernel_api::store::{Fact, FactBatch, SessionStore};
+use rust_cli_kernel_api::store::{Fact, FactBatch, SessionStore, StoreQueries};
 use rust_cli_kernel_api::testing::{MemoryStore, ScriptedModel, text_response, tool_use_response};
 use rust_cli_kernel_api::user_input::INTERRUPT_TEXTS;
 use serde_json::json;
@@ -26,6 +26,7 @@ fn fork_assistant(assistant: &MessageId) -> CommandEnvelope {
         &format!("fork-{assistant}"),
         Command::ForkFromAssistant {
             assistant: assistant.clone(),
+            target_cwd: None,
         },
     )
 }
@@ -513,4 +514,66 @@ fn a_running_notification_turn_starts_at_its_notification() {
     // Without a stored prompt the last typed input bounds the running turn, as before.
     assert!(!completed_while_running(&history, 3, None));
     assert!(!completed_while_running(&history, 1, None));
+}
+
+/// B1.3 (specs/fork-rust-agent-parity.md): a managed-worktree fork (`forkAssistant.targetCwd`) adopts the
+/// Host's pre-allocated child id (Node `forkedSessionId`) and writes the execution root as the child's
+/// worktree columns in the same store fork; the child row keeps the parent's workspace.
+#[tokio::test]
+async fn a_fork_from_assistant_adopts_the_host_child_and_worktree() {
+    let history = vec![human("msg_u1", "first"), assistant("msg_a1", said("one"))];
+    let store = Arc::new(MemoryStore::default());
+    store.create(meta()).await.unwrap();
+    let batch = FactBatch {
+        owner_epoch: OwnerEpoch::LOCAL,
+        command: None,
+        facts: history
+            .iter()
+            .map(|message| Fact::MessageAppended {
+                message: message.clone(),
+            })
+            .collect(),
+        turn: None,
+    };
+    store.commit(&meta().id, batch).await.unwrap();
+    let mut setup = Setup::new(Arc::new(Silent));
+    setup.store = Some(store);
+    setup.messages = history;
+    setup.opened = Opened::Loaded;
+    let built = setup.build().await;
+    let ack = built
+        .session
+        .send(envelope(
+            "fork-worktree",
+            Command::ForkFromAssistant {
+                assistant: MessageId::new("msg_a1"),
+                target_cwd: Some(rust_cli_kernel_api::session_api::ForkTarget {
+                    child: SessionId::new("child-host"),
+                    root: rust_cli_kernel_api::env::EnvPath::new("/work/.worktrees/one"),
+                }),
+            },
+        ))
+        .await;
+    let Ack::Accepted {
+        result: rust_cli_kernel_api::session_api::CommandResult::Forked(forked),
+    } = ack
+    else {
+        panic!("{ack:?}")
+    };
+    // The Host's id names the child (a plain fork allocates its own, as the tests above cover).
+    assert_eq!(forked.session.as_str(), "child-host");
+    let child = SessionId::new("child-host");
+    let execution = built
+        .store
+        .execution_worktree(&child)
+        .await
+        .unwrap()
+        .expect("the child carries the execution root");
+    assert_eq!(execution.directory.as_str(), "/work");
+    assert_eq!(execution.path.as_str(), "/work/.worktrees/one");
+    assert_eq!(execution.branch, None);
+    let loaded = built.store.load(&child).await.unwrap();
+    assert_eq!(loaded.meta.parent, Some(meta().id));
+    assert!(loaded.execution_worktree);
+    assert_eq!(loaded.meta.workspace.root.as_str(), "/work/.worktrees/one");
 }

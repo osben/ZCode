@@ -147,6 +147,7 @@ fn forks_round_trip() {
         ),
         mode: PermissionMode::Default,
         plan: true,
+        execution: None,
     });
     round_trip(&ForkReceipt { copied: 3 });
 }

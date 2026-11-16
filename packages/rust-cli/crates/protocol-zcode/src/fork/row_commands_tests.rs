@@ -224,11 +224,11 @@ fn a_replay_carries_gen_ui_context_and_takes_the_envelopes_origin() {
     assert_eq!(replayed.get("inputOrigin"), None);
 }
 
-/// Wave 2 B1 (specs/fork-rust-agent-parity.md): `forkAssistant.targetCwd` is the managed-worktree fork
-/// (Node `command.ts` `forkTargetCwdSchema`); this agent does not run it (`worktreeCwd` stays false), so
-/// the field is refused instead of dropped — dropping it would fork into the parent directory.
+/// B1.3 (specs/fork-rust-agent-parity.md): `retryTurn` keeps the managed-worktree guard (#478) — the field
+/// riding on a retry is an ungated sender (a retry creates no session), so it is refused instead of dropped;
+/// `forkAssistant` parses and executes its own typed shape now.
 #[test]
-fn a_fork_target_cwd_is_refused_instead_of_dropped() {
+fn a_retry_turn_target_cwd_is_refused_instead_of_dropped() {
     let plain: TargetPayload = serde_json::from_value(json!({
         "target": {"rowId": 3, "entityId": "msg_u1"}
     }))
@@ -251,5 +251,92 @@ fn a_fork_target_cwd_is_refused_instead_of_dropped() {
     assert_eq!(
         ack.message.as_deref(),
         Some("targetCwd is not supported by this agent")
+    );
+}
+
+/// B1.3: `forkAssistant.targetCwd` parses like Node's `forkTargetCwdSchema` (strict, every field required):
+/// a present `null` is not an absent field, an unknown key inside it refuses, whitespace-only `cwd` /
+/// `childSessionId` refuse with the field named, and a padded value trims before use
+/// (`z.string().trim().min(1)`).
+#[test]
+fn a_fork_target_cwd_parses_typed_like_node() {
+    let plain: ForkPayload = serde_json::from_value(json!({
+        "target": {"rowId": 3, "entityId": "msg_a1"}
+    }))
+    .unwrap();
+    assert!(plain.target_cwd.is_none());
+    let worktree: ForkPayload = serde_json::from_value(json!({
+        "target": {"rowId": 3, "entityId": "msg_a1"},
+        "targetCwd": {
+            "cwd": " /w/.zcode-worktrees/one ",
+            "childSessionId": " child-1 ",
+            "worktreeCreation": {
+                "path": "/w/.zcode-worktrees/one", "sha": "a1b2c3d4", "ref": null, "output": ""
+            }
+        }
+    }))
+    .unwrap();
+    let target = worktree.target_cwd.as_ref().expect("targetCwd parses");
+    assert_eq!(target.cwd, "/w/.zcode-worktrees/one");
+    assert_eq!(target.child_session_id, "child-1");
+    assert_eq!(target.worktree_creation.path, "/w/.zcode-worktrees/one");
+    // A present null is refused, not read as absent (Node's `.optional()` takes undefined only).
+    let null_cwd: Result<ForkPayload, _> = serde_json::from_value(json!({
+        "target": {"rowId": 3, "entityId": "msg_a1"}, "targetCwd": null
+    }));
+    assert!(null_cwd.is_err());
+    // Strict: an unknown key inside the target refuses, never silently drops.
+    let unknown: Result<ForkPayload, _> = serde_json::from_value(json!({
+        "target": {"rowId": 3, "entityId": "msg_a1"},
+        "targetCwd": {
+            "cwd": "/w/.zcode-worktrees/one", "childSessionId": "child-1",
+            "worktreeCreation": {
+                "path": "/w/.zcode-worktrees/one", "sha": "a1b2c3d4", "ref": null, "output": ""
+            },
+            "branchName": "feat/b1"
+        }
+    }));
+    assert!(unknown.is_err());
+    // Every field is required: a target without the child id refuses.
+    let no_child: Result<ForkPayload, _> = serde_json::from_value(json!({
+        "target": {"rowId": 3, "entityId": "msg_a1"},
+        "targetCwd": {
+            "cwd": "/w/.zcode-worktrees/one",
+            "worktreeCreation": {
+                "path": "/w/.zcode-worktrees/one", "sha": "a1b2c3d4", "ref": null, "output": ""
+            }
+        }
+    }));
+    assert!(no_child.is_err());
+    // Whitespace-only refuses with the field named.
+    let blank_cwd: Result<ForkPayload, _> = serde_json::from_value(json!({
+        "target": {"rowId": 3, "entityId": "msg_a1"},
+        "targetCwd": {
+            "cwd": "   ", "childSessionId": "child-1",
+            "worktreeCreation": {
+                "path": "/w/.zcode-worktrees/one", "sha": "a1b2c3d4", "ref": null, "output": ""
+            }
+        }
+    }));
+    assert!(
+        blank_cwd
+            .unwrap_err()
+            .to_string()
+            .contains("targetCwd.cwd must be a non-empty string")
+    );
+    let blank_child: Result<ForkPayload, _> = serde_json::from_value(json!({
+        "target": {"rowId": 3, "entityId": "msg_a1"},
+        "targetCwd": {
+            "cwd": "/w/.zcode-worktrees/one", "childSessionId": "  ",
+            "worktreeCreation": {
+                "path": "/w/.zcode-worktrees/one", "sha": "a1b2c3d4", "ref": null, "output": ""
+            }
+        }
+    }));
+    assert!(
+        blank_child
+            .unwrap_err()
+            .to_string()
+            .contains("targetCwd.childSessionId must be a non-empty string")
     );
 }

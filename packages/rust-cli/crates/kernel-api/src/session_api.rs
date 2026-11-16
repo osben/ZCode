@@ -119,6 +119,19 @@ pub struct TurnFileItem {
     pub patches: Vec<serde_json::Value>,
 }
 
+/// B1.3 (specs/fork-rust-agent-parity.md): the managed-worktree target of [`Command::ForkFromAssistant`] (Node
+/// `forkAssistant.targetCwd` → `forkStableConversation`'s `targetCwd`): the child session runs in `root` — an
+/// existing worktree the Host created, so the fork names no branch — under the pre-allocated `child` id (the
+/// Host's, Node's `forkedSessionId`). The child row keeps the parent's workspace; the execution worktree
+/// columns carry the root ([`rust_cli_kernel_api::store::SessionFork::execution`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ForkTarget {
+    /// The Host's pre-allocated child session id.
+    pub child: SessionId,
+    /// The worktree root the child executes in.
+    pub root: crate::env::EnvPath,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Command {
@@ -266,8 +279,12 @@ pub enum Command {
     /// Fork from an assistant reply (Node `forkAssistant`, the row action of a turn opened by a notification): the
     /// new session carries the history through `assistant`. `assistant` must be a stored assistant reply (not the
     /// resume sentinel); a running turn's reply is refused (`Rejected`), like [`Command::ForkFromInput`].
+    /// `target_cwd` (B1.3, Node `forkAssistant.targetCwd` → `forkStableConversation` `targetCwd`) forks into an
+    /// existing managed worktree under the Host's pre-allocated child id; absent forks in the session's own
+    /// directory with a locally allocated id, as before.
     ForkFromAssistant {
         assistant: MessageId,
+        target_cwd: Option<ForkTarget>,
     },
     /// 批准或拒绝一条扣住的同伴消息（docs/specs/rust-cli/cross-session.md §2.4，F28）：`message` 是
     /// [`crate::peers::HeldPeerMessage::msg_id`]。已经解决（过期、改模式放行）时 `Rejected`。
