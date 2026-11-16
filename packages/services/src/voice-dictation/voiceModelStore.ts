@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
-import { mkdir, rename, rm, stat } from "node:fs/promises";
+import { mkdir, readdir, rename, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -41,6 +41,8 @@ export interface VoiceModelStoreOptions {
   getModelsDir: () => string;
   /** Read-only model roots owned by another application. */
   handyModelDirs?: readonly string[];
+  /** HuggingFace hub cache roots (…/huggingface/hub); Handy ≥0.10 stores downloads there. */
+  hfHubDirs?: readonly string[];
   catalog?: readonly VoiceModelDescriptor[];
   /** Download sources, tried in order; each source's URL looks like `${source}/${repo}/resolve/${revision}/${file}`. */
   sources?: readonly string[];
@@ -63,6 +65,7 @@ export class VoiceModelStore {
   private readonly getModelsDir: () => string;
   private readonly catalog: readonly VoiceModelDescriptor[];
   private readonly handyModelDirs: readonly string[];
+  private readonly hfHubDirs: readonly string[];
   private readonly sources: readonly string[];
   private readonly fetchImpl: typeof fetch;
   private readonly active = new Map<string, ActiveDownload>();
@@ -71,6 +74,7 @@ export class VoiceModelStore {
   constructor(options: VoiceModelStoreOptions) {
     this.getModelsDir = options.getModelsDir;
     this.handyModelDirs = options.handyModelDirs ?? [];
+    this.hfHubDirs = options.hfHubDirs ?? [];
     this.catalog = options.catalog ?? VOICE_MODEL_CATALOG;
     this.sources = options.sources ?? DEFAULT_VOICE_MODEL_SOURCES;
     this.fetchImpl = options.fetchImpl ?? fetch;
@@ -116,25 +120,24 @@ export class VoiceModelStore {
     } catch (error) {
       if (!isNotFound(error)) throw error;
     }
-    for (const handyDir of this.handyModelDirs) {
-      const handyPath = join(handyDir, file.fileName);
+    for (const externalPath of await this.externalModelPaths(descriptor, file)) {
       try {
-        const info = await stat(handyPath, { throwIfNoEntry: true });
+        const info = await stat(externalPath, { throwIfNoEntry: true });
         if (!info.isFile() || info.size !== file.sizeBytes) continue;
 
-        const cacheKey = `${handyPath}:${info.size}:${info.mtimeMs}:${info.ctimeMs}:${info.ino}`;
+        const cacheKey = `${externalPath}:${info.size}:${info.mtimeMs}:${info.ctimeMs}:${info.ino}`;
         let digest = this.handyHashCache.get(cacheKey);
         if (!digest) {
-          digest = hashFileSha256(handyPath);
+          digest = hashFileSha256(externalPath);
           this.handyHashCache.set(cacheKey, digest);
         }
         try {
           const verified = (await digest) === file.sha256;
-          const latestInfo = await stat(handyPath, { throwIfNoEntry: true });
+          const latestInfo = await stat(externalPath, { throwIfNoEntry: true });
           if (verified && sameFileVersion(info, latestInfo)) {
             return {
               status: "ready",
-              path: handyPath,
+              path: externalPath,
               sizeBytes: info.size,
               source: "handy",
             };
@@ -339,6 +342,36 @@ export class VoiceModelStore {
     const descriptor = findVoiceModelDescriptor(id, this.catalog);
     if (!descriptor) throw new Error(`unknown voice model: ${id}`);
     return descriptor;
+  }
+
+  /**
+   * Candidate read-only paths for an externally downloaded model file: Handy's legacy flat models
+   * directory, and HuggingFace hub caches (Handy ≥0.10 stores downloads there) where the repo's
+   * snapshot revision is tried first, then any other snapshot (ref pins) with the same file name.
+   */
+  private async externalModelPaths(
+    descriptor: VoiceModelDescriptor,
+    file: VoiceModelQuantFile,
+  ): Promise<string[]> {
+    const candidates: string[] = [];
+    for (const handyDir of this.handyModelDirs) {
+      candidates.push(join(handyDir, file.fileName));
+    }
+    const repoFolder = `models--${descriptor.huggingFaceRepo.split("/").join("--")}`;
+    for (const hubDir of this.hfHubDirs) {
+      const snapshotsDir = join(hubDir, repoFolder, "snapshots");
+      candidates.push(join(snapshotsDir, descriptor.revision, file.fileName));
+      try {
+        for (const entry of await readdir(snapshotsDir, { withFileTypes: true })) {
+          if (entry.isDirectory()) {
+            candidates.push(join(snapshotsDir, entry.name, file.fileName));
+          }
+        }
+      } catch (error) {
+        if (!isNotFound(error)) throw error;
+      }
+    }
+    return [...new Set(candidates)];
   }
 
   private modelDir(descriptor: VoiceModelDescriptor): string {

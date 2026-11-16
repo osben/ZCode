@@ -133,6 +133,7 @@ function makeStore(
     catalog?: VoiceModelDescriptor[];
     sources?: string[];
     handyModelDirs?: string[];
+    hfHubDirs?: string[];
   } = {},
 ) {
   return new VoiceModelStore({
@@ -140,6 +141,7 @@ function makeStore(
     catalog: options.catalog ?? [makeDescriptor()],
     sources: options.sources,
     handyModelDirs: options.handyModelDirs,
+    hfHubDirs: options.hfHubDirs,
   });
 }
 
@@ -293,6 +295,40 @@ test("discovers a matching Handy model and returns its read-only path", async ()
       source: "handy",
     });
     assert.equal(await store.getReadyModelPath(descriptor.id), handyPath);
+  });
+});
+
+test("discovers a model downloaded into a HuggingFace hub cache snapshot", async () => {
+  await withTempDir(async (dir) => {
+    const descriptor = makeDescriptor();
+    const hubDir = join(dir, "hub");
+    const snapshotDir = join(hubDir, "models--owner--repo", "snapshots", descriptor.revision);
+    await mkdir(snapshotDir, { recursive: true });
+    await writeFile(join(snapshotDir, voiceModelQuantFile(descriptor).fileName), MODEL_BYTES);
+    const store = makeStore(join(dir, "zcode"), { hfHubDirs: [hubDir] });
+
+    const state = await store.getState(descriptor.id);
+    assert.equal(state.status, "ready");
+    if (state.status === "ready") {
+      assert.equal(state.source, "handy");
+      assert.equal(state.path, join(snapshotDir, voiceModelQuantFile(descriptor).fileName));
+    }
+  });
+});
+
+test("ignores a hub snapshot whose checksum does not match the catalog", async () => {
+  await withTempDir(async (dir) => {
+    const descriptor = makeDescriptor();
+    const hubDir = join(dir, "hub");
+    const snapshotDir = join(hubDir, "models--owner--repo", "snapshots", descriptor.revision);
+    await mkdir(snapshotDir, { recursive: true });
+    await writeFile(
+      join(snapshotDir, voiceModelQuantFile(descriptor).fileName),
+      Buffer.alloc(MODEL_BYTES.length, 7),
+    );
+    const store = makeStore(join(dir, "zcode"), { hfHubDirs: [hubDir] });
+
+    assert.equal((await store.getState(descriptor.id)).status, "not_downloaded");
   });
 });
 

@@ -229,6 +229,7 @@ export function createVoiceDictationService(
   const store = new VoiceModelStore({
     getModelsDir: () => join(getZCodeDataRootDir(), "voice-models"),
     handyModelDirs: getHandyModelDirectories(),
+    hfHubDirs: getHuggingFaceCacheDirectories(),
     // Model downloads must go through the host's unified network stack (proxy, self-signed certificates); otherwise users who need a proxy to reach huggingface.co cannot download.
     fetchImpl: options.fetchImpl,
   });
@@ -237,6 +238,22 @@ export function createVoiceDictationService(
     helperPath: process.env[ZCODE_APPLE_FM_HELPER_ENV]?.trim() || undefined,
   });
   return new VoiceDictationService({ store, transcriber, postProcessor });
+}
+
+/** HuggingFace hub cache roots (default plus overrides); Handy >= 0.10 downloads land there. */
+export function getHuggingFaceCacheDirectories(
+  env: NodeJS.ProcessEnv = process.env,
+  home = homedir(),
+): string[] {
+  const directories: string[] = [];
+  const push = (value: string | undefined) => {
+    const trimmed = value?.trim();
+    if (trimmed && !directories.includes(trimmed)) directories.push(trimmed);
+  };
+  push(env.HF_HUB_CACHE);
+  if (env.HF_HOME?.trim()) push(join(env.HF_HOME.trim(), "hub"));
+  push(join(home, ".cache", "huggingface", "hub"));
+  return directories;
 }
 
 /** Handy's documented default model directory; custom Handy data roots are not discoverable here. */

@@ -276,6 +276,9 @@ export function VoiceModelRow({
         </div>
 
         <div className="flex flex-wrap items-center justify-end gap-3">
+          {/* The picker's own options carry per-quant sizes; the standalone size chip renders only
+              when the picker is absent (single quantization, or mid-download), so the size never
+              appears twice. */}
           {quantIds.length > 1 && onQuantChange && !showDownloadProgress ? (
             <div className="pointer-events-auto">
               <Select value={selectedQuant} onValueChange={onQuantChange}>
@@ -303,10 +306,12 @@ export function VoiceModelRow({
               </Select>
             </div>
           ) : null}
-          <span className="inline-flex items-center gap-1.5 text-ui-base text-foreground-subtle">
-            <HardDrive className="size-4" aria-hidden />
-            {formatVoiceModelSize(file.sizeBytes)}
-          </span>
+          {quantIds.length > 1 && onQuantChange && !showDownloadProgress ? null : (
+            <span className="inline-flex items-center gap-1.5 text-ui-base text-foreground-subtle">
+              <HardDrive className="size-4" aria-hidden />
+              {formatVoiceModelSize(file.sizeBytes)}
+            </span>
+          )}
           <div className="pointer-events-auto">{control}</div>
         </div>
       </div>

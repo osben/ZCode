@@ -76,7 +76,8 @@ implementation.
 ### A4. Settings UI
 
 - Model row gains a quantization select (options from `descriptor.quants` with sizes,
-  ready quants marked). Download/cancel/use act on the selected quant.
+  ready quants marked); the standalone size chip renders only when the picker is absent, so the
+  size never shows twice. Download/cancel/use act on the selected quant.
 - Badges: `curated` models get a "Handy pick" badge; `parameters` is shown next to
   size. Catalog order follows Handy; existing sort/filter behavior is unchanged.
 - New i18n ids are added to all three locales (en-US, uk-UA, zh-CN).
@@ -102,8 +103,11 @@ implementation.
 
 - `canary-180m-flash` was re-uploaded upstream (new revision, +96 bytes): existing
   downloads fail the size check and re-download once. Expected, one-time.
-- Users of Handy-shared model files keep working when the quant file matches; the
-  Handy directory scan is unchanged.
+- Users of Handy-shared model files keep working when the quant file matches. External
+  discovery scans Handy's legacy flat models directory AND HuggingFace hub caches
+  (`~/.cache/huggingface/hub` plus HF_HUB_CACHE/HF_HOME overrides) — Handy >= 0.10 stores its
+  downloads in the hub layout (`models--<org>--<repo>/snapshots/<revision>/<file>`); both verify
+  size+sha256 and reuse the file in place.
 - Recommend ranking intentionally unchanged; re-tuning ranks for the new models
   (e.g. parakeet-ultra) is a follow-up.
 
