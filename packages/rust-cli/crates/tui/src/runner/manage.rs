@@ -251,9 +251,12 @@ impl Loop<'_> {
     }
 
     /// `/mcp enable/disable`：先逐个写配置（tui-manage.md §6.1），写成功的再交给内核改连接；reconnect 直接改。
+    /// Fork (specs/fork-rust-workspace-plugins-mcp.md, "As built: layer reload"): the control names
+    /// the session's current workspace, so the kernel reloads its layer after the committed write.
     fn mcp_run(&mut self, run: crate::ui::mcp_control::Run) {
         let kernel = self.kernel.clone();
         let preferences = self.options.services.preferences.clone();
+        let workspace = self.app.view.workspace().clone();
         self.pending.push(
             async move {
                 let mut failed = Vec::new();
@@ -274,6 +277,7 @@ impl Loop<'_> {
                     let control = rust_cli_kernel_api::manage::McpControl {
                         action: run.action,
                         servers: changed,
+                        workspace,
                     };
                     kernel.mcp_control(control).await
                 };

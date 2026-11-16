@@ -206,15 +206,29 @@ impl Kernel for LocalKernel {
     }
 
     /// `/mcp reconnect|enable|disable`：经 ext 的连接管理（tui-manage.md §6.1）。
+    /// Fork (specs/fork-rust-workspace-plugins-mcp.md, "As built: layer reload"): an enable/disable
+    /// follows a config write the caller committed (the TUI persists `enabled` first), so the
+    /// control's workspace layer re-reads past the loaded-slot reuse and its group re-merges with
+    /// the new enabled state — the same reload path as the App's trust writes, and the
+    /// shared-runtime equivalent of Node's per-app config re-read. Reconnect writes no config, so
+    /// it does not reload; the process manager keeps restarting only the servers it owns.
     async fn mcp_control(
         &self,
         control: rust_cli_kernel_api::manage::McpControl,
     ) -> Result<Vec<rust_cli_kernel_api::manage::McpServerInfo>, KernelError> {
-        Ok(self
+        let infos = self
             .ext
             .mcp()
             .control(control.action, &control.servers)
-            .await)
+            .await;
+        if matches!(
+            control.action,
+            rust_cli_kernel_api::manage::McpAction::Enable
+                | rust_cli_kernel_api::manage::McpAction::Disable
+        ) {
+            self.reload_workspace_layer(&control.workspace).await;
+        }
+        Ok(infos)
     }
 
     /// 存储的只读查询与前端记录（审查 K7）：同一个存储适配器，不经会话 actor（这些都不是会话状态）。

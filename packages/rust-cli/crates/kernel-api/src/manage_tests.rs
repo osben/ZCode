@@ -121,9 +121,17 @@ fn mcp_controls_round_trip() {
     let control = McpControl {
         action: McpAction::Disable,
         servers: vec!["docs".to_owned()],
+        workspace: crate::env::WorkspaceRef {
+            environment: crate::ids::EnvironmentId::new("local"),
+            root: crate::env::EnvPath::new("/Users/dev/project"),
+        },
     };
     let json = serde_json::to_value(&control).unwrap();
     assert_eq!(json["action"], "disable");
+    assert_eq!(
+        json["workspace"]["root"], "/Users/dev/project",
+        "the control names the workspace its enable/disable reloads"
+    );
     assert_eq!(serde_json::from_value::<McpControl>(json).unwrap(), control);
     assert_eq!(
         serde_json::to_value(McpServerState::Disabled).unwrap(),
