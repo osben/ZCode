@@ -9,14 +9,16 @@ use async_trait::async_trait;
 use futures_util::StreamExt;
 use futures_util::stream::{self, BoxStream};
 use rust_cli_base::TaskScope;
-use rust_cli_kernel_api::ids::{EnvironmentId, TraceId};
+use rust_cli_kernel_api::ids::OwnerEpoch;
+use rust_cli_kernel_api::ids::{EnvironmentId, MessageId, TraceId};
 use rust_cli_kernel_api::permission::PermissionMode;
 use rust_cli_kernel_api::session_api::{
-    CommandEnvelope, CommandResult, CreateSession, KernelError, SequencedEvent, SessionHandle,
-    SessionView,
+    CommandEnvelope, CommandResult, CreateSession, Forked, KernelError, SequencedEvent,
+    SessionHandle, SessionView,
 };
 use rust_cli_kernel_api::store::{
-    SessionFilter, SessionKind, SessionMeta, SessionStore, SessionSummary, StoreQueries,
+    Fact, FactBatch, SessionFilter, SessionKind, SessionMeta, SessionStore, SessionSummary,
+    StoreQueries,
 };
 use rust_cli_kernel_api::testing::{FixedClock, HandleOverride, MemoryStore, selection};
 use rust_cli_protocol_core::connection::{self, Options};
@@ -259,6 +261,8 @@ struct TestHandle {
     refuse_moves: Arc<std::sync::atomic::AtomicUsize>,
     /// How many `SetMode` commands to refuse.
     refuse_modes: Arc<std::sync::atomic::AtomicUsize>,
+    /// B1.3: the store the fork command writes through (the actor's `copy_through`).
+    store: Arc<MemoryStore>,
 }
 
 #[async_trait]
@@ -331,6 +335,56 @@ impl HandleOverride for TestHandle {
                 self.view.lock().unwrap().meta.incognito = Some(*profile);
                 "SetIncognito".to_owned()
             }
+            // B1.3: the store fork, as the actor's `copy_through` runs it — the child row and, with a
+            // managed-worktree target, its execution columns in the same write, under the Host's
+            // pre-allocated child id.
+            Command::ForkFromAssistant {
+                assistant,
+                target_cwd,
+            } => {
+                let view = self.view.lock().unwrap().clone();
+                let child = target_cwd.as_ref().map_or_else(
+                    || SessionId::new(format!("{}_forked", self.id.as_str())),
+                    |target| target.child.clone(),
+                );
+                // A fixed stamp, not the test clock's now(): nothing asserts timestamps, and the
+                // double only needs a stable value the copied facts carry.
+                let fork = rust_cli_kernel_api::store::SessionFork {
+                    parent: self.id.clone(),
+                    child: child.clone(),
+                    created_at_ms: 5000,
+                    through: assistant.clone(),
+                    selection: view.selection.clone(),
+                    mode: view.mode,
+                    plan: view.plan,
+                    execution: target_cwd.as_ref().map(|target| target.root.clone()),
+                };
+                let copied = match SessionStore::fork(self.store.as_ref(), fork).await {
+                    Ok(receipt) => receipt.copied,
+                    Err(error) => {
+                        return KernelAck::Rejected {
+                            reason: error.to_string(),
+                        };
+                    }
+                };
+                let root = target_cwd
+                    .as_ref()
+                    .map_or(String::new(), |target| target.root.as_str().to_owned());
+                self.sent.lock().unwrap().push((
+                    envelope.id.as_str().to_owned(),
+                    format!(
+                        "ForkFromAssistant {assistant} child={} root={root}",
+                        child.as_str()
+                    ),
+                ));
+                return KernelAck::Accepted {
+                    result: CommandResult::Forked(Forked {
+                        session: child,
+                        through: Some(assistant.clone()),
+                        copied,
+                    }),
+                };
+            }
             other => format!("{other:?}"),
         };
         self.sent
@@ -392,6 +446,7 @@ impl WorktreeKernel {
             sent: self.sent.clone(),
             refuse_moves: self.refuse_moves.clone(),
             refuse_modes: self.refuse_modes.clone(),
+            store: self.store.clone(),
         });
         self.handles
             .lock()
@@ -1063,6 +1118,222 @@ async fn a_cold_open_draws_the_stored_creation_marker() {
         .find(|row| row["marker"]["type"] == "worktreeCreated")
         .expect("the stored creation fact draws its marker");
     assert_eq!(marker["marker"]["path"], json!(path));
+}
+
+/// B1.3: one finished turn in session `s1` — committed to the store (the fork copies it) and in the live
+/// view (the projection offers the reply's `canFork` row). `key` overrides the session's listed workspace key
+/// (a remote session's `remote:` identity).
+async fn forkable(
+    server: &Server,
+    kernel: &Arc<WorktreeKernel>,
+    key: Option<&str>,
+) -> (u64, String) {
+    let id = SessionId::new("s1");
+    rust_cli_kernel_api::session_api::Kernel::create_session(
+        kernel.as_ref(),
+        CreateSession {
+            id: Some(id.clone()),
+            workspace: rust_cli_kernel_api::env::WorkspaceRef {
+                environment: EnvironmentId::new("local"),
+                root: EnvPath::new("/w"),
+            },
+            selection: selection(),
+            mode: PermissionMode::Default,
+            plan: false,
+            incognito: None,
+        },
+    )
+    .await
+    .unwrap();
+    if let Some(key) = key {
+        kernel.store.set_workspace_key(&id, key);
+    }
+    let messages = vec![
+        rust_cli_kernel_api::message::Message::User(rust_cli_kernel_api::message::UserMessage {
+            stall_execution: None,
+            intent: None,
+            id: MessageId::new("msg_u1"),
+            content: vec![rust_cli_kernel_api::message::ContentBlock::Text {
+                text: "hello".to_owned(),
+            }],
+            origin: rust_cli_kernel_api::message::UserOrigin::Human,
+        }),
+        rust_cli_kernel_api::message::Message::Assistant(
+            rust_cli_kernel_api::message::AssistantMessage {
+                id: MessageId::new("msg_a1"),
+                content: vec![rust_cli_kernel_api::message::ContentBlock::Text {
+                    text: "answer".to_owned(),
+                }],
+                model: "m".to_owned(),
+                stop_reason: Some(rust_cli_kernel_api::message::StopReason::EndTurn),
+                usage: None,
+            },
+        ),
+    ];
+    let facts = messages
+        .iter()
+        .cloned()
+        .map(|message| Fact::MessageAppended { message })
+        .collect();
+    SessionStore::commit(
+        kernel.store.as_ref(),
+        &id,
+        FactBatch {
+            owner_epoch: OwnerEpoch::LOCAL,
+            command: None,
+            facts,
+            turn: None,
+        },
+    )
+    .await
+    .unwrap();
+    kernel.handle(&id).unwrap().view.lock().unwrap().messages = messages;
+    let live = server.live(&id).await.unwrap();
+    let reply = live.sink.snapshot()["rows"]["window"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["kind"] == "assistantText" && row["actions"]["canFork"] == json!(true))
+        .expect("the finished turn offers its reply's fork action")
+        .clone();
+    (
+        reply["rowId"].as_u64().unwrap(),
+        reply["entityId"].as_str().unwrap().to_owned(),
+    )
+}
+
+/// A `forkAssistant` envelope through the command entry, so the inbound schema validates it too.
+async fn fork_command(server: &Server, id: &str, target: serde_json::Value, extra: Value) -> Value {
+    let mut payload = json!({"target": target});
+    payload
+        .as_object_mut()
+        .unwrap()
+        .extend(extra.as_object().unwrap().clone());
+    crate::commands::command(
+        server,
+        json!({
+            "commandId": id, "clientId": "client", "sessionId": "s1", "type": "forkAssistant",
+            "issuedAt": 1, "baseRevision": 0, "baseLogEpoch": "e", "payload": payload,
+        }),
+    )
+    .await
+    .unwrap()
+}
+
+/// B1.3 (specs/fork-rust-agent-parity.md): `forkAssistant.targetCwd` forks the child into the Host-created
+/// managed worktree. The pre-allocated `childSessionId` names the child (Node's `forkedSessionId`), the fork
+/// columns — not Node's directory override — carry the root while the row keeps the parent workspace, the
+/// creation record stores on the child (the fork-shaped `worktree_creation` fact), and the opened child lists
+/// under the parent with its execution worktree, like B1.1's create.
+#[tokio::test]
+async fn a_managed_worktree_fork_lands_the_child_in_the_worktree() {
+    let (_scope, server, kernel) = server();
+    let (row, entity) = forkable(&server, &kernel, None).await;
+    let worktree = tempfile::tempdir().unwrap();
+    let path = worktree.path().to_str().unwrap().to_owned();
+    let creation =
+        json!({"path": path, "sha": "a1b2c3d4", "ref": null, "output": "worktree added"});
+    let ack = fork_command(
+        &server,
+        "c-fork",
+        json!({"rowId": row, "entityId": entity}),
+        json!({"targetCwd": {"cwd": path, "childSessionId": "child-1",
+            "worktreeCreation": creation}}),
+    )
+    .await;
+    assert_eq!(ack["status"], "accepted", "{ack}");
+    assert_eq!(
+        ack["result"],
+        json!({"type": "forkAssistant", "sessionId": "child-1"})
+    );
+    // The kernel command carried the target: the Host's child id and the worktree root.
+    assert_eq!(
+        kernel
+            .sent
+            .lock()
+            .unwrap()
+            .last()
+            .map(|(_, name)| name.as_str()),
+        Some(format!("ForkFromAssistant msg_a1 child=child-1 root={path}").as_str())
+    );
+    // The fork columns, not Node's directory override: the child's row keeps the parent workspace.
+    let child = SessionId::new("child-1");
+    let execution = kernel
+        .store
+        .execution_worktree(&child)
+        .await
+        .unwrap()
+        .expect("the child carries the execution worktree");
+    assert_eq!(execution.directory.as_str(), "/w");
+    assert_eq!(execution.path.as_str(), path);
+    assert_eq!(execution.branch, None);
+    // The creation fact is the child's record (the marker row reads it, as in B1.1).
+    assert_eq!(
+        crate::worktree::creation_fact(&server, &child).await,
+        Some(json!({"path": path, "sha": "a1b2c3d4", "ref": null,
+            "output": "worktree added"}))
+    );
+    // The handler opened the child: listed under the parent, running in the worktree.
+    let live = server
+        .bridge
+        .get(&child)
+        .expect("the forked child is opened for the App");
+    let summary = live.sink.summary();
+    assert_eq!(summary["workspaceId"], "/w");
+    assert_eq!(summary["executionWorktree"], json!({"path": path}));
+}
+
+/// B1.3: Node runs `workspaceRefWithCwd` before anything persists (`v4-bridge.ts`
+/// `forkStableConversation`), so a `targetCwd` on a remote workspace is structured refusal
+/// (`guard.worktreeCwdLocalOnly`, B1.1's guard shape) and nothing is forked. A malformed `remote:` key is
+/// refused at resolution, as in B1.1.
+#[tokio::test]
+async fn a_fork_target_cwd_on_a_remote_workspace_refuses_like_node() {
+    let (_scope, server, kernel) = server();
+    let (row, entity) = forkable(&server, &kernel, Some("remote:docker:box:/w")).await;
+    let worktree = tempfile::tempdir().unwrap();
+    let path = worktree.path().to_str().unwrap().to_owned();
+    let creation = json!({"path": path, "sha": "a1b2c3d4", "ref": null, "output": ""});
+    let ack = fork_command(
+        &server,
+        "c-fork",
+        json!({"rowId": row, "entityId": entity}),
+        json!({"targetCwd": {"cwd": path, "childSessionId": "child-1",
+            "worktreeCreation": creation}}),
+    )
+    .await;
+    assert_eq!(ack["status"], "failed", "{ack}");
+    assert_eq!(ack["reasonCode"], "guard.worktreeCwdLocalOnly");
+    assert_eq!(
+        ack["message"],
+        "session cwd override only supports local workspaces: remote:docker:box:/w"
+    );
+    assert!(kernel.store.meta(&SessionId::new("child-1")).is_none());
+}
+
+/// B1.3: the route's not-a-directory pre-check refuses before anything is forked (B1.1's
+/// `check_directory` text), leaving no child behind.
+#[tokio::test]
+async fn a_fork_target_cwd_without_a_directory_refuses_before_forking() {
+    let (_scope, server, kernel) = server();
+    let (row, entity) = forkable(&server, &kernel, None).await;
+    let creation =
+        json!({"path": "/w/.zcode-worktrees/gone", "sha": "a1b2c3d4", "ref": null, "output": ""});
+    let ack = fork_command(
+        &server,
+        "c-fork",
+        json!({"rowId": row, "entityId": entity}),
+        json!({"targetCwd": {"cwd": "/w/.zcode-worktrees/gone", "childSessionId": "child-1",
+            "worktreeCreation": creation}}),
+    )
+    .await;
+    assert_eq!(ack["status"], "rejected", "{ack}");
+    assert_eq!(ack["reasonCode"], "proto.invalidPayload");
+    assert_eq!(
+        ack["message"],
+        "Execution worktree path does not exist or is not a directory: /w/.zcode-worktrees/gone"
+    );
+    assert!(kernel.store.meta(&SessionId::new("child-1")).is_none());
 }
 
 /// A stored worktree session (as the Node agent leaves one) whose directory was deleted: the cold row and the

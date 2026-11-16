@@ -187,6 +187,7 @@ async fn a_fork_keeps_the_results_in_place() {
             selection: selection(),
             mode: PermissionMode::Default,
             plan: false,
+            execution: None,
         })
         .await
         .unwrap();

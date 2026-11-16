@@ -148,6 +148,26 @@ struct CreateSessionPayload {
     worktree_creation: Option<crate::worktree::Creation>,
 }
 
+/// B1: the shared `guard.worktreeCwdLocalOnly` refusal (Node `resolveWorkspaceRefFromId` then
+/// `workspaceRefWithCwd`): a well-formed remote identity refuses the local-only rule, a malformed
+/// `remote:` key refuses at resolution. One owner because the message texts are Node-contract
+/// surfaces asserted by tests (create + fork).
+pub(crate) fn refuse_remote_cwd(envelope: &Envelope, workspace: &str) -> Ack {
+    let (reason, message) =
+        if rust_cli_kernel_api::remote_identity::is_remote_workspace_identity(workspace) {
+            (
+                "guard.worktreeCwdLocalOnly",
+                format!("session cwd override only supports local workspaces: {workspace}"),
+            )
+        } else {
+            (
+                "fault.command.executionFailed",
+                format!("Invalid remote workspace identity: {workspace}"),
+            )
+        };
+    Ack::refused(&envelope.command_id, Status::Failed, reason, message, 0)
+}
+
 /// Fork: a field that is present, `null` included, reads as `Some` (a missing field takes the serde default).
 pub(crate) fn present<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
@@ -159,7 +179,7 @@ pub(crate) fn present<'de, D: serde::Deserializer<'de>>(
 /// type refuses fails the payload parse. A present `null` is refused, not read as absent: Node's zod
 /// `.optional()` takes `undefined` only, and the generated inbound schema (type string / object) agrees, so a
 /// null never reaches a handler there either.
-fn typed<'de, T, D>(deserializer: D) -> Result<Option<T>, D::Error>
+pub(crate) fn typed<'de, T, D>(deserializer: D) -> Result<Option<T>, D::Error>
 where
     T: serde::de::DeserializeOwned,
     D: serde::Deserializer<'de>,
@@ -177,15 +197,19 @@ fn typed_cwd<'de, D: serde::Deserializer<'de>>(
 ) -> Result<Option<String>, D::Error> {
     let value: Option<String> = typed(deserializer)?;
     match value {
-        Some(cwd) => {
-            let trimmed = cwd.trim();
-            if trimmed.is_empty() {
-                Err(serde::de::Error::custom("cwd must be a non-empty string"))
-            } else {
-                Ok(Some(trimmed.to_owned()))
-            }
-        }
+        Some(cwd) => trimmed_non_empty(&cwd, "cwd").map(Some),
         None => Ok(None),
+    }
+}
+
+/// B1: Node `z.string().trim().min(1)` — the trimmed non-empty string, refused with the field
+/// named. One owner for the create (`cwd`) and fork (`targetCwd.*`) wire rule.
+pub(crate) fn trimmed_non_empty<E: serde::de::Error>(text: &str, field: &str) -> Result<String, E> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        Err(E::custom(format!("{field} must be a non-empty string")))
+    } else {
+        Ok(trimmed.to_owned())
     }
 }
 
@@ -452,19 +476,7 @@ pub(crate) async fn create_session_with(
         && let Some(workspace) = payload.workspace_id.as_deref()
         && workspace.starts_with("remote:")
     {
-        let (reason, message) =
-            if rust_cli_kernel_api::remote_identity::is_remote_workspace_identity(workspace) {
-                (
-                    "guard.worktreeCwdLocalOnly",
-                    format!("session cwd override only supports local workspaces: {workspace}"),
-                )
-            } else {
-                (
-                    "fault.command.executionFailed",
-                    format!("Invalid remote workspace identity: {workspace}"),
-                )
-            };
-        return Ack::refused(&envelope.command_id, Status::Failed, reason, message, 0);
+        return refuse_remote_cwd(envelope, workspace);
     }
     // The activation routes (preparedSessionId) name their own worktree in the marker's data; an
     // admitted cwd is silently dropped there and its creation fact never persists, so a sender
@@ -566,7 +578,7 @@ pub(crate) async fn create_session_with(
     });
     // Fork: the direct route refuses a dead worktree before the session exists.
     if let Some(requested) = &requested
-        && let Err(ack) = crate::worktree::check_directory(server, envelope, requested).await
+        && let Err(ack) = crate::worktree::check_directory(server, envelope, requested, 0).await
     {
         return *ack;
     }

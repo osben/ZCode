@@ -811,7 +811,10 @@ impl Actor {
             },
             Command::Fork { at } => self.fork(id, at).await,
             Command::ForkFromInput { input } => self.fork_from_input(input).await,
-            Command::ForkFromAssistant { assistant } => self.fork_from_assistant(assistant).await,
+            Command::ForkFromAssistant {
+                assistant,
+                target_cwd,
+            } => self.fork_from_assistant(assistant, target_cwd).await,
             Command::AdoptTitle { title } => {
                 self.adopt_title(title);
                 accepted()

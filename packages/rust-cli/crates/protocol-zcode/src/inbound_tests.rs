@@ -199,9 +199,9 @@ fn highspeed_meta_owner_key_is_accepted() {
 }
 
 /// Wave 2 B1 (specs/fork-rust-agent-parity.md): the shipped 3.18.0 schema accepts the managed-worktree fields
-/// (`createSession.cwd` / `worktreeCreation`, `forkAssistant.targetCwd`), so validation lets them through and the
-/// refusal is the handler's (`commands.rs`, `fork/row_commands.rs`) — the capability stays false, the fields must
-/// not be dropped. A wrong-typed half is still refused here, before the handler runs.
+/// (`createSession.cwd` / `worktreeCreation`, `forkAssistant.targetCwd`), so validation lets them through —
+/// the create and fork handlers execute them (B1.1/B1.3), and `retryTurn`'s handler refuses its field
+/// (`fork/row_commands.rs`). A wrong-typed half is still refused here, before the handler runs.
 #[test]
 fn managed_worktree_cwd_fields_are_accepted_by_the_shipped_schema() {
     let inbound = Inbound::get();

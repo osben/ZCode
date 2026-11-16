@@ -8,6 +8,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use futures_util::stream::{BoxStream, StreamExt};
 use rust_cli_base::TaskScope;
+use rust_cli_kernel_api::clock::Ids as _;
 use rust_cli_kernel_api::controller_services::ControllerServices;
 use rust_cli_kernel_api::env::{EnvFacts, EnvPath, WorkspaceRef};
 use rust_cli_kernel_api::hooks::{HookEvent, HookEventName, HookOutcome, HookRunner};
@@ -264,6 +265,12 @@ impl Setup {
             store.create(meta.clone()).await.unwrap();
         }
         let ids = Arc::new(SequentialIds::default());
+        // B1.3: the store double refuses a fork child whose id is taken, like node-store's primary
+        // key. A reused store holds sess_1 (the actor's own id), so the first allocated child must
+        // not be sess_1 — burn one allocation to keep every reused-store fork clear of the parent.
+        if reused {
+            drop(ids.session());
+        }
         let side_model = self.side_model.unwrap_or_else(|| self.model.clone());
         let machines = self.machines.unwrap_or_else(|| {
             Arc::new(rust_cli_kernel_api::env_registry::PrimaryRegistry::new(

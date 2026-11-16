@@ -19,6 +19,7 @@ pub(super) async fn fork(dir: &str, session: &str, through: &str) -> Result<()> 
         selection: loaded.model.unwrap_or(ModelSelection::new("p", "m")),
         mode: loaded.mode.unwrap_or(PermissionMode::Default),
         plan: loaded.plan,
+        execution: None,
     };
     let receipt = store.fork(fork).await?;
     print(&json!({"session": child.as_str(), "copied": receipt.copied}))

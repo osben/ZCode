@@ -172,6 +172,12 @@ pub(crate) fn fork(
             .map(|stored| IncognitoProfile::from_stored(&stored).to_stored()),
     };
     sessions::create(&tx, &input, created).storage()?;
+    // B1.3: a managed-worktree fork writes the child's execution columns in the same transaction (the write
+    // `set_execution_worktree` uses; a fresh child row has no stored value, so the coalesce takes the root). The
+    // row keeps the parent's workspace; a database without the columns fails the whole fork, leaving no child.
+    if let Some(root) = &fork.execution {
+        crate::fork_execution_worktree::write(&tx, fork.child.as_str(), root.as_str(), None)?;
+    }
     let uuid = || ids.uuid();
     let ctx = Commit::new(
         &tx,

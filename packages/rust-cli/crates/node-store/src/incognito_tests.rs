@@ -145,6 +145,7 @@ async fn a_fork_keeps_the_source_profile() {
             selection: selection(),
             mode: PermissionMode::Default,
             plan: false,
+            execution: None,
         })
         .await
         .unwrap();

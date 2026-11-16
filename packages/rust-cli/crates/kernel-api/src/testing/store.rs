@@ -459,6 +459,14 @@ impl SessionStore for MemoryStore {
     /// `source = fork` 的 attachment（正文是简化的分叉提示）。
     async fn fork(&self, fork: SessionFork) -> Result<ForkReceipt, StoreError> {
         let mut sessions = self.sessions.lock_unpoisoned();
+        // B1.3 (ocr): node-store's fork lands in `insert into session`, and the id primary key fails
+        // the whole transaction — no child row. The double refuses a taken child id the same way,
+        // instead of upserting over it.
+        if sessions.contains_key(&fork.child) {
+            return Err(StoreError::Unsupported {
+                what: format!("session id already exists: {}", fork.child),
+            });
+        }
         let (parent, facts) =
             sessions
                 .get(&fork.parent)
@@ -517,6 +525,24 @@ impl SessionStore for MemoryStore {
                     message: message.clone(),
                 }),
         );
+        // B1.3: the child's execution worktree, as node-store's fork transaction writes it (no branch: the
+        // Host created the worktree). The knob fails the write before the row, like node-store's
+        // missing-columns transaction failure (no child row).
+        if let Some(root) = fork.execution {
+            let mut execution = self.execution.lock_unpoisoned();
+            if execution
+                .get(&fork.child)
+                .is_some_and(|(existing, _)| existing.as_str() != root.as_str())
+                || self
+                    .fail_execution
+                    .swap(false, std::sync::atomic::Ordering::SeqCst)
+            {
+                return Err(StoreError::Unsupported {
+                    what: "execution worktree columns unavailable".to_owned(),
+                });
+            }
+            execution.insert(fork.child.clone(), (root, None));
+        }
         sessions.insert(fork.child, (meta, copied));
         Ok(ForkReceipt { copied: end })
     }

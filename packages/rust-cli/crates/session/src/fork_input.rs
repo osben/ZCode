@@ -85,13 +85,19 @@ impl Actor {
         if self.busy() && is_last_turn(&self.messages, &input) {
             return rejected(RUNNING);
         }
-        self.copy_through(through).await
+        self.copy_through(through, None).await
     }
 
     /// `ForkFromAssistant`: the copy ends at `assistant`. Only the projection's offer decides which reply the App
     /// may fork from; here a running turn is refused: a reply from the running turn's opening message on belongs to
     /// it, a reply before it is a completed turn (also when a notification opened the running turn).
-    pub(crate) async fn fork_from_assistant(&self, assistant: MessageId) -> Ack {
+    /// `target` (B1.3, Node `forkAssistant.targetCwd`) forks into an existing managed worktree under the
+    /// Host's pre-allocated child id.
+    pub(crate) async fn fork_from_assistant(
+        &self,
+        assistant: MessageId,
+        target: Option<rust_cli_kernel_api::session_api::ForkTarget>,
+    ) -> Ack {
         let Some(at) = reply_position(&self.messages, &assistant) else {
             return rejected(format!("{assistant} is not a message to fork from"));
         };
@@ -107,12 +113,21 @@ impl Actor {
                 return rejected(RUNNING);
             }
         }
-        self.copy_through(assistant).await
+        self.copy_through(assistant, target).await
     }
 
     /// Writes the child session that carries the history through `through` (`SessionStore::fork`, files untouched).
-    async fn copy_through(&self, through: MessageId) -> Ack {
-        let child = self.deps.ids.session();
+    /// `target` (B1.3) names the child id and the worktree root the child executes in.
+    async fn copy_through(
+        &self,
+        through: MessageId,
+        target: Option<rust_cli_kernel_api::session_api::ForkTarget>,
+    ) -> Ack {
+        // The Host pre-allocates the managed-worktree fork's child id (Node `forkedSessionId`); every other
+        // fork allocates its own, as before.
+        let child = target
+            .as_ref()
+            .map_or_else(|| self.deps.ids.session(), |target| target.child.clone());
         let fork = SessionFork {
             parent: self.meta.id.clone(),
             child: child.clone(),
@@ -121,6 +136,7 @@ impl Actor {
             selection: self.selection.clone(),
             mode: self.execution.mode,
             plan: self.execution.plan,
+            execution: target.map(|target| target.root),
         };
         let receipt = match self.deps.store.fork(fork).await {
             Ok(receipt) => receipt,
