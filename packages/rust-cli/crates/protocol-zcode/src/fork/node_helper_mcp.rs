@@ -617,7 +617,8 @@ impl HelperRoutedMcp {
     /// A session call's pipe decision for a workspace key beyond the own one, under one lock. The message travels the
     /// key's connected pipe ([`ParkedOrPipe::Pipe`]) unless the key's mailbox still holds its traffic draining to that
     /// pipe — then the message parks behind it (opening an empty mailbox starts the connect task,
-    /// [`connect_mailbox`]; a mailbox a running task already owns only takes the message) — or the key is inside its
+    /// [`connect_mailbox`]; a mailbox a running task already owns only takes the message, until the key's backlog
+    /// reaches [`PARKED_BACKLOG_CAP`], past which the call is refused at once) — or the key is inside its
     /// failed-connect cooldown, in which case the call is refused at once, exactly as the connect gate refuses it.
     /// Parking never waits: `send` must return without awaiting a connect, because Rust's MCP client awaits `send`
     /// before it watches a call's cancel. The mailbox is checked before the connected pipe: the pipe is published
@@ -631,7 +632,29 @@ impl HelperRoutedMcp {
     ) -> ParkedOrPipe {
         let id = message.get("id").cloned();
         let mut state = route.state.lock_unpoisoned();
+        // Dead before anything answers (the cap refusal included): the terminal Closed already fails
+        // the call client-side, and an answer after it breaks the stream's contract — the same rule
+        // as every other answer site, checked first because send awaited the store-row answer.
+        if state.dead {
+            return ParkedOrPipe::Dead;
+        }
         if let Some(mailbox) = state.mailbox.get_mut(key) {
+            if mailbox.len() >= PARKED_BACKLOG_CAP {
+                // The key's connect is still running and its parked CALLS are at the cap: answer the
+                // call here instead of parking it — a parked call is answered by its id through
+                // `recent`, and a backlog past the cap could evict the very ids it owes (the calls
+                // would hang, their `send` already returned Ok). The cancels of parked calls park
+                // behind them uncounted (no id, no recent slot, must follow their call).
+                drop(state);
+                if let Some(id) = id {
+                    refused(
+                        &route.events,
+                        &id,
+                        "the workspace's parked backlog is full".to_owned(),
+                    );
+                }
+                return ParkedOrPipe::Refused;
+            }
             mailbox.push_back(std::mem::take(message));
             if let Some(id) = &id {
                 state.recent.remember(id, key);
@@ -681,7 +704,8 @@ enum ParkedOrPipe {
     /// The message is parked on the key's mailbox until its connect resolves; `opened` when this call started the
     /// connect task (a task that is already running owns the mailbox otherwise).
     Parked { opened: bool },
-    /// The key is inside its failed-connect cooldown: the call is answered on the connection in `park_or_pipe`.
+    /// The key is inside its failed-connect cooldown, or its parked backlog is at [`PARKED_BACKLOG_CAP`]: the call is
+    /// answered on the connection in `park_or_pipe`.
     Refused,
 }
 
@@ -932,9 +956,10 @@ struct RouteState {
     connecting: std::collections::HashMap<String, std::sync::Arc<tokio::sync::Semaphore>>,
     /// The recent id'd messages that took a workspace pipe, for their cancels and a closed pipe's answers.
     recent: RecentMessages,
-    /// Messages parked until their workspace key's connect resolves, in arrival order. An entry lives exactly while
-    /// the key's connect task runs ([`connect_mailbox`]): its presence is what parks the key's further messages and
-    /// the cancels of its parked calls, so a cancel never overtakes the call it cancels.
+    /// Messages parked until their workspace key's connect resolves, in arrival order, at most [`PARKED_BACKLOG_CAP`]
+    /// per key (past it the call is refused inline). An entry lives exactly while the key's connect task runs
+    /// ([`connect_mailbox`]): its presence is what parks the key's further messages and the cancels of its parked
+    /// calls, so a cancel never overtakes the call it cancels.
     mailbox: std::collections::HashMap<String, std::collections::VecDeque<Value>>,
 }
 
@@ -944,7 +969,15 @@ const REMEMBERED_MESSAGES: usize = 1024;
 
 /// How long a failed workspace connect is remembered before a call may retry it. The own pipe's
 /// failures go through the MCP manager's reconnect policy; this is the workspace path's equivalent.
-const FAILED_CONNECT_COOLDOWN_MS: u64 = 30_000;
+pub(super) const FAILED_CONNECT_COOLDOWN_MS: u64 = 30_000;
+
+/// How many messages one key's mailbox parks while its connect runs. A parked call is answered by
+/// its id through the route's `recent` map ([`REMEMBERED_MESSAGES`], shared by every key of the
+/// connection), so an unbounded backlog could evict the very ids it owes — a pipelining client's
+/// calls would hang, their `send` already returned Ok. The cap keeps one key's backlog far inside
+/// that map; the overflow is refused inline instead ([`HelperRoutedMcp::park_or_pipe`]). The cap
+/// bounds parked CALLS; a parked call's cancel parks behind it uncounted (no id, no recent slot).
+pub(super) const PARKED_BACKLOG_CAP: usize = 64;
 
 /// How many sessions' workspaces the pipe-workspace cache keeps, oldest evicted first — the size of the neighboring
 /// recent-maps ([`REMEMBERED_CALLS`], [`REMEMBERED_MESSAGES`]): a desktop-continuous agent serves sessions without end,
@@ -1150,9 +1183,10 @@ impl McpTransport for HelperRoutedMcp {
                         ));
                         return Ok(());
                     }
-                    // Parked behind the key's in-flight connect (its task flushes the mailbox), refused inside
-                    // the cooldown (answered in `park_or_pipe`), or the route died while the store-row answer ran
-                    // (the caller's dead-route refusal answers it): nothing of the call travels in `send`.
+                    // Parked behind the key's in-flight connect (its task flushes the mailbox), refused inline
+                    // (the cooldown, or the key's parked backlog at its cap — answered in `park_or_pipe`), or the
+                    // route died while the store-row answer ran (the caller's dead-route refusal answers it):
+                    // nothing of the call travels in `send`.
                     ParkedOrPipe::Parked { opened: false }
                     | ParkedOrPipe::Refused
                     | ParkedOrPipe::Dead => return Ok(()),
