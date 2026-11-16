@@ -64,7 +64,6 @@ export function V4ComposerDictationControl({
       disabled={disabled}
       onToggle={handleToggle}
       modelStatus={modelStatus}
-      onCancel={engine.cancel}
       permissionGuide={voiceDictation.permissionGuide}
       onReauthorizeMicrophone={() => void voiceDictation.reauthorizeMicrophone()}
     />

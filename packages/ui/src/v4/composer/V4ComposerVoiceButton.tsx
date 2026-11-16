@@ -1,5 +1,5 @@
 import { memo, useEffect, useState } from "react";
-import { LoaderCircle, Mic, Square, X } from "lucide-react";
+import { LoaderCircle, Mic } from "lucide-react";
 import { DesktopCommandIds, TID_V4_COMPOSER_VOICE_ENTRY } from "@zcode/shared";
 import { Button } from "@/components/ui/button.js";
 import {
@@ -49,8 +49,6 @@ interface V4ComposerVoiceButtonProps {
   onToggle: () => void;
   /** Selected model's load state, shown as a small dot (Desktop only; omitted elsewhere). */
   modelStatus?: VoiceModelStatus;
-  /** Abandons the recording without transcribing; the Cancel button renders only when provided. */
-  onCancel?: () => void;
   /** Open microphone permission guide (null closes it); Desktop only. */
   permissionGuide?: VoicePermissionGuidePhase | null;
   /** Runs the macOS re-authorize flow; absent hides the Re-authorize button. */
@@ -127,8 +125,8 @@ const CapsuleWaveform = memo(function CapsuleWaveform({
 
 /**
  * Voice input button inside the composer: click to start/stop recording (shares the same recording
- * state as the shortcut). While recording, the peak-history waveform and Cancel sit in a capsule to
- * the left of the stop button. The transcript preview is drawn in the editor (ghost preview), not here.
+ * state as the shortcut). While dictation runs, the button becomes the waveform capsule with the
+ * stop action inside. The transcript text lives in the editor as the voice span, not here.
  */
 /**
  * Microphone permission guide anchored to the voice button (specs/voice-dictation.md). macOS can
@@ -203,7 +201,6 @@ function V4ComposerVoiceButtonImpl({
   disabled,
   onToggle,
   modelStatus,
-  onCancel,
   permissionGuide = null,
   onReauthorizeMicrophone,
 }: V4ComposerVoiceButtonProps) {
@@ -226,7 +223,6 @@ function V4ComposerVoiceButtonImpl({
     statusDot === "loading"
       ? intl.formatMessage({ id: "voiceDictation.composer.modelStatus.loading" })
       : null;
-  const Icon = recording ? Square : busy ? LoaderCircle : Mic;
   // Persistent polite live region: announces phase changes even when focus is elsewhere
   // (e.g. while recording); it is not the ghost preview, so transcript words are never announced.
   const statusAnnouncement = intl.formatMessage({ id: phaseStatusId(phase, loadingLabelId) });
@@ -240,28 +236,16 @@ function V4ComposerVoiceButtonImpl({
         >
           {active ? (
             // Voice capsule (upstream shape, VD-CLU-*): one rounded pill that replaces the mic
-            // button while dictation runs — waveform on the left, the stop action on the right,
-            // with Cancel kept before it. In the toolbar flow, never an overlay; the mousedown
-            // default is prevented so pressing it never moves focus out of the editor.
+            // button while dictation runs — waveform on the left, the stop action on the right.
+            // Cancelling stays on Escape/blur (upstream has no cancel button). In the toolbar
+            // flow, never an overlay; the mousedown default is prevented so pressing it never
+            // moves focus out of the editor.
             <div
               className="inline-flex shrink-0 items-center gap-1 rounded-full bg-voice-input-surface py-0.5 pl-3 pr-1 text-voice-input-wave animate-in fade-in duration-200 ease-out motion-reduce:animate-none"
               data-testid="voice-dictation-cluster"
               onMouseDown={(event) => event.preventDefault()}
             >
               <CapsuleWaveform subscribeLevel={subscribeLevel} />
-              {recording && onCancel ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  className="shrink-0 text-voice-input-wave hover:text-voice-input-wave"
-                  aria-label={intl.formatMessage({ id: "voiceDictation.composer.cancel" })}
-                  data-testid="voice-dictation-cancel"
-                  onClick={onCancel}
-                >
-                  <X aria-hidden />
-                </Button>
-              ) : null}
               <ControlHintTooltip title={label} shortcut={shortcutLabel || undefined}>
                 <Button
                   type="button"

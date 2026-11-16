@@ -79,7 +79,6 @@ describe("V4ComposerVoiceButton toolbar cluster", () => {
           phase: "recording",
           subscribeLevel: silentSubscription,
           onToggle: () => undefined,
-          onCancel: () => undefined,
         }),
       ),
     );
@@ -112,33 +111,6 @@ describe("V4ComposerVoiceButton toolbar cluster", () => {
     expect(screen.getByRole("status").textContent).toBe("voiceDictation.composer.status.idle");
   });
 
-  it("offers a clickable Cancel in the capsule only when a handler is given (VD-CLU-02)", () => {
-    const onCancel = vi.fn();
-    const renderCluster = (handler?: () => void) =>
-      render(
-        createElement(
-          TooltipProvider,
-          null,
-          createElement(V4ComposerVoiceButton, {
-            phase: "recording",
-            subscribeLevel: silentSubscription,
-            onToggle: () => undefined,
-            onCancel: handler,
-          }),
-        ),
-      );
-
-    renderCluster();
-    expect(screen.queryByTestId("voice-dictation-cancel")).toBeNull();
-    cleanup();
-
-    renderCluster(onCancel);
-    const cancel = screen.getByTestId("voice-dictation-cancel");
-    expect(cancel.getAttribute("aria-label")).toBe("voiceDictation.composer.cancel");
-    fireEvent.click(cancel);
-    expect(onCancel).toHaveBeenCalledTimes(1);
-  });
-
   it("keeps editor focus when the capsule is pressed (VD-CLU-03)", () => {
     render(
       createElement(
@@ -152,7 +124,6 @@ describe("V4ComposerVoiceButton toolbar cluster", () => {
             phase: "recording",
             subscribeLevel: silentSubscription,
             onToggle: () => undefined,
-            onCancel: () => undefined,
           }),
         ),
       ),
