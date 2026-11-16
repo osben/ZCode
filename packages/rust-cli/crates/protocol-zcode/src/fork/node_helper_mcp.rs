@@ -5,7 +5,9 @@
 //!
 //! Each pipe names one workspace (the key of its connect), and a `tools/call` whose session resolves to another key is
 //! refused on the pipe before it is sent (F3, "The pipe workspace is enforced"). [`HelperRoutedMcp`] connects one pipe
-//! per workspace key, so a session's call always finds its own workspace's pipe.
+//! per workspace key, so a session's call always finds its own workspace's pipe — the first calls of a key park in its
+//! mailbox while the connect runs as its own task, so the client's send path never waits on a connect (its cancel watch
+//! starts only after `send`).
 //!
 //! Owner: a pipe lives in the [`super::Running`] slot of the generation that connected it, so dropping that generation
 //! (crash, timeout, reclaim) closes the pipe's event stream; Rust's MCP manager then reconnects, which starts the next
@@ -116,6 +118,32 @@ impl Drop for Pipe {
 fn closed(message: &str) -> McpError {
     McpError::Closed {
         message: message.to_owned(),
+    }
+}
+
+/// The workspace (with its key) each session's pipe traffic runs in, oldest first — bounded at [`REMEMBERED_WORKSPACES`]
+/// by the same mechanics as the route's recent-maps: a desktop-continuous agent serves sessions without end, so an
+/// insert-only cache would grow for the process's life.
+#[derive(Default)]
+pub(super) struct PipeWorkspaces {
+    held: std::collections::HashMap<String, (Value, String)>,
+    order: std::collections::VecDeque<String>,
+}
+
+impl PipeWorkspaces {
+    fn get(&self, session: &str) -> Option<(Value, String)> {
+        self.held.get(session).cloned()
+    }
+
+    fn insert(&mut self, session: String, workspace: (Value, String)) {
+        if self.held.insert(session.clone(), workspace).is_none() {
+            self.order.push_back(session);
+        }
+        while self.order.len() > REMEMBERED_WORKSPACES {
+            if let Some(oldest) = self.order.pop_front() {
+                self.held.remove(&oldest);
+            }
+        }
     }
 }
 
@@ -237,10 +265,11 @@ impl NodeHelper {
 
     /// The workspace a session's pipe traffic runs in, as its store row holds it, with its key — the same
     /// authoritative resolution `helper/session/open` uses, so a pipe connected with it always matches the session it
-    /// carries (F3, "The pipe workspace is enforced"). Cached for the process's life: a row never changes workspace.
+    /// carries (F3, "The pipe workspace is enforced"). Cached, oldest evicted at [`REMEMBERED_WORKSPACES`]: a row never
+    /// changes workspace, so an evicted entry is only re-resolved, never wrong.
     pub(super) async fn pipe_workspace(&self, session: &str) -> Result<(Value, String), RpcError> {
         if let Some(held) = self.pipe_workspaces.lock_unpoisoned().get(session) {
-            return Ok(held.clone());
+            return Ok(held);
         }
         let Some(answers) = self.answers() else {
             return Err(super::unavailable(
@@ -585,80 +614,295 @@ impl HelperRoutedMcp {
         }
     }
 
-    /// The connection's pipe of `key`, connecting it on first use in `workspace` (the first session's store-row
-    /// workspace of that key). One connect at a time per key, so concurrent first calls share it.
-    async fn workspace_pipe(
+    /// A session call's pipe decision for a workspace key beyond the own one, under one lock. The message travels the
+    /// key's connected pipe ([`ParkedOrPipe::Pipe`]) unless the key's mailbox still holds its traffic draining to that
+    /// pipe — then the message parks behind it (opening an empty mailbox starts the connect task,
+    /// [`connect_mailbox`]; a mailbox a running task already owns only takes the message) — or the key is inside its
+    /// failed-connect cooldown, in which case the call is refused at once, exactly as the connect gate refuses it.
+    /// Parking never waits: `send` must return without awaiting a connect, because Rust's MCP client awaits `send`
+    /// before it watches a call's cancel. The mailbox is checked before the connected pipe: the pipe is published
+    /// while the mailbox may still be draining, and a message that went direct would overtake what is parked ahead
+    /// of it.
+    fn park_or_pipe(
         &self,
         route: &std::sync::Arc<Route>,
-        workspace: &Value,
         key: &str,
-    ) -> Result<String, McpError> {
-        let gate = route
-            .state
-            .lock_unpoisoned()
-            .connecting
-            .entry(key.to_owned())
-            .or_insert_with(|| std::sync::Arc::new(tokio::sync::Semaphore::new(1)))
-            .clone();
-        // A permit, not a lock guard: it travels across the connect's awaits.
-        let _one_at_a_time = gate.clone().acquire_owned().await.ok();
-        // The guard lives in its own block: nothing of it may reach the connect's await below.
+        message: &mut Value,
+    ) -> ParkedOrPipe {
+        let id = message.get("id").cloned();
+        let mut state = route.state.lock_unpoisoned();
+        if let Some(mailbox) = state.mailbox.get_mut(key) {
+            mailbox.push_back(std::mem::take(message));
+            if let Some(id) = &id {
+                state.recent.remember(id, key);
+            }
+            return ParkedOrPipe::Parked { opened: false };
+        }
+        if let Some(connected) = state.workspaces.get(key).cloned() {
+            if let Some(id) = &id {
+                state.recent.remember(id, key);
+            }
+            return ParkedOrPipe::Pipe(connected);
+        }
+        // Dead under the same lock (as answer_parked): a route whose own pipe closed while the
+        // caller awaited the store-row answer answers nothing and opens no mailbox — an answer after
+        // the terminal Closed breaks the stream's contract, and a mailbox for a dead route would pay
+        // a full connect only to close it again.
+        if state.dead {
+            return ParkedOrPipe::Dead;
+        }
+        let now = self.clock.now_ms();
+        if let Some((failure, at)) = state.failed.get(key).cloned()
+            && now.saturating_sub(at) < FAILED_CONNECT_COOLDOWN_MS
         {
+            drop(state);
+            if let Some(id) = id {
+                refused(&route.events, &id, closed(&failure).to_string());
+            }
+            return ParkedOrPipe::Refused;
+        }
+        if let Some(id) = &id {
+            state.recent.remember(id, key);
+        }
+        state.mailbox.insert(
+            key.to_owned(),
+            std::collections::VecDeque::from([std::mem::take(message)]),
+        );
+        ParkedOrPipe::Parked { opened: true }
+    }
+}
+
+/// What [`HelperRoutedMcp::park_or_pipe`] did with a session call of a workspace key beyond the connection's own one.
+enum ParkedOrPipe {
+    /// The route died while the caller awaited the session's workspace: answer nothing, park nothing.
+    Dead,
+    /// The key's connected pipe; the message (left with the caller) travels it in `send`.
+    Pipe(String),
+    /// The message is parked on the key's mailbox until its connect resolves; `opened` when this call started the
+    /// connect task (a task that is already running owns the mailbox otherwise).
+    Parked { opened: bool },
+    /// The key is inside its failed-connect cooldown: the call is answered on the connection in `park_or_pipe`.
+    Refused,
+}
+
+/// The connection's pipe of `key`, connecting it in `workspace` (the first parked session's store-row workspace of that
+/// key) and publishing it on the route. Only the key's connect task runs this — never the send path. One connect at a
+/// time per key, so tasks cannot race a connect.
+async fn workspace_pipe(
+    helper: &NodeHelper,
+    clock: &dyn rust_cli_kernel_api::clock::Clock,
+    route: &std::sync::Arc<Route>,
+    workspace: &Value,
+    key: &str,
+) -> Result<String, McpError> {
+    let gate = route
+        .state
+        .lock_unpoisoned()
+        .connecting
+        .entry(key.to_owned())
+        .or_insert_with(|| std::sync::Arc::new(tokio::sync::Semaphore::new(1)))
+        .clone();
+    // A permit, not a lock guard: it travels across the connect's awaits.
+    let _one_at_a_time = gate.clone().acquire_owned().await.ok();
+    // The guard lives in its own block: nothing of it may reach the connect's await below.
+    {
+        let mut state = route.state.lock_unpoisoned();
+        if let Some(connected) = state.workspaces.get(key) {
+            return Ok(connected.clone());
+        }
+        // Fail fast inside the cooldown: a key whose connect keeps failing must not turn every
+        // call into a fresh Node-side spawn attempt that pays the whole CONNECT timeout.
+        let now = clock.now_ms();
+        if let Some((failure, at)) = state.failed.get(key).cloned()
+            && now.saturating_sub(at) < FAILED_CONNECT_COOLDOWN_MS
+        {
+            return Err(closed(&failure));
+        }
+        state.failed.remove(key);
+    }
+    let closed = {
+        let route = route.clone();
+        let key = key.to_owned();
+        move |reason: Option<&str>| workspace_closed(&route, &key, reason)
+    };
+    let pipe = match helper
+        .mcp_connect_pipe(
+            workspace,
+            &route.server,
+            route.events.clone(),
+            Some(Box::new(closed)),
+        )
+        .await
+    {
+        Ok(pipe) => pipe,
+        Err(error) => {
+            // Remember the failure for the cooldown; the task answers the parked calls with it.
+            route
+                .state
+                .lock_unpoisoned()
+                .failed
+                .insert(key.to_owned(), (error.to_string(), clock.now_ms()));
+            return Err(error);
+        }
+    };
+    if route.state.lock_unpoisoned().dead {
+        // The connection closed while this connect ran: its route is gone, so nothing would
+        // ever close this pipe. Close it here and fail (the parked calls are answered by the
+        // route's terminal Closed, and the connection reconnects if it is opened again).
+        let _ = helper.mcp_close(pipe.as_str()).await;
+        return Err(McpError::Closed {
+            message: "the helper connection is closed".to_owned(),
+        });
+    }
+    route
+        .state
+        .lock_unpoisoned()
+        .workspaces
+        .insert(key.to_owned(), pipe.clone());
+    Ok(pipe)
+}
+
+/// Connects a workspace key's pipe and flushes its mailbox through it, as the key's own task: `send` parks the key's
+/// messages and returns, because the client's cancel watch starts only after its `send` — the first call of a key must
+/// not hold its cancel behind a connect that may take the whole CONNECT timeout.
+/// The mailbox's orphan guard: whatever ends the connect-and-flush task (an error path return, a
+/// panic-unwind, or the scope aborting the task at an await) answers the calls still parked in the
+/// key's mailbox and removes the entry — without it, a fire-and-forget spawn that never runs (a
+/// closed scope) or is aborted mid-`mcp_send` strands the mailbox with no owner, and every later
+/// call of the key parks forever behind a task that will never flush it.
+struct MailboxGuard {
+    route: std::sync::Arc<Route>,
+    key: String,
+}
+
+impl Drop for MailboxGuard {
+    fn drop(&mut self) {
+        let (parked, dead) = {
+            let mut state = self.route.state.lock_unpoisoned();
+            let parked = state
+                .mailbox
+                .remove(&self.key)
+                .map(|queue| queue.into_iter().collect::<Vec<_>>())
+                .unwrap_or_default();
+            (parked, state.dead)
+        };
+        if dead {
+            return;
+        }
+        let ids = parked
+            .iter()
+            .filter(|message| message.get("id").is_some())
+            .map(|message| message["id"].clone())
+            .collect::<Vec<_>>();
+        answer_parked(&self.route, &self.key, "the Node helper exited", ids);
+    }
+}
+
+async fn connect_mailbox(
+    helper: std::sync::Arc<NodeHelper>,
+    clock: std::sync::Arc<dyn rust_cli_kernel_api::clock::Clock>,
+    route: std::sync::Arc<Route>,
+    key: String,
+    workspace: Value,
+) {
+    // Dropped at EVERY exit of this task (including a scope abort at an await): the guard answers
+    // what is still parked in the key's mailbox and removes the entry.
+    let _orphan = MailboxGuard {
+        route: route.clone(),
+        key: key.clone(),
+    };
+    match workspace_pipe(&helper, clock.as_ref(), &route, &workspace, &key).await {
+        Ok(pipe) => {
+            // The mailbox empties through the pipe in arrival order; a message that arrives mid-flush parks behind
+            // what is still there, and the entry goes only under the same lock that finds it empty, so a cancel never
+            // overtakes its call, a later message never passes a parked one, and one that races the drain's end parks
+            // (the entry is still there) instead of being dropped with it.
+            loop {
+                let next = {
+                    let mut state = route.state.lock_unpoisoned();
+                    // The terminal Closed of a dead route already fails every in-flight call: the
+                    // drain stops there instead of sending more parked calls past the terminal event.
+                    if state.dead {
+                        state.mailbox.remove(&key);
+                        return;
+                    }
+                    let next = state
+                        .mailbox
+                        .get_mut(&key)
+                        .and_then(std::collections::VecDeque::pop_front);
+                    if next.is_none() {
+                        state.mailbox.remove(&key);
+                    }
+                    next
+                };
+                let Some(message) = next else {
+                    break;
+                };
+                let id = message.get("id").cloned();
+                if let Err(error) = helper.mcp_send(&pipe, message).await {
+                    // The pipe closed mid-flush (its close callback answered the ids it still held): answer what is
+                    // left — the failed message and the mailbox — and let the next call of the key reconnect.
+                    let mut ids = Vec::new();
+                    if let Some(id) = id {
+                        ids.push(id);
+                    }
+                    ids.extend(parked_ids(&route, &key));
+                    route
+                        .state
+                        .lock_unpoisoned()
+                        .workspaces
+                        .retain(|_, held| *held != pipe);
+                    answer_parked(&route, &key, &error.to_string(), ids);
+                    return;
+                }
+            }
+        }
+        Err(error) => {
+            answer_parked(&route, &key, &error.to_string(), parked_ids(&route, &key));
+        }
+    }
+}
+
+/// Takes the ids parked in `key`'s mailbox: its connect ended without a pipe for them to travel.
+fn parked_ids(route: &std::sync::Arc<Route>, key: &str) -> Vec<Value> {
+    route
+        .state
+        .lock_unpoisoned()
+        .mailbox
+        .remove(key)
+        .map(|mailbox| {
+            mailbox
+                .into_iter()
+                .filter_map(|message| message.get("id").cloned())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Answers ids a workspace key's connect failed for, or its pipe's flush could not send: each id still routed to `key`
+/// in `recent` — nobody answered it yet — is refused on the connection and forgotten, so no later close of the key's
+/// next pipe answers it twice. A dead route answers nothing: its terminal `Closed` fails every in-flight call, and an
+/// answer after it would break the stream's contract.
+fn answer_parked(route: &std::sync::Arc<Route>, key: &str, failure: &str, ids: Vec<Value>) {
+    for id in ids {
+        let answer = {
             let mut state = route.state.lock_unpoisoned();
-            if let Some(connected) = state.workspaces.get(key) {
-                return Ok(connected.clone());
-            }
-            // Fail fast inside the cooldown: a key whose connect keeps failing must not turn every
-            // call into a fresh Node-side spawn attempt that pays the whole CONNECT timeout.
-            let now = self.clock.now_ms();
-            if let Some((failure, at)) = state.failed.get(key).cloned()
-                && now.saturating_sub(at) < FAILED_CONNECT_COOLDOWN_MS
+            if state.dead {
+                false
+            } else if state
+                .recent
+                .key_of(&id.to_string())
+                .is_some_and(|held| held == key)
             {
-                return Err(closed(&failure));
-            }
-            state.failed.remove(key);
-        }
-        let closed = {
-            let route = route.clone();
-            let key = key.to_owned();
-            move |reason: Option<&str>| workspace_closed(&route, &key, reason)
-        };
-        let pipe = match self
-            .helper
-            .mcp_connect_pipe(
-                workspace,
-                &route.server,
-                route.events.clone(),
-                Some(Box::new(closed)),
-            )
-            .await
-        {
-            Ok(pipe) => pipe,
-            Err(error) => {
-                // Remember the failure for the cooldown, then surface it to this caller as-is.
-                route
-                    .state
-                    .lock_unpoisoned()
-                    .failed
-                    .insert(key.to_owned(), (error.to_string(), self.clock.now_ms()));
-                return Err(error);
+                state.recent.forget(&id);
+                true
+            } else {
+                false
             }
         };
-        if route.state.lock_unpoisoned().dead {
-            // The connection closed while this connect ran: its route is gone, so nothing would
-            // ever close this pipe. Close it here and fail the caller (it reconnects if the
-            // connection is opened again).
-            let _ = self.helper.mcp_close(pipe.as_str()).await;
-            return Err(McpError::Closed {
-                message: "the helper connection is closed".to_owned(),
-            });
+        if answer {
+            refused(&route.events, &id, failure.to_owned());
         }
-        route
-            .state
-            .lock_unpoisoned()
-            .workspaces
-            .insert(key.to_owned(), pipe.clone());
-        Ok(pipe)
     }
 }
 
@@ -688,6 +932,10 @@ struct RouteState {
     connecting: std::collections::HashMap<String, std::sync::Arc<tokio::sync::Semaphore>>,
     /// The recent id'd messages that took a workspace pipe, for their cancels and a closed pipe's answers.
     recent: RecentMessages,
+    /// Messages parked until their workspace key's connect resolves, in arrival order. An entry lives exactly while
+    /// the key's connect task runs ([`connect_mailbox`]): its presence is what parks the key's further messages and
+    /// the cancels of its parked calls, so a cancel never overtakes the call it cancels.
+    mailbox: std::collections::HashMap<String, std::collections::VecDeque<Value>>,
 }
 
 /// How many of a connection's recent messages the route remembers, to route a cancel after its call and answer the
@@ -697,6 +945,12 @@ const REMEMBERED_MESSAGES: usize = 1024;
 /// How long a failed workspace connect is remembered before a call may retry it. The own pipe's
 /// failures go through the MCP manager's reconnect policy; this is the workspace path's equivalent.
 const FAILED_CONNECT_COOLDOWN_MS: u64 = 30_000;
+
+/// How many sessions' workspaces the pipe-workspace cache keeps, oldest evicted first — the size of the neighboring
+/// recent-maps ([`REMEMBERED_CALLS`], [`REMEMBERED_MESSAGES`]): a desktop-continuous agent serves sessions without end,
+/// so an insert-only cache would grow for the process's life, and an evicted row is only re-resolved (a row never
+/// changes workspace), never wrong.
+pub(super) const REMEMBERED_WORKSPACES: usize = 1024;
 
 /// The workspace key each recent id'd message went to, oldest first. Keyed by the id as JSON text, the shape of a
 /// `notifications/cancelled` `requestId`.
@@ -734,23 +988,28 @@ impl RecentMessages {
         self.keys.get(id).map(|(_, key)| key.clone())
     }
 
-    /// Takes the ids whose calls went to `key`'s pipe (it closed: they are answered on the connection).
-    fn take_ids_of(&mut self, key: &str) -> Vec<Value> {
+    /// Takes the ids whose calls went to `key`'s pipe (it closed: they are answered on the connection), except the
+    /// ones still parked in `key`'s mailbox — those never traveled the pipe; the key's connect/flush task owns
+    /// answering them.
+    fn take_ids_of(&mut self, key: &str, except: &std::collections::HashSet<String>) -> Vec<Value> {
         let mut taken = Vec::new();
         self.order.retain(|text| match self.keys.get(text) {
-            Some((id, held)) if held == key => {
+            Some((id, held)) if held == key && !except.contains(text) => {
                 taken.push(id.clone());
                 false
             }
             _ => true,
         });
-        self.keys.retain(|_, (_, held)| held != key);
+        self.keys
+            .retain(|text, (_, held)| held != key || except.contains(text));
         taken
     }
 }
 
 /// A workspace pipe closed: its in-flight calls are answered on the connection's stream, and the next call of that
-/// workspace reconnects. Never ends the connection — only its own pipe's close does.
+/// workspace reconnects. Never ends the connection — only its own pipe's close does. The ids still parked in the key's
+/// mailbox are left to the key's connect/flush task — they never traveled the pipe it closed (a failed or abandoned
+/// connect drops its never-used pipe here first, and the task answers them with what actually failed).
 fn workspace_closed(route: &std::sync::Arc<Route>, key: &str, reason: Option<&str>) {
     let answered = {
         let mut state = route.state.lock_unpoisoned();
@@ -760,7 +1019,17 @@ fn workspace_closed(route: &std::sync::Arc<Route>, key: &str, reason: Option<&st
         if state.dead {
             Vec::new()
         } else {
-            state.recent.take_ids_of(key)
+            let parked: std::collections::HashSet<String> = state
+                .mailbox
+                .get(key)
+                .map(|mailbox| {
+                    mailbox
+                        .iter()
+                        .filter_map(|message| message.get("id").map(Value::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+            state.recent.take_ids_of(key, &parked)
         }
     };
     for id in answered {
@@ -850,42 +1119,67 @@ impl McpTransport for HelperRoutedMcp {
                 message: "the helper connection is closed".to_owned(),
             });
         }
-        // The pipe the message travels on: a session's call takes its workspace's pipe, a cancel follows its call,
-        // everything else (initialize, tools/list, answers to the server's requests) takes the own one. A session
-        // whose workspace cannot be resolved keeps the own pipe: its writer refuses the call fail-closed, exactly as
-        // its session open does.
+        // The pipe the message travels on: a session's call takes its workspace's pipe — parking in that key's
+        // mailbox while the pipe's connect runs as its own task, because Rust's MCP client awaits `send` before it
+        // watches a call's cancel — a cancel follows its call into its pipe or parks behind it, and everything else
+        // (initialize, tools/list, answers to the server's requests) takes the own one. A session whose workspace
+        // cannot be resolved keeps the own pipe: its writer refuses the call fail-closed, exactly as its session
+        // open does.
+        let mut message = message;
         let mut pipe = own.clone();
         let mut workspace_pipe = false;
         if let Some(session) = call_session(&message) {
             if let Ok((held, key)) = self.helper.pipe_workspace(session).await
                 && key != route.own_key
             {
-                match self.workspace_pipe(&route, &held, &key).await {
-                    Ok(connected) => {
-                        if let Some(id) = message.get("id") {
-                            route.state.lock_unpoisoned().recent.remember(id, &key);
-                        }
+                match self.park_or_pipe(&route, &key, &mut message) {
+                    ParkedOrPipe::Pipe(connected) => {
                         pipe = connected;
                         workspace_pipe = true;
                     }
-                    // The workspace's server never connected (it is not a helper plugin server there): the call is
-                    // answered on the connection instead of crossing in another workspace's pipe.
-                    Err(error) => {
-                        if let Some(id) = message.get("id") {
-                            refused(&route.events, id, error.to_string());
-                        }
+                    ParkedOrPipe::Parked { opened: true } => {
+                        drop(self.helper.spawner.spawn(
+                            "node-helper-workspace-connect",
+                            connect_mailbox(
+                                self.helper.clone(),
+                                self.clock.clone(),
+                                route.clone(),
+                                key,
+                                held,
+                            ),
+                        ));
                         return Ok(());
                     }
+                    // Parked behind the key's in-flight connect (its task flushes the mailbox), refused inside
+                    // the cooldown (answered in `park_or_pipe`), or the route died while the store-row answer ran
+                    // (the caller's dead-route refusal answers it): nothing of the call travels in `send`.
+                    ParkedOrPipe::Parked { opened: false }
+                    | ParkedOrPipe::Refused
+                    | ParkedOrPipe::Dead => return Ok(()),
                 }
             }
         } else if let Some(cancelled) = cancelled_request(&message) {
+            let mut parked = false;
             let followed = {
-                let state = route.state.lock_unpoisoned();
-                state
-                    .recent
-                    .key_of(&cancelled)
-                    .and_then(|key| state.workspaces.get(&key).cloned())
+                let mut state = route.state.lock_unpoisoned();
+                match state.recent.key_of(&cancelled) {
+                    // The cancelled call is still parked (or just left the mailbox): the cancel parks behind it,
+                    // so it never overtakes the call it cancels — the key's flush task sends both, in order.
+                    Some(key) => {
+                        if let Some(mailbox) = state.mailbox.get_mut(&key) {
+                            mailbox.push_back(std::mem::take(&mut message));
+                            parked = true;
+                            None
+                        } else {
+                            state.workspaces.get(&key).cloned()
+                        }
+                    }
+                    None => None,
+                }
             };
+            if parked {
+                return Ok(());
+            }
             if let Some(connected) = followed {
                 pipe = connected;
                 workspace_pipe = true;

@@ -1561,6 +1561,302 @@ async fn a_closed_workspace_pipe_answers_its_calls_and_the_connection_lives_on()
     );
 }
 
+/// The workspace of the first tool call, as the routed transport's pipe decision names it.
+fn one_workspace() -> Value {
+    json!({"workspacePath": "/home/One"})
+}
+
+/// F3: the first `tools/call` of a workspace key does not hold its cancel behind the key's connect. The connect runs as
+/// its own task and the call parks in the key's mailbox, so `send` returns while the connect is still in flight (Rust's
+/// MCP client awaits `send` before it watches a call's cancel); its cancel parks behind it, and both leave the
+/// workspace's pipe in order once the connect resolves.
+#[tokio::test(start_paused = true)]
+async fn a_workspaces_first_call_parks_instead_of_holding_its_cancel() {
+    use futures_util::StreamExt;
+    use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
+    use rust_cli_kernel_api::ids::EnvironmentId;
+    use rust_cli_kernel_api::mcp::{McpConnect, McpTransport, McpTransportConfig, NoMcpTransport};
+
+    // The workspace pipe's connect takes 2 s; everything else answers at once.
+    let sessions = pipes_with_sessions();
+    let gated = behaviour(move |_, method, params| {
+        if method == "helper/mcp/connect" && params["workspace"] == one_workspace() {
+            return Act::Delay {
+                after: Duration::from_secs(2),
+                result: json!({}),
+            };
+        }
+        sessions(0, method, params)
+    });
+    let rig = pipe_rig(gated);
+    let routed = HelperRoutedMcp::new(
+        Arc::new(NoMcpTransport),
+        rig.helper.clone(),
+        rig.clock.clone(),
+    );
+    let group = WorkspaceRef {
+        environment: EnvironmentId::new("primary"),
+        root: EnvPath::new("/w"),
+    };
+    let connection = routed
+        .connect(
+            &group,
+            McpConnect {
+                server: "plugin:a:s".to_owned(),
+                transport: McpTransportConfig::NodeHelper,
+            },
+        )
+        .await
+        .expect("connected");
+    let mut events = routed.events(&connection);
+    let cancel = json!({"jsonrpc": "2.0", "method": "notifications/cancelled",
+        "params": {"requestId": 2, "reason": "User interrupted"}});
+    let started = tokio::time::Instant::now();
+    routed
+        .send(&connection, helper_tool_call(2, "a"))
+        .await
+        .expect("the call is parked");
+    routed
+        .send(&connection, cancel.clone())
+        .await
+        .expect("the cancel is not held behind the connect");
+    // The connect task starts with the spawn (the sends returned without running it): let the runtime run it
+    // until its request is out, then hold there — paused time stays under the connect's 2 s, so it cannot have
+    // resolved, nothing of the call reached the helper, and neither send spent its connect's time.
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while received(&rig.fake, "helper/mcp/connect")
+            .iter()
+            .filter(|params| params["workspace"] == one_workspace())
+            .count()
+            < 1
+        {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the workspace's connect is in flight");
+    assert_eq!(
+        received(&rig.fake, "helper/mcp/connect")
+            .iter()
+            .filter(|params| params["workspace"] == one_workspace())
+            .count(),
+        1,
+        "one connect, still in flight"
+    );
+    assert!(
+        received(&rig.fake, "helper/mcp/send").is_empty(),
+        "the call and its cancel wait in the key's mailbox"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "neither send awaited the connect"
+    );
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    let satellite = received(&rig.fake, "helper/mcp/connect")
+        .iter()
+        .find(|params| params["workspace"] == one_workspace())
+        .and_then(|params| params["connection"].as_str())
+        .expect("the workspace's pipe")
+        .to_owned();
+    let on_satellite: Vec<Value> = received(&rig.fake, "helper/mcp/send")
+        .into_iter()
+        .filter(|params| params["connection"] == json!(satellite))
+        .map(|params| params["message"].clone())
+        .collect();
+    assert_eq!(
+        on_satellite,
+        [helper_tool_call(2, "a"), cancel],
+        "the call leaves first, its cancel follows it on the same pipe"
+    );
+    match tokio::time::timeout(Duration::from_secs(5), events.next()).await {
+        Ok(Some(rust_cli_kernel_api::mcp::McpTransportEvent::Message { message })) => {
+            assert_eq!(message["id"], json!(2));
+            assert!(message.get("error").is_none(), "{message:?}");
+        }
+        other => panic!("no answer for the parked call: {other:?}"),
+    }
+}
+
+/// F3: a workspace key whose connect fails answers its parked calls on the connection with the failure, and the 30 s
+/// cooldown refuses a later call of that key at once — no message of it reaches the helper, and no second connect runs.
+#[tokio::test(start_paused = true)]
+async fn a_failed_workspace_connect_answers_its_parked_calls_and_cools_down() {
+    use futures_util::StreamExt;
+    use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
+    use rust_cli_kernel_api::ids::EnvironmentId;
+    use rust_cli_kernel_api::mcp::{McpConnect, McpTransport, McpTransportConfig, NoMcpTransport};
+
+    let sessions = pipes_with_sessions();
+    let failing = behaviour(move |_, method, params| {
+        if method == "helper/mcp/connect" && params["workspace"] == one_workspace() {
+            return Act::Fail(RpcError::internal("MCP server failed to start"));
+        }
+        sessions(0, method, params)
+    });
+    let rig = pipe_rig(failing);
+    let routed = HelperRoutedMcp::new(
+        Arc::new(NoMcpTransport),
+        rig.helper.clone(),
+        rig.clock.clone(),
+    );
+    let group = WorkspaceRef {
+        environment: EnvironmentId::new("primary"),
+        root: EnvPath::new("/w"),
+    };
+    let connection = routed
+        .connect(
+            &group,
+            McpConnect {
+                server: "plugin:a:s".to_owned(),
+                transport: McpTransportConfig::NodeHelper,
+            },
+        )
+        .await
+        .expect("connected");
+    let mut events = routed.events(&connection);
+    routed
+        .send(&connection, helper_tool_call(7, "a"))
+        .await
+        .expect("parked");
+    routed
+        .send(
+            &connection,
+            json!({"jsonrpc": "2.0", "method": "notifications/cancelled",
+                "params": {"requestId": 7, "reason": "User interrupted"}}),
+        )
+        .await
+        .expect("parked behind its call");
+    match tokio::time::timeout(Duration::from_secs(5), events.next()).await {
+        Ok(Some(rust_cli_kernel_api::mcp::McpTransportEvent::Message { message })) => {
+            assert_eq!(message["id"], json!(7));
+            assert_eq!(message["error"]["code"], json!(-32603));
+            assert_eq!(
+                message["error"]["message"],
+                json!("MCP server failed to start")
+            );
+        }
+        other => panic!("no answer for the parked call: {other:?}"),
+    }
+    assert!(
+        !received(&rig.fake, "helper/mcp/send")
+            .iter()
+            .any(|params| params["message"] == helper_tool_call(7, "a")),
+        "the call never reaches the helper"
+    );
+
+    // The cooldown (the rig's clock never moves) refuses the next call of that key at once.
+    routed
+        .send(&connection, helper_tool_call(8, "a"))
+        .await
+        .expect("sent");
+    match tokio::time::timeout(Duration::from_secs(5), events.next()).await {
+        Ok(Some(rust_cli_kernel_api::mcp::McpTransportEvent::Message { message })) => {
+            assert_eq!(message["id"], json!(8));
+            assert_eq!(
+                message["error"]["message"],
+                json!("connection closed: MCP server failed to start")
+            );
+        }
+        other => panic!("no fail-fast answer: {other:?}"),
+    }
+    assert_eq!(
+        received(&rig.fake, "helper/mcp/connect")
+            .iter()
+            .filter(|params| params["workspace"] == one_workspace())
+            .count(),
+        1,
+        "no second connect inside the cooldown"
+    );
+}
+
+/// F3: the session → workspace cache is bounded — a desktop-continuous agent serves sessions without end, so an
+/// insert-only map would grow for the process's life. At the cap the oldest entry is evicted and only re-resolved
+/// (a row never changes workspace, so an eviction is never wrong).
+#[tokio::test]
+async fn the_session_workspace_cache_evicts_its_oldest_at_the_cap() {
+    /// Resolves `s<n>` to `/w/<n>`, counting each resolution.
+    struct CountingRows(Arc<AtomicUsize>);
+    #[async_trait]
+    impl HelperRequests for CountingRows {
+        async fn authorize_app_tool(
+            &self,
+            _params: Value,
+            _cancel: tokio_util::sync::CancellationToken,
+        ) -> Result<Value, RpcError> {
+            Err(RpcError::internal("not used"))
+        }
+
+        async fn sample_model(
+            &self,
+            _params: Value,
+            _cancel: tokio_util::sync::CancellationToken,
+        ) -> Result<Value, RpcError> {
+            Err(RpcError::internal("not used"))
+        }
+
+        fn session_delta(&self, _session: &str, _delta: Value) {}
+
+        async fn session_workspace(&self, session: &str) -> Option<Value> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            let n = session.strip_prefix("s")?.parse::<u64>().ok()?;
+            Some(json!({"workspacePath": format!("/w/{n}")}))
+        }
+    }
+
+    let rig = rig(fake(&["plugins/list"], echo()), timing());
+    let rows = Arc::new(CountingRows(Arc::new(AtomicUsize::new(0))));
+    let weak: Weak<dyn HelperRequests> = Arc::downgrade(&rows) as _;
+    rig.helper.set_requests(weak);
+    let resolutions = || rows.0.load(Ordering::SeqCst);
+    let session = |n: u64| format!("s{n}");
+    for n in 0..mcp::REMEMBERED_WORKSPACES as u64 {
+        let (_, key) = rig
+            .helper
+            .pipe_workspace(&session(n))
+            .await
+            .expect("resolved");
+        assert_eq!(key, format!("/w/{n}"));
+    }
+    assert_eq!(resolutions(), mcp::REMEMBERED_WORKSPACES);
+    // Inside the cap, a resolved session is served from the cache.
+    rig.helper
+        .pipe_workspace(&session(0))
+        .await
+        .expect("cached");
+    assert_eq!(resolutions(), mcp::REMEMBERED_WORKSPACES);
+    // One session beyond the cap evicts the oldest...
+    rig.helper
+        .pipe_workspace(&session(mcp::REMEMBERED_WORKSPACES as u64))
+        .await
+        .expect("resolved");
+    assert_eq!(resolutions(), mcp::REMEMBERED_WORKSPACES + 1);
+    // ...so it resolves again — and its re-insert at the cap evicts the next-oldest (s1), whose re-insert evicts
+    // its next-oldest in turn (s2), while a younger entry (s3) is still cached.
+    let (_, key) = rig
+        .helper
+        .pipe_workspace(&session(0))
+        .await
+        .expect("re-resolved");
+    assert_eq!(key, "/w/0");
+    assert_eq!(resolutions(), mcp::REMEMBERED_WORKSPACES + 2);
+    rig.helper
+        .pipe_workspace(&session(1))
+        .await
+        .expect("the next-oldest, re-resolved in turn");
+    assert_eq!(resolutions(), mcp::REMEMBERED_WORKSPACES + 3);
+    rig.helper
+        .pipe_workspace(&session(2))
+        .await
+        .expect("evicted by s1's re-insert, re-resolved in turn");
+    assert_eq!(resolutions(), mcp::REMEMBERED_WORKSPACES + 4);
+    rig.helper
+        .pipe_workspace(&session(4))
+        .await
+        .expect("cached");
+    assert_eq!(resolutions(), mcp::REMEMBERED_WORKSPACES + 4);
+}
+
 #[test]
 fn each_forwarded_method_uses_the_hosts_timeout_for_it() {
     let timing = Timing::default();
