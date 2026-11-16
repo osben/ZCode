@@ -8,7 +8,7 @@ use crate::ids::{EnvironmentId, MessageId, SessionId};
 use crate::message::{ContentBlock, Message, UserMessage, UserOrigin};
 use crate::model::ModelSelection;
 use crate::permission::PermissionMode;
-use crate::session_api::Command;
+use crate::session_api::{Command, ForkTarget};
 use crate::store::{ForkReceipt, SessionFork};
 
 fn round_trip<T>(value: &T) -> serde_json::Value
@@ -126,17 +126,9 @@ fn the_checkpoint_fork_is_not_a_command() {
     assert!(serde_json::from_value::<Command>(old).is_err());
 }
 
-#[test]
-fn forks_round_trip() {
-    // 按用户输入分叉（session-lifecycle.md §6.5.1，F75）。
-    let command = Command::ForkFromInput {
-        input: MessageId::new("msg_3"),
-    };
-    assert_eq!(
-        round_trip(&command),
-        json!({"type": "fork_from_input", "input": "msg_3"})
-    );
-    round_trip(&SessionFork {
+/// 无 execution 的分叉回执（`forks_round_trip` 的两侧共用一份底）。
+fn plain_fork() -> SessionFork {
+    SessionFork {
         parent: SessionId::new("sess_1"),
         child: SessionId::new("sess_2"),
         created_at_ms: 5,
@@ -148,7 +140,50 @@ fn forks_round_trip() {
         mode: PermissionMode::Default,
         plan: true,
         execution: None,
+    }
+}
+
+#[test]
+fn forks_round_trip() {
+    // 按用户输入分叉（session-lifecycle.md §6.5.1，F75）。
+    let command = Command::ForkFromInput {
+        input: MessageId::new("msg_3"),
+    };
+    assert_eq!(
+        round_trip(&command),
+        json!({"type": "fork_from_input", "input": "msg_3"})
+    );
+    // B1.3（specs/fork-rust-agent-parity.md）：按 assistant 分叉的两种形状 —— 无 target 的原样，
+    // 带 target 的进托管 worktree（Host 预分配的子 id + 执行根；target_cwd 缺省不序列化）。
+    assert_eq!(
+        round_trip(&Command::ForkFromAssistant {
+            assistant: MessageId::new("msg_7"),
+            target_cwd: None,
+        }),
+        json!({"type": "fork_from_assistant", "assistant": "msg_7"})
+    );
+    assert_eq!(
+        round_trip(&Command::ForkFromAssistant {
+            assistant: MessageId::new("msg_7"),
+            target_cwd: Some(ForkTarget {
+                child: SessionId::new("sess_9"),
+                root: EnvPath::new("/repo/.wt/task-1"),
+            }),
+        }),
+        json!({
+            "type": "fork_from_assistant",
+            "assistant": "msg_7",
+            "target_cwd": {"child": "sess_9", "root": "/repo/.wt/task-1"},
+        })
+    );
+    // execution 的 Some 一侧（B1.3）：子会话的执行 worktree 根随回执序列化 —— 裸字符串（EnvPath
+    // transparent），None 侧整个字段不出现（serde skip）。
+    let targeted_receipt = round_trip(&SessionFork {
+        execution: Some(EnvPath::new("/repo/.wt/task-1")),
+        ..plain_fork()
     });
+    assert_eq!(targeted_receipt["execution"], "/repo/.wt/task-1");
+    assert!(round_trip(&plain_fork()).get("execution").is_none());
     round_trip(&ForkReceipt { copied: 3 });
 }
 
