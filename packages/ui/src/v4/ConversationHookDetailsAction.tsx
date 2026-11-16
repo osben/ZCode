@@ -95,7 +95,7 @@ const HookDetailItemRow = memo(function HookDetailItemRow({ item }: { item: Hook
   const sourceLabel = intl.formatMessage({ id: `chat.hooks.source.${item.sourceKind}` });
   const durationLabel = item.durationMs === undefined ? null : formatHookDuration(item.durationMs);
   return (
-    <li className="min-w-0 px-3 py-1.5 text-ui-sm">
+    <li className="min-w-0 px-3 py-1.5 text-ui-sm" data-source-kind={item.sourceKind}>
       <div className="flex min-w-0 items-center gap-2">
         <span className="min-w-0 flex-1 break-words font-mono text-foreground">
           {item.eventName}
