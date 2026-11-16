@@ -20,7 +20,7 @@ pub use config::{
 };
 pub use manager::McpManager;
 pub use node_config::{NodeMcpServer, normalize_node_server, parse_node_servers};
-pub use parse::{expand_vars, merge_scopes, parse_servers, parse_servers_keeping};
+pub use parse::{EnvLookups, expand_vars, merge_scopes, parse_servers, parse_servers_keeping};
 pub use startup::{
     DEFAULT_CONNECT_WAIT_MS, DEFAULT_PREWAIT_MS, McpStartup, prewait_ms, required_servers,
     wait_for_deferrable,

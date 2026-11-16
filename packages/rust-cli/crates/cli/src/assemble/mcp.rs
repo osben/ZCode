@@ -4,8 +4,8 @@
 //! `--mcp-config` 是 `mcpServers` 的形状（`${VAR}` 展开）；文件经执行环境端口读。
 
 use rust_cli_ext::mcp::{
-    DEFAULT_CONNECT_WAIT_MS, McpScope, McpServer, McpSettings, McpStartup, parse_servers_keeping,
-    prewait_ms, required_servers, wait_for_deferrable,
+    DEFAULT_CONNECT_WAIT_MS, EnvLookups, McpScope, McpServer, McpSettings, McpStartup,
+    parse_servers_keeping, prewait_ms, required_servers, wait_for_deferrable,
 };
 
 use crate::assemble::mcp_machines::McpBindings;
@@ -207,7 +207,9 @@ impl Reader<'_> {
         };
         let lookup = |name: &str| self.snapshot.get(name).map(str::to_owned);
         let keep = |name: &str| self.bindings.machine(name).is_some();
-        let (servers, warnings) = parse_servers_keeping(table, scope, &lookup, &keep);
+        // 非插件的配置没有普通/敏感之分（Node 只在插件表里分），两套同一个查表。
+        let (servers, warnings) =
+            parse_servers_keeping(table, scope, &EnvLookups::same(&lookup), &keep);
         for warning in warnings {
             tracing::warn!(warning, "MCP configuration");
         }
