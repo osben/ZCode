@@ -393,8 +393,21 @@ impl SessionStore for MemoryStore {
                 Fact::ModelSelected { selection } => Some(selection.clone()),
                 _ => None,
             }),
-            mode: None,
-            plan: false,
+            // 执行状态也照库推导（node-store `state::execution`：最后一条 `runtime/execution_state` 整体覆盖，
+            // 否则退回 `ModeChanged`）；以前写死 None/false，会掩盖执行状态恢复的回归。
+            mode: facts.iter().rev().find_map(|fact| match fact {
+                Fact::ExecutionChanged { state } => Some(state.mode),
+                Fact::ModeChanged { mode } => Some(*mode),
+                _ => None,
+            }),
+            plan: facts
+                .iter()
+                .rev()
+                .find_map(|fact| match fact {
+                    Fact::ExecutionChanged { state } => Some(state.plan),
+                    _ => None,
+                })
+                .unwrap_or(false),
             checkpoints,
             // 最后一个批次之后的当前轮（node-store 按库推导；这里取最后一个带锚点的批次）。
             turn: self

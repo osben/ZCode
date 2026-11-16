@@ -160,9 +160,10 @@ async fn a_closed_session_leaves_the_kernel_and_reopens_with_a_new_actor() {
     again.view().await.unwrap();
 }
 
-/// 工作线 F140（performance.md §12.3）：缺省模型定下之前，建会话与开会话都等着（内核唯一的等待点）；定下后照常。
+/// 工作线 F140（performance.md §12.3）：缺省模型定下之前建会话等着（内核唯一的等待点）；开会话不等——
+/// DB109 之后重开的会话只认库里存的选择，打开路径不消费缺省，等它只会白挡住没存过选择的历史会话。
 #[tokio::test]
-async fn sessions_wait_for_the_default_model_to_settle() {
+async fn creates_wait_for_the_default_model_to_settle_and_opens_do_not() {
     let store = Arc::new(MemoryStore::default());
     let id = kernel(store.clone(), Arc::new(ScriptedModel::new(Vec::new())))
         .create_session(CreateSession {
@@ -199,14 +200,19 @@ async fn sessions_wait_for_the_default_model_to_settle() {
         let (late, id) = (late.clone(), id.clone());
         async move { late.open_session(&id).await.map(|_| ()) }
     });
-    // 单线程运行时：让出几次，两个任务都已跑到各自的等待点。
+    // 单线程运行时：让出几次，两个任务都跑过各自的入口。
     for _ in 0..16 {
         tokio::task::yield_now().await;
     }
-    assert!(!creating.is_finished() && !opening.is_finished());
+    // 打开不等缺省模型：它已经完成；建会话还在等。
+    tokio::time::timeout(std::time::Duration::from_secs(5), opening)
+        .await
+        .expect("an open does not wait for the default model")
+        .unwrap()
+        .unwrap();
+    assert!(!creating.is_finished());
     settle.settle(selection());
     creating.await.unwrap().unwrap();
-    opening.await.unwrap().unwrap();
 }
 
 /// Fork (node_desktop DB109, Node `resolveInitialRegistrySelection` 的 resume 分支)：重开会话只认库里存的

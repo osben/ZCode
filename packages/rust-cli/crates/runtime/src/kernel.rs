@@ -428,8 +428,8 @@ impl LocalKernel {
         start: StartSource,
         held: bool,
     ) -> Result<Arc<dyn SessionHandle>, KernelError> {
-        // 同 `create_session_as`：开会话也先等缺省模型定下。
-        self.defaults.selection.settled().await;
+        // 注意这里不等缺省模型（DB109 之后）：重开的会话只认库里存的选择，空缺不拿缺省补，
+        // 打开路径不消费缺省——等它只会白挡住没存过选择的历史会话（Node 的 resume 分支同样不等）。
         // 修复（F33，session-lifecycle.md §3.3.1）：以前表里有这个会话就直接给出句柄，它正在关闭时（actor 已退出、
         // 还没移出表）打开拿到的是死句柄，`view()` 报 `the session is closed`；两个并发的打开还会各自冷加载。现在
         // 关闭中、加载中的等它换掉；没有条目时登记 Loading，由这个调用冷加载（失败或被丢下时守卫移出 Loading）。
