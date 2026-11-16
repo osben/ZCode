@@ -194,17 +194,19 @@ impl McpManager {
         }
     }
 
-    /// Fork (PLM-LC-010, Node parity): waits until every server of this group that is on its FIRST connection has
-    /// settled (connected or failed), bounded by the connect wait. A workspace's layer loads and starts its group's
-    /// connections at the session's start without waiting ([`super::manager::McpManager::start`]), so the session's
-    /// first request would otherwise omit a freshly installed plugin's tools — the desktop's turn (Node
-    /// `toolSearchMode: "off"`) advertises them inline like Node's first request does. Print sessions keep the startup
+    /// Fork (PLM-LC-010, Node parity): a group's connections start without waiting
+    /// ([`super::manager::McpManager::start`] — the process set at `Ext::start`, a workspace layer's group at its
+    /// load), and a slot a later session reuses never loads again, so the *turn's* snapshot settles the first
+    /// connections (the trait method below); this inherent method is the body.
+    ///
+    /// Waits until every server of this group that is on its FIRST connection has settled (connected or failed),
+    /// bounded by the connect wait, and returns whether there was one to wait for. Print sessions keep the startup
     /// wait's own policy ([`Self::wait_for_print`]); deferred helper-hosted servers and later reconnects never wait
     /// here (their turns proceed; a call to a still-pending server waits at dispatch, `mcp_wait`).
-    pub async fn wait_for_first_connections(&self) {
+    pub async fn wait_for_first_connections(&self) -> bool {
         let inner = &self.0;
         if inner.print.load(std::sync::atomic::Ordering::Relaxed) {
-            return;
+            return false;
         }
         let first = |server: &Server| {
             matches!(
@@ -215,6 +217,9 @@ impl McpManager {
                 }
             ) && !server.deferred
         };
+        if !inner.check(|servers| servers.values().any(&first)) {
+            return false;
+        }
         let deadline = inner
             .clock
             .now_ms()
@@ -227,9 +232,10 @@ impl McpManager {
         {
             tracing::info!(
                 waited_ms = inner.settings.startup.connect_wait_ms,
-                "MCP servers of a workspace group not ready at the session's start; proceeding, background connection continues"
+                "MCP servers not ready for the turn's tool snapshot; proceeding, background connection continues"
             );
         }
+        true
     }
 }
 
@@ -256,6 +262,12 @@ impl McpConnections for McpManager {
 
     fn tool_wait_ms(&self) -> u64 {
         self.0.settings.connect_timeout_ms.min(TOOL_WAIT_CAP_MS)
+    }
+
+    /// Fork (PLM-LC-010, Node parity): the turn's tool snapshot settles this group's FIRST connections before it is
+    /// taken (see the inherent method; the kernel-api trait documents the contract).
+    async fn wait_for_first_connections(&self) -> bool {
+        McpManager::wait_for_first_connections(self).await
     }
 }
 

@@ -7,12 +7,13 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use rust_cli_base::models::{DEEPSEEK_V4_PRO, GLM_5_3};
 use rust_cli_kernel_api::abort::Abort;
+use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::manage::McpServerState;
-use rust_cli_kernel_api::mcp_state::McpView;
+use rust_cli_kernel_api::mcp_state::{McpConnections, McpView};
 use rust_cli_kernel_api::message::{AttachmentMessage, Message};
 use rust_cli_kernel_api::model::{ModelRequest, ModelSelection, QuerySource, SystemBlock};
 use rust_cli_kernel_api::orchestration::{
-    BuiltContext, ContextBuilder, ContextRequest, OrchestrationError,
+    BuiltContext, ContextBuilder, ContextRequest, OrchestrationError, ToolSnapshot,
 };
 use rust_cli_kernel_api::testing::{FakeTool, ScriptedModel, text_response, tool_use_response};
 use rust_cli_kernel_api::tool::Tool;
@@ -203,6 +204,135 @@ async fn wait_for_mcp_servers_is_sent_and_declared_without_tool_search() {
     .await;
     assert!(wire_names(&requests[0]).contains(&"WaitForMcpServers".to_owned()));
     assert!(registry.mcp.declared.lock().unwrap().is_empty());
+}
+
+/// The connections of a group whose first connection is still in flight (PLM-LC-010): the settle hook runs when the
+/// turn's snapshot calls it, and only the re-taken snapshot sees the server's tools.
+struct SettlingConnections {
+    view: Mutex<McpView>,
+    settles: AtomicUsize,
+    hook: Mutex<Option<Box<dyn Fn() + Send>>>,
+}
+
+impl SettlingConnections {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            view: Mutex::new(McpView {
+                servers: vec![server("plugin", McpServerState::Pending)],
+                instructions: Vec::new(),
+            }),
+            settles: AtomicUsize::new(0),
+            hook: Mutex::new(None),
+        })
+    }
+}
+
+#[async_trait]
+impl McpConnections for SettlingConnections {
+    fn view(&self) -> McpView {
+        self.view.lock().unwrap().clone()
+    }
+
+    async fn wait(
+        &self,
+        _wait_ms: u64,
+        _done: &(dyn for<'v> Fn(&'v McpView) -> bool + Send + Sync),
+    ) -> McpView {
+        self.view()
+    }
+
+    fn declare_wait_tool(&self, _session: &SessionId) {}
+
+    fn tool_wait_ms(&self) -> u64 {
+        10_000
+    }
+
+    async fn wait_for_first_connections(&self) -> bool {
+        self.settles.fetch_add(1, Ordering::SeqCst);
+        if let Some(hook) = self.hook.lock().unwrap().take() {
+            hook();
+        }
+        true
+    }
+}
+
+/// A registry over [`SettlingConnections`] whose late tool appears only after the settle.
+struct SettlingRegistry {
+    base: Vec<Arc<dyn Tool>>,
+    late: Mutex<Vec<Arc<dyn Tool>>>,
+    connections: Arc<SettlingConnections>,
+    snapshots: AtomicUsize,
+}
+
+impl rust_cli_kernel_api::testing::RegistryOverride for SettlingRegistry {
+    fn tools(&self) -> Vec<Arc<dyn Tool>> {
+        let mut tools = self.base.clone();
+        tools.extend(self.late.lock().unwrap().iter().cloned());
+        tools
+    }
+
+    fn find(&self, name: &str) -> Option<Arc<dyn Tool>> {
+        rust_cli_kernel_api::testing::RegistryOverride::tools(self)
+            .into_iter()
+            .find(|tool| tool.name() == name)
+    }
+
+    fn snapshot(&self, _session: &SessionId) -> ToolSnapshot {
+        self.snapshots.fetch_add(1, Ordering::SeqCst);
+        ToolSnapshot {
+            tools: rust_cli_kernel_api::testing::RegistryOverride::tools(self),
+            mcp: Some(self.connections.view()),
+        }
+    }
+
+    fn mcp(&self) -> Option<Arc<dyn McpConnections>> {
+        Some(self.connections.clone())
+    }
+}
+
+/// Fork (PLM-LC-010, Node parity): the turn's snapshot settles the session group's FIRST connections before it is
+/// taken, so the first request advertises a freshly loaded plugin's tool — only the snapshot re-taken after the
+/// settle sees it (`wait_for_first_connections` returned `true`).
+#[tokio::test]
+async fn the_snapshot_settles_first_connections_before_the_request() {
+    let connections = SettlingConnections::new();
+    let registry = Arc::new(SettlingRegistry {
+        base: vec![Arc::new(FakeTool::new("Echo", true, "echo")) as Arc<dyn Tool>],
+        late: Mutex::new(Vec::new()),
+        connections: connections.clone(),
+        snapshots: AtomicUsize::new(0),
+    });
+    const PLUGIN_TOOL: &str = "mcp__plugin__verify";
+    connections.hook.lock().unwrap().replace(Box::new({
+        let registry = registry.clone();
+        let connections = connections.clone();
+        move || {
+            registry.late.lock().unwrap().push(Arc::new(FakeTool::new(
+                PLUGIN_TOOL,
+                true,
+                "verify",
+            )));
+            let mut view = connections.view.lock().unwrap();
+            for server in &mut view.servers {
+                server.state = McpServerState::Connected;
+            }
+        }
+    }));
+    let scripted = Arc::new(ScriptedModel::new(vec![text_response(&["done"])]));
+    let mut parts = parts(scripted.clone(), Vec::new());
+    parts.tools = registry.clone();
+    let request = request("go");
+    let (run_scope, _) = scope(parts, &request, Abort::new());
+    crate::run::run(run_scope, request).await.unwrap();
+
+    let requests = scripted.requests();
+    assert!(wire_names(&requests[0]).contains(&PLUGIN_TOOL.to_owned()));
+    assert_eq!(
+        registry.snapshots.load(Ordering::SeqCst),
+        2,
+        "the snapshot was taken again after the settle"
+    );
+    assert_eq!(connections.settles.load(Ordering::SeqCst), 1);
 }
 
 /// Records every context request's `inject_agents_md`.

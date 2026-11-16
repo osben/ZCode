@@ -106,6 +106,16 @@ pub trait McpConnections: Send + Sync {
 
     /// 直接调用连接中服务器的工具时，一次模型响应里最多等多久（`min(MCP_TIMEOUT, 10000)` ms）。
     fn tool_wait_ms(&self) -> u64;
+
+    /// Fork (PLM-LC-010, Node parity): waits until every server of this group that is on its FIRST connection has
+    /// settled (connected or failed), bounded by the connect wait, and returns whether it waited — the turn's tool
+    /// snapshot ([`crate::orchestration::ToolRegistry::snapshot`]) calls this before it is taken, so a freshly loaded
+    /// plugin's tools are advertised in the very request that needs them, like Node's first request does. The default
+    /// is “nothing to settle” (registries whose connections have no first-connection state); a `true` tells the caller
+    /// to take the snapshot again.
+    async fn wait_for_first_connections(&self) -> bool {
+        false
+    }
 }
 
 #[cfg(test)]

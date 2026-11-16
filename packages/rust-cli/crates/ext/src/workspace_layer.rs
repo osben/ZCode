@@ -243,13 +243,6 @@ impl WorkspaceLayer {
         self.put_or_superseded(&key, workspace, epoch, install);
         self.finish(&key);
         claim.armed = false;
-        // Fork (PLM-LC-010, Node parity): the group this load just started settles its FIRST connections before the
-        // loading session proceeds, so the session's first request carries the freshly loaded plugins' tools
-        // ([`crate::mcp::McpManager::wait_for_first_connections`]); a reused slot returns above and never waits, and a
-        // reload keeps its caller's semantics.
-        if let Some(group) = self.mcp.group(&key) {
-            group.wait_for_first_connections().await;
-        }
     }
 
     /// Fork (specs/fork-rust-workspace-plugins-mcp.md, "As built: layer reload"): re-reads

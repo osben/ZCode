@@ -88,12 +88,15 @@ official cache and `installed_plugins.json` all live under the storage root
 2. `session/create` (or resume) with `params.workspace`: the server registers
    `SessionWorkspaces[session] = key(workspaceIdentity?.trim() || workspacePath)`.
 3. First snapshot/tool listing of that session: `WorkspacePluginLayer` misses → loader runs →
-   `Loaded` (start the workspace's MCP group) or `Invalid` (process set only, one warn log). A hit
-   serves from the map. Fork (PLM-LC-010, Node parity): a `Loaded` install settles the group's
-   FIRST connections (connected or failed, bounded by the connect wait; print sessions, deferred
-   helper-hosted servers and later reconnects excluded) before the loading session proceeds — the
+   `Loaded` (start the workspace's MCP group, no wait) or `Invalid` (process set only, one warn
+   log). A hit serves from the map. Fork (PLM-LC-010, Node parity): the settle lives at the turn's
+   boundary, not the load's — a group's connections start without waiting and a slot a later
+   session reuses never loads again, so the turn's tool snapshot (query `step.rs`) runs
+   `McpConnections::wait_for_first_connections` before it is taken (connected or failed, bounded
+   by the connect wait; print sessions keep `wait_for_print`'s policy, deferred helper-hosted
+   servers and later reconnects excluded) and takes the snapshot again when it waited — the
    desktop's first request (`toolSearchMode: "off"`) then advertises a freshly installed plugin's
-   tools inline, like Node's first request does; a slot reuse never waits again.
+   tools inline, like Node's first request does.
 4. Model turn: the session's tool snapshot, `SessionCatalog` (`mcp_servers`), WaitForMcpServers and
    ToolSearch read the session's group (the same snapshot path they read today, parity spec
    "session keeps a snapshot of the tool profile"), so they follow without new owners.

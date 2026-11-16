@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use rust_cli_kernel_api::mcp_state::McpView;
 use rust_cli_kernel_api::model::{ModelSelection, QuerySource};
-use rust_cli_kernel_api::orchestration::ContextRequest;
+use rust_cli_kernel_api::orchestration::{ContextRequest, ToolSnapshot};
 use rust_cli_kernel_api::provider::ModelCapabilities;
 use rust_cli_kernel_api::tool::Tool;
 use rust_cli_kernel_api::tool_names::WAIT_FOR_MCP_SERVERS;
@@ -35,7 +35,7 @@ impl StepTools {
     /// WaitForMcpServers；`system/init` 与 `/context` 用同一个函数，工作线 F131）。
     pub(crate) async fn refresh(scope: &RunScope, selection: &ModelSelection) -> Self {
         let capabilities = scope.parts.model.capabilities(selection).await;
-        let snapshot = scope.parts.tools.snapshot(&scope.session);
+        let snapshot = settled_snapshot(scope).await;
         // Fork: the running turn's limits (Node `getTurnTools`): an automation run hides the Cron mutation tools and its
         // disallowlist, other turns hide CronPauseSelf (specs/fork-rust-automations.md).
         let limits = scope.view().await.turn;
@@ -102,6 +102,23 @@ impl StepTools {
             mcp.declare_wait_tool(&scope.session);
         }
     }
+}
+
+/// The turn's snapshot, taken after the session's MCP group settled its FIRST connections
+/// ([`rust_cli_kernel_api::mcp_state::McpConnections::wait_for_first_connections`]; the snapshot is taken once more
+/// when the settle actually waited). Fork (PLM-LC-010, Node parity): the group's connections start without waiting
+/// (the process set at `Ext::start`, a workspace layer's group at its load — and a slot a later session reuses never
+/// loads again), so without this the turn's first request can omit a freshly loaded plugin's tools; the desktop's
+/// turn (Node `toolSearchMode: "off"`) advertises them inline like Node's first request does. A tool_use for a
+/// still-pending server already waits at dispatch (`mcp_wait`); the settle covers the advertisement, not the call.
+async fn settled_snapshot(scope: &RunScope) -> ToolSnapshot {
+    let snapshot = scope.parts.tools.snapshot(&scope.session);
+    if let Some(mcp) = scope.parts.tools.mcp_for(&scope.session)
+        && mcp.wait_for_first_connections().await
+    {
+        return scope.parts.tools.snapshot(&scope.session);
+    }
+    snapshot
 }
 
 #[cfg(test)]
