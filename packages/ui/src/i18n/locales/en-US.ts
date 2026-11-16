@@ -9303,6 +9303,9 @@ const enUS: Record<string, string> = {
   "voiceDictation.models.languages.showFewer": "Show fewer languages",
   "voiceDictation.models.streaming": "Streaming",
   "voiceDictation.models.license": "License: {license}",
+  "voiceDictation.models.curated": "Handy pick",
+  "voiceDictation.models.quant": "Quantization",
+  "voiceDictation.models.quantReady": "downloaded",
   "voiceDictation.models.download": "Download",
   "voiceDictation.models.cancel": "Cancel",
   "voiceDictation.models.use": "Use",
@@ -9329,6 +9332,10 @@ const enUS: Record<string, string> = {
     "Choose a transcription model in Settings → Voice dictation first.",
   "voiceDictation.openSettings": "Open settings",
   "voiceDictation.tooShort": "Recording too short. Keep recording until you finish speaking.",
+  "voiceDictation.silence.digital":
+    "No microphone signal was captured. Check the microphone permission or the selected input device.",
+  "voiceDictation.silence.tooQuiet":
+    "No voice detected. The microphone may be muted or too far away.",
   "voiceDictation.stillLoading":
     "The speech model was still loading. Start speaking once recording begins.",
   "voiceDictation.sessionBusyInOtherComposer":

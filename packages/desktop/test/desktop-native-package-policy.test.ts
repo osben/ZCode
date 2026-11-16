@@ -34,8 +34,8 @@ describe("desktop native package policy", () => {
     expect(patterns).toContain("!node_modules/@transcribe-cpp/linux-x64-*/**");
     expect(patterns).toContain("!node_modules/@transcribe-cpp/win32-x64-*/**");
     expect(patterns).not.toContain("!node_modules/@transcribe-cpp/darwin-arm64-*/**");
-    expect(patterns).toContain("!node_modules/koffi/build/koffi/**");
-    expect(patterns).toContain("node_modules/koffi/build/koffi/darwin_arm64/**");
+    expect(patterns).toContain("!node_modules/@koromix/koffi-*/**");
+    expect(patterns).toContain("node_modules/@koromix/koffi-darwin-arm64/**");
   });
 
   it("应接受仅包含目标平台且正确 unpack 的 native 资源", () => {
@@ -47,7 +47,7 @@ describe("desktop native package policy", () => {
         "unpack : /node_modules/@transcribe-cpp/darwin-arm64-metal/libtranscribe.dylib",
         "unpack : /node_modules/@transcribe-cpp/darwin-arm64-metal/libggml.dylib",
         "pack   : /node_modules/@transcribe-cpp/darwin-arm64-metal/contract.json",
-        "unpack : /node_modules/koffi/build/koffi/darwin_arm64/koffi.node",
+        "unpack : /node_modules/@koromix/koffi-darwin-arm64/darwin_arm64/koffi.node",
         "pack   : /node_modules/koffi/index.js",
       ].join("\n"),
     );
@@ -80,7 +80,7 @@ describe("desktop native package policy", () => {
       [
         "unpack : /node_modules/@transcribe-cpp/win32-x64-cpu-vulkan/transcribe.dll",
         "unpack : /node_modules/@transcribe-cpp/linux-x64-cpu-vulkan/libtranscribe.so",
-        "unpack : /node_modules/koffi/build/koffi/linux_x64/koffi.node",
+        "unpack : /node_modules/@koromix/koffi-linux-x64/linux_x64/koffi.node",
         "pack   : /node_modules/@transcribe-cpp/darwin-arm64-metal/libtranscribe.dylib",
       ].join("\n"),
     );
@@ -117,8 +117,8 @@ describe("desktop native package policy", () => {
         "@transcribe-cpp",
         "linux-x64-cpu-vulkan",
       );
-      const koffiTargetDir = join(stagingNodeModulesDir, "koffi", "build", "koffi", "darwin_arm64");
-      const koffiOtherDir = join(stagingNodeModulesDir, "koffi", "build", "koffi", "linux_x64");
+      const koffiTargetDir = join(stagingNodeModulesDir, "@koromix", "koffi-darwin-arm64");
+      const koffiOtherDir = join(stagingNodeModulesDir, "@koromix", "koffi-linux-x64");
       for (const dir of [transcribeTargetDir, transcribeOtherDir, koffiTargetDir, koffiOtherDir]) {
         mkdirSync(dir, { recursive: true });
       }

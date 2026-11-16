@@ -719,10 +719,10 @@ export default {
     // package via koffi; dlopen cannot read asar virtual paths, so native files must be unpacked to
     // app.asar.unpacked (the main process then points TRANSCRIBE_LIBRARY at the real path).
     // @transcribe-cpp platform package names carry a suffix (e.g. darwin-arm64-metal) and are matched by
-    // target platform prefix; koffi binary directory names use underscores (e.g. darwin_arm64). The files
-    // rules already prune the other platform directories.
+    // target platform prefix; koffi 3 ships its native addon inside one @koromix/koffi-<os>-<arch>
+    // package per platform. The files rules already prune the other platform packages.
     `node_modules/@transcribe-cpp/${targetPlatform.key}-*/**`,
-    `node_modules/koffi/build/koffi/${targetPlatform.os}_${targetPlatform.arch}/**`,
+    `node_modules/@koromix/koffi-${targetPlatform.key}/**`,
   ],
   beforePack: async (context) => {
     runTimedSync("beforePack:restoreTargetNodePtyPrebuild", () =>

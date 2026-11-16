@@ -11,15 +11,19 @@ import {
   VoiceTranscriber,
   type VoiceEngineModel,
 } from "../src/voice-dictation/voiceTranscriber.js";
-import { VOICE_MODEL_CATALOG } from "../src/voice-dictation/voiceModelCatalog.js";
+import {
+  VOICE_MODEL_CATALOG,
+  voiceModelQuantFile,
+} from "../src/voice-dictation/voiceModelCatalog.js";
 
-test("voice dictation service round-trips PCM bytes and model list over the RPC channel", async () => {
+test("voice dictation service round-trips PCM bytes, model list and quantization over the RPC channel", async () => {
   const dir = await mkdtemp(join(tmpdir(), "voice-rpc-test-"));
   try {
     const descriptor = VOICE_MODEL_CATALOG[0];
+    const file = voiceModelQuantFile(descriptor);
     const modelDir = join(dir, descriptor.id);
     await mkdir(modelDir, { recursive: true });
-    await writeFile(join(modelDir, descriptor.fileName), Buffer.alloc(descriptor.sizeBytes));
+    await writeFile(join(modelDir, file.fileName), Buffer.alloc(file.sizeBytes));
 
     const received: Array<{ isUint8Array: boolean; length: number; language?: string }> = [];
     const engine: VoiceEngineModel = {
@@ -68,13 +72,19 @@ test("voice dictation service round-trips PCM bytes and model list over the RPC 
 
     const models = await remote.listModels();
     assert.equal(
-      models.find((item) => item.descriptor.id === descriptor.id)?.state.status,
+      models.find((item) => item.descriptor.id === descriptor.id)?.states[descriptor.defaultQuant]
+        ?.status,
       "ready",
     );
 
     // 320 samples = 640 bytes of PCM16; after the RPC round-trip it should still be a Uint8Array and decode fully.
     const pcm = new Uint8Array(640);
-    const result = await remote.transcribe({ modelId: descriptor.id, pcm, language: "auto" });
+    const result = await remote.transcribe({
+      modelId: descriptor.id,
+      quant: descriptor.defaultQuant,
+      pcm,
+      language: "auto",
+    });
 
     assert.deepEqual(result, { text: "round trip", language: "en" });
     assert.deepEqual(received, [{ isUint8Array: true, length: 320, language: undefined }]);

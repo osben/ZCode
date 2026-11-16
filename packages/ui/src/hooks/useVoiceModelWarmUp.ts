@@ -41,6 +41,8 @@ export function useVoiceModelWarmUp({ enabled, scopeRef }: UseVoiceModelWarmUpOp
   const { settings } = useSettings();
   const voice = settings?.voiceDictation;
   const modelId = voice?.modelId ?? null;
+  // Per-model quantization choice; the throttle key includes it so a quant switch re-warms.
+  const quant = (modelId && voice?.quantByModel?.[modelId]) || undefined;
   const { idleUnloadMinutes, warmUpOnFocus } = resolveVoiceDictationPreferences(voice);
 
   const inFlightRef = useRef(false);
@@ -50,19 +52,20 @@ export function useVoiceModelWarmUp({ enabled, scopeRef }: UseVoiceModelWarmUpOp
   useEffect(() => {
     const scope = scopeRef.current;
     if (!enabled || !voiceDictationService || !warmUpOnFocus || !modelId || !scope) return;
+    const throttleKey = quant ? `${modelId}:${quant}` : modelId;
 
     const warmUp = async () => {
       if (hostUnsupportedRef.current || inFlightRef.current) return;
       const now = Date.now();
-      const last = lastWarmUpByModel.get(modelId);
+      const last = lastWarmUpByModel.get(throttleKey);
       if (last !== undefined && now - last < WARM_UP_THROTTLE_MS) return;
       inFlightRef.current = true;
-      lastWarmUpByModel.set(modelId, now);
+      lastWarmUpByModel.set(throttleKey, now);
       // The status dot must show the load while it runs, so the runtime poll runs at its active cadence.
       const releaseActivity = retainVoiceDictationRuntimeActivity();
       try {
         await applyIdleUnloadPreference(voiceDictationService, idleUnloadMinutes);
-        await voiceDictationService.warmUp({ modelId });
+        await voiceDictationService.warmUp({ modelId, quant });
       } catch (error) {
         if (isMissingMethod(error, "warmUp")) {
           hostUnsupportedRef.current = true;
@@ -81,5 +84,5 @@ export function useVoiceModelWarmUp({ enabled, scopeRef }: UseVoiceModelWarmUpOp
     scope.addEventListener("focusin", warmUp);
     if (scope.contains(document.activeElement)) void warmUp();
     return () => scope.removeEventListener("focusin", warmUp);
-  }, [enabled, idleUnloadMinutes, modelId, scopeRef, voiceDictationService, warmUpOnFocus]);
+  }, [enabled, idleUnloadMinutes, modelId, quant, scopeRef, voiceDictationService, warmUpOnFocus]);
 }

@@ -123,7 +123,7 @@
     "cheerio": "^1.0.0",
     "iconv-lite": "0.7.3",
     "jimp": "^1.6.1",
-    "koffi": "2.15.6",
+    "koffi": "3.0.2",
     "playwright-core": "1.59.1",
     "proxy-agent": "^8.0.2",
     "ripgrep": "0.3.1",

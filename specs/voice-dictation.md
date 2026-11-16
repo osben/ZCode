@@ -95,6 +95,16 @@ Applies to Desktop voice dictation. Web keeps the existing Desktop-only explanat
 - **Ghost preview.** For a runtime-verified streaming model, committed and tentative transcript text is drawn as ghost text at the caret ("Ghost preview").
 - Keep recording, transcribing, and idle visually distinct.
 - Models without verified streaming support keep record-then-transcribe: no ghost text, but the toolbar level meter and Cancel still show while recording.
+- **Model catalog and quantizations.** The catalog is generated from cjpais/Handy
+  (`scripts/sync-voice-model-catalog.mjs`): every `role:"asr"` model with per-quantization
+  sha256 trust anchors, `minEngine`, and a `curated` flag. Downloads, progress, readiness, and
+  engine loads are quantization-aware (`voiceDictation.quantByModel` in the fork sidecar keeps the
+  per-model choice); externally downloaded models are discovered in Handy's legacy models directory
+  AND HuggingFace hub caches (Handy >= 0.10 stores downloads in
+  `models--<org>--<repo>/snapshots/<revision>/`), always size+sha256-verified.
+- **Stop-time silence diagnostics.** A recording whose chunks are all digital silence (permission
+  off or wrong device) or whose peak stays below −50 dBFS ends with a specific message and is not
+  transcribed.
 
 ### Ghost preview
 
