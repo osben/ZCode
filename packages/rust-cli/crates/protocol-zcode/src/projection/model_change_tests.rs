@@ -242,3 +242,18 @@ fn the_using_marker_never_lands_after_the_child_s_first_turn() {
             .is_some_and(|id| id.starts_with("model-initial:"))
     }));
 }
+
+/// Fork (node_desktop DB109)：重开的会话没有存储的模型选择时，空 id 不是“上一个模型”。下一次真实
+/// 选模后的回合不画 `from` 为空的切换分隔线（Node 的冷恢复没有存储选择时也没有 `lastTurnModel`）。
+#[test]
+fn a_restored_session_without_a_selection_has_no_previous_model() {
+    let mut cold = view(vec![
+        user("msg_u1", "one"),
+        assistant("msg_a1", vec![ContentBlock::Text { text: "a".into() }]),
+    ]);
+    cold.selection = ModelSelection::new(String::new(), String::new());
+    let mut feed = Feed::new();
+    feed.projection = Projection::from_view(&cold, Followup::Queue, Vec::new());
+    select(&mut feed, "upstream", "pro", Some("high"));
+    assert!(markers(&turn(&mut feed, "turn_2")).is_empty());
+}

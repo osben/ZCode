@@ -246,6 +246,10 @@ pub fn mode_name(mode: PermissionMode) -> &'static str {
 }
 
 /// 会话配置（`sessionConfigStateSchema`）。
+///
+/// Fork (node_desktop DB109): `modelSelection` 是会话存的意图（Node 的种子 `cloneModelSelection`，没有时键不存在）。
+/// 恢复出的空选择（provider/model 为空）不写这个键——schema 对出现的 `modelSelection` 要求非空 id，写了会把整个
+/// 快照打爆；`provider` / `model` / `thought` 照 Node 的种子给空字符串。档位也只在有选择时给：空选择没有“当前模型”。
 pub fn config(
     current: &ModelSelection,
     mode: PermissionMode,
@@ -253,16 +257,20 @@ pub fn config(
     followup: Followup,
     levels: &[String],
 ) -> Value {
-    json!({
-        "modelSelection": selection(current),
+    let empty = current.provider.is_empty() || current.model.is_empty();
+    let mut config = json!({
         "provider": current.provider,
         "model": current.model,
         "thought": current.reasoning.clone().unwrap_or_default(),
-        "thoughtLevels": levels,
+        "thoughtLevels": if empty { &[] as &[String] } else { levels },
         "followupMode": followup.name(),
         "mode": mode_name(mode),
         "planEnabled": plan,
-    })
+    });
+    if !empty {
+        config["modelSelection"] = selection(current);
+    }
+    config
 }
 
 /// `autoCompactThresholdTokens` 是内核生效的自动压缩阈值（compact.md §2.3）；不会主动压缩时为 null。

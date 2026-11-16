@@ -387,9 +387,27 @@ impl SessionStore for MemoryStore {
             meta,
             messages,
             earlier,
-            model: None,
-            mode: None,
-            plan: false,
+            // 最后一次模型选择，像 node-store 的 `state::selection`（会话的恢复只认库里存的，测试替身以前永远给
+            // `None`，靠运行时的缺省补，掩盖了“没有选择的历史会话不得拿缺省当自己的选择”）。
+            model: facts.iter().rev().find_map(|fact| match fact {
+                Fact::ModelSelected { selection } => Some(selection.clone()),
+                _ => None,
+            }),
+            // 执行状态也照库推导（node-store `state::execution`：最后一条 `runtime/execution_state` 整体覆盖，
+            // 否则退回 `ModeChanged`）；以前写死 None/false，会掩盖执行状态恢复的回归。
+            mode: facts.iter().rev().find_map(|fact| match fact {
+                Fact::ExecutionChanged { state } => Some(state.mode),
+                Fact::ModeChanged { mode } => Some(*mode),
+                _ => None,
+            }),
+            plan: facts
+                .iter()
+                .rev()
+                .find_map(|fact| match fact {
+                    Fact::ExecutionChanged { state } => Some(state.plan),
+                    _ => None,
+                })
+                .unwrap_or(false),
             checkpoints,
             // 最后一个批次之后的当前轮（node-store 按库推导；这里取最后一个带锚点的批次）。
             turn: self
