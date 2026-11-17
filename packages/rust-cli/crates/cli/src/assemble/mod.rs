@@ -171,6 +171,8 @@ pub(crate) struct Controller {
     pub(crate) desktop_context: bool,
     /// Fork: the desktop Host's automation store (app-server only; specs/fork-rust-automations.md, slice 2).
     pub(crate) automation: Option<Arc<dyn rust_cli_kernel_api::automation::AutomationPort>>,
+    /// Fork: the Host's off-peak store, given by the app-server (specs/fork-rust-automations.md, slice 3).
+    pub(crate) off_peak: Option<Arc<dyn rust_cli_kernel_api::off_peak::OffPeakPort>>,
     /// Fork: the Host's topic resources (`ReadTopicResource`, specs/fork-rust-topic-resource.md); only the app-server.
     pub(crate) topic_resources: Option<Arc<dyn TopicResources>>,
     /// Fork: the language-server runtime (specs/fork-rust-lsp.md); only the app-server sets it, after opening the store.
@@ -200,6 +202,7 @@ impl Controller {
             node_desktop: false,
             desktop_context: false,
             automation: None,
+            off_peak: None,
             topic_resources: None,
             code_intelligence: None,
             node_helper: None,
@@ -230,6 +233,7 @@ impl Controller {
             node_desktop: false,
             desktop_context: false,
             automation: None,
+            off_peak: None,
             topic_resources: None,
             code_intelligence: None,
             node_helper: None,
@@ -264,6 +268,7 @@ impl Controller {
             node_desktop: true,
             desktop_context,
             automation: Some(automation),
+            off_peak: None,
             topic_resources: Some(topic_resources),
             code_intelligence: None,
             node_helper: None,
@@ -734,6 +739,7 @@ pub(crate) async fn kernel(
     }
     // The runtime derives `/loop` hiding and the storeless local cron from this port.
     extensions.automation = spec.automation.clone();
+    extensions.off_peak = spec.off_peak.clone();
     extensions.topic_resources = spec.topic_resources.clone();
     // Fork (F3b(b), specs/fork-rust-node-helper.md): the Node helper holds the app-provided tools of its sessions.
     extensions.app_tools = spec

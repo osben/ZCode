@@ -276,6 +276,103 @@ Not built (layer B): `v4/offPeak/lifecycle` notifications, `v4/conversation/offP
 before), the ticket authority and model binding, takeover, and the session's off-peak record. The
 `offPeakToolEnabled` create and resume flags are accepted and ignored, as before.
 
+### Slice 3 layer B: decision needed before the model binding
+
+Decision (2026-11-17): **option 1, the per-call override**, approved by the user. The model request gains an optional
+ticket field, default `None`. `request_auth` takes an early branch when it is set. The wait, `replace_ticket` and retry
+state stays in the agent. Ordinary turns are unchanged. The policy flip is the last commit, and only if the whole slice
+works.
+
+Status: the decision is recorded. The independent parts (lifecycle, notifications, control, registration) and the
+binding are built on `feat/rust-offpeak-slice3-b`. The note below is the original options analysis.
+
+**As built (binding, commit `8217f9f28`).** `kernel-api/src/off_peak_ticket.rs` defines `OffPeakTicketSource`
+(`acquire`, `refused_as_expired`, `expired`) and `TicketSource`, carried by `RequestOptions.off_peak_ticket`
+(`#[serde(skip)]`, identity equality, so traces and queued inputs never carry it). `EndpointQuery.ticket` is `None`
+for every ordinary request. Platform `endpoint()` takes the ticket's credentials before the ordinary source; with no
+credentials of its own it falls through to the ordinary source (Node `requestAuth ?? source`) and names the ticket in
+`x-off-peak-ticket-id`. The transport's `Connect::fail` renews an attempt refused as expired (Head phase only, before
+any output): `expired(ticket_id)`, then re-resolve on the renewed ticket, then resend. The renewal consumes no retry
+budget and is reported as a `Retrying` notice with delay 0 at the same attempt number.
+
+Divergences kept: the renewal is a `Retrying` notice (Node emits lifecycle `waiting_ticket` instead); a refusal
+after output was delivered is not renewed (Node: `delivered` rethrows); `refused_as_expired` checks the run's
+provider and code, so the provider id is matched by the source, not by the transport.
+
+**As built (run, turn hooks, ticket source).** `protocol-zcode/src/off_peak_ticket.rs` (`RunTickets`) is the run's
+`OffPeakTicketSource`: `acquire` waits on the run's lifecycle (a `Notify` woken on every change) until the ticket is
+usable, then returns its id and the credentials of its `replace_ticket` (None for the start ticket). `expired` runs
+Node `ticketExpired`: a stale ticket retries at once, a current one waits for the renewal; a cancel fails the waiters
+with `off_peak_cancelled`. `refused_as_expired` matches the run's provider and its `providerErrorCode` or 3102/3106.
+
+A `sendText` carrying `modelExecution.offPeak` is admitted as a pending run (`admit_off_peak_run`: it needs a model and
+an `offPeakTaskId`, else `off_peak_execution_identity_missing`; a session with an open run refuses it). The run opens when
+its turn starts (`turn_started`, Node `prepareOffPeakTurn`), so an input refused after admission, or dropped from the
+queue, opens nothing and blocks nothing. `firstInput` and `startNow` carrying `modelExecution.offPeak` are refused (not
+ported; refusal rather than a model without a ticket). A queued off-peak input's edited model is the run's model, and
+its edited provider the run's provider (`set_pending_provider`).
+
+Takeover is removed: no Rust caller existed, so the lifecycle has no `user_owned` state and no `UserTakeover` event.
+
+Divergences kept: the run's background tasks and queued notifications are not observed (the work snapshot is empty at
+turn end); the run opens at admission, not at turn start; the renewal is a `Retrying` notice (Node emits
+`waiting_ticket`).
+
+Subagents: a child run inherits its parent run's off-peak execution (`RunInfo.off_peak_execution` recorded from the
+request, `LiveAgent.off_peak_execution` set by the Agent tool, `QueryRequest.off_peak_execution` on the child), nested
+children included. The port resolves the open run by execution from any session, so a child is sent on the run's ticket;
+an ended run gives none.
+
+Selection: an off-peak input's model travels in its turn limits (`TurnLimits.off_peak_selection`) and becomes that turn's
+request selection (`main_request`). `submitted_execution` persists no selection for an off-peak input, so the session's
+model, and the next ordinary turn's, is the user's own. Test: `an_off_peak_input_does_not_persist_its_model`.
+
+Policy flip (last): `workspace/updateOffPeakToolPolicy` stores the policy and answers `enabled` as stored (Node
+`appRuntimePreferences.offPeakToolEnabled`). The off-peak tools follow it for sessions without their own
+`offPeakToolEnabled` flag (`OffPeakRuns::tools_enabled`); the port refuses a session whose tools are off.
+
+Known gap (not in this slice): the off-peak tools are registered for every session in the app-server, so the model sees
+OffPeakCreate and OffPeakList even when the policy is off; a call is refused with "not enabled". Node registers them only
+when enabled. Gating registration per session needs the tool list to know the session (follow-up).
+
+What is blocked: an off-peak run's model requests must carry the ticket (`x-off-peak-ticket-id`, request auth from
+`modelExecution.requestAuth`), wait for a ticket when none is held, retry on the ticket-expired code
+(`ticket_needed`, then `replace_ticket` resumes the waiting request), and fall back on takeover. Node does this in
+`core/src/runtime/off-peak/model-binding.ts` (`OffPeakTicketAuthority.createBinding`, a model wrapper that retries on
+`providerErrorCode`) and `lifecycle.ts`.
+
+What exists in zcode-rs: request auth is resolved per provider template in `platform/src/lib.rs` `request_auth`
+(`Access::Account` and `Access::ChatGpt` go to the Host's `HeaderSource` with `HeaderRequest { selection, access,
+session, rejected_fingerprint }`; everything else uses `credential`). There is no turn-scoped override. The header
+source is keyed by session and selection only, so it cannot tell an off-peak attempt from an ordinary one on the same
+session. No per-turn model wrapper exists either.
+
+Options:
+
+1. **Per-call override parameter (recommended).** Add `ticket: Option<OffPeakAuthOverride>` to the model request
+   (the `request_auth` call site), default `None`. When set, `request_auth` returns the override's headers and key and
+   skips the template path. The agent-side authority (wait, replace, retry on the expired code) is a wrapper created
+   per off-peak turn, which sets the override on each attempt. Ordinary turns pass `None` and see no change. Cost: a
+   new field on the model request type and one early branch in `request_auth`; both are shared-path edits, but each is
+   inert for `None`.
+2. **Host-resolved ticket.** Extend `HeaderRequest` with a ticket reference and let the Host's header source return
+   the ticket headers and wait for a replacement inside `request_auth`. Less agent code, but the wait and the replace
+   protocol move into the Host round trip, and the agent's lifecycle state (`ticket_needed`, `replace_ticket`) would
+   still need to observe it. Couples the model path to the Host's timing.
+3. **Turn-scoped task-local.** Set a task-local override around the turn's model calls and read it in `request_auth`.
+   No signature changes, but implicit state crosses the model path, and a subagent or a background task on the same
+   task would inherit it. Rejected on that ground.
+
+Recommendation: option 1. It keeps the authority in the agent, as Node does, and changes the shared path only by an
+inert optional field. Before coding, confirm: (a) the model request type may gain an optional field, and (b) the
+replace/wait state lives in the agent (not the Host).
+
+Independent of this decision, the lifecycle state machine (Node `lifecycle.ts`), the `v4/offPeak/lifecycle`
+notifications, `v4/conversation/offPeakControl` (`cancel` and `replace_ticket` route to the matching execution by
+`sessionId` and `executionId`), registration (`Extensions.off_peak`, the app-server wiring of `HostOffPeak`,
+`offPeakToolEnabled` honoured, incognito and subagent exclusion) could be built first. The policy flip stays last and
+waits for the model binding.
+
 ## Not ported (stay `-32601`)
 
 - `session/send`: on the automation path it is only the Host's attachment fallback. Node's legacy `session/send`

@@ -60,6 +60,8 @@ import {
   commandsQueryParamsSchema,
 } from "../../packages/shared/src/zcode-protocol-v4/command.ts";
 import { sessionsIndexReconcileParamsSchema } from "../../packages/shared/src/zcode-protocol-v4/sessions-index.ts";
+// The off-peak control the Host sends a run (specs/fork-rust-automations.md, slice 3).
+import { offPeakControlParamsSchema } from "../../packages/shared/src/off-peak-execution.ts";
 import { credentialCipherReplySchema } from "../../packages/shared/src/validation.ts";
 import { subagentRuntimeConfigSchema } from "../../packages/shared/src/subagent-runtime-config.ts";
 import {
@@ -110,6 +112,7 @@ const METHODS = {
   "workspace/updateInteractionPreferences": zcodeWorkspaceUpdateInteractionPreferencesParamsSchema,
   "workspace/updateModelIoPreferences": zcodeWorkspaceUpdateModelIoPreferencesParamsSchema,
   "workspace/updateOffPeakToolPolicy": zcodeWorkspaceUpdateOffPeakToolPolicyParamsSchema,
+  "v4/conversation/offPeakControl": offPeakControlParamsSchema,
 };
 // Replies to the agent's own requests that zcode-rs validates.
 const REPLIES = {

@@ -482,6 +482,8 @@ async fn run_loop(
         default_machine: agent.machine.clone(),
         // Fork: the run carries the definition's `injectAgentsMd` into its compaction too (rule 15).
         inject_agents_md: agent.definition.inject_agents_md,
+        // Fork (slice 3 layer B): a subagent inside an off-peak turn is sent on that run's ticket, nested ones too.
+        off_peak_execution: agent.off_peak_execution.clone(),
         ..QueryRequest::new(
             agent.child.clone(),
             core.ports.ids.run(),

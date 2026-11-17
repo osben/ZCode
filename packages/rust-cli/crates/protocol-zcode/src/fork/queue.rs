@@ -189,9 +189,18 @@ pub(super) async fn edit_queue_item(
             attachments,
         },
     };
+    let edited_provider = crate::commands::selection(body.model_selection.as_ref())
+        .map(|selection| selection.provider);
     let kernel = send(live.handle.as_ref(), &envelope.command_id, command).await;
     match kernel {
         KernelAck::Accepted { .. } => {
+            // Fork (slice 3 layer B): an admitted off-peak input's run takes the edited model's provider when it opens.
+            if let Some(provider) = edited_provider {
+                server
+                    .context
+                    .off_peak
+                    .set_pending_provider(source, &provider);
+            }
             if let Some(attachments) = body.attachments {
                 live.sink.set_queued_attachments(source, attachments).await;
             }
