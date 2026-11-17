@@ -358,5 +358,278 @@
       "reasonWithoutStatus": "server_error",
       "retryableWithoutStatus": true
     }
-  ]
+  ],
+  "fallbackByStatus": [
+    {
+      "code": "1210",
+      "status": null,
+      "reason": "unknown",
+      "retryable": false
+    },
+    {
+      "code": "1210",
+      "status": 400,
+      "reason": "invalid_request",
+      "retryable": false
+    },
+    {
+      "code": "1210",
+      "status": 401,
+      "reason": "auth_failed",
+      "retryable": false
+    },
+    {
+      "code": "1210",
+      "status": 403,
+      "reason": "auth_failed",
+      "retryable": false
+    },
+    {
+      "code": "1210",
+      "status": 404,
+      "reason": "invalid_request",
+      "retryable": false
+    },
+    {
+      "code": "1210",
+      "status": 422,
+      "reason": "invalid_request",
+      "retryable": false
+    },
+    {
+      "code": "1210",
+      "status": 429,
+      "reason": "rate_limited",
+      "retryable": true
+    },
+    {
+      "code": "1210",
+      "status": 500,
+      "reason": "server_error",
+      "retryable": true
+    },
+    {
+      "code": "1210",
+      "status": 503,
+      "reason": "server_error",
+      "retryable": true
+    },
+    {
+      "code": "1211",
+      "status": null,
+      "reason": "unknown",
+      "retryable": false
+    },
+    {
+      "code": "1211",
+      "status": 400,
+      "reason": "invalid_request",
+      "retryable": false
+    },
+    {
+      "code": "1211",
+      "status": 401,
+      "reason": "auth_failed",
+      "retryable": false
+    },
+    {
+      "code": "1211",
+      "status": 403,
+      "reason": "auth_failed",
+      "retryable": false
+    },
+    {
+      "code": "1211",
+      "status": 404,
+      "reason": "invalid_request",
+      "retryable": false
+    },
+    {
+      "code": "1211",
+      "status": 422,
+      "reason": "invalid_request",
+      "retryable": false
+    },
+    {
+      "code": "1211",
+      "status": 429,
+      "reason": "rate_limited",
+      "retryable": true
+    },
+    {
+      "code": "1211",
+      "status": 500,
+      "reason": "server_error",
+      "retryable": true
+    },
+    {
+      "code": "1211",
+      "status": 503,
+      "reason": "server_error",
+      "retryable": true
+    },
+    {
+      "code": "1213",
+      "status": null,
+      "reason": "unknown",
+      "retryable": false
+    },
+    {
+      "code": "1213",
+      "status": 400,
+      "reason": "invalid_request",
+      "retryable": false
+    },
+    {
+      "code": "1213",
+      "status": 401,
+      "reason": "auth_failed",
+      "retryable": false
+    },
+    {
+      "code": "1213",
+      "status": 403,
+      "reason": "auth_failed",
+      "retryable": false
+    },
+    {
+      "code": "1213",
+      "status": 404,
+      "reason": "invalid_request",
+      "retryable": false
+    },
+    {
+      "code": "1213",
+      "status": 422,
+      "reason": "invalid_request",
+      "retryable": false
+    },
+    {
+      "code": "1213",
+      "status": 429,
+      "reason": "rate_limited",
+      "retryable": true
+    },
+    {
+      "code": "1213",
+      "status": 500,
+      "reason": "server_error",
+      "retryable": true
+    },
+    {
+      "code": "1213",
+      "status": 503,
+      "reason": "server_error",
+      "retryable": true
+    },
+    {
+      "code": "1214",
+      "status": null,
+      "reason": "unknown",
+      "retryable": false
+    },
+    {
+      "code": "1214",
+      "status": 400,
+      "reason": "invalid_request",
+      "retryable": false
+    },
+    {
+      "code": "1214",
+      "status": 401,
+      "reason": "auth_failed",
+      "retryable": false
+    },
+    {
+      "code": "1214",
+      "status": 403,
+      "reason": "auth_failed",
+      "retryable": false
+    },
+    {
+      "code": "1214",
+      "status": 404,
+      "reason": "invalid_request",
+      "retryable": false
+    },
+    {
+      "code": "1214",
+      "status": 422,
+      "reason": "invalid_request",
+      "retryable": false
+    },
+    {
+      "code": "1214",
+      "status": 429,
+      "reason": "rate_limited",
+      "retryable": true
+    },
+    {
+      "code": "1214",
+      "status": 500,
+      "reason": "server_error",
+      "retryable": true
+    },
+    {
+      "code": "1214",
+      "status": 503,
+      "reason": "server_error",
+      "retryable": true
+    },
+    {
+      "code": "1301",
+      "status": null,
+      "reason": "unknown",
+      "retryable": false
+    },
+    {
+      "code": "1301",
+      "status": 400,
+      "reason": "invalid_request",
+      "retryable": false
+    },
+    {
+      "code": "1301",
+      "status": 401,
+      "reason": "auth_failed",
+      "retryable": false
+    },
+    {
+      "code": "1301",
+      "status": 403,
+      "reason": "auth_failed",
+      "retryable": false
+    },
+    {
+      "code": "1301",
+      "status": 404,
+      "reason": "invalid_request",
+      "retryable": false
+    },
+    {
+      "code": "1301",
+      "status": 422,
+      "reason": "invalid_request",
+      "retryable": false
+    },
+    {
+      "code": "1301",
+      "status": 429,
+      "reason": "rate_limited",
+      "retryable": true
+    },
+    {
+      "code": "1301",
+      "status": 500,
+      "reason": "server_error",
+      "retryable": true
+    },
+    {
+      "code": "1301",
+      "status": 503,
+      "reason": "server_error",
+      "retryable": true
+    }
+  ],
+  "fallbackGenerator": "apps/zcode-cli/packages/adapters/src/model/failure-classifier.ts classifyProviderBusinessFailure, for the five unmapped zhipu codes (1210, 1211, 1213, 1214, 1301) at each HTTP status; status null = no status"
 }

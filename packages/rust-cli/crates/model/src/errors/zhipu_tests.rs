@@ -224,7 +224,6 @@ fn unnamed_frames_with_codes_are_errors() {
     assert!(frame(json!({"type": "message_delta"})).is_none());
 }
 
-/// 结束原因：`sensitive` 是内容拦截，`network_error` 是流内的网络失败；别的值照通用表。
 /// Node `context.providerCode` is the numeric business code as a string (error-payload.ts `readCode`), with the
 /// status when the failure has one.
 #[test]
@@ -269,6 +268,7 @@ fn table_codes_keep_the_provider_code_and_status() {
     );
 }
 
+/// 结束原因：`sensitive` 是内容拦截，`network_error` 是流内的网络失败；别的值照通用表。
 #[test]
 fn finish_reasons_of_the_vendor() {
     assert_eq!(

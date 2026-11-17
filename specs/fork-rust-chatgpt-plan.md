@@ -204,6 +204,20 @@ Acceptance:
 | P7  | Every zhipu and plan code, at 429 and without a status       | classify   | `reason` and `retryable` equal the Node fixture row                                       |
 | P8  | A 429 for codes 1210, 1211, 1213, 1214, 1301                 | classify   | `rate_limited`, retryable; without a status `unknown`, not retryable                      |
 
+Rules added in review (2026-11-17):
+
+- An unmapped zhipu code on a response keeps the protocol's class and names the provider code with the status ladder
+  (`zhipu::attach_unmapped`), as the stream form does. Node attaches every code it reads (`readCode`).
+- The five unmapped zhipu codes follow Node's `classifyProviderBusinessFailure` by HTTP status: 401/403 `auth_failed`
+  (not retryable), 400/404/422 `invalid_request` (not retryable), 429 `rate_limited` (retryable), 5xx `server_error`
+  (retryable), others `unknown`; no status is `unknown` (not retryable). Fixture rows `fallbackByStatus`.
+- A plan code's `providerKind` follows the wire protocol (`anthropic`, `openai`, `openai-compatible`), not a constant.
+- The usage record's `error_type` is the classification's kind (`rate_limited`, ...), never `provider`, and its
+  `retryable` is the provider's own value when the failure carries one.
+- Not in scope, recorded as a gap: generic (non-business) model failures carry no `lastError.attribution`. Node attaches
+  `exceptionKind: "api_call"` and the same context to every classified failure. Doing that changes every failed turn's
+  `lastError`, so it needs its own Node goldens per error kind.
+
 Not verified here: the banner E2E (none exists in the repo) and a live ChatGPT account.
 
 ## Acceptance

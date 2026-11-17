@@ -370,10 +370,9 @@ pub(crate) async fn run(
         let responded = match respond(&scope, &mut history, request, state.responses).await {
             // 上下文超限的反应式压缩排在其他恢复分支之前（query.md §1）；压缩成功就重发，不计轮数。
             Err(QueryError::Model(error)) if error.prompt_too_long_message().is_some() => {
-                let message = error
-                    .prompt_too_long_message()
-                    .unwrap_or_default()
-                    .to_owned();
+                let Some(message) = error.prompt_too_long_message().map(str::to_owned) else {
+                    return Err(QueryError::Model(error));
+                };
                 if state
                     .compaction
                     .after_prompt_too_long(

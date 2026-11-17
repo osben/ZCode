@@ -1471,6 +1471,66 @@ fn a_provider_failure_names_its_code_in_last_error() {
     );
 }
 
+/// Fork: Node omits `statusCode` for a stream error, and `providerId` / `modelId` when the selection is unknown; the
+/// projection must not write those keys as null (golden: `zhipu_1113_stream_no_status`).
+#[test]
+fn a_stream_error_without_a_selection_omits_the_status_and_the_ids() {
+    use rust_cli_kernel_api::model::ProviderFailure;
+    fn last_error(deltas: &[Value]) -> Value {
+        fn find(value: &Value) -> Option<Value> {
+            match value {
+                Value::Object(map) => map
+                    .get("lastError")
+                    .filter(|error| !error.is_null())
+                    .cloned()
+                    .or_else(|| map.values().find_map(find)),
+                Value::Array(items) => items.iter().find_map(find),
+                _ => None,
+            }
+        }
+        deltas.iter().find_map(find).expect("a lastError")
+    }
+    let mut feed = Feed::new();
+    let turn = TurnId::new("turn_stream");
+    feed.apply(KernelEvent::TurnStarted {
+        turn: turn.clone(),
+        command: None,
+    });
+    let deltas = feed.apply(KernelEvent::TurnFinished {
+        turn,
+        outcome: TurnOutcome::Failed {
+            message: "upstream 1113".into(),
+            code: Some("1113".into()),
+            provider: Some(Box::new(ProviderFailure::new(
+                "1113",
+                None,
+                false,
+                "unknown",
+                "anthropic",
+            ))),
+        },
+        usage: None,
+    });
+    let error = last_error(&deltas);
+    assert_eq!(
+        error["attribution"],
+        json!({
+            "source": "provider",
+            "reason": "unknown",
+            "errorPhase": "stream",
+            "exceptionKind": "provider_business",
+            "providerKind": "anthropic",
+            "transport": "sse",
+            "providerErrorCode": "1113",
+            "retryable": false,
+        })
+    );
+    let attribution = error["attribution"].as_object().expect("an object");
+    assert!(!attribution.contains_key("statusCode"));
+    assert!(!attribution.contains_key("providerId"));
+    assert!(!attribution.contains_key("modelId"));
+}
+
 /// Fork: a failed turn with waiting inputs pauses the queue with `pauseReason: "error"` (Node `onTurnError`); a failed
 /// manual `/compact` turn and a failed turn with an empty queue do not.
 #[test]

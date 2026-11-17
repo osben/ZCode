@@ -286,6 +286,38 @@ fn terminal_errors_end_a_cut_stream_with_their_own_text() {
     }
 }
 
+/// Fork: a provider business failure that ends a cut stream keeps its provider facts on the outcome, so `lastError`
+/// can name the code (the text is the classification's own, under the wrapper).
+#[test]
+fn a_provider_failure_that_ends_a_cut_stream_keeps_its_facts() {
+    let half = cut(vec![text("half")]);
+    let quota = ModelError::Provider {
+        provider: Box::new(rust_cli_kernel_api::model::ProviderFailure::new(
+            "1308",
+            Some(429),
+            false,
+            "rate_limited",
+            "anthropic",
+        )),
+        error: Box::new(ModelError::QuotaExhausted {
+            message: "余额不足".to_owned(),
+        }),
+    };
+    let outcome = Guards::default().truncated(
+        &half,
+        &QuerySource::Subagent("Explore".to_owned()),
+        true,
+        &quota,
+    );
+    let Outcome::Failed { message, provider } = outcome else {
+        panic!("a quota failure ends the cut stream: {outcome:?}");
+    };
+    assert_eq!(message, quota.to_string());
+    let provider = provider.expect("the provider facts stay on the outcome");
+    assert_eq!(provider.code, "1308");
+    assert_eq!(provider.status, Some(429));
+}
+
 /// 只交出了 thinking 之后的重发（provider-errors.md §3.3）：别的错误最多 2 次，停顿另计 1 次；工具轮之后清零。
 #[test]
 fn resends_after_thinking_are_counted() {

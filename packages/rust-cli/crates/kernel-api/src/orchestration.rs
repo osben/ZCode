@@ -261,6 +261,7 @@ pub enum QueryStop {
     ApiError {
         message: String,
         /// Fork: the provider business failure behind `message` (Node `providerCode`), for `lastError`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         provider: Option<Box<crate::model::ProviderFailure>>,
     },
 }

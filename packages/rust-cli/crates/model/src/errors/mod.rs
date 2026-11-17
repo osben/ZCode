@@ -138,10 +138,17 @@ pub(crate) fn classify_response(
         WireProtocol::AnthropicMessages => {
             anthropic::response(status, &value, body, retry_after_ms)
         }
-        WireProtocol::OpenAiChatCompletions | WireProtocol::OpenAiResponses => {
-            openai::response(status, &value, body, retry_after_ms)
-        }
+        WireProtocol::OpenAiChatCompletions | WireProtocol::OpenAiResponses => openai::response(
+            status,
+            &value,
+            body,
+            retry_after_ms,
+            provider_kind(protocol),
+        ),
     });
+    if vendor == Vendor::Zhipu {
+        verdict = zhipu::attach_unmapped(verdict, &value, Some(status), provider_kind(protocol));
+    }
     verdict.retry_after = retry_after;
     verdict.should_retry = should_retry(headers);
     verdict
@@ -162,7 +169,7 @@ pub(crate) fn classify_stream_error(
     found.unwrap_or_else(|| match protocol {
         WireProtocol::AnthropicMessages => anthropic::stream(value, raw),
         WireProtocol::OpenAiChatCompletions | WireProtocol::OpenAiResponses => {
-            openai::stream(value, raw)
+            openai::stream(value, raw, provider_kind(protocol))
         }
     })
 }

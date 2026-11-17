@@ -13,7 +13,7 @@ use super::{Class, Finish, Shape, Verdict, error_of, message_text};
 
 /// 码 → 中性分类（§5.3 的两张表）与 Node 的 `reason` / `retryable`（`failure-provider-business-codes.ts`，
 /// 夹具 `tests/fixtures/node-provider-codes.json`）。
-const CODES: [(&str, Class, Terms); 42] = [
+pub(super) const CODES: [(&str, Class, Terms); 42] = [
     (
         "500",
         Class::ServerError,
@@ -200,7 +200,7 @@ const CODES: [(&str, Class, Terms); 42] = [
 
 /// Node's `reason` and `retryable` for a table code (`failure-provider-business-codes.ts`).
 #[derive(Clone, Copy)]
-enum Terms {
+pub(super) enum Terms {
     /// Node maps the code: its reason and retryability, whatever the status.
     Mapped(&'static str, bool),
     /// Node does not map the code and classifies it by the HTTP status: a 429 is a rate limit that retries; without a
@@ -223,8 +223,15 @@ fn class_of(code: &str) -> Option<Class> {
 fn terms_of(terms: Terms, status: Option<u16>) -> (&'static str, bool) {
     match terms {
         Terms::Mapped(reason, retryable) => (reason, retryable),
-        Terms::Fallback if status == Some(http::TOO_MANY_REQUESTS) => ("rate_limited", true),
-        Terms::Fallback => ("unknown", false),
+        // Node `classifyProviderBusinessFailure` for an unmapped code: by HTTP status (the Node fixture
+        // `fallbackByStatus` rows), then `unknown` without a status.
+        Terms::Fallback => match status {
+            Some(http::UNAUTHORIZED | http::FORBIDDEN) => ("auth_failed", false),
+            Some(http::BAD_REQUEST | http::NOT_FOUND | 422) => ("invalid_request", false),
+            Some(http::TOO_MANY_REQUESTS) => ("rate_limited", true),
+            Some(status) if status >= http::SERVER_ERROR_MIN => ("server_error", true),
+            _ => ("unknown", false),
+        },
     }
 }
 
@@ -338,6 +345,29 @@ pub(super) fn frame(value: &Value, raw: &str, kind: &'static str) -> Option<Verd
         stream(value, raw, kind)
             .unwrap_or_else(|| verdict(Class::InvalidRequest, None, value, raw, None, None)),
     )
+}
+
+/// A response whose body carried a code the table does not know keeps the protocol's classification, and names the
+/// provider code with the status ladder (Node attaches every code it reads, `readCode`). Nothing changes for a body
+/// without a code, or one the classifier already named.
+pub(super) fn attach_unmapped(
+    mut verdict: Verdict,
+    value: &Value,
+    status: Option<u16>,
+    kind: &'static str,
+) -> Verdict {
+    if verdict.error.provider().is_some() {
+        return verdict;
+    }
+    let Some(code) = code(value, message_of(value)) else {
+        return verdict;
+    };
+    let (reason, retryable) = terms_of(Terms::Fallback, status);
+    verdict.error = ModelError::Provider {
+        provider: Box::new(ProviderFailure::new(&code, status, retryable, reason, kind)),
+        error: Box::new(verdict.error),
+    };
+    verdict
 }
 
 /// 智谱专有的结束原因（§5.3 的第三张表）：`sensitive` 是内容拦截；`network_error` 不是结束，是流内的网络失败

@@ -11,6 +11,20 @@ use rust_cli_kernel_api::model::{ModelError, ProviderFailure};
 use super::{Class, Shape, Verdict, error_of};
 
 /// One code's class and the Node message (shown instead of the server text).
+/// The plan codes this table knows; `provider_table_tests` checks them against the Node fixture in both directions.
+#[cfg(test)]
+pub(super) const CODES: [&str; 9] = [
+    "subscription_sharing_user_not_eligible",
+    "subscription_sharing_usage_limit_exceeded",
+    "subscription_sharing_unsupported_capability",
+    "subscription_sharing_route_not_supported",
+    "subscription_sharing_invalid_user",
+    "chatpass_v2_scope_not_authorized",
+    "chatpass_v2_invalid_authorization_context",
+    "subscription_sharing_usage_unavailable",
+    "subscription_sharing_user_unavailable",
+];
+
 fn entry(code: &str) -> Option<(Class, &'static str)> {
     Some(match code {
         "subscription_sharing_user_not_eligible" => (
@@ -66,6 +80,7 @@ pub(super) fn classify(
     status: Option<u16>,
     codes: &[Option<&str>],
     retry_after_ms: Option<u64>,
+    kind: &'static str,
 ) -> Option<Verdict> {
     let (code, (class, message)) = codes
         .iter()
@@ -93,8 +108,7 @@ pub(super) fn classify(
                 "subscription_sharing_usage_unavailable" | "subscription_sharing_user_unavailable"
             ),
             reason_of(code),
-            // The plan routes are OpenAI Responses only.
-            "openai",
+            kind,
         )),
         error: Box::new(classified),
     };

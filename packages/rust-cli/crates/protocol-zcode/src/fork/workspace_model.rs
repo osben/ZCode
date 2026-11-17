@@ -166,8 +166,9 @@ fn model_failure(error: &ModelError) -> RpcError {
         ModelError::ContentBlocked { .. }
         | ModelError::Unsupported { .. }
         | ModelError::FallbackTriggered { .. } => ("model_request_failed", "Model request failed."),
-        // `peel` removes the provider wrapper before the match.
-        ModelError::Provider { .. } => unreachable!("peel removes the provider wrapper"),
+        // `peel` strips the provider wrapper, so this arm is not reached; it classifies the wrapped error all the same
+        // instead of panicking in the request handler if `peel` ever stops unwrapping.
+        ModelError::Provider { error, .. } => return model_failure(error),
     };
     protocol_error(code, message)
 }
