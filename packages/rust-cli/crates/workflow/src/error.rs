@@ -1,15 +1,22 @@
 //! Structured engine errors (Node `engine/errors.ts`): stable codes and the journal shape `toJSON` writes.
 //!
-//! Only the codes the W5a lifecycle reaches are listed; the rest of the union is added with the
-//! code that raises it. Messages are copied verbatim: they land in `failure_json` and event payloads.
+//! Only the codes the W5a lifecycle and scheduler reach are listed; the rest of the union is added with
+//! the code that raises it. Messages are copied verbatim: they land in `failure_json` and event payloads.
 //! The optional parts follow Node's `WorkflowErrorJson` and are written in its `toJSON` order.
+use crate::model::Violation;
 use serde_json::{Map, Value};
 
-/// Stable error codes (Node `WorkflowErrorCode`), the subset W5a raises or stores.
+/// Stable error codes (Node `WorkflowErrorCode`), the subset the scheduler and lifecycle raise or store.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ErrorCode {
+    ValidationFailed,
+    ResultNotSubmitted,
     DriverError,
     Cancelled,
+    InputHashMismatch,
+    UnknownActor,
+    MissingAskSpec,
+    DuplicateActorName,
     ScriptHashMismatch,
     Interrupted,
     ProviderStop,
@@ -18,8 +25,14 @@ pub enum ErrorCode {
 impl ErrorCode {
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::ValidationFailed => "ValidationFailed",
+            Self::ResultNotSubmitted => "ResultNotSubmitted",
             Self::DriverError => "DriverError",
             Self::Cancelled => "Cancelled",
+            Self::InputHashMismatch => "InputHashMismatch",
+            Self::UnknownActor => "UnknownActor",
+            Self::MissingAskSpec => "MissingAskSpec",
+            Self::DuplicateActorName => "DuplicateActorName",
             Self::ScriptHashMismatch => "ScriptHashMismatch",
             Self::Interrupted => "Interrupted",
             Self::ProviderStop => "ProviderStop",
@@ -28,8 +41,14 @@ impl ErrorCode {
 
     pub fn parse(name: &str) -> Option<Self> {
         Some(match name {
+            "ValidationFailed" => Self::ValidationFailed,
+            "ResultNotSubmitted" => Self::ResultNotSubmitted,
             "DriverError" => Self::DriverError,
             "Cancelled" => Self::Cancelled,
+            "InputHashMismatch" => Self::InputHashMismatch,
+            "UnknownActor" => Self::UnknownActor,
+            "MissingAskSpec" => Self::MissingAskSpec,
+            "DuplicateActorName" => Self::DuplicateActorName,
             "ScriptHashMismatch" => Self::ScriptHashMismatch,
             "Interrupted" => Self::Interrupted,
             "ProviderStop" => Self::ProviderStop,
@@ -92,6 +111,20 @@ impl WorkflowError {
     /// Node `new WorkflowError(code, message, { providerStop })`.
     pub fn with_provider_stop(mut self, details: Value) -> Self {
         self.provider_stop = Some(details);
+        self
+    }
+
+    /// Node `new WorkflowError(code, message, { violations })`: the violations in their JSON shape.
+    pub fn with_violations(mut self, violations: &[Violation]) -> Self {
+        self.violations = Some(Value::Array(
+            violations.iter().map(Violation::to_json).collect(),
+        ));
+        self
+    }
+
+    /// Node `new WorkflowError(code, message, { finalText })`.
+    pub fn with_final_text(mut self, final_text: impl Into<String>) -> Self {
+        self.final_text = Some(final_text.into());
         self
     }
 
@@ -169,6 +202,22 @@ mod tests {
             r#"{"code":"ProviderStop","message":"stopped","mismatch":{"expected":"h1","got":"h2"},"providerStop":{"phase":"plan"}}"#
         );
         assert_eq!(WorkflowError::from_json(&error.to_json()), Some(error));
+    }
+
+    #[test]
+    fn violations_and_final_text_follow_message_in_node_order() {
+        let violation = Violation {
+            path: "$".into(),
+            expected: "string".into(),
+            got: "number".into(),
+        };
+        let error = WorkflowError::new(ErrorCode::ValidationFailed, "m")
+            .with_violations(&[violation])
+            .with_final_text("text");
+        assert_eq!(
+            serde_json::to_string(&error.to_json()).unwrap(),
+            r#"{"code":"ValidationFailed","message":"m","violations":[{"path":"$","expected":"string","got":"number"}],"finalText":"text"}"#
+        );
     }
 
     #[test]

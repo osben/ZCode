@@ -298,6 +298,29 @@ fn events_are_numbered_per_run_and_kept_verbatim() {
     assert_eq!(events[1].time_created, 12);
 }
 
+/// The stored text must be `JSON.stringify`'s, byte for byte: serde writes `1e21`, JavaScript `1e+21`.
+#[test]
+fn the_stored_payload_text_is_javascript_json_text() {
+    let conn = database();
+    create_run(&conn, &run("run_1", RunStatus::Running), 10).unwrap();
+    let big = serde_json::Number::from_f64(1e21).unwrap();
+    append_event(
+        &conn,
+        "run_1",
+        &json!({ "type": "usage-updated", "spentTokens": big }),
+        11,
+    )
+    .unwrap();
+    let text: String = conn
+        .query_row(
+            "select payload_json from dwf_event where run_id = 'run_1' and sequence = 0",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(text, r#"{"type":"usage-updated","spentTokens":1e+21}"#);
+}
+
 #[test]
 fn an_actor_upsert_keeps_the_identity_it_is_given() {
     let conn = database();

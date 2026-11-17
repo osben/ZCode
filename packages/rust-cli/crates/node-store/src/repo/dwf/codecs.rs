@@ -93,13 +93,13 @@ fn parse_stop_reason(name: &str) -> Option<StopReason> {
 pub fn encode_json(value: Option<&Value>) -> Option<String> {
     match value {
         None | Some(Value::Null) => None,
-        Some(value) => Some(value.to_string()),
+        Some(value) => Some(rust_cli_base::js::json::stringify(value)),
     }
 }
 
 /// Node `encodeResultJson`: only a missing result is SQL NULL, so a stored `null` survives.
 pub fn encode_result_json(value: Option<&Value>) -> Option<String> {
-    value.map(Value::to_string)
+    value.map(rust_cli_base::js::json::stringify)
 }
 
 /// Node `decodeJson` (`value ? JSON.parse(value) : undefined`), with corrupt text as `Err`:
@@ -137,7 +137,7 @@ pub fn encode_run_settlement(status: RunStatus, settlement: &Settlement) -> Enco
             }
             Encoded {
                 status: PhysicalStatus::Cancelled,
-                failure_json: Some(Value::Object(envelope).to_string()),
+                failure_json: Some(rust_cli_base::js::json::stringify(&Value::Object(envelope))),
             }
         }
         RunStatus::Errored => Encoded {

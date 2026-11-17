@@ -1,6 +1,6 @@
 #!/usr/bin/env -S pnpm exec tsx
 /**
- * Node side of the run-lifecycle goldens (rust-cli crates/workflow, W5a; specs/fork-rust-workflow-engine.md section 9.2).
+ * Node side of the run-lifecycle goldens (rust-cli crates/workflow, W5a; specs/fork-rust-workflow-engine.md section 9.3).
  *
  * Runs the real `WorkflowEngine` (apps/zcode-cli/packages/dynamic-workflow/src/engine/engine.ts) on an
  * `InMemoryJournalStore` with a recording driver, for the scripted lifetimes below, and writes

@@ -1,18 +1,22 @@
 //! The journal port over the W2 repository (`rust-cli-node-store`, `dwf_*` in Node's row format).
 //!
 //! The engine core never sees SQL. This adapter maps the port's records onto the repository's records
-//! and converts numbers: `dwf_run` stores integers, so a non-integer cap or token count is an error
-//! here, not a silent truncation. `now` is the row timestamp source (the caller's clock); it never
-//! feeds a decision in the engine.
+//! and converts numbers: `dwf_run` and `dwf_node` store integers, so a non-integer cap, token count or
+//! ordinal is an error here, not a silent truncation. `now` is the row timestamp source (the caller's
+//! clock); it never feeds a decision in the engine.
 use crate::event::RunEvent;
 use crate::journal::JournalPort;
-use crate::model::{Caps, RunRow, RunStatus, Settlement, StopReason, StoredEvent};
+use crate::model::{
+    ActorRow, Caps, NodeKind, NodeRow, NodeStatus, Ref, RunRow, RunStatus, Settlement, StopReason,
+    StoredEvent,
+};
 use anyhow::{Result, bail};
 use rusqlite::Connection;
 use rust_cli_base::js::json::stringify;
 use rust_cli_node_store::dwf::{
-    self, RunRecord as DwfRun, RunStatus as DwfStatus, Settlement as DwfSettlement,
-    StopReason as DwfStop,
+    self, ActorRecord as DwfActor, NodeKind as DwfNodeKind, NodeRecord as DwfNode,
+    NodeStatus as DwfNodeStatus, RunRecord as DwfRun, RunStatus as DwfStatus,
+    Settlement as DwfSettlement, StopReason as DwfStop,
 };
 
 pub struct DwfJournal<'a> {
@@ -36,6 +40,18 @@ fn integer(value: f64, what: &str) -> Result<i64> {
         return Ok(value as i64);
     }
     bail!("dwf_run stores integers: {what} is {value}")
+}
+
+/// `what` names the field in the error, as `integer` does for caps and tokens.
+fn ordinal_to_column(ordinal: u64, what: &str) -> Result<i64> {
+    match i64::try_from(ordinal) {
+        Ok(value) => Ok(value),
+        Err(_) => bail!("dwf tables store integers: {what} is {ordinal}, above i64::MAX"),
+    }
+}
+
+fn ordinal_from_column(ordinal: i64) -> Result<u64> {
+    Ok(u64::try_from(ordinal)?)
 }
 
 fn status_to_dwf(status: RunStatus) -> DwfStatus {
@@ -75,6 +91,42 @@ fn stop_from_dwf(reason: DwfStop) -> StopReason {
         DwfStop::Provider => StopReason::Provider,
         DwfStop::Interrupted => StopReason::Interrupted,
         DwfStop::Superseded => StopReason::Superseded,
+    }
+}
+
+fn kind_to_dwf(kind: NodeKind) -> DwfNodeKind {
+    match kind {
+        NodeKind::Ask => DwfNodeKind::Ask,
+        NodeKind::WorldRead => DwfNodeKind::WorldRead,
+        NodeKind::WorldRun => DwfNodeKind::WorldRun,
+        NodeKind::Report => DwfNodeKind::Report,
+        NodeKind::Artifact => DwfNodeKind::Artifact,
+    }
+}
+
+fn kind_from_dwf(kind: DwfNodeKind) -> NodeKind {
+    match kind {
+        DwfNodeKind::Ask => NodeKind::Ask,
+        DwfNodeKind::WorldRead => NodeKind::WorldRead,
+        DwfNodeKind::WorldRun => NodeKind::WorldRun,
+        DwfNodeKind::Report => NodeKind::Report,
+        DwfNodeKind::Artifact => NodeKind::Artifact,
+    }
+}
+
+fn node_status_to_dwf(status: NodeStatus) -> DwfNodeStatus {
+    match status {
+        NodeStatus::Running => DwfNodeStatus::Running,
+        NodeStatus::Completed => DwfNodeStatus::Completed,
+        NodeStatus::Failed => DwfNodeStatus::Failed,
+    }
+}
+
+fn node_status_from_dwf(status: DwfNodeStatus) -> NodeStatus {
+    match status {
+        DwfNodeStatus::Running => NodeStatus::Running,
+        DwfNodeStatus::Completed => NodeStatus::Completed,
+        DwfNodeStatus::Failed => NodeStatus::Failed,
     }
 }
 
@@ -120,6 +172,74 @@ fn row_from_dwf(run: DwfRun) -> RunRow {
         failure: run.failure,
         result: run.result,
     }
+}
+
+fn actor_to_dwf(row: &ActorRow) -> Result<DwfActor> {
+    Ok(DwfActor {
+        run_id: row.run_id.clone(),
+        site_id: row.site_id.clone(),
+        ordinal: ordinal_to_column(row.ordinal, "actor ordinal")?,
+        name: row.name.clone(),
+        persona: row.persona.clone(),
+        session_id: row.session_id.clone(),
+        resolved_model: row.resolved_model.clone(),
+    })
+}
+
+fn actor_from_dwf(actor: DwfActor) -> Result<ActorRow> {
+    Ok(ActorRow {
+        run_id: actor.run_id,
+        site_id: actor.site_id,
+        ordinal: ordinal_from_column(actor.ordinal)?,
+        name: actor.name,
+        persona: actor.persona,
+        session_id: actor.session_id,
+        resolved_model: actor.resolved_model,
+    })
+}
+
+fn node_to_dwf(row: &NodeRow) -> Result<DwfNode> {
+    Ok(DwfNode {
+        run_id: row.run_id.clone(),
+        site_id: row.site_id.clone(),
+        ordinal: ordinal_to_column(row.ordinal, "node ordinal")?,
+        kind: kind_to_dwf(row.kind),
+        actor_site_id: row.actor_site_id.clone(),
+        actor_ordinal: row
+            .actor_ordinal
+            .map(|value| ordinal_to_column(value, "actor ordinal"))
+            .transpose()?,
+        actor_seq: row
+            .actor_seq
+            .map(|value| ordinal_to_column(value, "actor seq"))
+            .transpose()?,
+        input_hash: row.input_hash.clone(),
+        status: node_status_to_dwf(row.status),
+        result: row.result.clone(),
+        error: row.error.clone(),
+        stats: row.stats.clone(),
+        // Placeholders: `put_node` fills these from the stored row before the full-row upsert.
+        artifact_id: None,
+        input: None,
+        message_boundary: None,
+    })
+}
+
+fn node_from_dwf(node: DwfNode) -> Result<NodeRow> {
+    Ok(NodeRow {
+        run_id: node.run_id,
+        site_id: node.site_id,
+        ordinal: ordinal_from_column(node.ordinal)?,
+        kind: kind_from_dwf(node.kind),
+        actor_site_id: node.actor_site_id,
+        actor_ordinal: node.actor_ordinal.map(ordinal_from_column).transpose()?,
+        actor_seq: node.actor_seq.map(ordinal_from_column).transpose()?,
+        input_hash: node.input_hash,
+        status: node_status_from_dwf(node.status),
+        result: node.result,
+        error: node.error,
+        stats: node.stats,
+    })
 }
 
 impl JournalPort for DwfJournal<'_> {
@@ -170,6 +290,64 @@ impl JournalPort for DwfJournal<'_> {
         )
     }
 
+    fn put_actor(&mut self, row: ActorRow) -> Result<()> {
+        dwf::put_actor(self.conn, &actor_to_dwf(&row)?, (self.clock)())
+    }
+
+    fn get_actor(&self, run_id: &str, actor: &Ref) -> Result<Option<ActorRow>> {
+        dwf::get_actor(
+            self.conn,
+            run_id,
+            &actor.site_id,
+            ordinal_to_column(actor.ordinal, "actor ordinal")?,
+        )?
+        .map(actor_from_dwf)
+        .transpose()
+    }
+
+    fn list_actors(&self, run_id: &str) -> Result<Vec<ActorRow>> {
+        dwf::list_actors(self.conn, run_id)?
+            .into_iter()
+            .map(actor_from_dwf)
+            .collect()
+    }
+
+    fn put_node(&mut self, row: NodeRow) -> Result<()> {
+        // The repository's upsert rewrites every column. NodeRow has no artifact, input or boundary
+        // field, so carry the stored values through; otherwise a full-row write erases what Node wrote.
+        let mut node = node_to_dwf(&row)?;
+        let stored = dwf::get_node(
+            self.conn,
+            &row.run_id,
+            &row.site_id,
+            ordinal_to_column(row.ordinal, "node ordinal")?,
+        )?;
+        if let Some(stored) = stored {
+            node.artifact_id = stored.artifact_id;
+            node.input = stored.input;
+            node.message_boundary = stored.message_boundary;
+        }
+        dwf::put_node(self.conn, &node, (self.clock)())
+    }
+
+    fn get_node(&self, run_id: &str, instance: &Ref) -> Result<Option<NodeRow>> {
+        dwf::get_node(
+            self.conn,
+            run_id,
+            &instance.site_id,
+            ordinal_to_column(instance.ordinal, "node ordinal")?,
+        )?
+        .map(node_from_dwf)
+        .transpose()
+    }
+
+    fn list_nodes(&self, run_id: &str) -> Result<Vec<NodeRow>> {
+        dwf::list_nodes(self.conn, run_id)?
+            .into_iter()
+            .map(node_from_dwf)
+            .collect()
+    }
+
     fn append_event(&mut self, run_id: &str, event: &RunEvent) -> Result<StoredEvent> {
         let stored = dwf::append_event(self.conn, run_id, &event.to_json(), (self.clock)())?;
         Ok(StoredEvent {
@@ -214,5 +392,99 @@ mod tests {
         assert!(integer(f64::NAN, "x").is_err());
         assert!(integer(f64::INFINITY, "x").is_err());
         assert!(integer(-9_223_372_036_854_777_856.0, "x").is_err());
+    }
+
+    #[test]
+    fn an_ordinal_out_of_range_names_its_field() {
+        let message = super::ordinal_to_column(u64::MAX, "node ordinal")
+            .unwrap_err()
+            .to_string();
+        assert!(message.contains("node ordinal"), "{message}");
+    }
+
+    /// Node writes `artifact_id`, `input` and `message_boundary` on the node row. A full-row upsert from
+    /// the port must not erase them.
+    #[test]
+    fn a_full_row_upsert_keeps_the_columns_the_port_does_not_carry() {
+        use crate::journal::JournalPort;
+        use crate::model::{Caps, NodeKind, NodeRow, NodeStatus, RunRow, RunStatus};
+        use rust_cli_node_store::dwf::{NodeKind as DwfKind, NodeRecord, NodeStatus as DwfStatus};
+        use std::path::Path;
+        use std::time::Duration;
+
+        let (conn, _) = rust_cli_node_store::open_session_database(
+            Path::new(":memory:"),
+            Duration::from_secs(1),
+            0,
+        )
+        .expect("session database");
+        let mut journal = super::DwfJournal::new(&conn, || 0);
+        journal
+            .create_run(RunRow {
+                run_id: "run_keep".to_owned(),
+                parent_session_id: None,
+                cwd: None,
+                name: None,
+                tool_call_id: None,
+                script_text: None,
+                script_hash: None,
+                args: None,
+                resumed_from: None,
+                caps: Caps {
+                    max_concurrency: 4.0,
+                },
+                spent_tokens: 0.0,
+                status: RunStatus::Running,
+                stop_reason: None,
+                superseded_by: None,
+                failure: None,
+                result: None,
+            })
+            .expect("run");
+        rust_cli_node_store::dwf::put_node(
+            &conn,
+            &NodeRecord {
+                run_id: "run_keep".to_owned(),
+                site_id: "s".to_owned(),
+                ordinal: 1,
+                kind: DwfKind::Ask,
+                actor_site_id: None,
+                actor_ordinal: None,
+                actor_seq: None,
+                input_hash: "h".to_owned(),
+                status: DwfStatus::Running,
+                result: None,
+                error: None,
+                stats: None,
+                message_boundary: Some(3),
+                artifact_id: Some("a1".to_owned()),
+                input: Some(serde_json::json!({"k": 1})),
+            },
+            0,
+        )
+        .expect("seed node written by Node-shaped code");
+        journal
+            .put_node(NodeRow {
+                run_id: "run_keep".to_owned(),
+                site_id: "s".to_owned(),
+                ordinal: 1,
+                kind: NodeKind::Ask,
+                actor_site_id: None,
+                actor_ordinal: None,
+                actor_seq: None,
+                input_hash: "h".to_owned(),
+                status: NodeStatus::Completed,
+                result: Some(serde_json::json!("ok")),
+                error: None,
+                stats: None,
+            })
+            .expect("full-row upsert");
+        let stored = rust_cli_node_store::dwf::get_node(&conn, "run_keep", "s", 1)
+            .expect("read")
+            .expect("row");
+        assert_eq!(stored.artifact_id.as_deref(), Some("a1"));
+        assert_eq!(stored.input, Some(serde_json::json!({"k": 1})));
+        assert_eq!(stored.message_boundary, Some(3));
+        assert_eq!(stored.status, DwfStatus::Completed);
     }
 }

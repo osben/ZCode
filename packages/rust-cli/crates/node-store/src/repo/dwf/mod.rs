@@ -621,7 +621,8 @@ pub fn append_event(
     let Some(kind) = event.get("type").and_then(Value::as_str) else {
         bail!("dwf journal: event without a type for run: {run_id}");
     };
-    let payload = event.to_string();
+    // JSON.stringify's text, not serde's: they differ on exponent-form numbers (1e21 is 1e+21 in Node).
+    let payload = rust_cli_base::js::json::stringify(event);
     let sequence: i64 = conn.query_row(
         "insert into dwf_event (run_id, sequence, type, payload_json, time_created)
          values (
