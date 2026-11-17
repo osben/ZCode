@@ -501,6 +501,11 @@ impl Actor {
         };
         self.cancel_turn_asks();
         let result = running.task.await;
+        // Fork (D2): the turn's browser candidate is consumed here, once, whatever the outcome (no stale candidate). The
+        // tool side keys it by the run (`ToolUseContext::run`), the turn's run; a compaction turn has none.
+        let candidate = running.run.as_ref().and_then(|run| {
+            rust_cli_kernel_api::browser_turn::take(self.meta.id.as_str(), run.as_str())
+        });
         let outcome = match (running.failure, result) {
             (Some(error), _) => TurnOutcome::Failed {
                 message: error.to_string(),
@@ -566,6 +571,18 @@ impl Actor {
         let main_loop = running.run.is_some();
         let turn = running.turn.clone();
         let anchor_turn = running.turn.clone();
+        // Fork (D2): Node's appendBrowserTurnScreenshot runs after the loop completed and before TurnComplete, and
+        // turnEnded follows the turn. Only a successful turn with a prompt gets the screenshot; the row goes before
+        // TurnFinished so the protocol sink sends helper/turn/ended after it.
+        let shot = if matches!(outcome, TurnOutcome::Success) {
+            self.browser_turn_screenshot(&turn, running.prompt.as_ref(), candidate)
+                .await
+        } else {
+            None
+        };
+        if let Some(event) = shot {
+            self.log.append(event);
+        }
         self.log.append(KernelEvent::TurnFinished {
             turn: running.turn,
             outcome,

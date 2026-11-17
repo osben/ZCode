@@ -4,6 +4,7 @@
 
 mod background_task;
 mod background_work;
+pub(crate) mod browser_turn_screenshot;
 mod child_processes;
 pub(crate) mod commands;
 pub(crate) mod external_agent_config;

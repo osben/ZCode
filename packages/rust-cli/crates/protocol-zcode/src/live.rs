@@ -171,6 +171,15 @@ impl Live {
             preparation,
             worktree_creation,
         } = restored;
+        // Fork (D2): the end-of-turn screenshot of this session goes through this server's helper.
+        rust_cli_kernel_api::browser_turn::bind(
+            view.meta.id.as_str(),
+            Arc::new(
+                crate::fork::browser_turn_screenshot::HelperTurnScreenshots {
+                    context: context.clone(),
+                },
+            ),
+        );
         let levels = view.selection.reasoning.iter().cloned().collect();
         // A subagent's child session (`sess_subagent_<agentId>`) is reported by its parent.
         let telemetry = (!view.meta.id.as_str().starts_with(SUBAGENT_SESSION_PREFIX))
@@ -1031,6 +1040,9 @@ impl Live {
 
 impl Drop for Live {
     fn drop(&mut self) {
+        // Fork (D2): the session's screenshot port and any candidate it still holds go with it.
+        rust_cli_kernel_api::browser_turn::unbind(&self.session);
+        rust_cli_kernel_api::browser_turn::forget_session(&self.session);
         for (_, task) in self.state().watches.drain() {
             task.abort();
         }

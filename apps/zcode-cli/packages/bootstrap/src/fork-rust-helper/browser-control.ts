@@ -14,6 +14,8 @@ export const FORK_RUST_HELPER_BROWSER_CHILD_SESSION = "helper/browser/childSessi
 export const FORK_RUST_HELPER_BROWSER_CHILD_SESSION_END = "helper/browser/childSessionEnd";
 /** Rust ended a turn: the broker's turnEnded (F4-D5). */
 export const FORK_RUST_HELPER_TURN_ENDED = "helper/turn/ended";
+/** Rust asks for the end-of-turn screenshot of a turn with a browser candidate (D2-H). */
+export const FORK_RUST_HELPER_BROWSER_TURN_SCREENSHOT = "helper/browser/turnScreenshot";
 
 /** Strict wire shapes (F4-D7). Unknown keys are refused. */
 export const childSessionParamsSchema = z
@@ -28,6 +30,22 @@ export const childSessionEndParamsSchema = z
   .strict();
 
 export type ChildSessionParams = z.infer<typeof childSessionParamsSchema>;
+
+export const turnScreenshotParamsSchema = z
+  .object({
+    sessionId: z.string().trim().min(1),
+    turnId: z.string().trim().min(1),
+    browserId: z.string().trim().min(1),
+    browserGeneration: z.number().int(),
+  })
+  .strict();
+export type TurnScreenshotParams = z.infer<typeof turnScreenshotParamsSchema>;
+
+/** One display image, as Node's browser command result carries it. */
+export interface TurnScreenshotImage {
+  base64: string;
+  mimeType: string;
+}
 
 interface ChildRegistration {
   parentSessionId: string;
@@ -118,6 +136,49 @@ export class ForkRustBrowserControl {
         error: error instanceof Error ? error.message : String(error),
       });
     });
+  }
+
+  /**
+   * `helper/browser/turnScreenshot` (D2-H): Node's appendBrowserTurnScreenshot capture. Lists the tabs, screenshots the
+   * active one through the session's broker port (the child registration's port for a subagent), and answers the
+   * image. A missing active tab, a refused screenshot or a broker failure answers `{}` and is logged; the turn is not
+   * failed by it, as Node swallows the same failures.
+   */
+  async turnScreenshot(params: TurnScreenshotParams): Promise<{ image?: TurnScreenshotImage }> {
+    const port = this.children.get(params.sessionId)?.port ?? this.port;
+    const target = {
+      browserId: params.browserId,
+      browserGeneration: params.browserGeneration,
+      sessionId: params.sessionId,
+      turnId: params.turnId,
+    };
+    try {
+      const listed = await port.execute({ ...target, command: { method: "list" } });
+      const active = listed.ok ? listed.tabs?.find((tab) => tab.active === true) : undefined;
+      if (!active) {
+        this.deps.logger?.debug("Browser turn screenshot skipped because no active tab is available", {
+          event: "fork_rust_helper.browser.turn_screenshot_skipped",
+        });
+        return {};
+      }
+      const captured = await port.execute({
+        ...target,
+        command: { method: "screenshot", tabId: active.tabId },
+      });
+      if (!captured.ok || !captured.image) {
+        this.deps.logger?.warn("Browser turn screenshot capture returned no image", {
+          event: "fork_rust_helper.browser.turn_screenshot_failed",
+        });
+        return {};
+      }
+      return { image: captured.image };
+    } catch (error) {
+      this.deps.logger?.warn("Browser turn screenshot failed", {
+        event: "fork_rust_helper.browser.turn_screenshot_failed",
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return {};
+    }
   }
 
   /** The broker's `turnEnded` for a session (`helper/turn/ended`). */

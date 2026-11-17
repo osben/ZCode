@@ -300,6 +300,9 @@ pub(crate) struct Actor {
     /// in memory only, bounded like the event log retention ([`crate::log::RETAIN`]); the view drops a record whose
     /// turn is no longer stored. Only [`Self::view`] reads it.
     pub(crate) hook_invocations: Vec<rust_cli_kernel_api::hooks::HookInvocationRecord>,
+    /// Fork (D2): the end-of-turn screenshots, stored as fork entries (never messages). Loaded at open
+    /// ([`Actor::browser_screenshots_open`]); the view keeps those whose turn is still in the history.
+    pub(crate) browser_screenshots: Vec<rust_cli_kernel_api::browser_turn::BrowserScreenshotRecord>,
 }
 
 /// 拒绝的回执：原因是给前端的文字（存储的错误按它的原文）。
@@ -401,6 +404,7 @@ impl Actor {
             deferred_start: None,
             pending_session_start: Vec::new(),
             hook_invocations: Vec::new(),
+            browser_screenshots: Vec::new(),
             execution_worktree,
         };
         if defer_start {
@@ -551,6 +555,7 @@ impl Actor {
     pub(crate) async fn run(mut self, mut requests: mpsc::Receiver<Request>) {
         // 跨会话：绑定为主会话并从库里恢复（cross-session.md §2.2）；在处理第一条命令之前。
         self.peers_open().await;
+        self.browser_screenshots_open().await;
         // Fork: on a cold open, rebuild the per-turn file summaries from the stored checkpoints
         // (the previous process's `FileChanges` events are gone).
         self.restore_turn_files().await;
@@ -963,6 +968,18 @@ impl Actor {
                             .chain(self.messages.iter())
                             .any(|message| message.id() == anchor)
                     })
+                })
+                .cloned()
+                .collect(),
+            // Fork (D2): only screenshots whose turn is still in the shown history survive, as the hook records do.
+            browser_screenshots: self
+                .browser_screenshots
+                .iter()
+                .filter(|record| {
+                    self.earlier
+                        .iter()
+                        .chain(self.messages.iter())
+                        .any(|message| message.id() == &record.anchor)
                 })
                 .cloned()
                 .collect(),

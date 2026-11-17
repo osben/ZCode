@@ -9,9 +9,11 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use rust_cli_base::sync::LockUnpoisoned;
+use rust_cli_kernel_api::browser_turn::BrowserCandidate;
 use rust_cli_protocol_core::connection::{CONNECTION_CLOSED, Peer};
 use rust_cli_protocol_core::rpc::RpcError;
 use serde_json::{Value, json};
+use tokio_util::sync::CancellationToken;
 
 use super::{NodeHelper, Slot, unavailable};
 
@@ -22,6 +24,8 @@ const CHILD_SESSION: &str = "helper/browser/childSession";
 const CHILD_SESSION_END: &str = "helper/browser/childSessionEnd";
 /// F4-D5: a turn of an open session ended; the helper's broker runs its turnEnded (specs/fork-rust-node-helper.md F4b).
 const TURN_ENDED: &str = "helper/turn/ended";
+/// D2-H: the end-of-turn screenshot of the active tab (specs/fork-rust-node-helper.md, "D2 end-of-turn screenshot").
+const TURN_SCREENSHOT: &str = "helper/browser/turnScreenshot";
 
 /// The forwarded methods that always name a session: the 16 `mcp/ui*` methods, `mcp/readResource` and
 /// `plugins/mentionItems`.
@@ -437,6 +441,49 @@ impl NodeHelper {
         drop(self.spawner.spawn("node-helper-turn-ended", async move {
             peer.notify(TURN_ENDED, &params).await;
         }));
+    }
+
+    /// D2-H: `helper/browser/turnScreenshot` on the session's helper, when this generation holds the session open. `None`
+    /// when there is no helper session to ask (Node has no browser scope then either), when the turn is cancelled, or
+    /// when the helper does not answer in time; the turn is then unchanged. Bounded by the helper's default request
+    /// timeout, so a slow helper cannot hold the turn end.
+    pub(crate) async fn turn_screenshot(
+        &self,
+        session: &str,
+        turn: &str,
+        candidate: &BrowserCandidate,
+        cancel: &CancellationToken,
+    ) -> Option<Value> {
+        let peer = {
+            let state = self.state.lock_unpoisoned();
+            match &state.slot {
+                Slot::Running(running) if running.sessions.contains_key(session) => {
+                    running.peer.clone()
+                }
+                _ => return None,
+            }
+        };
+        let params = json!({
+            "sessionId": session,
+            "turnId": turn,
+            "browserId": candidate.browser_id,
+            "browserGeneration": candidate.browser_generation,
+        });
+        let deadline = self.timing.timeout_for(TURN_SCREENSHOT);
+        tokio::select! {
+            () = cancel.cancelled() => None,
+            answer = tokio::time::timeout(deadline, peer.request(TURN_SCREENSHOT, &params)) => match answer {
+                Ok(Ok(value)) => Some(value),
+                Ok(Err(error)) => {
+                    tracing::warn!(event = "fork_rust_helper.browser.turn_screenshot_failed", code = error.code, "the helper could not capture the turn screenshot");
+                    None
+                }
+                Err(_elapsed) => {
+                    tracing::warn!(event = "fork_rust_helper.browser.turn_screenshot_timeout", "the helper did not capture the turn screenshot in time");
+                    None
+                }
+            },
+        }
     }
 
     /// F4-D7: `helper/browser/childSessionEnd` for a subagent session. One task sends it and then the close, so the

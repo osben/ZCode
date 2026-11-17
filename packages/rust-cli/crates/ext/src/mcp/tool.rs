@@ -248,6 +248,18 @@ impl Tool for McpTool {
                 Err(error) => return Err(failed(error.to_string())),
             }
         };
+        // Fork (D2): a helper-hosted node_repl answer names the browser its turn used (Node records the same key from the
+        // tool result's `_meta`, before the error check, so a refused call still names its browser).
+        if manager.is_helper_hosted(server)
+            && let Some(candidate) =
+                rust_cli_kernel_api::browser_turn::candidate_from_meta(value.get("_meta"))
+        {
+            rust_cli_kernel_api::browser_turn::record(
+                context.session.as_str(),
+                context.run.as_str(),
+                candidate,
+            );
+        }
         // 服务器报告的错误（`isError`）：结果是原文、标记为错误，不加 `<tool_use_error>`。
         if let Some(message) = result::error_text(&value) {
             return Ok(ToolOutput {

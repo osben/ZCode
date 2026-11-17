@@ -71,8 +71,10 @@ import { errorMessage, FORK_RUST_HELPER_F3, requireString } from "./f3-protocol.
 import {
   FORK_RUST_HELPER_BROWSER_CHILD_SESSION,
   FORK_RUST_HELPER_BROWSER_CHILD_SESSION_END,
+  FORK_RUST_HELPER_BROWSER_TURN_SCREENSHOT,
   FORK_RUST_HELPER_TURN_ENDED,
   type ForkRustBrowserControl,
+  turnScreenshotParamsSchema,
 } from "./browser-control.js";
 import { z } from "zod";
 import type { Logger } from "@zcode/contracts";
@@ -204,6 +206,12 @@ export class ForkRustHelperServer {
         if (!browser) throw new ProtocolRequestError(-32601, "The browser control is not configured");
         browser.childSession(params);
         return {};
+      }],
+      [FORK_RUST_HELPER_BROWSER_TURN_SCREENSHOT, async (params) => {
+        if (!browser) throw new ProtocolRequestError(-32601, "The browser control is not configured");
+        const parsed = turnScreenshotParamsSchema.safeParse(params);
+        if (!parsed.success) throw new ProtocolRequestError(-32602, "Invalid helper/browser/turnScreenshot params");
+        return browser.turnScreenshot(parsed.data);
       }],
       [FORK_RUST_HELPER_F3.sessionOpen, (params) => host.openSession(params)],
       [FORK_RUST_HELPER_F3.appToolsCall, (params) => host.callAppTool(params)],

@@ -38,6 +38,7 @@ impl SessionView {
             goal: None,
             message_models: Default::default(),
             hook_invocations: Vec::new(),
+            browser_screenshots: Vec::new(),
         }
     }
 }

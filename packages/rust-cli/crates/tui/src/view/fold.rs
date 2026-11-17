@@ -279,6 +279,8 @@ impl Transcript {
             // 任务清单与每回合的改动只进投影，不加行（tui-display.md §2.2、§2.4）。
             KernelEvent::TasksChanged { tasks } => self.tasks_changed(tasks),
             KernelEvent::FileChanges { turn, files, .. } => self.file_changes(turn, files),
+            // Fork (D2): the end-of-turn screenshot is a desktop row (the TUI shows no images).
+            KernelEvent::BrowserTurnScreenshot { .. } => {}
             // Fork: ACP agent rows are a desktop projection (specs/fork-rust-agent-parity.md "ACP external agents").
             KernelEvent::ExternalToolRow { .. }
             | KernelEvent::ExternalAgentConfig { .. }

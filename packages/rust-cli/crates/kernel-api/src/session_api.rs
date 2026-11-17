@@ -538,6 +538,10 @@ pub struct SessionView {
     /// them, as Node loses its event store.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hook_invocations: Vec<crate::hooks::HookInvocationRecord>,
+    /// Fork (D2): the end-of-turn browser screenshots of this session, each anchored to its turn's user message. Stored
+    /// as fork entries (never messages, so never model history); loaded when the session opens.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub browser_screenshots: Vec<crate::browser_turn::BrowserScreenshotRecord>,
 }
 
 /// The command id prefix of the input a SessionStart hook gives (`initial_user_message`): it is not typed input, so
