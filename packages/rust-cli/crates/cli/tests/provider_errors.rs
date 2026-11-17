@@ -346,7 +346,13 @@ async fn a_zhipu_quota_code_ends_the_turn_at_once() {
         outcome,
         TurnOutcome::Failed {
             message: "API Error: Credit balance or quota exhausted · 已达到套餐用量上限".to_owned(),
-            code: None,
+            // Node `lastError.code` is the provider code when the error has one (error-payload.ts).
+            code: Some("1308".to_owned()),
+            provider: Some(rust_cli_kernel_api::model::ProviderFailure {
+                code: "1308".to_owned(),
+                status: Some(429),
+                retryable: false,
+            }),
         }
     );
     let requests = fixture.main_requests();
@@ -384,6 +390,7 @@ async fn zhipu_sensitive_keeps_the_text_and_fails_with_the_reason() {
         TurnOutcome::Failed {
             message: CONTENT_BLOCKED.to_owned(),
             code: None,
+            provider: None,
         }
     );
     assert_eq!(fixture.main_requests().len(), 1);
@@ -428,6 +435,7 @@ async fn openai_quota_and_content_filter() {
                 "API Error: Credit balance or quota exhausted · You exceeded your current quota"
                     .to_owned(),
             code: None,
+            provider: None,
         }
     );
     assert_eq!(fixture.main_requests().len(), 1);
@@ -442,6 +450,7 @@ async fn openai_quota_and_content_filter() {
         TurnOutcome::Failed {
             message: CONTENT_BLOCKED.to_owned(),
             code: None,
+            provider: None,
         }
     );
     assert_eq!(fixture.main_requests().len(), 1);

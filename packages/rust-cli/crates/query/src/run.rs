@@ -143,7 +143,9 @@ async fn conclude(
     }
     match outcome {
         Outcome::Completed => Ok(Some(QueryStop::Completed)),
-        Outcome::Failed { message } => Ok(Some(QueryStop::ApiError { message })),
+        Outcome::Failed { message, provider } => {
+            Ok(Some(QueryStop::ApiError { message, provider }))
+        }
         Outcome::Retry { nudge, source, .. } => {
             let message = Message::User(UserMessage {
                 stall_execution: None,
@@ -367,7 +369,11 @@ pub(crate) async fn run(
         };
         let responded = match respond(&scope, &mut history, request, state.responses).await {
             // 上下文超限的反应式压缩排在其他恢复分支之前（query.md §1）；压缩成功就重发，不计轮数。
-            Err(QueryError::Model(ModelError::PromptTooLong { message })) => {
+            Err(QueryError::Model(error)) if error.prompt_too_long_message().is_some() => {
+                let message = error
+                    .prompt_too_long_message()
+                    .unwrap_or_default()
+                    .to_owned();
                 if state
                     .compaction
                     .after_prompt_too_long(
@@ -381,7 +387,7 @@ pub(crate) async fn run(
                 {
                     continue;
                 }
-                return Err(QueryError::Model(ModelError::PromptTooLong { message }));
+                return Err(QueryError::Model(error));
             }
             other => other?,
         };

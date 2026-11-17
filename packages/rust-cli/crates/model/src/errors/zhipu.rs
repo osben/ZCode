@@ -6,7 +6,7 @@
 
 use rust_cli_base::proto::http;
 use rust_cli_kernel_api::message::StopReason;
-use rust_cli_kernel_api::model::ModelError;
+use rust_cli_kernel_api::model::{ModelError, ProviderFailure};
 use serde_json::Value;
 
 use super::{Class, Finish, Shape, Verdict, error_of, message_text};
@@ -102,9 +102,11 @@ fn message_of(value: &Value) -> Option<&str> {
         })
 }
 
+/// `code` is the business code the body carried, when it did; the failure then names it (Node `providerCode`).
 fn verdict(
     class: Class,
     status: Option<u16>,
+    code: Option<String>,
     value: &Value,
     raw: &str,
     retry_after_ms: Option<u64>,
@@ -114,7 +116,27 @@ fn verdict(
         message,
         retry_after_ms,
     };
-    Verdict::new(class, error_of(class, status, shape))
+    let classified = error_of(class, status, shape);
+    let error = match code {
+        // Node `context.retryable` follows the classification: only the transient classes retry.
+        Some(code) => ModelError::Provider {
+            provider: ProviderFailure {
+                code,
+                status,
+                retryable: matches!(
+                    class,
+                    Class::RateLimited
+                        | Class::Overloaded
+                        | Class::ServerError
+                        | Class::CapacityLimited
+                        | Class::Network
+                ),
+            },
+            error: Box::new(classified),
+        },
+        None => classified,
+    };
+    Verdict::new(class, error)
 }
 
 /// 非 2xx 响应：码在表里时按表（不看状态）；否则交给协议层。
@@ -124,15 +146,23 @@ pub(super) fn response(
     raw: &str,
     retry_after_ms: Option<u64>,
 ) -> Option<Verdict> {
-    let class = class_of(&code(value, message_of(value))?)?;
-    Some(verdict(class, Some(status), value, raw, retry_after_ms))
+    let code = code(value, message_of(value))?;
+    let class = class_of(&code)?;
+    Some(verdict(
+        class,
+        Some(status),
+        Some(code),
+        value,
+        raw,
+        retry_after_ms,
+    ))
 }
 
 /// 流里的错误块：码在表里时按表；有码却不在表里时是参数错误（没有状态可看，不重试）；没有码时交给协议层。
 pub(super) fn stream(value: &Value, raw: &str) -> Option<Verdict> {
     let code = code(value, message_of(value))?;
     let class = class_of(&code).unwrap_or(Class::InvalidRequest);
-    Some(verdict(class, None, value, raw, None))
+    Some(verdict(class, None, Some(code), value, raw, None))
 }
 
 /// 不带事件名的块：`success: false`，或带表里的码（带非错误的码的普通块不算）。
@@ -144,7 +174,7 @@ pub(super) fn frame(value: &Value, raw: &str) -> Option<Verdict> {
     }
     Some(
         stream(value, raw)
-            .unwrap_or_else(|| verdict(Class::InvalidRequest, None, value, raw, None)),
+            .unwrap_or_else(|| verdict(Class::InvalidRequest, None, None, value, raw, None)),
     )
 }
 

@@ -19,6 +19,7 @@ mod kinds;
 mod markers;
 mod model_change;
 mod plans;
+mod provider_error;
 mod rows;
 pub(crate) mod rows_range;
 pub mod state;
@@ -1357,14 +1358,18 @@ impl Projection {
                 "interrupted",
                 Phase::CompletedInterrupted,
             ),
-            TurnOutcome::Failed { message, code } => {
+            TurnOutcome::Failed {
+                message,
+                code,
+                provider,
+            } => {
                 self.error = Some(LastError {
                     message: message.clone(),
                     code: code.clone(),
                     at: now,
                     recoverable: true,
                     detail: None,
-                    attribution: None,
+                    attribution: provider.clone().map(state::ErrorAttribution::Provider),
                 });
                 ("failed", "failed", Phase::Error)
             }

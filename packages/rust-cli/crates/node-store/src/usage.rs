@@ -104,7 +104,7 @@ fn error_info(error: &ModelError) -> (String, Option<String>, bool) {
         .ok()
         .and_then(|value| value["kind"].as_str().map(str::to_owned))
         .unwrap_or_default();
-    let code = match error {
+    let code = match error.peel() {
         ModelError::Server { status, .. } => Some(status.to_string()),
         _ => None,
     };
@@ -203,7 +203,10 @@ pub fn model_called(ctx: &Commit<'_>, call: &ModelCall) -> Result<(), StoreError
         // Node `errorInfo.retryable ?? retryCount > 0`。
         retryable: error_retryable.unwrap_or(call.retries > 0),
         cancelled_by_user: call.status == CallStatus::Cancelled,
-        context_exceeded: matches!(call.error, Some(ModelError::PromptTooLong { .. })),
+        context_exceeded: call
+            .error
+            .as_ref()
+            .is_some_and(|error| error.prompt_too_long_message().is_some()),
         error_type,
         error_code,
         error_message: call.error.as_ref().map(ToString::to_string),

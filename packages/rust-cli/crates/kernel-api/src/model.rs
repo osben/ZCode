@@ -398,6 +398,23 @@ pub enum ModelError {
     /// `projectMessagesForMediaBudget`); refused before sending. Node's text, and its error code ([`Self::code`]).
     #[error("{CURRENT_ATTACHMENTS_TOO_LARGE}")]
     CurrentAttachmentsTooLarge,
+    /// Fork: a failure whose provider returned its own business code (Node `context.providerCode`). `error` is the
+    /// classification, unchanged; match on [`ModelError::peel`] to classify, and use [`ModelError::provider`] for the code.
+    #[error("{error}")]
+    Provider {
+        provider: ProviderFailure,
+        error: Box<ModelError>,
+    },
+}
+
+/// Fork: a provider business failure's facts that the turn attributes (Node `providerCode`, `statusCode`, `retryable` on
+/// the error context, `error-payload.ts`). The code is the provider's own (`subscription_sharing_*`, or a zhipu number).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderFailure {
+    pub code: String,
+    /// The HTTP status of the response that carried the code; `None` for a stream error (Node omits `statusCode`).
+    pub status: Option<u16>,
+    pub retryable: bool,
 }
 
 /// Fork: Node's text for [`ModelError::CurrentAttachmentsTooLarge`].
@@ -415,6 +432,31 @@ impl ModelError {
     pub fn code(&self) -> Option<&'static str> {
         match self {
             Self::CurrentAttachmentsTooLarge => Some(MEDIA_BUDGET_CURRENT_ATTACHMENT_TOO_LARGE),
+            Self::Provider { error, .. } => error.code(),
+            _ => None,
+        }
+    }
+
+    /// Fork: the classification under any [`ModelError::Provider`] wrapper; the error itself otherwise.
+    pub fn peel(&self) -> &ModelError {
+        match self {
+            Self::Provider { error, .. } => error.peel(),
+            other => other,
+        }
+    }
+
+    /// Fork: the provider business code and facts, when the provider returned one.
+    pub fn provider(&self) -> Option<&ProviderFailure> {
+        match self {
+            Self::Provider { provider, .. } => Some(provider),
+            _ => None,
+        }
+    }
+
+    /// Fork: the `message` of a [`ModelError::PromptTooLong`] (under any provider wrapper), for the reactive compaction.
+    pub fn prompt_too_long_message(&self) -> Option<&str> {
+        match self.peel() {
+            Self::PromptTooLong { message } => Some(message),
             _ => None,
         }
     }

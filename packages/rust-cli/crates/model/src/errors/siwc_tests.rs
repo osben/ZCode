@@ -27,7 +27,7 @@ fn the_usage_limit_is_final_with_the_node_text() {
     let limited = failure(429, "subscription_sharing_usage_limit_exceeded");
     assert_eq!(limited.class, Class::QuotaExhausted);
     assert_eq!(
-        limited.error,
+        *limited.error.peel(),
         ModelError::QuotaExhausted {
             message: "ChatGPT plan usage limit reached. Manage your usage at https://chatgpt.com/settings/usage (5-hour window, shared across all apps using the plan).".to_owned(),
         }
@@ -47,7 +47,7 @@ fn an_unavailable_plan_service_is_retried() {
         let verdict = failure(503, code);
         assert_eq!(verdict.class, Class::ServerError, "{code}");
         assert!(matches!(
-            &verdict.error,
+            &verdict.error.peel(),
             ModelError::Server { status: 503, message } if message.starts_with("The ChatGPT plan service is temporarily unavailable")
         ));
         assert!(matches!(
@@ -101,7 +101,7 @@ fn eligibility_scope_and_account_codes_keep_their_classes() {
     for (code, status, class) in cases {
         let verdict = failure(status, code);
         assert_eq!(verdict.class, class, "{code}");
-        let message = match &verdict.error {
+        let message = match verdict.error.peel() {
             ModelError::InvalidRequest { message } | ModelError::Authentication { message } => {
                 message
             }
@@ -111,7 +111,9 @@ fn eligibility_scope_and_account_codes_keep_their_classes() {
     }
     // The scope codes are an authentication failure at 401 / 403 (the sign-in error, not a bad request).
     assert!(matches!(
-        failure(403, "chatpass_v2_scope_not_authorized").error,
+        failure(403, "chatpass_v2_scope_not_authorized")
+            .error
+            .peel(),
         ModelError::Authentication { .. }
     ));
 }
@@ -123,12 +125,15 @@ fn a_401_renews_but_keeps_the_codes_own_error() {
     let limited = failure(401, "subscription_sharing_usage_limit_exceeded");
     assert_eq!(limited.class, Class::AuthRejected);
     assert!(matches!(
-        &limited.error,
+        &limited.error.peel(),
         ModelError::QuotaExhausted { message } if message.starts_with("ChatGPT plan usage limit reached.")
     ));
     let unavailable = failure(401, "subscription_sharing_user_unavailable");
     assert_eq!(unavailable.class, Class::AuthRejected);
-    assert!(matches!(&unavailable.error, ModelError::Server { .. }));
+    assert!(matches!(
+        unavailable.error.peel(),
+        ModelError::Server { .. }
+    ));
 }
 
 #[test]
@@ -155,7 +160,7 @@ fn stream_errors_and_the_type_field_are_recognised() {
         );
         assert_eq!(verdict.class, Class::AccessDenied, "{code}");
         assert!(
-            matches!(&verdict.error, ModelError::Authentication { message } if message.contains("zcode login chatgpt")),
+            matches!(verdict.error.peel(), ModelError::Authentication { message } if message.contains("zcode login chatgpt")),
             "{code}: {:?}",
             verdict.error
         );
@@ -164,5 +169,43 @@ fn stream_errors_and_the_type_field_are_recognised() {
     assert_eq!(
         failure(429, "rate_limit_exceeded").class,
         Class::RateLimited
+    );
+}
+
+/// Node `context.providerCode` / `statusCode` / `retryable` of a plan code (error-payload.ts): the failure keeps the
+/// code so the turn can name it in `lastError.attribution.providerErrorCode`.
+#[test]
+fn plan_codes_keep_the_provider_code_status_and_retryability() {
+    use rust_cli_kernel_api::model::ProviderFailure;
+
+    let limited = failure(429, "subscription_sharing_usage_limit_exceeded");
+    assert_eq!(
+        limited.error.provider(),
+        Some(&ProviderFailure {
+            code: "subscription_sharing_usage_limit_exceeded".to_owned(),
+            status: Some(429),
+            retryable: false,
+        })
+    );
+    let unavailable = failure(503, "subscription_sharing_usage_unavailable");
+    assert_eq!(
+        unavailable.error.provider(),
+        Some(&ProviderFailure {
+            code: "subscription_sharing_usage_unavailable".to_owned(),
+            status: Some(503),
+            retryable: true,
+        })
+    );
+    // A stream error has no HTTP status.
+    let value = json!({"type": "error", "error": {"type": "subscription_sharing_usage_limit_exceeded", "message": "x"}});
+    let stream = crate::errors::classify_stream_error(
+        Vendor::Generic,
+        WireProtocol::OpenAiResponses,
+        &value,
+        &value.to_string(),
+    );
+    assert_eq!(
+        stream.error.provider().map(|provider| provider.status),
+        Some(None)
     );
 }

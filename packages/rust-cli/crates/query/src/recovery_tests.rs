@@ -48,7 +48,8 @@ fn the_output_limit_is_resumed_three_times_then_fails() {
         guards.decide(&cut, &QuerySource::MainThread, 128_000),
         Outcome::Failed {
             // 修复线 F51b（query.md §1）：主语是 the model。
-            message: "API Error: The model's response exceeded the 128000 output token maximum. To configure this behavior, set the ZCODE_MAX_OUTPUT_TOKENS environment variable.".to_owned()
+            message: "API Error: The model's response exceeded the 128000 output token maximum. To configure this behavior, set the ZCODE_MAX_OUTPUT_TOKENS environment variable.".to_owned(),
+            provider: None,
         }
     );
     // 工具轮之后重新计数。
@@ -73,7 +74,8 @@ fn a_tool_use_stop_without_tool_calls_is_retried_once_and_resets_the_output_coun
     assert_eq!(
         guards.decide(&leaked, &QuerySource::MainThread, 1),
         Outcome::Failed {
-            message: "The model's tool call could not be parsed (retry also failed).".to_owned()
+            message: "The model's tool call could not be parsed (retry also failed).".to_owned(),
+            provider: None,
         }
     );
 }
@@ -162,7 +164,8 @@ fn a_cut_stream_is_resumed_only_for_subagents_and_print_mode() {
         Outcome::Failed {
             message:
                 "API Error: Connection lost mid-response. The response above may be incomplete."
-                    .to_owned()
+                    .to_owned(),
+            provider: None,
         }
     );
     assert_eq!(
@@ -172,7 +175,8 @@ fn a_cut_stream_is_resumed_only_for_subagents_and_print_mode() {
         }),
         Outcome::Failed {
             message: "API Error: Server error mid-response. The response above may be incomplete."
-                .to_owned()
+                .to_owned(),
+            provider: None,
         }
     );
     assert_eq!(
@@ -182,7 +186,8 @@ fn a_cut_stream_is_resumed_only_for_subagents_and_print_mode() {
         Outcome::Failed {
             message:
                 "API Error: The response stream was malformed. The response above may be incomplete."
-                    .to_owned()
+                    .to_owned(),
+            provider: None,
         }
     );
     // 流空闲看门狗中止（L35，stall-visibility.md §2.3）。
@@ -191,7 +196,8 @@ fn a_cut_stream_is_resumed_only_for_subagents_and_print_mode() {
         Outcome::Failed {
             message:
                 "API Error: The response stopped arriving. The response above may be incomplete."
-                    .to_owned()
+                    .to_owned(),
+            provider: None,
         }
     );
 }
@@ -222,7 +228,8 @@ fn a_refusal_ends_the_turn_with_the_reason() {
         Guards::default().decide(&blocked, &QuerySource::MainThread, 1),
         Outcome::Failed {
             message: "API Error: Model output was blocked by the provider's content safety filter."
-                .to_owned()
+                .to_owned(),
+            provider: None,
         }
     );
 }
@@ -242,7 +249,8 @@ fn a_full_context_window_is_resumed_like_the_output_limit() {
     assert_eq!(
         guards.decide(&full, &QuerySource::MainThread, 1),
         Outcome::Failed {
-            message: "API Error: The model has reached its context window limit.".to_owned()
+            message: "API Error: The model has reached its context window limit.".to_owned(),
+            provider: None,
         }
     );
 }
@@ -271,7 +279,8 @@ fn terminal_errors_end_a_cut_stream_with_their_own_text() {
         assert_eq!(
             outcome,
             Outcome::Failed {
-                message: error.to_string()
+                message: error.to_string(),
+                provider: None,
             }
         );
     }

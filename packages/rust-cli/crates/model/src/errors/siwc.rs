@@ -6,7 +6,7 @@
 //! `error.code` or `error.type`. None of them falls back to another billing path.
 
 use rust_cli_base::proto::http;
-use rust_cli_kernel_api::model::ModelError;
+use rust_cli_kernel_api::model::{ModelError, ProviderFailure};
 
 use super::{Class, Shape, Verdict, error_of};
 
@@ -53,18 +53,33 @@ pub(super) fn classify(
     codes: &[Option<&str>],
     retry_after_ms: Option<u64>,
 ) -> Option<Verdict> {
-    let (class, message) = codes.iter().flatten().find_map(|code| entry(code))?;
+    let (code, (class, message)) = codes
+        .iter()
+        .flatten()
+        .find_map(|code| entry(code).map(|found| (*code, found)))?;
     let shape = Shape {
         message: message.to_owned(),
         retry_after_ms,
     };
     // The error is always the code's own (Node's final classification): the scope codes are a sign-in error
     // (Node `ProviderNotConfigured`) with or without an HTTP status, so a stream error gets the same error as a 403.
-    let error = match class {
+    let classified = match class {
         Class::AccessDenied => ModelError::Authentication {
             message: shape.message,
         },
         _ => error_of(class, status, shape),
+    };
+    // Node `context.providerCode` / `statusCode` / `retryable`: the unavailable codes are the only retryable ones.
+    let error = ModelError::Provider {
+        provider: ProviderFailure {
+            code: code.to_owned(),
+            status,
+            retryable: matches!(
+                code,
+                "subscription_sharing_usage_unavailable" | "subscription_sharing_user_unavailable"
+            ),
+        },
+        error: Box::new(classified),
     };
     // Node `AccountRequestRetry` renews on the 401 status, whatever the code (`isProjectTokenRejection`): only the
     // disposition becomes a renewal; once that one renewal is spent the request ends with the code's own error.

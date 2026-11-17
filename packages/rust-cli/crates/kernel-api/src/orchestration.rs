@@ -260,6 +260,8 @@ pub enum QueryStop {
     /// `message` 是给用户的错误消息）。
     ApiError {
         message: String,
+        /// Fork: the provider business failure behind `message` (Node `providerCode`), for `lastError`.
+        provider: Option<crate::model::ProviderFailure>,
     },
 }
 
@@ -279,6 +281,14 @@ impl QueryError {
     pub fn code(&self) -> Option<&'static str> {
         match self {
             Self::Model(error) => error.code(),
+            _ => None,
+        }
+    }
+
+    /// Fork: the provider business failure of a model error (see [`ModelError::provider`]).
+    pub fn provider(&self) -> Option<&crate::model::ProviderFailure> {
+        match self {
+            Self::Model(error) => error.provider(),
             _ => None,
         }
     }

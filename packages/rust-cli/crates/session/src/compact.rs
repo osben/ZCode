@@ -115,7 +115,10 @@ impl Actor {
                         &record,
                     ))
                     .await?;
-                    Ok(QueryStop::ApiError { message })
+                    Ok(QueryStop::ApiError {
+                        message,
+                        provider: None,
+                    })
                 }
             }
         });

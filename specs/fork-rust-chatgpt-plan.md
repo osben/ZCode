@@ -149,40 +149,53 @@ code); the error is always the code's own, so after that one renewal the request
 `ProviderNotConfigured`) with or without an HTTP status, so a stream error gets the same error as a 403. Codes are matched in `error.code` or `error.type`, in HTTP error bodies and in stream `error` /
 `response.failed` events. `{"detail": "…"}` bodies keep the raw text as the message.
 
-## Known gap: provider attribution on the limit and sign-in banners (open, needs a design decision)
+## Provider attribution on the limit and sign-in banners (implemented)
 
 The Desktop limit banner (`chatgpt-plan-limited`, `useV4SessionQuotaBanner.ts`) and the sign-in error banner read
 `lastError.attribution.providerErrorCode`, falling back to `lastError.code`. The zhipu quota banners read the same
-field. Rust publishes `lastError.code = "fault.turn.failed"` and no attribution for every model failure, so the
-provider code never reaches the banner and a ChatGPT limit or sign-in failure on Rust shows the generic error banner
-with the Node message text.
+field. Node's `lastError.code` is the provider code when the error has one (`error-payload.ts` `selectErrorCode`),
+and its attribution is `projectErrorAttribution` over the error context.
 
-Verified cause (Rust, 2026-11-16):
+Rule (Rust):
 
-- `crates/model/src/errors/siwc.rs` and `zhipu.rs` know the provider code, but `error_of` (`errors/mod.rs`) builds a
-  `ModelError` variant (`QuotaExhausted`, `Authentication`, `RateLimited`, ...) that has no code field.
-- The query loop turns that error into `Outcome::Failed { message }` (`crates/query/src/run.rs`), then into
-  `QueryStop::ApiError { message }`, and `session/src/turn.rs` maps it to `TurnOutcome::Failed { code: None }`.
-- `protocol-zcode/src/projection/state.rs` `ErrorAttribution` has only `HookBlocked`, so `last_error()` never emits a
-  provider attribution.
+- The provider code is carried typed on the error: `ModelError::Provider { provider: ProviderFailure, error }`
+  (`crates/kernel-api/src/model.rs`), where `ProviderFailure` is `{ code, status, retryable }`. The classifiers wrap a
+  failure only when the body carried a code: the plan table (`siwc.rs`) and the zhipu table and unknown codes
+  (`zhipu.rs`). `error` is the unchanged classification. Consumers that match on the class call `peel()` first.
+- The query loop carries it as `Outcome::Failed { provider }` and `QueryStop::ApiError { provider }`. The session
+  maps it to `TurnOutcome::Failed { code, provider }`, with `code` = the provider code (Node parity).
+- The projection sets `lastError.attribution` in Node's shape (`projection/provider_error.rs`):
+  `{source: "provider", exceptionKind: "provider_business", providerErrorCode, retryable, statusCode?}`.
+  `statusCode` is present only for a response with an HTTP status (Node omits it for a stream error).
 
-Node contract (verified in source, 2026-11-16):
+Node golden (generated 2026-11-16 by running Node's `projectExecutionErrorPayload`,
+`apps/zcode-cli/packages/core/src/errors/error-payload.ts`, over the context `toAdapterError` builds for a
+`ProviderBusinessError`, `source: "provider"`, `exceptionKind: "provider_business"`, `providerCode`, `statusCode`,
+`retryable: false`):
 
-- Node builds `lastError.attribution` from the error chain by `projectExecutionErrorPayload`
-  (`apps/zcode-cli/packages/core/src/errors/error-payload.ts`, `projectErrorAttribution`). The keys it can emit are
-  `source`, `reason`, `errorPhase`, `exceptionKind`, `providerId`, `modelId`, `providerKind`, `transport`,
-  `statusCode`, `providerErrorCode`, `retryable`, plus `highspeedCardId` and `highspeedFallbackUnavailable` from
-  `turn-errors.ts`. `providerErrorCode` comes from `context.providerCode` (the string business code such as
-  `subscription_sharing_usage_limit_exceeded`, or a numeric zhipu code).
-- Node also persists the same attribution on the failed assistant message (`turn-model-step.ts`, `persistedErrorProjection`),
-  so cold hydration keeps it. Rust's node-records and node-store read such a record (fixture `node-cold.json`);
-  whether Rust writes the attribution into its own failed-assistant record is not verified and is part of the decision.
-- The exact attribution values for a live ChatGPT usage-limit failure are not captured here. Capture them from a live
-  Node run before writing the golden; this section does not assert them.
+| Case                                 | Node `attribution`                                                                                                           | Node `code`                                 |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| ChatGPT usage limit, HTTP 429        | `{source, exceptionKind, statusCode: 429, providerErrorCode: "subscription_sharing_usage_limit_exceeded", retryable: false}` | `subscription_sharing_usage_limit_exceeded` |
+| zhipu quota 1113, HTTP 429           | `{source, exceptionKind, statusCode: 429, providerErrorCode: "1113", retryable: false}`                                      | `1113`                                      |
+| zhipu quota 1113, stream (no status) | `{source, exceptionKind, providerErrorCode: "1113", retryable: false}`                                                       | `1113`                                      |
 
-Decision needed before implementation: how the provider code travels inside `ModelError`. Adding a field to each
-variant touches about 65 non-test construction sites plus `ModelNotice::Retrying` (serialized), so a wrapper or a
-sibling side channel is the alternative. Until that is decided, Rust keeps the generic banner.
+Not carried yet: Node's `providerId`, `modelId`, `providerKind`, `transport`, `errorPhase` and `reason`. They need the
+turn's model selection and the transport's phase at the failure, which the projection does not have. Until they are
+carried, the attribution is a subset of Node's shape, and the banner, which reads only `providerErrorCode`, is correct.
+Node's `providerId` for a plan account is `account:chatgpt-plan:<K>`; the banner takes the provider id from the session.
+
+Acceptance:
+
+| #   | Given                                                          | When       | Then                                                                                      |
+| --- | -------------------------------------------------------------- | ---------- | ----------------------------------------------------------------------------------------- |
+| P1  | HTTP 429 plan usage limit                                      | classify   | `ModelError::Provider` with code, status 429, retryable false; `peel()` is QuotaExhausted |
+| P2  | HTTP 503 plan usage unavailable                                | classify   | provider code, status 503, retryable true                                                 |
+| P3  | Stream error with a plan code (no status)                      | classify   | provider code, status None                                                                |
+| P4  | zhipu 1302 / 1113 response and stream                          | classify   | provider code (string), status per response, retryable per class                          |
+| P5  | Failed turn with a provider failure                            | projection | `lastError.code` = provider code; attribution equals the Node golden above                |
+| P6  | Failed turn in the integration suite on zhipu 1308 at HTTP 429 | run a turn | `TurnOutcome::Failed { code: "1308", provider: {1308, 429, false} }`                      |
+
+Not verified here: the banner E2E (none exists in the repo) and a live ChatGPT account.
 
 ## Acceptance
 

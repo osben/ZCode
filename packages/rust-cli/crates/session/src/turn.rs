@@ -512,6 +512,7 @@ impl Actor {
             (Some(error), _) => TurnOutcome::Failed {
                 message: error.to_string(),
                 code: None,
+                provider: None,
             },
             (None, Ok(Ok(QueryStop::Completed))) => TurnOutcome::Success,
             (None, Ok(Ok(QueryStop::Aborted))) => TurnOutcome::Interrupted,
@@ -520,20 +521,31 @@ impl Actor {
             (None, Ok(Ok(QueryStop::MaxTurns))) => TurnOutcome::Failed {
                 message: "reached the maximum number of turns".to_owned(),
                 code: None,
+                provider: None,
             },
-            (None, Ok(Ok(QueryStop::Blocked { message } | QueryStop::ApiError { message }))) => {
-                TurnOutcome::Failed {
-                    message,
-                    code: None,
-                }
-            }
+            (None, Ok(Ok(QueryStop::Blocked { message }))) => TurnOutcome::Failed {
+                message,
+                code: None,
+                provider: None,
+            },
+            // Node `lastError.code` is the provider code when the error has one (error-payload.ts `selectErrorCode`).
+            (None, Ok(Ok(QueryStop::ApiError { message, provider }))) => TurnOutcome::Failed {
+                message,
+                code: provider.as_ref().map(|provider| provider.code.clone()),
+                provider,
+            },
             (None, Ok(Err(error))) => TurnOutcome::Failed {
                 message: error.to_string(),
-                code: error.code().map(str::to_owned),
+                code: error
+                    .provider()
+                    .map(|provider| provider.code.clone())
+                    .or_else(|| error.code().map(str::to_owned)),
+                provider: error.provider().cloned(),
             },
             (None, Err(error)) => TurnOutcome::Failed {
                 message: error.to_string(),
                 code: None,
+                provider: None,
             },
         };
         // Node `turn_usage`（usage.md §2.4）：只在这次运行的输入已经落库时写；压缩运行没有输入。用量行是观测，

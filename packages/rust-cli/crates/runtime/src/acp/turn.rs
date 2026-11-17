@@ -60,7 +60,12 @@ pub(super) async fn run(
     };
     let launch = match read_launch(host, &agent_id, &request).await {
         Ok(launch) => launch,
-        Err(message) => return Ok(QueryStop::ApiError { message }),
+        Err(message) => {
+            return Ok(QueryStop::ApiError {
+                message,
+                provider: None,
+            });
+        }
     };
     if abort.is_aborted() {
         return turn.aborted(&abort).await;
@@ -79,6 +84,7 @@ pub(super) async fn run(
             tracing::warn!(event = "acp.start_failed", agent = %agent_id, error = %error.message, "ACP agent could not be started");
             return Ok(QueryStop::ApiError {
                 message: start_failure(&agent_id, &error),
+                provider: None,
             });
         }
     };
@@ -116,7 +122,10 @@ pub(super) async fn run(
         Err(ReconcileError::Aborted) => return turn.aborted(&abort).await,
         Err(ReconcileError::Refused(message)) => {
             tracing::warn!(event = "acp.config_failed", agent = %agent_id, "ACP agent refused a chosen config value");
-            return Ok(QueryStop::ApiError { message });
+            return Ok(QueryStop::ApiError {
+                message,
+                provider: None,
+            });
         }
         Err(ReconcileError::Store(error)) => return Err(error.into()),
     }
@@ -206,6 +215,7 @@ pub(super) async fn run(
             tracing::warn!(event = "acp.prompt_failed", agent = %agent_id, error = %error.message, "ACP agent turn failed");
             Ok(QueryStop::ApiError {
                 message: prompt_failure(&agent_id, &error),
+                provider: None,
             })
         }
     }

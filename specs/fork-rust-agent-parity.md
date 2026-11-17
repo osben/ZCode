@@ -2049,18 +2049,20 @@ Known small gaps and follow-ups:
   stdin stream errors only on a failed write (`transport.ts`), and its stall watch only emits a
   `stalled` status (`runtime-helpers.ts` `StallWatch`, `external-agent-turn.ts`); nothing fails the
   prompt. No timeout is added on either side.
-- No idle reaping, and Node has none either (verified 2026-11-16). Node's `AcpSessionPool`
+- Matches Node: no idle reaping on either side (verified 2026-11-16). Node's `AcpSessionPool`
   (`apps/zcode-cli/packages/bootstrap/src/acp-agent/acp-session-pool.ts`) starts the agent on the session's first
   external turn and stops it only on `stopSession` (the app session close, `create-app.ts` `close`), `stopAll`
   (worker shutdown, `runtime-cleanup.ts`), or a launch-config change. No timer calls any of them. Rust stops the
   runtime on the same session close (`AcpRelease::released`, `crates/runtime/src/acp/mod.rs`). An idle timeout
-  would be new behavior, not parity: it needs a user decision and is not implemented.
+  is not added: an idle timeout would be new behavior, not parity.
 - No prompt timeout, on Node or Rust. Node's `DEFAULT_TIMEOUTS` (`packages/acp-agent-runtime/src/runtime-helpers.ts`)
   are initialize 30 s, new session 30 s, cancel grace 10 s, stop grace 2 s, kill grace 5 s, and a stall warning
   of 120 s. The 120 s stall warning emits only a `stalled` event; nothing fails the prompt. Rust's `AcpTimeouts`
   (`crates/acp/src/runtime.rs`) has the same initialize, new session, cancel grace, stop grace and stall values.
-  Its process teardown uses a 1 s `death_grace` and a 1 s `KILL_DEADLINE` (`crates/proc/src/tree/posix.rs`), not
-  Node's 5 s kill grace; that difference is recorded here and not changed by this spec. No timeout error is defined.
+  Known difference, not changed here: Rust's ACP teardown kills the process tree after a 1 s `KILL_DEADLINE`
+  (`crates/proc/src/tree/posix.rs`, shared with the shell and MCP kills) where Node waits 5 s (`killGraceMs`).
+  Aligning it needs the kill grace passed through the proc crate's shutdown API, which changes shell and MCP kill
+  timing too, so it is a separate change. No timeout error is defined.
 - Images stored as artifacts (large attachments) are not sent to the agent; only inline base64
   images are.
 

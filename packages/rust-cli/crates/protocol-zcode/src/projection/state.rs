@@ -3,6 +3,7 @@
 
 use rust_cli_kernel_api::message::Usage;
 use rust_cli_kernel_api::model::ModelSelection;
+use rust_cli_kernel_api::model::ProviderFailure;
 use rust_cli_kernel_api::permission::PermissionMode;
 use serde_json::{Value, json};
 
@@ -58,10 +59,12 @@ pub struct LastError {
 }
 
 /// Fork: `sessionErrorInfoSchema.attribution`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ErrorAttribution {
     /// `{source: "runtime", reason: "hook_blocked"}`.
     HookBlocked,
+    /// Node `projectErrorAttribution` of a provider business failure (see `provider_error::attribution`).
+    Provider(ProviderFailure),
 }
 
 fn last_error(error: &LastError) -> Value {
@@ -75,9 +78,12 @@ fn last_error(error: &LastError) -> Value {
     if let Some(detail) = &error.detail {
         value["detail"] = json!(detail);
     }
-    match error.attribution {
+    match &error.attribution {
         Some(ErrorAttribution::HookBlocked) => {
             value["attribution"] = json!({"source": "runtime", "reason": "hook_blocked"});
+        }
+        Some(ErrorAttribution::Provider(provider)) => {
+            value["attribution"] = super::provider_error::attribution(provider);
         }
         None => {}
     }
