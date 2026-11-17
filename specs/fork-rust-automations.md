@@ -278,7 +278,13 @@ before), the ticket authority and model binding, takeover, and the session's off
 
 ### Slice 3 layer B: decision needed before the model binding
 
-Status: blocked on one design decision. No layer B code exists on `feat/rust-offpeak-slice3-b`.
+Decision (2026-11-17): **option 1, the per-call override**, approved by the user. The model request gains an optional
+ticket field, default `None`. `request_auth` takes an early branch when it is set. The wait, `replace_ticket` and retry
+state stays in the agent. Ordinary turns are unchanged. The policy flip is the last commit, and only if the whole slice
+works.
+
+Status: the decision is recorded. The independent parts (lifecycle, notifications, control, registration) and the
+binding are built on `feat/rust-offpeak-slice3-b`. The note below is the original options analysis.
 
 What is blocked: an off-peak run's model requests must carry the ticket (`x-off-peak-ticket-id`, request auth from
 `modelExecution.requestAuth`), wait for a ticket when none is held, retry on the ticket-expired code
