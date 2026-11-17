@@ -5,19 +5,37 @@
 //! in PR1: it parses what Node wrote and answers "is an authorization pending for this server".
 //! The store is injected through [`McpOAuthStore`]; the platform credential store implements it.
 
+mod callback;
+mod flow;
 mod keys;
+mod lease;
+mod pkce;
+mod protocol;
 mod record;
 mod store;
 
 #[cfg(test)]
+mod flow_tests;
+#[cfg(test)]
+mod lease_tests;
+#[cfg(test)]
+mod protocol_tests;
+#[cfg(test)]
 mod tests;
 
+pub use callback::{CallbackError, CallbackParams, parse_callback_target};
+pub use flow::{FlowInput, FlowOutcome, run_lead};
 pub use keys::{credential_key, credential_key_prefix, lease_path, sanitize_key_prefix};
+pub use lease::{delete_pending_if_owned, pending_record_json, publish_pending};
 pub use record::{
     CanonicalCredentials, DISCOVERY_TTL_MS, PendingAuthorization, load_canonical, load_discovery,
     load_pending,
 };
-pub use store::{McpOAuthStore, McpOAuthStoreError};
+pub use store::{
+    AuthorizationLease, LEASE_MAX_WAIT, LEASE_OWNERLESS_GRACE, LEASE_RETRY_DELAY,
+    LoopbackConnection, LoopbackListener, McpOAuthRuntime, McpOAuthStore, McpOAuthStoreError,
+    McpOAuthWrite, OAuthHttpError, OAuthHttpRequest, OAuthHttpResponse,
+};
 
 /// Whether a connect error is an authorization challenge (Node `classifyInteractiveAuthorizationTrigger`:
 /// a 401 that the SDK reports as `unauthorized`). A 403 needs the `WWW-Authenticate` header, which the

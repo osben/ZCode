@@ -1,0 +1,10 @@
+{
+  "keyPrefix": "mcp:oauth:0123456789abcdef01234567",
+  "leasePath": "/home/u/.zcode/v2/mcp-oauth-0123456789abcdef01234567.authz",
+  "raw": {
+    "mcp:oauth:0123456789abcdef01234567:pending_authorization": "{\"attempt_id\":\"att-1\",\"authorization_url\":\"https://auth.example.test/authorize?state=abc\",\"baseline_generation\":\"gen-0\",\"expires_at\":1700000300000,\"state\":\"abc\"}",
+    "mcp:oauth:0123456789abcdef01234567x:pending_authorization": "{\"attempt_id\":\"att-2\",\"authorization_url\":\"https://auth.example.test/authorize?state=def\",\"expires_at\":1700000300000,\"state\":\"def\"}",
+    "mcp:oauth:0123456789abcdef01234567:discovery_state": "{\"authorizationServerUrl\":\"https://auth.example.test/\",\"authorizationServerMetadata\":{\"issuer\":\"https://auth.example.test\",\"authorization_endpoint\":\"https://auth.example.test/authorize\"}}",
+    "mcp:oauth:0123456789abcdef01234567:discovery_state_fetched_at": "1700000000000"
+  }
+}

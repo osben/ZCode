@@ -2129,6 +2129,7 @@ name = "rust-cli-ext"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "base64",
  "futures-util",
  "regex",
  "rust-cli-base",
@@ -2141,6 +2142,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "url",
 ]
 
 [[package]]
