@@ -316,3 +316,61 @@ fn a_stop_subagent_payload_is_strict() {
         );
     }
 }
+
+/// Gen UI widget state (specs/fork-rust-agent-parity.md "Gen UI widget state"): `sendText.genUiContext` follows Node's
+/// `genUiModelContextSchema` and `genUiPathSchema`; a value Node's zod refuses refuses the command at the schema step.
+#[test]
+fn gen_ui_context_follows_the_node_schema() {
+    let inbound = Inbound::get();
+    let envelope = |context: Value| {
+        json!({"commandId": "c1", "clientId": "k", "sessionId": "s", "type": "sendText",
+            "payload": {"text": "hi", "genUiContext": context}, "issuedAt": 1})
+    };
+    let entry = |path: &str, state: Value| json!({"path": path, "state": state});
+    // An empty array is a present field (the App sends it when the page has no state): accepted.
+    assert!(inbound.command(&envelope(json!([]))).is_ok());
+    assert!(
+        inbound
+            .command(&envelope(json!([entry(
+                "/work/page-one.html",
+                json!({"stage": "entry"})
+            )])))
+            .is_ok()
+    );
+    // A Windows absolute path is accepted like Node's `^[A-Za-z]:[\\/]`.
+    assert!(
+        inbound
+            .command(&envelope(json!([entry(
+                "C:\\work\\page-one.html",
+                json!(1)
+            )])))
+            .is_ok()
+    );
+    let refused = [
+        ("relative path", "work/page-one.html"),
+        ("parent segment", "/work/../page-one.html"),
+        ("uppercase name", "/work/Page-One.html"),
+        ("wrong extension", "/work/page-one.htm"),
+        ("newline", "/work/page\n-one.html"),
+        ("NUL", "/work/page\u{0}-one.html"),
+    ];
+    for (case, path) in refused {
+        assert!(
+            inbound
+                .command(&envelope(json!([entry(path, json!(1))])))
+                .is_err(),
+            "{case}"
+        );
+    }
+    // Node: each state at most 16 KiB and the whole array at most 64 KiB of serialized JSON.
+    let big_state = json!("x".repeat(17_000));
+    assert!(
+        inbound
+            .command(&envelope(json!([entry("/w/a.html", big_state)])))
+            .is_err()
+    );
+    let many: Vec<Value> = (0..100)
+        .map(|index| entry(&format!("/w/p{index}.html"), json!("y".repeat(700))))
+        .collect();
+    assert!(inbound.command(&envelope(Value::Array(many))).is_err());
+}
