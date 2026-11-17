@@ -466,6 +466,13 @@ Order and dependencies: W1 and W2 can run in parallel. W3 needs W2. W4 is indepe
 
 Each PR updates the F5 row and D1 in `specs/fork-rust-node-helper.md` and the "Out of scope" section of `specs/fork-rust-agent-parity.md` with its status.
 
+### 9.1 As built (W2)
+
+- Code: `packages/rust-cli/crates/node-store/src/repo/dwf/` (`mod.rs` repository, `codecs.rs` Node's physical and logical status codecs, `dwf_tests.rs`, `golden_tests.rs`). The module is `#[allow(dead_code)]` until W5a calls it; nothing is wired, the gate stays off.
+- Surface: runs (create, settle, usage, caps, script, non-terminal by parent), actors and nodes (full-row upserts), events (per-run sequence in one statement), and the `session_task_link` `workflow_actor` writer. Reads: the run, actor, node, event lists Node's engine uses. The artifact, introspection and paged reads of `dwf-journal-*.ts` are not ported yet.
+- Goldens: `fixtures/dwf/scenario.json` is the shared input (27 event kinds, every status decoding path, a non-terminal run, a workflow actor link). `node-written.sqlite` and `node-expected.json` come from Node: `scripts/rust-cli/dwf-journal-goldens.ts`, run with `pnpm exec tsx`. `rust-written.sqlite` comes from the ignored test `regenerate_rust_written_golden`. Direction 1 is `golden_tests::rust_reads_what_node_wrote`; direction 2 is `apps/zcode-cli/packages/adapters/tests/dwf-rust-goldens.test.ts` (fork Vitest). Timestamps are not compared.
+- Pin: `dwf_tests::the_0019_checksum_is_pinned_to_the_upstream_ledger` pins `1c8da556…` (`fork-upstream-migrations.json`); the Node golden checks the ledger value. No migration or DDL changed.
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.

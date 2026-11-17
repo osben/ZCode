@@ -1,0 +1,508 @@
+//! dwf_* 仓储的单元测试（W2）：Node 的物理 ↔ 逻辑编解码表，写读语义（建run、结算、actor、node、事件序号），
+//! 以及 session_task_link 的 `workflow_actor` 行。跨运行时的逐行比对在 `golden_tests.rs`。
+use super::codecs::{
+    PhysicalStatus, RunSettlementFields, decode_run_settlement, encode_run_settlement,
+};
+use super::*;
+use serde_json::json;
+use std::time::Duration;
+
+fn database() -> Connection {
+    let (conn, _) = crate::repo::open::open(Path::new(":memory:"), Duration::from_secs(1), 0)
+        .expect("in-memory session database with every Node migration");
+    conn
+}
+
+fn add_session(conn: &Connection, id: &str, parent: Option<&str>) {
+    conn.execute(
+        "insert into session (id, project_id, parent_id, slug, directory, title, version, time_created, time_updated)
+         values (?, 'proj', ?, ?, '/work', 'title', '0.0.0', 1, 1)",
+        rusqlite::params![id, parent, id],
+    )
+    .expect("session row for the task link foreign key");
+}
+
+fn run(id: &str, status: RunStatus) -> RunRecord {
+    RunRecord {
+        run_id: id.to_owned(),
+        status,
+        max_concurrency: 2,
+        ..RunRecord::default()
+    }
+}
+
+// ---- Codec table (Node dwf-journal-codecs.ts: encodeRunSettlement / decodeRunSettlement).
+
+#[test]
+fn stopped_settles_as_cancelled_with_the_envelope() {
+    let encoded = encode_run_settlement(
+        RunStatus::Stopped,
+        &Settlement {
+            stop_reason: Some(StopReason::Superseded),
+            superseded_by: Some("run_d".into()),
+            ..Settlement::default()
+        },
+    );
+    assert_eq!(encoded.status, PhysicalStatus::Cancelled);
+    assert_eq!(
+        serde_json::from_str::<Value>(encoded.failure_json.as_deref().unwrap()).unwrap(),
+        json!({ "stopReason": "superseded", "supersededBy": "run_d" })
+    );
+}
+
+#[test]
+fn stopped_without_a_reason_writes_user() {
+    let encoded = encode_run_settlement(RunStatus::Stopped, &Settlement::default());
+    assert_eq!(encoded.status, PhysicalStatus::Cancelled);
+    assert_eq!(
+        serde_json::from_str::<Value>(encoded.failure_json.as_deref().unwrap()).unwrap(),
+        json!({ "stopReason": "user" })
+    );
+}
+
+#[test]
+fn errored_settles_as_failed_with_the_failure_as_is() {
+    let failure = json!({ "code": "ScriptError", "message": "boom" });
+    let encoded = encode_run_settlement(
+        RunStatus::Errored,
+        &Settlement {
+            failure: Some(failure.clone()),
+            ..Settlement::default()
+        },
+    );
+    assert_eq!(encoded.status, PhysicalStatus::Failed);
+    assert_eq!(
+        encoded
+            .failure_json
+            .as_deref()
+            .map(serde_json::from_str::<Value>)
+            .unwrap()
+            .unwrap(),
+        failure
+    );
+}
+
+#[test]
+fn completed_and_non_terminal_states_keep_their_physical_names() {
+    assert_eq!(
+        encode_run_settlement(RunStatus::Completed, &Settlement::default()),
+        codecs::Encoded {
+            status: PhysicalStatus::Completed,
+            failure_json: None
+        }
+    );
+    assert_eq!(
+        encode_run_settlement(RunStatus::Pending, &Settlement::default()),
+        codecs::Encoded {
+            status: PhysicalStatus::Pending,
+            failure_json: None
+        }
+    );
+    assert_eq!(
+        encode_run_settlement(RunStatus::Running, &Settlement::default()),
+        codecs::Encoded {
+            status: PhysicalStatus::Running,
+            failure_json: None
+        }
+    );
+}
+
+#[test]
+fn decoding_cancelled_reads_the_envelope_and_defaults_to_user() {
+    let with_envelope = decode_run_settlement(
+        PhysicalStatus::Cancelled,
+        Some(r#"{"stopReason":"model","error":{"code":"X","message":"y"}}"#),
+    );
+    assert_eq!(
+        with_envelope,
+        RunSettlementFields {
+            status: RunStatus::Stopped,
+            stop_reason: Some(StopReason::Model),
+            superseded_by: None,
+            failure: Some(json!({ "code": "X", "message": "y" })),
+        }
+    );
+    // Older rows have no envelope, and an unknown reason is not in the allowlist: both decode as user.
+    for raw in [None, Some(r#"{"stopReason":"unknown"}"#)] {
+        let fields = decode_run_settlement(PhysicalStatus::Cancelled, raw);
+        assert_eq!(fields.status, RunStatus::Stopped);
+        assert_eq!(fields.stop_reason, Some(StopReason::User));
+        assert_eq!(fields.failure, None);
+    }
+}
+
+#[test]
+fn decoding_failed_splits_interrupted_from_errored() {
+    let interrupted = decode_run_settlement(
+        PhysicalStatus::Failed,
+        Some(r#"{"code":"Interrupted","message":"gone"}"#),
+    );
+    assert_eq!(interrupted.status, RunStatus::Stopped);
+    assert_eq!(interrupted.stop_reason, Some(StopReason::Interrupted));
+    assert_eq!(
+        interrupted.failure,
+        Some(json!({ "code": "Interrupted", "message": "gone" }))
+    );
+
+    let errored = decode_run_settlement(PhysicalStatus::Failed, None);
+    assert_eq!(errored.status, RunStatus::Errored);
+    assert_eq!(errored.failure, None);
+}
+
+// ---- Repository behaviour.
+
+#[test]
+fn a_run_round_trips_every_optional_column() {
+    let conn = database();
+    let created = RunRecord {
+        parent_session_id: Some("sess_p".into()),
+        cwd: Some("/work".into()),
+        name: Some("Alpha".into()),
+        tool_call_id: Some("call_1".into()),
+        script_text: Some("export default 1".into()),
+        script_hash: Some("hash".into()),
+        args: Some(json!({ "n": 2 })),
+        resumed_from: Some("run_0".into()),
+        spent_tokens: 7,
+        ..run("run_1", RunStatus::Running)
+    };
+    create_run(&conn, &created, 10).unwrap();
+    assert_eq!(get_run(&conn, "run_1").unwrap(), Some(created));
+    assert_eq!(get_run(&conn, "missing").unwrap(), None);
+}
+
+#[test]
+fn a_duplicate_run_is_a_clear_error() {
+    let conn = database();
+    create_run(&conn, &run("run_1", RunStatus::Running), 10).unwrap();
+    let error = create_run(&conn, &run("run_1", RunStatus::Running), 11).unwrap_err();
+    assert!(
+        error.to_string().contains("run already exists: run_1"),
+        "{error}"
+    );
+}
+
+#[test]
+fn an_update_to_an_unknown_run_fails_loudly() {
+    let conn = database();
+    let error = update_run_usage(&conn, "nope", 1, 10).unwrap_err();
+    assert!(error.to_string().contains("unknown run: nope"), "{error}");
+    assert!(update_run_status(&conn, "nope", RunStatus::Running, None, 10).is_err());
+}
+
+#[test]
+fn settling_replaces_failure_and_keeps_an_earlier_result() {
+    let conn = database();
+    create_run(&conn, &run("run_1", RunStatus::Running), 10).unwrap();
+    update_run_status(
+        &conn,
+        "run_1",
+        RunStatus::Completed,
+        Some(&Settlement {
+            result: Some(json!({ "ok": 1 })),
+            ..Settlement::default()
+        }),
+        11,
+    )
+    .unwrap();
+    // A later settlement without a result leaves the stored result (coalesce), and failure is rewritten whole.
+    update_run_status(
+        &conn,
+        "run_1",
+        RunStatus::Errored,
+        Some(&Settlement {
+            failure: Some(json!({ "code": "E", "message": "m" })),
+            ..Settlement::default()
+        }),
+        12,
+    )
+    .unwrap();
+    let got = get_run(&conn, "run_1").unwrap().unwrap();
+    assert_eq!(got.status, RunStatus::Errored);
+    assert_eq!(got.result, Some(json!({ "ok": 1 })));
+    assert_eq!(got.failure, Some(json!({ "code": "E", "message": "m" })));
+}
+
+#[test]
+fn going_back_to_running_clears_the_settlement() {
+    let conn = database();
+    create_run(&conn, &run("run_1", RunStatus::Running), 10).unwrap();
+    update_run_status(
+        &conn,
+        "run_1",
+        RunStatus::Errored,
+        Some(&Settlement {
+            failure: Some(json!({ "code": "E", "message": "m" })),
+            ..Settlement::default()
+        }),
+        11,
+    )
+    .unwrap();
+    update_run_status(&conn, "run_1", RunStatus::Running, None, 12).unwrap();
+    let got = get_run(&conn, "run_1").unwrap().unwrap();
+    assert_eq!(got.status, RunStatus::Running);
+    assert_eq!(got.failure, None);
+    assert_eq!(got.result, None);
+}
+
+#[test]
+fn usage_caps_and_script_have_their_own_narrow_writers() {
+    let conn = database();
+    create_run(&conn, &run("run_1", RunStatus::Running), 10).unwrap();
+    update_run_usage(&conn, "run_1", 512, 11).unwrap();
+    update_run_caps(&conn, "run_1", 6, 12).unwrap();
+    update_run_script(&conn, "run_1", "export default 2", "hash_2", 13).unwrap();
+    let got = get_run(&conn, "run_1").unwrap().unwrap();
+    assert_eq!(got.spent_tokens, 512);
+    assert_eq!(got.max_concurrency, 6);
+    assert_eq!(got.script_text.as_deref(), Some("export default 2"));
+    assert_eq!(got.script_hash.as_deref(), Some("hash_2"));
+    assert_eq!(got.status, RunStatus::Running);
+}
+
+#[test]
+fn events_are_numbered_per_run_and_kept_verbatim() {
+    let conn = database();
+    create_run(&conn, &run("run_1", RunStatus::Running), 10).unwrap();
+    create_run(&conn, &run("run_2", RunStatus::Running), 10).unwrap();
+    let first = append_event(
+        &conn,
+        "run_1",
+        &json!({ "type": "log", "message": "a" }),
+        11,
+    )
+    .unwrap();
+    let second = append_event(
+        &conn,
+        "run_1",
+        &json!({ "type": "log", "message": "b" }),
+        12,
+    )
+    .unwrap();
+    let other = append_event(
+        &conn,
+        "run_2",
+        &json!({ "type": "log", "message": "c" }),
+        13,
+    )
+    .unwrap();
+    assert_eq!((first.sequence, second.sequence, other.sequence), (0, 1, 0));
+    let events = list_events(&conn, "run_1").unwrap();
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[1].event, json!({ "type": "log", "message": "b" }));
+    assert_eq!(events[1].time_created, 12);
+}
+
+#[test]
+fn an_actor_upsert_keeps_the_identity_it_is_given() {
+    let conn = database();
+    create_run(&conn, &run("run_1", RunStatus::Running), 10).unwrap();
+    let actor = ActorRecord {
+        run_id: "run_1".into(),
+        site_id: "site#1".into(),
+        ordinal: 0,
+        name: Some("researcher".into()),
+        persona: Some(json!({ "name": "researcher", "budget": { "webSearch": 8 } })),
+        session_id: Some("sess_child".into()),
+        resolved_model: None,
+    };
+    put_actor(&conn, &actor, 11).unwrap();
+    put_actor(
+        &conn,
+        &ActorRecord {
+            resolved_model: Some("zai/glm".into()),
+            ..actor.clone()
+        },
+        12,
+    )
+    .unwrap();
+    assert_eq!(
+        get_actor(&conn, "run_1", "site#1", 0).unwrap(),
+        Some(ActorRecord {
+            resolved_model: Some("zai/glm".into()),
+            ..actor
+        })
+    );
+    assert_eq!(list_actors(&conn, "run_1").unwrap().len(), 1);
+}
+
+#[test]
+fn a_node_upsert_replaces_the_row_and_keeps_the_identity_columns() {
+    let conn = database();
+    create_run(&conn, &run("run_1", RunStatus::Running), 10).unwrap();
+    let admitted = NodeRecord {
+        run_id: "run_1".into(),
+        site_id: "site#1".into(),
+        ordinal: 0,
+        kind: NodeKind::Ask,
+        actor_site_id: Some("site#1".into()),
+        actor_ordinal: Some(0),
+        actor_seq: Some(1),
+        input_hash: "ih".into(),
+        status: NodeStatus::Running,
+        ..NodeRecord::default()
+    };
+    put_node(&conn, &admitted, 11).unwrap();
+    let settled = NodeRecord {
+        status: NodeStatus::Completed,
+        result: Some(json!({ "answer": null })),
+        stats: Some(json!({ "tokens": 3, "toolCalls": 0, "turns": 1 })),
+        message_boundary: Some(0),
+        ..admitted
+    };
+    put_node(&conn, &settled, 12).unwrap();
+    assert_eq!(
+        get_node(&conn, "run_1", "site#1", 0).unwrap(),
+        Some(settled)
+    );
+    assert_eq!(list_nodes(&conn, "run_1").unwrap().len(), 1);
+}
+
+#[test]
+fn a_world_node_keeps_its_bounded_input_through_settlement() {
+    let conn = database();
+    create_run(&conn, &run("run_1", RunStatus::Running), 10).unwrap();
+    let admitted = NodeRecord {
+        run_id: "run_1".into(),
+        site_id: "site#2".into(),
+        ordinal: 0,
+        kind: NodeKind::WorldRead,
+        input_hash: "ih".into(),
+        status: NodeStatus::Running,
+        input: Some(json!({ "op": "glob", "args": ["**/*.ts"] })),
+        ..NodeRecord::default()
+    };
+    put_node(&conn, &admitted, 11).unwrap();
+    put_node(
+        &conn,
+        &NodeRecord {
+            status: NodeStatus::Completed,
+            result: Some(json!(["a.ts"])),
+            ..admitted.clone()
+        },
+        12,
+    )
+    .unwrap();
+    let got = get_node(&conn, "run_1", "site#2", 0).unwrap().unwrap();
+    assert_eq!(got.input, admitted.input);
+    assert_eq!(got.result, Some(json!(["a.ts"])));
+}
+
+#[test]
+fn the_non_terminal_query_is_scoped_to_one_parent_session() {
+    let conn = database();
+    add_session(&conn, "sess_p", None);
+    create_run(
+        &conn,
+        &RunRecord {
+            parent_session_id: Some("sess_p".into()),
+            ..run("run_live", RunStatus::Running)
+        },
+        10,
+    )
+    .unwrap();
+    create_run(
+        &conn,
+        &RunRecord {
+            parent_session_id: Some("sess_p".into()),
+            ..run("run_done", RunStatus::Completed)
+        },
+        10,
+    )
+    .unwrap();
+    create_run(&conn, &run("run_orphan_no_parent", RunStatus::Running), 10).unwrap();
+    let live = list_non_terminal_runs(&conn, "sess_p").unwrap();
+    assert_eq!(
+        live.iter().map(|r| r.run_id.as_str()).collect::<Vec<_>>(),
+        ["run_live"]
+    );
+}
+
+// ---- session_task_link role `workflow_actor` (Node createSessionTaskLink, script-workflow-activities.ts).
+
+#[test]
+fn a_workflow_actor_link_is_written_in_node_format() {
+    let conn = database();
+    add_session(&conn, "sess_p", None);
+    add_session(&conn, "sess_child", Some("sess_p"));
+    insert_workflow_actor_link(
+        &conn,
+        &WorkflowActorLink {
+            id: "tasklink_1",
+            child_session_id: "sess_child",
+            parent_session_id: Some("sess_p"),
+            path: "dwf/run_1/site#1@0",
+            status: "running",
+        },
+        10,
+    )
+    .unwrap();
+    let row: (Option<String>, Option<String>, String, i64, String, String) = conn
+        .query_row(
+            "select root_workflow_run_id, parent_link_id, role, depth, path, status
+             from session_task_link where child_session_id = 'sess_child'",
+            [],
+            |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                ))
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        row,
+        (
+            None,
+            None,
+            "workflow_actor".into(),
+            0,
+            "dwf/run_1/site#1@0".into(),
+            "running".into()
+        )
+    );
+
+    // Node upserts on child_session_id: a second write only moves status and time.
+    insert_workflow_actor_link(
+        &conn,
+        &WorkflowActorLink {
+            id: "tasklink_2",
+            child_session_id: "sess_child",
+            parent_session_id: Some("sess_p"),
+            path: "dwf/run_1/site#1@0",
+            status: "completed",
+        },
+        11,
+    )
+    .unwrap();
+    let count: i64 = conn
+        .query_row(
+            "select count(*) from session_task_link where child_session_id = 'sess_child'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let status: String = conn
+        .query_row(
+            "select status from session_task_link where child_session_id = 'sess_child'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!((count, status.as_str()), (1, "completed"));
+}
+
+#[test]
+fn the_0019_checksum_is_pinned_to_the_upstream_ledger() {
+    // fork-upstream-migrations.json, cli set, 0019_dwf_journal (specs/upstream-migration-freeze.md).
+    const PINNED: &str = "1c8da5568d2357f25c392be486fae80e1f3ad3ebc830dab1bee941634573e8ba";
+    let migration = crate::repo::migrations::MIGRATIONS
+        .iter()
+        .find(|m| m.id == "0019_dwf_journal")
+        .expect("0019 is embedded");
+    assert_eq!(crate::repo::migrations::checksum(migration.sql), PINNED);
+}
