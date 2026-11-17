@@ -526,10 +526,19 @@ async fn close(lane: &Lane) {
 /// servers and client-credential servers have no pending authorization.
 fn authorization_identity(name: &str, config: &Map<String, Value>) -> Option<ServerOAuthIdentity> {
     let url = config.get("url")?.as_str()?;
-    let oauth = config.get("oauth")?.as_object()?;
-    if oauth.get("type")?.as_str()? != "authorization_code" {
-        return None;
-    }
+    // A remote server without an `oauth` block is `authorization_code` for Node (`resolveOAuthConfig`), and the
+    // connect hook starts its flow on 401; the row must show that flow too.
+    let empty = Map::new();
+    let oauth = match config.get("oauth") {
+        None => &empty,
+        Some(value) => {
+            let block = value.as_object()?;
+            if block.get("type")?.as_str()? != "authorization_code" {
+                return None;
+            }
+            block
+        }
+    };
     let text = |key: &str| oauth.get(key).and_then(Value::as_str).map(str::to_owned);
     Some(ServerOAuthIdentity {
         name: name.to_owned(),
