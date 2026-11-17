@@ -1401,7 +1401,9 @@ Merge order (Node `configuredMcpServers = {...plugins, ...(mcpServers ?? config.
 
 Admission uses the `McpServer` that `load_all` produced, not a JSON round trip through `parse_node_servers`, so the plugin env is kept. The status of a plugin row is the live status, else `connecting` while pending, else `disconnected`; `toolCount: 0` when idle. No `authorization` field is reported: zcode-rs has no MCP OAuth flow (`node_config` warns `oauth is not supported`), so a server Node would gate on OAuth is not a Rust row with that state. That part stays open (see "Open gaps").
 
-Event order, connect: read config, read plugin set, merge, admit, install the lane (replacing the displaced one), settle. Status read: read config, read plugin set, merge, report the stored lane for the same workspace key only.
+Event order, connect: read config, read plugin set, merge, admit, install the lane (replacing the displaced one), start the admitted servers, then wait only for the non-plugin ones (`McpManager::wait_ready_non_plugin`). A plugin server that never answers stays `connecting` in its row and does not hold the read: Rust has no OAuth status wait to return early the way Node does (5 s, `waitForOAuthAuthorizationSnapshot`), so the wait excludes plugin servers instead. Status read: read config, read plugin set, merge, report the stored lane for the same workspace key only.
+
+Known difference: a plugin server that is slow but not stuck is reported `connecting` by Rust until it settles, while Node awaits it within its own timeout before the read returns.
 
 Acceptance (red tests first, `app_workspace_tests.rs`):
 

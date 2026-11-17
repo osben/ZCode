@@ -724,6 +724,14 @@ async fn a_status_read_lists_plugin_servers_without_loading_the_layer() {
 async fn a_connect_admits_the_plugin_server_with_its_plugin_env() {
     let fixture = fixture_with_plugin(json!({}), json!({}));
     let statuses = list(&fixture, "k", true).await;
+    // The read does not wait for the plugin server, so its connect task records the request a little later.
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while fixture.transport.started().is_empty() {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the plugin server was never connected");
     assert_eq!(fixture.transport.started(), ["plugin:toolkit:db"]);
     assert_eq!(
         fixture
@@ -733,8 +741,11 @@ async fn a_connect_admits_the_plugin_server_with_its_plugin_env() {
             .map(String::as_str),
         Some(PLUGIN_DIR)
     );
-    // The recording transport refuses every connect, so the admitted row reports the refusal.
-    assert_eq!(statuses["plugin:toolkit:db"]["status"], "failed");
+    // The read no longer waits for plugin servers, so the refused connect may still be in flight when it returns.
+    assert!(matches!(
+        statuses["plugin:toolkit:db"]["status"].as_str(),
+        Some("connecting" | "failed")
+    ));
     assert!(
         statuses["plugin:toolkit:db"]
             .get("workspaceTrust")
@@ -769,4 +780,44 @@ async fn an_unreadable_workspace_config_lists_no_plugin_rows() {
     let fixture = fixture_with("{}", json!({}), plugin_files(), None, |env| env);
     let statuses = list(&fixture, "k", false).await;
     assert!(statuses.get("plugin:toolkit:db").is_none());
+}
+
+/// A transport whose connects never complete, as a server that never answers its handshake behaves.
+#[derive(Default)]
+struct Silent;
+
+#[async_trait]
+impl McpTransport for Silent {
+    async fn connect(&self, _: &WorkspaceRef, _: McpConnect) -> Result<McpConnectionId, McpError> {
+        std::future::pending().await
+    }
+
+    async fn send(&self, _: &McpConnectionId, _: Value) -> Result<(), McpError> {
+        Ok(())
+    }
+
+    fn events(&self, _: &McpConnectionId) -> BoxStream<'static, McpTransportEvent> {
+        futures_util::stream::pending().boxed()
+    }
+
+    async fn close(&self, _: &McpConnectionId) -> Result<(), McpError> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn a_silent_plugin_server_does_not_hold_the_settings_read() {
+    let mut fixture = fixture_with_plugin(json!({}), json!({}));
+    fixture.admin.transport = Arc::new(Silent);
+    // Node answers `mcp/list` after its OAuth status wait (5 s) even while a plugin server is still connecting; the
+    // read must come back well inside the Desktop's own read timeout.
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        fixture.admin.mcp_list(&target("k"), None, true),
+    )
+    .await;
+    assert!(
+        result.is_ok(),
+        "mcp/list waited on a plugin server that never connected"
+    );
 }
