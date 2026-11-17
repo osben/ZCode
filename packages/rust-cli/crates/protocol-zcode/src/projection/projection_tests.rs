@@ -320,6 +320,7 @@ fn a_permission_ask_marks_the_tool_and_lists_the_interaction() {
             machine: Default::default(),
             once: false,
             independent: false,
+            session_allow: false,
         },
     });
     assert_eq!(asked[0]["row"]["status"], "pendingApproval");
@@ -387,6 +388,7 @@ fn a_single_use_ask_offers_no_always_allow_and_no_full_access() {
             machine: Default::default(),
             once: true,
             independent: false,
+            session_allow: false,
         },
     });
     let payload = &asked[1]["patch"]["pendingInteractions"][0]["payload"];
@@ -436,6 +438,7 @@ fn a_subagent_ask_and_an_independent_ask_offer_no_mode_switch() {
                 machine: Default::default(),
                 once,
                 independent,
+                session_allow: false,
             },
         });
         let payload = asked
@@ -471,6 +474,7 @@ fn an_independent_ask_offers_allow_once_and_deny_only() {
             machine: Default::default(),
             once: false,
             independent: true,
+            session_allow: false,
         },
     });
     let payload = asked
@@ -2451,6 +2455,7 @@ fn a_session_level_ask_stays_pending_after_the_turn_ends() {
             machine: Default::default(),
             once: false,
             independent: false,
+            session_allow: false,
         },
     });
     let finished = feed.apply(KernelEvent::TurnFinished {

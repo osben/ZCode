@@ -231,6 +231,9 @@ pub(crate) struct Actor {
     /// 已从任务表取走、还没开回合的定时任务（排在通道与 `Queue` 输入之后）。
     pub(crate) cron_fires: VecDeque<rust_cli_kernel_api::cron::CronFire>,
     pub(crate) pending: Vec<Pending>,
+    /// Fork (F3b a): tools the user allowed for this session ("Always allow in this session", Node
+    /// `PermissionService.sessionRules`). Lives in the actor: restart, cold resume and `/new` start empty.
+    pub(crate) session_grants: std::collections::BTreeSet<String>,
     pub(crate) running: Option<Running>,
     /// Fork (D2 follow-up): the end-of-turn capture's cancel token while `finish_turn` awaits it. The actor keeps
     /// serving requests meanwhile, and an interrupt or shutdown cancels the capture through this token.
@@ -375,6 +378,7 @@ impl Actor {
             inbox: crate::inbox::Inbox::default(),
             cron_fires: VecDeque::new(),
             pending: Vec::new(),
+            session_grants: Default::default(),
             running: None,
             capture_cancel: None,
             job: None,

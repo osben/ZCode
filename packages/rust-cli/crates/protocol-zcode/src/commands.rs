@@ -2054,6 +2054,8 @@ async fn grant(
 struct Offered {
     suggestions: Vec<rust_cli_kernel_api::permission::PermissionRule>,
     always: bool,
+    /// Fork (F3b a): the ask offers "Always allow in this session" instead of the project option.
+    session: bool,
 }
 
 impl Offered {
@@ -2066,6 +2068,7 @@ impl Offered {
             tool_use,
             once,
             independent,
+            session_allow,
             ..
         } = request
         else {
@@ -2076,9 +2079,12 @@ impl Offered {
         } else {
             suggestions.clone()
         };
+        let plain = !once && !independent;
+        // Fork (F3b a): a session-allow ask swaps the project option for the session one (Node `session-always-allow`).
         let offered = Self {
             suggestions,
-            always: !once && !independent,
+            always: plain && !session_allow,
+            session: plain && *session_allow,
         };
         Some((offered, tool_use.clone()))
     }
@@ -2106,6 +2112,7 @@ fn permission_answer(
         Some("allowAlways") if offered.always => PermissionAnswer::Allow {
             remember: offered.suggestions,
         },
+        Some("allowSession") if offered.session => PermissionAnswer::AllowSession,
         _ => PermissionAnswer::Deny {
             feedback: free_text
                 .map(str::trim)
