@@ -2,12 +2,15 @@
 
 use std::sync::Arc;
 
-use rust_cli_kernel_api::ids::{MessageId, ToolUseId};
+use rust_cli_kernel_api::env::EnvError;
+use rust_cli_kernel_api::ids::{MessageId, SessionId, ToolUseId};
 use rust_cli_kernel_api::message::{
     AssistantMessage, ContentBlock, ToolResultContent, UserMessage, UserOrigin,
 };
+use rust_cli_kernel_api::subagent_config::SubagentSkillGrants;
 use rust_cli_kernel_api::testing::MemoryEnvironment;
 use serde_json::json;
+use tokio::sync::oneshot;
 
 use super::*;
 use crate::test_support::{CWD, facts, workspace};
@@ -124,5 +127,87 @@ async fn references_list_file_skills_with_their_skill_md_path() {
                 "\"workspace\"".to_owned()
             ),
         ]
+    );
+}
+
+/// Holds the next `facts` call (the discovery of a grant) until the test releases it, so the catalog can be observed
+/// while that discovery is in flight. The gate is a channel handshake, not a timer.
+struct Gated {
+    inner: Arc<MemoryEnvironment>,
+    hold: Mutex<Option<(oneshot::Sender<()>, oneshot::Receiver<()>)>>,
+}
+
+impl Gated {
+    /// The next `facts` call reports that it started on the receiver, then waits for the sender.
+    fn hold_next(&self) -> (oneshot::Receiver<()>, oneshot::Sender<()>) {
+        let (entered_tx, entered_rx) = oneshot::channel();
+        let (release_tx, release_rx) = oneshot::channel();
+        *self.hold.lock_unpoisoned() = Some((entered_tx, release_rx));
+        (entered_rx, release_tx)
+    }
+}
+
+#[async_trait::async_trait]
+impl EnvInfo for Gated {
+    async fn facts(&self, workspace: &WorkspaceRef) -> Result<EnvFacts, EnvError> {
+        let hold = self.hold.lock_unpoisoned().take();
+        if let Some((entered, release)) = hold {
+            let _ = entered.send(());
+            let _ = release.await;
+        }
+        self.inner.facts(workspace).await
+    }
+}
+
+/// Fork (rule 17): a re-grant must not expose ungranted skills while it discovers. The old grant stays in force until the
+/// new one replaces it, so the child never sees the full catalog in between.
+#[tokio::test]
+async fn a_regrant_keeps_the_old_grant_until_the_new_one_replaces_it() {
+    let dir = format!("{CWD}/.zcode/skills");
+    let env = Arc::new(
+        MemoryEnvironment::new(facts())
+            .with_file(&format!("{dir}/a/SKILL.md"), "---\ndescription: A\n---\n")
+            .with_file(&format!("{dir}/b/SKILL.md"), "---\ndescription: B\n---\n"),
+    );
+    let info = Arc::new(Gated {
+        inner: env.clone(),
+        hold: Mutex::new(None),
+    });
+    let catalog = Arc::new(SkillCatalog::new(info.clone(), env));
+    let child = SessionId::new("child");
+    let ws = workspace();
+    let names = |skills: Vec<Arc<Skill>>| -> Vec<String> {
+        skills.iter().map(|skill| skill.name.clone()).collect()
+    };
+    assert!(
+        catalog
+            .grant(&child, &ws, &["a".to_owned()])
+            .await
+            .is_empty()
+    );
+    assert_eq!(
+        names(catalog.skills_in(&ws, Some(&child)).await),
+        vec!["a".to_owned()]
+    );
+
+    let (entered, release) = info.hold_next();
+    let regrant = {
+        let catalog = catalog.clone();
+        let (ws, child) = (ws.clone(), child.clone());
+        tokio::spawn(async move { catalog.grant(&child, &ws, &["b".to_owned()]).await })
+    };
+    entered.await.expect("the re-grant reached its discovery");
+    assert_eq!(
+        names(catalog.skills_in(&ws, Some(&child)).await),
+        vec!["a".to_owned()],
+        "the old grant is in force while the new one is discovered"
+    );
+    assert!(catalog.find_in(&ws, Some(&child), "b").await.is_none());
+
+    release.send(()).expect("the discovery is waiting");
+    assert!(regrant.await.expect("the re-grant finishes").is_empty());
+    assert_eq!(
+        names(catalog.skills_in(&ws, Some(&child)).await),
+        vec!["b".to_owned()]
     );
 }

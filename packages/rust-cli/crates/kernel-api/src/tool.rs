@@ -313,6 +313,12 @@ pub trait Tool: Send + Sync {
         None
     }
 
+    /// Fork: a Node `resultBudget` with the truncate strategy: a result above this many UTF-8 bytes is head-cut to it and
+    /// nothing is persisted (Node `serializeToolResult`, `strategy` truncate). Checked before [`Tool::result_budget_bytes`].
+    fn result_budget_truncate_bytes(&self) -> Option<usize> {
+        None
+    }
+
     async fn validate_input(&self, _input: &Value, _context: &ToolUseContext) -> Validation {
         Validation::Ok
     }
