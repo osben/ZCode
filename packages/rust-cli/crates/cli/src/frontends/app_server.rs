@@ -228,6 +228,16 @@ async fn serve(
         built.kernel.project_hook_slots(),
         built.kernel.workspace_layer_host(),
         (opened.primary.mcp().clone(), spawner.clone(), clock.clone()),
+        Arc::new(crate::config::workspace_layer::Loader {
+            files: opened.primary.files().clone(),
+            controller: opened.env.clone(),
+            paths: opened.paths.clone(),
+            process_env: facts.process.env.clone(),
+            flag: None,
+            project_is_local: opened.deployment.primary_is_local(),
+            process: opened.config.plugins.clone(),
+            strict: false,
+        }),
     )));
     // Fork: the ACP agents' session config behind `setExternalAgentConfigOption` and the subscribe seed.
     if let Some(configs) = built.kernel.external_agent_configs() {

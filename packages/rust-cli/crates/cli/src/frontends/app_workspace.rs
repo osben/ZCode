@@ -14,14 +14,16 @@ use async_trait::async_trait;
 use rust_cli_base::Spawner;
 use rust_cli_base::secret::EnvSnapshot;
 use rust_cli_base::sync::LockUnpoisoned;
+use rust_cli_ext::WorkspaceConfigLoader;
 use rust_cli_ext::mcp::{McpManager, McpScope, McpServer, McpSettings, parse_node_servers};
+use rust_cli_ext::plugins::load_all;
 use rust_cli_hooks::ProjectHookSlots;
 use rust_cli_kernel_api::clock::Clock;
 use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
 use rust_cli_kernel_api::ids::EnvironmentId;
 use rust_cli_kernel_api::machine::Files;
 use rust_cli_kernel_api::manage::{McpAction, McpServerInfo, McpServerState};
-use rust_cli_kernel_api::mcp::McpTransport;
+use rust_cli_kernel_api::mcp::{McpTransport, McpTransportConfig};
 use rust_cli_kernel_api::workspace_key::WorkspaceLayerHost;
 use rust_cli_node_store::LOCAL_ENVIRONMENT;
 use rust_cli_paths::StoragePaths;
@@ -49,6 +51,9 @@ pub(crate) struct AppWorkspace {
     /// Fork: the workspace layer this admin's committed trust writes reload (a seam, like
     /// `project_hooks`; specs/fork-rust-workspace-plugins-mcp.md, "As built: layer reload").
     pub(crate) workspace_layer: Arc<dyn WorkspaceLayerHost>,
+    /// Fork: the workspace's plugin view, read per request for the plugin MCP rows (Node `resolveStartupPlugins`).
+    /// The app-server takes no `--plugin-dir`, so the view's session plugin directories are empty.
+    pub(crate) plugins: Arc<dyn WorkspaceConfigLoader>,
     pub(crate) transport: Arc<dyn McpTransport>,
     pub(crate) spawner: Spawner,
     pub(crate) clock: Arc<dyn Clock>,
@@ -86,6 +91,7 @@ impl AppWorkspace {
         project_hooks: Arc<dyn ProjectHookSlots>,
         workspace_layer: Arc<dyn WorkspaceLayerHost>,
         (transport, spawner, clock): (Arc<dyn McpTransport>, Spawner, Arc<dyn Clock>),
+        plugins: Arc<dyn WorkspaceConfigLoader>,
     ) -> Self {
         Self {
             files,
@@ -93,6 +99,7 @@ impl AppWorkspace {
             process,
             project_hooks,
             workspace_layer,
+            plugins,
             transport,
             spawner,
             clock,
@@ -146,10 +153,34 @@ impl AppWorkspace {
         }
     }
 
-    /// Node's configured servers: the Host's DTO when given, else the config's (project declarations and user
-    /// servers, each tagged with its source).
-    fn configured(read: &Read, servers: Option<&[Value]>) -> Vec<(String, Map<String, Value>)> {
-        let mut out: BTreeMap<String, Map<String, Value>> = BTreeMap::new();
+    /// The plugin set of `workspace`, read without installing anything: the workspace view's servers, or none when
+    /// its config cannot be read (the layer fails closed the same way).
+    async fn plugin_servers(&self, workspace: &WorkspaceRef) -> BTreeMap<String, McpServer> {
+        let Some(config) = self.plugins.load(workspace).await else {
+            return BTreeMap::new();
+        };
+        let loaded = load_all(self.files.as_ref(), workspace, &[], &config.plugins)
+            .await
+            .plugins;
+        loaded
+            .mcp_servers()
+            .into_iter()
+            .map(|server| (server.name.clone(), server))
+            .collect()
+    }
+
+    /// Node's configured servers: the plugin servers first (`plugin:<plugin>:<server>`, source kind `plugin`), then the
+    /// Host's DTO when given, else the config's (project declarations and user servers, each tagged with its source).
+    /// A later entry of the same name replaces a plugin server (Node `{...plugins, ...config}`).
+    fn configured(
+        read: &Read,
+        servers: Option<&[Value]>,
+        plugins: &BTreeMap<String, McpServer>,
+    ) -> Vec<(String, Map<String, Value>)> {
+        let mut out: BTreeMap<String, Map<String, Value>> = plugins
+            .iter()
+            .map(|(name, server)| (name.clone(), plugin_row_config(server)))
+            .collect();
         if let Some(servers) = servers {
             for (name, config) in servers.iter().filter_map(mcp_trust::dto_config) {
                 out.insert(name, config);
@@ -185,6 +216,7 @@ impl AppWorkspace {
         &self,
         read: &Read,
         configured: &[(String, Map<String, Value>)],
+        plugins: &BTreeMap<String, McpServer>,
         untrusted: &BTreeSet<&str>,
     ) -> (Vec<McpServer>, BTreeMap<String, Value>) {
         let mut admitted = Vec::new();
@@ -197,6 +229,11 @@ impl AppWorkspace {
             {
                 let status = if disabled { "disabled" } else { "untrusted" };
                 blocked.insert(name.clone(), self.idle(status, transport(config)));
+                continue;
+            }
+            // A plugin row is admitted as the server its plugin produced, so its env (plugin root, project dir) survives.
+            if mcp_trust::source_kind(config) == Some("plugin") {
+                admitted.extend(plugins.get(name).cloned());
                 continue;
             }
             let scope = match mcp_trust::source_kind(config) {
@@ -318,6 +355,8 @@ impl AppWorkspace {
             let servers = std::mem::take(&mut *fresh.pending.lock_unpoisoned());
             fresh.manager.start(workspace, servers);
         }
+        // Node awaits every connection of the lane (each one bounded by its own connect timeout, so a server that
+        // never answers ends `failed` instead of holding the read).
         fresh.manager.wait_ready().await;
     }
 
@@ -346,7 +385,8 @@ impl AppWorkspace {
         arrival: Option<u64>,
     ) -> Result<Value, String> {
         let read = self.read(target).await;
-        let configured = Self::configured(&read, servers);
+        let plugins = self.plugin_servers(&read.workspace).await;
+        let configured = Self::configured(&read, servers, &plugins);
         // Node's `inspect()` throws from `displayConfig` before anything connects.
         let reviews = read
             .inspection
@@ -358,7 +398,7 @@ impl AppWorkspace {
             .map(|review| review.name.as_str())
             .collect();
         if let Some(arrival) = arrival {
-            let admitted = self.admit(&read, &configured, &untrusted);
+            let admitted = self.admit(&read, &configured, &plugins, &untrusted);
             self.connect(arrival, &target.key, read.workspace.clone(), admitted)
                 .await;
         }
@@ -448,6 +488,20 @@ fn transport(config: &Map<String, Value>) -> &str {
         .get("type")
         .and_then(Value::as_str)
         .unwrap_or("stdio")
+}
+
+/// The settings row config of a plugin server: its transport as Node reports it, tagged with the plugin source
+/// (no `workspaceTrust`, and `allows` passes it).
+fn plugin_row_config(server: &McpServer) -> Map<String, Value> {
+    let kind = match &server.transport {
+        McpTransportConfig::Sse { .. } => "sse",
+        McpTransportConfig::Http { .. } => "http",
+        McpTransportConfig::Stdio { .. } | McpTransportConfig::NodeHelper => "stdio",
+    };
+    let mut config = Map::new();
+    config.insert("type".into(), json!(kind));
+    config.insert("source".into(), json!({"kind": "plugin"}));
+    config
 }
 
 #[async_trait]
