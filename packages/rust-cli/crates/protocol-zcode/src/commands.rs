@@ -460,6 +460,23 @@ pub(crate) async fn create_session_with(
         Ok(payload) => payload,
         Err(ack) => return *ack,
     };
+    // Fork: Node `sessionCreationIds`. The explicit id is claimed before any await, so a permanent deletion of that id
+    // sees the create as busy and a second create for it is refused (Node's "sessionId already exists").
+    let _creation = match payload.session_id.as_deref() {
+        Some(id) => match server.in_flight.claim_creation(id) {
+            Some(claim) => Some(claim),
+            None => {
+                return Ack::refused(
+                    &envelope.command_id,
+                    Status::Rejected,
+                    "proto.invalidPayload",
+                    "sessionId already exists".to_owned(),
+                    0,
+                );
+            }
+        },
+        None => None,
+    };
     // B1.1 (specs/fork-rust-agent-parity.md): the managed-worktree fields are admitted in Node's order. First
     // `session-mgmt.ts`: "worktreeCreation requires cwd" — the record names the directory `cwd` points at, so it
     // cannot ride without one (Node refuses before `runActivation`; nothing is persisted from the envelope).
@@ -2054,6 +2071,8 @@ async fn grant(
 struct Offered {
     suggestions: Vec<rust_cli_kernel_api::permission::PermissionRule>,
     always: bool,
+    /// Fork (F3b a): the ask offers "Always allow in this session" instead of the project option.
+    session: bool,
 }
 
 impl Offered {
@@ -2066,6 +2085,7 @@ impl Offered {
             tool_use,
             once,
             independent,
+            session_allow,
             ..
         } = request
         else {
@@ -2076,9 +2096,12 @@ impl Offered {
         } else {
             suggestions.clone()
         };
+        let plain = !once && !independent;
+        // Fork (F3b a): a session-allow ask swaps the project option for the session one (Node `session-always-allow`).
         let offered = Self {
             suggestions,
-            always: !once && !independent,
+            always: plain && !session_allow,
+            session: plain && *session_allow,
         };
         Some((offered, tool_use.clone()))
     }
@@ -2106,6 +2129,7 @@ fn permission_answer(
         Some("allowAlways") if offered.always => PermissionAnswer::Allow {
             remember: offered.suggestions,
         },
+        Some("allowSession") if offered.session => PermissionAnswer::AllowSession,
         _ => PermissionAnswer::Deny {
             feedback: free_text
                 .map(str::trim)

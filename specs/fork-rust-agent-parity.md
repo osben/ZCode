@@ -1242,7 +1242,7 @@ Reference triggers also refuse rows that cite a `deleting` session's artifact. T
    - The triggers persist after state `deleted`, so Rust never recreates the purged rows.
 7. **Request gate** (`protocol-zcode` `Handler::request`, before inbound validation, in Node's order). It collects session ids as Node's `collectResidencySessionIds` does, skips the two deletion methods, and answers `-32603 session-data.deleting` when any id has a purge row.
 8. **Lists and reads.** `list` (`/resume`, `-c`) and `query_sessions` skip sessions with a purge row, as Node's `listSessions` does. The store-level `load` answers `NotFound` for them, as Node's store `getSession` returns null. The repository read that write paths use (`repo::sessions::get`, `facts::live_session`) does not filter, as in Node; a write there meets the triggers instead.
-9. **Out of scope.** zcode-rs still does not serve `deletionPreview`, `deletionExecute`, `sessionDataPurge` or `sessionDataMeasure`; they answer `method_not_found` (`protocol-zcode/src/server.rs`). Presence protects Rust sessions from a purge started elsewhere. It does not make Rust a purger. The Host does not gate these calls by runtime, so permanent deletion fails with that error in Rust mode. The Host's handling of that error, including the `reservePermanentDeletion` reservation, was not exercised.
+9. **Superseded (2026-11-17).** zcode-rs now serves `deletionPreview`, `deletionExecute`, `sessionDataPurge` and `sessionDataMeasure` (see "Context composition, session deletion and model-request metrics"). Presence still protects Rust sessions from a purge started elsewhere, and Rust is now a purger too. The Host does not gate these calls by runtime. The Host's handling of `reservePermanentDeletion` in Rust mode is still not exercised end to end.
 
 **Remaining gaps.**
 
@@ -1353,9 +1353,70 @@ crash        [Node]           next inspect: kill(pid, 0) = ESRCH -> deletes the 
 ### (c) Model-facing, telemetry and skew-safe
 
 - Background subagent stall reminder (core `subagent-stall-reminder.ts`, config `subagents.backgroundStallNotifyMs`): done on this branch, see "Background subagent stall reminder" below.
-- `v4/conversation/contextComposition`, `v4/telemetry/model-request-metrics` and `v4/storage/sessionData/deletion*`: absent; the Host treats their absence as unsupported.
+- `v4/conversation/contextComposition`, `v4/telemetry/model-request-metrics` and `v4/storage/sessionData/deletion*`: absent; the Host treats their absence as unsupported. Scoped in detail under "Context composition, session deletion and model-request metrics (gap analysis)" below; none of the three is ported yet.
 
 Order: A1 then A2, then A3, then the database check, then B2, B3 and B5, then B4, then the stall reminder. B1's managed-worktree support waits for a design agreed with the user; its interim `cwd`/`targetCwd` refusal is in (2026-11-15).
+
+## Context composition, session deletion and model-request metrics (gap analysis)
+
+Status (2026-11-16): `deletionPreview` and `deletionExecute` are ported (below, "Ported"). `contextComposition` and `model-request-metrics` are not: this section records what Node does, what Rust has, and the order of work, so that each port starts from verified facts.
+
+### `v4/storage/sessionData/deletionPreview` and `deletionExecute`
+
+- **Ported.** Store: `node-store/src/session_deletion.rs` (`inspect_session_deletion`, `begin_session_deletion`, `complete_session_deletion`; Node's SQL, the sha256 revision with Node's key order, `locale_compare` for Node's `localeCompare` sorts in `kernel-api/src/session_deletion.rs`). Files: `protocol-zcode/src/fork/session_data_files.rs` (Node's roots: `artifacts`, `exec`, `agents`, `sessions`, `debug|rollout/model-io-<id>.jsonl`; `lstat` semantics; `rust_cli_fs::link_stat`, `dir_entries`, `remove_path_force`). Protocol: `protocol-zcode/src/fork/session_deletion.rs`, dispatched in `server.rs`. The request gate keeps its exemption for both methods (`presence_gate.rs`): `begin` writes the barrier row that the gate checks.
+- **Node behaviour kept.** Blockers `in-use` (foreign live runtime, or a local runtime not loaded), `running` (pending work or a busy session), `not-found`; execute order `completed` → blocker → `changed` → busy recheck → admission. A failure before the barrier reports `blocked`; after it, `incomplete`, and a retry finishes the deletion. Idle runtimes are released without a removal announcement; forgotten sessions leave the sessions index.
+- **Busy (as built 2026-11-17).** A tree member is busy when any of these holds:
+  - it has a request in flight (Node `sessionRequestCounts`): `Server::in_flight` (`fork/in_flight.rs`) holds a `RequestGuard` for the request's session ids (`presence_gate::session_ids`, as Node's `collectResidencySessionIds`) for the request's life, excluding the two deletion methods;
+  - a create is in flight for its explicit id (Node `sessionCreationIds`): `CreationGuard` claimed in `commands::create_session_with` before any await; a second create for that id is refused with `sessionId already exists`. A generated id is not claimed: no deletion can name it yet;
+  - it runs a turn, has an interaction waiting, or has queued inputs (`Live::residency_busy`, from the projection); or a running subagent runs in the tree (`session_tree::running_session_ids`, the erase path's test, unchanged).
+    The owner is the `Server`, the process that dispatches the requests and runs the creates. A registry in the store would be wrong: Node's counts are process-local too, and the store cannot see a request that has not reached it yet. Node's `hasResidencyBlockingWork` is approximated by the running phase.
+  - Purge (`v4/storage/sessionData/purge`) is the exception: Node's purge takes `running` and the release of idle members from `host.residency(id) === "busy"` alone, so it uses `session_deletion::residency_busy_session_ids` (the running turn, interaction, queued input and running subagent facts), without the in-flight counts. A request in flight for a member therefore does not keep the tree; the purge deletes it, as Node does. Test: `session_data_tests.rs` `a_request_in_flight_does_not_keep_a_tree_from_the_purge`.
+- **Revision check.** `node-store/src/fixtures/session_deletion_golden.sql` is the shared fixture (non-ASCII titles and artifact ids). Node's `inspectSessionDeletion` gives revision `de4b7789…ace5` on it, and node-store's `the_revision_matches_nodes_on_the_shared_golden_fixture` asserts the same value. `locale_compare` folds common Latin accents to their base letter and orders the accent second, as ICU's root collation does. It is not the full UCA: scripts beyond Latin are approximated by code point.
+- **Errors.** A file failure reports the errno name (`EACCES`, `EBUSY`, …; `rust_cli_fs::error_code`), or `unavailable` (execute) and `unknown` (purge) when the error has no errno, as Node's `error.code` does. Gap: off Unix `error_code` is always `None`, while Node reports libuv's names there (`EPERM`, `EBUSY`), so a Windows failure reports the fallback code.
+- **Cross-check against Node (preview).** The preview revision `49f0e7bb…2848` on the golden state is produced by Node's `SqliteSessionStore.inspectSessionDeletion` and `createNodeSessionDataFiles` over the same files, with the one-line hash of `previewSessionDeletionWith` restated in the check script (the CLI's workspace graph does not load outside its build). `session_store_integration_tests.rs` runs the Rust methods on the real store and asserts it. Node's `execute` on the same state is not run in this check.
+- **Tests.** node-store: 7 tests ported from Node's `session-store-permanent-deletion.test.ts`, 2 for the URI parser and the collation, 1 golden. protocol-zcode: also the in-flight tests (request and creation) and the real-store integration test. protocol-zcode: 8 tests in `fork/session_deletion_tests.rs`, 1 errno test, 5 in `fork/session_data_tests.rs` (measure, purge, referenced keep, params, method-not-found), 1 memory-folder golden in `fork/session_data_size.rs` (the four folder names are Node's `resolveProjectMemoryRoot` output), and the win32 golden there. Review round (2026-11-17) added: node-store `a_failed_completion_keeps_the_rows_for_the_retry`, `deletion_is_unsupported_without_migration_0025`, `a_percent_escape_needs_two_hex_digits_and_valid_utf8`; kernel-api `an_uppercase_letter_has_the_weight_of_its_lowercase_letter` (the module is new, `session_deletion_tests.rs`); protocol-zcode `a_request_in_flight_does_not_keep_a_tree_from_the_purge`, `a_backslash_in_a_file_name_is_kept_as_node_keeps_it`. Runs: node-store 278, kernel-api 374, fs 45 (1 ignored), protocol-zcode 689, all passing. Windows: `cargo check --target x86_64-pc-windows-gnu --lib` passes for fs, kernel-api and protocol-zcode; node-store's bundled SQLite cannot be cross-built here, so its Windows build is not checked.
+- **Purge and measure.** `v4/storage/sessionData/measure` and `purge` are served (`fork/session_data.rs`), as Node serves them from the agent. A tree is `running` when a member is busy, `referenced` when another session names one of its artifacts (a fixed point), else deleted: idle loaded members released, files removed, rows purged, sessions forgotten (from the request's directories). The project memory folder is Node's `memories/projects/<slug>-<sha256[..16]>`. On Windows the key and the basename follow Node's `path.win32.resolve` / `basename` for drive-absolute workspace paths (`session_data_size.rs` `project_memory_folder_for`; its goldens were run with Node). A path without a drive is not resolved against the cwd's drive as Node does, so it keeps the POSIX form: a gap, and the Host sends absolute paths.
+- **Without migration 0025.** Node's migrations create `session_runtime_presence` and `session_purge`; a database only the Rust store opened has neither. `inspect`, `begin` and `complete` then return `StoreError::Unsupported` (`presence::has_tables`), which the protocol answers as `method_not_found`. Measure and purge need no 0025 table and still work (`session_deletion_tests.rs` `deletion_is_unsupported_without_migration_0025`).
+- **Completion.** `complete` purges the receipt's rows and writes the `deleted` marks in one transaction (Node runs `purgeSessions` and the mark as two statements, so a failed mark leaves the rows purged and the barrier `deleting`; Rust does not). Test: `a_failed_completion_keeps_the_rows_for_the_retry`.
+- **Retained files.** The preview's `retainedArtifacts` and the begin's `retained_artifacts` JSON have one entry per matched file, as Node's `permanent-deletion.ts` `flatMap` and `beginSessionDeletion` do; the duplicates of one artifact are Node's.
+- **Forks and receipt order.** Forks and the receipt are in SQLite byte order (`order by id`, `order by session_id`), as Node's `inspectSessionDeletion` (`sessions.ts`); only references and referrers use ICU order (`localeCompare`).
+- **Forgetting.** A session removed by permanent deletion or purge leaves every loaded sessions index: `Topics::remove_everywhere` (`index.rs`) lists the loaded indexes inside the single writer's job, so an upsert queued earlier is seen. This matches Node's global `forgetIndexedSession`. Test: `index_tests.rs` `removing_a_session_drops_it_from_every_loaded_index`.
+
+#### Original gap analysis (2026-11-16)
+
+- **Node.** Bootstrap `zcode-protocol/session-data/permanent-deletion.ts` (`previewSessionDeletion`, `executeSessionDeletion`). Store: `adapters/src/storage/session-store/repositories/sessions.ts` `inspectSessionDeletion` (~l.542), `beginSessionDeletion` (~l.692), `completeSessionDeletion` (~l.730). Files: `adapters/src/storage/session-data-files/index.ts` (`listSessionFiles`, `removeSession(id, retained)`). Schemas: `packages/shared/src/zcode-protocol-v4/session-data/contract.ts`.
+- **Rust today.** Upstream migration `0025_session_permanent_deletion` tables (`session_purge`, `session_runtime_presence`) are read by the presence code in `node-store/src/presence.rs`, and the request gate reads them in `protocol-zcode/src/presence_gate.rs`. Nothing else exists: no inspect, begin or complete, no file manifest, no dispatch arm. The refusal is `method_not_found` from the dispatcher in `protocol-zcode/src/server.rs` (the `other =>` arm), not from `presence_gate.rs`.
+- **Correction to earlier wording.** `DELETION_METHODS` in `presence_gate.rs` is the request-gate exemption, not a refusal list. It must stay. `beginSessionDeletion` writes the barrier row that the gate checks, so an `incomplete` deletion could never be retried if these methods were gated. Node exempts them for the same reason.
+- **Revision.** Node: sha256 over `JSON.stringify` of `{ids, facts, forks, references, pendingWork}` (inspect) and, in the preview, sha256 over `JSON.stringify([revision, [[relativePath, bytes]...], blockedReason])`. Rust must reproduce key order and `undefined`-as-`null` exactly, or a preview from Node and an execute from Rust disagree.
+- **Admission.** `begin` runs inside `begin immediate`. It rejects a foreign live runtime or pending work with `running`, and a revision mismatch with `changed`. Only then does it insert the `deleting` rows. `complete` purges the rows and sets `deleted`.
+- **Out of scope:** none. `sessionDataPurge` and `sessionDataMeasure` are served as well (see "Purge and measure" above). The Host does not gate them by runtime.
+- **Acceptance.** Red tests first: execute on a session whose purge row is `deleting` is not refused by the request gate; preview and execute over the same fixture produce the same `revision` in Node and Rust; a deletion touches exactly the rows and files that Node's `purgeSessions` and file port touch.
+
+### `v4/conversation/contextComposition`
+
+- **Node.** Core `runtime/context-composition/`: `classifier.ts` (354 lines, the 11 fine categories and 7 coarse ones, token rules), `preview.ts`, `state.ts` (request record and change reasons), `query.ts`, `items.ts`. Bootstrap `zcode-protocol/context-composition/` (`handler.ts`, `tracker.ts`).
+- **Rust today.** No method, no `contextCompositionChanged` notification, no classifier, no request record.
+- **Blocker.** The classifier is written against Node's message model: `ModelInputMessage`, origin entries from the provider projection, MCS-merged reminders, system-reminder sources, ToolSearch exposure, skill and instruction items. Rust's prompt assembly has to be mapped onto those categories first, and the token estimator (`context/utils.ts` `estimateTokens`) must be checked against Rust's for equal counts. A handler that returns `null` for every session would pass the shape check and would not be parity, so it is not acceptable as a partial port.
+- **Acceptance.** Response shape identical to Node (`composition: null` for unknown sessions, `revision` starting at 0 per process, one coalesced notification per tick, no timers). Token accounting rules as in `classifier.ts`. Node's `core/tests/context-composition/runtime.test.ts` and `bootstrap/tests/context-composition/tracker.test.ts` ported as red tests first.
+
+### `v4/telemetry/model-request-metrics`
+
+- **Not a Host-only method.** Node produces it in the agent process: `bootstrap/src/zcode-protocol-v4/v4-gateway.ts` (~l.1009-1015) normalizes each model event with `conversation-telemetry-facts.ts` `normalizeModelRequestMetrics` and calls `host.emitModelRequestMetrics`, which `zcode-protocol/v4-bridge.ts` (~l.2453) sends as `v4/telemetry/model-request-metrics`. The notification is live-only, and older Apps ignore it.
+- **Rust today.** No producer. This is a real gap. It is a notification fed from model-completion events, so it depends on the same per-request data as the request phase of context composition.
+
+### Desktop E2E inventory
+
+- No active desktop spec calls `contextComposition` or `deletionPreview` or `deletionExecute`. The grep hit on `sessionData` in `conversation-session-turn-error-history-activity.test.ts` is `sessionDatabase`, a false positive.
+- The only permanent-delete spec is `packages/desktop/test/e2e/conversation-session/task-management/manual-review/pending/conversation-session-permanent-delete.test.ts` (DEL01). It is pending in `manual-review`. It drives the sidebar delete and reads `~/.zcode` rows; it does not call the methods directly.
+- No E2E covers the context-composition panel. `packages/services/src/extensions/contextPump.ts` consumes the query, with no spec.
+
+### Order of work
+
+1. Deletion store in `node-store` (inspect, begin, complete) with red tests from Node's `adapters/tests/session-store-permanent-deletion.test.ts`. No migration: the tables are upstream and already exist.
+2. Deletion file manifest and removal, matching `session-data-files/index.ts` roots (`artifacts`, `exec`, `agents`, `sessions`, `debug|rollout/model-io-<id>.jsonl`).
+3. Dispatch arms for `deletionPreview` and `deletionExecute` in `server.rs`, keeping the gate exemption.
+4. Context composition: token-estimator parity check, then the Rust mapping onto the 11 categories, then the request record and tracker.
+5. `model-request-metrics` producer, fed from the same per-request record as step 4.
 
 ## Background subagent stall reminder (Node `subagent-stall-reminder.ts`, `background-stall.ts`)
 
@@ -2049,9 +2110,19 @@ Known small gaps and follow-ups:
   stdin stream errors only on a failed write (`transport.ts`), and its stall watch only emits a
   `stalled` status (`runtime-helpers.ts` `StallWatch`, `external-agent-turn.ts`); nothing fails the
   prompt. No timeout is added on either side.
-- No idle reaping: an agent process stays resident until `deleteSession` or app exit (Node stops it
-  on the desktop's session close). Follow-up: an idle timeout that stops the runtime through the slot
-  gate; the binding lets the next turn resume.
+- Matches Node: no idle reaping on either side (verified 2026-11-16). Node's `AcpSessionPool`
+  (`apps/zcode-cli/packages/bootstrap/src/acp-agent/acp-session-pool.ts`) starts the agent on the session's first
+  external turn and stops it only on `stopSession` (the app session close, `create-app.ts` `close`), `stopAll`
+  (worker shutdown, `runtime-cleanup.ts`), or a launch-config change. No timer calls any of them. Rust stops the
+  runtime on the same session close (`AcpRelease::released`, `crates/runtime/src/acp/mod.rs`). An idle timeout
+  is not added: an idle timeout would be new behavior, not parity.
+- No prompt timeout, on Node or Rust. Node's `DEFAULT_TIMEOUTS` (`packages/acp-agent-runtime/src/runtime-helpers.ts`)
+  are initialize 30 s, new session 30 s, cancel grace 10 s, stop grace 2 s, kill grace 5 s, and a stall warning
+  of 120 s. The 120 s stall warning emits only a `stalled` event; nothing fails the prompt. Rust's `AcpTimeouts`
+  (`crates/acp/src/runtime.rs`) has the same initialize, new session, cancel grace, stop grace and stall values.
+  ACP teardown: Node's `killGraceMs` (5 s between TERM and KILL) is passed to the proc crate as the
+  TERM-to-KILL grace (`AcpTimeouts::kill_grace`, `Tracked::terminate_with_grace`). Shell and MCP keep the proc
+  default of 1.5 s (`tree::posix::GRACE`), so their teardown timing does not change. No timeout error is defined.
 - Images stored as artifacts (large attachments) are not sent to the agent; only inline base64
   images are.
 

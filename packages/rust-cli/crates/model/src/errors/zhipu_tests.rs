@@ -111,7 +111,7 @@ fn other_endpoints_do_not_read_the_codes() {
     let zhipu = response(Vendor::Zhipu, WireProtocol::AnthropicMessages, 429, &body);
     assert_eq!(zhipu.class, Class::QuotaExhausted);
     assert_eq!(
-        zhipu.error,
+        *zhipu.error.peel(),
         ModelError::QuotaExhausted {
             message: "已达到套餐用量上限".to_owned()
         }
@@ -156,7 +156,7 @@ fn codes_come_from_the_known_fields() {
         &json!({"code": "1113", "msg": "余额不足"}),
     );
     assert_eq!(
-        top.error,
+        *top.error.peel(),
         ModelError::QuotaExhausted {
             message: "余额不足".to_owned()
         }
@@ -172,18 +172,24 @@ fn stream_errors_follow_the_table() {
         assert_eq!(got.class, class, "{code}");
     }
     assert_eq!(
-        stream(&json!({"error": {"code": "1230", "message": "x"}})).error,
+        *stream(&json!({"error": {"code": "1230", "message": "x"}}))
+            .error
+            .peel(),
         ModelError::Server {
             status: 500,
             message: "x".to_owned()
         }
     );
     assert!(matches!(
-        stream(&json!({"error": {"code": "1311", "message": "x"}})).error,
+        stream(&json!({"error": {"code": "1311", "message": "x"}}))
+            .error
+            .peel(),
         ModelError::InvalidRequest { .. }
     ));
     assert!(matches!(
-        stream(&json!({"error": {"code": "3008", "message": "x"}})).error,
+        stream(&json!({"error": {"code": "3008", "message": "x"}}))
+            .error
+            .peel(),
         ModelError::RateLimited { .. }
     ));
     let protocol =
@@ -216,6 +222,50 @@ fn unnamed_frames_with_codes_are_errors() {
     );
     assert!(frame(json!({"code": 200, "msg": "ok"})).is_none());
     assert!(frame(json!({"type": "message_delta"})).is_none());
+}
+
+/// Node `context.providerCode` is the numeric business code as a string (error-payload.ts `readCode`), with the
+/// status when the failure has one.
+#[test]
+fn table_codes_keep_the_provider_code_and_status() {
+    use rust_cli_kernel_api::model::ProviderFailure;
+
+    let verdict = response(
+        Vendor::Zhipu,
+        WireProtocol::OpenAiChatCompletions,
+        429,
+        &json!({"error": {"code": "1113", "message": "quota"}}),
+    );
+    assert_eq!(
+        verdict.error.provider(),
+        Some(&ProviderFailure {
+            code: "1113".to_owned(),
+            status: Some(429),
+            retryable: false,
+            reason: "unknown".to_owned(),
+            error_phase: "prepare".to_owned(),
+            transport: "sse".to_owned(),
+            provider_kind: "openai-compatible".to_owned(),
+            provider_id: None,
+            model_id: None,
+        })
+    );
+    let value = json!({"error": {"code": "1302", "message": "rate"}});
+    let stream_verdict = stream(&value);
+    assert_eq!(
+        stream_verdict.error.provider(),
+        Some(&ProviderFailure {
+            code: "1302".to_owned(),
+            status: None,
+            retryable: true,
+            reason: "rate_limited".to_owned(),
+            error_phase: "stream".to_owned(),
+            transport: "sse".to_owned(),
+            provider_kind: "anthropic".to_owned(),
+            provider_id: None,
+            model_id: None,
+        })
+    );
 }
 
 /// 结束原因：`sensitive` 是内容拦截，`network_error` 是流内的网络失败；别的值照通用表。

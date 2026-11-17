@@ -971,6 +971,7 @@ impl rust_cli_kernel_api::testing::HandleOverride for GrantHandle {
                     machine: Default::default(),
                     once: false,
                     independent: false,
+                    session_allow: false,
                 };
                 (InteractionId::new(*id), request)
             })
@@ -1108,6 +1109,7 @@ fn allow_always_denies_an_ask_that_does_not_offer_it() {
     let offered = |always: bool| Offered {
         suggestions: vec![rule.clone()],
         always,
+        session: false,
     };
     assert_eq!(
         permission_answer(Some("allowAlways"), offered(true), None),
@@ -1146,6 +1148,7 @@ fn only_a_normal_ask_offers_always_allow() {
         machine: Default::default(),
         once,
         independent,
+        session_allow: false,
     };
     let always = |request: InteractionRequest| {
         let (offered, tool) = Offered::of(&request).unwrap();
@@ -1180,6 +1183,7 @@ fn allow_always_without_suggestions_remembers_nodes_default_rule() {
             machine: Default::default(),
             once: false,
             independent: false,
+            session_allow: false,
         }
     };
     let remembered = |request: InteractionRequest| {
@@ -1243,4 +1247,44 @@ fn the_remembered_input_keeps_the_host_automation_for_the_telemetry_facts() {
     );
     assert_eq!(meta(json!({"text": "run", "automationId": "  "})), None);
     assert_eq!(meta(json!({"text": "run"})), None);
+}
+
+/// Fork (F3b a): an ask that offers the session allow swaps the project option for "Always allow in this session"
+/// (optionId `allowSession`, Node's wire). The answer is accepted only when offered, and never as a project rule.
+#[test]
+fn a_session_ask_offers_the_session_allow_in_place_of_the_project_option() {
+    use rust_cli_kernel_api::ids::ToolUseId;
+    use rust_cli_kernel_api::orchestration::{InteractionRequest, PermissionAnswer};
+    let ask = |session_allow: bool| InteractionRequest::Permission {
+        origin: None,
+        tool_use: ToolUseId::new("toolu_1"),
+        tool: "app__search".into(),
+        input: json!({}),
+        message: "ask".into(),
+        suggestions: Vec::new(),
+        rule_seed: None,
+        asked_by: None,
+        machine: Default::default(),
+        once: false,
+        independent: false,
+        session_allow,
+    };
+    let offered = |request: &InteractionRequest| Offered::of(request).unwrap().0;
+    let session = ask(true);
+    assert!(!offered(&session).always);
+    assert!(offered(&session).session);
+    assert!(matches!(
+        permission_answer(Some("allowSession"), offered(&session), None),
+        PermissionAnswer::AllowSession
+    ));
+    assert!(matches!(
+        permission_answer(Some("allowAlways"), offered(&session), None),
+        PermissionAnswer::Deny { .. }
+    ));
+    let plain = ask(false);
+    assert!(!offered(&plain).session);
+    assert!(matches!(
+        permission_answer(Some("allowSession"), offered(&plain), None),
+        PermissionAnswer::Deny { .. }
+    ));
 }

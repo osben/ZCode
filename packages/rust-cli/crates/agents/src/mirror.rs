@@ -274,16 +274,19 @@ pub(crate) fn outcome(result: &Result<QueryStop, QueryError>) -> TurnOutcome {
         Ok(QueryStop::MaxTurns) => TurnOutcome::Failed {
             message: "reached the maximum number of turns".to_owned(),
             code: None,
+            provider: None,
         },
-        Ok(QueryStop::Blocked { message } | QueryStop::ApiError { message }) => {
+        Ok(QueryStop::Blocked { message } | QueryStop::ApiError { message, .. }) => {
             TurnOutcome::Failed {
                 message: message.clone(),
                 code: None,
+                provider: None,
             }
         }
         Err(error) => TurnOutcome::Failed {
             message: error.to_string(),
             code: error.code().map(str::to_owned),
+            provider: None,
         },
     }
 }

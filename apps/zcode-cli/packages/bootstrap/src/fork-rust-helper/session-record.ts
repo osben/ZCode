@@ -1,3 +1,4 @@
+import { createOrderedQueue } from "./ordered-queue.js";
 import {
   McpResourceSubscribeUnsupportedError,
   resolveMcpToolVisibility,
@@ -51,6 +52,8 @@ deps: HelperSessionRecordDeps,
 ): ZCodeProtocolSessionRecord {
   const { port, sessionId } = session;
   const workspace = session.workspace;
+  // One app-tool replace of this session in flight at a time: Rust applies the replaces in the order they arrive.
+  const replaceInOrder = createOrderedQueue();
   const app: Partial<ZCodeApp> = {
     getPluginReferenceCatalog: () => session.catalog,
     listMcpServers: async () => port.status(),
@@ -159,8 +162,8 @@ deps: HelperSessionRecordDeps,
         if (!session.appTools.has(definition.modelName))
           session.appTools.set(definition.modelName, { definition, execute });
       const registered = [...session.appTools.keys()];
-      void deps.client
-        .request<{ registered?: string[] }>(FORK_RUST_HELPER_F3.appToolsReplace, {
+      void replaceInOrder(() =>
+        deps.client.request<{ registered?: string[] }>(FORK_RUST_HELPER_F3.appToolsReplace, {
           sessionId,
           tools: [...session.appTools.values()].map(({ definition }) => ({
             name: definition.modelName,
@@ -179,7 +182,8 @@ deps: HelperSessionRecordDeps,
               ? { idempotentHint: definition.idempotentHint }
               : {}),
           })),
-        })
+        }),
+      )
         .then((answer) => {
           const skipped = registered.filter((name) => !answer.registered?.includes(name));
           if (skipped.length > 0)

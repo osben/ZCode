@@ -60,6 +60,8 @@ fn wire_errors_map_one_to_one_and_protocol_errors_become_io() {
         (
             WireError::Io {
                 message: "m".to_owned(),
+                http_status: None,
+                www_authenticate: None,
             },
             EnvError::Io {
                 message: "m".to_owned(),
@@ -270,5 +272,41 @@ fn remote_failures_say_whether_the_call_ran_and_what_to_do() {
     assert!(
         !text.contains("files.") && !text.contains("put_file"),
         "{text}"
+    );
+}
+
+/// Review #1 and #13: an HTTP challenge travels as `io` with its status and `WWW-Authenticate`. The MCP path restores
+/// `Http` with both, and a plain io error stays `Io` with its text.
+#[test]
+fn an_http_challenge_keeps_its_status_and_header_on_the_mcp_path() {
+    use crate::from_wire::{is_http_challenge, mcp_error};
+    use rust_cli_kernel_api::mcp::McpError;
+
+    let challenge = WireError::Io {
+        message: "HTTP 401: unauthorized".to_owned(),
+        http_status: Some(401),
+        www_authenticate: Some(r#"Bearer realm="mcp""#.to_owned()),
+    };
+    assert!(is_http_challenge(&challenge));
+    assert_eq!(
+        mcp_error(challenge),
+        McpError::Http {
+            status: 401,
+            message: "HTTP 401: unauthorized".to_owned(),
+            www_authenticate: Some(r#"Bearer realm="mcp""#.to_owned()),
+        }
+    );
+
+    let plain = WireError::Io {
+        message: "boom".to_owned(),
+        http_status: None,
+        www_authenticate: None,
+    };
+    assert!(!is_http_challenge(&plain));
+    assert_eq!(
+        mcp_error(plain),
+        McpError::Io {
+            message: "boom".to_owned()
+        }
     );
 }

@@ -1,5 +1,5 @@
 //! Refresh of the canonical access token under the refresh lock (Node `oauth-refresh.ts`,
-//! `refreshMcpOAuthTokensUnderLock`; `specs/fork-rust-mcp-oauth.md`, PR3).
+//! `refreshMcpOAuthTokensUnderLock`; `specs/fork-rust-mcp-oauth.md`, PR3 and PR4).
 //!
 //! Two callers may hold the same refresh token. The second one must not spend it again: it waits for the
 //! lock, re-reads the credentials, and reuses the first caller's token when the generation has advanced.
@@ -7,11 +7,13 @@
 //! network failure, a 5xx or a timeout keeps them.
 
 use serde_json::Value;
-use sha2::{Digest, Sha256};
+use url::Url;
 
-use super::flow::{discover, publish_canonical};
+use super::flow::{Discovered, discover, publish_canonical, save_discovery};
 use super::keys::credential_key;
+use super::pair::{CredentialPair, load_pair};
 use super::protocol::basic_auth;
+use super::record::load_discovery;
 use super::store::{
     McpOAuthRuntime, McpOAuthStore, McpOAuthStoreError, McpOAuthWrite, OAuthHttpError,
     OAuthHttpRequest,
@@ -47,67 +49,6 @@ pub struct RefreshInput {
     pub reactive: bool,
 }
 
-/// The canonical record as read under the lock: the raw text for compare-and-swap, the parsed pieces, and
-/// the generation (the stored one, or the legacy hash of the raw text for records without one).
-struct Snapshot {
-    raw: String,
-    generation: String,
-    client: Value,
-    tokens: Value,
-    issuer: Option<String>,
-}
-
-impl Snapshot {
-    fn access_token(&self) -> Option<String> {
-        self.tokens["access_token"].as_str().map(str::to_owned)
-    }
-}
-
-/// Node `loadCanonicalCredentials` (versions 1 and 2 only). An unreadable record is absent.
-async fn load_snapshot(
-    store: &dyn McpOAuthStore,
-    key_prefix: &str,
-) -> Result<Option<Snapshot>, McpOAuthStoreError> {
-    let Some(raw) = store
-        .load(&credential_key(key_prefix, CANONICAL_KEY))
-        .await?
-    else {
-        return Ok(None);
-    };
-    let Ok(parsed) = serde_json::from_str::<Value>(&raw) else {
-        return Ok(None);
-    };
-    let version_ok = matches!(parsed["version"].as_i64(), Some(1 | 2));
-    let usable = version_ok
-        && parsed["client_information"].is_object()
-        && parsed["tokens"].is_object()
-        && parsed["published_by"]
-            .as_str()
-            .is_some_and(|by| !by.is_empty());
-    if !usable {
-        return Ok(None);
-    }
-    let generation = match parsed["generation"].as_str() {
-        Some(generation) if !generation.is_empty() => generation.to_owned(),
-        _ => {
-            let digest = Sha256::digest(raw.as_bytes());
-            let hex: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
-            format!("legacy-{}", &hex[..32])
-        }
-    };
-    Ok(Some(Snapshot {
-        generation,
-        client: parsed["client_information"].clone(),
-        tokens: parsed["tokens"].clone(),
-        issuer: parsed["issuer"].as_str().map(str::to_owned),
-        raw,
-    }))
-}
-
-fn store_failure(error: McpOAuthStoreError) -> RefreshError {
-    RefreshError::Temporary(error.0)
-}
-
 /// Refresh the access token and return a usable one (Node `refreshMcpOAuthTokensUnderLock`).
 ///
 /// Order: read the observed generation, take the refresh lock, re-read under the lock, coalesce on a
@@ -117,12 +58,10 @@ pub async fn refresh_under_lock(
     runtime: &dyn McpOAuthRuntime,
     input: &RefreshInput,
 ) -> Result<String, RefreshError> {
-    let observed = load_snapshot(store, &input.key_prefix)
+    let observed = load_pair(store, &input.key_prefix)
         .await
-        .map_err(store_failure)?;
-    let observed_generation = observed
-        .as_ref()
-        .map(|snapshot| snapshot.generation.clone());
+        .map_err(store_failure)?
+        .and_then(|pair| pair.generation);
 
     let Some(lease) = store
         .try_acquire_refresh_lock(&input.key_prefix)
@@ -131,23 +70,22 @@ pub async fn refresh_under_lock(
     else {
         // The wait ran out. The winner may have published a token meanwhile: reuse it when the generation
         // has moved, otherwise report a temporary failure (Node: re-read after a lock timeout).
-        let current = load_snapshot(store, &input.key_prefix)
+        let current = load_pair(store, &input.key_prefix)
             .await
             .map_err(store_failure)?;
-        return match current {
-            Some(current)
-                if Some(&current.generation) != observed_generation.as_ref()
-                    && current.access_token().is_some() =>
-            {
-                Ok(current.access_token().unwrap_or_default())
-            }
-            _ => Err(RefreshError::Temporary(
+        return match current.and_then(|pair| {
+            (pair.generation != observed)
+                .then(|| pair.access_token())
+                .flatten()
+        }) {
+            Some(access) => Ok(access),
+            None => Err(RefreshError::Temporary(
                 "the refresh lock was not released in time".to_owned(),
             )),
         };
     };
 
-    let result = refresh_locked(store, runtime, input, observed_generation).await;
+    let result = refresh_locked(store, runtime, input, observed).await;
     lease.release().await;
     result
 }
@@ -158,38 +96,38 @@ async fn refresh_locked(
     input: &RefreshInput,
     observed_generation: Option<String>,
 ) -> Result<String, RefreshError> {
-    let current = load_snapshot(store, &input.key_prefix)
+    let current = load_pair(store, &input.key_prefix)
         .await
         .map_err(store_failure)?;
     // Coalesce: another caller refreshed while this one waited. Its token is used without a second request,
     // which would otherwise trigger the authorization server's refresh-token reuse detection.
     if let Some(current) = &current
-        && observed_generation.as_deref() != Some(current.generation.as_str())
+        && current.generation != observed_generation
         && let Some(access) = current.access_token()
     {
         return Ok(access);
     }
-    let Some(current) = current else {
+    let Some(current) = current.filter(|pair| pair.tokens.is_some()) else {
         return Err(RefreshError::InteractiveRequired {
             reason: "no_credentials",
         });
     };
-    let Some(refresh_token) = current.tokens["refresh_token"].as_str().map(str::to_owned) else {
+    let (Some(refresh_token), Some(client)) = (current.refresh_token(), current.client.clone())
+    else {
         return Err(RefreshError::InteractiveRequired {
             reason: "no_refresh_token",
         });
     };
-    let client_id = current.client["client_id"]
-        .as_str()
-        .unwrap_or_default()
-        .to_owned();
+    let client_id = client["client_id"].as_str().unwrap_or_default().to_owned();
 
     // A discovery failure is never an invalid grant: it is handled like a network failure.
-    let (authorization_server, metadata) = match discover(runtime, &input.server_url, None).await {
-        Ok(found) => found,
-        Err(message) => return fail_soft(input, &current, message),
+    let resolved = match resolve_authorization_server(store, runtime, input, &current).await {
+        Ok(resolved) => resolved,
+        // A credential-store failure is a temporary error (the credentials were kept), not a discovery failure.
+        Err(ResolveFailure::Store(message)) => return Err(RefreshError::Temporary(message)),
+        Err(ResolveFailure::Discovery(message)) => return fail_soft(input, &current, message),
     };
-    let Some(endpoint) = metadata["token_endpoint"].as_str() else {
+    let Some(endpoint) = resolved.metadata["token_endpoint"].as_str() else {
         return fail_soft(
             input,
             &current,
@@ -209,9 +147,19 @@ async fn refresh_locked(
         ),
         ("Accept".to_owned(), "application/json".to_owned()),
     ];
-    match &input.client_secret {
-        Some(secret) => headers.push(("Authorization".to_owned(), basic_auth(&client_id, secret))),
+    // Same rule as the code exchange (`flow::exchange_code`): the registered client's secret authenticates when the
+    // configuration has none.
+    let secret = input
+        .client_secret
+        .clone()
+        .or_else(|| client["client_secret"].as_str().map(str::to_owned));
+    match secret {
+        Some(secret) => headers.push(("Authorization".to_owned(), basic_auth(&client_id, &secret))),
         None => pairs.push(("client_id", client_id.as_str())),
+    }
+    // RFC 8707: the SDK sends `resource` with the refresh when the metadata names one (Node `refreshAuthorization`).
+    if let Some(resource) = resolved.resource.as_deref() {
+        pairs.push(("resource", resource));
     }
     let body = url::form_urlencoded::Serializer::new(String::new())
         .extend_pairs(pairs)
@@ -281,17 +229,13 @@ async fn refresh_locked(
     if tokens["refresh_token"].is_null() {
         tokens["refresh_token"] = Value::String(refresh_token);
     }
-    let issuer = current
-        .issuer
-        .clone()
-        .unwrap_or_else(|| authorization_server.clone());
     publish_canonical(
         store,
         runtime,
         &input.key_prefix,
-        &current.client,
+        &client,
         &tokens,
-        &issuer,
+        current.issuer.as_deref(),
         &format!("refresh:{}", input.key_prefix),
     )
     .await
@@ -299,14 +243,118 @@ async fn refresh_locked(
     Ok(access)
 }
 
+/// The authorization server metadata and the RFC 8707 resource for a refresh (Node `resolveAsMetadata`).
+struct Resolved {
+    metadata: Value,
+    resource: Option<String>,
+}
+
+/// The cached discovery record when it is fresh and matches the stored issuer (Node `loadDiscoveryRecord`).
+/// Otherwise discover and save the record, so the next refresh within 24 h makes no discovery request.
+/// Why the authorization server could not be resolved. A store failure keeps the credentials and is a temporary error;
+/// a discovery or resource failure is handled like a network failure.
+enum ResolveFailure {
+    Store(String),
+    Discovery(String),
+}
+
+async fn resolve_authorization_server(
+    store: &dyn McpOAuthStore,
+    runtime: &dyn McpOAuthRuntime,
+    input: &RefreshInput,
+    current: &CredentialPair,
+) -> Result<Resolved, ResolveFailure> {
+    let now = runtime.now_ms();
+    let cached = load_discovery(store, &input.key_prefix, current.issuer.as_deref(), now)
+        .await
+        .map_err(|error| ResolveFailure::Store(error.to_string()))?;
+    let found = match cached.filter(|state| state["authorizationServerMetadata"].is_object()) {
+        Some(state) => Discovered {
+            authorization_server: state["authorizationServerUrl"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned(),
+            metadata: state["authorizationServerMetadata"].clone(),
+            resource_metadata: state
+                .get("resourceMetadata")
+                .filter(|value| value.is_object())
+                .cloned(),
+        },
+        None => {
+            let found = discover(runtime, &input.server_url, None)
+                .await
+                .map_err(ResolveFailure::Discovery)?;
+            save_discovery(
+                store,
+                &input.key_prefix,
+                &found.authorization_server,
+                &found.metadata,
+                found.resource_metadata.as_ref(),
+                now,
+            )
+            .await
+            .map_err(ResolveFailure::Store)?;
+            found
+        }
+    };
+    let resource = select_resource(&input.server_url, found.resource_metadata.as_ref())
+        .map_err(ResolveFailure::Discovery)?;
+    Ok(Resolved {
+        metadata: found.metadata,
+        resource,
+    })
+}
+
+/// The SDK's `selectResourceURL` with an empty provider: the protected-resource metadata's `resource`, provided
+/// it covers the server URL (`checkResourceAllowed`: same origin, and the path prefix with a trailing slash).
+/// Without metadata there is no `resource`. A metadata `resource` that does not cover the server is an error.
+fn select_resource(
+    server_url: &str,
+    resource_metadata: Option<&Value>,
+) -> Result<Option<String>, String> {
+    let Some(metadata) = resource_metadata else {
+        return Ok(None);
+    };
+    let configured = metadata["resource"]
+        .as_str()
+        .ok_or("the protected resource metadata has no resource")?;
+    let mut requested = Url::parse(server_url).map_err(|error| error.to_string())?;
+    requested.set_fragment(None);
+    let configured = Url::parse(configured).map_err(|error| error.to_string())?;
+    let with_slash = |path: &str| {
+        if path.ends_with('/') {
+            path.to_owned()
+        } else {
+            format!("{path}/")
+        }
+    };
+    let covers = requested.origin() == configured.origin()
+        && requested.path().len() >= configured.path().len()
+        && with_slash(requested.path()).starts_with(&with_slash(configured.path()));
+    if !covers {
+        return Err(format!(
+            "protected resource {configured} does not match {requested}"
+        ));
+    }
+    Ok(Some(configured.to_string()))
+}
+
+fn store_failure(error: McpOAuthStoreError) -> RefreshError {
+    RefreshError::Temporary(error.0)
+}
+
 /// Drop the tokens (and the client when `include_client`) only if the canonical record is still the one that
-/// was observed (Node `invalidateCanonicalCredentials`). A newer publication survives.
+/// was observed (Node `invalidateCanonicalCredentials`). A newer publication survives. A legacy-derived pair has
+/// no canonical record to compare, so nothing is dropped (Node: `if (current.raw)`).
 async fn invalidate(
     store: &dyn McpOAuthStore,
     key_prefix: &str,
-    current: &Snapshot,
+    current: &CredentialPair,
     include_client: bool,
 ) -> Result<(), RefreshError> {
+    let Some(raw) = &current.raw else {
+        return Ok(());
+    };
     let canonical = credential_key(key_prefix, CANONICAL_KEY);
     let mut keys = vec![
         canonical.clone(),
@@ -318,7 +366,7 @@ async fn invalidate(
     store
         .apply(&[McpOAuthWrite::DeleteGuarded {
             guard_key: canonical,
-            expected: current.raw.clone(),
+            expected: raw.clone(),
             keys,
         }])
         .await
@@ -329,7 +377,7 @@ async fn invalidate(
 /// proactive refresh may return the current token and let the request decide (Node `failSoft`).
 fn fail_soft(
     input: &RefreshInput,
-    current: &Snapshot,
+    current: &CredentialPair,
     message: String,
 ) -> Result<String, RefreshError> {
     match current.access_token() {

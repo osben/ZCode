@@ -34,13 +34,17 @@ pub(super) enum ChallengeRefresh {
 mod tests;
 
 /// The OAuth config a server acts on. Node treats a remote server with no `oauth` block as
-/// `authorization_code` (`resolveOAuthConfig`), so user-scope remote servers do too. Plugin rows are not
-/// covered until #501 carries their config.
+/// `authorization_code` (`resolveAuthorizationCodeOAuthConfig`), unless its headers already carry an
+/// `Authorization` header. User and plugin servers do so here, as they do in Node.
 fn effective_oauth(config: &McpServer) -> Option<McpOAuthConfig> {
     if let Some(oauth) = &config.oauth {
         return Some(oauth.clone());
     }
-    (remote_parts(config).is_some() && matches!(config.scope, McpScope::User)).then_some(
+    let (_, headers) = remote_parts(config)?;
+    let has_authorization = headers
+        .keys()
+        .any(|name| name.eq_ignore_ascii_case("authorization"));
+    (!has_authorization && matches!(config.scope, McpScope::User | McpScope::Plugin)).then_some(
         McpOAuthConfig::AuthorizationCode {
             client_id: None,
             client_secret: None,
@@ -66,6 +70,14 @@ impl McpManager {
     #[cfg(test)]
     pub(crate) fn oauth_coordinator_for_test(&self) -> Option<Arc<McpOAuthCoordinator>> {
         self.0.oauth.get().cloned()
+    }
+
+    /// Whether an OAuth authorization flow for `name` is registered and running on this manager's coordinator.
+    pub fn oauth_flow_running(&self, name: &str) -> bool {
+        self.0
+            .oauth
+            .get()
+            .is_some_and(|coordinator| coordinator.flow_running(name))
     }
 
     /// Wire the OAuth coordinator: the flow's store and runtime, and a reconnect of the server after success.
@@ -210,7 +222,11 @@ impl Inner {
 
     /// A connect that fails with HTTP 401 starts the authorization flow for this server (Node: the SDK asks for
     /// authorization on 401). The row then reports `connecting` through the pending record. Deduplicated per server.
-    pub(super) fn start_oauth_on_challenge(&self, config: &McpServer, failure: &ConnectFailure) {
+    pub(super) async fn start_oauth_on_challenge(
+        &self,
+        config: &McpServer,
+        failure: &ConnectFailure,
+    ) {
         let (Some(coordinator), Some(oauth), Some((url, _))) = (
             self.oauth.get(),
             effective_oauth(config),
@@ -220,7 +236,7 @@ impl Inner {
         };
         if is_authorization_challenge(&failure.reason) {
             if let Some(input) = oauth.flow_input(&config.name, url) {
-                coordinator.start(config.name.clone(), input);
+                coordinator.start(config.name.clone(), input).await;
             }
             return;
         }
@@ -243,26 +259,11 @@ impl Inner {
         let Some(mut input) = oauth.flow_input(&config.name, url) else {
             return;
         };
-        input.requested_scope = union_scopes(input.scope.as_deref(), challenge.scope.as_deref());
+        // The union with the stored token's scope is computed by the flow task (`flow::requested_scope`).
+        input.challenge_scope = challenge.scope;
         input.resource_metadata = challenge.resource_metadata;
-        coordinator.start(config.name.clone(), input);
+        coordinator.start(config.name.clone(), input).await;
     }
-}
-
-/// The union of the configured scope and the scope a challenge names, in order, without repeats
-/// (Node `computeScopeUnion`, without the token scope: the stored token's scope is not read here).
-fn union_scopes(configured: Option<&str>, required: Option<&str>) -> Option<String> {
-    let mut scopes: Vec<&str> = Vec::new();
-    for scope in configured
-        .into_iter()
-        .chain(required)
-        .flat_map(str::split_whitespace)
-    {
-        if !scopes.contains(&scope) {
-            scopes.push(scope);
-        }
-    }
-    (!scopes.is_empty()).then(|| scopes.join(" "))
 }
 
 impl McpManager {
@@ -287,7 +288,7 @@ impl McpManager {
             }
             Some(ChallengeRefresh::Failed) => false,
             Some(ChallengeRefresh::Reauthorize) | None => {
-                self.0.start_oauth_on_challenge(&config, failure);
+                self.0.start_oauth_on_challenge(&config, failure).await;
                 false
             }
         }

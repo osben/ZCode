@@ -159,35 +159,7 @@ impl Timing {
     }
 }
 
-/// A launched helper process. Dropping `guard` kills the process tree.
-pub struct NodeHelperProcess {
-    pub stdin: Box<dyn AsyncWrite + Send + Unpin>,
-    pub stdout: Box<dyn AsyncBufRead + Send + Unpin>,
-    pub guard: Box<dyn Send>,
-}
-
-/// Releases the helper's stdin when the process is retired. The protocol writer task owns the write half and only
-/// ends once every `Peer` clone is gone, and the reader task keeps one until the helper's stdout closes, which is
-/// after the helper exits. Without this, a retired helper never sees EOF, so its F4a stop grace always expires.
-struct WriterRelease {
-    writer: Task<()>,
-    /// Dropped after `writer` is aborted, so the process guard's stop starts once stdin is closed.
-    _process: Box<dyn Send>,
-}
-
-impl Drop for WriterRelease {
-    fn drop(&mut self) {
-        // Aborting the writer drops the write half (EOF for the helper). The process guard drops after this, so
-        // its stop task starts with the helper already told to shut down.
-        self.writer.abort();
-    }
-}
-
-/// Starts one helper process. The implementation owns the child's stderr.
-#[async_trait]
-pub trait NodeHelperLauncher: Send + Sync {
-    async fn launch(&self) -> io::Result<NodeHelperProcess>;
-}
+pub use launch::{NodeHelperLauncher, NodeHelperProcess};
 
 /// Resolves a session's workspace catalog (F3, per-workspace admission): the catalog of the plugins
 /// the session's workspace layer admitted, or `None` when no layer is loaded for it, in which case
@@ -237,6 +209,8 @@ pub struct NodeHelper {
     /// Every session this agent has opened in the helper (never removed: a close-time relay still arrives after the
     /// close, and the session stays this agent's). Browser relays are answered only for these or a live session.
     opened_here: StdMutex<HashSet<String>>,
+    /// F3b(b): the app-provided tools each session's `helper/appTools/replace` set, with the process that set them.
+    app_tools: StdMutex<app_tools::AppToolSets>,
 }
 
 struct State {
@@ -318,6 +292,7 @@ impl NodeHelper {
             requests: StdMutex::default(),
             last_open: AtomicU64::new(0),
             opened_here: StdMutex::new(HashSet::new()),
+            app_tools: StdMutex::default(),
         })
     }
 
@@ -349,18 +324,28 @@ impl NodeHelper {
             helper: self,
             generation,
         };
+        Some(self.send_on(generation, &peer, method, params).await)
+    }
+
+    /// Sends `method` on a link of `generation` that the caller holds the in-flight count of: a session-scoped call
+    /// opens its helper session first, and a call the helper never answers is timed out and cancelled.
+    pub(super) async fn send_on(
+        &self,
+        generation: u64,
+        peer: &Peer,
+        method: &str,
+        params: &Value,
+    ) -> Result<Value, RpcError> {
         // F3: a session-scoped call runs in its helper session, opened first in this generation.
-        if let Some(session) = sessions::session_of(method, params)
-            && let Err(error) = self.ensure_session(generation, &peer, session).await
-        {
-            return Some(Err(error));
+        if let Some(session) = sessions::session_of(method, params) {
+            self.ensure_session(generation, peer, session).await?;
         }
         let started = self.heard_count(generation);
         let deadline = self.timing.timeout_for(method);
         let result = match tokio::time::timeout(deadline, peer.request(method, params)).await {
             Err(_elapsed) => {
-                if self.timed_out(generation, started, &peer).await {
-                    self.cancel_abandoned(method, params, &peer);
+                if self.timed_out(generation, started, peer).await {
+                    self.cancel_abandoned(method, params, peer);
                 }
                 Err(unavailable("the helper did not answer in time"))
             }
@@ -373,7 +358,7 @@ impl NodeHelper {
                 result
             }
         };
-        Some(self.panel_answered(generation, method, params, result))
+        self.panel_answered(generation, method, params, result)
     }
 
     /// A ready link for `method`, starting the helper when it is not running. `Ok(None)` when the helper does not
@@ -460,291 +445,6 @@ impl NodeHelper {
         }
     }
 
-    /// Launches and initializes a helper, then makes it the running slot. Runs once per start, shared by the callers
-    /// that were waiting for it. Holds no lock across an await.
-    async fn start(&self, generation: u64) -> Result<(), RpcError> {
-        let process = match self.launcher.launch().await {
-            Ok(process) => process,
-            Err(error) => {
-                self.warn_once("launch", Some(error.to_string()));
-                self.start_failed(generation);
-                return Err(unavailable("the helper could not be started"));
-            }
-        };
-        let NodeHelperProcess {
-            stdin,
-            stdout,
-            guard,
-        } = process;
-        let (peer, writer) = connection::start(stdin, &self.spawner, Options::default());
-        let guard: Box<dyn Send> = Box::new(WriterRelease {
-            writer,
-            _process: guard,
-        });
-        let relay = Arc::new(Relay {
-            host: self.host.clone(),
-            helper: self.myself.clone(),
-            generation,
-        });
-        let weak = self.myself.clone();
-        let reader_peer = peer.clone();
-        let reader_spawner = self.spawner.clone();
-        drop(self.spawner.spawn("node-helper-reader", async move {
-            let _ = connection::serve(
-                stdout,
-                reader_peer,
-                relay,
-                reader_spawner,
-                Options::default(),
-            )
-            .await;
-            if let Some(helper) = weak.upgrade() {
-                // The slot goes first, so a request that begins after it starts cancelled (requests::begin).
-                helper.link_lost(generation);
-                helper.requests_lost(generation);
-            }
-        }));
-
-        let initialized = tokio::time::timeout(
-            self.timing.initialize,
-            peer.request(
-                "helper/initialize",
-                &json!({"protocolVersion": PROTOCOL_VERSION}),
-            ),
-        )
-        .await;
-        let answer = match initialized {
-            Ok(Ok(answer)) => answer,
-            Ok(Err(_)) | Err(_) => {
-                drop(guard);
-                self.warn_once("initialize", None);
-                self.start_failed(generation);
-                return Err(unavailable("the helper did not initialize"));
-            }
-        };
-        if answer["protocolVersion"].as_u64() != Some(PROTOCOL_VERSION) {
-            drop(guard);
-            self.state.lock_unpoisoned().slot = Slot::Down;
-            tracing::warn!(
-                event = "helper.unavailable",
-                reason = "protocol_version",
-                "the helper speaks another protocol version; it stays down"
-            );
-            return Err(unavailable("the helper speaks another protocol version"));
-        }
-        let methods: HashSet<String> = answer["methods"]
-            .as_array()
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(|item| item.as_str().map(str::to_owned))
-                    .collect()
-            })
-            .unwrap_or_default();
-        if methods.is_empty() {
-            // A helper that advertises nothing is broken (the bundle and this binary disagree): report it as
-            // unavailable instead of answering every method -32601 as if no helper were configured.
-            drop(guard);
-            self.warn_once(
-                "initialize",
-                Some("the helper advertised no methods".to_owned()),
-            );
-            self.start_failed(generation);
-            return Err(unavailable("the helper advertised no methods"));
-        }
-        let now = Instant::now();
-        let mut state = self.state.lock_unpoisoned();
-        state.slot = Slot::Running(Box::new(Running {
-            generation,
-            peer,
-            methods,
-            in_flight: 0,
-            last_used: now,
-            heard: 0,
-            pipes: HashMap::new(),
-            sessions: HashMap::new(),
-            children: HashSet::new(),
-            panels: Box::new(panels::Panels::new(
-                self.myself.clone(),
-                self.spawner.clone(),
-            )),
-            _guard: guard,
-        }));
-        state.retry_at = None;
-        drop(state);
-        self.warned.store(false, Ordering::Relaxed);
-        tracing::info!(
-            event = "helper.spawned",
-            generation,
-            "the node helper started"
-        );
-        self.spawn_reclaim(generation);
-        Ok(())
-    }
-
-    /// Returns a failed start to idle; the next call starts again once the cooldown has passed. Only the start of
-    /// `generation` does this.
-    fn start_failed(&self, generation: u64) {
-        let mut state = self.state.lock_unpoisoned();
-        if matches!(&state.slot, Slot::Starting(_)) && state.generation == generation {
-            state.slot = Slot::Idle;
-            state.retry_at = Some(Instant::now() + self.timing.start_cooldown);
-        }
-    }
-
-    /// A helper process is starting, or running with its connection open.
-    fn has_process(&self) -> bool {
-        match &self.state.lock_unpoisoned().slot {
-            Slot::Starting(_) => true,
-            Slot::Running(running) => !running.peer.is_closed(),
-            Slot::Idle | Slot::Down => false,
-        }
-    }
-
-    fn spawn_reclaim(&self, generation: u64) {
-        let weak = self.myself.clone();
-        let idle = self.timing.idle;
-        drop(self.spawner.spawn("node-helper-idle", async move {
-            reclaim(weak, generation, idle).await;
-        }));
-    }
-
-    fn finish(&self, generation: u64) {
-        let mut state = self.state.lock_unpoisoned();
-        if let Slot::Running(running) = &mut state.slot
-            && running.generation == generation
-        {
-            running.in_flight -= 1;
-            running.last_used = Instant::now();
-        }
-    }
-
-    /// The process of `generation` sent something: it is alive.
-    fn heard(&self, generation: u64) {
-        let mut state = self.state.lock_unpoisoned();
-        if let Slot::Running(running) = &mut state.slot
-            && running.generation == generation
-        {
-            running.heard += 1;
-        }
-    }
-
-    /// How much `generation` was heard from so far (see [`Running::heard`]).
-    fn heard_count(&self, generation: u64) -> u64 {
-        match &self.state.lock_unpoisoned().slot {
-            Slot::Running(running) if running.generation == generation => running.heard,
-            _ => 0,
-        }
-    }
-
-    /// A call of `generation` timed out; `started` is [`Self::heard_count`] when it started. The process is kept when it was heard from since the
-    /// call started (an answer, progress or pipe traffic) or when it answers `helper/ping` in time: it is alive and only
-    /// this call is slow, and dropping it would close every session's helper pipes. Otherwise it is hung and is dropped
-    /// without counting a crash. Returns whether the process was kept.
-    async fn timed_out(&self, generation: u64, started: u64, peer: &Peer) -> bool {
-        let heard = match &self.state.lock_unpoisoned().slot {
-            Slot::Running(running) if running.generation == generation => running.heard != started,
-            _ => return false,
-        };
-        let alive = heard || self.answers_ping(peer).await;
-        let mut state = self.state.lock_unpoisoned();
-        if !is_current(&state, generation) {
-            return false;
-        }
-        if alive {
-            if let Slot::Running(running) = &mut state.slot {
-                running.heard += 1;
-            }
-            tracing::warn!(
-                event = "helper.call_timed_out",
-                generation,
-                "a forwarded call timed out; the helper is alive and is kept"
-            );
-            return true;
-        }
-        let retired = std::mem::replace(&mut state.slot, Slot::Idle);
-        drop(state);
-        drop(retired);
-        tracing::warn!(
-            event = "helper.unavailable",
-            reason = "timeout",
-            "the node helper was dropped"
-        );
-        false
-    }
-
-    /// Any answer to `helper/ping` within [`Timing::ping`] proves the process is alive, an error answer included.
-    async fn answers_ping(&self, peer: &Peer) -> bool {
-        match tokio::time::timeout(self.timing.ping, peer.request(PING, &json!({}))).await {
-            Ok(Ok(_)) => true,
-            Ok(Err(error)) => !(error.code == CONNECTION_CLOSED && peer.is_closed()),
-            Err(_elapsed) => false,
-        }
-    }
-
-    /// The kept process still runs a call its caller gave up on. It is cancelled in the helper with that call's own
-    /// cancel, as the Host would, so it neither keeps running nor stays registered under its id: a panel tool call's
-    /// pending authorization is withdrawn, a sampling call ends. Fire and forget: the answer does not matter, and a
-    /// process dropped meanwhile ends the call anyway.
-    fn cancel_abandoned(&self, method: &str, params: &Value, peer: &Peer) {
-        let Some((cancel_method, cancel)) = abandoned_cancel(method, params) else {
-            return;
-        };
-        let peer = peer.clone();
-        let deadline = self.timing.cancel;
-        drop(self.spawner.spawn("node-helper-cancel", async move {
-            let _ = tokio::time::timeout(deadline, peer.request(cancel_method, &cancel)).await;
-        }));
-    }
-
-    /// The reader of `generation` ended (the process closed its stdout), or a call saw the connection closed.
-    fn link_lost(&self, generation: u64) {
-        let mut state = self.state.lock_unpoisoned();
-        if is_current(&state, generation) {
-            let retired = self.crashed(&mut state, generation);
-            drop(state);
-            drop(retired);
-        } else {
-            tracing::info!(
-                event = "helper.exited",
-                generation,
-                "the node helper exited"
-            );
-        }
-    }
-
-    /// Counts a crash of `generation` and trips the breaker at the limit. Ignored unless `generation` is the running
-    /// process, so a crash is counted once however many callers see it. Returns the crashed slot, for the caller to
-    /// drop after it releases the lock.
-    #[must_use]
-    fn crashed(&self, state: &mut State, generation: u64) -> Option<Slot> {
-        if !is_current(state, generation) {
-            return None;
-        }
-        let retired = std::mem::replace(&mut state.slot, Slot::Idle);
-        let now = Instant::now();
-        let window = self.timing.crash_window;
-        state
-            .crashes
-            .retain(|at| now.saturating_duration_since(*at) < window);
-        state.crashes.push(now);
-        tracing::warn!(
-            event = "helper.crashed",
-            generation,
-            crashes = state.crashes.len(),
-            "the node helper crashed"
-        );
-        if state.crashes.len() >= self.timing.crash_limit {
-            state.slot = Slot::Down;
-            tracing::warn!(
-                event = "helper.unavailable",
-                reason = "crash_limit",
-                "the node helper stays down until this process restarts"
-            );
-        }
-        Some(retired)
-    }
-
     fn warn_once(&self, stage: &'static str, detail: Option<String>) {
         if !self.warned.swap(true, Ordering::Relaxed) {
             tracing::warn!(
@@ -772,50 +472,6 @@ struct InFlight<'a> {
 impl Drop for InFlight<'_> {
     fn drop(&mut self) {
         self.helper.finish(self.generation);
-    }
-}
-
-fn is_current(state: &State, generation: u64) -> bool {
-    matches!(&state.slot, Slot::Running(running) if running.generation == generation)
-}
-
-/// Ends the process of `generation` once it has been idle for `idle`. Each wake-up re-checks the state, so a call in
-/// flight or a newer process is never reclaimed by a stale timer.
-async fn reclaim(weak: Weak<NodeHelper>, generation: u64, idle: Duration) {
-    loop {
-        let Some(helper) = weak.upgrade() else {
-            return;
-        };
-        // The lock lives in this block only: the guard must not be held, or even live, across the sleep below.
-        let wake = {
-            let mut state = helper.state.lock_unpoisoned();
-            let Slot::Running(running) = &state.slot else {
-                return;
-            };
-            if running.generation != generation {
-                return;
-            }
-            if !running.idle() {
-                Some(Instant::now() + idle)
-            } else if running.last_used.elapsed() >= idle {
-                let retired = std::mem::replace(&mut state.slot, Slot::Idle);
-                drop(state);
-                drop(retired);
-                tracing::info!(
-                    event = "helper.reclaimed",
-                    generation,
-                    "the idle node helper was reclaimed"
-                );
-                None
-            } else {
-                Some(running.last_used + idle)
-            }
-        };
-        let Some(wake) = wake else {
-            return;
-        };
-        drop(helper);
-        tokio::time::sleep_until(wake).await;
     }
 }
 
@@ -852,9 +508,23 @@ fn abandoned_cancel(method: &str, params: &Value) -> Option<(&'static str, Value
     };
     match method {
         // A cancel is never cancelled: an abandoned one sends nothing.
-        CANCEL_OPERATION | "mcp/uiCancelCall" | "mcp/uiCancelSampling" => None,
+        CANCEL_OPERATION
+        | "mcp/uiCancelCall"
+        | "mcp/uiCancelSampling"
+        | app_tools::APP_TOOLS_CANCEL => None,
         UI_CALL_TOOL => ui_cancel("mcp/uiCancelCall", "callId"),
         UI_SAMPLING => ui_cancel("mcp/uiCancelSampling", "operationId"),
+        // F3b(b): an app tool call the helper never answers is cancelled by its session and tool call id.
+        app_tools::APP_TOOLS_CALL => {
+            let tool_call = params
+                .get("toolCallId")
+                .and_then(Value::as_str)
+                .filter(|id| !id.is_empty())?;
+            Some((
+                app_tools::APP_TOOLS_CANCEL,
+                json!({"sessionId": params.get("sessionId")?, "toolCallId": tool_call}),
+            ))
+        }
         _ => operation_id(params).map(|id| (CANCEL_OPERATION, json!({"operationId": id}))),
     }
 }
@@ -871,76 +541,12 @@ fn unavailable(message: &str) -> RpcError {
         .with_data(json!({"reasonCode": NODE_HELPER_UNAVAILABLE}))
 }
 
-/// The helper's side of the connection: relays allowlisted notifications to the Host and answers the helper's own
-/// requests with method-not-found.
-struct Relay {
-    host: Peer,
-    /// Anything the process sends marks it alive (see [`Running::heard`]), relayed or not: a dropped notification
-    /// is still proof that the process is running. A hung call on a live process is then left to its cancel (calls
-    /// with an `operationId`) and to the idle reclaim.
-    helper: Weak<NodeHelper>,
-    generation: u64,
-}
-
-impl Relay {
-    fn heard(&self) {
-        if let Some(helper) = self.helper.upgrade() {
-            helper.heard(self.generation);
-        }
-    }
-}
-
-#[async_trait]
-impl Service for Relay {
-    /// F3: pipe traffic is routed in the read loop, so a connection's messages reach Rust's MCP client in the order the
-    /// helper sent them (`serve` spawns every other notification as its own task).
-    /// `helper/session/delta` too, so a session's deltas keep the helper's order on its stream.
-    fn control(&self, method: &str, params: &Value) -> bool {
-        let pipe = mcp::PIPE_NOTIFICATIONS.contains(&method);
-        if !pipe && method != panels::SESSION_DELTA {
-            return false;
-        }
-        if let Some(helper) = self.helper.upgrade() {
-            helper.heard(self.generation);
-            if pipe {
-                helper.pipe_event(self.generation, method, params);
-            } else {
-                helper.session_delta(self.generation, params);
-            }
-        }
-        true
-    }
-
-    /// F3: the helper's requests to Rust (`helper/authorizeAppTool`).
-    async fn request(&self, method: &str, params: Value) -> Result<Reply, RpcError> {
-        self.heard();
-        let Some(helper) = self.helper.upgrade() else {
-            return Err(unavailable("the agent is shutting down"));
-        };
-        helper
-            .helper_request(self.generation, method, params)
-            .await
-            .map(Reply::new)
-    }
-
-    async fn notification(&self, method: &str, params: Value) {
-        self.heard();
-        if method == requests::CANCEL_REQUEST {
-            if let Some(helper) = self.helper.upgrade() {
-                helper.cancel_request(&params);
-            }
-        } else if RELAYED_NOTIFICATIONS.contains(&method) {
-            self.host.notify(method, &params).await;
-        } else {
-            tracing::debug!(
-                event = "helper.notification.dropped",
-                method,
-                "a helper notification is not relayed"
-            );
-        }
-    }
-}
-
+#[path = "node_helper_app_tools.rs"]
+mod app_tools;
+#[path = "node_helper_launch.rs"]
+mod launch;
+#[path = "node_helper_link.rs"]
+mod link;
 #[path = "node_helper_mcp.rs"]
 mod mcp;
 #[path = "node_helper_panels.rs"]
@@ -949,6 +555,8 @@ mod panels;
 mod requests;
 #[path = "node_helper_sessions.rs"]
 mod sessions;
+#[path = "node_helper_stop.rs"]
+mod stop;
 #[cfg(test)]
 use mcp::HelperMcpConnection;
 pub use mcp::HelperRoutedMcp;
