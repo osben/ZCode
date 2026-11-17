@@ -230,6 +230,35 @@ fn workspace() -> Value {
     json!({"workspacePath": WORKSPACE})
 }
 
+/// Node `sessionRequestCounts`: a request in flight for a tree session blocks the preview, until it completes.
+#[tokio::test]
+async fn a_request_in_flight_for_the_tree_blocks_the_preview() {
+    let storage = tempfile::tempdir().unwrap();
+    lay_out_files(storage.path()).await;
+    let (_scope, server, _store) = server(store(snapshot()), storage.path());
+    let flight = server.in_flight.request(&[CHILD.to_owned()]);
+    let blocked = preview(&server, &preview_params()).await.unwrap();
+    assert_eq!(blocked["blockedReason"], "running");
+    drop(flight);
+    let free = preview(&server, &preview_params()).await.unwrap();
+    assert!(free.get("blockedReason").is_none());
+}
+
+/// Node `sessionCreationIds`: a create in flight under a tree session's id blocks the preview, until it completes.
+#[tokio::test]
+async fn a_creation_in_flight_for_the_tree_blocks_the_preview() {
+    let storage = tempfile::tempdir().unwrap();
+    lay_out_files(storage.path()).await;
+    let (_scope, server, _store) = server(store(snapshot()), storage.path());
+    let claim = server.in_flight.claim_creation(ROOT).unwrap();
+    assert!(server.in_flight.claim_creation(ROOT).is_none());
+    let blocked = preview(&server, &preview_params()).await.unwrap();
+    assert_eq!(blocked["blockedReason"], "running");
+    drop(claim);
+    let free = preview(&server, &preview_params()).await.unwrap();
+    assert!(free.get("blockedReason").is_none());
+}
+
 fn preview_params() -> Value {
     json!({"sessionId": ROOT, "workspace": workspace()})
 }

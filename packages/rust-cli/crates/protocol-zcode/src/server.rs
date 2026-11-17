@@ -50,6 +50,8 @@ pub struct Server {
     pub(crate) context: Arc<Context>,
     pub(crate) kernel: Arc<dyn Kernel>,
     pub(crate) bridge: SessionBridge<Live>,
+    /// Fork: the requests and creations in flight per session (Node `sessionRequestCounts`, `sessionCreationIds`).
+    pub(crate) in_flight: Arc<crate::fork::in_flight::InFlight>,
     /// Fork: spawns the per-session subagent table watchers.
     pub(crate) spawner: rust_cli_base::Spawner,
     pub(crate) topics: Arc<Topics>,
@@ -130,6 +132,7 @@ impl Server {
         let topics = Arc::new(Topics::new(context.clone(), &spawner));
         Self {
             instance: context.fresh("instance"),
+            in_flight: Arc::default(),
             bridge: SessionBridge::new(kernel.clone(), spawner.clone(), EVENT_BATCH_WINDOW)
                 .with_close_listener(crate::fork::node_helper::close_listener(context.clone())),
             spawner,
@@ -566,6 +569,19 @@ impl Service for Handler {
         // Fork: Node asserts that no purge started for the request's sessions before it dispatches and validates
         // (specs/fork-rust-agent-parity.md "Session runtime presence on the shared database").
         crate::presence_gate::check(self.0.kernel.queries().as_ref(), method, &params).await?;
+        // Fork: Node `sessionRequestCounts`. The count covers the request's sessions while it runs, so a purge that
+        // starts meanwhile sees it as busy. The deletion methods carry none (Node excludes them).
+        let deletion = method == "v4/storage/sessionData/deletionPreview"
+            || method == "v4/storage/sessionData/deletionExecute";
+        let ids = if deletion {
+            Vec::new()
+        } else {
+            crate::presence_gate::session_ids(&params)
+                .iter()
+                .map(|id| id.as_str().to_owned())
+                .collect()
+        };
+        let _flight = self.0.in_flight.request(&ids);
         Inbound::get().method(method, &params)?;
         self.0.dispatch(method, params).await
     }

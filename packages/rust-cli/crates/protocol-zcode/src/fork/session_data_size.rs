@@ -113,7 +113,9 @@ mod tests {
     fn project_folders_match_nodes_resolve_project_memory_root() {
         let cli = Path::new("/cli");
         let folder = |path: &str, identity: Option<&str>| {
-            project_memory_folder(cli, path, identity).to_string_lossy().into_owned()
+            project_memory_folder(cli, path, identity)
+                .to_string_lossy()
+                .into_owned()
         };
         assert_eq!(
             folder("/work/Example Project", None),
@@ -127,6 +129,9 @@ mod tests {
             folder("/work/My_Repo!!--x/", None),
             "/cli/memories/projects/my_repo---x-ff23fa6ced8d2b12"
         );
-        assert_eq!(folder("/", None), "/cli/memories/projects/project-8a5edab282632443");
+        assert_eq!(
+            folder("/", None),
+            "/cli/memories/projects/project-8a5edab282632443"
+        );
     }
 }

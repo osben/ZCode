@@ -460,6 +460,23 @@ pub(crate) async fn create_session_with(
         Ok(payload) => payload,
         Err(ack) => return *ack,
     };
+    // Fork: Node `sessionCreationIds`. The explicit id is claimed before any await, so a permanent deletion of that id
+    // sees the create as busy and a second create for it is refused (Node's "sessionId already exists").
+    let _creation = match payload.session_id.as_deref() {
+        Some(id) => match server.in_flight.claim_creation(id) {
+            Some(claim) => Some(claim),
+            None => {
+                return Ack::refused(
+                    &envelope.command_id,
+                    Status::Rejected,
+                    "proto.invalidPayload",
+                    "sessionId already exists".to_owned(),
+                    0,
+                );
+            }
+        },
+        None => None,
+    };
     // B1.1 (specs/fork-rust-agent-parity.md): the managed-worktree fields are admitted in Node's order. First
     // `session-mgmt.ts`: "worktreeCreation requires cwd" — the record names the directory `cwd` points at, so it
     // cannot ride without one (Node refuses before `runActivation`; nothing is persisted from the envelope).

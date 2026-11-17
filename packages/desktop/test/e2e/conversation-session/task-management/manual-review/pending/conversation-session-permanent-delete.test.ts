@@ -1,5 +1,4 @@
-import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
   TID_TASK_DELETE,
@@ -11,20 +10,17 @@ import {
 import {
   DEFAULT_WORKSPACE,
   clearAppData,
+  getE2EAppDataPaths,
+  waitForTestIdByDom,
   waitForWorkspaceApp,
 } from "../../../../helpers/desktop-app.js";
-import { ensureProjectExpanded } from "../../../../helpers/project-sidebar.js";
-import { restartIntoWorkspacePreservingProfile } from "../../../../helpers/model-provider-restart-runtime.js";
-import {
-  PROVIDER_READINESS_HISTORY_SESSION_ID,
-  seedProviderReadinessHistoryFixture,
-} from "../../../../helpers/provider-readiness-history-fixture.js";
+import { PROVIDER_READINESS_HISTORY_SESSION_ID } from "../../../../helpers/provider-readiness-history-fixture.js";
 
 const TASK_ID = PROVIDER_READINESS_HISTORY_SESSION_ID;
 const CASE_TIMEOUT_MS = 120_000;
 
 function readPersistedState() {
-  const root = join(homedir(), ".zcode");
+  const root = join(getE2EAppDataPaths().homeDir, ".zcode");
   const content = new DatabaseSync(join(root, "cli", "db", "db.sqlite"), { readOnly: true });
   const index = new DatabaseSync(join(root, "v2", "tasks-index.sqlite"), { readOnly: true });
   try {
@@ -44,7 +40,24 @@ function readPersistedState() {
 async function openDeleteDialog() {
   const row = await $(`[data-testid="${testId(TID_TASK_ITEM, TASK_ID)}"]`);
   await row.waitForDisplayed({ timeout: 15_000 });
-  await row.click({ button: "right" });
+  // Radix ContextMenu opens on the contextmenu event; a WebDriver right click does not reach it in this harness.
+  await browser.execute(
+    (taskItemTestId) => {
+      const target = document.querySelector<HTMLElement>(`[data-testid="${taskItemTestId}"]`);
+      if (!target) throw new Error(`task row missing: ${taskItemTestId}`);
+      const rect = target.getBoundingClientRect();
+      target.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          button: 2,
+          clientX: rect.left + rect.width / 2,
+          clientY: rect.top + rect.height / 2,
+        }),
+      );
+    },
+    testId(TID_TASK_ITEM, TASK_ID),
+  );
   await $(`[data-testid="${TID_TASK_DELETE}"]`).waitForDisplayed({ timeout: 10_000 });
   await $(`[data-testid="${TID_TASK_DELETE}"]`).click();
   await $(`[data-testid="${TID_TASK_DELETE_DIALOG}"]`).waitForDisplayed({ timeout: 15_000 });
@@ -52,23 +65,6 @@ async function openDeleteDialog() {
 }
 
 describe("DEL01: permanent task deletion from the sidebar", () => {
-  // The task row and its CLI session must exist before the Host starts (the seed is read at startup).
-  before(async () => {
-    // The restart helper may call the hook again when its reload retries, so the insert runs once.
-    let seeded = false;
-    await restartIntoWorkspacePreservingProfile(DEFAULT_WORKSPACE, {
-      afterElectronProcessExit: async () => {
-        if (seeded) return;
-        seeded = true;
-        await seedProviderReadinessHistoryFixture({
-          cliEntryPoint: resolve("../../apps/zcode-cli/packages/cli/dist/zcode.cjs"),
-          e2eHomeDir: process.env.ZCODE_E2E_HOME_DIR ?? "",
-          workspacePath: DEFAULT_WORKSPACE,
-        });
-      },
-    });
-  });
-
   after(async () => {
     await browser.electron.restoreAllMocks();
     await clearAppData();
@@ -77,7 +73,10 @@ describe("DEL01: permanent task deletion from the sidebar", () => {
   it("cancel preserves content; confirm erases content and retains the tombstone after reload", async function () {
     this.timeout(CASE_TIMEOUT_MS);
     await waitForWorkspaceApp(DEFAULT_WORKSPACE, 45_000);
-    await ensureProjectExpanded(DEFAULT_WORKSPACE);
+    await waitForTestIdByDom(testId(TID_TASK_ITEM, TASK_ID), {
+      timeout: 30_000,
+      timeoutMsg: "DEL01 的预置任务没有出现在侧栏",
+    });
     const before = readPersistedState();
     expect(before.sessions).toBe(1);
     expect(before.deleted).toBe(0);
@@ -103,7 +102,6 @@ describe("DEL01: permanent task deletion from the sidebar", () => {
 
     await browser.refresh();
     await waitForWorkspaceApp(DEFAULT_WORKSPACE, 45_000);
-    await ensureProjectExpanded(DEFAULT_WORKSPACE);
     expect(await $(`[data-testid="${testId(TID_TASK_ITEM, TASK_ID)}"]`).isExisting()).toBe(false);
     expect(readPersistedState()).toMatchObject({ sessions: 0, deleted: 1 });
   });

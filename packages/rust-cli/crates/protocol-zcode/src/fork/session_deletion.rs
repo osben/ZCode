@@ -239,6 +239,12 @@ pub(crate) fn busy_session_ids(server: &Server, ids: &[String]) -> Vec<String> {
             busy.insert(id);
         }
     }
+    // Node `sessionRequestCounts` and `sessionCreationIds`: a request or a create in flight for the session.
+    for id in ids {
+        if server.in_flight.busy(id) {
+            busy.insert(id.clone());
+        }
+    }
     ids.iter()
         .filter(|id| busy.contains(*id))
         .cloned()
