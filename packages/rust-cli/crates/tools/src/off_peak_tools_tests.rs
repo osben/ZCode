@@ -443,8 +443,11 @@ async fn list_refuses_unknown_keys_before_any_request() {
     let host = Host::answering(vec![]);
     let list = tool(&host, "OffPeakList");
     let message = invalid_message(
-        list.validate_input(&json!({"status": "queued"}), &context(TurnLimits::default()))
-            .await,
+        list.validate_input(
+            &json!({"status": "queued"}),
+            &context(TurnLimits::default()),
+        )
+        .await,
     );
     assert!(!message.is_empty());
     assert!(host.requests().is_empty());
