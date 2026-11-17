@@ -44,13 +44,13 @@ pub struct Invocation {
     pub env: Vec<(String, String)>,
 }
 
-/// Names only, as [`ChildCommand`]: the environment can carry credentials, so no value reaches a log through `{:?}`.
+/// Names only, as [`ChildCommand`]: the program path and the arguments (the entry file's directory) can hold the user's
+/// name, and the environment can carry credentials, so only the argument count and the environment names are printed.
 impl std::fmt::Debug for Invocation {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("Invocation")
-            .field("program", &self.program)
-            .field("args", &self.args)
+            .field("args", &self.args.len())
             .field(
                 "env",
                 &self.env.iter().map(|(name, _)| name).collect::<Vec<_>>(),

@@ -225,9 +225,10 @@ impl Drop for StopOnDrop {
         };
         let label = self.label;
         drop(self.spawner.spawn(label.task, async move {
-            // F4a: the helper's stdin was dropped with the process (EOF) before this task ran, so it closes its
-            // sessions and MCP children itself, in order. Only a helper still alive after the grace period gets TERM
-            // and KILL; one that exited meanwhile has its leftovers killed without a TERM.
+            // F4a: this guard owns either the node helper's tree or a sandbox child's tree (workflow_child.rs). The
+            // process's stdin was dropped with it (EOF) before this task ran, so the helper closes its sessions and MCP
+            // children itself, in order. Only a process still alive after the grace period gets TERM and KILL; one that
+            // exited meanwhile has its leftovers killed without a TERM.
             let shutdown = stop_mode(tree.child().wait(), HELPER_STOP_GRACE).await;
             if let Err(error) = tree.terminate(shutdown).await {
                 tracing::debug!(

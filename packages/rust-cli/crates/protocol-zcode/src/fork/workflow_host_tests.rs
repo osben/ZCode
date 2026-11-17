@@ -237,6 +237,10 @@ async fn an_ask_carries_every_optional_field_it_was_sent_with() {
     child.send(json!({"kind": "complete", "ok": true})).await;
     host.await.unwrap();
 
+    let created = handler.created.lock().unwrap();
+    assert_eq!(created.len(), 1);
+    assert_eq!(created[0].persona, Some(json!({"role": "auditor"})));
+    drop(created);
     let requests = handler.requests.lock().unwrap();
     let by_id = |id: &str| {
         requests

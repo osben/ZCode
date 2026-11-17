@@ -40,12 +40,27 @@ fn has_entries(dir: &Path) -> bool {
     std::fs::read_dir(dir).is_ok_and(|mut entries| entries.next().is_some())
 }
 
+/// Whether `pid` is a live process. `kill(pid, 0)` also succeeds for a zombie (exited, not yet reaped), so a zombie
+/// counts as dead: the grandchild is reparented, and its exit is only reaped by whoever inherits it.
 #[cfg(unix)]
 fn alive(pid: libc::pid_t) -> bool {
     // SAFETY: kill with signal 0 delivers nothing; it only checks that the process exists.
     #[expect(unsafe_code, reason = "kill(2) is libc FFI")]
     let found = unsafe { libc::kill(pid, 0) } == 0;
-    found
+    found && !zombie(pid)
+}
+
+#[cfg(unix)]
+fn zombie(pid: libc::pid_t) -> bool {
+    rust_cli_proc::std_command("ps")
+        .args(["-o", "stat=", "-p", &pid.to_string()])
+        .stderr(std::process::Stdio::null())
+        .output()
+        .is_ok_and(|output| {
+            String::from_utf8_lossy(&output.stdout)
+                .trim_start()
+                .starts_with('Z')
+        })
 }
 
 /// A stand-in child: it ignores its arguments, starts a grandchild, prints its pid and waits.

@@ -2,7 +2,8 @@
 //!
 //! The state lives here: the bytes of a line that has not ended yet stay in `line`, and a read consumes them only once
 //! they are copied in. So [`NdjsonLines::next`] is safe to drop inside a `select!` and resume later, as
-//! `acp::rpc::StderrLines` is. A line over [`MAX_LINE_BYTES`] is not buffered: the caller stops the run.
+//! `acp::rpc::StderrLines` is. A line over [`MAX_LINE_BYTES`] is not buffered: its read returns [`Line::TooLong`],
+//! and the next read skips the rest of that line, so the reader stays framed on the lines after it.
 
 use std::io;
 
@@ -17,7 +18,8 @@ pub const MAX_LINE_BYTES: usize = 8 * 1024 * 1024;
 pub enum Line {
     /// One line, without its newline. A last line with no newline at the end of the stream is also a line.
     Text(Vec<u8>),
-    /// The line is longer than [`MAX_LINE_BYTES`]; the rest of it is not read.
+    /// The line is longer than [`MAX_LINE_BYTES`]. Its bytes are not kept; the rest of it, up to its newline, is
+    /// skipped by the next read.
     TooLong,
     /// The end of the stream, with no partial line pending.
     End,
@@ -27,6 +29,8 @@ pub enum Line {
 pub struct NdjsonLines<R> {
     reader: R,
     line: Vec<u8>,
+    /// Set after a [`Line::TooLong`] until the newline that ends the oversized line has been consumed.
+    discarding: bool,
 }
 
 impl<R: AsyncBufRead + Unpin> NdjsonLines<R> {
@@ -34,6 +38,7 @@ impl<R: AsyncBufRead + Unpin> NdjsonLines<R> {
         Self {
             reader,
             line: Vec::new(),
+            discarding: false,
         }
     }
 
@@ -42,11 +47,24 @@ impl<R: AsyncBufRead + Unpin> NdjsonLines<R> {
         loop {
             let available = self.reader.fill_buf().await?;
             if available.is_empty() {
+                self.discarding = false;
                 return Ok(if self.line.is_empty() {
                     Line::End
                 } else {
                     Line::Text(std::mem::take(&mut self.line))
                 });
+            }
+            if self.discarding {
+                // Consumed as it is seen, so a dropped call resumes the skip where it stopped.
+                let (skipped, ended) = match available.iter().position(|byte| *byte == b'\n') {
+                    Some(position) => (position + 1, true),
+                    None => (available.len(), false),
+                };
+                self.reader.consume(skipped);
+                if ended {
+                    self.discarding = false;
+                }
+                continue;
             }
             let (chunk, newline) = match available.iter().position(|byte| *byte == b'\n') {
                 Some(position) => (&available[..position], true),
@@ -54,6 +72,7 @@ impl<R: AsyncBufRead + Unpin> NdjsonLines<R> {
             };
             if self.line.len() + chunk.len() > MAX_LINE_BYTES {
                 self.line.clear();
+                self.discarding = true;
                 return Ok(Line::TooLong);
             }
             self.line.extend_from_slice(chunk);
@@ -91,6 +110,29 @@ mod tests {
         writer.write_all(b"tail").await.unwrap();
         drop(writer);
         assert_eq!(lines.next().await.unwrap(), Line::Text(b"tail".to_vec()));
+        assert_eq!(lines.next().await.unwrap(), Line::End);
+    }
+
+    #[tokio::test]
+    async fn the_line_after_an_oversized_one_is_read_whole() {
+        let (mut writer, reader) = duplex(1 << 16);
+        let mut lines = NdjsonLines::new(BufReader::new(reader));
+        tokio::spawn(async move {
+            let block = vec![b'x'; 1 << 16];
+            let mut sent = 0;
+            while sent <= MAX_LINE_BYTES {
+                if writer.write_all(&block).await.is_err() {
+                    return;
+                }
+                sent += block.len();
+            }
+            let _ = writer.write_all(b"\n{\"after\":1}\n").await;
+        });
+        assert_eq!(lines.next().await.unwrap(), Line::TooLong);
+        assert_eq!(
+            lines.next().await.unwrap(),
+            Line::Text(b"{\"after\":1}".to_vec())
+        );
         assert_eq!(lines.next().await.unwrap(), Line::End);
     }
 
