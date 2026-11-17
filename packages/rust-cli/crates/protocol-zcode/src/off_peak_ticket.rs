@@ -12,14 +12,18 @@ use serde_json::Value;
 
 use crate::off_peak_control::{Expiry, OffPeakRuns, Poll};
 
-/// Where the run's lifecycle notifications go (production: `peer.try_notify(LIFECYCLE, …)`).
-pub(crate) type Notify = Arc<dyn Fn(&Value) + Send + Sync>;
+/// Where the run's lifecycle notifications go (production: the peer's awaited `v4/offPeak/lifecycle` notification).
+#[async_trait]
+pub(crate) trait LifecycleSink: Send + Sync {
+    /// Sends one notification. False when it could not be delivered (the connection is closed).
+    async fn send(&self, note: &Value) -> bool;
+}
 
 pub struct RunTickets {
     runs: Arc<OffPeakRuns>,
     session: String,
     execution_id: String,
-    notify: Notify,
+    sink: Arc<dyn LifecycleSink>,
 }
 
 impl RunTickets {
@@ -27,22 +31,21 @@ impl RunTickets {
         runs: Arc<OffPeakRuns>,
         session: impl Into<String>,
         execution_id: impl Into<String>,
-        notify: Notify,
+        sink: Arc<dyn LifecycleSink>,
     ) -> Self {
         Self {
             runs,
             session: session.into(),
             execution_id: execution_id.into(),
-            notify,
+            sink,
         }
     }
 }
 
-/// The error an attempt ends with: the Node code, as the message.
-fn ended(code: &str) -> ModelError {
-    ModelError::Authentication {
-        message: code.to_owned(),
-    }
+/// The error an attempt ends with once its run has ended. A run that ends (cancelled or completed) stops its attempts as
+/// cancelled: the run's Node code is its state, and it must not reach the user as a rejected credential.
+fn ended() -> ModelError {
+    ModelError::Cancelled
 }
 
 #[async_trait]
@@ -50,11 +53,13 @@ impl OffPeakTicketSource for RunTickets {
     /// Node `waitForTicket`: waits until the run may use a ticket, then returns it with its credentials.
     async fn acquire(&self) -> Result<Ticket, ModelError> {
         loop {
-            // The waiter exists before the state is read, so a change in between is not missed.
+            // The waiter is registered before the state is read: a change after the read wakes it, so none is lost.
             let changed = self.runs.changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
             match self.runs.poll_ticket(&self.session, &self.execution_id) {
                 Poll::Ready(ticket) => return Ok(ticket),
-                Poll::Ended(code) => return Err(ended(code)),
+                Poll::Ended => return Err(ended()),
                 Poll::Pending => changed.await,
             }
         }
@@ -71,20 +76,35 @@ impl OffPeakTicketSource for RunTickets {
             .runs
             .expire_ticket(&self.session, &self.execution_id, ticket_id)
         {
-            Expiry::Ended(code) => return Err(ended(code)),
+            Expiry::Ended => return Err(ended()),
             Expiry::Immediate => return Ok(()),
             Expiry::Renewing(notes) => {
-                for note in &notes {
-                    (self.notify)(note);
-                }
+                // Sent by a task of its own, not by this attempt: an attempt dropped mid-send (its turn ends, a cancel)
+                // must not lose the request, which is the only trigger of the Host's renewal. A send that cannot be
+                // delivered ends the run, so its attempts do not wait for an answer nobody can give.
+                let sink = self.sink.clone();
+                let runs = self.runs.clone();
+                let session = self.session.clone();
+                let execution = self.execution_id.clone();
+                tokio::spawn(async move {
+                    for note in &notes {
+                        if !sink.send(note).await {
+                            runs.abandon_undelivered(&session, &execution);
+                            return;
+                        }
+                    }
+                });
             }
         }
         loop {
+            // Registered before the state is read, as in `acquire`.
             let changed = self.runs.changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
             match self.runs.poll_ticket(&self.session, &self.execution_id) {
                 // Replaced: the next acquire takes the renewed ticket.
                 Poll::Ready(ticket) if ticket.id != ticket_id => return Ok(()),
-                Poll::Ended(code) => return Err(ended(code)),
+                Poll::Ended => return Err(ended()),
                 Poll::Ready(_) | Poll::Pending => changed.await,
             }
         }

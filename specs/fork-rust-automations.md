@@ -300,7 +300,7 @@ after output was delivered is not renewed (Node: `delivered` rethrows); `refused
 provider and code, so the provider id is matched by the source, not by the transport.
 
 **As built (run, turn hooks, ticket source).** `protocol-zcode/src/off_peak_ticket.rs` (`RunTickets`) is the run's
-`OffPeakTicketSource`: `acquire` waits on the run's lifecycle (a `Notify` woken on every change) until the ticket is
+`OffPeakTicketSource`: `acquire` waits on the run's lifecycle (a `tokio::sync::Notify` woken on every change) until the ticket is
 usable, then returns its id and the credentials of its `replace_ticket` (None for the start ticket). `expired` runs
 Node `ticketExpired`: a stale ticket retries at once, a current one waits for the renewal; a cancel fails the waiters
 with `off_peak_cancelled`. `refused_as_expired` matches the run's provider and its `providerErrorCode` or 3102/3106.
@@ -317,6 +317,25 @@ Takeover is removed: no Rust caller existed, so the lifecycle has no `user_owned
 Divergences kept: the run's background tasks and queued notifications are not observed (the work snapshot is empty at
 turn end); the run opens at admission, not at turn start; the renewal is a `Retrying` notice (Node emits
 `waiting_ticket`).
+
+**Review follow-ups (2026-11-17).** The ticket source registers its wait on the run's `changed` notify before it reads
+the state (`enable()`), so a change between the read and the wait is not missed. `ticket_needed` is sent by a task of its
+own (`LifecycleSink` over the peer), so dropping the attempt mid-send cannot lose the request; an undelivered notification
+(the connection is closed) ends the run, and so its attempts, rather than leave them waiting for an answer nobody can give. An ended run (cancelled or completed) stops its attempts as
+`ModelError::Cancelled`, not as an authentication failure; the Node code stays the run's state. `replace_ticket` judges
+the run by the runtime's facts (`main_running` is "the run's turn is open"), so a renewal answered after its turn ended
+completes the run. A renewal still pending when its turn ends waits for the Host's answer, as Node does (Node's binding
+release does not clear a pending renewal). A renewal that names `apiKeyId` or `accountScope` is refused: Node routes a
+zhipu account by `apiKeyId` and checks `accountScope`, and neither is implemented in Rust yet. A renewal with neither a key
+nor headers installs no credentials, so the ordinary source supplies them. Session delete, tree erase and the deletion execution end the
+removed sessions' runs (their final notifications go to the Host) and drop their flags and admitted inputs
+(`off_peak_control::forget_sessions`). An admitted input is taken only by its own session's turn,
+and admission checks the runs under the same lock. In the transport, a refusal renews only when its attempt named a
+non-empty ticket id; renewals per request are capped at 3 (`MAX_TICKET_RENEWALS`), after which the refusal is the
+request's error; each renewal logs `model.attempt.failed` with the refused send's ordinal and the renewal count, never the ticket id
+(the off-peak ticket header is a secret header); the model-io send ordinal is `attempt + renewals` (each send distinct),
+while the `Retrying` notice keeps its attempt number. A queued
+off-peak input whose edit leaves the model unset keeps the run's model.
 
 Subagents: a child run inherits its parent run's off-peak execution (`RunInfo.off_peak_execution` recorded from the
 request, `LiveAgent.off_peak_execution` set by the Agent tool, `QueryRequest.off_peak_execution` on the child), nested

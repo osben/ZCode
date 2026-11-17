@@ -73,7 +73,7 @@ fn replacing_the_ticket_releases_the_old_one_and_is_idempotent() {
     life.work_changed(running());
     let renewal = life.ticket_expired("tkt_1").unwrap();
     life.drain_events();
-    assert!(life.replace_ticket(renewal, "tkt_2"));
+    assert!(life.replace_ticket(renewal, "tkt_2", running()));
     assert_eq!(life.state(), State::RunningIdle);
     assert_eq!(life.ticket_id(), Some("tkt_2"));
     assert_eq!(
@@ -86,7 +86,7 @@ fn replacing_the_ticket_releases_the_old_one_and_is_idempotent() {
         ]
     );
     // The same answer again (a lost reply) is accepted without another effect.
-    assert!(life.replace_ticket(renewal, "tkt_2"));
+    assert!(life.replace_ticket(renewal, "tkt_2", running()));
     assert!(life.drain_events().is_empty());
 }
 
@@ -95,9 +95,24 @@ fn a_stale_or_unknown_renewal_is_refused() {
     let mut life = OffPeakLifecycle::new("tkt_1");
     life.work_changed(running());
     let renewal = life.ticket_expired("tkt_1").unwrap();
-    assert!(!life.replace_ticket(renewal + 1, "tkt_2"));
-    assert!(!life.replace_ticket(renewal, "tkt_1"));
+    assert!(!life.replace_ticket(renewal + 1, "tkt_2", running()));
+    assert!(!life.replace_ticket(renewal, "tkt_1", running()));
     assert_eq!(life.state(), State::WaitingTicket);
+}
+
+/// A renewal answered after the run's work ended is judged by the real facts: nothing is left, so the run completes
+/// instead of resuming as if its turn were still running.
+#[test]
+fn a_renewal_answered_after_the_work_ended_completes_the_run() {
+    let mut life = OffPeakLifecycle::new("tkt_1");
+    assert!(life.retain_idle_model_round());
+    life.main_ended(Outcome::Succeeded);
+    assert_eq!(life.ticket_expired("tkt_1"), Some(1));
+    life.release_idle_model_round(idle());
+    assert_eq!(life.state(), State::WaitingTicket);
+    assert!(life.replace_ticket(1, "tkt_2", idle()));
+    assert!(life.terminal(), "no work is left once the renewal is in");
+    assert_eq!(life.state(), State::Completed);
 }
 
 #[test]
@@ -125,7 +140,7 @@ fn cancel_stops_the_run_once_and_refuses_later_renewals() {
     assert_eq!(life.state(), State::Cancelled);
     assert!(life.terminal());
     assert_eq!(life.ticket_expired("tkt_1"), None);
-    assert!(!life.replace_ticket(1, "tkt_2"));
+    assert!(!life.replace_ticket(1, "tkt_2", running()));
     let events = life.drain_events();
     assert_eq!(
         events,
