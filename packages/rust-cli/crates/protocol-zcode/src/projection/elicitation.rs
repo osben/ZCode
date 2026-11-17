@@ -6,7 +6,9 @@
 
 use std::collections::BTreeMap;
 
-use rust_cli_kernel_api::orchestration::{PlanApprovalAnswer, QuestionAnnotation, QuestionAnswer};
+use rust_cli_kernel_api::orchestration::{
+    McpElicitationAnswer, PlanApprovalAnswer, QuestionAnnotation, QuestionAnswer,
+};
 use rust_cli_kernel_api::permission::PermissionMode;
 use serde_json::{Map, Value, json};
 
@@ -238,6 +240,270 @@ pub fn plan_answer(
         Some(feedback) => keep(Some(feedback)),
         None => keep(None),
     }
+}
+
+/// Node's `MCP_ELICITATION_TOOL_NAME`: the tool name of the synthesized ask, which the projection and the App key on.
+pub const MCP_ELICITATION_TOOL_NAME: &str = "McpElicitation";
+/// Node's `MCP_ELICITATION_INTERACTION`: `schema.interaction` of an MCP elicitation's pending interaction.
+pub const MCP_ELICITATION_INTERACTION: &str = "mcp_elicitation";
+/// Node's `MCP_ELICITATION_FREE_TEXT_OPTION`: the value of the "Type your answer" option of a question.
+pub const MCP_ELICITATION_FREE_TEXT_OPTION: &str = "__zcode_free_text__";
+
+/// The supported kinds of a form field (Node's `McpElicitationSchemaField.type`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FieldKind {
+    String,
+    Number,
+    Integer,
+    Boolean,
+    Enum,
+}
+
+/// One form field of a requested schema, in the schema's own order.
+struct Field {
+    name: String,
+    kind: FieldKind,
+    title: Option<String>,
+    description: Option<String>,
+    enum_values: Vec<String>,
+    enum_names: Vec<String>,
+}
+
+/// Node's `readMcpElicitationFields`: the properties of a flat schema whose type is a primitive or an enum of strings;
+/// any other property is left out.
+fn mcp_fields(schema: &Value) -> Vec<Field> {
+    let Some(properties) = schema["properties"].as_object() else {
+        return Vec::new();
+    };
+    let strings = |value: &Value| -> Vec<String> {
+        value
+            .as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    properties
+        .iter()
+        .filter_map(|(name, raw)| {
+            let raw = raw.as_object()?;
+            let is_enum = raw.get("enum").is_some_and(Value::is_array);
+            let kind = if is_enum {
+                FieldKind::Enum
+            } else {
+                match raw.get("type").and_then(Value::as_str)? {
+                    "number" => FieldKind::Number,
+                    "integer" => FieldKind::Integer,
+                    "boolean" => FieldKind::Boolean,
+                    "string" => FieldKind::String,
+                    _ => return None,
+                }
+            };
+            Some(Field {
+                name: name.clone(),
+                kind,
+                title: raw.get("title").and_then(Value::as_str).map(str::to_owned),
+                description: raw
+                    .get("description")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+                enum_values: raw.get("enum").map(strings).unwrap_or_default(),
+                enum_names: raw.get("enumNames").map(strings).unwrap_or_default(),
+            })
+        })
+        .collect()
+}
+
+fn free_text_option() -> Value {
+    json!({"value": MCP_ELICITATION_FREE_TEXT_OPTION, "label": "Type your answer"})
+}
+
+/// Node's `mcpElicitationQuestions`: one question per field (a boolean is Yes/No, an enum its values, anything else
+/// free text). A schema without fields asks the message itself, under the header "Answer".
+fn mcp_questions(message: &str, schema: &Value) -> Vec<Value> {
+    let fields = mcp_fields(schema);
+    if fields.is_empty() {
+        return vec![json!({
+            "header": "Answer",
+            "question": message,
+            "options": [free_text_option()],
+        })];
+    }
+    fields
+        .iter()
+        .map(|field| {
+            let header = field.title.clone().unwrap_or_else(|| field.name.clone());
+            let question = field
+                .description
+                .clone()
+                .unwrap_or_else(|| format!("{message}\n\n{header}"));
+            let options = match field.kind {
+                FieldKind::Boolean => vec![
+                    json!({"value": "true", "label": "Yes"}),
+                    json!({"value": "false", "label": "No"}),
+                ],
+                FieldKind::Enum if !field.enum_values.is_empty() => field
+                    .enum_values
+                    .iter()
+                    .enumerate()
+                    .map(|(index, value)| {
+                        let label = field.enum_names.get(index).unwrap_or(value);
+                        json!({"value": value, "label": label})
+                    })
+                    .collect(),
+                _ => vec![free_text_option()],
+            };
+            json!({"header": header, "question": question, "options": options})
+        })
+        .collect()
+}
+
+/// Fork: an MCP elicitation's `userInput` pending interaction, like Node's `createPendingInteractionFromPermissionEvent`
+/// MCP branch: the questions come from the requested schema, and the App answers them with `resolveInteraction`.
+pub fn mcp_elicitation(
+    interaction: &str,
+    anchor: Option<u64>,
+    now: u64,
+    tool_use: &str,
+    server: &str,
+    message: &str,
+    schema: &Value,
+) -> Value {
+    let payload = json!({
+        "prompt": message,
+        "toolName": MCP_ELICITATION_TOOL_NAME,
+        "input": {"serverName": server, "message": message, "requestedSchema": schema},
+        "schema": {
+            "interaction": MCP_ELICITATION_INTERACTION,
+            "serverName": server,
+            "requestedSchema": schema,
+        },
+        "questions": mcp_questions(message, schema),
+    });
+    user_input(interaction, anchor, now, tool_use, payload)
+}
+
+/// The answer under `content` for field `index`: `answer_<index>`, else the answer by question text, else (the first
+/// field only) the legacy `answer`. A keyed `answers` object decides alone, as in Node.
+fn read_answer<'a>(
+    content: &'a Map<String, Value>,
+    index: usize,
+    question: &str,
+) -> Option<&'a Value> {
+    if let Some(value) = content.get(&format!("answer_{index}")) {
+        return Some(value);
+    }
+    if let Some(answers) = content.get("answers").and_then(Value::as_object) {
+        return answers.get(question);
+    }
+    if index == 0 {
+        return content.get("answer");
+    }
+    None
+}
+
+/// The text of an answer, a string or the first string of a list.
+fn first_string(value: &Value) -> Option<&str> {
+    match value {
+        Value::String(text) => Some(text),
+        Value::Array(items) => items.first().and_then(Value::as_str),
+        _ => None,
+    }
+}
+
+/// One answer converted to its field's type; `None` leaves the field out (Node: a number that does not parse).
+fn typed_value(field: &Field, raw: &str) -> Option<Value> {
+    match field.kind {
+        FieldKind::Boolean => Some(json!(raw == "true" || raw.to_lowercase() == "yes")),
+        FieldKind::Number | FieldKind::Integer => {
+            let parsed: f64 = raw.trim().parse().ok()?;
+            if !parsed.is_finite() {
+                return None;
+            }
+            Some(match field.kind {
+                FieldKind::Integer => json!(parsed.trunc() as i64),
+                _ => json!(parsed),
+            })
+        }
+        FieldKind::String | FieldKind::Enum => Some(json!(raw)),
+    }
+}
+
+/// Fork: the App's answer to an MCP elicitation as the kernel answer (Node's `requestMcpElicitation` mapping).
+/// `decline` and `cancel` pass through. `accept`, or no action with content or free text, maps the answers to the MCP
+/// content by the schema (`mcpElicitationContentFromAnswers`): a field without a usable answer is left out, and the
+/// free-text sentinel is no answer. Free text counts as the `answer` key. No action, no content and no text declines.
+pub fn mcp_answer(
+    message: &str,
+    schema: &Value,
+    action: Option<&str>,
+    content: Option<&Map<String, Value>>,
+    free_text: Option<&str>,
+) -> McpElicitationAnswer {
+    let free = free_text.map(str::trim).filter(|text| !text.is_empty());
+    match action {
+        Some("decline") | Some("cancel") => {
+            return if action == Some("cancel") {
+                McpElicitationAnswer::Cancel
+            } else {
+                McpElicitationAnswer::Decline
+            };
+        }
+        Some("accept") => {}
+        Some(_) => return McpElicitationAnswer::Decline,
+        None if content.is_none() && free.is_none() => return McpElicitationAnswer::Decline,
+        None => {}
+    }
+    mcp_accepted(message, schema, content, free)
+}
+
+/// The accept branch of [`mcp_answer`]: `content` (or the free text as `answer`) converted by the schema.
+fn mcp_accepted(
+    message: &str,
+    schema: &Value,
+    content: Option<&Map<String, Value>>,
+    free: Option<&str>,
+) -> McpElicitationAnswer {
+    let free_content;
+    let answers = match content {
+        Some(content) => Some(content),
+        None => {
+            free_content = free.map(|text| {
+                let mut map = Map::new();
+                map.insert("answer".to_owned(), json!(text));
+                map
+            });
+            free_content.as_ref()
+        }
+    };
+    let mut result = Map::new();
+    let questions = mcp_questions(message, schema);
+    if let Some(answers) = answers {
+        for (index, field) in mcp_fields(schema).iter().enumerate() {
+            let question = questions[index]["question"].as_str().unwrap_or_default();
+            let Some(raw) = read_answer(answers, index, question).and_then(first_string) else {
+                continue;
+            };
+            if raw == MCP_ELICITATION_FREE_TEXT_OPTION {
+                continue;
+            }
+            if let Some(value) = typed_value(field, raw) {
+                result.insert(field.name.clone(), value);
+            }
+        }
+        if mcp_fields(schema).is_empty() {
+            let question = questions[0]["question"].as_str().unwrap_or_default();
+            if let Some(raw) = read_answer(answers, 0, question).and_then(first_string)
+                && raw != MCP_ELICITATION_FREE_TEXT_OPTION
+            {
+                result.insert("answer".to_owned(), json!(raw));
+            }
+        }
+    }
+    McpElicitationAnswer::Accept { content: result }
 }
 
 #[cfg(test)]

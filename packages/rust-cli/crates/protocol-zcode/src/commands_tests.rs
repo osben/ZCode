@@ -1131,6 +1131,22 @@ fn allow_always_denies_an_ask_that_does_not_offer_it() {
     );
 }
 
+/// Fork (F3b(c)): an MCP elicitation is not a permission ask, so `resolve` sends its `resolveInteraction` answer to
+/// `resolve_elicitation` (the `Offered::of` fall-through), which maps it to `Answer::McpElicitation`.
+#[test]
+fn an_mcp_elicitation_answer_is_not_a_permission_answer() {
+    use rust_cli_kernel_api::ids::ToolUseId;
+    use rust_cli_kernel_api::orchestration::InteractionRequest;
+    let request = InteractionRequest::McpElicitation {
+        tool_use: ToolUseId::new("toolu_1"),
+        server: "files".to_owned(),
+        message: "Name?".to_owned(),
+        requested_schema: json!({"type": "object", "properties": {"name": {"type": "string"}}}),
+        origin: None,
+    };
+    assert!(Offered::of(&request).is_none());
+}
+
 /// #422 review P2-1: only an ask that is neither `once` nor independent offers always-allow.
 #[test]
 fn only_a_normal_ask_offers_always_allow() {
