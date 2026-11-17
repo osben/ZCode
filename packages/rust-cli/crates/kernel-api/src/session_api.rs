@@ -863,12 +863,14 @@ pub trait Kernel: Send + Sync {
         })
     }
 
-    /// `v4/conversation/contextComposition` (spec "Rust port"): the session's revision and its last measured request, read
-    /// together. Existing sessions only: an unknown session has revision 0 and no record. Read-only.
+    /// `v4/conversation/contextComposition` (spec "Rust port"): the composition of the session's next request for
+    /// `selection` (the session's model when `None`). `Ok(None)` for a session that is not in memory: this never opens or
+    /// restores one. Read-only.
     async fn context_composition(
         &self,
         _session: &SessionId,
-    ) -> Result<(u64, Option<crate::context_composition::CompositionRecord>), KernelError> {
+        _selection: Option<ModelSelection>,
+    ) -> Result<Option<crate::context_composition::CompositionAnswer>, KernelError> {
         Err(KernelError::Unsupported {
             what: "context composition".to_owned(),
         })

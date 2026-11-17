@@ -444,6 +444,38 @@ pub fn measure(
     })
 }
 
+/// [`measure`] for a caller that already knows each tool's deferral (the draft preview reads it from the tool list it
+/// builds, not from request flags). `tools` pairs each definition with whether it is sent deferred.
+pub fn measure_parts(
+    system: &[SystemBlock],
+    active: &[&Message],
+    tools: &[(ToolDefinition, bool)],
+    model: &str,
+    configured: Option<bool>,
+) -> Breakdown {
+    let wire: Vec<Vec<ApiMessage>> = active
+        .iter()
+        .map(|message| crate::api_messages(std::iter::once(*message), model, configured))
+        .collect();
+    let parts: Vec<MessagePart<'_>> = active
+        .iter()
+        .zip(&wire)
+        .map(|(message, wire)| MessagePart { message, wire })
+        .collect();
+    let tool_parts: Vec<ToolPart<'_>> = tools
+        .iter()
+        .map(|(definition, deferred)| ToolPart {
+            definition,
+            deferred: *deferred,
+        })
+        .collect();
+    classify(&Input {
+        system,
+        messages: &parts,
+        tools: &tool_parts,
+    })
+}
+
 /// The stored record for a measured request: the wire categories and the estimate over all of them.
 pub fn record(
     provider_id: &str,

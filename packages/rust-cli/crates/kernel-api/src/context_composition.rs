@@ -48,6 +48,22 @@ pub struct CompositionRecord {
     pub provider_usage: Option<ProviderUsage>,
 }
 
+/// Node `ContextCompositionPhase`: the last measured request (when it is still valid for the model asked about), or the
+/// preview of the next request built for that model without side effects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompositionPhase {
+    Request,
+    DraftPreview,
+}
+
+/// The answer to `v4/conversation/contextComposition`: the session's revision, the phase, and the composition.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompositionAnswer {
+    pub revision: u64,
+    pub phase: CompositionPhase,
+    pub record: CompositionRecord,
+}
+
 #[derive(Default)]
 struct Slot {
     revision: u64,

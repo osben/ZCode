@@ -2,6 +2,7 @@
 
 use super::*;
 use rust_cli_kernel_api::env::EnvPath;
+use rust_cli_kernel_api::model::ModelSelection;
 use rust_cli_kernel_api::permission::ExecutionState;
 
 #[async_trait]
@@ -122,14 +123,49 @@ impl Kernel for LocalKernel {
     async fn context_composition(
         &self,
         session: &SessionId,
-    ) -> Result<
-        (
-            u64,
-            Option<rust_cli_kernel_api::context_composition::CompositionRecord>,
-        ),
-        KernelError,
-    > {
-        Ok(self.compositions.snapshot(session))
+        selection: Option<ModelSelection>,
+    ) -> Result<Option<rust_cli_kernel_api::context_composition::CompositionAnswer>, KernelError>
+    {
+        use rust_cli_kernel_api::context_composition::{CompositionAnswer, CompositionPhase};
+        // Existing-only: a session that is not open is answered as absent, not restored.
+        let Some(handle) = self.settled(session).await else {
+            return Ok(None);
+        };
+        let view = handle.view().await?;
+        let selection = selection.unwrap_or_else(|| view.selection.clone());
+        let (revision, record) = self.compositions.snapshot(session);
+        // A measured request answers only for the model it was sent to (the reasoning level does not count).
+        if let Some(record) = record.filter(|found| {
+            found.provider_id == selection.provider && found.model_id == selection.model
+        }) {
+            return Ok(Some(CompositionAnswer {
+                revision,
+                phase: CompositionPhase::Request,
+                record,
+            }));
+        }
+        let mode = ExecutionState::from_parts(view.mode, view.plan).effective();
+        let breakdown = self
+            .usage
+            .composition_draft(
+                session,
+                &view.meta.workspace,
+                mode,
+                &selection,
+                &view.messages,
+            )
+            .await?;
+        let record = rust_cli_query::composition::record(
+            &selection.provider,
+            &selection.model,
+            self.ports.clock.now_ms(),
+            &breakdown,
+        );
+        Ok(Some(CompositionAnswer {
+            revision,
+            phase: CompositionPhase::DraftPreview,
+            record,
+        }))
     }
 
     /// `/context`（context-usage.md §2）：有会话时按会话 actor 的当前视图（历史、模型、模式），只读。
