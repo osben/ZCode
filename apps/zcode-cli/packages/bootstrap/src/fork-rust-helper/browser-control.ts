@@ -60,6 +60,13 @@ interface ChildRegistration {
   port: BrowserControlPort;
 }
 
+/** An abort rejection (DOMException or Error named AbortError), as the broker throws it for an aborted call. */
+function isAbortError(error: unknown): boolean {
+  return (
+    typeof error === "object" && error !== null && (error as { name?: unknown }).name === "AbortError"
+  );
+}
+
 /** The key of one end-of-turn capture: a turn has at most one in flight per session. */
 function captureKey(sessionId: string, turnId: string): string {
   return `${sessionId}\u0000${turnId}`;
@@ -193,8 +200,9 @@ export class ForkRustBrowserControl {
       }
       return { image: captured.image };
     } catch (error) {
-      // An abort is Rust's cancel of the turn (D2 C1), a routine outcome of an interrupt rather than a broker failure.
-      if (controller.signal.aborted) {
+      // The broker rejects an aborted call with an AbortError (Rust's cancel of the turn, D2 C1): a routine outcome of an
+      // interrupt. Any other rejection is a broker failure, even when it lands after the abort, and stays a warning.
+      if (controller.signal.aborted && isAbortError(error)) {
         this.deps.logger?.debug("Browser turn screenshot cancelled with the turn", {
           event: "fork_rust_helper.browser.turn_screenshot_cancelled",
         });

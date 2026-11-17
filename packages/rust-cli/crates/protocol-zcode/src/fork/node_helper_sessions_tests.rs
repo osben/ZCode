@@ -1012,11 +1012,9 @@ async fn a_cancelled_turn_screenshot_is_cancelled_in_the_helper() {
     );
 }
 
-/// D2 race (C1): a helper that answers while the turn's cancel is already in place must not lose the answer or cancel a
-/// capture that finished. Either the answer is returned and no cancel is sent, or the capture is cancelled and exactly
-/// one cancel is sent for its turn.
+/// D2 (C1): a capture whose turn is cancelled before the helper answers is cancelled, and exactly one cancel is sent.
 #[tokio::test(start_paused = true)]
-async fn a_turn_screenshot_answer_and_cancel_together_is_kept_or_cancelled_once() {
+async fn a_turn_screenshot_cancelled_before_its_answer_is_cancelled_once() {
     let pipes = sessions(|_| opened());
     let image = json!({"image": {"base64": "AAAA", "mimeType": "image/png"}});
     let answer = image.clone();
@@ -1046,27 +1044,87 @@ async fn a_turn_screenshot_answer_and_cancel_together_is_kept_or_cancelled_once(
         browser_id: "iab-1".to_owned(),
         browser_generation: 2,
     };
-    // The cancel is ready before the capture is polled, so it races the answer that is already on its way.
+    // The cancel is ready before the capture's first poll, and the answer cannot arrive before the request is sent, so
+    // the cancel settles the capture.
     let cancel = tokio_util::sync::CancellationToken::new();
     cancel.cancel();
     let answered = rig
         .helper
         .turn_screenshot("s1", "turn-1", &candidate, &cancel)
         .await;
+    assert!(answered.is_none(), "a cancelled capture answers nothing");
     tokio::time::sleep(Duration::from_secs(1)).await;
-    let cancels = received(&rig.fake, "helper/browser/turnScreenshotCancel");
-    match answered {
-        Some(value) => {
-            assert_eq!(value, image);
-            assert!(
-                cancels.is_empty(),
-                "a capture that answered sends no cancel: {cancels:?}"
-            );
-        }
-        None => assert_eq!(
-            cancels,
-            [json!({"sessionId": "s1", "turnId": "turn-1"})],
-            "a cancelled capture sends exactly one cancel"
-        ),
+    assert_eq!(
+        received(&rig.fake, "helper/browser/turnScreenshotCancel"),
+        [json!({"sessionId": "s1", "turnId": "turn-1"})],
+        "a cancelled capture sends exactly one cancel"
+    );
+}
+
+/// D2 race (C1): a ready answer is kept when the cancel is ready in the same tick. Both futures are ready on every poll
+/// here, so an unbiased select would drop the answer about half the time; 64 rounds make that fail with near certainty.
+#[tokio::test]
+async fn a_ready_capture_answer_is_kept_when_the_turn_is_cancelled_in_the_same_tick() {
+    use super::super::sessions::settle_capture;
+    for round in 0..64 {
+        let cancel = tokio_util::sync::CancellationToken::new();
+        cancel.cancel();
+        assert_eq!(
+            settle_capture(std::future::ready(round), &cancel).await,
+            Some(round),
+            "round {round}"
+        );
     }
+}
+
+/// D2 (C1): a capture whose timeout and cancel are both ready is still cancelled in the helper, since a timed-out
+/// capture may be in flight there. The timeout is reached by advancing paused time to the deadline, then the cancel
+/// fires before the capture is polled again.
+#[tokio::test(start_paused = true)]
+async fn a_timed_out_capture_of_a_cancelled_turn_is_cancelled_in_the_helper() {
+    let pipes = sessions(|_| opened());
+    let rig = rig(
+        fake(
+            &[SESSION_METHOD, "helper/browser/turnScreenshot"],
+            behaviour(move |launch, method, params| match method {
+                "helper/browser/turnScreenshot" => Act::Hang,
+                _ => pipes(launch, method, params),
+            }),
+        ),
+        timing(),
+    );
+    rig.helper.set_catalog(catalog());
+    let rows: std::sync::Weak<dyn HelperRequests> = Arc::downgrade(&*ROWS) as _;
+    rig.helper.set_requests(rows);
+    forward_ok(
+        &rig.helper,
+        SESSION_METHOD,
+        json!({"sessionId": "s1", "serverName": "plugin:viewer:view"}),
+    )
+    .await;
+    let candidate = rust_cli_kernel_api::browser_turn::BrowserCandidate {
+        browser_id: "iab-1".to_owned(),
+        browser_generation: 2,
+    };
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let helper = rig.helper.clone();
+    let token = cancel.clone();
+    let capture = tokio::spawn(async move {
+        helper
+            .turn_screenshot("s1", "turn-1", &candidate, &token)
+            .await
+    });
+    tokio::time::sleep(Duration::from_millis(1)).await;
+    tokio::time::advance(Duration::from_secs(5)).await;
+    cancel.cancel();
+    assert!(
+        capture.await.unwrap().is_none(),
+        "a timed-out capture answers nothing"
+    );
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(
+        received(&rig.fake, "helper/browser/turnScreenshotCancel"),
+        [json!({"sessionId": "s1", "turnId": "turn-1"})],
+        "the helper is told to abort a timed-out capture of a cancelled turn"
+    );
 }

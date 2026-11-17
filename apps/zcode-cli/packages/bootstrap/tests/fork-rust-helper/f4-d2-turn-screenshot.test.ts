@@ -16,7 +16,15 @@ interface Sent {
 
 type Answer = (command: Record<string, unknown>) => Record<string, unknown> | Error | Promise<Record<string, unknown>>;
 
-function harness(answer: Answer, sessions: string[] = ["parent", "child"], logger?: Logger) {
+/** What an aborted broker call rejects with: the broker throws an AbortError when the turn's signal fires. */
+const abortError = () => new DOMException("This operation was aborted", "AbortError");
+
+function harness(
+  answer: Answer,
+  sessions: string[] = ["parent", "child"],
+  logger?: Logger,
+  abortReason: () => unknown = abortError,
+) {
   const sent: Sent[] = [];
   const context = {
     sessions: new Map(
@@ -37,7 +45,7 @@ function harness(answer: Answer, sessions: string[] = ["parent", "child"], logge
       if (response instanceof Error) return Promise.reject(response);
       // As the Host request does: an abort of the call's signal rejects it.
       return new Promise((resolve, reject) => {
-        const abort = () => reject(new Error("aborted"));
+        const abort = () => reject(abortReason());
         options?.signal?.addEventListener("abort", abort, { once: true });
         Promise.resolve(response).then(resolve, reject);
       });
@@ -146,6 +154,35 @@ describe("helper turn screenshot (F4 D2-H)", () => {
     expect(logger.debug).toHaveBeenCalledWith(
       "Browser turn screenshot cancelled with the turn",
       expect.objectContaining({ event: "fork_rust_helper.browser.turn_screenshot_cancelled" }),
+    );
+  });
+
+  it("still warns when the capture was cancelled but the broker failed with a real error", async () => {
+    const logger = recordingLogger();
+    const { control, sent } = harness(
+      (command) => {
+        if (command.method === "list") return { ok: true, tabs: [{ tabId: "t1", active: true }] };
+        if (command.method === "cancelRequest") return { ok: true };
+        return new Promise<Record<string, unknown>>(() => {});
+      },
+      ["parent", "child"],
+      logger as unknown as Logger,
+      () => new Error("Browser control scope is closing"),
+    );
+    const answered = control.turnScreenshot(request);
+    await vi.waitFor(() => expect(executes(sent)).toHaveLength(2));
+    control.cancelTurnScreenshot(request.sessionId, request.turnId);
+    await expect(answered).resolves.toEqual({});
+    expect(logger.warn).toHaveBeenCalledWith(
+      "Browser turn screenshot failed",
+      expect.objectContaining({
+        event: "fork_rust_helper.browser.turn_screenshot_failed",
+        error: "Browser control scope is closing",
+      }),
+    );
+    expect(logger.debug).not.toHaveBeenCalledWith(
+      "Browser turn screenshot cancelled with the turn",
+      expect.anything(),
     );
   });
 });
