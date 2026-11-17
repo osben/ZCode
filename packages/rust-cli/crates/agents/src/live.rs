@@ -615,7 +615,7 @@ impl Live {
             Some(AgentState::Running { abort, mailbox }) if !abort.is_aborted() => {
                 let (taken, kept) = std::mem::take(mailbox)
                     .into_iter()
-                    .partition(|mail| wanted(mail));
+                    .partition(wanted);
                 *mailbox = kept;
                 taken
             }

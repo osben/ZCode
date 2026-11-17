@@ -95,7 +95,7 @@ struct Found {
 }
 
 /// A resolved task for the model text.
-struct TaskView<'a> {
+pub(crate) struct TaskView<'a> {
     id: &'a str,
     /// Node's `task_type`: `local_bash` for a background command, `local_agent` for a subagent.
     kind: &'a str,
