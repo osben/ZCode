@@ -176,6 +176,47 @@ impl<H: StoreHooks> StoreQueries for StoreProxy<H> {
         self.inner.assert_not_deleting(sessions).await
     }
 
+    async fn inspect_session_deletion(
+        &self,
+        root: &SessionId,
+    ) -> Result<crate::session_deletion::SessionDeletionSnapshot, StoreError> {
+        self.inner.inspect_session_deletion(root).await
+    }
+
+    async fn begin_session_deletion(
+        &self,
+        root: &SessionId,
+        revision: &str,
+        operation_id: &str,
+        retained: &[(SessionId, String)],
+    ) -> Result<crate::session_deletion::DeletionBegin, StoreError> {
+        self.inner
+            .begin_session_deletion(root, revision, operation_id, retained)
+            .await
+    }
+
+    async fn complete_session_deletion(&self, root: &SessionId) -> Result<(), StoreError> {
+        self.inner.complete_session_deletion(root).await
+    }
+
+    async fn list_owned_session_trees(
+        &self,
+        roots: &[SessionId],
+    ) -> Result<Vec<(SessionId, Vec<SessionId>)>, StoreError> {
+        self.inner.list_owned_session_trees(roots).await
+    }
+
+    async fn list_artifact_referrers(
+        &self,
+        sessions: &[SessionId],
+    ) -> Result<Vec<(SessionId, Vec<SessionId>)>, StoreError> {
+        self.inner.list_artifact_referrers(sessions).await
+    }
+
+    async fn purge_session_rows(&self, sessions: &[SessionId]) -> Result<(), StoreError> {
+        self.inner.purge_session_rows(sessions).await
+    }
+
     async fn metering(&self, session: &SessionId) -> Result<SessionMetering, StoreError> {
         self.inner.metering(session).await
     }

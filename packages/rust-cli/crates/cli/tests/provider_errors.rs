@@ -342,13 +342,31 @@ async fn a_zhipu_quota_code_ends_the_turn_at_once() {
     sandbox.provider(&fixture.url, Api::Anthropic);
     let kernel = sandbox.kernel(Some(ZHIPU)).await;
     let (_, outcome) = sandbox.one_turn(&kernel).await;
+    let TurnOutcome::Failed {
+        message,
+        code,
+        provider,
+    } = outcome
+    else {
+        panic!("the quota code fails the turn");
+    };
     assert_eq!(
-        outcome,
-        TurnOutcome::Failed {
-            message: "API Error: Credit balance or quota exhausted · 已达到套餐用量上限".to_owned(),
-            code: None,
-        }
+        message,
+        "API Error: Credit balance or quota exhausted · 已达到套餐用量上限"
     );
+    // Node `lastError.code` is the provider code when the error has one (error-payload.ts).
+    assert_eq!(code.as_deref(), Some("1308"));
+    let provider = provider.expect("the provider failure is attributed");
+    assert_eq!(provider.code, "1308");
+    assert_eq!(provider.status, Some(429));
+    assert!(!provider.retryable);
+    assert_eq!(provider.reason, "rate_limited");
+    assert_eq!(provider.error_phase, "prepare");
+    assert_eq!(provider.transport, "sse");
+    assert_eq!(provider.provider_kind, "anthropic");
+    // The request's own selection names the provider and model (Node `providerId`, `modelId`).
+    assert!(provider.provider_id.is_some());
+    assert!(provider.model_id.is_some());
     let requests = fixture.main_requests();
     assert_eq!(requests.len(), 1);
     assert!(!requests.iter().any(is_summary));
@@ -384,6 +402,7 @@ async fn zhipu_sensitive_keeps_the_text_and_fails_with_the_reason() {
         TurnOutcome::Failed {
             message: CONTENT_BLOCKED.to_owned(),
             code: None,
+            provider: None,
         }
     );
     assert_eq!(fixture.main_requests().len(), 1);
@@ -428,6 +447,7 @@ async fn openai_quota_and_content_filter() {
                 "API Error: Credit balance or quota exhausted · You exceeded your current quota"
                     .to_owned(),
             code: None,
+            provider: None,
         }
     );
     assert_eq!(fixture.main_requests().len(), 1);
@@ -442,6 +462,7 @@ async fn openai_quota_and_content_filter() {
         TurnOutcome::Failed {
             message: CONTENT_BLOCKED.to_owned(),
             code: None,
+            provider: None,
         }
     );
     assert_eq!(fixture.main_requests().len(), 1);

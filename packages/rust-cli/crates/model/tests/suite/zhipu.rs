@@ -52,11 +52,18 @@ async fn a_quota_code_on_429_is_not_retried() {
         request("hi", QuerySource::MainThread),
     )
     .await;
+    let [Err(error)] = events.as_slice() else {
+        panic!("one error event: {events:?}");
+    };
     assert_eq!(
-        events,
-        vec![Err(ModelError::QuotaExhausted {
+        error.peel(),
+        &ModelError::QuotaExhausted {
             message: "已达到套餐用量上限".to_owned()
-        })]
+        }
+    );
+    assert_eq!(
+        error.provider().map(|provider| provider.code.as_str()),
+        Some("1308")
     );
     assert_eq!(server.requests().len(), 1);
 

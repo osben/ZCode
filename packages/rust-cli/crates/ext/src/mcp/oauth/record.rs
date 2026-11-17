@@ -120,6 +120,29 @@ fn normalize_issuer(value: &str) -> &str {
     value.strip_suffix('/').unwrap_or(value)
 }
 
+/// The generation of a canonical record: its `generation` as written, or the legacy hash of its raw text for a record
+/// without one (Node `resolveCredentialGeneration`). Refresh coalescing and the follower baseline both read it, so
+/// this is the one derivation both use.
+pub(super) fn resolve_generation(parsed: &Value, raw: &str) -> String {
+    match parsed.get("generation").and_then(Value::as_str) {
+        Some(generation) if !generation.is_empty() => generation.to_owned(),
+        _ => {
+            let digest = Sha256::digest(raw.as_bytes());
+            let hex: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+            format!("legacy-{}", &hex[..32])
+        }
+    }
+}
+
+/// Node `hasNewerCredentials`: a publication counts only when a canonical record exists (it carries tokens) and its
+/// generation differs from the baseline. An absent or unreadable record is not newer.
+pub(super) fn has_newer_credentials(
+    current: Option<&CanonicalCredentials>,
+    baseline: Option<&str>,
+) -> bool {
+    current.is_some_and(|canonical| baseline != Some(canonical.generation.as_str()))
+}
+
 /// Node `loadCanonicalCredentials`: versions 1 and 2 are accepted; a record without `generation`
 /// gets the legacy hash of its raw text.
 pub async fn load_canonical(
@@ -146,16 +169,8 @@ pub async fn load_canonical(
     {
         return Ok(None);
     }
-    let generation = match parsed.get("generation").and_then(Value::as_str) {
-        Some(generation) if !generation.is_empty() => generation.to_owned(),
-        _ => {
-            let digest = Sha256::digest(raw.as_bytes());
-            let hex: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
-            format!("legacy-{}", &hex[..32])
-        }
-    };
     Ok(Some(CanonicalCredentials {
-        generation,
+        generation: resolve_generation(&parsed, &raw),
         expires_at: parsed.get("expires_at").and_then(Value::as_i64),
         obtained_at: parsed.get("obtained_at").and_then(Value::as_i64),
     }))

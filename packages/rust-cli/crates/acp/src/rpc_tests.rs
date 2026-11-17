@@ -134,6 +134,7 @@ async fn pump_over(
         timings: PumpTimings {
             death_grace,
             stop_grace: Duration::from_millis(200),
+            kill_grace: Duration::from_millis(1500),
         },
         stderr_tail: stderr_tail.clone(),
     });

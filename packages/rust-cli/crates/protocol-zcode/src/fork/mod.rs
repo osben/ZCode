@@ -21,9 +21,17 @@ pub mod node_helper;
 mod queue;
 mod release_under_directory;
 pub(crate) use queue::settle_running_turn;
+pub(crate) mod in_flight;
 mod row_commands;
 mod session_config;
+pub(crate) mod session_data;
+mod session_data_files;
+mod session_data_size;
 mod session_delete;
+pub(crate) mod session_deletion;
+#[cfg(test)]
+#[path = "session_store_integration_tests.rs"]
+mod session_store_integration_tests;
 pub(crate) mod session_tree;
 mod skills;
 mod subagents;

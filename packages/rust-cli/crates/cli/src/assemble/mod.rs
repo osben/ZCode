@@ -735,6 +735,11 @@ pub(crate) async fn kernel(
     // The runtime derives `/loop` hiding and the storeless local cron from this port.
     extensions.automation = spec.automation.clone();
     extensions.topic_resources = spec.topic_resources.clone();
+    // Fork (F3b(b), specs/fork-rust-node-helper.md): the Node helper holds the app-provided tools of its sessions.
+    extensions.app_tools = spec
+        .node_helper
+        .clone()
+        .map(|helper| helper as Arc<dyn rust_cli_kernel_api::app_tool::AppToolHost>);
     // Fork: the desktop app-server runs ACP agents (specs/fork-rust-agent-parity.md "ACP external agents"): records
     // from the Host's sidecar next to `provider_config.json`, the raw process environment, the shared ledger.
     if spec.node_desktop {

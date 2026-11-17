@@ -29,6 +29,7 @@ fn permission(tool_use: &str) -> InteractionRequest {
         asked_by: None,
         once: false,
         independent: false,
+        session_allow: false,
     }
 }
 

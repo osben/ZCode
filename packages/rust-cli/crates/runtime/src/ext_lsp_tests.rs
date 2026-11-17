@@ -100,6 +100,7 @@ async fn the_code_intelligence_sees_the_session_profiles() {
             node_desktop: false,
             automation: None,
             topic_resources: None,
+            app_tools: None,
             acp: None,
             code_intelligence: Some(code.clone()),
             hook_transcripts: None,

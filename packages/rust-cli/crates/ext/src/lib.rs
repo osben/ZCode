@@ -71,6 +71,8 @@ pub struct ExtPorts {
     /// Fork: the sessions' workspaces (specs/fork-rust-workspace-plugins-mcp.md): the per-workspace
     /// MCP views resolve a session's group through it.
     pub sessions: rust_cli_kernel_api::workspace_key::SessionWorkspaces,
+    /// Fork F3b(b): the Node helper's app-provided tools (specs/fork-rust-node-helper.md); None without a helper.
+    pub app_tools: Option<Arc<dyn rust_cli_kernel_api::app_tool::AppToolHost>>,
 }
 
 /// 入口层给出的配置快照。
@@ -172,6 +174,7 @@ impl Ext {
             workspace_mcp,
             sessions: ports.sessions.clone(),
             incognito: incognito.clone(),
+            app_tools: ports.app_tools.clone(),
         });
         Self {
             skills,
@@ -290,6 +293,8 @@ struct ExtRegistry {
     workspace_mcp: Arc<crate::mcp::workspaces::WorkspaceMcp>,
     sessions: rust_cli_kernel_api::workspace_key::SessionWorkspaces,
     incognito: IncognitoTools,
+    /// Fork F3b(b): the session's app-provided tools come from this host's overlay (after the MCP tools).
+    app_tools: Option<Arc<dyn rust_cli_kernel_api::app_tool::AppToolHost>>,
 }
 
 impl ExtRegistry {
@@ -308,6 +313,49 @@ impl ExtRegistry {
         } else {
             Arc::new(mcp::WaitForMcpServers::new(Arc::downgrade(manager)))
         }
+    }
+
+    /// Fork F3b(b): the one app-provided tool of `session` named `name`, built alone (a lookup does not wrap the set).
+    fn app_tool_of(
+        &self,
+        session: &SessionId,
+        mcp: &McpManager,
+        name: &str,
+    ) -> Option<Arc<dyn Tool>> {
+        let host = self.app_tools.as_ref()?;
+        mcp::app_provided_tool(host, session, name, mcp.settings().max_output_tokens)
+    }
+
+    /// Fork F3b(b): the session's app-provided tools (empty without a helper), after `tools`. The configured MCP output
+    /// budget of the session's group bounds them, as it bounds its MCP tools.
+    fn app_tools_of(&self, session: &SessionId) -> Vec<Arc<dyn Tool>> {
+        match &self.app_tools {
+            Some(host) => {
+                let max_output_tokens = self.session_mcp(session).settings().max_output_tokens;
+                mcp::app_provided_tools(host, session, max_output_tokens)
+            }
+            None => Vec::new(),
+        }
+    }
+
+    /// Node's `replaceMcpAppProvidedTools` keeps the existing tool on a name collision: an app tool whose name a listed
+    /// tool already has is not listed.
+    fn with_app_tools(
+        &self,
+        session: &SessionId,
+        mut tools: Vec<Arc<dyn Tool>>,
+    ) -> Vec<Arc<dyn Tool>> {
+        // A name is taken when lookup resolves it to a listed tool (`answers_to`: its own name or a legacy one), and each
+        // accepted app tool takes its name for the rest, so a host that lists one name twice shows it once.
+        for app in self.app_tools_of(session) {
+            if !tools
+                .iter()
+                .any(|tool| rust_cli_kernel_api::tool::answers_to(tool.as_ref(), app.name()))
+            {
+                tools.push(app);
+            }
+        }
+        tools
     }
 
     fn assemble_with(
@@ -361,14 +409,17 @@ impl ToolRegistry for ExtRegistry {
             return base;
         }
         let mcp = self.session_mcp(session);
-        match self.incognito.profile(session) {
+        let mcp_hit = match self.incognito.profile(session) {
             None => mcp.find(name),
             Some(profile) => mcp
                 .snapshot_where(|scope| incognito::keeps_scope(&profile, scope))
                 .0
                 .into_iter()
                 .find(|tool| rust_cli_kernel_api::tool::answers_to(tool.as_ref(), name)),
-        }
+        };
+        // Fork F3b(b): an app-provided tool of this session (its helper's set, never another session's) answers only
+        // where no MCP tool of the session does, as Node keeps the existing tool on a collision.
+        mcp_hit.or_else(|| self.app_tool_of(session, &mcp, name))
     }
 
     fn withheld(&self, name: &str) -> Option<Arc<dyn Tool>> {
@@ -399,14 +450,14 @@ impl ToolRegistry for ExtRegistry {
             let mut tools = self.assemble_with(wait_tool, wait, tools);
             tools.retain(|tool| !self.incognito.hides(session, tool.as_ref()));
             return ToolSnapshot {
-                tools,
+                tools: self.with_app_tools(session, tools),
                 mcp: Some(view),
             };
         }
         let (tools, view) = mcp.snapshot();
         let wait = !view.pending().is_empty() || mcp.declared(session);
         ToolSnapshot {
-            tools: self.assemble_with(wait_tool, wait, tools),
+            tools: self.with_app_tools(session, self.assemble_with(wait_tool, wait, tools)),
             mcp: Some(view),
         }
     }

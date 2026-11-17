@@ -41,6 +41,8 @@ pub struct Extensions {
     /// Fork: the Host's topic resources (specs/fork-rust-topic-resource.md); `Some` registers `ReadTopicResource`. Only
     /// the app-server gives it.
     pub topic_resources: Option<Arc<dyn TopicResources>>,
+    /// Fork F3b(b): the Node helper's app-provided tools (specs/fork-rust-node-helper.md); None without a helper.
+    pub app_tools: Option<Arc<dyn rust_cli_kernel_api::app_tool::AppToolHost>>,
     /// Fork: ACP external agents (the app-server gives it; specs/fork-rust-agent-parity.md "ACP external agents").
     /// None: an `acp:` selection runs on the query loop like any provider.
     pub acp: Option<crate::acp::AcpSetup>,
@@ -73,6 +75,7 @@ impl Extensions {
             node_desktop: false,
             automation: None,
             topic_resources: None,
+            app_tools: None,
             acp: None,
             code_intelligence: None,
             subagent_config: None,

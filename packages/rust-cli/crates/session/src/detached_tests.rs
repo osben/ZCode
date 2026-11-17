@@ -30,6 +30,7 @@ fn permission(tool_use: &str) -> InteractionRequest {
         asked_by: Some("general-purpose".to_owned()),
         once: false,
         independent: false,
+        session_allow: false,
     }
 }
 

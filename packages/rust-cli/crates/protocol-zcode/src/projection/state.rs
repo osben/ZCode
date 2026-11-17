@@ -3,6 +3,7 @@
 
 use rust_cli_kernel_api::message::Usage;
 use rust_cli_kernel_api::model::ModelSelection;
+use rust_cli_kernel_api::model::ProviderFailure;
 use rust_cli_kernel_api::permission::PermissionMode;
 use serde_json::{Value, json};
 
@@ -58,10 +59,12 @@ pub struct LastError {
 }
 
 /// Fork: `sessionErrorInfoSchema.attribution`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ErrorAttribution {
     /// `{source: "runtime", reason: "hook_blocked"}`.
     HookBlocked,
+    /// Node `projectErrorAttribution` of a provider business failure (see `provider_error::attribution`).
+    Provider(Box<ProviderFailure>),
 }
 
 fn last_error(error: &LastError) -> Value {
@@ -75,9 +78,12 @@ fn last_error(error: &LastError) -> Value {
     if let Some(detail) = &error.detail {
         value["detail"] = json!(detail);
     }
-    match error.attribution {
+    match &error.attribution {
         Some(ErrorAttribution::HookBlocked) => {
             value["attribution"] = json!({"source": "runtime", "reason": "hook_blocked"});
+        }
+        Some(ErrorAttribution::Provider(provider)) => {
+            value["attribution"] = super::provider_error::attribution(provider);
         }
         None => {}
     }
@@ -293,6 +299,19 @@ pub fn usage(
             "cacheWriteTokens": total.cache_creation_input_tokens,
         },
     })
+}
+
+/// Fork (F3b a): a permission ask that offers the session allow (Node `session-always-allow`): the session option
+/// takes the project option's slot, with Node's id, kind, label and response.
+pub fn session_permission_options() -> Value {
+    json!([
+        {"optionId": "allowOnce", "label": "Allow once", "kind": "allowOnce",
+            "response": {"decision": "allow", "reason": "Approved once"}},
+        {"optionId": "allowSession", "label": "Always allow in this session", "kind": "allowAlways",
+            "response": {"decision": "allow", "reason": "Approved for this session"}},
+        {"optionId": "deny", "label": "Deny", "kind": "deny",
+            "response": {"decision": "deny", "reason": "The user doesn't want to proceed with this tool use."}},
+    ])
 }
 
 /// 权限询问的选项（与 Node 的 V4 投影同一组）：允许一次、本项目一直允许、拒绝。

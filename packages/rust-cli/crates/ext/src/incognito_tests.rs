@@ -78,6 +78,7 @@ async fn started_with(
             clock: crate::clock_tests::clock(),
             incognito: profiles.clone(),
             sessions: Default::default(),
+            app_tools: None,
         },
         base,
         ExtConfig {

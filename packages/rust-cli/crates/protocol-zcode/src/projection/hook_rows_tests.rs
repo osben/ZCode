@@ -211,6 +211,7 @@ fn a_failed_turn_keeps_the_recoverable_turn_fault() {
         outcome: TurnOutcome::Failed {
             message: "boom".into(),
             code: None,
+            provider: None,
         },
         usage: None,
     });

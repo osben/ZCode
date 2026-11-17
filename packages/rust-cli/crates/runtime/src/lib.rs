@@ -282,6 +282,7 @@ impl LocalKernel {
             base.registry.clone(),
             (assemble::ext_config(&extensions), traits),
             (&incognito, &workspaces),
+            extensions.app_tools.clone(),
         );
         // Fork: the kernel's session opens await this layer host (the ext layer).
         let workspace_layer = ext.workspace_layer().clone();
@@ -536,3 +537,7 @@ mod adopt_tests;
 #[cfg(test)]
 #[path = "presence_tests.rs"]
 mod presence_tests;
+
+#[cfg(test)]
+#[path = "session_allow_tests.rs"]
+mod session_allow_tests;

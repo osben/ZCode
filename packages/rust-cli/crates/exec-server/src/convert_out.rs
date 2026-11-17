@@ -40,7 +40,11 @@ pub(crate) fn error(error: EnvError) -> WireError {
         EnvError::OperationConflict { operation } => WireError::OperationConflict {
             operation: operation.as_str().to_owned(),
         },
-        EnvError::Io { message } => WireError::Io { message },
+        EnvError::Io { message } => WireError::Io {
+            message,
+            http_status: None,
+            www_authenticate: None,
+        },
         EnvError::Unsupported { what } => WireError::Unsupported { what },
     }
 }
@@ -449,9 +453,20 @@ pub(crate) fn shell_notice(notice: ShellNotice) -> ws::ShellNotice {
 /// 执行器的 `McpError` → 线上的错误（§22.4）：`Connect` 与 `Io` 是 `io`，`Closed` 是 `not_found`，原文不变。
 pub(crate) fn mcp_error(error: McpError) -> WireError {
     match error {
-        McpError::Connect { message } | McpError::Io { message } => WireError::Io { message },
-        // The challenge header does not cross the executor wire yet: the remote side sees the status text only.
-        McpError::Http { message, .. } => WireError::Io { message },
+        McpError::Connect { message } | McpError::Io { message } => WireError::Io {
+            message,
+            http_status: None,
+            www_authenticate: None,
+        },
+        McpError::Http {
+            status,
+            message,
+            www_authenticate,
+        } => WireError::Io {
+            message,
+            http_status: Some(status),
+            www_authenticate,
+        },
         McpError::Closed { message } => WireError::NotFound { path: message },
         McpError::Unsupported { what } => WireError::Unsupported { what },
     }
