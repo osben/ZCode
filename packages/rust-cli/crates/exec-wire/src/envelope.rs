@@ -24,14 +24,15 @@ pub enum WireError {
     Stale { message: String },
     #[error("operation {operation} reused with different arguments")]
     OperationConflict { operation: String },
+    /// An I/O failure. An HTTP transport's non-success answer (`McpError::Http`) also travels as `io`, with the
+    /// status and the response's `WWW-Authenticate` header (RFC 6750) as optional fields. The PROTOCOL rule allows
+    /// optional fields in a same-major change, and an older client ignores them and keeps the message. A new kind
+    /// would fail the older client's reply decode and tear down its connection.
     #[error("io error: {message}")]
-    Io { message: String },
-    /// An HTTP transport answered a non-success status (`McpError::Http`). `www_authenticate` is the response's
-    /// `WWW-Authenticate` header, which the OAuth challenge reads (RFC 6750). Protocol's own kind, not an `EnvError`.
-    #[error("http {status}: {message}")]
-    Http {
-        status: u16,
+    Io {
         message: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        http_status: Option<u16>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         www_authenticate: Option<String>,
     },

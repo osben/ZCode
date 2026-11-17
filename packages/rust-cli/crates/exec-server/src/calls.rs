@@ -56,6 +56,8 @@ fn encode_reply(call: u64, result: ReplyResult, body: &Body) -> Bytes {
         Err(error) => {
             let result = ReplyResult::Err(WireError::Io {
                 message: error.to_string(),
+                http_status: None,
+                www_authenticate: None,
             });
             Frame::encode(Kind::Reply, &ReplyHeader { call, result }, &Body::empty())
                 .unwrap_or_default()
@@ -99,6 +101,8 @@ pub(crate) async fn request(inner: &Arc<Inner>, instance: &str, header: RequestH
         Err(error) => {
             let error = WireError::Io {
                 message: error.to_string(),
+                http_status: None,
+                www_authenticate: None,
             };
             return reply_error(inner, instance, call, error).await;
         }
@@ -321,6 +325,8 @@ async fn produce(inner: Arc<Inner>, key: CallKey, source: Source, notify: Arc<No
                 let item = StreamItem::Error {
                     error: WireError::Io {
                         message: error.to_string(),
+                        http_status: None,
+                        www_authenticate: None,
                     },
                 };
                 let header = EventHeader {

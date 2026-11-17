@@ -405,35 +405,44 @@ fn the_ended_background_command_is_a_background_read() {
     assert_eq!(op.kind(), OpKind::Read);
 }
 
-/// PR4 (b): an HTTP error keeps its status and its `WWW-Authenticate` header on the wire. The kind is `http`,
-/// and the header is optional.
+/// PR4 (b): an HTTP challenge keeps its status and `WWW-Authenticate` header on the wire, as an `io` error with
+/// optional fields. An older client knows only `io { message }`; it must still decode the reply, or its executor
+/// connection is torn down. Before the fix the kind was `http`, which that client cannot decode.
 #[test]
-fn an_http_error_keeps_its_challenge_header_on_the_wire() {
-    let error = WireError::Http {
-        status: 403,
+fn an_http_challenge_travels_as_io_with_optional_fields_an_older_client_decodes() {
+    #[derive(serde::Deserialize, Debug, PartialEq)]
+    #[serde(tag = "kind", rename_all = "snake_case")]
+    enum OlderWireError {
+        Io { message: String },
+    }
+
+    let error = WireError::Io {
         message: "HTTP 403: forbidden".to_owned(),
+        http_status: Some(403),
         www_authenticate: Some(
             r#"Bearer error="insufficient_scope", scope="mcp:write""#.to_owned(),
         ),
     };
     let encoded = serde_json::to_value(&error).expect("encode");
-    assert_eq!(encoded["kind"], json!("http"));
-    assert_eq!(encoded["status"], json!(403));
+    assert_eq!(encoded["kind"], json!("io"));
+    assert_eq!(encoded["http_status"], json!(403));
+    let older: OlderWireError =
+        serde_json::from_value(encoded.clone()).expect("an older client decodes the reply");
+    assert_eq!(
+        older,
+        OlderWireError::Io {
+            message: "HTTP 403: forbidden".to_owned(),
+        }
+    );
     let decoded: WireError = serde_json::from_value(encoded).expect("decode");
     assert_eq!(decoded, error);
 
-    let without: WireError = serde_json::from_value(json!({
-        "kind": "http",
-        "status": 401,
-        "message": "HTTP 401: unauthorized",
-    }))
-    .expect("the header is optional");
-    assert_eq!(
-        without,
-        WireError::Http {
-            status: 401,
-            message: "HTTP 401: unauthorized".to_owned(),
-            www_authenticate: None,
-        }
-    );
+    // A plain io error keeps its original encoding: no optional fields are written.
+    let plain = serde_json::to_value(WireError::Io {
+        message: "boom".to_owned(),
+        http_status: None,
+        www_authenticate: None,
+    })
+    .expect("encode");
+    assert_eq!(plain, json!({"kind": "io", "message": "boom"}));
 }
