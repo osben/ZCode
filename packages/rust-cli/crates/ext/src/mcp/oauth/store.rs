@@ -23,6 +23,14 @@ pub enum McpOAuthWrite {
     Put { key: String, value: String },
     /// Delete `key` only if its current value still equals `expected` (Node `deleteIfValue`).
     DeleteIfValue { key: String, expected: String },
+    /// Delete every key in `keys` only if `guard_key` still holds `expected` (Node
+    /// `invalidateCanonicalCredentials`, a compare-and-swap on the canonical raw value). A record published
+    /// after the failure was observed therefore survives.
+    DeleteGuarded {
+        guard_key: String,
+        expected: String,
+        keys: Vec<String>,
+    },
 }
 
 /// A held authorization lease. Dropping it without [`AuthorizationLease::release`] leaves the lock
@@ -45,6 +53,13 @@ pub trait McpOAuthStore: Send + Sync {
     /// 250 ms with a 25 ms retry and a 100 ms owner-less grace. `Ok(None)` means another live caller
     /// holds it. Lock-path derivation lives in the implementation (`<credentials dir>/<sanitized>.authz`).
     async fn try_acquire_lease(
+        &self,
+        key_prefix: &str,
+    ) -> Result<Option<Box<dyn AuthorizationLease>>, McpOAuthStoreError>;
+
+    /// Take the refresh lock for `key_prefix` (Node `resolveRefreshLockPath`, `withFileLock` with a 45 s wait).
+    /// It is a separate file from the authorization lease. `Ok(None)` means the wait ran out.
+    async fn try_acquire_refresh_lock(
         &self,
         key_prefix: &str,
     ) -> Result<Option<Box<dyn AuthorizationLease>>, McpOAuthStoreError>;
@@ -102,6 +117,9 @@ pub trait LoopbackConnection: Send {
     /// Write a complete HTTP/1.1 response with `Connection: close` and close the connection.
     async fn respond(&mut self, status: u16, body: &str) -> Result<(), OAuthHttpError>;
 }
+
+/// Refresh lock wait budget (Node `REFRESH_LOCK_MAX_WAIT_MS`): it must cover one discovery and one token request.
+pub const REFRESH_LOCK_MAX_WAIT: Duration = Duration::from_secs(45);
 
 /// The lease wait budget of Node `oauth-lease.ts`, shared with the platform implementation.
 pub const LEASE_RETRY_DELAY: Duration = Duration::from_millis(25);

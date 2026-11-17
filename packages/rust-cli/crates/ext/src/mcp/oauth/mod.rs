@@ -14,6 +14,7 @@ mod lease;
 mod pkce;
 mod protocol;
 mod record;
+mod refresh;
 mod store;
 
 #[cfg(test)]
@@ -25,22 +26,27 @@ mod lease_tests;
 #[cfg(test)]
 mod protocol_tests;
 #[cfg(test)]
+mod refresh_tests;
+#[cfg(test)]
 mod tests;
 
 pub use callback::{CallbackError, CallbackParams, parse_callback_target};
 pub use config::McpOAuthConfig;
 pub use coordinator::{McpOAuthCoordinator, ReconnectFn};
 pub use flow::{FlowInput, FlowOutcome, run_lead};
-pub use keys::{credential_key, credential_key_prefix, lease_path, sanitize_key_prefix};
+pub use keys::{
+    credential_key, credential_key_prefix, lease_path, refresh_lock_path, sanitize_key_prefix,
+};
 pub use lease::{delete_pending_if_owned, pending_record_json, publish_pending};
 pub use record::{
     CanonicalCredentials, DISCOVERY_TTL_MS, PendingAuthorization, load_canonical, load_discovery,
     load_pending,
 };
+pub use refresh::{RefreshError, RefreshInput, refresh_under_lock};
 pub use store::{
     AuthorizationLease, LEASE_MAX_WAIT, LEASE_OWNERLESS_GRACE, LEASE_RETRY_DELAY,
     LoopbackConnection, LoopbackListener, McpOAuthRuntime, McpOAuthStore, McpOAuthStoreError,
-    McpOAuthWrite, OAuthHttpError, OAuthHttpRequest, OAuthHttpResponse,
+    McpOAuthWrite, OAuthHttpError, OAuthHttpRequest, OAuthHttpResponse, REFRESH_LOCK_MAX_WAIT,
 };
 
 /// Whether a connect error is an authorization challenge (Node `classifyInteractiveAuthorizationTrigger`:

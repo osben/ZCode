@@ -486,7 +486,7 @@ async fn exchange_code(
 
 /// Node `publishCanonicalCredentials`: canonical v2 record and the legacy `client_information` and
 /// `tokens` keys, written in one batch so no reader sees one without the other.
-async fn publish_canonical(
+pub(super) async fn publish_canonical(
     store: &dyn McpOAuthStore,
     runtime: &dyn McpOAuthRuntime,
     key_prefix: &str,

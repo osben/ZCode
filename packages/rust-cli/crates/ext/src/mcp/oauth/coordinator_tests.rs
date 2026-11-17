@@ -9,6 +9,7 @@ use super::flow_tests::{FakeRuntime, MemoryStore, callback, expected_state};
 use super::*;
 use crate::mcp::oauth::coordinator::McpOAuthCoordinator;
 use crate::mcp::oauth::protocol::{basic_auth, token_form_client_credentials};
+use crate::mcp::oauth::refresh::RefreshInput;
 
 const SERVER_URL: &str = "https://mcp.example.test/mcp";
 const NOW: i64 = 1_700_000_000_000;
@@ -51,14 +52,14 @@ async fn bearer_is_the_fresh_canonical_access_token() {
         Arc::new(|_| {}),
     );
     assert_eq!(
-        coordinator.bearer_for(&prefix(), NOW).await.expect("read"),
+        coordinator.fresh_bearer(&input()).await.expect("read"),
         Some("Bearer tok-fresh".to_owned())
     );
 }
 
 #[tokio::test]
-async fn expired_canonical_token_gives_no_bearer_until_pr3_refresh() {
-    // Within the 30 s skew of expiry the token is not sent; refresh is PR3.
+async fn near_expiry_without_refresh_token_sends_the_current_token_as_node_does() {
+    // Node `token()`: near expiry with no refresh token returns the current token; the server's 401 decides.
     let store = Arc::new(MemoryStore::default());
     seed(&store, canonical_with("tok-old", Some(NOW + 10_000))).await;
     let coordinator = McpOAuthCoordinator::new(
@@ -67,9 +68,20 @@ async fn expired_canonical_token_gives_no_bearer_until_pr3_refresh() {
         Arc::new(|_| {}),
     );
     assert_eq!(
-        coordinator.bearer_for(&prefix(), NOW).await.expect("read"),
-        None
+        coordinator.fresh_bearer(&input()).await.expect("read"),
+        Some("Bearer tok-old".to_owned())
     );
+}
+
+fn input() -> RefreshInput {
+    RefreshInput {
+        server_name: "e2e-remote".to_owned(),
+        server_url: SERVER_URL.to_owned(),
+        key_prefix: prefix(),
+        static_client_id: None,
+        client_secret: None,
+        reactive: false,
+    }
 }
 
 #[tokio::test]
@@ -81,7 +93,7 @@ async fn missing_credentials_give_no_bearer() {
         Arc::new(|_| {}),
     );
     assert_eq!(
-        coordinator.bearer_for(&prefix(), NOW).await.expect("read"),
+        coordinator.fresh_bearer(&input()).await.expect("read"),
         None
     );
 }

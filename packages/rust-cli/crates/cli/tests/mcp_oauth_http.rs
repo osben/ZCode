@@ -22,7 +22,9 @@ use rust_cli_base::clock::SystemClock;
 use rust_cli_base::secret::{EnvSnapshot, RedactedString};
 use rust_cli_env_local::LocalMcpTransport;
 use rust_cli_ext::mcp::McpServerOptions;
-use rust_cli_ext::mcp::oauth::{McpOAuthConfig, credential_key, credential_key_prefix};
+use rust_cli_ext::mcp::oauth::{
+    McpOAuthConfig, McpOAuthWrite, credential_key, credential_key_prefix,
+};
 use rust_cli_ext::{McpManager, McpScope, McpServer, McpSettings};
 use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
 use rust_cli_kernel_api::ids::EnvironmentId;
@@ -44,6 +46,10 @@ struct Mock {
     token_requests: Vec<(String, Option<String>)>,
     /// MCP methods answered, by bearer that was presented.
     mcp_methods: Vec<(String, String)>,
+    /// The `refresh_token` of every refresh grant (PR3).
+    refresh_grants: Vec<String>,
+    /// The `Authorization` header values the MCP endpoint refused with 401 (PR3).
+    rejected: Vec<String>,
 }
 
 async fn serve(state: Arc<Mutex<Mock>>) -> String {
@@ -171,6 +177,32 @@ fn token(body: &str, authorization: Option<String>, state: &Mutex<Mock>) -> Repl
         "client_credentials" if authorization.as_deref() == Some(CC_BASIC) => {
             ok(json!({"access_token": "cc-token", "token_type": "Bearer", "expires_in": 3600}))
         }
+        "refresh_token" => {
+            let refresh = fields.get("refresh_token").cloned().unwrap_or_default();
+            state
+                .lock()
+                .expect("mock")
+                .refresh_grants
+                .push(refresh.clone());
+            match refresh.as_str() {
+                // Omits refresh_token: the client must keep the one it spent (PR3 acceptance 4).
+                r if r.starts_with("refresh-ok") => ok(json!({
+                    "access_token": "refreshed-token",
+                    "token_type": "Bearer",
+                    "expires_in": 3600,
+                })),
+                "refresh-broken" => (
+                    "503 Service Unavailable",
+                    String::new(),
+                    json!({"error": "server_error"}).to_string(),
+                ),
+                _ => (
+                    "400 Bad Request",
+                    String::new(),
+                    json!({"error": "invalid_grant"}).to_string(),
+                ),
+            }
+        }
         _ => (
             "400 Bad Request",
             String::new(),
@@ -193,7 +225,13 @@ fn mcp(
     let bearer = match authorization.as_deref() {
         Some("Bearer real-token") => "real-token",
         Some("Bearer cc-token") => "cc-token",
+        Some("Bearer refreshed-token") => "refreshed-token",
         _ => {
+            state
+                .lock()
+                .expect("mock")
+                .rejected
+                .push(authorization.clone().unwrap_or_default());
             let challenge = format!(
                 "WWW-Authenticate: Bearer resource_metadata=\"{base}/.well-known/oauth-protected-resource/mcp\"\r\n"
             );
@@ -443,6 +481,205 @@ async fn authorization_code_and_client_credentials_work_over_real_http() {
         mock.mcp_methods
             .iter()
             .any(|(method, bearer)| method == "tools/list" && bearer == "cc-token")
+    );
+}
+
+/// A stored canonical record as Node writes it (version 2), for one server's credential key prefix.
+fn canonical_record(access: &str, refresh: &str, expires_at_ms: i64) -> String {
+    json!({
+        "client_information": {"client_id": "client-1"},
+        "tokens": {"access_token": access, "token_type": "Bearer", "refresh_token": refresh},
+        "generation": "gen-seed",
+        "expires_at": expires_at_ms,
+        "obtained_at": 0,
+        "published_by": "seed",
+        "version": 2,
+    })
+    .to_string()
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_millis() as i64
+}
+
+/// PR3 scenarios over real HTTP (`specs/fork-rust-mcp-oauth.md`, PR3 acceptance 2, 3, 5, 7, 9, 10). Four servers
+/// share one mock, each with its own stored token and refresh token, so the outcomes stay separate:
+/// `fresh` (expired token refreshed before connect), `retry` (401 on connect, refresh and retry),
+/// `revoked` (invalid_grant, re-authorization) and `broken` (5xx on refresh, credentials kept).
+#[tokio::test(flavor = "multi_thread")]
+async fn refresh_and_reauthorization_work_over_real_http() {
+    let mock = Arc::new(Mutex::new(Mock::default()));
+    let base = serve(mock.clone()).await;
+    let home = tempfile::tempdir().expect("home");
+    let work = tempfile::tempdir().expect("work");
+    let paths = StoragePaths::resolve(&StorageSettings::default(), home.path(), work.path());
+    let egress = Arc::new(Egress::new(NetworkPolicy::default()).await.expect("egress"));
+    let clock = Arc::new(SystemClock::utc());
+    let origin = "http://127.0.0.1:9".to_owned();
+    let services = AccountServices {
+        egress: egress.clone(),
+        clock: clock.clone(),
+        origins: AccountOrigins {
+            zcode_api: format!("{origin}/api/v1"),
+            zai_api: origin.clone(),
+            bigmodel_team_plans: format!("{origin}/coding-plan/team/plans"),
+            bigmodel_api: origin,
+            client_version: "0.0.0-test".to_owned(),
+            usage_quota_url: None,
+        },
+    };
+    let secret = CredentialSecret {
+        explicit: Some(RedactedString::new("test-secret")),
+        platform: rust_cli_platform::node_platform().to_owned(),
+        home: home.path().to_string_lossy().into_owned(),
+        username: "dev".to_owned(),
+    };
+    let platform = Arc::new(Platform::new(&paths, &secret, services));
+    let transport = Arc::new(LocalMcpTransport::new(
+        work.path().join("ledger.json"),
+        EnvSnapshot::default(),
+        Some(egress.clone()),
+    ));
+    let scope = TaskScope::root("test", |_| {});
+    let manager = McpManager::new(
+        transport,
+        scope.spawner(),
+        McpSettings::default(),
+        clock.clone(),
+    );
+    manager.enable_oauth(platform.mcp_oauth_store(), platform.mcp_oauth_runtime());
+    let store = platform.mcp_oauth_store();
+
+    // Seed the stored tokens. `fresh` is past its expiry; the others are valid far into the future, so their
+    // first connect sends the stale token and the mock refuses it.
+    let later = now_ms() + 3_600_000;
+    let seeds = [
+        (
+            "fresh",
+            "stale-fresh",
+            "refresh-ok-fresh",
+            now_ms() - 60_000,
+        ),
+        ("retry", "stale-retry", "refresh-ok-retry", later),
+        ("revoked", "stale-revoked", "refresh-revoked", later),
+        ("broken", "stale-broken", "refresh-broken", later),
+    ];
+    for (name, access, refresh, expires_at) in seeds {
+        let prefix = credential_key_prefix(name, &format!("{base}/mcp-{name}"), None, None, None);
+        store
+            .apply(&[McpOAuthWrite::Put {
+                key: credential_key(&prefix, "authorization_credentials"),
+                value: canonical_record(access, refresh, expires_at),
+            }])
+            .await
+            .expect("seed");
+    }
+
+    let servers = ["fresh", "retry", "revoked", "broken"]
+        .into_iter()
+        .map(|name| server(name, format!("{base}/mcp-{name}"), None))
+        .collect();
+    manager.start(workspace(work.path()), servers);
+
+    // 1. `fresh`: refreshed before the connect, so the first request already carries the new token.
+    until("the refreshed server lists its tool", || {
+        manager
+            .tools()
+            .iter()
+            .any(|tool| tool.name().contains("fresh") && tool.name().ends_with("ping"))
+            .then_some(())
+    })
+    .await;
+
+    // 2. `retry`: the stale token is refused with 401, the refresh runs, and the connect is retried once.
+    until("the retried server lists its tool", || {
+        manager
+            .tools()
+            .iter()
+            .any(|tool| tool.name().contains("retry") && tool.name().ends_with("ping"))
+            .then_some(())
+    })
+    .await;
+
+    // 3. `revoked`: invalid_grant drops the tokens and the authorization flow starts (a pending record appears).
+    let revoked_prefix =
+        credential_key_prefix("revoked", &format!("{base}/mcp-revoked"), None, None, None);
+    let pending_key = credential_key(&revoked_prefix, "pending_authorization");
+    until("re-authorization after invalid_grant", || {
+        let raw = futures_block(store.load(&pending_key)).ok().flatten()?;
+        serde_json::from_str::<Value>(&raw).ok()
+    })
+    .await;
+    let revoked_canonical = futures_block(store.load(&credential_key(
+        &revoked_prefix,
+        "authorization_credentials",
+    )))
+    .expect("store");
+    assert!(
+        revoked_canonical.is_none(),
+        "invalid_grant must drop the tokens"
+    );
+
+    // 4. `broken`: a 5xx on refresh keeps the stored credentials and starts no flow.
+    until("the broken refresh was attempted", || {
+        mock.lock()
+            .expect("mock")
+            .refresh_grants
+            .iter()
+            .any(|grant| grant == "refresh-broken")
+            .then_some(())
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let broken_prefix =
+        credential_key_prefix("broken", &format!("{base}/mcp-broken"), None, None, None);
+    let kept =
+        futures_block(store.load(&credential_key(&broken_prefix, "authorization_credentials")))
+            .expect("store");
+    assert!(
+        kept.is_some(),
+        "a temporary refresh failure keeps the credentials"
+    );
+    let started =
+        futures_block(store.load(&credential_key(&broken_prefix, "pending_authorization")))
+            .expect("store");
+    assert!(
+        started.is_none(),
+        "a temporary refresh failure starts no authorization flow"
+    );
+
+    let mock = mock.lock().expect("mock");
+    // Each scenario refreshed exactly once: the refresh token is spent once.
+    for refresh in [
+        "refresh-ok-fresh",
+        "refresh-ok-retry",
+        "refresh-revoked",
+        "refresh-broken",
+    ] {
+        let count = mock
+            .refresh_grants
+            .iter()
+            .filter(|grant| *grant == refresh)
+            .count();
+        assert_eq!(count, 1, "{refresh} was refreshed {count} times");
+    }
+    assert!(
+        !mock.rejected.contains(&"Bearer stale-fresh".to_owned()),
+        "{:?}",
+        mock.rejected
+    );
+    assert!(
+        mock.rejected.contains(&"Bearer stale-retry".to_owned()),
+        "{:?}",
+        mock.rejected
+    );
+    assert!(
+        mock.mcp_methods
+            .iter()
+            .any(|(method, bearer)| method == "tools/list" && bearer == "refreshed-token")
     );
 }
 

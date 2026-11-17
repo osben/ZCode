@@ -225,3 +225,131 @@ Decision recorded: lease acquisition lives in the platform store (the lock direc
 - PR3 brief: refresh under lock, 401 re-auth after connect, invalidation on `invalid_grant`.
 - `WWW-Authenticate` `resource_metadata` and challenge `scope` are not carried by the transport error.
 - #501 plugin rows do not carry `url` or `oauth`; the row hook needs them (see PR1 note).
+
+## PR3: refresh under lock, 401 retry, invalidation (as specified)
+
+Scope: proactive refresh before a connect when the canonical token is within the 30 s skew, one
+reactive refresh and retry after a connect 401, re-authorization when the refresh is rejected, and
+credential invalidation with compare-and-swap. Not in PR3: 403 `WWW-Authenticate` carriage (see
+"Deferred" below), `resource` (RFC 8707) on refresh, and saving discovery from the refresh path.
+
+### Owners (PR3 additions)
+
+| Concern                                              | Owner                                                    | Notes                                                                                                                              |
+| ---------------------------------------------------- | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Refresh lock (`<prefix>.refresh`, 45 s wait)         | `platform` `mcp_oauth.rs` `try_acquire_refresh_lock`     | Separate from the `.authz` lease: the refresh lock is held while `apply` writes `credentials.json`. Node `resolveRefreshLockPath`. |
+| Refresh decision, coalescing, failure classification | `ext/src/mcp/oauth/refresh.rs`                           | Node `oauth-refresh.ts` `refreshLocked` and `handleRefreshFailure`.                                                                |
+| Guarded invalidation (`DeleteGuarded`)               | `ext/src/mcp/oauth/store.rs` (trait), `platform` (apply) | Node `invalidateCanonicalCredentials`: delete the key set only if the canonical value still equals the observed raw.               |
+| Proactive refresh in `bearer_for`                    | `ext/src/mcp/oauth/coordinator.rs`                       | Near-expiry with a refresh token calls `refresh::refresh_under_lock` (reactive = false).                                           |
+| Reactive refresh after a connect 401                 | `ext/src/mcp/oauth_hooks.rs` (connect path, small hook)  | One retry of the connect with the new bearer; a rejected refresh falls through to the flow (`start_oauth_on_challenge`).           |
+
+### Event order (PR3, refresh under lock)
+
+```mermaid
+sequenceDiagram
+  participant Conn as connect (manager)
+  participant Ref as oauth::refresh
+  participant Lock as refresh lock (<prefix>.refresh)
+  participant Store as McpOAuthStore (credentials.json)
+  participant AS as token endpoint
+  Conn->>Ref: refresh_under_lock(observed = canonical generation)
+  Ref->>Lock: acquire (wait up to 45 s)
+  alt lock timed out
+    Ref->>Store: re-read canonical
+    Ref-->>Conn: reuse token if generation changed, else temporary failure
+  else acquired
+    Ref->>Store: re-read canonical (under lock)
+    alt generation changed and token present
+      Ref-->>Conn: reuse winner's token (no second POST)
+    else no refresh token
+      Ref-->>Conn: interactive required (no_refresh_token)
+    else
+      Ref->>AS: POST grant_type=refresh_token (discovery fetched; see deviations)
+      alt 2xx
+        Ref->>Store: apply v2 canonical + legacy mirror (refresh token kept if omitted)
+        Ref-->>Conn: new access token
+      else 400 invalid_grant
+        Ref->>Store: DeleteGuarded(canonical, legacy tokens) if canonical unchanged
+        Ref-->>Conn: interactive required (invalid_grant)
+      else 400 invalid_client / unauthorized_client
+        Ref->>Store: DeleteGuarded(canonical, legacy tokens, legacy client) if unchanged
+        Ref-->>Conn: interactive required (invalid_client), or config error when clientId is static
+      else network, 5xx, timeout, other 4xx
+        Note over Ref: credentials untouched
+        Ref-->>Conn: reactive: temporary failure; proactive: current token
+      end
+    end
+    Ref->>Lock: release
+  end
+```
+
+### Connect-time 401 rule (decision)
+
+1. A connect that fails with HTTP 401 and has a refresh token runs `refresh_under_lock(reactive=true)`.
+2. Success: the connect is retried once with the new bearer. A second 401 starts the flow.
+3. `invalid_grant` or `invalid_client` (or no refresh token): credentials were invalidated by the refresh,
+   so the flow starts (`start_oauth_on_challenge`) and the row reports `connecting`.
+4. A temporary failure: the credentials are kept and the row reports the error (`failed`); no flow starts,
+   because the grant is not known to be invalid.
+5. A connected server whose token expired mid-session takes the same path on its next connect (reconnect);
+   a live session gets the 401 on the next request, which is the Node `recoverToolCallAuthorization` path
+   and is deferred (see below).
+
+### SDK and Node retry order (reference)
+
+1. `token()` (Node `oauth-provider.ts`): load the pair; no token gives no bearer; not near expiry gives
+   the token; near expiry without refresh token gives the current token; otherwise refresh (reactive=false).
+2. A 401 calls `onUnauthorized()`: no refresh token gives interactive required (`no_refresh_token` or
+   `no_credentials`); otherwise refresh (reactive=true). The SDK retries the request once.
+3. The refresh itself (`refreshLocked`): re-read under the lock; coalesce on generation change; discovery
+   (cached or fresh, failure is fail-soft); `refreshAuthorization`; publish canonical; classify errors.
+
+### Records (byte-compatible with Node)
+
+- Canonical v2 written by refresh: `{client_information, tokens, generation, obtained_at, expires_at?,
+issuer?, published_by: "refresh:<prefix>", version: 2}` plus the legacy `client_information` and `tokens`
+  mirror keys, in one `apply`. The refresh token is kept from the previous tokens when the response omits it.
+- Node-generated fixture: `testdata/node_pr3_fixture.json` (generator `gen-pr3-fixture.mts` next to the
+  PR2 generator) holds the refresh-lock path and a post-refresh canonical record written by Node's
+  `publishCanonicalCredentials`.
+
+### Acceptance criteria
+
+1. Refresh lock path is `<credentials dir>/<sanitized prefix>.refresh`; matches the Node fixture.
+2. Near-expiry canonical token with a refresh token is refreshed before the connect; the connect uses the new bearer.
+3. Two concurrent refreshes produce exactly one token POST; the second returns the winner's token.
+4. The refresh response without `refresh_token` keeps the old refresh token in the published record.
+5. `invalid_grant` deletes canonical and legacy tokens (CAS) and returns interactive required (`invalid_grant`).
+6. `invalid_client` deletes canonical, legacy tokens and legacy client (CAS); with a static client id it returns
+   a configuration error and deletes nothing.
+7. A 5xx, network error or timeout on refresh keeps the credentials; reactive returns temporary failure,
+   proactive returns the current token.
+8. `DeleteGuarded` removes nothing when the canonical value changed after it was observed (a newer write survives).
+9. A connect 401 with a refresh token refreshes and retries once (real HTTP integration test, mock AS and MCP).
+10. `invalid_grant` on that path leads to re-authorization (the pending authorization is published).
+11. Logs and errors never contain tokens, refresh tokens, codes or client secrets.
+
+### As built in PR3 (deviations and status)
+
+Built and tested: refresh lock (`platform` `try_acquire_refresh_lock`, 45 s, `<prefix>.refresh`), `refresh.rs`
+(coalescing, classification, guarded invalidation), `DeleteGuarded` in `McpOAuthStore::apply`,
+`fresh_bearer` (proactive refresh in the bearer path), the connect-time 401 rule (`refresh_on_challenge` in
+`oauth_hooks.rs`, one retry in the manager connect loop), and the static-client configuration error.
+
+Deviations from Node, each deliberate for this PR:
+
+- The refresh reads the canonical record only. Node's `loadCredentialPair` also derives a pair from the
+  legacy `tokens` and `client_information` keys. A legacy-only record therefore gives `no_credentials`
+  (interactive authorization) instead of a refresh. Legacy-pair derivation is a follow-up.
+- Discovery is fetched on every refresh. The cached `discovery_state` read is not ported (the write side
+  stays in PR2's flow). Behaviour is the same, one extra discovery round trip.
+- `resource` (RFC 8707) is not sent on the refresh request (see Deferred).
+
+Deferred (not in PR3):
+
+- 403 `WWW-Authenticate` (`insufficient_scope`) and its `resource_metadata`: needs the header carried through
+  the transport error (`kernel-api` McpError). Not done in this PR; a 403 still fails the row.
+- Mid-session 401 on a request (Node `recoverToolCallAuthorization`): a live session that gets 401 on a tool
+  call is not refreshed in this PR; the row fails and the next connect takes the rule above.
+- `resource` (RFC 8707) on the refresh request.
+- Plugin rows (#501) do not carry `oauth` or `url`, so they get neither refresh nor flow.

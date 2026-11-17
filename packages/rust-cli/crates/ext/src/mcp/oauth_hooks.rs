@@ -12,9 +12,20 @@ use rust_cli_kernel_api::mcp::McpTransportConfig;
 use super::config::{McpScope, McpServer};
 use super::manager::{Inner, McpManager};
 use super::oauth::{
-    McpOAuthConfig, McpOAuthCoordinator, McpOAuthRuntime, McpOAuthStore, ReconnectFn,
-    is_authorization_challenge,
+    McpOAuthConfig, McpOAuthCoordinator, McpOAuthRuntime, McpOAuthStore, ReconnectFn, RefreshError,
+    RefreshInput, is_authorization_challenge,
 };
+
+/// What a 401 on connect leads to (see [`Inner::refresh_on_challenge`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ChallengeRefresh {
+    /// The token was refreshed: retry the connect once with the new bearer.
+    Retry,
+    /// The grant is invalid or absent: start the authorization flow.
+    Reauthorize,
+    /// The refresh failed temporarily or the static client was rejected: keep the credentials, report the failure.
+    Failed,
+}
 
 #[cfg(test)]
 #[path = "oauth_hooks_tests.rs"]
@@ -98,11 +109,23 @@ impl Inner {
             return unchanged;
         }
         let bearer = match &oauth {
-            McpOAuthConfig::AuthorizationCode { .. } => {
-                let Some(prefix) = oauth.key_prefix(&config.name, url) else {
+            McpOAuthConfig::AuthorizationCode {
+                client_id,
+                client_secret,
+                ..
+            } => {
+                let Some(key_prefix) = oauth.key_prefix(&config.name, url) else {
                     return unchanged;
                 };
-                match coordinator.bearer_for(&prefix, coordinator.now_ms()).await {
+                let refresh = RefreshInput {
+                    server_name: config.name.clone(),
+                    server_url: url.to_owned(),
+                    key_prefix,
+                    static_client_id: client_id.clone(),
+                    client_secret: client_secret.clone(),
+                    reactive: false,
+                };
+                match coordinator.fresh_bearer(&refresh).await {
                     Ok(bearer) => bearer,
                     Err(error) => {
                         tracing::warn!(server = config.name.as_str(), %error, "MCP OAuth credentials unreadable");
@@ -141,6 +164,46 @@ impl Inner {
             transport,
             ..config.clone()
         }
+    }
+
+    /// A connect failed with HTTP 401: refresh the canonical token under the lock (reactive) and say what the
+    /// connect should do next. `None` when the server has no authorization_code OAuth or the failure is not a 401.
+    pub(super) async fn refresh_on_challenge(
+        &self,
+        config: &McpServer,
+        reason: &str,
+    ) -> Option<ChallengeRefresh> {
+        if !is_authorization_challenge(reason) {
+            return None;
+        }
+        let coordinator = self.oauth.get()?;
+        let oauth = effective_oauth(config)?;
+        let (url, _) = remote_parts(config)?;
+        let McpOAuthConfig::AuthorizationCode {
+            client_id,
+            client_secret,
+            ..
+        } = &oauth
+        else {
+            return None;
+        };
+        let input = RefreshInput {
+            server_name: config.name.clone(),
+            server_url: url.to_owned(),
+            key_prefix: oauth.key_prefix(&config.name, url)?,
+            static_client_id: client_id.clone(),
+            client_secret: client_secret.clone(),
+            reactive: true,
+        };
+        Some(match coordinator.refresh(&input).await {
+            Ok(_) => ChallengeRefresh::Retry,
+            // The refresh token was rejected, or none is stored: the authorization flow starts.
+            Err(RefreshError::InteractiveRequired { .. }) => ChallengeRefresh::Reauthorize,
+            // A static client that the server rejects, or a temporary failure: the credentials stay.
+            Err(RefreshError::Configuration(_) | RefreshError::Temporary(_)) => {
+                ChallengeRefresh::Failed
+            }
+        })
     }
 
     /// A connect that fails with HTTP 401 starts the authorization flow for this server (Node: the SDK asks for

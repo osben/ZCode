@@ -16,6 +16,7 @@ use tokio_util::sync::CancellationToken;
 use super::flow::{FlowInput, FlowOutcome, discover, run_lead};
 use super::keys::credential_key;
 use super::protocol::{basic_auth, token_form_client_credentials};
+use super::refresh::{RefreshError, RefreshInput, refresh_under_lock};
 use super::{
     McpOAuthConfig, McpOAuthRuntime, McpOAuthStore, McpOAuthStoreError, OAuthHttpError,
     OAuthHttpRequest,
@@ -65,16 +66,22 @@ impl McpOAuthCoordinator {
         self.runtime.now_ms()
     }
 
-    /// `Bearer <access token>` from the canonical credentials, or `None` when absent or within the expiry
-    /// skew. Refresh is PR3; until then an expired token gives no bearer and the server answers 401.
-    pub async fn bearer_for(
+    /// Refresh the canonical token under the lock after a 401 (reactive). See [`refresh_under_lock`].
+    pub async fn refresh(&self, input: &RefreshInput) -> Result<String, RefreshError> {
+        refresh_under_lock(&*self.store, &*self.runtime, input).await
+    }
+
+    /// The bearer of one connect attempt (Node `token()`). A canonical token outside the 30 s skew is used as it is.
+    /// Near expiry it is refreshed under the lock first when a refresh token exists; without one the current token
+    /// is sent, as Node does, and the server's 401 decides. A rejected grant gives no bearer: the 401 path then
+    /// starts the flow. Store failures are returned.
+    pub async fn fresh_bearer(
         &self,
-        key_prefix: &str,
-        now: i64,
+        input: &RefreshInput,
     ) -> Result<Option<String>, McpOAuthStoreError> {
         let Some(raw) = self
             .store
-            .load(&credential_key(key_prefix, CANONICAL_KEY))
+            .load(&credential_key(&input.key_prefix, CANONICAL_KEY))
             .await?
         else {
             return Ok(None);
@@ -82,16 +89,30 @@ impl McpOAuthCoordinator {
         let Ok(canonical) = serde_json::from_str::<Value>(&raw) else {
             return Ok(None);
         };
-        let Some(token) = canonical["tokens"]["access_token"].as_str() else {
+        let Some(access) = canonical["tokens"]["access_token"].as_str() else {
             return Ok(None);
         };
-        if canonical["expires_at"]
+        let now = self.now_ms();
+        // Node `isCanonicalTokenNearExpiry`: a record without `expires_at` counts as near expiry.
+        let near_expiry = canonical["expires_at"]
             .as_i64()
-            .is_some_and(|expires_at| now + EXPIRY_SKEW_MS >= expires_at)
-        {
-            return Ok(None);
+            .is_none_or(|expires_at| now + EXPIRY_SKEW_MS >= expires_at);
+        let has_refresh_token = canonical["tokens"]["refresh_token"].is_string();
+        if !near_expiry || !has_refresh_token {
+            return Ok(Some(format!("Bearer {access}")));
         }
-        Ok(Some(format!("Bearer {token}")))
+        let proactive = RefreshInput {
+            reactive: false,
+            ..input.clone()
+        };
+        match refresh_under_lock(&*self.store, &*self.runtime, &proactive).await {
+            Ok(token) => Ok(Some(format!("Bearer {token}"))),
+            // Interactive authorization is needed, or the static client was rejected: no bearer.
+            Err(RefreshError::InteractiveRequired { .. } | RefreshError::Configuration(_)) => {
+                Ok(None)
+            }
+            Err(RefreshError::Temporary(_)) => Ok(None),
+        }
     }
 
     /// Start the authorization flow for `server_name` unless one is still running. Returns whether it started.
