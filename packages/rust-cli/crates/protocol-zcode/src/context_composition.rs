@@ -1,14 +1,69 @@
 //! `v4/conversation/contextComposition` (Node `bootstrap/.../zcode-protocol/context-composition/handler.ts`; wire form
 //! in `packages/shared/src/zcode-protocol-v4/context-composition/contract.ts`). Existing-only: a session that is not in
-//! memory answers `composition: null`, and nothing is opened or restored. The notification
-//! (`v4/conversation/contextCompositionChanged`) is not wired yet.
+//! memory answers `composition: null`, and nothing is opened or restored. Changes are pushed as
+//! `v4/conversation/contextCompositionChanged`, coalesced per batch (`forward`).
 
-use rust_cli_kernel_api::context_composition::{CompositionAnswer, CompositionPhase, WireCategory};
+use rust_cli_base::Spawner;
+use rust_cli_kernel_api::context_composition::{
+    CompositionAnswer, CompositionChange, CompositionPhase, WireCategory,
+};
 use rust_cli_kernel_api::ids::SessionId;
+use rust_cli_kernel_api::session_api::Kernel;
+use rust_cli_protocol_core::connection::Peer;
 use rust_cli_protocol_core::rpc::RpcError;
 use serde_json::{Value, json};
 
 use crate::server::{Server, kernel_error};
+
+/// Node `V4_NOTIFICATIONS.conversationContextCompositionChanged`.
+const CHANGED: &str = "v4/conversation/contextCompositionChanged";
+
+/// Node `tracker.ts`: one notification per session per batch, carrying the latest revision, in first-seen order.
+pub(crate) fn coalesce(changes: &[CompositionChange]) -> Vec<CompositionChange> {
+    let mut out: Vec<CompositionChange> = Vec::new();
+    for change in changes {
+        match out.iter_mut().find(|found| found.session == change.session) {
+            Some(found) => found.revision = found.revision.max(change.revision),
+            None => out.push(change.clone()),
+        }
+    }
+    out
+}
+
+/// The notification params for one change.
+pub(crate) fn changed_params(change: &CompositionChange) -> Value {
+    json!({"sessionId": change.session.to_string(), "revision": change.revision})
+}
+
+/// Forwards the kernel's composition changes to this connection, one notification per session per batch. A batch is
+/// what is already queued after one scheduler turn (no timers). The task ends when the connection's writer is gone, or
+/// the kernel publishes no changes.
+pub(crate) fn forward(peer: Peer, kernel: &dyn Kernel, spawner: &Spawner) {
+    let Some(mut changes) = kernel.context_composition_changes() else {
+        return;
+    };
+    // Resident in the connection's scope: dropping the handle does not stop it.
+    drop(spawner.spawn_resident("context-composition-changed", async move {
+        loop {
+            let first = match changes.recv().await {
+                Ok(change) => change,
+                // Skipped changes cannot be named; the App re-reads a session's composition when it asks.
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+            };
+            let mut batch = vec![first];
+            tokio::task::yield_now().await;
+            while let Ok(change) = changes.try_recv() {
+                batch.push(change);
+            }
+            for change in coalesce(&batch) {
+                if !peer.notify(CHANGED, &changed_params(&change)).await {
+                    return;
+                }
+            }
+        }
+    }));
+}
 
 /// The method's result for `answer`: `{composition: null}` when there is no answer.
 pub(crate) fn wire(session_id: &str, answer: Option<&CompositionAnswer>) -> Value {

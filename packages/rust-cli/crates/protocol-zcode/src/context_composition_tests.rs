@@ -1,11 +1,13 @@
 //! Wire form of `v4/conversation/contextComposition` (Node `context-composition/contract.ts`, `handler.ts`).
 
 use rust_cli_kernel_api::context_composition::{
-    CompositionAnswer, CompositionPhase, CompositionRecord, ProviderUsage, WireCategory, WireItem,
+    CompositionAnswer, CompositionChange, CompositionPhase, CompositionRecord, ProviderUsage,
+    WireCategory, WireItem,
 };
+use rust_cli_kernel_api::ids::SessionId;
 use serde_json::json;
 
-use super::wire;
+use super::{changed_params, coalesce, wire};
 
 fn answer(
     phase: CompositionPhase,
@@ -95,4 +97,33 @@ fn free_space_is_floored_at_zero_and_empty_items_are_absent() {
 #[test]
 fn an_unknown_session_answers_null() {
     assert_eq!(wire("sess_1", None), json!({"composition": null}));
+}
+
+fn change(session: &str, revision: u64) -> CompositionChange {
+    CompositionChange {
+        session: SessionId::new(session),
+        revision,
+    }
+}
+
+/// Node `tracker.ts`: one notification per session per batch, carrying the latest revision, in first-seen order.
+#[test]
+fn a_batch_coalesces_to_one_change_per_session_with_the_latest_revision() {
+    let batch = [
+        change("a", 1),
+        change("a", 2),
+        change("b", 1),
+        change("a", 3),
+    ];
+    assert_eq!(coalesce(&batch), vec![change("a", 3), change("b", 1)]);
+    assert_eq!(coalesce(&[]), Vec::new());
+}
+
+/// The notification body is `{sessionId, revision}` (the App re-reads the composition for that revision).
+#[test]
+fn the_changed_notification_carries_the_session_and_revision() {
+    assert_eq!(
+        changed_params(&change("a", 4)),
+        json!({"sessionId": "a", "revision": 4})
+    );
 }

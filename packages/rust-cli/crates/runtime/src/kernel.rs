@@ -176,6 +176,14 @@ impl Kernel for LocalKernel {
         }))
     }
 
+    fn context_composition_changes(
+        &self,
+    ) -> Option<
+        tokio::sync::broadcast::Receiver<rust_cli_kernel_api::context_composition::CompositionChange>,
+    > {
+        Some(self.compositions.subscribe())
+    }
+
     /// `/context`（context-usage.md §2）：有会话时按会话 actor 的当前视图（历史、模型、模式），只读。
     async fn context_usage(
         &self,

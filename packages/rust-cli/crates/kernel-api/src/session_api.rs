@@ -876,6 +876,16 @@ pub trait Kernel: Send + Sync {
         })
     }
 
+    /// The composition change stream behind `v4/conversation/contextCompositionChanged`: every later revision change.
+    /// `None` when the kernel publishes no changes (test doubles, `-p`).
+    fn context_composition_changes(
+        &self,
+    ) -> Option<
+        tokio::sync::broadcast::Receiver<crate::context_composition::CompositionChange>,
+    > {
+        None
+    }
+
     /// `@` 补全的文件清单（docs/specs/rust-cli/tui-input.md §1.2）：相对 shell 当前目录的文件路径。
     async fn workspace_files(
         &self,

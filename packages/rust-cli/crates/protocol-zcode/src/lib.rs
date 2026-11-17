@@ -133,6 +133,7 @@ pub fn handler(
     defaults: Defaults,
     spawner: Spawner,
 ) -> Arc<dyn connection::Service> {
+    crate::context_composition::forward(context.peer.clone(), kernel.as_ref(), &spawner);
     let server = Arc::new(server::Server::new(context, kernel, spawner, defaults));
     // Fork: the Node helper's requests are answered by this server (specs/fork-rust-node-helper.md F3).
     if let Some(helper) = server.context.node_helper() {

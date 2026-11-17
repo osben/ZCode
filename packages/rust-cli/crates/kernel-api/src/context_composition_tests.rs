@@ -62,3 +62,48 @@ fn sessions_are_independent() {
     store.record(&one, record("a"));
     assert_eq!(store.snapshot(&two), (0, None));
 }
+
+/// Every change is published with its session and the new revision, in order. The protocol side coalesces them per tick.
+#[test]
+fn each_change_is_published_with_its_revision() {
+    let store = CompositionStore::default();
+    let session = SessionId::new("s");
+    let mut changes = store.subscribe();
+    store.record(&session, record("a"));
+    store.set_usage(
+        &session,
+        ProviderUsage {
+            input_tokens: 1,
+            context_tokens: 2,
+        },
+    );
+    store.invalidate(&session);
+    let mut seen = Vec::new();
+    while let Ok(change) = changes.try_recv() {
+        seen.push((change.session, change.revision));
+    }
+    assert_eq!(
+        seen,
+        vec![
+            (session.clone(), 1),
+            (session.clone(), 2),
+            (session.clone(), 3)
+        ]
+    );
+}
+
+/// A set_usage with no record publishes nothing: no revision moved.
+#[test]
+fn a_dropped_usage_publishes_nothing() {
+    let store = CompositionStore::default();
+    let session = SessionId::new("s");
+    let mut changes = store.subscribe();
+    store.set_usage(
+        &session,
+        ProviderUsage {
+            input_tokens: 1,
+            context_tokens: 1,
+        },
+    );
+    assert!(changes.try_recv().is_err());
+}
