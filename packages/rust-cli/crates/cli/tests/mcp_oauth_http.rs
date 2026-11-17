@@ -1035,6 +1035,16 @@ fn futures_block<T>(future: impl std::future::Future<Output = T>) -> T {
 /// reconnects with the credentials the lead publishes, over real HTTP.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_follower_lane_reconnects_after_the_lead_publishes_over_real_http() {
+    // A bounded scenario: a stall fails the test instead of hanging the run.
+    tokio::time::timeout(
+        Duration::from_secs(90),
+        follower_lane_scenario(),
+    )
+    .await
+    .expect("the follower scenario did not finish within 90 s");
+}
+
+async fn follower_lane_scenario() {
     let mock = Arc::new(Mutex::new(Mock::default()));
     let base = serve(mock.clone()).await;
     let harness = harness().await;
@@ -1100,13 +1110,19 @@ async fn a_follower_lane_reconnects_after_the_lead_publishes_over_real_http() {
     while !lists_ping(&follower) && Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
+    // One snapshot of the mock: taking the lock twice inside one assertion deadlocks on the same thread.
+    let (methods, rejected, token_requests) = {
+        let guard = mock.lock().expect("mock");
+        (
+            guard.mcp_methods.clone(),
+            guard.rejected.clone(),
+            guard.token_requests.clone(),
+        )
+    };
     assert!(
         lists_ping(&follower),
-        "the follower did not reconnect: {:?}; mock: {:?}; rejected: {:?}; token requests: {:?}",
+        "the follower did not reconnect: {:?}; mock: {methods:?}; rejected: {rejected:?}; token requests: {token_requests:?}",
         follower.server_infos(),
-        mock.lock().expect("mock").mcp_methods,
-        mock.lock().expect("mock").rejected,
-        mock.lock().expect("mock").token_requests
     );
     let mock = mock.lock().expect("mock");
     assert!(

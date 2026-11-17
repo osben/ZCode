@@ -63,10 +63,13 @@ pub enum FlowOutcome {
 }
 
 /// Run the flow as lead, or as follower when the lease is held. Never panics on server answers.
+///
+/// `baseline` is the canonical generation read when the caller started (Node `followAuthorization`'s baseline).
 pub async fn run_lead(
     store: &dyn McpOAuthStore,
     runtime: &dyn McpOAuthRuntime,
     input: &FlowInput,
+    baseline: Option<String>,
     cancel: &CancellationToken,
 ) -> FlowOutcome {
     let key_prefix = key_prefix_of(input);
@@ -75,6 +78,21 @@ pub async fn run_lead(
         Ok(None) => return follower(store, runtime, &key_prefix).await,
         Err(error) => return failed(error),
     };
+    // A publish that landed after the caller's baseline was read is the result this caller waits for. The lease can
+    // be free by now (the lead releases it after publishing), so taking it must not start a second transaction: its
+    // callback would never reach this caller's listener. Release the lease and follow the publish instead, as Node's
+    // `followAuthorization` returns `already-authorized`.
+    let published = load_canonical(store, &key_prefix)
+        .await
+        .ok()
+        .flatten()
+        .map(|canonical| canonical.generation);
+    if published != baseline {
+        lease.release().await;
+        return FlowOutcome::Pending {
+            authorization_url: None,
+        };
+    }
     let attempt_id = match random_hex(runtime, 16) {
         Ok(id) => id,
         Err(message) => return FlowOutcome::Failed { message },

@@ -9,7 +9,7 @@ use std::sync::Mutex;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
-use super::flow::{FlowInput, FlowOutcome, run_lead};
+use super::flow::{FlowInput, FlowOutcome, key_prefix_of, run_lead};
 use super::*;
 use tokio_util::sync::CancellationToken;
 
@@ -252,7 +252,7 @@ async fn happy_path_discovers_registers_exchanges_and_publishes_canonical_creden
         requests: Mutex::new(Vec::new()),
         listen_calls: Mutex::new(0),
     };
-    let outcome = run_lead(&store, &runtime, &input(), &CancellationToken::new()).await;
+    let outcome = run_lead(&store, &runtime, &input(), None, &CancellationToken::new()).await;
     assert_eq!(outcome, FlowOutcome::Authorized);
 
     let requests = runtime.requests.lock().unwrap().clone();
@@ -316,7 +316,7 @@ async fn follower_returns_pending_without_listening_when_the_lease_is_held() {
         requests: Mutex::new(Vec::new()),
         listen_calls: Mutex::new(0),
     };
-    let outcome = run_lead(&store, &runtime, &input(), &CancellationToken::new()).await;
+    let outcome = run_lead(&store, &runtime, &input(), None, &CancellationToken::new()).await;
     assert_eq!(
         outcome,
         FlowOutcome::Pending {
@@ -339,7 +339,7 @@ async fn a_forged_callback_with_the_wrong_state_is_ignored_and_the_real_one_comp
         listen_calls: Mutex::new(0),
     };
     assert_eq!(
-        run_lead(&store, &runtime, &input(), &CancellationToken::new()).await,
+        run_lead(&store, &runtime, &input(), None, &CancellationToken::new()).await,
         FlowOutcome::Authorized
     );
 }
@@ -355,7 +355,7 @@ async fn an_authorization_error_fails_the_flow_and_removes_the_pending_record() 
         requests: Mutex::new(Vec::new()),
         listen_calls: Mutex::new(0),
     };
-    let outcome = run_lead(&store, &runtime, &input(), &CancellationToken::new()).await;
+    let outcome = run_lead(&store, &runtime, &input(), None, &CancellationToken::new()).await;
     assert!(matches!(outcome, FlowOutcome::Failed { .. }), "{outcome:?}");
     let key_prefix = credential_key_prefix("e2e-remote", SERVER_URL, None, Some("mcp:tools"), None);
     assert!(
@@ -378,7 +378,7 @@ async fn token_request_never_appears_in_an_error_or_outcome() {
         requests: Mutex::new(Vec::new()),
         listen_calls: Mutex::new(0),
     };
-    let outcome = run_lead(&store, &runtime, &input(), &CancellationToken::new()).await;
+    let outcome = run_lead(&store, &runtime, &input(), None, &CancellationToken::new()).await;
     let text = format!("{outcome:?}");
     assert!(!text.contains("tok-access-1"));
     assert!(!text.contains(CODE));
@@ -424,7 +424,7 @@ async fn a_dynamically_registered_secret_authenticates_the_code_exchange() {
         requests: Mutex::new(Vec::new()),
         listen_calls: Mutex::new(0),
     });
-    let outcome = run_lead(&store, &runtime, &input(), &CancellationToken::new()).await;
+    let outcome = run_lead(&store, &runtime, &input(), None, &CancellationToken::new()).await;
     assert_eq!(outcome, FlowOutcome::Authorized);
 
     let requests = runtime.0.requests.lock().unwrap().clone();
@@ -444,5 +444,46 @@ async fn a_dynamically_registered_secret_authenticates_the_code_exchange() {
     assert!(
         !token.body.as_deref().unwrap_or("").contains("client_id="),
         "client_secret_basic sends the client id in the header, not the body"
+    );
+}
+
+/// Red test (follower race): a caller whose baseline had no canonical record takes the lease only after the lead
+/// has published. It must follow the publish (Node `followAuthorization` returns `already-authorized`), not start
+/// its own transaction, whose callback would never reach its listener.
+#[tokio::test]
+async fn a_caller_that_takes_the_lease_after_a_publish_follows_and_starts_no_transaction() {
+    let store = MemoryStore::default();
+    let prefix = key_prefix_of(&input());
+    let canonical = serde_json::json!({
+        "client_information": {"client_id": "client-from-dcr"},
+        "tokens": {"access_token": "tok-access-1", "token_type": "Bearer"},
+        "generation": "published-gen",
+        "issuer": "https://auth.example.test",
+        "obtained_at": 1_700_000_000_000i64,
+        "expires_at": 1_700_003_600_000i64,
+        "published_by": "att-lead",
+        "version": 2,
+    });
+    store.raw.lock().unwrap().insert(
+        credential_key(&prefix, "authorization_credentials"),
+        canonical.to_string(),
+    );
+    let runtime = FakeRuntime::new(vec![]);
+    // The caller's baseline was read before the lead published: no canonical record existed then.
+    // Bounded: before the fix the caller starts a transaction and waits for a callback that never comes.
+    let outcome = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        run_lead(&store, &runtime, &input(), None, &CancellationToken::new()),
+    )
+    .await
+    .expect("the caller must not wait for a callback of its own");
+    assert!(
+        matches!(outcome, FlowOutcome::Pending { .. }),
+        "a publish after the baseline must read as Pending so the follower reconnects: {outcome:?}"
+    );
+    assert!(
+        runtime.requests().is_empty(),
+        "no registration, authorize or token request may start: {:?}",
+        runtime.requests()
     );
 }

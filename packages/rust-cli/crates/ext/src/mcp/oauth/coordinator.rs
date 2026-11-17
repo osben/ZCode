@@ -140,7 +140,14 @@ impl McpOAuthCoordinator {
         let task_cancel = cancel.clone();
         let name = server_name.clone();
         let handle = tokio::spawn(async move {
-            let outcome = run_lead(&*this.store, &*this.runtime, &input, &task_cancel).await;
+            let outcome = run_lead(
+                &*this.store,
+                &*this.runtime,
+                &input,
+                baseline.clone(),
+                &task_cancel,
+            )
+            .await;
             let authorized = match outcome {
                 FlowOutcome::Authorized => true,
                 // Node `followAuthorization`: the follower's client reconnects when another caller's
