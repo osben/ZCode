@@ -210,14 +210,15 @@ impl FilteredTools {
                 resolved.push(tool.clone());
             }
         }
-        // The child-only tools are not named in the allowlist, but they are always in the child's set.
+        let restored = self.restored(&resolved);
+        resolved.extend(restored);
+        // The child-only tools are not named in the allowlist, but they are always in the child's set. They come after
+        // the restored search tools: Node's child lists RespondToCoordinator last (`coordinator-response` tool order).
         for tool in self.child_pool() {
             if !resolved.iter().any(|seen| Arc::ptr_eq(seen, &tool)) {
                 resolved.push(tool);
             }
         }
-        let restored = self.restored(&resolved);
-        resolved.extend(restored);
         resolved
     }
 }
