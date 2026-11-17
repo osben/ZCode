@@ -17,7 +17,6 @@ use rust_cli_kernel_api::tool::{
     invalid, parse,
 };
 use rust_cli_kernel_api::tool_names;
-use rust_cli_kernel_api::turn_limits::TurnLimits;
 use serde::{Deserialize, Deserializer};
 use serde_json::{Map, Value, json};
 use tokio::sync::mpsc;
@@ -54,6 +53,7 @@ struct Contract {
     description: String,
     search_hint: Option<String>,
     read_only: bool,
+    destructive: bool,
     concurrent_safe: bool,
     needs_approval: bool,
     should_defer: bool,
@@ -257,7 +257,7 @@ impl OffPeakTool {
     }
 
     async fn create(&self, input: &Value, owner: &SessionId) -> Result<ToolOutput, ToolError> {
-        let fields = create_input(input).map_err(failed_message)?;
+        let fields = create_input(input).map_err(|message| ToolError::InvalidInput { message })?;
         if self.bound(owner).await? {
             return Err(failed(IN_BOUND_SESSION.to_owned()));
         }
@@ -309,29 +309,23 @@ impl OffPeakTool {
     ) -> Result<ToolOutput, ToolError> {
         // The limits decide the refusal. Without the session view a create cannot tell an off-peak run apart, so it
         // fails closed.
-        let limits = match context.session_ops.view().await {
-            Some(view) => view.turn,
-            None if self.kind == Kind::Create => {
+        if self.kind == Kind::Create {
+            let Some(view) = context.session_ops.view().await else {
                 return Err(failed("Session state is unavailable.".to_owned()));
+            };
+            if view.turn.hides(&self.contract.name) {
+                return Err(refuse_off_peak_turn(&self.contract.name));
             }
-            None => TurnLimits::default(),
-        };
-        if self.kind == Kind::Create && limits.hides(&self.contract.name) {
-            return Err(refuse_off_peak_turn(&self.contract.name));
         }
         let owner = context.session_ops.owner_session(&context.session).await;
         match self.kind {
             Kind::Create => self.create(input, &owner).await,
             Kind::List => {
-                list_input(input).map_err(failed_message)?;
+                list_input(input).map_err(|message| ToolError::InvalidInput { message })?;
                 self.list(&owner).await
             }
         }
     }
-}
-
-fn failed_message(message: String) -> ToolError {
-    failed(message)
 }
 
 #[async_trait]
@@ -362,7 +356,7 @@ impl Tool for OffPeakTool {
     }
 
     fn is_destructive(&self, _input: &Value) -> bool {
-        false
+        self.contract.destructive
     }
 
     fn is_concurrency_safe(&self, _input: &Value) -> bool {
@@ -373,7 +367,18 @@ impl Tool for OffPeakTool {
         Some(RESULT_CHARS)
     }
 
-    async fn validate_input(&self, input: &Value, _context: &ToolUseContext) -> Validation {
+    async fn validate_input(&self, input: &Value, context: &ToolUseContext) -> Validation {
+        // Node refuses OffPeakCreate on an off-peak turn before it parses the input (`assertNotOffPeakTurn` first):
+        // leave the checks to `call`, whose dispatch refuses before any parse.
+        if self.kind == Kind::Create
+            && context
+                .session_ops
+                .view()
+                .await
+                .is_some_and(|view| view.turn.hides(&self.contract.name))
+        {
+            return Validation::Ok;
+        }
         let checked = match self.kind {
             Kind::Create => create_input(input).map(drop),
             Kind::List => list_input(input),

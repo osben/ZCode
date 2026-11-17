@@ -47,7 +47,6 @@ mod grep_output;
 mod html_markdown;
 mod line_diff;
 mod lsp_range;
-mod off_peak_tools;
 // Fork: the `LSP` agent tool (specs/fork-rust-lsp.md "Tool (D2)").
 mod lsp_tool;
 mod mentions;
@@ -55,6 +54,7 @@ mod monitor;
 mod monitor_input;
 mod notebook;
 mod notebook_edit;
+mod off_peak_tools;
 #[cfg(test)]
 #[path = "permission_subject_tests.rs"]
 mod permission_subject_tests;
