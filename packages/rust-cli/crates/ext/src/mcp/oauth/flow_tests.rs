@@ -19,19 +19,19 @@ const CALLBACK_PORT: u16 = 49_152;
 const CODE: &str = "auth-code-1";
 
 /// The state the flow generates: 24 bytes of 7, base64url. The fake entropy makes it predictable.
-pub(super) fn expected_state() -> String {
+pub(crate) fn expected_state() -> String {
     URL_SAFE_NO_PAD.encode([7u8; 24])
 }
 
 #[derive(Default)]
-pub(super) struct MemoryStore {
-    pub(super) raw: Mutex<BTreeMap<String, String>>,
-    pub(super) lease_acquisitions: Mutex<u32>,
-    pub(super) lease_held: bool,
+pub(crate) struct MemoryStore {
+    pub(crate) raw: Mutex<BTreeMap<String, String>>,
+    pub(crate) lease_acquisitions: Mutex<u32>,
+    pub(crate) lease_held: bool,
 }
 
 impl MemoryStore {
-    pub(super) fn has_key(&self, key: &str) -> bool {
+    pub(crate) fn has_key(&self, key: &str) -> bool {
         self.raw.lock().unwrap().contains_key(key)
     }
 }
@@ -118,15 +118,15 @@ impl LoopbackListener for ScriptedListener {
     }
 }
 
-pub(super) struct FakeRuntime {
+pub(crate) struct FakeRuntime {
     /// Callback request targets the browser delivers, in order.
-    pub(super) callbacks: Vec<String>,
-    pub(super) requests: Mutex<Vec<OAuthHttpRequest>>,
-    pub(super) listen_calls: Mutex<u32>,
+    pub(crate) callbacks: Vec<String>,
+    pub(crate) requests: Mutex<Vec<OAuthHttpRequest>>,
+    pub(crate) listen_calls: Mutex<u32>,
 }
 
 impl FakeRuntime {
-    pub(super) fn new(callbacks: Vec<String>) -> Self {
+    pub(crate) fn new(callbacks: Vec<String>) -> Self {
         Self {
             callbacks,
             requests: Mutex::new(Vec::new()),
@@ -134,11 +134,11 @@ impl FakeRuntime {
         }
     }
 
-    pub(super) fn requests(&self) -> Vec<OAuthHttpRequest> {
+    pub(crate) fn requests(&self) -> Vec<OAuthHttpRequest> {
         self.requests.lock().unwrap().clone()
     }
 
-    pub(super) fn listen_count(&self) -> u32 {
+    pub(crate) fn listen_count(&self) -> u32 {
         *self.listen_calls.lock().unwrap()
     }
 }
@@ -207,7 +207,7 @@ impl McpOAuthRuntime for FakeRuntime {
     }
 }
 
-pub(super) fn input() -> FlowInput {
+pub(crate) fn input() -> FlowInput {
     FlowInput {
         server_name: "e2e-remote".to_owned(),
         server_url: SERVER_URL.to_owned(),
@@ -220,7 +220,7 @@ pub(super) fn input() -> FlowInput {
     }
 }
 
-pub(super) fn callback(state: &str) -> String {
+pub(crate) fn callback(state: &str) -> String {
     format!("/callback?code={CODE}&state={state}")
 }
 

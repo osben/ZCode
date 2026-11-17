@@ -203,13 +203,20 @@ Built and tested (ext `mcp` unit tests 124 passed before the CLI wiring, `rust-c
 - Row config (`node_config.rs`): strict `oauth` block for Node-config servers (`authorization_code`, `client_credentials`); the old "not supported" warning is removed.
 - CLI wiring: `AppWorkspace::with_mcp_oauth(store, runtime)` calls `enable_oauth` on each lane manager.
 
-Not closed in this PR (draft):
+Tests (PR2 close-out):
 
-- No manager-level test of the 401 trigger or the bearer hook: the coordinator, flow and parser are tested, the call sites in `manager.rs` are not.
-- No E2E run. `conversation-session-mcp-oauth-status-isolation` depends on #501 plugin rows. The Node baseline `apps/zcode-cli/packages/adapters/tests/mcp-oauth.e2e.test.ts` passes 21/21 in Node; the Rust side has no harness for it.
+- Manager level (`mcp/oauth_hooks_tests.rs`, `FakeMcp` transport): a 401 starts one flow; the bearer is added when the server sets none and kept when it sets its own; a successful flow reconnects the server with the bearer; a status snapshot starts no flow and takes no lease (checks the manager snapshot only; the row status path in `app_workspace` is covered by `lease_tests::status_lookup_never_takes_the_lease`).
+- Integration over real HTTP (`crates/cli/tests/mcp_oauth_http.rs`): a mock MCP and OAuth server on 127.0.0.1 (discovery, DCR, token, an MCP endpoint that answers 401 without a bearer). The real streamable-HTTP transport, the platform store and runtime, and `enable_oauth` are used. The test checks the first 401 with a pending authorization and its URL, plays the browser with a GET on the loopback callback, checks the stored token, the reconnect, and the listed tool, and covers the `client_credentials` server.
+- Found and fixed by that test: the lease failed on a fresh home because the lock directory beside `credentials.json` did not exist. `try_acquire_lease` now creates the private parent directory first.
+
+Substitution, stated plainly: the integration test stands in for the desktop E2E of user servers, which this box cannot run. It is not the desktop E2E. The lane wiring `AppWorkspace::with_mcp_oauth(store, runtime)` calls `enable_oauth` in production, but the test calls `enable_oauth` directly, because `AppWorkspace` is `pub(crate)` and not reachable from an integration test. The lane call is compiled and clippy-checked, not executed.
+
+Not closed in this PR:
+
 - Plugin rows (#501) do not carry `oauth` or `url`; they get no bearer and no flow.
 - `resource_metadata` from `WWW-Authenticate` is not carried; the transport error drops the header.
-- Client-credentials tokens are not refreshed; they are re-requested after 30 s before expiry.
+- Client-credentials tokens are not refreshed; they are re-requested 30 s before expiry.
+- The desktop E2E for user servers is not run (see above).
 
 Decision recorded: lease acquisition lives in the platform store (the lock directory sits next to `credentials.json`), not in ext, so ext keeps no fs or network categories.
 

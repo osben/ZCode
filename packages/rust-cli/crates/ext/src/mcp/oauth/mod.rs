@@ -19,7 +19,7 @@ mod store;
 #[cfg(test)]
 mod coordinator_tests;
 #[cfg(test)]
-mod flow_tests;
+pub(crate) mod flow_tests;
 #[cfg(test)]
 mod lease_tests;
 #[cfg(test)]

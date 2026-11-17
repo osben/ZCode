@@ -76,6 +76,13 @@ impl McpOAuthStore for CredentialsMcpOAuthStore {
         key_prefix: &str,
     ) -> Result<Option<Box<dyn AuthorizationLease>>, McpOAuthStoreError> {
         let path = rust_cli_ext::mcp::oauth::lease_path(self.store.file().as_path(), key_prefix);
+        // The lock directory sits beside `credentials.json`; on a fresh home that directory may not exist yet,
+        // and the lease must not fail for it (the lock is the first write of an authorization).
+        if let Some(dir) = path.parent() {
+            rust_cli_fs::create_private_dir_all(dir)
+                .await
+                .map_err(|error| McpOAuthStoreError(format!("authorization lease: {error}")))?;
+        }
         let options = LockOptions {
             retry_delays: vec![LEASE_RETRY],
             ownerless_grace: LEASE_OWNERLESS_GRACE,

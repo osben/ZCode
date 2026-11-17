@@ -11,7 +11,7 @@ use futures_util::stream::BoxStream;
 use rust_cli_kernel_api::env::{EnvFacts, EnvPath, WorkspaceRef};
 use rust_cli_kernel_api::ids::EnvironmentId;
 use rust_cli_kernel_api::mcp::{
-    McpConnect, McpConnectionId, McpError, McpTransport, McpTransportEvent,
+    McpConnect, McpConnectionId, McpError, McpTransport, McpTransportConfig, McpTransportEvent,
 };
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
@@ -61,6 +61,10 @@ pub(crate) struct FakeMcp {
     released: Mutex<HashMap<String, Value>>,
     /// 每次连接的（服务器名，工作区根）。
     roots: Mutex<Vec<(String, String)>>,
+    /// Servers that answer HTTP 401 to a connect that carries no `Authorization` header.
+    challenged: Mutex<Vec<String>>,
+    /// Each connect attempt: server name and the transport headers it was given.
+    connect_headers: Mutex<Vec<(String, std::collections::BTreeMap<String, String>)>>,
 }
 
 /// 一个能握手、有给定能力与 instructions 的服务器；其余请求交给 `rest`。
@@ -138,6 +142,25 @@ impl FakeMcp {
     }
 
     /// 收到的消息（服务器名，消息）。
+    /// Make `name` answer 401 until a connect carries an `Authorization` header.
+    pub(crate) fn challenged(self, name: &str) -> Self {
+        self.challenged.lock_unpoisoned().push(name.to_owned());
+        self
+    }
+
+    /// The transport headers of every connect attempt of `name`, in order.
+    pub(crate) fn connect_headers_of(
+        &self,
+        name: &str,
+    ) -> Vec<std::collections::BTreeMap<String, String>> {
+        self.connect_headers
+            .lock_unpoisoned()
+            .iter()
+            .filter(|(server, _)| server == name)
+            .map(|(_, headers)| headers.clone())
+            .collect()
+    }
+
     pub(crate) fn received(&self) -> Vec<(String, Value)> {
         self.received.lock_unpoisoned().clone()
     }
@@ -178,6 +201,23 @@ impl McpTransport for FakeMcp {
         workspace: &WorkspaceRef,
         request: McpConnect,
     ) -> Result<McpConnectionId, McpError> {
+        let headers = match &request.transport {
+            McpTransportConfig::Http { headers, .. } | McpTransportConfig::Sse { headers, .. } => {
+                headers.clone()
+            }
+            _ => Default::default(),
+        };
+        self.connect_headers
+            .lock_unpoisoned()
+            .push((request.server.clone(), headers.clone()));
+        let authorized = headers
+            .keys()
+            .any(|name| name.eq_ignore_ascii_case("authorization"));
+        if !authorized && self.challenged.lock_unpoisoned().contains(&request.server) {
+            return Err(McpError::Connect {
+                message: "HTTP 401: unauthorized".to_owned(),
+            });
+        }
         self.roots
             .lock_unpoisoned()
             .push((request.server.clone(), workspace.root.as_str().to_owned()));

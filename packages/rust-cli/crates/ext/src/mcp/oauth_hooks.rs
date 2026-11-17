@@ -16,6 +16,10 @@ use super::oauth::{
     is_authorization_challenge,
 };
 
+#[cfg(test)]
+#[path = "oauth_hooks_tests.rs"]
+mod tests;
+
 /// The OAuth config a server acts on. Node treats a remote server with no `oauth` block as
 /// `authorization_code` (`resolveOAuthConfig`), so user-scope remote servers do too. Plugin rows are not
 /// covered until #501 carries their config.
@@ -45,6 +49,12 @@ fn remote_parts(config: &McpServer) -> Option<(&str, &BTreeMap<String, String>)>
 }
 
 impl McpManager {
+    /// The coordinator, for tests that wait for or cancel the flows.
+    #[cfg(test)]
+    pub(crate) fn oauth_coordinator_for_test(&self) -> Option<Arc<McpOAuthCoordinator>> {
+        self.0.oauth.get().cloned()
+    }
+
     /// Wire the OAuth coordinator: the flow's store and runtime, and a reconnect of the server after success.
     pub fn enable_oauth(&self, store: Arc<dyn McpOAuthStore>, runtime: Arc<dyn McpOAuthRuntime>) {
         self.0.enable_oauth(Arc::downgrade(&self.0), store, runtime);
