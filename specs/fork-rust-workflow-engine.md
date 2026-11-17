@@ -608,6 +608,59 @@ Spec-first design, then the code. The gate stays off and nothing calls the port.
 - Surrogates: the reducer's own cuts (`slice(0, limit - 1) + "…"`, bounded text fields) round down to a code point boundary, as `truncateSurrogateSafe` does in the contracts bounding. Node can keep a lone surrogate there, and `JSON.stringify` writes it as an escape that Rust cannot hold. This is a deliberate deviation; the golden set avoids the case and a unit test pins the rounding.
 - Size and checks: 4,289 lines of Rust in `workflow_runs/` (3,665 excluding `tests.rs`), 14 `workflow_runs` unit tests, 326 passed in the `rust-cli-node-store` lib suite (1 ignored). `clippy --workspace --all-targets -- -D warnings` is clean.
 
+### 9.5 W5b: engine resume and amend (design)
+
+Status: design written before the code (2026-11-17). Gate off; nothing calls it.
+
+Scope of this PR (W5b part 1, branch `feat/rust-workflow-engine-resume`):
+
+- **World path.** `engine-world.ts`: `readWorld` (world-read and world-run) with replay through the settle-order gate, live execution through a driver ticket, and the cached settlement `node-settled {cached: true}`. The W5a refusal of resume with world rows goes away. World reads are not subject to actor FIFO or the cap (Node: "harness I/O").
+- **Import cache consumption.** `imported-cache.ts` (`ImportedActorState`, `ImportedWorldQueue`, `matchImportedActor`, `importedAskRecord`) and `imported-cache-types.ts`. The scheduler's `tryImportedSettle` runs at the admission point of a fresh ask (after the miss, before `admitLive`). Recorded asks are reconciled before their release. `cachedAskFacts` carries `sourceSessionId`, read at decision time. `ensureSession` passes the divergence seed to the driver.
+- **Closure.** `closeImportCache` with causes `world-run` (before a live world run is dispatched) and `mutating-tool` (`askMutating`, a driver observation). `import-cache-closed` is emitted only for an amended run. Resume rebuilds the closure state from events (`recoverImportClosure`, `engine-world.ts`).
+- **Preflight and builder.** `bootstrap/src/app/dynamic-workflow-import.ts` is ported as a pure function over the journal port. The transcript message count it needs (`countSource`) is an injected function, so the Rust side can plug its session store in later. `preflightAmendImport`, `buildImportedCache` and `rebuildImportedCacheForResume` share it.
+- **Superseded.** The engine already settles `stopped(superseded, supersededBy)` (W5a lifecycle goldens). The orchestration (stop the predecessor, build the cache, create the successor with `inheritedTokens` and `resumedFrom`) belongs to the run service (W7/W9) and is not part of this row.
+
+Driver-owned fields. `messageBoundary` on an ask row and the transcript count are written by the driver (`workflow-driver-transcript.ts`), not by the engine. The Rust engine exposes `set_message_boundary` as the write point for the host, so goldens can simulate the driver.
+
+Deviations expected: Node's `buildImportedCache` is async only for the transcript count; the Rust port is synchronous with an injected count. Logs of the builder are not ported (no logger port); the reasons are returned as values.
+
+Out of this row: holes, artifacts, reports, the governor, and the transcript store adapter that answers the count.
+
+#### As built (W5b part 1)
+
+Status: built on `feat/rust-workflow-engine-resume` (on top of W5a part 2, PR 531). Gate off; nothing calls the port.
+
+Code, `packages/rust-cli/crates/workflow`:
+
+- `engine_world.rs` (world path): `world_read` (ticket; a completed or failed row replays through the gate with no driver call; a running row runs again; the import queue answers while the cache is open; a live world run closes the cache first), `world_read_settled` (the host's completion, with `world_read_driver_error` for a non-workflow failure), `ask_mutating` (the driver observation), `set_message_boundary` (the driver's write of an ask boundary), `close_import_cache`, `recover_import_closure`, `bound_world_read_input` (Node `boundWorldReadInput`, UTF-16 previews).
+- `imported_cache.rs`: the table types, `ImportedActorState` (take, take-if-pure, reconcile, carried, seed, divergence), `ImportedWorldQueue`, `match_imported_actor`, `imported_ask_record`, and the table as JSON (for the goldens).
+- `import_build.rs`: `preflight_amend_import`, `build_imported_cache`, `rebuild_imported_cache_for_resume` (the pure builder over the port; the transcript count is injected).
+- `scheduler.rs`: `try_imported_settle` at the miss point of admission (after the take decision, before `admit_live`), reconciliation of recorded rows before their release, `sourceSessionId` on the cached facts (read at decision time), `carried` as the prior-transcript flag, and the divergence seed passed to `create_actor_session`.
+- `resume.rs`: the W5a world refusal is removed; world rows claim settle-order slots like asks; closure state is rebuilt from events for an amended run.
+- `model.rs`, `journal_dwf.rs`: `NodeRow` carries `input` and `messageBoundary`. The DWF write keeps a stored value when the row leaves it out (a settlement upsert never resets them).
+- `event.rs`: `node-queued` and `node-dispatched` without an actor (world), `import-cache-closed` (`cause`, optional `actorName`), and `sourceSessionId` on cached facts.
+- `engine.rs`: `EngineConfig.imported_cache`; the driver port gains `create_actor_session(…, seed)` and `start_world_read`.
+
+Goldens: `scripts/rust-cli/workflow-import-goldens.ts` runs Node's real `WorkflowEngine` and the real builder (`bootstrap/src/app/dynamic-workflow-import.ts`) over twelve scenarios, each a sequence of runs on one journal: world-row settle order across two lifetimes, a failed world read replayed as failed, a world-row hash mismatch on resume, a world run without a cache (no closure event), prefix hit then a seeded miss, an in-flight continuation, persona mismatch and an anonymous actor, the world queue cursor, a world run closing the cache before a pure entry is refused, a mutating observation closing it for a pure entry that then hits, a two-lifetime resume of an amended run, and the four refusals (`not_amendable`, `missing_boundaries`, `run_not_found`). Fixture: `packages/rust-cli/crates/workflow/fixtures/import-goldens.json`. `import_golden_tests.rs` replays it on `MemoryJournal` and on `DwfJournal`, and compares the build results, step results, constructor errors, run, node and actor rows (row order is not significant), dispose counts, settlements in settlement order, driver calls (session seeds included) and every event's sequence and payload text.
+
+Deviations and facts found while porting:
+
+- Node's `buildImportedCache` is async only for the transcript count. The Rust builder is synchronous and takes the count as a function (`None` from it is an unreadable source, as Node treats it). Node's logger is not ported; the degraded cases are returned as values.
+- The generator answers one bootstrap module, `dynamic-workflow-run-observation.ts` (it only supplies `TERMINAL_RUN_STATUSES`, and its own import graph needs `@zcode/*` runtime packages tsx cannot resolve outside the app build), with the same three statuses. The builder itself is Node's file, unmodified.
+- Ordinals are one-based per site (`refToString` of the first node of a site is `@1`). Node's submit settles only at the end of the turn, so the scenarios end the turn after each submit.
+- A live world read is a ticket finished by `world_read_settled`, the Rust form of Node's `executeWorldRead(...).then`. The driver receives the instance in `start_world_read`.
+- `set_message_boundary` is the write point the driver uses (Node writes `messageBoundary` from `workflow-driver-transcript.ts`). The engine never computes it.
+- Row order: Node's and Rust's `listNodes` / `listActors` order is not compared (rows are sorted canonically on both sides). Events are compared byte for byte in journal order.
+- The W5a refusal test (`resume_refuses_settled_world_rows_instead_of_holding_the_gate`) is removed. Its behaviour is now golden-covered by `resume-world-rows-settle-in-recorded-order` and `world-read-failure-replays-as-failed`.
+- The goldens were generated before the Rust side was written. The first Rust run failed on row order only, which the harness then normalised. Red was not observed per Rust test; the golden mismatch was the first failing signal.
+
+Not in this row, with the owner:
+
+- The transcript store adapter that answers `countSource` (the production driver, W6a). The builder is ready for it.
+- The run service's amend orchestration: stop the predecessor with `superseded` and the successor id, build the cache, create the successor with `inheritedTokens` and `resumedFrom`, and the resume rebuild call (W7/W9). The engine already settles `superseded` (W5a lifecycle goldens).
+- The production driver's calls into `ask_mutating` (on a subagent's mutating tool), `set_message_boundary` (after each exchange) and the session seed (W6a).
+- Holes, artifacts, reports, `countNodes` / `sumResultBytes`, and the governor (W6b and their own row).
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.

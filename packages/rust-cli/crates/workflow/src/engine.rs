@@ -10,11 +10,15 @@
 //!   turns. A first dispatch of an actor takes two jobs (session ready, then dispatch), a later one one
 //!   job, matching the promise hops of `ensureSession`.
 //!
-//! Not here yet (spec 9.3, remaining): import cache, holes, artifacts, reports, world reads, the
-//! driver's async session creation, and the process-level governor.
+//! Holes, artifacts, reports and the process-level governor are not here yet (spec 9.3 and 9.5). The import
+//! cache and world reads are (W5b, spec 9.5).
+use crate::engine_world::WorldLive;
 use crate::error::{ErrorCode, WorkflowError};
 use crate::event::{LaunchFields, RunEvent};
 use crate::identity::Identity;
+use crate::imported_cache::{
+    ActorSessionSeed, ImportedRunCache, ImportedWorldQueue, match_imported_actor,
+};
 use crate::journal::JournalPort;
 use crate::model::{
     ActorRow, Caps, Ref, RunRow, RunStatus, Settlement, StopReason, StoredEvent, Violation,
@@ -96,6 +100,9 @@ pub struct EngineConfig {
     /// Host metadata for `run-launched`; the origin fields come from this config (as in Node).
     pub launch: Option<LaunchFields>,
     pub inherited_tokens: Option<f64>,
+    /// The amend-resume import cache (Node `importedCache`), built by `import_build`. Absent for a run that
+    /// is not amended.
+    pub imported_cache: Option<ImportedRunCache>,
 }
 
 fn no_validation(_schema: &Value, _value: &Value) -> Vec<Violation> {
@@ -120,6 +127,7 @@ impl Default for EngineConfig {
             resumed_from: None,
             launch: None,
             inherited_tokens: None,
+            imported_cache: None,
         }
     }
 }
@@ -127,18 +135,36 @@ impl Default for EngineConfig {
 /// The driver side of the port: session creation, asks, submit verdicts, cancellation and event fan-out
 /// (Node `WorkflowDriver`, without the journal, which the engine owns).
 pub trait WorkflowDriver {
-    /// Create (or reattach) the session of an actor and return its id.
-    fn create_actor_session(&mut self, actor: &Ref, persona: &Value) -> anyhow::Result<String>;
+    /// Create (or reattach) the session of an actor and return its id. `seed` is the transcript a diverged
+    /// actor continues from (Node `ActorSessionSeed`), when there is one.
+    fn create_actor_session(
+        &mut self,
+        actor: &Ref,
+        persona: &Value,
+        seed: Option<&ActorSessionSeed>,
+    ) -> anyhow::Result<String>;
     fn start_ask(&mut self, session: &str, instance: &Ref, message: &AskMessage);
     fn respond_to_submit(&mut self, instance: &Ref, verdict: &SubmitVerdict);
     fn cancel_ask(&mut self, instance: &Ref);
+    /// Execute a live world read or run (Node `executeWorldRead`). The result comes back through
+    /// `WorkflowEngine::world_read_settled` with the same instance.
+    fn start_world_read(&mut self, instance: &Ref, op: &str, args: &Value);
     fn emit(&mut self, event: &RunEvent);
     fn dispose(&mut self) {}
 }
 
 impl<T: WorkflowDriver + ?Sized> WorkflowDriver for &mut T {
-    fn create_actor_session(&mut self, actor: &Ref, persona: &Value) -> anyhow::Result<String> {
-        (**self).create_actor_session(actor, persona)
+    fn create_actor_session(
+        &mut self,
+        actor: &Ref,
+        persona: &Value,
+        seed: Option<&ActorSessionSeed>,
+    ) -> anyhow::Result<String> {
+        (**self).create_actor_session(actor, persona, seed)
+    }
+
+    fn start_world_read(&mut self, instance: &Ref, op: &str, args: &Value) {
+        (**self).start_world_read(instance, op, args);
     }
 
     fn start_ask(&mut self, session: &str, instance: &Ref, message: &AskMessage) {
@@ -227,6 +253,18 @@ pub struct WorkflowEngine<J: JournalPort, D: WorkflowDriver> {
     pub(crate) jobs: VecDeque<Job>,
     pub(crate) outcomes: Vec<AskOutcome>,
     next_ticket: u64,
+    /// The amend-resume import cache (Node `importedCache`); absent for a run that is not amended.
+    pub(crate) imported_cache: Option<ImportedRunCache>,
+    /// Consumption cursors of the world import queue (Node `importedWorld`).
+    pub(crate) imported_world: ImportedWorldQueue,
+    /// Whether the import cache is closed. It never reopens. Resume restores it from the closure event.
+    pub(crate) import_closed: bool,
+    /// Asks admitted while the cache was still open (Node `queuedBeforeImportClose`, resume only).
+    pub(crate) queued_before_close: HashSet<String>,
+    /// Asks that ran live in an earlier lifetime (Node `liveAskInstances`, resume only).
+    pub(crate) live_before_resume: HashSet<String>,
+    /// World nodes the driver is executing, by instance key.
+    pub(crate) world_live: HashMap<String, WorldLive>,
 }
 
 impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
@@ -306,6 +344,18 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
             jobs: VecDeque::new(),
             outcomes: Vec::new(),
             next_ticket: 0,
+            imported_world: ImportedWorldQueue::new(
+                config
+                    .imported_cache
+                    .as_ref()
+                    .map(|cache| cache.world.clone())
+                    .unwrap_or_default(),
+            ),
+            imported_cache: config.imported_cache.clone(),
+            import_closed: false,
+            queued_before_close: HashSet::new(),
+            live_before_resume: HashSet::new(),
+            world_live: HashMap::new(),
         };
         if existing.is_some() {
             engine.restore_from_journal()?;
@@ -391,12 +441,14 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
             self.actor_names.insert(effective, id.clone());
         }
         let recorded = self.recorded_asks.get(&id).copied().unwrap_or(0);
-        let actor = Actor::new(
+        let mut actor = Actor::new(
             actor_ref.clone(),
             name.map(str::to_owned),
             spec.clone(),
             recorded,
         );
+        // Node `createActor`: the import candidate is matched by effective name and normalized persona.
+        actor.imported = match_imported_actor(self.imported_cache.as_ref(), &spec);
         self.actors.insert(id.clone(), actor);
         self.actor_order.push(id.clone());
         // putActor replaces the row, but sessionId and resolvedModel belong to the driver side; carry
@@ -793,6 +845,27 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
 
     pub(crate) fn push_outcome(&mut self, ticket: u64, result: Result<Value, WorkflowError>) {
         self.outcomes.push(AskOutcome { ticket, result });
+    }
+
+    /// The next ticket for an ask or a world node. Tickets are unique per engine.
+    pub(crate) fn allocate_ticket(&mut self) -> u64 {
+        let ticket = self.next_ticket;
+        self.next_ticket += 1;
+        ticket
+    }
+
+    /// Node `liveNodes` membership: the ask is admitted and not yet settled.
+    pub(crate) fn is_live_ask(&self, instance: &Ref) -> bool {
+        self.live_index.contains_key(&instance.key())
+    }
+
+    /// Node `liveActorName`: the effective name of the actor owning a live ask (`None` when anonymous or
+    /// not live).
+    pub(crate) fn live_actor_name(&self, instance: &Ref) -> Option<String> {
+        let node_id = self.live_index.get(&instance.key())?;
+        let node = self.live.get(node_id)?;
+        let actor = self.actors.get(&node.actor_id)?;
+        crate::persona::persona_name(&actor.persona).map(str::to_owned)
     }
 
     pub(crate) fn is_settled(&self) -> bool {

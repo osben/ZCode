@@ -67,6 +67,20 @@ pub fn persona_model(persona: &Value) -> Option<String> {
     persona.get("model")?.as_str().map(str::to_owned)
 }
 
+/// Node `personaIdentity`: the persona without `model` and `budget`. Changing either is the user's choice for
+/// the next work (an amend may raise a budget), so it must not make finished work run again.
+pub fn persona_identity(persona: &Value) -> Value {
+    match persona {
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .filter(|(key, _)| key.as_str() != "model" && key.as_str() != "budget")
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

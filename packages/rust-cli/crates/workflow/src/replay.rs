@@ -29,13 +29,14 @@ pub enum Job {
     GateFlush,
 }
 
-/// The settlement of a journal row that a resumed ask replays.
+/// The settlement of a journal row that a resumed ask or world node replays. `facts` is the ask's birth facts
+/// (Node `cachedAskFacts`); a world node has none.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CachedSettle {
     pub instance: Ref,
     pub ticket: u64,
     pub outcome: CachedOutcome,
-    pub facts: AskFacts,
+    pub facts: Option<AskFacts>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -164,7 +165,7 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
                     outcome: NodeOutcome::Ok,
                     cached: true,
                     error: None,
-                    facts: Some(cached.facts),
+                    facts: cached.facts,
                     phase: None,
                 })?;
                 self.push_outcome(cached.ticket, Ok(value));
@@ -175,7 +176,7 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
                     outcome: NodeOutcome::Failed,
                     cached: true,
                     error: Some(error.clone()),
-                    facts: Some(cached.facts),
+                    facts: cached.facts,
                     phase: None,
                 })?;
                 let Some(parsed) = WorkflowError::from_json(&error) else {

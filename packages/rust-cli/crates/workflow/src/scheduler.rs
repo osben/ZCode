@@ -11,6 +11,7 @@ use crate::engine::{
 };
 use crate::error::{ErrorCode, Mismatch, WorkflowError};
 use crate::event::{AskFacts, NodeOutcome, RunEvent};
+use crate::imported_cache::{ActorSessionSeed, ImportedActorState, imported_ask_record};
 use crate::journal::JournalPort;
 use crate::model::{ActorRow, NodeKind, NodeRow, NodeStatus, Ref};
 use crate::persona::persona_model;
@@ -113,6 +114,8 @@ pub struct Actor {
     pub(crate) live_queue: VecDeque<u64>,
     pub(crate) current: Option<u64>,
     pub(crate) session: SessionState,
+    /// Import consumption state, when a predecessor candidate matched (Node `actor.imported`).
+    pub(crate) imported: Option<ImportedActorState>,
 }
 
 impl Actor {
@@ -134,6 +137,7 @@ impl Actor {
             live_queue: VecDeque::new(),
             current: None,
             session: SessionState::None,
+            imported: None,
         }
     }
 }
@@ -250,6 +254,17 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
             }) else {
                 break;
             };
+            // Node `tryImportedSettle`: a fresh miss may be answered by the predecessor's transcript. A hit
+            // settles here and never reaches the driver.
+            if self.try_imported_settle(actor_id, seq, &live)? {
+                continue;
+            }
+            // Node `carriedAt`: this miss continues the predecessor's in-flight ask.
+            let prior = self
+                .actor(actor_id)?
+                .imported
+                .as_ref()
+                .is_some_and(|imported| imported.carried_at(seq));
             self.admit_live(
                 actor_id,
                 seq,
@@ -259,11 +274,75 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
                     hash: live.hash,
                     spec: live.spec,
                     ticket: live.ticket,
-                    prior: false,
+                    prior,
                 },
             )?;
         }
         self.pump_actor(actor_id)
+    }
+
+    /// Node `tryImportedSettle`: answer a fresh ask from the import cache. The hit writes one real row and a
+    /// cached settlement (with the birth facts, read after the take). Returns whether it hit.
+    fn try_imported_settle(
+        &mut self,
+        actor_id: &str,
+        seq: u64,
+        live: &PendingLive,
+    ) -> Result<bool> {
+        let closed = self.import_closed;
+        let actor_ref = self.actor(actor_id)?.actor_ref.clone();
+        let Some(imported) = self.actor_mut(actor_id)?.imported.as_mut() else {
+            return Ok(false);
+        };
+        let entry = if closed {
+            imported.take_if_pure(seq, &live.hash)
+        } else {
+            imported.take(seq, &live.hash)
+        };
+        let Some(entry) = entry else {
+            return Ok(false);
+        };
+        let source = imported.source_session_at(seq);
+        self.journal.put_node(imported_ask_record(
+            &self.run_id,
+            &live.instance,
+            &actor_ref,
+            seq,
+            &live.hash,
+            &entry,
+        ))?;
+        self.record(RunEvent::NodeSettled {
+            instance: live.instance.clone(),
+            outcome: NodeOutcome::Ok,
+            cached: true,
+            error: None,
+            facts: Some(AskFacts {
+                actor: actor_ref,
+                actor_seq: seq,
+                instructions_head: instructions_head(&live.instructions),
+                source_session_id: source,
+            }),
+            phase: None,
+        })?;
+        self.push_outcome(live.ticket, Ok(entry.result));
+        Ok(true)
+    }
+
+    /// Node `reconcile` in the recorded branch of `admitAsk`: rebuild the import divergence from a recorded row,
+    /// using the event facts of the first lifetime (see `recover_import_closure`).
+    fn reconcile_recorded_ask(
+        &mut self,
+        actor_id: &str,
+        instance: &Ref,
+        seq: u64,
+        recorded_hash: &str,
+    ) -> Result<()> {
+        let was_live = self.live_before_resume.contains(&instance.key());
+        let queued_before_close = self.queued_before_close.contains(&instance.key());
+        if let Some(imported) = self.actor_mut(actor_id)?.imported.as_mut() {
+            imported.reconcile_recorded(seq, recorded_hash, was_live, queued_before_close);
+        }
+        Ok(())
     }
 
     fn run_pending_recorded(
@@ -279,30 +358,41 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
                 hash,
                 spec,
                 ticket,
-            } => self.admit_live(
-                actor_id,
-                seq,
-                LiveAsk {
-                    instance,
-                    instructions,
-                    hash,
-                    spec,
-                    ticket,
-                    prior: true,
-                },
-            ),
+            } => {
+                self.reconcile_recorded_ask(actor_id, &instance, seq, &hash)?;
+                self.admit_live(
+                    actor_id,
+                    seq,
+                    LiveAsk {
+                        instance,
+                        instructions,
+                        hash,
+                        spec,
+                        ticket,
+                        prior: true,
+                    },
+                )
+            }
             PendingRecorded::Settled {
                 instance,
                 instructions,
                 row,
                 ticket,
             } => {
+                let row = *row;
+                self.reconcile_recorded_ask(actor_id, &instance, seq, &row.input_hash)?;
+                // The birth facts are read after the reconciliation (Node `cachedAskFacts` in the closure).
+                let source = self
+                    .actor(actor_id)?
+                    .imported
+                    .as_ref()
+                    .and_then(|imported| imported.source_session_at(seq));
                 let facts = AskFacts {
                     actor: self.actor(actor_id)?.actor_ref.clone(),
                     actor_seq: seq,
                     instructions_head: instructions_head(&instructions),
+                    source_session_id: source,
                 };
-                let row = *row;
                 let outcome = if row.status == NodeStatus::Completed {
                     CachedOutcome::Completed(row.result.unwrap_or(Value::Null))
                 } else {
@@ -314,7 +404,7 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
                         instance: instance.clone(),
                         ticket,
                         outcome,
-                        facts,
+                        facts: Some(facts),
                     }),
                 )
             }
@@ -372,6 +462,8 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
             result: None,
             error: None,
             stats: None,
+            input: None,
+            message_boundary: None,
         })?;
         self.actor_mut(actor_id)?.live_queue.push_back(node_id);
         self.record(RunEvent::NodeQueued {
@@ -412,7 +504,16 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
         }
         let actor_ref = self.actor(actor_id)?.actor_ref.clone();
         let persona = self.actor(actor_id)?.persona.clone();
-        let session = match self.driver.create_actor_session(&actor_ref, &persona) {
+        // Node `ensureSession`: the seed is known only at the divergence point, so it is read here.
+        let seed: Option<ActorSessionSeed> = self
+            .actor(actor_id)?
+            .imported
+            .as_ref()
+            .and_then(ImportedActorState::seed);
+        let session = match self
+            .driver
+            .create_actor_session(&actor_ref, &persona, seed.as_ref())
+        {
             Ok(id) => SessionState::Ready(id),
             Err(error) => SessionState::Failed(describe_cause(&format!("{error}"))),
         };
@@ -658,6 +759,8 @@ fn node_row(
         result,
         error,
         stats,
+        input: None,
+        message_boundary: None,
     }
 }
 

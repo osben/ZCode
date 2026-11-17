@@ -23,8 +23,17 @@ struct RecordingDriver {
 }
 
 impl WorkflowDriver for RecordingDriver {
-    fn create_actor_session(&mut self, _actor: &Ref, _persona: &Value) -> anyhow::Result<String> {
+    fn create_actor_session(
+        &mut self,
+        _actor: &Ref,
+        _persona: &Value,
+        _seed: Option<&crate::imported_cache::ActorSessionSeed>,
+    ) -> anyhow::Result<String> {
         unreachable!("the lifecycle goldens create no actors")
+    }
+
+    fn start_world_read(&mut self, _instance: &Ref, _op: &str, _args: &Value) {
+        unreachable!("world reads are not used by this driver");
     }
 
     fn start_ask(&mut self, _session: &str, _instance: &Ref, _message: &AskMessage) {

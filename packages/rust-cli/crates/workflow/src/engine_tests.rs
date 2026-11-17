@@ -127,8 +127,17 @@ struct CountingDriver {
 }
 
 impl WorkflowDriver for CountingDriver {
-    fn create_actor_session(&mut self, _actor: &Ref, _persona: &Value) -> Result<String> {
+    fn create_actor_session(
+        &mut self,
+        _actor: &Ref,
+        _persona: &Value,
+        _seed: Option<&crate::imported_cache::ActorSessionSeed>,
+    ) -> Result<String> {
         unreachable!("these tests create no actors")
+    }
+
+    fn start_world_read(&mut self, _instance: &Ref, _op: &str, _args: &Value) {
+        unreachable!("world reads are not used by this driver");
     }
 
     fn start_ask(&mut self, _session: &str, _instance: &Ref, _message: &AskMessage) {
@@ -337,9 +346,18 @@ struct AskDriver {
 }
 
 impl WorkflowDriver for AskDriver {
-    fn create_actor_session(&mut self, _actor: &Ref, _persona: &Value) -> Result<String> {
+    fn create_actor_session(
+        &mut self,
+        _actor: &Ref,
+        _persona: &Value,
+        _seed: Option<&crate::imported_cache::ActorSessionSeed>,
+    ) -> Result<String> {
         self.sessions += 1;
         Ok(format!("session-{}", self.sessions))
+    }
+
+    fn start_world_read(&mut self, _instance: &Ref, _op: &str, _args: &Value) {
+        unreachable!("world reads are not used by this driver");
     }
 
     fn start_ask(&mut self, _session: &str, _instance: &Ref, _message: &AskMessage) {}
@@ -476,37 +494,6 @@ fn instructions_head_cuts_by_utf16_units() {
 
 /// A run with settled world rows cannot resume until W5b: those rows would hold replay-order slots that
 /// nothing in this engine releases.
-#[test]
-fn resume_refuses_settled_world_rows_instead_of_holding_the_gate() {
-    let mut journal = MemoryJournal::new();
-    let mut driver = CountingDriver::default();
-    {
-        let _engine =
-            WorkflowEngine::new(config("run_world", 4.0), &mut journal, &mut driver).expect("new");
-    }
-    journal
-        .put_node(NodeRow {
-            run_id: "run_world".to_owned(),
-            site_id: "world".to_owned(),
-            ordinal: 1,
-            kind: NodeKind::WorldRead,
-            actor_site_id: None,
-            actor_ordinal: None,
-            actor_seq: None,
-            input_hash: "h".to_owned(),
-            status: NodeStatus::Completed,
-            result: Some(json!(1)),
-            error: None,
-            stats: None,
-        })
-        .expect("put_node");
-    let message = match WorkflowEngine::new(config("run_world", 4.0), &mut journal, &mut driver) {
-        Ok(_) => panic!("resume must refuse world rows"),
-        Err(error) => error.to_string(),
-    };
-    assert!(message.contains("W5b"), "names the owner: {message}");
-}
-
 /// A corrupt settlement event fails the resume, and the message names the run and the event sequence.
 #[test]
 fn a_corrupt_settle_event_names_the_run_and_sequence() {
@@ -523,6 +510,8 @@ fn a_corrupt_settle_event_names_the_run_and_sequence() {
         result: None,
         error: None,
         stats: None,
+        input: None,
+        message_boundary: None,
     }];
     let events = vec![StoredEvent {
         sequence: 7,
