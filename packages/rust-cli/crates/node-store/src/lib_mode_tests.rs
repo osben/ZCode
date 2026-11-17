@@ -470,3 +470,32 @@ async fn a_grant_receipt_is_nodes_entry_and_is_read_back() {
         .unwrap();
     assert_eq!(t.store.load(&sid()).await.unwrap().permission_grant, None);
 }
+
+/// Fork (D2, specs/fork-rust-node-helper.md "D2 end-of-turn screenshot"): the screenshot entry is a `rust-cli/` session
+/// entry with its own type, and it writes no message, so no model request can read it.
+#[tokio::test]
+async fn a_browser_turn_screenshot_entry_is_a_session_entry_and_no_message() {
+    let t = TestStore::new();
+    started(&t, "sess_1").await;
+    let fact = Fact::Entry {
+        kind: "fork_browser_turn_screenshot".into(),
+        id: "tool_shot".into(),
+        data: json!({"anchor": "msg_u1", "tool_use": "tool_shot", "display": {"kind": "node_repl_images"}}),
+    };
+    t.store
+        .commit(&sid(), batch(None, vec![fact]))
+        .await
+        .unwrap();
+    let entries = t.rows(
+        "select type from session_entry where type = 'rust-cli/fork_browser_turn_screenshot'",
+    );
+    assert_eq!(
+        entries,
+        vec![vec![Value::from("rust-cli/fork_browser_turn_screenshot")]]
+    );
+    let messages = t.rows("select id from message where session_id = 'sess_1'");
+    assert!(
+        messages.is_empty(),
+        "a screenshot entry is not a message: {messages:?}"
+    );
+}

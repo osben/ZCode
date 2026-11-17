@@ -99,6 +99,8 @@ pub(crate) type ChildWatch =
     dyn Fn(&str, u64, bool) -> Option<rust_cli_base::Task<()>> + Send + Sync;
 
 pub struct Live {
+    /// Fork (D2): the generation of this Live's screenshot port binding; drop removes only that binding.
+    screenshot_binding: u64,
     context: Arc<Context>,
     topics: Arc<Topics>,
     session: String,
@@ -171,6 +173,15 @@ impl Live {
             preparation,
             worktree_creation,
         } = restored;
+        // Fork (D2): the end-of-turn screenshot of this session goes through this server's helper.
+        let screenshot_binding = rust_cli_kernel_api::browser_turn::bind(
+            view.meta.id.as_str(),
+            Arc::new(
+                crate::fork::browser_turn_screenshot::HelperTurnScreenshots {
+                    context: context.clone(),
+                },
+            ),
+        );
         let levels = view.selection.reasoning.iter().cloned().collect();
         // A subagent's child session (`sess_subagent_<agentId>`) is reported by its parent.
         let telemetry = (!view.meta.id.as_str().starts_with(SUBAGENT_SESSION_PREFIX))
@@ -180,6 +191,7 @@ impl Live {
         context.register(view.meta.id.as_str(), &workspace);
         Self {
             session: view.meta.id.as_str().to_owned(),
+            screenshot_binding,
             workspace,
             created_at: view.meta.created_at_ms,
             handle,
@@ -1031,6 +1043,9 @@ impl Live {
 
 impl Drop for Live {
     fn drop(&mut self) {
+        // Fork (D2): the session's screenshot port and any candidate it still holds go with it.
+        rust_cli_kernel_api::browser_turn::unbind(&self.session, self.screenshot_binding);
+        rust_cli_kernel_api::browser_turn::forget_session(&self.session);
         for (_, task) in self.state().watches.drain() {
             task.abort();
         }
