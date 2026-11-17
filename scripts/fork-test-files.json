@@ -16,6 +16,7 @@
   "apps/zcode-cli/packages/bootstrap/tests/fork-rust-helper/f4-node-repl-config.test.ts",
   "apps/zcode-cli/packages/bootstrap/tests/fork-rust-helper/f4b-browser-control.test.ts",
   "apps/zcode-cli/packages/bootstrap/tests/fork-rust-helper/f4b-node-broker-suite.test.ts",
+  "apps/zcode-cli/packages/bootstrap/tests/fork-rust-helper/f4b-node-broker-suite-release.test.ts",
   "apps/zcode-cli/packages/bootstrap/tests/fork-rust-helper/helper.test.ts",
   "packages/acp-agent-runtime/test/config-options.test.ts",
   "packages/acp-agent-runtime/test/frames.test.ts",
