@@ -27,7 +27,10 @@ import {
   waitForV4Pane,
   waitForV4UserMessageContaining,
 } from "#e2e/helpers/v4-conversation";
-import { waitForUpstreamRequest } from "#e2e/helpers/conversation-session-network";
+import {
+  getUpstreamRequestToolNames,
+  waitForUpstreamRequest,
+} from "#e2e/helpers/conversation-session-network";
 import { waitForToolCallBlockByToolName } from "#e2e/helpers/conversation-session-tool";
 import { ensureToolCrossProductFullAccessMode } from "#e2e/helpers/conversation-session-tool-cross-product";
 import {
@@ -76,9 +79,11 @@ describe("会话区 MCP OAuth 状态刷新隔离 E2E", () => {
   it("MO01/MO03: 插件 OAuth 状态刷新不会断开 stdio 与普通 HTTP MCP", async function () {
     this.timeout(CASE_TIMEOUT_MS);
 
-    await prepareV4ConversationE2E();
+    // 修复原因（排序）：会话的 MCP 服务器集合在 session/create 时固定（Node 与 Rust 一致），prepare 阶段创建的
+    // 草稿就是后面发送 ping 的会话。用户配置必须先于 prepare 写入，否则该会话永远看不到 everything 与 plain_http。
     oauthServer = await startMcpOAuthStatusIsolationServer();
     await writeMcpFixtures(oauthServer.mcpUrl, oauthServer.plainHttpMcpUrl);
+    await prepareV4ConversationE2E();
     const openExternalMock = await browser.electron.mock("shell", "openExternal");
     await openExternalMock.mockResolvedValue(undefined);
 
@@ -175,14 +180,8 @@ describe("会话区 MCP OAuth 状态刷新隔离 E2E", () => {
     await sendV4Prompt(prompt);
     await waitForV4ComposerText("", "MCP OAuth 隔离 case 首发后输入框没有清空");
     await waitForV4UserMessageContaining(PROMPT_MARKER);
-    await waitForUpstreamRequest(
-      {
-        excludes: ["Generate a concise title", "CRITICAL: Respond with TEXT ONLY"],
-        includes: [PROMPT_MARKER, DIRECT_MCP_TOOL_NAME, PLAIN_HTTP_MCP_TOOL_NAME],
-      },
-      "首轮 provider 请求没有同时暴露 stdio 与普通 HTTP MCP 工具",
-      60_000,
-    );
+    // 修复原因：提示词本身含有工具名，只查 body 文本会在工具没有暴露时假通过；这里读 tools 数组。
+    await waitForAdvertisedMcpTools([DIRECT_MCP_TOOL_NAME, PLAIN_HTTP_MCP_TOOL_NAME], 60_000);
     await waitForToolCallBlockByToolName(DIRECT_MCP_TOOL_NAME, 60_000);
     await waitForDirectMcpCall(PROMPT_MARKER, 60_000);
     await waitForUpstreamRequest(
@@ -418,6 +417,26 @@ async function writeMcpFixtures(mcpUrl: string, plainHttpMcpUrl: string): Promis
   config.mcp = mcp;
   config.plugins = plugins;
   await writeFile(CLI_CONFIG_FILE, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+}
+
+/**
+ * Waits until the first provider request of the case advertises every named tool in its `tools` array. The prompt
+ * text also names the tools, so a body-text match alone would pass when no MCP tool was advertised.
+ */
+async function waitForAdvertisedMcpTools(names: string[], timeoutMs: number): Promise<void> {
+  let latest: string[] = [];
+  await waitUntilReportingLatest(
+    async () => {
+      latest = await getUpstreamRequestToolNames({
+        excludes: ["Generate a concise title", "CRITICAL: Respond with TEXT ONLY"],
+        includes: [PROMPT_MARKER],
+      });
+      return names.every((name) => latest.includes(name));
+    },
+    () =>
+      `首轮 provider 请求的 tools 数组缺少 MCP 工具: expected=${JSON.stringify(names)} latest=${JSON.stringify(latest)}`,
+    timeoutMs,
+  );
 }
 
 async function waitForDirectMcpCall(marker: string, timeoutMs: number): Promise<void> {
