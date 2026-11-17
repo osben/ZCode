@@ -157,3 +157,196 @@ pub struct StoredEvent {
     pub sequence: u64,
     pub payload_json: String,
 }
+
+/// Node `InstanceRef` / `ActorRef`: `siteId` × per-site ordinal (the ordinal starts at 1).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Ref {
+    pub site_id: String,
+    pub ordinal: u64,
+}
+
+impl Ref {
+    pub fn new(site_id: impl Into<String>, ordinal: u64) -> Self {
+        Self {
+            site_id: site_id.into(),
+            ordinal,
+        }
+    }
+
+    /// Node `refToString`: `site@ordinal`, the key of the instance and actor tables.
+    pub fn key(&self) -> String {
+        format!("{}@{}", self.site_id, self.ordinal)
+    }
+
+    /// `{siteId, ordinal}` as Node writes the ref in events.
+    pub fn to_json(&self) -> Value {
+        let mut map = Map::new();
+        map.insert("siteId".into(), Value::String(self.site_id.clone()));
+        map.insert("ordinal".into(), Value::from(self.ordinal));
+        Value::Object(map)
+    }
+}
+
+/// Node `Violation` (schema/types.ts): where a value failed, what was expected, and what arrived.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Violation {
+    pub path: String,
+    pub expected: String,
+    pub got: String,
+}
+
+impl Violation {
+    pub fn to_json(&self) -> Value {
+        let mut map = Map::new();
+        map.insert("path".into(), Value::String(self.path.clone()));
+        map.insert("expected".into(), Value::String(self.expected.clone()));
+        map.insert("got".into(), Value::String(self.got.clone()));
+        Value::Object(map)
+    }
+
+    pub fn from_json(json: &Value) -> Option<Self> {
+        Some(Self {
+            path: json.get("path")?.as_str()?.to_owned(),
+            expected: json.get("expected")?.as_str()?.to_owned(),
+            got: json.get("got")?.as_str()?.to_owned(),
+        })
+    }
+}
+
+/// Node `NodeKind`. Only `ask` rows are written by the scheduler so far; the others are read by the
+/// replay filters and arrive with their own rows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NodeKind {
+    Ask,
+    WorldRead,
+    WorldRun,
+    Report,
+    Artifact,
+}
+
+impl NodeKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Ask => "ask",
+            Self::WorldRead => "world-read",
+            Self::WorldRun => "world-run",
+            Self::Report => "report",
+            Self::Artifact => "artifact",
+        }
+    }
+
+    pub fn parse(name: &str) -> Option<Self> {
+        Some(match name {
+            "ask" => Self::Ask,
+            "world-read" => Self::WorldRead,
+            "world-run" => Self::WorldRun,
+            "report" => Self::Report,
+            "artifact" => Self::Artifact,
+            _ => return None,
+        })
+    }
+}
+
+/// Node `NodeRecordStatus`: an ask is `running` from admission until it settles.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NodeStatus {
+    Running,
+    Completed,
+    Failed,
+}
+
+impl NodeStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+        }
+    }
+
+    pub fn parse(name: &str) -> Option<Self> {
+        Some(match name {
+            "running" => Self::Running,
+            "completed" => Self::Completed,
+            "failed" => Self::Failed,
+            _ => return None,
+        })
+    }
+}
+
+/// Node `dwf_node` record, unique on (run, site, ordinal). Asks also carry the actor coordinates,
+/// `actorSeq` and `inputHash`. `stats` is the JSON object the driver reported; the engine drops
+/// `worldToolCalls` from it when the transcript predates the dispatch.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NodeRow {
+    pub run_id: String,
+    pub site_id: String,
+    pub ordinal: u64,
+    pub kind: NodeKind,
+    pub actor_site_id: Option<String>,
+    pub actor_ordinal: Option<u64>,
+    pub actor_seq: Option<u64>,
+    pub input_hash: String,
+    pub status: NodeStatus,
+    pub result: Option<Value>,
+    pub error: Option<Value>,
+    pub stats: Option<Value>,
+}
+
+impl NodeRow {
+    /// Node's stored record as `JSON.stringify` writes it (absent fields omitted). Compared canonically.
+    pub fn to_json(&self) -> Value {
+        let mut map = Map::new();
+        map.insert("runId".into(), Value::String(self.run_id.clone()));
+        map.insert("siteId".into(), Value::String(self.site_id.clone()));
+        map.insert("ordinal".into(), Value::from(self.ordinal));
+        map.insert("kind".into(), Value::String(self.kind.as_str().into()));
+        insert_text(&mut map, "actorSiteId", &self.actor_site_id);
+        if let Some(ordinal) = self.actor_ordinal {
+            map.insert("actorOrdinal".into(), Value::from(ordinal));
+        }
+        if let Some(seq) = self.actor_seq {
+            map.insert("actorSeq".into(), Value::from(seq));
+        }
+        map.insert("inputHash".into(), Value::String(self.input_hash.clone()));
+        map.insert("status".into(), Value::String(self.status.as_str().into()));
+        if let Some(result) = &self.result {
+            map.insert("result".into(), result.clone());
+        }
+        if let Some(error) = &self.error {
+            map.insert("error".into(), error.clone());
+        }
+        if let Some(stats) = &self.stats {
+            map.insert("stats".into(), stats.clone());
+        }
+        Value::Object(map)
+    }
+}
+
+/// Node `ActorRecord`, unique on (run, site, ordinal). `persona` is the normalized persona JSON.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ActorRow {
+    pub run_id: String,
+    pub site_id: String,
+    pub ordinal: u64,
+    pub name: Option<String>,
+    pub persona: Option<Value>,
+    pub session_id: Option<String>,
+    pub resolved_model: Option<String>,
+}
+
+impl ActorRow {
+    pub fn to_json(&self) -> Value {
+        let mut map = Map::new();
+        map.insert("runId".into(), Value::String(self.run_id.clone()));
+        map.insert("siteId".into(), Value::String(self.site_id.clone()));
+        map.insert("ordinal".into(), Value::from(self.ordinal));
+        insert_text(&mut map, "name", &self.name);
+        if let Some(persona) = &self.persona {
+            map.insert("persona".into(), persona.clone());
+        }
+        insert_text(&mut map, "sessionId", &self.session_id);
+        insert_text(&mut map, "resolvedModel", &self.resolved_model);
+        Value::Object(map)
+    }
+}

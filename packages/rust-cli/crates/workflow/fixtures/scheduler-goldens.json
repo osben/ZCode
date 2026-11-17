@@ -396,12 +396,19 @@
               "siteId": "actor#1",
               "ordinal": 1,
               "name": "alpha",
+              "persona": {
+                "name": "alpha"
+              },
               "sessionId": "sess:actor#1@1"
             },
             {
               "runId": "run_fifo",
               "siteId": "actor#2",
               "ordinal": 1,
+              "persona": {
+                "system": "sys b",
+                "model": "zai/glm"
+              },
               "sessionId": "sess:actor#2@1"
             }
           ],
@@ -527,12 +534,19 @@
               "siteId": "actor#1",
               "ordinal": 1,
               "name": "alpha",
+              "persona": {
+                "name": "alpha"
+              },
               "sessionId": "sess:actor#1@1"
             },
             {
               "runId": "run_fifo",
               "siteId": "actor#2",
               "ordinal": 1,
+              "persona": {
+                "system": "sys b",
+                "model": "zai/glm"
+              },
               "sessionId": "sess:actor#2@1"
             }
           ],
@@ -1077,6 +1091,9 @@
               "siteId": "actor#1",
               "ordinal": 1,
               "name": "x",
+              "persona": {
+                "name": "x"
+              },
               "sessionId": "sess:actor#1@1"
             },
             {
@@ -1084,13 +1101,19 @@
               "siteId": "actor#2",
               "ordinal": 1,
               "name": "y",
+              "persona": {
+                "name": "y"
+              },
               "sessionId": "sess:actor#2@1"
             },
             {
               "runId": "run_complete",
               "siteId": "actor#3",
               "ordinal": 1,
-              "name": "z"
+              "name": "z",
+              "persona": {
+                "name": "z"
+              }
             }
           ],
           "disposed": 1
@@ -1310,6 +1333,9 @@
               "siteId": "actor#1",
               "ordinal": 1,
               "name": "solo",
+              "persona": {
+                "name": "solo"
+              },
               "sessionId": "sess:actor#1@1"
             }
           ],
@@ -1475,6 +1501,9 @@
               "siteId": "actor#1",
               "ordinal": 1,
               "name": "solo",
+              "persona": {
+                "name": "solo"
+              },
               "sessionId": "sess:actor#1@1"
             }
           ],
@@ -1640,7 +1669,10 @@
               "runId": "run_dup",
               "siteId": "actor#1",
               "ordinal": 1,
-              "name": "alpha"
+              "name": "alpha",
+              "persona": {
+                "name": "alpha"
+              }
             }
           ],
           "disposed": 1
@@ -1777,6 +1809,9 @@
               "siteId": "actor#1",
               "ordinal": 1,
               "name": "alpha",
+              "persona": {
+                "name": "alpha"
+              },
               "sessionId": "sess:actor#1@1"
             }
           ],
@@ -1826,6 +1861,9 @@
               "siteId": "actor#1",
               "ordinal": 1,
               "name": "alpha",
+              "persona": {
+                "name": "alpha"
+              },
               "sessionId": "sess:actor#1@1"
             }
           ],

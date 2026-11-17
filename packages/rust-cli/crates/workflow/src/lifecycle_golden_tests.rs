@@ -3,12 +3,12 @@
 //! every step result, the run row after each lifetime, the constructor error, the dispose count and
 //! the event log (sequence and exact payload text).
 use crate::canon::canonical_json;
-use crate::engine::{EngineConfig, WorkflowDriver, WorkflowEngine};
+use crate::engine::{AskMessage, EngineConfig, SubmitVerdict, WorkflowDriver, WorkflowEngine};
 use crate::error::{ErrorCode, WorkflowError};
 use crate::event::RunEvent;
 use crate::journal::{JournalPort, MemoryJournal};
 use crate::journal_dwf::DwfJournal;
-use crate::model::{Caps, StopReason};
+use crate::model::{Caps, Ref, StopReason};
 use rust_cli_node_store::open_session_database;
 use serde_json::Value;
 use std::path::Path;
@@ -23,6 +23,22 @@ struct RecordingDriver {
 }
 
 impl WorkflowDriver for RecordingDriver {
+    fn create_actor_session(&mut self, _actor: &Ref, _persona: &Value) -> anyhow::Result<String> {
+        unreachable!("the lifecycle goldens create no actors")
+    }
+
+    fn start_ask(&mut self, _session: &str, _instance: &Ref, _message: &AskMessage) {
+        unreachable!("the lifecycle goldens start no asks")
+    }
+
+    fn respond_to_submit(&mut self, _instance: &Ref, _verdict: &SubmitVerdict) {
+        unreachable!("the lifecycle goldens submit nothing")
+    }
+
+    fn cancel_ask(&mut self, _instance: &Ref) {
+        unreachable!("the lifecycle goldens cancel no asks")
+    }
+
     fn emit(&mut self, event: &RunEvent) {
         self.emitted.push(event.payload_json());
     }
@@ -73,6 +89,7 @@ fn config_for(run_id: &str, lifetime: &Value) -> EngineConfig {
         resumed_from: optional_text(lifetime, "resumedFrom"),
         launch,
         inherited_tokens: lifetime.get("inheritedTokens").and_then(Value::as_f64),
+        ..Default::default()
     }
 }
 

@@ -1,18 +1,22 @@
 //! The journal port over the W2 repository (`rust-cli-node-store`, `dwf_*` in Node's row format).
 //!
 //! The engine core never sees SQL. This adapter maps the port's records onto the repository's records
-//! and converts numbers: `dwf_run` stores integers, so a non-integer cap or token count is an error
-//! here, not a silent truncation. `now` is the row timestamp source (the caller's clock); it never
-//! feeds a decision in the engine.
+//! and converts numbers: `dwf_run` and `dwf_node` store integers, so a non-integer cap, token count or
+//! ordinal is an error here, not a silent truncation. `now` is the row timestamp source (the caller's
+//! clock); it never feeds a decision in the engine.
 use crate::event::RunEvent;
 use crate::journal::JournalPort;
-use crate::model::{Caps, RunRow, RunStatus, Settlement, StopReason, StoredEvent};
+use crate::model::{
+    ActorRow, Caps, NodeKind, NodeRow, NodeStatus, Ref, RunRow, RunStatus, Settlement, StopReason,
+    StoredEvent,
+};
 use anyhow::{Result, bail};
 use rusqlite::Connection;
 use rust_cli_base::js::json::stringify;
 use rust_cli_node_store::dwf::{
-    self, RunRecord as DwfRun, RunStatus as DwfStatus, Settlement as DwfSettlement,
-    StopReason as DwfStop,
+    self, ActorRecord as DwfActor, NodeKind as DwfNodeKind, NodeRecord as DwfNode,
+    NodeStatus as DwfNodeStatus, RunRecord as DwfRun, RunStatus as DwfStatus,
+    Settlement as DwfSettlement, StopReason as DwfStop,
 };
 
 pub struct DwfJournal<'a> {
@@ -32,6 +36,14 @@ fn integer(value: f64, what: &str) -> Result<i64> {
         return Ok(value as i64);
     }
     bail!("dwf_run stores integers: {what} is {value}")
+}
+
+fn ordinal_to_column(ordinal: u64) -> Result<i64> {
+    Ok(i64::try_from(ordinal)?)
+}
+
+fn ordinal_from_column(ordinal: i64) -> Result<u64> {
+    Ok(u64::try_from(ordinal)?)
 }
 
 fn status_to_dwf(status: RunStatus) -> DwfStatus {
@@ -71,6 +83,42 @@ fn stop_from_dwf(reason: DwfStop) -> StopReason {
         DwfStop::Provider => StopReason::Provider,
         DwfStop::Interrupted => StopReason::Interrupted,
         DwfStop::Superseded => StopReason::Superseded,
+    }
+}
+
+fn kind_to_dwf(kind: NodeKind) -> DwfNodeKind {
+    match kind {
+        NodeKind::Ask => DwfNodeKind::Ask,
+        NodeKind::WorldRead => DwfNodeKind::WorldRead,
+        NodeKind::WorldRun => DwfNodeKind::WorldRun,
+        NodeKind::Report => DwfNodeKind::Report,
+        NodeKind::Artifact => DwfNodeKind::Artifact,
+    }
+}
+
+fn kind_from_dwf(kind: DwfNodeKind) -> NodeKind {
+    match kind {
+        DwfNodeKind::Ask => NodeKind::Ask,
+        DwfNodeKind::WorldRead => NodeKind::WorldRead,
+        DwfNodeKind::WorldRun => NodeKind::WorldRun,
+        DwfNodeKind::Report => NodeKind::Report,
+        DwfNodeKind::Artifact => NodeKind::Artifact,
+    }
+}
+
+fn node_status_to_dwf(status: NodeStatus) -> DwfNodeStatus {
+    match status {
+        NodeStatus::Running => DwfNodeStatus::Running,
+        NodeStatus::Completed => DwfNodeStatus::Completed,
+        NodeStatus::Failed => DwfNodeStatus::Failed,
+    }
+}
+
+fn node_status_from_dwf(status: DwfNodeStatus) -> NodeStatus {
+    match status {
+        DwfNodeStatus::Running => NodeStatus::Running,
+        DwfNodeStatus::Completed => NodeStatus::Completed,
+        DwfNodeStatus::Failed => NodeStatus::Failed,
     }
 }
 
@@ -116,6 +164,67 @@ fn row_from_dwf(run: DwfRun) -> RunRow {
         failure: run.failure,
         result: run.result,
     }
+}
+
+fn actor_to_dwf(row: &ActorRow) -> Result<DwfActor> {
+    Ok(DwfActor {
+        run_id: row.run_id.clone(),
+        site_id: row.site_id.clone(),
+        ordinal: ordinal_to_column(row.ordinal)?,
+        name: row.name.clone(),
+        persona: row.persona.clone(),
+        session_id: row.session_id.clone(),
+        resolved_model: row.resolved_model.clone(),
+    })
+}
+
+fn actor_from_dwf(actor: DwfActor) -> Result<ActorRow> {
+    Ok(ActorRow {
+        run_id: actor.run_id,
+        site_id: actor.site_id,
+        ordinal: ordinal_from_column(actor.ordinal)?,
+        name: actor.name,
+        persona: actor.persona,
+        session_id: actor.session_id,
+        resolved_model: actor.resolved_model,
+    })
+}
+
+fn node_to_dwf(row: &NodeRow) -> Result<DwfNode> {
+    Ok(DwfNode {
+        run_id: row.run_id.clone(),
+        site_id: row.site_id.clone(),
+        ordinal: ordinal_to_column(row.ordinal)?,
+        kind: kind_to_dwf(row.kind),
+        actor_site_id: row.actor_site_id.clone(),
+        actor_ordinal: row.actor_ordinal.map(ordinal_to_column).transpose()?,
+        actor_seq: row.actor_seq.map(ordinal_to_column).transpose()?,
+        input_hash: row.input_hash.clone(),
+        status: node_status_to_dwf(row.status),
+        result: row.result.clone(),
+        error: row.error.clone(),
+        stats: row.stats.clone(),
+        artifact_id: None,
+        input: None,
+        message_boundary: None,
+    })
+}
+
+fn node_from_dwf(node: DwfNode) -> Result<NodeRow> {
+    Ok(NodeRow {
+        run_id: node.run_id,
+        site_id: node.site_id,
+        ordinal: ordinal_from_column(node.ordinal)?,
+        kind: kind_from_dwf(node.kind),
+        actor_site_id: node.actor_site_id,
+        actor_ordinal: node.actor_ordinal.map(ordinal_from_column).transpose()?,
+        actor_seq: node.actor_seq.map(ordinal_from_column).transpose()?,
+        input_hash: node.input_hash,
+        status: node_status_from_dwf(node.status),
+        result: node.result,
+        error: node.error,
+        stats: node.stats,
+    })
 }
 
 impl JournalPort for DwfJournal<'_> {
@@ -164,6 +273,50 @@ impl JournalPort for DwfJournal<'_> {
             integer(caps.max_concurrency, "maxConcurrency")?,
             (self.clock)(),
         )
+    }
+
+    fn put_actor(&mut self, row: ActorRow) -> Result<()> {
+        dwf::put_actor(self.conn, &actor_to_dwf(&row)?, (self.clock)())
+    }
+
+    fn get_actor(&self, run_id: &str, actor: &Ref) -> Result<Option<ActorRow>> {
+        dwf::get_actor(
+            self.conn,
+            run_id,
+            &actor.site_id,
+            ordinal_to_column(actor.ordinal)?,
+        )?
+        .map(actor_from_dwf)
+        .transpose()
+    }
+
+    fn list_actors(&self, run_id: &str) -> Result<Vec<ActorRow>> {
+        dwf::list_actors(self.conn, run_id)?
+            .into_iter()
+            .map(actor_from_dwf)
+            .collect()
+    }
+
+    fn put_node(&mut self, row: NodeRow) -> Result<()> {
+        dwf::put_node(self.conn, &node_to_dwf(&row)?, (self.clock)())
+    }
+
+    fn get_node(&self, run_id: &str, instance: &Ref) -> Result<Option<NodeRow>> {
+        dwf::get_node(
+            self.conn,
+            run_id,
+            &instance.site_id,
+            ordinal_to_column(instance.ordinal)?,
+        )?
+        .map(node_from_dwf)
+        .transpose()
+    }
+
+    fn list_nodes(&self, run_id: &str) -> Result<Vec<NodeRow>> {
+        dwf::list_nodes(self.conn, run_id)?
+            .into_iter()
+            .map(node_from_dwf)
+            .collect()
     }
 
     fn append_event(&mut self, run_id: &str, event: &RunEvent) -> Result<StoredEvent> {

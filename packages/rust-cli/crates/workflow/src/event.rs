@@ -1,9 +1,11 @@
-//! Run events (Node `types.ts` `RunEvent`), the run-lifecycle subset W5a emits.
+//! Run events (Node `types.ts` `RunEvent`): the lifecycle, asks and phase markers W5a emits. Holes,
+//! artifacts and reports are not here yet (spec 9.2).
 //!
-//! `to_json` builds the object in the same key order Node's object literals use, so the payload text
+//! `to_json` builds each object in the key order Node's object literals use, so the payload text
 //! (`JSON.stringify` of the event) is byte-identical. Optional keys are omitted when absent, as Node's
-//! conditional spreads do. Asks, holes, artifacts and reports are not here yet (see spec 9.2).
-use crate::model::{Caps, RunStatus, StopReason, js_number};
+//! conditional spreads do. The birth-phase fields (`phase`, `actor_phase`) are set by the engine's
+//! stamping step, which Node appends after the literal keys, so they are written last.
+use crate::model::{Caps, Ref, RunStatus, StopReason, Violation, js_number};
 use rust_cli_base::js::json::stringify;
 use serde_json::{Map, Value};
 
@@ -21,6 +23,32 @@ pub struct LaunchFields {
     pub script_path: Option<String>,
     pub phase_alongside: Option<Value>,
     pub holes: Option<Value>,
+}
+
+/// Outcome of a settled node (Node `NodeOutcome`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NodeOutcome {
+    Ok,
+    Failed,
+    Cancelled,
+}
+
+impl NodeOutcome {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Ok => "ok",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+        }
+    }
+}
+
+/// The birth facts a cached ask settlement repeats (Node `CachedAskFacts`): `kind` is always `ask`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AskFacts {
+    pub actor: Ref,
+    pub actor_seq: u64,
+    pub instructions_head: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -47,6 +75,54 @@ pub enum RunEvent {
         superseded_by: Option<String>,
         /// `WorkflowErrorJson`, already in its journal shape.
         error: Option<Value>,
+    },
+    /// Node `actor-created`. `name` is the argument as given, `persona` the normalized spec.
+    ActorCreated {
+        actor: Ref,
+        name: Option<String>,
+        persona: Value,
+        phase: Option<String>,
+    },
+    /// Node `node-queued` for an ask.
+    NodeQueued {
+        instance: Ref,
+        actor: Ref,
+        actor_seq: u64,
+        instructions_head: Option<String>,
+        phase: Option<String>,
+    },
+    /// Node `node-dispatched` for an ask: repeats the birth facts (see types.ts).
+    NodeDispatched {
+        instance: Ref,
+        actor: Ref,
+        actor_name: Option<String>,
+        actor_persona_model: Option<String>,
+        instructions_head: Option<String>,
+        phase: Option<String>,
+        actor_phase: Option<String>,
+    },
+    NodeRepairing {
+        instance: Ref,
+        attempt: u64,
+        violations: Vec<Violation>,
+    },
+    NodeNudged {
+        instance: Ref,
+    },
+    /// Node `node-settled`. A cached settlement sets `cached` and repeats the facts; a live one does not.
+    NodeSettled {
+        instance: Ref,
+        outcome: NodeOutcome,
+        cached: bool,
+        /// `WorkflowErrorJson` in its journal shape.
+        error: Option<Value>,
+        facts: Option<AskFacts>,
+        phase: Option<String>,
+    },
+    /// Node `phase-entered`: the nth entry into a phase name.
+    PhaseEntered {
+        name: String,
+        ordinal: u64,
     },
 }
 
@@ -109,6 +185,97 @@ impl RunEvent {
                 put_text(&mut map, "supersededBy", superseded_by);
                 put_value(&mut map, "error", error);
             }
+            Self::ActorCreated {
+                actor,
+                name,
+                persona,
+                phase,
+            } => {
+                put_type(&mut map, "actor-created");
+                map.insert("actor".into(), actor.to_json());
+                put_text(&mut map, "name", name);
+                map.insert("persona".into(), persona.clone());
+                put_text(&mut map, "phaseName", phase);
+            }
+            Self::NodeQueued {
+                instance,
+                actor,
+                actor_seq,
+                instructions_head,
+                phase,
+            } => {
+                put_type(&mut map, "node-queued");
+                map.insert("instance".into(), instance.to_json());
+                map.insert("kind".into(), Value::String("ask".into()));
+                map.insert("actor".into(), actor.to_json());
+                map.insert("actorSeq".into(), Value::from(*actor_seq));
+                put_text(&mut map, "instructionsHead", instructions_head);
+                put_text(&mut map, "phaseName", phase);
+            }
+            Self::NodeDispatched {
+                instance,
+                actor,
+                actor_name,
+                actor_persona_model,
+                instructions_head,
+                phase,
+                actor_phase,
+            } => {
+                put_type(&mut map, "node-dispatched");
+                map.insert("instance".into(), instance.to_json());
+                map.insert("kind".into(), Value::String("ask".into()));
+                map.insert("actor".into(), actor.to_json());
+                put_text(&mut map, "actorName", actor_name);
+                put_text(&mut map, "actorPersonaModel", actor_persona_model);
+                put_text(&mut map, "instructionsHead", instructions_head);
+                put_text(&mut map, "phaseName", phase);
+                put_text(&mut map, "actorPhaseName", actor_phase);
+            }
+            Self::NodeRepairing {
+                instance,
+                attempt,
+                violations,
+            } => {
+                put_type(&mut map, "node-repairing");
+                map.insert("instance".into(), instance.to_json());
+                map.insert("attempt".into(), Value::from(*attempt));
+                map.insert(
+                    "violations".into(),
+                    Value::Array(violations.iter().map(Violation::to_json).collect()),
+                );
+            }
+            Self::NodeNudged { instance } => {
+                put_type(&mut map, "node-nudged");
+                map.insert("instance".into(), instance.to_json());
+            }
+            Self::NodeSettled {
+                instance,
+                outcome,
+                cached,
+                error,
+                facts,
+                phase,
+            } => {
+                put_type(&mut map, "node-settled");
+                map.insert("instance".into(), instance.to_json());
+                map.insert("outcome".into(), Value::String(outcome.as_str().into()));
+                if *cached {
+                    map.insert("cached".into(), Value::Bool(true));
+                }
+                put_value(&mut map, "error", error);
+                if let Some(facts) = facts {
+                    map.insert("kind".into(), Value::String("ask".into()));
+                    map.insert("actor".into(), facts.actor.to_json());
+                    map.insert("actorSeq".into(), Value::from(facts.actor_seq));
+                    put_text(&mut map, "instructionsHead", &facts.instructions_head);
+                }
+                put_text(&mut map, "phaseName", phase);
+            }
+            Self::PhaseEntered { name, ordinal } => {
+                put_type(&mut map, "phase-entered");
+                map.insert("name".into(), Value::String(name.clone()));
+                map.insert("ordinal".into(), Value::from(*ordinal));
+            }
         }
         Value::Object(map)
     }
@@ -165,6 +332,42 @@ mod tests {
         assert_eq!(
             event.payload_json(),
             r#"{"type":"run-settled","status":"errored","error":{"code":"DriverError","message":"boom"}}"#
+        );
+    }
+
+    #[test]
+    fn cached_settlement_repeats_the_facts_and_takes_the_phase_last() {
+        let event = RunEvent::NodeSettled {
+            instance: Ref::new("ask#1", 2),
+            outcome: NodeOutcome::Failed,
+            cached: true,
+            error: Some(json!({"code": "ResultNotSubmitted", "message": "m"})),
+            facts: Some(AskFacts {
+                actor: Ref::new("actor#1", 1),
+                actor_seq: 3,
+                instructions_head: Some("go".into()),
+            }),
+            phase: Some("plan".into()),
+        };
+        assert_eq!(
+            event.payload_json(),
+            r#"{"type":"node-settled","instance":{"siteId":"ask#1","ordinal":2},"outcome":"failed","cached":true,"error":{"code":"ResultNotSubmitted","message":"m"},"kind":"ask","actor":{"siteId":"actor#1","ordinal":1},"actorSeq":3,"instructionsHead":"go","phaseName":"plan"}"#
+        );
+    }
+
+    #[test]
+    fn a_live_settlement_has_no_cached_key() {
+        let event = RunEvent::NodeSettled {
+            instance: Ref::new("ask#1", 1),
+            outcome: NodeOutcome::Ok,
+            cached: false,
+            error: None,
+            facts: None,
+            phase: None,
+        };
+        assert_eq!(
+            event.payload_json(),
+            r#"{"type":"node-settled","instance":{"siteId":"ask#1","ordinal":1},"outcome":"ok"}"#
         );
     }
 }

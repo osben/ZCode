@@ -42,12 +42,21 @@ type Step =
   | { op: "submit"; at: Ref; payload: unknown }
   | { op: "turnEnded"; at: Ref; finalText: string }
   | { op: "askFailed"; at: Ref; error: { code: WorkflowErrorCode; message: string } }
-  | { op: "stats"; at: Ref; stats: { tokens: number; toolCalls: number; turns: number; worldToolCalls?: number } }
+  | {
+      op: "stats";
+      at: Ref;
+      stats: { tokens: number; toolCalls: number; turns: number; worldToolCalls?: number };
+    }
   | { op: "retune"; value: number }
   | { op: "phase"; name: string }
   | { op: "log"; message: string }
   | { op: "complete"; artifact: unknown }
-  | { op: "stop"; reason: RunStopReason; error?: { code: WorkflowErrorCode; message: string }; supersededBy?: string }
+  | {
+      op: "stop";
+      reason: RunStopReason;
+      error?: { code: WorkflowErrorCode; message: string };
+      supersededBy?: string;
+    }
   | { op: "fail"; error: { code: WorkflowErrorCode; message: string } };
 
 interface Lifetime {
@@ -97,15 +106,27 @@ const scenarios: Scenario[] = [
           { op: "retune", value: 2 },
           { op: "retune", value: 2 },
           { op: "submit", at: { site: "ask#1", ordinal: 1 }, payload: "done-1" },
-          { op: "stats", at: { site: "ask#1", ordinal: 1 }, stats: { tokens: 5, toolCalls: 2, turns: 1, worldToolCalls: 1 } },
+          {
+            op: "stats",
+            at: { site: "ask#1", ordinal: 1 },
+            stats: { tokens: 5, toolCalls: 2, turns: 1, worldToolCalls: 1 },
+          },
           { op: "submit", at: { site: "ask#2", ordinal: 1 }, payload: 42 },
           { op: "submit", at: { site: "ask#2", ordinal: 1 }, payload: "fixed" },
           { op: "turnEnded", at: { site: "ask#1", ordinal: 2 }, finalText: "no submit yet" },
           { op: "turnEnded", at: { site: "ask#1", ordinal: 2 }, finalText: "still none" },
-          { op: "stats", at: { site: "ask#1", ordinal: 2 }, stats: { tokens: 3, toolCalls: 0, turns: 2 } },
+          {
+            op: "stats",
+            at: { site: "ask#1", ordinal: 2 },
+            stats: { tokens: 3, toolCalls: 0, turns: 2 },
+          },
           { op: "ask", tag: "c1", site: "ask#3", actor: "actor#1@1", instructions: "fourth" },
           { op: "ask", tag: "c2", site: "ask#3", actor: "actor#2@1", instructions: "fifth" },
-          { op: "stop", reason: "interrupted", error: { code: "Interrupted", message: "sandbox exited" } },
+          {
+            op: "stop",
+            reason: "interrupted",
+            error: { code: "Interrupted", message: "sandbox exited" },
+          },
         ],
       },
       {
@@ -126,7 +147,11 @@ const scenarios: Scenario[] = [
           { op: "ask", tag: "c2", site: "ask#3", actor: "actor#2@1", instructions: "fifth" },
           { op: "submit", at: { site: "ask#3", ordinal: 1 }, payload: "c1-done" },
           { op: "submit", at: { site: "ask#3", ordinal: 2 }, payload: "c2-done" },
-          { op: "stats", at: { site: "ask#3", ordinal: 2 }, stats: { tokens: 4, toolCalls: 1, turns: 1 } },
+          {
+            op: "stats",
+            at: { site: "ask#3", ordinal: 2 },
+            stats: { tokens: 4, toolCalls: 1, turns: 1 },
+          },
           { op: "complete", artifact: { ok: true } },
         ],
       },
@@ -150,7 +175,11 @@ const scenarios: Scenario[] = [
           { op: "ask", tag: "y1", site: "ask#1", actor: "actor#2@1", instructions: "two" },
           { op: "ask", tag: "z1", site: "ask#1", actor: "actor#3@1", instructions: "three" },
           { op: "complete", artifact: "partial" },
-          { op: "stats", at: { site: "ask#1", ordinal: 1 }, stats: { tokens: 7, toolCalls: 0, turns: 1 } },
+          {
+            op: "stats",
+            at: { site: "ask#1", ordinal: 1 },
+            stats: { tokens: 7, toolCalls: 0, turns: 1 },
+          },
           { op: "log", message: "after settlement" },
         ],
       },
@@ -311,7 +340,9 @@ async function runScenario(scenario: Scenario): Promise<unknown> {
         validate,
         sitePhases,
         ...(lifetime.scriptHash === undefined ? {} : { scriptHash: lifetime.scriptHash }),
-        ...(lifetime.inheritedTokens === undefined ? {} : { inheritedTokens: lifetime.inheritedTokens }),
+        ...(lifetime.inheritedTokens === undefined
+          ? {}
+          : { inheritedTokens: lifetime.inheritedTokens }),
       });
     } catch (error) {
       constructError = errorJson(error);
@@ -333,7 +364,10 @@ async function runScenario(scenario: Scenario): Promise<unknown> {
           return null;
         }
         case "submit":
-          engine.askSubmitAttempted({ siteId: step.at.site, ordinal: step.at.ordinal }, step.payload);
+          engine.askSubmitAttempted(
+            { siteId: step.at.site, ordinal: step.at.ordinal },
+            step.payload,
+          );
           return null;
         case "turnEnded":
           engine.askTurnEnded({ siteId: step.at.site, ordinal: step.at.ordinal }, step.finalText);
@@ -361,7 +395,9 @@ async function runScenario(scenario: Scenario): Promise<unknown> {
         case "stop":
           engine.stop(
             step.reason,
-            step.error === undefined ? undefined : new WorkflowError(step.error.code, step.error.message),
+            step.error === undefined
+              ? undefined
+              : new WorkflowError(step.error.code, step.error.message),
             step.supersededBy,
           );
           return null;
@@ -379,8 +415,10 @@ async function runScenario(scenario: Scenario): Promise<unknown> {
       ...(constructError === undefined ? {} : { constructError }),
       results,
       run: row === undefined ? null : JSON.parse(JSON.stringify(row)),
-      nodes: JSON.parse(JSON.stringify(store.listNodes(scenario.runId, { kinds: "all", withResult: true }))),
-      actors: JSON.parse(JSON.stringify(store.listActors(scenario.runId, {}))),
+      nodes: JSON.parse(
+        JSON.stringify(store.listNodes(scenario.runId, { kinds: "all", withResult: true })),
+      ),
+      actors: JSON.parse(JSON.stringify(store.listActors(scenario.runId, { withPersona: true }))),
       disposed,
     });
   }
