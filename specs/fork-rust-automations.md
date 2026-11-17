@@ -249,13 +249,13 @@ that exists would let the Host create tasks whose runs bill the plan quota, so t
 
 Owners:
 
-| Owner | Owns |
-| --- | --- |
-| Host | `off_peak_tasks`, the `offPeak/create|list` answers, ticket issue and dispatch, the policy |
-| Tools (`tools/src/off_peak_tools.rs`) | Parse, the bound-session check, `offPeak/create` params, output and Node's error texts; the 30 s deadline; refusal on an off-peak turn |
-| Port (`kernel-api/src/off_peak.rs`, `protocol-zcode/src/off_peak_port.rs`) | The transport only: the `workspace` ref, the reply check against the inbound schema, the Host's error code |
-| Turn (`kernel-api/src/turn_limits.rs` via `sendText`) | `OffPeakCreate` hidden on the turn whose input carries `offPeakTaskId` (Node `OFF_PEAK_EXECUTION_TOOL_DENYLIST`) |
-| Inbound schema (`scripts/fork-rust-agent/inbound-schema.mts`) | Reply shapes of `offPeak/create` (the `ok` union) and `offPeak/list` |
+| Owner                                                                      | Owns                                                                                                                                   |
+| -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| Host                                                                       | `off_peak_tasks`, the `offPeak/create                                                                                                  | list` answers, ticket issue and dispatch, the policy |
+| Tools (`tools/src/off_peak_tools.rs`)                                      | Parse, the bound-session check, `offPeak/create` params, output and Node's error texts; the 30 s deadline; refusal on an off-peak turn |
+| Port (`kernel-api/src/off_peak.rs`, `protocol-zcode/src/off_peak_port.rs`) | The transport only: the `workspace` ref, the reply check against the inbound schema, the Host's error code                             |
+| Turn (`kernel-api/src/turn_limits.rs` via `sendText`)                      | `OffPeakCreate` hidden on the turn whose input carries `offPeakTaskId` (Node `OFF_PEAK_EXECUTION_TOOL_DENYLIST`)                       |
+| Inbound schema (`scripts/fork-rust-agent/inbound-schema.mts`)              | Reply shapes of `offPeak/create` (the `ok` union) and `offPeak/list`                                                                   |
 
 Wire:
 
@@ -285,6 +285,23 @@ works.
 
 Status: the decision is recorded. The independent parts (lifecycle, notifications, control, registration) and the
 binding are built on `feat/rust-offpeak-slice3-b`. The note below is the original options analysis.
+
+**As built (binding, commit `8217f9f28`).** `kernel-api/src/off_peak_ticket.rs` defines `OffPeakTicketSource`
+(`acquire`, `refused_as_expired`, `expired`) and `TicketSource`, carried by `RequestOptions.off_peak_ticket`
+(`#[serde(skip)]`, identity equality, so traces and queued inputs never carry it). `EndpointQuery.ticket` is `None`
+for every ordinary request. Platform `endpoint()` takes the ticket's credentials before the ordinary source; with no
+credentials of its own it falls through to the ordinary source (Node `requestAuth ?? source`) and names the ticket in
+`x-off-peak-ticket-id`. The transport's `Connect::fail` renews an attempt refused as expired (Head phase only, before
+any output): `expired(ticket_id)`, then re-resolve on the renewed ticket, then resend. The renewal consumes no retry
+budget and is reported as a `Retrying` notice with delay 0 at the same attempt number.
+
+Divergences kept: the renewal is a `Retrying` notice (Node emits lifecycle `waiting_ticket` instead); a refusal
+after output was delivered is not renewed (Node: `delivered` rethrows); `refused_as_expired` checks the run's
+provider and code, so the provider id is matched by the source, not by the transport.
+
+Not built yet (layer B, still uncommitted on the branch): the protocol-zcode `OffPeakTicketSource` implementation
+(the wait on `waitForTicket` via a notify, the `replace_ticket` `requestAuth` conversion), the sendText run start,
+the turn-end work observation, and the policy flip. The flip stays last.
 
 What is blocked: an off-peak run's model requests must carry the ticket (`x-off-peak-ticket-id`, request auth from
 `modelExecution.requestAuth`), wait for a ticket when none is held, retry on the ticket-expired code
