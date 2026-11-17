@@ -14,6 +14,7 @@ use rust_cli_kernel_api::mcp::McpTransportConfig;
 use serde_json::Value;
 
 use super::{Manifest, Plugin, Plugins, Reader};
+use crate::mcp::{McpScope, McpServer, McpServerOptions};
 
 /// Node `ZCODE_OFFICIAL_PLUGIN_MARKETPLACE`（定义在 base，F55）。
 const OFFICIAL: &str = rust_cli_base::names::OFFICIAL_MARKETPLACE;
@@ -34,8 +35,15 @@ const DEFAULT_ENABLED: [&str; 12] = [
     "zcode-guide",
     "visualize",
 ];
-/// 能力来自 Node 宿主注入的 `node_repl` MCP 的官方插件（Node `hostMcpServerNames` 与宿主本身）。
-const NODE_REPL: [&str; 3] = ["node-repl-host", "browser-use", "computer-use"];
+/// The host plugin itself: it carries the node_repl runtime and is never a user-visible plugin (F4a).
+const NODE_REPL_HOST: &str = "node-repl-host";
+/// The plugins whose capability needs node_repl; the first admitted one carries the server (F4a).
+const NODE_REPL_USERS: [&str; 2] = ["browser-use", "computer-use"];
+/// The server name Node registers node_repl under (`BUILTIN_NODE_REPL_SERVER_NAME`). Protocol-zcode classifies the
+/// process row by this exact name and the tool is `mcp__node_repl__js`, so it must not drift.
+const NODE_REPL_SERVER: &str = "node_repl";
+/// The node_repl tool timeout (Node `built-in-node-repl.ts`, `timeoutMs: 600_000`).
+const NODE_REPL_TIMEOUT_MS: u64 = 600_000;
 /// Node `ZCODE_PLUGIN_HOST_COMMAND`：播种缓存时改写进 MCP 的启动参数。
 const PLUGIN_HOST_ARG: &str = "__zcode-plugin-host";
 /// 需要 App 内联视图宿主的官方插件（Node `filterVisualizeSkillRoots`）。
@@ -198,7 +206,9 @@ fn node_dependency(
     if marketplace != OFFICIAL {
         return None;
     }
-    if NODE_REPL.contains(&name) {
+    // Official plugins whose capability comes from the node_repl MCP that the Node host injects: the host itself
+    // and its users. One list (NODE_REPL_HOST + NODE_REPL_USERS) drives both admission and attachment.
+    if name == NODE_REPL_HOST || NODE_REPL_USERS.contains(&name) {
         return Some(NodeDependency::NodeRepl);
     }
     let servers = tables
@@ -294,7 +304,13 @@ impl Admission<'_> {
             other => other,
         };
         // One of the two helper-hosting triggers (F3); the other, an MCP App entry point, is in `load_all`.
-        let served = dependency == Some(NodeDependency::PluginHost) && self.sources.node_helper;
+        // Fork (F4a): node_repl users are served by the helper too, except the host plugin itself.
+        let served = self.sources.node_helper
+            && match dependency {
+                Some(NodeDependency::PluginHost) => true,
+                Some(NodeDependency::NodeRepl) => name != NODE_REPL_HOST,
+                _ => false,
+            };
         if let Some(dependency) = dependency.filter(|_| !served) {
             return reject(SkipReason::NodeRuntime(dependency));
         }
@@ -433,10 +449,35 @@ pub async fn load_all(
             })
             .collect();
     }
+    if sources.node_helper {
+        attach_node_repl(&mut plugins);
+    }
     Loaded {
         plugins: Plugins(plugins),
         skipped,
     }
+}
+
+/// Fork (F4a): node_repl is a host server, not a plugin's, so it is attached once, to the first admitted node_repl
+/// user. Its name is the bare `node_repl`, so its tool is `mcp__node_repl__js` as in Node.
+fn attach_node_repl(plugins: &mut [Plugin]) {
+    let Some(plugin) = plugins.iter_mut().find(|plugin| {
+        NODE_REPL_USERS
+            .iter()
+            .any(|name| plugin.id == format!("{name}@{OFFICIAL}"))
+    }) else {
+        return;
+    };
+    plugin.mcp_servers.push(McpServer {
+        name: NODE_REPL_SERVER.to_owned(),
+        scope: McpScope::Plugin,
+        transport: McpTransportConfig::NodeHelper,
+        options: McpServerOptions {
+            timeout_ms: Some(NODE_REPL_TIMEOUT_MS),
+            always_load: false,
+        },
+        machine: MachineName::primary(),
+    });
 }
 
 #[cfg(test)]
