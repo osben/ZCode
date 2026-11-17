@@ -40,9 +40,7 @@ interface Scenario {
   ops: Array<Record<string, any>>;
 }
 
-const scenario = JSON.parse(
-  readFileSync(join(fixtures, "scenario.json"), "utf8"),
-) as Scenario;
+const scenario = JSON.parse(readFileSync(join(fixtures, "scenario.json"), "utf8")) as Scenario;
 
 rmSync(databasePath, { force: true });
 const db = new DatabaseSync(databasePath);
@@ -56,7 +54,9 @@ db.exec("COMMIT");
 const ledger = db
   .prepare("select id, checksum from schema_migration where id = '0019_dwf_journal'")
   .get() as { id: string; checksum: string } | undefined;
-const pinned = JSON.parse(readFileSync(join(here, "../../fork-upstream-migrations.json"), "utf8")) as {
+const pinned = JSON.parse(
+  readFileSync(join(here, "../../fork-upstream-migrations.json"), "utf8"),
+) as {
   sets: Record<string, Array<{ id: string; checksum: string }>>;
 };
 const pinnedEntry = pinned.sets.cli.find((entry) => entry.id === "0019_dwf_journal");
