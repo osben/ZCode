@@ -130,6 +130,9 @@ async fn conclude(
         Outcome::Retry { fate, .. } => *fate,
         Outcome::Completed | Outcome::Failed { .. } => Fate::Keep,
     };
+    // The response's usage belongs to the request it answers: attach it before the call is committed (a plain answer
+    // ends here, a tool-use answer goes through `commit_batch` in respond.rs).
+    crate::respond::attach_usage(scope, &call);
     let metered = Metered::Model(call);
     if assistant.content.is_empty() {
         scope.sink.commit_metered(None, metered).await?;

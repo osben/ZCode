@@ -623,7 +623,7 @@ fn partial(
 /// The response's provider usage goes onto the session's composition record: the record is the request this response
 /// answers. A response without usage leaves the record as it is. The session's record is dropped by an invalidation
 /// (see `CompositionStore::invalidate`), so a late usage cannot attach to a newer request's record.
-fn attach_usage(scope: &RunScope, call: &ModelCall) {
+pub(crate) fn attach_usage(scope: &RunScope, call: &ModelCall) {
     if let Some(usage) = &call.usage {
         scope.parts.compositions.set_usage(
             &scope.session,
