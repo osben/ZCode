@@ -220,25 +220,28 @@ async fn serve(
     // Fork: workspace trust from the App (specs/fork-rust-agent-parity.md, "Workspace MCP trust"): set before the
     // handler is installed, so the first request already sees it.
     let opened = &built.opened;
-    context.set_workspace_admin(Arc::new(AppWorkspace::new(
-        (opened.primary.files().clone(), paths.clone()),
-        ProcessConfig {
-            process_env: facts.process.env.clone(),
-        },
-        built.kernel.project_hook_slots(),
-        built.kernel.workspace_layer_host(),
-        (opened.primary.mcp().clone(), spawner.clone(), clock.clone()),
-        Arc::new(crate::config::workspace_layer::Loader {
-            files: opened.primary.files().clone(),
-            controller: opened.env.clone(),
-            paths: opened.paths.clone(),
-            process_env: facts.process.env.clone(),
-            flag: None,
-            project_is_local: opened.deployment.primary_is_local(),
-            process: opened.config.plugins.clone(),
-            strict: false,
-        }),
-    )));
+    context.set_workspace_admin(Arc::new(
+        AppWorkspace::new(
+            (opened.primary.files().clone(), paths.clone()),
+            ProcessConfig {
+                process_env: facts.process.env.clone(),
+            },
+            built.kernel.project_hook_slots(),
+            built.kernel.workspace_layer_host(),
+            (opened.primary.mcp().clone(), spawner.clone(), clock.clone()),
+            Arc::new(crate::config::workspace_layer::Loader {
+                files: opened.primary.files().clone(),
+                controller: opened.env.clone(),
+                paths: opened.paths.clone(),
+                process_env: facts.process.env.clone(),
+                flag: None,
+                project_is_local: opened.deployment.primary_is_local(),
+                process: opened.config.plugins.clone(),
+                strict: false,
+            }),
+        )
+        .with_mcp_oauth(opened.platform.mcp_oauth_store()),
+    ));
     // Fork: the ACP agents' session config behind `setExternalAgentConfigOption` and the subscribe seed.
     if let Some(configs) = built.kernel.external_agent_configs() {
         context.set_external_agent_configs(configs);

@@ -6,6 +6,7 @@ mod connection;
 mod manager;
 mod node_config;
 mod notices;
+pub mod oauth;
 mod parse;
 mod resources;
 mod result;

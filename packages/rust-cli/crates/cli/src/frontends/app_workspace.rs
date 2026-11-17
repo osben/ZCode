@@ -15,6 +15,10 @@ use rust_cli_base::Spawner;
 use rust_cli_base::secret::EnvSnapshot;
 use rust_cli_base::sync::LockUnpoisoned;
 use rust_cli_ext::WorkspaceConfigLoader;
+use rust_cli_ext::mcp::oauth::{
+    McpOAuthStore, ServerOAuthIdentity, authorization_status, is_authorization_challenge,
+    may_show_pending, pending_authorization_for,
+};
 use rust_cli_ext::mcp::{McpManager, McpScope, McpServer, McpSettings, parse_node_servers};
 use rust_cli_ext::plugins::load_all;
 use rust_cli_hooks::ProjectHookSlots;
@@ -37,6 +41,10 @@ use crate::commands::hooks_trust::{self, TrustContext};
 use crate::config::mcp_trust::{self, Inspection, Review, Target};
 use crate::config::{ConfigInputs, read_files};
 
+#[cfg(test)]
+#[path = "app_workspace_oauth_tests.rs"]
+mod oauth_tests;
+
 /// The app-server's process environment. Trust changes name their own workspace, so the App holds no process root.
 pub(crate) struct ProcessConfig {
     pub(crate) process_env: EnvSnapshot,
@@ -57,6 +65,9 @@ pub(crate) struct AppWorkspace {
     pub(crate) transport: Arc<dyn McpTransport>,
     pub(crate) spawner: Spawner,
     pub(crate) clock: Arc<dyn Clock>,
+    /// Fork: the MCP OAuth state (pending authorizations). None when the admin is built without a platform,
+    /// so no row reads it (`with_mcp_oauth`).
+    pub(crate) mcp_oauth: Option<Arc<dyn McpOAuthStore>>,
     /// Connect and tool settings for the settings lane (defaults; the handshake carries the agent version).
     pub(crate) mcp: McpSettings,
     pub(crate) version: &'static str,
@@ -103,6 +114,7 @@ impl AppWorkspace {
             transport,
             spawner,
             clock,
+            mcp_oauth: None,
             mcp: McpSettings {
                 client_version: crate::VERSION.to_owned(),
                 ..McpSettings::default()
@@ -111,6 +123,55 @@ impl AppWorkspace {
             lane: StdMutex::new(None),
             arrivals: AtomicU64::new(0),
             toggles: tokio::sync::Semaphore::new(1),
+        }
+    }
+
+    /// Fork: read the MCP OAuth state of the status rows from the platform's credential store.
+    pub(crate) fn with_mcp_oauth(mut self, store: Arc<dyn McpOAuthStore>) -> Self {
+        self.mcp_oauth = Some(store);
+        self
+    }
+
+    /// Fork: a pending OAuth authorization of the server turns a `connecting`, `failed` or `disconnected` row
+    /// into Node's `connecting` row with an `authorization` object (Node `createOAuthAuthorizationStatus`). Other
+    /// statuses keep their own state. A store that cannot be read keeps the row as it is, so a status read never
+    /// fails on it.
+    async fn with_pending_authorization(
+        &self,
+        name: &str,
+        config: &Map<String, Value>,
+        mut status: Value,
+    ) -> Value {
+        let Some(store) = self.mcp_oauth.as_ref() else {
+            return status;
+        };
+        let shown = status
+            .get("status")
+            .and_then(Value::as_str)
+            .is_some_and(may_show_pending);
+        let Some(identity) = authorization_identity(name, config).filter(|_| shown) else {
+            return status;
+        };
+        let now = i64::try_from(self.clock.now_ms()).unwrap_or(i64::MAX);
+        match pending_authorization_for(store.as_ref(), &identity, now).await {
+            Ok(Some(pending)) => {
+                if let Some(row) = status.as_object_mut() {
+                    row.insert("status".into(), json!("connecting"));
+                    row.insert(
+                        "authorization".into(),
+                        authorization_status(&pending, &self.now()),
+                    );
+                    row.remove("error");
+                    row.remove("failureKind");
+                }
+                status
+            }
+            Ok(None) => status,
+            Err(error) => {
+                // The store's message names the reason only; keys and values never reach the log.
+                tracing::warn!(server = name, error = %error, "MCP OAuth state unreadable; row unchanged");
+                status
+            }
         }
     }
 
@@ -272,6 +333,10 @@ impl AppWorkspace {
         });
         if let Some(reason) = &info.reason {
             value["error"] = json!(reason);
+            // Fork: a 401 is an authorization challenge (Node's `unauthorized` trigger), not a plain failure.
+            if info.state == McpServerState::Failed && is_authorization_challenge(reason) {
+                value["failureKind"] = json!("not_authenticated");
+            }
         }
         value
     }
@@ -436,6 +501,7 @@ impl AppWorkspace {
             } else {
                 self.idle("disconnected", kind)
             };
+            let status = self.with_pending_authorization(name, config, status).await;
             statuses.insert(name.clone(), status);
         }
         self.with_reviews(&mut statuses, &configured, &reviews);
@@ -481,6 +547,24 @@ async fn close(lane: &Lane) {
         .map(|info| info.name)
         .collect();
     lane.manager.control(McpAction::Disable, &names).await;
+}
+
+/// The OAuth identity a configured server declares: its `url` and an `authorization_code` `oauth` block. Stdio
+/// servers and client-credential servers have no pending authorization.
+fn authorization_identity(name: &str, config: &Map<String, Value>) -> Option<ServerOAuthIdentity> {
+    let url = config.get("url")?.as_str()?;
+    let oauth = config.get("oauth")?.as_object()?;
+    if oauth.get("type")?.as_str()? != "authorization_code" {
+        return None;
+    }
+    let text = |key: &str| oauth.get(key).and_then(Value::as_str).map(str::to_owned);
+    Some(ServerOAuthIdentity {
+        name: name.to_owned(),
+        url: url.to_owned(),
+        client_id: text("clientId"),
+        scope: text("scope"),
+        redirect_path: text("redirectPath"),
+    })
 }
 
 fn transport(config: &Map<String, Value>) -> &str {
