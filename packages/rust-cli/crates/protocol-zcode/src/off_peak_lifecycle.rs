@@ -10,7 +10,6 @@ pub enum State {
     RunningIdle,
     WaitingBackground,
     WaitingTicket,
-    RunningUser,
     Completed,
     Cancelled,
 }
@@ -22,7 +21,6 @@ impl State {
             Self::RunningIdle => "running_idle",
             Self::WaitingBackground => "waiting_background",
             Self::WaitingTicket => "waiting_ticket",
-            Self::RunningUser => "running_user",
             Self::Completed => "completed",
             Self::Cancelled => "cancelled",
         }
@@ -60,7 +58,6 @@ pub struct WorkSnapshot {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
     StateChanged(State),
-    UserTakeover,
     TicketNeeded {
         renewal_id: u64,
         expired_ticket_id: String,
@@ -76,7 +73,6 @@ pub enum Event {
 #[derive(Debug)]
 pub struct OffPeakLifecycle {
     phase: State,
-    user_owned: bool,
     ticket_id: Option<String>,
     ticket_available: bool,
     renewal_sequence: u64,
@@ -92,7 +88,6 @@ impl OffPeakLifecycle {
     pub fn new(ticket_id: impl Into<String>) -> Self {
         Self {
             phase: State::RunningIdle,
-            user_owned: false,
             ticket_id: Some(ticket_id.into()),
             ticket_available: true,
             renewal_sequence: 0,
@@ -113,29 +108,18 @@ impl OffPeakLifecycle {
         matches!(self.phase, State::Completed | State::Cancelled)
     }
 
-    pub fn owned_by_user(&self) -> bool {
-        self.user_owned
-    }
-
-    pub fn outcome(&self) -> Outcome {
-        self.outcome
-    }
-
     pub fn ticket_id(&self) -> Option<&str> {
         self.ticket_id.as_deref()
     }
 
     /// Whether a model round may use the ticket now (Node `waitForTicket` without waiting).
     pub fn ticket_ready(&self) -> bool {
-        self.ticket_available
-            && self.pending_renewal.is_none()
-            && self.ticket_id.is_some()
-            && (!self.user_owned || self.idle_model_rounds > 0)
+        self.ticket_available && self.pending_renewal.is_none() && self.ticket_id.is_some()
     }
 
     /// Node `retainIdleModelRound`: a model round of the run keeps it open. False once it is terminal or user-owned.
     pub fn retain_idle_model_round(&mut self) -> bool {
-        if self.terminal() || self.user_owned {
+        if self.terminal() {
             return false;
         }
         self.idle_model_rounds += 1;
@@ -176,9 +160,7 @@ impl OffPeakLifecycle {
             });
             return;
         }
-        let next = if self.user_owned {
-            State::RunningUser
-        } else if self.pending_renewal.is_some() {
+        let next = if self.pending_renewal.is_some() {
             State::WaitingTicket
         } else if work.main_running {
             State::RunningIdle
@@ -190,7 +172,7 @@ impl OffPeakLifecycle {
 
     /// Node `ticketExpired`: the ticket was refused as expired. Returns the renewal id the Host must answer with, once.
     pub fn ticket_expired(&mut self, ticket_id: &str) -> Option<u64> {
-        if self.terminal() || self.user_owned || self.ticket_id.as_deref() != Some(ticket_id) {
+        if self.terminal() || self.ticket_id.as_deref() != Some(ticket_id) {
             return None;
         }
         if let Some(renewal) = self.pending_renewal {
@@ -217,7 +199,6 @@ impl OffPeakLifecycle {
             return true;
         }
         if self.terminal()
-            || self.user_owned
             || self.pending_renewal != Some(renewal_id)
             || self.ticket_id.as_deref() == Some(ticket_id)
         {
@@ -237,24 +218,14 @@ impl OffPeakLifecycle {
         true
     }
 
-    /// Node `takeOver`: the user accepted the run. It is theirs from now on; no idle ticket is kept for it.
-    pub fn take_over(&mut self) {
-        if self.terminal() || self.user_owned {
-            return;
-        }
-        self.user_owned = true;
-        self.pending_renewal = None;
-        self.events.push(Event::UserTakeover);
-        self.release_unused_ticket();
-        self.change_state(State::RunningUser);
-    }
-
     /// Node `cancel`: stops the run for good. Repeated calls have no effect.
     pub fn cancel(&mut self) {
         if self.terminal() {
             return;
         }
         self.pending_renewal = None;
+        // A cancelled run holds no model round: a round still waiting for its ticket ends with the run.
+        self.idle_model_rounds = 0;
         self.change_state(State::Cancelled);
         self.release_unused_ticket();
         self.events.push(Event::Completed {
@@ -276,7 +247,7 @@ impl OffPeakLifecycle {
     }
 
     fn release_unused_ticket(&mut self) {
-        if (!self.user_owned && !self.terminal()) || self.idle_model_rounds > 0 {
+        if !self.terminal() || self.idle_model_rounds > 0 {
             return;
         }
         if let Some(ticket) = self.ticket_id.take() {

@@ -93,7 +93,7 @@ impl Actor {
             turn: turn.clone(),
             command: Some(command.clone()),
         });
-        let (opening, request) = self.open_main_turn(turn);
+        let (opening, request) = self.open_main_turn(turn, None);
         let sink = opening.sink.clone();
         let context = self.command_context(&request.run, &opening.abort, sink.clone());
         let inputs = self.deps.inputs.clone();

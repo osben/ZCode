@@ -9,8 +9,12 @@ use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::off_peak::{OffPeakError, OffPeakPort};
 use serde_json::Value;
 
+use rust_cli_kernel_api::off_peak_ticket::TicketSource;
+
 use crate::context::Context;
 use crate::inbound::Inbound;
+use crate::off_peak_control::LIFECYCLE;
+use crate::off_peak_ticket::{Notify, RunTickets};
 
 pub struct HostOffPeak {
     context: Arc<Context>,
@@ -24,6 +28,23 @@ impl HostOffPeak {
 
 #[async_trait]
 impl OffPeakPort for HostOffPeak {
+    /// Fork (slice 3 layer B): the run's ticket source, while the run is open for `session`.
+    fn ticket(&self, session: &SessionId, execution: &str) -> Option<TicketSource> {
+        if !self.context.off_peak.has_run(session.as_str(), execution) {
+            return None;
+        }
+        let context = self.context.clone();
+        let notify: Notify = Arc::new(move |note: &Value| {
+            context.peer.try_notify(LIFECYCLE, note);
+        });
+        Some(TicketSource(Arc::new(RunTickets::new(
+            self.context.off_peak.clone(),
+            session.as_str(),
+            execution,
+            notify,
+        ))))
+    }
+
     async fn request(
         &self,
         session: &SessionId,
@@ -40,6 +61,11 @@ impl OffPeakPort for HostOffPeak {
             return Err(OffPeakError::new(format!(
                 "{method} is not an off-peak method"
             )));
+        }
+        if !self.context.off_peak.tools_enabled(session.as_str()) {
+            return Err(OffPeakError::new(
+                "The off-peak tools are not enabled for this session",
+            ));
         }
         let Some(fields) = params.as_object_mut() else {
             return Err(OffPeakError::new(format!(

@@ -69,6 +69,7 @@ async fn a_request_carries_the_owner_session_s_workspace_and_checks_the_reply() 
     let (_scope, context, mut lines, mut host_out) = connected();
     let port = Arc::new(HostOffPeak::new(context.clone()));
     // A session that is not open here has no workspace: nothing is sent.
+    context.off_peak.set_session_enabled("other", true);
     let unknown = port
         .request(&SessionId::new("other"), "offPeak/list", json!({}))
         .await;
@@ -77,6 +78,7 @@ async fn a_request_carries_the_owner_session_s_workspace_and_checks_the_reply() 
         Some("Session workspace is unavailable".to_owned())
     );
     context.register("sess_1", "/w");
+    context.off_peak.set_session_enabled("sess_1", true);
 
     let asking = {
         let port = port.clone();
@@ -139,6 +141,7 @@ async fn a_business_failure_of_create_is_a_reply_not_an_error() {
     let (_scope, context, mut lines, mut host_out) = connected();
     let port = Arc::new(HostOffPeak::new(context.clone()));
     context.register("sess_1", "/w");
+    context.off_peak.set_session_enabled("sess_1", true);
     let asking = {
         let port = port.clone();
         tokio::spawn(async move {
@@ -172,8 +175,26 @@ async fn only_the_off_peak_methods_with_a_reply_schema_are_sent() {
     let (_scope, context, _lines, _host_out) = connected();
     let port = HostOffPeak::new(context.clone());
     context.register("sess_1", "/w");
+    context.off_peak.set_session_enabled("sess_1", true);
     let refused = port
         .request(&SessionId::new("sess_1"), "session/create", json!({}))
         .await;
     assert!(refused.is_err_and(|error| error.message.contains("is not an off-peak method")));
+}
+
+#[tokio::test]
+async fn a_session_without_the_tools_enabled_sends_nothing() {
+    let (_scope, context, mut lines, _host_out) = connected();
+    let port = HostOffPeak::new(context.clone());
+    context.register("sess_1", "/w");
+    let refused = port
+        .request(&SessionId::new("sess_1"), "offPeak/list", json!({}))
+        .await;
+    assert!(refused.is_err_and(|error| error.message.contains("not enabled")));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), lines.next_line())
+            .await
+            .is_err(),
+        "nothing reaches the Host"
+    );
 }

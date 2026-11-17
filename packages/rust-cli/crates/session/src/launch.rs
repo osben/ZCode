@@ -45,16 +45,22 @@ impl Actor {
     }
 
     /// 主循环的回合：新的运行 ID 与这一回合的请求（[`Self::main_request`]）。
-    pub(crate) fn open_main_turn(&self, turn: TurnId) -> (Opening, QueryRequest) {
+    /// `off_peak` is the off-peak execution the turn's input opens (its limits), if any.
+    pub(crate) fn open_main_turn(
+        &self,
+        turn: TurnId,
+        off_peak: Option<String>,
+    ) -> (Opening, QueryRequest) {
         let run = self.deps.ids.run();
-        let request = self.main_request(run.clone());
+        let request = self.main_request(run.clone(), off_peak);
         (self.open_turn(turn, Some(run), SINK_REQUESTS), request)
     }
 
     /// 主线程这一回合的请求：历史、模型与模式取 actor 此刻的值，入口再追加这一回合的输入。
-    fn main_request(&self, run: RunId) -> QueryRequest {
+    fn main_request(&self, run: RunId, off_peak: Option<String>) -> QueryRequest {
         QueryRequest {
             max_turns: self.deps.max_turns,
+            off_peak_execution: off_peak,
             ..QueryRequest::new(
                 self.meta.id.clone(),
                 run,

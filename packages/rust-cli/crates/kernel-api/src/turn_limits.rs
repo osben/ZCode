@@ -25,6 +25,10 @@ pub struct TurnLimits {
     /// Tool names the input hides from its turn (`toolDisallowlist`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hidden_tools: Vec<String>,
+    /// Fork: the off-peak run's execution id (`modelExecution.offPeak`, slice 3 layer B). The turn's model requests
+    /// are sent on that run's ticket; the ticket source itself is resolved from it, never stored here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    off_peak_execution: Option<String>,
 }
 
 impl TurnLimits {
@@ -37,7 +41,22 @@ impl TurnLimits {
         Self {
             automation,
             hidden_tools,
+            off_peak_execution: None,
         }
+    }
+
+    /// Fork: the limits with the off-peak execution the input opens (a blank id is none).
+    pub fn with_off_peak_execution(mut self, execution: Option<&str>) -> Self {
+        self.off_peak_execution = execution
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .map(str::to_owned);
+        self
+    }
+
+    /// The off-peak execution of the turn, if the input opened one.
+    pub fn off_peak_execution(&self) -> Option<&str> {
+        self.off_peak_execution.as_deref()
     }
 
     /// The automation that dispatched the turn, if any.
@@ -46,7 +65,9 @@ impl TurnLimits {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.automation.is_none() && self.hidden_tools.is_empty()
+        self.automation.is_none()
+            && self.hidden_tools.is_empty()
+            && self.off_peak_execution.is_none()
     }
 
     /// Whether CronCreate, CronUpdate and CronDelete must refuse on this turn (Node

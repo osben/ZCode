@@ -1164,6 +1164,27 @@ impl SessionSink for Live {
         }
         let deltas = state.projection.apply(&event, now);
         state.log.record(deltas);
+        // Fork (slice 3 layer B): the off-peak run follows its own turn's start and end (Node `prepareOffPeakTurn`).
+        let lifecycle = match &event.event {
+            KernelEvent::TurnStarted { turn, command } => self.context.off_peak.turn_started(
+                self.session.as_str(),
+                turn.as_str(),
+                command
+                    .as_ref()
+                    .map(rust_cli_kernel_api::ids::CommandId::as_str),
+            ),
+            KernelEvent::TurnFinished { turn, outcome, .. } => {
+                self.context
+                    .off_peak
+                    .turn_finished(self.session.as_str(), turn.as_str(), outcome)
+            }
+            _ => Vec::new(),
+        };
+        for note in &lifecycle {
+            self.context
+                .peer
+                .try_notify(crate::off_peak_control::LIFECYCLE, note);
+        }
         // F4b: the helper's broker runs turnEnded once per finished turn, after the turn's own calls answered.
         if let KernelEvent::TurnFinished { turn, outcome, .. } = &event.event
             && let Some(helper) = self.context.node_helper()

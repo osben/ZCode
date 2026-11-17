@@ -299,9 +299,27 @@ Divergences kept: the renewal is a `Retrying` notice (Node emits lifecycle `wait
 after output was delivered is not renewed (Node: `delivered` rethrows); `refused_as_expired` checks the run's
 provider and code, so the provider id is matched by the source, not by the transport.
 
-Not built yet (layer B, still uncommitted on the branch): the protocol-zcode `OffPeakTicketSource` implementation
-(the wait on `waitForTicket` via a notify, the `replace_ticket` `requestAuth` conversion), the sendText run start,
-the turn-end work observation, and the policy flip. The flip stays last.
+**As built (run, turn hooks, ticket source).** `protocol-zcode/src/off_peak_ticket.rs` (`RunTickets`) is the run's
+`OffPeakTicketSource`: `acquire` waits on the run's lifecycle (a `Notify` woken on every change) until the ticket is
+usable, then returns its id and the credentials of its `replace_ticket` (None for the start ticket). `expired` runs
+Node `ticketExpired`: a stale ticket retries at once, a current one waits for the renewal; a cancel fails the waiters
+with `off_peak_cancelled`. `refused_as_expired` matches the run's provider and its `providerErrorCode` or 3102/3106.
+
+A `sendText` carrying `modelExecution.offPeak` opens the run at admission (`open_off_peak_run`); a second active run
+is refused. The run keeps one idle model round from admission until its turn ends (pending inputs count as work). The
+live pump calls `turn_started` (records the turn whose `TurnStarted` carries the admitted command) and `turn_finished`
+(`main_ended` with the turn outcome, then `release_idle_model_round`). Cancel clears held rounds. The turn's limits carry
+the execution id (`TurnLimits.off_peak_execution`); the query run resolves its ticket through `OffPeakPort::ticket` and
+sends only that run's requests on it.
+
+Takeover is removed: no Rust caller existed, so the lifecycle has no `user_owned` state and no `UserTakeover` event.
+
+Divergences kept: the run's background tasks and queued notifications are not observed (the work snapshot is empty at
+turn end); the run opens at admission, not at turn start; the renewal is a `Retrying` notice (Node emits
+`waiting_ticket`).
+
+Not built yet: the ticket for subagent requests inside an off-peak turn, the selection-persistence check (`mode.rs`),
+and the policy flip (`workspace/updateOffPeakToolPolicy` still answers `enabled: false`). The flip stays last.
 
 What is blocked: an off-peak run's model requests must carry the ticket (`x-off-peak-ticket-id`, request auth from
 `modelExecution.requestAuth`), wait for a ticket when none is held, retry on the ticket-expired code

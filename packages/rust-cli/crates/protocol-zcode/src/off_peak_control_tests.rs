@@ -5,7 +5,8 @@ use super::*;
 
 fn runs_with_one() -> OffPeakRuns {
     let runs = OffPeakRuns::default();
-    runs.start("sess_1", "exe_1", "oft_1", "tkt_1").unwrap();
+    runs.start("sess_1", "exe_1", "oft_1", "tkt_1", "prov", "3105")
+        .unwrap();
     runs
 }
 
@@ -13,11 +14,12 @@ fn runs_with_one() -> OffPeakRuns {
 fn a_session_holds_one_active_run_and_a_second_start_is_refused() {
     let runs = runs_with_one();
     assert_eq!(
-        runs.start("sess_1", "exe_2", "oft_2", "tkt_2"),
+        runs.start("sess_1", "exe_2", "oft_2", "tkt_2", "prov", "3105"),
         Err(StartError::AlreadyActive)
     );
     // Another session is independent.
-    runs.start("sess_2", "exe_2", "oft_2", "tkt_2").unwrap();
+    runs.start("sess_2", "exe_2", "oft_2", "tkt_2", "prov", "3105")
+        .unwrap();
 }
 
 #[test]
@@ -26,7 +28,10 @@ fn control_matches_the_session_and_the_execution_or_answers_false() {
     let cancel = json!({"sessionId": "sess_1", "executionId": "exe_1", "action": "cancel"});
     assert!(!runs.control("sess_2", &cancel).accepted, "another session");
     let other = json!({"sessionId": "sess_1", "executionId": "exe_9", "action": "cancel"});
-    assert!(!runs.control("sess_1", &other).accepted, "another execution");
+    assert!(
+        !runs.control("sess_1", &other).accepted,
+        "another execution"
+    );
     assert!(runs.control("sess_1", &cancel).accepted);
 }
 
@@ -62,17 +67,26 @@ fn replace_ticket_takes_the_renewal_the_run_asked_for_and_refuses_a_stale_one() 
     });
     assert!(!runs.control("sess_1", &replace).accepted);
     // The run's ticket expires: the lifecycle asks for renewal 1.
-    let asked = runs.ticket_expired("sess_1", "tkt_1");
+    let Expiry::Renewing(asked) = runs.expire_ticket("sess_1", "exe_1", "tkt_1") else {
+        panic!("the current ticket asks for a renewal");
+    };
     assert_eq!(asked.len(), 2);
     assert_eq!(asked[1]["type"], "ticket_needed");
     assert_eq!(asked[1]["renewalId"], 1);
     let control = runs.control("sess_1", &replace);
     assert!(control.accepted);
     assert_eq!(control.notifications[0]["type"], "ticket_released");
-    assert!(!runs.control("sess_1", &json!({
-        "sessionId": "sess_1", "executionId": "exe_1", "action": "replace_ticket",
-        "renewalId": 7, "ticketId": "tkt_3", "requestAuth": {"apiKey": "k"},
-    })).accepted);
+    assert!(
+        !runs
+            .control(
+                "sess_1",
+                &json!({
+                    "sessionId": "sess_1", "executionId": "exe_1", "action": "replace_ticket",
+                    "renewalId": 7, "ticketId": "tkt_3", "requestAuth": {"apiKey": "k"},
+                })
+            )
+            .accepted
+    );
 }
 
 #[test]
@@ -80,5 +94,30 @@ fn a_finished_run_leaves_a_new_one_free_to_start() {
     let runs = runs_with_one();
     let cancel = json!({"sessionId": "sess_1", "executionId": "exe_1", "action": "cancel"});
     runs.control("sess_1", &cancel);
-    runs.start("sess_1", "exe_2", "oft_2", "tkt_2").unwrap();
+    runs.start("sess_1", "exe_2", "oft_2", "tkt_2", "prov", "3105")
+        .unwrap();
+}
+
+/// Node `offPeakToolEnabled`: a session's create or resume flag wins, the workspace policy is the default. The policy
+/// answer itself stays `enabled: false` until the flip.
+#[test]
+fn the_tools_follow_the_session_flag_and_fall_back_to_the_policy() {
+    let runs = OffPeakRuns::default();
+    assert!(
+        !runs.tools_enabled("sess_1"),
+        "off until the Host enables them"
+    );
+    runs.set_session_enabled("sess_1", true);
+    assert!(runs.tools_enabled("sess_1"));
+    runs.set_session_enabled("sess_1", false);
+    assert!(
+        !runs.tools_enabled("sess_1"),
+        "an explicit false overrides the policy"
+    );
+    runs.set_policy(true);
+    assert!(
+        runs.tools_enabled("sess_2"),
+        "a session without a flag takes the policy"
+    );
+    assert!(!runs.tools_enabled("sess_1"));
 }

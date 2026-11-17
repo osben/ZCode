@@ -31,6 +31,7 @@ mod network_capture;
 mod off_peak_control;
 mod off_peak_lifecycle;
 mod off_peak_port;
+mod off_peak_ticket;
 mod preparation;
 mod presence_gate;
 mod projection;

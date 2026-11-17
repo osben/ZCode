@@ -490,6 +490,10 @@ impl Server {
             // Fork: the off-peak tools are not ported yet (specs/fork-rust-automations.md, slice 3): answer disabled, so
             // the Host does not assume OffPeakCreate / OffPeakList exist.
             "workspace/updateOffPeakToolPolicy" => {
+                // The policy is stored for the sessions that follow, but the answer stays `false` until the flip.
+                if let Some(enabled) = params["enabled"].as_bool() {
+                    self.context.off_peak.set_policy(enabled);
+                }
                 reply(json!({"workspace": params["workspace"], "enabled": false}))
             }
             // 动态工作流不移植（P4 决定）：回 disabled 生效。

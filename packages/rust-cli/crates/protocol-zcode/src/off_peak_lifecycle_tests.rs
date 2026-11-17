@@ -101,22 +101,6 @@ fn a_stale_or_unknown_renewal_is_refused() {
 }
 
 #[test]
-fn a_takeover_hands_the_run_to_the_user_and_refuses_idle_rounds() {
-    let mut life = OffPeakLifecycle::new("tkt_1");
-    life.work_changed(running());
-    life.drain_events();
-    life.take_over();
-    assert!(life.owned_by_user());
-    assert_eq!(life.state(), State::RunningUser);
-    assert!(!life.retain_idle_model_round(), "the user owns the run now");
-    let events = life.drain_events();
-    assert_eq!(events[0], Event::UserTakeover);
-    assert!(events.contains(&Event::TicketReleased {
-        ticket_id: "tkt_1".to_owned()
-    }));
-}
-
-#[test]
 fn an_idle_model_round_keeps_the_run_open_until_released() {
     let mut life = OffPeakLifecycle::new("tkt_1");
     life.work_changed(running());
@@ -125,8 +109,10 @@ fn an_idle_model_round_keeps_the_run_open_until_released() {
     life.work_changed(idle());
     assert!(!life.terminal(), "a model round still holds the run");
     life.release_idle_model_round(idle());
-    assert_eq!(life.outcome(), Outcome::Failed);
     assert!(life.terminal());
+    assert!(life.drain_events().contains(&Event::Completed {
+        outcome: Outcome::Failed
+    }));
 }
 
 #[test]

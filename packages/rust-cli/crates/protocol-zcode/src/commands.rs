@@ -88,6 +88,26 @@ pub(crate) struct Input {
     /// Fork: the off-peak task whose run this input is (specs/fork-rust-automations.md, slice 3). It hides OffPeakCreate
     /// on the turn it opens ([`TurnLimits`]); the off-peak dispatch itself is not ported yet.
     off_peak_task_id: Option<String>,
+    /// Fork: `modelExecution` (slice 3 layer B). Only its `offPeak` run is read: the run opens when the input is
+    /// admitted, and the turn's limits name its execution.
+    model_execution: Option<ModelExecutionInput>,
+}
+
+/// Fork: the `modelExecution` of an input (Node `ModelExecutionContext`); only `offPeak` is ported.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ModelExecutionInput {
+    #[serde(default)]
+    off_peak: Option<OffPeakRunInput>,
+}
+
+/// Fork: the off-peak run an input opens (`modelExecution.offPeak`, checked by the inbound schema).
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct OffPeakRunInput {
+    execution_id: String,
+    ticket_id: String,
+    provider_error_code: String,
 }
 
 /// Fork: `heldQueueDisposition` (`command.ts`).
@@ -1506,6 +1526,53 @@ fn source_in_schema_order(source: &Value) -> Value {
 /// (`heldQueueDispositionRequired`), a queue that changed since the client's confirmation is stale
 /// (`guard.heldQueueConfirmationStale`), `clearQueueAndSend` drops the waiting items and releases the hold, and
 /// `keepQueueAndSend` leaves them. The input itself then starts at once: an idle submit is not held.
+/// Fork (slice 3 layer B, Node `prepareOffPeakTurn`): an input carrying `modelExecution.offPeak` opens the run it names. A
+/// session with another active run refuses it. The run starts at admission, not at the turn's start (divergence).
+fn open_off_peak_run(
+    server: &Server,
+    session: &str,
+    input: &Input,
+    command: &str,
+    revision: u64,
+) -> Result<(), Box<Ack>> {
+    let Some(run) = input
+        .model_execution
+        .as_ref()
+        .and_then(|execution| execution.off_peak.as_ref())
+    else {
+        return Ok(());
+    };
+    let provider = selection(input.model_selection.as_ref())
+        .map(|chosen| chosen.provider)
+        .unwrap_or_default();
+    let task = input.off_peak_task_id.as_deref().unwrap_or_default();
+    server
+        .context
+        .off_peak
+        .start(
+            session,
+            &run.execution_id,
+            task,
+            &run.ticket_id,
+            &provider,
+            &run.provider_error_code,
+        )
+        .map_err(|_| {
+            Box::new(Ack::refused(
+                command,
+                Status::Failed,
+                "off_peak_execution_already_active",
+                "off_peak_execution_already_active",
+                revision,
+            ))
+        })?;
+    server
+        .context
+        .off_peak
+        .note_command(session, &run.execution_id, command);
+    Ok(())
+}
+
 async fn held_queue_choice(
     handle: &dyn SessionHandle,
     live: &crate::live::Live,
@@ -1600,7 +1667,14 @@ fn input_execution(
     {
         hidden.push(rust_cli_kernel_api::tool_names::OFF_PEAK_CREATE.to_owned());
     }
-    let limits = TurnLimits::new(input.automation_id.as_deref(), hidden);
+    // Fork (slice 3 layer B): the turn's model requests are sent on the off-peak run's ticket.
+    let off_peak = input
+        .model_execution
+        .as_ref()
+        .and_then(|execution| execution.off_peak.as_ref())
+        .map(|run| run.execution_id.as_str());
+    let limits =
+        TurnLimits::new(input.automation_id.as_deref(), hidden).with_off_peak_execution(off_peak);
     if chosen.is_none() && resolved.is_none() && limits.is_empty() {
         return None;
     }
@@ -1843,6 +1917,16 @@ async fn send_text(
     )
     .await
     {
+        return *ack;
+    }
+    // Fork (slice 3 layer B): an off-peak input opens its run before it is admitted.
+    if let Err(ack) = open_off_peak_run(
+        server,
+        handle.id().as_str(),
+        &input,
+        envelope.command_id.as_str(),
+        revision,
+    ) {
         return *ack;
     }
     let execution = input_execution(&input, view.as_ref());

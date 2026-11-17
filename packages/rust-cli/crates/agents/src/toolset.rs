@@ -29,7 +29,15 @@ const ALL_AGENT_DISALLOWED: &[&str] = &[
 ];
 
 /// Fork: the desktop Cron tools (Node registers them for the main session only).
-const MAIN_SESSION_CRON: &[&str] = &tool_names::CRON_TOOLS;
+const MAIN_SESSION_CRON: &[&str] = &[
+    tool_names::CRON_CREATE,
+    tool_names::CRON_DELETE,
+    tool_names::CRON_LIST,
+    tool_names::CRON_UPDATE,
+    tool_names::CRON_PAUSE_SELF,
+    tool_names::OFF_PEAK_CREATE,
+    tool_names::OFF_PEAK_LIST,
+];
 
 /// Fork (node_desktop): the subagent tools. Node runs every child runtime with `subagents.enabled: false` (core
 /// `runtime/methods/subagent.ts`), so a child has no subagent port, no Agent and no SendMessage; Node has no ListAgents.
