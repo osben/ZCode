@@ -441,3 +441,20 @@ fn the_logged_failure_reason_is_cut_to_300_characters() {
     assert!(long.starts_with(&logged));
     assert_eq!(logged_reason("closed"), "closed");
 }
+
+/// A helper-hosted server (the official plugins' `documents`, `pdf`, ...) starts only when a session first needs it,
+/// so its status stays `Pending` with no connection task. A settings read must not wait for it.
+#[tokio::test]
+async fn a_deferred_helper_server_does_not_hold_wait_ready() {
+    let fake = Arc::new(FakeMcp::default());
+    let scope = TaskScope::root("test", |_| {});
+    let manager = manager(fake, &scope);
+    let deferred = McpServer {
+        transport: McpTransportConfig::NodeHelper,
+        ..config("documents", false)
+    };
+    manager.start(workspace(), vec![deferred]);
+    tokio::time::timeout(std::time::Duration::from_secs(2), manager.wait_ready())
+        .await
+        .expect("wait_ready waited on a helper server that was never started");
+}
