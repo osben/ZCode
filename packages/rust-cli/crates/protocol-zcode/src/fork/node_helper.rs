@@ -13,8 +13,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use futures_util::FutureExt;
 use futures_util::future::{BoxFuture, Shared};
-use rust_cli_base::Spawner;
 use rust_cli_base::sync::LockUnpoisoned;
+use rust_cli_base::{Spawner, Task};
 use rust_cli_protocol_core::connection::{self, CONNECTION_CLOSED, Options, Peer, Reply, Service};
 use rust_cli_protocol_core::rpc::RpcError;
 use serde_json::{Value, json};
@@ -164,6 +164,23 @@ pub struct NodeHelperProcess {
     pub stdin: Box<dyn AsyncWrite + Send + Unpin>,
     pub stdout: Box<dyn AsyncBufRead + Send + Unpin>,
     pub guard: Box<dyn Send>,
+}
+
+/// Releases the helper's stdin when the process is retired. The protocol writer task owns the write half and only
+/// ends once every `Peer` clone is gone, and the reader task keeps one until the helper's stdout closes, which is
+/// after the helper exits. Without this, a retired helper never sees EOF, so its F4a stop grace always expires.
+struct WriterRelease {
+    writer: Task<()>,
+    /// Dropped after `writer` is aborted, so the process guard's stop starts once stdin is closed.
+    _process: Box<dyn Send>,
+}
+
+impl Drop for WriterRelease {
+    fn drop(&mut self) {
+        // Aborting the writer drops the write half (EOF for the helper). The process guard drops after this, so
+        // its stop task starts with the helper already told to shut down.
+        self.writer.abort();
+    }
 }
 
 /// Starts one helper process. The implementation owns the child's stderr.
@@ -447,7 +464,11 @@ impl NodeHelper {
             stdout,
             guard,
         } = process;
-        let (peer, _writer) = connection::start(stdin, &self.spawner, Options::default());
+        let (peer, writer) = connection::start(stdin, &self.spawner, Options::default());
+        let guard: Box<dyn Send> = Box::new(WriterRelease {
+            writer,
+            _process: guard,
+        });
         let relay = Arc::new(Relay {
             host: self.host.clone(),
             helper: self.myself.clone(),
