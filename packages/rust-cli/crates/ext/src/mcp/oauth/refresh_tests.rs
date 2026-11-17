@@ -68,11 +68,25 @@ impl RefreshStore {
         self.raw.lock().unwrap().get(&key(name)).cloned()
     }
 
+    /// Writes the canonical record and its legacy mirror in one batch, as Node's `publishCanonicalCredentials`
+    /// does. A v2 record without its mirror means an older provider invalidated the tokens (Node), so the mirror
+    /// is part of a usable record.
     async fn seed(&self, value: String) {
-        self.apply(&[McpOAuthWrite::Put {
-            key: key("authorization_credentials"),
-            value,
-        }])
+        let parsed: Value = serde_json::from_str(&value).expect("canonical JSON");
+        self.apply(&[
+            McpOAuthWrite::Put {
+                key: key("authorization_credentials"),
+                value: value.clone(),
+            },
+            McpOAuthWrite::Put {
+                key: key("client_information"),
+                value: parsed["client_information"].to_string(),
+            },
+            McpOAuthWrite::Put {
+                key: key("tokens"),
+                value: parsed["tokens"].to_string(),
+            },
+        ])
         .await
         .unwrap();
     }
@@ -165,14 +179,26 @@ type Route =
 struct ScriptedRuntime {
     route: Route,
     posts: Mutex<Vec<OAuthHttpRequest>>,
+    gets: Mutex<Vec<String>>,
 }
 
 impl ScriptedRuntime {
     fn new(reply: TokenReply) -> Arc<Self> {
+        Self::with_metadata(
+            reply,
+            Some(json!({"authorization_servers": [AS_URL], "resource": SERVER_URL})),
+        )
+    }
+
+    /// `metadata` is the protected-resource document; `None` answers 404 (no metadata).
+    fn with_metadata(reply: TokenReply, metadata: Option<Value>) -> Arc<Self> {
         let route: Route = Box::new(move |request: &OAuthHttpRequest| {
             let url = request.url.as_str();
             if url.ends_with("/.well-known/oauth-protected-resource/mcp") {
-                return Ok(response(200, json!({"authorization_servers": [AS_URL]})));
+                return Ok(match &metadata {
+                    Some(document) => response(200, document.clone()),
+                    None => response(404, json!({})),
+                });
             }
             if url.ends_with("/.well-known/oauth-authorization-server") {
                 return Ok(response(
@@ -198,11 +224,17 @@ impl ScriptedRuntime {
         Arc::new(Self {
             route,
             posts: Mutex::new(Vec::new()),
+            gets: Mutex::new(Vec::new()),
         })
     }
 
     fn token_posts(&self) -> Vec<OAuthHttpRequest> {
         self.posts.lock().unwrap().clone()
+    }
+
+    /// The URLs fetched with GET, in order (discovery requests).
+    fn gets(&self) -> Vec<String> {
+        self.gets.lock().unwrap().clone()
     }
 }
 
@@ -227,6 +259,8 @@ impl McpOAuthRuntime for ScriptedRuntime {
     async fn http(&self, request: OAuthHttpRequest) -> Result<OAuthHttpResponse, OAuthHttpError> {
         if request.method == "POST" {
             self.posts.lock().unwrap().push(request.clone());
+        } else {
+            self.gets.lock().unwrap().push(request.url.clone());
         }
         // Yield so that concurrent callers reach the lock while this request is in flight.
         tokio::task::yield_now().await;
@@ -579,4 +613,176 @@ async fn coordinator_reports_no_bearer_when_the_grant_is_invalid() {
         .expect("store readable");
 
     assert_eq!(bearer, None);
+}
+
+/// Node `deriveCredentialPair` for a legacy-only record (no canonical key): the old `client_information` and
+/// `tokens` keys refresh like a canonical record, and the refreshed record is published as canonical v2.
+#[tokio::test]
+async fn a_legacy_only_record_refreshes_and_is_published_canonical() {
+    let store = RefreshStore::default();
+    store.raw.lock().unwrap().insert(
+        key("client_information"),
+        json!({"client_id": "client-1"}).to_string(),
+    );
+    store.raw.lock().unwrap().insert(
+        key("tokens"),
+        json!({"access_token": "old", "token_type": "Bearer", "refresh_token": "refresh-1"})
+            .to_string(),
+    );
+    let runtime = ScriptedRuntime::new(TokenReply::Json(fresh_tokens("new", Some("refresh-2"))));
+    let token = refresh_under_lock(&store, &*runtime, &input(true, None))
+        .await
+        .expect("a legacy refresh token is spent");
+    assert_eq!(token, "new");
+    assert_eq!(runtime.token_posts().len(), 1);
+    let canonical: Value = serde_json::from_str(&store.value("authorization_credentials").unwrap())
+        .expect("canonical record");
+    assert_eq!(canonical["version"], json!(2));
+    assert_eq!(canonical["tokens"]["access_token"], json!("new"));
+}
+
+/// Node `refreshAuthorization({ resource })`: the protected-resource metadata names the resource, and it covers
+/// the server URL, so the refresh request carries RFC 8707 `resource`.
+#[tokio::test]
+async fn refresh_sends_the_resource_the_protected_resource_metadata_names() {
+    let store = RefreshStore::default();
+    store
+        .seed(canonical("old", Some("refresh-1"), "gen-1", NOW - 1))
+        .await;
+    let runtime = ScriptedRuntime::with_metadata(
+        TokenReply::Json(fresh_tokens("new", Some("refresh-2"))),
+        Some(json!({"authorization_servers": [AS_URL], "resource": SERVER_URL})),
+    );
+    refresh_under_lock(&store, &*runtime, &input(true, None))
+        .await
+        .expect("refresh");
+    let body = runtime.token_posts()[0].body.clone().unwrap_or_default();
+    assert!(
+        body.contains("resource=https%3A%2F%2Fmcp.example.test%2Fmcp"),
+        "resource missing from {body}"
+    );
+}
+
+/// Without protected-resource metadata in the discovery record, Node passes no `resource`.
+#[tokio::test]
+async fn refresh_omits_resource_without_protected_resource_metadata() {
+    let store = RefreshStore::default();
+    store
+        .seed(canonical("old", Some("refresh-1"), "gen-1", NOW - 1))
+        .await;
+    store
+        .apply(&[
+            McpOAuthWrite::Put {
+                key: key("discovery_state"),
+                value: json!({
+                    "authorizationServerUrl": AS_URL,
+                    "authorizationServerMetadata": {"issuer": AS_URL, "token_endpoint": TOKEN_URL},
+                })
+                .to_string(),
+            },
+            McpOAuthWrite::Put {
+                key: key("discovery_state_fetched_at"),
+                value: (NOW - 60_000).to_string(),
+            },
+        ])
+        .await
+        .unwrap();
+    let runtime = ScriptedRuntime::new(TokenReply::Json(fresh_tokens("new", Some("refresh-2"))));
+    refresh_under_lock(&store, &*runtime, &input(true, None))
+        .await
+        .expect("refresh");
+    let body = runtime.token_posts()[0].body.clone().unwrap_or_default();
+    assert!(!body.contains("resource="), "unexpected resource in {body}");
+}
+
+/// Metadata whose `resource` does not cover the server is a discovery failure: proactive refresh keeps the
+/// current token and sends no token request (Node `selectResourceURL` throws, `failSoft`).
+#[tokio::test]
+async fn a_resource_that_does_not_cover_the_server_fails_soft_without_a_token_request() {
+    let store = RefreshStore::default();
+    store
+        .seed(canonical("old", Some("refresh-1"), "gen-1", NOW - 1))
+        .await;
+    let runtime = ScriptedRuntime::with_metadata(
+        TokenReply::Json(fresh_tokens("new", Some("refresh-2"))),
+        Some(
+            json!({"authorization_servers": [AS_URL], "resource": "https://other.example.test/mcp"}),
+        ),
+    );
+    let token = refresh_under_lock(&store, &*runtime, &input(false, None))
+        .await
+        .expect("proactive refresh keeps the current token");
+    assert_eq!(token, "old");
+    assert!(runtime.token_posts().is_empty());
+}
+
+/// A cached discovery record that is fresh and matches the issuer is used: no discovery request.
+#[tokio::test]
+async fn a_fresh_cached_discovery_record_is_used_without_discovery_requests() {
+    let store = RefreshStore::default();
+    store
+        .seed(canonical("old", Some("refresh-1"), "gen-1", NOW - 1))
+        .await;
+    store
+        .apply(&[
+            McpOAuthWrite::Put {
+                key: key("discovery_state"),
+                value: json!({
+                    "authorizationServerUrl": AS_URL,
+                    "authorizationServerMetadata": {
+                        "issuer": AS_URL,
+                        "token_endpoint": TOKEN_URL,
+                    },
+                })
+                .to_string(),
+            },
+            McpOAuthWrite::Put {
+                key: key("discovery_state_fetched_at"),
+                value: (NOW - 60_000).to_string(),
+            },
+        ])
+        .await
+        .unwrap();
+    let runtime = ScriptedRuntime::new(TokenReply::Json(fresh_tokens("new", Some("refresh-2"))));
+    refresh_under_lock(&store, &*runtime, &input(true, None))
+        .await
+        .expect("refresh");
+    assert!(
+        runtime.gets().is_empty(),
+        "discovery was fetched: {:?}",
+        runtime.gets()
+    );
+    assert_eq!(runtime.token_posts().len(), 1);
+}
+
+/// An expired discovery record is rediscovered, and the new record is saved with its timestamp (Node
+/// `resolveAsMetadata` saves what it discovered).
+#[tokio::test]
+async fn an_expired_discovery_record_is_rediscovered_and_saved() {
+    let store = RefreshStore::default();
+    store
+        .seed(canonical("old", Some("refresh-1"), "gen-1", NOW - 1))
+        .await;
+    store.apply(&[
+        McpOAuthWrite::Put {
+            key: key("discovery_state"),
+            value: json!({"authorizationServerUrl": AS_URL, "authorizationServerMetadata": {"issuer": AS_URL, "token_endpoint": TOKEN_URL}}).to_string(),
+        },
+        McpOAuthWrite::Put {
+            key: key("discovery_state_fetched_at"),
+            value: (NOW - 25 * 60 * 60 * 1000).to_string(),
+        },
+    ]).await.unwrap();
+    let runtime = ScriptedRuntime::new(TokenReply::Json(fresh_tokens("new", Some("refresh-2"))));
+    refresh_under_lock(&store, &*runtime, &input(true, None))
+        .await
+        .expect("refresh");
+    assert!(
+        !runtime.gets().is_empty(),
+        "an expired record must be rediscovered"
+    );
+    assert_eq!(
+        store.value("discovery_state_fetched_at").as_deref(),
+        Some(NOW.to_string().as_str())
+    );
 }

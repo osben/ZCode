@@ -32,12 +32,24 @@ fn canonical_with(access: &str, expires_at: Option<i64>) -> String {
     value.to_string()
 }
 
+/// The canonical record and its legacy mirror, as Node publishes them (see `refresh_tests::RefreshStore::seed`).
 async fn seed(store: &MemoryStore, value: String) {
+    let parsed: serde_json::Value = serde_json::from_str(&value).expect("canonical JSON");
     store
-        .apply(&[McpOAuthWrite::Put {
-            key: credential_key(&prefix(), "authorization_credentials"),
-            value,
-        }])
+        .apply(&[
+            McpOAuthWrite::Put {
+                key: credential_key(&prefix(), "authorization_credentials"),
+                value,
+            },
+            McpOAuthWrite::Put {
+                key: credential_key(&prefix(), "client_information"),
+                value: parsed["client_information"].to_string(),
+            },
+            McpOAuthWrite::Put {
+                key: credential_key(&prefix(), "tokens"),
+                value: parsed["tokens"].to_string(),
+            },
+        ])
         .await
         .expect("seed");
 }

@@ -404,3 +404,36 @@ fn the_ended_background_command_is_a_background_read() {
     assert_eq!(op.capability(), Capability::Background);
     assert_eq!(op.kind(), OpKind::Read);
 }
+
+/// PR4 (b): an HTTP error keeps its status and its `WWW-Authenticate` header on the wire. The kind is `http`,
+/// and the header is optional.
+#[test]
+fn an_http_error_keeps_its_challenge_header_on_the_wire() {
+    let error = WireError::Http {
+        status: 403,
+        message: "HTTP 403: forbidden".to_owned(),
+        www_authenticate: Some(
+            r#"Bearer error="insufficient_scope", scope="mcp:write""#.to_owned(),
+        ),
+    };
+    let encoded = serde_json::to_value(&error).expect("encode");
+    assert_eq!(encoded["kind"], json!("http"));
+    assert_eq!(encoded["status"], json!(403));
+    let decoded: WireError = serde_json::from_value(encoded).expect("decode");
+    assert_eq!(decoded, error);
+
+    let without: WireError = serde_json::from_value(json!({
+        "kind": "http",
+        "status": 401,
+        "message": "HTTP 401: unauthorized",
+    }))
+    .expect("the header is optional");
+    assert_eq!(
+        without,
+        WireError::Http {
+            status: 401,
+            message: "HTTP 401: unauthorized".to_owned(),
+            www_authenticate: None,
+        }
+    );
+}

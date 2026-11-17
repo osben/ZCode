@@ -450,8 +450,15 @@ pub(crate) fn shell_notice(notice: ShellNotice) -> ws::ShellNotice {
 pub(crate) fn mcp_error(error: McpError) -> WireError {
     match error {
         McpError::Connect { message } | McpError::Io { message } => WireError::Io { message },
-        // The challenge header does not cross the executor wire yet: the remote side sees the status text only.
-        McpError::Http { message, .. } => WireError::Io { message },
+        McpError::Http {
+            status,
+            message,
+            www_authenticate,
+        } => WireError::Http {
+            status,
+            message,
+            www_authenticate,
+        },
         McpError::Closed { message } => WireError::NotFound { path: message },
         McpError::Unsupported { what } => WireError::Unsupported { what },
     }

@@ -138,7 +138,15 @@ fn route(
             ok(json!({"resource": format!("{base}/mcp"), "authorization_servers": [base]}))
         }
         ("GET", p) if p.starts_with("/.well-known/oauth-protected-resource") => {
-            ok(json!({"resource": format!("{base}/mcp"), "authorization_servers": [base]}))
+            // The resource is the server path the metadata was asked for (RFC 9728), so every test server
+            // (`/mcp`, `/mcp-live`, `/mcp-concurrent`, ...) is covered by its own metadata.
+            let server_path = p.trim_start_matches("/.well-known/oauth-protected-resource");
+            let server_path = if server_path.is_empty() {
+                "/mcp"
+            } else {
+                server_path
+            };
+            ok(json!({"resource": format!("{base}{server_path}"), "authorization_servers": [base]}))
         }
         ("GET", "/.well-known/oauth-authorization-server") => ok(json!({
             "issuer": base,
@@ -573,6 +581,26 @@ async fn harness() -> Harness {
     }
 }
 
+/// The canonical record and its legacy mirror (`client_information`, `tokens`), written in one batch as Node's
+/// `publishCanonicalCredentials` does. A v2 record without its mirror reads as invalidated (Node).
+fn mirrored(prefix: &str, canonical: String) -> Vec<McpOAuthWrite> {
+    let parsed: serde_json::Value = serde_json::from_str(&canonical).expect("canonical JSON");
+    vec![
+        McpOAuthWrite::Put {
+            key: credential_key(prefix, "authorization_credentials"),
+            value: canonical,
+        },
+        McpOAuthWrite::Put {
+            key: credential_key(prefix, "client_information"),
+            value: parsed["client_information"].to_string(),
+        },
+        McpOAuthWrite::Put {
+            key: credential_key(prefix, "tokens"),
+            value: parsed["tokens"].to_string(),
+        },
+    ]
+}
+
 /// A stored canonical record as Node writes it (version 2), for one server's credential key prefix.
 fn canonical_record(access: &str, refresh: &str, expires_at_ms: i64) -> String {
     json!({
@@ -659,10 +687,10 @@ async fn refresh_and_reauthorization_work_over_real_http() {
     for (name, access, refresh, expires_at) in seeds {
         let prefix = credential_key_prefix(name, &format!("{base}/mcp-{name}"), None, None, None);
         store
-            .apply(&[McpOAuthWrite::Put {
-                key: credential_key(&prefix, "authorization_credentials"),
-                value: canonical_record(access, refresh, expires_at),
-            }])
+            .apply(&mirrored(
+                &prefix,
+                canonical_record(access, refresh, expires_at),
+            ))
             .await
             .expect("seed");
     }
@@ -782,10 +810,10 @@ async fn a_401_during_a_tool_call_refreshes_and_retries_over_real_http() {
     let store = h.platform.mcp_oauth_store();
     let prefix = credential_key_prefix("live", &format!("{base}/mcp-live"), None, None, None);
     store
-        .apply(&[McpOAuthWrite::Put {
-            key: credential_key(&prefix, "authorization_credentials"),
-            value: canonical_record("live-old", "refresh-ok-live", now_ms() + 3_600_000),
-        }])
+        .apply(&mirrored(
+            &prefix,
+            canonical_record("live-old", "refresh-ok-live", now_ms() + 3_600_000),
+        ))
         .await
         .expect("seed");
     h.manager.start(
@@ -844,10 +872,10 @@ async fn a_403_insufficient_scope_reauthorizes_with_the_header_scope_over_real_h
     let store = h.platform.mcp_oauth_store();
     let prefix = credential_key_prefix("scope", &format!("{base}/mcp-scope"), None, None, None);
     store
-        .apply(&[McpOAuthWrite::Put {
-            key: credential_key(&prefix, "authorization_credentials"),
-            value: canonical_record("scope-token", "refresh-ok-scope", now_ms() + 3_600_000),
-        }])
+        .apply(&mirrored(
+            &prefix,
+            canonical_record("scope-token", "refresh-ok-scope", now_ms() + 3_600_000),
+        ))
         .await
         .expect("seed");
     h.manager.start(
@@ -892,10 +920,10 @@ async fn concurrent_refreshes_make_one_token_request_over_real_http() {
     let url = format!("{base}/mcp-concurrent");
     let prefix = credential_key_prefix("concurrent", &url, None, None, None);
     store
-        .apply(&[McpOAuthWrite::Put {
-            key: credential_key(&prefix, "authorization_credentials"),
-            value: canonical_record("stale-c", "refresh-ok-concurrent", now_ms() - 60_000),
-        }])
+        .apply(&mirrored(
+            &prefix,
+            canonical_record("stale-c", "refresh-ok-concurrent", now_ms() - 60_000),
+        ))
         .await
         .expect("seed");
 

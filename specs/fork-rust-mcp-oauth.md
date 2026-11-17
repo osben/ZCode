@@ -418,7 +418,7 @@ Scope: OAuth for plugin MCP servers (#501 rows), the follower reconnect, and the
 
 Node's follower (`followAuthorization`) polls the canonical credentials until the transaction TTL, returns
 `already-authorized` when a newer generation appears, and its MCP client then reconnects. Rust: after
-`run_lead` returns `Pending`, the spawned flow task polls the canonical generation (100 ms, bounded by the
+`run_lead` returns `Pending`, the spawned flow task polls the canonical generation (500 ms, Node FOLLOWER_POLL_INTERVAL_MS, bounded by the
 TTL, ends on cancel) and reconnects its own manager when the generation moved.
 
 ### Deviations closed
@@ -461,3 +461,31 @@ canonical `issuer`); on a miss it discovers and saves the record, as Node `resol
 8. A cached discovery record is used without a discovery request; an expired one is rediscovered and saved.
 9. Follower: a second lane's manager reconnects after the lead publishes (integration test, real HTTP).
 10. E2E `conversation-session/plugins/conversation-session-mcp-oauth-status-isolation` passes on Rust and on Node.
+
+### As built in PR4
+
+- Plugin servers: `parse.rs` `plugin_oauth` (Node's lenient rules; tests `plugin_servers_read_their_oauth_block_leniently`
+  and `user_servers_do_not_read_the_plugin_oauth_block`). `effective_oauth` defaults plugin and user remote servers to
+  `authorization_code` unless they carry an `Authorization` header. `plugin_row_config` carries `url` and the identity
+  fields only (test `plugin_rows_carry_the_url_and_the_oauth_identity_without_secrets`).
+- Follower: `coordinator.rs` `follow` polls the canonical generation every 500 ms (Node `FOLLOWER_POLL_INTERVAL_MS`)
+  until the TTL or cancel, then reconnects its own server. No unit test yet (see below).
+- (a) `flow.rs` `requested_scope` reads the stored token scope through `pair::load_pair` and asks for
+  `union_scopes(config, token, challenge)`. The same value goes to DCR and to the authorize request.
+- (b) `exec-wire` `WireError::Http { status, message, www_authenticate }` (kind `http`), mapped in
+  `exec-server/convert_out.rs` and `env-remote/from_wire.rs`. The exec wire is Rust-only; `zcode-protocol/index.ts`
+  is unchanged. The header is optional on decode. An older peer cannot decode kind `http`.
+- (c) `pair.rs` ports Node's `deriveCredentialPair`. Refresh, the bearer path (`fresh_bearer`) and the scope read use
+  it. A v2 record without its legacy `tokens` mirror counts as invalidated, as in Node; the test seeds write the mirror
+  as Node's publish does.
+- (d) `discover` returns the protected-resource metadata; `save_discovery` stores it as `resourceMetadata`;
+  `refresh.rs` `select_resource` follows the SDK `selectResourceURL` and `checkResourceAllowed`, and sends `resource`.
+  Metadata whose resource does not cover the server fails soft.
+- (e) `refresh.rs` `resolve_authorization_server` reads `load_discovery` (24 h, issuer-checked) and saves a fresh
+  discovery record on a miss.
+
+### Not verified in PR4
+
+- No follower reconnect integration test (acceptance 9); the follower path is covered by review only.
+- No Node-generated fixtures for the new pair branches or the discovery record; those tests use records written by hand
+  from Node's source.

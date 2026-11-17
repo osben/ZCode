@@ -13,9 +13,10 @@ use serde_json::Value;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-use super::flow::{FlowInput, FlowOutcome, discover, run_lead};
-use super::keys::credential_key;
+use super::flow::{FlowInput, FlowOutcome, discover, key_prefix_of, run_lead};
+use super::pair::load_pair;
 use super::protocol::{basic_auth, token_form_client_credentials};
+use super::record::load_canonical;
 use super::refresh::{RefreshError, RefreshInput, refresh_under_lock};
 use super::{
     McpOAuthConfig, McpOAuthRuntime, McpOAuthStore, McpOAuthStoreError, OAuthHttpError,
@@ -27,7 +28,18 @@ pub type ReconnectFn = Arc<dyn Fn(&str) + Send + Sync>;
 
 /// Node `MCP_OAUTH_EXPIRY_SKEW_MS`: a token this close to expiry is not sent.
 const EXPIRY_SKEW_MS: i64 = 30_000;
-const CANONICAL_KEY: &str = "authorization_credentials";
+/// Node `FOLLOWER_POLL_INTERVAL_MS`: how often a follower re-reads the canonical credentials.
+const FOLLOWER_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// The generation of the canonical record, `None` when there is none or it is unusable (Node
+/// `loadCanonicalCredentials`). A store failure reads as absent: the follower keeps waiting.
+async fn canonical_generation(store: &dyn McpOAuthStore, key_prefix: &str) -> Option<String> {
+    load_canonical(store, key_prefix)
+        .await
+        .ok()
+        .flatten()
+        .map(|canonical| canonical.generation)
+}
 
 struct FlowTask {
     cancel: CancellationToken,
@@ -79,26 +91,19 @@ impl McpOAuthCoordinator {
         &self,
         input: &RefreshInput,
     ) -> Result<Option<String>, McpOAuthStoreError> {
-        let Some(raw) = self
-            .store
-            .load(&credential_key(&input.key_prefix, CANONICAL_KEY))
-            .await?
-        else {
+        // Node `token()` reads the pair through `loadCredentialPair`, so legacy records are used too.
+        let Some(pair) = load_pair(&*self.store, &input.key_prefix).await? else {
             return Ok(None);
         };
-        let Ok(canonical) = serde_json::from_str::<Value>(&raw) else {
-            return Ok(None);
-        };
-        let Some(access) = canonical["tokens"]["access_token"].as_str() else {
+        let Some(access) = pair.access_token() else {
             return Ok(None);
         };
         let now = self.now_ms();
         // Node `isCanonicalTokenNearExpiry`: a record without `expires_at` counts as near expiry.
-        let near_expiry = canonical["expires_at"]
-            .as_i64()
+        let near_expiry = pair
+            .expires_at
             .is_none_or(|expires_at| now + EXPIRY_SKEW_MS >= expires_at);
-        let has_refresh_token = canonical["tokens"]["refresh_token"].is_string();
-        if !near_expiry || !has_refresh_token {
+        if !near_expiry || pair.refresh_token().is_none() {
             return Ok(Some(format!("Bearer {access}")));
         }
         let proactive = RefreshInput {
@@ -129,13 +134,54 @@ impl McpOAuthCoordinator {
         let task_cancel = cancel.clone();
         let name = server_name.clone();
         let handle = tokio::spawn(async move {
+            let key_prefix = key_prefix_of(&input);
+            let baseline = canonical_generation(&*this.store, &key_prefix).await;
             let outcome = run_lead(&*this.store, &*this.runtime, &input, &task_cancel).await;
-            if outcome == FlowOutcome::Authorized {
+            let authorized = match outcome {
+                FlowOutcome::Authorized => true,
+                // Node `followAuthorization`: the follower's client reconnects when another caller's
+                // credentials arrive, not when its own flow ends.
+                FlowOutcome::Pending { .. } => {
+                    this.follow(
+                        &key_prefix,
+                        baseline,
+                        input.transaction_ttl_ms,
+                        &task_cancel,
+                    )
+                    .await
+                }
+                FlowOutcome::Failed { .. } => false,
+            };
+            if authorized {
                 (this.reconnect)(&name);
             }
         });
         flows.insert(server_name, FlowTask { cancel, handle });
         true
+    }
+
+    /// Follower wait (Node `followAuthorization`): poll the canonical generation until it moves from `baseline`,
+    /// the transaction TTL passes, or the flow is cancelled. Returns whether newer credentials arrived.
+    async fn follow(
+        &self,
+        key_prefix: &str,
+        baseline: Option<String>,
+        ttl_ms: i64,
+        cancel: &CancellationToken,
+    ) -> bool {
+        let deadline = self.now_ms() + ttl_ms;
+        while self.now_ms() < deadline && !cancel.is_cancelled() {
+            if canonical_generation(&*self.store, key_prefix).await != baseline {
+                return canonical_generation(&*self.store, key_prefix)
+                    .await
+                    .is_some();
+            }
+            tokio::select! {
+                () = tokio::time::sleep(FOLLOWER_POLL_INTERVAL) => {}
+                () = cancel.cancelled() => return false,
+            }
+        }
+        false
     }
 
     /// Cancel the running flow for `server_name`. Its wait ends, its own pending record is removed and its
@@ -185,7 +231,7 @@ impl McpOAuthCoordinator {
             return Ok(token.bearer.clone());
         }
 
-        let (_, metadata) = discover(&*self.runtime, server_url, None).await?;
+        let metadata = discover(&*self.runtime, server_url, None).await?.metadata;
         let endpoint = metadata["token_endpoint"]
             .as_str()
             .ok_or("the authorization server has no token endpoint")?;

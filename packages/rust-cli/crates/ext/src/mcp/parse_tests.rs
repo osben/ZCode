@@ -148,3 +148,55 @@ fn local_beats_project_beats_user_and_enterprise_is_exclusive() {
     assert_eq!(only.len(), 1);
     assert_eq!(only[0].name, "x");
 }
+
+/// PR4 (1): plugin servers read `oauth` with Node's lenient rules (`resolveMcpOAuthConfig`). The secret expands
+/// through the sensitive lookup and the other fields through the plain one.
+#[test]
+fn plugin_servers_read_their_oauth_block_leniently() {
+    use crate::mcp::oauth::McpOAuthConfig;
+    let table = json!({
+        "canva": {
+            "type": "http",
+            "url": "https://mcp.example.com/mcp",
+            "oauth": {"type": "authorization_code", "clientId": "${TOKEN}", "scope": "mcp:tools", "unknown": 1}
+        },
+        "secret": {
+            "type": "http",
+            "url": "https://mcp.example.com/cc",
+            "oauth": {"type": "client_credentials", "clientId": "cid", "clientSecret": "${TOKEN}", "scope": 3}
+        },
+        "unsupported": {"type": "http", "url": "https://mcp.example.com/x", "oauth": {"type": "device"}},
+        "missing_secret": {"type": "http", "url": "https://mcp.example.com/y", "oauth": {"type": "client_credentials", "clientId": "cid"}},
+        "stdio_block": {"command": "node", "oauth": {"type": "authorization_code"}}
+    });
+    let (servers, warnings) = parse_servers(&table, McpScope::Plugin, &EnvLookups::same(&lookup));
+    let by_name = |name: &str| servers.iter().find(|server| server.name == name);
+    assert!(
+        matches!(
+            by_name("canva").and_then(|server| server.oauth.as_ref()),
+            Some(McpOAuthConfig::AuthorizationCode { client_id: Some(id), scope: Some(scope), .. })
+                if id == "secret" && scope == "mcp:tools"
+        ),
+        "canva oauth: {:?}",
+        by_name("canva").map(|server| &server.oauth)
+    );
+    assert!(matches!(
+        by_name("secret").and_then(|server| server.oauth.as_ref()),
+        Some(McpOAuthConfig::ClientCredentials { client_secret, scope: None, .. })
+            if client_secret == "secret"
+    ));
+    assert!(by_name("unsupported").is_none());
+    assert!(by_name("missing_secret").is_none());
+    assert!(by_name("stdio_block").is_some_and(|server| server.oauth.is_none()));
+    assert_eq!(warnings.len(), 2, "warnings: {warnings:?}");
+}
+
+/// PR4 (1): user servers keep the strict parser, so their `oauth` is not read here.
+#[test]
+fn user_servers_do_not_read_the_plugin_oauth_block() {
+    let table = json!({
+        "web": {"type": "http", "url": "https://mcp.example.com/mcp", "oauth": {"type": "authorization_code"}}
+    });
+    let (servers, _) = parse_servers(&table, McpScope::User, &EnvLookups::same(&lookup));
+    assert!(servers[0].oauth.is_none());
+}

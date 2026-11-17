@@ -34,13 +34,17 @@ pub(super) enum ChallengeRefresh {
 mod tests;
 
 /// The OAuth config a server acts on. Node treats a remote server with no `oauth` block as
-/// `authorization_code` (`resolveOAuthConfig`), so user-scope remote servers do too. Plugin rows are not
-/// covered until #501 carries their config.
+/// `authorization_code` (`resolveAuthorizationCodeOAuthConfig`), unless its headers already carry an
+/// `Authorization` header. User and plugin servers do so here, as they do in Node.
 fn effective_oauth(config: &McpServer) -> Option<McpOAuthConfig> {
     if let Some(oauth) = &config.oauth {
         return Some(oauth.clone());
     }
-    (remote_parts(config).is_some() && matches!(config.scope, McpScope::User)).then_some(
+    let (_, headers) = remote_parts(config)?;
+    let has_authorization = headers
+        .keys()
+        .any(|name| name.eq_ignore_ascii_case("authorization"));
+    (!has_authorization && matches!(config.scope, McpScope::User | McpScope::Plugin)).then_some(
         McpOAuthConfig::AuthorizationCode {
             client_id: None,
             client_secret: None,
@@ -243,26 +247,11 @@ impl Inner {
         let Some(mut input) = oauth.flow_input(&config.name, url) else {
             return;
         };
-        input.requested_scope = union_scopes(input.scope.as_deref(), challenge.scope.as_deref());
+        // The union with the stored token's scope is computed by the flow task (`flow::requested_scope`).
+        input.challenge_scope = challenge.scope;
         input.resource_metadata = challenge.resource_metadata;
         coordinator.start(config.name.clone(), input);
     }
-}
-
-/// The union of the configured scope and the scope a challenge names, in order, without repeats
-/// (Node `computeScopeUnion`, without the token scope: the stored token's scope is not read here).
-fn union_scopes(configured: Option<&str>, required: Option<&str>) -> Option<String> {
-    let mut scopes: Vec<&str> = Vec::new();
-    for scope in configured
-        .into_iter()
-        .chain(required)
-        .flat_map(str::split_whitespace)
-    {
-        if !scopes.contains(&scope) {
-            scopes.push(scope);
-        }
-    }
-    (!scopes.is_empty()).then(|| scopes.join(" "))
 }
 
 impl McpManager {

@@ -26,6 +26,15 @@ pub enum WireError {
     OperationConflict { operation: String },
     #[error("io error: {message}")]
     Io { message: String },
+    /// An HTTP transport answered a non-success status (`McpError::Http`). `www_authenticate` is the response's
+    /// `WWW-Authenticate` header, which the OAuth challenge reads (RFC 6750). Protocol's own kind, not an `EnvError`.
+    #[error("http {status}: {message}")]
+    Http {
+        status: u16,
+        message: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        www_authenticate: Option<String>,
+    },
     #[error("not implemented: {what}")]
     Unsupported { what: String },
     /// 请求解不开（对方编码有误）。

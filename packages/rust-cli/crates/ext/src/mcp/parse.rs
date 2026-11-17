@@ -7,6 +7,7 @@ use rust_cli_kernel_api::mcp::McpTransportConfig;
 use serde_json::Value;
 
 use super::config::{McpScope, McpServer};
+use super::oauth::McpOAuthConfig;
 
 /// `${VAR}` 与 `${VAR:-默认}` 展开：规则只有一份，在 kernel-api（远端的执行器也用它，remote-exec.md §22.7）。
 pub use rust_cli_kernel_api::mcp_vars::expand_vars;
@@ -129,6 +130,47 @@ fn transport(config: &Value, fields: &mut Fields<'_>) -> Result<McpTransportConf
     }
 }
 
+/// Node `resolveMcpOAuthConfig` (`plugins/mcp.ts`) for a plugin server. Lenient like Node: a non-object block is
+/// no OAuth, non-string optional fields are dropped, unknown fields are ignored. An unsupported `type`, or a
+/// `client_credentials` block without `clientId` and `clientSecret`, makes the server invalid. `clientSecret`
+/// expands through the sensitive lookup, the other fields through the plain one.
+fn plugin_oauth(
+    value: Option<&Value>,
+    fields: &mut Fields<'_>,
+) -> Result<Option<McpOAuthConfig>, String> {
+    let Some(block) = value.and_then(Value::as_object) else {
+        return Ok(None);
+    };
+    let text = |key: &str| block.get(key).and_then(Value::as_str).map(str::to_owned);
+    match block.get("type").and_then(Value::as_str) {
+        Some("client_credentials") => {
+            let client_id = text("clientId")
+                .filter(|value| !value.is_empty())
+                .ok_or("MCP OAuth client_credentials requires clientId")?;
+            let client_secret = text("clientSecret")
+                .filter(|value| !value.is_empty())
+                .ok_or("MCP OAuth client_credentials requires clientSecret")?;
+            Ok(Some(McpOAuthConfig::ClientCredentials {
+                client_id: fields.plain(&client_id),
+                client_secret: fields.sensitive(&client_secret),
+                client_name: text("clientName").map(|value| fields.plain(&value)),
+                scope: text("scope").map(|value| fields.plain(&value)),
+            }))
+        }
+        Some("authorization_code") => Ok(Some(McpOAuthConfig::AuthorizationCode {
+            client_id: text("clientId").map(|value| fields.plain(&value)),
+            client_secret: text("clientSecret").map(|value| fields.sensitive(&value)),
+            client_name: text("clientName").map(|value| fields.plain(&value)),
+            redirect_path: text("redirectPath").map(|value| fields.plain(&value)),
+            scope: text("scope").map(|value| fields.plain(&value)),
+        })),
+        other => Err(format!(
+            "Unsupported MCP OAuth type: {}",
+            other.unwrap_or("undefined")
+        )),
+    }
+}
+
 /// 服务器表（`mcpServers` 的值）里的服务器，按名字排序；返回服务器与警告。
 pub fn parse_servers(
     servers: &Value,
@@ -161,9 +203,20 @@ pub fn parse_servers_keeping(
             kept: keep(name),
             missing: Vec::new(),
         };
-        let parsed = transport(&entries[name], &mut fields);
+        let parsed = transport(&entries[name], &mut fields).and_then(|transport| {
+            // Only plugin servers read `oauth` here (Node `resolveMcpOAuthConfig` in `plugins/mcp.ts`);
+            // user, project and local servers keep their strict parser in `node_config.rs`.
+            let oauth = match (scope, &transport) {
+                (
+                    McpScope::Plugin,
+                    McpTransportConfig::Http { .. } | McpTransportConfig::Sse { .. },
+                ) => plugin_oauth(entries[name].get("oauth"), &mut fields)?,
+                _ => None,
+            };
+            Ok((transport, oauth))
+        });
         match parsed {
-            Ok(transport) => {
+            Ok((transport, oauth)) => {
                 if !fields.missing.is_empty() {
                     warnings.push(format!(
                         "MCP server \"{name}\": missing environment variables: {}",
@@ -175,7 +228,7 @@ pub fn parse_servers_keeping(
                     scope,
                     transport,
                     options: Default::default(),
-                    oauth: None,
+                    oauth,
                     machine: Default::default(),
                 });
             }
