@@ -110,6 +110,7 @@ async fn session_as(
     }));
     Session::spawn(
         SessionDeps {
+            compositions: Default::default(),
             agents: Arc::new(rust_cli_kernel_api::agents::NoAgentSignals),
             cron: Arc::new(rust_cli_kernel_api::cron::NoCron),
             store,

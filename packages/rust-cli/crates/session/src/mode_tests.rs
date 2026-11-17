@@ -112,6 +112,7 @@ fn spawn(
     let env = Arc::new(UnusedEnvironment);
     Session::spawn(
         SessionDeps {
+            compositions: Default::default(),
             agents: Arc::new(rust_cli_kernel_api::agents::NoAgentSignals),
             cron: Arc::new(rust_cli_kernel_api::cron::NoCron),
             store: store.clone(),

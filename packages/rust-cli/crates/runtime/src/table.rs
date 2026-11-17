@@ -282,6 +282,7 @@ impl LocalKernel {
             store: self.ports.store.clone(),
             ids: self.ports.ids.clone(),
             runner: self.runner.clone(),
+            compositions: self.compositions.clone(),
             compactor: self.compactor.clone(),
             machines: self.ports.environments.clone(),
             max_turns: self.defaults.max_turns,

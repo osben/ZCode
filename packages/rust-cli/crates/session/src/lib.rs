@@ -151,6 +151,8 @@ pub struct SessionDeps {
     pub directory_rules: Arc<dyn rust_cli_kernel_api::orchestration::DirectoryRules>,
     /// 本机跨会话通信（docs/specs/rust-cli/cross-session.md §2.4）。
     pub peers: PeerDeps,
+    /// The per-session composition store (kernel-api `context_composition`): a model change drops the session's record.
+    pub compositions: Arc<rust_cli_kernel_api::context_composition::CompositionStore>,
     /// 父会话关闭之后旧会话的询问入口（进程级，agents.md §4.1.2，工作线 F72）；没有时那些询问按会话已关闭失败。
     pub detached: Option<Arc<DetachedAsks>>,
     /// Fork: queued inputs are not merged into one turn; each runs as its own turn, like the Node desktop agent
@@ -602,3 +604,6 @@ mod tests;
 #[cfg(test)]
 #[path = "machines_tests.rs"]
 mod machines_tests;
+#[cfg(test)]
+#[path = "composition_tests.rs"]
+mod composition_tests;

@@ -81,6 +81,7 @@ async fn an_agent_notice_starts_a_turn_and_is_acked_after_the_commit() {
     let env = Arc::new(UnusedEnvironment);
     let session = Session::spawn(
         SessionDeps {
+            compositions: Default::default(),
             agents: signals.clone(),
             cron: Arc::new(rust_cli_kernel_api::cron::NoCron),
             store,
@@ -201,6 +202,7 @@ async fn open_with(signals: Arc<FakeSignals>, scope: &TaskScope) -> Session {
     }));
     Session::spawn(
         SessionDeps {
+            compositions: Default::default(),
             agents: signals,
             cron: Arc::new(rust_cli_kernel_api::cron::NoCron),
             store,

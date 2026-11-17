@@ -195,6 +195,8 @@ pub(crate) struct Setup {
     pub goal_target: Option<rust_cli_kernel_api::goal::GoalState>,
     /// Fork: the stored goal verification steps; none by default.
     pub goal_verifications: Vec<rust_cli_kernel_api::goal::RecordedVerification>,
+    /// The composition store the session writes to; a test keeps a clone to read it back.
+    pub compositions: Arc<rust_cli_kernel_api::context_composition::CompositionStore>,
 }
 
 impl Setup {
@@ -244,6 +246,7 @@ impl Setup {
             title_pending: true,
             goal_target: None,
             goal_verifications: Vec::new(),
+            compositions: Default::default(),
         }
     }
 
@@ -338,6 +341,7 @@ impl Setup {
                 released: Arc::new(crate::NothingToRelease),
                 directory_rules: self.directory_rules,
                 peers: self.peers,
+                compositions: self.compositions.clone(),
                 detached: self.detached,
                 one_input_per_turn: self.one_input_per_turn,
                 desktop_goals: self.desktop_goals,

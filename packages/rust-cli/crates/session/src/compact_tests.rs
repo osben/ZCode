@@ -221,6 +221,7 @@ async fn session_with_hooks(
     let env = Arc::new(UnusedEnvironment);
     let session = Session::spawn(
         SessionDeps {
+            compositions: Default::default(),
             agents: Arc::new(rust_cli_kernel_api::agents::NoAgentSignals),
             cron: Arc::new(rust_cli_kernel_api::cron::NoCron),
             store: store.clone(),
