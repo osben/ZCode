@@ -7,8 +7,12 @@ use crate::engine::{EngineConfig, WorkflowDriver, WorkflowEngine};
 use crate::error::{ErrorCode, WorkflowError};
 use crate::event::RunEvent;
 use crate::journal::{JournalPort, MemoryJournal};
+use crate::journal_dwf::DwfJournal;
 use crate::model::{Caps, StopReason};
+use rust_cli_node_store::open_session_database;
 use serde_json::Value;
+use std::path::Path;
+use std::time::Duration;
 
 const GOLDENS: &str = include_str!("../fixtures/lifecycle-goldens.json");
 
@@ -73,8 +77,8 @@ fn config_for(run_id: &str, lifetime: &Value) -> EngineConfig {
 }
 
 /// Runs one step and returns its JSON result (`null`, or a boolean for a retune).
-fn run_step(
-    engine: &mut WorkflowEngine<&mut MemoryJournal, &mut RecordingDriver>,
+fn run_step<J: JournalPort>(
+    engine: &mut WorkflowEngine<&mut J, &mut RecordingDriver>,
     step: &Value,
 ) -> Value {
     match step["op"].as_str().expect("op") {
@@ -115,97 +119,113 @@ fn run_step(
     }
 }
 
-#[test]
-fn every_lifecycle_scenario_matches_node() {
+fn scenarios() -> Vec<Value> {
     let goldens: Value = serde_json::from_str(GOLDENS).expect("golden file parses");
-    let scenarios = goldens["scenarios"].as_array().expect("scenarios");
-    assert_eq!(scenarios.len(), 6);
-    for scenario in scenarios {
-        let name = scenario["name"].as_str().unwrap_or_default().to_owned();
-        let input = &scenario["input"];
-        let run_id = input["runId"].as_str().expect("runId");
-        let mut journal = MemoryJournal::new();
-        let mut driver = RecordingDriver::default();
-        let lifetimes = input["lifetimes"].as_array().expect("lifetimes");
-        let expected = scenario["lifetimes"]
-            .as_array()
-            .expect("expected lifetimes");
-        assert_eq!(lifetimes.len(), expected.len(), "{name}: lifetime count");
-        for (index, (lifetime, want)) in lifetimes.iter().zip(expected).enumerate() {
-            let config = config_for(run_id, lifetime);
-            match WorkflowEngine::new(config, &mut journal, &mut driver) {
-                Err(error) => {
-                    let thrown = error
-                        .downcast_ref::<WorkflowError>()
-                        .expect("workflow error");
-                    assert_eq!(
-                        want["constructError"]["code"].as_str(),
-                        Some(thrown.code.as_str()),
-                        "{name} lifetime {index}: construct error code"
-                    );
-                    assert_eq!(
-                        want["constructError"]["message"].as_str(),
-                        Some(thrown.message.as_str()),
-                        "{name} lifetime {index}: construct error message"
-                    );
-                }
-                Ok(mut engine) => {
-                    assert!(
-                        want.get("constructError").is_none(),
-                        "{name} lifetime {index}: expected a constructor error"
-                    );
-                    let steps = lifetime["steps"].as_array().expect("steps");
-                    let results: Vec<Value> = steps
-                        .iter()
-                        .map(|step| run_step(&mut engine, step))
-                        .collect();
-                    assert_eq!(
-                        &Value::Array(results),
-                        &want["results"],
-                        "{name} lifetime {index}: step results"
-                    );
-                }
+    let list = goldens["scenarios"].as_array().expect("scenarios").clone();
+    assert_eq!(list.len(), 6);
+    list
+}
+
+#[test]
+fn memory_journal_matches_node_for_every_scenario() {
+    for scenario in scenarios() {
+        replay_scenario(&scenario, &mut MemoryJournal::new());
+    }
+}
+
+#[test]
+fn dwf_journal_matches_node_for_every_scenario() {
+    for scenario in scenarios() {
+        let (conn, _) = open_session_database(Path::new(":memory:"), Duration::from_secs(1), 0)
+            .expect("session database with every Node migration");
+        replay_scenario(&scenario, &mut DwfJournal::new(&conn, || 0));
+    }
+}
+
+fn replay_scenario<J: JournalPort>(scenario: &Value, journal: &mut J) {
+    let name = scenario["name"].as_str().unwrap_or_default().to_owned();
+    let input = &scenario["input"];
+    let run_id = input["runId"].as_str().expect("runId");
+    let mut driver = RecordingDriver::default();
+    let lifetimes = input["lifetimes"].as_array().expect("lifetimes");
+    let expected = scenario["lifetimes"]
+        .as_array()
+        .expect("expected lifetimes");
+    assert_eq!(lifetimes.len(), expected.len(), "{name}: lifetime count");
+    for (index, (lifetime, want)) in lifetimes.iter().zip(expected).enumerate() {
+        let config = config_for(run_id, lifetime);
+        match WorkflowEngine::new(config, &mut *journal, &mut driver) {
+            Err(error) => {
+                let thrown = error
+                    .downcast_ref::<WorkflowError>()
+                    .expect("workflow error");
+                assert_eq!(
+                    want["constructError"]["code"].as_str(),
+                    Some(thrown.code.as_str()),
+                    "{name} lifetime {index}: construct error code"
+                );
+                assert_eq!(
+                    want["constructError"]["message"].as_str(),
+                    Some(thrown.message.as_str()),
+                    "{name} lifetime {index}: construct error message"
+                );
             }
-            let row = journal
-                .get_run(run_id)
-                .expect("get_run")
-                .expect("row exists");
-            assert_eq!(
-                canonical_json(&row.to_json()),
-                canonical_json(&want["run"]),
-                "{name} lifetime {index}: run row"
-            );
-            assert_eq!(
-                driver.disposed,
-                want["disposed"].as_u64().expect("disposed"),
-                "{name} lifetime {index}: dispose count"
-            );
+            Ok(mut engine) => {
+                assert!(
+                    want.get("constructError").is_none(),
+                    "{name} lifetime {index}: expected a constructor error"
+                );
+                let steps = lifetime["steps"].as_array().expect("steps");
+                let results: Vec<Value> = steps
+                    .iter()
+                    .map(|step| run_step(&mut engine, step))
+                    .collect();
+                assert_eq!(
+                    &Value::Array(results),
+                    &want["results"],
+                    "{name} lifetime {index}: step results"
+                );
+            }
         }
-        let stored = journal.list_events(run_id).expect("events");
-        let expected_events = scenario["events"].as_array().expect("events");
-        assert_eq!(stored.len(), expected_events.len(), "{name}: event count");
-        for (entry, want) in stored.iter().zip(expected_events) {
-            assert_eq!(
-                entry.sequence,
-                want["sequence"].as_u64().expect("sequence"),
-                "{name}: sequence"
-            );
-            assert_eq!(
-                entry.payload_json,
-                want["payloadJson"].as_str().expect("payload"),
-                "{name}: payload text"
-            );
-        }
+        let row = journal
+            .get_run(run_id)
+            .expect("get_run")
+            .expect("row exists");
         assert_eq!(
-            driver.emitted.len(),
-            stored.len(),
-            "{name}: driver saw every event"
+            canonical_json(&row.to_json()),
+            canonical_json(&want["run"]),
+            "{name} lifetime {index}: run row"
         );
-        for (emitted, entry) in driver.emitted.iter().zip(&stored) {
-            assert_eq!(
-                emitted, &entry.payload_json,
-                "{name}: driver payload matches journal"
-            );
-        }
+        assert_eq!(
+            driver.disposed,
+            want["disposed"].as_u64().expect("disposed"),
+            "{name} lifetime {index}: dispose count"
+        );
+    }
+    let stored = journal.list_events(run_id).expect("events");
+    let expected_events = scenario["events"].as_array().expect("events");
+    assert_eq!(stored.len(), expected_events.len(), "{name}: event count");
+    for (entry, want) in stored.iter().zip(expected_events) {
+        assert_eq!(
+            entry.sequence,
+            want["sequence"].as_u64().expect("sequence"),
+            "{name}: sequence"
+        );
+        assert_eq!(
+            entry.payload_json,
+            want["payloadJson"].as_str().expect("payload"),
+            "{name}: payload text"
+        );
+    }
+    assert_eq!(
+        driver.emitted.len(),
+        stored.len(),
+        "{name}: driver saw every event"
+    );
+    for (emitted, entry) in driver.emitted.iter().zip(&stored) {
+        assert_eq!(
+            emitted, &entry.payload_json,
+            "{name}: driver payload matches journal"
+        );
     }
 }

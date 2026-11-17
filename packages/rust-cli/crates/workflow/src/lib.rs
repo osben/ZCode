@@ -9,6 +9,7 @@ pub mod engine;
 pub mod error;
 pub mod event;
 pub mod journal;
+pub mod journal_dwf;
 pub mod model;
 
 #[cfg(test)]

@@ -73,6 +73,9 @@ use rust_cli_paths::StoragePaths;
 use serde_json::json;
 
 pub use artifacts::uri as artifact_uri;
+// W5a (rust-cli-workflow): the dwf_* journal repository and the migrated session database opener.
+pub use repo::dwf;
+pub use repo::open::open as open_session_database;
 pub use ids::{NodeIds, RandomUuids, UuidSource};
 
 /// 本机执行环境的 ID（与入口 crate 相同）。只有它的会话写进本地库；`workspace_id` 为 NULL。
