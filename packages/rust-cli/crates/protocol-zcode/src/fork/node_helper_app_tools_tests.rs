@@ -349,3 +349,61 @@ async fn a_call_the_helper_never_answers_is_cancelled_in_the_helper() {
         json!("tc_1")
     );
 }
+
+/// The warnings of the current thread, each as field name → value (`Debug` text).
+#[derive(Clone, Default)]
+struct Warnings(Arc<StdMutex<Vec<std::collections::BTreeMap<&'static str, String>>>>);
+
+impl tracing::Subscriber for Warnings {
+    fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+        true
+    }
+
+    fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        tracing::span::Id::from_u64(1)
+    }
+
+    fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+
+    fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+
+    fn event(&self, event: &tracing::Event<'_>) {
+        if *event.metadata().level() != tracing::Level::WARN {
+            return;
+        }
+        let mut fields = std::collections::BTreeMap::new();
+        event.record(
+            &mut |field: &tracing::field::Field, value: &dyn std::fmt::Debug| {
+                fields.insert(field.name(), format!("{value:?}"));
+            },
+        );
+        self.0.lock().unwrap().push(fields);
+    }
+
+    fn enter(&self, _: &tracing::span::Id) {}
+
+    fn exit(&self, _: &tracing::span::Id) {}
+}
+
+#[tokio::test]
+async fn a_replace_that_drops_entries_warns_with_how_many() {
+    // A second registered dispatcher keeps tracing-core from caching a callsite's interest from another thread.
+    let _second = tracing::Dispatch::new(Warnings::default());
+    let warnings = Warnings::default();
+    let _guard = tracing::subscriber::set_default(warnings.clone());
+    let rig = started().await;
+    let malformed = json!({"modelName": "app__calc__bad", "toolName": "pick"});
+    replace(
+        &rig,
+        "s1",
+        vec![listed("app__calc__a"), malformed.clone(), malformed],
+    )
+    .await;
+    let logged = warnings.0.lock().unwrap().clone();
+    assert!(
+        logged
+            .iter()
+            .any(|fields| fields.get("dropped").map(String::as_str) == Some("2")),
+        "no warning with dropped = 2: {logged:?}"
+    );
+}

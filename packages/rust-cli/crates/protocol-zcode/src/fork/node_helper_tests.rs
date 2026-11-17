@@ -2,7 +2,7 @@
 //! framing; its behaviour per method is scripted by the test.
 
 use std::io;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, OnceLock, Weak};
 use std::time::Duration;
 
@@ -69,6 +69,8 @@ struct Fake {
     received: Arc<StdMutex<Vec<(String, Value)>>>,
     /// The methods of the notifications Rust sent the helper (a message without an id).
     notified: Arc<StdMutex<Vec<String>>>,
+    /// While set, the fake helper does not read its stdin (a stalled process: Rust's writes back up).
+    paused: Arc<AtomicBool>,
     /// The helper under test, so a guard can check how it is dropped.
     helper: Arc<OnceLock<Weak<NodeHelper>>>,
     /// Incremented when a guard is dropped while the helper's state lock is held.
@@ -118,6 +120,7 @@ impl NodeHelperLauncher for Fake {
             answers: self.answers.clone(),
             received: self.received.clone(),
             notified: self.notified.clone(),
+            paused: self.paused.clone(),
             stdin_eofs: self.stdin_eofs.clone(),
         };
         tokio::spawn(run_helper(script, helper_in, helper_out));
@@ -142,6 +145,7 @@ struct Script {
     answers: Arc<StdMutex<Vec<Value>>>,
     received: Arc<StdMutex<Vec<(String, Value)>>>,
     notified: Arc<StdMutex<Vec<String>>>,
+    paused: Arc<AtomicBool>,
     stdin_eofs: Arc<AtomicUsize>,
 }
 
@@ -152,7 +156,13 @@ async fn write_line(output: &mut DuplexStream, line: String) {
 
 async fn run_helper(script: Script, input: DuplexStream, mut output: DuplexStream) {
     let mut lines = BufReader::new(input).lines();
-    while let Ok(Some(line)) = lines.next_line().await {
+    loop {
+        while script.paused.load(Ordering::SeqCst) {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        let Ok(Some(line)) = lines.next_line().await else {
+            break;
+        };
         let Ok(message) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
@@ -255,6 +265,7 @@ fn fake(advertised: &[&str], behaviour: Arc<Behaviour>) -> Fake {
         answers: Arc::new(StdMutex::new(Vec::new())),
         received: Arc::new(StdMutex::new(Vec::new())),
         notified: Arc::new(StdMutex::new(Vec::new())),
+        paused: Arc::new(AtomicBool::new(false)),
         helper: Arc::new(OnceLock::new()),
         dropped_under_lock: Arc::new(AtomicUsize::new(0)),
         stdin_eofs: Arc::new(AtomicUsize::new(0)),

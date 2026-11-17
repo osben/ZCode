@@ -345,13 +345,16 @@ impl ExtRegistry {
         session: &SessionId,
         mut tools: Vec<Arc<dyn Tool>>,
     ) -> Vec<Arc<dyn Tool>> {
-        let taken: std::collections::HashSet<String> =
-            tools.iter().map(|tool| tool.name().to_owned()).collect();
-        tools.extend(
-            self.app_tools_of(session)
-                .into_iter()
-                .filter(|tool| !taken.contains(tool.name())),
-        );
+        // A name is taken when lookup resolves it to a listed tool (`answers_to`: its own name or a legacy one), and each
+        // accepted app tool takes its name for the rest, so a host that lists one name twice shows it once.
+        for app in self.app_tools_of(session) {
+            if !tools
+                .iter()
+                .any(|tool| rust_cli_kernel_api::tool::answers_to(tool.as_ref(), app.name()))
+            {
+                tools.push(app);
+            }
+        }
         tools
     }
 

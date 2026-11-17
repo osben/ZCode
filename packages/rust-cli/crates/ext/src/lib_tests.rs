@@ -16,7 +16,35 @@ use super::*;
 use crate::test_support::{CWD, EchoBash, FakeMcp, facts, server, workspace};
 
 fn ext(env: MemoryEnvironment, fake: Arc<FakeMcp>, scope: &TaskScope, servers: McpServers) -> Ext {
-    ext_with_apps(env, fake, scope, servers, None)
+    let base: Arc<dyn ToolRegistry> = Arc::new(ListTools(vec![Arc::new(EchoBash::default())]));
+    ext_with_apps(env, fake, scope, servers, None, base)
+}
+
+/// A named base tool that is never called (for the collision tests).
+struct Named(&'static str);
+
+#[async_trait::async_trait]
+impl rust_cli_kernel_api::tool::Tool for Named {
+    fn name(&self) -> &str {
+        self.0
+    }
+
+    fn input_schema(&self) -> serde_json::Value {
+        json!({"type": "object"})
+    }
+
+    fn description(&self, _context: &rust_cli_kernel_api::tool::PromptContext) -> String {
+        self.0.to_owned()
+    }
+
+    async fn call(
+        &self,
+        _input: serde_json::Value,
+        _context: rust_cli_kernel_api::tool::ToolUseContext,
+        _progress: tokio::sync::mpsc::Sender<rust_cli_kernel_api::tool::ToolProgress>,
+    ) -> Result<rust_cli_kernel_api::tool::ToolOutput, rust_cli_kernel_api::tool::ToolError> {
+        Err(rust_cli_kernel_api::tool::ToolError::Cancelled)
+    }
 }
 
 fn ext_with_apps(
@@ -25,8 +53,8 @@ fn ext_with_apps(
     scope: &TaskScope,
     servers: McpServers,
     app_tools: Option<Arc<dyn AppToolHost>>,
+    base: Arc<dyn ToolRegistry>,
 ) -> Ext {
-    let base: Arc<dyn ToolRegistry> = Arc::new(ListTools(vec![Arc::new(EchoBash::default())]));
     let env = Arc::new(env);
     let ports = ExtPorts {
         info: env.clone(),
@@ -120,12 +148,12 @@ async fn the_registry_adds_skill_and_mcp_tools_after_the_base() {
 }
 
 /// The helper's set for the test: one app tool, named as the given MCP tool is.
-struct OneAppTool(AppToolSpec);
+struct OneAppTool(Vec<AppToolSpec>);
 
 #[async_trait::async_trait]
 impl AppToolHost for OneAppTool {
     fn app_tools(&self, _session: &SessionId) -> Vec<AppToolSpec> {
-        vec![self.0.clone()]
+        self.0.clone()
     }
 
     async fn call(
@@ -163,7 +191,7 @@ async fn an_app_tool_never_shadows_an_mcp_tool_of_the_same_name() {
         oauth: None,
         machine: Default::default(),
     }];
-    let app = OneAppTool(AppToolSpec {
+    let app = OneAppTool(vec![AppToolSpec {
         model_name: "mcp__files__read".to_owned(),
         server_name: "calc".to_owned(),
         plugin_id: "calc".to_owned(),
@@ -174,13 +202,15 @@ async fn an_app_tool_never_shadows_an_mcp_tool_of_the_same_name() {
         read_only: true,
         destructive: false,
         idempotent: false,
-    });
+    }]);
+    let base: Arc<dyn ToolRegistry> = Arc::new(ListTools(vec![Arc::new(EchoBash::default())]));
     let ext = ext_with_apps(
         MemoryEnvironment::new(facts()),
         fake,
         &scope,
         servers,
         Some(Arc::new(app)),
+        base,
     );
     ext.start().await;
     ext.mcp().wait_ready().await;
@@ -273,5 +303,84 @@ async fn the_wait_tool_follows_pending_servers_and_the_declared_session() {
     assert_eq!(
         listings.mcp_instructions(&request()).await.unwrap()[0].line,
         "## slow\nSlow."
+    );
+}
+
+/// An app tool spec named `model`, as a page's set holds it.
+fn app_spec(model: &str) -> AppToolSpec {
+    AppToolSpec {
+        model_name: model.to_owned(),
+        server_name: "calc".to_owned(),
+        plugin_id: "calc".to_owned(),
+        tool_name: "pick".to_owned(),
+        title: None,
+        description: None,
+        input_schema: json!({"type": "object"}),
+        read_only: true,
+        destructive: false,
+        idempotent: false,
+    }
+}
+
+/// Lookup resolves legacy names (`answers_to`), so an app tool named as a listed tool's legacy name is taken: it is not
+/// listed, and the name keeps resolving to the existing tool.
+#[tokio::test]
+async fn an_app_tool_named_as_a_listed_tools_legacy_name_is_not_listed() {
+    let scope = TaskScope::root("test", |_| {});
+    let app = OneAppTool(vec![app_spec("Task")]);
+    let base: Arc<dyn ToolRegistry> = Arc::new(ListTools(vec![Arc::new(Named("Agent"))]));
+    let ext = ext_with_apps(
+        MemoryEnvironment::new(facts()),
+        Arc::new(FakeMcp::default()),
+        &scope,
+        Vec::new(),
+        Some(Arc::new(app)),
+        base,
+    );
+    let registry = ext.registry();
+    let session = SessionId::new("sess_1");
+    let listed: Vec<String> = registry
+        .snapshot(&session)
+        .tools
+        .iter()
+        .map(|tool| tool.name().to_owned())
+        .collect();
+    // Lookup of `Task` resolves to `Agent` in the production base registry (`answers_to`); this double matches names
+    // exactly, so only the listing is checked here.
+    assert!(!listed.contains(&"Task".to_owned()), "{listed:?}");
+    assert!(listed.contains(&"Agent".to_owned()), "{listed:?}");
+}
+
+/// A host that lists one name twice must not put it in the model's list twice (an API-rejected duplicate).
+#[tokio::test]
+async fn an_app_tool_name_the_host_lists_twice_is_listed_once() {
+    let scope = TaskScope::root("test", |_| {});
+    let app = OneAppTool(vec![
+        app_spec("app__calc__pick"),
+        app_spec("app__calc__pick"),
+    ]);
+    let base: Arc<dyn ToolRegistry> = Arc::new(ListTools(vec![Arc::new(EchoBash::default())]));
+    let ext = ext_with_apps(
+        MemoryEnvironment::new(facts()),
+        Arc::new(FakeMcp::default()),
+        &scope,
+        Vec::new(),
+        Some(Arc::new(app)),
+        base,
+    );
+    let listed: Vec<String> = ext
+        .registry()
+        .snapshot(&SessionId::new("sess_1"))
+        .tools
+        .iter()
+        .map(|tool| tool.name().to_owned())
+        .collect();
+    assert_eq!(
+        listed
+            .iter()
+            .filter(|name| *name == "app__calc__pick")
+            .count(),
+        1,
+        "{listed:?}"
     );
 }

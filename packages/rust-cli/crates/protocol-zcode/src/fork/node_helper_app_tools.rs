@@ -7,7 +7,6 @@
 //! is gone its sets are dropped, and [`NodeHelper::app_tools`] never returns a set of a process that is not running.
 
 use std::collections::HashMap;
-use std::time::Duration;
 
 use async_trait::async_trait;
 use rust_cli_base::sync::LockUnpoisoned;
@@ -49,13 +48,27 @@ impl NodeHelper {
             .and_then(Value::as_array)
             .ok_or_else(|| RpcError::invalid_params("tools is required"))?;
         let mut specs: Vec<AppToolSpec> = Vec::new();
-        for spec in tools.iter().filter_map(parse_spec) {
+        let mut dropped = 0_usize;
+        for tool in tools {
+            let Some(spec) = parse_spec(tool) else {
+                dropped += 1;
+                continue;
+            };
             if !specs
                 .iter()
                 .any(|known| known.model_name == spec.model_name)
             {
                 specs.push(spec);
             }
+        }
+        // Left out without an error, so the app's set and what the model sees can differ: say how many.
+        if dropped > 0 {
+            tracing::warn!(
+                event = "helper.app_tools.dropped",
+                session,
+                dropped,
+                "app tool entries without the names a call needs are not served"
+            );
         }
         let registered: Vec<String> = specs.iter().map(|spec| spec.model_name.clone()).collect();
         {
@@ -197,11 +210,9 @@ impl AppToolHost for NodeHelper {
             return;
         };
         let params = json!({"sessionId": session.as_str(), "toolCallId": tool_call});
-        let _ = tokio::time::timeout(
-            Duration::from_secs(5),
-            peer.notify(APP_TOOLS_CANCEL, &params),
-        )
-        .await;
+        // The same deadline as an abandoned call's cancel (`cancel_abandoned`): the same notification, the same bound.
+        let _ =
+            tokio::time::timeout(self.timing.cancel, peer.notify(APP_TOOLS_CANCEL, &params)).await;
     }
 }
 
