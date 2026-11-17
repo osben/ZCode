@@ -53,6 +53,20 @@ fn failed(message: String) -> McpError {
     McpError::Connect { message }
 }
 
+/// A non-success HTTP status. The text is the one `Connect` always had; the challenge header is kept typed.
+fn http_error(
+    code: u16,
+    status: impl std::fmt::Display,
+    body: &str,
+    www_authenticate: Option<String>,
+) -> McpError {
+    McpError::Http {
+        status: code,
+        message: format!("HTTP {status}: {body}"),
+        www_authenticate,
+    }
+}
+
 /// 加上配置给的 header。
 ///
 /// 缺陷修复 R2-13：值原来按普通值交给 net；配置里的 header 常是 Authorization 或 API key，现在一律是秘密值
@@ -202,8 +216,12 @@ impl HttpLink {
             });
         }
         if !response.is_success() {
+            let www_authenticate = response
+                .headers()
+                .get("www-authenticate")
+                .map(str::to_owned);
             let body = response.text(ERROR_BODY_LIMIT).await.unwrap_or_default();
-            return Err(failed(format!("HTTP {status}: {body}")));
+            return Err(http_error(status, status, &body, www_authenticate));
         }
         if initialized && self.streamable {
             self.open_listener().await;
@@ -292,8 +310,12 @@ pub(crate) async fn sse(
         .map_err(|error| failed(error.to_string()))?;
     if !response.is_success() {
         let status = response.status();
+        let www_authenticate = response
+            .headers()
+            .get("www-authenticate")
+            .map(str::to_owned);
         let body = response.text(ERROR_BODY_LIMIT).await.unwrap_or_default();
-        return Err(failed(format!("HTTP {status}: {body}")));
+        return Err(http_error(status, status, &body, www_authenticate));
     }
     let (endpoint, found) = oneshot::channel();
     let closed = CancellationToken::new();

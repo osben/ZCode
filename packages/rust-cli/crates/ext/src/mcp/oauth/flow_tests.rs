@@ -235,6 +235,8 @@ pub(crate) fn input() -> FlowInput {
         scope: Some("mcp:tools".to_owned()),
         redirect_path: None,
         transaction_ttl_ms: 5 * 60 * 1000,
+        requested_scope: None,
+        resource_metadata: None,
     }
 }
 

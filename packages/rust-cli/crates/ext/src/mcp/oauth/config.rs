@@ -64,6 +64,8 @@ impl McpOAuthConfig {
                 scope: scope.clone(),
                 redirect_path: redirect_path.clone(),
                 transaction_ttl_ms: 5 * 60 * 1000,
+                requested_scope: None,
+                resource_metadata: None,
             }),
             Self::ClientCredentials { .. } => None,
         }

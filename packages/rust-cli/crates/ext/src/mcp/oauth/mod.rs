@@ -6,6 +6,7 @@
 //! The store is injected through [`McpOAuthStore`]; the platform credential store implements it.
 
 mod callback;
+mod challenge;
 mod config;
 mod coordinator;
 mod flow;
@@ -17,6 +18,8 @@ mod record;
 mod refresh;
 mod store;
 
+#[cfg(test)]
+mod challenge_tests;
 #[cfg(test)]
 mod coordinator_tests;
 #[cfg(test)]
@@ -31,6 +34,7 @@ mod refresh_tests;
 mod tests;
 
 pub use callback::{CallbackError, CallbackParams, parse_callback_target};
+pub use challenge::{Challenge, parse_www_authenticate};
 pub use config::McpOAuthConfig;
 pub use coordinator::{McpOAuthCoordinator, ReconnectFn};
 pub use flow::{FlowInput, FlowOutcome, run_lead};

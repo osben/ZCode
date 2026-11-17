@@ -162,6 +162,15 @@ pub enum McpError {
     /// 进程起不来、连不上、HTTP 错误状态等。
     #[error("{message}")]
     Connect { message: String },
+    /// HTTP 传输收到非成功状态（401/403 等）。`www_authenticate` 是响应的 `WWW-Authenticate` 头：OAuth 据此
+    /// 判断 `insufficient_scope` 与 `resource_metadata`（RFC 6750 §3）。`message` 与 `Connect` 的文本相同。
+    #[error("{message}")]
+    Http {
+        status: u16,
+        message: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        www_authenticate: Option<String>,
+    },
     /// 连接已关闭或不存在。
     #[error("connection closed: {message}")]
     Closed { message: String },

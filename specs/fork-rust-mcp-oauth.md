@@ -345,11 +345,51 @@ Deviations from Node, each deliberate for this PR:
   stays in PR2's flow). Behaviour is the same, one extra discovery round trip.
 - `resource` (RFC 8707) is not sent on the refresh request (see Deferred).
 
-Deferred (not in PR3):
+## PR3 follow-up: mid-session 401, 403 insufficient_scope (as built)
 
-- 403 `WWW-Authenticate` (`insufficient_scope`) and its `resource_metadata`: needs the header carried through
-  the transport error (`kernel-api` McpError). Not done in this PR; a 403 still fails the row.
-- Mid-session 401 on a request (Node `recoverToolCallAuthorization`): a live session that gets 401 on a tool
-  call is not refreshed in this PR; the row fails and the next connect takes the rule above.
+Owners: `kernel-api` `McpError::Http { status, message, www_authenticate }` (the header, typed) ->
+`env-local` `http.rs` (sets it on a non-success status) -> `ext` `rpc.rs` `RpcError::Http` ->
+`connection.rs` `ConnectFailure { reason, www_authenticate }` -> `oauth_hooks.rs` (challenge decisions) ->
+`oauth/challenge.rs` (RFC 6750 parser). The row text is unchanged (`HTTP <status>: <body>`).
+
+Event order, tool call on a live connection:
+
+```mermaid
+sequenceDiagram
+  participant Tool as McpTool::call
+  participant Client as connection (old)
+  participant Mgr as McpManager
+  participant Ref as oauth::refresh
+  participant New as connection (new)
+  Tool->>Client: tools/call (bearer B1)
+  Client-->>Tool: RpcError::Http 401 (not retried yet)
+  Tool->>Mgr: recover_call_challenge
+  Mgr->>Ref: refresh (reactive)
+  alt refreshed
+    Ref-->>Mgr: Retry
+    Mgr->>Client: restart; wait for the new client
+    Mgr-->>Tool: true
+    Tool->>New: tools/call (bearer B2), once
+  else invalid_grant or no refresh token
+    Mgr->>Mgr: start flow (row connecting)
+    Mgr-->>Tool: false: return the original error text
+  else temporary failure
+    Mgr-->>Tool: false: credentials kept, original error text
+  end
+```
+
+- A 401 mid-session: one refresh, one retried call. A second 401 returns the server's text.
+- Node returns the original error to the model when recovery does not connect (`throw input.error`).
+  This port does the same: the tool result is the transport's error text, not a new message.
+- A 403 `insufficient_scope` on connect or on a call: a new authorization for the configured scope
+  united with the header's `scope`, discovery from the header's `resource_metadata` (tried first), and the
+  credential key prefix unchanged (keyed on the configured scope, as Node). No refresh.
+- Deviation: the union omits the stored token's scope (Node includes it). A server that drops a scope it
+  granted earlier could therefore see a narrower request.
+- Deviation: the header does not cross the executor wire (`exec-server` maps `Http` to `Io`); a remote
+  executor's 401/403 reaches the hooks as text only, with no refresh and no scope challenge.
+
+Still deferred (not in PR3):
+
 - `resource` (RFC 8707) on the refresh request.
 - Plugin rows (#501) do not carry `oauth` or `url`, so they get neither refresh nor flow.

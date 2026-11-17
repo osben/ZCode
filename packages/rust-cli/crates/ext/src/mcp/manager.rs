@@ -213,6 +213,11 @@ impl Inner {
     }
 
     /// 已连接的服务器的客户端。
+    /// The configuration of server `name`, as the connection was started with it.
+    pub(crate) fn config_of(&self, name: &str) -> Option<McpServer> {
+        self.servers().get(name).map(|server| server.config.clone())
+    }
+
     pub(crate) fn client(&self, name: &str) -> Option<Arc<Client>> {
         self.servers()
             .get(name)
@@ -448,12 +453,12 @@ impl Inner {
                     });
                     reason.unwrap_or_else(|| "connection closed".to_owned())
                 }
-                Err(reason) => {
+                Err(failure) => {
                     // One refresh-and-retry per 401 (SDK `onUnauthorized`); a second 401 starts the flow.
                     let refresh = if refreshed_on_challenge {
                         None
                     } else {
-                        self.refresh_on_challenge(&config, &reason).await
+                        self.refresh_on_challenge(&config, &failure).await
                     };
                     match refresh {
                         Some(ChallengeRefresh::Retry) => {
@@ -463,10 +468,10 @@ impl Inner {
                         // Keep the credentials and report the failure: the grant is not known to be invalid.
                         Some(ChallengeRefresh::Failed) => {}
                         Some(ChallengeRefresh::Reauthorize) | None => {
-                            self.start_oauth_on_challenge(&config, &reason);
+                            self.start_oauth_on_challenge(&config, &failure);
                         }
                     }
-                    reason
+                    failure.reason
                 }
             };
             if !remote || !connected_once || attempts >= MAX_RECONNECTS {

@@ -185,7 +185,7 @@ impl McpOAuthCoordinator {
             return Ok(token.bearer.clone());
         }
 
-        let (_, metadata) = discover(&*self.runtime, server_url).await?;
+        let (_, metadata) = discover(&*self.runtime, server_url, None).await?;
         let endpoint = metadata["token_endpoint"]
             .as_str()
             .ok_or("the authorization server has no token endpoint")?;

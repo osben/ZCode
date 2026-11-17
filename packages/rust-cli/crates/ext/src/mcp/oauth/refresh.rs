@@ -185,7 +185,7 @@ async fn refresh_locked(
         .to_owned();
 
     // A discovery failure is never an invalid grant: it is handled like a network failure.
-    let (authorization_server, metadata) = match discover(runtime, &input.server_url).await {
+    let (authorization_server, metadata) = match discover(runtime, &input.server_url, None).await {
         Ok(found) => found,
         Err(message) => return fail_soft(input, &current, message),
     };

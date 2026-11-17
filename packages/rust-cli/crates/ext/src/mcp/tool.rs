@@ -18,8 +18,10 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
 use super::config::tool_name;
+use super::connection::ConnectFailure;
 use super::connection::truncate_description;
 use super::manager::Inner;
+use super::manager::McpManager;
 use super::result;
 use super::rpc::RpcError;
 
@@ -239,6 +241,25 @@ impl Tool for McpTool {
                         self.info.tool,
                         timeout_ms / units::MS_PER_SECOND
                     )));
+                }
+                // HTTP 401/403 on a live connection (Node `recoverToolCallAuthorization`): recover once and retry the
+                // call; otherwise the call fails with the server's own status text.
+                Err(RpcError::Http {
+                    message,
+                    www_authenticate,
+                }) if !retried => {
+                    let failure = ConnectFailure {
+                        reason: message.clone(),
+                        www_authenticate,
+                    };
+                    if McpManager::from_inner(manager.clone())
+                        .recover_call_challenge(server, &client, &failure)
+                        .await
+                    {
+                        retried = true;
+                        continue;
+                    }
+                    return Err(failed(message));
                 }
                 // 会话过期（HTTP 404）：等连接任务重连后重试一次。
                 Err(RpcError::Closed(_)) if !retried && manager.expired(server) => {
