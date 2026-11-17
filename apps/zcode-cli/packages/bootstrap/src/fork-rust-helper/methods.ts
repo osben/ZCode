@@ -1,5 +1,6 @@
 import { zcodeProtocolMethods } from "@zcode/shared";
 import { V4_METHODS } from "@zcode/shared/zcode-protocol-v4";
+import { FORK_RUST_HELPER_WORKFLOW } from "./workflow-protocol.js";
 
 /** Version of the Rust ↔ helper protocol (`helper/initialize`). */
 export const FORK_RUST_HELPER_PROTOCOL_VERSION = 2;
@@ -65,4 +66,7 @@ export const FORK_RUST_HELPER_METHODS = [
   zcodeProtocolMethods.mcpUiUnregisterAppTools,
   zcodeProtocolMethods.mcpUiClaimAppToolCall,
   zcodeProtocolMethods.mcpUiResolveAppToolCall,
+  // W4: stateless compile and format for the Rust workflow engine (specs/fork-rust-workflow-engine.md, 4.1).
+  FORK_RUST_HELPER_WORKFLOW.compile,
+  FORK_RUST_HELPER_WORKFLOW.format,
 ] as const;

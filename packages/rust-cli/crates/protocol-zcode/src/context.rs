@@ -38,6 +38,9 @@ pub struct Context {
     /// Fork: the Node helper that answers the JS-only method families; set once by the app-server when the Host
     /// configured a helper command (specs/fork-rust-node-helper.md).
     node_helper: std::sync::OnceLock<Arc<crate::fork::node_helper::NodeHelper>>,
+    /// Fork: starts the sandbox children of dynamic workflow runs (specs/fork-rust-workflow-engine.md, 4.1); set once by
+    /// the composition root when the helper command is configured. Nothing starts a run yet (gate off).
+    workflow_child: std::sync::OnceLock<Arc<dyn crate::fork::workflow_child::ChildLauncher>>,
     /// Fork: the entry's model port for workspace model calls (`fork::workspace_model`); without it those methods
     /// stay unported.
     model_port: std::sync::OnceLock<Arc<dyn ModelPort>>,
@@ -67,6 +70,19 @@ impl Context {
     /// Fork: the Node helper, when one is configured.
     pub fn node_helper(&self) -> Option<&Arc<crate::fork::node_helper::NodeHelper>> {
         self.node_helper.get()
+    }
+
+    /// Fork: the sandbox child launcher of workflow runs (set once; without it no run can start).
+    pub fn set_workflow_child(
+        &self,
+        launcher: Arc<dyn crate::fork::workflow_child::ChildLauncher>,
+    ) {
+        let _ = self.workflow_child.set(launcher);
+    }
+
+    /// Fork: the sandbox child launcher, when the helper command is configured.
+    pub fn workflow_child(&self) -> Option<&Arc<dyn crate::fork::workflow_child::ChildLauncher>> {
+        self.workflow_child.get()
     }
 
     /// Fork: the storage root (Node `context.deps.storageRoot`).
@@ -181,6 +197,7 @@ impl Context {
             workspace_admin: std::sync::OnceLock::new(),
             attach: crate::attach::HostAttach::new(),
             node_helper: std::sync::OnceLock::new(),
+            workflow_child: std::sync::OnceLock::new(),
             model_port: std::sync::OnceLock::new(),
             mcp_processes: std::sync::OnceLock::new(),
             language_servers: std::sync::OnceLock::new(),

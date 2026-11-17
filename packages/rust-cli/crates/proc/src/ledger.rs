@@ -37,6 +37,8 @@ pub enum Purpose {
     Acp,
     /// Fork: a language server (specs/fork-rust-lsp.md "Pool"). A build without it skips these records.
     Lsp,
+    /// Fork: a sandbox child of a dynamic workflow run (specs/fork-rust-workflow-engine.md, 4.1).
+    Workflow,
 }
 
 impl Purpose {
@@ -47,6 +49,7 @@ impl Purpose {
             Purpose::Mcp => "mcp",
             Purpose::Acp => "acp",
             Purpose::Lsp => "lsp",
+            Purpose::Workflow => "workflow",
         }
     }
 
@@ -58,6 +61,7 @@ impl Purpose {
             Purpose::Mcp,
             Purpose::Acp,
             Purpose::Lsp,
+            Purpose::Workflow,
         ]
         .into_iter()
         .find(|purpose| purpose.as_str() == name)

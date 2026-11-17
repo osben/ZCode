@@ -13,8 +13,10 @@ use rust_cli_base::names::env::ZCODE_FORK_NODE_HELPER_COMMAND;
 use rust_cli_proc::ledger::{Containment, Isolation, Ledger, Purpose, Tracked};
 use rust_cli_proc::tree::Shutdown;
 use rust_cli_protocol_zcode::{
-    Context, NodeHelper, NodeHelperLauncher, NodeHelperProcess, NodeHelperTiming,
+    ChildCommand, Context, NodeHelper, NodeHelperLauncher, NodeHelperProcess, NodeHelperTiming,
 };
+
+use super::workflow_child;
 use serde_json::Value;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, BufReader};
 
@@ -184,9 +186,9 @@ async fn stop_mode<F: std::future::Future>(exit: F, grace: std::time::Duration) 
 /// in a task so it is confirmed: the tree is reaped and its ledger record removed, instead of one record per
 /// generation waiting for the next process's sweep. If the task never runs (the scope is closing), dropping the tree
 /// still kills it.
-struct StopOnDrop {
-    tree: Option<Tracked>,
-    spawner: Spawner,
+pub(crate) struct StopOnDrop {
+    pub(crate) tree: Option<Tracked>,
+    pub(crate) spawner: Spawner,
 }
 
 impl Drop for StopOnDrop {
@@ -263,9 +265,19 @@ pub(crate) fn install(
             return None;
         }
     };
+    let ledger = Ledger::open(rust_cli_proc::private::user_dir(temp));
+    // W4: the sandbox children of workflow runs start from the same command (specs/fork-rust-workflow-engine.md, 4.1).
+    context.set_workflow_child(Arc::new(workflow_child::ProcessChildLauncher::new(
+        ChildCommand {
+            program: command.program.clone(),
+            env: command.env.clone(),
+        },
+        ledger.clone(),
+        spawner.clone(),
+    )));
     let launcher = ProcessLauncher {
         command,
-        ledger: Ledger::open(rust_cli_proc::private::user_dir(temp)),
+        ledger,
         spawner: spawner.clone(),
     };
     let helper = NodeHelper::new(
