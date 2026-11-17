@@ -2347,6 +2347,7 @@ dependencies = [
  "regress",
  "ring",
  "rust-cli-base",
+ "rust-cli-ext",
  "rust-cli-fs",
  "rust-cli-kernel-api",
  "rust-cli-net",

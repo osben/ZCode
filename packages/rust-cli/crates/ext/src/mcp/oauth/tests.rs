@@ -219,3 +219,43 @@ async fn authorization_status_is_reported_only_for_a_live_pending_record() {
     .expect("read");
     assert!(expired.is_none());
 }
+
+#[test]
+fn http_401_is_an_authorization_challenge_and_403_is_not() {
+    // The connect error text is `HTTP <status> <reason>: <body>` (env-local/src/mcp/http.rs).
+    assert!(is_authorization_challenge(
+        "HTTP 401 Unauthorized: unauthorized"
+    ));
+    assert!(!is_authorization_challenge("HTTP 403 Forbidden: no"));
+    assert!(!is_authorization_challenge("connection refused"));
+}
+
+#[test]
+fn pending_authorization_status_matches_node_shape() {
+    let pending = PendingAuthorization {
+        attempt_id: "a".to_owned(),
+        authorization_url: "https://auth.example.test/authorize?state=s1".to_owned(),
+        baseline_generation: None,
+        expires_at: FIXTURE_NOW + 300_000,
+        state: "s1".to_owned(),
+    };
+    let value = authorization_status(&pending, "2026-11-16T00:00:00.000Z");
+    assert_eq!(
+        value,
+        serde_json::json!({
+            "type": "oauth_authorization_code",
+            "authorizationUrl": "https://auth.example.test/authorize?state=s1",
+            "startedAt": "2026-11-16T00:00:00.000Z",
+        })
+    );
+}
+
+#[test]
+fn pending_authorization_replaces_only_non_connected_statuses() {
+    assert!(may_show_pending("failed"));
+    assert!(may_show_pending("disconnected"));
+    assert!(may_show_pending("connecting"));
+    assert!(!may_show_pending("connected"));
+    assert!(!may_show_pending("disabled"));
+    assert!(!may_show_pending("untrusted"));
+}

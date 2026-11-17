@@ -69,7 +69,17 @@ workspace's flow.
 5. Config with `oauth.type == "authorization_code"` no longer logs the "not supported" warning;
    `node_config_tests.rs` L19 expectation is updated accordingly.
 
-## Not in PR1
+## As built in PR1
 
-Discovery, DCR, PKCE, callback server (PR2); refresh and 401 re-auth (PR3). `client_credentials`
-is handled in PR2 together with the provider.
+- Read side: `crates/ext/src/mcp/oauth/` (keys, lease path, pending, discovery, canonical records),
+  behind `McpOAuthStore`. `platform` implements it over `credentials.json` through the existing
+  `CredentialStore` (the `enc:v2` cipher), verified against a Node-sealed fixture (env secret).
+- 401: `is_authorization_challenge` (connect error `HTTP 401 ...`). The row gets `failureKind:
+"not_authenticated"` and stays `failed` until PR2 starts the flow (Node then reports `connecting`).
+  403 is not classified: its `WWW-Authenticate` header is not carried in the transport error.
+- Row hook: `AppWorkspace::with_pending_authorization` (status loop). A live pending record turns a
+  `connecting`, `failed` or `disconnected` row into `connecting` with `authorization`. The identity
+  comes from the row config (`url` and an `authorization_code` `oauth` block). Plugin rows (#501) carry
+  neither yet, so they pick the hook up only once #501's row config includes `url` and `oauth`.
+- Not in PR1: the lease itself, writes, discovery, DCR, PKCE, callback server (PR2); refresh and
+  re-auth (PR3). `client_credentials` is handled in PR2 together with the provider.

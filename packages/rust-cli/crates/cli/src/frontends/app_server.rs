@@ -220,15 +220,18 @@ async fn serve(
     // Fork: workspace trust from the App (specs/fork-rust-agent-parity.md, "Workspace MCP trust"): set before the
     // handler is installed, so the first request already sees it.
     let opened = &built.opened;
-    context.set_workspace_admin(Arc::new(AppWorkspace::new(
-        (opened.primary.files().clone(), paths.clone()),
-        ProcessConfig {
-            process_env: facts.process.env.clone(),
-        },
-        built.kernel.project_hook_slots(),
-        built.kernel.workspace_layer_host(),
-        (opened.primary.mcp().clone(), spawner.clone(), clock.clone()),
-    )));
+    context.set_workspace_admin(Arc::new(
+        AppWorkspace::new(
+            (opened.primary.files().clone(), paths.clone()),
+            ProcessConfig {
+                process_env: facts.process.env.clone(),
+            },
+            built.kernel.project_hook_slots(),
+            built.kernel.workspace_layer_host(),
+            (opened.primary.mcp().clone(), spawner.clone(), clock.clone()),
+        )
+        .with_mcp_oauth(opened.platform.mcp_oauth_store()),
+    ));
     // Fork: the ACP agents' session config behind `setExternalAgentConfigOption` and the subscribe seed.
     if let Some(configs) = built.kernel.external_agent_configs() {
         context.set_external_agent_configs(configs);

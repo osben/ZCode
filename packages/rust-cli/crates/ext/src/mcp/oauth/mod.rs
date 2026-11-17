@@ -19,6 +19,29 @@ pub use record::{
 };
 pub use store::{McpOAuthStore, McpOAuthStoreError};
 
+/// Whether a connect error is an authorization challenge (Node `classifyInteractiveAuthorizationTrigger`:
+/// a 401 that the SDK reports as `unauthorized`). A 403 needs the `WWW-Authenticate` header, which the
+/// transport error text does not carry, so it is not classified here.
+pub fn is_authorization_challenge(reason: &str) -> bool {
+    reason.starts_with("HTTP 401")
+}
+
+/// Node `createOAuthAuthorizationStatus`: the `authorization` object of a status row. `started_at` is
+/// the time the row is built, as in Node (the pending record does not store it).
+pub fn authorization_status(pending: &PendingAuthorization, started_at: &str) -> serde_json::Value {
+    serde_json::json!({
+        "type": "oauth_authorization_code",
+        "authorizationUrl": pending.authorization_url,
+        "startedAt": started_at,
+    })
+}
+
+/// Which row statuses a pending authorization replaces. A connected, disabled or untrusted server keeps its
+/// own status: the pending record must not hide them.
+pub fn may_show_pending(status: &str) -> bool {
+    matches!(status, "connecting" | "failed" | "disconnected")
+}
+
 /// The fields Node hashes into the credential key prefix (`createCredentialKeyPrefix`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerOAuthIdentity {
