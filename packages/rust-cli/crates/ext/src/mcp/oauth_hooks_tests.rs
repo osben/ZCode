@@ -111,11 +111,22 @@ async fn the_bearer_is_added_unless_the_server_sets_its_own_authorization() {
         ("plain", "https://mcp.example.test/plain"),
         ("own", "https://mcp.example.test/own"),
     ] {
+        // The canonical record and its legacy mirror, as Node publishes them.
         store
-            .apply(&[McpOAuthWrite::Put {
-                key: credential_key(&prefix(name, url), "authorization_credentials"),
-                value: canonical.clone(),
-            }])
+            .apply(&[
+                McpOAuthWrite::Put {
+                    key: credential_key(&prefix(name, url), "authorization_credentials"),
+                    value: canonical.clone(),
+                },
+                McpOAuthWrite::Put {
+                    key: credential_key(&prefix(name, url), "client_information"),
+                    value: r#"{"client_id":"c"}"#.to_owned(),
+                },
+                McpOAuthWrite::Put {
+                    key: credential_key(&prefix(name, url), "tokens"),
+                    value: r#"{"access_token":"tok-fresh","token_type":"Bearer"}"#.to_owned(),
+                },
+            ])
             .await
             .expect("seed");
     }

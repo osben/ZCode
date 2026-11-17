@@ -12,9 +12,9 @@ mod posix;
 mod table;
 
 #[cfg(unix)]
-pub use posix::terminate;
-#[cfg(unix)]
 pub(crate) use posix::{Adopted, terminate_adopted};
+#[cfg(unix)]
+pub use posix::{terminate, terminate_with_grace};
 
 /// 结束进程树的方式。Windows 上两种方式相同：直接结束整棵树。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

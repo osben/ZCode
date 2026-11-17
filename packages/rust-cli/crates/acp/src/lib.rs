@@ -13,6 +13,10 @@ mod rpc;
 pub mod runtime;
 pub mod updates;
 
+#[cfg(test)]
+#[path = "kill_grace_tests.rs"]
+mod kill_grace_tests;
+
 pub use config::{ConfigOption, ConfigValue};
 pub use error::{AcpError, AcpErrorCode};
 pub use launch::{AcpLaunch, launch_key};

@@ -16,7 +16,7 @@ use rust_cli_base::secret::EnvSnapshot;
 use rust_cli_base::sync::LockUnpoisoned;
 use rust_cli_ext::WorkspaceConfigLoader;
 use rust_cli_ext::mcp::oauth::{
-    McpOAuthRuntime, McpOAuthStore, ServerOAuthIdentity, authorization_status,
+    McpOAuthConfig, McpOAuthRuntime, McpOAuthStore, ServerOAuthIdentity, authorization_status,
     is_authorization_challenge, may_show_pending, pending_authorization_for,
 };
 use rust_cli_ext::mcp::{McpManager, McpScope, McpServer, McpSettings, parse_node_servers};
@@ -597,17 +597,57 @@ fn transport(config: &Map<String, Value>) -> &str {
 }
 
 /// The settings row config of a plugin server: its transport as Node reports it, tagged with the plugin source
-/// (no `workspaceTrust`, and `allows` passes it).
+/// (no `workspaceTrust`, and `allows` passes it). A remote row carries its resolved `url` and the OAuth identity
+/// fields (`type`, `clientId`, `scope`, `redirectPath`) that `authorization_identity` hashes; never the secret or
+/// the headers. A remote row with its own `Authorization` header gets no `url`, so it has no authorization
+/// identity, as Node's default does not apply to it.
 fn plugin_row_config(server: &McpServer) -> Map<String, Value> {
-    let kind = match &server.transport {
-        McpTransportConfig::Sse { .. } => "sse",
-        McpTransportConfig::Http { .. } => "http",
-        McpTransportConfig::Stdio { .. } | McpTransportConfig::NodeHelper => "stdio",
+    let (kind, url, headers) = match &server.transport {
+        McpTransportConfig::Sse { url, headers } => ("sse", Some(url), Some(headers)),
+        McpTransportConfig::Http { url, headers } => ("http", Some(url), Some(headers)),
+        McpTransportConfig::Stdio { .. } | McpTransportConfig::NodeHelper => ("stdio", None, None),
     };
     let mut config = Map::new();
     config.insert("type".into(), json!(kind));
     config.insert("source".into(), json!({"kind": "plugin"}));
+    let own_authorization = headers.is_some_and(|headers| {
+        headers
+            .keys()
+            .any(|name| name.eq_ignore_ascii_case("authorization"))
+    });
+    if let Some(url) = url.filter(|_| server.oauth.is_some() || !own_authorization) {
+        config.insert("url".into(), json!(url));
+        config.insert("oauth".into(), plugin_oauth_row(server.oauth.as_ref()));
+    }
     config
+}
+
+/// The `oauth` block of a plugin row, reduced to what the authorization identity hashes. `None` is Node's default
+/// (`authorization_code` for a remote server with no block). The secret never enters a row.
+fn plugin_oauth_row(oauth: Option<&McpOAuthConfig>) -> Value {
+    match oauth {
+        None => json!({"type": "authorization_code"}),
+        Some(McpOAuthConfig::AuthorizationCode {
+            client_id,
+            redirect_path,
+            scope,
+            ..
+        }) => {
+            let mut block = Map::new();
+            block.insert("type".into(), json!("authorization_code"));
+            for (key, value) in [
+                ("clientId", client_id),
+                ("redirectPath", redirect_path),
+                ("scope", scope),
+            ] {
+                if let Some(value) = value {
+                    block.insert(key.into(), json!(value));
+                }
+            }
+            Value::Object(block)
+        }
+        Some(McpOAuthConfig::ClientCredentials { .. }) => json!({"type": "client_credentials"}),
+    }
 }
 
 #[async_trait]

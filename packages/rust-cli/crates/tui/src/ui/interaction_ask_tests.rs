@@ -32,6 +32,7 @@ fn ask(
         machine: Default::default(),
         once,
         independent,
+        session_allow: false,
         origin: None,
     }
 }

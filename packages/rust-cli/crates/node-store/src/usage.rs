@@ -100,22 +100,73 @@ impl Normalized {
 
 /// 错误的种类（`ModelError` 的 serde tag）、5xx 的状态码与是否可重试（usage.md §2.2、D5）。
 fn error_info(error: &ModelError) -> (String, Option<String>, bool) {
-    let kind = serde_json::to_value(error)
+    // The kind is the classification's, never the provider wrapper's (`provider`).
+    let inner = error.peel();
+    let kind = serde_json::to_value(inner)
         .ok()
         .and_then(|value| value["kind"].as_str().map(str::to_owned))
         .unwrap_or_default();
-    let code = match error {
+    let code = match inner {
         ModelError::Server { status, .. } => Some(status.to_string()),
         _ => None,
     };
-    let retryable = matches!(
-        error,
-        ModelError::RateLimited { .. }
-            | ModelError::Overloaded { .. }
-            | ModelError::Network { .. }
-            | ModelError::Server { .. }
+    // A provider business failure carries Node's `retryable` from its table (3008–3010 are rate limits that do not
+    // retry); other failures keep the classification's retry rule.
+    let retryable = error.provider().map_or_else(
+        || {
+            matches!(
+                inner,
+                ModelError::RateLimited { .. }
+                    | ModelError::Overloaded { .. }
+                    | ModelError::Network { .. }
+                    | ModelError::Server { .. }
+            )
+        },
+        |provider| provider.retryable,
     );
     (kind, code, retryable)
+}
+
+#[cfg(test)]
+mod error_info_tests {
+    use super::*;
+    use rust_cli_kernel_api::model::ProviderFailure;
+
+    fn provider(retryable: bool) -> ProviderFailure {
+        ProviderFailure::new("3008", Some(429), retryable, "rate_limited", "anthropic")
+    }
+
+    #[test]
+    fn a_provider_failure_records_the_classification_kind_and_its_own_retryable() {
+        let limited = ModelError::Provider {
+            provider: Box::new(provider(false)),
+            error: Box::new(ModelError::RateLimited {
+                message: "concurrency".into(),
+                retry_after_ms: None,
+            }),
+        };
+        assert_eq!(error_info(&limited), ("rate_limited".into(), None, false));
+        let retrying = ModelError::Provider {
+            provider: Box::new(provider(true)),
+            error: Box::new(ModelError::RateLimited {
+                message: "rate".into(),
+                retry_after_ms: None,
+            }),
+        };
+        assert_eq!(error_info(&retrying), ("rate_limited".into(), None, true));
+    }
+
+    #[test]
+    fn a_plain_failure_keeps_the_classification_rule() {
+        let network = ModelError::Network {
+            message: "reset".into(),
+        };
+        assert_eq!(error_info(&network), ("network".into(), None, true));
+        let auth = ModelError::Authentication {
+            message: "no".into(),
+        };
+        assert_eq!(error_info(&auth), ("authentication".into(), None, false));
+    }
 }
 
 /// 会话行与当前轮：trace、会话类型、当前的真实用户输入（id 与 `anchor.turnId`）。
@@ -203,7 +254,10 @@ pub fn model_called(ctx: &Commit<'_>, call: &ModelCall) -> Result<(), StoreError
         // Node `errorInfo.retryable ?? retryCount > 0`。
         retryable: error_retryable.unwrap_or(call.retries > 0),
         cancelled_by_user: call.status == CallStatus::Cancelled,
-        context_exceeded: matches!(call.error, Some(ModelError::PromptTooLong { .. })),
+        context_exceeded: call
+            .error
+            .as_ref()
+            .is_some_and(|error| error.prompt_too_long_message().is_some()),
         error_type,
         error_code,
         error_message: call.error.as_ref().map(ToString::to_string),

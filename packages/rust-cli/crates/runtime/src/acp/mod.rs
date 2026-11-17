@@ -153,6 +153,7 @@ impl QueryRunner for ExternalAgentRunner {
                         message: format!(
                             "ACP agent {agent_id} runs only interactive chat turns; {what} need a ZCode model. Switch the model to continue."
                         ),
+                        provider: None,
                     });
                 }
                 let agent_id = agent_id.to_owned();

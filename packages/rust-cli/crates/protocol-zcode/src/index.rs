@@ -276,6 +276,27 @@ impl Topics {
         }));
     }
 
+    /// Fork: a session left every loaded sessions index (Node `removeSession` is global). Permanent deletion forgets the
+    /// sessions it removed here, whichever workspace index they were listed in.
+    pub fn remove_everywhere(self: &Arc<Self>, session: &str) {
+        // The loaded indexes are listed inside the single writer's job: an upsert queued before this call has then
+        // created its index, and the removal sees it.
+        let topics = self.clone();
+        let session = session.to_owned();
+        self.serial.run(Box::pin(async move {
+            let workspaces: Vec<String> = topics
+                .table()
+                .keys()
+                .filter_map(|topic| topic.strip_prefix(INDEX_PREFIX).map(str::to_owned))
+                .collect();
+            for workspace in workspaces {
+                let topic = format!("{INDEX_PREFIX}{workspace}");
+                let outgoing = topics.dropped(&topic, &session);
+                Self::write(&topics.context, outgoing).await;
+            }
+        }));
+    }
+
     /// The live rows of a workspace's sessions index (tests only).
     #[cfg(test)]
     pub(crate) fn live_rows(&self, workspace: &str) -> Vec<String> {

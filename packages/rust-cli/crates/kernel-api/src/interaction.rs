@@ -23,6 +23,9 @@ pub enum PermissionAnswer {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         remember: Vec<crate::permission::PermissionRule>,
     },
+    /// Fork (F3b a): "Always allow in this session" (Node `allowSession`). The session actor grants the tool for
+    /// this session only; nothing is written to the project rules. Refused unless the ask offered it.
+    AllowSession,
     /// 拒绝；`feedback` 是用户附带的说明，会转给模型。
     Deny {
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -117,6 +120,7 @@ impl Answer {
     pub fn decision(&self) -> &'static str {
         match self {
             Self::Permission(PermissionAnswer::Allow { .. }) => "allow",
+            Self::Permission(PermissionAnswer::AllowSession) => "allow_session",
             Self::Permission(PermissionAnswer::Deny { .. }) => "deny",
             Self::Permission(PermissionAnswer::Unavailable) => "unavailable",
             Self::Permission(PermissionAnswer::NoPrompts) => "no_prompts",
@@ -132,7 +136,8 @@ impl Answer {
         match self {
             Self::Permission(PermissionAnswer::Allow { remember }) => remember,
             Self::Permission(
-                PermissionAnswer::Deny { .. }
+                PermissionAnswer::AllowSession
+                | PermissionAnswer::Deny { .. }
                 | PermissionAnswer::Unavailable
                 | PermissionAnswer::NoPrompts,
             )

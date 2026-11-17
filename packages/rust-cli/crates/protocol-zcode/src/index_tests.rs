@@ -110,3 +110,31 @@ fn only_task_sessions_are_listed_in_the_sessions_index() {
     ));
     assert!(crate::live::listed_in_sessions_index(SessionKind::Fork));
 }
+
+/// Node `removeSession` is global: a session leaves every loaded sessions index, not only the index of the directory
+/// the request named (the session's workspace is not known to the purge that removes it).
+#[tokio::test]
+async fn removing_a_session_drops_it_from_every_loaded_index() {
+    // The scope must outlive the queued removal: the `topics()` helper drops it on return, which cancels the writer.
+    let scope = TaskScope::root("test", |_| {});
+    let (out, _reader) = tokio::io::duplex(1 << 16);
+    let (peer, _writer) = connection::start(out, &scope.spawner(), Options::default());
+    let context = Arc::new(Context::new(peer, Arc::new(FixedClock(5))));
+    let topics = Arc::new(Topics::new(context, &scope.spawner()));
+    // Seeded synchronously, as the other index tests do: the rows live in the loaded tables before the removal.
+    topics.changed("sessions-index//w1", row("sess_x"));
+    topics.changed("sessions-index//w2", row("sess_x"));
+    topics.changed("sessions-index//w2", row("sess_y"));
+    topics.remove_everywhere("sess_x");
+    for _ in 0..200 {
+        if topics.live_rows("/w1").is_empty() && topics.live_rows("/w2") == ["sess_y".to_owned()] {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    panic!(
+        "sess_x stayed in a loaded index: /w1 {:?}, /w2 {:?}",
+        topics.live_rows("/w1"),
+        topics.live_rows("/w2")
+    );
+}

@@ -150,6 +150,10 @@ impl crate::actor::Actor {
         }
         if let Some(running) = &self.running {
             running.abort.abort(reason);
+        } else if let Some(capture) = &self.capture_cancel {
+            // Fork (D2 follow-up, C2): the end-of-turn capture runs outside `running`; a close cancels it as an abort of
+            // the turn would, so the close does not wait for the capture.
+            capture.cancel();
         }
         if let Some(cancel) = self.job.as_ref().and_then(|job| job.cancel.as_ref()) {
             cancel.cancel();

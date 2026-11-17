@@ -132,7 +132,10 @@ impl Compaction {
                 // 失败已计入熔断次数，再看阻塞线（错误文字带上失败的原因）。
                 AutoCompactOutcome::Failed { message } => failure = Some(message),
                 AutoCompactOutcome::Thrashing { message } => {
-                    return Ok(Some(QueryStop::ApiError { message }));
+                    return Ok(Some(QueryStop::ApiError {
+                        message,
+                        provider: None,
+                    }));
                 }
                 // 刚压缩过：这一步不看阻塞线。
                 // 开始事件已由压缩器在摘要请求之前说过（compact.md §4.1）。
@@ -148,7 +151,10 @@ impl Compaction {
         if *source != QuerySource::Compact
             && let Some(message) = compactor.blocking_limit(history, selection, failure.as_deref())
         {
-            return Ok(Some(QueryStop::ApiError { message }));
+            return Ok(Some(QueryStop::ApiError {
+                message,
+                provider: None,
+            }));
         }
         Ok(None)
     }

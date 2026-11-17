@@ -17,11 +17,12 @@ use url::Url;
 use super::callback::{CallbackError, CallbackParams, parse_callback_target};
 use super::keys::{credential_key, credential_key_prefix};
 use super::lease::{delete_pending_if_owned, publish_pending};
+use super::pair::load_pair;
 use super::pkce::{code_challenge, verifier_from_bytes};
 use super::protocol::{
     as_metadata_urls, prm_urls, registration_body, token_form_authorization_code,
 };
-use super::record::{PendingAuthorization, load_canonical, load_pending};
+use super::record::{PendingAuthorization, has_newer_credentials, load_canonical, load_pending};
 use super::store::{
     LoopbackConnection, LoopbackListener, McpOAuthRuntime, McpOAuthStore, McpOAuthStoreError,
     McpOAuthWrite, OAuthHttpError, OAuthHttpRequest, OAuthHttpResponse,
@@ -43,9 +44,10 @@ pub struct FlowInput {
     pub redirect_path: Option<String>,
     /// Lifetime of the transaction: the pending record and the callback wait (Node: 5 minutes).
     pub transaction_ttl_ms: i64,
-    /// The scope the authorization request asks for when it differs from the configured `scope` (a 403
-    /// `insufficient_scope` challenge). The credential key prefix always uses the configured `scope`.
-    pub requested_scope: Option<String>,
+    /// The `scope` of a 403 `insufficient_scope` challenge. The flow asks for the union of the configured scope,
+    /// the stored token's scope and this one (Node `computeScopeUnion`). The credential key prefix always uses the
+    /// configured `scope`.
+    pub challenge_scope: Option<String>,
     /// The `resource_metadata` URL of a 403/401 challenge (RFC 9728), tried before the well-known URLs.
     pub resource_metadata: Option<String>,
 }
@@ -61,10 +63,13 @@ pub enum FlowOutcome {
 }
 
 /// Run the flow as lead, or as follower when the lease is held. Never panics on server answers.
+///
+/// `baseline` is the canonical generation read when the caller started (Node `followAuthorization`'s baseline).
 pub async fn run_lead(
     store: &dyn McpOAuthStore,
     runtime: &dyn McpOAuthRuntime,
     input: &FlowInput,
+    baseline: Option<String>,
     cancel: &CancellationToken,
 ) -> FlowOutcome {
     let key_prefix = key_prefix_of(input);
@@ -73,6 +78,17 @@ pub async fn run_lead(
         Ok(None) => return follower(store, runtime, &key_prefix).await,
         Err(error) => return failed(error),
     };
+    // A publish that landed after the caller's baseline was read is the result this caller waits for. The lease can
+    // be free by now (the lead releases it after publishing), so taking it must not start a second transaction: its
+    // callback would never reach this caller's listener. Release the lease and follow the publish instead, as Node's
+    // `followAuthorization` returns `already-authorized`.
+    let published = load_canonical(store, &key_prefix).await.ok().flatten();
+    if has_newer_credentials(published.as_ref(), baseline.as_deref()) {
+        lease.release().await;
+        return FlowOutcome::Pending {
+            authorization_url: None,
+        };
+    }
     let attempt_id = match random_hex(runtime, 16) {
         Ok(id) => id,
         Err(message) => return FlowOutcome::Failed { message },
@@ -84,7 +100,7 @@ pub async fn run_lead(
     outcome
 }
 
-fn key_prefix_of(input: &FlowInput) -> String {
+pub(super) fn key_prefix_of(input: &FlowInput) -> String {
     credential_key_prefix(
         &input.server_name,
         &input.server_url,
@@ -146,15 +162,21 @@ async fn run_transaction(
         listener.local_addr().port()
     );
 
-    let (authorization_server, metadata) = discover(
+    let Discovered {
+        authorization_server,
+        metadata,
+        resource_metadata,
+    } = discover(
         runtime,
         &input.server_url,
         input.resource_metadata.as_deref(),
     )
     .await?;
+    // One scope for the registration and the authorize request (Node `oauth-interactive.ts`).
+    let scope = requested_scope(store, input, key_prefix).await?;
     let client = match &input.client_id {
         Some(client_id) => json!({ "client_id": client_id }),
-        None => register(runtime, &metadata, input, &redirect_uri).await?,
+        None => register(runtime, &metadata, input, &redirect_uri, scope.as_deref()).await?,
     };
     let client_id = client["client_id"]
         .as_str()
@@ -169,7 +191,7 @@ async fn run_transaction(
         &code_challenge(&verifier),
         &redirect_uri,
         &state,
-        input.requested_scope.as_deref().or(input.scope.as_deref()),
+        scope.as_deref(),
     )?;
     let now = runtime.now_ms();
     publish_pending(
@@ -185,7 +207,15 @@ async fn run_transaction(
     )
     .await
     .map_err(stage("publish the pending authorization"))?;
-    save_discovery(store, key_prefix, &authorization_server, &metadata, now).await?;
+    save_discovery(
+        store,
+        key_prefix,
+        &authorization_server,
+        &metadata,
+        resource_metadata.as_ref(),
+        now,
+    )
+    .await?;
 
     let ttl = Duration::from_millis(input.transaction_ttl_ms.max(0) as u64);
     let waited = tokio::select! {
@@ -211,7 +241,7 @@ async fn run_transaction(
         key_prefix,
         &client,
         &tokens,
-        &authorization_server,
+        Some(&authorization_server),
         attempt_id,
     )
     .await
@@ -242,24 +272,35 @@ fn random_hex(runtime: &dyn McpOAuthRuntime, len: usize) -> Result<String, Strin
     random(runtime, len).map(|bytes| hex(&bytes))
 }
 
-/// `(authorization server URL, AS metadata)`: protected-resource metadata first, then the origin.
+/// What discovery found (Node `OAuthDiscoveryState`): the authorization server, its metadata, and the
+/// protected-resource metadata when a document answered.
+#[derive(Debug, Clone)]
+pub(super) struct Discovered {
+    pub authorization_server: String,
+    pub metadata: Value,
+    pub resource_metadata: Option<Value>,
+}
+
+/// Protected-resource metadata first, then the origin (SDK `discoverOAuthServerInfo`).
 pub(super) async fn discover(
     runtime: &dyn McpOAuthRuntime,
     server_url: &str,
     resource_metadata: Option<&str>,
-) -> Result<(String, Value), String> {
+) -> Result<Discovered, String> {
     // SDK order: a 2xx answers; a 4xx (or 502) moves to the next URL; any other failure ends the PRM
     // lookup, and the SDK then uses the server origin. A broken PRM document is treated the same way.
     // A `resource_metadata` named by the server's challenge (RFC 9728) is tried before the well-known URLs.
     let mut urls: Vec<String> = resource_metadata.map(str::to_owned).into_iter().collect();
     urls.extend(prm_urls(server_url)?);
     let mut authorization_server = None;
+    let mut resource_metadata = None;
     for url in urls {
         let response = get(runtime, &url).await?;
         if (200..300).contains(&response.status) {
-            authorization_server = parse_json(&response.body, "protected resource metadata")
-                .ok()
-                .and_then(|prm: Value| prm["authorization_servers"][0].as_str().map(str::to_owned));
+            if let Ok(prm) = parse_json(&response.body, "protected resource metadata") {
+                authorization_server = prm["authorization_servers"][0].as_str().map(str::to_owned);
+                resource_metadata = Some(prm);
+            }
             break;
         }
         if response.status >= 500 && response.status != 502 {
@@ -274,7 +315,11 @@ pub(super) async fn discover(
         }
     };
     let metadata = as_metadata(runtime, &authorization_server).await?;
-    Ok((authorization_server, metadata))
+    Ok(Discovered {
+        authorization_server,
+        metadata,
+        resource_metadata,
+    })
 }
 
 /// RFC 8414 / OIDC metadata, first document that answers 2xx. A 4xx (except 502) skips to the next URL.
@@ -308,16 +353,51 @@ async fn as_metadata(
     Err("no authorization server metadata was found".to_owned())
 }
 
+/// The scope the flow asks for (Node `computeScopeUnion(config, token scope, challenge scope)`). Without a
+/// challenge it is the configured scope. The stored token is read here, under the flow, not in the 401 hook.
+async fn requested_scope(
+    store: &dyn McpOAuthStore,
+    input: &FlowInput,
+    key_prefix: &str,
+) -> Result<Option<String>, String> {
+    let Some(challenge) = &input.challenge_scope else {
+        return Ok(input.scope.clone());
+    };
+    let token_scope = load_pair(store, key_prefix)
+        .await
+        .map_err(stage("read credentials"))?
+        .and_then(|pair| pair.token_scope());
+    Ok(union_scopes(&[
+        input.scope.as_deref(),
+        token_scope.as_deref(),
+        Some(challenge.as_str()),
+    ]))
+}
+
+/// Node `computeScopeUnion`: space-separated tokens, first-seen order, no repeats; `None` when empty.
+pub(super) fn union_scopes(scopes: &[Option<&str>]) -> Option<String> {
+    let mut seen: Vec<&str> = Vec::new();
+    for scope in scopes.iter().flatten() {
+        for token in scope.split_whitespace() {
+            if !seen.contains(&token) {
+                seen.push(token);
+            }
+        }
+    }
+    (!seen.is_empty()).then(|| seen.join(" "))
+}
+
 async fn register(
     runtime: &dyn McpOAuthRuntime,
     metadata: &Value,
     input: &FlowInput,
     redirect_uri: &str,
+    scope: Option<&str>,
 ) -> Result<Value, String> {
     let endpoint = metadata["registration_endpoint"]
         .as_str()
         .ok_or("the authorization server does not support dynamic client registration")?;
-    let mut body = registration_body(redirect_uri, &input.client_name, input.scope.as_deref());
+    let mut body = registration_body(redirect_uri, &input.client_name, scope);
     if input.client_secret.is_some() {
         body["token_endpoint_auth_method"] = json!("client_secret_basic");
     }
@@ -369,17 +449,21 @@ fn authorization_url(
     Ok(url.to_string())
 }
 
-async fn save_discovery(
+pub(super) async fn save_discovery(
     store: &dyn McpOAuthStore,
     key_prefix: &str,
     authorization_server: &str,
     metadata: &Value,
+    resource_metadata: Option<&Value>,
     now: i64,
 ) -> Result<(), String> {
-    let state = json!({
+    let mut state = json!({
         "authorizationServerUrl": authorization_server,
         "authorizationServerMetadata": metadata,
     });
+    if let Some(resource_metadata) = resource_metadata {
+        state["resourceMetadata"] = resource_metadata.clone();
+    }
     store
         .apply(&[
             McpOAuthWrite::Put {
@@ -463,7 +547,13 @@ async fn exchange_code(
         ),
         ("Accept".into(), "application/json".into()),
     ];
-    match &input.client_secret {
+    // Node's SDK authenticates with the registered client's secret when registration issued one; the configured
+    // secret wins when both exist. Sending only `client_id` to a server that issued a secret gets `invalid_client`.
+    let secret = input
+        .client_secret
+        .clone()
+        .or_else(|| client["client_secret"].as_str().map(str::to_owned));
+    match secret {
         Some(secret) => {
             let basic = STANDARD.encode(format!("{client_id}:{secret}"));
             headers.push(("Authorization".into(), format!("Basic {basic}")));
@@ -506,7 +596,7 @@ pub(super) async fn publish_canonical(
     key_prefix: &str,
     client: &Value,
     tokens: &Value,
-    issuer: &str,
+    issuer: Option<&str>,
     attempt_id: &str,
 ) -> Result<(), String> {
     let now = runtime.now_ms();
@@ -516,10 +606,13 @@ pub(super) async fn publish_canonical(
         "tokens": tokens,
         "generation": generation,
         "obtained_at": now,
-        "issuer": issuer,
         "published_by": attempt_id,
         "version": 2,
     });
+    // Node writes `issuer` only when the record has one (`...(current.issuer ? { issuer } : {})`).
+    if let Some(issuer) = issuer {
+        canonical["issuer"] = json!(issuer);
+    }
     if let Some(expires_in) = tokens["expires_in"].as_i64() {
         canonical["expires_at"] = json!(now + expires_in * 1000);
     }

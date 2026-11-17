@@ -320,6 +320,7 @@ fn a_permission_ask_marks_the_tool_and_lists_the_interaction() {
             machine: Default::default(),
             once: false,
             independent: false,
+            session_allow: false,
         },
     });
     assert_eq!(asked[0]["row"]["status"], "pendingApproval");
@@ -387,6 +388,7 @@ fn a_single_use_ask_offers_no_always_allow_and_no_full_access() {
             machine: Default::default(),
             once: true,
             independent: false,
+            session_allow: false,
         },
     });
     let payload = &asked[1]["patch"]["pendingInteractions"][0]["payload"];
@@ -436,6 +438,7 @@ fn a_subagent_ask_and_an_independent_ask_offer_no_mode_switch() {
                 machine: Default::default(),
                 once,
                 independent,
+                session_allow: false,
             },
         });
         let payload = asked
@@ -471,6 +474,7 @@ fn an_independent_ask_offers_allow_once_and_deny_only() {
             machine: Default::default(),
             once: false,
             independent: true,
+            session_allow: false,
         },
     });
     let payload = asked
@@ -1395,6 +1399,7 @@ fn a_failed_turn_carries_its_node_error_code() {
             outcome: TurnOutcome::Failed {
                 message: message.clone(),
                 code,
+                provider: None,
             },
             usage: None,
         });
@@ -1402,6 +1407,132 @@ fn a_failed_turn_carries_its_node_error_code() {
         assert_eq!(error["code"], expected);
         assert_eq!(error["message"], message.as_str());
     }
+}
+
+/// Fork: a provider business failure's `lastError` (golden: Node `projectExecutionErrorPayload` over the context that
+/// `toAdapterError` builds for a ChatGPT `subscription_sharing_usage_limit_exceeded` at HTTP 429, retryable false).
+/// `code` is the provider code, and the attribution names the provider's status and retryability.
+#[test]
+fn a_provider_failure_names_its_code_in_last_error() {
+    use rust_cli_kernel_api::model::ProviderFailure;
+    fn last_error(deltas: &[Value]) -> Value {
+        fn find(value: &Value) -> Option<Value> {
+            match value {
+                Value::Object(map) => map
+                    .get("lastError")
+                    .filter(|error| !error.is_null())
+                    .cloned()
+                    .or_else(|| map.values().find_map(find)),
+                Value::Array(items) => items.iter().find_map(find),
+                _ => None,
+            }
+        }
+        deltas.iter().find_map(find).expect("a lastError")
+    }
+    let code = "subscription_sharing_usage_limit_exceeded";
+    let mut feed = Feed::new();
+    let turn = TurnId::new("turn_provider");
+    feed.apply(KernelEvent::TurnStarted {
+        turn: turn.clone(),
+        command: None,
+    });
+    let deltas = feed.apply(KernelEvent::TurnFinished {
+        turn,
+        outcome: TurnOutcome::Failed {
+            message: "ChatGPT plan usage limit reached.".into(),
+            code: Some(code.into()),
+            provider: Some(Box::new(ProviderFailure {
+                code: code.into(),
+                status: Some(429),
+                retryable: false,
+                reason: "rate_limited".into(),
+                error_phase: "prepare".into(),
+                transport: "sse".into(),
+                provider_kind: "openai".into(),
+                provider_id: Some("account:chatgpt-plan:K".into()),
+                model_id: Some("gpt-6.1-sol".into()),
+            })),
+        },
+        usage: None,
+    });
+    let error = last_error(&deltas);
+    assert_eq!(error["code"], code);
+    assert_eq!(
+        error["attribution"],
+        json!({
+            "source": "provider",
+            "reason": "rate_limited",
+            "errorPhase": "prepare",
+            "exceptionKind": "provider_business",
+            "providerId": "account:chatgpt-plan:K",
+            "modelId": "gpt-6.1-sol",
+            "providerKind": "openai",
+            "transport": "sse",
+            "statusCode": 429,
+            "providerErrorCode": code,
+            "retryable": false,
+        })
+    );
+}
+
+/// Fork: Node omits `statusCode` for a stream error, and `providerId` / `modelId` when the selection is unknown; the
+/// projection must not write those keys as null (golden: `zhipu_1113_stream_no_status`).
+#[test]
+fn a_stream_error_without_a_selection_omits_the_status_and_the_ids() {
+    use rust_cli_kernel_api::model::ProviderFailure;
+    fn last_error(deltas: &[Value]) -> Value {
+        fn find(value: &Value) -> Option<Value> {
+            match value {
+                Value::Object(map) => map
+                    .get("lastError")
+                    .filter(|error| !error.is_null())
+                    .cloned()
+                    .or_else(|| map.values().find_map(find)),
+                Value::Array(items) => items.iter().find_map(find),
+                _ => None,
+            }
+        }
+        deltas.iter().find_map(find).expect("a lastError")
+    }
+    let mut feed = Feed::new();
+    let turn = TurnId::new("turn_stream");
+    feed.apply(KernelEvent::TurnStarted {
+        turn: turn.clone(),
+        command: None,
+    });
+    let deltas = feed.apply(KernelEvent::TurnFinished {
+        turn,
+        outcome: TurnOutcome::Failed {
+            message: "upstream 1113".into(),
+            code: Some("1113".into()),
+            provider: Some(Box::new(ProviderFailure::new(
+                "1113",
+                None,
+                false,
+                "unknown",
+                "anthropic",
+            ))),
+        },
+        usage: None,
+    });
+    let error = last_error(&deltas);
+    assert_eq!(
+        error["attribution"],
+        json!({
+            "source": "provider",
+            "reason": "unknown",
+            "errorPhase": "stream",
+            "exceptionKind": "provider_business",
+            "providerKind": "anthropic",
+            "transport": "sse",
+            "providerErrorCode": "1113",
+            "retryable": false,
+        })
+    );
+    let attribution = error["attribution"].as_object().expect("an object");
+    assert!(!attribution.contains_key("statusCode"));
+    assert!(!attribution.contains_key("providerId"));
+    assert!(!attribution.contains_key("modelId"));
 }
 
 /// Fork: a failed turn with waiting inputs pauses the queue with `pauseReason: "error"` (Node `onTurnError`); a failed
@@ -1425,6 +1556,7 @@ fn a_failed_turn_pauses_a_waiting_queue_with_the_error_reason() {
         outcome: TurnOutcome::Failed {
             message: "upstream 500".into(),
             code: None,
+            provider: None,
         },
         usage: None,
     };
@@ -2323,6 +2455,7 @@ fn a_session_level_ask_stays_pending_after_the_turn_ends() {
             machine: Default::default(),
             once: false,
             independent: false,
+            session_allow: false,
         },
     });
     let finished = feed.apply(KernelEvent::TurnFinished {

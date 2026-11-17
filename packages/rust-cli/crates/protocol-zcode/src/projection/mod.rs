@@ -19,6 +19,7 @@ mod kinds;
 mod markers;
 mod model_change;
 mod plans;
+mod provider_error;
 mod rows;
 pub(crate) mod rows_range;
 pub mod state;
@@ -667,6 +668,12 @@ impl Projection {
         self.auto_drain = auto_drain;
         self.pause_reason = (!auto_drain).then_some("manual");
         self.queue_patch()
+    }
+
+    /// Fork: whether an interaction waits for an answer (Node `hasPendingInteractions`, the busy test of permanent
+    /// deletion and purge).
+    pub fn has_pending_interactions(&self) -> bool {
+        !self.pending.is_empty()
     }
 
     /// Fork: whether queued inputs wait behind the running turn (a stop would hold them).
@@ -1358,14 +1365,18 @@ impl Projection {
                 "interrupted",
                 Phase::CompletedInterrupted,
             ),
-            TurnOutcome::Failed { message, code } => {
+            TurnOutcome::Failed {
+                message,
+                code,
+                provider,
+            } => {
                 self.error = Some(LastError {
                     message: message.clone(),
                     code: code.clone(),
                     at: now,
                     recoverable: true,
                     detail: None,
-                    attribution: None,
+                    attribution: provider.clone().map(state::ErrorAttribution::Provider),
                 });
                 ("failed", "failed", Phase::Error)
             }

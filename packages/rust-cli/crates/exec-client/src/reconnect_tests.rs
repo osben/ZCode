@@ -89,6 +89,8 @@ async fn a_stream_resumes_after_the_last_received_seq_on_the_same_executor() {
             let item = StreamItem::Error {
                 error: rust_cli_exec_wire::envelope::WireError::Io {
                     message: format!("item {seq}"),
+                    http_status: None,
+                    www_authenticate: None,
                 },
             };
             first.event(header.call, seq, item, &Body::empty()).await;

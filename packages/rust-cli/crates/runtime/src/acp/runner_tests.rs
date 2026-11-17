@@ -217,7 +217,7 @@ async fn a_refused_automatic_turn_still_commits_its_prompt_hook_messages() {
         .await
         .expect("run");
     assert!(
-        matches!(&stop, QueryStop::ApiError { message } if message.contains("runtime continuations")),
+        matches!(&stop, QueryStop::ApiError { message, .. } if message.contains("runtime continuations")),
         "{stop:?}"
     );
     assert_eq!(texts(&sink.messages()), vec!["hook context".to_owned()]);
@@ -548,7 +548,7 @@ async fn a_notice_turn_draws_no_context_reset() {
         .await
         .expect("run");
     assert!(
-        matches!(&stop, QueryStop::ApiError { message } if message.contains("background results")),
+        matches!(&stop, QueryStop::ApiError { message, .. } if message.contains("background results")),
         "{stop:?}"
     );
     assert!(statuses(&sink.events()).is_empty(), "{:?}", sink.events());
@@ -927,7 +927,7 @@ async fn a_refused_choice_fails_the_turn() {
         .await
         .expect("run");
     assert!(
-        matches!(&stop, QueryStop::ApiError { message } if message.starts_with("Could not set Model to Model 2: ")),
+        matches!(&stop, QueryStop::ApiError { message, .. } if message.starts_with("Could not set Model to Model 2: ")),
         "{stop:?}"
     );
     assert!(!harness.methods().contains(&"session/prompt".to_owned()));

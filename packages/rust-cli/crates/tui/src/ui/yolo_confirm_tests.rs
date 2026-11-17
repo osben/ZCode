@@ -360,6 +360,7 @@ fn confirming_for_an_ask_allows_it_once_then_switches() {
                     asked_by: None,
                     once: false,
                     independent: false,
+                    session_allow: false,
                 },
             },
         },

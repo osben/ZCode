@@ -251,6 +251,7 @@ pub(crate) fn ext(
         &rust_cli_kernel_api::incognito::IncognitoProfiles,
         &rust_cli_kernel_api::workspace_key::SessionWorkspaces,
     ),
+    app_tools: Option<Arc<dyn rust_cli_kernel_api::app_tool::AppToolHost>>,
 ) -> Arc<Ext> {
     let machine = ports.environments.primary_machine();
     let ext = Arc::new(Ext::new(
@@ -265,6 +266,7 @@ pub(crate) fn ext(
             clock: ports.clock.clone(),
             incognito: incognito.clone(),
             sessions: sessions.clone(),
+            app_tools,
         },
         base,
         config,

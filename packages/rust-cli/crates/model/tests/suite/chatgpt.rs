@@ -151,12 +151,20 @@ async fn a_second_rejection_after_the_renewal_ends_the_request() {
     let endpoints = Plan::new(format!("{}/v1", server.url()), None);
     let model = model(endpoints.clone(), 5).await;
     let events = collect(&model, request("hi", QuerySource::MainThread)).await;
+    // Node's error is the same classification with the provider code attached (`providerCode`).
+    let [Err(error)] = events.as_slice() else {
+        panic!("one error event: {events:?}");
+    };
     assert_eq!(
-        events,
-        vec![Err(ModelError::Authentication {
+        error.peel(),
+        &ModelError::Authentication {
             message: "The ChatGPT plan no longer accepts this account. Sign in again with zcode login chatgpt."
                 .to_owned(),
-        })]
+        }
+    );
+    assert_eq!(
+        error.provider().map(|provider| provider.code.as_str()),
+        Some("subscription_sharing_invalid_user")
     );
     let requests = server.requests();
     assert_eq!(requests.len(), 2);
@@ -178,7 +186,7 @@ async fn a_usage_limit_at_401_ends_with_the_quota_error_after_one_renewal() {
     let model = model(endpoints.clone(), 5).await;
     let events = collect(&model, request("hi", QuerySource::MainThread)).await;
     assert!(
-        matches!(events.as_slice(), [Err(ModelError::QuotaExhausted { message })] if message.starts_with("ChatGPT plan usage limit reached.")),
+        matches!(events.as_slice(), [Err(error)] if matches!(error.peel(), ModelError::QuotaExhausted { message } if message.starts_with("ChatGPT plan usage limit reached."))),
         "{events:?}"
     );
     let requests = server.requests();
@@ -260,7 +268,7 @@ async fn the_usage_limit_is_not_retried() {
     let model = model(Plan::new(format!("{}/v1", server.url()), None), 3).await;
     let events = collect(&model, request("hi", QuerySource::MainThread)).await;
     assert!(
-        matches!(events.as_slice(), [Err(ModelError::QuotaExhausted { message })] if message.starts_with("ChatGPT plan usage limit reached.")),
+        matches!(events.as_slice(), [Err(error)] if matches!(error.peel(), ModelError::QuotaExhausted { message } if message.starts_with("ChatGPT plan usage limit reached."))),
         "{events:?}"
     );
     assert_eq!(server.requests().len(), 1);

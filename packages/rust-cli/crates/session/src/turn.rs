@@ -14,9 +14,9 @@ use rust_cli_kernel_api::orchestration::{
 };
 use rust_cli_kernel_api::session_api::{Ack, KernelEvent, TurnOutcome};
 use rust_cli_kernel_api::store::{Fact, StoreError};
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
 
-use crate::actor::{Actor, Pending, accepted, rejected};
+use crate::actor::{Actor, Pending, Request, accepted, rejected};
 use crate::lane::Waiting;
 use crate::sink::SinkRequest;
 
@@ -514,7 +514,13 @@ impl Actor {
             });
     }
 
-    pub(crate) async fn finish_turn(&mut self) {
+    /// `requests` is the actor's request channel: the end-of-turn capture serves it while it runs (see
+    /// `browser_turn_screenshot`), and the requests it keeps are pushed to `deferred` in arrival order.
+    pub(crate) async fn finish_turn(
+        &mut self,
+        requests: &mut mpsc::Receiver<Request>,
+        deferred: &mut Vec<Request>,
+    ) {
         let Some(running) = self.running.take() else {
             return;
         };
@@ -531,6 +537,7 @@ impl Actor {
             (Some(error), _) => TurnOutcome::Failed {
                 message: error.to_string(),
                 code: None,
+                provider: None,
             },
             (None, Ok(Ok(QueryStop::Completed))) => TurnOutcome::Success,
             (None, Ok(Ok(QueryStop::Aborted))) => TurnOutcome::Interrupted,
@@ -539,20 +546,31 @@ impl Actor {
             (None, Ok(Ok(QueryStop::MaxTurns))) => TurnOutcome::Failed {
                 message: "reached the maximum number of turns".to_owned(),
                 code: None,
+                provider: None,
             },
-            (None, Ok(Ok(QueryStop::Blocked { message } | QueryStop::ApiError { message }))) => {
-                TurnOutcome::Failed {
-                    message,
-                    code: None,
-                }
-            }
+            (None, Ok(Ok(QueryStop::Blocked { message }))) => TurnOutcome::Failed {
+                message,
+                code: None,
+                provider: None,
+            },
+            // Node `lastError.code` is the provider code when the error has one (error-payload.ts `selectErrorCode`).
+            (None, Ok(Ok(QueryStop::ApiError { message, provider }))) => TurnOutcome::Failed {
+                message,
+                code: provider.as_ref().map(|provider| provider.code.clone()),
+                provider,
+            },
             (None, Ok(Err(error))) => TurnOutcome::Failed {
                 message: error.to_string(),
-                code: error.code().map(str::to_owned),
+                code: error
+                    .provider()
+                    .map(|provider| provider.code.clone())
+                    .or_else(|| error.code().map(str::to_owned)),
+                provider: error.provider().cloned().map(Box::new),
             },
             (None, Err(error)) => TurnOutcome::Failed {
                 message: error.to_string(),
                 code: None,
+                provider: None,
             },
         };
         // Node `turn_usage`（usage.md §2.4）：只在这次运行的输入已经落库时写；压缩运行没有输入。用量行是观测，
@@ -596,8 +614,15 @@ impl Actor {
         // turnEnded follows the turn. Only a successful turn with a prompt gets the screenshot; the row goes before
         // TurnFinished so the protocol sink sends helper/turn/ended after it.
         let shot = if matches!(outcome, TurnOutcome::Success) {
-            self.browser_turn_screenshot(&turn, running.prompt.as_ref(), candidate, abort)
-                .await
+            self.browser_turn_screenshot(
+                &turn,
+                running.prompt.as_ref(),
+                candidate,
+                abort,
+                requests,
+                deferred,
+            )
+            .await
         } else {
             None
         };

@@ -24,6 +24,7 @@ fn question() -> InteractionRequest {
         asked_by: Some("Explore".to_owned()),
         once: false,
         independent: false,
+        session_allow: false,
     }
 }
 

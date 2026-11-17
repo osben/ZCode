@@ -96,6 +96,10 @@ impl NodeHelper {
         method: &str,
         params: Value,
     ) -> Result<Value, RpcError> {
+        // F3b(b): the replace answers at once and has no requestKey: nothing waits on it, nothing can cancel it.
+        if method == super::app_tools::APP_TOOLS_REPLACE {
+            return self.replace_app_tools(generation, &params);
+        }
         let browser = method == BROWSER_LIST || method == BROWSER_EXECUTE;
         if method != AUTHORIZE_APP_TOOL && method != SAMPLE_MODEL && !browser {
             return Err(RpcError::method_not_found(method));
