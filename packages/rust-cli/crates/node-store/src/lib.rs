@@ -45,6 +45,8 @@ mod usage;
 mod usage_query;
 mod usage_stats;
 mod usage_v4;
+#[allow(dead_code)]
+mod workflow_runs;
 mod workspace_trust;
 
 // 记录格式的纯函数在 node-records（F128）：这里按 `crate::records` 这样的路径照常引用。
@@ -73,7 +75,13 @@ use rust_cli_paths::StoragePaths;
 use serde_json::json;
 
 pub use artifacts::uri as artifact_uri;
+// W5a (rust-cli-workflow): the dwf_* journal repository and the migrated session database opener.
+// Boundary: `dwf` is a repository, not a workflow rule. Its functions take the session connection and
+// write Node's rows as given; the engine decides what to write. Only rust-cli-workflow and, in part 2,
+// its scheduler use it. Its write functions must keep Node's row format (see its module docs).
 pub use ids::{NodeIds, RandomUuids, UuidSource};
+pub use repo::dwf;
+pub use repo::open::{MIGRATION_LOCK_WAIT, StartupError, open as open_session_database};
 
 /// 本机执行环境的 ID（与入口 crate 相同）。只有它的会话写进本地库；`workspace_id` 为 NULL。
 pub const LOCAL_ENVIRONMENT: &str = "local";

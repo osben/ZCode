@@ -2641,6 +2641,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rust-cli-workflow"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "rusqlite",
+ "rust-cli-base",
+ "rust-cli-node-store",
+ "serde_json",
+]
+
+[[package]]
 name = "rustc_version"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
