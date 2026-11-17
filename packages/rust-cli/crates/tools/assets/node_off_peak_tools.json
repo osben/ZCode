@@ -1,0 +1,70 @@
+[
+  {
+    "name": "OffPeakCreate",
+    "description": "Create a one-off idle-time task in the current workspace: it takes a queue ticket immediately and later runs unattended in THIS session (with the full conversation history) when the server grants off-peak compute, at no plan-quota cost. There is no guaranteed start time. Unlike CronCreate (recurring or clock-scheduled work), use this for deferrable work the user wants done cheaply 'when compute is idle'. The prompt must describe the final work directly and must never ask the run to create, schedule, or configure another idle-time task or automation.\n\nUsage:\n- Use this only when the user explicitly asks for idle-time/off-peak execution in any language (for example 'run this when compute is idle'), or explicitly accepts deferring the work to the free idle-time queue.\n- Choose CronCreate instead for anything time-scheduled or recurring ('every day at 9', 'in 10 minutes'). OffPeakCreate has no clock: the server decides when the task starts.\n- The task later continues THIS conversation unattended with the full history available, so prompt may refer to context already established here; still state the expected deliverable explicitly because nobody will answer questions during the run.\n- By default the task runs in full-automatic mode with the default allowed model at the highest reasoning level. Only set permissionMode/model/thoughtLevel when the user explicitly asks for confirmation-gated execution, a specific model, or a lower reasoning effort.\n- Do not include workspace paths or identities in the input; the current session workspace is used.\n- Keep title concise and task-descriptive without file paths.\n- Creation consumes a limited free take-number quota. If creation fails with a quota error, relay the limit to the user instead of retrying.\n- After a successful creation, reply with only a brief confirmation; the UI renders a task card with a link to the Automations page for edits.\n- Never call OffPeakCreate from within an idle-time task run, and never write a prompt asking the run to create more idle-time tasks or automations.",
+    "searchHint": null,
+    "readOnly": false,
+    "destructive": false,
+    "concurrentSafe": false,
+    "needsApproval": true,
+    "shouldDefer": true,
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Concise idle-time task title describing the deferred work, for example 'Refactor the utils directory' or 'Fix flaky auth tests'. Keep it short and do not include file paths.",
+          "type": "string",
+          "minLength": 1
+        },
+        "prompt": {
+          "description": "Instructions for the deferred run, which later continues THIS conversation unattended with the full history available, so it may refer to context already established here. State the expected deliverable explicitly (nobody will answer questions during the run); never ask the run to create, schedule, or configure another idle-time task or automation.",
+          "type": "string",
+          "minLength": 1
+        },
+        "permissionMode": {
+          "description": "Unattended run permission mode. Omit for the default full-automatic mode (yolo). Set only when the user explicitly asks for confirmation-gated execution: 'build' pauses for approval before changes, 'edit' auto-applies edits, 'plan' is read-only planning, 'guarded' runs like yolo but pauses once for explicitly recognized dangerous shell commands (rm -rf, git reset --hard, force push, rsync --delete, etc.).",
+          "type": "string",
+          "enum": [
+            "build",
+            "edit",
+            "plan",
+            "yolo",
+            "guarded"
+          ]
+        },
+        "model": {
+          "description": "Idle-plan model id. Must be one of the idle-time allowed models; omit to use the default (the newest allowed model). Set only when the user names a specific model.",
+          "type": "string",
+          "minLength": 1
+        },
+        "thoughtLevel": {
+          "description": "Reasoning effort level for the chosen model. Omit to use the default (the highest level). Set only when the user explicitly asks for a lower reasoning effort.",
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "title",
+        "prompt"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "OffPeakList",
+    "description": "List idle-time tasks in the current workspace with status and queue position. Read-only.",
+    "searchHint": null,
+    "readOnly": true,
+    "destructive": false,
+    "concurrentSafe": true,
+    "needsApproval": false,
+    "shouldDefer": true,
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    }
+  }
+]
