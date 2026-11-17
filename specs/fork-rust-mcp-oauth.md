@@ -393,3 +393,71 @@ Still deferred (not in PR3):
 
 - `resource` (RFC 8707) on the refresh request.
 - Plugin rows (#501) do not carry `oauth` or `url`, so they get neither refresh nor flow.
+
+## PR4: plugin MCP OAuth and the PR3 deviations (as specified)
+
+Scope: OAuth for plugin MCP servers (#501 rows), the follower reconnect, and the five PR3 deviations
+(a) to (e). Node is the reference for each; where Node and this spec differ, Node wins.
+
+### Plugin servers
+
+- `parse.rs` reads the `oauth` block of a plugin server with Node's lenient rules (`resolveMcpOAuthConfig`):
+  `authorization_code` keeps `clientId`, `clientSecret`, `clientName`, `redirectPath`, `scope` (non-strings
+  are dropped); `client_credentials` requires `clientId` and `clientSecret`; any other `type` makes the server
+  invalid (skipped with a warning). Unknown fields are ignored. `clientSecret` resolves through the sensitive
+  lookup; the other fields through the plain lookup. User, project and local servers keep the strict
+  `node_config.rs` parser.
+- Plugin rows carry `url` (the resolved transport URL) and an `oauth` block with only `type`, `clientId`,
+  `scope`, `redirectPath`. The row never carries `clientSecret`, headers or the bearer.
+- Default: a remote (http or sse) server with no `oauth` block is `authorization_code` in every scope that
+  Node resolves this way (Node `resolveAuthorizationCodeOAuthConfig`), unless its headers already contain an
+  `Authorization` header. Plugin servers are added to the user scope in `effective_oauth`.
+- The credential key uses the runtime name `plugin:<plugin>:<server>`, the same string Node hashes.
+
+### Follower reconnect
+
+Node's follower (`followAuthorization`) polls the canonical credentials until the transaction TTL, returns
+`already-authorized` when a newer generation appears, and its MCP client then reconnects. Rust: after
+`run_lead` returns `Pending`, the spawned flow task polls the canonical generation (100 ms, bounded by the
+TTL, ends on cancel) and reconnects its own manager when the generation moved.
+
+### Deviations closed
+
+a) 403 scope union. The union is `config scope`, then the stored token's `scope` (canonical, or legacy
+`tokens`), then the challenge's `scope`, deduplicated in first-seen order (SDK `computeScopeUnion`). It is
+computed inside the flow task, after the token read. The DCR request and the authorize request use the same
+value (Node `oauth-interactive.ts` registers with the union).
+
+b) WWW-Authenticate on the executor wire. `exec-wire` `WireError` gains a typed variant
+`Http { status: u16, message: String, www_authenticate: Option<String> }` (kind `http`). The executor maps
+`McpError::Http` to it and the client maps it back, so a remote 401/403 keeps its header. `exec-wire` is
+Rust-only (no TypeScript mirror; `packages/shared/src/zcode-protocol/index.ts` is unchanged). An older peer
+cannot decode the new kind: the rollout is one build per side (the fork ships both together).
+
+c) Legacy records. Refresh and the bearer path read the pair the way Node's `deriveCredentialPair` does: the
+canonical record first, the legacy `client_information` and `tokens` keys when it is absent or when the
+legacy pair can be proven to belong to it (the same branches as Node). A legacy-only pair has no generation
+and no raw value: no compare-and-swap invalidation (Node skips it when `current.raw` is absent).
+
+d) `resource` (RFC 8707). The protected-resource metadata `resource` is kept in the discovery record as
+`resourceMetadata` (Node `OAuthDiscoveryState`). The refresh request sends `resource` when the SDK's
+`selectResourceURL` would return one: the metadata exists and its origin and path prefix contain the server
+URL (`checkResourceAllowed`). A metadata `resource` that does not match is a discovery failure (fail soft),
+never an invalid grant.
+
+e) Discovery cache. Refresh reads `discovery_state` with `loadDiscoveryRecord` (24 h TTL, issuer must match the
+canonical `issuer`); on a miss it discovers and saves the record, as Node `resolveAsMetadata` does.
+
+### Acceptance criteria
+
+1. Plugin server `oauth` parses like Node's lenient parser (unit tests for each `type`, missing secret, unknown field).
+2. A plugin row with an `authorization_code` block (or none, remote) shows `connecting` with `authorization`
+   after a 401 pending record (unit test in `app_workspace_tests`), and its runtime key matches the Node fixture.
+3. Plugin row config carries `url` and never `clientSecret` (unit test).
+4. Scope union: a 403 refresh of a token with scope `a` and challenge `b` requests `config a b` (fake AS records the scope).
+5. The executor round-trips `McpError::Http` with its `www_authenticate` (exec-wire unit test and exec-client test).
+6. Legacy-only record (`tokens` + `client_information`, no canonical) refreshes with a token POST; the published canonical is v2.
+7. Refresh sends `resource` when the discovery record has matching `resourceMetadata`, not otherwise.
+8. A cached discovery record is used without a discovery request; an expired one is rediscovered and saved.
+9. Follower: a second lane's manager reconnects after the lead publishes (integration test, real HTTP).
+10. E2E `conversation-session/plugins/conversation-session-mcp-oauth-status-isolation` passes on Rust and on Node.

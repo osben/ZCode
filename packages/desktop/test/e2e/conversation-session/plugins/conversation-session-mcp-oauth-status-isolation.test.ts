@@ -238,6 +238,21 @@ interface McpRowSnapshot {
   toolCount: number | null;
 }
 
+/**
+ * waitUntil whose failure message is built from the last polled value. `describe` runs only on timeout.
+ */
+async function waitUntilReportingLatest(
+  poll: () => Promise<boolean>,
+  describe: () => string,
+  timeoutMs: number,
+): Promise<void> {
+  try {
+    await browser.waitUntil(poll, { timeout: timeoutMs, timeoutMsg: "waitUntil timed out" });
+  } catch (error) {
+    throw new Error(describe(), { cause: error });
+  }
+}
+
 async function waitForMcpRow(expectation: McpRowExpectation): Promise<void> {
   let latest: McpRowSnapshot = {
     exists: false,
@@ -245,15 +260,16 @@ async function waitForMcpRow(expectation: McpRowExpectation): Promise<void> {
     text: "",
     toolCount: null,
   };
-  await browser.waitUntil(
+  // The timeout message must be built after polling: a template literal in the options object is
+  // evaluated before waitUntil runs, so it would always report the initial snapshot.
+  await waitUntilReportingLatest(
     async () => {
       latest = await readMcpRow(expectation.testIdValue);
       return matchesMcpRow(latest, expectation);
     },
-    {
-      timeout: 45_000,
-      timeoutMsg: `MCP 行状态未收敛: expected=${JSON.stringify(expectation)} latest=${JSON.stringify(latest)}`,
-    },
+    () =>
+      `MCP 行状态未收敛: expected=${JSON.stringify(expectation)} latest=${JSON.stringify(latest)}`,
+    45_000,
   );
 }
 
@@ -404,15 +420,13 @@ async function writeMcpFixtures(mcpUrl: string, plainHttpMcpUrl: string): Promis
 
 async function waitForDirectMcpCall(marker: string, timeoutMs: number): Promise<void> {
   let latest: DirectMcpLogEntry[] = [];
-  await browser.waitUntil(
+  await waitUntilReportingLatest(
     async () => {
       latest = await readDirectMcpCalls();
       return latest.some((call) => call.tool === "ping" && call.marker === marker);
     },
-    {
-      timeout: timeoutMs,
-      timeoutMsg: `用户级 MCP ping 没有真实执行: ${JSON.stringify(latest)}`,
-    },
+    () => `用户级 MCP ping 没有真实执行: ${JSON.stringify(latest)}`,
+    timeoutMs,
   );
 }
 
@@ -422,15 +436,13 @@ async function waitForPlainHttpMcpCall(
   timeoutMs: number,
 ): Promise<void> {
   let latest: string[] = [];
-  await browser.waitUntil(
+  await waitUntilReportingLatest(
     async () => {
       latest = server.snapshot().plainHttpToolCallMarkers;
       return latest.includes(marker);
     },
-    {
-      timeout: timeoutMs,
-      timeoutMsg: `普通 HTTP MCP ping 没有真实执行: ${JSON.stringify(latest)}`,
-    },
+    () => `普通 HTTP MCP ping 没有真实执行: ${JSON.stringify(latest)}`,
+    timeoutMs,
   );
 }
 
@@ -444,16 +456,14 @@ interface DirectMcpLogEntry {
 async function waitForDirectMcpProcessStarted(timeoutMs: number): Promise<number> {
   let latest: DirectMcpLogEntry[] = [];
   let pid = 0;
-  await browser.waitUntil(
+  await waitUntilReportingLatest(
     async () => {
       latest = await readDirectMcpCalls();
       pid = [...latest].reverse().find((entry) => entry.event === "started")?.pid ?? 0;
       return pid > 0;
     },
-    {
-      timeout: timeoutMs,
-      timeoutMsg: `用户级 MCP 没有记录启动 PID: ${JSON.stringify(latest)}`,
-    },
+    () => `用户级 MCP 没有记录启动 PID: ${JSON.stringify(latest)}`,
+    timeoutMs,
   );
   return pid;
 }
