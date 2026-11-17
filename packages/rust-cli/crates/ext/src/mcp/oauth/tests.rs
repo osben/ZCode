@@ -301,10 +301,15 @@ fn node_pair_branches_match_derive_pair() {
         let node = &fixture["pairs"][name];
         // Node's `source` is "canonical" for a canonical snapshot; the Rust pair marks it by its generation.
         let node_canonical = node["source"] == "canonical";
-        assert_eq!(rust.generation.is_some(), node_canonical, "{name}: canonical vs legacy");
+        assert_eq!(
+            rust.generation.is_some(),
+            node_canonical,
+            "{name}: canonical vs legacy"
+        );
         assert_eq!(
             rust.client.as_ref(),
-            node.get("clientInformation").filter(|value| !value.is_null()),
+            node.get("clientInformation")
+                .filter(|value| !value.is_null()),
             "{name}: client"
         );
         assert_eq!(
@@ -326,10 +331,18 @@ async fn node_pr4_discovery_record_carries_resource_metadata() {
             .map(|(key, value)| (key.clone(), value.as_str().expect("string").to_owned()))
             .collect(),
     );
-    let state = load_discovery(&store, &prefix, Some("https://auth.example.test"), now + 60_000)
-        .await
-        .expect("read")
-        .expect("fresh Node record");
-    assert_eq!(state["resourceMetadata"]["resource"], "http://127.0.0.1:9/mcp");
+    let state = load_discovery(
+        &store,
+        &prefix,
+        Some("https://auth.example.test"),
+        now + 60_000,
+    )
+    .await
+    .expect("read")
+    .expect("fresh Node record");
+    assert_eq!(
+        state["resourceMetadata"]["resource"],
+        "http://127.0.0.1:9/mcp"
+    );
     assert_eq!(state["authorizationServerUrl"], "https://auth.example.test");
 }

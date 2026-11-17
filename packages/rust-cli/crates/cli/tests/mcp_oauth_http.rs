@@ -1036,12 +1036,9 @@ fn futures_block<T>(future: impl std::future::Future<Output = T>) -> T {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_follower_lane_reconnects_after_the_lead_publishes_over_real_http() {
     // A bounded scenario: a stall fails the test instead of hanging the run.
-    tokio::time::timeout(
-        Duration::from_secs(90),
-        follower_lane_scenario(),
-    )
-    .await
-    .expect("the follower scenario did not finish within 90 s");
+    tokio::time::timeout(Duration::from_secs(90), follower_lane_scenario())
+        .await
+        .expect("the follower scenario did not finish within 90 s");
 }
 
 async fn follower_lane_scenario() {

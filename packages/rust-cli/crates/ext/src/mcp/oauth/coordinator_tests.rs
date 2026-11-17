@@ -119,8 +119,16 @@ async fn one_flow_runs_per_server() {
         runtime.clone(),
         Arc::new(|_| {}),
     ));
-    assert!(coordinator.start("e2e-remote".into(), super::flow_tests::input()).await);
-    assert!(!coordinator.start("e2e-remote".into(), super::flow_tests::input()).await);
+    assert!(
+        coordinator
+            .start("e2e-remote".into(), super::flow_tests::input())
+            .await
+    );
+    assert!(
+        !coordinator
+            .start("e2e-remote".into(), super::flow_tests::input())
+            .await
+    );
     coordinator.wait_idle().await;
     assert_eq!(runtime.listen_count(), 1);
 }
@@ -136,7 +144,9 @@ async fn successful_flow_reconnects_the_server_once() {
         runtime.clone(),
         Arc::new(move |name: &str| sink.lock().unwrap().push(name.to_owned())),
     ));
-    coordinator.start("e2e-remote".into(), super::flow_tests::input()).await;
+    coordinator
+        .start("e2e-remote".into(), super::flow_tests::input())
+        .await;
     coordinator.wait_idle().await;
     assert_eq!(*reconnects.lock().unwrap(), vec!["e2e-remote".to_owned()]);
 }
@@ -151,7 +161,9 @@ async fn cancel_ends_the_flow_and_removes_its_pending_record() {
         runtime.clone(),
         Arc::new(|_| {}),
     ));
-    coordinator.start("e2e-remote".into(), super::flow_tests::input()).await;
+    coordinator
+        .start("e2e-remote".into(), super::flow_tests::input())
+        .await;
     for _ in 0..200 {
         if store.has_key(&credential_key(&prefix(), "pending_authorization")) {
             break;
@@ -165,7 +177,11 @@ async fn cancel_ends_the_flow_and_removes_its_pending_record() {
     // A cancelled flow is not a successful one: no canonical record was written.
     assert!(!store.has_key(&credential_key(&prefix(), "authorization_credentials")));
     // The slot is free again.
-    assert!(coordinator.start("e2e-remote".into(), super::flow_tests::input()).await);
+    assert!(
+        coordinator
+            .start("e2e-remote".into(), super::flow_tests::input())
+            .await
+    );
     coordinator.cancel("e2e-remote");
     coordinator.wait_idle().await;
 }

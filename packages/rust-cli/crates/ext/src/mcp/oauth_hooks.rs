@@ -74,7 +74,10 @@ impl McpManager {
 
     /// Whether an OAuth authorization flow for `name` is registered and running on this manager's coordinator.
     pub fn oauth_flow_running(&self, name: &str) -> bool {
-        self.0.oauth.get().is_some_and(|coordinator| coordinator.flow_running(name))
+        self.0
+            .oauth
+            .get()
+            .is_some_and(|coordinator| coordinator.flow_running(name))
     }
 
     /// Wire the OAuth coordinator: the flow's store and runtime, and a reconnect of the server after success.
@@ -219,7 +222,11 @@ impl Inner {
 
     /// A connect that fails with HTTP 401 starts the authorization flow for this server (Node: the SDK asks for
     /// authorization on 401). The row then reports `connecting` through the pending record. Deduplicated per server.
-    pub(super) async fn start_oauth_on_challenge(&self, config: &McpServer, failure: &ConnectFailure) {
+    pub(super) async fn start_oauth_on_challenge(
+        &self,
+        config: &McpServer,
+        failure: &ConnectFailure,
+    ) {
         let (Some(coordinator), Some(oauth), Some((url, _))) = (
             self.oauth.get(),
             effective_oauth(config),
