@@ -102,6 +102,8 @@ pub struct AgentsPorts {
     /// Fork: each session's workspace; a spawned child records its own (its parent's workspace),
     /// so it reads the same per-workspace MCP group.
     pub sessions: rust_cli_kernel_api::workspace_key::SessionWorkspaces,
+    /// Fork (rule 17): the skill catalog's grants for the subagent runs (`skills` in a profile).
+    pub skill_grants: Arc<dyn rust_cli_kernel_api::subagent_config::SubagentSkillGrants>,
 }
 
 /// Task v2 四个工具开不开（[`task_tools_enabled`]）。

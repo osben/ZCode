@@ -671,3 +671,25 @@ fn a_listed_server_that_is_not_connected_refuses_the_start() {
     definition.mcp_servers = None;
     assert_eq!(super::mcp_refusal(&definition, None), None);
 }
+
+// Fork (rule 17): a child with a `skills` list gets the Skill tool, even when its `tools` list omits it.
+#[test]
+fn a_child_with_a_skills_list_is_offered_the_skill_tool() {
+    let mut definition = builtins().remove(0);
+    definition.tools = Some(vec!["Read".to_owned()]);
+    definition.skills = Some(vec!["review".to_owned()]);
+    let filtered = FilteredTools {
+        inner: registry(),
+        rule: ToolRule::new(&definition, false, 1),
+        child_tools: Vec::new(),
+    };
+    let names = tool_names_of(&filtered);
+    assert_eq!(names, vec!["Read".to_owned(), "Skill".to_owned()]);
+    definition.skills = None;
+    let filtered = FilteredTools {
+        inner: registry(),
+        rule: ToolRule::new(&definition, false, 1),
+        child_tools: Vec::new(),
+    };
+    assert_eq!(tool_names_of(&filtered), vec!["Read".to_owned()]);
+}

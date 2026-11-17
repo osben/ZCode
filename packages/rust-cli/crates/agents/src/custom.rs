@@ -131,7 +131,7 @@ pub(crate) fn parse(raw: &str, source: AgentSource) -> Option<AgentDefinition> {
         selection: None,
         inject_agents_md: frontmatter::inject_agents_md(text("injectAgentsMd")),
         mcp_servers: frontmatter::names(map.get("mcpServers")),
-        skills: None,
+        skills: frontmatter::names(map.get("skills")),
         memory: None,
     })
 }

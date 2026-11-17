@@ -338,7 +338,12 @@ impl LocalKernel {
             (&parts, tasks, &agent_catalog),
             (&late, scope.spawner(), &extensions.peers),
             (&defaults, traits, extensions.node_desktop),
-            (&incognito, &workspaces),
+            (
+                &incognito,
+                &workspaces,
+                ext.skills().clone()
+                    as Arc<dyn rust_cli_kernel_api::subagent_config::SubagentSkillGrants>,
+            ),
         );
         // Fork: ACP agent processes by session; a session close releases its process.
         let acp_host = extensions.acp.clone().map(|setup| {

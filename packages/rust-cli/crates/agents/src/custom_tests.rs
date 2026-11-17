@@ -181,3 +181,16 @@ fn parses_mcp_servers_as_a_comma_list_or_a_yaml_list() {
     );
     assert_eq!(parse(absent, AgentSource::User).unwrap().mcp_servers, None);
 }
+
+// Fork (rule 17): `skills` in an agent file is a comma list or a YAML list; absent means no skill list.
+#[test]
+fn parses_skills_as_a_comma_list_or_a_yaml_list() {
+    let comma = "---\nname: reviewer\ndescription: Reviews.\nskills: review, lint\n---\nBody.\n";
+    let list =
+        "---\nname: reviewer\ndescription: Reviews.\nskills:\n  - review\n  - lint\n---\nBody.\n";
+    let absent = "---\nname: reviewer\ndescription: Reviews.\n---\nBody.\n";
+    let expected = Some(vec!["review".to_owned(), "lint".to_owned()]);
+    assert_eq!(parse(comma, AgentSource::User).unwrap().skills, expected);
+    assert_eq!(parse(list, AgentSource::User).unwrap().skills, expected);
+    assert_eq!(parse(absent, AgentSource::User).unwrap().skills, None);
+}

@@ -195,8 +195,7 @@ fn profile(value: &Value) -> Result<SubagentProfile, String> {
         background: value["background"] == true,
         inject_agents_md: value["injectAgentsMd"] != false,
         mcp_servers: names("mcpServers"),
-        // Rule 17 (skills) reads this list in its own commit.
-        skills: None,
+        skills: names("skills"),
         memory: None,
         permission_mode: value["permissionMode"]
             .as_str()

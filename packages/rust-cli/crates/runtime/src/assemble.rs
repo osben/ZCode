@@ -393,9 +393,10 @@ pub(crate) fn agents(
     (parts, tasks, agent_catalog): (&QueryParts, Arc<dyn TaskListStore>, &Arc<AgentCatalog>),
     (late, spawner, peers): (&Arc<LateCompactor>, Spawner, &rust_cli_session::PeerDeps),
     (defaults, traits, node_desktop): (&Defaults, SurfaceTraits, bool),
-    (incognito, sessions): (
+    (incognito, sessions, skill_grants): (
         &rust_cli_kernel_api::incognito::IncognitoProfiles,
         &rust_cli_kernel_api::workspace_key::SessionWorkspaces,
+        Arc<dyn rust_cli_kernel_api::subagent_config::SubagentSkillGrants>,
     ),
 ) -> Agents {
     Agents::new(
@@ -414,6 +415,7 @@ pub(crate) fn agents(
             catalog: agent_catalog.clone(),
             spawner,
             sessions: sessions.clone(),
+            skill_grants,
             peers: peers.port.clone(),
             operations: parts.operations.clone(),
             incognito: incognito.clone(),

@@ -221,7 +221,7 @@ async fn an_open_gate_reads_and_maps_the_ready_snapshot() {
                     permission_mode: Some(PermissionMode::AcceptEdits),
                     inject_agents_md: false,
                     mcp_servers: Some(vec!["docs".to_owned()]),
-                    skills: None,
+                    skills: Some(vec!["s".to_owned()]),
                     memory: None,
                 },
                 SubagentProfile {

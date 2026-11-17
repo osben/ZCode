@@ -85,6 +85,8 @@ pub(crate) struct ToolRule {
     questions: bool,
     /// Fork (node_desktop): a child of Node's desktop agent ([`node_child_lacks`]).
     node_child: bool,
+    /// Fork (rule 17): the child has a `skills` list, so it is offered the Skill tool.
+    skill_grants: bool,
     /// Fork (rule 16, `mcpServers`): the parent servers the child is scoped to; None (or empty) means all of them.
     mcp_servers: Option<Vec<String>>,
 }
@@ -101,6 +103,10 @@ impl ToolRule {
             depth,
             questions: false,
             node_child: false,
+            skill_grants: definition
+                .skills
+                .as_ref()
+                .is_some_and(|skills| !skills.is_empty()),
             mcp_servers: definition
                 .mcp_servers
                 .clone()
@@ -166,6 +172,10 @@ impl ToolRule {
         }
         if self.deny.iter().any(|tool| tool == name) {
             return false;
+        }
+        // Fork (rule 17): a child with a `skills` list has the Skill tool whatever its `tools` list says.
+        if self.skill_grants && name == tool_names::SKILL {
+            return true;
         }
         self.allow
             .as_ref()
@@ -250,6 +260,13 @@ impl FilteredTools {
         }
         let restored = self.restored(&resolved);
         resolved.extend(restored);
+        // Fork (rule 17): the Skill tool a `skills` list adds, even when the `tools` list does not name it.
+        if self.rule.skill_grants
+            && !resolved.iter().any(|tool| tool.name() == tool_names::SKILL)
+            && let Some(tool) = pool.iter().find(|tool| tool.name() == tool_names::SKILL)
+        {
+            resolved.push(tool.clone());
+        }
         // The child-only tools are not named in the allowlist, but they are always in the child's set. They come after
         // the restored search tools: Node's child lists RespondToCoordinator last (`coordinator-response` tool order).
         for tool in self.child_pool() {

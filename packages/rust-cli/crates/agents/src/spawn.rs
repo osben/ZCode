@@ -422,6 +422,28 @@ async fn run_loop(
             }),
         )
     };
+    // Fork (rule 17): the child's `skills` list grants its skills for this run; the grant is dropped when the run ends.
+    let _skill_grant = match agent.definition.skills.as_deref() {
+        Some(entries) if agent.fork_prefix.is_none() => {
+            let unresolved = core
+                .ports
+                .skill_grants
+                .grant(&agent.child, &agent.workspace, entries)
+                .await;
+            if !unresolved.is_empty() {
+                tracing::warn!(
+                    agent = %agent.definition.agent_type,
+                    unresolved = ?unresolved,
+                    "subagent skill entries matched no discovered skill"
+                );
+            }
+            Some(SkillGrantGuard {
+                grants: core.ports.skill_grants.clone(),
+                child: agent.child.clone(),
+            })
+        }
+        _ => None,
+    };
     let runner = Tracked {
         inner: core.ports.queries.runner(tools, context),
         book: core.runs.clone(),
@@ -480,3 +502,15 @@ pub(crate) fn ids(core: &Core) -> (AgentId, SessionId) {
 #[cfg(test)]
 #[path = "spawn_tests.rs"]
 mod tests;
+
+/// Fork (rule 17): drops a child's skill grant when its run ends, on every exit path.
+struct SkillGrantGuard {
+    grants: Arc<dyn rust_cli_kernel_api::subagent_config::SubagentSkillGrants>,
+    child: rust_cli_kernel_api::ids::SessionId,
+}
+
+impl Drop for SkillGrantGuard {
+    fn drop(&mut self) {
+        self.grants.forget(&self.child);
+    }
+}
