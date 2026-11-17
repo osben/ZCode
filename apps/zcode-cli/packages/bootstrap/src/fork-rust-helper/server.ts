@@ -72,8 +72,10 @@ import {
   FORK_RUST_HELPER_BROWSER_CHILD_SESSION,
   FORK_RUST_HELPER_BROWSER_CHILD_SESSION_END,
   FORK_RUST_HELPER_BROWSER_TURN_SCREENSHOT,
+  FORK_RUST_HELPER_BROWSER_TURN_SCREENSHOT_CANCEL,
   FORK_RUST_HELPER_TURN_ENDED,
   type ForkRustBrowserControl,
+  turnScreenshotCancelParamsSchema,
   turnScreenshotParamsSchema,
 } from "./browser-control.js";
 import { z } from "zod";
@@ -224,6 +226,11 @@ export class ForkRustHelperServer {
       [FORK_RUST_HELPER_F3.sessionClose, (params) => host.closeSession(params)],
       [FORK_RUST_HELPER_F3.appToolsCancel, async (params) => host.cancelAppTool(params)],
       [FORK_RUST_HELPER_BROWSER_CHILD_SESSION_END, (params) => browser?.childSessionEnd(params) ?? Promise.resolve()],
+      [FORK_RUST_HELPER_BROWSER_TURN_SCREENSHOT_CANCEL, async (params) => {
+        const parsed = turnScreenshotCancelParamsSchema.safeParse(params);
+        if (!parsed.success) throw new ProtocolRequestError(-32602, "Invalid helper/browser/turnScreenshotCancel params");
+        browser?.cancelTurnScreenshot(parsed.data.sessionId, parsed.data.turnId);
+      }],
       [FORK_RUST_HELPER_TURN_ENDED, async (params) => {
         const { sessionId, turnId } = requireTurnEnded(params);
         await browser?.turnEnded(sessionId, turnId);

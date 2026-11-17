@@ -26,6 +26,8 @@ const CHILD_SESSION_END: &str = "helper/browser/childSessionEnd";
 const TURN_ENDED: &str = "helper/turn/ended";
 /// D2-H: the end-of-turn screenshot of the active tab (specs/fork-rust-node-helper.md, "D2 end-of-turn screenshot").
 const TURN_SCREENSHOT: &str = "helper/browser/turnScreenshot";
+/// C1: the turn's abort reached a capture in flight; the helper aborts it (`helper/browser/turnScreenshotCancel`).
+const TURN_SCREENSHOT_CANCEL: &str = "helper/browser/turnScreenshotCancel";
 
 /// The forwarded methods that always name a session: the 16 `mcp/ui*` methods, `mcp/readResource` and
 /// `plugins/mentionItems`.
@@ -499,8 +501,16 @@ impl NodeHelper {
             "browserGeneration": candidate.browser_generation,
         });
         let deadline = self.timing.timeout_for(TURN_SCREENSHOT);
+        let cancel_peer = peer.clone();
+        let cancel_params = json!({"sessionId": session, "turnId": turn});
         tokio::select! {
-            () = cancel.cancelled() => None,
+            () = cancel.cancelled() => {
+                // C1: the helper aborts its broker calls, which send `cancelRequest` to Main (Node's turnAbortSignal).
+                drop(self.spawner.spawn("node-helper-turn-screenshot-cancel", async move {
+                    cancel_peer.notify(TURN_SCREENSHOT_CANCEL, &cancel_params).await;
+                }));
+                None
+            },
             answer = tokio::time::timeout(deadline, peer.request(TURN_SCREENSHOT, &params)) => match answer {
                 Ok(Ok(value)) => Some(value),
                 Ok(Err(error)) => {

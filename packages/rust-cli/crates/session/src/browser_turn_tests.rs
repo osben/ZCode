@@ -289,3 +289,80 @@ async fn a_turn_superseded_by_a_newer_input_does_not_leak_its_candidate_into_the
     );
     browser_turn::forget_session(session);
 }
+
+/// A capture that is held until its cancel token fires, the way a helper answer is held until the turn is cancelled.
+struct Holding {
+    started: tokio::sync::Notify,
+    cancelled: std::sync::atomic::AtomicBool,
+}
+
+#[async_trait]
+impl TurnScreenshotPort for Holding {
+    async fn capture(
+        &self,
+        _session: &str,
+        _turn: &str,
+        _candidate: &BrowserCandidate,
+        cancel: CancellationToken,
+    ) -> Option<CapturedScreenshot> {
+        self.started.notify_one();
+        cancel.cancelled().await;
+        self.cancelled
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        None
+    }
+}
+
+/// D2 interrupt (specs/fork-rust-node-helper.md "D2 follow-up: cancel and interrupt", C2): an interrupt while the
+/// end-of-turn capture runs is answered at once and cancels the capture. Node aborts the turn signal, which cancels the
+/// capture; the turn still ends with its own outcome (the model loop had completed) and stores no screenshot.
+#[tokio::test]
+async fn an_interrupt_during_the_capture_returns_promptly_and_cancels_the_capture() {
+    let session = "sess_d2_interrupt_capture";
+    let port = std::sync::Arc::new(Holding {
+        started: tokio::sync::Notify::new(),
+        cancelled: std::sync::atomic::AtomicBool::new(false),
+    });
+    browser_turn::bind(session, port.clone());
+    record_candidates(session);
+    let model = std::sync::Arc::new(ScriptedModel::new(vec![text_response(&["one"])]));
+    let mut built = Setup::new(model);
+    built.session_id = Some(session);
+    let built = built.build().await;
+    let mut events = built.session.subscribe(Some(0));
+    built.session.send(submit("c1", "first")).await;
+    port.started.notified().await;
+
+    let ack = tokio::time::timeout(
+        Duration::from_secs(5),
+        built.session.send(envelope("c2", Command::Interrupt)),
+    )
+    .await
+    .expect("the interrupt does not wait for the capture");
+    assert!(
+        matches!(ack, rust_cli_kernel_api::session_api::Ack::Accepted { .. }),
+        "{ack:?}"
+    );
+    let seen = until(&mut events, finished).await;
+    assert!(
+        port.cancelled.load(std::sync::atomic::Ordering::SeqCst),
+        "the capture saw its cancel"
+    );
+    assert!(
+        seen.iter().any(|event| matches!(
+            event,
+            KernelEvent::TurnFinished {
+                outcome: TurnOutcome::Success,
+                ..
+            }
+        )),
+        "{seen:?}"
+    );
+    assert!(
+        !seen
+            .iter()
+            .any(|event| matches!(event, KernelEvent::BrowserTurnScreenshot { .. })),
+        "{seen:?}"
+    );
+    browser_turn::forget_session(session);
+}

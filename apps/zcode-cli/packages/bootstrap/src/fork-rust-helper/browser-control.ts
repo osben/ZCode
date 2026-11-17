@@ -16,6 +16,8 @@ export const FORK_RUST_HELPER_BROWSER_CHILD_SESSION_END = "helper/browser/childS
 export const FORK_RUST_HELPER_TURN_ENDED = "helper/turn/ended";
 /** Rust asks for the end-of-turn screenshot of a turn with a browser candidate (D2-H). */
 export const FORK_RUST_HELPER_BROWSER_TURN_SCREENSHOT = "helper/browser/turnScreenshot";
+/** Rust's turn was cancelled during the capture: the helper aborts that capture's broker calls (D2 C1). */
+export const FORK_RUST_HELPER_BROWSER_TURN_SCREENSHOT_CANCEL = "helper/browser/turnScreenshotCancel";
 
 /** Strict wire shapes (F4-D7). Unknown keys are refused. */
 export const childSessionParamsSchema = z
@@ -41,6 +43,13 @@ export const turnScreenshotParamsSchema = z
   .strict();
 export type TurnScreenshotParams = z.infer<typeof turnScreenshotParamsSchema>;
 
+export const turnScreenshotCancelParamsSchema = z
+  .object({
+    sessionId: z.string().trim().min(1),
+    turnId: z.string().trim().min(1),
+  })
+  .strict();
+
 /** One display image, as Node's browser command result carries it. */
 export interface TurnScreenshotImage {
   base64: string;
@@ -50,6 +59,11 @@ export interface TurnScreenshotImage {
 interface ChildRegistration {
   parentSessionId: string;
   port: BrowserControlPort;
+}
+
+/** The key of one end-of-turn capture: a turn has at most one in flight per session. */
+function captureKey(sessionId: string, turnId: string): string {
+  return `${sessionId}\u0000${turnId}`;
 }
 
 /**
@@ -70,6 +84,8 @@ export class ForkRustBrowserControl {
   /** Node's broker port: the state machine of the browser scopes (shared by the node_repl socket and lifecycle). */
   readonly port: BrowserControlPort;
   private readonly children = new Map<string, ChildRegistration>();
+  /** The end-of-turn captures in flight, by session and turn: a cancel from Rust aborts one (D2 C1). */
+  private readonly captures = new Map<string, AbortController>();
   private nodeReplBroker: NodeReplBrowserBroker | undefined;
 
   constructor(
@@ -146,11 +162,16 @@ export class ForkRustBrowserControl {
    */
   async turnScreenshot(params: TurnScreenshotParams): Promise<{ image?: TurnScreenshotImage }> {
     const port = this.children.get(params.sessionId)?.port ?? this.port;
+    const key = captureKey(params.sessionId, params.turnId);
+    const controller = new AbortController();
+    this.captures.set(key, controller);
     const target = {
       browserId: params.browserId,
       browserGeneration: params.browserGeneration,
       sessionId: params.sessionId,
       turnId: params.turnId,
+      // Node passes turnAbortSignal to both calls: an abort makes the broker send cancelRequest to Main.
+      signal: controller.signal,
     };
     try {
       const listed = await port.execute({ ...target, command: { method: "list" } });
@@ -178,7 +199,17 @@ export class ForkRustBrowserControl {
         error: error instanceof Error ? error.message : String(error),
       });
       return {};
+    } finally {
+      if (this.captures.get(key) === controller) this.captures.delete(key);
     }
+  }
+
+  /**
+   * `helper/browser/turnScreenshotCancel` (D2 C1): Rust's turn was cancelled during the capture. Aborts the capture in
+   * flight, if any; a capture that already answered has no entry and nothing happens.
+   */
+  cancelTurnScreenshot(sessionId: string, turnId: string): void {
+    this.captures.get(captureKey(sessionId, turnId))?.abort();
   }
 
   /** The broker's `turnEnded` for a session (`helper/turn/ended`). */

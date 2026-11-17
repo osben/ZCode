@@ -961,3 +961,53 @@ async fn a_turn_of_a_session_the_helper_does_not_hold_sends_nothing() {
     tokio::time::sleep(Duration::from_secs(1)).await;
     assert!(received(&rig.fake, "helper/turn/ended").is_empty());
 }
+
+/// D2 cancel (specs/fork-rust-node-helper.md "D2 follow-up: cancel and interrupt", C1): a turn-end capture cancelled
+/// by the turn's abort is cancelled in the helper too, so the helper aborts its broker calls and Main gets
+/// `cancelRequest`. Without the notification the helper would keep the capture running to its own timeout.
+#[tokio::test(start_paused = true)]
+async fn a_cancelled_turn_screenshot_is_cancelled_in_the_helper() {
+    let pipes = sessions(|_| opened());
+    let rig = rig(
+        fake(
+            &[SESSION_METHOD, "helper/browser/turnScreenshot"],
+            behaviour(move |launch, method, params| match method {
+                "helper/browser/turnScreenshot" => Act::Hang,
+                _ => pipes(launch, method, params),
+            }),
+        ),
+        timing(),
+    );
+    rig.helper.set_catalog(catalog());
+    let rows: std::sync::Weak<dyn HelperRequests> = Arc::downgrade(&*ROWS) as _;
+    rig.helper.set_requests(rows);
+    forward_ok(
+        &rig.helper,
+        SESSION_METHOD,
+        json!({"sessionId": "s1", "serverName": "plugin:viewer:view"}),
+    )
+    .await;
+    let candidate = rust_cli_kernel_api::browser_turn::BrowserCandidate {
+        browser_id: "iab-1".to_owned(),
+        browser_generation: 2,
+    };
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let helper = rig.helper.clone();
+    let token = cancel.clone();
+    let capture = tokio::spawn(async move {
+        helper
+            .turn_screenshot("s1", "turn-1", &candidate, &token)
+            .await
+    });
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    cancel.cancel();
+    assert!(
+        capture.await.unwrap().is_none(),
+        "a cancelled capture answers nothing"
+    );
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(
+        received(&rig.fake, "helper/browser/turnScreenshotCancel"),
+        [json!({"sessionId": "s1", "turnId": "turn-1"})]
+    );
+}
