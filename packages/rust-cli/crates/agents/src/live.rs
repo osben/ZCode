@@ -37,6 +37,9 @@ pub(crate) struct Notice {
 pub(crate) enum Mail {
     Message(String),
     Notice(Notice),
+    /// A child's RespondToCoordinator block, for a subagent parent (Node `subagent_message` command): absorbed at the next
+    /// tool boundary as a `subagent_reply_steer`, never as a coordinator steer.
+    SubagentMessage(String),
 }
 
 #[derive(Debug, Clone)]
@@ -607,12 +610,12 @@ impl Live {
     }
 
     /// 工具边界取走邮箱里的一类（按到达顺序）；已中止时不取，留到运行结束时处理。
-    fn take(&self, agent: &AgentId, notices: bool) -> Vec<Mail> {
+    fn take(&self, agent: &AgentId, wanted: fn(&Mail) -> bool) -> Vec<Mail> {
         match self.agents().get_mut(agent).map(|entry| &mut entry.state) {
             Some(AgentState::Running { abort, mailbox }) if !abort.is_aborted() => {
                 let (taken, kept) = std::mem::take(mailbox)
                     .into_iter()
-                    .partition(|mail| matches!(mail, Mail::Notice(_)) == notices);
+                    .partition(|mail| wanted(mail));
                 *mailbox = kept;
                 taken
             }
@@ -622,24 +625,48 @@ impl Live {
 
     /// SendMessage 排进来的消息。
     pub(crate) fn take_mailbox(&self, agent: &AgentId) -> Vec<String> {
-        self.take(agent, false)
+        self.take(agent, |mail| matches!(mail, Mail::Message(_)))
             .into_iter()
             .filter_map(|mail| match mail {
                 Mail::Message(text) => Some(text),
-                Mail::Notice(_) => None,
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// 子代理经 RespondToCoordinator 发来的 `<subagent-message>` 块（只有子代理父会话有邮箱时）。
+    pub(crate) fn take_subagent_messages(&self, agent: &AgentId) -> Vec<String> {
+        self.take(agent, |mail| matches!(mail, Mail::SubagentMessage(_)))
+            .into_iter()
+            .filter_map(|mail| match mail {
+                Mail::SubagentMessage(block) => Some(block),
+                _ => None,
             })
             .collect()
     }
 
     /// 发给它的通知（信封）。
     pub(crate) fn take_notices(&self, agent: &AgentId) -> Vec<Notice> {
-        self.take(agent, true)
+        self.take(agent, |mail| matches!(mail, Mail::Notice(_)))
             .into_iter()
             .filter_map(|mail| match mail {
                 Mail::Notice(notice) => Some(notice),
-                Mail::Message(_) => None,
+                _ => None,
             })
             .collect()
+    }
+
+    /// Queues a child's RespondToCoordinator block for a running subagent parent. False when the parent is not running:
+    /// the caller reports that the coordinator is gone (a parked or finished parent is not woken for it yet).
+    pub(crate) fn enqueue_subagent_message(&self, agent: &AgentId, block: String) -> bool {
+        let mut state = self.agents();
+        match state.get_mut(agent).map(|entry| &mut entry.state) {
+            Some(AgentState::Running { mailbox, .. }) => {
+                mailbox.push(Mail::SubagentMessage(block));
+                true
+            }
+            _ => false,
+        }
     }
 
     /// 中止正在跑的子代理；不在跑时返回 false（停放的由 `routing::stop_parked` 处理）。

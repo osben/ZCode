@@ -173,6 +173,11 @@ pub(crate) async fn settle(core: &Core, id: &AgentId, finished: &Finished) -> Se
                     match mail {
                         Mail::Notice(notice) => notices.push(notice.clone()),
                         Mail::Message(text) => messages.push(text.clone()),
+                        // Open gap (spec `fork-rust-subagent-runtime-config.md`): a child's message left at the end of the run
+                        // is not resumed yet, so it is reported, not delivered.
+                        Mail::SubagentMessage(_) => {
+                            tracing::warn!(agent = %id, "a subagent message arrived after its parent's last tool boundary");
+                        }
                     }
                 }
                 (abort.is_aborted(), notices, messages)

@@ -511,17 +511,26 @@ impl RunSink for ChildSink {
     /// 邮箱里的 SendMessage（插话，没有 UserPromptSubmit）与它派生的后台子代理的通知（agents.md §5.1：全文，在工具
     /// 边界作为 `task-notification` 并入），先插话后通知。
     async fn take_absorbed(&self) -> Vec<Absorbed> {
-        let steered = self.live.take_mailbox(&self.agent);
+        let mut steered: Vec<Steered> = self
+            .live
+            .take_mailbox(&self.agent)
+            .into_iter()
+            .map(Steered::coordinator)
+            .collect();
+        // A child's RespondToCoordinator block (Node `subagent_message`, a subagent_reply_steer), after the SendMessages.
+        steered.extend(
+            self.live
+                .take_subagent_messages(&self.agent)
+                .into_iter()
+                .map(Steered::subagent),
+        );
         let notices = self
             .live
             .take_notices(&self.agent)
             .into_iter()
             .map(|notice| rust_cli_prompts::agents::notification_wrap(&notice.envelope))
             .collect();
-        Absorbed::ordered(
-            steered.into_iter().map(Steered::coordinator).collect(),
-            notices,
-        )
+        Absorbed::ordered(steered, notices)
     }
 
     /// 子代理没有目标（goal.md §4）：不提交。

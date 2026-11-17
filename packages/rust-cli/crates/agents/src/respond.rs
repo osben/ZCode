@@ -153,8 +153,8 @@ struct RespondToCoordinator {
 }
 
 impl RespondToCoordinator {
-    /// Queues the message for the coordinator that owns the calling child. A child whose owner is another subagent
-    /// fails: this port has no mailbox for a subagent parent yet (the desktop never spawns one).
+    /// Queues the message for the coordinator that owns the calling child: the parent session, or a subagent parent's
+    /// mailbox (absorbed at its next tool boundary as a `subagent_reply_steer`).
     async fn respond(
         &self,
         value: &Value,
@@ -169,21 +169,28 @@ impl RespondToCoordinator {
             )))));
         };
         let outcome = match self.core.live.get(agent) {
-            Some(live) if live.owner.is_none() => {
+            Some(live) => {
                 let message = message_text(
                     agent.as_str(),
                     &live.definition.agent_type,
                     &input.summary,
                     &input.message,
                 );
-                self.core.hub.subagent_message(&live.parent, message);
-                Ok(response_id)
+                match &live.owner {
+                    // A subagent parent takes it through its own mailbox (Node `enqueueSubagentMessage` on the parent runtime).
+                    Some(owner) => {
+                        if self.core.live.enqueue_subagent_message(owner, message) {
+                            Ok(response_id)
+                        } else {
+                            Err((response_id, "the coordinator is no longer running".to_owned()))
+                        }
+                    }
+                    None => {
+                        self.core.hub.subagent_message(&live.parent, message);
+                        Ok(response_id)
+                    }
+                }
             }
-            Some(_) => Err((
-                response_id,
-                "the coordinator is a subagent, which this runtime does not route to yet"
-                    .to_owned(),
-            )),
             None => Err((response_id, "the subagent is no longer running".to_owned())),
         };
         let mut shown = text(reply_text(&outcome));
