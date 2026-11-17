@@ -83,6 +83,8 @@ import type { Logger } from "@zcode/contracts";
 import type { ForkRustHelperMcpHost } from "./mcp-host.js";
 import type { ForkRustHelperClient } from "./rust-client.js";
 import type { createWorkflowRunReads } from "./workflow-run-reads.js";
+import { compileWorkflowForRust, formatWorkflowForRust } from "./workflow-compile.js";
+import { FORK_RUST_HELPER_WORKFLOW } from "./workflow-protocol.js";
 
 type Handler = (params: unknown) => Promise<unknown> | unknown;
 
@@ -174,6 +176,9 @@ export class ForkRustHelperServer {
       [zcodeProtocolMethods.workflowsSave]: (params) => saveSavedWorkflowFromRunOp(context, params),
       [zcodeProtocolMethods.workflowsForRun]: (params) => findSavedWorkflowForRunOp(context, params),
       ...deps.workflowRuns,
+      // W4: stateless workflow compile and format (no storage, no session).
+      [FORK_RUST_HELPER_WORKFLOW.compile]: (params) => compileWorkflowForRust(params),
+      [FORK_RUST_HELPER_WORKFLOW.format]: (params) => formatWorkflowForRust(params),
       // F3: the same handlers as Node's protocol server, on the helper's session records.
       [zcodeProtocolMethods.pluginsMentionItems]: (params) => getPluginMentionItems(context, params),
       [zcodeProtocolMethods.mcpReadResource]: (params) => readMcpUiResource(context, params),

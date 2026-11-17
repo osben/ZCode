@@ -342,6 +342,35 @@ Node keeps the App resident while a run is live (`execution-engine.md` "Engine o
 
 Why the helper is not the spawner of the child (open question Q4). Rust owns the run's abort, its lifetime and its settlement. A helper-spawned child would make the helper a second owner of the run and would add a relay for every host call.
 
+### 4.1 As built (W4): helper wire and the NDJSON boundary
+
+Status: built in PR W4 (branch `feat/rust-workflow-sandbox-host`). Gate off: nothing calls these from a turn.
+
+Helper methods (added to `FORK_RUST_HELPER_METHODS`, so `helper/initialize` advertises them; protocol version stays 2 because the additions are advertised, not assumed. Rust forwards them only when both its allowlist and the advertised list name them):
+
+- `helper/workflow/compile` `{scriptText, runId, args?, resumedFrom?}` returns either
+  - `{ok: true, scriptHash, compiled, entrySource}`, where `compiled` is `compileProgram` (`bootstrap/src/app/dynamic-workflow-run-compile.ts`) without `lowered` (`askSpecs`, `actorSubmitProfiles`, `sitePhases`, `phases`, `holes`, `holeBodies`, `scriptHash`), and `entrySource` is `renderChildEntry({lowered, args, run: {id, resumedFrom?}}, {runId})`; or
+  - `{ok: false, diagnostics, message?}` with `diagnostics` as `CompileDiagnostic[]` (`code, line, column, message`). `message` is set when the compile threw after the diagnostics pass (schema or world-run wiring errors).
+  - `scriptHash` is the SHA-256 of the author's text, as Node computes it. Rust never hashes or lowers.
+- `helper/workflow/format` `{kind: "analysis", scriptText}` returns `{analysis}`, the JSON of `analyzeWorkflowScript` (window graph, causality, declared artifacts, model references). Other `kind` values are rejected with -32602; the journal-row text formats (`GetWorkflowRun`) come with W7.
+- Invalid params are -32602 on both. Neither method reads or writes storage, a session, or the journal.
+
+Rust side (`protocol-zcode/src/fork/workflow_*.rs`):
+
+- The compile client calls `NodeHelper::forward`, so the usual lifecycle, timeout and `nodeHelperUnavailable` answers apply. Both methods are added to `FORWARDED_METHODS`.
+- The entry writer writes `<cwd>/.zcode/workflow-runs/<runId>.mjs` with `*` in a `.gitignore` written once. A write failure falls back to `<tmp>/zcode-workflow-runs/`, with a warning. The file name sanitises `runId` as `childEntryFileName` does.
+- The child is spawned as `execPath --max-old-space-size=256 <entry>` with `ELECTRON_RUN_AS_NODE=1` added to the helper command's `env`. `execPath` and `env` come from the same `ZCODE_FORK_NODE_HELPER_COMMAND` the helper uses (Q9). The entry file is self-contained, so the bundle path in `args` is not used. Spawning goes through an injected launcher, so `protocol-zcode` spawns nothing itself.
+
+NDJSON boundary (Boundary A, transport only in W4). The message shapes are those of `dynamic-workflow-runtime/src/protocol.ts`.
+
+- Child to host: `create-actor` (no answer; the host records `localId` before any later message is handled), `request` (`ask`, `world-read`, `publish-artifact`, `hole`; answered by a `response` with the same `id`, in any order), `event` (`log`, `report`, `declare-artifact`, `phase-entered`; no answer, handled in line order), `complete` (ends the run's stream).
+- Host to child: `{kind: "response", id, ok, value?, error?}`, one line each.
+- Lines are handled in arrival order. A line that does not parse, an unknown `kind` or `type` (a `response` from the child included), a request naming a handle the child never created, a reused request `id` or `localId`, and an engine refusal of an actor all end the run as `stopped(interrupted)`. The cause gives the line's position, never its content.
+- EOF before `complete` ends the run as `stopped(interrupted)`; the cause is the bounded tail of the child's stderr.
+- The host does not interpret asks, world reads, reports or artifacts. W5 to W6 supply the handler for those.
+
+Memory (Q8), measured in W4 on macOS arm64 with Node v26.12.0 and the unmodified `renderChildEntry` output, run as `node --max-old-space-size=256 <entry>` with one ask in flight and no reply: RSS about 56 MB (56,080 KB), steady over 5 s. This is a plain Node process, not the packaged Electron helper, so the packaged child is expected to be larger; it is still one child per live run, and the same child runs under Node today. Not measured: the packaged build, and several concurrent runs.
+
 ## 5. Mapping to existing Rust machinery, and what is new
 
 | Need                                | Existing in Rust                                                                                                                                                                                                  | New                                                                                                                                                                                                   |

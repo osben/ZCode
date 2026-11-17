@@ -39,6 +39,14 @@ mod usage;
 mod workspace_model;
 pub(crate) use workspace_model::Operations as WorkspaceOperations;
 pub(crate) mod workspace_trust;
+// Fork: specs/fork-rust-workflow-engine.md, 4.1 (as built in W4): the compile helper, the entry file, the sandbox child
+// and its NDJSON host. Exported from the crate root, where the composition root installs the child launcher.
+pub mod workflow_child;
+pub mod workflow_compile;
+pub mod workflow_entry;
+pub mod workflow_host;
+pub mod workflow_lines;
+pub mod workflow_wire;
 pub use workspace_trust::{
     Admission, ReviewBundle, ReviewItem, ReviewLookup, ReviewSource, StoredTrust, ToggleError,
     WorkspaceAdmin, WorkspaceTarget,

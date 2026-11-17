@@ -59,6 +59,17 @@ pub use fork::node_helper::{
     HelperCatalog, HelperRoutedMcp, NODE_HELPER_UNAVAILABLE, NodeHelper, NodeHelperLauncher,
     NodeHelperProcess, Timing as NodeHelperTiming,
 };
+// Fork: the workflow engine's helper client, sandbox child and NDJSON host (specs/fork-rust-workflow-engine.md, 4.1).
+pub use fork::workflow_child::{
+    ChildCommand, ChildLauncher, ChildStreams, Invocation, LaunchedChild, MAX_OLD_SPACE_MB,
+    invocation as child_invocation,
+};
+pub use fork::workflow_compile::{self, CompileRequest, Compiled};
+pub use fork::workflow_entry::{EntryFile, EntryLocation, write_entry};
+pub use fork::workflow_host::{
+    ChildHandler, ChildIo, Outcome, StopReason, run as run_workflow_child,
+};
+pub use fork::workflow_wire::{ChildEvent, ChildRequest, Completion, CreateActor, WireError};
 pub use fork::{
     Admission, ReviewBundle, ReviewItem, ReviewLookup, ReviewSource, StoredTrust, ToggleError,
     WorkspaceAdmin, WorkspaceTarget,

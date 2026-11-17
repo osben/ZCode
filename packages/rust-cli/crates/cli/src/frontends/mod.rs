@@ -15,4 +15,5 @@ pub(crate) mod tui_mcp;
 pub(crate) mod tui_peek;
 pub(crate) mod tui_screens;
 pub(crate) mod tui_usage;
+pub(crate) mod workflow_child;
 pub(crate) mod workspace_trust;

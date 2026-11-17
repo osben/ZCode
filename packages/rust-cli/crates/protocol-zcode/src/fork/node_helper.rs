@@ -85,6 +85,10 @@ pub(crate) const FORWARDED_METHODS: &[&str] = &[
     "mcp/uiResolveAppToolCall",
     "mcp/readResource",
     "plugins/mentionItems",
+    // W4: stateless workflow compile and format, named by the constants the client sends
+    // (specs/fork-rust-workflow-engine.md, 4.1).
+    super::workflow_compile::COMPILE,
+    super::workflow_compile::FORMAT,
 ];
 
 /// Helper notifications relayed to the Host verbatim. Any other notification from the helper is dropped.

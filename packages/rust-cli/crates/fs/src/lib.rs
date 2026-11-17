@@ -260,6 +260,59 @@ pub fn remove_dir_all_optional_blocking(path: &Path) -> io::Result<()> {
     }
 }
 
+/// Writes `bytes` to `path` only when nothing is there yet: an existing file is left as it is, so a user's edit is
+/// never overwritten, even by a writer that raced past a read. Returns whether it was created.
+///
+/// The parent directory must already exist: a missing one is `NotFound`, and nothing is created. The bytes are staged
+/// in a temporary file in the same directory and published with `hard_link`, which fails with `AlreadyExists` rather
+/// than replacing anything. So `path` never holds a partial file, and the temporary file is removed on every way out,
+/// including a failed or cancelled write. A filesystem without hard links fails with its own error and writes nothing.
+pub async fn create_new_file(path: &Path, bytes: &[u8]) -> io::Result<bool> {
+    let name = path.file_name().ok_or_else(|| {
+        io::Error::new(
+            ErrorKind::InvalidInput,
+            format!("new file has no file name: {}", path.display()),
+        )
+    })?;
+    let directory = match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
+        Some(_) | None => PathBuf::from("."),
+    };
+    let temp = directory.join(temp_name(name, TempName::Hidden));
+    let (path, bytes) = (path.to_path_buf(), bytes.to_vec());
+    // On the blocking pool, so the guard that removes the temporary file runs even if the caller stopped waiting.
+    rust_cli_base::blocking(move || publish_new(&temp, &path, &bytes))
+        .await
+        .map_err(io::Error::other)?
+}
+
+/// Stages `bytes` in `temp`, then links it to `path` without replacing it. `temp` is removed on every return path once
+/// it was created by this call; a failed create (for example a name clash) never removes a file it did not create.
+fn publish_new(temp: &Path, path: &Path, bytes: &[u8]) -> io::Result<bool> {
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(temp)?;
+    let _remove_temp = RemoveOnDrop(temp);
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    drop(file);
+    match std::fs::hard_link(temp, path) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == ErrorKind::AlreadyExists => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+/// Removes the file at its path when dropped, whatever way the owner leaves its scope.
+struct RemoveOnDrop<'a>(&'a Path);
+
+impl Drop for RemoveOnDrop<'_> {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(self.0);
+    }
+}
+
 /// 在文件末尾追加 `bytes`（按需建父目录与文件）。只给"一个写者、按顺序追加"的日志类文件用
 /// （例如 TUI 输入历史）；调用方保证同一个文件只有一个写者。
 pub async fn append(path: &Path, bytes: &[u8]) -> io::Result<()> {

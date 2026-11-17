@@ -364,3 +364,31 @@ fn the_blocking_write_matches_the_async_one() {
         vec!["occupied".to_owned(), "private".to_owned()]
     );
 }
+
+#[tokio::test]
+async fn create_new_file_writes_a_missing_file_and_leaves_no_temp_file() {
+    let directory = tempfile::tempdir().unwrap();
+    let target = directory.path().join(".gitignore");
+    assert!(create_new_file(&target, b"*\n").await.unwrap());
+    assert_eq!(std::fs::read(&target).unwrap(), b"*\n");
+    assert_eq!(entries(directory.path()), vec![".gitignore".to_owned()]);
+}
+
+#[tokio::test]
+async fn create_new_file_leaves_an_existing_file_unchanged_and_no_temp_file() {
+    let directory = tempfile::tempdir().unwrap();
+    let target = directory.path().join(".gitignore");
+    std::fs::write(&target, "user edit\n").unwrap();
+    assert!(!create_new_file(&target, b"*\n").await.unwrap());
+    assert_eq!(std::fs::read(&target).unwrap(), b"user edit\n");
+    assert_eq!(entries(directory.path()), vec![".gitignore".to_owned()]);
+}
+
+#[tokio::test]
+async fn create_new_file_does_not_create_a_missing_parent() {
+    let directory = tempfile::tempdir().unwrap();
+    let target = directory.path().join("missing").join(".gitignore");
+    let error = create_new_file(&target, b"*\n").await.unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+    assert!(!directory.path().join("missing").exists());
+}
