@@ -596,6 +596,27 @@ fn an_automation_input_carries_its_turn_limits() {
     assert!(!input_execution(&moded, None).unwrap().keeps_session_state);
 }
 
+/// Fork (specs/fork-rust-automations.md, slice 3): `offPeakTaskId` hides OffPeakCreate on the turn its input opens, so
+/// an off-peak run cannot queue more off-peak work (Node `OFF_PEAK_EXECUTION_TOOL_DENYLIST`). OffPeakList stays.
+#[test]
+fn an_off_peak_input_hides_offpeak_create_on_its_turn() {
+    let input: Input = serde_json::from_value(serde_json::json!({
+        "text": "run", "offPeakTaskId": "oft_1", "offPeakRunType": "init",
+    }))
+    .unwrap();
+    let execution = input_execution(&input, None).expect("an off-peak input carries its limits");
+    assert!(execution.limits.hides("OffPeakCreate"));
+    assert!(!execution.limits.hides("OffPeakList"));
+    let ordinary: Input =
+        serde_json::from_value(serde_json::json!({"text": "x", "mode": "auto"})).unwrap();
+    assert!(
+        !input_execution(&ordinary, None)
+            .unwrap()
+            .limits
+            .hides("OffPeakCreate")
+    );
+}
+
 /// Fork: Node `resolveExecutionState(input, current)` (`packages/shared/src/execution-state.ts`) case by case.
 #[test]
 fn execution_state_resolves_like_node() {
