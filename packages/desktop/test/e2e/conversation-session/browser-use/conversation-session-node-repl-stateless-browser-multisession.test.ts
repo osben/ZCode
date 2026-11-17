@@ -108,20 +108,21 @@ describe("Node REPL Browser Use 无状态多 Session E2E", () => {
     // The capture needs the macOS screenshot surface: on Linux the candidate and the list succeed, but the screenshot
     // answers backend_unavailable (packages/desktop/src/main/browserView/browserScreenshotSurfaceCoordinatorWiring.ts:37-38
     // gates the transparent bootstrap to darwin/win32; browserGuestManager.ts:2012-2013 maps the failure), so no row exists.
-    // Skipped off macOS, as acp-agent-delegation does.
-    if (process.platform !== "darwin") this.skip();
-    await selectV4TaskById(sessionA);
-    await browser.waitUntil(
-      async () =>
-        browser.execute(
-          (testId) => document.querySelectorAll(`[data-testid="${testId}"]`).length > 0,
-          TURN_END_SCREENSHOT_TESTID,
-        ),
-      {
-        timeout: 60_000,
-        timeoutMsg: "Session A 的 Browser Use 轮次结束后没有出现截图行",
-      },
-    );
+    // Guarded off macOS only: the rest of this test runs and passes on Linux.
+    if (process.platform === "darwin") {
+      await selectV4TaskById(sessionA);
+      await browser.waitUntil(
+        async () =>
+          browser.execute(
+            (testId) => document.querySelectorAll(`[data-testid="${testId}"]`).length > 0,
+            TURN_END_SCREENSHOT_TESTID,
+          ),
+        {
+          timeout: 60_000,
+          timeoutMsg: "Session A 的 Browser Use 轮次结束后没有出现截图行",
+        },
+      );
+    }
   });
 });
 
