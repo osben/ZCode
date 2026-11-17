@@ -13,4 +13,6 @@ pub mod journal_dwf;
 pub mod model;
 
 #[cfg(test)]
+mod engine_tests;
+#[cfg(test)]
 mod lifecycle_golden_tests;

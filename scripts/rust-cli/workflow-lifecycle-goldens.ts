@@ -10,7 +10,7 @@
  * - the full event log of the run: sequence and the exact `JSON.stringify` text of each event. Key
  *   order is part of the contract, so Rust must reproduce the bytes, not just the values.
  *
- * Rust replays the same scenarios (crates/workflow/src/engine tests) and must match all of it.
+ * Rust replays the same scenarios (crates/workflow/src/lifecycle_golden_tests.rs) and must match all of it.
  * Scenarios are the source of truth; edit them here and regenerate.
  *
  * Run from the repository root:
@@ -24,9 +24,9 @@ import { InMemoryJournalStore } from "../../apps/zcode-cli/packages/dynamic-work
 import {
   WorkflowError,
   type WorkflowErrorCode,
+  type WorkflowErrorJson,
   type RunStopReason,
   type WorkflowDriver,
-  type RunEvent,
 } from "../../apps/zcode-cli/packages/dynamic-workflow/src/engine/types.ts";
 import type { RunLaunchConfig } from "../../apps/zcode-cli/packages/dynamic-workflow/src/engine/engine-launch.ts";
 
@@ -228,15 +228,20 @@ function runStepResult(engine: WorkflowEngine, step: Step): unknown {
   }
 }
 
+/** Drops keys whose value is undefined, so an optional config field is absent, not present-but-undefined. */
+function omitUndefined<T extends Record<string, unknown>>(fields: T): Partial<T> {
+  return Object.fromEntries(
+    Object.entries(fields).filter(([, value]) => value !== undefined),
+  ) as Partial<T>;
+}
+
 function runScenario(scenario: Scenario): unknown {
   const store = new InMemoryJournalStore();
   let disposed = 0;
-  const emitted: RunEvent[] = [];
   const driver: WorkflowDriver = {
     journal: store,
-    emit: (event) => {
-      emitted.push(event);
-    },
+    // Events are read back from the journal below; the driver's copy is not part of the fixture.
+    emit: () => {},
     createActorSession: () => {
       throw new Error("not used in the lifecycle goldens");
     },
@@ -249,7 +254,8 @@ function runScenario(scenario: Scenario): unknown {
     },
   };
   const lifetimes = scenario.lifetimes.map((lifetime) => {
-    let constructError: { code: string; message: string } | undefined;
+    // The whole toJSON shape, so the typed parts (the hash mismatch) are golden-covered too.
+    let constructError: WorkflowErrorJson | undefined;
     let engine: WorkflowEngine | undefined;
     try {
       engine = new WorkflowEngine({
@@ -258,24 +264,23 @@ function runScenario(scenario: Scenario): unknown {
         caps: { maxConcurrency: lifetime.caps },
         askSpecs: new Map(),
         validate: () => [],
-        ...(lifetime.scriptText === undefined ? {} : { scriptText: lifetime.scriptText }),
-        ...(lifetime.scriptHash === undefined ? {} : { scriptHash: lifetime.scriptHash }),
-        ...(lifetime.name === undefined ? {} : { name: lifetime.name }),
-        ...(lifetime.args === undefined ? {} : { args: lifetime.args }),
-        ...(lifetime.toolCallId === undefined ? {} : { toolCallId: lifetime.toolCallId }),
-        ...(lifetime.parentSessionId === undefined
-          ? {}
-          : { parentSessionId: lifetime.parentSessionId }),
-        ...(lifetime.cwd === undefined ? {} : { cwd: lifetime.cwd }),
-        ...(lifetime.resumedFrom === undefined ? {} : { resumedFrom: lifetime.resumedFrom }),
-        ...(lifetime.launch === undefined ? {} : { launch: lifetime.launch }),
-        ...(lifetime.inheritedTokens === undefined
-          ? {}
-          : { inheritedTokens: lifetime.inheritedTokens }),
+        ...omitUndefined({
+          scriptText: lifetime.scriptText,
+          scriptHash: lifetime.scriptHash,
+          name: lifetime.name,
+          args: lifetime.args,
+          toolCallId: lifetime.toolCallId,
+          parentSessionId: lifetime.parentSessionId,
+          cwd: lifetime.cwd,
+          resumedFrom: lifetime.resumedFrom,
+          launch: lifetime.launch,
+          inheritedTokens: lifetime.inheritedTokens,
+        }),
       });
     } catch (error) {
-      const err = error as WorkflowError;
-      constructError = { code: err.code, message: err.message };
+      // Only the constructor's own WorkflowError is recorded; anything else is a generator bug.
+      if (!(error instanceof WorkflowError)) throw error;
+      constructError = error.toJSON();
     }
     const results =
       engine === undefined ? [] : lifetime.steps.map((step) => runStepResult(engine!, step));

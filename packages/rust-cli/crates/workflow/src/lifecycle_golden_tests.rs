@@ -8,7 +8,7 @@ use crate::error::{ErrorCode, WorkflowError};
 use crate::event::RunEvent;
 use crate::journal::{JournalPort, MemoryJournal};
 use crate::journal_dwf::DwfJournal;
-use crate::model::{Caps, StopReason};
+use crate::model::{Caps, RunRow, StopReason};
 use rust_cli_node_store::open_session_database;
 use serde_json::Value;
 use std::path::Path;
@@ -48,7 +48,10 @@ fn config_for(run_id: &str, lifetime: &Value) -> EngineConfig {
     let launch = lifetime
         .get("launch")
         .map(|launch| crate::event::LaunchFields {
-            input_id: launch["inputId"].as_str().unwrap_or_default().to_owned(),
+            input_id: launch["inputId"]
+                .as_str()
+                .expect("golden launch inputId")
+                .to_owned(),
             phase_names: launch.get("phaseNames").cloned(),
             subagent_model: optional_text(launch, "subagentModel"),
             subagent_permission_mode: optional_text(launch, "subagentPermissionMode"),
@@ -89,8 +92,14 @@ fn run_step<J: JournalPort>(
             Value::Null
         }
         "retune" => {
-            // JSON cannot carry NaN; the generator writes it as null, and Node's step was NaN.
-            let value = step["value"].as_f64().unwrap_or(f64::NAN);
+            // JSON cannot carry NaN; the generator writes it as null, and Node's step was NaN. Any other
+            // non-number is a broken fixture, not a NaN.
+            let value = match &step["value"] {
+                Value::Null => f64::NAN,
+                other => other
+                    .as_f64()
+                    .expect("golden retune value is a number or null"),
+            };
             Value::Bool(engine.set_max_concurrency(value).expect("retune"))
         }
         "usage" => {
@@ -122,7 +131,11 @@ fn run_step<J: JournalPort>(
 fn scenarios() -> Vec<Value> {
     let goldens: Value = serde_json::from_str(GOLDENS).expect("golden file parses");
     let list = goldens["scenarios"].as_array().expect("scenarios").clone();
-    assert_eq!(list.len(), 6);
+    assert!(
+        list.len() >= 6,
+        "expected at least 6 scenarios, got {}",
+        list.len()
+    );
     list
 }
 
@@ -159,15 +172,11 @@ fn replay_scenario<J: JournalPort>(scenario: &Value, journal: &mut J) {
                 let thrown = error
                     .downcast_ref::<WorkflowError>()
                     .expect("workflow error");
+                // The whole toJSON shape: code, message and the typed parts (mismatch for a hash mismatch).
                 assert_eq!(
-                    want["constructError"]["code"].as_str(),
-                    Some(thrown.code.as_str()),
-                    "{name} lifetime {index}: construct error code"
-                );
-                assert_eq!(
-                    want["constructError"]["message"].as_str(),
-                    Some(thrown.message.as_str()),
-                    "{name} lifetime {index}: construct error message"
+                    canonical_json(&thrown.to_json()),
+                    canonical_json(&want["constructError"]),
+                    "{name} lifetime {index}: construct error"
                 );
             }
             Ok(mut engine) => {
@@ -187,12 +196,11 @@ fn replay_scenario<J: JournalPort>(scenario: &Value, journal: &mut J) {
                 );
             }
         }
-        let row = journal
-            .get_run(run_id)
-            .expect("get_run")
-            .expect("row exists");
+        // A run with no row is recorded as null (the generator's `run: row === undefined ? null`).
+        let row = journal.get_run(run_id).expect("get_run");
+        let got_row = row.as_ref().map_or(Value::Null, RunRow::to_json);
         assert_eq!(
-            canonical_json(&row.to_json()),
+            canonical_json(&got_row),
             canonical_json(&want["run"]),
             "{name} lifetime {index}: run row"
         );

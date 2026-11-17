@@ -27,8 +27,12 @@ impl<'a> DwfJournal<'a> {
     }
 }
 
+/// Accepts the integers an `i64` holds: `[-2^63, 2^63)`. The upper bound is `2^63` written as an
+/// exact `f64` literal, because `i64::MAX as f64` rounds up to `2^63` and would let `2^63` through.
 fn integer(value: f64, what: &str) -> Result<i64> {
-    if value.is_finite() && value.fract() == 0.0 && value.abs() <= i64::MAX as f64 {
+    const LOWER: f64 = i64::MIN as f64;
+    const UPPER_EXCLUSIVE: f64 = 9_223_372_036_854_775_808.0;
+    if value.is_finite() && value.fract() == 0.0 && (LOWER..UPPER_EXCLUSIVE).contains(&value) {
         return Ok(value as i64);
     }
     bail!("dwf_run stores integers: {what} is {value}")
@@ -184,5 +188,31 @@ impl JournalPort for DwfJournal<'_> {
                 })
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::integer;
+
+    #[test]
+    fn integer_bounds_are_half_open_at_two_to_the_63() {
+        assert_eq!(
+            integer(-9_223_372_036_854_775_808.0, "x").unwrap(),
+            i64::MIN
+        );
+        assert!(integer(9_223_372_036_854_775_808.0, "x").is_err());
+        assert_eq!(
+            integer(9_223_372_036_854_774_784.0, "x").unwrap(),
+            9_223_372_036_854_774_784
+        );
+    }
+
+    #[test]
+    fn non_integers_and_non_finite_values_are_rejected() {
+        assert!(integer(2.5, "x").is_err());
+        assert!(integer(f64::NAN, "x").is_err());
+        assert!(integer(f64::INFINITY, "x").is_err());
+        assert!(integer(-9_223_372_036_854_777_856.0, "x").is_err());
     }
 }

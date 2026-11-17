@@ -113,6 +113,7 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
                             config.run_id
                         ),
                     )
+                    .with_mismatch(recorded, got)
                     .into());
                 }
                 journal.update_run_status(
@@ -176,6 +177,11 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
 
     /// Node `askStats` for the run-level usage: the total is persisted at once; the event is emitted only
     /// while the run is live. Late stats after settlement update accounting only.
+    ///
+    /// The total is added before the journal write, as Node does (`spentTokens += tokens`, then
+    /// `updateRunUsage`). When the write fails, the in-memory total stays ahead of the row until the
+    /// next successful usage write; the next call writes the full total again. Do not move the add
+    /// after the write: that changes which total a retry persists.
     pub fn record_usage(&mut self, tokens: f64) -> Result<()> {
         self.spent_tokens += tokens;
         self.journal
@@ -190,6 +196,12 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
 
     /// Node `setMaxConcurrency`. Returns whether anything changed. A non-finite value, a settled run,
     /// and an unchanged value are no-ops. The value is floored and raised to at least 1.
+    ///
+    /// The caps are replaced before the journal write, as Node does (`this.caps = caps`, then
+    /// `updateRunCaps`). When the write fails, the engine keeps the new value and the row keeps the old
+    /// one, and a retry with the same value returns `Ok(false)` because the engine already holds it.
+    /// The row then stays stale until the next change of the value. This matches Node; a caller that
+    /// needs the row to converge must retry with a different value.
     pub fn set_max_concurrency(&mut self, max_concurrency: f64) -> Result<bool> {
         if self.is_settled() || !max_concurrency.is_finite() {
             return Ok(false);
@@ -288,6 +300,13 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
 
     /// Node `finishRun`: the journal status first, then `run-settled`, then dispose. The event carries
     /// only the stop reason, successor and error, never the artifact.
+    ///
+    /// The settlement latch is set by the caller before this runs (`complete`, `stop` and `fail` write
+    /// `self.settlement` first), as Node's `markSettled()` precedes `finishRun`. So when the status write
+    /// fails, the engine is still settled: `run-settled` is not appended, dispose is not called, and a
+    /// retry of the same settlement is a no-op returning `Ok(())`. The journal row keeps its previous
+    /// status until someone else writes it. Do not reorder the latch after the write: a retry would then
+    /// settle twice. Pinned by `engine_tests`.
     fn finish_run(
         &mut self,
         status: RunStatus,
