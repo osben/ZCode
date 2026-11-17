@@ -493,3 +493,15 @@ async fn a_final_line_without_a_newline_is_read_as_a_line_like_readline_does() {
     assert!(!completion.ok);
     assert_eq!(completion.error.unwrap().message, "boom");
 }
+
+/// The host reads child lines with serde_json. A float in a line must come out as the nearest double,
+/// as `JSON.parse` gives it (`123456789012345680000` is one ulp off with serde's default parser).
+#[test]
+fn a_number_in_a_child_line_is_the_nearest_double() {
+    let line = r#"{"kind":"event","type":"usage-updated","spentTokens":123456789012345680000}"#;
+    let parsed: Value = serde_json::from_str(line).unwrap();
+    assert_eq!(
+        parsed["spentTokens"].as_f64(),
+        Some(123456789012345680000.0)
+    );
+}
