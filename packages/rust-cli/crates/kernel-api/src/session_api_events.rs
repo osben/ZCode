@@ -34,7 +34,7 @@ pub enum TurnOutcome {
         /// Fork: the provider business failure (Node `lastError.attribution`: `providerErrorCode` is its code, with
         /// the status and retryability); `None` for a failure without a provider code.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        provider: Option<crate::model::ProviderFailure>,
+        provider: Option<Box<crate::model::ProviderFailure>>,
     },
 }
 

@@ -540,7 +540,7 @@ impl Actor {
                     .provider()
                     .map(|provider| provider.code.clone())
                     .or_else(|| error.code().map(str::to_owned)),
-                provider: error.provider().cloned(),
+                provider: error.provider().cloned().map(Box::new),
             },
             (None, Err(error)) => TurnOutcome::Failed {
                 message: error.to_string(),

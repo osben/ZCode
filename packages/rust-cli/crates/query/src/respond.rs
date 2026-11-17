@@ -500,10 +500,14 @@ fn finish(
     let (assembled, error_of_call) = match failure {
         None if keep_partial => (assembler.finish_aborted(), None),
         None => (assembler.finish(), None),
-        Some(error) => match partial(&assistant_id, assembler, error, (&timing, completed)) {
-            Partial::WithTools(assembled, error) => (assembled, Some(error)),
-            Partial::Ended(ending) => return *ending,
-        },
+        Some(error) => {
+            // Node `providerId` / `modelId` of the error context: the request's own selection.
+            let error = error.with_model(&timing.selection.provider, &timing.selection.model);
+            match partial(&assistant_id, assembler, error, (&timing, completed)) {
+                Partial::WithTools(assembled, error) => (assembled, Some(error)),
+                Partial::Ended(ending) => return *ending,
+            }
+        }
     };
     let tool_uses = assembled
         .content

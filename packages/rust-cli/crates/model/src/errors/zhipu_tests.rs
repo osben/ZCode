@@ -243,6 +243,12 @@ fn table_codes_keep_the_provider_code_and_status() {
             code: "1113".to_owned(),
             status: Some(429),
             retryable: false,
+            reason: "unknown".to_owned(),
+            error_phase: "prepare".to_owned(),
+            transport: "sse".to_owned(),
+            provider_kind: "openai-compatible".to_owned(),
+            provider_id: None,
+            model_id: None,
         })
     );
     let value = json!({"error": {"code": "1302", "message": "rate"}});
@@ -253,6 +259,12 @@ fn table_codes_keep_the_provider_code_and_status() {
             code: "1302".to_owned(),
             status: None,
             retryable: true,
+            reason: "rate_limited".to_owned(),
+            error_phase: "stream".to_owned(),
+            transport: "sse".to_owned(),
+            provider_kind: "anthropic".to_owned(),
+            provider_id: None,
+            model_id: None,
         })
     );
 }

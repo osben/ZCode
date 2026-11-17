@@ -168,32 +168,41 @@ Rule (Rust):
   `{source: "provider", exceptionKind: "provider_business", providerErrorCode, retryable, statusCode?}`.
   `statusCode` is present only for a response with an HTTP status (Node omits it for a stream error).
 
-Node golden (generated 2026-11-16 by running Node's `projectExecutionErrorPayload`,
-`apps/zcode-cli/packages/core/src/errors/error-payload.ts`, over the context `toAdapterError` builds for a
-`ProviderBusinessError`, `source: "provider"`, `exceptionKind: "provider_business"`, `providerCode`, `statusCode`,
-`retryable: false`):
+Node golden (generated 2026-11-16 by running Node's own functions with `tsx`: `classifyModelFailure`
+(`apps/zcode-cli/packages/adapters/src/model/failure-classifier.ts`) over a `ProviderBusinessError`, `toAdapterError`
+(`runner-retry.ts`) for the error context, and `projectExecutionErrorPayload` (`core/src/errors/error-payload.ts`) for
+the attribution). The request is the chat model path, which streams, so `transport` is `sse`.
 
-| Case                                 | Node `attribution`                                                                                                           | Node `code`                                 |
-| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
-| ChatGPT usage limit, HTTP 429        | `{source, exceptionKind, statusCode: 429, providerErrorCode: "subscription_sharing_usage_limit_exceeded", retryable: false}` | `subscription_sharing_usage_limit_exceeded` |
-| zhipu quota 1113, HTTP 429           | `{source, exceptionKind, statusCode: 429, providerErrorCode: "1113", retryable: false}`                                      | `1113`                                      |
-| zhipu quota 1113, stream (no status) | `{source, exceptionKind, providerErrorCode: "1113", retryable: false}`                                                       | `1113`                                      |
+| Case                                             | Node `attribution` (full payload)                                                                                                                                                                                                                                                                         | Node `code`                               |
+| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| ChatGPT usage limit, HTTP 429, before the stream | `source` provider, `reason` rate_limited, `errorPhase` prepare, `exceptionKind` provider_business, `providerId` account:chatgpt-plan:K, `modelId` gpt-6.1-sol, `providerKind` openai, `transport` sse, `statusCode` 429, `providerErrorCode` subscription_sharing_usage_limit_exceeded, `retryable` false | subscription_sharing_usage_limit_exceeded |
+| zhipu 1113, HTTP 429, before the stream          | `reason` unknown, `errorPhase` prepare, `providerKind` anthropic, `statusCode` 429, `providerErrorCode` 1113, `retryable` false (plus the same source/phase/transport/ids)                                                                                                                                | 1113                                      |
+| zhipu 1302, error event in the stream            | `reason` rate_limited, `errorPhase` stream, `providerKind` anthropic, `providerErrorCode` 1302, `retryable` true, no `statusCode`                                                                                                                                                                         | 1302                                      |
+| zhipu 1113, error event in the stream            | `reason` unknown, `errorPhase` stream, `providerErrorCode` 1113, `retryable` false, no `statusCode`                                                                                                                                                                                                       | 1113                                      |
 
-Not carried yet: Node's `providerId`, `modelId`, `providerKind`, `transport`, `errorPhase` and `reason`. They need the
-turn's model selection and the transport's phase at the failure, which the projection does not have. Until they are
-carried, the attribution is a subset of Node's shape, and the banner, which reads only `providerErrorCode`, is correct.
-Node's `providerId` for a plan account is `account:chatgpt-plan:<K>`; the banner takes the provider id from the session.
+The per-code `reason` and `retryable` of every zhipu and plan code is the fixture
+`crates/model/tests/fixtures/node-provider-codes.json`, checked by `errors/provider_table_tests.rs`. Five zhipu codes
+(1210, 1211, 1213, 1214, 1301) are not in Node's mapping: Node classifies them by HTTP status. A 429 is `rate_limited`
+and retries; without a status they are `unknown` and do not retry. Other statuses for those five codes are not in the
+fixture and are reported as `unknown`, not verified.
+
+Fields and sources (Rust): `reason`, `retryable`, `providerErrorCode` from the classifier's table; `errorPhase` is
+`prepare` for a response with a status and `stream` for an error event; `transport` is `sse`; `providerKind` follows
+the wire protocol (`anthropic`, `openai`, `openai-compatible`); `providerId` and `modelId` are the request's selection,
+added in the query loop (`ModelError::with_model`).
 
 Acceptance:
 
-| #   | Given                                                          | When       | Then                                                                                      |
-| --- | -------------------------------------------------------------- | ---------- | ----------------------------------------------------------------------------------------- |
-| P1  | HTTP 429 plan usage limit                                      | classify   | `ModelError::Provider` with code, status 429, retryable false; `peel()` is QuotaExhausted |
-| P2  | HTTP 503 plan usage unavailable                                | classify   | provider code, status 503, retryable true                                                 |
-| P3  | Stream error with a plan code (no status)                      | classify   | provider code, status None                                                                |
-| P4  | zhipu 1302 / 1113 response and stream                          | classify   | provider code (string), status per response, retryable per class                          |
-| P5  | Failed turn with a provider failure                            | projection | `lastError.code` = provider code; attribution equals the Node golden above                |
-| P6  | Failed turn in the integration suite on zhipu 1308 at HTTP 429 | run a turn | `TurnOutcome::Failed { code: "1308", provider: {1308, 429, false} }`                      |
+| #   | Given                                                        | When       | Then                                                                                      |
+| --- | ------------------------------------------------------------ | ---------- | ----------------------------------------------------------------------------------------- |
+| P1  | HTTP 429 plan usage limit                                    | classify   | `ModelError::Provider` with code, status 429, retryable false; `peel()` is QuotaExhausted |
+| P2  | HTTP 503 plan usage unavailable                              | classify   | provider code, status 503, retryable true                                                 |
+| P3  | Stream error with a plan code (no status)                    | classify   | provider code, status None                                                                |
+| P4  | zhipu 1302 / 1113 response and stream                        | classify   | provider code (string), status per response, retryable per class                          |
+| P5  | Failed turn with a provider failure, full Node payload       | projection | `lastError.code` = provider code; attribution equals the Node golden row above            |
+| P6  | Failed turn on zhipu 1308 at HTTP 429, the integration suite | run a turn | `TurnOutcome::Failed { code: "1308", provider }` with reason, phase, transport, kind, ids |
+| P7  | Every zhipu and plan code, at 429 and without a status       | classify   | `reason` and `retryable` equal the Node fixture row                                       |
+| P8  | A 429 for codes 1210, 1211, 1213, 1214, 1301                 | classify   | `rate_limited`, retryable; without a status `unknown`, not retryable                      |
 
 Not verified here: the banner E2E (none exists in the repo) and a live ChatGPT account.
 

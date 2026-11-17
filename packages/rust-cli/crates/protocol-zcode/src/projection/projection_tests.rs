@@ -1437,11 +1437,17 @@ fn a_provider_failure_names_its_code_in_last_error() {
         outcome: TurnOutcome::Failed {
             message: "ChatGPT plan usage limit reached.".into(),
             code: Some(code.into()),
-            provider: Some(ProviderFailure {
+            provider: Some(Box::new(ProviderFailure {
                 code: code.into(),
                 status: Some(429),
                 retryable: false,
-            }),
+                reason: "rate_limited".into(),
+                error_phase: "prepare".into(),
+                transport: "sse".into(),
+                provider_kind: "openai".into(),
+                provider_id: Some("account:chatgpt-plan:K".into()),
+                model_id: Some("gpt-6.1-sol".into()),
+            })),
         },
         usage: None,
     });
@@ -1451,7 +1457,13 @@ fn a_provider_failure_names_its_code_in_last_error() {
         error["attribution"],
         json!({
             "source": "provider",
+            "reason": "rate_limited",
+            "errorPhase": "prepare",
             "exceptionKind": "provider_business",
+            "providerId": "account:chatgpt-plan:K",
+            "modelId": "gpt-6.1-sol",
+            "providerKind": "openai",
+            "transport": "sse",
             "statusCode": 429,
             "providerErrorCode": code,
             "retryable": false,

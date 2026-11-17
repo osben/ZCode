@@ -41,7 +41,7 @@ pub(crate) enum Outcome {
     Failed {
         message: String,
         /// Fork: the provider business failure behind the message, for `lastError` (see `ModelError::Provider`).
-        provider: Option<rust_cli_kernel_api::model::ProviderFailure>,
+        provider: Option<Box<rust_cli_kernel_api::model::ProviderFailure>>,
     },
 }
 
@@ -139,7 +139,7 @@ impl Guards {
         if ends_partial_output(error) {
             return Outcome::Failed {
                 message: error.to_string(),
-                provider: error.provider().cloned(),
+                provider: error.provider().cloned().map(Box::new),
             };
         }
         let nudge = match source {
@@ -161,7 +161,7 @@ impl Guards {
             }
             _ => Outcome::Failed {
                 message: texts::truncated_error(error),
-                provider: error.provider().cloned(),
+                provider: error.provider().cloned().map(Box::new),
             },
         }
     }

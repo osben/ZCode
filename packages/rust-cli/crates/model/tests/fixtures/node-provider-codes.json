@@ -1,0 +1,362 @@
+{
+  "generator": "apps/zcode-cli/packages/adapters/src/model/failure-classifier.ts classifyModelFailure over a ProviderBusinessError (providerCode=code, statusCode 429 or none), generated 2026-11-16 with tsx",
+  "rows": [
+    {
+      "code": "500",
+      "reason": "server_error",
+      "retryable": true,
+      "reasonWithoutStatus": "server_error",
+      "retryableWithoutStatus": true
+    },
+    {
+      "code": "1008",
+      "reason": "unknown",
+      "retryable": false,
+      "reasonWithoutStatus": "unknown",
+      "retryableWithoutStatus": false
+    },
+    {
+      "code": "1113",
+      "reason": "unknown",
+      "retryable": false,
+      "reasonWithoutStatus": "unknown",
+      "retryableWithoutStatus": false
+    },
+    {
+      "code": "1120",
+      "reason": "server_error",
+      "retryable": true,
+      "reasonWithoutStatus": "server_error",
+      "retryableWithoutStatus": true
+    },
+    {
+      "code": "1210",
+      "reason": "rate_limited",
+      "retryable": true,
+      "reasonWithoutStatus": "unknown",
+      "retryableWithoutStatus": false
+    },
+    {
+      "code": "1211",
+      "reason": "rate_limited",
+      "retryable": true,
+      "reasonWithoutStatus": "unknown",
+      "retryableWithoutStatus": false
+    },
+    {
+      "code": "1213",
+      "reason": "rate_limited",
+      "retryable": true,
+      "reasonWithoutStatus": "unknown",
+      "retryableWithoutStatus": false
+    },
+    {
+      "code": "1214",
+      "reason": "rate_limited",
+      "retryable": true,
+      "reasonWithoutStatus": "unknown",
+      "retryableWithoutStatus": false
+    },
+    {
+      "code": "1230",
+      "reason": "server_error",
+      "retryable": true,
+      "reasonWithoutStatus": "server_error",
+      "retryableWithoutStatus": true
+    },
+    {
+      "code": "1234",
+      "reason": "network_error",
+      "retryable": true,
+      "reasonWithoutStatus": "network_error",
+      "retryableWithoutStatus": true
+    },
+    {
+      "code": "1261",
+      "reason": "context_exceeded",
+      "retryable": false,
+      "reasonWithoutStatus": "context_exceeded",
+      "retryableWithoutStatus": false
+    },
+    {
+      "code": "1301",
+      "reason": "rate_limited",
+      "retryable": true,
+      "reasonWithoutStatus": "unknown",
+      "retryableWithoutStatus": false
+    },
+    {
+      "code": "1302",
+      "reason": "rate_limited",
+      "retryable": true,
+      "reasonWithoutStatus": "rate_limited",
+      "retryableWithoutStatus": true
+    },
+    {
+      "code": "1303",
+      "reason": "rate_limited",
+      "retryable": true,
+      "reasonWithoutStatus": "rate_limited",
+      "retryableWithoutStatus": true
+    },
+    {
+      "code": "1304",
+      "reason": "rate_limited",
+      "retryable": false,
+      "reasonWithoutStatus": "rate_limited",
+      "retryableWithoutStatus": false
+    },
+    {
+      "code": "1305",
+      "reason": "rate_limited",
+      "retryable": true,
+      "reasonWithoutStatus": "rate_limited",
+      "retryableWithoutStatus": true
+    },
+    {
+      "code": "1308",
+      "reason": "rate_limited",
+      "retryable": false,
+      "reasonWithoutStatus": "rate_limited",
+      "retryableWithoutStatus": false
+    },
+    {
+      "code": "1309",
+      "reason": "unknown",
+      "retryable": false,
+      "reasonWithoutStatus": "unknown",
+      "retryableWithoutStatus": false
+    },
+    {
+      "code": "1310",
+      "reason": "rate_limited",
+      "retryable": false,
+      "reasonWithoutStatus": "rate_limited",
+      "retryableWithoutStatus": false
+    },
+    {
+      "code": "1311",
+      "reason": "unknown",
+      "retryable": false,
+      "reasonWithoutStatus": "unknown",
+      "retryableWithoutStatus": false
+    },
+    {
+      "code": "1312",
+      "reason": "provider_overloaded",
+      "retryable": true,
+      "reasonWithoutStatus": "provider_overloaded",
+      "retryableWithoutStatus": true
+    },
+    {
+      "code": "1313",
+      "reason": "rate_limited",
+      "retryable": false,
+      "reasonWithoutStatus": "rate_limited",
+      "retryableWithoutStatus": false
+    },
+    {
+      "code": "1314",
+      "reason": "unknown",
+      "retryable": false,
+      "reasonWithoutStatus": "unknown",
+      "retryableWithoutStatus": false
+    },
+    {
+      "code": "1315",
+      "reason": "unknown",
+      "retryable": false,
+      "reasonWithoutStatus": "unknown",
+      "retryableWithoutStatus": false
+    },
+    {
+      "code": "1316",
+      "reason": "rate_limited",
+      "retryable": false,
+      "reasonWithoutStatus": "rate_limited",
+      "retryableWithoutStatus": false
+    },
+    {
+      "code": "1317",
+      "reason": "rate_limited",
+      "retryable": false,
+      "reasonWithoutStatus": "rate_limited",
+      "retryableWithoutStatus": false
+    },
+    {
+      "code": "1318",
+      "reason": "rate_limited",
+      "retryable": false,
+      "reasonWithoutStatus": "rate_limited",
+      "retryableWithoutStatus": false
+    },
+    {
+      "code": "1319",
+      "reason": "rate_limited",
+      "retryable": false,
+      "reasonWithoutStatus": "rate_limited",
+      "retryableWithoutStatus": false
+    },
+    {
+      "code": "1320",
+      "reason": "rate_limited",
+      "retryable": false,
+      "reasonWithoutStatus": "rate_limited",
+      "retryableWithoutStatus": false
+    },
+    {
+      "code": "1321",
+      "reason": "rate_limited",
+      "retryable": false,
+      "reasonWithoutStatus": "rate_limited",
+      "retryableWithoutStatus": false
+    },
+    {
+      "code": "2056",
+      "reason": "rate_limited",
+      "retryable": false,
+      "reasonWithoutStatus": "rate_limited",
+      "retryableWithoutStatus": false
+    },
+    {
+      "code": "20097",
+      "reason": "rate_limited",
+      "retryable": false,
+      "reasonWithoutStatus": "rate_limited",
+      "retryableWithoutStatus": false
+    },
+    {
+      "code": "1005",
+      "reason": "invalid_request",
+      "retryable": false,
+      "reasonWithoutStatus": "invalid_request",
+      "retryableWithoutStatus": false
+    },
+    {
+      "code": "1006",
+      "reason": "auth_failed",
+      "retryable": false,
+      "reasonWithoutStatus": "auth_failed",
+      "retryableWithoutStatus": false
+    },
+    {
+      "code": "2007",
+      "reason": "server_error",
+      "retryable": true,
+      "reasonWithoutStatus": "server_error",
+      "retryableWithoutStatus": true
+    },
+    {
+      "code": "3001",
+      "reason": "invalid_request",
+      "retryable": false,
+      "reasonWithoutStatus": "invalid_request",
+      "retryableWithoutStatus": false
+    },
+    {
+      "code": "3002",
+      "reason": "rate_limited",
+      "retryable": true,
+      "reasonWithoutStatus": "rate_limited",
+      "retryableWithoutStatus": true
+    },
+    {
+      "code": "3006",
+      "reason": "invalid_request",
+      "retryable": false,
+      "reasonWithoutStatus": "invalid_request",
+      "retryableWithoutStatus": false
+    },
+    {
+      "code": "3007",
+      "reason": "auth_failed",
+      "retryable": false,
+      "reasonWithoutStatus": "auth_failed",
+      "retryableWithoutStatus": false
+    },
+    {
+      "code": "3008",
+      "reason": "rate_limited",
+      "retryable": false,
+      "reasonWithoutStatus": "rate_limited",
+      "retryableWithoutStatus": false
+    },
+    {
+      "code": "3009",
+      "reason": "rate_limited",
+      "retryable": false,
+      "reasonWithoutStatus": "rate_limited",
+      "retryableWithoutStatus": false
+    },
+    {
+      "code": "3010",
+      "reason": "rate_limited",
+      "retryable": false,
+      "reasonWithoutStatus": "rate_limited",
+      "retryableWithoutStatus": false
+    },
+    {
+      "code": "subscription_sharing_user_not_eligible",
+      "reason": "invalid_request",
+      "retryable": false,
+      "reasonWithoutStatus": "invalid_request",
+      "retryableWithoutStatus": false
+    },
+    {
+      "code": "subscription_sharing_usage_limit_exceeded",
+      "reason": "rate_limited",
+      "retryable": false,
+      "reasonWithoutStatus": "rate_limited",
+      "retryableWithoutStatus": false
+    },
+    {
+      "code": "subscription_sharing_unsupported_capability",
+      "reason": "invalid_request",
+      "retryable": false,
+      "reasonWithoutStatus": "invalid_request",
+      "retryableWithoutStatus": false
+    },
+    {
+      "code": "subscription_sharing_route_not_supported",
+      "reason": "invalid_request",
+      "retryable": false,
+      "reasonWithoutStatus": "invalid_request",
+      "retryableWithoutStatus": false
+    },
+    {
+      "code": "subscription_sharing_invalid_user",
+      "reason": "auth_failed",
+      "retryable": false,
+      "reasonWithoutStatus": "auth_failed",
+      "retryableWithoutStatus": false
+    },
+    {
+      "code": "chatpass_v2_scope_not_authorized",
+      "reason": "auth_failed",
+      "retryable": false,
+      "reasonWithoutStatus": "auth_failed",
+      "retryableWithoutStatus": false
+    },
+    {
+      "code": "chatpass_v2_invalid_authorization_context",
+      "reason": "auth_failed",
+      "retryable": false,
+      "reasonWithoutStatus": "auth_failed",
+      "retryableWithoutStatus": false
+    },
+    {
+      "code": "subscription_sharing_usage_unavailable",
+      "reason": "server_error",
+      "retryable": true,
+      "reasonWithoutStatus": "server_error",
+      "retryableWithoutStatus": true
+    },
+    {
+      "code": "subscription_sharing_user_unavailable",
+      "reason": "server_error",
+      "retryable": true,
+      "reasonWithoutStatus": "server_error",
+      "retryableWithoutStatus": true
+    }
+  ]
+}

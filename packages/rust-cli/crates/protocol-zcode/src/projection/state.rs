@@ -64,7 +64,7 @@ pub enum ErrorAttribution {
     /// `{source: "runtime", reason: "hook_blocked"}`.
     HookBlocked,
     /// Node `projectErrorAttribution` of a provider business failure (see `provider_error::attribution`).
-    Provider(ProviderFailure),
+    Provider(Box<ProviderFailure>),
 }
 
 fn last_error(error: &LastError) -> Value {

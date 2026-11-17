@@ -185,6 +185,12 @@ fn plan_codes_keep_the_provider_code_status_and_retryability() {
             code: "subscription_sharing_usage_limit_exceeded".to_owned(),
             status: Some(429),
             retryable: false,
+            reason: "rate_limited".to_owned(),
+            error_phase: "prepare".to_owned(),
+            transport: "sse".to_owned(),
+            provider_kind: "openai".to_owned(),
+            provider_id: None,
+            model_id: None,
         })
     );
     let unavailable = failure(503, "subscription_sharing_usage_unavailable");
@@ -194,6 +200,12 @@ fn plan_codes_keep_the_provider_code_status_and_retryability() {
             code: "subscription_sharing_usage_unavailable".to_owned(),
             status: Some(503),
             retryable: true,
+            reason: "server_error".to_owned(),
+            error_phase: "prepare".to_owned(),
+            transport: "sse".to_owned(),
+            provider_kind: "openai".to_owned(),
+            provider_id: None,
+            model_id: None,
         })
     );
     // A stream error has no HTTP status.

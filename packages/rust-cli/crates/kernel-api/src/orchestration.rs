@@ -261,7 +261,7 @@ pub enum QueryStop {
     ApiError {
         message: String,
         /// Fork: the provider business failure behind `message` (Node `providerCode`), for `lastError`.
-        provider: Option<crate::model::ProviderFailure>,
+        provider: Option<Box<crate::model::ProviderFailure>>,
     },
 }
 

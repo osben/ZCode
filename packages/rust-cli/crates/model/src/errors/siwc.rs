@@ -47,6 +47,20 @@ fn entry(code: &str) -> Option<(Class, &'static str)> {
     })
 }
 
+/// Node's `reason` for a plan code (`failure-provider-business-codes.ts`; the Node fixture `node-provider-codes.json`).
+fn reason_of(code: &str) -> &'static str {
+    match code {
+        "subscription_sharing_usage_limit_exceeded" => "rate_limited",
+        "subscription_sharing_invalid_user"
+        | "chatpass_v2_scope_not_authorized"
+        | "chatpass_v2_invalid_authorization_context" => "auth_failed",
+        "subscription_sharing_usage_unavailable" | "subscription_sharing_user_unavailable" => {
+            "server_error"
+        }
+        _ => "invalid_request",
+    }
+}
+
 /// The verdict for the first known code among `codes` (`type`, then `code`). `status` is absent for stream errors.
 pub(super) fn classify(
     status: Option<u16>,
@@ -71,14 +85,17 @@ pub(super) fn classify(
     };
     // Node `context.providerCode` / `statusCode` / `retryable`: the unavailable codes are the only retryable ones.
     let error = ModelError::Provider {
-        provider: ProviderFailure {
-            code: code.to_owned(),
+        provider: Box::new(ProviderFailure::new(
+            code,
             status,
-            retryable: matches!(
+            matches!(
                 code,
                 "subscription_sharing_usage_unavailable" | "subscription_sharing_user_unavailable"
             ),
-        },
+            reason_of(code),
+            // The plan routes are OpenAI Responses only.
+            "openai",
+        )),
         error: Box::new(classified),
     };
     // Node `AccountRequestRetry` renews on the 401 status, whatever the code (`isProjectTokenRejection`): only the

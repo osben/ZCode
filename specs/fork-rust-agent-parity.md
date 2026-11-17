@@ -2059,10 +2059,9 @@ Known small gaps and follow-ups:
   are initialize 30 s, new session 30 s, cancel grace 10 s, stop grace 2 s, kill grace 5 s, and a stall warning
   of 120 s. The 120 s stall warning emits only a `stalled` event; nothing fails the prompt. Rust's `AcpTimeouts`
   (`crates/acp/src/runtime.rs`) has the same initialize, new session, cancel grace, stop grace and stall values.
-  Known difference, not changed here: Rust's ACP teardown kills the process tree after a 1 s `KILL_DEADLINE`
-  (`crates/proc/src/tree/posix.rs`, shared with the shell and MCP kills) where Node waits 5 s (`killGraceMs`).
-  Aligning it needs the kill grace passed through the proc crate's shutdown API, which changes shell and MCP kill
-  timing too, so it is a separate change. No timeout error is defined.
+  ACP teardown: Node's `killGraceMs` (5 s between TERM and KILL) is passed to the proc crate as the
+  TERM-to-KILL grace (`AcpTimeouts::kill_grace`, `Tracked::terminate_with_grace`). Shell and MCP keep the proc
+  default of 1.5 s (`tree::posix::GRACE`), so their teardown timing does not change. No timeout error is defined.
 - Images stored as artifacts (large attachments) are not sent to the agent; only inline base64
   images are.
 

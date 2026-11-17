@@ -42,6 +42,8 @@ pub struct AcpTimeouts {
     pub stall_warning: Duration,
     /// After stdout ends, how long to wait for the exit before the stream counts as failed.
     pub death_grace: Duration,
+    /// Between TERM and KILL when the agent does not exit after its stdin closed (Node `killGraceMs`, 5 s).
+    pub kill_grace: Duration,
 }
 
 impl Default for AcpTimeouts {
@@ -53,6 +55,7 @@ impl Default for AcpTimeouts {
             stop_grace: Duration::from_secs(2),
             stall_warning: Duration::from_secs(120),
             death_grace: Duration::from_secs(1),
+            kill_grace: Duration::from_secs(5),
         }
     }
 }
@@ -597,6 +600,7 @@ impl AcpRuntime {
             timings: PumpTimings {
                 death_grace: options.timeouts.death_grace,
                 stop_grace: options.timeouts.stop_grace,
+                kill_grace: options.timeouts.kill_grace,
             },
             stderr_tail: self.inner.stderr_tail.clone(),
         });

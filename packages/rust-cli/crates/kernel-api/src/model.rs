@@ -402,10 +402,14 @@ pub enum ModelError {
     /// classification, unchanged; match on [`ModelError::peel`] to classify, and use [`ModelError::provider`] for the code.
     #[error("{error}")]
     Provider {
-        provider: ProviderFailure,
+        provider: Box<ProviderFailure>,
         error: Box<ModelError>,
     },
 }
+
+#[cfg(test)]
+#[path = "model_provider_tests.rs"]
+mod provider_tests;
 
 /// Fork: a provider business failure's facts that the turn attributes (Node `providerCode`, `statusCode`, `retryable` on
 /// the error context, `error-payload.ts`). The code is the provider's own (`subscription_sharing_*`, or a zhipu number).
@@ -415,6 +419,52 @@ pub struct ProviderFailure {
     /// The HTTP status of the response that carried the code; `None` for a stream error (Node omits `statusCode`).
     pub status: Option<u16>,
     pub retryable: bool,
+    /// Node `reason`: the failure reason of the code's mapping (`rate_limited`, `unknown`, `auth_failed`, ...).
+    #[serde(default)]
+    pub reason: String,
+    /// Node `errorPhase`: `prepare` for a response with an HTTP status (before any event), `stream` for an error event.
+    #[serde(default)]
+    pub error_phase: String,
+    /// Node `transport`: `sse` for the chat model path, which streams every request.
+    #[serde(default)]
+    pub transport: String,
+    /// Node `providerKind`: `openai`, `anthropic` or `openai-compatible`, by the wire protocol.
+    #[serde(default)]
+    pub provider_kind: String,
+    /// Node `providerId` and `modelId`: the request's selection, added where the selection is known (see
+    /// [`ModelError::with_model`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
+}
+
+impl ProviderFailure {
+    /// The facts a classifier knows: the phase follows the status (a response with one, or a stream error without).
+    pub fn new(
+        code: &str,
+        status: Option<u16>,
+        retryable: bool,
+        reason: &str,
+        provider_kind: &str,
+    ) -> Self {
+        Self {
+            code: code.to_owned(),
+            status,
+            retryable,
+            reason: reason.to_owned(),
+            error_phase: if status.is_some() {
+                "prepare"
+            } else {
+                "stream"
+            }
+            .to_owned(),
+            transport: "sse".to_owned(),
+            provider_kind: provider_kind.to_owned(),
+            provider_id: None,
+            model_id: None,
+        }
+    }
 }
 
 /// Fork: Node's text for [`ModelError::CurrentAttachmentsTooLarge`].
@@ -437,6 +487,23 @@ impl ModelError {
         }
     }
 
+    /// Fork: the request's provider and model ids (Node `providerId`, `modelId` of the error context) on a provider
+    /// business failure; any other error is returned unchanged.
+    #[must_use]
+    pub fn with_model(self, provider_id: &str, model_id: &str) -> Self {
+        match self {
+            Self::Provider { provider, error } => Self::Provider {
+                provider: Box::new(ProviderFailure {
+                    provider_id: Some(provider_id.to_owned()),
+                    model_id: Some(model_id.to_owned()),
+                    ..*provider
+                }),
+                error,
+            },
+            other => other,
+        }
+    }
+
     /// Fork: the classification under any [`ModelError::Provider`] wrapper; the error itself otherwise.
     pub fn peel(&self) -> &ModelError {
         match self {
@@ -448,7 +515,7 @@ impl ModelError {
     /// Fork: the provider business code and facts, when the provider returned one.
     pub fn provider(&self) -> Option<&ProviderFailure> {
         match self {
-            Self::Provider { provider, .. } => Some(provider),
+            Self::Provider { provider, .. } => Some(provider.as_ref()),
             _ => None,
         }
     }
