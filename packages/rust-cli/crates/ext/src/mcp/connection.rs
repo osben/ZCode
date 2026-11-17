@@ -134,7 +134,8 @@ pub(crate) async fn open(
         let (client, notices) = Client::start(transport.clone(), connection, spawner, roots);
         let params = json!({
             "protocolVersion": PROTOCOL_VERSION,
-            "capabilities": {"roots": {}},
+            // Fork (F3b(c)): form elicitation, as Node advertises it; the answer for a question with no call is a decline.
+            "capabilities": {"roots": {}, "elicitation": {"form": {}}},
             "clientInfo": {"name": rust_cli_base::names::CLIENT_NAME, "version": client_version},
         });
         let never = CancellationToken::new();
