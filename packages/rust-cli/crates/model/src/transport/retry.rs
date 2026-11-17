@@ -29,6 +29,16 @@ impl Connect {
         phase: Phase,
         tape: Option<Tape>,
     ) -> Result<(ModelNotice, Box<Self>, Duration), ModelError> {
+        // Fork (slice 3 layer B, Node `retryExpired`): a refusal of the run's expired ticket, before anything was handed
+        // out. The attempt waits for the ticket's renewal and resends at once; the retry budget is not spent.
+        if phase == Phase::Head
+            && let Some(source) = self.ticket.clone()
+            && source
+                .0
+                .refused_as_expired(&self.selection.provider, &verdict.error)
+        {
+            return self.renew_ticket(source, verdict, tape).await;
+        }
         let renew = verdict.class == Class::AuthRejected && self.endpoint.renewable;
         // Fork (specs/fork-rust-chatgpt-plan.md rule 10): one renewal per request, like Node `AccountRequestRetry`.
         // A token the Host just refreshed and the server still rejects will not get better; renewing again would only
@@ -58,6 +68,7 @@ impl Connect {
                 rejected: Some(&self.endpoint),
                 output_limit: self.output_limit,
                 session: self.session.as_ref(),
+                ticket: self.ticket.as_ref(),
             });
             match self.cancel.run_until_cancelled(renewed).await {
                 None => return Err(ModelError::Cancelled),
@@ -91,6 +102,59 @@ impl Connect {
         self.attempt += 1;
         self.notified = true;
         Ok((notice, self, delay))
+    }
+
+    /// Fork (slice 3 layer B): renews the run's expired ticket, then re-resolves the endpoint on the renewed ticket. The
+    /// notice keeps the attempt number and has no delay; the wait itself is the run's (`waiting_ticket`), not a retry.
+    async fn renew_ticket(
+        mut self: Box<Self>,
+        source: rust_cli_kernel_api::off_peak_ticket::TicketSource,
+        verdict: Verdict,
+        tape: Option<Tape>,
+    ) -> Result<(ModelNotice, Box<Self>, Duration), ModelError> {
+        end(tape, End::Failed(verdict.error.clone(), None));
+        let refused = self
+            .endpoint
+            .headers
+            .iter()
+            .find(|(name, _)| {
+                name.eq_ignore_ascii_case(rust_cli_kernel_api::off_peak_ticket::TICKET_HEADER)
+            })
+            .map(|(_, value)| value.expose().to_owned())
+            .unwrap_or_default();
+        let waited = self
+            .cancel
+            .run_until_cancelled(source.0.expired(&refused))
+            .await;
+        match waited {
+            None => return Err(ModelError::Cancelled),
+            Some(Err(error)) => return Err(error),
+            Some(Ok(())) => {}
+        }
+        let renewed = self.route.endpoints.endpoint(EndpointQuery {
+            selection: &self.selection,
+            rejected: None,
+            output_limit: self.output_limit,
+            session: self.session.as_ref(),
+            ticket: Some(&source),
+        });
+        match self.cancel.run_until_cancelled(renewed).await {
+            None => return Err(ModelError::Cancelled),
+            Some(Err(error)) => return Err(error),
+            Some(Ok(endpoint)) => {
+                self.endpoint.credential = endpoint.credential;
+                self.endpoint.headers = endpoint.headers;
+            }
+        }
+        self.ticket = Some(source);
+        let notice = ModelNotice::Retrying {
+            attempt: self.attempt,
+            max_retries: self.route.options.retry.max_retries,
+            delay_ms: 0,
+            error: verdict.error,
+        };
+        self.notified = true;
+        Ok((notice, self, Duration::ZERO))
     }
 
     /// 处置表的动作换成等待时长；不再重发时是给调用方的错误（换 fallback、连续过载、不可重试或到了上限）。

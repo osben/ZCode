@@ -89,6 +89,9 @@ pub struct EndpointQuery<'a> {
     /// 发这次请求的会话（缺口 G8，docs/specs/rust-cli/app-protocol.md §5.2；子代理是子会话）：前端提供的请求头来源
     /// （例如经宿主取账号凭据）按它找到会话与工作区；平台层自己算凭据时不用它。
     pub session: Option<&'a crate::ids::SessionId>,
+    /// Fork: the off-peak ticket the request is sent on (specs/fork-rust-automations.md, slice 3 layer B). `Some` takes
+    /// the ticket's credentials before the ordinary source; `None` is an ordinary request.
+    pub ticket: Option<&'a crate::off_peak_ticket::TicketSource>,
 }
 
 impl<'a> EndpointQuery<'a> {
@@ -99,6 +102,7 @@ impl<'a> EndpointQuery<'a> {
             rejected: None,
             output_limit: None,
             session: None,
+            ticket: None,
         }
     }
 }

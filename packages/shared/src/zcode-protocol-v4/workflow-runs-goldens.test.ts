@@ -1,14 +1,12 @@
 // Drift guard for the Rust workflowRuns goldens (rust-cli node-store, W3).
-// The fixture is produced by scripts/rust-cli/workflow-runs-goldens.ts from this package's reducer and
-// delta. If either changes without regenerating the fixture, the Rust tests would keep checking the old
-// bytes; this test fails instead, and the fix is to rerun the generator.
+// The fixture is produced from this package's reducer and delta by ./workflow-runs-goldens.ts, and written by
+// scripts/rust-cli/workflow-runs-goldens.ts. If either changes without regenerating the fixture, the Rust tests
+// would keep checking the old bytes; this test fails instead, and the fix is to rerun the script:
+//   pnpm exec tsx scripts/rust-cli/workflow-runs-goldens.ts
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import {
-  buildGoldens,
-  serializeGoldens,
-} from "../../../../scripts/rust-cli/workflow-runs-goldens.ts";
+import { buildGoldens, serializeGoldens } from "./workflow-runs-goldens.js";
 
 const FIXTURE = fileURLToPath(
   new URL(

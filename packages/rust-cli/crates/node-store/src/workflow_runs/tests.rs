@@ -411,7 +411,7 @@ fn replay_mints_the_derived_fields_the_live_path_sends() {
     assert_eq!(envelopes.len(), 7);
 
     let session = mint_actor_session_id("dwfrun-1", "agent#1", 1.0);
-    assert_eq!(session, "dwf-dwfrun-1-agent_1_1");
+    assert_eq!(session, "sess_dwf-dwfrun-1-agent_1_1");
     // run-started carries the launch's subagent model and the default concurrency ceiling.
     let started = envelopes[1].payload.as_ref().unwrap();
     assert_eq!(started["concurrencyCeiling"], json!(8));
@@ -480,7 +480,7 @@ fn replay_state_is_the_fold_of_the_replayed_envelopes() {
     assert_eq!(record["status"], json!("completed"));
     assert_eq!(
         record["actors"][0]["sessionId"],
-        json!("dwf-dwfrun-1-agent_1_1")
+        json!("sess_dwf-dwfrun-1-agent_1_1")
     );
     assert_eq!(record["actors"][0]["model"], json!("claude-haiku"));
     assert_eq!(record["nodes"][0]["phase"], json!("settled"));

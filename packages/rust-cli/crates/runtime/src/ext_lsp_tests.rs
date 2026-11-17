@@ -99,6 +99,7 @@ async fn the_code_intelligence_sees_the_session_profiles() {
             monitor: false,
             node_desktop: false,
             automation: None,
+            off_peak: None,
             topic_resources: None,
             app_tools: None,
             acp: None,

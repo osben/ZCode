@@ -79,7 +79,8 @@ impl Pickable for Group {
 }
 
 /// `pickVictim`: prefer unfailed entries, then the most crowded phase, then the earliest in table
-/// order (replace only when strictly more crowded).
+/// order (replace only when strictly more crowded). The crowd of each phase is counted once, so the
+/// pick is linear in the pool rather than quadratic.
 fn pick_victim<T: Pickable + Clone>(candidates: &[T]) -> Option<T> {
     if candidates.is_empty() {
         return None;
@@ -90,11 +91,16 @@ fn pick_victim<T: Pickable + Clone>(candidates: &[T]) -> Option<T> {
     } else {
         unfailed
     };
+    // The unphased bucket is the empty string, as in Node (phase names are never empty).
+    let mut crowd: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for candidate in &pool {
+        *crowd.entry(candidate.phase().unwrap_or("")).or_insert(0) += 1;
+    }
     let crowd_of = |candidate: &T| -> usize {
-        let key = candidate.phase().unwrap_or("");
-        pool.iter()
-            .filter(|other| other.phase().unwrap_or("") == key)
-            .count()
+        crowd
+            .get(candidate.phase().unwrap_or(""))
+            .copied()
+            .unwrap_or(0)
     };
     let mut best = pool[0];
     let mut best_crowd = crowd_of(best);
@@ -580,18 +586,11 @@ pub fn absorb_refused_settled_node(run: Obj, node: &Obj, limits: &Limits) -> Obj
             .iter()
             .position(|actor| entry_ref(actor).is_some_and(|r| r.same(o)))
     });
-    let orphan = match index {
-        Some(i) => {
-            let actor_ref = entry_ref(&actors[i]);
-            actor_ref
-                .as_ref()
-                .is_some_and(|r| !owns_listed_node(&run, r))
-        }
-        None => false,
-    };
+    // The orphan rule needs the actor's position, so it is carried as `Some(i)` only when it applies.
+    let orphan_index =
+        index.filter(|&i| entry_ref(&actors[i]).is_some_and(|r| !owns_listed_node(&run, &r)));
     let mut next = run;
-    if orphan {
-        let i = index.unwrap_or(0);
+    if let Some(i) = orphan_index {
         buckets = add_to_bucket(
             buckets,
             phase_of(&actors[i]).as_deref(),
@@ -612,7 +611,7 @@ pub fn absorb_refused_settled_node(run: Obj, node: &Obj, limits: &Limits) -> Obj
 
 /// Applied to the run list when the entry budget is exceeded: evict the oldest terminal run until
 /// within budget. Active runs and the run receiving the event are never evicted.
-pub fn evict_for_entry_budget(runs: Vec<Obj>, event_run_id: &str, _limits: &Limits) -> Vec<Obj> {
+pub fn evict_for_entry_budget(runs: Vec<Obj>, event_run_id: &str) -> Vec<Obj> {
     let size = |run: &Obj| nodes_of(run).len() + actors_of(run).len();
     let mut total: usize = runs.iter().map(size).sum();
     if total <= PRODUCTION.max_total_entries {

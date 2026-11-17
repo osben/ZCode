@@ -380,3 +380,62 @@ async fn background_agents_count_running_ones_and_unacked_notices() {
     signals.ack(&SessionId::new(ROOT), inner.seq).await;
     assert!(waited().await.is_empty());
 }
+
+/// Fork (slice 3 layer B): a subagent started in an off-peak run is sent on that run's ticket, and so is a subagent
+/// started from inside it (the child's own request carries the execution, and a call it makes inherits it). A
+/// subagent of an ordinary run carries none.
+#[tokio::test]
+async fn a_subagent_of_an_off_peak_turn_is_sent_on_its_ticket() {
+    let gates = Gates::default();
+    let harness = held(&gates, true);
+    let launched = harness
+        .call_as_in(
+            ROOT,
+            "Agent",
+            json!({"description": "Outer", "prompt": "Go."}),
+            None,
+            "run_off_peak_root",
+            Some("exe_1"),
+        )
+        .await
+        .0;
+    let outer = spawned(&text(&launched));
+    harness.started(1).await;
+    let outer_request = harness.seen()[0].request.clone();
+    assert_eq!(outer_request.off_peak_execution.as_deref(), Some("exe_1"));
+    // The outer child's loop starts an inner subagent with its own run and execution.
+    let launched = harness
+        .call_as_in(
+            &outer.session,
+            "Agent",
+            json!({"description": "Inner", "prompt": "Dig."}),
+            None,
+            outer_request.run.as_str(),
+            outer_request.off_peak_execution.as_deref(),
+        )
+        .await
+        .0;
+    let _inner = spawned(&text(&launched));
+    harness.started(2).await;
+    assert_eq!(
+        harness.seen()[1].request.off_peak_execution.as_deref(),
+        Some("exe_1"),
+        "the nested subagent is sent on the ticket too"
+    );
+}
+
+#[tokio::test]
+async fn a_subagent_of_an_ordinary_run_is_not_sent_on_a_ticket() {
+    let gates = Gates::default();
+    let harness = held(&gates, true);
+    let launched = harness
+        .call(
+            ROOT,
+            "Agent",
+            json!({"description": "Plain", "prompt": "Go."}),
+        )
+        .await;
+    let _plain = spawned(&text(&launched));
+    harness.started(1).await;
+    assert_eq!(harness.seen()[0].request.off_peak_execution, None);
+}

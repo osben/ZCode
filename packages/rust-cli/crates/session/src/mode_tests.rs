@@ -341,3 +341,119 @@ async fn a_tool_under_plan_sees_the_base_mode() {
     assert!(third.contains("Guarded over Guarded"), "{third}");
     assert!(third.contains("Plan over Guarded"), "{third}");
 }
+
+/// Fork (slice 3 layer B): an off-peak turn's model request is sent on the off-peak model, not on the session's, and the
+/// session's next ordinary turn keeps the user's own model (Node `selectionScope: "execution"`).
+#[tokio::test]
+async fn an_off_peak_turn_is_sent_on_its_own_model() {
+    use rust_cli_kernel_api::model::ModelSelection;
+    use rust_cli_kernel_api::session_api::{Delivery, InputExecution};
+    use rust_cli_kernel_api::turn_limits::TurnLimits;
+
+    let scope = TaskScope::root("test", |_| {});
+    let store = Arc::new(MemoryStore::default());
+    store.create(meta()).await.unwrap();
+    let model = Arc::new(ScriptedModel::new(vec![text_response(&["done"])]));
+    let session = spawn(&scope, &store, &model, PermissionMode::Default);
+    let idle = ModelSelection::new("zai", "glm-idle");
+    let ack = session
+        .send(CommandEnvelope {
+            id: CommandId::new("off_peak_1"),
+            command: Command::SubmitWith {
+                kind: rust_cli_kernel_api::session_api::QueuedKind::Text,
+                text: "tidy up".to_owned(),
+                content: Vec::new(),
+                delivery: Delivery::Queue,
+                execution: Some(InputExecution {
+                    state: ExecutionState::from_parts(PermissionMode::Default, false),
+                    selection: Some(idle.clone()),
+                    limits: TurnLimits::new(None, Vec::new())
+                        .with_off_peak_run(Some("exe_1"), Some(idle.clone())),
+                    keeps_session_state: false,
+                }),
+                behind_held: false,
+                intent: None,
+                lease: None,
+            },
+        })
+        .await;
+    assert!(
+        matches!(ack, rust_cli_kernel_api::session_api::Ack::Accepted { .. }),
+        "{ack:?}"
+    );
+    for _ in 0..200 {
+        if !model.requests().is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let requests = model.requests();
+    assert!(!requests.is_empty(), "the off-peak turn asked the model");
+    assert!(
+        requests.iter().all(|request| request.selection == idle),
+        "every request of the off-peak turn uses the off-peak model: {:?}",
+        requests
+            .iter()
+            .map(|request| &request.selection)
+            .collect::<Vec<_>>()
+    );
+    let persisted: Vec<Fact> = store
+        .facts(&SessionId::new("sess_1"))
+        .into_iter()
+        .filter(|fact| matches!(fact, Fact::ModelSelected { selection } if *selection == idle))
+        .collect();
+    assert!(
+        persisted.is_empty(),
+        "the off-peak model is not persisted: {persisted:?}"
+    );
+}
+
+/// Fork (slice 3 layer B): an off-peak input's model is for its own turn. The session persists no selection for it, so
+/// the next ordinary turn keeps the user's own model (Node `selectionScope: "execution"`).
+#[tokio::test]
+async fn an_off_peak_input_does_not_persist_its_model() {
+    use rust_cli_kernel_api::model::ModelSelection;
+    use rust_cli_kernel_api::session_api::{Delivery, InputExecution};
+    use rust_cli_kernel_api::turn_limits::TurnLimits;
+
+    let scope = TaskScope::root("test", |_| {});
+    let store = Arc::new(MemoryStore::default());
+    store.create(meta()).await.unwrap();
+    let model = Arc::new(ScriptedModel::new(Vec::new()));
+    let session = spawn(&scope, &store, &model, PermissionMode::Default);
+    let idle = ModelSelection::new("zai", "glm-idle");
+    let ack = session
+        .send(CommandEnvelope {
+            id: CommandId::new("off_peak_1"),
+            command: Command::SubmitWith {
+                kind: rust_cli_kernel_api::session_api::QueuedKind::Text,
+                text: "tidy up".to_owned(),
+                content: Vec::new(),
+                delivery: Delivery::Queue,
+                execution: Some(InputExecution {
+                    state: ExecutionState::from_parts(PermissionMode::Default, false),
+                    selection: Some(idle.clone()),
+                    limits: TurnLimits::new(None, Vec::new())
+                        .with_off_peak_run(Some("exe_1"), Some(idle.clone())),
+                    keeps_session_state: false,
+                }),
+                behind_held: false,
+                intent: None,
+                lease: None,
+            },
+        })
+        .await;
+    assert!(
+        matches!(ack, rust_cli_kernel_api::session_api::Ack::Accepted { .. }),
+        "{ack:?}"
+    );
+    let persisted: Vec<Fact> = store
+        .facts(&SessionId::new("sess_1"))
+        .into_iter()
+        .filter(|fact| matches!(fact, Fact::ModelSelected { selection } if *selection == idle))
+        .collect();
+    assert!(
+        persisted.is_empty(),
+        "the idle-plan model is not persisted: {persisted:?}"
+    );
+}

@@ -25,6 +25,21 @@ pub(crate) struct RunInfo {
     pub(crate) workspace: WorkspaceRef,
     pub(crate) selection: ModelSelection,
     pub(crate) mode: PermissionMode,
+    /// Fork (slice 3 layer B): the off-peak execution the run belongs to; its subagents inherit it.
+    pub(crate) off_peak_execution: Option<String>,
+}
+
+impl RunInfo {
+    /// The facts of the run `request` starts.
+    pub(crate) fn of(request: &QueryRequest) -> Self {
+        Self {
+            session: request.session.clone(),
+            workspace: request.workspace.clone(),
+            selection: request.selection.clone(),
+            mode: request.mode,
+            off_peak_execution: request.off_peak_execution.clone(),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -66,12 +81,7 @@ impl QueryRunner for Tracked {
         sink: Arc<dyn RunSink>,
         abort: Abort,
     ) -> Result<QueryStop, QueryError> {
-        let info = RunInfo {
-            session: request.session.clone(),
-            workspace: request.workspace.clone(),
-            selection: request.selection.clone(),
-            mode: request.mode,
-        };
+        let info = RunInfo::of(&request);
         self.book.runs().insert(request.run.clone(), info);
         let _entry = Entry {
             book: &self.book,
@@ -87,5 +97,33 @@ impl QueryRunner for Tracked {
         mid_system: Option<bool>,
     ) -> Vec<rust_cli_kernel_api::model::ApiMessage> {
         self.inner.transcript(history, selection, mid_system)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rust_cli_kernel_api::ids::SessionId;
+    use rust_cli_kernel_api::orchestration::QueryRequest;
+
+    /// Fork (slice 3 layer B): a run records the off-peak execution its request names; an ordinary run records none, so
+    /// its subagents are sent on no ticket.
+    #[test]
+    fn a_run_records_the_off_peak_execution_of_its_request() {
+        let mut request = QueryRequest::new(
+            SessionId::new("sess_1"),
+            RunId::new("run_1"),
+            crate::test_support::workspace(),
+            Vec::new(),
+            ModelSelection::new("zai", "glm"),
+            PermissionMode::Default,
+            rust_cli_kernel_api::model::QuerySource::MainThread,
+        );
+        assert_eq!(RunInfo::of(&request).off_peak_execution, None);
+        request.off_peak_execution = Some("exe_1".to_owned());
+        assert_eq!(
+            RunInfo::of(&request).off_peak_execution.as_deref(),
+            Some("exe_1")
+        );
     }
 }

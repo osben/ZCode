@@ -532,3 +532,71 @@ mod edit_lock {
             .collect()
     }
 }
+
+/// Fork (slice 3 layer B, Node `prepareOffPeakTurn`): an off-peak input's run takes its model from the item when its turn
+/// starts, so a model edited while the input waits is the model its turn runs on.
+#[tokio::test]
+async fn an_edited_off_peak_input_runs_on_the_edited_model() {
+    use rust_cli_kernel_api::model::ModelSelection;
+    use rust_cli_kernel_api::permission::PermissionMode;
+    use rust_cli_kernel_api::session_api::{Delivery, InputExecution, QueuedKind};
+    use rust_cli_kernel_api::turn_limits::TurnLimits;
+
+    let scope = TaskScope::root("test", |_| {});
+    let (_store, model, session) = asking_session(&scope).await;
+    let mut events = session.subscribe(Some(0));
+    session.send(submit("c1", "ask me")).await;
+    let interaction = asked(&mut events).await;
+    let idle = ModelSelection::new("zai", "glm-idle");
+    let edited = ModelSelection::new("zai", "glm-edited");
+    let queued = session
+        .send(CommandEnvelope {
+            id: CommandId::new("c2"),
+            command: Command::SubmitWith {
+                kind: QueuedKind::Text,
+                text: "tidy".to_owned(),
+                content: Vec::new(),
+                delivery: Delivery::Queue,
+                execution: Some(InputExecution {
+                    state: rust_cli_kernel_api::permission::ExecutionState::from_parts(
+                        PermissionMode::Default,
+                        false,
+                    ),
+                    selection: Some(idle.clone()),
+                    limits: TurnLimits::new(None, Vec::new())
+                        .with_off_peak_run(Some("exe_1"), Some(idle.clone())),
+                    keeps_session_state: false,
+                }),
+                behind_held: false,
+                intent: None,
+                lease: None,
+            },
+        })
+        .await;
+    assert!(matches!(queued, Ack::Accepted { .. }), "{queued:?}");
+    let edit_model = CommandEnvelope {
+        id: CommandId::new("c3"),
+        command: Command::EditQueued {
+            command: CommandId::new("c2"),
+            edit: rust_cli_kernel_api::session_api::QueuedEdit {
+                model_selection: Some(edited.clone()),
+                ..Default::default()
+            },
+        },
+    };
+    assert!(matches!(
+        session.send(edit_model).await,
+        Ack::Accepted { .. }
+    ));
+    session.send(answer("c4", interaction)).await;
+    until_finished(&mut events, 2).await;
+    let requests = model.requests();
+    assert!(
+        requests.iter().any(|request| request.selection == edited),
+        "the off-peak turn runs on the edited model"
+    );
+    assert!(
+        requests.iter().all(|request| request.selection != idle),
+        "the stale model is not used"
+    );
+}

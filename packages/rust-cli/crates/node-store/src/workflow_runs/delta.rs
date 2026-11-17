@@ -314,11 +314,16 @@ pub fn apply_all(prior: Option<&State>, ops: &[Value]) -> Option<State> {
         match op.get("op").and_then(Value::as_str) {
             Some("workflowRun.updated") => state = Some(apply_updated(state.as_ref(), op)),
             Some("workflowRun.removed") => state = Some(apply_removed(state.as_ref(), op)),
+            // Node assigns `patch.workflowRuns` as it is and leaves the key alone when the patch has none.
+            // A value this port cannot hold keeps the prior state rather than emptying it.
             Some("state.updated") => {
-                state = op
+                if let Some(next) = op
                     .get("patch")
                     .and_then(|patch| patch.get("workflowRuns"))
-                    .and_then(State::from_value);
+                    .and_then(State::from_value)
+                {
+                    state = Some(next);
+                }
             }
             _ => {}
         }

@@ -65,10 +65,12 @@ fn non_negative_integer(value: Option<&Value>) -> Option<f64> {
     js_number(value).filter(|n| is_integer(*n) && *n >= 0.0)
 }
 
-/// `String(value)` for the unrecognised-status message.
+/// `String(value)` for the unrecognised-status message. A missing key is `undefined`; an explicit
+/// `null` is `"null"`.
 fn js_string(value: Option<&Value>) -> String {
     match value {
-        None | Some(Value::Null) => "undefined".to_string(),
+        None => "undefined".to_string(),
+        Some(Value::Null) => "null".to_string(),
         Some(Value::String(text)) => text.clone(),
         Some(Value::Bool(flag)) => flag.to_string(),
         Some(Value::Number(number)) => {

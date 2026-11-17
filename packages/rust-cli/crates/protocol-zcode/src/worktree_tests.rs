@@ -1724,6 +1724,44 @@ async fn a_prepared_session_reopened_cold_keeps_session_start_held() {
     assert_eq!(*kernel.reopened_held.lock().unwrap(), [id.as_str()]);
 }
 
+/// W1 (specs/fork-rust-workflow-engine.md 9.2): the direct createSession route records the gate that its
+/// `dynamicWorkflowEnabled` / `dynamicWorkflowMode` fields resolve to, and a create without them records a closed gate.
+#[tokio::test]
+async fn create_session_records_the_dynamic_workflow_gate() {
+    use rust_cli_kernel_api::dynamic_workflow::DynamicWorkflowGate;
+
+    let (_scope, server, _kernel) = server();
+    let parent = tempfile::tempdir().unwrap();
+    let workspace = parent.path().to_str().unwrap().to_owned();
+
+    let ack = create(
+        &server,
+        "d1",
+        json!({"workspaceId": workspace, "dynamicWorkflowEnabled": true, "dynamicWorkflowMode": "onDemand"}),
+    )
+    .await;
+    assert_eq!(ack.status, Status::Accepted, "{ack:?}");
+    let on_demand = SessionId::new(ack.result.as_ref().unwrap()["sessionId"].as_str().unwrap());
+    assert_eq!(
+        server.dynamic_workflow_gate(&on_demand),
+        Some(DynamicWorkflowGate {
+            enabled: true,
+            tools_on_demand: true,
+        })
+    );
+
+    let ack = create(&server, "d2", json!({"workspaceId": workspace})).await;
+    assert_eq!(ack.status, Status::Accepted, "{ack:?}");
+    let closed = SessionId::new(ack.result.as_ref().unwrap()["sessionId"].as_str().unwrap());
+    assert_eq!(
+        server.dynamic_workflow_gate(&closed),
+        Some(DynamicWorkflowGate {
+            enabled: false,
+            tools_on_demand: false,
+        })
+    );
+}
+
 /// The column write fails after the move: the actor already runs in the worktree, the row stays listed under the
 /// parent. A retry names the parent `workspaceId` and is matched against the row, not against the actor's root.
 #[tokio::test]

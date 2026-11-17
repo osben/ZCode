@@ -49,12 +49,21 @@ pub fn number_value(number: f64) -> Value {
     }
 }
 
-/// JS `String(number)` for the instance-key string (`siteId\0ordinal`).
+/// JS `String(number)`: the instance-key string (`siteId\0ordinal`) and the minted session id.
+/// The exponent form outside `[1e-6, 1e21)` (`1e+21`, `1e-7`) comes from the shared `Number::toString`
+/// port in `rust-cli-base`; Rust's `Display` would print those as long decimals.
 pub fn number_key(number: f64) -> String {
-    if is_integer(number) && number.abs() < 9.0e15 {
-        format!("{}", number as i64)
+    if number.is_nan() {
+        "NaN".to_string()
+    } else if number.is_infinite() {
+        if number > 0.0 {
+            "Infinity"
+        } else {
+            "-Infinity"
+        }
+        .to_string()
     } else {
-        format!("{number}")
+        rust_cli_base::js::json::js_double(number)
     }
 }
 
@@ -64,7 +73,7 @@ pub fn utf16_len(text: &str) -> usize {
 }
 
 /// JS `text.slice(0, n)` counted in UTF-16 code units, rounded **down** when the cut would split a
-/// surrogate pair. A lone surrogate cannot be held in a Rust `String` (see the spec, section 9.2).
+/// surrogate pair. A lone surrogate cannot be held in a Rust `String` (see the spec, section 9.3).
 pub fn utf16_prefix(text: &str, n: usize) -> String {
     let mut units = 0;
     let mut end = 0;

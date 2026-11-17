@@ -96,10 +96,11 @@ fn is_resumable(status: RunStatus, reason: Option<StopReason>) -> bool {
     status == RunStatus::Stopped && reason != Some(StopReason::Superseded)
 }
 
-/// `mintActorSessionId` for `(runId, actorRef)`: `dwf-<san(runId)>-<san(site@ordinal)>`.
+/// `mintActorSessionId` for `(runId, actorRef)`: `createSessionId(dwf-<san(runId)>-<san(site@ordinal)>)`,
+/// which Node prefixes with `sess_` (contracts `createSessionId`). The drift test pins this in workflow-driver.test.ts.
 pub fn mint_actor_session_id(run_id: &str, site_id: &str, ordinal: f64) -> String {
     format!(
-        "dwf-{}-{}",
+        "sess_dwf-{}-{}",
         sanitize_id_segment(run_id),
         sanitize_id_segment(&format!("{site_id}@{}", super::js::number_key(ordinal)))
     )

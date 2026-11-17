@@ -3,7 +3,7 @@
 //! One dwf progress event goes in; the next `workflowRuns` state (or `None` for a semantic no-op)
 //! comes out. The module is pure: no clock, no randomness, no I/O. Its output is compared byte for
 //! byte with Node's by the goldens in `fixtures/workflow-runs/goldens.json` (see the spec, section
-//! 9.2). Nothing calls it yet: the gate stays off (W3).
+//! 9.3). Nothing calls it yet: the gate stays off (W3).
 
 pub mod caps;
 pub mod delta;
@@ -280,8 +280,9 @@ pub fn reduce(prior: Option<&State>, envelope: &Envelope, limits: &Limits) -> Op
     if runs.len() > PRODUCTION.max_runs {
         runs.drain(..runs.len() - PRODUCTION.max_runs);
     }
-    // Entry budget after the run-count cut, as in Node.
-    let runs = eviction::evict_for_entry_budget(runs, &run_id, limits);
+    // Entry budget after the run-count cut, as in Node. Both cross-run caps are fixed constants:
+    // Node's `evictForEntryBudget` reads WORKFLOW_RUNS_LIMITS, and the injected set only shrinks a run.
+    let runs = eviction::evict_for_entry_budget(runs, &run_id);
     Some(State {
         revision: prior.revision + 1,
         runs,

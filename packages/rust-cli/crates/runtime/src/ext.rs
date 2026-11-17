@@ -9,6 +9,7 @@ use rust_cli_hooks::PluginHooks;
 use rust_cli_kernel_api::automation::AutomationPort;
 use rust_cli_kernel_api::cron_store::CronStore;
 use rust_cli_kernel_api::lsp::CodeIntelligence;
+use rust_cli_kernel_api::off_peak::OffPeakPort;
 use rust_cli_kernel_api::topic_resource::TopicResources;
 
 pub use rust_cli_ext::ExtConfig;
@@ -38,6 +39,9 @@ pub struct Extensions {
     /// says (nothing fires twice), and `/loop` is hidden (`ExtConfig::host_automations` is derived from it);
     /// ScheduleWakeup is unchanged.
     pub automation: Option<Arc<dyn AutomationPort>>,
+    /// Fork: the Host's off-peak store (specs/fork-rust-automations.md, slice 3). `Some` registers OffPeakCreate and
+    /// OffPeakList; the app-server gives it, and the tools answer `enabled` per session through the port.
+    pub off_peak: Option<Arc<dyn OffPeakPort>>,
     /// Fork: the Host's topic resources (specs/fork-rust-topic-resource.md); `Some` registers `ReadTopicResource`. Only
     /// the app-server gives it.
     pub topic_resources: Option<Arc<dyn TopicResources>>,
@@ -74,6 +78,7 @@ impl Extensions {
             monitor: false,
             node_desktop: false,
             automation: None,
+            off_peak: None,
             topic_resources: None,
             app_tools: None,
             acp: None,

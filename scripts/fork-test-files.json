@@ -173,6 +173,7 @@
   "packages/shared/src/credential-security/systemCredentialCipher.test.ts",
   "packages/shared/src/definition-preview/contract.test.ts",
   "packages/shared/src/fork-attachment-ref-trust/contract.test.ts",
+  "packages/shared/src/zcode-protocol-v4/workflow-runs-goldens.test.ts",
   "packages/shared/test/contextBudgetPolicy.test.ts",
   "packages/shared/test/forkAgentRuntimeSetting.test.ts",
   "packages/shared/test/forkLocaleSettings.test.ts",
@@ -464,6 +465,5 @@
   "packages/web/test/webRemoteControlV2Pairing.test.ts",
   "packages/web/test/webRemoteControlWorkspaceOpen.test.ts",
   "packages/zcode-server-cli/test/componentCacheTarOutput.test.ts",
-  "packages/zcode-server-cli/test/lockAtomicPublish.test.ts",
-  "packages/shared/src/zcode-protocol-v4/workflow-runs-goldens.test.ts"
+  "packages/zcode-server-cli/test/lockAtomicPublish.test.ts"
 ]

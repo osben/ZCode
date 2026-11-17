@@ -717,7 +717,7 @@ Plugin-host servers stay helper-hosted (the reasons above). Each server then has
 
 ### Decisions (approved 2026-11-13)
 
-- **D1. Workflow execution (F5) is not a thin delegation.** Revised 2026-11-17: Rust ports the engine and runs the actors as its own child sessions; see `specs/fork-rust-workflow-engine.md`. The text below is the 2026-11-13 record. F5 status (W3, branch `feat/rust-workflow-reducer`): the reducer, delta and cold replay are ported in `node-store` and checked against Node's goldens; the gate stays off, so nothing user-visible changes (`specs/fork-rust-workflow-engine.md` section 9.2).
+- **D1. Workflow execution (F5) is not a thin delegation.** Revised 2026-11-17: Rust ports the engine and runs the actors as its own child sessions; see `specs/fork-rust-workflow-engine.md`. The text below is the 2026-11-13 record. F5 status (W3, branch `feat/rust-workflow-reducer`): the reducer, delta and cold replay are ported in `node-store` and checked against Node's goldens; the gate stays off, so nothing user-visible changes (`specs/fork-rust-workflow-engine.md` section 9.3).
   - Each actor is a full Node `AgentRuntime`, with its own session row, model calls, tools and permission prompts.
   - Each run appends progress to the parent conversation, and it starts or extends a turn of the parent (`workflowLaunch`, `workflowSettingsAmend` origins).
   - Delegating it means the helper hosts the Node runtime for actor sessions. Those sessions are separate from Rust's, but they are Node-owned conversations, which breaks "one runtime per app process" for actors only. The helper would also need the provider configuration and the credential cipher relay, and its memory would approach the full agent while a run is active.

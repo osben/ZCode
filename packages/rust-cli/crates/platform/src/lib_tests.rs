@@ -634,3 +634,189 @@ async fn hosted_chatgpt_plan_requests_ask_the_host_and_shape_the_body() {
         .unwrap();
     assert!(older.body_patches.last().unwrap().get("include").is_none());
 }
+
+/// Fork (slice 3 layer B): a run's ticket source. It issues `tkt_<n>` on each acquire and supplies its own credentials
+/// unless `supplies` is false.
+struct Ticketed {
+    issued: std::sync::Mutex<u32>,
+    supplies: bool,
+}
+
+#[async_trait]
+impl rust_cli_kernel_api::off_peak_ticket::OffPeakTicketSource for Ticketed {
+    async fn acquire(&self) -> Result<rust_cli_kernel_api::off_peak_ticket::Ticket, ModelError> {
+        let id = {
+            let mut issued = self.issued.lock().unwrap();
+            *issued += 1;
+            format!("tkt_{issued}")
+        };
+        let auth = self
+            .supplies
+            .then(|| rust_cli_kernel_api::provider::SuppliedAuth {
+                api_key: Some(RedactedString::new("sk-ticket")),
+                headers: vec![("x-ticket-sign".to_owned(), RedactedString::new("signed"))],
+            });
+        Ok(rust_cli_kernel_api::off_peak_ticket::Ticket { id, auth })
+    }
+
+    fn refused_as_expired(&self, _provider: &str, _error: &ModelError) -> bool {
+        false
+    }
+
+    async fn expired(&self, _ticket_id: &str) -> Result<(), ModelError> {
+        Ok(())
+    }
+}
+
+async fn zai_account_platform(
+    dir: &std::path::Path,
+    source: Arc<Supplied>,
+) -> (Platform, ModelSelection) {
+    let (platform, paths) = platform(dir).await;
+    let platform = platform.with_header_source(source);
+    write(
+        paths.credentials().as_path(),
+        json!({
+            account::identity_key(ZAI): IDENTITY,
+            account::source_key(ZAI): "manual",
+            account::manual_key(ZAI, IDENTITY): "sk-own",
+        })
+        .to_string(),
+    )
+    .await;
+    (
+        platform,
+        selection(ZAI, models::GLM_5_3_ACCOUNT, Some("high")),
+    )
+}
+
+fn header_value(endpoint: &ModelEndpoint, name: &str) -> Option<String> {
+    endpoint
+        .headers
+        .iter()
+        .find(|(known, _)| known == name)
+        .map(|(_, value)| value.expose().to_owned())
+}
+
+/// Slice 3 layer B, option 1: a run's ticket supplies the request's credentials and names its ticket; the ordinary
+/// header source is not asked.
+#[tokio::test]
+async fn a_ticket_supplies_the_credentials_and_names_the_ticket() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = Arc::new(Supplied(std::sync::Mutex::new(Vec::new())));
+    let (platform, select) = zai_account_platform(dir.path(), source.clone()).await;
+    let ticket = rust_cli_kernel_api::off_peak_ticket::TicketSource(Arc::new(Ticketed {
+        issued: std::sync::Mutex::new(0),
+        supplies: true,
+    }));
+    let endpoint = platform
+        .endpoint(EndpointQuery {
+            ticket: Some(&ticket),
+            ..EndpointQuery::new(&select)
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        endpoint.credential,
+        Credential::ApiKey(RedactedString::new("sk-ticket"))
+    );
+    assert_eq!(
+        header_value(&endpoint, "authorization").as_deref(),
+        Some("Bearer sk-ticket")
+    );
+    assert_eq!(
+        header_value(&endpoint, "x-ticket-sign").as_deref(),
+        Some("signed")
+    );
+    assert_eq!(
+        header_value(&endpoint, "x-off-peak-ticket-id").as_deref(),
+        Some("tkt_1")
+    );
+    assert!(
+        source.0.lock().unwrap().is_empty(),
+        "the ordinary source is not asked"
+    );
+}
+
+/// A ticket without credentials of its own falls back to the ordinary source, as Node's `requestAuth ?? source`.
+#[tokio::test]
+async fn a_ticket_without_credentials_falls_back_to_the_ordinary_source() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = Arc::new(Supplied(std::sync::Mutex::new(Vec::new())));
+    let (platform, select) = zai_account_platform(dir.path(), source.clone()).await;
+    let ticket = rust_cli_kernel_api::off_peak_ticket::TicketSource(Arc::new(Ticketed {
+        issued: std::sync::Mutex::new(0),
+        supplies: false,
+    }));
+    let endpoint = platform
+        .endpoint(EndpointQuery {
+            ticket: Some(&ticket),
+            ..EndpointQuery::new(&select)
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        header_value(&endpoint, "authorization").as_deref(),
+        Some("Bearer sk-host-1")
+    );
+    assert_eq!(
+        header_value(&endpoint, "x-off-peak-ticket-id").as_deref(),
+        Some("tkt_1")
+    );
+    assert_eq!(source.0.lock().unwrap().len(), 1);
+}
+
+/// Without a ticket (every ordinary request) the endpoint carries no ticket header and the ordinary source is asked
+/// once, with the same request as before the binding existed.
+#[tokio::test]
+async fn an_ordinary_request_is_unchanged_by_the_ticket_binding() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = Arc::new(Supplied(std::sync::Mutex::new(Vec::new())));
+    let (platform, select) = zai_account_platform(dir.path(), source.clone()).await;
+    let endpoint = platform
+        .endpoint(EndpointQuery::new(&select))
+        .await
+        .unwrap();
+    assert_eq!(header_value(&endpoint, "x-off-peak-ticket-id"), None);
+    assert_eq!(
+        header_value(&endpoint, "authorization").as_deref(),
+        Some("Bearer sk-host-1")
+    );
+    let seen = source.0.lock().unwrap().clone();
+    assert_eq!(seen.len(), 1);
+    assert_eq!(seen[0].session, None);
+    assert_eq!(seen[0].rejected_fingerprint, None);
+}
+
+/// Fork (slice 3 layer B): a ticket's key refused as a plain 401 (not an expired code) is not renewed by the platform:
+/// the ticket hands back the same key, so the endpoint fails at once as a rejected credential. Renewal of an expired
+/// ticket belongs to the transport (`refused_as_expired`); the same-key rule is the ordinary one (Node re-resolves the
+/// same request auth on a 401 and gets the same material).
+#[tokio::test]
+async fn a_ticket_key_rejected_again_ends_the_request_as_rejected() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = Arc::new(Supplied(std::sync::Mutex::new(Vec::new())));
+    let (platform, select) = zai_account_platform(dir.path(), source).await;
+    let ticket = rust_cli_kernel_api::off_peak_ticket::TicketSource(Arc::new(Ticketed {
+        issued: std::sync::Mutex::new(0),
+        supplies: true,
+    }));
+    let first = platform
+        .endpoint(EndpointQuery {
+            ticket: Some(&ticket),
+            ..EndpointQuery::new(&select)
+        })
+        .await
+        .unwrap();
+    let again = platform
+        .endpoint(EndpointQuery {
+            ticket: Some(&ticket),
+            rejected: Some(&first),
+            ..EndpointQuery::new(&select)
+        })
+        .await;
+    assert!(
+        matches!(again, Err(ModelError::Authentication { ref message }) if message.contains("was rejected")),
+        "{again:?}"
+    );
+}

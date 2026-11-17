@@ -284,9 +284,12 @@ impl Start {
         let output_limit = request.options.provider_max_output_tokens.map(u64::from);
         // 缺口 G8（app-protocol.md §5.2）：取端点时带上发请求的会话，前端提供的请求头来源按它找会话。
         let session = request.options.session_id.clone();
+        // Fork (slice 3 layer B): an off-peak run's attempt is sent on its ticket; ordinary requests carry none.
+        let ticket = request.options.off_peak_ticket.clone();
         let query = EndpointQuery {
             output_limit,
             session: session.as_ref(),
+            ticket: ticket.as_ref(),
             ..EndpointQuery::new(&request.selection)
         };
         let endpoint = cancel
@@ -360,6 +363,7 @@ impl Start {
             limits,
             cancel,
             trail,
+            ticket,
         })
     }
 }
@@ -424,6 +428,9 @@ pub(crate) struct Connect {
     /// Fork: the endpoint was already renewed once after an auth rejection (Node `AccountRequestRetry` `#used`,
     /// specs/fork-rust-chatgpt-plan.md rule 10): a second rejection ends the request.
     renewed: bool,
+    /// Fork (slice 3 layer B): the off-peak ticket the request is sent on; a refusal as expired renews it (Node
+    /// `retryExpired`), and the renewal re-resolves the endpoint with it.
+    ticket: Option<rust_cli_kernel_api::off_peak_ticket::TicketSource>,
     /// 发过 `Retrying` 通知、还没有产出 `Resumed`。
     notified: bool,
     /// 这个端点上的看门狗上限。
