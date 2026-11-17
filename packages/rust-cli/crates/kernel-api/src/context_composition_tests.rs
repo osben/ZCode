@@ -11,14 +11,46 @@ fn record(model: &str) -> CompositionRecord {
     }
 }
 
-#[test]
-fn revision_starts_at_zero_and_goes_up_on_each_change() {
+/// Node's tracker ends a batch with a microtask. Here the batch ends when the mutating task yields to the runtime.
+async fn end_batch() {
+    tokio::task::yield_now().await;
+}
+
+#[tokio::test]
+async fn revision_starts_at_zero_and_goes_up_once_per_batch() {
     let store = CompositionStore::default();
     let session = SessionId::new("s");
     assert_eq!(store.snapshot(&session), (0, None));
     assert_eq!(store.record(&session, record("a")), 1);
+    end_batch().await;
     assert_eq!(store.invalidate(&session), 2);
     assert_eq!(store.revision(&session), 2);
+}
+
+/// Node `markChanged`: a second change in the same batch leaves the revision alone and publishes nothing more.
+#[tokio::test]
+async fn changes_in_one_batch_share_one_revision_and_one_publish() {
+    let store = CompositionStore::default();
+    let session = SessionId::new("s");
+    let mut changes = store.subscribe();
+    assert_eq!(store.record(&session, record("a")), 1);
+    assert_eq!(store.invalidate(&session), 1);
+    assert_eq!(store.revision(&session), 1);
+    assert_eq!(changes.try_recv().map(|c| c.revision).ok(), Some(1));
+    assert!(changes.try_recv().is_err());
+    // The invalidation in the same batch dropped the record.
+    assert_eq!(store.snapshot(&session).1, None);
+    end_batch().await;
+    assert_eq!(store.record(&session, record("b")), 2);
+}
+
+/// Without a Tokio runtime there is no batch to wait for, so every change bumps.
+#[test]
+fn without_a_runtime_every_change_bumps() {
+    let store = CompositionStore::default();
+    let session = SessionId::new("s");
+    assert_eq!(store.record(&session, record("a")), 1);
+    assert_eq!(store.invalidate(&session), 2);
 }
 
 #[test]
@@ -63,13 +95,14 @@ fn sessions_are_independent() {
     assert_eq!(store.snapshot(&two), (0, None));
 }
 
-/// Every change is published with its session and the new revision, in order. The protocol side coalesces them per tick.
-#[test]
-fn each_change_is_published_with_its_revision() {
+/// Every batch is published with its session and the new revision, in order. The protocol side coalesces them per tick.
+#[tokio::test]
+async fn each_batch_is_published_once_with_its_revision() {
     let store = CompositionStore::default();
     let session = SessionId::new("s");
     let mut changes = store.subscribe();
     store.record(&session, record("a"));
+    end_batch().await;
     store.set_usage(
         &session,
         ProviderUsage {
@@ -77,6 +110,7 @@ fn each_change_is_published_with_its_revision() {
             context_tokens: 2,
         },
     );
+    end_batch().await;
     store.invalidate(&session);
     let mut seen = Vec::new();
     while let Ok(change) = changes.try_recv() {
