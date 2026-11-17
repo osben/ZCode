@@ -391,6 +391,26 @@ The ownership check does not compare workspace paths:
 
 **Memory.** With the Office plugins enabled (the default), a Rust process that ran a turn keeps a helper and the Office servers for as long as its connections are open. This is the same set of servers a Node agent runs for its sessions, plus the helper (324 MB idle, see "Memory").
 
+### F3b, elicitation and F5: verified Node semantics (design, 2026-11-16)
+
+Status: design only, no code. Facts checked against the Node source (`apps/zcode-cli/packages`), not the helper.
+
+**Session-only "always allow".** Required by F3b and F5.
+
+- Node sets `askOptions.allowAlways: "session"` on app-provided tools (`core/src/mcp/app-tools.ts:102`) and on `CreateWorkflow`, `FillWorkflowHole` and `AmendWorkflow` (`core/src/tool/handlers/`). `SaveWorkflow` sets `false`. The `mcp/uiCallTool` and mention-item authorizations are not session-scoped: they keep the project rule (`app_tool_tests.rs` `an_always_allow_answer_stops_later_prompts_for_the_tool`).
+- Wire (`bootstrap/src/permission-options.ts`): optionId `allowSession`, internal kind `allow_session`, closed-set kind `allowAlways`, label "Always allow in this session", description "Do not ask again for this tool in this session". Response `{decision: "allow", reason: "Approved for this session"}`. The broker (`bootstrap/src/zcode-protocol/interaction-broker.ts:231`) adds `sessionPermissionUpdates: [{behavior: "allow", rules: [{toolName}]}]`. Nothing is persisted: no `permissionUpdates`, no project rule.
+- Scope: `PermissionService.sessionRules` (`core/src/permission/service.ts:96`) is per instance, and one instance is one agent app, so one session. It matches the whole tool name, after deny rules and before the ask (`service.ts:439`). It is lost on restart, cold resume and `/new`, and subagents have their own instance.
+- Rust today: `commands.rs` `permission_answer` maps only `allowOnce` and `allowAlways`; `projection/state.rs:303` hard-codes the project label; `session/turn_interact.rs` `resolve` commits `Fact::PermissionRulesAdded` for any `remember`. No session-scoped grant exists.
+- Proposed owner: the session actor (`crates/session`). It keeps `session_allow: Vec<tool name>`. `resolve` with the session answer adds to it and commits nothing. `ask` checks it first and resolves Allow without a prompt. The state dies with the actor, which gives Node's lifetime. The gate needs no new state, and `local_rules_committed` is not called.
+
+**App-provided tool registry (F3b).** The helper already sends `helper/appTools/replace` (`fork-rust-helper/session-record.ts:163`) and serves `helper/appTools/call` and `helper/appTools/cancel` (`mcp-host.ts:465`). Rust has only the authorize side (`runtime/src/app_tool.rs`). Missing: a per-session overlay of `app__` tools appended to the turn's tool snapshot, replaced by each `replace`, and a Tool whose execution sends `helper/appTools/call` as a request. Cancel is the `helper/appTools/cancel` notification. Tools registered by a helper generation are dropped when it crashes.
+
+**Elicitation from helper-hosted servers.** Node's MCP adapter (`adapters/src/mcp/index.ts:1152`) passes the session from `activeCallTraces`, which is set during `callTool` from the request's `trace.sessionId` and `trace.turnId`. Without a trace it declines, because the session cannot be determined (`contracts/src/interfaces/mcp.port.ts:465`). The helper's `runtime.ts:104` always declines, and the pipe path never sets a trace, so the trace has to be rebuilt from the `_meta["zcode/helperContext"]` of the in-flight `tools/call` on the pipe. Rust has no MCP elicitation interaction: only AskUserQuestion and ExitPlanMode exist (`projection/elicitation.rs`). A helper relay alone is not enough. Needed: a kernel `InteractionRequest` variant for MCP elicitation, its projection to a `userInput` pending interaction with the requested schema, the answer mapping, and the helper request `helper/elicitation` that carries the request key.
+
+**F5 workflow execution.** Needs the session-only allow above. Open decision D1(A) still stands. Before any code, a written decision is needed on who owns the actors' `dwf/<runId>/...` session rows under rule 2 (Rust owns conversations), because each Node actor is a full `AgentRuntime` with its own session row.
+
+**F7 MCP Apps on Rust-run servers.** Needs the lease and sampling ledger in Rust, as described in "MCP Apps on Rust-hosted servers" below. It is the largest family and is not started.
+
 ### F4 node_repl and browser (design, built in three PRs)
 
 Status: decided 2026-11-16 (the user accepted the recommendations below). Built in three PRs, each branched from `origin/fork`:
