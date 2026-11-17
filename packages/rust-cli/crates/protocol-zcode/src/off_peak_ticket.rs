@@ -44,15 +44,8 @@ impl RunTickets {
 
 /// The error an attempt ends with once its run has ended. A run that ends (cancelled or completed) stops its attempts as
 /// cancelled: the run's Node code is its state, and it must not reach the user as a rejected credential.
-fn ended(_code: &str) -> ModelError {
+fn ended() -> ModelError {
     ModelError::Cancelled
-}
-
-/// The renewal request could not be sent, so no answer can come: the attempt fails rather than wait for it.
-fn undelivered() -> ModelError {
-    ModelError::Network {
-        message: "off_peak_ticket_request_undelivered".to_owned(),
-    }
 }
 
 #[async_trait]
@@ -66,7 +59,7 @@ impl OffPeakTicketSource for RunTickets {
             changed.as_mut().enable();
             match self.runs.poll_ticket(&self.session, &self.execution_id) {
                 Poll::Ready(ticket) => return Ok(ticket),
-                Poll::Ended(code) => return Err(ended(code)),
+                Poll::Ended => return Err(ended()),
                 Poll::Pending => changed.await,
             }
         }
@@ -83,14 +76,24 @@ impl OffPeakTicketSource for RunTickets {
             .runs
             .expire_ticket(&self.session, &self.execution_id, ticket_id)
         {
-            Expiry::Ended(code) => return Err(ended(code)),
+            Expiry::Ended => return Err(ended()),
             Expiry::Immediate => return Ok(()),
             Expiry::Renewing(notes) => {
-                for note in &notes {
-                    if !self.sink.send(note).await {
-                        return Err(undelivered());
+                // Sent by a task of its own, not by this attempt: an attempt dropped mid-send (its turn ends, a cancel)
+                // must not lose the request, which is the only trigger of the Host's renewal. A send that cannot be
+                // delivered ends the run, so its attempts do not wait for an answer nobody can give.
+                let sink = self.sink.clone();
+                let runs = self.runs.clone();
+                let session = self.session.clone();
+                let execution = self.execution_id.clone();
+                tokio::spawn(async move {
+                    for note in &notes {
+                        if !sink.send(note).await {
+                            runs.abandon_undelivered(&session, &execution);
+                            return;
+                        }
                     }
-                }
+                });
             }
         }
         loop {
@@ -101,7 +104,7 @@ impl OffPeakTicketSource for RunTickets {
             match self.runs.poll_ticket(&self.session, &self.execution_id) {
                 // Replaced: the next acquire takes the renewed ticket.
                 Poll::Ready(ticket) if ticket.id != ticket_id => return Ok(()),
-                Poll::Ended(code) => return Err(ended(code)),
+                Poll::Ended => return Err(ended()),
                 Poll::Ready(_) | Poll::Pending => changed.await,
             }
         }

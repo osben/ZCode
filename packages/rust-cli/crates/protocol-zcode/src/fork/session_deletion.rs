@@ -413,6 +413,9 @@ async fn run(
     for id in &snapshot.session_ids {
         server.topics.remove_everywhere(id);
     }
+    // Fork (slice 3): the deleted sessions' off-peak runs, flags and admitted inputs go with them.
+    let ids: Vec<&str> = snapshot.session_ids.iter().map(String::as_str).collect();
+    crate::off_peak_control::forget_sessions(&server.context, &ids).await;
     Ok(())
 }
 

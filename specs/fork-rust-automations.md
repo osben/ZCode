@@ -319,20 +319,22 @@ turn end); the run opens at admission, not at turn start; the renewal is a `Retr
 `waiting_ticket`).
 
 **Review follow-ups (2026-11-17).** The ticket source registers its wait on the run's `changed` notify before it reads
-the state (`enable()`), so a change between the read and the wait is not missed. `ticket_needed` is sent awaited through
-the peer (`LifecycleSink`): an undelivered notification (the connection is closed) fails the attempt with a network error
-rather than wait for a renewal nobody was asked for. An ended run (cancelled or completed) stops its attempts as
+the state (`enable()`), so a change between the read and the wait is not missed. `ticket_needed` is sent by a task of its
+own (`LifecycleSink` over the peer), so dropping the attempt mid-send cannot lose the request; an undelivered notification
+(the connection is closed) ends the run, and so its attempts, rather than leave them waiting for an answer nobody can give. An ended run (cancelled or completed) stops its attempts as
 `ModelError::Cancelled`, not as an authentication failure; the Node code stays the run's state. `replace_ticket` judges
 the run by the runtime's facts (`main_running` is "the run's turn is open"), so a renewal answered after its turn ended
 completes the run. A renewal still pending when its turn ends waits for the Host's answer, as Node does (Node's binding
 release does not clear a pending renewal). A renewal that names `apiKeyId` or `accountScope` is refused: Node routes a
 zhipu account by `apiKeyId` and checks `accountScope`, and neither is implemented in Rust yet. A renewal with neither a key
-nor headers installs no credentials, so the ordinary source supplies them. Session delete ends the session's run and drops
-its flag and admitted inputs (`OffPeakRuns::remove_session`). An admitted input is taken only by its own session's turn,
+nor headers installs no credentials, so the ordinary source supplies them. Session delete, tree erase and the deletion execution end the
+removed sessions' runs (their final notifications go to the Host) and drop their flags and admitted inputs
+(`off_peak_control::forget_sessions`). An admitted input is taken only by its own session's turn,
 and admission checks the runs under the same lock. In the transport, a refusal renews only when its attempt named a
 non-empty ticket id; renewals per request are capped at 3 (`MAX_TICKET_RENEWALS`), after which the refusal is the
-request's error; each renewal logs `model.attempt.failed` with the ticket id and renewal count; the model-io send
-ordinal is `attempt + renewals` (each send distinct), while the `Retrying` notice keeps its attempt number. A queued
+request's error; each renewal logs `model.attempt.failed` with the refused send's ordinal and the renewal count, never the ticket id
+(the off-peak ticket header is a secret header); the model-io send ordinal is `attempt + renewals` (each send distinct),
+while the `Retrying` notice keeps its attempt number. A queued
 off-peak input whose edit leaves the model unset keeps the run's model.
 
 Subagents: a child run inherits its parent run's off-peak execution (`RunInfo.off_peak_execution` recorded from the

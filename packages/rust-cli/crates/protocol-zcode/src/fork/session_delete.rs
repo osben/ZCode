@@ -86,7 +86,7 @@ pub(super) async fn delete(
     // Fork (W1): the dynamic-workflow gate is per record, so a deleted id takes its gate with it.
     server.dynamic_workflow_gates.lock_unpoisoned().remove(&id);
     // Fork (slice 3): the off-peak run, its flag and its admitted inputs go with the session (their attempts end).
-    server.context.off_peak.remove_session(id.as_str());
+    crate::off_peak_control::forget_sessions(&server.context, &[id.as_str()]).await;
     tracing::info!(
         event = "protocol.session.deleted",
         session,

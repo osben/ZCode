@@ -21,7 +21,7 @@ use tokio::sync::Notify;
 
 use rust_cli_kernel_api::session_api::TurnOutcome;
 
-use crate::off_peak_lifecycle::{Event, OffPeakLifecycle, Outcome, State, WorkSnapshot};
+use crate::off_peak_lifecycle::{Event, OffPeakLifecycle, Outcome, WorkSnapshot};
 
 /// Node `OFF_PEAK_EXECUTION_TOOL_DENYLIST` aside, a session with an active run refuses a second one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,7 +74,7 @@ pub(crate) enum Poll {
     /// Not usable yet: a renewal is pending or the ticket is not installed.
     Pending,
     /// The run ended; the Node error code its attempts fail with.
-    Ended(&'static str),
+    Ended,
 }
 
 /// What an expired ticket does to its run (Node `ticketExpired`).
@@ -84,7 +84,7 @@ pub(crate) enum Expiry {
     /// The renewal was asked for; the notifications it caused, to send to the Host.
     Renewing(Vec<Value>),
     /// The run ended; the Node error code.
-    Ended(&'static str),
+    Ended,
 }
 
 /// The runs of this agent, keyed by session id. A finished run stays until a new one replaces it, so a repeated cancel
@@ -178,8 +178,11 @@ impl OffPeakRuns {
                             main_running: run.turn.is_some(),
                             ..WorkSnapshot::default()
                         };
+                        // A repeat of the applied answer is accepted with no effect: only a renewal that installs a
+                        // new ticket may install its credentials.
+                        let installs = run.lifecycle.ticket_id() != Some(ticket);
                         let accepted = run.lifecycle.replace_ticket(renewal, ticket, work);
-                        if accepted {
+                        if accepted && installs {
                             run.request_auth = supplied_auth(auth);
                         }
                         accepted
@@ -230,11 +233,15 @@ impl OffPeakRuns {
     }
 
     /// Node `off_peak` session delete: the session's run ends (its attempts end with it), and its flag and admitted inputs
-    /// go, so a deleted session leaves no state behind.
-    pub fn remove_session(&self, session: &str) {
-        if let Some(mut run) = self.lock().remove(session) {
-            run.lifecycle.cancel();
-        }
+    /// go, so a deleted session leaves no state behind. Returns the run's final notifications, for the Host.
+    pub fn remove_session(&self, session: &str) -> Vec<Value> {
+        let notes = match self.lock().remove(session) {
+            Some(mut run) => {
+                run.lifecycle.cancel();
+                notifications(&mut run)
+            }
+            None => Vec::new(),
+        };
         self.session_flags
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -243,6 +250,20 @@ impl OffPeakRuns {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .retain(|_, pending| pending.session != session);
+        self.changed.notify_waiters();
+        notes
+    }
+
+    /// The run `execution` of `session` could not deliver its renewal request (the connection is closed): it ends, so its
+    /// attempts end instead of waiting for an answer that cannot come.
+    pub(crate) fn abandon_undelivered(&self, session: &str, execution: &str) {
+        if let Some(run) = self
+            .lock()
+            .get_mut(session)
+            .filter(|run| run.execution_id == execution)
+        {
+            run.lifecycle.cancel();
+        }
         self.changed.notify_waiters();
     }
 
@@ -324,11 +345,11 @@ impl OffPeakRuns {
             .get(session)
             .filter(|run| run.execution_id == execution)
         else {
-            return Poll::Ended("off_peak_completed");
+            return Poll::Ended;
         };
         let lifecycle = &run.lifecycle;
         if lifecycle.terminal() {
-            return Poll::Ended(ended_code(lifecycle.state()));
+            return Poll::Ended;
         }
         match lifecycle.ticket_id() {
             Some(id) if lifecycle.ticket_ready() => Poll::Ready(Ticket {
@@ -346,10 +367,10 @@ impl OffPeakRuns {
             .get_mut(session)
             .filter(|run| run.execution_id == execution)
         else {
-            return Expiry::Ended("off_peak_completed");
+            return Expiry::Ended;
         };
         if run.lifecycle.terminal() {
-            return Expiry::Ended(ended_code(run.lifecycle.state()));
+            return Expiry::Ended;
         }
         if run.lifecycle.ticket_id() != Some(ticket) {
             return Expiry::Immediate;
@@ -435,14 +456,6 @@ fn lifecycle_outcome(outcome: &TurnOutcome) -> Outcome {
     }
 }
 
-/// The Node error code of a run that ended in `state`: a cancel, or a completion.
-fn ended_code(state: State) -> &'static str {
-    match state {
-        State::Cancelled => "off_peak_cancelled",
-        _ => "off_peak_completed",
-    }
-}
-
 /// Whether a `replace_ticket`'s credentials carry no account identity this agent cannot apply. Node routes a zhipu
 /// account's request by `apiKeyId` and checks `accountScope` against the account; neither is implemented here, so a
 /// renewal that names either is refused rather than sent with the wrong account.
@@ -501,6 +514,16 @@ fn wire(run: &Run, event: Event) -> Value {
 
 /// The notification a run's lifecycle effect is sent as (Node `v4/offPeak/lifecycle`).
 pub(crate) const LIFECYCLE: &str = "v4/offPeak/lifecycle";
+
+/// The off-peak state of sessions that were permanently removed: each run ends, and the Host is told its final state
+/// (every deletion path calls this: session delete, tree erase, and the deletion execution).
+pub(crate) async fn forget_sessions(context: &crate::context::Context, sessions: &[&str]) {
+    for session in sessions {
+        for notification in context.off_peak.remove_session(session) {
+            context.peer.notify(LIFECYCLE, &notification).await;
+        }
+    }
+}
 
 /// `v4/conversation/offPeakControl` (Host to agent): the params were checked by the inbound schema. The answer says
 /// whether a run matched, and each effect of the request is sent as a `v4/offPeak/lifecycle` notification.

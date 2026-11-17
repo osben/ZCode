@@ -290,3 +290,36 @@ fn a_deleted_session_leaves_no_run_flag_or_admission_behind() {
     runs.turn_started("sess_2", "turn_9", Some("cmd_9"));
     assert_eq!(runs.open_session("exe_9"), None, "the admission is gone");
 }
+
+/// A repeat of an applied renewal is accepted with no effect, so its credentials must not replace the installed ones.
+#[test]
+fn a_repeated_renewal_does_not_replace_the_credentials_it_installed() {
+    let runs = runs_with_one();
+    let _ = runs.expire_ticket("sess_1", "exe_1", "tkt_1");
+    assert!(
+        runs.control("sess_1", &replace_with(json!({"apiKey": "k1"})))
+            .accepted
+    );
+    assert!(
+        runs.control("sess_1", &replace_with(json!({"apiKey": "k2"})))
+            .accepted,
+        "the repeat is accepted"
+    );
+    let Poll::Ready(ticket) = runs.poll_ticket("sess_1", "exe_1") else {
+        panic!("the renewed ticket is usable");
+    };
+    assert_eq!(ticket.auth.unwrap().api_key.unwrap().expose(), "k1");
+}
+
+/// Ending a run tells the Host its final state: a deleted session's run sends its last notifications, not silence.
+#[test]
+fn removing_a_session_returns_the_run_s_final_notifications() {
+    let runs = runs_with_one();
+    let notes = runs.remove_session("sess_1");
+    assert!(
+        notes
+            .iter()
+            .any(|note| note["type"] == "completed" && note["outcome"] == "stopped"),
+        "{notes:?}"
+    );
+}

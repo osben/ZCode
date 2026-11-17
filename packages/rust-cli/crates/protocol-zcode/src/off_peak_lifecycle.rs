@@ -100,6 +100,7 @@ impl OffPeakLifecycle {
         }
     }
 
+    #[cfg(test)]
     pub fn state(&self) -> State {
         self.phase
     }

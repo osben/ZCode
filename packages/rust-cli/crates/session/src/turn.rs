@@ -296,7 +296,10 @@ impl Actor {
         self.after_commit(appended).await;
         // Cron fires and notices never carry an input's limits (see `start_turn_with`): their turn gets the defaults
         // by construction here, not by the caller's `limits` argument.
-        let (opening, request) = self.open_main_turn(turn, &Default::default());
+        let (opening, request) = self.open_main_turn(
+            turn,
+            &rust_cli_kernel_api::turn_limits::TurnLimits::default(),
+        );
         let runner = self.deps.runner.clone();
         let sink = opening.sink.clone();
         let signal = opening.abort.clone();

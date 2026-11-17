@@ -161,20 +161,21 @@ impl Connect {
                 self.endpoint.headers = endpoint.headers;
             }
         }
+        // The refused send's model-io ordinal (`attempt + renewals`, before this renewal counts).
+        let send = self.attempt + self.renewals;
         self.renewals += 1;
         let max_retries = self.route.options.retry.max_retries;
-        // The renewal is a send with no backoff and no spent budget: the debug event is the only trace of it, so it
-        // carries the ticket context that the `Retrying` notice does not.
+        // The renewal is a send with no backoff and no spent budget: the debug event is the only trace of it. The ticket
+        // id is not logged: the off-peak ticket header is a secret header, redacted in traces.
         tracing::debug!(
             event = "model.attempt.failed",
             model = %self.selection.model,
-            attempt = self.attempt,
+            attempt = send,
             max_retries,
             delay_ms = 0_u64,
             phase = ?Phase::Head,
             class = ?verdict.class,
             error = %verdict.error,
-            ticket = %refused,
             renewal = self.renewals,
             "model request refused as expired; its ticket was renewed"
         );

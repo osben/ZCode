@@ -199,14 +199,34 @@ async fn a_renewal_answered_before_the_wait_starts_is_not_waited_for() {
         .unwrap();
 }
 
-/// An expired attempt whose renewal request cannot be delivered (the connection is closed) fails at once: nobody will
-/// answer that request, so the attempt must not wait for it.
+/// A renewal request that cannot be delivered (the connection is closed) ends the run, so its expired attempt ends too:
+/// nobody will answer that request, so the attempt must not wait for it.
 #[tokio::test]
-async fn an_undelivered_renewal_request_fails_the_attempt_instead_of_waiting() {
+async fn an_undelivered_renewal_request_ends_the_run_instead_of_waiting() {
     let runs = runs_with_run();
     let source = tickets(&runs, Arc::new(Closed));
     let outcome = tokio::time::timeout(Duration::from_secs(5), source.expired("tkt_1"))
         .await
         .expect("the attempt must not wait for a renewal nobody was asked for");
     assert!(outcome.is_err());
+    assert!(source.acquire().await.is_err(), "the run has ended");
+}
+
+/// The renewal request is sent even when its attempt is dropped right after asking for it (its turn ends): the request
+/// is the only trigger of the Host's renewal, so it must not depend on the attempt's future staying alive.
+#[tokio::test]
+async fn a_renewal_request_is_sent_even_when_its_attempt_is_dropped() {
+    use futures_util::FutureExt;
+    let runs = runs_with_run();
+    let (sent, sink) = sink();
+    let source = tickets(&runs, sink);
+    // One poll asks for the renewal; the attempt is then dropped.
+    let _ = source.expired("tkt_1").now_or_never();
+    until(|| {
+        sent.lock()
+            .unwrap()
+            .iter()
+            .any(|note| note["type"] == "ticket_needed")
+    })
+    .await;
 }

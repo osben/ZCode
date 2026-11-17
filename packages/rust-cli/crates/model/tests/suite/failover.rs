@@ -372,10 +372,17 @@ async fn an_expired_ticket_is_renewed_and_resent_without_spending_retries() {
 /// the request with the refusal instead of renewing forever (the cap is `MAX_TICKET_RENEWALS`, 3).
 #[tokio::test]
 async fn the_renewals_of_one_request_are_bounded() {
-    let server = Fixture::start((0..6).map(|_| error(401, "authentication_error")).collect()).await;
+    /// The transport's private cap (`transport/retry.rs`): the test refuses exactly one more time than it allows.
+    const MAX_TICKET_RENEWALS: u32 = 3;
+    let server = Fixture::start(
+        (0..=MAX_TICKET_RENEWALS)
+            .map(|_| error(401, "authentication_error"))
+            .collect(),
+    )
+    .await;
     let tickets = Arc::new(Tickets {
         issued: Mutex::new(0),
-        refusals: Mutex::new(100),
+        refusals: Mutex::new(MAX_TICKET_RENEWALS + 1),
         renewed: Mutex::new(Vec::new()),
     });
     let source = rust_cli_kernel_api::off_peak_ticket::TicketSource(tickets.clone());
@@ -395,7 +402,14 @@ async fn the_renewals_of_one_request_are_bounded() {
     let mut ticketed = request("hi", QuerySource::MainThread);
     ticketed.options.off_peak_ticket = Some(source);
     let events = collect(&model, ticketed).await;
-    assert!(events.iter().any(Result::is_err), "{events:?}");
+    // The last refusal ends the request with the provider's own classification, not as a renewal.
+    let Some(Err(error)) = events.last() else {
+        panic!("the request ends with an error: {events:?}");
+    };
+    assert!(
+        matches!(error.peel(), ModelError::Authentication { .. }),
+        "{error:?}"
+    );
     assert_eq!(tickets.renewed.lock().unwrap().len(), 3);
     assert_eq!(server.requests().len(), 4);
 }
@@ -429,4 +443,70 @@ async fn a_refusal_without_the_ticket_header_is_not_renewed() {
     let events = collect(&model, ticketed).await;
     assert!(events.iter().any(Result::is_err), "{events:?}");
     assert!(tickets.renewed.lock().unwrap().is_empty());
+}
+
+/// Keeps the model-io records, as the JSON the trace writer gets.
+#[derive(Default)]
+struct Records(Mutex<Vec<serde_json::Value>>);
+
+impl rust_cli_model::ModelIoSink for Records {
+    fn record(&self, record: rust_cli_model::ModelIoRecord) {
+        self.0
+            .lock()
+            .unwrap()
+            .push(serde_json::Value::Object(record.into_json()));
+    }
+}
+
+/// Fork (slice 3 layer B): each send of a request is its own trace record with a distinct attempt ordinal, renewals
+/// included. The sends are: refused (1), its renewal (no budget spent), a server error (2, retried within budget), and
+/// the success (3). The renewal does not reuse the refused send's number.
+#[tokio::test]
+async fn each_send_of_a_renewed_request_has_its_own_attempt_ordinal() {
+    let server = Fixture::start(vec![
+        error(401, "authentication_error"),
+        Reply::new(500)
+            .header("content-type", "application/json")
+            .send(r#"{"type":"error","error":{"type":"api_error","message":"boom"}}"#),
+        Reply::new(200).send(text_response(&["ok"])),
+    ])
+    .await;
+    let tickets = Arc::new(Tickets {
+        issued: Mutex::new(0),
+        refusals: Mutex::new(1),
+        renewed: Mutex::new(Vec::new()),
+    });
+    let source = rust_cli_kernel_api::off_peak_ticket::TicketSource(tickets.clone());
+    let records = Arc::new(Records::default());
+    let egress = Arc::new(Egress::new(NetworkPolicy::default()).await.unwrap());
+    let model = ProviderModel::new(
+        egress,
+        Arc::new(TicketedEndpoints {
+            base_url: server.url(),
+            ticket_header: true,
+        }),
+        clock(),
+        RouteOptions {
+            retry: fast_retry(1),
+            headers: Some(Arc::new(rust_cli_model::RequestHeaders {
+                source: Vec::new(),
+                trace_id: "trace-renewal".to_owned(),
+                request_id: Arc::new(|| "req-renewal".to_owned()),
+            })),
+            model_io: Some(records.clone()),
+            ..RouteOptions::default()
+        },
+    );
+    let mut ticketed = request("hi", QuerySource::MainThread);
+    ticketed.options.off_peak_ticket = Some(source);
+    let events = collect(&model, ticketed).await;
+    assert!(events.iter().all(Result::is_ok), "{events:?}");
+    let sent: Vec<u64> = records
+        .0
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|record| record["attempt"].as_u64().unwrap())
+        .collect();
+    assert_eq!(sent, [1, 2, 3]);
 }
