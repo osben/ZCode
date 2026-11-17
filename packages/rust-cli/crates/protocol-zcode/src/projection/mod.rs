@@ -670,6 +670,12 @@ impl Projection {
         self.queue_patch()
     }
 
+    /// Fork: whether an interaction waits for an answer (Node `hasPendingInteractions`, the busy test of permanent
+    /// deletion and purge).
+    pub fn has_pending_interactions(&self) -> bool {
+        !self.pending.is_empty()
+    }
+
     /// Fork: whether queued inputs wait behind the running turn (a stop would hold them).
     pub fn has_queue(&self) -> bool {
         self.queue_state()["items"]

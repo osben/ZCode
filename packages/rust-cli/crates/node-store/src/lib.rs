@@ -34,6 +34,7 @@ mod reconcile_row;
 mod repo;
 mod rewind;
 mod rust_entries;
+mod session_deletion;
 mod session_inputs;
 mod session_tree;
 mod state;
@@ -610,6 +611,87 @@ impl StoreQueries for NodeStore {
         }
         let ids: Vec<String> = sessions.iter().map(|id| id.as_str().to_owned()).collect();
         self.with_db(move |conn, _| presence::assert_not_deleting(conn, &ids))
+            .await
+    }
+
+    async fn inspect_session_deletion(
+        &self,
+        root: &SessionId,
+    ) -> Result<rust_cli_kernel_api::session_deletion::SessionDeletionSnapshot, StoreError> {
+        let root = root.as_str().to_owned();
+        let held = self.presence.clone();
+        self.with_db(move |conn, _| session_deletion::inspect(conn, &root, &held))
+            .await
+    }
+
+    async fn begin_session_deletion(
+        &self,
+        root: &SessionId,
+        revision: &str,
+        operation_id: &str,
+        retained: &[(SessionId, String)],
+    ) -> Result<rust_cli_kernel_api::session_deletion::DeletionBegin, StoreError> {
+        let root = root.as_str().to_owned();
+        let revision = revision.to_owned();
+        let operation_id = operation_id.to_owned();
+        let retained: Vec<(String, String)> = retained
+            .iter()
+            .map(|(session, artifact)| (session.as_str().to_owned(), artifact.clone()))
+            .collect();
+        let held = self.presence.clone();
+        self.with_db(move |conn, _| {
+            session_deletion::begin(conn, &root, &revision, &operation_id, &retained, &held)
+        })
+        .await
+    }
+
+    async fn complete_session_deletion(&self, root: &SessionId) -> Result<(), StoreError> {
+        let root = root.as_str().to_owned();
+        self.with_db(move |conn, _| session_deletion::complete(conn, &root))
+            .await
+    }
+
+    async fn list_owned_session_trees(
+        &self,
+        roots: &[SessionId],
+    ) -> Result<Vec<(SessionId, Vec<SessionId>)>, StoreError> {
+        let roots: Vec<String> = roots.iter().map(|id| id.as_str().to_owned()).collect();
+        let trees = self
+            .with_db(move |conn, _| session_deletion::owned_trees(conn, &roots))
+            .await?;
+        Ok(trees
+            .into_iter()
+            .map(|(root, ids)| {
+                (
+                    SessionId::new(root),
+                    ids.into_iter().map(SessionId::new).collect(),
+                )
+            })
+            .collect())
+    }
+
+    async fn list_artifact_referrers(
+        &self,
+        sessions: &[SessionId],
+    ) -> Result<Vec<(SessionId, Vec<SessionId>)>, StoreError> {
+        let targets: Vec<String> = sessions.iter().map(|id| id.as_str().to_owned()).collect();
+        let referrers = self
+            .with_db(move |conn, _| session_deletion::artifact_referrers(conn, &targets))
+            .await?;
+        Ok(referrers
+            .into_iter()
+            .map(|(target, ids)| {
+                (
+                    SessionId::new(target),
+                    ids.into_iter().map(SessionId::new).collect(),
+                )
+            })
+            .collect())
+    }
+
+    async fn purge_session_rows(&self, sessions: &[SessionId]) -> Result<(), StoreError> {
+        let sessions: Vec<String> = sessions.iter().map(|id| id.as_str().to_owned()).collect();
+        self.with_db(move |conn, _| session_deletion::purge_rows(conn, &sessions))
             .await
     }
 
