@@ -82,3 +82,41 @@ fn a_turn_is_restricted_by_its_automation_id_or_a_disallowlist_covering_all_thre
     let some = vec!["CronCreate".to_owned(), "CronDelete".to_owned()];
     assert!(!TurnLimits::new(None, some).restricts_automation_mutations());
 }
+
+/// Fork (slice 3 layer B): a decoded off-peak id is trimmed and a blank one is none, like the automation id; a decoded
+/// model never outlives its run.
+#[test]
+fn a_decoded_off_peak_run_is_normalized_like_its_constructor() {
+    for raw in ["", "   "] {
+        let limits: TurnLimits =
+            serde_json::from_value(serde_json::json!({"off_peak_execution": raw})).unwrap();
+        assert!(limits.off_peak_execution().is_none(), "{raw:?}");
+        assert!(limits.is_empty());
+    }
+    let limits: TurnLimits =
+        serde_json::from_value(serde_json::json!({"off_peak_execution": " exe_1 "})).unwrap();
+    assert_eq!(limits.off_peak_execution(), Some("exe_1"));
+    let model = serde_json::json!({"provider": "zai", "model": "glm-idle"});
+    let orphan: TurnLimits =
+        serde_json::from_value(serde_json::json!({"off_peak_selection": model})).unwrap();
+    assert!(
+        orphan.off_peak_selection().is_none(),
+        "a model without its run is dropped"
+    );
+    assert!(orphan.is_empty());
+}
+
+/// The constructor drops a blank run and its model with it.
+#[test]
+fn a_blank_off_peak_run_takes_its_model_with_it() {
+    let model = rust_cli_kernel_api_model_selection();
+    let blank = TurnLimits::default().with_off_peak_run(Some("  "), Some(model.clone()));
+    assert!(blank.off_peak_selection().is_none());
+    assert!(blank.is_empty());
+    let run = TurnLimits::default().with_off_peak_run(Some(" exe_1 "), Some(model.clone()));
+    assert_eq!(run.off_peak_selection(), Some(&model));
+}
+
+fn rust_cli_kernel_api_model_selection() -> crate::model::ModelSelection {
+    crate::model::ModelSelection::new("zai", "glm-idle")
+}

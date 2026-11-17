@@ -64,6 +64,8 @@ pub const DYNAMIC_WORKFLOW_TOOLS: [&str; 10] = [
     RESOLVE_WORKFLOW_QUESTION,
     FILL_WORKFLOW_HOLE,
 ];
+/// Fork: every off-peak tool (the desktop's two): the incognito `automationTools` gate reads this list.
+pub const OFF_PEAK_TOOLS: [&str; 2] = [OFF_PEAK_CREATE, OFF_PEAK_LIST];
 /// 本工程没有这个工具：子代理的工具表与工作区信任的授权表按名字认它（与 shell 的名字无关）。
 pub const POWER_SHELL: &str = "PowerShell";
 pub const READ: &str = "Read";

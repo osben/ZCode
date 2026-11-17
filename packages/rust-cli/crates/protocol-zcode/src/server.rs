@@ -522,10 +522,12 @@ impl Server {
                     "updatedSessionCount": 0}),
                 )
             }
-            // Fork: the off-peak tools are not ported yet (specs/fork-rust-automations.md, slice 3): answer disabled, so
-            // the Host does not assume OffPeakCreate / OffPeakList exist.
             "workspace/updateOffPeakToolPolicy" => {
-                reply(json!({"workspace": params["workspace"], "enabled": false}))
+                // Fork (slice 3 layer B): the policy is stored for the sessions without their own flag and answered as
+                // stored (Node `appRuntimePreferences.offPeakToolEnabled`); the off-peak tools follow it.
+                let enabled = params["enabled"].as_bool().unwrap_or(false);
+                self.context.off_peak.set_policy(enabled);
+                reply(json!({"workspace": params["workspace"], "enabled": enabled}))
             }
             // Fork (specs/fork-rust-workflow-engine.md 9.2, W1): the Host's fact is cached for the records created later,
             // but the answer stays disabled until the tools are registered (W9).
@@ -553,6 +555,11 @@ impl Server {
                 .await
                 .map(Reply::new),
             "v4/conversation/rowsRange" => self.rows_range(&params).await.map(Reply::new),
+            "v4/conversation/offPeakControl" => {
+                crate::off_peak_control::control_request(&self.context, &params)
+                    .await
+                    .map(Reply::new)
+            }
             "v4/conversation/contextComposition" => crate::context_composition::read(self, &params)
                 .await
                 .map(Reply::new),

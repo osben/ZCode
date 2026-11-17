@@ -250,3 +250,113 @@ async fn retries_are_reported_as_notices() {
     let events = collect(&model, request("hi", QuerySource::MainThread)).await;
     assert!(events.iter().all(Result::is_ok), "{events:?}");
 }
+
+/// Fork (slice 3 layer B): a run's tickets. Each acquire issues `tkt_<n>` with credential `token-<n>`; the first
+/// `refusals` attempts are refused as expired, and every renewal is recorded.
+struct Tickets {
+    issued: Mutex<u32>,
+    refusals: Mutex<u32>,
+    renewed: Mutex<Vec<String>>,
+}
+
+#[async_trait]
+impl rust_cli_kernel_api::off_peak_ticket::OffPeakTicketSource for Tickets {
+    async fn acquire(&self) -> Result<rust_cli_kernel_api::off_peak_ticket::Ticket, ModelError> {
+        let mut issued = self.issued.lock().unwrap();
+        *issued += 1;
+        Ok(rust_cli_kernel_api::off_peak_ticket::Ticket {
+            id: format!("tkt_{issued}"),
+            auth: Some(rust_cli_kernel_api::provider::SuppliedAuth {
+                api_key: Some(RedactedString::new(format!("token-{issued}"))),
+                headers: Vec::new(),
+            }),
+        })
+    }
+
+    fn refused_as_expired(&self, _provider: &str, _error: &ModelError) -> bool {
+        let mut refusals = self.refusals.lock().unwrap();
+        if *refusals == 0 {
+            return false;
+        }
+        *refusals -= 1;
+        true
+    }
+
+    async fn expired(&self, ticket_id: &str) -> Result<(), ModelError> {
+        self.renewed.lock().unwrap().push(ticket_id.to_owned());
+        Ok(())
+    }
+}
+
+/// Endpoints of a run: the credential and the ticket id come from the query's ticket, as the platform gives them.
+struct TicketedEndpoints {
+    base_url: String,
+}
+
+#[async_trait]
+impl ModelEndpoints for TicketedEndpoints {
+    async fn endpoint(&self, query: EndpointQuery<'_>) -> Result<ModelEndpoint, ModelError> {
+        let EndpointQuery {
+            selection, ticket, ..
+        } = query;
+        let granted = ticket.unwrap().0.acquire().await?;
+        let key = granted.auth.and_then(|auth| auth.api_key).unwrap();
+        Ok(ModelEndpoint {
+            protocol: WireProtocol::AnthropicMessages,
+            base_url: self.base_url.clone(),
+            model: format!("{}-api", selection.model),
+            credential: Credential::ApiKey(key),
+            headers: vec![(
+                rust_cli_kernel_api::off_peak_ticket::TICKET_HEADER.to_owned(),
+                RedactedString::new(granted.id),
+            )],
+            body_patches: Vec::new(),
+            capabilities: ModelCapabilities {
+                supports_mid_conversation_system: true,
+                supports_image: true,
+                ..ModelCapabilities::default()
+            },
+            renewable: false,
+            compress_body_over: None,
+        })
+    }
+}
+
+/// Fork (slice 3 layer B, Node `retryExpired`): an attempt refused as expired waits for its ticket's renewal and is
+/// resent on the renewed ticket; the retry budget is not spent (`max_retries` is 0 here).
+#[tokio::test]
+async fn an_expired_ticket_is_renewed_and_resent_without_spending_retries() {
+    let server = Fixture::start(vec![
+        error(401, "authentication_error"),
+        Reply::new(200).send(text_response(&["ok"])),
+    ])
+    .await;
+    let tickets = Arc::new(Tickets {
+        issued: Mutex::new(0),
+        refusals: Mutex::new(1),
+        renewed: Mutex::new(Vec::new()),
+    });
+    let source = rust_cli_kernel_api::off_peak_ticket::TicketSource(tickets.clone());
+    let egress = Arc::new(Egress::new(NetworkPolicy::default()).await.unwrap());
+    let model = ProviderModel::new(
+        egress,
+        Arc::new(TicketedEndpoints {
+            base_url: server.url(),
+        }),
+        clock(),
+        RouteOptions {
+            retry: fast_retry(0),
+            ..RouteOptions::default()
+        },
+    );
+    let mut ticketed = request("hi", QuerySource::MainThread);
+    ticketed.options.off_peak_ticket = Some(source);
+    let events = collect(&model, ticketed).await;
+    assert!(events.iter().all(Result::is_ok), "{events:?}");
+    let requests = server.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].header("x-api-key"), Some("token-1"));
+    assert_eq!(requests[1].header("x-api-key"), Some("token-2"));
+    assert_eq!(requests[1].header("x-off-peak-ticket-id"), Some("tkt_2"));
+    assert_eq!(*tickets.renewed.lock().unwrap(), ["tkt_1"]);
+}

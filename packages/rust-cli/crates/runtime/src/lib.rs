@@ -247,6 +247,8 @@ impl LocalKernel {
         tasks: Arc<dyn TaskListStore>,
         extensions: Extensions,
     ) -> Self {
+        // Fork (slice 3 layer B): the main loop resolves an off-peak run's ticket through the Host's port.
+        let off_peak_port = extensions.off_peak.clone();
         // Fork: an `acp:` selection never reaches a model provider; side callers fail closed (acp::guard).
         let ports = Ports {
             model: Arc::new(acp::ExternalAgentModelGuard { inner: ports.model }),
@@ -410,7 +412,8 @@ impl LocalKernel {
             compositions: compositions.clone(),
             ..parts
         };
-        let main_loop: Arc<dyn QueryRunner> = Arc::new(QueryLoop::new(parts));
+        let main_loop: Arc<dyn QueryRunner> =
+            Arc::new(QueryLoop::new(parts).with_off_peak(off_peak_port));
         // Fork: the session's `LSP` tool fact is settled before the run's first tool snapshot.
         let main_loop: Arc<dyn QueryRunner> = match extensions.code_intelligence.clone() {
             Some(code) => Arc::new(lsp_tool::LspToolSettle {

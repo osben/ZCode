@@ -596,18 +596,22 @@ async fn set_mode_thought_and_model_switch_the_live_session() {
     assert_eq!(missing.code, crate::server::SESSION_UNAVAILABLE);
 }
 
+/// Node `updateOffPeakToolPolicy` answers the policy it stored (`enabled: params.enabled`); the off-peak tools follow it
+/// for the sessions without their own flag (slice 3 layer B).
 #[tokio::test]
-async fn the_off_peak_tool_policy_answers_disabled_until_the_tools_are_ported() {
+async fn the_off_peak_tool_policy_answers_the_policy_it_stored() {
     let (_scope, server, _kernel) = server();
     let workspace = json!({"workspacePath": WORKSPACE, "workspaceKey": WORKSPACE});
-    let reply = call(
-        &server,
-        "workspace/updateOffPeakToolPolicy",
-        json!({"workspace": workspace, "enabled": true}),
-    )
-    .await
-    .unwrap();
-    assert_eq!(reply, json!({"workspace": workspace, "enabled": false}));
+    for enabled in [true, false] {
+        let reply = call(
+            &server,
+            "workspace/updateOffPeakToolPolicy",
+            json!({"workspace": workspace, "enabled": enabled}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(reply, json!({"workspace": workspace, "enabled": enabled}));
+    }
 }
 
 /// W1 (specs/fork-rust-workflow-engine.md 9.2): the Host's dynamic-workflow fact is cached (Node

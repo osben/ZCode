@@ -120,6 +120,8 @@ pub(crate) struct RunScope {
     pub(crate) parts: QueryParts,
     /// 本次运行里等满过预算的 MCP 服务器（直接调用连接中服务器的工具，ext.md §3.8）。
     pub(crate) exhausted: mcp_wait::Exhausted,
+    /// Fork (slice 3 layer B): the ticket of the off-peak run this run belongs to; None for every other run.
+    pub(crate) off_peak_ticket: Option<rust_cli_kernel_api::off_peak_ticket::TicketSource>,
 }
 
 impl RunScope {
@@ -142,6 +144,7 @@ impl RunScope {
             sink,
             parts,
             exhausted: Default::default(),
+            off_peak_ticket: None,
         }
     }
 
@@ -160,11 +163,26 @@ impl RunScope {
 
 pub struct QueryLoop {
     parts: QueryParts,
+    /// Fork: the Host's off-peak port, which resolves an off-peak run's ticket (specs/fork-rust-automations.md,
+    /// slice 3 layer B). None outside the desktop Host.
+    off_peak: Option<Arc<dyn rust_cli_kernel_api::off_peak::OffPeakPort>>,
 }
 
 impl QueryLoop {
     pub fn new(parts: QueryParts) -> Self {
-        Self { parts }
+        Self {
+            parts,
+            off_peak: None,
+        }
+    }
+
+    /// Fork: gives the run loop the off-peak port that resolves an off-peak run's ticket.
+    pub fn with_off_peak(
+        mut self,
+        port: Option<Arc<dyn rust_cli_kernel_api::off_peak::OffPeakPort>>,
+    ) -> Self {
+        self.off_peak = port;
+        self
     }
 
     pub fn parts(&self) -> &QueryParts {
@@ -180,8 +198,13 @@ impl QueryRunner for QueryLoop {
         sink: Arc<dyn RunSink>,
         abort: Abort,
     ) -> Result<QueryStop, QueryError> {
-        let scope = Arc::new(RunScope::new(&request, sink, self.parts.clone(), abort));
-        run::run(scope, request).await
+        let mut scope = RunScope::new(&request, sink, self.parts.clone(), abort);
+        // Fork (slice 3 layer B): only the off-peak run's own turn is sent on its ticket.
+        scope.off_peak_ticket = request
+            .off_peak_execution
+            .as_deref()
+            .and_then(|execution| self.off_peak.as_ref()?.ticket(&request.session, execution));
+        run::run(Arc::new(scope), request).await
     }
 
     fn transcript(

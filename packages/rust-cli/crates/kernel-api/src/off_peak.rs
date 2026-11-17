@@ -31,6 +31,16 @@ impl OffPeakError {
 
 #[async_trait]
 pub trait OffPeakPort: Send + Sync {
+    /// Fork (slice 3 layer B): the ticket source of the open run `execution`, whichever session asks: the requests of
+    /// its turn and of the subagents it started are sent on it. None when no such run is open.
+    fn ticket(
+        &self,
+        _session: &SessionId,
+        _execution: &str,
+    ) -> Option<crate::off_peak_ticket::TicketSource> {
+        None
+    }
+
     /// Sends `method` with `params` plus the `workspace` ref of `session` (the owner session) and answers the Host's
     /// result once it matched the method's reply schema.
     async fn request(
