@@ -44,7 +44,8 @@ pub(crate) trait HelperRequests: Send + Sync {
     ) -> Result<Value, RpcError>;
 
     /// `interaction/browserList` or `interaction/browserExecute` (F4b): forwarded to the Host after the session is
-    /// checked to be one of this agent's. `requestKey` is already removed from `params`.
+    /// checked to be one of this agent's. `params` still carries `requestKey`; the implementation removes it before the
+    /// Host sees the request.
     async fn browser_request(&self, method: &str, _params: Value) -> Result<Value, RpcError> {
         Err(RpcError::method_not_found(method))
     }
@@ -113,12 +114,9 @@ impl NodeHelper {
         let cancel = self.begin(generation, &key);
         if browser {
             // The helper abandons a browser call with `helper/cancelRequest`; the Host's own cancel is the broker's.
-            let mut forwarded = params;
-            if let Some(object) = forwarded.as_object_mut() {
-                object.remove("requestKey");
-            }
+            // `requestKey` stays in `params`: the relay (`relay_browser`) is the one layer that removes it.
             let result = tokio::select! {
-                result = answers.browser_request(method, forwarded) => result,
+                result = answers.browser_request(method, params) => result,
                 () = cancel.cancelled() => Err(unavailable("the browser request was abandoned")),
             };
             self.requests.lock_unpoisoned().live.remove(&key);

@@ -1128,10 +1128,11 @@ impl SessionSink for Live {
         if let KernelEvent::TurnFinished { turn, outcome, .. } = &event.event
             && let Some(helper) = self.context.node_helper()
         {
-            let reason = if matches!(outcome, TurnOutcome::Interrupted) {
-                "interrupted"
-            } else {
-                "completed"
+            // A failed turn is not a completed one: the helper's wire reason must not read as success.
+            let reason = match outcome {
+                TurnOutcome::Interrupted => "interrupted",
+                TurnOutcome::Failed { .. } => "failed",
+                _ => "completed",
             };
             helper.turn_ended(&self.session, turn.as_str(), reason);
         }

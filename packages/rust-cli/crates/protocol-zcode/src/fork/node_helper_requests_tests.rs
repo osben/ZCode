@@ -6,7 +6,9 @@ use tokio_util::sync::CancellationToken;
 
 use super::*;
 use crate::fork::node_helper::HelperRequests;
-use crate::fork::node_helper::requests::{AUTHORIZE_APP_TOOL, SAMPLE_MODEL};
+use crate::fork::node_helper::requests::{
+    AUTHORIZE_APP_TOOL, BROWSER_EXECUTE, BROWSER_LIST, SAMPLE_MODEL,
+};
 
 /// Answers with its params; a request whose input says `wait` waits for its cancel and then fails.
 struct Answers;
@@ -39,6 +41,14 @@ impl HelperRequests for Answers {
 
     fn session_delta(&self, _session: &str, _delta: Value) {}
 
+    async fn browser_request(&self, _method: &str, params: Value) -> Result<Value, RpcError> {
+        // Only the helper's cancel ends a waiting browser request (the test below), so it never answers here.
+        if params["sessionId"] == json!("hang") {
+            std::future::pending::<()>().await;
+        }
+        Ok(params)
+    }
+
     async fn session_workspace(&self, _session: &str) -> Option<Value> {
         Some(json!({"workspacePath": "/w"}))
     }
@@ -60,6 +70,50 @@ async fn helper() -> (Rig, Arc<Answers>) {
 
 fn authorize(key: &str, input: Value) -> Value {
     json!({"requestKey": key, "sessionId": "s1", "input": input})
+}
+
+/// F4b: a browser request is answered by the browser relay, and a helper cancel abandons one that is still waiting.
+#[tokio::test]
+async fn a_browser_request_is_answered_and_a_cancel_abandons_it() {
+    let (rig, _answers) = helper().await;
+    let answer = rig
+        .helper
+        .helper_request(
+            1,
+            BROWSER_LIST,
+            json!({"requestKey": "b1", "sessionId": "s1"}),
+        )
+        .await
+        .unwrap();
+    // The answerer sees the request's params; the relay, not this layer, removes requestKey.
+    assert_eq!(answer["requestKey"], json!("b1"));
+    assert!(rig.helper.requests.lock().unwrap().live.is_empty());
+
+    let running = {
+        let helper = rig.helper.clone();
+        tokio::spawn(async move {
+            helper
+                .helper_request(
+                    1,
+                    BROWSER_EXECUTE,
+                    json!({"requestKey": "b2", "sessionId": "hang"}),
+                )
+                .await
+        })
+    };
+    while rig.helper.requests.lock().unwrap().live.is_empty() {
+        tokio::task::yield_now().await;
+    }
+    rig.helper.cancel_request(&json!({"requestKey": "b2"}));
+    // The unavailable error carries a code suffix; the text names the abandoned request.
+    assert!(
+        running
+            .await
+            .unwrap()
+            .unwrap_err()
+            .message
+            .starts_with("the browser request was abandoned")
+    );
 }
 
 #[tokio::test]

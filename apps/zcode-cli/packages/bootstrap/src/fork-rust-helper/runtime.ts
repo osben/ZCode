@@ -23,7 +23,12 @@ import type { ZCodeProtocolAgentServerContext } from "../zcode-protocol/server-t
 import { V4InteractionRegistry } from "../zcode-protocol-v4/interaction-registry.js";
 import { zcodeProtocolMethods } from "@zcode/shared";
 import { FORK_RUST_HELPER_F3 } from "./f3-protocol.js";
-import { ForkRustBrowserControl } from "./browser-control.js";
+import {
+  FORK_RUST_HELPER_BROWSER_CHILD_SESSION,
+  FORK_RUST_HELPER_BROWSER_CHILD_SESSION_END,
+  FORK_RUST_HELPER_TURN_ENDED,
+  ForkRustBrowserControl,
+} from "./browser-control.js";
 import { withNodeReplServer } from "./node-repl.js";
 import { ForkRustHelperMcpHost } from "./mcp-host.js";
 import { ForkRustHelperClient } from "./rust-client.js";
@@ -54,6 +59,11 @@ const CONCURRENT_METHODS: ReadonlySet<string> = new Set([
   FORK_RUST_HELPER_F3.appToolsCall,
   FORK_RUST_HELPER_F3.appToolsCancel,
   FORK_RUST_HELPER_F3.ping,
+  // F4b: the session-lifecycle class too. Rust awaits childSession with the open timeout before sessionOpen, and
+  // sends childSessionEnd and turn/ended before sessionClose, so none of them may queue behind a plugin install.
+  FORK_RUST_HELPER_BROWSER_CHILD_SESSION,
+  FORK_RUST_HELPER_BROWSER_CHILD_SESSION_END,
+  FORK_RUST_HELPER_TURN_ENDED,
 ]);
 
 export function isConcurrent(message: ZCodeProtocolMessage): boolean {

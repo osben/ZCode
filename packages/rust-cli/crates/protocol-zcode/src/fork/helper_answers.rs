@@ -50,14 +50,20 @@ impl HelperRequests for Server {
         relay_browser(
             method,
             params,
-            |session: String| async move { self.session_workspace(&session).await.is_some() },
-            |method, params| async move {
-                self.context
-                    .peer
-                    .request(&method, &params)
-                    .await
-                    .map_err(|error| RpcError::new(error.code, error.message))
+            // Owned means this agent's: a session it opened in the helper, or one it runs live. The store row alone
+            // is shared by every agent and the Node main agent of the workspace (specs/fork-rust-node-helper.md).
+            |session: String| async move {
+                let live = self
+                    .bridge
+                    .get(&rust_cli_kernel_api::ids::SessionId::new(&session))
+                    .is_some();
+                live || self
+                    .context
+                    .node_helper()
+                    .is_some_and(|helper| helper.opened_here(&session))
             },
+            // The Host's refusal goes back unchanged: its `data` carries the typed error the helper maps (`data.type`).
+            |method, params| async move { self.context.peer.request(&method, &params).await },
         )
         .await
     }
@@ -65,7 +71,20 @@ impl HelperRequests for Server {
     async fn session_parent(&self, session: &str) -> Option<String> {
         use rust_cli_kernel_api::store::SessionKind;
         let id = rust_cli_kernel_api::ids::SessionId::new(session);
-        let meta = self.kernel.session_snapshot(&id).await.ok()?.meta;
+        // A failed read is logged: a subagent whose parent cannot be read opens without its parent's browser scope,
+        // and that must not be silent.
+        let view = match self.kernel.session_snapshot(&id).await {
+            Ok(view) => view,
+            Err(error) => {
+                tracing::warn!(
+                    event = "helper.browser.parent_unread",
+                    error = %error,
+                    "the child-session registration is skipped: the parent cannot be read"
+                );
+                return None;
+            }
+        };
+        let meta = view.meta;
         match (meta.kind, meta.parent) {
             (SessionKind::Subagent, Some(parent)) => Some(parent.as_str().to_owned()),
             _ => None,

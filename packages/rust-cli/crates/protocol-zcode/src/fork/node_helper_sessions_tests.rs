@@ -253,6 +253,18 @@ async fn a_session_call_opens_the_session_once_per_generation() {
     assert_eq!(received(&rig.fake, "helper/session/open").len(), 1);
 }
 
+/// Browser relays are answered only for sessions this agent opened: the store row alone does not make a session
+/// this agent's (F4b, the owned-session check).
+#[tokio::test]
+async fn only_the_sessions_this_agent_opened_are_owned() {
+    let rig = session_rig(sessions(|_| opened()));
+    assert!(!rig.helper.opened_here("s1"));
+    let params = json!({"sessionId": "s1", "serverName": "plugin:viewer:view"});
+    forward_ok(&rig.helper, SESSION_METHOD, params).await;
+    assert!(rig.helper.opened_here("s1"));
+    assert!(!rig.helper.opened_here("foreign"));
+}
+
 #[tokio::test]
 async fn a_refused_open_fails_the_call_and_the_next_call_opens_again() {
     let rig = session_rig(sessions(|attempt| {
@@ -888,6 +900,31 @@ async fn a_failed_subagent_open_ends_its_registration() {
         received(&rig.fake, "helper/browser/childSessionEnd"),
         [json!({"childSessionId": "sub-1"})]
     );
+}
+
+/// F4-D7: a child registration the helper may still accept after Rust gave up on it is ended too (no open was sent).
+#[tokio::test(start_paused = true)]
+async fn a_subagent_registration_that_times_out_is_ended() {
+    let registration_hangs = behaviour(|_, method, params| match method {
+        "helper/browser/childSession" => Act::Hang,
+        _ => Act::Reply {
+            notes: Vec::new(),
+            result: params.clone(),
+        },
+    });
+    let rig = session_rig(registration_hangs);
+    let _ = forward_err(
+        &rig.helper,
+        SESSION_METHOD,
+        json!({"sessionId": "sub-1", "serverName": "plugin:viewer:view"}),
+    )
+    .await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(
+        received(&rig.fake, "helper/browser/childSessionEnd"),
+        [json!({"childSessionId": "sub-1"})]
+    );
+    assert!(received(&rig.fake, "helper/session/open").is_empty());
 }
 
 /// F4-D5/F4b: Rust sends `helper/turn/ended` once per finished turn of an open session, after the turn's own tool

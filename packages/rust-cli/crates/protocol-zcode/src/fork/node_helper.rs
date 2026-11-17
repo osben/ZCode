@@ -234,6 +234,9 @@ pub struct NodeHelper {
     requests: StdMutex<requests::Requests>,
     /// F3: the last `openId` of a `helper/session/open`; a close names its open's id.
     last_open: AtomicU64,
+    /// Every session this agent has opened in the helper (never removed: a close-time relay still arrives after the
+    /// close, and the session stays this agent's). Browser relays are answered only for these or a live session.
+    opened_here: StdMutex<HashSet<String>>,
 }
 
 struct State {
@@ -270,9 +273,9 @@ struct Running {
     pipes: HashMap<String, mcp::Pipe>,
     /// F3: the helper sessions opened (or opening) in this generation. An open session blocks idle reclaim.
     sessions: HashMap<String, sessions::Opening>,
-    /// F4-D7: the subagent sessions whose child registration this generation made, with their parents. Ending one
+    /// F4-D7: the subagent sessions whose child registration this generation made. Ending one
     /// sends `helper/browser/childSessionEnd` before its close.
-    children: HashMap<String, String>,
+    children: HashSet<String>,
     /// F3: the panel instances this generation opened and nobody closed. Dropped with the slot, it closes them on
     /// their sessions' streams.
     panels: Box<panels::Panels>,
@@ -314,7 +317,13 @@ impl NodeHelper {
             pipe_workspaces: StdMutex::default(),
             requests: StdMutex::default(),
             last_open: AtomicU64::new(0),
+            opened_here: StdMutex::new(HashSet::new()),
         })
+    }
+
+    /// Whether this agent opened `session` in the helper. Foreign sessions in the workspace-shared store are not.
+    pub(crate) fn opened_here(&self, session: &str) -> bool {
+        self.opened_here.lock_unpoisoned().contains(session)
     }
 
     /// Forwards `method` when it is allowlisted and the helper advertises it. `None` means the caller answers as
@@ -554,7 +563,7 @@ impl NodeHelper {
             heard: 0,
             pipes: HashMap::new(),
             sessions: HashMap::new(),
-            children: HashMap::new(),
+            children: HashSet::new(),
             panels: Box::new(panels::Panels::new(
                 self.myself.clone(),
                 self.spawner.clone(),
