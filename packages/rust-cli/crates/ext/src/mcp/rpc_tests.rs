@@ -162,3 +162,284 @@ fn root_uris_are_listed_once() {
         json!({"roots": [{"uri": "file:///w"}, {"uri": "file:///x"}]})
     );
 }
+
+/// F3b(c) MCP elicitation on the connection (specs/fork-rust-node-helper.md). The question is asked only while a tool
+/// call of this connection is in flight; otherwise, or for a mode other than form, the answer is a decline.
+mod elicitation {
+    use std::sync::Mutex;
+    use std::time::Duration;
+
+    use async_trait::async_trait;
+    use rust_cli_base::sync::LockUnpoisoned;
+    use rust_cli_kernel_api::ids::ToolUseId;
+    use rust_cli_kernel_api::orchestration::{
+        Answer, InteractionAnswer, InteractionRequest, Interactions, McpElicitationAnswer,
+        OrchestrationError, QuestionAnswer,
+    };
+    use rust_cli_kernel_api::testing::ScriptedInteractions;
+    use serde_json::Map;
+
+    use super::*;
+    use crate::mcp::rpc::ElicitationCall;
+    use crate::test_support::{FakeMcp, server, workspace};
+
+    fn schema() -> Value {
+        json!({"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]})
+    }
+
+    fn name_params() -> Value {
+        json!({"message": "Name?", "requestedSchema": schema()})
+    }
+
+    fn content(value: Value) -> Map<String, Value> {
+        value.as_object().cloned().unwrap()
+    }
+
+    fn fake() -> Arc<FakeMcp> {
+        Arc::new(FakeMcp::default().with("s", server(json!({}), None, |_, _| None)))
+    }
+
+    async fn connected(fake: &Arc<FakeMcp>, scope: &TaskScope) -> Arc<Client> {
+        let request = McpConnect {
+            server: "s".to_owned(),
+            transport: McpTransportConfig::http(
+                "https://mcp.example.com".to_owned(),
+                Default::default(),
+            ),
+        };
+        let transport: Arc<dyn McpTransport> = fake.clone();
+        let id = transport.connect(&workspace(), request).await.unwrap();
+        Client::start(transport, id, &scope.spawner(), Vec::new()).0
+    }
+
+    fn elicit(fake: &FakeMcp, id: u64, params: Value) {
+        fake.push(
+            "s",
+            json!({"jsonrpc": "2.0", "id": id, "method": "elicitation/create", "params": params}),
+        );
+    }
+
+    /// The client's answer to the server's request `id`, once it is sent.
+    async fn answered(fake: &FakeMcp, id: u64) -> Value {
+        for _ in 0..400 {
+            let reply = fake
+                .received()
+                .into_iter()
+                .map(|(_, message)| message)
+                .find(|message| message["id"] == id && message.get("method").is_none());
+            if let Some(reply) = reply {
+                return reply;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        panic!("no answer to request {id}");
+    }
+
+    async fn wait_until(mut done: impl FnMut() -> bool) {
+        for _ in 0..400 {
+            if done() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        panic!("the condition never held");
+    }
+
+    fn in_flight(
+        tool_use: &str,
+        interactions: Arc<dyn Interactions>,
+        cancel: CancellationToken,
+    ) -> ElicitationCall {
+        ElicitationCall {
+            tool_use: ToolUseId::new(tool_use),
+            server: "s".to_owned(),
+            interactions,
+            cancel,
+        }
+    }
+
+    /// An ask that never gets an answer; it records the asks and the withdrawn ones.
+    #[derive(Default)]
+    struct Hanging {
+        asked: Mutex<usize>,
+        withdrawn: Mutex<Vec<ToolUseId>>,
+    }
+
+    #[async_trait]
+    impl Interactions for Hanging {
+        async fn ask(
+            &self,
+            _request: InteractionRequest,
+        ) -> Result<InteractionAnswer, OrchestrationError> {
+            *self.asked.lock_unpoisoned() += 1;
+            std::future::pending().await
+        }
+
+        async fn cancel_ask(&self, tool_use: &ToolUseId) {
+            self.withdrawn.lock_unpoisoned().push(tool_use.clone());
+        }
+
+        fn lasting(&self) -> Option<Arc<dyn Interactions>> {
+            None
+        }
+    }
+
+    #[tokio::test]
+    async fn an_elicitation_without_a_call_is_declined() {
+        let fake = fake();
+        let scope = TaskScope::root("test", |_| {});
+        let _client = connected(&fake, &scope).await;
+        elicit(&fake, 9, name_params());
+        assert_eq!(
+            answered(&fake, 9).await["result"],
+            json!({"action": "decline"})
+        );
+    }
+
+    #[tokio::test]
+    async fn an_accepted_answer_reaches_the_server_with_its_content() {
+        let fake = fake();
+        let scope = TaskScope::root("test", |_| {});
+        let client = connected(&fake, &scope).await;
+        let interactions = Arc::new(ScriptedInteractions::new([Answer::McpElicitation(
+            McpElicitationAnswer::Accept {
+                content: content(json!({"name": "Ada"})),
+            },
+        )]));
+        let _call = client.enter_call(in_flight(
+            "toolu_1",
+            interactions.clone(),
+            CancellationToken::new(),
+        ));
+        elicit(&fake, 9, name_params());
+        assert_eq!(
+            answered(&fake, 9).await["result"],
+            json!({"action": "accept", "content": {"name": "Ada"}})
+        );
+        assert_eq!(
+            interactions.asked(),
+            vec![InteractionRequest::McpElicitation {
+                tool_use: ToolUseId::new("toolu_1"),
+                server: "s".to_owned(),
+                message: "Name?".to_owned(),
+                requested_schema: schema(),
+                origin: None,
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn decline_and_cancel_answers_reach_the_server() {
+        let fake = fake();
+        let scope = TaskScope::root("test", |_| {});
+        let client = connected(&fake, &scope).await;
+        for (id, answer, expected) in [
+            (10, McpElicitationAnswer::Decline, "decline"),
+            (11, McpElicitationAnswer::Cancel, "cancel"),
+        ] {
+            let interactions =
+                Arc::new(ScriptedInteractions::always(Answer::McpElicitation(answer)));
+            let _call =
+                client.enter_call(in_flight("toolu_1", interactions, CancellationToken::new()));
+            elicit(&fake, id, name_params());
+            assert_eq!(
+                answered(&fake, id).await["result"],
+                json!({"action": expected})
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_failed_question_or_another_answer_kind_declines() {
+        let fake = fake();
+        let scope = TaskScope::root("test", |_| {});
+        let client = connected(&fake, &scope).await;
+        // No scripted answer: the ask fails.
+        let failed = Arc::new(ScriptedInteractions::new([]));
+        let call = client.enter_call(in_flight("toolu_1", failed, CancellationToken::new()));
+        elicit(&fake, 20, name_params());
+        assert_eq!(
+            answered(&fake, 20).await["result"],
+            json!({"action": "decline"})
+        );
+        drop(call);
+        // An answer of another kind is not this question's answer.
+        let other = Arc::new(ScriptedInteractions::always(Answer::Question(
+            QuestionAnswer::Declined,
+        )));
+        let _call = client.enter_call(in_flight("toolu_2", other, CancellationToken::new()));
+        elicit(&fake, 21, name_params());
+        assert_eq!(
+            answered(&fake, 21).await["result"],
+            json!({"action": "decline"})
+        );
+    }
+
+    #[tokio::test]
+    async fn a_mode_other_than_form_is_declined_without_asking() {
+        let fake = fake();
+        let scope = TaskScope::root("test", |_| {});
+        let client = connected(&fake, &scope).await;
+        let interactions = Arc::new(ScriptedInteractions::allowing());
+        let _call = client.enter_call(in_flight(
+            "toolu_1",
+            interactions.clone(),
+            CancellationToken::new(),
+        ));
+        elicit(
+            &fake,
+            30,
+            json!({"mode": "url", "message": "Open?", "url": "https://example.com", "elicitationId": "e1"}),
+        );
+        assert_eq!(
+            answered(&fake, 30).await["result"],
+            json!({"action": "decline"})
+        );
+        assert!(interactions.asked().is_empty());
+    }
+
+    #[tokio::test]
+    async fn ending_the_call_withdraws_the_question_and_answers_cancel() {
+        let fake = fake();
+        let scope = TaskScope::root("test", |_| {});
+        let client = connected(&fake, &scope).await;
+        let hanging = Arc::new(Hanging::default());
+        let call = client.enter_call(in_flight(
+            "toolu_1",
+            hanging.clone(),
+            CancellationToken::new(),
+        ));
+        elicit(&fake, 40, name_params());
+        wait_until(|| *hanging.asked.lock_unpoisoned() == 1).await;
+        drop(call);
+        assert_eq!(
+            answered(&fake, 40).await["result"],
+            json!({"action": "cancel"})
+        );
+        assert_eq!(
+            *hanging.withdrawn.lock_unpoisoned(),
+            vec![ToolUseId::new("toolu_1")]
+        );
+    }
+
+    #[tokio::test]
+    async fn cancelling_the_call_withdraws_the_question_and_answers_cancel() {
+        let fake = fake();
+        let scope = TaskScope::root("test", |_| {});
+        let client = connected(&fake, &scope).await;
+        let hanging = Arc::new(Hanging::default());
+        let cancel = CancellationToken::new();
+        let _call = client.enter_call(in_flight("toolu_1", hanging.clone(), cancel.clone()));
+        elicit(&fake, 50, name_params());
+        wait_until(|| *hanging.asked.lock_unpoisoned() == 1).await;
+        cancel.cancel();
+        assert_eq!(
+            answered(&fake, 50).await["result"],
+            json!({"action": "cancel"})
+        );
+        assert_eq!(
+            *hanging.withdrawn.lock_unpoisoned(),
+            vec![ToolUseId::new("toolu_1")]
+        );
+    }
+}

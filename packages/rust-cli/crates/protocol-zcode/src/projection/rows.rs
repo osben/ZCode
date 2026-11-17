@@ -541,6 +541,20 @@ impl Projection {
             InteractionRequest::PlanApproval { plan, .. } => {
                 super::elicitation::plan_approval(interaction, anchor, now, &tool_use, plan)
             }
+            InteractionRequest::McpElicitation {
+                server,
+                message,
+                requested_schema,
+                ..
+            } => super::elicitation::mcp_elicitation(
+                interaction,
+                anchor,
+                now,
+                &tool_use,
+                server,
+                message,
+                requested_schema,
+            ),
         };
         let mut pending = pending;
         if let Some(origin) = request.origin() {

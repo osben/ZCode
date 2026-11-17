@@ -151,10 +151,12 @@ fn one_tool_is_found_by_its_name_alone() {
 }
 
 #[test]
-fn the_result_budget_is_the_nodes_model_byte_budget() {
-    // Node's app tool entry declares resultBudget.maxModelBytes 50 000, the budget `Limit::Bytes` applies.
+fn the_result_budget_is_the_nodes_truncate_budget() {
+    // Node's app tool entry declares resultBudget.maxModelBytes 50 000 with strategy truncate: head-cut, nothing persisted.
+    // The pipeline's `Limit::of` picks the truncate kind, so no artifact is written for an oversized answer.
     let tool = one(&host(vec![spec("app__calc__pick")]));
-    assert_eq!(tool.result_budget_bytes(), Some(50_000));
+    assert_eq!(tool.result_budget_truncate_bytes(), Some(50_000));
+    assert_eq!(tool.result_budget_bytes(), None);
 }
 
 #[tokio::test]

@@ -237,6 +237,17 @@ impl SkillCatalog {
         workspace: &WorkspaceRef,
         session: Option<&rust_cli_kernel_api::ids::SessionId>,
     ) -> Vec<Arc<Skill>> {
+        let skills = self.discovered(workspace, session).await;
+        self.granted(session, skills)
+    }
+
+    /// Fork (rule 17): the skills discovered for `session` before its grant filter. A grant resolves against this set,
+    /// so a re-grant can discover without the child's old grant applying, or the new one.
+    async fn discovered(
+        &self,
+        workspace: &WorkspaceRef,
+        session: Option<&rust_cli_kernel_api::ids::SessionId>,
+    ) -> Vec<Arc<Skill>> {
         let facts = match self.info.facts(workspace).await {
             Ok(facts) => facts,
             Err(error) => {
@@ -244,10 +255,8 @@ impl SkillCatalog {
                 return Vec::new();
             }
         };
-        let skills = self
-            .skills_with(workspace, &facts, self.keeps_plugins(session))
-            .await;
-        self.granted(session, skills)
+        self.skills_with(workspace, &facts, self.keeps_plugins(session))
+            .await
     }
 
     /// Fork (rule 17): `skills` as the child run of `session` sees them: only the granted identities, when it has a grant.
@@ -259,12 +268,7 @@ impl SkillCatalog {
         let Some(session) = session else {
             return skills;
         };
-        let grant = self
-            .grants
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get(session)
-            .cloned();
+        let grant = self.grants.lock_unpoisoned().get(session).cloned();
         match grant {
             Some(identities) => grants::filter_granted(&skills, &identities),
             None => skills,
@@ -413,24 +417,17 @@ impl rust_cli_kernel_api::subagent_config::SubagentSkillGrants for SkillCatalog 
         workspace: &WorkspaceRef,
         entries: &[String],
     ) -> Vec<String> {
-        // Drop an earlier grant first: the discovery for the child must see every skill.
-        self.grants
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .remove(child);
-        let skills = self.skills_in(workspace, Some(child)).await;
+        // Discover unfiltered while the child's old grant is still in force; the new grant replaces it with one insert,
+        // so no concurrent lookup sees the full catalog in between.
+        let skills = self.discovered(workspace, Some(child)).await;
         let resolved = grants::resolve(entries, &skills);
         self.grants
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .lock_unpoisoned()
             .insert(child.clone(), resolved.identities);
         resolved.unresolved
     }
 
     fn forget(&self, child: &rust_cli_kernel_api::ids::SessionId) {
-        self.grants
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .remove(child);
+        self.grants.lock_unpoisoned().remove(child);
     }
 }
