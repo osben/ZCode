@@ -155,6 +155,7 @@ export async function runForkRustHelper(options: RunForkRustHelperOptions): Prom
           env,
         }),
         workspace.workspacePath,
+        env,
       ),
     logger,
   });

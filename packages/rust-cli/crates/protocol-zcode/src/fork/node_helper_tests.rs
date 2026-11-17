@@ -331,7 +331,11 @@ fn forwarded_table_is_the_spec_list() {
     // answers itself stays out.
     assert!(FORWARDED_METHODS.contains(&"plugins/mentionItems"));
     assert!(!FORWARDED_METHODS.contains(&"skills/referenceCatalog"));
-    assert_eq!(RELAYED_NOTIFICATIONS, &["plugins/operationProgress"]);
+    // F4c: the computer-use operation events are relayed to the Host verbatim (specs/fork-rust-node-helper.md F4c).
+    assert_eq!(
+        RELAYED_NOTIFICATIONS,
+        &["plugins/operationProgress", "computer-use/operation-event"]
+    );
 }
 
 #[tokio::test]

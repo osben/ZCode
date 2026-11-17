@@ -88,7 +88,11 @@ pub(crate) const FORWARDED_METHODS: &[&str] = &[
 ];
 
 /// Helper notifications relayed to the Host verbatim. Any other notification from the helper is dropped.
-pub(crate) const RELAYED_NOTIFICATIONS: &[&str] = &["plugins/operationProgress"];
+pub(crate) const RELAYED_NOTIFICATIONS: &[&str] = &[
+    "plugins/operationProgress",
+    // F4c: the helper relays computer-use operation events (specs/fork-rust-node-helper.md F4c).
+    "computer-use/operation-event",
+];
 
 /// Answered without a helper when no helper process exists or is starting: no operation can be in flight, and
 /// starting one only to answer `cancelled: false` would cost a Node process. During a start the cancel waits for it,

@@ -4,6 +4,8 @@ import { describe, expect, it } from "vitest";
 import type { PluginLoadOutcome } from "@zcode/contracts";
 import { withNodeReplServer } from "../../src/fork-rust-helper/node-repl.js";
 
+const CUA_SOCKET = "ZCODE_CUA_PERMISSION_BROKER_SOCKET";
+
 function outcome(enabledIds: string[], withHost = true): PluginLoadOutcome {
   const ids = ["browser-use@zcode-plugins-official", "computer-use@zcode-plugins-official"];
   const plugins = ids.map((id) => ({
@@ -40,5 +42,25 @@ describe("helper node_repl config", () => {
   it("does not inject node_repl without the node-repl-host plugin", () => {
     const result = withNodeReplServer(outcome(["browser-use@zcode-plugins-official"], false), "/work");
     expect(result.mcpServers.node_repl).toBeUndefined();
+  });
+
+  // F4c (F4-D6): the computer-use broker socket reaches node_repl only, from the helper's own env.
+  it("passes the computer-use broker socket to node_repl only", () => {
+    const result = withNodeReplServer(
+      outcome(["computer-use@zcode-plugins-official"]),
+      "/work",
+      { [CUA_SOCKET]: "/tmp/cua.sock" },
+    );
+    expect(result.mcpServers.node_repl?.env).toMatchObject({ [CUA_SOCKET]: "/tmp/cua.sock" });
+    expect(result.mcpServers["plugin:other:files"]).toEqual({ type: "stdio", command: "x", args: [] });
+  });
+
+  it("does not set the broker socket when the helper env has none or a blank one", () => {
+    const none = withNodeReplServer(outcome(["browser-use@zcode-plugins-official"]), "/work", {});
+    expect(none.mcpServers.node_repl?.env?.[CUA_SOCKET]).toBeUndefined();
+    const blank = withNodeReplServer(outcome(["browser-use@zcode-plugins-official"]), "/work", {
+      [CUA_SOCKET]: "   ",
+    });
+    expect(blank.mcpServers.node_repl?.env?.[CUA_SOCKET]).toBeUndefined();
   });
 });
