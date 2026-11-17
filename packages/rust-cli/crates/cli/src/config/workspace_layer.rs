@@ -45,6 +45,37 @@ pub(crate) struct Loader {
 
 #[async_trait]
 impl WorkspaceConfigLoader for Loader {
+    /// The user-scope servers the config files hold now (the same readers as `load`, merged as the process config
+    /// merges them, user origins only). The process-start snapshot goes stale when the user config changes.
+    async fn user_servers(&self, workspace: &WorkspaceRef) -> Option<Vec<McpServer>> {
+        let inputs = ConfigInputs {
+            files: self.files.as_ref(),
+            workspace,
+            paths: &self.paths,
+            process_env: &self.process_env,
+            flag: self.flag.as_ref(),
+            project_is_local: self.project_is_local,
+        };
+        let files = super::read_files(&inputs).await;
+        let empty = Map::new();
+        let mut warnings = Vec::new();
+        let layers = super::layers(&files, inputs.flag, &empty, &mut warnings);
+        let merged = merge::mcp_layers(&layers, &mut warnings);
+        Some(
+            merged
+                .servers
+                .iter()
+                .filter(|server| {
+                    merged
+                        .origins
+                        .get(&server.name)
+                        .is_some_and(|origin| origin.user)
+                })
+                .cloned()
+                .collect(),
+        )
+    }
+
     async fn load(&self, workspace: &WorkspaceRef) -> Option<WorkspaceConfig> {
         let inputs = ConfigInputs {
             files: self.files.as_ref(),

@@ -34,6 +34,13 @@ pub struct WorkspaceConfig {
 #[async_trait]
 pub trait WorkspaceConfigLoader: Send + Sync {
     async fn load(&self, workspace: &WorkspaceRef) -> Option<WorkspaceConfig>;
+
+    /// The user-scope servers the config holds now. A load runs these, not the process-start snapshot the layer
+    /// was built with: the user config can change after the process started (Node's per-app pool reads it at each
+    /// connect). `None` keeps the snapshot.
+    async fn user_servers(&self, _workspace: &WorkspaceRef) -> Option<Vec<McpServer>> {
+        None
+    }
 }
 
 /// Fork (specs/fork-rust-workspace-plugins-mcp.md, "As built"): receives a workspace's own plugin set when its
@@ -366,7 +373,12 @@ impl WorkspaceLayer {
                 )
                 .await
                 .plugins;
-                let mut servers = self.servers.clone();
+                // The user servers the config holds at this load; the process-start snapshot only when the loader
+                // cannot read them (the trait default).
+                let mut servers = match loader.user_servers(workspace).await {
+                    Some(user) => user,
+                    None => self.servers.clone(),
+                };
                 servers.extend(loaded.mcp_servers());
                 servers.extend(config.servers);
                 Install::Loaded {

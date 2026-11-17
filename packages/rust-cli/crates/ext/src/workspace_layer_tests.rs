@@ -622,3 +622,43 @@ async fn the_open_after_a_prewarm_reuses_its_read_once() {
     layer.load(&workspace()).await;
     assert_eq!(names(&mcp, "/w"), ["re-read"]);
 }
+
+/// A loader whose project layer is empty and whose user-scope servers are read at load time.
+struct WithUserServers(Vec<McpServer>);
+
+#[async_trait::async_trait]
+impl WorkspaceConfigLoader for WithUserServers {
+    async fn load(&self, _workspace: &WorkspaceRef) -> Option<WorkspaceConfig> {
+        Some(WorkspaceConfig {
+            plugins: PluginSources::default(),
+            servers: Vec::new(),
+        })
+    }
+
+    async fn user_servers(&self, _workspace: &WorkspaceRef) -> Option<Vec<McpServer>> {
+        Some(self.0.clone())
+    }
+}
+
+/// Red test (E2E: `everything` missing from the session's workspace group): the user config is written after the
+/// process started, so the process-start snapshot the layer was built with lacks the user server. A workspace group
+/// loaded now must run the user servers the config holds at load time, as Node's per-app pool does.
+#[tokio::test]
+async fn a_loaded_group_runs_the_user_servers_the_config_holds_at_load() {
+    let scope = TaskScope::root("test", |_| {});
+    let fake: Arc<FakeMcp> = Arc::new(FakeMcp::default());
+    let (mcp, layer) = layer(&fake, &scope);
+    let user = McpServer {
+        name: "everything".to_owned(),
+        scope: crate::mcp::McpScope::User,
+        transport: McpTransportConfig::stdio("node".to_owned(), Vec::new()),
+        options: Default::default(),
+        oauth: None,
+        machine: Default::default(),
+    };
+    layer.set_loader(Arc::new(WithUserServers(vec![user])));
+
+    layer.load(&workspace()).await;
+
+    assert_eq!(names(&mcp, "/w"), ["everything"]);
+}
