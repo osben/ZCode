@@ -20,3 +20,25 @@ fn estimate_matches_the_old_formulas() {
         }
     }
 }
+
+/// Node's `estimateTokens` (apps/zcode-cli/packages/core/src/context/utils.ts) with `ESTIMATED_TOKEN_CHAR_DIVISOR = 3`.
+/// Expected values are Node's own output (2026-11-16, verbatim copies of the two functions run under Node 26).
+#[test]
+fn estimate_text_matches_node_estimate_tokens() {
+    let cases: [(&str, u64); 11] = [
+        ("", 0),
+        ("abcd", 2),
+        ("中文😀", 2),
+        ("\u{4dff}", 1),
+        ("\u{4e00}", 1),
+        ("\u{9fff}", 1),
+        ("\u{a000}", 1),
+        ("𠀀", 1),
+        ("a\u{4e00}b\u{9fff}c", 3),
+        ("line\nwith \"quotes\" and \\ backslash\t", 12),
+        ("中中中中中中中xxxxx", 7),
+    ];
+    for (text, tokens) in cases {
+        assert_eq!(estimate_text(text), tokens, "{text:?}");
+    }
+}

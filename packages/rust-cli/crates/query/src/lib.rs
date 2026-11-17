@@ -12,6 +12,8 @@
 
 mod assembler;
 mod compaction;
+// Classifier for `v4/conversation/contextComposition`; its consumer (the protocol handler) follows in the next PR.
+pub mod composition;
 mod defaults;
 mod deferred;
 mod executor;

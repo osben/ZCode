@@ -1353,9 +1353,78 @@ crash        [Node]           next inspect: kill(pid, 0) = ESRCH -> deletes the 
 ### (c) Model-facing, telemetry and skew-safe
 
 - Background subagent stall reminder (core `subagent-stall-reminder.ts`, config `subagents.backgroundStallNotifyMs`): done on this branch, see "Background subagent stall reminder" below.
-- `v4/conversation/contextComposition`, `v4/telemetry/model-request-metrics` and `v4/storage/sessionData/deletion*`: absent; the Host treats their absence as unsupported.
+- `v4/conversation/contextComposition`, `v4/telemetry/model-request-metrics` and `v4/storage/sessionData/deletion*`: absent; the Host treats their absence as unsupported. Scoped in detail under "Context composition, session deletion and model-request metrics (gap analysis)" below; none of the three is ported yet.
 
 Order: A1 then A2, then A3, then the database check, then B2, B3 and B5, then B4, then the stall reminder. B1's managed-worktree support waits for a design agreed with the user; its interim `cwd`/`targetCwd` refusal is in (2026-11-15).
+
+## Context composition, session deletion and model-request metrics (gap analysis)
+
+Status (2026-11-16): gap analysis only. None of the three methods is ported. This section records what Node does, what Rust has, and the order of work, so that each port starts from verified facts.
+
+### `v4/storage/sessionData/deletionPreview` and `deletionExecute`
+
+- **Node.** Bootstrap `zcode-protocol/session-data/permanent-deletion.ts` (`previewSessionDeletion`, `executeSessionDeletion`). Store: `adapters/src/storage/session-store/repositories/sessions.ts` `inspectSessionDeletion` (~l.542), `beginSessionDeletion` (~l.692), `completeSessionDeletion` (~l.730). Files: `adapters/src/storage/session-data-files/index.ts` (`listSessionFiles`, `removeSession(id, retained)`). Schemas: `packages/shared/src/zcode-protocol-v4/session-data/contract.ts`.
+- **Rust today.** Upstream migration `0025_session_permanent_deletion` tables (`session_purge`, `session_runtime_presence`) are read by the presence code in `node-store/src/presence.rs`, and the request gate reads them in `protocol-zcode/src/presence_gate.rs`. Nothing else exists: no inspect, begin or complete, no file manifest, no dispatch arm. The refusal is `method_not_found` from the dispatcher in `protocol-zcode/src/server.rs` (the `other =>` arm), not from `presence_gate.rs`.
+- **Correction to earlier wording.** `DELETION_METHODS` in `presence_gate.rs` is the request-gate exemption, not a refusal list. It must stay. `beginSessionDeletion` writes the barrier row that the gate checks, so an `incomplete` deletion could never be retried if these methods were gated. Node exempts them for the same reason.
+- **Revision.** Node: sha256 over `JSON.stringify` of `{ids, facts, forks, references, pendingWork}` (inspect) and, in the preview, sha256 over `JSON.stringify([revision, [[relativePath, bytes]...], blockedReason])`. Rust must reproduce key order and `undefined`-as-`null` exactly, or a preview from Node and an execute from Rust disagree.
+- **Admission.** `begin` runs inside `begin immediate`. It rejects a foreign live runtime or pending work with `running`, and a revision mismatch with `changed`. Only then does it insert the `deleting` rows. `complete` purges the rows and sets `deleted`.
+- **Out of scope.** `sessionDataPurge` and `sessionDataMeasure` (same Node module) stay `method_not_found`. The Host does not gate them by runtime, so permanent deletion fails with that error in Rust mode (item 9 above).
+- **Acceptance.** Red tests first: execute on a session whose purge row is `deleting` is not refused by the request gate; preview and execute over the same fixture produce the same `revision` in Node and Rust; a deletion touches exactly the rows and files that Node's `purgeSessions` and file port touch.
+
+### `v4/conversation/contextComposition`
+
+- **Node.** Core `runtime/context-composition/`: `classifier.ts` (354 lines, the 11 fine categories and 7 coarse ones, token rules), `preview.ts`, `state.ts` (request record and change reasons), `query.ts`, `items.ts`. Bootstrap `zcode-protocol/context-composition/` (`handler.ts`, `tracker.ts`).
+- **Rust today.** No method, no `contextCompositionChanged` notification, no classifier, no request record.
+- **Blocker.** The classifier is written against Node's message model: `ModelInputMessage`, origin entries from the provider projection, MCS-merged reminders, system-reminder sources, ToolSearch exposure, skill and instruction items. Rust's prompt assembly has to be mapped onto those categories first, and the token estimator (`context/utils.ts` `estimateTokens`) must be checked against Rust's for equal counts. A handler that returns `null` for every session would pass the shape check and would not be parity, so it is not acceptable as a partial port.
+- **Acceptance.** Response shape identical to Node (`composition: null` for unknown sessions, `revision` starting at 0 per process, one coalesced notification per tick, no timers). Token accounting rules as in `classifier.ts`. Node's `core/tests/context-composition/runtime.test.ts` and `bootstrap/tests/context-composition/tracker.test.ts` ported as red tests first.
+
+#### Rust port, step 1 (2026-11-16): estimator and classifier
+
+Landed on `feat/rust-context-composition`. Not yet reachable from the protocol.
+
+- **Estimator.** `base/src/tokens.rs` `estimate_text` is Node's `estimateTokens` with `ESTIMATED_TOKEN_CHAR_DIVISOR = 3`. The private copy in `protocol-zcode/src/attachment_text.rs` now calls it, so there is one implementation. Expected values in `tokens_tests.rs` come from Node's own functions (verbatim copies run under Node 26; the divisor is `packages/shared/src/usage-stats.ts`). Cases: the U+4DFF / U+4E00 / U+9FFF / U+A000 boundaries, a non-BMP character, mixed CJK and ASCII, and the empty string.
+- **Classifier.** `query/src/composition.rs`: the 11 categories in Node's order, the 7 usage-ring sources, the wire form (zero categories dropped, items sorted by tokens, at most 50, names cut at 200 UTF-16 units). Tests in `composition_tests.rs`.
+- **Rust-to-category mapping (as implemented).**
+
+  | Rust input                                                                                                                                                                                                                                                                                                  | Category                                                        |
+  | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+  | `ModelRequest.system` blocks                                                                                                                                                                                                                                                                                | `system_prompt` (item `system_block`)                           |
+  | `Message::Attachment` / `UserOrigin::Meta` with source `instructions`                                                                                                                                                                                                                                       | `meta_user_context`                                             |
+  | same, source in the reminder list (`environment`, `date`, `date_change`, `plan_mode_exit`, `deferred_tools_delta`, `nested_memory`, `remote_machines`, `goal_status`, `hook_additional_context`, `hook_success`, `hook_stopped_continuation`, `max_turns_reached`, `read_truncation_notice`, `diagnostics`) | `reminders`                                                     |
+  | any other attachment or meta source (`file`, `queued_command`, `fork`, …)                                                                                                                                                                                                                                   | `messages`                                                      |
+  | `SystemMessage::CompactBoundary`                                                                                                                                                                                                                                                                            | `compact_summary`                                               |
+  | user (human), assistant, `Interrupted`                                                                                                                                                                                                                                                                      | `messages` (named `user`, `assistant`, `system`)                |
+  | tool named `mcp__*` / `app__*` / other                                                                                                                                                                                                                                                                      | `mcp_tool_schemas` / `app_tool_schemas` / `system_tool_schemas` |
+
+- **Deviations from Node (open, each needs a decision or a Rust-side change).**
+  1. Sizes. Node sizes each message as `{role, content, toolCalls, toolCallId, toolName}` of its projected form. Rust sizes each pre-normalize `Message` as its serde JSON. The totals will differ from Node's for the same conversation.
+  2. Tools. Node sizes ten contract fields. Rust's `ToolDefinition` has name, description and input schema, so only those are sized.
+  3. System sections. Rust keeps no per-section name, source or injection target. Every block is `system_prompt`; `skills` and `tool_prompt` stay empty.
+  4. Deferred tools. `ToolDefinition` has no `defer_loading`, so `deferred_tool_schemas` is always empty and deferred tools count at full size. The fix needs the flag in the request model.
+  5. Origins. Node apportions a merged message across its origin entries (MCS, reminders folded into tool results). Rust classifies the pre-normalize messages, so a merged reminder is not split.
+  6. Skills and instructions. Node takes `skills` and instruction items from their announced text. Rust has no skills listing attachment yet, and instructions use the `instructions` attachment text.
+  7. Source names. Rust attachment sources are not Node's reminder ids (for example Rust `instructions` vs Node `context_prefix`, `deferred_tools_delta` vs `tool_search_announcement`). The table above is the mapping; a source Rust adds later must be added there.
+
+- **Still to do before the method can ship.** (a) Record the classified request per session at the call site after `assemble` in `query/src/request.rs`, with the usage fields from the same usage record that feeds `usedTokens`. (b) Invalidation events from §3.4 (compact, tool-cache invalidation, context-prefix rebuild, model change). (c) Draft preview (§3.5) without side effects, so an unsent session never returns `null`. (d) Tracker on the protocol server, dispatch arm `v4/conversation/contextComposition` in `protocol-zcode/src/server.rs`, and the `contextCompositionChanged` notification. (e) Protocol-level test mirroring Node's `bootstrap/tests/context-composition/protocol.test.ts`. Until (a) to (d) land, the method stays absent, which the App reads as "unsupported", the same as today.
+
+### `v4/telemetry/model-request-metrics`
+
+- **Not a Host-only method.** Node produces it in the agent process: `bootstrap/src/zcode-protocol-v4/v4-gateway.ts` (~l.1009-1015) normalizes each model event with `conversation-telemetry-facts.ts` `normalizeModelRequestMetrics` and calls `host.emitModelRequestMetrics`, which `zcode-protocol/v4-bridge.ts` (~l.2453) sends as `v4/telemetry/model-request-metrics`. The notification is live-only, and older Apps ignore it.
+- **Rust today.** No producer. This is a real gap. It is a notification fed from model-completion events, so it depends on the same per-request data as the request phase of context composition.
+
+### Desktop E2E inventory
+
+- No active desktop spec calls `contextComposition` or `deletionPreview` or `deletionExecute`. The grep hit on `sessionData` in `conversation-session-turn-error-history-activity.test.ts` is `sessionDatabase`, a false positive.
+- The only permanent-delete spec is `packages/desktop/test/e2e/conversation-session/task-management/manual-review/pending/conversation-session-permanent-delete.test.ts` (DEL01). It is pending in `manual-review`. It drives the sidebar delete and reads `~/.zcode` rows; it does not call the methods directly.
+- No E2E covers the context-composition panel. `packages/services/src/extensions/contextPump.ts` consumes the query, with no spec.
+
+### Order of work
+
+1. Deletion store in `node-store` (inspect, begin, complete) with red tests from Node's `adapters/tests/session-store-permanent-deletion.test.ts`. No migration: the tables are upstream and already exist.
+2. Deletion file manifest and removal, matching `session-data-files/index.ts` roots (`artifacts`, `exec`, `agents`, `sessions`, `debug|rollout/model-io-<id>.jsonl`).
+3. Dispatch arms for `deletionPreview` and `deletionExecute` in `server.rs`, keeping the gate exemption.
+4. Context composition: token-estimator parity check, then the Rust mapping onto the 11 categories, then the request record and tracker.
+5. `model-request-metrics` producer, fed from the same per-request record as step 4.
 
 ## Background subagent stall reminder (Node `subagent-stall-reminder.ts`, `background-stall.ts`)
 
