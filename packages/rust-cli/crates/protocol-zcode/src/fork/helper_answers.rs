@@ -47,24 +47,19 @@ where
 #[async_trait]
 impl HelperRequests for Server {
     async fn browser_request(&self, method: &str, params: Value) -> Result<Value, RpcError> {
-        // Owned sessions only: the broker names the session its browser call belongs to (F4-D5).
-        let owned = params
-            .get("sessionId")
-            .and_then(Value::as_str)
-            .filter(|session| !session.is_empty());
-        let Some(session) = owned else {
-            return Err(RpcError::invalid_params("sessionId is required"));
-        };
-        if self.session_workspace(session).await.is_none() {
-            return Err(RpcError::invalid_params(
-                "the session is not one of this agent's",
-            ));
-        }
-        self.context
-            .peer
-            .request(method, &params)
-            .await
-            .map_err(|error| RpcError::new(error.code, error.message))
+        relay_browser(
+            method,
+            params,
+            |session: String| async move { self.session_workspace(&session).await.is_some() },
+            |method, params| async move {
+                self.context
+                    .peer
+                    .request(&method, &params)
+                    .await
+                    .map_err(|error| RpcError::new(error.code, error.message))
+            },
+        )
+        .await
     }
 
     async fn session_parent(&self, session: &str) -> Option<String> {
@@ -153,6 +148,38 @@ impl HelperRequests for Server {
             sink.plugin_ui(delta).await;
         }));
     }
+}
+
+/// F4b: relays one browser request of the helper (`interaction/browserList` or `interaction/browserExecute`). The
+/// session is named by `sessionId` and must be one this agent owns; the helper's `requestKey` stays here. Main gets
+/// the rest, as the broker built it (F4-D5).
+pub(super) async fn relay_browser<Owned, OwnedFut, Host, HostFut>(
+    method: &str,
+    mut params: Value,
+    owned: Owned,
+    host: Host,
+) -> Result<Value, RpcError>
+where
+    Owned: FnOnce(String) -> OwnedFut,
+    OwnedFut: std::future::Future<Output = bool>,
+    Host: FnOnce(String, Value) -> HostFut,
+    HostFut: std::future::Future<Output = Result<Value, RpcError>>,
+{
+    let session = params
+        .get("sessionId")
+        .and_then(Value::as_str)
+        .filter(|session| !session.is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| RpcError::invalid_params("sessionId is required"))?;
+    if let Some(object) = params.as_object_mut() {
+        object.remove("requestKey");
+    }
+    if !owned(session).await {
+        return Err(RpcError::invalid_params(
+            "the session is not one of this agent's",
+        ));
+    }
+    host(method.to_owned(), params).await
 }
 
 pub(super) fn required<'a>(params: &'a Value, key: &str) -> Result<&'a str, RpcError> {

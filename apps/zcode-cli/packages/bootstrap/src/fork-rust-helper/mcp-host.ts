@@ -1,5 +1,4 @@
 import type { McpConnectionPool } from "@zcode/adapters/mcp";
-import { injectNodeReplBrowserBroker } from "../app/node-repl-browser-broker.js";
 import {
   createRootTraceContext,
   McpResourceSubscribeUnsupportedError,
@@ -44,7 +43,7 @@ import {
   type HelperWorkspace,
 } from "./f3-protocol.js";
 import type { ForkRustHelperClient } from "./rust-client.js";
-import type { ForkRustBrowserControl } from "./browser-control.js";
+import { nodeReplConfigFor, type ForkRustBrowserControl } from "./browser-control.js";
 import { PluginOutcomes } from "./plugin-outcomes.js";
 import { SessionLanes } from "./session-lanes.js";
 import { createHelperSessionRecord, type HelperSession } from "./session-record.js";
@@ -119,7 +118,8 @@ export class ForkRustHelperMcpHost {
   private async serverConfig(server: string, workspace: HelperWorkspace): Promise<McpServerConfig> {
     const config = (await this.plugins.get(workspace)).mcpServers[server];
     if (!config) throw new ProtocolRequestError(-32602, `MCP server is not a helper plugin server: ${server}`);
-    return config;
+    // The same config a session open gives node_repl, so the pool shares one process (F4b).
+    return this.deps.browser ? nodeReplConfigFor(this.deps.browser, server, config) : config;
   }
 
   /** `directory` is where the servers run: the workspace, or a session's execution worktree. */
@@ -381,8 +381,11 @@ export class ForkRustHelperMcpHost {
         : {}),
     };
     // node_repl gets the browser broker's socket and token (Node `injectNodeReplBrowserBroker`, F4b).
-    const withBroker = this.deps.browser && servers.node_repl
-      ? injectNodeReplBrowserBroker(servers, this.deps.browser.nodeRepl())
+    const browser = this.deps.browser;
+    const withBroker = browser
+      ? Object.fromEntries(
+          Object.entries(servers).map(([name, config]) => [name, nodeReplConfigFor(browser, name, config)]),
+        )
       : servers;
     const port = this.deps.pool.acquireLease({ leaseId: sessionId, sessionId });
     try {

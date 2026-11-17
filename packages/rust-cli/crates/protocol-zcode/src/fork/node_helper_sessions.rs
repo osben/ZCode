@@ -20,6 +20,8 @@ const CLOSE: &str = "helper/session/close";
 /// F4-D7: Rust is the only sender of a subagent's browser registration (specs/fork-rust-node-helper.md "F4b").
 const CHILD_SESSION: &str = "helper/browser/childSession";
 const CHILD_SESSION_END: &str = "helper/browser/childSessionEnd";
+/// F4-D5: a turn of an open session ended; the helper's broker runs its turnEnded (specs/fork-rust-node-helper.md F4b).
+const TURN_ENDED: &str = "helper/turn/ended";
 
 /// The forwarded methods that always name a session: the 16 `mcp/ui*` methods, `mcp/readResource` and
 /// `plugins/mentionItems`.
@@ -414,6 +416,27 @@ impl NodeHelper {
         if let Some((peer, open_id, child)) = peer {
             self.send_close_ending(&peer, session, open_id, child);
         }
+    }
+
+    /// A turn of `session` finished (sent once per turn by its owner, after the turn's own tool calls answered). Only a
+    /// session this generation holds open is told: there is no browser scope to release otherwise.
+    pub fn turn_ended(&self, session: &str, turn_id: &str, reason: &str) {
+        let peer = {
+            let state = self.state.lock_unpoisoned();
+            match &state.slot {
+                Slot::Running(running) if running.sessions.contains_key(session) => {
+                    Some(running.peer.clone())
+                }
+                _ => None,
+            }
+        };
+        let Some(peer) = peer else {
+            return;
+        };
+        let params = json!({"sessionId": session, "turnId": turn_id, "reason": reason});
+        drop(self.spawner.spawn("node-helper-turn-ended", async move {
+            peer.notify(TURN_ENDED, &params).await;
+        }));
     }
 
     /// F4-D7: `helper/browser/childSessionEnd` for a subagent session. One task sends it and then the close, so the

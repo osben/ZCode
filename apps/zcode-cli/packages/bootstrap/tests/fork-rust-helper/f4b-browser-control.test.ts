@@ -95,3 +95,21 @@ describe("helper broker lifecycle and routing (ported from browser-control-broke
     expect(executes(sent)).toHaveLength(0);
   });
 });
+
+// One config per server (F4b): the pipe and the session open must hand node_repl the same config, or the pool starts a
+// second node_repl process. The broker's socket goes into node_repl's env on both paths through one function.
+describe("node_repl broker config is the same on every path", () => {
+  it("adds the broker socket to node_repl's stdio config, and leaves other servers alone", async () => {
+    const { ForkRustBrowserControl, nodeReplConfigFor } = await import(
+      "../../src/fork-rust-helper/browser-control.js"
+    );
+    const { context } = harness();
+    const browser = new ForkRustBrowserControl({ context });
+    const config = { type: "stdio", command: "node", args: [], env: { A: "1" } } as const;
+    const withBroker = nodeReplConfigFor(browser, "node_repl", config) as { env: Record<string, string> };
+    expect(withBroker.env.ZCODE_NODE_REPL_BROWSER_BROKER_SOCKET).toBe(browser.nodeRepl().socketPath);
+    expect(withBroker.env.A).toBe("1");
+    expect(nodeReplConfigFor(browser, "plugin:x:y", config)).toBe(config);
+    await browser.dispose();
+  });
+});

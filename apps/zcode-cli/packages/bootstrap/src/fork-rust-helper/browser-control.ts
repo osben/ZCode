@@ -1,10 +1,14 @@
 // Fork F4b (specs/fork-rust-node-helper.md "F4b browser broker", F4-D5, F4-D7): the helper's browser control. It reuses
 // Node's broker (zcode-protocol/browser-control-broker.ts) unchanged. Child-session facts come only from Rust.
 import { z } from "zod";
-import type { BrowserControlPort, Logger } from "@zcode/contracts";
+import type { BrowserControlPort, Logger, McpServerConfig } from "@zcode/contracts";
 import { createProtocolBrowserControlBroker } from "../zcode-protocol/browser-control-broker.js";
 import { ProtocolRequestError, type ZCodeProtocolAgentServerContext } from "../zcode-protocol/server-types.js";
-import { createNodeReplBrowserBroker, type NodeReplBrowserBroker } from "../app/node-repl-browser-broker.js";
+import {
+  createNodeReplBrowserBroker,
+  injectNodeReplBrowserBroker,
+  type NodeReplBrowserBroker,
+} from "../app/node-repl-browser-broker.js";
 
 export const FORK_RUST_HELPER_BROWSER_CHILD_SESSION = "helper/browser/childSession";
 export const FORK_RUST_HELPER_BROWSER_CHILD_SESSION_END = "helper/browser/childSessionEnd";
@@ -28,6 +32,19 @@ export type ChildSessionParams = z.infer<typeof childSessionParamsSchema>;
 interface ChildRegistration {
   parentSessionId: string;
   port: BrowserControlPort;
+}
+
+/**
+ * node_repl's config with the broker's socket and token in its env (Node `injectNodeReplBrowserBroker`). Every path that
+ * connects node_repl (a session open, a pipe) goes through here, so the pool sees one config and starts one process.
+ */
+export function nodeReplConfigFor(
+  browser: ForkRustBrowserControl,
+  server: string,
+  config: McpServerConfig,
+): McpServerConfig {
+  if (server !== "node_repl") return config;
+  return injectNodeReplBrowserBroker({ [server]: config }, browser.nodeRepl())[server] ?? config;
 }
 
 /** The helper's browser control: one Node broker, its node_repl socket, and the child registrations it owns. */
