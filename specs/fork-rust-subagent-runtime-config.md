@@ -94,7 +94,7 @@ parent run R2 of S starts ──▶ a new read; cache[S] = (R2, snapshot')
    - `injectAgentsMd` carries over (rule 15).
    - Not used:
      - `path` and `color`: the Node runtime does not read them either (`color` is set only on the built-in profiles in core `subagent/profile.ts`; the Settings page reads it from its own files).
-     - `memory`, `skills` and `mcpServers`: open gaps. zcode-rs supports none of them for agent files either, so each is its own feature, not part of this snapshot:
+     - `memory`, `skills` and `mcpServers`: open gaps, moved to a follow-up PR (not in #516). zcode-rs supports none of them for agent files either, so each is its own feature, not part of this snapshot:
        - `memory`: Node loads the agent's persistent memory into its prompt (`loadPersistentAgentMemory`, core `runtime/methods/subagent.ts`) and adds the memory tools (`projectPersistentAgentMemoryTools`, `runtime/agent-runtime.ts`).
        - `skills`: an allowlist, not a preload. Node adds the `Skill` tool and limits the child's skill listing and loads to the granted skills (`runtime/methods/subagent.ts`, `resolveSubagentSkillGrants`).
        - `mcpServers`: Node scopes the child's borrowed parent MCP servers to the listed names (`runtime/methods/subagent.ts`, `createBorrowedSubagentMcpAccess`).
