@@ -175,6 +175,15 @@ impl NodeHelperLauncher for ProcessLauncher {
 /// Fork (F4a): how long a helper gets to exit on EOF before its tree is terminated.
 const HELPER_STOP_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
 
+/// Fork (F4a): the stop mode once the helper's stdin is at EOF. `exit` resolves when the helper process exits; if it
+/// does within `grace` there is nothing to terminate but its leftovers, otherwise the tree gets TERM and KILL.
+async fn stop_mode<F: std::future::Future>(exit: F, grace: std::time::Duration) -> Shutdown {
+    match tokio::time::timeout(grace, exit).await {
+        Ok(_) => Shutdown::Immediate,
+        Err(_) => Shutdown::Graceful,
+    }
+}
+
 struct StopOnDrop {
     tree: Option<Tracked>,
     spawner: Spawner,
@@ -189,11 +198,7 @@ impl Drop for StopOnDrop {
             // F4a: the helper's stdin was dropped with the process (EOF) before this task ran, so it closes its
             // sessions and MCP children itself, in order. Only a helper still alive after the grace period gets TERM
             // and KILL; one that exited meanwhile has its leftovers killed without a TERM.
-            let shutdown = match tokio::time::timeout(HELPER_STOP_GRACE, tree.child().wait()).await
-            {
-                Ok(_) => Shutdown::Immediate,
-                Err(_) => Shutdown::Graceful,
-            };
+            let shutdown = stop_mode(tree.child().wait(), HELPER_STOP_GRACE).await;
             if let Err(error) = tree.terminate(shutdown).await {
                 tracing::debug!(
                     event = "helper.stop_unconfirmed",
