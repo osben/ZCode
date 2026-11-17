@@ -62,6 +62,9 @@ pub struct CompositionAnswer {
     pub revision: u64,
     pub phase: CompositionPhase,
     pub record: CompositionRecord,
+    /// The selected model's context window (Node `model.contextWindow`); `None` when the model's capabilities are not
+    /// known, and the wire form then reports `freeTokens: null`.
+    pub context_window: Option<u64>,
 }
 
 #[derive(Default)]

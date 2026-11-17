@@ -1405,6 +1405,14 @@ Landed on `feat/rust-context-composition`. Not yet reachable from the protocol.
   6. Skills and instructions. Node takes `skills` and instruction items from their announced text. Rust has no skills listing attachment yet, and instructions use the `instructions` attachment text.
   7. Source names. Rust attachment sources are not Node's reminder ids (for example Rust `instructions` vs Node `context_prefix`, `deferred_tools_delta` vs `tool_search_announcement`). The table above is the mapping; a source Rust adds later must be added there.
 
+#### Rust port, step 3, read path (2026-11-16): `v4/conversation/contextComposition` is registered
+
+- **Dispatch.** `protocol-zcode/src/server.rs` arm `v4/conversation/contextComposition` to `protocol-zcode/src/context_composition.rs` `read`. `sessionId` required; `modelSelection` optional (the App's `{providerId, modelId, options.reasoningLevel}` through `commands::selection`); an unparseable selection is `invalid_params`. Existing-only: a session not in memory answers `{composition: null}` from `Kernel::context_composition`.
+- **Wire.** `wire()` maps the kernel answer onto Node's contract: `phase` (`request` | `draft-preview`), `measuredAt`, `model.contextWindow` (from `ModelPort::capabilities`, null when unknown or zero), `freeTokens` (`max(0, window - estimatedTokens)`, null without a window), `providerInputTokens` / `providerContextTokens` only on a measured request with usage, categories with optional `items`.
+- **Not yet.** The `contextCompositionChanged` notification and its per-tick coalescing (Node `tracker.ts`); the revision is in the store, so it needs a broadcast from `CompositionStore` to the protocol server. Until then the App pulls only.
+- **Tests.** `context_composition_tests.rs` (4 unit tests on the wire mapping). Not yet: a fixture comparison with Node's `protocol.test.ts`.
+- **Deviation to check.** `providerInputTokens` is `ProviderUsage::input_tokens`, which includes cache reads and writes (the usage ring's input). Node's `providerInputTokens` may be the raw provider input; unverified.
+
 #### Rust port, step 2 (2026-11-16): record, usage, invalidation on compaction
 
 - **Store.** `kernel-api/src/context_composition.rs` `CompositionStore`: one slot per session holding a revision (per process, from 0) and the last measured request. The query loop writes it, the runtime kernel reads it through `Kernel::context_composition`. The store is created in the runtime's main loop assembly and shared by `QueryParts::compositions` and the kernel. The summary loop of compaction and child loops keep their own store.

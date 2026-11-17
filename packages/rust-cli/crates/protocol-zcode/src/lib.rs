@@ -17,6 +17,7 @@ mod child_runs;
 mod cipher;
 mod commands;
 pub mod context;
+mod context_composition;
 mod fork;
 pub mod headers;
 mod ids;

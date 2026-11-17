@@ -602,8 +602,8 @@ impl SessionHandle for Session {
 mod tests;
 
 #[cfg(test)]
-#[path = "machines_tests.rs"]
-mod machines_tests;
-#[cfg(test)]
 #[path = "composition_tests.rs"]
 mod composition_tests;
+#[cfg(test)]
+#[path = "machines_tests.rs"]
+mod machines_tests;

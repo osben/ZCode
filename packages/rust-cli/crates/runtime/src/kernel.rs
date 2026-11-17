@@ -134,6 +134,12 @@ impl Kernel for LocalKernel {
         let view = handle.view().await?;
         let selection = selection.unwrap_or_else(|| view.selection.clone());
         let (revision, record) = self.compositions.snapshot(session);
+        let context_window = self
+            .usage
+            .model
+            .capabilities(&selection)
+            .await
+            .map(|found| found.context_window);
         // A measured request answers only for the model it was sent to (the reasoning level does not count).
         if let Some(record) = record.filter(|found| {
             found.provider_id == selection.provider && found.model_id == selection.model
@@ -142,6 +148,7 @@ impl Kernel for LocalKernel {
                 revision,
                 phase: CompositionPhase::Request,
                 record,
+                context_window,
             }));
         }
         let mode = ExecutionState::from_parts(view.mode, view.plan).effective();
@@ -165,6 +172,7 @@ impl Kernel for LocalKernel {
             revision,
             phase: CompositionPhase::DraftPreview,
             record,
+            context_window,
         }))
     }
 

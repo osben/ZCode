@@ -55,7 +55,10 @@ async fn set_model(
     let mut events = built.session.subscribe(None);
     let ack = built
         .session
-        .send(envelope("cmd_model", Command::SetModel { selection: chosen }))
+        .send(envelope(
+            "cmd_model",
+            Command::SetModel { selection: chosen },
+        ))
         .await;
     assert!(matches!(ack, Ack::Accepted { .. }), "{ack:?}");
     loop {
