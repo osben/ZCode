@@ -11,6 +11,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
 use super::flow::{FlowInput, FlowOutcome, run_lead};
 use super::*;
+use tokio_util::sync::CancellationToken;
 
 const SERVER_URL: &str = "https://mcp.example.test/mcp";
 const AS_URL: &str = "https://auth.example.test";
@@ -18,15 +19,21 @@ const CALLBACK_PORT: u16 = 49_152;
 const CODE: &str = "auth-code-1";
 
 /// The state the flow generates: 24 bytes of 7, base64url. The fake entropy makes it predictable.
-fn expected_state() -> String {
+pub(super) fn expected_state() -> String {
     URL_SAFE_NO_PAD.encode([7u8; 24])
 }
 
 #[derive(Default)]
-struct MemoryStore {
-    raw: Mutex<BTreeMap<String, String>>,
-    lease_acquisitions: Mutex<u32>,
-    lease_held: bool,
+pub(super) struct MemoryStore {
+    pub(super) raw: Mutex<BTreeMap<String, String>>,
+    pub(super) lease_acquisitions: Mutex<u32>,
+    pub(super) lease_held: bool,
+}
+
+impl MemoryStore {
+    pub(super) fn has_key(&self, key: &str) -> bool {
+        self.raw.lock().unwrap().contains_key(key)
+    }
 }
 
 struct FakeLease;
@@ -95,16 +102,45 @@ impl LoopbackListener for ScriptedListener {
         SocketAddr::from((Ipv4Addr::LOCALHOST, CALLBACK_PORT))
     }
     async fn accept(&mut self) -> Result<Box<dyn LoopbackConnection>, OAuthHttpError> {
-        let target = self.targets.lock().unwrap().remove(0);
-        Ok(Box::new(ScriptedConnection { target }))
+        // With no scripted callback left the browser never answers: wait forever, as a real listener does.
+        let next = {
+            let mut targets = self.targets.lock().unwrap();
+            if targets.is_empty() {
+                None
+            } else {
+                Some(targets.remove(0))
+            }
+        };
+        match next {
+            Some(target) => Ok(Box::new(ScriptedConnection { target })),
+            None => std::future::pending().await,
+        }
     }
 }
 
-struct FakeRuntime {
+pub(super) struct FakeRuntime {
     /// Callback request targets the browser delivers, in order.
-    callbacks: Vec<String>,
-    requests: Mutex<Vec<OAuthHttpRequest>>,
-    listen_calls: Mutex<u32>,
+    pub(super) callbacks: Vec<String>,
+    pub(super) requests: Mutex<Vec<OAuthHttpRequest>>,
+    pub(super) listen_calls: Mutex<u32>,
+}
+
+impl FakeRuntime {
+    pub(super) fn new(callbacks: Vec<String>) -> Self {
+        Self {
+            callbacks,
+            requests: Mutex::new(Vec::new()),
+            listen_calls: Mutex::new(0),
+        }
+    }
+
+    pub(super) fn requests(&self) -> Vec<OAuthHttpRequest> {
+        self.requests.lock().unwrap().clone()
+    }
+
+    pub(super) fn listen_count(&self) -> u32 {
+        *self.listen_calls.lock().unwrap()
+    }
 }
 
 #[async_trait::async_trait]
@@ -171,7 +207,7 @@ impl McpOAuthRuntime for FakeRuntime {
     }
 }
 
-fn input() -> FlowInput {
+pub(super) fn input() -> FlowInput {
     FlowInput {
         server_name: "e2e-remote".to_owned(),
         server_url: SERVER_URL.to_owned(),
@@ -184,7 +220,7 @@ fn input() -> FlowInput {
     }
 }
 
-fn callback(state: &str) -> String {
+pub(super) fn callback(state: &str) -> String {
     format!("/callback?code={CODE}&state={state}")
 }
 
@@ -196,7 +232,7 @@ async fn happy_path_discovers_registers_exchanges_and_publishes_canonical_creden
         requests: Mutex::new(Vec::new()),
         listen_calls: Mutex::new(0),
     };
-    let outcome = run_lead(&store, &runtime, &input()).await;
+    let outcome = run_lead(&store, &runtime, &input(), &CancellationToken::new()).await;
     assert_eq!(outcome, FlowOutcome::Authorized);
 
     let requests = runtime.requests.lock().unwrap().clone();
@@ -260,7 +296,7 @@ async fn follower_returns_pending_without_listening_when_the_lease_is_held() {
         requests: Mutex::new(Vec::new()),
         listen_calls: Mutex::new(0),
     };
-    let outcome = run_lead(&store, &runtime, &input()).await;
+    let outcome = run_lead(&store, &runtime, &input(), &CancellationToken::new()).await;
     assert_eq!(
         outcome,
         FlowOutcome::Pending {
@@ -283,7 +319,7 @@ async fn a_forged_callback_with_the_wrong_state_is_ignored_and_the_real_one_comp
         listen_calls: Mutex::new(0),
     };
     assert_eq!(
-        run_lead(&store, &runtime, &input()).await,
+        run_lead(&store, &runtime, &input(), &CancellationToken::new()).await,
         FlowOutcome::Authorized
     );
 }
@@ -299,7 +335,7 @@ async fn an_authorization_error_fails_the_flow_and_removes_the_pending_record() 
         requests: Mutex::new(Vec::new()),
         listen_calls: Mutex::new(0),
     };
-    let outcome = run_lead(&store, &runtime, &input()).await;
+    let outcome = run_lead(&store, &runtime, &input(), &CancellationToken::new()).await;
     assert!(matches!(outcome, FlowOutcome::Failed { .. }), "{outcome:?}");
     let key_prefix = credential_key_prefix("e2e-remote", SERVER_URL, None, Some("mcp:tools"), None);
     assert!(
@@ -322,7 +358,7 @@ async fn token_request_never_appears_in_an_error_or_outcome() {
         requests: Mutex::new(Vec::new()),
         listen_calls: Mutex::new(0),
     };
-    let outcome = run_lead(&store, &runtime, &input()).await;
+    let outcome = run_lead(&store, &runtime, &input(), &CancellationToken::new()).await;
     let text = format!("{outcome:?}");
     assert!(!text.contains("tok-access-1"));
     assert!(!text.contains(CODE));

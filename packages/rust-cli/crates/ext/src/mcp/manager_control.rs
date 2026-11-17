@@ -73,7 +73,7 @@ impl McpManager {
     }
 
     /// 重新连一个服务器（重连与启用共用）。
-    async fn restart(&self, name: &str) {
+    pub(crate) async fn restart(&self, name: &str) {
         let Some((config, client, generation, cancel)) = self.retire(name, McpStatus::CONNECTING)
         else {
             return;

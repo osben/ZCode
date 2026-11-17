@@ -111,6 +111,7 @@ fn server(name: &str, scope: McpScope, command: &str) -> McpServer {
         scope,
         transport: McpTransportConfig::stdio(command.to_owned(), Vec::new()),
         options: Default::default(),
+        oauth: None,
         machine: Default::default(),
     }
 }

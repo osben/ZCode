@@ -230,7 +230,10 @@ async fn serve(
             built.kernel.workspace_layer_host(),
             (opened.primary.mcp().clone(), spawner.clone(), clock.clone()),
         )
-        .with_mcp_oauth(opened.platform.mcp_oauth_store()),
+        .with_mcp_oauth(
+            opened.platform.mcp_oauth_store(),
+            opened.platform.mcp_oauth_runtime(),
+        ),
     ));
     // Fork: the ACP agents' session config behind `setExternalAgentConfigOption` and the subscribe seed.
     if let Some(configs) = built.kernel.external_agent_configs() {

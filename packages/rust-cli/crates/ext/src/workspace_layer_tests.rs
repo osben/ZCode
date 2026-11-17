@@ -95,6 +95,7 @@ fn config_with_server(name: &str) -> WorkspaceConfig {
             scope: crate::mcp::McpScope::Project,
             transport: McpTransportConfig::stdio("node".to_owned(), Vec::new()),
             options: Default::default(),
+            oauth: None,
             machine: Default::default(),
         }],
     }

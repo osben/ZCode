@@ -93,17 +93,17 @@ starts the flow, as Node does. Not in PR2: refresh, 401 re-auth after connect, i
 
 ### Owners (PR2 additions)
 
-| Concern                                                              | Owner                                                                                    | Notes                                                                                                       |
-| -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| Credential write API (`put`, `delete_if_value`, `publish_canonical`) | `McpOAuthStore` trait in `ext`, implemented by `platform` over `CredentialStore::mutate` | `ext` never depends on `platform`. The trait gets write methods; PR1 only read.                             |
-| Lease acquire/release, attempt id                                    | `ext/src/mcp/oauth/lease.rs`                                                             | `fs::acquire_file_lock` (`LockOptions{retry [25], grace 100, max_wait 250}`), Node `oauth-lease.ts`.        |
-| Pending record write and attempt-CAS delete                          | `ext/src/mcp/oauth/lease.rs`                                                             | Byte-compatible JSON, field order `attempt_id, authorization_url, baseline_generation?, expires_at, state`. |
-| Discovery read/write (24 h)                                          | `ext/src/mcp/oauth/discovery.rs`                                                         | Node `oauth-shared.ts`. Bare `discovery_state` plus `discovery_state_fetched_at`.                           |
-| Protocol: metadata, DCR, PKCE, token request                         | `ext/src/mcp/oauth/protocol.rs`                                                          | Pure HTTP helpers on an injected client; order copied from the MCP SDK `auth()` (see below).                |
-| Loopback callback listener                                           | `ext/src/mcp/oauth/callback.rs`                                                          | 127.0.0.1, port 0, path from `redirectPath`, `state` check. Node `localhost-callback.ts`.                   |
-| Flow orchestration (lead/follower, TTL 5 min)                        | `ext/src/mcp/oauth/flow.rs`                                                              | Node `oauth-interactive.ts`. One owner per flow task; cancel token; no lock held after the callback.        |
-| 401 hook into the connect path                                       | `ext/src/mcp/manager.rs` (small hook only)                                               | Calls `flow::start_for_challenge`. Keeps #501's manager edits minimal.                                      |
-| Bearer injection on connect                                          | `ext/src/mcp/connection.rs` (small hook)                                                 | Adds `Authorization: Bearer` from canonical credentials; stored credentials only, never logged.             |
+| Concern                                                  | Owner                                                                     | Notes                                                                                                       |
+| -------------------------------------------------------- | ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Credential writes (`McpOAuthStore::apply`, atomic batch) | `platform` `mcp_oauth.rs` over `CredentialStore::mutate` (trait in `ext`) | `ext` never depends on `platform`; the trait carries the write methods.                                     |
+| Authorization lease (`try_acquire_lease`)                | `platform` `mcp_oauth.rs` (`rust_cli_fs::acquire_file_lock`)              | Lock sits next to `credentials.json` (`lease_path`). `ext` never takes the lock. Node `oauth-lease.ts`.     |
+| Pending record write and attempt-CAS delete              | `ext/src/mcp/oauth/lease.rs`                                              | Byte-compatible JSON, field order `attempt_id, authorization_url, baseline_generation?, expires_at, state`. |
+| Discovery read/write (24 h)                              | `ext/src/mcp/oauth/discovery.rs`                                          | Node `oauth-shared.ts`. Bare `discovery_state` plus `discovery_state_fetched_at`.                           |
+| Protocol: metadata, DCR, PKCE, token request             | `ext/src/mcp/oauth/protocol.rs`                                           | Pure HTTP helpers on an injected client; order copied from the MCP SDK `auth()` (see below).                |
+| Loopback callback listener                               | `ext/src/mcp/oauth/callback.rs`                                           | 127.0.0.1, port 0, path from `redirectPath`, `state` check. Node `localhost-callback.ts`.                   |
+| Flow orchestration (lead/follower, TTL 5 min)            | `ext/src/mcp/oauth/flow.rs`                                               | Node `oauth-interactive.ts`. One owner per flow task; cancel token; no lock held after the callback.        |
+| 401 hook into the connect path                           | `ext/src/mcp/manager.rs` (small hook only)                                | Calls `flow::start_for_challenge`. Keeps #501's manager edits minimal.                                      |
+| Bearer injection on connect                              | `ext/src/mcp/connection.rs` (small hook)                                  | Adds `Authorization: Bearer` from canonical credentials; stored credentials only, never logged.             |
 
 ### Event order (PR2, connect mode)
 
@@ -191,32 +191,27 @@ written in the same `mutate` call. `generation` is a fresh id per publish.
 10. Logs and errors never contain the access token, refresh token, code, verifier or client secret.
 11. E2E: `conversation-session-mcp-oauth-status-isolation` passes on Rust with the same assertions as Node.
 
-### Status of this branch (PR2, partial)
+### Status of this branch (PR2)
 
-Built and tested (ext unit tests 38/38 with the Node fixture; platform `mcp_oauth` 2/2; clippy clean on
-`rust-cli-net`, `rust-cli-platform`, `rust-cli-ext`):
+Built and tested (ext `mcp` unit tests 124 passed before the CLI wiring, `rust-cli-ext --lib` 220 passed after; net `--lib` 46 passed; platform `mcp_oauth` passes; workspace clippy `-D warnings` clean):
 
-- Store writes: `McpOAuthStore::apply` (atomic batch: `Put`, `DeleteIfValue`) and `try_acquire_lease`, implemented
-  in platform over `CredentialStore::mutate` and `rust_cli_fs::acquire_file_lock`.
-- Entropy, clock, egress and loopback are injected through `McpOAuthRuntime` (ext cannot use them directly,
-  `clippy.toml`). Platform implements it over `ring`, `rust-cli-net::Egress` and the new `rust-cli-net::loopback`.
-- Pending record bytes match Node (`pending_record_json`); attempt-CAS delete; discovery order and fallbacks per
-  the SDK list above; PKCE S256; DCR body; callback state check; lead/follower flow with the 5 min TTL, canonical
-  v2 write with legacy mirror keys, and lease release in every outcome.
+- Store writes: `McpOAuthStore::apply` (atomic batch: `Put`, `DeleteIfValue`) and `try_acquire_lease`, implemented in platform (`mcp_oauth.rs`).
+- Runtime seam `McpOAuthRuntime` (entropy, clock, egress, loopback). Platform implements it; the loopback listener is `rust-cli-net::loopback`, with four listener tests.
+- Flow (`flow.rs`): lead/follower, 5 min TTL, cancel token, SDK discovery order, DCR per flow, PKCE S256, pending record, canonical v2 write with legacy mirror keys, lease and attempt-owned pending delete on every outcome.
+- Coordinator (`coordinator.rs`): one flow task per server; cancel; reconnect through the manager after success; canonical bearer lookup (expiry skew 30 s); in-memory `client_credentials` token with `client_secret_basic`.
+- Connection hooks (`oauth_hooks.rs`, small call sites in `manager.rs`): bearer added as `Authorization` before each connect attempt (unless the server sets its own); HTTP 401 starts the flow; user-scope remote servers without an `oauth` block act as `authorization_code`, as Node does.
+- Row config (`node_config.rs`): strict `oauth` block for Node-config servers (`authorization_code`, `client_credentials`); the old "not supported" warning is removed.
+- CLI wiring: `AppWorkspace::with_mcp_oauth(store, runtime)` calls `enable_oauth` on each lane manager.
 
-Not done in this branch (PR2 is not complete):
+Not closed in this PR (draft):
 
-- The 401 trigger in `crates/ext/src/mcp/manager.rs` (connect error path) and the coordinator that owns the
-  flow task, its cancel token, and the reconnect after success. This needs `oauth` config from the row, which is
-  not parsed by `node_config.rs` yet.
-- Bearer injection on connect (`Authorization` header from canonical credentials). Without it, a connect after
-  authorization still gets 401.
-- The Node-side `localhost-callback` test against the real listener, and the E2E
-  `conversation-session-mcp-oauth-status-isolation` run (depends on #501's plugin rows).
+- No manager-level test of the 401 trigger or the bearer hook: the coordinator, flow and parser are tested, the call sites in `manager.rs` are not.
+- No E2E run. `conversation-session-mcp-oauth-status-isolation` depends on #501 plugin rows. The Node baseline `apps/zcode-cli/packages/adapters/tests/mcp-oauth.e2e.test.ts` passes 21/21 in Node; the Rust side has no harness for it.
+- Plugin rows (#501) do not carry `oauth` or `url`; they get no bearer and no flow.
 - `resource_metadata` from `WWW-Authenticate` is not carried; the transport error drops the header.
+- Client-credentials tokens are not refreshed; they are re-requested after 30 s before expiry.
 
-Decision recorded: lease acquisition lives in the platform store (the lock directory sits next to
-`credentials.json`), not in ext, so ext keeps no fs or network categories.
+Decision recorded: lease acquisition lives in the platform store (the lock directory sits next to `credentials.json`), not in ext, so ext keeps no fs or network categories.
 
 ### Follow-ups (not PR2)
 

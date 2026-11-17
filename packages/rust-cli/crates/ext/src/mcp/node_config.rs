@@ -2,7 +2,7 @@
 //!
 //! 外形是 Node 的 `McpServerConfig`（`apps/zcode-cli/packages/adapters/src/config/schema.ts`），解析前先做
 //! Node 的旧格式规范化（`normalizeMcpServerConfigInput`）。值原样使用，不展开 `${VAR}`（Node 不展开）。
-//! `cwd`、`timeoutMs`、`alwaysLoad` 按 Node 接上；`protocolVersion`、`oauth` 未覆盖，记警告照常连接（ext.md §3.1、
+//! `cwd`、`timeoutMs`、`alwaysLoad` 按 Node 接上；`protocolVersion` 未覆盖，记警告照常连接；`oauth` 按 PR2 解析（ext.md §3.1、
 //! D21）。
 
 use std::collections::BTreeMap;
@@ -114,6 +114,7 @@ struct Parsed {
     transport: McpTransportConfig,
     enabled: bool,
     options: McpServerOptions,
+    oauth: Option<crate::mcp::oauth::McpOAuthConfig>,
     warnings: Vec<String>,
 }
 
@@ -160,9 +161,6 @@ fn extra_fields(
             ));
         }
     }
-    if server.contains_key("oauth") {
-        warnings.push("oauth is not supported; connecting without it".to_owned());
-    }
     let options = McpServerOptions {
         timeout_ms,
         always_load,
@@ -178,6 +176,7 @@ fn server(value: &Value) -> Result<Parsed, String> {
     if stdio {
         required(&server, "command")?;
     }
+    let oauth = oauth_block(&server)?;
     let (cwd, options, warnings) = extra_fields(&server, stdio)?;
     let transport = match server.get("type").and_then(Value::as_str) {
         Some("stdio") => McpTransportConfig::Stdio {
@@ -210,8 +209,66 @@ fn server(value: &Value) -> Result<Parsed, String> {
         transport,
         enabled,
         options,
+        oauth,
         warnings,
     })
+}
+
+/// The Node `oauth` block (`zcodeProtocolMcpOAuthSchema`, strict). An invalid block makes the server invalid,
+/// as Node's schema does; unknown keys are refused. Plugin rows never reach this parser.
+fn oauth_block(
+    server: &Map<String, Value>,
+) -> Result<Option<crate::mcp::oauth::McpOAuthConfig>, String> {
+    use crate::mcp::oauth::McpOAuthConfig;
+    let Some(value) = server.get("oauth") else {
+        return Ok(None);
+    };
+    let block = value.as_object().ok_or("oauth: expected an object")?;
+    let allowed: &[&str] = match block.get("type").and_then(Value::as_str) {
+        Some("authorization_code") => &[
+            "type",
+            "clientId",
+            "clientSecret",
+            "clientName",
+            "redirectPath",
+            "scope",
+        ],
+        Some("client_credentials") => &["type", "clientId", "clientSecret", "clientName", "scope"],
+        _ => {
+            return Err("oauth.type: expected authorization_code or client_credentials".to_owned());
+        }
+    };
+    if let Some(unknown) = block.keys().find(|key| !allowed.contains(&key.as_str())) {
+        return Err(format!("oauth.{unknown}: unknown field"));
+    }
+    let text = |key: &str| -> Result<Option<String>, String> {
+        match block.get(key) {
+            None => Ok(None),
+            Some(Value::String(text)) => Ok(Some(text.clone())),
+            Some(_) => Err(format!("oauth.{key}: expected a string")),
+        }
+    };
+    let required = |key: &str| -> Result<String, String> {
+        match text(key)? {
+            Some(text) if !text.is_empty() => Ok(text),
+            _ => Err(format!("oauth.{key}: required")),
+        }
+    };
+    if block.get("type").and_then(Value::as_str) == Some("authorization_code") {
+        return Ok(Some(McpOAuthConfig::AuthorizationCode {
+            client_id: text("clientId")?,
+            client_secret: text("clientSecret")?,
+            client_name: text("clientName")?,
+            redirect_path: text("redirectPath")?,
+            scope: text("scope")?,
+        }));
+    }
+    Ok(Some(McpOAuthConfig::ClientCredentials {
+        client_id: required("clientId")?,
+        client_secret: required("clientSecret")?,
+        client_name: text("clientName")?,
+        scope: text("scope")?,
+    }))
 }
 
 /// `mcp.servers` 的值里的服务器（按名字排序），返回服务器与警告（Node `config_mcp_server_invalid`）。
@@ -235,6 +292,7 @@ pub fn parse_node_servers(servers: &Value, scope: McpScope) -> (Vec<NodeMcpServe
                         scope,
                         transport: parsed.transport,
                         options: parsed.options,
+                        oauth: parsed.oauth,
                         machine: Default::default(),
                     },
                     enabled: parsed.enabled,
@@ -245,6 +303,10 @@ pub fn parse_node_servers(servers: &Value, scope: McpScope) -> (Vec<NodeMcpServe
     }
     (found, warnings)
 }
+
+#[cfg(test)]
+#[path = "node_config_oauth_tests.rs"]
+mod oauth_tests;
 
 #[cfg(test)]
 #[path = "node_config_tests.rs"]

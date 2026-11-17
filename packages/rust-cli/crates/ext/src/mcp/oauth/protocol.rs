@@ -2,6 +2,8 @@
 //! `buildDiscoveryUrls`, `startAuthorization`, `executeTokenRequest`). Pure URL and body builders here;
 //! the HTTP calls run through [`super::McpOAuthRuntime::http`] in `flow.rs`.
 
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
 use serde_json::{Value, json};
 use url::{Url, form_urlencoded};
 
@@ -80,4 +82,22 @@ pub fn token_form_authorization_code(code: &str, verifier: &str, redirect_uri: &
         .append_pair("code_verifier", verifier)
         .append_pair("redirect_uri", redirect_uri)
         .finish()
+}
+
+/// `Authorization` value of `client_secret_basic` (RFC 6749 2.3.1). PR2 red stub.
+pub fn basic_auth(client_id: &str, client_secret: &str) -> String {
+    format!(
+        "Basic {}",
+        STANDARD.encode(format!("{client_id}:{client_secret}"))
+    )
+}
+
+/// Form body of the `client_credentials` token request (SDK `prepareTokenRequest`). PR2 red stub.
+pub fn token_form_client_credentials(scope: Option<&str>) -> String {
+    let mut serializer = form_urlencoded::Serializer::new(String::new());
+    serializer.append_pair("grant_type", "client_credentials");
+    if let Some(scope) = scope {
+        serializer.append_pair("scope", scope);
+    }
+    serializer.finish()
 }

@@ -11,6 +11,7 @@ use std::time::Duration;
 use base64::Engine as _;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use serde_json::{Value, json};
+use tokio_util::sync::CancellationToken;
 use url::Url;
 
 use super::callback::{CallbackError, CallbackParams, parse_callback_target};
@@ -59,6 +60,7 @@ pub async fn run_lead(
     store: &dyn McpOAuthStore,
     runtime: &dyn McpOAuthRuntime,
     input: &FlowInput,
+    cancel: &CancellationToken,
 ) -> FlowOutcome {
     let key_prefix = key_prefix_of(input);
     let lease = match store.try_acquire_lease(&key_prefix).await {
@@ -70,7 +72,7 @@ pub async fn run_lead(
         Ok(id) => id,
         Err(message) => return FlowOutcome::Failed { message },
     };
-    let outcome = lead(store, runtime, input, &key_prefix, &attempt_id).await;
+    let outcome = lead(store, runtime, input, &key_prefix, &attempt_id, cancel).await;
     // Remove only this attempt's pending record, then release the lease (Node `finally`).
     let _ = delete_pending_if_owned(store, &key_prefix, &attempt_id).await;
     lease.release().await;
@@ -106,8 +108,9 @@ async fn lead(
     input: &FlowInput,
     key_prefix: &str,
     attempt_id: &str,
+    cancel: &CancellationToken,
 ) -> FlowOutcome {
-    match run_transaction(store, runtime, input, key_prefix, attempt_id).await {
+    match run_transaction(store, runtime, input, key_prefix, attempt_id, cancel).await {
         Ok(()) => FlowOutcome::Authorized,
         Err(message) => FlowOutcome::Failed { message },
     }
@@ -119,6 +122,7 @@ async fn run_transaction(
     input: &FlowInput,
     key_prefix: &str,
     attempt_id: &str,
+    cancel: &CancellationToken,
 ) -> Result<(), String> {
     let baseline = load_canonical(store, key_prefix)
         .await
@@ -174,9 +178,12 @@ async fn run_transaction(
     save_discovery(store, key_prefix, &authorization_server, &metadata, now).await?;
 
     let ttl = Duration::from_millis(input.transaction_ttl_ms.max(0) as u64);
-    let params = tokio::time::timeout(ttl, wait_for_callback(listener, &callback_path, &state))
-        .await
-        .map_err(|_| "the authorization was not completed before it expired".to_owned())??;
+    let waited = tokio::select! {
+        result = tokio::time::timeout(ttl, wait_for_callback(listener, &callback_path, &state)) => result
+            .map_err(|_| "the authorization was not completed before it expired".to_owned())?,
+        () = cancel.cancelled() => return Err("the authorization was cancelled".to_owned()),
+    };
+    let params = waited?;
 
     let tokens = exchange_code(
         runtime,
@@ -226,7 +233,7 @@ fn random_hex(runtime: &dyn McpOAuthRuntime, len: usize) -> Result<String, Strin
 }
 
 /// `(authorization server URL, AS metadata)`: protected-resource metadata first, then the origin.
-async fn discover(
+pub(super) async fn discover(
     runtime: &dyn McpOAuthRuntime,
     server_url: &str,
 ) -> Result<(String, Value), String> {

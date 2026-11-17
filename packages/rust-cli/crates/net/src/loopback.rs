@@ -87,3 +87,7 @@ impl LoopbackConnection {
         stream.shutdown().await
     }
 }
+
+#[cfg(test)]
+#[path = "loopback_tests.rs"]
+mod tests;

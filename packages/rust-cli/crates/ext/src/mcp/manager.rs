@@ -122,6 +122,8 @@ pub(crate) struct Inner {
     transport: Arc<dyn McpTransport>,
     /// 远端机器的注册表（R5）：绑定到远端的服务器从这里取那台机器的 `mcp()`（remote-exec.md §22.6）。
     machines: OnceLock<Arc<dyn EnvironmentRegistry>>,
+    /// PR2 (`oauth_hooks.rs`): the OAuth coordinator, set once by `enable_oauth`.
+    pub(super) oauth: OnceLock<Arc<super::oauth::McpOAuthCoordinator>>,
     spawner: Spawner,
     settings: McpSettings,
     servers: Mutex<BTreeMap<String, Server>>,
@@ -403,10 +405,11 @@ impl Inner {
                 machines: self.machines.get(),
                 workspace: &workspace,
             };
+            let attempt = self.with_oauth_bearer(&config).await;
             let reason = match connection::open(
                 &pipe,
                 &self.spawner,
-                &config,
+                &attempt,
                 timeout,
                 &self.settings.client_version,
             )
@@ -443,7 +446,10 @@ impl Inner {
                     });
                     reason.unwrap_or_else(|| "connection closed".to_owned())
                 }
-                Err(reason) => reason,
+                Err(reason) => {
+                    self.start_oauth_on_challenge(&config, &reason);
+                    reason
+                }
             };
             if !remote || !connected_once || attempts >= MAX_RECONNECTS {
                 tracing::warn!(
@@ -472,7 +478,14 @@ impl Inner {
 }
 
 /// MCP 连接管理。
-pub struct McpManager(Arc<Inner>);
+pub struct McpManager(pub(super) Arc<Inner>);
+
+impl McpManager {
+    /// PR2 hook: rebuild the handle from the shared state (the reconnect task holds a weak reference).
+    pub(super) fn from_inner(inner: Arc<Inner>) -> Self {
+        Self(inner)
+    }
+}
 
 impl McpManager {
     pub fn new(
@@ -485,6 +498,7 @@ impl McpManager {
         Self(Arc::new(Inner {
             transport,
             machines: OnceLock::new(),
+            oauth: OnceLock::new(),
             spawner,
             settings,
             servers: Mutex::default(),

@@ -29,6 +29,9 @@ pub struct McpServer {
     /// 服务器绑定的机器（R5，remote-exec.md §22.2：入口按 rust-cli 的旁路文件设）；缺省是主 env。绑定到额外机器时
     /// `transport` 是配置的原文（`${VAR}` 由那台机器的执行器展开，§22.7）。
     pub machine: MachineName,
+    /// The `oauth` block of a Node server config (`specs/fork-rust-mcp-oauth.md`, PR2). `None` for plugin
+    /// rows until #501 carries it, and for servers without the block.
+    pub oauth: Option<crate::mcp::oauth::McpOAuthConfig>,
 }
 
 /// 按服务器的选项（Node 配置的 `timeoutMs`、`alwaysLoad`，ext.md §3.1）；`--mcp-config` 与插件的服务器用缺省值。
