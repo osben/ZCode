@@ -22,8 +22,8 @@ use super::result;
 use super::tool::{MAX_TOOL_NAME_UNITS, name_too_long};
 
 /// Node's app tool entry declares `resultBudget.maxModelBytes` 50 000 with strategy `truncate` (core `mcp/app-tools.ts`).
-/// The pipeline's `Limit::Bytes` applies this size to every result, error results included, but it persists an artifact
-/// over it where Node head-truncates (partial parity: specs/fork-rust-node-helper.md F3b(b)).
+/// The pipeline's `Limit::Truncate` applies this size to every result, error results included, head-cutting it and
+/// persisting nothing, as Node does.
 const APP_TOOL_MODEL_BYTES: usize = 50_000;
 
 /// Names of app tools already logged as skipped, so each long name warns once (as the MCP listing does).
@@ -163,7 +163,7 @@ impl Tool for AppTool {
         Some(&self.info)
     }
 
-    fn result_budget_bytes(&self) -> Option<usize> {
+    fn result_budget_truncate_bytes(&self) -> Option<usize> {
         Some(APP_TOOL_MODEL_BYTES)
     }
 

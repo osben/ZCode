@@ -176,3 +176,59 @@ async fn a_byte_budget_result_that_cannot_be_persisted_is_cut_like_node() {
     .await;
     assert!(first(&kept) == whole);
 }
+
+/// Counts the artifacts written, to show a truncate-only budget persists none.
+#[derive(Default)]
+struct CountingStore {
+    puts: std::sync::atomic::AtomicUsize,
+}
+
+#[async_trait]
+impl ArtifactStore for CountingStore {
+    async fn put(
+        &self,
+        session: &SessionId,
+        purpose: ArtifactPurpose,
+        media_type: String,
+        bytes: Vec<u8>,
+    ) -> Result<ArtifactRef, StoreError> {
+        self.puts.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Store.put(session, purpose, media_type, bytes).await
+    }
+
+    async fn get(&self, _artifact: &ArtifactRef) -> Result<Vec<u8>, StoreError> {
+        Ok(Vec::new())
+    }
+}
+
+/// Fork: Node's `resultBudget` with the truncate strategy (app-provided tools): a result above the budget is head-cut to
+/// it with Node's suffix (no artifactPath, strategy=truncate) and nothing is persisted. Within the budget it is kept.
+#[tokio::test]
+async fn a_truncate_budget_cuts_the_head_and_persists_nothing() {
+    let session = SessionId::new("sess_1");
+    let store = CountingStore::default();
+    let long = "a".repeat(60_000);
+    let cut = apply(
+        output(&long),
+        "app__calc__pick",
+        Some(Limit::Truncate(50_000)),
+        &session,
+        &store,
+    )
+    .await;
+    let suffix = "\n\n[Tool output truncated by resultBudget: originalBytes=60000, maxModelBytes=50000, strategy=truncate]";
+    let text = first(&cut);
+    assert_eq!(text.len(), 50_000);
+    assert!(text.ends_with(suffix));
+    assert!(text.starts_with(&"a".repeat(50_000 - suffix.len())));
+    assert_eq!(store.puts.load(std::sync::atomic::Ordering::Relaxed), 0);
+    let kept = apply(
+        output("small"),
+        "app__calc__pick",
+        Some(Limit::Truncate(50_000)),
+        &session,
+        &store,
+    )
+    .await;
+    assert_eq!(first(&kept), "small");
+}
