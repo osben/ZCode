@@ -22,7 +22,7 @@ use super::pkce::{code_challenge, verifier_from_bytes};
 use super::protocol::{
     as_metadata_urls, prm_urls, registration_body, token_form_authorization_code,
 };
-use super::record::{PendingAuthorization, load_canonical, load_pending};
+use super::record::{PendingAuthorization, has_newer_credentials, load_canonical, load_pending};
 use super::store::{
     LoopbackConnection, LoopbackListener, McpOAuthRuntime, McpOAuthStore, McpOAuthStoreError,
     McpOAuthWrite, OAuthHttpError, OAuthHttpRequest, OAuthHttpResponse,
@@ -82,12 +82,8 @@ pub async fn run_lead(
     // be free by now (the lead releases it after publishing), so taking it must not start a second transaction: its
     // callback would never reach this caller's listener. Release the lease and follow the publish instead, as Node's
     // `followAuthorization` returns `already-authorized`.
-    let published = load_canonical(store, &key_prefix)
-        .await
-        .ok()
-        .flatten()
-        .map(|canonical| canonical.generation);
-    if published != baseline {
+    let published = load_canonical(store, &key_prefix).await.ok().flatten();
+    if has_newer_credentials(published.as_ref(), baseline.as_deref()) {
         lease.release().await;
         return FlowOutcome::Pending {
             authorization_url: None,

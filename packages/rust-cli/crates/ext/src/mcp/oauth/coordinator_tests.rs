@@ -252,3 +252,135 @@ async fn client_credentials_bearer_uses_basic_auth_and_is_kept_in_memory() {
         1
     );
 }
+
+/// Red test (review #3, Node `hasNewerCredentials`): an absent canonical record is not a newer publication. A follower
+/// whose baseline had a record keeps waiting while the record is absent, and returns once a record with a different
+/// generation appears. Before the fix the follower gave up on the first absent read.
+#[tokio::test]
+async fn a_follower_keeps_waiting_while_the_record_is_absent_and_returns_on_a_new_generation() {
+    let store = Arc::new(MemoryStore::default());
+    let runtime = Arc::new(FakeRuntime::new(vec![]));
+    let coordinator = Arc::new(McpOAuthCoordinator::new(
+        store.clone(),
+        runtime.clone(),
+        Arc::new(|_| {}),
+    ));
+    let writer = store.clone();
+    let key = credential_key(&prefix(), "authorization_credentials");
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let canonical = serde_json::json!({
+            "client_information": {"client_id": "c"},
+            "tokens": {"access_token": "a", "token_type": "Bearer"},
+            "generation": "gen-new",
+            "published_by": "att",
+            "version": 2,
+        });
+        writer
+            .raw
+            .lock()
+            .unwrap()
+            .insert(key, canonical.to_string());
+    });
+    let newer = coordinator
+        .follow(
+            &prefix(),
+            Some("gen-old".to_owned()),
+            5_000,
+            &tokio_util::sync::CancellationToken::new(),
+        )
+        .await;
+    assert!(newer, "an absent record must not end the follower wait");
+}
+
+/// Guard for the same rule: a record whose generation equals the baseline is not newer, so the follower waits out
+/// its window and reports nothing.
+#[tokio::test]
+async fn a_follower_does_not_treat_the_baseline_generation_as_newer() {
+    let store = Arc::new(MemoryStore::default());
+    let runtime = Arc::new(FakeRuntime::new(vec![]));
+    let coordinator = Arc::new(McpOAuthCoordinator::new(
+        store.clone(),
+        runtime.clone(),
+        Arc::new(|_| {}),
+    ));
+    let canonical = serde_json::json!({
+        "client_information": {"client_id": "c"},
+        "tokens": {"access_token": "a", "token_type": "Bearer"},
+        "generation": "gen-same",
+        "published_by": "att",
+        "version": 2,
+    });
+    store.raw.lock().unwrap().insert(
+        credential_key(&prefix(), "authorization_credentials"),
+        canonical.to_string(),
+    );
+    // The fake runtime's clock is frozen, so the follower's own deadline never passes: bound the wait here.
+    let newer = tokio::time::timeout(
+        Duration::from_millis(800),
+        coordinator.follow(
+            &prefix(),
+            Some("gen-same".to_owned()),
+            300,
+            &tokio_util::sync::CancellationToken::new(),
+        ),
+    )
+    .await;
+    assert!(
+        !matches!(newer, Ok(true)),
+        "an unchanged generation is not newer"
+    );
+}
+
+/// Fails the read of the discovery state only, as a credential-file read error would.
+struct DiscoveryReadFails(Arc<MemoryStore>);
+
+#[async_trait::async_trait]
+impl McpOAuthStore for DiscoveryReadFails {
+    async fn load(&self, key: &str) -> Result<Option<String>, McpOAuthStoreError> {
+        if key.ends_with("discovery_state") {
+            return Err(McpOAuthStoreError("credential file unreadable".to_owned()));
+        }
+        self.0.load(key).await
+    }
+
+    async fn apply(&self, writes: &[McpOAuthWrite]) -> Result<(), McpOAuthStoreError> {
+        self.0.apply(writes).await
+    }
+
+    async fn try_acquire_lease(
+        &self,
+        key_prefix: &str,
+    ) -> Result<Option<Box<dyn AuthorizationLease>>, McpOAuthStoreError> {
+        self.0.try_acquire_lease(key_prefix).await
+    }
+
+    async fn try_acquire_refresh_lock(
+        &self,
+        key_prefix: &str,
+    ) -> Result<Option<Box<dyn AuthorizationLease>>, McpOAuthStoreError> {
+        self.0.try_acquire_refresh_lock(key_prefix).await
+    }
+}
+
+/// Red test (review #9): a store failure while resolving the discovery state is a temporary refresh error. It is not a
+/// discovery failure, so a proactive refresh must not fail soft into the current token.
+#[tokio::test]
+async fn a_store_failure_resolving_discovery_is_temporary_not_fail_soft() {
+    let inner = Arc::new(MemoryStore::default());
+    let canonical = serde_json::json!({
+        "client_information": {"client_id": "c"},
+        "tokens": {"access_token": "tok-old", "refresh_token": "r", "token_type": "Bearer"},
+        "generation": "g1",
+        "published_by": "att",
+        "version": 2,
+        "expires_at": 0,
+    });
+    seed(&inner, canonical.to_string()).await;
+    let store = DiscoveryReadFails(inner.clone());
+    let result = refresh_under_lock(&store, &FakeRuntime::new(vec![]), &input()).await;
+    assert!(
+        matches!(result, Err(RefreshError::Temporary(_))),
+        "a store failure must surface as a temporary error: {result:?}"
+    );
+}

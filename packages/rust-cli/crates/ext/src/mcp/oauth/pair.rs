@@ -6,7 +6,6 @@
 //! Node's, in Node's order; the refresh, the bearer and the 403 scope read all use this one derivation.
 
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 
 use super::keys::credential_key;
 use super::store::{McpOAuthStore, McpOAuthStoreError};
@@ -107,7 +106,7 @@ pub fn derive_pair(
         tokens: Some(canonical_tokens.clone()),
         issuer: canonical["issuer"].as_str().map(str::to_owned),
         expires_at: canonical["expires_at"].as_i64(),
-        generation: Some(generation_of(&canonical, raw)),
+        generation: Some(super::record::resolve_generation(&canonical, raw)),
         raw: Some(raw.to_owned()),
     };
 
@@ -163,17 +162,6 @@ fn is_canonical(value: &Value) -> bool {
 }
 
 /// Node `resolveCredentialGeneration`: the stored generation, else a legacy hash of the raw text.
-fn generation_of(canonical: &Value, raw: &str) -> String {
-    match canonical["generation"].as_str() {
-        Some(generation) if !generation.is_empty() => generation.to_owned(),
-        _ => {
-            let digest = Sha256::digest(raw.as_bytes());
-            let hex: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
-            format!("legacy-{}", &hex[..32])
-        }
-    }
-}
-
 fn parse(raw: Option<&str>) -> Option<Value> {
     serde_json::from_str::<Value>(raw?).ok()
 }

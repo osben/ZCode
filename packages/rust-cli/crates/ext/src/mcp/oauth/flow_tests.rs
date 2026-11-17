@@ -487,3 +487,31 @@ async fn a_caller_that_takes_the_lease_after_a_publish_follows_and_starts_no_tra
         runtime.requests()
     );
 }
+
+/// Red test (review #4, Node `hasNewerCredentials` in the post-lease re-check): an absent canonical record after the
+/// lease is taken is not a publish. The caller had a baseline record, the record is now gone (or unreadable), so the
+/// caller must start its own transaction instead of releasing the lease and reporting Pending.
+#[tokio::test]
+async fn an_absent_record_after_the_lease_is_not_a_publish() {
+    let store = MemoryStore::default();
+    let runtime = FakeRuntime::new(vec![]);
+    let outcome = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        run_lead(
+            &store,
+            &runtime,
+            &input(),
+            Some("gen-old".to_owned()),
+            &CancellationToken::new(),
+        ),
+    )
+    .await;
+    assert!(
+        !matches!(outcome, Ok(FlowOutcome::Pending { .. })),
+        "an absent record is not a newer publication: {outcome:?}"
+    );
+    assert!(
+        !runtime.requests().is_empty(),
+        "the caller must start its own transaction"
+    );
+}

@@ -16,7 +16,7 @@ use tokio_util::sync::CancellationToken;
 use super::flow::{FlowInput, FlowOutcome, discover, key_prefix_of, run_lead};
 use super::pair::load_pair;
 use super::protocol::{basic_auth, token_form_client_credentials};
-use super::record::load_canonical;
+use super::record::{has_newer_credentials, load_canonical};
 use super::refresh::{RefreshError, RefreshInput, refresh_under_lock};
 use super::{
     McpOAuthConfig, McpOAuthRuntime, McpOAuthStore, McpOAuthStoreError, OAuthHttpError,
@@ -173,7 +173,7 @@ impl McpOAuthCoordinator {
 
     /// Follower wait (Node `followAuthorization`): poll the canonical generation until it moves from `baseline`,
     /// the transaction TTL passes, or the flow is cancelled. Returns whether newer credentials arrived.
-    async fn follow(
+    pub(super) async fn follow(
         &self,
         key_prefix: &str,
         baseline: Option<String>,
@@ -182,10 +182,13 @@ impl McpOAuthCoordinator {
     ) -> bool {
         let deadline = self.now_ms() + ttl_ms;
         while self.now_ms() < deadline && !cancel.is_cancelled() {
-            if canonical_generation(&*self.store, key_prefix).await != baseline {
-                return canonical_generation(&*self.store, key_prefix)
-                    .await
-                    .is_some();
+            // One read per poll, judged by Node's `hasNewerCredentials`: an absent record keeps the follower waiting.
+            let current = load_canonical(&*self.store, key_prefix)
+                .await
+                .ok()
+                .flatten();
+            if has_newer_credentials(current.as_ref(), baseline.as_deref()) {
+                return true;
             }
             tokio::select! {
                 () = tokio::time::sleep(FOLLOWER_POLL_INTERVAL) => {}
