@@ -114,15 +114,16 @@ impl CompositionStore {
         });
     }
 
+    // Each change publishes while it holds the slots lock. The revision is bumped and sent in one critical section, so
+    // two writers cannot publish their revisions out of order (the subscriber takes the last one as the current value).
+
     /// A request was measured: it becomes the session's record and the revision goes up. Returns the new revision.
     pub fn record(&self, session: &SessionId, record: CompositionRecord) -> u64 {
-        let revision = {
-            let mut slots = self.slots.lock_unpoisoned();
-            let slot = slots.entry(session.clone()).or_default();
-            slot.revision += 1;
-            slot.record = Some(record);
-            slot.revision
-        };
+        let mut slots = self.slots.lock_unpoisoned();
+        let slot = slots.entry(session.clone()).or_default();
+        slot.revision += 1;
+        slot.record = Some(record);
+        let revision = slot.revision;
         self.publish(session, revision);
         revision
     }
@@ -130,14 +131,12 @@ impl CompositionStore {
     /// The provider's usage arrived for the session's current record. Ignored when there is no record (an invalidation
     /// dropped it), so a late response never attaches usage to a newer request's record.
     pub fn set_usage(&self, session: &SessionId, usage: ProviderUsage) -> Option<u64> {
-        let revision = {
-            let mut slots = self.slots.lock_unpoisoned();
-            let slot = slots.get_mut(session)?;
-            let record = slot.record.as_mut()?;
-            record.provider_usage = Some(usage);
-            slot.revision += 1;
-            slot.revision
-        };
+        let mut slots = self.slots.lock_unpoisoned();
+        let slot = slots.get_mut(session)?;
+        let record = slot.record.as_mut()?;
+        record.provider_usage = Some(usage);
+        slot.revision += 1;
+        let revision = slot.revision;
         self.publish(session, revision);
         Some(revision)
     }
@@ -145,15 +144,22 @@ impl CompositionStore {
     /// The session's composition changed in a way that makes its record stale (compaction, a model switch, a tool cache
     /// or context-prefix rebuild). The record is dropped and the revision goes up. Returns the new revision.
     pub fn invalidate(&self, session: &SessionId) -> u64 {
-        let revision = {
-            let mut slots = self.slots.lock_unpoisoned();
-            let slot = slots.entry(session.clone()).or_default();
-            slot.revision += 1;
-            slot.record = None;
-            slot.revision
-        };
+        let mut slots = self.slots.lock_unpoisoned();
+        let slot = slots.entry(session.clone()).or_default();
+        slot.revision += 1;
+        slot.record = None;
+        let revision = slot.revision;
         self.publish(session, revision);
         revision
+    }
+
+    /// The session closed: its record (the largest part of a slot) is dropped. The revision stays, as Node's tracker keeps
+    /// its revision map for the life of the process: a session reopened in the same process must not restart at 0,
+    /// because the App compares revisions for staleness.
+    pub fn forget(&self, session: &SessionId) {
+        if let Some(slot) = self.slots.lock_unpoisoned().get_mut(session) {
+            slot.record = None;
+        }
     }
 
     /// The current revision; 0 for a session that has never changed.

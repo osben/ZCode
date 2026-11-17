@@ -138,6 +138,8 @@ pub(crate) struct SessionScoped {
     /// Fork: a session close drops its Host subagent snapshot and gate (specs/fork-rust-subagent-runtime-config.md
     /// rule 11).
     pub(crate) agent_catalog: Arc<rust_cli_agents::AgentCatalog>,
+    /// The session's last measured request (the kernel's composition store). A closed session's record is dropped.
+    pub(crate) compositions: Arc<rust_cli_kernel_api::context_composition::CompositionStore>,
 }
 
 impl SessionScoped {
@@ -177,6 +179,7 @@ impl SessionScoped {
             acp.released(session);
         }
         self.agent_catalog.forget(session);
+        self.compositions.forget(session);
     }
 }
 

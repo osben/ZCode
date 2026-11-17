@@ -88,6 +88,55 @@ fn each_change_is_published_with_its_revision() {
     );
 }
 
+/// A closed session's record is freed, and its revision is kept: a reopened session must not restart at 0.
+#[test]
+fn forget_drops_the_record_and_keeps_the_revision() {
+    let store = CompositionStore::default();
+    let session = SessionId::new("s");
+    store.record(&session, record("a"));
+    store.forget(&session);
+    assert_eq!(store.snapshot(&session), (1, None));
+    assert_eq!(store.invalidate(&session), 2);
+}
+
+/// Writers on several threads publish their revisions in the order they were assigned: the subscriber's sequence is
+/// strictly increasing. (Before the fix a publish after the lock was released could overtake a later one.)
+#[test]
+fn concurrent_writers_publish_in_revision_order() {
+    let store = std::sync::Arc::new(CompositionStore::default());
+    let session = SessionId::new("s");
+    let mut changes = store.subscribe();
+    let handles: Vec<_> = (0..8)
+        .map(|_| {
+            let store = store.clone();
+            let session = session.clone();
+            std::thread::spawn(move || {
+                // Kept under the channel capacity, so no change is dropped for lag.
+                for _ in 0..20 {
+                    store.invalidate(&session);
+                }
+            })
+        })
+        .collect();
+    for handle in handles {
+        handle.join().unwrap();
+    }
+    let mut last = 0;
+    let mut count = 0;
+    while let Ok(change) = changes.try_recv() {
+        assert!(
+            change.revision > last,
+            "revision {} after {}",
+            change.revision,
+            last
+        );
+        last = change.revision;
+        count += 1;
+    }
+    assert_eq!(count, 8 * 20);
+    assert_eq!(last, 8 * 20);
+}
+
 /// A set_usage with no record publishes nothing: no revision moved.
 #[test]
 fn a_dropped_usage_publishes_nothing() {

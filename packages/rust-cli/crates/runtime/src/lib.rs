@@ -352,10 +352,15 @@ impl LocalKernel {
                 scope.spawner(),
             ))
         });
+        // The main loop's requests are measured into the store the kernel reads (the summary loop above keeps its own).
+        // The closer forgets a session's record too, so the store must exist before the closer is built.
+        let compositions =
+            Arc::new(rust_cli_kernel_api::context_composition::CompositionStore::default());
         // Fork: built after the agents so a release also reaches them (their notice forwarders).
         let closer = Arc::new(Closer {
             sessions: Arc::downgrade(&sessions),
             scoped: table::SessionScoped {
+                compositions: compositions.clone(),
                 context: assembler.clone(),
                 read_files: base.read_files.clone(),
                 worktrees: base.worktrees.clone(),
@@ -389,9 +394,6 @@ impl LocalKernel {
         // 第三处晚绑定：主循环与子循环拿到的压缩器句柄。
         late.bind(compactor.clone());
         let operations = parts.operations.clone();
-        // The main loop's requests are measured into the store the kernel reads (the summary loop above keeps its own).
-        let compositions =
-            Arc::new(rust_cli_kernel_api::context_composition::CompositionStore::default());
         let parts = QueryParts {
             tools,
             compositions: compositions.clone(),
