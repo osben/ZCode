@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use rust_cli_base::TaskScope;
 use rust_cli_base::models::GLM_5_3;
+use rust_cli_kernel_api::app_tool::{AppToolHost, AppToolSpec};
 use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::mcp::McpTransportConfig;
 use rust_cli_kernel_api::model::{ModelSelection, QuerySource};
@@ -15,6 +16,16 @@ use super::*;
 use crate::test_support::{CWD, EchoBash, FakeMcp, facts, server, workspace};
 
 fn ext(env: MemoryEnvironment, fake: Arc<FakeMcp>, scope: &TaskScope, servers: McpServers) -> Ext {
+    ext_with_apps(env, fake, scope, servers, None)
+}
+
+fn ext_with_apps(
+    env: MemoryEnvironment,
+    fake: Arc<FakeMcp>,
+    scope: &TaskScope,
+    servers: McpServers,
+    app_tools: Option<Arc<dyn AppToolHost>>,
+) -> Ext {
     let base: Arc<dyn ToolRegistry> = Arc::new(ListTools(vec![Arc::new(EchoBash::default())]));
     let env = Arc::new(env);
     let ports = ExtPorts {
@@ -28,7 +39,7 @@ fn ext(env: MemoryEnvironment, fake: Arc<FakeMcp>, scope: &TaskScope, servers: M
         clock: crate::clock_tests::clock(),
         incognito: Default::default(),
         sessions: Default::default(),
-        app_tools: None,
+        app_tools,
     };
     let config = ExtConfig {
         mcp: McpSettings {
@@ -106,6 +117,93 @@ async fn the_registry_adds_skill_and_mcp_tools_after_the_base() {
     assert_eq!(lines.len(), 4);
     let instructions = listings.mcp_instructions(&request()).await.unwrap();
     assert_eq!(instructions[0].line, "## files\nRead files.");
+}
+
+/// The helper's set for the test: one app tool, named as the given MCP tool is.
+struct OneAppTool(AppToolSpec);
+
+#[async_trait::async_trait]
+impl AppToolHost for OneAppTool {
+    fn app_tools(&self, _session: &SessionId) -> Vec<AppToolSpec> {
+        vec![self.0.clone()]
+    }
+
+    async fn call(
+        &self,
+        _session: &SessionId,
+        _turn: &str,
+        _tool_call: &str,
+        _name: &str,
+        _input: serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        Err("not called".to_owned())
+    }
+
+    async fn cancel(&self, _session: &SessionId, _tool_call: &str) {}
+}
+
+/// Node keeps the existing tool on a name collision (`replaceMcpAppProvidedTools`): an app tool named like an MCP tool
+/// of the session is neither listed twice nor found in its place.
+#[tokio::test]
+async fn an_app_tool_never_shadows_an_mcp_tool_of_the_same_name() {
+    let fake = Arc::new(FakeMcp::default().with(
+        "files",
+        server(json!({"tools": {}}), Some("Read files."), |method, _| {
+            (method == "tools/list").then(|| {
+                Ok(json!({"tools": [{"name": "read", "inputSchema": {"type": "object"}}]}))
+            })
+        }),
+    ));
+    let scope = TaskScope::root("test", |_| {});
+    let servers = vec![McpServer {
+        name: "files".to_owned(),
+        scope: McpScope::Project,
+        transport: McpTransportConfig::stdio("node".to_owned(), Vec::new()),
+        options: Default::default(),
+        oauth: None,
+        machine: Default::default(),
+    }];
+    let app = OneAppTool(AppToolSpec {
+        model_name: "mcp__files__read".to_owned(),
+        server_name: "calc".to_owned(),
+        plugin_id: "calc".to_owned(),
+        tool_name: "pick".to_owned(),
+        title: None,
+        description: None,
+        input_schema: json!({"type": "object"}),
+        read_only: true,
+        destructive: false,
+        idempotent: false,
+    });
+    let ext = ext_with_apps(
+        MemoryEnvironment::new(facts()),
+        fake,
+        &scope,
+        servers,
+        Some(Arc::new(app)),
+    );
+    ext.start().await;
+    ext.mcp().wait_ready().await;
+    let registry = ext.registry();
+    let session = SessionId::new("sess_1");
+    let listed: Vec<String> = registry
+        .snapshot(&session)
+        .tools
+        .iter()
+        .map(|tool| tool.name().to_owned())
+        .collect();
+    assert_eq!(
+        listed
+            .iter()
+            .filter(|name| *name == "mcp__files__read")
+            .count(),
+        1,
+        "{listed:?}"
+    );
+    let found = registry
+        .find_for(&session, "mcp__files__read")
+        .expect("the MCP tool answers");
+    assert_eq!(found.mcp_info().expect("an MCP tool").server, "files");
 }
 
 /// WaitForMcpServers 在有连接中的服务器时出现；主线程带过它的会话之后一直带着（ext.md §3.8，修复线 F36）。快照里的

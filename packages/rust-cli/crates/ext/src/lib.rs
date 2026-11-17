@@ -315,20 +315,43 @@ impl ExtRegistry {
         }
     }
 
-    /// Fork F3b(b): the session's app-provided tools (empty without a helper), after `tools`.
+    /// Fork F3b(b): the one app-provided tool of `session` named `name`, built alone (a lookup does not wrap the set).
+    fn app_tool_of(
+        &self,
+        session: &SessionId,
+        mcp: &McpManager,
+        name: &str,
+    ) -> Option<Arc<dyn Tool>> {
+        let host = self.app_tools.as_ref()?;
+        mcp::app_provided_tool(host, session, name, mcp.settings().max_output_tokens)
+    }
+
+    /// Fork F3b(b): the session's app-provided tools (empty without a helper), after `tools`. The configured MCP output
+    /// budget of the session's group bounds them, as it bounds its MCP tools.
     fn app_tools_of(&self, session: &SessionId) -> Vec<Arc<dyn Tool>> {
         match &self.app_tools {
-            Some(host) => mcp::app_provided_tools(host, session),
+            Some(host) => {
+                let max_output_tokens = self.session_mcp(session).settings().max_output_tokens;
+                mcp::app_provided_tools(host, session, max_output_tokens)
+            }
             None => Vec::new(),
         }
     }
 
+    /// Node's `replaceMcpAppProvidedTools` keeps the existing tool on a name collision: an app tool whose name a listed
+    /// tool already has is not listed.
     fn with_app_tools(
         &self,
         session: &SessionId,
         mut tools: Vec<Arc<dyn Tool>>,
     ) -> Vec<Arc<dyn Tool>> {
-        tools.extend(self.app_tools_of(session));
+        let taken: std::collections::HashSet<String> =
+            tools.iter().map(|tool| tool.name().to_owned()).collect();
+        tools.extend(
+            self.app_tools_of(session)
+                .into_iter()
+                .filter(|tool| !taken.contains(tool.name())),
+        );
         tools
     }
 
@@ -382,23 +405,18 @@ impl ToolRegistry for ExtRegistry {
         if base.is_some() {
             return base;
         }
-        // Fork F3b(b): an app-provided tool of this session (its helper's set, never another session's).
-        if let Some(app) = self
-            .app_tools_of(session)
-            .into_iter()
-            .find(|tool| tool.name() == name)
-        {
-            return Some(app);
-        }
         let mcp = self.session_mcp(session);
-        match self.incognito.profile(session) {
+        let mcp_hit = match self.incognito.profile(session) {
             None => mcp.find(name),
             Some(profile) => mcp
                 .snapshot_where(|scope| incognito::keeps_scope(&profile, scope))
                 .0
                 .into_iter()
                 .find(|tool| rust_cli_kernel_api::tool::answers_to(tool.as_ref(), name)),
-        }
+        };
+        // Fork F3b(b): an app-provided tool of this session (its helper's set, never another session's) answers only
+        // where no MCP tool of the session does, as Node keeps the existing tool on a collision.
+        mcp_hit.or_else(|| self.app_tool_of(session, &mcp, name))
     }
 
     fn withheld(&self, name: &str) -> Option<Arc<dyn Tool>> {

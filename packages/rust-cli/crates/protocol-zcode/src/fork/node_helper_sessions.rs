@@ -57,9 +57,9 @@ pub(crate) const SESSION_METHODS: &[&str] = &[
     "mcp/uiCancelCall",
     "mcp/uiSampling",
     "mcp/uiCancelSampling",
-    // F3b(b): an app tool runs in its session's helper session (the set lives in that session's record).
+    // F3b(b): an app tool call runs in its session's helper session (the set lives in that session's record). Its
+    // cancel is not session-scoped: it must not open a session, so it is sent without `ensure_session`.
     "helper/appTools/call",
-    "helper/appTools/cancel",
     "mcp/uiRegisterAppTools",
     "mcp/uiUnregisterAppTools",
     "mcp/uiClaimAppToolCall",

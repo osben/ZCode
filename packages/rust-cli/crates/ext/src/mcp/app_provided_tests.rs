@@ -13,14 +13,19 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use super::app_provided_tools;
+use super::{app_provided_tool, app_provided_tools};
+use crate::mcp::config::McpSettings;
 
-/// Records what it was asked; answers with `answer`, or waits for the cancel when `hang` is set.
+/// Records what it was asked; answers with `answer`, or waits for the cancel when `hang` is set. `hang_cancel` makes
+/// its cancel never return, as a wedged helper does.
 #[derive(Default)]
 struct Host {
     specs: Vec<AppToolSpec>,
     answer: Option<Value>,
     hang: bool,
+    hang_cancel: bool,
+    /// The host fails the call with this message.
+    fail: Option<String>,
     calls: Mutex<Vec<(String, String, String, Value)>>,
     cancels: Mutex<Vec<String>>,
 }
@@ -48,6 +53,9 @@ impl AppToolHost for Host {
         if self.hang {
             std::future::pending::<()>().await;
         }
+        if let Some(message) = &self.fail {
+            return Err(message.clone());
+        }
         Ok(self
             .answer
             .clone()
@@ -55,6 +63,9 @@ impl AppToolHost for Host {
     }
 
     async fn cancel(&self, _session: &SessionId, tool_call: &str) {
+        if self.hang_cancel {
+            std::future::pending::<()>().await;
+        }
         self.cancels.lock().unwrap().push(tool_call.to_owned());
     }
 }
@@ -90,9 +101,13 @@ fn host(specs: Vec<AppToolSpec>) -> Arc<Host> {
     })
 }
 
+fn budget() -> u64 {
+    McpSettings::default().max_output_tokens
+}
+
 fn one(host: &Arc<Host>) -> Arc<dyn Tool> {
     let host: Arc<dyn AppToolHost> = host.clone();
-    app_provided_tools(&host, &SessionId::new("s1"))
+    app_provided_tools(&host, &SessionId::new("s1"), budget())
         .into_iter()
         .next()
         .expect("one tool")
@@ -102,11 +117,110 @@ fn one(host: &Arc<Host>) -> Arc<dyn Tool> {
 fn the_overlay_of_the_session_is_the_hosts_set() {
     let host = host(vec![spec("app__calc__pick")]);
     let host_dyn: Arc<dyn AppToolHost> = host;
-    let names: Vec<String> = app_provided_tools(&host_dyn, &SessionId::new("s1"))
+    let names: Vec<String> = app_provided_tools(&host_dyn, &SessionId::new("s1"), budget())
         .iter()
         .map(|tool| tool.name().to_owned())
         .collect();
     assert_eq!(names, vec!["app__calc__pick".to_owned()]);
+}
+
+#[test]
+fn a_name_the_api_would_refuse_is_not_listed_nor_found() {
+    // Node's app tool names are at most the API's 128 UTF-16 units (the F67 rule for MCP tools).
+    let long = format!("app__calc__{}", "x".repeat(120));
+    let host = host(vec![spec(&long), spec("app__calc__pick")]);
+    let host_dyn: Arc<dyn AppToolHost> = host;
+    let names: Vec<String> = app_provided_tools(&host_dyn, &SessionId::new("s1"), budget())
+        .iter()
+        .map(|tool| tool.name().to_owned())
+        .collect();
+    assert_eq!(names, vec!["app__calc__pick".to_owned()]);
+    assert!(app_provided_tool(&host_dyn, &SessionId::new("s1"), &long, budget()).is_none());
+}
+
+#[test]
+fn one_tool_is_found_by_its_name_alone() {
+    let host = host(vec![spec("app__calc__a"), spec("app__calc__b")]);
+    let host_dyn: Arc<dyn AppToolHost> = host;
+    let found = app_provided_tool(&host_dyn, &SessionId::new("s1"), "app__calc__b", budget())
+        .expect("the tool of that name");
+    assert_eq!(found.name(), "app__calc__b");
+    assert!(
+        app_provided_tool(&host_dyn, &SessionId::new("s1"), "app__calc__c", budget()).is_none()
+    );
+}
+
+#[test]
+fn the_result_budget_is_the_nodes_model_byte_budget() {
+    // Node's app tool entry declares resultBudget.maxModelBytes 50 000, the budget `Limit::Bytes` applies.
+    let tool = one(&host(vec![spec("app__calc__pick")]));
+    assert_eq!(tool.result_budget_bytes(), Some(50_000));
+}
+
+#[tokio::test]
+async fn the_configured_output_budget_truncates_an_answer() {
+    let long = "a".repeat(5_000);
+    let mut answered = host(vec![spec("app__calc__pick")]);
+    Arc::get_mut(&mut answered).unwrap().answer =
+        Some(json!({"content": [{"type": "text", "text": long}]}));
+    let host_dyn: Arc<dyn AppToolHost> = answered;
+    let tool =
+        app_provided_tool(&host_dyn, &SessionId::new("s1"), "app__calc__pick", 10).expect("found");
+    let (tx, _rx) = mpsc::channel(8);
+    let output = tool
+        .call(json!({}), context(CancellationToken::new()), tx)
+        .await
+        .expect("answered");
+    let text_len: usize = output
+        .content
+        .iter()
+        .map(|block| match block {
+            ToolResultContent::Text { text } => text.len(),
+            _ => 0,
+        })
+        .sum();
+    assert!(
+        text_len < 5_000,
+        "a 10-token budget cuts the answer, got {text_len}"
+    );
+}
+
+#[tokio::test]
+async fn a_failed_call_names_the_app_tool_in_its_error() {
+    let mut failing = host(vec![spec("app__calc__pick")]);
+    Arc::get_mut(&mut failing).unwrap().fail = Some("the page is gone".to_owned());
+    let tool = one(&failing);
+    let (tx, _rx) = mpsc::channel(8);
+    let error = tool
+        .call(json!({}), context(CancellationToken::new()), tx)
+        .await
+        .expect_err("the host failed the call");
+    let message = error.to_string();
+    assert!(
+        message.contains("App tool \"pick\" of \"calc\": the page is gone"),
+        "{message}"
+    );
+}
+
+#[tokio::test]
+async fn a_cancel_that_never_returns_does_not_hold_the_turn() {
+    let mut wedged = host(vec![spec("app__calc__pick")]);
+    {
+        let host = Arc::get_mut(&mut wedged).unwrap();
+        host.hang = true;
+        host.hang_cancel = true;
+    }
+    let tool = one(&wedged);
+    let cancel = CancellationToken::new();
+    cancel.cancel();
+    let (tx, _rx) = mpsc::channel(8);
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        tool.call(json!({}), context(cancel), tx),
+    )
+    .await
+    .expect("the cancelled call returns without waiting for the helper");
+    assert!(matches!(result, Err(ToolError::Cancelled)), "{result:?}");
 }
 
 #[test]
@@ -207,5 +321,12 @@ async fn a_cancelled_call_tells_the_helper_and_returns_cancelled() {
     cancel.cancel();
     let result = call.await.expect("joined");
     assert!(matches!(result, Err(ToolError::Cancelled)), "{result:?}");
+    // The cancel is sent detached, so the helper may receive it a moment after the call returned.
+    for _ in 0..200 {
+        if !waiting.cancels.lock().unwrap().is_empty() {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
     assert_eq!(*waiting.cancels.lock().unwrap(), vec!["toolu_7".to_owned()]);
 }

@@ -132,7 +132,12 @@ impl NodeHelper {
         let peer = peer.clone();
         let deadline = self.timing.cancel;
         drop(self.spawner.spawn("node-helper-cancel", async move {
-            let _ = tokio::time::timeout(deadline, peer.request(cancel_method, &cancel)).await;
+            // The helper answers an app tool cancel only as a notification (it never advertises it).
+            if cancel_method == super::app_tools::APP_TOOLS_CANCEL {
+                let _ = tokio::time::timeout(deadline, peer.notify(cancel_method, &cancel)).await;
+            } else {
+                let _ = tokio::time::timeout(deadline, peer.request(cancel_method, &cancel)).await;
+            }
         }));
     }
 

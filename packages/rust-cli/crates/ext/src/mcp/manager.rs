@@ -508,6 +508,11 @@ impl McpManager {
     pub(super) fn from_inner(inner: Arc<Inner>) -> Self {
         Self(inner)
     }
+
+    /// The configured MCP settings (the output budget an app-provided tool shares with the MCP tools).
+    pub(crate) fn settings(&self) -> &McpSettings {
+        &self.0.settings
+    }
 }
 
 impl McpManager {

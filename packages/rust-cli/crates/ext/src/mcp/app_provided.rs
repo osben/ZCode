@@ -3,9 +3,11 @@
 //! helper (`helper/appTools/call`). Node's `createMcpAppProvidedToolEntry` (core `mcp/app-tools.ts`) is the reference.
 
 use std::borrow::Cow;
-use std::sync::Arc;
+use std::collections::HashSet;
+use std::sync::{Arc, LazyLock, Mutex};
 
 use async_trait::async_trait;
+use rust_cli_base::sync::LockUnpoisoned;
 use rust_cli_kernel_api::app_tool::{AppToolHost, AppToolSpec};
 use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::mcp::McpToolInfo;
@@ -16,27 +18,79 @@ use rust_cli_kernel_api::tool::{
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
-use super::config::McpSettings;
 use super::result;
+use super::tool::{MAX_TOOL_NAME_UNITS, name_too_long};
 
-/// The tools `session` sees from the host's overlay, in the order the helper replaced them.
-pub fn app_provided_tools(host: &Arc<dyn AppToolHost>, session: &SessionId) -> Vec<Arc<dyn Tool>> {
+/// Node's app tool entry declares `resultBudget.maxModelBytes` 50 000 (core `mcp/app-tools.ts`): an oversized result is
+/// persisted or truncated by the pipeline, as any tool's is.
+const APP_TOOL_MODEL_BYTES: usize = 50_000;
+
+/// Names of app tools already logged as skipped, so each long name warns once (as the MCP listing does).
+static NOTED_LONG_NAMES: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(Mutex::default);
+/// The most names [`NOTED_LONG_NAMES`] keeps; a name past the cap is skipped without a warning.
+const NOTED_NAMES: usize = 256;
+
+/// The tools `session` sees from the host's overlay, in the order the helper replaced them. A name the API would refuse
+/// is left out. `max_output_tokens` is the configured MCP output budget, which an app tool's answer obeys as an MCP
+/// tool's does.
+pub fn app_provided_tools(
+    host: &Arc<dyn AppToolHost>,
+    session: &SessionId,
+    max_output_tokens: u64,
+) -> Vec<Arc<dyn Tool>> {
     host.app_tools(session)
         .into_iter()
-        .map(|spec| {
-            let info = McpToolInfo {
-                server: spec.server_name.clone(),
-                tool: spec.tool_name.clone(),
-                // Node lists an app tool directly, never deferred behind ToolSearch.
-                always_load: true,
-            };
-            Arc::new(AppTool {
-                spec,
-                info,
-                host: host.clone(),
-            }) as Arc<dyn Tool>
-        })
+        .filter(|spec| !skip_long_name(spec))
+        .map(|spec| wrap(host, spec, max_output_tokens))
         .collect()
+}
+
+/// The one app tool of `session` named `name`, built alone: a model call or a ToolSearch name looks one tool up, and the
+/// rest of the set is not wrapped for it.
+pub fn app_provided_tool(
+    host: &Arc<dyn AppToolHost>,
+    session: &SessionId,
+    name: &str,
+    max_output_tokens: u64,
+) -> Option<Arc<dyn Tool>> {
+    host.app_tool(session, name)
+        .filter(|spec| !name_too_long(&spec.model_name))
+        .map(|spec| wrap(host, spec, max_output_tokens))
+}
+
+/// Whether `spec` is left out for its name being too long for the API (`MAX_TOOL_NAME_UNITS`), warning once per name.
+fn skip_long_name(spec: &AppToolSpec) -> bool {
+    if !name_too_long(&spec.model_name) {
+        return false;
+    }
+    let mut noted = NOTED_LONG_NAMES.lock_unpoisoned();
+    if noted.len() < NOTED_NAMES && noted.insert(spec.model_name.clone()) {
+        let length = spec.model_name.encode_utf16().count();
+        tracing::warn!(
+            event = "mcp.app_tool.skipped",
+            server = spec.server_name.as_str(),
+            tool = spec.model_name.as_str(),
+            length,
+            "App tool \"{}\" is not sent to the model: its name has {length} characters and the API accepts at most {MAX_TOOL_NAME_UNITS}",
+            spec.model_name
+        );
+    }
+    true
+}
+
+fn wrap(host: &Arc<dyn AppToolHost>, spec: AppToolSpec, max_output_tokens: u64) -> Arc<dyn Tool> {
+    let info = McpToolInfo {
+        server: spec.server_name.clone(),
+        tool: spec.tool_name.clone(),
+        // Node lists an app tool directly, never deferred behind ToolSearch.
+        always_load: true,
+    };
+    Arc::new(AppTool {
+        spec,
+        info,
+        host: host.clone(),
+        max_output_tokens,
+    }) as Arc<dyn Tool>
 }
 
 /// One app-provided tool. Its permission is the pipeline's, as for an MCP tool: a read-only tool is allowed without
@@ -46,6 +100,7 @@ pub(crate) struct AppTool {
     spec: AppToolSpec,
     info: McpToolInfo,
     host: Arc<dyn AppToolHost>,
+    max_output_tokens: u64,
 }
 
 #[async_trait]
@@ -107,6 +162,10 @@ impl Tool for AppTool {
         Some(&self.info)
     }
 
+    fn result_budget_bytes(&self) -> Option<usize> {
+        Some(APP_TOOL_MODEL_BYTES)
+    }
+
     async fn call(
         &self,
         input: Value,
@@ -126,13 +185,27 @@ impl Tool for AppTool {
         let answer = tokio::select! {
             answer = request => answer,
             () = context.cancel.cancelled() => {
-                // The helper abandons the call too; its cancel is a notification, nothing waits for it.
-                self.host.cancel(&context.session, &tool_call).await;
+                // The helper abandons the call too. Its cancel is a notification the turn must not wait for, even when
+                // the host is slow to send it, so it runs detached.
+                let host = self.host.clone();
+                let session = context.session.clone();
+                let tool_call = tool_call.clone();
+                tokio::spawn(async move { host.cancel(&session, &tool_call).await });
                 return Err(ToolError::Cancelled);
             }
         };
-        let value = answer.map_err(failed)?;
-        output_of(&value, &self.spec.server_name, &self.spec.tool_name)
+        let value = answer.map_err(|error| {
+            failed(format!(
+                "App tool \"{}\" of \"{}\": {error}",
+                self.spec.tool_name, self.spec.server_name
+            ))
+        })?;
+        output_of(
+            &value,
+            &self.spec.server_name,
+            &self.spec.tool_name,
+            self.max_output_tokens,
+        )
     }
 }
 
@@ -156,11 +229,19 @@ fn object_schema(schema: &Value) -> Value {
 }
 
 /// The helper's MCP-shaped answer, mapped as an MCP tool's result is: a server error is the error text, a result is its
-/// content, truncated to the MCP output budget.
-fn output_of(value: &Value, server: &str, tool: &str) -> Result<ToolOutput, ToolError> {
+/// content, truncated to the configured MCP output budget (error text too).
+fn output_of(
+    value: &Value,
+    server: &str,
+    tool: &str,
+    max_output_tokens: u64,
+) -> Result<ToolOutput, ToolError> {
     if let Some(message) = result::error_text(value) {
         return Ok(ToolOutput {
-            content: vec![ToolResultContent::Text { text: message }],
+            content: result::truncate(
+                vec![ToolResultContent::Text { text: message }],
+                max_output_tokens,
+            ),
             is_error: true,
             display: Value::Null,
         });
@@ -171,7 +252,7 @@ fn output_of(value: &Value, server: &str, tool: &str) -> Result<ToolOutput, Tool
         ))
     })?;
     Ok(ToolOutput {
-        content: result::truncate(content, McpSettings::default().max_output_tokens),
+        content: result::truncate(content, max_output_tokens),
         is_error: false,
         display: Value::Null,
     })

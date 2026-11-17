@@ -47,9 +47,6 @@ pub(crate) const FORWARDED_METHODS: &[&str] = &[
     "plugins/marketplace/update",
     "plugins/resolveSuggestedReference",
     "plugins/cancelOperation",
-    // F3b(b): the app tool call and its cancel (Rust to helper), see node_helper_app_tools.rs.
-    "helper/appTools/call",
-    "helper/appTools/cancel",
     "plugins/readUserOptions",
     "plugins/listUiSurfaces",
     "plugins/referenceCatalog",
@@ -327,18 +324,28 @@ impl NodeHelper {
             helper: self,
             generation,
         };
+        Some(self.send_on(generation, &peer, method, params).await)
+    }
+
+    /// Sends `method` on a link of `generation` that the caller holds the in-flight count of: a session-scoped call
+    /// opens its helper session first, and a call the helper never answers is timed out and cancelled.
+    pub(super) async fn send_on(
+        &self,
+        generation: u64,
+        peer: &Peer,
+        method: &str,
+        params: &Value,
+    ) -> Result<Value, RpcError> {
         // F3: a session-scoped call runs in its helper session, opened first in this generation.
-        if let Some(session) = sessions::session_of(method, params)
-            && let Err(error) = self.ensure_session(generation, &peer, session).await
-        {
-            return Some(Err(error));
+        if let Some(session) = sessions::session_of(method, params) {
+            self.ensure_session(generation, peer, session).await?;
         }
         let started = self.heard_count(generation);
         let deadline = self.timing.timeout_for(method);
         let result = match tokio::time::timeout(deadline, peer.request(method, params)).await {
             Err(_elapsed) => {
-                if self.timed_out(generation, started, &peer).await {
-                    self.cancel_abandoned(method, params, &peer);
+                if self.timed_out(generation, started, peer).await {
+                    self.cancel_abandoned(method, params, peer);
                 }
                 Err(unavailable("the helper did not answer in time"))
             }
@@ -351,7 +358,7 @@ impl NodeHelper {
                 result
             }
         };
-        Some(self.panel_answered(generation, method, params, result))
+        self.panel_answered(generation, method, params, result)
     }
 
     /// A ready link for `method`, starting the helper when it is not running. `Ok(None)` when the helper does not
@@ -501,9 +508,23 @@ fn abandoned_cancel(method: &str, params: &Value) -> Option<(&'static str, Value
     };
     match method {
         // A cancel is never cancelled: an abandoned one sends nothing.
-        CANCEL_OPERATION | "mcp/uiCancelCall" | "mcp/uiCancelSampling" => None,
+        CANCEL_OPERATION
+        | "mcp/uiCancelCall"
+        | "mcp/uiCancelSampling"
+        | app_tools::APP_TOOLS_CANCEL => None,
         UI_CALL_TOOL => ui_cancel("mcp/uiCancelCall", "callId"),
         UI_SAMPLING => ui_cancel("mcp/uiCancelSampling", "operationId"),
+        // F3b(b): an app tool call the helper never answers is cancelled by its session and tool call id.
+        app_tools::APP_TOOLS_CALL => {
+            let tool_call = params
+                .get("toolCallId")
+                .and_then(Value::as_str)
+                .filter(|id| !id.is_empty())?;
+            Some((
+                app_tools::APP_TOOLS_CANCEL,
+                json!({"sessionId": params.get("sessionId")?, "toolCallId": tool_call}),
+            ))
+        }
         _ => operation_id(params).map(|id| (CANCEL_OPERATION, json!({"operationId": id}))),
     }
 }

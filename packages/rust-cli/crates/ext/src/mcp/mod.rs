@@ -18,7 +18,7 @@ mod tool;
 mod wait_tool;
 pub(crate) mod workspaces;
 
-pub use app_provided::app_provided_tools;
+pub use app_provided::{app_provided_tool, app_provided_tools};
 pub use config::{
     McpScope, McpServer, McpServerOptions, McpServers, McpSettings, normalize_name, tool_name,
 };

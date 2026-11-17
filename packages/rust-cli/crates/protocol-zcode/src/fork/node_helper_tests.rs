@@ -67,6 +67,8 @@ struct Fake {
     answers: Arc<StdMutex<Vec<Value>>>,
     /// Every forwarded request the helper received, as `(method, params)`.
     received: Arc<StdMutex<Vec<(String, Value)>>>,
+    /// The methods of the notifications Rust sent the helper (a message without an id).
+    notified: Arc<StdMutex<Vec<String>>>,
     /// The helper under test, so a guard can check how it is dropped.
     helper: Arc<OnceLock<Weak<NodeHelper>>>,
     /// Incremented when a guard is dropped while the helper's state lock is held.
@@ -115,6 +117,7 @@ impl NodeHelperLauncher for Fake {
             behaviour: self.behaviour.clone(),
             answers: self.answers.clone(),
             received: self.received.clone(),
+            notified: self.notified.clone(),
             stdin_eofs: self.stdin_eofs.clone(),
         };
         tokio::spawn(run_helper(script, helper_in, helper_out));
@@ -138,6 +141,7 @@ struct Script {
     behaviour: Arc<Behaviour>,
     answers: Arc<StdMutex<Vec<Value>>>,
     received: Arc<StdMutex<Vec<(String, Value)>>>,
+    notified: Arc<StdMutex<Vec<String>>>,
     stdin_eofs: Arc<AtomicUsize>,
 }
 
@@ -157,6 +161,9 @@ async fn run_helper(script: Script, input: DuplexStream, mut output: DuplexStrea
             script.answers.lock().unwrap().push(message);
             continue;
         };
+        if message.get("id").is_none() {
+            script.notified.lock().unwrap().push(method.to_owned());
+        }
         let id = message["id"].clone();
         let params = message["params"].clone();
         if method == "helper/initialize" {
@@ -247,6 +254,7 @@ fn fake(advertised: &[&str], behaviour: Arc<Behaviour>) -> Fake {
         stopped: Arc::new(AtomicUsize::new(0)),
         answers: Arc::new(StdMutex::new(Vec::new())),
         received: Arc::new(StdMutex::new(Vec::new())),
+        notified: Arc::new(StdMutex::new(Vec::new())),
         helper: Arc::new(OnceLock::new()),
         dropped_under_lock: Arc::new(AtomicUsize::new(0)),
         stdin_eofs: Arc::new(AtomicUsize::new(0)),
@@ -315,9 +323,10 @@ async fn forward_ok(helper: &NodeHelper, method: &str, params: Value) -> Value {
 
 #[test]
 fn forwarded_table_is_the_spec_list() {
-    assert_eq!(FORWARDED_METHODS.len(), 55);
-    // F3b(b): the app tool call is forwarded, session-scoped (the helper opens the session first).
-    assert!(FORWARDED_METHODS.contains(&"helper/appTools/call"));
+    assert_eq!(FORWARDED_METHODS.len(), 53);
+    // F3b(b): the app tool call and its cancel are sent by their own path, never forwarded from the Host.
+    assert!(!FORWARDED_METHODS.contains(&"helper/appTools/call"));
+    assert!(!FORWARDED_METHODS.contains(&"helper/appTools/cancel"));
     let plugins = FORWARDED_METHODS
         .iter()
         .filter(|method| method.starts_with("plugins/"))

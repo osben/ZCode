@@ -78,6 +78,13 @@ pub trait AppToolHost: Send + Sync {
     /// The session's app-provided tools as the helper last replaced them; none once the helper that set them is gone.
     fn app_tools(&self, session: &SessionId) -> Vec<AppToolSpec>;
 
+    /// The session's app-provided tool named `name`, if the set holds it. A host reads one tool without copying the set.
+    fn app_tool(&self, session: &SessionId, name: &str) -> Option<AppToolSpec> {
+        self.app_tools(session)
+            .into_iter()
+            .find(|spec| spec.model_name == name)
+    }
+
     /// `helper/appTools/call`: the helper's MCP-shaped result (`{content, isError?, ...}`), or the failure's message.
     async fn call(
         &self,
