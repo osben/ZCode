@@ -19,6 +19,7 @@ use rust_cli_kernel_api::session_api::{
 use rust_cli_kernel_api::store::Fact;
 
 use crate::actor::Actor;
+use crate::agent_signals::SUBAGENT_MESSAGE_SOURCE;
 use crate::inbox::{InputKind, Item, LaneItem, Queued, is_slash};
 use crate::notices::{NOTICE_SOURCE, task_notification};
 use crate::peers::{PEER_SOURCE, PeerItem};
@@ -39,6 +40,8 @@ pub(crate) fn order_for_parsing(notices: &mut [Waiting]) {
         Waiting::Shell(_) | Waiting::Agent(_) | Waiting::MonitorEnd { .. } => 0,
         // Not terminal, but they have always sorted with the terminal group. Keep them there.
         Waiting::Peer(_) | Waiting::MonitorEvent(_) => 0,
+        // A subagent's message to its coordinator is not a result either: it keeps the arrival order with the peers.
+        Waiting::SubagentMessage(_) => 0,
         // A stall reminder goes last, after every notification that reports a result.
         Waiting::Stall(_) => 1,
     });
@@ -57,6 +60,8 @@ pub(crate) enum Waiting {
     /// 无进展提醒（Node `task-notification` 命令的 stall 形式）：全文原样，不 ack，不计入后台工作。
     Stall(AgentStall),
     Peer(PeerItem),
+    /// 子代理经 RespondToCoordinator 发来的消息（`<subagent-message>` 块，全文）：不 ack，不计入后台工作。
+    SubagentMessage(String),
     /// Monitor 的事件或说明（工作线 F83，tools-more.md §19.6）：actor 自己产生，全文已包装；不 ack，也不按文字去重
     /// （同样的一行可以出现多次）。
     MonitorEvent(String),
@@ -75,6 +80,7 @@ impl Waiting {
             Self::Agent(notice) => notice.text.clone(),
             Self::Stall(stall) => stall.text.clone(),
             Self::Peer(item) => item.text(),
+            Self::SubagentMessage(text) => text.clone(),
             Self::MonitorEvent(text) | Self::MonitorEnd { text, .. } => text.clone(),
         }
     }
@@ -91,6 +97,7 @@ impl Waiting {
     pub(crate) fn source(&self) -> &'static str {
         match self {
             Self::Peer(_) => PEER_SOURCE,
+            Self::SubagentMessage(_) => SUBAGENT_MESSAGE_SOURCE,
             _ => NOTICE_SOURCE,
         }
     }
@@ -116,6 +123,7 @@ impl Waiting {
             (Self::Agent(a), Self::Agent(b)) => a.seq == b.seq,
             (Self::Stall(a), Self::Stall(b)) => a == b,
             (Self::Peer(a), Self::Peer(b)) => a == b,
+            (Self::SubagentMessage(a), Self::SubagentMessage(b)) => a == b,
             (Self::MonitorEnd { notice: a, .. }, Self::MonitorEnd { notice: b, .. }) => {
                 a.machine == b.machine && a.notice.seq == b.notice.seq
             }
@@ -129,7 +137,7 @@ impl Waiting {
 /// block is a notification of its own.
 fn notice_texts(message: &Message) -> Vec<&str> {
     match message {
-        Message::User(user) if matches!(&user.origin, UserOrigin::Meta { source } if source == NOTICE_SOURCE || source == PEER_SOURCE) => {
+        Message::User(user) if matches!(&user.origin, UserOrigin::Meta { source } if source == NOTICE_SOURCE || source == PEER_SOURCE || source == SUBAGENT_MESSAGE_SOURCE) => {
             user.content
                 .iter()
                 .map(|block| match block {
@@ -174,7 +182,10 @@ impl Actor {
             Waiting::Shell(notice) => self.ack(notice).await,
             Waiting::MonitorEnd { notice, .. } => self.ack(notice).await,
             Waiting::Agent(notice) => self.ack_agent(notice.seq).await,
-            Waiting::Stall(_) | Waiting::Peer(_) | Waiting::MonitorEvent(_) => {}
+            Waiting::Stall(_)
+            | Waiting::Peer(_)
+            | Waiting::SubagentMessage(_)
+            | Waiting::MonitorEvent(_) => {}
         }
     }
 

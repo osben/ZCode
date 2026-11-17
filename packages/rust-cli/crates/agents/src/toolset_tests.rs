@@ -49,6 +49,7 @@ fn names(agent: &str, background: bool) -> Vec<String> {
     let filtered = FilteredTools {
         inner: registry(),
         rule: ToolRule::new(&definition, background, 1),
+        child_tools: Vec::new(),
     };
     filtered
         .tools()
@@ -128,6 +129,7 @@ fn find_respects_the_rule() {
     let filtered = FilteredTools {
         inner: registry(),
         rule: ToolRule::new(&definition, false, 1),
+        child_tools: Vec::new(),
     };
     assert!(filtered.find("Read").is_some());
     assert!(filtered.find("Edit").is_none());
@@ -145,6 +147,7 @@ fn the_agent_tool_depends_on_the_depth_only() {
         FilteredTools {
             inner: registry(),
             rule: ToolRule::new(&definition, background, depth),
+            child_tools: Vec::new(),
         }
         .find("Agent")
         .is_some()
@@ -190,7 +193,46 @@ fn custom(tools: &[&str], disallowed: &[&str]) -> FilteredTools {
     FilteredTools {
         inner: Arc::new(HidingSearch(all)),
         rule: ToolRule::new(&definition, false, 1),
+        child_tools: Vec::new(),
     }
+}
+
+fn respond_tool() -> Arc<dyn Tool> {
+    Arc::new(FakeTool::new("RespondToCoordinator", true, ""))
+}
+
+/// Node gives every subagent child the coordinator port, so RespondToCoordinator is in every child's tool set,
+/// whatever its `tools` allowlist says. The main thread never gets it: its registry does not hold it.
+#[test]
+fn every_child_gets_respond_to_coordinator_whatever_its_allowlist_says() {
+    let mut foreground = custom(&["Read"], &[]);
+    foreground.child_tools = vec![respond_tool()];
+    assert_eq!(listed(&foreground), ["Read", "RespondToCoordinator"]);
+
+    let definition = builtins()
+        .into_iter()
+        .find(|definition| definition.agent_type == EXPLORE)
+        .unwrap();
+    let background = FilteredTools {
+        inner: registry(),
+        rule: ToolRule::new(&definition, true, 1),
+        child_tools: vec![respond_tool()],
+    };
+    assert!(
+        background
+            .tools()
+            .iter()
+            .any(|tool| tool.name() == "RespondToCoordinator")
+    );
+    assert!(background.find("RespondToCoordinator").is_some());
+    assert!(!names(GENERAL_PURPOSE, false).contains(&"RespondToCoordinator".to_owned()));
+}
+
+#[test]
+fn a_disallowed_respond_to_coordinator_is_removed() {
+    let mut filtered = custom(&["Read"], &["RespondToCoordinator"]);
+    filtered.child_tools = vec![respond_tool()];
+    assert_eq!(listed(&filtered), ["Read"]);
 }
 
 fn listed(filtered: &FilteredTools) -> Vec<String> {
@@ -277,6 +319,7 @@ fn a_desktop_fork_keeps_the_main_registry_without_the_cron_and_subagent_tools() 
     let fork = super::ForkChildTools {
         inner: registry(),
         node_child: true,
+        child_tools: Vec::new(),
     };
     let listed: Vec<String> = fork
         .tools()
@@ -335,6 +378,7 @@ fn a_desktop_fork_withholds_none_of_the_five_cron_tools() {
     let fork = super::ForkChildTools {
         inner: Arc::new(Withholding(tools)),
         node_child: true,
+        child_tools: Vec::new(),
     };
     let session = rust_cli_kernel_api::ids::SessionId::new("s");
     for name in cron {
@@ -383,6 +427,7 @@ fn a_fork_child_never_sees_the_lsp_tool() {
     let fork = super::ForkChildTools {
         inner: Arc::new(ListTools(tools)),
         node_child: false,
+        child_tools: Vec::new(),
     };
     let session = rust_cli_kernel_api::ids::SessionId::new("s");
     let listed: Vec<String> = fork
@@ -413,6 +458,7 @@ fn a_desktop_subagent_launches_no_subagents() {
             let desktop = FilteredTools {
                 inner: registry(),
                 rule: ToolRule::new(&definition, background, 1).node_child(true),
+                child_tools: Vec::new(),
             };
             let listed = listed(&desktop);
             for name in gone {
@@ -435,6 +481,7 @@ fn a_desktop_subagent_launches_no_subagents() {
     let desktop = FilteredTools {
         inner: registry(),
         rule: ToolRule::new(&named, false, 1).node_child(true),
+        child_tools: Vec::new(),
     };
     assert_eq!(listed(&desktop), ["TaskStop", "Read"]);
     // The TUI: a general-purpose subagent below the depth limit still has them.

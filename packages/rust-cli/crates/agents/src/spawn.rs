@@ -395,6 +395,7 @@ async fn run_loop(
         let registry: Arc<dyn ToolRegistry> = Arc::new(crate::toolset::ForkChildTools {
             inner: registry,
             node_child: core.node_desktop,
+            child_tools: vec![crate::respond::tool(core.clone())],
         });
         (
             registry,
@@ -409,6 +410,7 @@ async fn run_loop(
                 rule: ToolRule::new(&agent.definition, agent.background, agent.depth)
                     .with_questions(core.node_desktop)
                     .node_child(core.node_desktop),
+                child_tools: vec![crate::respond::tool(core.clone())],
             }),
             Arc::new(SubagentContext {
                 inner: core.ports.context.clone(),

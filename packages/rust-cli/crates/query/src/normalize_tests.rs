@@ -96,7 +96,12 @@ fn a_first_turn_folds_the_attachments_after_the_input() {
     // Node marks the latest non-system message (`finalizeLatestNonSystemMessageCacheControl`),
     // so the trailing system message is skipped and the user message's last block carries it.
     assert_eq!(marked(&api), [(0, api[0].content.len() - 1)]);
-    assert!(api[1].content.iter().all(|item| item.cache_control.is_none()));
+    assert!(
+        api[1]
+            .content
+            .iter()
+            .all(|item| item.cache_control.is_none())
+    );
 }
 
 #[test]

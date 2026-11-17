@@ -116,6 +116,11 @@ impl ToolRule {
     }
 
     pub(crate) fn allows(&self, name: &str) -> bool {
+        // Node gives every child the coordinator port (`includeRespondToCoordinator`), so the child's `tools`
+        // allowlist does not remove it; only `disallowedTools` does.
+        if name == crate::respond::NAME {
+            return !self.deny.iter().any(|tool| tool == name);
+        }
         let mcp = rust_cli_kernel_api::mcp_name::is_mcp(name);
         let asks = self.questions && name == tool_names::ASK_USER_QUESTION;
         if !mcp && !asks && ALL_AGENT_DISALLOWED.contains(&name) {
@@ -154,6 +159,20 @@ impl ToolRule {
 pub(crate) struct FilteredTools {
     pub(crate) inner: Arc<dyn ToolRegistry>,
     pub(crate) rule: ToolRule,
+    /// Tools only a subagent child has (RespondToCoordinator). They are not in `inner`, so the main thread never sees
+    /// them; they pass the rule like the others, except that the `tools` allowlist does not remove them.
+    pub(crate) child_tools: Vec<Arc<dyn Tool>>,
+}
+
+impl FilteredTools {
+    /// The child-only tools that the rule keeps, in the order they were given.
+    fn child_pool(&self) -> Vec<Arc<dyn Tool>> {
+        self.child_tools
+            .iter()
+            .filter(|tool| self.rule.allows(tool.name()))
+            .cloned()
+            .collect()
+    }
 }
 
 impl FilteredTools {
@@ -174,10 +193,11 @@ impl FilteredTools {
 impl FilteredTools {
     /// 主注册表的工具（`tools()` 或快照里的）按规则过滤、按清单排序。
     fn resolve(&self, tools: Vec<Arc<dyn Tool>>) -> Vec<Arc<dyn Tool>> {
-        let pool: Vec<Arc<dyn Tool>> = tools
+        let mut pool: Vec<Arc<dyn Tool>> = tools
             .into_iter()
             .filter(|tool| self.rule.allows(tool.name()))
             .collect();
+        pool.extend(self.child_pool());
         let Some(allow) = &self.rule.allow else {
             return pool;
         };
@@ -188,6 +208,12 @@ impl FilteredTools {
                 && !resolved.iter().any(|seen| Arc::ptr_eq(seen, tool))
             {
                 resolved.push(tool.clone());
+            }
+        }
+        // The child-only tools are not named in the allowlist, but they are always in the child's set.
+        for tool in self.child_pool() {
+            if !resolved.iter().any(|seen| Arc::ptr_eq(seen, &tool)) {
+                resolved.push(tool);
             }
         }
         let restored = self.restored(&resolved);
@@ -230,6 +256,13 @@ impl ToolRegistry for FilteredTools {
         {
             return Some(tool);
         }
+        if let Some(tool) = self
+            .child_pool()
+            .into_iter()
+            .find(|tool| tool.name() == name)
+        {
+            return Some(tool);
+        }
         if !SEARCH_TOOLS.contains(&name) {
             return None;
         }
@@ -241,6 +274,13 @@ impl ToolRegistry for FilteredTools {
             .inner
             .find_for(session, name)
             .filter(|tool| self.rule.allows(tool.name()))
+        {
+            return Some(tool);
+        }
+        if let Some(tool) = self
+            .child_pool()
+            .into_iter()
+            .find(|tool| tool.name() == name)
         {
             return Some(tool);
         }
@@ -273,6 +313,8 @@ pub(crate) struct ForkChildTools {
     pub(crate) inner: Arc<dyn ToolRegistry>,
     /// node_desktop: see [`node_child_lacks`].
     pub(crate) node_child: bool,
+    /// The child-only tools (RespondToCoordinator); a fork child has no tools allowlist, so they are always kept.
+    pub(crate) child_tools: Vec<Arc<dyn Tool>>,
 }
 
 impl ForkChildTools {
@@ -284,21 +326,38 @@ impl ForkChildTools {
 
 impl ToolRegistry for ForkChildTools {
     fn tools(&self) -> Vec<Arc<dyn Tool>> {
-        self.inner
+        let mut tools: Vec<Arc<dyn Tool>> = self
+            .inner
             .tools()
             .into_iter()
             .filter(|tool| self.keeps(tool))
-            .collect()
+            .collect();
+        tools.extend(self.child_tools.iter().cloned());
+        tools
     }
 
     fn find(&self, name: &str) -> Option<Arc<dyn Tool>> {
-        self.inner.find(name).filter(|tool| self.keeps(tool))
+        self.inner
+            .find(name)
+            .filter(|tool| self.keeps(tool))
+            .or_else(|| {
+                self.child_tools
+                    .iter()
+                    .find(|tool| tool.name() == name)
+                    .cloned()
+            })
     }
 
     fn find_for(&self, session: &SessionId, name: &str) -> Option<Arc<dyn Tool>> {
         self.inner
             .find_for(session, name)
             .filter(|tool| self.keeps(tool))
+            .or_else(|| {
+                self.child_tools
+                    .iter()
+                    .find(|tool| tool.name() == name)
+                    .cloned()
+            })
     }
 
     fn withheld(&self, name: &str) -> Option<Arc<dyn Tool>> {
@@ -320,6 +379,7 @@ impl ToolRegistry for ForkChildTools {
                 .tools
                 .into_iter()
                 .filter(|tool| self.keeps(tool))
+                .chain(self.child_tools.iter().cloned())
                 .collect(),
             mcp: snapshot.mcp,
         }

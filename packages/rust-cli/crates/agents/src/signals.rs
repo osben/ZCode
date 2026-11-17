@@ -34,6 +34,8 @@ struct Channel {
     tasks: Option<(u64, Value)>,
     /// 无进展提醒（不 ack，不计入 `pending`）：交给订阅方时就从这里取走。
     stalls: Vec<(u64, AgentStall)>,
+    /// 子代理发给这个会话的消息（RespondToCoordinator；不 ack）：交给订阅方时从这里取走。
+    messages: Vec<(u64, String)>,
 }
 
 impl Channel {
@@ -95,12 +97,20 @@ fn next_signal(channel: &mut Channel, cursor: &Cursor) -> Option<(u64, AgentSign
         .iter()
         .find(|(order, _)| *order > cursor.delivered)
         .map(|(order, stall)| (*order, AgentSignal::Stall(stall.clone())));
-    let (order, signal) = [notice, tasks, stall]
+    let message = channel
+        .messages
+        .iter()
+        .find(|(order, _)| *order > cursor.delivered)
+        .map(|(order, text)| (*order, AgentSignal::SubagentMessage { text: text.clone() }));
+    let (order, signal) = [notice, tasks, stall, message]
         .into_iter()
         .flatten()
         .min_by_key(|(order, _)| *order)?;
     if matches!(signal, AgentSignal::Stall(_)) {
         channel.stalls.retain(|(stalled, _)| *stalled != order);
+    }
+    if matches!(signal, AgentSignal::SubagentMessage { .. }) {
+        channel.messages.retain(|(sent, _)| *sent != order);
     }
     Some((order, signal))
 }
@@ -183,6 +193,18 @@ impl Hub {
             let channel = channels.entry(session.clone()).or_default();
             let order = channel.order();
             channel.stalls.push((order, stall));
+        }
+        self.wake();
+    }
+
+    /// 子代理的消息进了父会话的信号通道（RespondToCoordinator 的“已排队”）。不进 `pending`：不算后台工作，也不 ack；
+    /// 会话的 actor 交出时取走它。
+    pub(crate) fn subagent_message(&self, session: &SessionId, text: String) {
+        {
+            let mut channels = self.channels();
+            let channel = channels.entry(session.clone()).or_default();
+            let order = channel.order();
+            channel.messages.push((order, text));
         }
         self.wake();
     }

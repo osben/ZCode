@@ -77,3 +77,26 @@ fn a_monitor_event_keeps_its_arrival_place_among_the_terminal_notices() {
         ]
     );
 }
+
+/// A subagent's message to its coordinator (RespondToCoordinator) is not terminal, keeps its arrival place among the
+/// peers, and carries Node's `subagent_message` source with the `<subagent-message>` block as its text.
+#[test]
+fn a_subagent_message_keeps_its_arrival_place_and_source() {
+    let block = "<subagent-message>\n<agent-id>a1</agent-id>\n</subagent-message>".to_owned();
+    let mut notices = vec![
+        stall("a"),
+        Waiting::SubagentMessage(block.clone()),
+        terminal("bash"),
+    ];
+    order_for_parsing(&mut notices);
+    assert_eq!(
+        texts(&notices),
+        [
+            block.as_str(),
+            "<task-notification>bash</task-notification>",
+            "[SYSTEM NOTIFICATION - NOT USER INPUT] a",
+        ]
+    );
+    assert_eq!(notices[0].source(), "subagent_message");
+    assert_eq!(notices[0].turn_text(), block);
+}

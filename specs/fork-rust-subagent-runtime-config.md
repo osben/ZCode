@@ -143,6 +143,24 @@ The summary request (`skip_cache_write`) keeps its rule: the breakpoint goes on 
 
 Tests: `query` `normalize_tests` `a_first_turn_folds_the_attachments_after_the_input` (the breakpoint is on the user message, not on the trailing system message) and `a_summary_request_marks_the_message_before_the_last` (main-loop expectation).
 
+## RespondToCoordinator
+
+Node: `apps/zcode-cli/packages/core/src/tool/handlers/respond-to-coordinator.ts`, the port in `subagent/coordinator-response.ts`, the parent-side carrier in `runtime/methods/subagent-messages.ts`, availability in `runtime/helpers/runtime-tools.ts` (`includeRespondToCoordinator`). Design: `docs/subagent-respond-to-coordinator.md`.
+
+zcode-rs (`agents` crate, `respond.rs`) matches Node's contract:
+
+- **Who has it.** Every subagent child (foreground and background, desktop and TUI), never the main thread. Node gives the port to every child spawn (`runtime/methods/subagent.ts`). It is added to the child's tool set whatever its `tools` allowlist says (Node `runtime-tool-allowlist.test.ts`), and a `disallowedTools` entry still removes it. It is not in the main registry: `FilteredTools` and `ForkChildTools` add it for child runs only.
+- **Input.** Strict object: `summary` (1 to 200 characters) and `message` (1 to 20000 characters). Nothing else.
+- **Routing.** The target is bound by the runtime, not by the model: the child's own agent id and the agent's parent session (`LiveAgent.parent`). On the desktop a subagent has no subagent tools, so its parent is always the main session. A child whose parent is another subagent gets a failed result (`Failure: ...`), because this port has no mailbox for a subagent parent yet.
+- **Delivery.** Success means the message entered the parent session's signal channel (`Hub::subagent_message`). It does not mean the parent has read it. The channel keeps the message until the parent's session actor takes it: it is not background work and is not acknowledged (like a stall reminder).
+- **Parent side.** The session actor queues it as a `next` item with source `subagent_message` (Node's carrier, user role, model-only). It is merged at the parent's next tool boundary, or it starts a turn when the parent is idle. The text is Node's `<subagent-message>` block (`formatSubagentMessage`, XML-escaped), without a response id.
+- **Result.** Model text (capped at 4096 bytes):
+  - success: `Response <responseId> was queued for the coordinator. Continue the current task unless the coordinator explicitly changed or ended it.`
+  - failure: `Response <responseId> failed to queue for the coordinator. Continue the current task unless the coordinator explicitly changed or ended it. Failure: <error>.`
+- **Tool metadata.** Deferred (`ToolSearch`), read-only false, concurrency safe, no approval, description `Respond to the coordinator that owns this subagent.` plus Node's model instructions.
+
+Not covered: a subagent parent (see Routing), and the desktop renderer's display of the call (it already has `RespondToCoordinator` in `packages/ui`).
+
 ## Out of scope
 
 - **Standalone CLI.** It does not honor `disabledAgentIds` the way the Node standalone CLI does (`bootstrap/src/subagents.ts` `readAgentState`).
@@ -199,7 +217,7 @@ A case that fails on Node too is not a parity gap.
 
 The refresh specs (`subagent-refresh-capture.ts`, and the explicit tool lists in the model-override and reasoning specs) expect Node's child tool list, which includes `RespondToCoordinator`. zcode-rs has no such tool. That is a separate parity gap, outside this spec, so on Rust these specs run from a copy without that one tool name.
 
-Results on Rust (2026-11-13). The following failures are not gaps of this spec:
+Results on Rust (2026-11-13). RespondToCoordinator is now implemented (see "RespondToCoordinator" above), so the specs below run from their original tool lists. The following failures are not gaps of this spec:
 
 - `runtime-refresh` passes.
 - `catalog-refresh`: the `user` case passes. The `mcs` case fails afterwards, at the provider-prefix check. When a request ends with a mid-conversation system message, Rust puts the message cache breakpoint on that system message. Node puts it on the latest non-system message (`finalizeLatestNonSystemMessageCacheControl`, core `runtime/helpers/provider-request-messages.ts`); the Rust counterpart is `query` `normalize.rs`. That is a request-shaping gap, outside this spec.
