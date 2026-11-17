@@ -11,46 +11,111 @@ fn record(model: &str) -> CompositionRecord {
     }
 }
 
-/// Node's tracker ends a batch with a microtask. Here the batch ends when the mutating task yields to the runtime.
-async fn end_batch() {
-    tokio::task::yield_now().await;
+fn usage() -> ProviderUsage {
+    ProviderUsage {
+        input_tokens: 1,
+        context_tokens: 2,
+    }
 }
 
-#[tokio::test]
-async fn revision_starts_at_zero_and_goes_up_once_per_batch() {
+#[test]
+fn revision_starts_at_zero_and_each_single_change_is_its_own_batch() {
     let store = CompositionStore::default();
     let session = SessionId::new("s");
     assert_eq!(store.snapshot(&session), (0, None));
     assert_eq!(store.record(&session, record("a")), 1);
-    end_batch().await;
     assert_eq!(store.invalidate(&session), 2);
     assert_eq!(store.revision(&session), 2);
 }
 
-/// Node `markChanged`: a second change in the same batch leaves the revision alone and publishes nothing more.
-#[tokio::test]
-async fn changes_in_one_batch_share_one_revision_and_one_publish() {
+/// Node `markChanged`: every change of one batch shares one revision bump and one notification, and the notification
+/// is sent when the batch ends, so a subscriber reads the batch-final state.
+#[test]
+fn a_batch_bumps_once_and_publishes_once_with_its_final_state() {
     let store = CompositionStore::default();
     let session = SessionId::new("s");
     let mut changes = store.subscribe();
-    assert_eq!(store.record(&session, record("a")), 1);
-    assert_eq!(store.invalidate(&session), 1);
+    store.batch(&session, |batch| {
+        batch.record(record("a"));
+        batch.invalidate();
+        batch.record(record("b"));
+        // Nothing is published while the batch is open.
+        assert!(changes.try_recv().is_err());
+    });
     assert_eq!(store.revision(&session), 1);
-    assert_eq!(changes.try_recv().map(|c| c.revision).ok(), Some(1));
+    let change = changes.try_recv().expect("one notification for the batch");
+    assert_eq!(change.revision, 1);
     assert!(changes.try_recv().is_err());
-    // The invalidation in the same batch dropped the record.
-    assert_eq!(store.snapshot(&session).1, None);
-    end_batch().await;
-    assert_eq!(store.record(&session, record("b")), 2);
+    assert_eq!(
+        store.snapshot(&session).1.map(|r| r.model_id),
+        Some("b".to_owned())
+    );
 }
 
-/// Without a Tokio runtime there is no batch to wait for, so every change bumps.
+/// A batch ends where its closure returns, so the next change is a new batch with the next revision. No runtime or
+/// timer is involved: the same result on a current-thread and on a multi-thread runtime.
 #[test]
-fn without_a_runtime_every_change_bumps() {
+fn the_next_change_after_a_batch_is_a_new_batch() {
     let store = CompositionStore::default();
     let session = SessionId::new("s");
-    assert_eq!(store.record(&session, record("a")), 1);
-    assert_eq!(store.invalidate(&session), 2);
+    let mut changes = store.subscribe();
+    store.batch(&session, |batch| {
+        batch.record(record("a"));
+        batch.invalidate();
+    });
+    assert_eq!(store.record(&session, record("b")), 2);
+    let revisions: Vec<u64> = std::iter::from_fn(|| changes.try_recv().ok())
+        .map(|change| change.revision)
+        .collect();
+    assert_eq!(revisions, vec![1, 2]);
+}
+
+/// A batch whose changes are all no-ops (a usage with no record) moves nothing and publishes nothing.
+#[test]
+fn a_batch_without_a_change_publishes_nothing() {
+    let store = CompositionStore::default();
+    let session = SessionId::new("s");
+    let mut changes = store.subscribe();
+    let applied = store.batch(&session, |batch| batch.set_usage(usage()));
+    assert!(!applied);
+    assert_eq!(store.revision(&session), 0);
+    assert!(changes.try_recv().is_err());
+}
+
+/// Many batches run concurrently on a multi-thread runtime: each bumps once, so the revisions are 1..=N with one
+/// notification each, and no batch is cut short by another worker.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_batches_on_a_multi_thread_runtime_bump_once_each() {
+    use std::sync::Arc;
+    const BATCHES: u64 = 100;
+    let store = Arc::new(CompositionStore::default());
+    let session = SessionId::new("s");
+    let mut changes = store.subscribe();
+    let mut tasks = Vec::new();
+    for _ in 0..BATCHES {
+        let store = store.clone();
+        let session = session.clone();
+        tasks.push(tokio::spawn(async move {
+            store.batch(&session, |batch| {
+                batch.record(record("a"));
+                batch.invalidate();
+                batch.record(record("b"));
+            });
+        }));
+    }
+    for task in tasks {
+        task.await.unwrap();
+    }
+    let mut revisions = Vec::new();
+    while let Ok(change) = changes.try_recv() {
+        revisions.push(change.revision);
+    }
+    assert_eq!(revisions, (1..=BATCHES).collect::<Vec<_>>());
+    assert_eq!(store.revision(&session), BATCHES);
+    assert_eq!(
+        store.snapshot(&session).1.map(|r| r.model_id),
+        Some("b".to_owned())
+    );
 }
 
 #[test]
@@ -71,18 +136,14 @@ fn invalidation_drops_the_record_and_a_new_request_replaces_it() {
 fn usage_attaches_to_the_current_record_only() {
     let store = CompositionStore::default();
     let session = SessionId::new("s");
-    let usage = ProviderUsage {
-        input_tokens: 5,
-        context_tokens: 7,
-    };
     // No record: a late response after an invalidation must not create or fill one.
-    assert_eq!(store.set_usage(&session, usage), None);
+    assert_eq!(store.set_usage(&session, usage()), None);
     assert_eq!(store.snapshot(&session), (0, None));
     store.record(&session, record("a"));
-    assert!(store.set_usage(&session, usage).is_some());
+    assert!(store.set_usage(&session, usage()).is_some());
     assert_eq!(
         store.snapshot(&session).1.and_then(|r| r.provider_usage),
-        Some(usage)
+        Some(usage())
     );
 }
 
@@ -96,21 +157,13 @@ fn sessions_are_independent() {
 }
 
 /// Every batch is published with its session and the new revision, in order. The protocol side coalesces them per tick.
-#[tokio::test]
-async fn each_batch_is_published_once_with_its_revision() {
+#[test]
+fn each_batch_is_published_once_with_its_revision() {
     let store = CompositionStore::default();
     let session = SessionId::new("s");
     let mut changes = store.subscribe();
     store.record(&session, record("a"));
-    end_batch().await;
-    store.set_usage(
-        &session,
-        ProviderUsage {
-            input_tokens: 1,
-            context_tokens: 2,
-        },
-    );
-    end_batch().await;
+    store.set_usage(&session, usage());
     store.invalidate(&session);
     let mut seen = Vec::new();
     while let Ok(change) = changes.try_recv() {
@@ -177,12 +230,6 @@ fn a_dropped_usage_publishes_nothing() {
     let store = CompositionStore::default();
     let session = SessionId::new("s");
     let mut changes = store.subscribe();
-    store.set_usage(
-        &session,
-        ProviderUsage {
-            input_tokens: 1,
-            context_tokens: 1,
-        },
-    );
+    store.set_usage(&session, usage());
     assert!(changes.try_recv().is_err());
 }

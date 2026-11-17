@@ -75,6 +75,9 @@ pub enum ChildLive {
     /// A message the run has already stored in the child session.
     Committed(crate::message::Message),
     Finished(crate::session_api::TurnOutcome),
+    /// A completed model request of the run (Node `model_request_completed` in the child session). Live only: a replay
+    /// lists the run's committed messages and events, not its requests, so a request is reported once, when it completes.
+    ModelRequestCompleted(Box<crate::metering::ModelCall>),
 }
 
 /// Fork: the current child run so far (`Started`, the messages stored during it, the events since the last stored

@@ -429,11 +429,26 @@ impl RunSink for ChildSink {
             .flatten(),
             rust_cli_kernel_api::metering::Metered::Tool(_) => None,
         };
+        // Only a completed request is reported live, and only once its usage row is stored (as the main session does).
+        let completed = match &metered {
+            rust_cli_kernel_api::metering::Metered::Model(call)
+                if call.status == rust_cli_kernel_api::metering::CallStatus::Completed =>
+            {
+                Some(call.clone())
+            }
+            _ => None,
+        };
         let fact = Fact::from(metered);
-        match message {
+        let result = match message {
             Some(message) => self.commit_with(message, vec![fact], speed).await,
             None => self.commit(vec![fact]).await,
+        };
+        if result.is_ok()
+            && let Some(call) = completed
+        {
+            self.mirror(ChildLive::ModelRequestCompleted(Box::new(call)));
         }
+        result
     }
 
     async fn request_started(&self) {

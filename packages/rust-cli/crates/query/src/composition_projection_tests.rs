@@ -94,14 +94,13 @@ fn wire_for(name: &str) -> Vec<ApiMessage> {
     }
 }
 
-fn tool_names() -> HashMap<String, String> {
+fn tool_names() -> HashMap<&'static str, &'static str> {
     [
         ("toolu_1", "Read"),
         ("toolu_2", "Bash"),
         ("toolu_3", "Grep"),
     ]
     .into_iter()
-    .map(|(id, name)| (id.to_owned(), name.to_owned()))
     .collect()
 }
 

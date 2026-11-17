@@ -76,7 +76,9 @@ impl Mirror {
                 self.clear();
                 return unread;
             }
-            ChildLive::Event(_) | ChildLive::Committed(_) => {}
+            // A completed request is live only: it is not kept for a replay.
+            ChildLive::Event(_) | ChildLive::Committed(_) | ChildLive::ModelRequestCompleted(_) => {
+            }
         }
         None
     }

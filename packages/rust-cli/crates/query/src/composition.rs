@@ -284,7 +284,14 @@ pub fn classify(input: &Input<'_>) -> Breakdown {
         // Node sizes each of its messages on its own (its tokens are ceil'd per message), so each projected message is
         // added separately.
         for value in project(part.wire, &names) {
-            builder.add(id, &name, &stringify(&value));
+            // Node's tool result is its own `tool` item of the messages category (its `role`), apart from the turn's
+            // `user` or `assistant` item. Other sources keep their own name.
+            let item = if matches!(id, CategoryId::Messages) && value["role"] == "tool" {
+                "tool"
+            } else {
+                name.as_str()
+            };
+            builder.add(id, item, &stringify(&value));
         }
     }
     for part in input.tools {
@@ -301,13 +308,13 @@ pub fn classify(input: &Input<'_>) -> Breakdown {
 
 /// The name of every tool call in the request, by its id. A tool result takes its `toolName` from here, as Node's
 /// tool message carries the name of the call it answers.
-fn tool_names(messages: &[MessagePart<'_>]) -> HashMap<String, String> {
+fn tool_names<'a>(messages: &[MessagePart<'a>]) -> HashMap<&'a str, &'a str> {
     let mut names = HashMap::new();
     for part in messages {
         for wire in part.wire {
             for content in &wire.content {
                 if let ContentBlock::ToolUse { id, name, .. } = &content.block {
-                    names.insert(id.as_str().to_owned(), name.clone());
+                    names.insert(id.as_str(), name.as_str());
                 }
             }
         }
@@ -322,7 +329,7 @@ fn tool_names(messages: &[MessagePart<'_>]) -> HashMap<String, String> {
 ///   the turn's own message, as Node orders a turn's tool results ahead of its text.
 /// - The turn's own message carries its text and its tool calls (`{id, name, input}`). With no text its `content` is `""`.
 /// - `content` is a string when there is at most one text block, otherwise an array of `{type, ...}` blocks.
-pub fn project(wire: &[ApiMessage], names: &HashMap<String, String>) -> Vec<Value> {
+fn project(wire: &[ApiMessage], names: &HashMap<&str, &str>) -> Vec<Value> {
     let mut out = Vec::new();
     for message in wire {
         let role = match message.role {
@@ -434,7 +441,7 @@ fn source_category(source: &str) -> (CategoryId, String) {
 /// The sized JSON of one tool (Node `toolCategory`). A deferred tool is its name and description only. A tool sent in
 /// full carries the ten contract fields in Node's order; a field the tool does not set is an absent key, as Node's
 /// `undefined` is.
-pub fn tool_content(tool: &ToolDefinition, deferred: bool) -> String {
+fn tool_content(tool: &ToolDefinition, deferred: bool) -> String {
     let mut object = Map::new();
     object.insert("name".into(), json!(tool.name));
     object.insert("description".into(), json!(tool.description));

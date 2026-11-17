@@ -8,6 +8,7 @@
 use rust_cli_base::{Task, TaskError};
 use rust_cli_kernel_api::ids::{CommandId, MessageId, RunId};
 use rust_cli_kernel_api::message::{ContentBlock, Message, UserOrigin};
+use rust_cli_kernel_api::metering::CallStatus;
 use rust_cli_kernel_api::session_api::{Ack, KernelEvent};
 use rust_cli_kernel_api::side_request::SideSource;
 use rust_cli_kernel_api::store::{Fact, SessionKind, TurnAnchor};
@@ -493,11 +494,20 @@ impl Actor {
         }
         // 工作线 F73（usage.md §2.1.1）：Node 在标题请求结束时就写用量行，不看标题用不用；单独一批，锚在起任务时的
         // 回合；写入失败只记日志（Node 同）。
+        // Fork (parity step 4, review finding 0): a completed title request is announced once its row is stored, as the
+        // other completed requests are (Node `model_request_completed` with query source `session_title`).
+        let announced =
+            (generated.call.status == CallStatus::Completed).then(|| generated.call.clone());
         let usage = vec![Fact::ModelCalled {
             call: generated.call,
         }];
-        if let Err(reason) = self.commit_in_turn(turn, usage).await {
-            tracing::warn!(%reason, "the session title usage was not stored");
+        match self.commit_in_turn(turn, usage).await {
+            Ok(()) => {
+                if let Some(call) = announced {
+                    self.announce_completed(call);
+                }
+            }
+            Err(reason) => tracing::warn!(%reason, "the session title usage was not stored"),
         }
         let Some(title) = generated.title.filter(|_| session) else {
             return;

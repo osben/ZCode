@@ -349,9 +349,12 @@ impl Actor {
                 };
                 // 没有消息的计量（没有内容的失败请求、丢弃的响应）单独一批。
                 let messages = message.into_iter().collect();
+                // Only a call that will be announced is carried past the commit (`announce_completed` drops the others).
                 let completed = match metered.as_ref() {
-                    Metered::Model(call) => Some(call.clone()),
-                    Metered::Tool(_) => None,
+                    Metered::Model(call) if call.status == CallStatus::Completed => {
+                        Some(call.clone())
+                    }
+                    _ => None,
                 };
                 let result = self.record(messages, vec![Fact::from(*metered)]).await;
                 // 先落库，再记下并发出（只在内存，F105）。

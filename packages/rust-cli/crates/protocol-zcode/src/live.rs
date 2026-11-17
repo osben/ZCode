@@ -332,12 +332,15 @@ impl Live {
                     provider_for(projection, selection.clone())
                 });
             state.facts.extend(read.facts);
+            state.metrics.extend(read.metrics);
+            // Facts and metrics drain together, as `collect` does: a metric buffered earlier in this batch is not held
+            // back until the next write.
             (
                 Outgoing {
                     frames: Vec::new(),
                     summary: None,
                     facts: std::mem::take(&mut state.facts),
-                    metrics: Vec::new(),
+                    metrics: std::mem::take(&mut state.metrics),
                 },
                 read.reopen,
             )
