@@ -5,3 +5,11 @@
 //! wired into a session yet (the gate stays off until W9).
 
 pub mod canon;
+pub mod engine;
+pub mod error;
+pub mod event;
+pub mod journal;
+pub mod model;
+
+#[cfg(test)]
+mod lifecycle_golden_tests;

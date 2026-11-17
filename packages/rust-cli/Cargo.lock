@@ -2644,9 +2644,8 @@ dependencies = [
 name = "rust-cli-workflow"
 version = "0.1.0"
 dependencies = [
- "rusqlite",
+ "anyhow",
  "rust-cli-base",
- "rust-cli-node-store",
  "serde_json",
 ]
 
