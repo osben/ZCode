@@ -87,9 +87,18 @@ official cache and `installed_plugins.json` all live under the storage root
    unchanged.
 2. `session/create` (or resume) with `params.workspace`: the server registers
    `SessionWorkspaces[session] = key(workspaceIdentity?.trim() || workspacePath)`.
-3. First snapshot/tool listing of that session: `WorkspacePluginLayer` misses → loader runs →
+3. Session open (create or resume) of that session: `WorkspacePluginLayer` misses → loader runs →
    `Loaded` (start the workspace's MCP group, no wait) or `Invalid` (process set only, one warn
-   log). A hit serves from the map.
+   log). A hit re-reads too (Fork, PLM-LC-010, Node parity — "As built: session-open re-read"
+   below): the loader runs again and the slot, group and hooks are replaced only when the fresh
+   read differs; an equal read keeps the slot and its live connections. The settle lives at the
+   turn's boundary, not the load's — a group's connections start without waiting and an
+   unchanged slot a later session reuses never starts them again, so the turn's tool snapshot (query `step.rs`) runs
+   `McpConnections::wait_for_first_connections` before it is taken (connected or failed, bounded
+   by the connect wait; print sessions keep `wait_for_print`'s policy, deferred helper-hosted
+   servers and later reconnects excluded) and takes the snapshot again when it waited — the
+   desktop's first request (`toolSearchMode: "off"`) then advertises a freshly installed plugin's
+   tools inline, like Node's first request does.
 4. Model turn: the session's tool snapshot, `SessionCatalog` (`mcp_servers`), WaitForMcpServers and
    ToolSearch read the session's group (the same snapshot path they read today, parity spec
    "session keeps a snapshot of the tool profile"), so they follow without new owners.
@@ -162,6 +171,30 @@ recovers. The replaced slot needs no new owners: the skill roots, agent files an
 read `plugins_of` (the slot) per call, and the MCP view resolves the group per snapshot, so both
 follow a replaced slot.
 
+## As built: session-open re-read
+
+Trigger (PLM-LC-010, box rustlog 2026-11-17): the desktop installs and enables a plugin through the
+Host, which writes the plugin files and restarts only the plugin-workspace agent process — the
+session agent process gets no write it committed, so the explicit reload triggers above never fire.
+Its `ZCodeProject` slot was loaded by an earlier session (before the install) and every later
+session reused it: the new session's group had no `secret-verifier` server, and the model's
+tool_use answered `No such tool available` although the plugin-workspace process had connected it.
+
+Node re-reads the app config at every session app construction. The Rust layer now does the same
+at every session open (`WorkspaceLayer::load`, called by the kernel's create/resume and the print
+`--continue` prewarm): a `Loaded` slot no longer short-circuits the read. The re-read runs under the
+same one-load-at-a-time claim and epoch as a first load (a concurrent open of the same workspace
+waits for it and then reuses its result; a reload that reserved later still wins). The fresh read is
+compared with the installed one (the group's full server list and the re-selected plugin set, both
+`PartialEq`): equal → nothing is installed (no group restart, no hooks re-registration, the
+reserved epoch is simply unused); different → the normal epoch install replaces slot, group and
+hooks for that workspace only. The print `--continue` prewarm (`WorkspaceLayerHost::prewarm`)
+reads ahead of the open that follows: that open joins the read while it is in flight, or reuses its
+slot once afterwards (a prewarm mark the open consumes), so the prewarm still takes the read off the
+open's path. A re-read that fails is fail-closed like a reload (`Invalid`, the
+group stops). Sessions already open keep their group handle semantics unchanged: a replaced group
+is what a reload does today. Cost: one config + plugin inventory read per session open, as in Node.
+
 ## Not in this PR (follow-ups)
 
 - ~~Per-workspace `HelperCatalog` admission and helper-hosted plugin servers per workspace~~ — closed:
@@ -206,6 +239,10 @@ follow a replaced slot.
   - user shadows project by name inside a group; two groups run the same name independently;
   - an unreadable/broken project layer → `Invalid`: the session keeps the process set, the next
     successful assembly recovers;
+  - a session open of a workspace whose loaded slot is stale (a plugin installed by another
+    process since) re-reads and installs the new set and group; an unchanged re-read keeps the
+    slot, the group (no restart) and the hooks registration; a concurrent open waits for the
+    in-flight re-read (ext);
   - a reload after a committed write replaces the slot, the group and the plugin-hook registration
     for that workspace only; an in-flight load that started earlier never installs over it; a reload
     of a never-loaded workspace loads nothing; the App's trust paths (`workspace/hooks/trustGrant`,

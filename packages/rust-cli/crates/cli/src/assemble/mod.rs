@@ -668,7 +668,7 @@ pub(crate) async fn kernel(
         max_turns: cli.max_turns,
         search_tools: names_search_tools(&cli.allowed),
         task_tools: options::task_tools(env),
-        limits: limits::limits(env, facts.controller.max_output_tokens),
+        limits: limits::limits(env, facts.controller.max_output_tokens, spec.node_desktop),
     };
     // 自动记忆目录先建好，提示词的记忆段才能说“目录已存在”（memory.md §2）；目录在主 env 上（deployment.md §8）。
     let mut context = ContextConfig::new(spec.surface);
@@ -700,7 +700,7 @@ pub(crate) async fn kernel(
     // F89，tools-more.md §3.2.1）。修改：F84 时看 `tool_search_mode`（禁用表里的模型不算）。
     let prewait = Prewait {
         streaming_input: cli.streaming_input,
-        tool_search: limits::tool_search(env).allows(),
+        tool_search: limits::tool_search(env, spec.node_desktop).allows(),
     };
     // `--mcp-config` 与 `--plugin-dir` 经主 env 读、解析（deployment.md §21）；机器绑定的旁路文件是 controller 的配置。
     let mut extensions = setup::extensions(

@@ -315,3 +315,59 @@ async fn a_direct_call_waits_at_most_ten_seconds_or_mcp_timeout() {
     assert_eq!(manager(30_000).tool_wait_ms(), 10_000);
     assert_eq!(manager(4_000).tool_wait_ms(), 4_000);
 }
+
+/// Fork (PLM-LC-010, Node parity): the settle a turn's tool snapshot runs before it is taken — a group's FIRST
+/// connections settle (connected or failed) before it reports `true`; with none pending it reports `false` at once.
+#[tokio::test(start_paused = true)]
+async fn the_settle_waits_for_a_first_connection_only() {
+    let rig = rig(
+        FakeMcp::default()
+            .with("fast", tools_server())
+            .with("slow", slow()),
+        McpStartup::default(),
+        vec![config("fast", false, false), config("slow", false, false)],
+    );
+    release_after(&rig, "slow", 1_500);
+    let start = rig.clock.now_ms();
+    assert!(rig.manager.wait_for_first_connections().await);
+    assert_eq!(rig.clock.now_ms() - start, 1_500);
+    let (_, view) = rig.manager.snapshot();
+    assert!(
+        view.servers
+            .iter()
+            .all(|server| server.state == McpServerState::Connected)
+    );
+    // Everything settled: a later snapshot has nothing to settle.
+    assert!(!rig.manager.wait_for_first_connections().await);
+}
+
+/// Print sessions keep the startup wait's own policy (`wait_for_print`); a reconnecting server is not a first
+/// connection and never holds the settle.
+#[tokio::test(start_paused = true)]
+async fn print_sessions_and_reconnects_skip_the_settle() {
+    let print_rig = rig(
+        FakeMcp::default().with("slow", slow()),
+        McpStartup::default(),
+        vec![config("slow", false, false)],
+    );
+    print_rig.manager.set_print_session(true);
+    let start = print_rig.clock.now_ms();
+    assert!(!print_rig.manager.wait_for_first_connections().await);
+    assert_eq!(print_rig.clock.now_ms() - start, 0);
+
+    let reconnecting_rig = rig(
+        FakeMcp::default().with("web", slow()),
+        McpStartup::default(),
+        vec![config("web", false, true)],
+    );
+    release_after(&reconnecting_rig, "web", 100);
+    assert!(reconnecting_rig.manager.wait_for_first_connections().await);
+    reconnecting_rig.fake.drop_server("web", false);
+    let reconnecting = |view: &rust_cli_kernel_api::mcp_state::McpView| {
+        view.servers.iter().any(|server| server.reconnecting)
+    };
+    reconnecting_rig.manager.wait(1_000, &reconnecting).await;
+    let start = reconnecting_rig.clock.now_ms();
+    assert!(!reconnecting_rig.manager.wait_for_first_connections().await);
+    assert_eq!(reconnecting_rig.clock.now_ms() - start, 0);
+}

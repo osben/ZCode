@@ -72,6 +72,12 @@ struct Slots {
     /// Counts writes: a session's load reserves when it claims the key, a reload before it reads.
     epoch: u64,
     map: BTreeMap<String, (Slot, u64)>,
+    /// The full server list each `Loaded` slot's group was started with: a session-open re-read
+    /// compares against it (with the slot's plugin set) to install only a changed read.
+    servers: BTreeMap<String, Vec<McpServer>>,
+    /// The keys a prewarm read for a session open that is about to follow: that open reuses the
+    /// read once instead of re-reading (the prewarm exists to take the read off the open's path).
+    prewarmed: std::collections::BTreeSet<String>,
 }
 
 /// One assembled layer, ready to install: the slot plus what its group needs. The group itself
@@ -111,6 +117,8 @@ impl WorkspaceLayer {
             slots: RwLock::new(Slots {
                 epoch: 0,
                 map: BTreeMap::new(),
+                servers: BTreeMap::new(),
+                prewarmed: std::collections::BTreeSet::new(),
             }),
             loading: RwLock::new(std::collections::HashMap::new()),
             process,
@@ -189,10 +197,32 @@ impl WorkspaceLayer {
         }
     }
 
-    /// Loads the layer of `workspace` at the first need of one of its sessions. Fail-closed: a
-    /// project layer that cannot be read or parsed stops the workspace's group and marks the slot
-    /// `Invalid`, so its sessions keep the process set until the next successful load.
+    /// Loads the layer of `workspace` at each session open (create, resume, the print `--continue`
+    /// prewarm). Fail-closed: a project layer that cannot be read or parsed stops the workspace's
+    /// group and marks the slot `Invalid`, so its sessions keep the process set until the next
+    /// successful load.
+    ///
+    /// Fork (PLM-LC-010, specs/fork-rust-workspace-plugins-mcp.md "As built: session-open
+    /// re-read"): a `Loaded` slot is re-read too, like Node's per-session config read — another
+    /// process (the desktop Host's plugin-workspace agent) installs plugins without a write this
+    /// process committed, so the explicit reload never fires. An equal read installs nothing (the
+    /// group keeps its live connections); a changed one installs through the same epoch check.
     pub(crate) async fn load(&self, workspace: &WorkspaceRef) {
+        self.load_for(workspace, false).await;
+    }
+
+    /// Loads ahead of the session open that follows (the print `--continue` prewarm): the read is
+    /// the open's — the open joins it while in flight, or reuses its slot once afterwards.
+    pub(crate) async fn prewarm(&self, workspace: &WorkspaceRef) {
+        self.load_for(workspace, true).await;
+    }
+
+    /// Takes the prewarm mark of `key`: `true` when the slot was read for this open.
+    fn take_prewarmed(&self, key: &str) -> bool {
+        self.slots.write_unpoisoned().prewarmed.remove(key)
+    }
+
+    async fn load_for(&self, workspace: &WorkspaceRef, prewarm: bool) {
         let key = project_key(workspace.root.as_str());
         if self
             .process
@@ -203,29 +233,37 @@ impl WorkspaceLayer {
             // group would duplicate every connection.
             return;
         }
-        // A loaded slot is reused: a second session of the same workspace must not replace the
-        // group (that would cancel the first session's connections mid-flight). The config-change
-        // path is [`Self::reload`], which reserves an epoch and re-reads past this guard.
-        if matches!(self.slot(&key), Some(Slot::Loaded(_))) {
-            return;
-        }
         let Some(loader) = self.loader.get().cloned() else {
             return;
         };
-        // One load at a time: the caller that registers the key loads; every other caller waits for
-        // the slot it puts (the notified future is created before the slot check, so a finish in
-        // between cannot be missed).
+        if !prewarm && self.take_prewarmed(&key) && matches!(self.slot(&key), Some(Slot::Loaded(_)))
+        {
+            return;
+        }
+        // One load at a time: the caller that registers the key reads; every other caller waits
+        // for that read and reuses what it put — a concurrent open never proceeds on a slot an
+        // in-flight re-read is about to replace, and never replaces the group a second time. The
+        // notified future is created before the in-flight check, so a finish in between cannot be
+        // missed; a claim released without a slot (a cancelled open) makes the waiter retry.
         loop {
             let waiter = match self.begin(&key) {
                 Ok(()) => break,
                 Err(waiter) => waiter,
             };
             let notified = waiter.notified();
-            if self.slot(&key).is_some() {
-                return;
+            let in_flight = self
+                .loading
+                .read_unpoisoned()
+                .get(&key)
+                .is_some_and(|current| Arc::ptr_eq(current, &waiter));
+            if in_flight {
+                notified.await;
             }
-            notified.await;
             if self.slot(&key).is_some() {
+                // The joined read was this open's: a prewarm mark it left is consumed with it.
+                if !prewarm {
+                    self.take_prewarmed(&key);
+                }
                 return;
             }
         }
@@ -240,9 +278,37 @@ impl WorkspaceLayer {
         // this load runs reserved after it, so whichever finishes first the later read wins.
         let epoch = self.reserve();
         let install = self.assemble(&loader, workspace).await;
-        self.put_or_superseded(&key, workspace, epoch, install);
+        if !self.installed_matches(&key, &install) {
+            self.put_or_superseded(&key, workspace, epoch, install);
+        }
+        if prewarm {
+            self.slots.write_unpoisoned().prewarmed.insert(key.clone());
+        }
         self.finish(&key);
         claim.armed = false;
+    }
+
+    /// Whether `install` equals what `key`'s slot already holds — the same plugin set and the same
+    /// group server list for a `Loaded` slot, or an `Invalid` slot again. A matching re-read is not
+    /// installed: re-installing would restart the group and cancel its live connections.
+    fn installed_matches(&self, key: &str, install: &Install) -> bool {
+        let slots = self.slots.read_unpoisoned();
+        match (slots.map.get(key), install) {
+            (
+                Some((Slot::Loaded(current), _)),
+                Install::Loaded {
+                    servers, plugins, ..
+                },
+            ) => {
+                **current == **plugins
+                    && slots
+                        .servers
+                        .get(key)
+                        .is_some_and(|current| current == servers)
+            }
+            (Some((Slot::Invalid, _)), Install::Invalid) => true,
+            _ => false,
+        }
     }
 
     /// Fork (specs/fork-rust-workspace-plugins-mcp.md, "As built: layer reload"): re-reads
@@ -347,6 +413,7 @@ impl WorkspaceLayer {
                 plugins,
             } => {
                 // A replaced group's connections stop inside `start` (`McpManager::shutdown`).
+                slots.servers.insert(key.to_owned(), servers.clone());
                 self.mcp.start(key, workspace, servers);
                 if let Some(sink) = self.hooks.get() {
                     sink(key, &plugins);
@@ -356,6 +423,7 @@ impl WorkspaceLayer {
                     .insert(key.to_owned(), (Slot::Loaded(plugins), epoch));
             }
             Install::Invalid => {
+                slots.servers.remove(key);
                 self.mcp.stop(key);
                 slots.map.insert(key.to_owned(), (Slot::Invalid, epoch));
             }
@@ -384,6 +452,10 @@ impl Drop for Claim<'_> {
 impl rust_cli_kernel_api::workspace_key::WorkspaceLayerHost for WorkspaceLayer {
     async fn load(&self, workspace: &WorkspaceRef) {
         WorkspaceLayer::load(self, workspace).await;
+    }
+
+    async fn prewarm(&self, workspace: &WorkspaceRef) {
+        WorkspaceLayer::prewarm(self, workspace).await;
     }
 
     async fn reload(&self, workspace: &WorkspaceRef) {

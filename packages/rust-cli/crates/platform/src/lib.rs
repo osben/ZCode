@@ -22,6 +22,7 @@ mod credentials;
 mod fake_server_tests;
 pub mod local;
 mod login;
+mod mcp_oauth;
 mod option_map;
 mod personal;
 mod providers;
@@ -187,6 +188,12 @@ impl Platform {
     /// default-model task waits on it to settle the default again (fork spec `fork-rust-credential-cipher.md` F3).
     pub async fn credentials_readable(&self) {
         self.registry.readable().await;
+    }
+
+    /// The MCP OAuth state in `credentials.json`, read through the same cipher as the other credentials
+    /// (`specs/fork-rust-mcp-oauth.md`).
+    pub fn mcp_oauth_store(&self) -> Arc<dyn rust_cli_ext::mcp::oauth::McpOAuthStore> {
+        mcp_oauth::CredentialsMcpOAuthStore::new(self.credentials.clone()).into_dyn()
     }
 
     /// 凭据文件 `credentials.json` 的位置。

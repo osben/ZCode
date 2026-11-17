@@ -60,3 +60,12 @@ fn worktree_cwd_reports_true() {
         assert_eq!(capabilities(node_helper)["worktreeCwd"], true);
     }
 }
+
+/// Gen UI widget state (specs/fork-rust-agent-parity.md "Gen UI widget state"): the sendText `genUiContext` input
+/// path exists, so the capability reports true like Node and the Host forwards widget state to Rust sessions.
+#[test]
+fn gen_ui_context_reports_true() {
+    for node_helper in [false, true] {
+        assert_eq!(capabilities(node_helper)["genUiContext"], true);
+    }
+}

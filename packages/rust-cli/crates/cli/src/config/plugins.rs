@@ -150,6 +150,7 @@ pub(crate) async fn sources(
     section: PluginSection,
     root: &str,
     storage: &StoragePath,
+    process_env: &rust_cli_base::secret::EnvSnapshot,
 ) -> PluginSources {
     let mut candidates = Vec::new();
     if section.enabled {
@@ -184,6 +185,9 @@ pub(crate) async fn sources(
         view_host: false,
         // The app-server sets it when the Host configured a Node helper (assembly).
         node_helper: false,
+        // Fork: the entry-captured process environment — the plugin MCP servers' `${NAME}` env
+        // references resolve against it (Node `adapters/src/plugins/template.ts`).
+        env: process_env.clone(),
     }
 }
 
