@@ -477,6 +477,8 @@ fn attach_node_repl(plugins: &mut [Plugin]) {
             always_load: false,
         },
         machine: MachineName::primary(),
+        // Plugin rows carry no OAuth config yet (PR2 spec, follow-up #501).
+        oauth: None,
     });
 }
 

@@ -865,6 +865,7 @@ fn oauth_fixture(user: Value) -> (Fixture, Arc<MemoryOAuthStore>) {
             scope.spawner(),
             Arc::new(FixedClock(1_767_225_600_000)),
         ),
+        Arc::new(Plugins(None)),
     )
     .with_mcp_oauth(store.clone(), Arc::new(DiscoveryOnly));
     let fixture = Fixture {
