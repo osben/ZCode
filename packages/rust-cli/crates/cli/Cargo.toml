@@ -86,7 +86,7 @@ rust-cli-vendor-ugrep = { path = "../../vendor/ugrep" }
 # 部署配置的 JSON（docs/specs/rust-cli/deployment.md §6）：类型化的解析，未知字段报错。
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
-tokio = { workspace = true, features = ["io-std", "signal", "sync"] }
+tokio = { workspace = true, features = ["io-std", "signal", "sync", "time"] }
 # 退出信号交给前端的取消令牌（session-lifecycle.md §3.5）。
 tokio-util.workspace = true
 bytes.workspace = true

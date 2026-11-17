@@ -13,6 +13,7 @@
   "apps/zcode-cli/packages/bootstrap/tests/fork-rust-helper/f3-notifications.test.ts",
   "apps/zcode-cli/packages/bootstrap/tests/fork-rust-helper/f3-office.test.ts",
   "apps/zcode-cli/packages/bootstrap/tests/fork-rust-helper/f3-session-lane.test.ts",
+  "apps/zcode-cli/packages/bootstrap/tests/fork-rust-helper/f4-node-repl-config.test.ts",
   "apps/zcode-cli/packages/bootstrap/tests/fork-rust-helper/helper.test.ts",
   "packages/acp-agent-runtime/test/config-options.test.ts",
   "packages/acp-agent-runtime/test/frames.test.ts",
