@@ -50,14 +50,20 @@ impl Actor {
         &self,
         turn: TurnId,
         off_peak: Option<String>,
+        turn_selection: Option<rust_cli_kernel_api::model::ModelSelection>,
     ) -> (Opening, QueryRequest) {
         let run = self.deps.ids.run();
-        let request = self.main_request(run.clone(), off_peak);
+        let request = self.main_request(run.clone(), off_peak, turn_selection);
         (self.open_turn(turn, Some(run), SINK_REQUESTS), request)
     }
 
     /// 主线程这一回合的请求：历史、模型与模式取 actor 此刻的值，入口再追加这一回合的输入。
-    fn main_request(&self, run: RunId, off_peak: Option<String>) -> QueryRequest {
+    fn main_request(
+        &self,
+        run: RunId,
+        off_peak: Option<String>,
+        turn_selection: Option<rust_cli_kernel_api::model::ModelSelection>,
+    ) -> QueryRequest {
         QueryRequest {
             max_turns: self.deps.max_turns,
             off_peak_execution: off_peak,
@@ -66,7 +72,8 @@ impl Actor {
                 run,
                 self.meta.workspace.clone(),
                 self.messages.clone(),
-                self.selection.clone(),
+                // Fork (slice 3 layer B): an off-peak run's turn uses its own model; the session's stays as it is.
+                turn_selection.unwrap_or_else(|| self.selection.clone()),
                 self.mode(),
                 QuerySource::MainThread,
             )

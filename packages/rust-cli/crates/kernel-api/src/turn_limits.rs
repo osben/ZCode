@@ -29,6 +29,9 @@ pub struct TurnLimits {
     /// are sent on that run's ticket; the ticket source itself is resolved from it, never stored here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     off_peak_execution: Option<String>,
+    /// Fork: the model the off-peak run's turn uses. It is this turn's only: the session's selection is not changed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    off_peak_selection: Option<Box<crate::model::ModelSelection>>,
 }
 
 impl TurnLimits {
@@ -42,16 +45,30 @@ impl TurnLimits {
             automation,
             hidden_tools,
             off_peak_execution: None,
+            off_peak_selection: None,
         }
     }
 
     /// Fork: the limits with the off-peak execution the input opens (a blank id is none).
-    pub fn with_off_peak_execution(mut self, execution: Option<&str>) -> Self {
+    pub fn with_off_peak_run(
+        mut self,
+        execution: Option<&str>,
+        selection: Option<crate::model::ModelSelection>,
+    ) -> Self {
         self.off_peak_execution = execution
             .map(str::trim)
             .filter(|id| !id.is_empty())
             .map(str::to_owned);
+        self.off_peak_selection = self
+            .off_peak_execution
+            .as_ref()
+            .and(selection.map(Box::new));
         self
+    }
+
+    /// The model of the off-peak run's turn, if the turn is one.
+    pub fn off_peak_selection(&self) -> Option<&crate::model::ModelSelection> {
+        self.off_peak_selection.as_deref()
     }
 
     /// The off-peak execution of the turn, if the input opened one.
@@ -68,6 +85,7 @@ impl TurnLimits {
         self.automation.is_none()
             && self.hidden_tools.is_empty()
             && self.off_peak_execution.is_none()
+            && self.off_peak_selection.is_none()
     }
 
     /// Whether CronCreate, CronUpdate and CronDelete must refuse on this turn (Node

@@ -323,7 +323,11 @@ request, `LiveAgent.off_peak_execution` set by the Agent tool, `QueryRequest.off
 children included. The port resolves the open run by execution from any session, so a child is sent on the run's ticket;
 an ended run gives none.
 
-Not built yet: the selection-persistence check (`mode.rs`),
+Selection: an off-peak input's model travels in its turn limits (`TurnLimits.off_peak_selection`) and becomes that turn's
+request selection (`main_request`). `submitted_execution` persists no selection for an off-peak input, so the session's
+model, and the next ordinary turn's, is the user's own. Test: `an_off_peak_input_does_not_persist_its_model`.
+
+Not built yet:
 and the policy flip (`workspace/updateOffPeakToolPolicy` still answers `enabled: false`). The flip stays last.
 
 What is blocked: an off-peak run's model requests must carry the ticket (`x-off-peak-ticket-id`, request auth from

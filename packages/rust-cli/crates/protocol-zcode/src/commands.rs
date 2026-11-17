@@ -1673,8 +1673,8 @@ fn input_execution(
         .as_ref()
         .and_then(|execution| execution.off_peak.as_ref())
         .map(|run| run.execution_id.as_str());
-    let limits =
-        TurnLimits::new(input.automation_id.as_deref(), hidden).with_off_peak_execution(off_peak);
+    let limits = TurnLimits::new(input.automation_id.as_deref(), hidden)
+        .with_off_peak_run(off_peak, chosen.clone());
     if chosen.is_none() && resolved.is_none() && limits.is_empty() {
         return None;
     }
