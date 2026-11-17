@@ -249,13 +249,13 @@ that exists would let the Host create tasks whose runs bill the plan quota, so t
 
 Owners:
 
-| Owner | Owns |
-| --- | --- |
-| Host | `off_peak_tasks`, the `offPeak/create|list` answers, ticket issue and dispatch, the policy |
-| Tools (`tools/src/off_peak_tools.rs`) | Parse, the bound-session check, `offPeak/create` params, output and Node's error texts; the 30 s deadline; refusal on an off-peak turn |
-| Port (`kernel-api/src/off_peak.rs`, `protocol-zcode/src/off_peak_port.rs`) | The transport only: the `workspace` ref, the reply check against the inbound schema, the Host's error code |
-| Turn (`kernel-api/src/turn_limits.rs` via `sendText`) | `OffPeakCreate` hidden on the turn whose input carries `offPeakTaskId` (Node `OFF_PEAK_EXECUTION_TOOL_DENYLIST`) |
-| Inbound schema (`scripts/fork-rust-agent/inbound-schema.mts`) | Reply shapes of `offPeak/create` (the `ok` union) and `offPeak/list` |
+| Owner                                                                      | Owns                                                                                                                                   |
+| -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| Host                                                                       | `off_peak_tasks`, the `offPeak/create                                                                                                  | list` answers, ticket issue and dispatch, the policy |
+| Tools (`tools/src/off_peak_tools.rs`)                                      | Parse, the bound-session check, `offPeak/create` params, output and Node's error texts; the 30 s deadline; refusal on an off-peak turn |
+| Port (`kernel-api/src/off_peak.rs`, `protocol-zcode/src/off_peak_port.rs`) | The transport only: the `workspace` ref, the reply check against the inbound schema, the Host's error code                             |
+| Turn (`kernel-api/src/turn_limits.rs` via `sendText`)                      | `OffPeakCreate` hidden on the turn whose input carries `offPeakTaskId` (Node `OFF_PEAK_EXECUTION_TOOL_DENYLIST`)                       |
+| Inbound schema (`scripts/fork-rust-agent/inbound-schema.mts`)              | Reply shapes of `offPeak/create` (the `ok` union) and `offPeak/list`                                                                   |
 
 Wire:
 
