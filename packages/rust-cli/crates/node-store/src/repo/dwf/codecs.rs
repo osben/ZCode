@@ -10,8 +10,9 @@
 //! | completed                | completed   | the failure as is (normally NULL)                     |
 //! | pending / running        | same        | NULL                                                  |
 //!
-//! Decoding is total. `cancelled` without a usable envelope is `stopped(user)`. `failed` with code
-//! `Interrupted` is `stopped(interrupted)`. Other `failed` rows are `errored`.
+//! Decoding is total over the physical statuses: `cancelled` without a usable envelope is `stopped(user)`,
+//! and `failed` with code `Interrupted` is `stopped(interrupted)`; other `failed` rows are `errored`.
+//! Corrupt JSON in `failure_json` is an error, not a status (see `decode_json`).
 use serde_json::{Map, Value};
 
 use super::{RunStatus, Settlement, StopReason};
@@ -101,9 +102,13 @@ pub fn encode_result_json(value: Option<&Value>) -> Option<String> {
     value.map(Value::to_string)
 }
 
-/// Node `decodeJson`: NULL and JSON `null` are absent. Unparsable text is absent too (Node would throw).
-/// Corrupt text is an error, not an absent value: Node's decodeJson throws, and a silent `None` would
-/// make a damaged failure or error read as "no failure".
+/// Node `decodeJson` (`value ? JSON.parse(value) : undefined`), with corrupt text as `Err`:
+/// - SQL NULL and the empty string are absent (`None`). Node never parses a falsy value.
+/// - Text that parses to JSON `null` is also `None`. Node returns that `null` itself, and callers here do
+///   not keep it apart from absent. Node's writers never store it (`encodeJson` maps null to SQL NULL),
+///   so this only differs on hand-edited rows.
+/// - Any other text is parsed. Text that does not parse is `Err`: Node's JSON.parse throws, and a silent
+///   `None` would make a damaged failure or error read as "no failure".
 pub fn decode_json(text: Option<&str>) -> Result<Option<Value>, serde_json::Error> {
     match text {
         None | Some("") => Ok(None),

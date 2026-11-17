@@ -171,38 +171,72 @@ pub struct WorkflowActorLink<'a> {
 const RUN_COLUMNS: &str = "id, parent_session_id, cwd, name, script_text, script_hash, args_json, \
      tool_call_id, resumed_from, caps_max_concurrency, spent_tokens, status, failure_json, result_json";
 
-/// A corrupt JSON column fails the row and names the column. It is never read as an absent value.
-fn corrupt_column(row: &Row<'_>, name: &str, error: serde_json::Error) -> rusqlite::Error {
-    let index = row.as_ref().column_index(name).unwrap_or(0);
-    rusqlite::Error::FromSqlConversionFailure(index, rusqlite::types::Type::Text, Box::new(error))
+/// The error for a column whose value cannot be read. The column name travels in the message, and the
+/// index is the column's real position in the statement. A name the statement does not select is a
+/// programming error: it is never reported as column 0.
+fn column_error(
+    row: &Row<'_>,
+    name: &'static str,
+    source: impl Into<Box<dyn std::error::Error + Send + Sync>>,
+) -> rusqlite::Error {
+    let index = match row.as_ref().column_index(name) {
+        Ok(index) => index,
+        Err(_) => {
+            debug_assert!(false, "dwf column {name} is not in the selected columns");
+            usize::MAX
+        }
+    };
+    rusqlite::Error::FromSqlConversionFailure(
+        index,
+        rusqlite::types::Type::Text,
+        Box::new(ColumnError {
+            column: name,
+            source: source.into(),
+        }),
+    )
+}
+
+/// The source of a [`column_error`]: the column name, then the cause.
+#[derive(Debug)]
+struct ColumnError {
+    column: &'static str,
+    source: Box<dyn std::error::Error + Send + Sync>,
+}
+
+impl std::fmt::Display for ColumnError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "column {}: {}", self.column, self.source)
+    }
+}
+
+impl std::error::Error for ColumnError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.source.as_ref())
+    }
 }
 
 /// An optional JSON column where JSON `null` is absent (Node `decodeJson`).
-fn json_column(row: &Row<'_>, name: &str) -> rusqlite::Result<Option<Value>> {
+fn json_column(row: &Row<'_>, name: &'static str) -> rusqlite::Result<Option<Value>> {
     let text: Option<String> = row.get(name)?;
-    decode_json(text.as_deref()).map_err(|error| corrupt_column(row, name, error))
+    decode_json(text.as_deref()).map_err(|error| column_error(row, name, error))
 }
 
-/// A result column, where only SQL NULL is absent: a stored JSON `null` is a valid result (Node
-/// `result_json !== null`, then JSON.parse).
-fn value_column(row: &Row<'_>, name: &str) -> rusqlite::Result<Option<Value>> {
+/// A column where only SQL NULL is absent, and a stored JSON `null` is a present value. Node reads
+/// `result_json` and `args_json` as `col !== null` then `JSON.parse`, with no falsy check, so the empty
+/// string is corrupt here as it is there.
+fn value_column(row: &Row<'_>, name: &'static str) -> rusqlite::Result<Option<Value>> {
     let text: Option<String> = row.get(name)?;
-    text.map(|text| serde_json::from_str(&text).map_err(|error| corrupt_column(row, name, error)))
+    text.map(|text| serde_json::from_str(&text).map_err(|error| column_error(row, name, error)))
         .transpose()
 }
 
 fn run_from_row(row: &Row<'_>) -> rusqlite::Result<RunRecord> {
     let physical: String = row.get("status")?;
-    let physical = PhysicalStatus::from_column(&physical).ok_or_else(|| {
-        rusqlite::Error::FromSqlConversionFailure(
-            0,
-            rusqlite::types::Type::Text,
-            format!("unknown dwf_run status {physical}").into(),
-        )
-    })?;
+    let physical = PhysicalStatus::from_column(&physical)
+        .ok_or_else(|| column_error(row, "status", format!("unknown dwf_run status {physical}")))?;
     let failure_json: Option<String> = row.get("failure_json")?;
     let settlement = decode_run_settlement(physical, failure_json.as_deref())
-        .map_err(|error| corrupt_column(row, "failure_json", error))?;
+        .map_err(|error| column_error(row, "failure_json", error))?;
     Ok(RunRecord {
         run_id: row.get("id")?,
         parent_session_id: row.get("parent_session_id")?,
@@ -211,7 +245,7 @@ fn run_from_row(row: &Row<'_>) -> rusqlite::Result<RunRecord> {
         tool_call_id: row.get("tool_call_id")?,
         script_text: row.get("script_text")?,
         script_hash: row.get("script_hash")?,
-        args: json_column(row, "args_json")?,
+        args: value_column(row, "args_json")?,
         resumed_from: row.get("resumed_from")?,
         max_concurrency: row.get("caps_max_concurrency")?,
         spent_tokens: row.get("spent_tokens")?,
@@ -495,7 +529,7 @@ pub fn put_node(conn: &Connection, node: &NodeRecord, now: i64) -> Result<()> {
 const NODE_COLUMNS: &str = "run_id, site_id, ordinal, kind, actor_site_id, actor_ordinal, actor_seq, \
      input_hash, status, result_json, error_json, stats_json, message_boundary, artifact_id, input_json";
 
-fn node_kind_from_column(value: &str) -> rusqlite::Result<NodeKind> {
+fn node_kind_from_column(row: &Row<'_>, value: &str) -> rusqlite::Result<NodeKind> {
     Ok(match value {
         "ask" => NodeKind::Ask,
         "world-read" => NodeKind::WorldRead,
@@ -503,10 +537,10 @@ fn node_kind_from_column(value: &str) -> rusqlite::Result<NodeKind> {
         "report" => NodeKind::Report,
         "artifact" => NodeKind::Artifact,
         other => {
-            return Err(rusqlite::Error::FromSqlConversionFailure(
-                0,
-                rusqlite::types::Type::Text,
-                format!("unknown dwf_node kind {other}").into(),
+            return Err(column_error(
+                row,
+                "kind",
+                format!("unknown dwf_node kind {other}"),
             ));
         }
     })
@@ -514,16 +548,16 @@ fn node_kind_from_column(value: &str) -> rusqlite::Result<NodeKind> {
 
 /// An unknown status is corruption (the CHECK set is running, completed, failed): it errors like an
 /// unknown kind instead of defaulting to a terminal state.
-fn node_status_from_column(value: &str) -> rusqlite::Result<NodeStatus> {
+fn node_status_from_column(row: &Row<'_>, value: &str) -> rusqlite::Result<NodeStatus> {
     Ok(match value {
         "running" => NodeStatus::Running,
         "completed" => NodeStatus::Completed,
         "failed" => NodeStatus::Failed,
         other => {
-            return Err(rusqlite::Error::FromSqlConversionFailure(
-                0,
-                rusqlite::types::Type::Text,
-                format!("unknown dwf_node status {other}").into(),
+            return Err(column_error(
+                row,
+                "status",
+                format!("unknown dwf_node status {other}"),
             ));
         }
     })
@@ -536,12 +570,12 @@ fn node_from_row(row: &Row<'_>) -> rusqlite::Result<NodeRecord> {
         run_id: row.get("run_id")?,
         site_id: row.get("site_id")?,
         ordinal: row.get("ordinal")?,
-        kind: node_kind_from_column(&kind)?,
+        kind: node_kind_from_column(row, &kind)?,
         actor_site_id: row.get("actor_site_id")?,
         actor_ordinal: row.get("actor_ordinal")?,
         actor_seq: row.get("actor_seq")?,
         input_hash: row.get("input_hash")?,
-        status: node_status_from_column(&status)?,
+        status: node_status_from_column(row, &status)?,
         result: value_column(row, "result_json")?,
         error: json_column(row, "error_json")?,
         stats: json_column(row, "stats_json")?,

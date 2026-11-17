@@ -636,3 +636,94 @@ fn a_duplicate_run_keeps_the_underlying_sqlite_error_as_its_cause() {
         "{chain:?}"
     );
 }
+
+// ---- A failing column is named, at its real index (never column 0).
+
+/// The index and message of the conversion failure in an error chain.
+fn conversion_failure(error: &anyhow::Error) -> (usize, String) {
+    error
+        .chain()
+        .find_map(|link| match link.downcast_ref::<rusqlite::Error>() {
+            Some(rusqlite::Error::FromSqlConversionFailure(index, _, source)) => {
+                Some((*index, source.to_string()))
+            }
+            _ => None,
+        })
+        .expect("a sqlite conversion failure in the error chain")
+}
+
+#[test]
+fn a_corrupt_run_column_is_reported_at_its_own_index() {
+    // Positions in RUN_COLUMNS: status is 11, failure_json is 12.
+    let conn = database();
+    create_run(&conn, &run("run_1", RunStatus::Running), 10).unwrap();
+    corrupt_writes(&conn);
+    conn.execute("update dwf_run set status = 'bogus' where id = 'run_1'", [])
+        .unwrap();
+    let (index, message) = conversion_failure(&get_run(&conn, "run_1").unwrap_err());
+    assert_eq!(index, 11);
+    assert!(message.contains("column status"), "{message}");
+
+    conn.execute(
+        "update dwf_run set status = 'failed', failure_json = '{' where id = 'run_1'",
+        [],
+    )
+    .unwrap();
+    let (index, message) = conversion_failure(&get_run(&conn, "run_1").unwrap_err());
+    assert_eq!(index, 12);
+    assert!(message.contains("column failure_json"), "{message}");
+}
+
+#[test]
+fn an_unknown_node_status_and_kind_are_named_at_their_own_index() {
+    // Positions in NODE_COLUMNS: kind is 3, status is 8.
+    let conn = database();
+    create_run(&conn, &run("run_1", RunStatus::Running), 10).unwrap();
+    let node = NodeRecord {
+        run_id: "run_1".into(),
+        site_id: "s".into(),
+        ordinal: 0,
+        input_hash: "ih".into(),
+        ..NodeRecord::default()
+    };
+    put_node(&conn, &node, 11).unwrap();
+    corrupt_writes(&conn);
+    conn.execute("update dwf_node set status = 'bogus'", [])
+        .unwrap();
+    let (index, message) = conversion_failure(&get_node(&conn, "run_1", "s", 0).unwrap_err());
+    assert_eq!(index, 8);
+    assert!(message.contains("column status"), "{message}");
+
+    conn.execute("update dwf_node set status = 'running', kind = 'bogus'", [])
+        .unwrap();
+    let (index, message) = conversion_failure(&get_node(&conn, "run_1", "s", 0).unwrap_err());
+    assert_eq!(index, 3);
+    assert!(message.contains("column kind"), "{message}");
+}
+
+#[test]
+fn args_text_null_is_a_present_value_like_nodes_json_parse() {
+    // Node: `if (row.args_json !== null) record.args = JSON.parse(row.args_json)`. The text "null" is a
+    // present null, not an absent key.
+    let conn = database();
+    create_run(&conn, &run("run_1", RunStatus::Running), 10).unwrap();
+    conn.execute(
+        "update dwf_run set args_json = 'null' where id = 'run_1'",
+        [],
+    )
+    .unwrap();
+    assert_eq!(
+        get_run(&conn, "run_1").unwrap().unwrap().args,
+        Some(Value::Null)
+    );
+}
+
+#[test]
+fn an_empty_args_text_is_corrupt_like_nodes_json_parse() {
+    // Node parses args_json whenever it is not SQL NULL, and JSON.parse("") throws. It is not falsy-skipped.
+    let conn = database();
+    create_run(&conn, &run("run_1", RunStatus::Running), 10).unwrap();
+    conn.execute("update dwf_run set args_json = '' where id = 'run_1'", [])
+        .unwrap();
+    assert!(get_run(&conn, "run_1").is_err());
+}

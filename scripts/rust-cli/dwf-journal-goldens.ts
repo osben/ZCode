@@ -43,12 +43,54 @@ import type {
   RunStatus,
 } from "../../apps/zcode-cli/packages/dynamic-workflow/src/engine/types.ts";
 
+/** The createSession input fields that the session row takes (`parentID` is optional). */
+type SessionInput = {
+  id: string;
+  projectID: string;
+  parentID?: string;
+  slug: string;
+  directory: string;
+  title: string;
+  version: string;
+};
+
+/** Every allowed createSession input key. Typed, so a key added to SessionInput must be listed here. */
+const SESSION_INPUT_FIELDS: Record<keyof SessionInput, true> = {
+  id: true,
+  projectID: true,
+  parentID: true,
+  slug: true,
+  directory: true,
+  title: true,
+  version: true,
+};
+
+/**
+ * Checks a createSession input at run time. The scenario is JSON cast to its type, so the type alone
+ * cannot catch a misspelled key: an unknown key throws, and so does a missing required field.
+ */
+function checkSessionInput(input: SessionInput): SessionInput {
+  const unknownKeys = Object.keys(input).filter((key) => !Object.hasOwn(SESSION_INPUT_FIELDS, key));
+  if (unknownKeys.length > 0) {
+    throw new Error(`createSession: unknown input field(s): ${unknownKeys.join(", ")}`);
+  }
+  for (const key of ["id", "projectID", "slug", "directory", "title", "version"] as const) {
+    if (typeof input[key] !== "string") {
+      throw new Error(`createSession: input.${key} must be a string`);
+    }
+  }
+  if (input.parentID !== undefined && typeof input.parentID !== "string") {
+    throw new Error("createSession: input.parentID must be a string when set");
+  }
+  return input;
+}
+
 /**
  * The shared scenario, as a discriminated union on `op`. The fields are Node's record names, so a
  * misspelled key fails the type check of the journal call it feeds.
  */
 type ScenarioOp =
-  | { op: "createSession"; now: number; input: Record<string, string> }
+  | { op: "createSession"; now: number; input: SessionInput }
   | { op: "createRun"; now: number; record: RunRecord }
   | {
       op: "updateRunStatus";
@@ -123,22 +165,24 @@ const runIds: string[] = [];
 
 for (const op of scenario.ops) {
   switch (op.op) {
-    case "createSession":
+    case "createSession": {
+      const input = checkSessionInput(op.input);
       db.prepare(
         `insert into session (id, project_id, parent_id, slug, directory, title, version, time_created, time_updated)
          values (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
-        op.input.id,
-        op.input.projectID,
-        op.input.parentID ?? null,
-        op.input.slug,
-        op.input.directory,
-        op.input.title,
-        op.input.version,
+        input.id,
+        input.projectID,
+        input.parentID ?? null,
+        input.slug,
+        input.directory,
+        input.title,
+        input.version,
         op.now,
         op.now,
       );
       break;
+    }
     case "createRun":
       journal.createRun(op.record);
       runIds.push(op.record.runId);
@@ -174,6 +218,12 @@ for (const op of scenario.ops) {
         status: op.status,
       });
       break;
+    default: {
+      // Exhaustiveness: an op added to ScenarioOp without a branch fails the type check here, and an
+      // unknown op at run time throws instead of being skipped.
+      const unhandled: never = op;
+      throw new Error(`unknown scenario op: ${JSON.stringify(unhandled)}`);
+    }
   }
 }
 
