@@ -292,6 +292,28 @@ fn model_text(retrieval: &str, task: &TaskView<'_>) -> String {
     blocks.join("\n\n")
 }
 
+/// Node's `TASK_OUTPUT_DISPLAY_MAX_STATUS_CHARS` and `TASK_OUTPUT_DISPLAY_MAX_OUTPUT_CHARS` (`contracts` `tool-result-metadata.ts`).
+const DISPLAY_STATUS_CHARS: usize = 64;
+const DISPLAY_OUTPUT_CHARS: usize = 2_000;
+
+/// Node's TaskOutput display (`result-display.ts`): the bounded projection the UI reads, separate from the model text.
+pub(crate) fn task_output_display(retrieval: &str, task: &TaskView<'_>) -> serde_json::Value {
+    let mut display = serde_json::json!({ "kind": "task_output", "retrievalStatus": retrieval });
+    let status: String = task.status.trim().chars().take(DISPLAY_STATUS_CHARS).collect();
+    if !status.is_empty() {
+        display["taskStatus"] = serde_json::json!(status);
+    }
+    let full = task.output.trim_end();
+    if !full.trim().is_empty() {
+        let shown: String = full.chars().take(DISPLAY_OUTPUT_CHARS).collect();
+        display["output"] = serde_json::json!(shown);
+        if full.chars().count() > DISPLAY_OUTPUT_CHARS {
+            display["truncated"] = serde_json::json!(true);
+        }
+    }
+    display
+}
+
 fn not_found(id: &str) -> String {
     format!("No task found with ID: {id}")
 }
@@ -456,7 +478,9 @@ impl TaskOutputTool {
             output: agent.report_text(),
             output_file: None,
         };
-        Ok(rust_cli_kernel_api::tool::text(model_text(retrieval, &view)))
+        let mut shown = rust_cli_kernel_api::tool::text(model_text(retrieval, &view));
+        shown.display = task_output_display(retrieval, &view);
+        Ok(shown)
     }
 
     async fn known(&self, id: &str, context: &ToolUseContext) -> Option<Found> {
