@@ -85,6 +85,10 @@ impl HelperRequests for Rows {
     async fn session_root(&self, session: &str) -> Option<String> {
         session.strip_prefix("sub-").map(|_| "root-1".to_owned())
     }
+
+    async fn session_parent(&self, session: &str) -> Option<String> {
+        session.strip_prefix("sub-").map(|_| "parent-1".to_owned())
+    }
 }
 
 static ROWS: std::sync::LazyLock<Arc<Rows>> = std::sync::LazyLock::new(|| Arc::new(Rows));
@@ -247,6 +251,18 @@ async fn a_session_call_opens_the_session_once_per_generation() {
     // A sessionless catalog opens nothing.
     forward_ok(&rig.helper, "plugins/referenceCatalog", json!({})).await;
     assert_eq!(received(&rig.fake, "helper/session/open").len(), 1);
+}
+
+/// Browser relays are answered only for sessions this agent opened: the store row alone does not make a session
+/// this agent's (F4b, the owned-session check).
+#[tokio::test]
+async fn only_the_sessions_this_agent_opened_are_owned() {
+    let rig = session_rig(sessions(|_| opened()));
+    assert!(!rig.helper.opened_here("s1"));
+    let params = json!({"sessionId": "s1", "serverName": "plugin:viewer:view"});
+    forward_ok(&rig.helper, SESSION_METHOD, params).await;
+    assert!(rig.helper.opened_here("s1"));
+    assert!(!rig.helper.opened_here("foreign"));
 }
 
 #[tokio::test]
@@ -797,4 +813,151 @@ async fn a_call_waiting_on_a_failed_open_opens_a_session_that_stays_open() {
         received(&rig.fake, "helper/session/close"),
         [json!({"sessionId": "s1", "openId": 2})]
     );
+}
+
+/// F4-D7: a subagent's browser registration is sent before its open, and names its parent with the tab owner.
+#[tokio::test]
+async fn a_subagent_registers_its_browser_child_before_it_opens() {
+    let rig = session_rig(sessions(|_| opened()));
+    forward_ok(
+        &rig.helper,
+        SESSION_METHOD,
+        json!({"sessionId": "sub-1", "serverName": "plugin:viewer:view"}),
+    )
+    .await;
+    assert_eq!(
+        received(&rig.fake, "helper/browser/childSession"),
+        [json!({"childSessionId": "sub-1", "parentSessionId": "parent-1", "tabOwner": "parent"})]
+    );
+    let order = methods(&rig.fake);
+    let child = order
+        .iter()
+        .position(|m| m == "helper/browser/childSession")
+        .unwrap();
+    let open = order
+        .iter()
+        .position(|m| m == "helper/session/open")
+        .unwrap();
+    assert!(
+        child < open,
+        "the registration precedes the open: {order:?}"
+    );
+}
+
+/// A session that is not a subagent sends no browser registration.
+#[tokio::test]
+async fn a_plain_session_sends_no_browser_registration() {
+    let rig = session_rig(sessions(|_| opened()));
+    forward_ok(
+        &rig.helper,
+        SESSION_METHOD,
+        json!({"sessionId": "s1", "serverName": "plugin:viewer:view"}),
+    )
+    .await;
+    assert!(received(&rig.fake, "helper/browser/childSession").is_empty());
+}
+
+/// F4-D7: the child's end is sent before its close, so the helper releases the registration first.
+#[tokio::test(start_paused = true)]
+async fn a_subagent_end_is_sent_before_its_session_close() {
+    let rig = session_rig(sessions(|_| opened()));
+    forward_ok(
+        &rig.helper,
+        SESSION_METHOD,
+        json!({"sessionId": "sub-1", "serverName": "plugin:viewer:view"}),
+    )
+    .await;
+    rig.helper.session_closed("sub-1");
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    let order = methods(&rig.fake);
+    let end = order
+        .iter()
+        .position(|m| m == "helper/browser/childSessionEnd")
+        .expect("end sent");
+    let close = order
+        .iter()
+        .position(|m| m == "helper/session/close")
+        .expect("close sent");
+    assert!(end < close, "the end precedes the close: {order:?}");
+    assert_eq!(
+        received(&rig.fake, "helper/browser/childSessionEnd"),
+        [json!({"childSessionId": "sub-1"})]
+    );
+}
+
+/// F4-D7: a subagent whose open fails after its registration ends that registration, so nothing outlives the open.
+#[tokio::test(start_paused = true)]
+async fn a_failed_subagent_open_ends_its_registration() {
+    let rig = session_rig(sessions(|_| Act::Fail(RpcError::internal("open refused"))));
+    let _ = forward_err(
+        &rig.helper,
+        SESSION_METHOD,
+        json!({"sessionId": "sub-1", "serverName": "plugin:viewer:view"}),
+    )
+    .await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(
+        received(&rig.fake, "helper/browser/childSessionEnd"),
+        [json!({"childSessionId": "sub-1"})]
+    );
+}
+
+/// F4-D7: a child registration the helper may still accept after Rust gave up on it is ended too (no open was sent).
+#[tokio::test(start_paused = true)]
+async fn a_subagent_registration_that_times_out_is_ended() {
+    let registration_hangs = behaviour(|_, method, params| match method {
+        "helper/browser/childSession" => Act::Hang,
+        _ => Act::Reply {
+            notes: Vec::new(),
+            result: params.clone(),
+        },
+    });
+    let rig = session_rig(registration_hangs);
+    let _ = forward_err(
+        &rig.helper,
+        SESSION_METHOD,
+        json!({"sessionId": "sub-1", "serverName": "plugin:viewer:view"}),
+    )
+    .await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(
+        received(&rig.fake, "helper/browser/childSessionEnd"),
+        [json!({"childSessionId": "sub-1"})]
+    );
+    assert!(received(&rig.fake, "helper/session/open").is_empty());
+}
+
+/// F4-D5/F4b: Rust sends `helper/turn/ended` once per finished turn of an open session, after the turn's own tool
+/// call has answered, so the broker's turnEnded never overtakes a browser call of that turn.
+#[tokio::test(start_paused = true)]
+async fn a_finished_turn_is_sent_to_the_helper_after_its_tool_call_answered() {
+    let rig = session_rig(sessions(|_| opened()));
+    forward_ok(
+        &rig.helper,
+        SESSION_METHOD,
+        json!({"sessionId": "s1", "serverName": "plugin:viewer:view"}),
+    )
+    .await;
+    rig.helper.turn_ended("s1", "turn-1", "completed");
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(
+        received(&rig.fake, "helper/turn/ended"),
+        [json!({"sessionId": "s1", "turnId": "turn-1", "reason": "completed"})]
+    );
+    let order = methods(&rig.fake);
+    let open = order
+        .iter()
+        .position(|m| m == "helper/session/open")
+        .unwrap();
+    let ended = order.iter().position(|m| m == "helper/turn/ended").unwrap();
+    assert!(open < ended, "the open precedes the turn end: {order:?}");
+}
+
+/// A turn of a session the helper does not hold open sends nothing: there is no browser scope to release.
+#[tokio::test(start_paused = true)]
+async fn a_turn_of_a_session_the_helper_does_not_hold_sends_nothing() {
+    let rig = session_rig(sessions(|_| opened()));
+    rig.helper.turn_ended("never-opened", "turn-1", "completed");
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert!(received(&rig.fake, "helper/turn/ended").is_empty());
 }

@@ -43,6 +43,7 @@ import {
   type HelperWorkspace,
 } from "./f3-protocol.js";
 import type { ForkRustHelperClient } from "./rust-client.js";
+import { nodeReplConfigFor, type ForkRustBrowserControl } from "./browser-control.js";
 import { PluginOutcomes } from "./plugin-outcomes.js";
 import { SessionLanes } from "./session-lanes.js";
 import { createHelperSessionRecord, type HelperSession } from "./session-record.js";
@@ -77,6 +78,8 @@ export interface ForkRustHelperMcpHostDeps {
   pool: McpConnectionPool;
   resolvePlugins(workspace: HelperWorkspace): Promise<PluginLoadOutcome>;
   logger?: Logger;
+  /** The helper's browser control (F4b): node_repl's broker socket, and each session's release before its lease closes. */
+  browser?: ForkRustBrowserControl;
 }
 
 const SESSION_NOT_OPEN = -32602;
@@ -115,7 +118,8 @@ export class ForkRustHelperMcpHost {
   private async serverConfig(server: string, workspace: HelperWorkspace): Promise<McpServerConfig> {
     const config = (await this.plugins.get(workspace)).mcpServers[server];
     if (!config) throw new ProtocolRequestError(-32602, `MCP server is not a helper plugin server: ${server}`);
-    return config;
+    // The same config a session open gives node_repl, so the pool shares one process (F4b).
+    return this.deps.browser ? nodeReplConfigFor(this.deps.browser, server, config) : config;
   }
 
   /** `directory` is where the servers run: the workspace, or a session's execution worktree. */
@@ -376,9 +380,16 @@ export class ForkRustHelperMcpHost {
         ? { rootSessionId: rootSessionId as SessionId }
         : {}),
     };
+    // node_repl gets the browser broker's socket and token (Node `injectNodeReplBrowserBroker`, F4b).
+    const browser = this.deps.browser;
+    const withBroker = browser
+      ? Object.fromEntries(
+          Object.entries(servers).map(([name, config]) => [name, nodeReplConfigFor(browser, name, config)]),
+        )
+      : servers;
     const port = this.deps.pool.acquireLease({ leaseId: sessionId, sessionId });
     try {
-      const snapshot = await port.connectConfiguredServers(servers, {
+      const snapshot = await port.connectConfiguredServers(withBroker, {
         ...this.connectOptions(workspace, directory),
         trace: traceContext,
       });
@@ -439,6 +450,13 @@ export class ForkRustHelperMcpHost {
     clearMcpUiAppToolsForSession(this.deps.context, sessionId);
     for (const controller of session.appToolCalls.values())
       controller.abort(new Error("Session closed"));
+    // Node's close steps: the browser scope is released before the lease closes (F4b).
+    await this.deps.browser?.closeSession(sessionId).catch((error: unknown) =>
+      this.deps.logger?.warn("Helper session browser release failed", {
+        event: "fork_rust_helper.session.browser_release_failed",
+        error: errorMessage(error),
+      }),
+    );
     try {
       await session.port.unsubscribeResourcesBySubscriber?.(`${sessionId}|`);
     } catch (error) {

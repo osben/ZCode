@@ -46,6 +46,51 @@ where
 
 #[async_trait]
 impl HelperRequests for Server {
+    async fn browser_request(&self, method: &str, params: Value) -> Result<Value, RpcError> {
+        relay_browser(
+            method,
+            params,
+            // Owned means this agent's: a session it opened in the helper, or one it runs live. The store row alone
+            // is shared by every agent and the Node main agent of the workspace (specs/fork-rust-node-helper.md).
+            |session: String| async move {
+                let live = self
+                    .bridge
+                    .get(&rust_cli_kernel_api::ids::SessionId::new(&session))
+                    .is_some();
+                live || self
+                    .context
+                    .node_helper()
+                    .is_some_and(|helper| helper.opened_here(&session))
+            },
+            // The Host's refusal goes back unchanged: its `data` carries the typed error the helper maps (`data.type`).
+            |method, params| async move { self.context.peer.request(&method, &params).await },
+        )
+        .await
+    }
+
+    async fn session_parent(&self, session: &str) -> Option<String> {
+        use rust_cli_kernel_api::store::SessionKind;
+        let id = rust_cli_kernel_api::ids::SessionId::new(session);
+        // A failed read is logged: a subagent whose parent cannot be read opens without its parent's browser scope,
+        // and that must not be silent.
+        let view = match self.kernel.session_snapshot(&id).await {
+            Ok(view) => view,
+            Err(error) => {
+                tracing::warn!(
+                    event = "helper.browser.parent_unread",
+                    error = %error,
+                    "the child-session registration is skipped: the parent cannot be read"
+                );
+                return None;
+            }
+        };
+        let meta = view.meta;
+        match (meta.kind, meta.parent) {
+            (SessionKind::Subagent, Some(parent)) => Some(parent.as_str().to_owned()),
+            _ => None,
+        }
+    }
+
     async fn session_workspace(&self, session: &str) -> Option<Value> {
         let workspace = self
             .kernel
@@ -122,6 +167,38 @@ impl HelperRequests for Server {
             sink.plugin_ui(delta).await;
         }));
     }
+}
+
+/// F4b: relays one browser request of the helper (`interaction/browserList` or `interaction/browserExecute`). The
+/// session is named by `sessionId` and must be one this agent owns; the helper's `requestKey` stays here. Main gets
+/// the rest, as the broker built it (F4-D5).
+pub(super) async fn relay_browser<Owned, OwnedFut, Host, HostFut>(
+    method: &str,
+    mut params: Value,
+    owned: Owned,
+    host: Host,
+) -> Result<Value, RpcError>
+where
+    Owned: FnOnce(String) -> OwnedFut,
+    OwnedFut: std::future::Future<Output = bool>,
+    Host: FnOnce(String, Value) -> HostFut,
+    HostFut: std::future::Future<Output = Result<Value, RpcError>>,
+{
+    let session = params
+        .get("sessionId")
+        .and_then(Value::as_str)
+        .filter(|session| !session.is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| RpcError::invalid_params("sessionId is required"))?;
+    if let Some(object) = params.as_object_mut() {
+        object.remove("requestKey");
+    }
+    if !owned(session).await {
+        return Err(RpcError::invalid_params(
+            "the session is not one of this agent's",
+        ));
+    }
+    host(method.to_owned(), params).await
 }
 
 pub(super) fn required<'a>(params: &'a Value, key: &str) -> Result<&'a str, RpcError> {

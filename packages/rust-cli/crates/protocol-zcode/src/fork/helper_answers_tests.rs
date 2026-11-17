@@ -194,3 +194,75 @@ async fn a_subagent_session_names_the_session_above_its_subagent_chain() {
         assert_eq!(root(own).await, None, "{own}");
     }
 }
+
+/// F4b: the browser relay forwards a helper request only for a session this agent owns, and never forwards the
+/// helper's `requestKey` to Main.
+mod browser_relay {
+    use std::sync::Mutex;
+
+    use rust_cli_protocol_core::rpc::RpcError;
+    use serde_json::{Value, json};
+
+    use super::super::relay_browser;
+
+    /// A fake Host: records what it was sent, and answers `{ok: true}`.
+    async fn host(
+        sent: &Mutex<Vec<(String, Value)>>,
+        method: String,
+        params: Value,
+    ) -> Result<Value, RpcError> {
+        sent.lock().unwrap().push((method, params));
+        Ok(json!({"ok": true}))
+    }
+
+    #[tokio::test]
+    async fn an_owned_session_is_forwarded_without_the_request_key() {
+        let sent = Mutex::new(Vec::new());
+        let answer = relay_browser(
+            "interaction/browserExecute",
+            json!({"requestKey": "helper-1", "sessionId": "s1", "command": {"method": "screenshot"}}),
+            |session: String| async move { session == "s1" },
+            |method, params| host(&sent, method, params),
+        )
+        .await
+        .unwrap();
+        assert_eq!(answer, json!({"ok": true}));
+        assert_eq!(
+            *sent.lock().unwrap(),
+            [(
+                "interaction/browserExecute".to_owned(),
+                json!({"sessionId": "s1", "command": {"method": "screenshot"}}),
+            )]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_session_this_agent_does_not_own_is_refused_and_not_forwarded() {
+        let sent = Mutex::new(Vec::new());
+        let error = relay_browser(
+            "interaction/browserList",
+            json!({"requestKey": "helper-2", "sessionId": "someone-elses"}),
+            |_session: String| async move { false },
+            |method, params| host(&sent, method, params),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code, -32602);
+        assert!(sent.lock().unwrap().is_empty(), "nothing reaches Main");
+    }
+
+    #[tokio::test]
+    async fn a_request_without_a_session_is_invalid_params() {
+        let sent = Mutex::new(Vec::new());
+        let error = relay_browser(
+            "interaction/browserList",
+            json!({"requestKey": "helper-3"}),
+            |_session: String| async move { true },
+            |method, params| host(&sent, method, params),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code, -32602);
+        assert!(sent.lock().unwrap().is_empty());
+    }
+}

@@ -8,7 +8,9 @@ use rust_cli_base::sync::LockUnpoisoned;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use async_trait::async_trait;
-use rust_cli_kernel_api::session_api::{KernelEvent, SequencedEvent, SessionHandle, SessionView};
+use rust_cli_kernel_api::session_api::{
+    KernelEvent, SequencedEvent, SessionHandle, SessionView, TurnOutcome,
+};
 use rust_cli_protocol_core::delivery::TopicLog;
 use rust_cli_protocol_core::sessions::SessionSink;
 use serde_json::{Value, json};
@@ -1122,6 +1124,18 @@ impl SessionSink for Live {
         }
         let deltas = state.projection.apply(&event, now);
         state.log.record(deltas);
+        // F4b: the helper's broker runs turnEnded once per finished turn, after the turn's own calls answered.
+        if let KernelEvent::TurnFinished { turn, outcome, .. } = &event.event
+            && let Some(helper) = self.context.node_helper()
+        {
+            // A failed turn is not a completed one: the helper's wire reason must not read as success.
+            let reason = match outcome {
+                TurnOutcome::Interrupted => "interrupted",
+                TurnOutcome::Failed { .. } => "failed",
+                _ => "completed",
+            };
+            helper.turn_ended(&self.session, turn.as_str(), reason);
+        }
         let provider = provider_of(&state.projection);
         // The automation the Host sent with the input this turn starts (remembered by sendText, the only writer).
         let automation = match &event.event {

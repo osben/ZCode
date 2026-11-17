@@ -21,7 +21,14 @@ import { getSessionDbPath } from "../app/session-store.js";
 import { ZCodeProtocolNdjsonConnection } from "../zcode-protocol/transport.js";
 import type { ZCodeProtocolAgentServerContext } from "../zcode-protocol/server-types.js";
 import { V4InteractionRegistry } from "../zcode-protocol-v4/interaction-registry.js";
+import { zcodeProtocolMethods } from "@zcode/shared";
 import { FORK_RUST_HELPER_F3 } from "./f3-protocol.js";
+import {
+  FORK_RUST_HELPER_BROWSER_CHILD_SESSION,
+  FORK_RUST_HELPER_BROWSER_CHILD_SESSION_END,
+  FORK_RUST_HELPER_TURN_ENDED,
+  ForkRustBrowserControl,
+} from "./browser-control.js";
 import { withNodeReplServer } from "./node-repl.js";
 import { ForkRustHelperMcpHost } from "./mcp-host.js";
 import { ForkRustHelperClient } from "./rust-client.js";
@@ -52,6 +59,11 @@ const CONCURRENT_METHODS: ReadonlySet<string> = new Set([
   FORK_RUST_HELPER_F3.appToolsCall,
   FORK_RUST_HELPER_F3.appToolsCancel,
   FORK_RUST_HELPER_F3.ping,
+  // F4b: the session-lifecycle class too. Rust awaits childSession with the open timeout before sessionOpen, and
+  // sends childSessionEnd and turn/ended before sessionClose, so none of them may queue behind a plugin install.
+  FORK_RUST_HELPER_BROWSER_CHILD_SESSION,
+  FORK_RUST_HELPER_BROWSER_CHILD_SESSION_END,
+  FORK_RUST_HELPER_TURN_ENDED,
 ]);
 
 export function isConcurrent(message: ZCodeProtocolMessage): boolean {
@@ -87,6 +99,7 @@ export async function runForkRustHelper(options: RunForkRustHelperOptions): Prom
   const send = (message: unknown) => connection?.send(message as never);
   const client = new ForkRustHelperClient(send);
   let mcpHost: ForkRustHelperMcpHost | undefined;
+  let browser: ForkRustBrowserControl | undefined;
   const pool = createMcpAdapterConnectionPool({
     // Elicitation from a helper-hosted server is declined: the helper has no Host client (spec F3).
     elicitation: { requestElicitation: () => Promise.resolve({ action: "decline" as const }) },
@@ -125,7 +138,19 @@ export async function runForkRustHelper(options: RunForkRustHelperOptions): Prom
       dynamicWorkflowEnabled: false,
     },
     notify: (notification) => connection?.send(notification),
-    requestClient: () => Promise.reject(new Error("The Rust agent's Node helper has no Host client")),
+    // F4b: the broker's only Host requests are browser list and execute. They go to Rust, which relays them to Main.
+    requestClient: <T,>(
+      method: string,
+      params: unknown,
+      resultSchema: { parse(input: unknown): T },
+      options?: { signal?: AbortSignal },
+    ) => {
+      if (method !== zcodeProtocolMethods.interactionBrowserList && method !== zcodeProtocolMethods.interactionBrowserExecute)
+        return Promise.reject(new Error("The Rust agent's Node helper has no Host client"));
+      return client
+        .request<unknown>(method, params as Record<string, unknown>, options?.signal)
+        .then((result) => resultSchema.parse(result));
+    },
     sessions: new Map(),
     v4Interactions: new V4InteractionRegistry(),
     // F3: the helper's sessions are opened by Rust and are ready while present; nothing activates.
@@ -139,9 +164,11 @@ export async function runForkRustHelper(options: RunForkRustHelperOptions): Prom
         mcpHost?.ingest(sessionId, event),
     } as unknown as ZCodeProtocolAgentServerContext["v4Gateway"],
   };
+  browser = new ForkRustBrowserControl({ context, logger });
   mcpHost = new ForkRustHelperMcpHost({
     context,
     client,
+    browser,
     notify: (method, params) => send({ method, params }),
     pool,
     resolvePlugins: async (workspace) =>
@@ -186,6 +213,7 @@ export async function runForkRustHelper(options: RunForkRustHelperOptions): Prom
   const server = new ForkRustHelperServer({
     client,
     mcpHost,
+    browser,
     logger,
     context,
     ensureSessionStore: async () => {
@@ -222,6 +250,7 @@ export async function runForkRustHelper(options: RunForkRustHelperOptions): Prom
   } finally {
     client.close(new Error("The Rust agent closed the helper"));
     await mcpHost.dispose().catch(() => undefined);
+    await browser.dispose().catch(() => undefined);
     await pool.close().catch(() => undefined);
     pluginDiscovery.dispose();
     await pluginPreparation.dispose();
