@@ -248,6 +248,7 @@ fn a_failed_turn_shows_its_reason() {
     feed.push(started()).push(finished(TurnOutcome::Failed {
         message: "busy".into(),
         code: None,
+        provider: None,
     }));
     let bodies = bodies(&feed.view);
     assert_eq!(bodies[0], Body::Turn(TurnState::Failed));
@@ -260,6 +261,7 @@ fn a_failed_turn_shows_its_reason() {
     feed.push(started()).push(finished(TurnOutcome::Failed {
         message: "Prompt is too long".into(),
         code: None,
+        provider: None,
     }));
     let Body::Failure(failure) = &bodies_of(&feed)[1] else {
         panic!("失败块");

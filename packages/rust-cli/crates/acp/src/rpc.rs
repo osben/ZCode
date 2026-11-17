@@ -204,6 +204,8 @@ pub(crate) struct PumpTimings {
     pub death_grace: Duration,
     /// After stdin is closed on shutdown, how long the agent may take to exit by itself (`stopGraceMs`).
     pub stop_grace: Duration,
+    /// Between TERM and KILL when the agent does not exit (`killGraceMs`).
+    pub kill_grace: Duration,
 }
 
 /// The process side of one agent: pipes, process, outbox and the sink.
@@ -525,7 +527,10 @@ impl Pump {
                 }
             }
         };
-        if let Err(error) = tracked.terminate(shutdown_mode).await {
+        if let Err(error) = tracked
+            .terminate_with_grace(shutdown_mode, timings.kill_grace)
+            .await
+        {
             tracing::warn!(event = "acp.cleanup_failed", %error, "ACP agent process cleanup failed");
         }
     }

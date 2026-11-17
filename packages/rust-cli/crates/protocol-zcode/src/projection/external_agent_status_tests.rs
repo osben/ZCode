@@ -167,6 +167,7 @@ fn a_stopped_or_failed_turn_clears_its_stall() {
         TurnOutcome::Failed {
             message: "boom".into(),
             code: None,
+            provider: None,
         },
     ] {
         let mut feed = Feed::new();

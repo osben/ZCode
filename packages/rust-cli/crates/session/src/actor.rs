@@ -701,6 +701,14 @@ impl Actor {
             Request::Command { reply, .. } if self.closing.is_some() => {
                 let _ = reply.send(rejected("the session is closed"));
             }
+            // Fork (D2 follow-up, C2): Shutdown is final and no turn starts after it (session_api `Command::Shutdown`).
+            // A request that would start a turn and arrives after it, such as one deferred behind the end-of-turn
+            // capture, is refused here: `start_next` is not the only way a turn starts.
+            Request::Command { envelope, reply }
+                if self.shutting_down && crate::child_live::starts_turn(&envelope.command) =>
+            {
+                let _ = reply.send(rejected("the session is shutting down"));
+            }
             Request::Command { envelope, reply } => {
                 if !self.seen.insert(envelope.id.clone()) {
                     let _ = reply.send(Ack::Duplicate);

@@ -56,14 +56,15 @@ pub(super) fn response(
     value: &Value,
     raw: &str,
     retry_after_ms: Option<u64>,
+    kind: &'static str,
 ) -> Verdict {
-    classify(status, &ApiError::parse(value), raw, retry_after_ms)
+    classify(status, &ApiError::parse(value), raw, retry_after_ms, kind)
 }
 
 /// 流里带的错误对象（Chat 的 chunk.error、Responses 的 `error` / `response.failed`）：按类型与码对应的状态分类。
 ///
 /// 修改（F113，provider-errors.md D4 暂定）：`insufficient_quota` 以前按 429 算、会重试十次；现在是配额用尽，不重试。
-pub(super) fn stream(value: &Value, raw: &str) -> Verdict {
+pub(super) fn stream(value: &Value, raw: &str, kind: &'static str) -> Verdict {
     let api = ApiError::parse(value);
     let status = if api.has(&vocab::QUOTA_CODES) {
         http::PAYMENT_REQUIRED
@@ -78,15 +79,21 @@ pub(super) fn stream(value: &Value, raw: &str) -> Verdict {
             _ => http::INTERNAL_SERVER_ERROR,
         }
     };
-    if let Some(verdict) = siwc::classify(None, &api.codes(), None) {
+    if let Some(verdict) = siwc::classify(None, &api.codes(), None, kind) {
         return verdict;
     }
-    classify(status, &api, raw, None)
+    classify(status, &api, raw, None, kind)
 }
 
-fn classify(status: u16, api: &ApiError, raw: &str, retry_after_ms: Option<u64>) -> Verdict {
+fn classify(
+    status: u16,
+    api: &ApiError,
+    raw: &str,
+    retry_after_ms: Option<u64>,
+    kind: &'static str,
+) -> Verdict {
     // Fork: ChatGPT Plan codes first (specs/fork-rust-chatgpt-plan.md, Errors).
-    if let Some(verdict) = siwc::classify(Some(status), &api.codes(), retry_after_ms) {
+    if let Some(verdict) = siwc::classify(Some(status), &api.codes(), retry_after_ms, kind) {
         return verdict;
     }
     let message = message_text(status, api.message.as_deref(), raw);

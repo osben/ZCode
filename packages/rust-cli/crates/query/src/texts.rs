@@ -54,7 +54,7 @@ pub(crate) const TRUNCATED_NUDGE_SUBAGENT: &str = "Your response above was cut o
 
 /// 已有输出后流断开的错误消息（部分收尾）。
 pub(crate) fn truncated_error(error: &ModelError) -> String {
-    let what = match error {
+    let what = match error.peel() {
         ModelError::Server { .. } => "Server error mid-response.",
         ModelError::Protocol { .. } => "The response stream was malformed.",
         // 流空闲看门狗中止（stall-visibility.md §2.3）。

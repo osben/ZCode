@@ -14,19 +14,22 @@ use tokio_util::sync::CancellationToken;
 
 use crate::actor::{Actor, Request};
 
-/// The requests the end-of-turn capture serves at once: an interrupt or a shutdown ends the capture (Node aborts the
-/// turn signal for both). Everything else waits for the turn end.
-fn is_capture_interrupt(request: &Request) -> bool {
-    matches!(
-        request,
-        Request::Command { envelope, .. }
-            if matches!(envelope.command, Command::Interrupt | Command::Shutdown)
-    )
+/// The requests the end-of-turn capture serves at once. An interrupt, a shutdown or a close ends the capture (Node
+/// aborts the turn signal for each). The close path's `EndMeta` only reads the session, so it is served too, and the
+/// close is not held behind the capture. Everything else waits for the turn end.
+fn served_during_capture(request: &Request) -> bool {
+    match request {
+        Request::Command { envelope, .. } => {
+            matches!(envelope.command, Command::Interrupt | Command::Shutdown)
+        }
+        Request::Close { .. } | Request::EndMeta { .. } => true,
+        _ => false,
+    }
 }
 
 impl Actor {
-    /// Awaits `capture` while the actor keeps serving `requests`: an interrupt or shutdown is handled now (it cancels
-    /// `cancel` through `capture_cancel`), any other request is pushed to `deferred`. The capture future must not
+    /// Awaits `capture` while the actor keeps serving `requests`: an interrupt, shutdown or close is handled now (it
+    /// cancels `cancel` through `capture_cancel`), any other request is pushed to `deferred`. The capture future must not
     /// borrow the actor, which is why the caller builds it from locals.
     pub(crate) async fn serve_while_capturing<F>(
         &mut self,
@@ -46,7 +49,7 @@ impl Actor {
             tokio::select! {
                 shot = &mut capture => break shot,
                 Some(request) = requests.recv() => {
-                    if is_capture_interrupt(&request) {
+                    if served_during_capture(&request) {
                         self.handle(request).await;
                     } else {
                         deferred.push(request);

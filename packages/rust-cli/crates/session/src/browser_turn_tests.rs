@@ -15,7 +15,9 @@ use rust_cli_kernel_api::browser_turn::{
 };
 use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::model::ModelError;
-use rust_cli_kernel_api::session_api::{Command, KernelEvent, SessionHandle, TurnOutcome};
+use rust_cli_kernel_api::session_api::{
+    Ack, Command, EndReason, KernelEvent, SessionHandle, TurnOutcome,
+};
 use rust_cli_kernel_api::store::SessionStore;
 use rust_cli_kernel_api::testing::{ScriptedModel, text_response};
 use tokio_util::sync::CancellationToken;
@@ -331,7 +333,9 @@ async fn an_interrupt_during_the_capture_returns_promptly_and_cancels_the_captur
     let built = built.build().await;
     let mut events = built.session.subscribe(Some(0));
     built.session.send(submit("c1", "first")).await;
-    port.started.notified().await;
+    tokio::time::timeout(Duration::from_secs(5), port.started.notified())
+        .await
+        .expect("the end-of-turn capture started");
 
     let ack = tokio::time::timeout(
         Duration::from_secs(5),
@@ -364,5 +368,122 @@ async fn an_interrupt_during_the_capture_returns_promptly_and_cancels_the_captur
             .any(|event| matches!(event, KernelEvent::BrowserTurnScreenshot { .. })),
         "{seen:?}"
     );
+    browser_turn::forget_session(session);
+}
+
+/// Binds a capture that is held until its cancel token fires, and returns it so a test can wait for it to start.
+fn hold(session: &str) -> std::sync::Arc<Holding> {
+    let port = std::sync::Arc::new(Holding {
+        started: tokio::sync::Notify::new(),
+        cancelled: std::sync::atomic::AtomicBool::new(false),
+    });
+    browser_turn::bind(session, port.clone());
+    port
+}
+
+/// Awaits `future` for at most 5 s, so a regression that waits for the turn end fails the test instead of hanging it.
+async fn within<T>(future: impl std::future::Future<Output = T>) -> T {
+    tokio::time::timeout(Duration::from_secs(5), future)
+        .await
+        .expect("answered within 5 s")
+}
+
+/// Node aborts the turn signal on shutdown as well as on interrupt: a shutdown during the capture is answered at once,
+/// cancels the capture, and the turn keeps its own outcome with no screenshot.
+#[tokio::test]
+async fn a_shutdown_during_the_capture_returns_promptly_and_cancels_the_capture() {
+    let session = "sess_d2_shutdown_capture";
+    let port = hold(session);
+    record_candidates(session);
+    let model = std::sync::Arc::new(ScriptedModel::new(vec![text_response(&["one"])]));
+    let mut built = Setup::new(model);
+    built.session_id = Some(session);
+    let built = built.build().await;
+    let mut events = built.session.subscribe(Some(0));
+    built.session.send(submit("c1", "first")).await;
+    within(port.started.notified()).await;
+
+    let ack = within(built.session.send(envelope("c2", Command::Shutdown))).await;
+    assert!(matches!(ack, Ack::Accepted { .. }), "{ack:?}");
+    let seen = until(&mut events, finished).await;
+    assert!(
+        port.cancelled.load(std::sync::atomic::Ordering::SeqCst),
+        "the capture saw its cancel"
+    );
+    assert!(
+        seen.iter().any(|event| matches!(
+            event,
+            KernelEvent::TurnFinished {
+                outcome: TurnOutcome::Success,
+                ..
+            }
+        )),
+        "{seen:?}"
+    );
+    assert!(
+        !seen
+            .iter()
+            .any(|event| matches!(event, KernelEvent::BrowserTurnScreenshot { .. })),
+        "{seen:?}"
+    );
+    browser_turn::forget_session(session);
+}
+
+/// Shutdown is final (session_api `Command::Shutdown`): a submit that arrives after a shutdown served during the capture
+/// is refused, and no turn starts for it.
+#[tokio::test]
+async fn a_submit_after_a_shutdown_during_the_capture_starts_no_turn() {
+    let session = "sess_d2_shutdown_submit";
+    let port = hold(session);
+    record_candidates(session);
+    let model = std::sync::Arc::new(ScriptedModel::new(vec![
+        text_response(&["one"]),
+        text_response(&["two"]),
+    ]));
+    let mut built = Setup::new(model.clone());
+    built.session_id = Some(session);
+    let built = built.build().await;
+    built.session.send(submit("c1", "first")).await;
+    within(port.started.notified()).await;
+
+    let ack = within(built.session.send(envelope("c2", Command::Shutdown))).await;
+    assert!(matches!(ack, Ack::Accepted { .. }), "{ack:?}");
+    let late = within(built.session.send(submit("c3", "second"))).await;
+    assert!(matches!(late, Ack::Rejected { .. }), "{late:?}");
+    assert_eq!(model.requests().len(), 1, "no turn starts after a shutdown");
+    browser_turn::forget_session(session);
+}
+
+/// A close served during the capture cancels it and is answered without waiting for the turn end. A submit that was
+/// queued behind the capture is refused once the close is served, so the close starts no turn.
+#[tokio::test]
+async fn a_close_during_the_capture_is_served_at_once_and_starts_no_turn() {
+    let session = "sess_d2_close_capture";
+    let port = hold(session);
+    record_candidates(session);
+    let model = std::sync::Arc::new(ScriptedModel::new(vec![
+        text_response(&["one"]),
+        text_response(&["two"]),
+    ]));
+    let mut built = Setup::new(model.clone());
+    built.session_id = Some(session);
+    let built = built.build().await;
+    built.session.send(submit("c1", "first")).await;
+    within(port.started.notified()).await;
+
+    let handle = &built.session;
+    let (late, _notices) = within(async {
+        tokio::join!(
+            handle.send(submit("c2", "second")),
+            handle.close(EndReason::Clear),
+        )
+    })
+    .await;
+    assert!(matches!(late, Ack::Rejected { .. }), "{late:?}");
+    assert!(
+        port.cancelled.load(std::sync::atomic::Ordering::SeqCst),
+        "the close cancelled the capture"
+    );
+    assert_eq!(model.requests().len(), 1, "no turn starts after the close");
     browser_turn::forget_session(session);
 }
