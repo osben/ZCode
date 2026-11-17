@@ -28,7 +28,7 @@ These are JavaScript by nature or tied to Node-only runtimes. In Rust mode they 
 - JS plugin runtimes and plugin UI surfaces (`plugins/*`, `mcp/ui*`) beyond what `zcode-rs` `ext` already serves. Plugin management (the `plugins/*` methods of "F1+F2 forwarded methods" in `specs/fork-rust-node-helper.md`) is forwarded to the Node helper when the Host configures one. `mcp/ui*`, `mcp/readResource` and `plugins/mentionItems` are forwarded for helper-hosted plugin servers (F3); **not ported yet:** MCP Apps on MCP servers Rust runs itself (refused with `proto.forkRustAgent.mcpUiServerNotHelperHosted`; F7, "MCP Apps on Rust-hosted servers" in `specs/fork-rust-node-helper.md`), and app-provided tools (`helper/appTools/*`, F3b in `specs/fork-rust-node-helper.md`).
 - Dynamic workflows (`workflows/*`, `v4/conversation/workflowRun*`, `startSavedWorkflow`, `resumeWorkflowRun`, `amendWorkflowRunSettings`). Saved workflows (`workflows/*`) and run-history reads (`v4/conversation/workflowRun*`) are forwarded to the Node helper; running a workflow is the helper's last family (F5).
 - Office runtime: served through the Node helper since F3 (`specs/fork-rust-node-helper.md`); without a helper command the Office plugins stay skipped.
-- node-repl host (F4, not ported yet).
+- node-repl host and browser control (F4, in progress: `specs/fork-rust-node-helper.md` "F4 node_repl and browser"). F4c (computer-use env pass-through) ships with it; the computer-use operation-event builder is deferred (F4-D3).
 
 ChatGPT Plan account models run in Rust hosted mode: `specs/fork-rust-chatgpt-plan.md` (standalone `zcode-rs` refuses them; the Host owns sign-in and refresh).
 

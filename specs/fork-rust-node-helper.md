@@ -1,6 +1,6 @@
 # Node helper for the Rust agent (JS-only features in Rust mode)
 
-Status: approved 2026-11-13 (decisions D1–D3 below). Phase 2 in progress: F1+F2 merged (#447), F3 in progress. Revised with PR1: `helper/initialize` shape, notification relay without a wrapper, the memory rule, the plugin reload follow-up.
+Status: approved 2026-11-13 (decisions D1–D3 below). Phase 2 in progress: F1+F2 merged (#447), F3 merged (#459, #473, #477), F4 designed 2026-11-16 (see "F4 node_repl and browser"). Revised with PR1: `helper/initialize` shape, notification relay without a wrapper, the memory rule, the plugin reload follow-up.
 
 Related: `specs/fork-agent-runtime-selection.md` (runtime choice, Host gate), `specs/fork-rust-agent-parity.md` ("Out of scope", which this spec shrinks).
 
@@ -390,6 +390,88 @@ The ownership check does not compare workspace paths:
 - **Lazy start.** `McpManager` registers helper-hosted servers as pending at `Ext::start` and connects them on the first tool snapshot of any session (a turn), or when an MCP status listing asks for them. The plugin lane runs neither, so it never starts the helper for them.
 
 **Memory.** With the Office plugins enabled (the default), a Rust process that ran a turn keeps a helper and the Office servers for as long as its connections are open. This is the same set of servers a Node agent runs for its sessions, plus the helper (324 MB idle, see "Memory").
+
+### F4 node_repl and browser (design, built in three PRs)
+
+Status: decided 2026-11-16 (the user accepted the recommendations below). Built in three PRs, each branched from `origin/fork`:
+
+- **F4a**: node_repl hosting: the helper computes the server config, Rust routes the server through the helper, the tool timeout and its cancel, and the helper shutdown order.
+- **F4b**: the browser broker and its scope state machine, in the helper; Rust relays `interaction/browserList` and `interaction/browserExecute`, and the end-of-turn screenshot (D2).
+- **F4c** (= F6): the `ZCODE_CUA_PERMISSION_BROKER_SOCKET` env pass-through to node_repl only, and the `computer-use/operation-event` relay allowlist. Unit tests only.
+
+#### Decisions
+
+- **F4-D1 (config source).** The helper computes node_repl's config from its own `resolveZCodePlugins` result, with Node's injection rule: `resolveBuiltInNodeReplMcpServers` (`bootstrap/src/app/built-in-node-repl.ts`) runs on that outcome, so node_repl is injected when browser-use or CUA is enabled and `node-repl-host` is present. The config is keyed `node_repl` in the helper's per-workspace `mcpServers`, next to the `plugin:<plugin>:<server>` keys. Rust never builds it.
+- **F4-D2 (scope owner).** The helper runs the Node broker state machine (`openScope` sent lazily on the first execute per browser connection, `controlScopeId`, revoke only on an explicit rejection, `turnEnded`, `closeSession`, `cancelRequest`) ported from `zcode-protocol/browser-control-broker.ts`. Rust relays the resulting `interaction/browserExecute` and `interaction/browserList` requests to Main on its own connection. Rust checks only that `sessionId` names a session it owns, as the relay rule in this spec says.
+- **F4-D3 (F6 builder deferred).** F4c ships the env pass-through and the relay allowlist. The helper does not build `computer-use/operation-event`: no emitter exists in Node or in the `packages/zcode-cua` stub, so the event shape is not defined yet. That builder is a follow-up that needs a product decision.
+- **F4-D4 (E2E).** The browser-pane specs need Main and a macOS desktop. They run on macOS only, and the box runs what it can run. Nothing opens an Electron window on the user's Mac from an agent run.
+
+#### Owners
+
+| Thing                                                             | Owner                                                                         |
+| ----------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| node_repl server config (`node_repl` key)                         | Helper (`PluginOutcomes`, from `resolveBuiltInNodeReplMcpServers`)            |
+| node_repl MCP connection, its lease and child process             | Helper (session lease from `helper/session/open` `servers`)                   |
+| Broker socket (`ZCODE_NODE_REPL_BROWSER_BROKER_SOCKET` and token) | Helper, one broker per helper generation                                      |
+| Browser scope state (`controlScopeId`, open, revoke)              | Helper                                                                        |
+| Tool call, permission prompt, model turn, rows, deltas, images    | Rust (unchanged rule 2)                                                       |
+| `interaction/browserList` and `interaction/browserExecute`        | Main (through Rust relay)                                                     |
+| End-of-turn browser screenshot (D2)                               | Rust turn completion, one relayed `interaction/browserExecute`                |
+| `ZCODE_CUA_PERMISSION_BROKER_SOCKET`                              | Host sets it; Rust passes it to the helper, which passes it to node_repl only |
+
+#### Event order
+
+```
+UI/Host        Rust (owner)                       Helper                         node_repl / Main
+  │ v4 command ─► turn starts; model asks for mcp__node_repl__js
+  │              ◄── permission prompt (always ask: high risk from the tool entry)
+  │ ── allow ───► pipe tools/call (timeout 600 s, cancel = notifications/cancelled)
+  │                                            ─ MCP tools/call ───────────────────► node_repl
+  │                                            ◄─ broker socket: list/execute ───── node_repl
+  │                                            ─ openScope if not open (scope state)
+  │ ◄── interaction/browserExecute (relayed) ◄─ request {sessionId}
+  │ ── result (Main) ─────────────────────────► broker answer ──────────────────────► node_repl
+  │              ◄─ MCP result {content, display} ◄─────────────────────────────────── node_repl
+  │ ◄── tool row + node_repl_images display (Rust projection)
+  │              turn ends: D2 screenshot relayed, then helper/turn/ended ─► broker turnEnded
+  │              session closes: helper/session/close ─► broker closeSession, lease, MCP child
+  │ Rust closes helper stdin ─► helper runs the close steps of every open session, closes the
+  │                              pool and exits; Rust kills the process group after the grace period
+```
+
+Ordering guarantees (kept from F3): `helper/turn/ended` goes only after the turn's last tool call settled or was cancelled; `helper/session/close` goes only after `turn/ended`.
+
+#### Shutdown order (F4a)
+
+1. Rust closes the helper's stdin.
+2. The helper runs the close steps of each open session (broker scope closeSession, panels, lease), then `pool.close()`, which ends the node_repl child.
+3. The helper exits. If it has not exited after the Rust guard's existing grace period, Rust kills the process group.
+
+#### Tool timeout and cancel (F4a)
+
+- node_repl's server timeout is 600 000 ms (Node's `timeoutMs`), carried on the Rust `McpServer` options. Rust's MCP client times the call and cancels with `notifications/cancelled`, which the helper maps to MCP cancel on the node_repl connection.
+- The pipe timeout rule keeps the helper alive while a long call is in progress (F3, "Timeout rule").
+
+#### Permission (F4a)
+
+- node_repl tools are always-ask, because their risk is high. The risk is Node's classification (`core/src/mcp/index.ts:135-147`). How the helper's `tools/list` carries it to Rust is decided in the F4a red test, not here. Rust then asks the session prompt before each call, as it does for any ask.
+
+#### Acceptance
+
+1. With browser-use or CUA enabled, the model sees `mcp__node_repl__js`. With neither enabled, it does not. With no helper, node-repl plugins are skipped as today.
+2. A `js` call asks for approval. Deny returns a tool error to the model. Allow runs it, and the text and image result render (`node_repl_images` display kept).
+3. Stop during a call cancels it on the node_repl connection.
+4. A browser-use task opens a page in the desktop browser through `interaction/browserExecute`. Turn end releases the scope with `turnEnded`. Session close releases it with `closeSession`.
+5. Helper crash mid-call: the tool row shows an error, and the next call respawns the helper.
+6. Helper stdin close: sessions close before the helper exits, and the node_repl child is gone.
+7. Node mode: nothing changes, and no helper is spawned.
+
+#### Tests
+
+- Helper (TypeScript, Vitest, `scripts/fork-test-files.json`): `PluginOutcomes` adds `node_repl` only when browser-use or CUA is enabled and host is present; the helper's broker scope state machine: open once per connection, revoke on explicit rejection only, closeSession and turnEnded release.
+- Rust (`ext`): `select` serves node-repl plugins with `node_helper` set and skips them without it; the server carries `timeout_ms = 600000` and transport `NodeHelper`.
+- Rust (`protocol-zcode`): the relay allowlist forwards `interaction/browserList` and `interaction/browserExecute` only for owned sessions; the D2 screenshot is relayed once per turn.
+- Desktop E2E in the box: the node-repl spec, if it runs on Linux; the browser-use specs run on macOS only and are not run by the agent.
 
 ### Why the helper, not Rust, is the MCP client for Node-hosted servers
 
