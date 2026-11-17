@@ -125,6 +125,19 @@ fn an_mcp_answer_maps_to_the_schema_types() {
 }
 
 #[test]
+fn an_integer_outside_i64_keeps_the_truncated_number_like_node() {
+    let schema = json!({"type": "object", "properties": {"n": {"type": "integer"}}});
+    let answers = content(json!({"answer_0": "1e300"}));
+    let McpElicitationAnswer::Accept { content: got } =
+        mcp_answer("Fill in", &schema, Some("accept"), Some(&answers), None)
+    else {
+        panic!("accepted");
+    };
+    assert_eq!(got["n"].as_f64(), Some(1e300));
+    assert_eq!(got["n"].as_i64(), None);
+}
+
+#[test]
 fn an_mcp_answer_with_free_text_and_no_action_is_the_first_field() {
     let schema = json!({"type": "object", "properties": {"name": {"type": "string"}}});
     assert_eq!(

@@ -424,7 +424,15 @@ fn typed_value(field: &Field, raw: &str) -> Option<Value> {
                 return None;
             }
             Some(match field.kind {
-                FieldKind::Integer => json!(parsed.trunc() as i64),
+                // Node `Math.trunc(Number(raw))`: an integer outside i64 stays the truncated number, never saturates.
+                FieldKind::Integer => {
+                    let whole = parsed.trunc();
+                    if whole >= i64::MIN as f64 && whole < i64::MAX as f64 {
+                        json!(whole as i64)
+                    } else {
+                        json!(whole)
+                    }
+                }
                 _ => json!(parsed),
             })
         }
@@ -481,9 +489,17 @@ fn mcp_accepted(
     };
     let mut result = Map::new();
     let questions = mcp_questions(message, schema);
+    let fields = mcp_fields(schema);
+    // Node reads `questions[index]?.question ?? ""`: a missing question is an empty one, never a panic.
+    let question_at = |index: usize| {
+        questions
+            .get(index)
+            .and_then(|question| question["question"].as_str())
+            .unwrap_or_default()
+    };
     if let Some(answers) = answers {
-        for (index, field) in mcp_fields(schema).iter().enumerate() {
-            let question = questions[index]["question"].as_str().unwrap_or_default();
+        for (index, field) in fields.iter().enumerate() {
+            let question = question_at(index);
             let Some(raw) = read_answer(answers, index, question).and_then(first_string) else {
                 continue;
             };
@@ -494,8 +510,8 @@ fn mcp_accepted(
                 result.insert(field.name.clone(), value);
             }
         }
-        if mcp_fields(schema).is_empty() {
-            let question = questions[0]["question"].as_str().unwrap_or_default();
+        if fields.is_empty() {
+            let question = question_at(0);
             if let Some(raw) = read_answer(answers, 0, question).and_then(first_string)
                 && raw != MCP_ELICITATION_FREE_TEXT_OPTION
             {

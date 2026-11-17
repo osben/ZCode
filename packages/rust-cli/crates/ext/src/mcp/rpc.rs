@@ -100,6 +100,7 @@ struct Registered {
 
 /// Keeps a call registered on its connection. Dropping it ends the call, which withdraws any question the call still
 /// has open (its answer is `cancel`). It cancels only its own token, never the caller's.
+#[must_use = "dropping the guard ends the call at once"]
 pub(crate) struct CallGuard {
     calls: Arc<Mutex<Vec<Registered>>>,
     id: u64,
