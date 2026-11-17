@@ -809,15 +809,21 @@ impl McpTransport for Silent {
 async fn a_silent_plugin_server_does_not_hold_the_settings_read() {
     let mut fixture = fixture_with_plugin(json!({}), json!({}));
     fixture.admin.transport = Arc::new(Silent);
-    // Node answers `mcp/list` after its OAuth status wait (5 s) even while a plugin server is still connecting; the
-    // read must come back well inside the Desktop's own read timeout.
+    // The plugin server gets a 200 ms connect timeout (its `timeoutMs` default is the settings default, 30 s in
+    // production). Node awaits each connection of the lane within that bound, so the read returns with the server
+    // `failed` and the timeout message, well inside the Desktop's read timeout.
+    fixture.admin.mcp.connect_timeout_ms = 200;
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(5),
         fixture.admin.mcp_list(&target("k"), None, true),
     )
-    .await;
-    assert!(
-        result.is_ok(),
-        "mcp/list waited on a plugin server that never connected"
+    .await
+    .expect("mcp/list waited past the connect timeout of a silent plugin server")
+    .unwrap();
+    let row = &result["statuses"]["plugin:toolkit:db"];
+    assert_eq!(row["status"], "failed");
+    assert_eq!(
+        row["error"],
+        "MCP server plugin:toolkit:db connection timed out after 200ms"
     );
 }

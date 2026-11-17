@@ -378,7 +378,7 @@ async fn node_options_apply_per_server() {
         status.contains(&(
             "silent".to_owned(),
             McpStatus::Failed {
-                reason: "MCP server \"silent\" connection timed out after 50ms".to_owned()
+                reason: "MCP server silent connection timed out after 50ms".to_owned()
             }
         )),
         "{status:?}"

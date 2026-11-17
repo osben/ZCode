@@ -355,8 +355,9 @@ impl AppWorkspace {
             let servers = std::mem::take(&mut *fresh.pending.lock_unpoisoned());
             fresh.manager.start(workspace, servers);
         }
-        // Plugin servers keep their rows `connecting` without holding the read (see `wait_ready_non_plugin`).
-        fresh.manager.wait_ready_non_plugin().await;
+        // Node awaits every connection of the lane (each one bounded by its own connect timeout, so a server that
+        // never answers ends `failed` instead of holding the read).
+        fresh.manager.wait_ready().await;
     }
 
     /// Fork (specs/fork-rust-workspace-plugins-mcp.md, "As built: layer reload"): a config or trust

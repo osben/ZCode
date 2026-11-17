@@ -1401,9 +1401,9 @@ Merge order (Node `configuredMcpServers = {...plugins, ...(mcpServers ?? config.
 
 Admission uses the `McpServer` that `load_all` produced, not a JSON round trip through `parse_node_servers`, so the plugin env is kept. The status of a plugin row is the live status, else `connecting` while pending, else `disconnected`; `toolCount: 0` when idle. No `authorization` field is reported: zcode-rs has no MCP OAuth flow (`node_config` warns `oauth is not supported`), so a server Node would gate on OAuth is not a Rust row with that state. That part stays open (see "Open gaps").
 
-Event order, connect: read config, read plugin set, merge, admit, install the lane (replacing the displaced one), start the admitted servers, then wait only for the non-plugin ones (`McpManager::wait_ready_non_plugin`). A plugin server that never answers stays `connecting` in its row and does not hold the read: Rust has no OAuth status wait to return early the way Node does (5 s, `waitForOAuthAuthorizationSnapshot`), so the wait excludes plugin servers instead. Status read: read config, read plugin set, merge, report the stored lane for the same workspace key only.
+Event order, connect: read config, read plugin set, merge, admit, install the lane (replacing the displaced one), start the admitted servers, then `McpManager::wait_ready` for every server of the lane, plugin ones included. Each connection is bounded by its own connect timeout (`connection::open`, the server's `timeoutMs` or the settings default, 30 s, as Node's `DEFAULT_MCP_TIMEOUT_MS`), so a server that never answers ends `failed` with Node's message (`MCP server <name> connection timed out after <ms>ms`) and the read returns. Status read: read config, read plugin set, merge, report the stored lane for the same workspace key only.
 
-Known difference: a plugin server that is slow but not stuck is reported `connecting` by Rust until it settles, while Node awaits it within its own timeout before the read returns.
+The turn-time settle is unchanged: `McpManager::wait_ready` has no other caller, and the session MCP group does not go through the settings lane. (The lead's reference to `query/step.rs` PLM-LC-010 does not match this tree: PLM-LC-010 is a plugin env projection E2E, and there is no `query/step.rs` under `packages/rust-cli`.)
 
 Acceptance (red tests first, `app_workspace_tests.rs`):
 

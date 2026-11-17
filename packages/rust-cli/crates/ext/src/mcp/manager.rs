@@ -20,7 +20,7 @@ use serde_json::Value;
 use tokio::sync::{Notify, watch};
 use tokio_util::sync::CancellationToken;
 
-use super::config::{McpScope, McpServer, McpServerOptions, McpSettings};
+use super::config::{McpServer, McpServerOptions, McpSettings};
 use super::connection::{self, Session, has_capability};
 use super::resources;
 use super::rpc::{Client, Notice};
@@ -613,22 +613,6 @@ impl McpManager {
                 .servers()
                 .values()
                 .any(|server| server.status.pending());
-            if !pending || changes.changed().await.is_err() {
-                return;
-            }
-        }
-    }
-
-    /// Fork (specs/fork-rust-agent-parity.md, "Plugin MCP rows in `mcp/list`"): [`Self::wait_ready`] for every server
-    /// but the plugin ones. A plugin server that has not connected keeps its settings row `connecting` and must not
-    /// hold the settings read; Node's read returns while a plugin server is still connecting.
-    pub async fn wait_ready_non_plugin(&self) {
-        let mut changes = self.0.changed.subscribe();
-        loop {
-            let pending =
-                self.0.servers().values().any(|server| {
-                    server.status.pending() && server.config.scope != McpScope::Plugin
-                });
             if !pending || changes.changed().await.is_err() {
                 return;
             }
