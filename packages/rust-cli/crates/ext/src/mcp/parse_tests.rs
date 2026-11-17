@@ -200,3 +200,17 @@ fn user_servers_do_not_read_the_plugin_oauth_block() {
     let (servers, _) = parse_servers(&table, McpScope::User, &EnvLookups::same(&lookup));
     assert!(servers[0].oauth.is_none());
 }
+
+/// Review #2: the diagnostic names the declared `type` the way Node's `String(value.type)` does, so a non-string value
+/// is shown rather than `undefined`.
+#[test]
+fn an_unsupported_oauth_type_is_named_as_declared() {
+    let table = json!({
+        "numeric": {"type": "http", "url": "https://mcp.example.com/n", "oauth": {"type": 3}},
+        "null": {"type": "http", "url": "https://mcp.example.com/z", "oauth": {"type": null}}
+    });
+    let (_, warnings) = parse_servers(&table, McpScope::Plugin, &EnvLookups::same(&lookup));
+    let text = format!("{warnings:?}");
+    assert!(text.contains("Unsupported MCP OAuth type: 3"), "{text}");
+    assert!(text.contains("Unsupported MCP OAuth type: null"), "{text}");
+}

@@ -164,10 +164,31 @@ fn plugin_oauth(
             redirect_path: text("redirectPath").map(|value| fields.plain(&value)),
             scope: text("scope").map(|value| fields.plain(&value)),
         })),
-        other => Err(format!(
+        _ => Err(format!(
             "Unsupported MCP OAuth type: {}",
-            other.unwrap_or("undefined")
+            js_string(block.get("type"))
         )),
+    }
+}
+
+/// Node's `String(value)` for a declared OAuth `type`: the text of a string, `undefined` when absent, and the JavaScript
+/// rendering of the other JSON values.
+fn js_string(value: Option<&Value>) -> String {
+    match value {
+        None => "undefined".to_owned(),
+        Some(Value::Null) => "null".to_owned(),
+        Some(Value::String(text)) => text.clone(),
+        Some(Value::Bool(flag)) => flag.to_string(),
+        Some(Value::Number(number)) => number.to_string(),
+        Some(Value::Array(items)) => items
+            .iter()
+            .map(|item| match item {
+                Value::Null => String::new(),
+                other => js_string(Some(other)),
+            })
+            .collect::<Vec<_>>()
+            .join(","),
+        Some(Value::Object(_)) => "[object Object]".to_owned(),
     }
 }
 
