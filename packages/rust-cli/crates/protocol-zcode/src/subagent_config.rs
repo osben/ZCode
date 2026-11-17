@@ -194,6 +194,11 @@ fn profile(value: &Value) -> Result<SubagentProfile, String> {
             .map(|turns| u32::try_from(turns).unwrap_or(u32::MAX)),
         background: value["background"] == true,
         inject_agents_md: value["injectAgentsMd"] != false,
+        mcp_servers: names("mcpServers"),
+        skills: names("skills"),
+        memory: value["memory"]
+            .as_str()
+            .and_then(rust_cli_kernel_api::subagent_config::AgentMemoryScope::from_name),
         permission_mode: value["permissionMode"]
             .as_str()
             .and_then(PermissionMode::from_cli_choice),

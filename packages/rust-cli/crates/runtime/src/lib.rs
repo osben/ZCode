@@ -31,6 +31,10 @@ mod workspace_sessions;
 
 use std::sync::Arc;
 
+/// Fork (rule 18): the agent-memory storage root when `features.memory` and `memory.use` allow it (see
+/// `rust_cli_agents::configured_root`).
+pub use rust_cli_agents::configured_root as configured_agent_memory_root;
+
 use async_trait::async_trait;
 use rust_cli_agents::{AgentCatalog, MemoryTaskLists};
 use rust_cli_base::TaskScope;
@@ -341,7 +345,13 @@ impl LocalKernel {
             (&parts, tasks, &agent_catalog),
             (&late, scope.spawner(), &extensions.peers),
             (&defaults, traits, extensions.node_desktop),
-            (&incognito, &workspaces),
+            (
+                &incognito,
+                &workspaces,
+                ext.skills().clone()
+                    as Arc<dyn rust_cli_kernel_api::subagent_config::SubagentSkillGrants>,
+                extensions.agent_memory_root.clone(),
+            ),
         );
         // Fork: ACP agent processes by session; a session close releases its process.
         let acp_host = extensions.acp.clone().map(|setup| {

@@ -11,16 +11,23 @@ pub(crate) fn inject_agents_md(value: Option<&str>) -> bool {
 
 /// 工具清单：缺省为 None（全部）；含 `*` 也是全部；逗号分隔或列表。嵌套块按没写。
 pub(crate) fn tools(value: Option<&Value>) -> Option<Vec<String>> {
-    let items: Vec<String> = match value? {
-        Value::Text(text) => text
-            .split(',')
-            .map(|item| item.trim().to_owned())
-            .filter(|item| !item.is_empty())
-            .collect(),
-        Value::List(items) => items.clone(),
-        Value::Block(_) => return None,
-    };
+    let items = names(value)?;
     (!items.iter().any(|item| item == "*")).then_some(items)
+}
+
+/// Fork (rule 16/17): a list of names (`mcpServers`, `skills`), comma separated or a list; no wildcard meaning.
+/// Missing or a nested block is None; an empty list stays `Some(vec![])` (Node `?.length`: not a scope).
+pub(crate) fn names(value: Option<&Value>) -> Option<Vec<String>> {
+    match value? {
+        Value::Text(text) => Some(
+            text.split(',')
+                .map(|item| item.trim().to_owned())
+                .filter(|item| !item.is_empty())
+                .collect(),
+        ),
+        Value::List(items) => Some(items.clone()),
+        Value::Block(_) => None,
+    }
 }
 
 #[cfg(test)]

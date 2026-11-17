@@ -731,6 +731,9 @@ fn reviewer_snapshot(
                 background: false,
                 permission_mode: None,
                 inject_agents_md: true,
+                mcp_servers: None,
+                skills: None,
+                memory: None,
             })
             .into_iter()
             .collect(),

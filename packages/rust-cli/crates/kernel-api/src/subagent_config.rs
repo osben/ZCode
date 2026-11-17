@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 
 use async_trait::async_trait;
 
+use crate::env::WorkspaceRef;
 use crate::ids::SessionId;
 use crate::model::ModelSelection;
 use crate::permission::PermissionMode;
@@ -36,6 +37,32 @@ pub struct SubagentProfile {
     pub permission_mode: Option<PermissionMode>,
     /// `injectAgentsMd`: false gives the child no project instructions; absent means true (Node `!== false`).
     pub inject_agents_md: bool,
+    /// `mcpServers` (rule 16): None or empty means every parent server.
+    pub mcp_servers: Option<Vec<String>>,
+    /// `skills` (rule 17): None means the profile declares no skill list.
+    pub skills: Option<Vec<String>>,
+    /// `memory` (rule 18).
+    pub memory: Option<AgentMemoryScope>,
+}
+
+/// Node `AgentMemoryScope`: where the persistent agent memory of a profile lives (rule 18).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentMemoryScope {
+    User,
+    Project,
+    Local,
+}
+
+impl AgentMemoryScope {
+    /// The frontmatter and Host value (`user`, `project` or `local`); any other value is no scope.
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "user" => Some(Self::User),
+            "project" => Some(Self::Project),
+            "local" => Some(Self::Local),
+            _ => None,
+        }
+    }
 }
 
 /// The Host's answer. One value per root session, read at most once per root turn, so the unboxed `Ready` is not worth
@@ -63,4 +90,21 @@ pub trait SubagentConfigSource: Send + Sync {
 
     /// The root session `session` closed: drop what was remembered for it (the gate).
     fn forget(&self, _session: &SessionId) {}
+}
+
+/// Fork (rule 17): the skills a subagent's `skills` list grants its child run. The skill catalog (ext) resolves the list
+/// against its discovery and filters the child's skill tool, listing and loads to the grant.
+#[async_trait]
+pub trait SubagentSkillGrants: Send + Sync {
+    /// Freezes the grant of `entries` for the run of the child session `child` in `workspace`. Returns the entries that
+    /// matched no skill, in the order given.
+    async fn grant(
+        &self,
+        child: &SessionId,
+        workspace: &WorkspaceRef,
+        entries: &[String],
+    ) -> Vec<String>;
+
+    /// The run of `child` ended: drop its grant.
+    fn forget(&self, child: &SessionId);
 }

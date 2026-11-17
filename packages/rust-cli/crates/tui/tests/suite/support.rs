@@ -547,6 +547,7 @@ pub fn kernel(
         },
         rust_cli_runtime::ContextConfig::new(rust_cli_runtime::Surface::Interactive),
         rust_cli_runtime::Extensions {
+            agent_memory_root: None,
             peers,
             ..rust_cli_runtime::Extensions::none()
         },

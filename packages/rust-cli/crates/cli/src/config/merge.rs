@@ -281,3 +281,21 @@ pub(crate) fn resolve_project_cwds(
 #[cfg(test)]
 #[path = "merge_tests.rs"]
 mod tests;
+
+/// Fork (rule 18, Node `features.memory`, default on): the last layer that sets it wins.
+pub(crate) fn memory_enabled(layers: &[Layer<'_>]) -> bool {
+    layers
+        .iter()
+        .rev()
+        .find_map(|layer| layer.object.get("features")?.get("memory")?.as_bool())
+        .unwrap_or(true)
+}
+
+/// Fork (rule 18, Node `memory.use`, default on): the last layer that sets it wins.
+pub(crate) fn memory_use(layers: &[Layer<'_>]) -> bool {
+    layers
+        .iter()
+        .rev()
+        .find_map(|layer| layer.object.get("memory")?.get("use")?.as_bool())
+        .unwrap_or(true)
+}

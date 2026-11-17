@@ -23,6 +23,8 @@ mod messaging;
 mod mirror;
 mod monitors;
 mod peer_send;
+mod persistent_memory;
+pub use persistent_memory::configured_root;
 mod plugin;
 mod report;
 mod respond;
@@ -102,6 +104,8 @@ pub struct AgentsPorts {
     /// Fork: each session's workspace; a spawned child records its own (its parent's workspace),
     /// so it reads the same per-workspace MCP group.
     pub sessions: rust_cli_kernel_api::workspace_key::SessionWorkspaces,
+    /// Fork (rule 17): the skill catalog's grants for the subagent runs (`skills` in a profile).
+    pub skill_grants: Arc<dyn rust_cli_kernel_api::subagent_config::SubagentSkillGrants>,
 }
 
 /// Task v2 四个工具开不开（[`task_tools_enabled`]）。
@@ -137,6 +141,8 @@ pub struct AgentsConfig {
     pub background_prompts: bool,
     /// fork 子代理（修复线 L-A，agents.md §8.1）：交互会话打开，`-p` 关。打开时 Agent 用 fork 写法、全部在后台。
     pub fork: bool,
+    /// Fork (rule 18): the storage root of subagent persistent memory (Node `memory.storageRoot`); None disables it.
+    pub agent_memory_root: Option<std::path::PathBuf>,
     /// Fork (node_desktop): register Node's TaskOutput tool (the desktop agent's regression
     /// drives background Bash through it). Off keeps the CLI's tool list unchanged.
     pub node_desktop: bool,
@@ -170,6 +176,8 @@ pub(crate) struct Core {
     /// Fork (node_desktop): an Agent call runs in the foreground unless it asks for the background
     /// (Node `agent.ts`: `runInBackground: run_in_background === true`).
     pub(crate) node_desktop: bool,
+    /// Fork (rule 18): see [`AgentsConfig::agent_memory_root`].
+    pub(crate) agent_memory_root: Option<std::path::PathBuf>,
     /// 主线程的完整注册表（基础工具 + 本 crate 的工具）；子代理从它过滤。弱引用：注册表里的工具持有 Core，
     /// 两者在 [`Agents::new`] 里用 `Arc::new_cyclic` 一次建好，没有“先建后接”的空档。
     registry: Weak<AgentRegistry>,
@@ -295,6 +303,7 @@ impl Agents {
                 background_prompts: config.background_prompts,
                 fork: config.fork,
                 node_desktop: config.node_desktop,
+                agent_memory_root: config.agent_memory_root.clone(),
                 registry: registry.clone(),
             });
             let mut own: Vec<Arc<dyn Tool>> = vec![Arc::new(AgentTool { core: core.clone() })];

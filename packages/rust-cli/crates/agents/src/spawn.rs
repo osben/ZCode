@@ -387,6 +387,33 @@ async fn run_loop(
     abort: Abort,
     cancel: Option<CancellationToken>,
 ) -> Result<QueryStop, QueryError> {
+    // Fork (rule 18): a child with a `memory` scope gets its memory tools and the persistent-memory prompt, when the
+    // runtime has a storage root for agent memory.
+    let mut definition = agent.definition.as_ref().clone();
+    // A session that excludes memory (incognito) gets none, as Node's `incognitoExcludes(…, "memory")` gate.
+    let memory_root = if core.ports.incognito.excludes(
+        &agent.child,
+        rust_cli_kernel_api::incognito::IncognitoKey::Memory,
+    ) {
+        None
+    } else {
+        core.agent_memory_root.as_deref()
+    };
+    if let (Some(scope), Some(storage_root)) = (definition.memory, memory_root) {
+        let memory_prompt = crate::persistent_memory::load(
+            scope,
+            storage_root,
+            std::path::Path::new(agent.workspace.root.as_str()),
+            &definition.agent_type,
+        )
+        .await;
+        crate::persistent_memory::project_memory_tools(&mut definition);
+        definition.prompt = if definition.prompt.trim().is_empty() {
+            memory_prompt
+        } else {
+            format!("{}\n\n{memory_prompt}", definition.prompt)
+        };
+    }
     // fork：主线程的整份注册表与主线程的 system（同对照实现，修复线 L-A，agents.md §8.1.2）。
     let (tools, context): (
         Arc<dyn ToolRegistry>,
@@ -407,7 +434,7 @@ async fn run_loop(
         (
             Arc::new(FilteredTools {
                 inner: registry,
-                rule: ToolRule::new(&agent.definition, agent.background, agent.depth)
+                rule: ToolRule::new(&definition, agent.background, agent.depth)
                     .with_questions(core.node_desktop)
                     .node_child(core.node_desktop),
                 child_tools: vec![crate::respond::tool(core.clone())],
@@ -415,12 +442,34 @@ async fn run_loop(
             Arc::new(SubagentContext {
                 inner: core.ports.context.clone(),
                 system: report::system(
-                    &agent.definition.prompt,
+                    &definition.prompt,
                     core.ports.incognito.get(&agent.child).as_ref(),
                 ),
                 inject_agents_md: agent.definition.inject_agents_md,
             }),
         )
+    };
+    // Fork (rule 17): the child's `skills` list grants its skills for this run; the grant is dropped when the run ends.
+    let _skill_grant = match agent.definition.skills.as_deref() {
+        Some(entries) if agent.fork_prefix.is_none() => {
+            let unresolved = core
+                .ports
+                .skill_grants
+                .grant(&agent.child, &agent.workspace, entries)
+                .await;
+            if !unresolved.is_empty() {
+                tracing::warn!(
+                    agent = %agent.definition.agent_type,
+                    unresolved = ?unresolved,
+                    "subagent skill entries matched no discovered skill"
+                );
+            }
+            Some(SkillGrantGuard {
+                grants: core.ports.skill_grants.clone(),
+                child: agent.child.clone(),
+            })
+        }
+        _ => None,
     };
     let runner = Tracked {
         inner: core.ports.queries.runner(tools, context),
@@ -480,3 +529,15 @@ pub(crate) fn ids(core: &Core) -> (AgentId, SessionId) {
 #[cfg(test)]
 #[path = "spawn_tests.rs"]
 mod tests;
+
+/// Fork (rule 17): drops a child's skill grant when its run ends, on every exit path.
+struct SkillGrantGuard {
+    grants: Arc<dyn rust_cli_kernel_api::subagent_config::SubagentSkillGrants>,
+    child: rust_cli_kernel_api::ids::SessionId,
+}
+
+impl Drop for SkillGrantGuard {
+    fn drop(&mut self) {
+        self.grants.forget(&self.child);
+    }
+}
