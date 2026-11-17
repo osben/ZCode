@@ -12,6 +12,7 @@ mod coordinator;
 mod flow;
 mod keys;
 mod lease;
+mod pair;
 mod pkce;
 mod protocol;
 mod record;
@@ -26,6 +27,8 @@ mod coordinator_tests;
 pub(crate) mod flow_tests;
 #[cfg(test)]
 mod lease_tests;
+#[cfg(test)]
+mod pair_tests;
 #[cfg(test)]
 mod protocol_tests;
 #[cfg(test)]

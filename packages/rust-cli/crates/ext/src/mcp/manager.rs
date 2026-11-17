@@ -468,7 +468,7 @@ impl Inner {
                         // Keep the credentials and report the failure: the grant is not known to be invalid.
                         Some(ChallengeRefresh::Failed) => {}
                         Some(ChallengeRefresh::Reauthorize) | None => {
-                            self.start_oauth_on_challenge(&config, &failure);
+                            self.start_oauth_on_challenge(&config, &failure).await;
                         }
                     }
                     failure.reason

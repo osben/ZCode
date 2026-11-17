@@ -33,7 +33,7 @@ use rust_cli_kernel_api::env_worktree::{
 use rust_cli_kernel_api::ids::{EnvironmentId, OperationId, ShellTaskId, ToolUseId};
 use rust_cli_kernel_api::mcp::{McpError, McpTransportEvent};
 
-/// 线上的错误 → `EnvError`：七种一一对应；协议自己的两种是 `Io`。
+/// 线上的错误 → `EnvError`：七种一一对应；协议自己的几种（`http` 也是）是 `Io`。
 pub(crate) fn error(error: WireError) -> EnvError {
     match error {
         WireError::NotFound { path } => EnvError::NotFound { path },
@@ -43,7 +43,7 @@ pub(crate) fn error(error: WireError) -> EnvError {
         WireError::OperationConflict { operation } => EnvError::OperationConflict {
             operation: OperationId::new(operation),
         },
-        WireError::Io { message } => EnvError::Io { message },
+        WireError::Io { message, .. } => EnvError::Io { message },
         WireError::Unsupported { what } => EnvError::Unsupported { what },
         other @ (WireError::BadRequest { .. } | WireError::Interrupted { .. }) => EnvError::Io {
             message: other.to_string(),
@@ -383,18 +383,38 @@ pub(crate) fn mcp_event(event: wm::McpEvent) -> McpTransportEvent {
 /// 线上错误的原文（执行器的 `Connect` / `Io` 是 `io`、`Closed` 是 `not_found`，§22.4）。
 pub(crate) fn mcp_text(error: &WireError) -> String {
     match error {
-        WireError::Io { message } => message.clone(),
+        WireError::Io { message, .. } => message.clone(),
         WireError::NotFound { path } => path.clone(),
         other => other.to_string(),
     }
 }
 
-/// `mcp.send` / `mcp.close` / `mcp.declare` 的错误：连接不在了是 `Closed`，执行器没有这一能力是 `Unsupported`，其余是
-/// `Io`。
+/// Whether the wire error is an HTTP challenge (the executor's `McpError::Http`): an `io` with a status.
+pub(crate) fn is_http_challenge(error: &WireError) -> bool {
+    matches!(
+        error,
+        WireError::Io {
+            http_status: Some(_),
+            ..
+        }
+    )
+}
+
+/// `mcp.send` / `mcp.close` / `mcp.declare` 的错误：连接不在了是 `Closed`，执行器没有这一能力是 `Unsupported`，HTTP
+/// 挑战是 `Http`（保留状态与 `WWW-Authenticate`），其余是 `Io`。
 pub(crate) fn mcp_error(error: WireError) -> McpError {
     match error {
         WireError::NotFound { path } => McpError::Closed { message: path },
         WireError::Unsupported { what } => McpError::Unsupported { what },
+        WireError::Io {
+            message,
+            http_status: Some(status),
+            www_authenticate,
+        } => McpError::Http {
+            status,
+            message,
+            www_authenticate,
+        },
         other => McpError::Io {
             message: mcp_text(&other),
         },
