@@ -145,8 +145,14 @@ async fn refresh_locked(
         ),
         ("Accept".to_owned(), "application/json".to_owned()),
     ];
-    match &input.client_secret {
-        Some(secret) => headers.push(("Authorization".to_owned(), basic_auth(&client_id, secret))),
+    // Same rule as the code exchange (`flow::exchange_code`): the registered client's secret authenticates when the
+    // configuration has none.
+    let secret = input
+        .client_secret
+        .clone()
+        .or_else(|| client["client_secret"].as_str().map(str::to_owned));
+    match secret {
+        Some(secret) => headers.push(("Authorization".to_owned(), basic_auth(&client_id, &secret))),
         None => pairs.push(("client_id", client_id.as_str())),
     }
     // RFC 8707: the SDK sends `resource` with the refresh when the metadata names one (Node `refreshAuthorization`).

@@ -533,7 +533,13 @@ async fn exchange_code(
         ),
         ("Accept".into(), "application/json".into()),
     ];
-    match &input.client_secret {
+    // Node's SDK authenticates with the registered client's secret when registration issued one; the configured
+    // secret wins when both exist. Sending only `client_id` to a server that issued a secret gets `invalid_client`.
+    let secret = input
+        .client_secret
+        .clone()
+        .or_else(|| client["client_secret"].as_str().map(str::to_owned));
+    match secret {
         Some(secret) => {
             let basic = STANDARD.encode(format!("{client_id}:{secret}"));
             headers.push(("Authorization".into(), format!("Basic {basic}")));

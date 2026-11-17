@@ -383,3 +383,66 @@ async fn token_request_never_appears_in_an_error_or_outcome() {
     assert!(!text.contains("tok-access-1"));
     assert!(!text.contains(CODE));
 }
+
+/// A runtime whose dynamic registration also issues a `client_secret` (the E2E fixture does this).
+struct DcrSecretRuntime(FakeRuntime);
+
+#[async_trait::async_trait]
+impl McpOAuthRuntime for DcrSecretRuntime {
+    fn random_bytes(&self, len: usize) -> Result<Vec<u8>, OAuthHttpError> {
+        self.0.random_bytes(len)
+    }
+
+    fn now_ms(&self) -> i64 {
+        self.0.now_ms()
+    }
+
+    async fn http(&self, request: OAuthHttpRequest) -> Result<OAuthHttpResponse, OAuthHttpError> {
+        let registration = request.url.ends_with("/register");
+        let mut response = self.0.http(request).await?;
+        if registration {
+            let mut body: serde_json::Value = serde_json::from_str(&response.body).expect("json");
+            body["client_secret"] = serde_json::json!("dcr-secret");
+            response.body = body.to_string();
+        }
+        Ok(response)
+    }
+
+    async fn bind_loopback(&self) -> Result<Box<dyn LoopbackListener>, OAuthHttpError> {
+        self.0.bind_loopback().await
+    }
+}
+
+/// Red test (E2E canva "You are not signed in"): a client registered with a secret, and no configured secret, must
+/// exchange the code with `client_secret_basic`. Before the fix the exchange sent only `client_id` and the server
+/// answered 401 `invalid_client`.
+#[tokio::test]
+async fn a_dynamically_registered_secret_authenticates_the_code_exchange() {
+    let store = MemoryStore::default();
+    let runtime = DcrSecretRuntime(FakeRuntime {
+        callbacks: vec![callback(&expected_state())],
+        requests: Mutex::new(Vec::new()),
+        listen_calls: Mutex::new(0),
+    });
+    let outcome = run_lead(&store, &runtime, &input(), &CancellationToken::new()).await;
+    assert_eq!(outcome, FlowOutcome::Authorized);
+
+    let requests = runtime.0.requests.lock().unwrap().clone();
+    let token = requests
+        .iter()
+        .find(|r| r.url.ends_with("/token"))
+        .expect("token request");
+    let expected = super::protocol::basic_auth("client-from-dcr", "dcr-secret");
+    assert!(
+        token
+            .headers
+            .iter()
+            .any(|(name, value)| name == "Authorization" && *value == expected),
+        "the token request must authenticate with the registered secret: {:?}",
+        token.headers
+    );
+    assert!(
+        !token.body.as_deref().unwrap_or("").contains("client_id="),
+        "client_secret_basic sends the client id in the header, not the body"
+    );
+}
