@@ -520,7 +520,11 @@
         {
           "constructError": {
             "code": "ScriptHashMismatch",
-            "message": "Cannot resume run run_resume: its script changed (recorded hash h1, got h2). Resume needs the byte-identical script; to run a revised script, start a new run with resume_from instead."
+            "message": "Cannot resume run run_resume: its script changed (recorded hash h1, got h2). Resume needs the byte-identical script; to run a revised script, start a new run with resume_from instead.",
+            "mismatch": {
+              "expected": "h1",
+              "got": "h2"
+            }
           },
           "results": [],
           "run": {

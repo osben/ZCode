@@ -67,13 +67,11 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
         self.driver.cancel_ask(instance);
         self.settle_failed(
             node_id,
-            WorkflowError {
-                violations: Some(violations),
-                ..WorkflowError::new(
-                    ErrorCode::ValidationFailed,
-                    "submit_result failed schema validation repeatedly and the repair budget is exhausted.",
-                )
-            },
+            WorkflowError::new(
+                ErrorCode::ValidationFailed,
+                "submit_result failed schema validation repeatedly and the repair budget is exhausted.",
+            )
+            .with_violations(&violations),
         )
     }
 
@@ -100,13 +98,11 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
         self.driver.cancel_ask(instance);
         self.settle_failed(
             node_id,
-            WorkflowError {
-                final_text: Some(final_text.to_owned()),
-                ..WorkflowError::new(
-                    ErrorCode::ResultNotSubmitted,
-                    "The typed ask ended without a submit_result call, so there is no result.",
-                )
-            },
+            WorkflowError::new(
+                ErrorCode::ResultNotSubmitted,
+                "The typed ask ended without a submit_result call, so there is no result.",
+            )
+            .with_final_text(final_text),
         )
     }
 }

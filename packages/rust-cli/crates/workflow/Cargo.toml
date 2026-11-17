@@ -20,6 +20,4 @@ rust-cli-node-store.workspace = true
 rusqlite.workspace = true
 # JS 语义的 JSON 文本（JSON.stringify 的字符串转义与数字形式）。
 rust-cli-base.workspace = true
-# float_roundtrip: JSON.parse is correctly rounded; serde_json's default float parser is one ulp off
-# for some inputs (found by hash-goldens.json, 123456789012345680000). No extra crates.
-serde_json = { workspace = true, features = ["float_roundtrip"] }
+serde_json.workspace = true

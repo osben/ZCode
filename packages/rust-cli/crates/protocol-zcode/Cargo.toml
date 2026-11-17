@@ -31,8 +31,7 @@ rust-cli-protocol-core.workspace = true
 # Fork: the unknown-model output limit of workspace model calls.
 rust-cli-prompts.workspace = true
 serde.workspace = true
-# float_roundtrip: child lines carry numbers that must parse to the nearest double, as JSON.parse does (W4 host).
-serde_json = { workspace = true, features = ["float_roundtrip"] }
+serde_json.workspace = true
 sha2.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "sync", "time"] }
 # Fork: cancels workspace model calls (the model port's cancellation token).

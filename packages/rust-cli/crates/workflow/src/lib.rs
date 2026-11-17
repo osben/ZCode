@@ -19,6 +19,8 @@ pub mod scheduler;
 pub mod scheduler_submit;
 
 #[cfg(test)]
+mod engine_tests;
+#[cfg(test)]
 mod lifecycle_golden_tests;
 #[cfg(test)]
 mod scheduler_golden_tests;
