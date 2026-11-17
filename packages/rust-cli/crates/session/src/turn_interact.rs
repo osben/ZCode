@@ -1,5 +1,7 @@
 //! 回合里待回答的交互：登记、回答与取消（从 turn.rs 拆出）。
 
+use rust_cli_kernel_api::orchestration::PermissionAnswer;
+
 use super::*;
 
 impl Actor {
@@ -16,6 +18,21 @@ impl Actor {
     ) {
         let id = self.deps.ids.interaction();
         let (kind, tool) = describe(&request);
+        // Fork (F3b a): a tool the user allowed for this session is answered without a prompt, after the
+        // pipeline's deny rules and hooks, as Node's session rule is checked before its ask.
+        if let InteractionRequest::Permission { tool, .. } = &request
+            && self.session_grants.contains(tool)
+        {
+            tracing::info!(event = "permission.session_allowed", session = %self.meta.id, tool, "allowed for this session");
+            let _ = reply.send(Ok(InteractionAnswer {
+                interaction: id,
+                answer: PermissionAnswer::Allow {
+                    remember: Vec::new(),
+                }
+                .into(),
+            }));
+            return;
+        }
         tracing::info!(event = "interaction.asked", session = %self.meta.id, interaction = %id, kind, tool, "interaction asked");
         self.log.append(KernelEvent::InteractionAsked {
             interaction: id.clone(),
@@ -44,6 +61,29 @@ impl Actor {
             .position(|pending| pending.id == interaction)
         else {
             return rejected(format!("no pending interaction {interaction}"));
+        };
+        // Fork (F3b a): "Always allow in this session" grants the tool to this actor only, and the waiter gets a plain
+        // allow. An ask that did not offer it is a deny (Node: the option is not in the list, so the answer is refused).
+        let answer = match (&self.pending[position].request, answer) {
+            (
+                InteractionRequest::Permission {
+                    tool,
+                    session_allow: true,
+                    ..
+                },
+                Answer::Permission(PermissionAnswer::AllowSession),
+            ) => {
+                self.session_grants.insert(tool.clone());
+
+                Answer::Permission(PermissionAnswer::Allow {
+                    remember: Vec::new(),
+                })
+            }
+            (
+                InteractionRequest::Permission { .. },
+                Answer::Permission(PermissionAnswer::AllowSession),
+            ) => Answer::Permission(PermissionAnswer::Deny { feedback: None }),
+            (_, answer) => answer,
         };
         // “总是允许”的规则先落库，成功了才算回答（shell-permissions.md §5）；没有要记住的规则时不写库。
         if let Some(rules) = crate::rules::remembered(&self.pending[position].request, &answer)

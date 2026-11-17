@@ -295,6 +295,19 @@ pub fn usage(
     })
 }
 
+/// Fork (F3b a): a permission ask that offers the session allow (Node `session-always-allow`): the session option
+/// takes the project option's slot, with Node's id, kind, label and response.
+pub fn session_permission_options() -> Value {
+    json!([
+        {"optionId": "allowOnce", "label": "Allow once", "kind": "allowOnce",
+            "response": {"decision": "allow", "reason": "Approved once"}},
+        {"optionId": "allowSession", "label": "Always allow in this session", "kind": "allowAlways",
+            "response": {"decision": "allow", "reason": "Approved for this session"}},
+        {"optionId": "deny", "label": "Deny", "kind": "deny",
+            "response": {"decision": "deny", "reason": "The user doesn't want to proceed with this tool use."}},
+    ])
+}
+
 /// 权限询问的选项（与 Node 的 V4 投影同一组）：允许一次、本项目一直允许、拒绝。
 pub fn permission_options() -> Value {
     json!([

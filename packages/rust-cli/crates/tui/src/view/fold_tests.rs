@@ -340,6 +340,7 @@ fn permission_asks_mark_the_tool_and_resolve() {
         asked_by: None,
         once: false,
         independent: false,
+        session_allow: false,
     };
     feed.push(started())
         .push(KernelEvent::ToolStarted {

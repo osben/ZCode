@@ -254,6 +254,7 @@ impl Interactions for ChildSink {
                 machine,
                 once,
                 independent,
+                session_allow,
                 origin,
             } => InteractionRequest::Permission {
                 machine,
@@ -266,6 +267,7 @@ impl Interactions for ChildSink {
                 asked_by: Some(self.name.clone()),
                 once,
                 independent,
+                session_allow,
                 origin,
             },
             other => other,

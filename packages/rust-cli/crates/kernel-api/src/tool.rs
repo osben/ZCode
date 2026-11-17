@@ -241,6 +241,12 @@ pub trait Tool: Send + Sync {
         None
     }
 
+    /// Fork (F3b a): the tool offers "Always allow in this session" on its asks (Node `askOptions.allowAlways:
+    /// "session"`, app-provided tools). The grant lives in the session actor and dies with it.
+    fn allow_session(&self) -> bool {
+        false
+    }
+
     fn is_enabled(&self) -> bool {
         true
     }

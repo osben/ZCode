@@ -277,6 +277,8 @@ impl Pipeline {
             machine: call.machine.clone(),
             once,
             independent,
+            // Fork (F3b a): an approve-once or independent ask offers no "always allow", the session one included.
+            session_allow: tool.allow_session() && !once && !independent,
         };
         let Ok(answer) = crate::asking::ask::<PermissionAnswer>(context, request).await else {
             return Err(error(rejection(context, None)));
@@ -302,7 +304,11 @@ impl Pipeline {
             Some(PermissionAnswer::NoPrompts) => Err(error(
                 rust_cli_policy::texts::prompts_unavailable(tool.name()),
             )),
-            Some(PermissionAnswer::Deny { .. }) | None => Err(error(rejection(context, None))),
+            // Fork (F3b a): the session actor turns an offered "allow in this session" into `Allow`; one that reaches
+            // here was not offered, so it is refused like any other answer.
+            Some(PermissionAnswer::Deny { .. } | PermissionAnswer::AllowSession) | None => {
+                Err(error(rejection(context, None)))
+            }
         }
     }
 

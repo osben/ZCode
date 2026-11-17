@@ -740,6 +740,10 @@ pub enum InteractionRequest {
         /// (specs/fork-rust-agent-parity.md B3). Unlike `once`, PermissionRequest hooks still run for it.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         independent: bool,
+        /// Fork (F3b a): the App offers "Always allow in this session" (Node `askOptions.allowAlways: "session"`).
+        /// Set by the pipeline from the tool; never offered with `once` or `independent`.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        session_allow: bool,
         /// Fork: the subagent that asked, for the App's delegated ask (Node `payload.origin`); the
         /// innermost subagent writes it, outer forwarding keeps it. None for the main thread.
         #[serde(default, skip_serializing_if = "Option::is_none")]

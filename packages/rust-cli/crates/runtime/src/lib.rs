@@ -526,3 +526,7 @@ mod adopt_tests;
 #[cfg(test)]
 #[path = "presence_tests.rs"]
 mod presence_tests;
+
+#[cfg(test)]
+#[path = "session_allow_tests.rs"]
+mod session_allow_tests;
