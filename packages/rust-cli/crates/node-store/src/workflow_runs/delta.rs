@@ -7,10 +7,10 @@
 //! Not ported in W3: `mergeWorkflowRunUpdates` and `workflowRunUpdateWithinWireBounds`. They belong
 //! to the publisher's coalescing (rule 6), which lands with the engine's publish path.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use super::js::{canonical, entry_key, entry_ref, json_equal, plain, InstanceRef, Obj};
 use super::State;
+use super::js::{InstanceRef, Obj, canonical, entry_key, entry_ref, json_equal, plain};
 
 /// Header keys: the run minus the two incrementally synchronised tables, in schema order.
 const HEADER_KEYS: &[&str] = &[
@@ -47,7 +47,9 @@ const REQUIRED_HEADER_KEYS: &[&str] = &["runId", "status", "usage", "lastEventSe
 /// `isCompleteWorkflowRunHeader`.
 pub fn is_complete_header(header: &Value) -> bool {
     match header.as_object() {
-        Some(record) => REQUIRED_HEADER_KEYS.iter().all(|key| record.get(*key).is_some_and(|v| !v.is_null())),
+        Some(record) => REQUIRED_HEADER_KEYS
+            .iter()
+            .all(|key| record.get(*key).is_some_and(|v| !v.is_null())),
         None => false,
     }
 }
@@ -68,11 +70,22 @@ fn birth_op(run: &Obj, revision: u64) -> Value {
     }
     let mut op = Obj::new();
     op.insert("op".into(), json!("workflowRun.updated"));
-    op.insert("runId".into(), run.get("runId").cloned().unwrap_or(Value::Null));
+    op.insert(
+        "runId".into(),
+        run.get("runId").cloned().unwrap_or(Value::Null),
+    );
     op.insert("revision".into(), json!(revision));
     op.insert("run".into(), Value::Object(patch));
-    let actors = run.get("actors").and_then(Value::as_array).cloned().unwrap_or_default();
-    let nodes = run.get("nodes").and_then(Value::as_array).cloned().unwrap_or_default();
+    let actors = run
+        .get("actors")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let nodes = run
+        .get("nodes")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
     if !actors.is_empty() {
         op.insert("actors".into(), Value::Array(actors));
     }
@@ -91,7 +104,12 @@ struct EntryDiff {
 fn entries(run: &Obj, key: &str) -> Vec<Obj> {
     run.get(key)
         .and_then(Value::as_array)
-        .map(|items| items.iter().filter_map(|item| item.as_object().cloned()).collect())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_object().cloned())
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -109,7 +127,10 @@ fn diff_entries(before: &[Obj], after: &[Obj]) -> Result<Option<EntryDiff>, ()> 
                         aligned = false;
                         break;
                     }
-                    if !json_equal(&Value::Object(previous.clone()), &Value::Object(entry.clone())) {
+                    if !json_equal(
+                        &Value::Object(previous.clone()),
+                        &Value::Object(entry.clone()),
+                    ) {
                         changed.push(Value::Object(entry.clone()));
                     }
                 }
@@ -119,7 +140,10 @@ fn diff_entries(before: &[Obj], after: &[Obj]) -> Result<Option<EntryDiff>, ()> 
             return Ok(if changed.is_empty() {
                 None
             } else {
-                Some(EntryDiff { removed: Vec::new(), changed })
+                Some(EntryDiff {
+                    removed: Vec::new(),
+                    changed,
+                })
             });
         }
     }
@@ -135,7 +159,9 @@ fn diff_entries_by_key(before: &[Obj], after: &[Obj]) -> Result<Option<EntryDiff
     let mut removed = Vec::new();
     let mut survivors: Vec<&Obj> = Vec::new();
     for entry in before {
-        let Some(reference) = entry_ref(entry) else { return Err(()) };
+        let Some(reference) = entry_ref(entry) else {
+            return Err(());
+        };
         if survives.contains(&reference.key()) {
             survivors.push(entry);
         } else {
@@ -154,7 +180,10 @@ fn diff_entries_by_key(before: &[Obj], after: &[Obj]) -> Result<Option<EntryDiff
         if entry_ref(previous) != entry_ref(entry) {
             return Err(());
         }
-        if !json_equal(&Value::Object((*previous).clone()), &Value::Object(entry.clone())) {
+        if !json_equal(
+            &Value::Object((*previous).clone()),
+            &Value::Object(entry.clone()),
+        ) {
             changed.push(Value::Object(entry.clone()));
         }
     }
@@ -197,7 +226,10 @@ fn diff_run(before: Option<&Obj>, run: &Obj, revision: u64) -> RunDiff {
     }
     let mut op = Obj::new();
     op.insert("op".into(), json!("workflowRun.updated"));
-    op.insert("runId".into(), run.get("runId").cloned().unwrap_or(Value::Null));
+    op.insert(
+        "runId".into(),
+        run.get("runId").cloned().unwrap_or(Value::Null),
+    );
     op.insert("revision".into(), json!(revision));
     if !patch.is_empty() {
         op.insert("run".into(), Value::Object(patch));
@@ -205,25 +237,25 @@ fn diff_run(before: Option<&Obj>, run: &Obj, revision: u64) -> RunDiff {
     if !cleared.is_empty() {
         op.insert("cleared".into(), Value::Array(cleared));
     }
-    if let Some(actors) = &actors {
-        if !actors.removed.is_empty() {
-            op.insert("removedActors".into(), refs_value(&actors.removed));
-        }
+    if let Some(actors) = &actors
+        && !actors.removed.is_empty()
+    {
+        op.insert("removedActors".into(), refs_value(&actors.removed));
     }
-    if let Some(nodes) = &nodes {
-        if !nodes.removed.is_empty() {
-            op.insert("removedNodes".into(), refs_value(&nodes.removed));
-        }
+    if let Some(nodes) = &nodes
+        && !nodes.removed.is_empty()
+    {
+        op.insert("removedNodes".into(), refs_value(&nodes.removed));
     }
-    if let Some(actors) = &actors {
-        if !actors.changed.is_empty() {
-            op.insert("actors".into(), Value::Array(actors.changed.clone()));
-        }
+    if let Some(actors) = &actors
+        && !actors.changed.is_empty()
+    {
+        op.insert("actors".into(), Value::Array(actors.changed.clone()));
     }
-    if let Some(nodes) = &nodes {
-        if !nodes.changed.is_empty() {
-            op.insert("nodes".into(), Value::Array(nodes.changed.clone()));
-        }
+    if let Some(nodes) = &nodes
+        && !nodes.changed.is_empty()
+    {
+        op.insert("nodes".into(), Value::Array(nodes.changed.clone()));
     }
     RunDiff::Op(Value::Object(op))
 }
@@ -259,7 +291,9 @@ pub fn diff(prior: Option<&State>, next: &State) -> Vec<Value> {
     }
     for run in &next.runs {
         let id = run.get("runId").and_then(Value::as_str).unwrap_or_default();
-        let before = prior_runs.iter().find(|candidate| candidate.get("runId").and_then(Value::as_str) == Some(id));
+        let before = prior_runs
+            .iter()
+            .find(|candidate| candidate.get("runId").and_then(Value::as_str) == Some(id));
         match diff_run(before, run, next.revision) {
             RunDiff::Op(op) => ops.push(op),
             RunDiff::NoChange => {}
@@ -317,8 +351,13 @@ fn remove_entries(current: &[Obj], removed: Option<&Value>) -> Vec<Obj> {
 fn upsert_entries(current: &[Obj], incoming: &[Value]) -> Vec<Obj> {
     let mut next = current.to_vec();
     for value in incoming {
-        let Some(entry) = value.as_object() else { continue };
-        match next.iter().position(|item| entry_ref(item) == entry_ref(entry)) {
+        let Some(entry) = value.as_object() else {
+            continue;
+        };
+        match next
+            .iter()
+            .position(|item| entry_ref(item) == entry_ref(entry))
+        {
             Some(index) => next[index] = entry.clone(),
             None => next.push(entry.clone()),
         }
@@ -329,9 +368,17 @@ fn upsert_entries(current: &[Obj], incoming: &[Value]) -> Vec<Obj> {
 /// `applyWorkflowRunUpdated`.
 pub fn apply_updated(state: Option<&State>, delta: &Value) -> State {
     let runs: Vec<Obj> = state.map(|s| s.runs.clone()).unwrap_or_default();
-    let revision = state.map(|s| s.revision).unwrap_or(0).max(delta.get("revision").and_then(Value::as_u64).unwrap_or(0));
-    let run_id = delta.get("runId").and_then(Value::as_str).unwrap_or_default();
-    let index = runs.iter().position(|run| run.get("runId").and_then(Value::as_str) == Some(run_id));
+    let revision = state
+        .map(|s| s.revision)
+        .unwrap_or(0)
+        .max(delta.get("revision").and_then(Value::as_u64).unwrap_or(0));
+    let run_id = delta
+        .get("runId")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let index = runs
+        .iter()
+        .position(|run| run.get("runId").and_then(Value::as_str) == Some(run_id));
     let header = delta.get("run").cloned().unwrap_or(Value::Null);
     match index {
         None => {
@@ -346,11 +393,17 @@ pub fn apply_updated(state: Option<&State>, delta: &Value) -> State {
                 "actors".into(),
                 delta.get("actors").cloned().unwrap_or_else(|| json!([])),
             );
-            born.insert("nodes".into(), delta.get("nodes").cloned().unwrap_or_else(|| json!([])));
+            born.insert(
+                "nodes".into(),
+                delta.get("nodes").cloned().unwrap_or_else(|| json!([])),
+            );
             let born = canonical(born);
             let mut next = runs;
             next.push(born);
-            State { revision, runs: next }
+            State {
+                revision,
+                runs: next,
+            }
         }
         Some(index) => {
             let mut merged = runs[index].clone();
@@ -359,7 +412,12 @@ pub fn apply_updated(state: Option<&State>, delta: &Value) -> State {
                     merged.insert(key.clone(), value.clone());
                 }
             }
-            for key in delta.get("cleared").and_then(Value::as_array).into_iter().flatten() {
+            for key in delta
+                .get("cleared")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
                 if let Some(name) = key.as_str() {
                     merged.shift_remove(name);
                 }
@@ -368,15 +426,15 @@ pub fn apply_updated(state: Option<&State>, delta: &Value) -> State {
             let nodes = remove_entries(&entries(&merged, "nodes"), delta.get("removedNodes"));
             let mut actors_value = actors;
             let mut nodes_value = nodes;
-            if let Some(incoming) = delta.get("actors").and_then(Value::as_array) {
-                if !incoming.is_empty() {
-                    actors_value = upsert_entries(&actors_value, incoming);
-                }
+            if let Some(incoming) = delta.get("actors").and_then(Value::as_array)
+                && !incoming.is_empty()
+            {
+                actors_value = upsert_entries(&actors_value, incoming);
             }
-            if let Some(incoming) = delta.get("nodes").and_then(Value::as_array) {
-                if !incoming.is_empty() {
-                    nodes_value = upsert_entries(&nodes_value, incoming);
-                }
+            if let Some(incoming) = delta.get("nodes").and_then(Value::as_array)
+                && !incoming.is_empty()
+            {
+                nodes_value = upsert_entries(&nodes_value, incoming);
             }
             merged.insert(
                 "actors".into(),
@@ -388,7 +446,10 @@ pub fn apply_updated(state: Option<&State>, delta: &Value) -> State {
             );
             let mut next = runs;
             next[index] = canonical(merged);
-            State { revision, runs: next }
+            State {
+                revision,
+                runs: next,
+            }
         }
     }
 }
@@ -396,8 +457,14 @@ pub fn apply_updated(state: Option<&State>, delta: &Value) -> State {
 /// `applyWorkflowRunRemoved`.
 pub fn apply_removed(state: Option<&State>, delta: &Value) -> State {
     let runs: Vec<Obj> = state.map(|s| s.runs.clone()).unwrap_or_default();
-    let revision = state.map(|s| s.revision).unwrap_or(0).max(delta.get("revision").and_then(Value::as_u64).unwrap_or(0));
-    let run_id = delta.get("runId").and_then(Value::as_str).unwrap_or_default();
+    let revision = state
+        .map(|s| s.revision)
+        .unwrap_or(0)
+        .max(delta.get("revision").and_then(Value::as_u64).unwrap_or(0));
+    let run_id = delta
+        .get("runId")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     let remaining: Vec<Obj> = runs
         .iter()
         .filter(|run| run.get("runId").and_then(Value::as_str) != Some(run_id))
@@ -409,5 +476,8 @@ pub fn apply_removed(state: Option<&State>, delta: &Value) -> State {
             _ => State { revision, runs },
         };
     }
-    State { revision, runs: remaining }
+    State {
+        revision,
+        runs: remaining,
+    }
 }

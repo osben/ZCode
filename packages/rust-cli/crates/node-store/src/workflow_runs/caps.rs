@@ -3,8 +3,8 @@
 
 use serde_json::Value;
 
-use super::js::{plain, Obj};
 use super::Limits;
+use super::js::{Obj, plain};
 
 /// One birth-phase cell of `unlistedByPhase` (`WorkflowRunUnlistedPhase`), in schema field order.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -33,7 +33,10 @@ impl Bucket {
     fn from_obj(obj: &Obj) -> Bucket {
         let int = |key: &str| obj.get(key).and_then(Value::as_i64);
         Bucket {
-            phase_name: obj.get("phaseName").and_then(Value::as_str).map(str::to_string),
+            phase_name: obj
+                .get("phaseName")
+                .and_then(Value::as_str)
+                .map(str::to_string),
             actors: int("actors").unwrap_or(0),
             actors_settled: int("actorsSettled"),
             actors_failed: int("actorsFailed"),
@@ -61,7 +64,13 @@ impl Bucket {
 /// Reads `run.unlistedByPhase` (`None` = key absent).
 pub fn read_buckets(run: &Obj) -> Option<Vec<Bucket>> {
     let array = run.get("unlistedByPhase")?.as_array()?;
-    Some(array.iter().filter_map(|value| plain(Some(value))).map(Bucket::from_obj).collect())
+    Some(
+        array
+            .iter()
+            .filter_map(|value| plain(Some(value)))
+            .map(Bucket::from_obj)
+            .collect(),
+    )
 }
 
 /// `withUnlistedBuckets`: an empty or absent table removes the key; an unchanged table is a no-op.
@@ -78,7 +87,10 @@ pub fn with_buckets(mut run: Obj, buckets: Option<Vec<Bucket>>) -> Obj {
             run.shift_remove("unlistedByPhase");
         }
         Some(list) => {
-            let array = list.iter().map(|bucket| Value::Object(bucket.to_obj())).collect();
+            let array = list
+                .iter()
+                .map(|bucket| Value::Object(bucket.to_obj()))
+                .collect();
             run.insert("unlistedByPhase".into(), Value::Array(array));
         }
     }
@@ -97,13 +109,15 @@ pub fn add_to_bucket(
     let index = current
         .iter()
         .position(|bucket| bucket.phase_name.as_deref() == phase_name);
-    if index.is_none() && current.len() >= max_phases + 1 {
+    if index.is_none() && current.len() > max_phases {
         return buckets.map(|_| current);
     }
     let base = index.map(|i| current[i].clone()).unwrap_or_default();
     let actors = at_least_zero(base.actors + delta.actors);
-    let actors_settled = at_least_zero(base.actors_settled.unwrap_or(0) + delta.actors_settled).min(actors);
-    let actors_failed = at_least_zero(base.actors_failed.unwrap_or(0) + delta.actors_failed).min(actors_settled);
+    let actors_settled =
+        at_least_zero(base.actors_settled.unwrap_or(0) + delta.actors_settled).min(actors);
+    let actors_failed =
+        at_least_zero(base.actors_failed.unwrap_or(0) + delta.actors_failed).min(actors_settled);
     let settled = at_least_zero(base.settled + delta.settled);
 
     if actors == 0 && actors_settled == 0 && actors_failed == 0 && settled == 0 {
@@ -156,8 +170,14 @@ pub fn count_unlisted_instance(
     if !born && !settled {
         return usage;
     }
-    let current_unlisted = usage.get("nodesUnlisted").and_then(Value::as_u64).unwrap_or(0);
-    let current_settled = usage.get("nodesUnlistedSettled").and_then(Value::as_u64).unwrap_or(0);
+    let current_unlisted = usage
+        .get("nodesUnlisted")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let current_settled = usage
+        .get("nodesUnlistedSettled")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
     let unlisted = current_unlisted + u64::from(born);
     let unlisted_settled = current_settled + u64::from(settled);
     let mut next = usage;
@@ -173,7 +193,10 @@ pub fn count_unlisted_instance(
 /// `discountUnlistedInstance`: an instance returning to the node table leaves the unlisted count.
 /// Clamped at zero; the key is removed at zero.
 pub fn discount_unlisted_instance(usage: Obj) -> Obj {
-    let current = usage.get("nodesUnlisted").and_then(Value::as_u64).unwrap_or(0);
+    let current = usage
+        .get("nodesUnlisted")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
     if current == 0 {
         return usage;
     }

@@ -16,9 +16,9 @@ pub mod tables;
 #[cfg(test)]
 mod tests;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use self::js::{canonical, instance_ref, non_empty, number_value, plain, Obj};
+use self::js::{Obj, canonical, instance_ref, non_empty, number_value, plain};
 
 /// Top-level run keys in schema declaration order (`workflowRunSchema`). `canonical` reorders by it.
 pub const RUN_KEY_ORDER: &[&str] = &[
@@ -115,7 +115,12 @@ pub const PRODUCTION: Limits = Limits {
 
 impl Limits {
     /// Production limits with the three entry limits replaced (the test injection point).
-    pub fn with_entry_limits(self, max_actors: usize, max_nodes: usize, max_phases: usize) -> Limits {
+    pub fn with_entry_limits(
+        self,
+        max_actors: usize,
+        max_nodes: usize,
+        max_phases: usize,
+    ) -> Limits {
         Limits {
             max_actors,
             max_nodes,
@@ -170,12 +175,24 @@ impl Envelope {
     pub fn from_value(value: &Value) -> Envelope {
         let record = plain(Some(value)).cloned().unwrap_or_default();
         Envelope {
-            run_id: record.get("runId").and_then(Value::as_str).map(str::to_string),
-            tool_call_id: record.get("toolCallId").and_then(Value::as_str).map(str::to_string),
+            run_id: record
+                .get("runId")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            tool_call_id: record
+                .get("toolCallId")
+                .and_then(Value::as_str)
+                .map(str::to_string),
             sequence: js::js_number(record.get("sequence")),
-            event_type: record.get("eventType").and_then(Value::as_str).map(str::to_string),
+            event_type: record
+                .get("eventType")
+                .and_then(Value::as_str)
+                .map(str::to_string),
             payload: plain(record.get("payload")).cloned(),
-            actor_session_id: record.get("actorSessionId").and_then(Value::as_str).map(str::to_string),
+            actor_session_id: record
+                .get("actorSessionId")
+                .and_then(Value::as_str)
+                .map(str::to_string),
         }
     }
 }
@@ -192,19 +209,34 @@ pub(crate) struct Derived<'a> {
 /// Reduce one progress event. `None` means no semantic change (an invalid event, or a replay whose
 /// content is identical). Otherwise the result is the next state with `revision + 1`.
 pub fn reduce(prior: Option<&State>, envelope: &Envelope, limits: &Limits) -> Option<State> {
-    let run_id = non_empty(envelope.run_id.as_ref().map(|id| Value::String(id.clone())).as_ref())?;
+    let run_id = non_empty(
+        envelope
+            .run_id
+            .as_ref()
+            .map(|id| Value::String(id.clone()))
+            .as_ref(),
+    )?;
     let event_type = envelope.event_type.clone()?;
     let sequence = envelope.sequence.unwrap_or(0.0);
     let payload = envelope.payload.clone().unwrap_or_default();
 
     let prior = prior.cloned().unwrap_or_default();
-    let existing_index = prior.runs.iter().position(|run| run_id_of(run) == Some(run_id.as_str()));
+    let existing_index = prior
+        .runs
+        .iter()
+        .position(|run| run_id_of(run) == Some(run_id.as_str()));
     let base: Obj = match existing_index {
         Some(index) => prior.runs[index].clone(),
         None => {
             let mut fresh = Obj::new();
             fresh.insert("runId".into(), Value::String(run_id.clone()));
-            if let Some(tool_call_id) = non_empty(envelope.tool_call_id.as_ref().map(|s| Value::String(s.clone())).as_ref()) {
+            if let Some(tool_call_id) = non_empty(
+                envelope
+                    .tool_call_id
+                    .as_ref()
+                    .map(|s| Value::String(s.clone()))
+                    .as_ref(),
+            ) {
                 fresh.insert("toolCallId".into(), Value::String(tool_call_id));
             }
             fresh.insert("status".into(), Value::String("pending".into()));
@@ -230,10 +262,13 @@ pub fn reduce(prior: Option<&State>, envelope: &Envelope, limits: &Limits) -> Op
     let applied = apply_event(base, &event_type, &payload, &derived);
     let next = canonical(applied);
 
-    if let Some(index) = existing_index {
-        if js::json_equal(&Value::Object(prior.runs[index].clone()), &Value::Object(next.clone())) {
-            return None;
-        }
+    if let Some(index) = existing_index
+        && js::json_equal(
+            &Value::Object(prior.runs[index].clone()),
+            &Value::Object(next.clone()),
+        )
+    {
+        return None;
     }
 
     let mut runs = prior.runs.clone();
@@ -261,18 +296,21 @@ fn run_id_of(run: &Obj) -> Option<&str> {
 /// the high-water mark, as Node's `default: return run` does.
 fn apply_event(base: Obj, event_type: &str, payload: &Obj, derived: &Derived<'_>) -> Obj {
     let mut run = base;
-    if let Some(tool_call_id) = derived.tool_call_id {
-        if !tool_call_id.is_empty() && non_empty(run.get("toolCallId")).is_none() {
-            run.insert("toolCallId".into(), Value::String(tool_call_id.to_string()));
-        }
+    if let Some(tool_call_id) = derived.tool_call_id
+        && !tool_call_id.is_empty()
+        && non_empty(run.get("toolCallId")).is_none()
+    {
+        run.insert("toolCallId".into(), Value::String(tool_call_id.to_string()));
     }
     run.insert("lastEventSequence".into(), number_value(derived.sequence));
 
     match event_type {
         "run-started" => tables::reduce_run_started(run, payload, derived),
         "actor-created" => tables::reduce_actor_created(run, payload, derived),
-        "node-queued" | "node-dispatched" | "node-executing" | "node-waiting" | "node-repairing" | "node-nudged"
-        | "node-settled" => tables::reduce_node_event(run, event_type, payload, derived),
+        "node-queued" | "node-dispatched" | "node-executing" | "node-waiting"
+        | "node-repairing" | "node-nudged" | "node-settled" => {
+            tables::reduce_node_event(run, event_type, payload, derived)
+        }
         "node-progress" => match instance_ref(payload.get("instance")) {
             Some(reference) => tables::reduce_node_progress(run, &reference, payload),
             None => run,
@@ -283,7 +321,10 @@ fn apply_event(base: Obj, event_type: &str, payload: &Obj, derived: &Derived<'_>
         "artifact-failed" => run,
         "usage-updated" => match js::js_number(payload.get("spentTokens")) {
             Some(_) => {
-                let usage = run.get("usage").and_then(|u| plain(Some(u)).cloned()).unwrap_or_default();
+                let usage = run
+                    .get("usage")
+                    .and_then(|u| plain(Some(u)).cloned())
+                    .unwrap_or_default();
                 let spent = payload.get("spentTokens").cloned().unwrap_or(Value::Null);
                 let next_usage = js::spread_set(usage, "spentTokens", spent);
                 run.insert("usage".into(), Value::Object(next_usage));
@@ -316,7 +357,10 @@ pub fn canonical_run(run: Obj) -> Obj {
 
 /// Used by the replay and the projection, which need the status vocabulary of the run.
 pub fn is_terminal(status: Option<&str>) -> bool {
-    matches!(status, Some("completed") | Some("errored") | Some("stopped"))
+    matches!(
+        status,
+        Some("completed") | Some("errored") | Some("stopped")
+    )
 }
 
 /// `non_empty` for a plain string; the JS `typeof x === "string" && x.length > 0` check.

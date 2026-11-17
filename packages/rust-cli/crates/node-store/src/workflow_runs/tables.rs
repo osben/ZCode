@@ -5,16 +5,16 @@
 //! Each handler takes the run object by value and returns the next one, mirroring Node's
 //! `{...run, key: v}` spreads: an existing key keeps its position, a new key is appended.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::caps::{count_unlisted_instance, discount_unlisted_instance};
 use super::eviction::{
-    absorb_refused_actor, absorb_refused_settled_node, admits_new_entry, seat_workflow_node,
-    with_room_for_actor, Seat,
+    Seat, absorb_refused_actor, absorb_refused_settled_node, admits_new_entry, seat_workflow_node,
+    with_room_for_actor,
 };
 use super::js::{
-    bounded, ellipsized, entry_ref, instance_ref, js_number, is_integer, json_equal, non_empty, number_value,
-    plain, utf16_len, InstanceRef, Obj,
+    InstanceRef, Obj, bounded, ellipsized, entry_ref, instance_ref, is_integer, js_number,
+    json_equal, non_empty, number_value, plain, utf16_len,
 };
 use super::{Derived, Limits, PRODUCTION};
 
@@ -32,12 +32,20 @@ fn ordinal_value(reference: &InstanceRef) -> Value {
 fn list(run: &Obj, key: &str) -> Vec<Obj> {
     run.get(key)
         .and_then(Value::as_array)
-        .map(|items| items.iter().filter_map(|item| item.as_object().cloned()).collect())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_object().cloned())
+                .collect()
+        })
         .unwrap_or_default()
 }
 
 fn put_list(run: &mut Obj, key: &str, items: Vec<Obj>) {
-    run.insert(key.to_string(), Value::Array(items.into_iter().map(Value::Object).collect()));
+    run.insert(
+        key.to_string(),
+        Value::Array(items.into_iter().map(Value::Object).collect()),
+    );
 }
 
 fn truncated_flag(run: &Obj) -> bool {
@@ -91,7 +99,9 @@ pub fn workflow_actor_entry(
     if let Some(phase) = phase_name {
         actor.insert("phaseName".into(), Value::String(phase));
     }
-    if let Some(model) = non_empty(model).filter(|m| utf16_len(m) <= PRODUCTION.max_subagent_model_length) {
+    if let Some(model) =
+        non_empty(model).filter(|m| utf16_len(m) <= PRODUCTION.max_subagent_model_length)
+    {
         actor.insert("model".into(), Value::String(model));
     }
     actor.insert("status".into(), Value::String("waiting".into()));
@@ -124,7 +134,10 @@ pub fn with_derived_statuses(mut run: Obj) -> Obj {
             _ => {}
         }
     }
-    let run_live = matches!(run.get("status").and_then(Value::as_str), Some("pending") | Some("running"));
+    let run_live = matches!(
+        run.get("status").and_then(Value::as_str),
+        Some("pending") | Some("running")
+    );
     let mut actors = list(&run, "actors");
     for actor in &mut actors {
         let key = entry_ref(actor).map(|r| r.key()).unwrap_or_default();
@@ -158,17 +171,26 @@ fn actors_with_transcript_session(
     actor_ref: Option<&InstanceRef>,
     envelope_session_id: Option<&str>,
 ) -> Vec<Obj> {
-    let Some(actor_ref) = actor_ref else { return actors };
-    let envelope = envelope_session_id.map(|s| Value::String(s.to_string()));
-    let session_id = if event_type == "node-settled" && payload.get("cached") == Some(&Value::Bool(true)) {
-        bounded_session_id(payload.get("sourceSessionId")).or_else(|| bounded_session_id(envelope.as_ref()))
-    } else if event_type == "node-dispatched" {
-        bounded_session_id(envelope.as_ref())
-    } else {
-        None
+    let Some(actor_ref) = actor_ref else {
+        return actors;
     };
-    let Some(session_id) = session_id else { return actors };
-    let Some(index) = actors.iter().position(|actor| entry_ref(actor).is_some_and(|r| r.same(actor_ref))) else {
+    let envelope = envelope_session_id.map(|s| Value::String(s.to_string()));
+    let session_id =
+        if event_type == "node-settled" && payload.get("cached") == Some(&Value::Bool(true)) {
+            bounded_session_id(payload.get("sourceSessionId"))
+                .or_else(|| bounded_session_id(envelope.as_ref()))
+        } else if event_type == "node-dispatched" {
+            bounded_session_id(envelope.as_ref())
+        } else {
+            None
+        };
+    let Some(session_id) = session_id else {
+        return actors;
+    };
+    let Some(index) = actors
+        .iter()
+        .position(|actor| entry_ref(actor).is_some_and(|r| r.same(actor_ref)))
+    else {
         return actors;
     };
     if actors[index].get("sessionId").and_then(Value::as_str) == Some(session_id.as_str()) {
@@ -183,10 +205,18 @@ fn actors_with_transcript_session(
 pub fn reduce_run_started(run: Obj, payload: &Obj, derived: &Derived<'_>) -> Obj {
     let original = run.clone();
     let mut rebased = run;
-    for key in ["error", "resultPreview", "pendingQuestions", "resumable", "stopReason", "unlistedByPhase"] {
+    for key in [
+        "error",
+        "resultPreview",
+        "pendingQuestions",
+        "resumable",
+        "stopReason",
+        "unlistedByPhase",
+    ] {
         rebased.shift_remove(key);
     }
-    let resumed_from = str_field(payload, "resumedFrom").or_else(|| str_field(&rebased, "resumedFrom"));
+    let resumed_from =
+        str_field(payload, "resumedFrom").or_else(|| str_field(&rebased, "resumedFrom"));
     let subagent_model = read_subagent_model(payload.get("subagentModel"))
         .or_else(|| str_field(&rebased, "subagentModel"));
     let mut next = without_waiting_holes(rebased);
@@ -199,8 +229,24 @@ pub fn reduce_run_started(run: Obj, payload: &Obj, derived: &Derived<'_>) -> Obj
     next.insert("status".into(), Value::String("running".into()));
     next.insert("usage".into(), json!({"spentTokens": 0, "nodesUsed": 0}));
     if !truncated_flag(&original) {
-        next.insert("actors".into(), Value::Array(list(&original, "actors").into_iter().map(Value::Object).collect()));
-        next.insert("nodes".into(), Value::Array(list(&original, "nodes").into_iter().map(Value::Object).collect()));
+        next.insert(
+            "actors".into(),
+            Value::Array(
+                list(&original, "actors")
+                    .into_iter()
+                    .map(Value::Object)
+                    .collect(),
+            ),
+        );
+        next.insert(
+            "nodes".into(),
+            Value::Array(
+                list(&original, "nodes")
+                    .into_iter()
+                    .map(Value::Object)
+                    .collect(),
+            ),
+        );
     } else {
         next.insert("actors".into(), json!([]));
         next.insert("nodes".into(), json!([]));
@@ -211,7 +257,8 @@ pub fn reduce_run_started(run: Obj, payload: &Obj, derived: &Derived<'_>) -> Obj
 
 fn read_subagent_model(value: Option<&Value>) -> Option<String> {
     let text = value?.as_str()?.trim();
-    (!text.is_empty() && utf16_len(text) <= PRODUCTION.max_subagent_model_length).then(|| text.to_string())
+    (!text.is_empty() && utf16_len(text) <= PRODUCTION.max_subagent_model_length)
+        .then(|| text.to_string())
 }
 
 fn without_waiting_holes(mut run: Obj) -> Obj {
@@ -234,15 +281,18 @@ fn without_waiting_holes(mut run: Obj) -> Obj {
 }
 
 fn reduce_run_started_concurrency(mut run: Obj, payload: &Obj) -> Obj {
-    let limit = positive_integer(plain(payload.get("caps")).and_then(|caps| caps.get("maxConcurrency")));
+    let limit =
+        positive_integer(plain(payload.get("caps")).and_then(|caps| caps.get("maxConcurrency")));
     let read_ceiling = positive_integer(payload.get("concurrencyCeiling"));
     let ceiling = read_ceiling.filter(|c| *c <= PRODUCTION.max_concurrency_ceiling);
-    if let Some(value) = ceiling {
-        if js_number(run.get("concurrencyCeiling")) != Some(value) {
-            run.insert("concurrencyCeiling".into(), number_value(value));
-        }
+    if let Some(value) = ceiling
+        && js_number(run.get("concurrencyCeiling")) != Some(value)
+    {
+        run.insert("concurrencyCeiling".into(), number_value(value));
     }
-    let (Some(limit), Some(ceiling)) = (limit, ceiling) else { return run };
+    let (Some(limit), Some(ceiling)) = (limit, ceiling) else {
+        return run;
+    };
     if limit == ceiling {
         return run;
     }
@@ -259,16 +309,19 @@ fn reduce_run_started_concurrency(mut run: Obj, payload: &Obj) -> Obj {
 
 /// `reduceRunCapsChanged`: a limit change while running, in place.
 pub fn reduce_run_caps_changed(mut run: Obj, payload: &Obj) -> Obj {
-    let max_concurrency = positive_integer(plain(payload.get("caps")).and_then(|caps| caps.get("maxConcurrency")));
+    let max_concurrency =
+        positive_integer(plain(payload.get("caps")).and_then(|caps| caps.get("maxConcurrency")));
     let read_ceiling = positive_integer(payload.get("concurrencyCeiling"));
     let payload_ceiling = read_ceiling.filter(|c| *c <= PRODUCTION.max_concurrency_ceiling);
-    if let Some(value) = payload_ceiling {
-        if js_number(run.get("concurrencyCeiling")) != Some(value) {
-            run.insert("concurrencyCeiling".into(), number_value(value));
-        }
+    if let Some(value) = payload_ceiling
+        && js_number(run.get("concurrencyCeiling")) != Some(value)
+    {
+        run.insert("concurrencyCeiling".into(), number_value(value));
     }
     let ceiling = payload_ceiling.or_else(|| js_number(run.get("concurrencyCeiling")));
-    let (Some(max_concurrency), Some(ceiling)) = (max_concurrency, ceiling) else { return run };
+    let (Some(max_concurrency), Some(ceiling)) = (max_concurrency, ceiling) else {
+        return run;
+    };
     let existing = plain(run.get("concurrency")).cloned();
     if max_concurrency != ceiling {
         let mut concurrency = existing.unwrap_or_else(|| {
@@ -300,7 +353,9 @@ pub fn reduce_run_caps_changed(mut run: Obj, payload: &Obj) -> Obj {
 
 /// `reduceConcurrencyChanged`: the process coordinator adjusted the cap for this run's key.
 pub fn reduce_concurrency_changed(mut run: Obj, payload: &Obj) -> Obj {
-    let Some(next) = positive_integer(payload.get("next")) else { return run };
+    let Some(next) = positive_integer(payload.get("next")) else {
+        return run;
+    };
     let previous = positive_integer(payload.get("previous")).unwrap_or(next);
     let existing = plain(run.get("concurrency")).cloned();
     let ceiling = js_number(run.get("concurrencyCeiling")).unwrap_or_else(|| {
@@ -331,7 +386,9 @@ pub fn reduce_concurrency_changed(mut run: Obj, payload: &Obj) -> Obj {
 }
 
 fn without_cooldown(mut run: Obj) -> Obj {
-    let Some(mut concurrency) = plain(run.get("concurrency")).cloned() else { return run };
+    let Some(mut concurrency) = plain(run.get("concurrency")).cloned() else {
+        return run;
+    };
     if !concurrency.contains_key("cooldownMs") {
         return run;
     }
@@ -342,7 +399,9 @@ fn without_cooldown(mut run: Obj) -> Obj {
 
 /// `reducePhaseEntered`: adds a declared phase, or raises its rounds.
 pub fn reduce_phase_entered(mut run: Obj, payload: &Obj, _derived: &Derived<'_>) -> Obj {
-    let Some(raw) = payload.get("name").and_then(Value::as_str) else { return run };
+    let Some(raw) = payload.get("name").and_then(Value::as_str) else {
+        return run;
+    };
     let name = bounded(raw, PRODUCTION.max_phase_name_length);
     if name.is_empty() {
         return run;
@@ -352,11 +411,16 @@ pub fn reduce_phase_entered(mut run: Obj, payload: &Obj, _derived: &Derived<'_>)
         _ => 1,
     };
     let existing = list(&run, "phases");
-    let index = existing.iter().position(|phase| phase.get("name").and_then(Value::as_str) == Some(name.as_str()));
+    let index = existing
+        .iter()
+        .position(|phase| phase.get("name").and_then(Value::as_str) == Some(name.as_str()));
     let mut truncated = truncated_flag(&run);
     let phases: Vec<Obj> = match index {
         Some(position) => {
-            let current_rounds = existing[position].get("rounds").and_then(js_integer_value).unwrap_or(0);
+            let current_rounds = existing[position]
+                .get("rounds")
+                .and_then(js_integer_value)
+                .unwrap_or(0);
             if current_rounds >= ordinal {
                 existing
             } else {
@@ -406,9 +470,15 @@ fn read_phase_alongside(raw: Option<&Value>, count: usize) -> Option<Vec<Vec<i64
         let mut indexes: Vec<i64> = Vec::new();
         if let Some(entry) = raw.get(index).and_then(Value::as_array) {
             for value in entry {
-                let Some(number) = value.as_f64().filter(|n| is_integer(*n)) else { continue };
+                let Some(number) = value.as_f64().filter(|n| is_integer(*n)) else {
+                    continue;
+                };
                 let value = number as i64;
-                if value < 0 || value >= count as i64 || value == index as i64 || indexes.contains(&value) {
+                if value < 0
+                    || value >= count as i64
+                    || value == index as i64
+                    || indexes.contains(&value)
+                {
                     continue;
                 }
                 indexes.push(value);
@@ -429,7 +499,9 @@ fn read_phase_holes(raw: Option<&Value>, count: usize) -> Option<Vec<i64>> {
     let raw = raw?.as_array()?;
     let mut out: Vec<i64> = Vec::new();
     for value in raw {
-        let Some(number) = value.as_f64().filter(|n| is_integer(*n)) else { continue };
+        let Some(number) = value.as_f64().filter(|n| is_integer(*n)) else {
+            continue;
+        };
         let value = number as i64;
         if value < 0 || value >= count as i64 || out.contains(&value) {
             continue;
@@ -465,14 +537,19 @@ fn int_array(values: &[i64]) -> Value {
 
 /// `reduceRunLaunched`: the declared phase table, alongside lists and holes.
 pub fn reduce_run_launched(mut run: Obj, payload: &Obj) -> Obj {
-    let Some(raw) = payload.get("phaseNames").and_then(Value::as_array) else { return run };
+    let Some(raw) = payload.get("phaseNames").and_then(Value::as_array) else {
+        return run;
+    };
     let names = read_phase_names(Some(&Value::Array(raw.clone()))).unwrap_or_default();
     if names.is_empty() {
         return run;
     }
     let alongside = read_phase_alongside(payload.get("phaseAlongside"), names.len());
     let holes = read_phase_holes(payload.get("holes"), names.len());
-    run.insert("phaseNames".into(), Value::Array(names.iter().map(|n| Value::String(n.clone())).collect()));
+    run.insert(
+        "phaseNames".into(),
+        Value::Array(names.iter().map(|n| Value::String(n.clone())).collect()),
+    );
     if let Some(alongside) = alongside {
         run.insert(
             "phaseAlongside".into(),
@@ -487,16 +564,22 @@ pub fn reduce_run_launched(mut run: Obj, payload: &Obj) -> Obj {
 
 /// `reduceHoleReached`: a hole waits. The entry is merged by site, and the table is bounded.
 pub fn reduce_hole_reached(mut run: Obj, payload: &Obj) -> Obj {
-    let Some(instance) = plain(payload.get("instance")) else { return run };
+    let Some(instance) = plain(payload.get("instance")) else {
+        return run;
+    };
     let site_id = str_field(instance, "siteId");
     let ordinal = instance
         .get("ordinal")
         .and_then(js_integer_value)
         .unwrap_or(0);
     let name = bounded_name(str_field(payload, "name"), PRODUCTION.max_phase_name_length);
-    let (Some(site_id), Some(name)) = (site_id, name) else { return run };
-    let type_value = str_field(payload, "type").map(|t| bounded(&t, PRODUCTION.max_hole_type_length));
-    let prompt = str_field(payload, "prompt").map(|p| ellipsized(&p, PRODUCTION.max_hole_prompt_length));
+    let (Some(site_id), Some(name)) = (site_id, name) else {
+        return run;
+    };
+    let type_value =
+        str_field(payload, "type").map(|t| bounded(&t, PRODUCTION.max_hole_type_length));
+    let prompt =
+        str_field(payload, "prompt").map(|p| ellipsized(&p, PRODUCTION.max_hole_prompt_length));
     let since = read_epoch(payload.get("reachedAt")).or_else(|| read_epoch(payload.get("since")));
 
     let mut entry = Obj::new();
@@ -515,18 +598,21 @@ pub fn reduce_hole_reached(mut run: Obj, payload: &Obj) -> Obj {
     }
 
     let existing = list(&run, "holes");
-    if let Some(index) = existing.iter().position(|hole| hole.get("siteId").and_then(Value::as_str) == Some(site_id.as_str())) {
+    if let Some(index) = existing
+        .iter()
+        .position(|hole| hole.get("siteId").and_then(Value::as_str) == Some(site_id.as_str()))
+    {
         let previous = &existing[index];
         let mut merged = entry;
-        if !merged.contains_key("type") {
-            if let Some(t) = previous.get("type") {
-                merged.insert("type".into(), t.clone());
-            }
+        if !merged.contains_key("type")
+            && let Some(t) = previous.get("type")
+        {
+            merged.insert("type".into(), t.clone());
         }
-        if !merged.contains_key("prompt") {
-            if let Some(p) = previous.get("prompt") {
-                merged.insert("prompt".into(), p.clone());
-            }
+        if !merged.contains_key("prompt")
+            && let Some(p) = previous.get("prompt")
+        {
+            merged.insert("prompt".into(), p.clone());
         }
         let next: Vec<Obj> = existing
             .into_iter()
@@ -553,12 +639,17 @@ fn read_epoch(value: Option<&Value>) -> Option<i64> {
 
 /// `reduceHoleFilled`: the hole becomes filled; the phase table is replaced when named.
 pub fn reduce_hole_filled(run: Obj, payload: &Obj) -> Obj {
-    let Some(site_id) = str_field(payload, "siteId") else { return run };
+    let Some(site_id) = str_field(payload, "siteId") else {
+        return run;
+    };
     let filled_at = read_epoch(payload.get("filledAt"));
     let filled_by = str_field(payload, "filledBy").map(|s| bounded(&s, 128));
     let mut next = run.clone();
     let existing = list(&run, "holes");
-    if let Some(index) = existing.iter().position(|hole| hole.get("siteId").and_then(Value::as_str) == Some(site_id.as_str())) {
+    if let Some(index) = existing
+        .iter()
+        .position(|hole| hole.get("siteId").and_then(Value::as_str) == Some(site_id.as_str()))
+    {
         let mut reached = existing[index].clone();
         reached.shift_remove("prompt");
         reached.insert("state".into(), Value::String("filled".into()));
@@ -575,12 +666,22 @@ pub fn reduce_hole_filled(run: Obj, payload: &Obj) -> Obj {
             .collect();
         put_list(&mut next, "holes", mapped);
     }
-    let Some(phase_names) = read_phase_names(payload.get("phaseNames")) else { return next };
+    let Some(phase_names) = read_phase_names(payload.get("phaseNames")) else {
+        return next;
+    };
     let phase_holes = read_phase_holes(payload.get("holes"), phase_names.len());
     let phase_alongside = shift_phase_alongside(&run, &phase_names);
     next.shift_remove("phaseAlongside");
     next.shift_remove("phaseHoles");
-    next.insert("phaseNames".into(), Value::Array(phase_names.iter().map(|n| Value::String(n.clone())).collect()));
+    next.insert(
+        "phaseNames".into(),
+        Value::Array(
+            phase_names
+                .iter()
+                .map(|n| Value::String(n.clone()))
+                .collect(),
+        ),
+    );
     if let Some(alongside) = phase_alongside {
         next.insert(
             "phaseAlongside".into(),
@@ -617,8 +718,8 @@ fn shift_phase_alongside(run: &Obj, names: &[String]) -> Option<Vec<Vec<i64>>> {
         return None;
     }
     let mut h: i64 = -1;
-    for i in 0..old.len() {
-        if names.get(i) != Some(&old[i]) {
+    for (i, old_name) in old.iter().enumerate() {
+        if names.get(i) != Some(old_name) {
             break;
         }
         h = i as i64;
@@ -626,8 +727,8 @@ fn shift_phase_alongside(run: &Obj, names: &[String]) -> Option<Vec<Vec<i64>>> {
     if h < 0 {
         return None;
     }
-    for i in (h as usize + 1)..old.len() {
-        if names.get(i + inserted as usize) != Some(&old[i]) {
+    for (i, old_name) in old.iter().enumerate().skip(h as usize + 1) {
+        if names.get(i + inserted as usize) != Some(old_name) {
             return None;
         }
     }
@@ -649,16 +750,22 @@ fn shift_phase_alongside(run: &Obj, names: &[String]) -> Option<Vec<Vec<i64>>> {
 
 fn read_last_tool(value: Option<&Value>) -> Option<Obj> {
     let record = plain(value)?;
-    let name = record.get("name").and_then(Value::as_str).map(|n| bounded(n, PRODUCTION.max_last_tool_name_length))?;
+    let name = record
+        .get("name")
+        .and_then(Value::as_str)
+        .map(|n| bounded(n, PRODUCTION.max_last_tool_name_length))?;
     if name.is_empty() {
         return None;
     }
     let mut out = Obj::new();
     out.insert("name".into(), Value::String(name));
-    if let Some(target) = record.get("target").and_then(Value::as_str).map(|t| bounded(t, PRODUCTION.max_last_tool_target_length)) {
-        if !target.is_empty() {
-            out.insert("target".into(), Value::String(target));
-        }
+    if let Some(target) = record
+        .get("target")
+        .and_then(Value::as_str)
+        .map(|t| bounded(t, PRODUCTION.max_last_tool_target_length))
+        && !target.is_empty()
+    {
+        out.insert("target".into(), Value::String(target));
     }
     Some(out)
 }
@@ -666,13 +773,19 @@ fn read_last_tool(value: Option<&Value>) -> Option<Obj> {
 /// `reduceNodeProgress`: one parsed turn. Not a lifecycle event; only the three readings change.
 pub fn reduce_node_progress(mut run: Obj, reference: &InstanceRef, payload: &Obj) -> Obj {
     let mut nodes = list(&run, "nodes");
-    let Some(index) = nodes.iter().position(|node| entry_ref(node).is_some_and(|r| r.same(reference))) else {
+    let Some(index) = nodes
+        .iter()
+        .position(|node| entry_ref(node).is_some_and(|r| r.same(reference)))
+    else {
         return run;
     };
     let node = nodes[index].clone();
     let turn = positive_integer(payload.get("turn")).or_else(|| js_number(node.get("turn")));
-    let tool_calls = non_negative_integer(payload.get("toolCalls")).or_else(|| js_number(node.get("toolCalls")));
-    let last_tool = read_last_tool(payload.get("lastTool")).map(Value::Object).or_else(|| node.get("lastTool").cloned());
+    let tool_calls =
+        non_negative_integer(payload.get("toolCalls")).or_else(|| js_number(node.get("toolCalls")));
+    let last_tool = read_last_tool(payload.get("lastTool"))
+        .map(Value::Object)
+        .or_else(|| node.get("lastTool").cloned());
     let mut next = node;
     if let Some(turn) = turn {
         next.insert("turn".into(), number_value(turn));
@@ -691,7 +804,8 @@ pub fn reduce_node_progress(mut run: Obj, reference: &InstanceRef, payload: &Obj
 /// `carryNodeProgress`: the three readings and the head, carried across events as Node does.
 fn carry_node_progress(event_type: &str, payload: &Obj, previous: Option<&Obj>) -> Obj {
     let requeued = event_type == "node-queued";
-    let born = requeued || (event_type == "node-settled" && payload.get("cached") == Some(&Value::Bool(true)));
+    let born = requeued
+        || (event_type == "node-settled" && payload.get("cached") == Some(&Value::Bool(true)));
     let carried = if born { None } else { previous };
     let head = payload
         .get("instructionsHead")
@@ -701,7 +815,12 @@ fn carry_node_progress(event_type: &str, payload: &Obj, previous: Option<&Obj>) 
     let instructions_head = if requeued {
         head
     } else {
-        head.or_else(|| previous.and_then(|p| p.get("instructionsHead")).and_then(Value::as_str).map(str::to_string))
+        head.or_else(|| {
+            previous
+                .and_then(|p| p.get("instructionsHead"))
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
     };
     let mut out = Obj::new();
     if let Some(head) = instructions_head {
@@ -731,17 +850,30 @@ fn node_phase_of(event_type: &str) -> Option<&'static str> {
 }
 
 /// The node-lifecycle branch of `applyWorkflowRunEvent`.
-pub fn reduce_node_event(mut run: Obj, event_type: &str, payload: &Obj, derived: &Derived<'_>) -> Obj {
-    let Some(reference) = instance_ref(payload.get("instance")) else { return run };
-    let Some(phase) = node_phase_of(event_type) else { return run };
-    let born = event_type == "node-queued" || (event_type == "node-settled" && payload.get("cached") == Some(&Value::Bool(true)));
+pub fn reduce_node_event(
+    mut run: Obj,
+    event_type: &str,
+    payload: &Obj,
+    derived: &Derived<'_>,
+) -> Obj {
+    let Some(reference) = instance_ref(payload.get("instance")) else {
+        return run;
+    };
+    let Some(phase) = node_phase_of(event_type) else {
+        return run;
+    };
+    let born = event_type == "node-queued"
+        || (event_type == "node-settled" && payload.get("cached") == Some(&Value::Bool(true)));
     let actor_ref = instance_ref(payload.get("actor"));
     let dispatch_actor = if event_type == "node-dispatched" {
         actor_ref.as_ref().map(|actor| {
             workflow_actor_entry(
                 actor,
                 payload.get("actorName"),
-                bounded_name(str_field(payload, "actorPhaseName"), PRODUCTION.max_phase_name_length),
+                bounded_name(
+                    str_field(payload, "actorPhaseName"),
+                    PRODUCTION.max_phase_name_length,
+                ),
                 derived.actor_session_id,
                 payload.get("actorModel"),
             )
@@ -769,9 +901,12 @@ pub fn reduce_node_event(mut run: Obj, event_type: &str, payload: &Obj, derived:
         Some("ask") | Some("world-read") => payload.get("kind").cloned(),
         _ => previous.as_ref().and_then(|p| p.get("kind")).cloned(),
     };
-    let phase_name = bounded_name(str_field(payload, "phaseName"), PRODUCTION.max_phase_name_length)
-        .map(Value::String)
-        .or_else(|| previous.as_ref().and_then(|p| p.get("phaseName")).cloned());
+    let phase_name = bounded_name(
+        str_field(payload, "phaseName"),
+        PRODUCTION.max_phase_name_length,
+    )
+    .map(Value::String)
+    .or_else(|| previous.as_ref().and_then(|p| p.get("phaseName")).cloned());
 
     let mut node = Obj::new();
     node.insert("siteId".into(), Value::String(reference.site_id.clone()));
@@ -780,22 +915,32 @@ pub fn reduce_node_event(mut run: Obj, event_type: &str, payload: &Obj, derived:
         node.insert("kind".into(), kind);
     }
     node.insert("phase".into(), Value::String(phase.into()));
-    if let Some(outcome) = payload.get("outcome").and_then(Value::as_str) {
-        if matches!(outcome, "ok" | "failed" | "cancelled") {
-            node.insert("outcome".into(), Value::String(outcome.into()));
-        }
+    if let Some(outcome) = payload.get("outcome").and_then(Value::as_str)
+        && matches!(outcome, "ok" | "failed" | "cancelled")
+    {
+        node.insert("outcome".into(), Value::String(outcome.into()));
     }
     if payload.get("cached") == Some(&Value::Bool(true)) {
         node.insert("cached".into(), Value::Bool(true));
     }
-    match (&actor_ref, previous.as_ref().and_then(|p| p.get("actorSiteId")).cloned()) {
+    match (
+        &actor_ref,
+        previous
+            .as_ref()
+            .and_then(|p| p.get("actorSiteId"))
+            .cloned(),
+    ) {
         (Some(actor), _) => {
             node.insert("actorSiteId".into(), Value::String(actor.site_id.clone()));
             node.insert("actorOrdinal".into(), ordinal_value(actor));
         }
         (None, Some(site)) => {
             node.insert("actorSiteId".into(), site);
-            if let Some(ordinal) = previous.as_ref().and_then(|p| p.get("actorOrdinal")).cloned() {
+            if let Some(ordinal) = previous
+                .as_ref()
+                .and_then(|p| p.get("actorOrdinal"))
+                .cloned()
+            {
                 node.insert("actorOrdinal".into(), ordinal);
             }
         }
@@ -817,7 +962,9 @@ pub fn reduce_node_event(mut run: Obj, event_type: &str, payload: &Obj, derived:
 
     let first_dispatch = event_type == "node-dispatched"
         && admits_new_entry(&run, derived.advances_water_mark)
-        && previous.as_ref().map_or(true, |p| p.get("phase").and_then(Value::as_str) == Some("queued"));
+        && previous
+            .as_ref()
+            .is_none_or(|p| p.get("phase").and_then(Value::as_str) == Some("queued"));
     let restored = if seating.activated {
         discount_unlisted_instance(usage_of(&seated))
     } else {
@@ -825,7 +972,11 @@ pub fn reduce_node_event(mut run: Obj, event_type: &str, payload: &Obj, derived:
     };
     let mut counted = restored;
     if first_dispatch {
-        let used = counted.get("nodesUsed").and_then(Value::as_u64).unwrap_or(0) + 1;
+        let used = counted
+            .get("nodesUsed")
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+            + 1;
         counted.insert("nodesUsed".into(), Value::from(used));
     }
     let usage = count_unlisted_instance(
@@ -838,11 +989,12 @@ pub fn reduce_node_event(mut run: Obj, event_type: &str, payload: &Obj, derived:
 
     // Node reads `seated.truncated` (after eviction), not the incoming run's flag.
     let seated_truncated = truncated_flag(&seated);
-    let absorbed = if upserted_truncated && derived.advances_water_mark && born && phase == "settled" {
-        absorb_refused_settled_node(seated, &node, derived.limits)
-    } else {
-        seated
-    };
+    let absorbed =
+        if upserted_truncated && derived.advances_water_mark && born && phase == "settled" {
+            absorb_refused_settled_node(seated, &node, derived.limits)
+        } else {
+            seated
+        };
     let transcript_actors = actors_with_transcript_session(
         list(&absorbed, "actors"),
         event_type,
@@ -862,11 +1014,18 @@ pub fn reduce_node_event(mut run: Obj, event_type: &str, payload: &Obj, derived:
 }
 
 fn usage_of(run: &Obj) -> Obj {
-    run.get("usage").and_then(|u| plain(Some(u)).cloned()).unwrap_or_default()
+    run.get("usage")
+        .and_then(|u| plain(Some(u)).cloned())
+        .unwrap_or_default()
 }
 
 /// `upsertBoundedByInstance`: replace in place, or append within the limit. Returns (list, truncated).
-fn upsert_bounded_by_instance(list: &[Obj], entry: Obj, limit: usize, admit_new: bool) -> (Vec<Obj>, bool) {
+fn upsert_bounded_by_instance(
+    list: &[Obj],
+    entry: Obj,
+    limit: usize,
+    admit_new: bool,
+) -> (Vec<Obj>, bool) {
     let key = entry_ref(&entry);
     if let Some(index) = list.iter().position(|item| entry_ref(item) == key) {
         let mut next = list.to_vec();
@@ -883,8 +1042,13 @@ fn upsert_bounded_by_instance(list: &[Obj], entry: Obj, limit: usize, admit_new:
 
 /// `reduceActorCreated`: a subagent's birth. Makes room for an active newcomer if the table is full.
 pub fn reduce_actor_created(run: Obj, payload: &Obj, derived: &Derived<'_>) -> Obj {
-    let Some(reference) = instance_ref(payload.get("actor")) else { return run };
-    let phase_name = bounded_name(str_field(payload, "phaseName"), PRODUCTION.max_phase_name_length);
+    let Some(reference) = instance_ref(payload.get("actor")) else {
+        return run;
+    };
+    let phase_name = bounded_name(
+        str_field(payload, "phaseName"),
+        PRODUCTION.max_phase_name_length,
+    );
     let actor = workflow_actor_entry(
         &reference,
         payload.get("name"),
@@ -900,7 +1064,8 @@ pub fn reduce_actor_created(run: Obj, payload: &Obj, derived: &Derived<'_>) -> O
         run
     };
     let actors = list(&seated, "actors");
-    let (upserted, truncated) = upsert_bounded_by_instance(&actors, actor, derived.limits.max_actors, admit_new);
+    let (upserted, truncated) =
+        upsert_bounded_by_instance(&actors, actor, derived.limits.max_actors, admit_new);
     let absorbed = if truncated && derived.advances_water_mark {
         absorb_refused_actor(seated.clone(), phase_name.as_deref(), derived.limits)
     } else {
@@ -926,18 +1091,26 @@ pub fn report_preview(item: Option<&Value>) -> String {
 
 /// `report`: one incremental output. Does not touch nodes or actors.
 pub fn reduce_report(mut run: Obj, payload: &Obj, derived: &Derived<'_>) -> Obj {
-    let Some(reference) = instance_ref(payload.get("instance")) else { return run };
+    let Some(reference) = instance_ref(payload.get("instance")) else {
+        return run;
+    };
     let artifact_id = str_field(payload, "artifactId");
     let mut report = Obj::new();
     report.insert("siteId".into(), Value::String(reference.site_id.clone()));
     report.insert("ordinal".into(), ordinal_value(&reference));
-    report.insert("preview".into(), Value::String(report_preview(payload.get("item"))));
+    report.insert(
+        "preview".into(),
+        Value::String(report_preview(payload.get("item"))),
+    );
     if let Some(id) = &artifact_id {
         report.insert("artifactId".into(), Value::String(id.clone()));
     }
     let existing = list(&run, "reports");
-    let first_sighting = !existing.iter().any(|item| entry_ref(item).is_some_and(|r| r.same(&reference)));
-    let (upserted, truncated) = upsert_bounded_by_instance(&existing, report, PRODUCTION.max_reports, true);
+    let first_sighting = !existing
+        .iter()
+        .any(|item| entry_ref(item).is_some_and(|r| r.same(&reference)));
+    let (upserted, truncated) =
+        upsert_bounded_by_instance(&existing, report, PRODUCTION.max_reports, true);
     let counted = match (&artifact_id, first_sighting) {
         (Some(id), true) => count_tagged_report(&run, id),
         _ => None,
@@ -955,8 +1128,15 @@ pub fn reduce_report(mut run: Obj, payload: &Obj, derived: &Derived<'_>) -> Obj 
 
 /// `countTaggedReport`: increments `itemCount` on the artifact with that id, if it is listed.
 fn count_tagged_report(run: &Obj, artifact_id: &str) -> Option<Vec<Obj>> {
-    let mut artifacts = run.get("artifacts").and_then(Value::as_array)?.iter().filter_map(|a| a.as_object().cloned()).collect::<Vec<_>>();
-    let index = artifacts.iter().position(|a| a.get("id").and_then(Value::as_str) == Some(artifact_id))?;
+    let mut artifacts = run
+        .get("artifacts")
+        .and_then(Value::as_array)?
+        .iter()
+        .filter_map(|a| a.as_object().cloned())
+        .collect::<Vec<_>>();
+    let index = artifacts
+        .iter()
+        .position(|a| a.get("id").and_then(Value::as_str) == Some(artifact_id))?;
     let current = js_number(artifacts[index].get("itemCount")).unwrap_or(0.0);
     artifacts[index].insert("itemCount".into(), number_value(current + 1.0));
     Some(artifacts)
@@ -975,15 +1155,24 @@ pub fn artifact_summary(value: Option<&Value>, limits: &Limits) -> Option<Obj> {
         return None;
     }
     let mut out = Obj::new();
-    out.insert("id".into(), Value::String(bounded(&id, limits.max_artifact_id_length)));
+    out.insert(
+        "id".into(),
+        Value::String(bounded(&id, limits.max_artifact_id_length)),
+    );
     out.insert("kind".into(), Value::String(kind));
     if let Some(title) = str_field(record, "title") {
-        out.insert("title".into(), Value::String(bounded(&title, limits.max_artifact_title_length)));
+        out.insert(
+            "title".into(),
+            Value::String(bounded(&title, limits.max_artifact_title_length)),
+        );
     }
     let capped = (version as u64).min(limits.max_artifact_versions);
     out.insert("version".into(), Value::from(capped));
     if let Some(content_type) = str_field(record, "contentType") {
-        out.insert("contentType".into(), Value::String(bounded(&content_type, 128)));
+        out.insert(
+            "contentType".into(),
+            Value::String(bounded(&content_type, 128)),
+        );
     }
     if let Some(bytes) = js_number(record.get("bytes")).filter(|b| is_integer(*b) && *b >= 0.0) {
         out.insert("bytes".into(), number_value(bytes));
@@ -996,14 +1185,28 @@ pub fn artifact_summary(value: Option<&Value>, limits: &Limits) -> Option<Obj> {
 
 /// `artifact-published`: upsert by artifact id, keeping the existing `itemCount`.
 pub fn reduce_artifact_published(mut run: Obj, payload: &Obj, derived: &Derived<'_>) -> Obj {
-    let Some(summary) = artifact_summary(payload.get("artifact"), derived.limits) else { return run };
+    let Some(summary) = artifact_summary(payload.get("artifact"), derived.limits) else {
+        return run;
+    };
     let artifacts: Vec<Obj> = run
         .get("artifacts")
         .and_then(Value::as_array)
-        .map(|items| items.iter().filter_map(|a| a.as_object().cloned()).collect())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|a| a.as_object().cloned())
+                .collect()
+        })
         .unwrap_or_default();
-    let id = summary.get("id").and_then(Value::as_str).unwrap_or_default().to_string();
-    let (next, truncated) = if let Some(index) = artifacts.iter().position(|a| a.get("id").and_then(Value::as_str) == Some(id.as_str())) {
+    let id = summary
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let (next, truncated) = if let Some(index) = artifacts
+        .iter()
+        .position(|a| a.get("id").and_then(Value::as_str) == Some(id.as_str()))
+    {
         let mut entry = summary;
         if let Some(count) = artifacts[index].get("itemCount").cloned() {
             entry.insert("itemCount".into(), count);
@@ -1031,13 +1234,20 @@ fn bounded_question_text(text: &str) -> String {
 
 /// `escalation-raised`: a pending question, upserted by `qid`.
 pub fn reduce_escalation_raised(mut run: Obj, payload: &Obj, _derived: &Derived<'_>) -> Obj {
-    let (Some(qid), Some(question)) = (str_field(payload, "qid"), str_field(payload, "question")) else {
+    let (Some(qid), Some(question)) = (str_field(payload, "qid"), str_field(payload, "question"))
+    else {
         return run;
     };
     let actor_ref = instance_ref(payload.get("actor"));
-    let actor_name = bounded_name(str_field(payload, "actorName"), PRODUCTION.max_actor_name_length);
+    let actor_name = bounded_name(
+        str_field(payload, "actorName"),
+        PRODUCTION.max_actor_name_length,
+    );
     let context = str_field(payload, "context");
-    let asked_at = payload.get("askedAt").filter(|v| js_number(Some(v)).is_some_and(f64::is_finite)).cloned();
+    let asked_at = payload
+        .get("askedAt")
+        .filter(|v| js_number(Some(v)).is_some_and(f64::is_finite))
+        .cloned();
     let mut pending = Obj::new();
     pending.insert("qid".into(), Value::String(qid.clone()));
     if let Some(actor) = &actor_ref {
@@ -1047,9 +1257,15 @@ pub fn reduce_escalation_raised(mut run: Obj, payload: &Obj, _derived: &Derived<
     if let Some(name) = actor_name {
         pending.insert("actorName".into(), Value::String(name));
     }
-    pending.insert("question".into(), Value::String(bounded_question_text(&question)));
+    pending.insert(
+        "question".into(),
+        Value::String(bounded_question_text(&question)),
+    );
     if let Some(context) = context {
-        pending.insert("context".into(), Value::String(bounded_question_text(&context)));
+        pending.insert(
+            "context".into(),
+            Value::String(bounded_question_text(&context)),
+        );
     }
     if let Some(at) = asked_at {
         pending.insert("askedAt".into(), at);
@@ -1058,9 +1274,17 @@ pub fn reduce_escalation_raised(mut run: Obj, payload: &Obj, _derived: &Derived<
     let existing: Vec<Obj> = run
         .get("pendingQuestions")
         .and_then(Value::as_array)
-        .map(|items| items.iter().filter_map(|i| i.as_object().cloned()).collect())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|i| i.as_object().cloned())
+                .collect()
+        })
         .unwrap_or_default();
-    let (next, truncated) = if let Some(index) = existing.iter().position(|item| item.get("qid").and_then(Value::as_str) == Some(qid.as_str())) {
+    let (next, truncated) = if let Some(index) = existing
+        .iter()
+        .position(|item| item.get("qid").and_then(Value::as_str) == Some(qid.as_str()))
+    {
         let mut next = existing.clone();
         next[index] = pending;
         (next, false)
@@ -1080,12 +1304,16 @@ pub fn reduce_escalation_raised(mut run: Obj, payload: &Obj, _derived: &Derived<
 
 /// `withoutPendingQuestions`: drops the entries the predicate rejects, and the key when none remain.
 pub fn without_pending_questions(mut run: Obj, keep: impl Fn(&Obj) -> bool) -> Obj {
-    let Some(current) = run.get("pendingQuestions").and_then(Value::as_array).cloned() else {
+    let Some(current) = run
+        .get("pendingQuestions")
+        .and_then(Value::as_array)
+        .cloned()
+    else {
         return run;
     };
     let remaining: Vec<Value> = current
         .iter()
-        .filter(|item| item.as_object().is_some_and(|obj| keep(obj)))
+        .filter(|item| item.as_object().is_some_and(&keep))
         .cloned()
         .collect();
     if remaining.len() == current.len() {
@@ -1107,7 +1335,8 @@ pub fn reduce_run_settled(run: Obj, payload: &Obj) -> Obj {
         .and_then(|error| error.get("message"))
         .and_then(Value::as_str)
         .map(str::to_string);
-    let cleared = without_waiting_holes(without_cooldown(without_pending_questions(run, |_| false)));
+    let cleared =
+        without_waiting_holes(without_cooldown(without_pending_questions(run, |_| false)));
     let carried_stop = if status.and_then(Value::as_str) == Some("stopped") {
         payload
             .get("stopReason")
@@ -1123,16 +1352,28 @@ pub fn reduce_run_settled(run: Obj, payload: &Obj) -> Obj {
         None
     };
     let status_text = status.and_then(Value::as_str);
-    let terminal = matches!(status_text, Some("completed") | Some("errored") | Some("stopped"));
+    let terminal = matches!(
+        status_text,
+        Some("completed") | Some("errored") | Some("stopped")
+    );
     let settled_message = if terminal {
         message
     } else {
-        Some(message.unwrap_or_else(|| format!("run settled with an unrecognized status: {}", js_string(status))))
+        Some(message.unwrap_or_else(|| {
+            format!(
+                "run settled with an unrecognized status: {}",
+                js_string(status)
+            )
+        }))
     };
     let mut next = cleared;
     next.insert(
         "status".into(),
-        Value::String(if terminal { status_text.unwrap_or("errored").to_string() } else { "errored".to_string() }),
+        Value::String(if terminal {
+            status_text.unwrap_or("errored").to_string()
+        } else {
+            "errored".to_string()
+        }),
     );
     if let Some(reason) = carried_stop {
         next.insert("stopReason".into(), Value::String(reason));
@@ -1141,7 +1382,10 @@ pub fn reduce_run_settled(run: Obj, payload: &Obj) -> Obj {
         next.insert("supersededBy".into(), Value::String(by));
     }
     if let Some(text) = settled_message {
-        next.insert("error".into(), Value::String(bounded(&text, PRODUCTION.max_error_length)));
+        next.insert(
+            "error".into(),
+            Value::String(bounded(&text, PRODUCTION.max_error_length)),
+        );
     }
     if payload.get("resumable") == Some(&Value::Bool(true)) {
         next.insert("resumable".into(), Value::Bool(true));

@@ -8,8 +8,8 @@
 
 use serde_json::Value;
 
-use super::caps::{add_to_bucket, read_buckets, with_buckets, BucketDelta};
-use super::js::{entry_ref, InstanceRef, Obj};
+use super::caps::{BucketDelta, add_to_bucket, read_buckets, with_buckets};
+use super::js::{InstanceRef, Obj, entry_ref};
 use super::{Limits, PRODUCTION};
 
 /// `admitsNewEntry`: below the overflow point every event admits; an overflowed run admits new keys
@@ -92,7 +92,9 @@ fn pick_victim<T: Pickable + Clone>(candidates: &[T]) -> Option<T> {
     };
     let crowd_of = |candidate: &T| -> usize {
         let key = candidate.phase().unwrap_or("");
-        pool.iter().filter(|other| other.phase().unwrap_or("") == key).count()
+        pool.iter()
+            .filter(|other| other.phase().unwrap_or("") == key)
+            .count()
     };
     let mut best = pool[0];
     let mut best_crowd = crowd_of(best);
@@ -109,7 +111,12 @@ fn pick_victim<T: Pickable + Clone>(candidates: &[T]) -> Option<T> {
 fn list_of(run: &Obj, key: &str) -> Vec<Obj> {
     run.get(key)
         .and_then(Value::as_array)
-        .map(|items| items.iter().filter_map(|item| item.as_object().cloned()).collect())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_object().cloned())
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -129,7 +136,10 @@ fn nodes_of(run: &Obj) -> Vec<Obj> {
 }
 
 fn phase_of(entry: &Obj) -> Option<String> {
-    entry.get("phaseName").and_then(Value::as_str).map(str::to_string)
+    entry
+        .get("phaseName")
+        .and_then(Value::as_str)
+        .map(str::to_string)
 }
 
 fn phase_str(entry: &Obj) -> Option<&str> {
@@ -137,7 +147,10 @@ fn phase_str(entry: &Obj) -> Option<&str> {
 }
 
 fn is_failed(node: &Obj) -> bool {
-    matches!(node.get("outcome").and_then(Value::as_str), Some("failed") | Some("cancelled"))
+    matches!(
+        node.get("outcome").and_then(Value::as_str),
+        Some("failed") | Some("cancelled")
+    )
 }
 
 /// A node's actor owner, when both coordinates are present.
@@ -157,7 +170,9 @@ fn listed_groups(run: &Obj) -> Vec<Group> {
     }
     let mut owned: std::collections::HashMap<String, Bucket> = std::collections::HashMap::new();
     for (index, node) in nodes_of(run).iter().enumerate() {
-        let Some(owner) = owner_of(node) else { continue };
+        let Some(owner) = owner_of(node) else {
+            continue;
+        };
         let entry = owned.entry(owner.key()).or_insert(Bucket {
             nodes: Vec::new(),
             live: false,
@@ -213,7 +228,9 @@ fn own_settled_nodes(run: &Obj, owner: &InstanceRef) -> Vec<Candidate> {
     nodes_of(run)
         .iter()
         .enumerate()
-        .filter(|(_, node)| owner_of(node).is_some_and(|o| o.same(owner)) && phase_str(node) == Some("settled"))
+        .filter(|(_, node)| {
+            owner_of(node).is_some_and(|o| o.same(owner)) && phase_str(node) == Some("settled")
+        })
         .map(|(index, node)| Candidate {
             index,
             phase_name: phase_of(node),
@@ -223,7 +240,9 @@ fn own_settled_nodes(run: &Obj, owner: &InstanceRef) -> Vec<Candidate> {
 }
 
 fn owns_listed_node(run: &Obj, actor: &InstanceRef) -> bool {
-    nodes_of(run).iter().any(|node| owner_of(node).is_some_and(|o| o.same(actor)))
+    nodes_of(run)
+        .iter()
+        .any(|node| owner_of(node).is_some_and(|o| o.same(actor)))
 }
 
 fn spare_groups(run: &Obj, owner: Option<&InstanceRef>) -> Vec<Group> {
@@ -237,7 +256,11 @@ fn spare_groups(run: &Obj, owner: Option<&InstanceRef>) -> Vec<Group> {
 }
 
 /// `pickGroupVictim`: completed group, then the last idle group, then (if allowed) the last zero-node actor.
-fn pick_group_victim(run: &Obj, owner: Option<&InstanceRef>, allow_zero_node: bool) -> Option<Group> {
+fn pick_group_victim(
+    run: &Obj,
+    owner: Option<&InstanceRef>,
+    allow_zero_node: bool,
+) -> Option<Group> {
     let groups = spare_groups(run, owner);
     let finished: Vec<Group> = groups.iter().filter(|g| g.finished).cloned().collect();
     if let Some(group) = pick_victim(&finished) {
@@ -289,8 +312,16 @@ fn with_unlisted_evictions(
         .get("usage")
         .and_then(|value| value.as_object().cloned())
         .unwrap_or_default();
-    let unlisted = usage.get("nodesUnlisted").and_then(Value::as_u64).unwrap_or(0) + nodes.len() as u64;
-    let settled_total = usage.get("nodesUnlistedSettled").and_then(Value::as_u64).unwrap_or(0) + settled_count;
+    let unlisted = usage
+        .get("nodesUnlisted")
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+        + nodes.len() as u64;
+    let settled_total = usage
+        .get("nodesUnlistedSettled")
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+        + settled_count;
     usage.insert("nodesUnlisted".into(), Value::from(unlisted));
     if settled_total > 0 {
         usage.insert("nodesUnlistedSettled".into(), Value::from(settled_total));
@@ -303,9 +334,16 @@ fn with_unlisted_evictions(
 fn evict_group(mut run: Obj, group: &Group, limits: &Limits) -> Obj {
     let actors = actors_of(&run);
     let nodes = nodes_of(&run);
-    let evicted: Vec<Obj> = group.node_indexes.iter().map(|&i| nodes[i].clone()).collect();
+    let evicted: Vec<Obj> = group
+        .node_indexes
+        .iter()
+        .map(|&i| nodes[i].clone())
+        .collect();
     let agent = Some((
-        actors[group.index].get("phaseName").and_then(Value::as_str).map(str::to_string),
+        actors[group.index]
+            .get("phaseName")
+            .and_then(Value::as_str)
+            .map(str::to_string),
         group.finished,
         group.finished && group.failed,
     ));
@@ -349,27 +387,44 @@ pub fn with_room_for_actor(run: Obj, reference: &InstanceRef, limits: &Limits) -
     if actors_of(&run).len() < limits.max_actors {
         return run;
     }
-    if actors_of(&run).iter().any(|actor| entry_ref(actor).is_some_and(|r| r.same(reference))) {
+    if actors_of(&run)
+        .iter()
+        .any(|actor| entry_ref(actor).is_some_and(|r| r.same(reference)))
+    {
         return run;
     }
-    let finished: Vec<Group> = listed_groups(&run).into_iter().filter(|g| g.finished).collect();
+    let finished: Vec<Group> = listed_groups(&run)
+        .into_iter()
+        .filter(|g| g.finished)
+        .collect();
     match pick_victim(&finished) {
         Some(victim) => evict_group(run, &victim, limits),
         None => run,
     }
 }
 
-fn with_room_for_node(run: Obj, reference: &InstanceRef, owner: Option<&InstanceRef>, limits: &Limits) -> Obj {
+fn with_room_for_node(
+    run: Obj,
+    reference: &InstanceRef,
+    owner: Option<&InstanceRef>,
+    limits: &Limits,
+) -> Obj {
     if nodes_of(&run).len() < limits.max_nodes {
         return run;
     }
-    if nodes_of(&run).iter().any(|node| entry_ref(node).is_some_and(|r| r.same(reference))) {
+    if nodes_of(&run)
+        .iter()
+        .any(|node| entry_ref(node).is_some_and(|r| r.same(reference)))
+    {
         return run;
     }
     if let Some(loose) = pick_victim(&loose_settled_nodes(&run)) {
         return evict_single_node(run, &loose, limits);
     }
-    let finished: Vec<Group> = spare_groups(&run, owner).into_iter().filter(|g| g.finished).collect();
+    let finished: Vec<Group> = spare_groups(&run, owner)
+        .into_iter()
+        .filter(|g| g.finished)
+        .collect();
     match pick_victim(&finished) {
         Some(victim) => evict_group(run, &victim, limits),
         None => run,
@@ -381,8 +436,12 @@ fn with_room_for_node(run: Obj, reference: &InstanceRef, owner: Option<&Instance
 /// no slot can be made.
 fn activate_instance(run: &Obj, reference: &InstanceRef, actor: &Obj, limits: &Limits) -> Seating {
     let actor_ref = entry_ref(actor).unwrap_or_else(|| reference.clone());
-    let node_listed = nodes_of(run).iter().any(|node| entry_ref(node).is_some_and(|r| r.same(reference)));
-    let actor_listed = actors_of(run).iter().any(|listed| entry_ref(listed).is_some_and(|r| r.same(&actor_ref)));
+    let node_listed = nodes_of(run)
+        .iter()
+        .any(|node| entry_ref(node).is_some_and(|r| r.same(reference)));
+    let actor_listed = actors_of(run)
+        .iter()
+        .any(|listed| entry_ref(listed).is_some_and(|r| r.same(&actor_ref)));
     if node_listed && actor_listed {
         return Seating {
             run: run.clone(),
@@ -450,21 +509,24 @@ pub fn seat_workflow_node(run: &Obj, seat: &Seat<'_>, limits: &Limits) -> Seatin
         };
     }
     let overflowed = run.get("truncated") == Some(&Value::Bool(true));
-    if seat.event_type == "node-dispatched" && overflowed {
-        if let Some(actor) = &seat.actor {
-            return activate_instance(run, &seat.reference, actor, limits);
-        }
+    if seat.event_type == "node-dispatched"
+        && overflowed
+        && let Some(actor) = &seat.actor
+    {
+        return activate_instance(run, &seat.reference, actor, limits);
     }
-    if seat.born && overflowed {
-        if let Some(actor_ref) = &seat.actor_ref {
-            if !actors_of(run).iter().any(|actor| entry_ref(actor).is_some_and(|r| r.same(actor_ref))) {
-                return Seating {
-                    run: run.clone(),
-                    admit_new: false,
-                    activated: false,
-                };
-            }
-        }
+    if seat.born
+        && overflowed
+        && let Some(actor_ref) = &seat.actor_ref
+        && !actors_of(run)
+            .iter()
+            .any(|actor| entry_ref(actor).is_some_and(|r| r.same(actor_ref)))
+    {
+        return Seating {
+            run: run.clone(),
+            admit_new: false,
+            activated: false,
+        };
     }
     if seat.event_type != "node-queued" {
         return Seating {
@@ -474,7 +536,12 @@ pub fn seat_workflow_node(run: &Obj, seat: &Seat<'_>, limits: &Limits) -> Seatin
         };
     }
     Seating {
-        run: with_room_for_node(run.clone(), &seat.reference, seat.actor_ref.as_ref(), limits),
+        run: with_room_for_node(
+            run.clone(),
+            &seat.reference,
+            seat.actor_ref.as_ref(),
+            limits,
+        ),
         admit_new: by_birth,
         activated: false,
     }
@@ -508,13 +575,17 @@ pub fn absorb_refused_settled_node(run: Obj, node: &Obj, limits: &Limits) -> Obj
     );
     let owner = owner_of(node);
     let actors = actors_of(&run);
-    let index = owner
-        .as_ref()
-        .and_then(|o| actors.iter().position(|actor| entry_ref(actor).is_some_and(|r| r.same(o))));
+    let index = owner.as_ref().and_then(|o| {
+        actors
+            .iter()
+            .position(|actor| entry_ref(actor).is_some_and(|r| r.same(o)))
+    });
     let orphan = match index {
         Some(i) => {
             let actor_ref = entry_ref(&actors[i]);
-            actor_ref.as_ref().is_some_and(|r| !owns_listed_node(&run, r))
+            actor_ref
+                .as_ref()
+                .is_some_and(|r| !owns_listed_node(&run, r))
         }
         None => false,
     };

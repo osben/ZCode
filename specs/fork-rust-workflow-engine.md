@@ -513,6 +513,7 @@ Spec-first design, then the code. The gate stays off and nothing calls the port.
 - Cold replay: `replay.rs` reads `dwf_event` through W2's `list_events`, mints the envelope fields that `toProgressPayload` derives (`actorSessionId`, `resumedFrom`, `subagentModel`, the persona `model` and `actorModel` through `modelBindings`, `concurrencyCeiling`, `resumable`, `reachedAt`), and applies the `boundDynamicWorkflowRunEventPayload` bounds. Not ported: `holeTypeOf`, which needs the compiled script and so lands with the helper (W4). A replayed `hole-reached` therefore has no `type`.
 - Runtime switch: nothing reads the replay yet. The snapshot hook returns `{"runs": []}` when no run exists, the same answer Rust gives today.
 - Surrogates: the reducer's own cuts (`slice(0, limit - 1) + "…"`, bounded text fields) round down to a code point boundary, as `truncateSurrogateSafe` does in the contracts bounding. Node can keep a lone surrogate there, and `JSON.stringify` writes it as an escape that Rust cannot hold. This is a deliberate deviation; the golden set avoids the case and a unit test pins the rounding.
+- Size and checks: 4,289 lines of Rust in `workflow_runs/` (3,665 excluding `tests.rs`), 14 `workflow_runs` unit tests, 326 passed in the `rust-cli-node-store` lib suite (1 ignored). `clippy --workspace --all-targets -- -D warnings` is clean.
 
 ## 10. Open questions
 

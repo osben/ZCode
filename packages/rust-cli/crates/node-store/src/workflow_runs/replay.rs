@@ -11,10 +11,10 @@
 //! Not minted (the reducer does not read them): `launchInputId`. Not minted and read by the reducer:
 //! `type` on `hole-reached`, which needs the compiled script (`holeTypeOf`, lands with the W4 helper).
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use super::js::{plain, Obj};
-use super::{reduce, Envelope, Limits, State};
+use super::js::{Obj, plain};
+use super::{Envelope, Limits, State, reduce};
 use crate::repo::dwf::codecs::stop_reason_name;
 use crate::repo::dwf::{RunRecord, RunStatus, StopReason, StoredEvent};
 
@@ -42,7 +42,10 @@ fn bound_value(value: &Value, depth: usize) -> Option<Value> {
             if super::js::utf16_len(text) <= MAX_STRING_LENGTH {
                 Some(value.clone())
             } else {
-                Some(Value::String(super::js::utf16_prefix(text, MAX_STRING_LENGTH)))
+                Some(Value::String(super::js::utf16_prefix(
+                    text,
+                    MAX_STRING_LENGTH,
+                )))
             }
         }
         Value::Array(items) => {
@@ -82,7 +85,10 @@ fn run_status_name(status: RunStatus) -> &'static str {
 }
 
 fn is_terminal(status: RunStatus) -> bool {
-    matches!(status, RunStatus::Completed | RunStatus::Errored | RunStatus::Stopped)
+    matches!(
+        status,
+        RunStatus::Completed | RunStatus::Errored | RunStatus::Stopped
+    )
 }
 
 /// `isResumableSettlement`: stopped and not superseded.
@@ -92,7 +98,11 @@ fn is_resumable(status: RunStatus, reason: Option<StopReason>) -> bool {
 
 /// `mintActorSessionId` for `(runId, actorRef)`: `dwf-<san(runId)>-<san(site@ordinal)>`.
 pub fn mint_actor_session_id(run_id: &str, site_id: &str, ordinal: f64) -> String {
-    format!("dwf-{}-{}", sanitize_id_segment(run_id), sanitize_id_segment(&format!("{site_id}@{}", super::js::number_key(ordinal))))
+    format!(
+        "dwf-{}-{}",
+        sanitize_id_segment(run_id),
+        sanitize_id_segment(&format!("{site_id}@{}", super::js::number_key(ordinal)))
+    )
 }
 
 /// `sanitizeIdSegment`: `_` escapes to `__` first, then every char outside `[A-Za-z0-9.-]` maps to `_`.
@@ -100,7 +110,13 @@ fn sanitize_id_segment(value: &str) -> String {
     let escaped = value.replace('_', "__");
     escaped
         .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() || ch == '.' || ch == '-' { ch.to_string() } else { "_".to_string() })
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '.' || ch == '-' {
+                ch.to_string()
+            } else {
+                "_".to_string()
+            }
+        })
         .collect()
 }
 
@@ -118,17 +134,29 @@ fn actor_session_ref(event_type: &str, event: &Value) -> Option<(String, f64)> {
 
 /// Replays one run's journal into envelopes, in journal order, with the terminal settlement taken
 /// from the row. `default_concurrency` is the host default (`resolveWorkflowDefaultConcurrency`).
-pub fn replay_envelopes(run: &RunRecord, events: &[StoredEvent], default_concurrency: f64) -> Vec<Envelope> {
-    let launched = events.iter().find(|stored| stored.event.get("type").and_then(Value::as_str) == Some("run-launched"));
+pub fn replay_envelopes(
+    run: &RunRecord,
+    events: &[StoredEvent],
+    default_concurrency: f64,
+) -> Vec<Envelope> {
+    let launched = events
+        .iter()
+        .find(|stored| stored.event.get("type").and_then(Value::as_str) == Some("run-launched"));
     let launched_event = launched.map(|stored| &stored.event);
-    let subagent_model = launched_event.and_then(|event| event.get("subagentModel")).cloned();
+    let subagent_model = launched_event
+        .and_then(|event| event.get("subagentModel"))
+        .cloned();
     let model_bindings = launched_event
         .and_then(|event| plain(event.get("modelBindings")))
         .cloned();
     let terminal = is_terminal(run.status);
     let last = events.last();
     let trailing_settle = match (terminal, last) {
-        (true, Some(stored)) if stored.event.get("type").and_then(Value::as_str) == Some("run-settled") => Some(stored),
+        (true, Some(stored))
+            if stored.event.get("type").and_then(Value::as_str) == Some("run-settled") =>
+        {
+            Some(stored)
+        }
         _ => None,
     };
     let replayable: &[StoredEvent] = if trailing_settle.is_some() {
@@ -140,9 +168,28 @@ pub fn replay_envelopes(run: &RunRecord, events: &[StoredEvent], default_concurr
     let mut envelopes: Vec<Envelope> = replayable
         .iter()
         .map(|stored| {
-            let event_type = stored.event.get("type").and_then(Value::as_str).unwrap_or_default().to_string();
-            let payload = minted_payload(run, &event_type, &stored.event, stored.time_created, &subagent_model, &model_bindings, default_concurrency);
-            envelope_for(run, stored.sequence as f64, &event_type, &stored.event, payload)
+            let event_type = stored
+                .event
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let payload = minted_payload(
+                run,
+                &event_type,
+                &stored.event,
+                stored.time_created,
+                &subagent_model,
+                &model_bindings,
+                default_concurrency,
+            );
+            envelope_for(
+                run,
+                stored.sequence as f64,
+                &event_type,
+                &stored.event,
+                payload,
+            )
         })
         .collect();
 
@@ -166,7 +213,9 @@ pub fn replay_envelopes(run: &RunRecord, events: &[StoredEvent], default_concurr
         }
         let sequence = match trailing_settle {
             Some(stored) => stored.sequence as f64,
-            None => last.map(|stored| stored.sequence as f64 + 1.0).unwrap_or(1.0),
+            None => last
+                .map(|stored| stored.sequence as f64 + 1.0)
+                .unwrap_or(1.0),
         };
         envelopes.push(envelope_for(run, sequence, "run-settled", &event, payload));
     }
@@ -184,13 +233,19 @@ fn minted_payload(
     default_concurrency: f64,
 ) -> Obj {
     let raw = plain(Some(event)).cloned().unwrap_or_default();
-    let mut rest = raw.clone();
+    let mut rest = raw;
     rest.shift_remove("type");
     let mut payload = bound_payload(&rest);
     match event_type {
         "run-settled" => {
-            let status = event.get("status").and_then(Value::as_str).unwrap_or_default();
-            let reason = event.get("stopReason").and_then(Value::as_str).and_then(stop_reason_from_str);
+            let status = event
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let reason = event
+                .get("stopReason")
+                .and_then(Value::as_str)
+                .and_then(stop_reason_from_str);
             if status == "stopped" && reason != Some(StopReason::Superseded) {
                 payload.insert("resumable".into(), Value::Bool(true));
             }
@@ -199,16 +254,25 @@ fn minted_payload(
             if let Some(resumed) = &run.resumed_from {
                 payload.insert("resumedFrom".into(), json!(resumed));
             }
-            payload.insert("concurrencyCeiling".into(), super::js::number_value(default_concurrency));
+            payload.insert(
+                "concurrencyCeiling".into(),
+                super::js::number_value(default_concurrency),
+            );
             if let Some(model) = subagent_model {
                 payload.insert("subagentModel".into(), model.clone());
             }
         }
         "run-caps-changed" => {
-            payload.insert("concurrencyCeiling".into(), super::js::number_value(default_concurrency));
+            payload.insert(
+                "concurrencyCeiling".into(),
+                super::js::number_value(default_concurrency),
+            );
         }
         "actor-created" => {
-            let persona = event.get("persona").and_then(|p| p.get("model")).and_then(Value::as_str);
+            let persona = event
+                .get("persona")
+                .and_then(|p| p.get("model"))
+                .and_then(Value::as_str);
             if let Some(model) = with_actor_model(persona, model_bindings) {
                 payload.insert("model".into(), json!(model));
             }
@@ -244,7 +308,13 @@ fn stop_reason_from_str(text: &str) -> Option<StopReason> {
     }
 }
 
-fn envelope_for(run: &RunRecord, sequence: f64, event_type: &str, event: &Value, payload: Obj) -> Envelope {
+fn envelope_for(
+    run: &RunRecord,
+    sequence: f64,
+    event_type: &str,
+    event: &Value,
+    payload: Obj,
+) -> Envelope {
     let actor_session_id = actor_session_ref(event_type, event)
         .map(|(site, ordinal)| mint_actor_session_id(&run.run_id, &site, ordinal));
     Envelope {
@@ -258,7 +328,12 @@ fn envelope_for(run: &RunRecord, sequence: f64, event_type: &str, event: &Value,
 }
 
 /// Replays a run and folds it into the `workflowRuns` state (the cold-start projection).
-pub fn replay_state(run: &RunRecord, events: &[StoredEvent], default_concurrency: f64, limits: &Limits) -> Option<State> {
+pub fn replay_state(
+    run: &RunRecord,
+    events: &[StoredEvent],
+    default_concurrency: f64,
+    limits: &Limits,
+) -> Option<State> {
     let mut state: Option<State> = None;
     for envelope in replay_envelopes(run, events, default_concurrency) {
         if let Some(next) = reduce(state.as_ref(), &envelope, limits) {
@@ -267,4 +342,3 @@ pub fn replay_state(run: &RunRecord, events: &[StoredEvent], default_concurrency
     }
     state
 }
-
