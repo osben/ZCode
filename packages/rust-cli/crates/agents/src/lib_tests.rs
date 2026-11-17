@@ -50,7 +50,9 @@ async fn a_foreground_agent_runs_in_a_child_session_and_hands_back_its_report() 
             "TaskCreate",
             "TaskGet",
             "TaskList",
-            "TaskUpdate"
+            "TaskUpdate",
+            // Node gives every child the coordinator port last (`includeRespondToCoordinator`).
+            "RespondToCoordinator"
         ]
     );
     assert!(
@@ -143,7 +145,7 @@ async fn a_background_agent_notifies_its_parent_once_it_finishes() {
     // 后台子代理只有异步白名单里的工具。
     assert_eq!(
         harness.started(1).await[0].tools,
-        ["Bash", "Read", "SendMessage", "TaskStop"]
+        ["Bash", "Read", "SendMessage", "TaskStop", "RespondToCoordinator"]
     );
     gate.notify_one();
     let Some(AgentSignal::Notice(notice)) = stream.next().await else {

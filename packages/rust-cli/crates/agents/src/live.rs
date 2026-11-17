@@ -93,6 +93,9 @@ pub(crate) struct LiveAgent {
     /// 父会话的会话级询问入口（交互界面里才有，agents.md §4.1.1）：后台运行（含续跑、停放后的唤醒）经它询问。
     pub(crate) asks: Option<crate::child::Asks>,
     pub(crate) state: AgentState,
+    /// The final report of the last run that finished (Node's completed task result, read by TaskOutput). A parked agent
+    /// reads its parked report instead; a run that was stopped keeps none.
+    pub(crate) result: Option<String>,
     /// 列表显示用的记录（tui-panels.md §1.1）；由 `live::Live` 在每次改动后统一维护。
     pub(crate) shown: Shown,
     /// 转发任务已经交给它的命令通知的来源（命令的任务 ID，agents.md §5.2 第 5 条）：在交出的同一把锁里记。命令通知交出
@@ -140,6 +143,14 @@ pub(crate) struct Shown {
 }
 
 impl LiveAgent {
+    /// The report TaskOutput shows: the parked report of a parked run, else the result of the last finished run.
+    pub(crate) fn report_text(&self) -> String {
+        match &self.state {
+            AgentState::Parked { report, .. } => report.text.clone(),
+            _ => self.result.clone().unwrap_or_default(),
+        }
+    }
+
     pub(crate) fn status(&self) -> BackgroundStatus {
         match &self.state {
             // Fork: a claimed stop is the run's end already (Node takes `killed` synchronously, core `runner.ts`).

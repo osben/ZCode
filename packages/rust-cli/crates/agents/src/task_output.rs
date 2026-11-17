@@ -20,7 +20,7 @@ use tokio::sync::mpsc;
 use rust_cli_kernel_api::env::{EnvPath, ReadFile, WorkspaceRef};
 use rust_cli_kernel_api::env_files::StatFile;
 use rust_cli_kernel_api::env_shell::{BackgroundStatus, BackgroundTask};
-use rust_cli_kernel_api::ids::{MachineName, SessionId, ShellTaskId};
+use rust_cli_kernel_api::ids::{AgentId, MachineName, SessionId, ShellTaskId};
 use rust_cli_kernel_api::machine::MachineEnv;
 use rust_cli_kernel_api::permission::PermissionDecision;
 use rust_cli_kernel_api::tool::{
@@ -30,6 +30,7 @@ use rust_cli_kernel_api::tool::{
 use rust_cli_kernel_api::tool_names;
 
 use crate::Core;
+use crate::live::LiveAgent;
 
 const NAME: &str = tool_names::TASK_OUTPUT;
 
@@ -96,6 +97,8 @@ struct Found {
 /// A resolved task for the model text.
 struct TaskView<'a> {
     id: &'a str,
+    /// Node's `task_type`: `local_bash` for a background command, `local_agent` for a subagent.
+    kind: &'a str,
     status: &'a str,
     output: String,
     output_file: Option<String>,
@@ -279,7 +282,7 @@ fn model_text(retrieval: &str, task: &TaskView<'_>) -> String {
     let mut blocks = vec![
         format!("<retrieval_status>{retrieval}</retrieval_status>"),
         format!("<task_id>{}</task_id>", task.id),
-        "<task_type>local_bash</task_type>".to_owned(),
+        format!("<task_type>{}</task_type>", task.kind),
         format!("<status>{}</status>", task.status),
     ];
     if !task.output.trim().is_empty() {
@@ -332,7 +335,7 @@ impl Tool for TaskOutputTool {
         if id.is_empty() {
             return invalid("Task ID is required".to_owned());
         }
-        if self.known(&id, context).await.is_none() {
+        if self.agent_of(&id, context).is_none() && self.known(&id, context).await.is_none() {
             return invalid(not_found(&id));
         }
         Validation::Ok
@@ -363,6 +366,10 @@ impl Tool for TaskOutputTool {
         }
         let block = parsed.block.unwrap_or(true);
         let timeout = Duration::from_millis(parsed.timeout.max(0.0) as u64);
+        // A subagent is a task too (Node's runtime registry holds `local_agent` entries): it is read from its report.
+        if let Some(agent) = self.agent_of(&id, &context) {
+            return self.agent_output(&id, agent, block, timeout, &context).await;
+        }
         // `find` first, then the kept-file fallback; together they decide "known".
         let mut found = self.known(&id, &context).await;
         if block {
@@ -392,6 +399,7 @@ impl Tool for TaskOutputTool {
         let (output, output_file) = self.read_output(&found, &id).await.unwrap_or_default();
         let view = TaskView {
             id: &id,
+            kind: "local_bash",
             status: found.status.as_str(),
             output,
             output_file,
@@ -405,6 +413,52 @@ impl Tool for TaskOutputTool {
 impl TaskOutputTool {
     /// A task this caller can see: live or unacked in an environment, or forgotten but with its
     /// kept output file still present.
+    /// The subagent `id` names, when the caller's root session owns it.
+    fn agent_of(&self, id: &str, context: &ToolUseContext) -> Option<LiveAgent> {
+        let agent = self.core.live.get(&AgentId::new(id))?;
+        (agent.root == self.core.live.root_of(&context.session)).then_some(agent)
+    }
+
+    /// Node's `projectAgentTask` with the blocking wait of `task-output.ts`: the status, and the final report once the
+    /// run is no longer running.
+    async fn agent_output(
+        &self,
+        id: &str,
+        mut agent: LiveAgent,
+        block: bool,
+        timeout: Duration,
+        context: &ToolUseContext,
+    ) -> Result<ToolOutput, ToolError> {
+        let deadline = tokio::time::Instant::now() + timeout;
+        while block
+            && agent.status() == BackgroundStatus::Running
+            && tokio::time::Instant::now() < deadline
+        {
+            if context.cancel.is_cancelled() {
+                return Err(ToolError::Cancelled);
+            }
+            tokio::time::sleep(POLL).await;
+            match self.core.live.get(&AgentId::new(id)) {
+                Some(next) => agent = next,
+                None => break,
+            }
+        }
+        let status = agent.status();
+        let retrieval = match (status == BackgroundStatus::Running, block) {
+            (true, true) => "timeout",
+            (true, false) => "not_ready",
+            (false, _) => "success",
+        };
+        let view = TaskView {
+            id,
+            kind: "local_agent",
+            status: status.as_str(),
+            output: agent.report_text(),
+            output_file: None,
+        };
+        Ok(rust_cli_kernel_api::tool::text(model_text(retrieval, &view)))
+    }
+
     async fn known(&self, id: &str, context: &ToolUseContext) -> Option<Found> {
         match self.find(id, context).await {
             Some(found) => Some(found),

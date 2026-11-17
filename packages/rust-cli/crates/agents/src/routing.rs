@@ -293,6 +293,9 @@ pub(crate) async fn settle(core: &Core, id: &AgentId, finished: &Finished) -> Se
         }
         if let Some(slot) = agents.get_mut(id) {
             slot.state = AgentState::Finished(ending);
+            // A stopped run keeps no report (Node's killed task has no result); TaskOutput reads this one.
+            slot.result = (!matches!(ending, Ending::Killed | Ending::KilledByUser))
+                .then(|| finished.report.text.clone());
         }
         let mut wakes = Vec::new();
         if entry.background {

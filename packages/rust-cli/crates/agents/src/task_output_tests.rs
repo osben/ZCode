@@ -407,6 +407,7 @@ fn truncation_keeps_the_tail_and_names_the_full_output() {
 fn the_model_text_orders_the_blocks_like_node() {
     let task = TaskView {
         id: "b1",
+        kind: "local_bash",
         status: "running",
         output: "  \ninterim\n\n".to_owned(),
         output_file: Some("/tmp/outputs/b1.output".to_owned()),
@@ -419,6 +420,7 @@ fn the_model_text_orders_the_blocks_like_node() {
     );
     let blank = TaskView {
         id: "b2",
+        kind: "local_bash",
         status: "completed",
         output: "  \n".to_owned(),
         output_file: None,
@@ -427,5 +429,24 @@ fn the_model_text_orders_the_blocks_like_node() {
         model_text("success", &blank),
         "<retrieval_status>success</retrieval_status>\n\n<task_id>b2</task_id>\n\n\
          <task_type>local_bash</task_type>\n\n<status>completed</status>"
+    );
+}
+
+/// Node's `projectAgentTask` (`task-output-projection.ts`): a subagent is read by its agent id as a `local_agent`, and
+/// its output is the final report of its last completed run.
+#[test]
+fn a_completed_subagent_is_read_as_a_local_agent_with_its_report() {
+    let task = TaskView {
+        id: "agent_1",
+        kind: "local_agent",
+        status: "completed",
+        output: "E2E_SUBAGENT_FINAL_RESULT".to_owned(),
+        output_file: None,
+    };
+    assert_eq!(
+        model_text("success", &task),
+        "<retrieval_status>success</retrieval_status>\n\n<task_id>agent_1</task_id>\n\n\
+         <task_type>local_agent</task_type>\n\n<status>completed</status>\n\n\
+         <output>\nE2E_SUBAGENT_FINAL_RESULT\n</output>"
     );
 }

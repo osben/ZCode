@@ -273,6 +273,7 @@ impl Tool for AgentTool {
                 .then(|| context.interactions.lasting())
                 .flatten()
                 .map(crate::child::Asks),
+            result: None,
             state: AgentState::Finished(Ending::Completed),
             shown: crate::live::Shown {
                 execution_id: self.core.ports.ids.execution(),

@@ -235,6 +235,7 @@ fn undriven(harness: &crate::test_support::Harness, agent: &str) -> AgentId {
         mode: rust_cli_kernel_api::permission::PermissionMode::Default,
         background: true,
         asks: None,
+        result: None,
         state: crate::live::AgentState::Running {
             abort: Abort::new(),
             mailbox: Vec::new(),
