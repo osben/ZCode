@@ -880,9 +880,8 @@ pub trait Kernel: Send + Sync {
     /// `None` when the kernel publishes no changes (test doubles, `-p`).
     fn context_composition_changes(
         &self,
-    ) -> Option<
-        tokio::sync::broadcast::Receiver<crate::context_composition::CompositionChange>,
-    > {
+    ) -> Option<tokio::sync::broadcast::Receiver<crate::context_composition::CompositionChange>>
+    {
         None
     }
 

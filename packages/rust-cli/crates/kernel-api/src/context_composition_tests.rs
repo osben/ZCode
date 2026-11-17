@@ -84,11 +84,7 @@ fn each_change_is_published_with_its_revision() {
     }
     assert_eq!(
         seen,
-        vec![
-            (session.clone(), 1),
-            (session.clone(), 2),
-            (session.clone(), 3)
-        ]
+        vec![(session.clone(), 1), (session.clone(), 2), (session, 3)]
     );
 }
 

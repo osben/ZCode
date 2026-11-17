@@ -364,11 +364,19 @@ pub(crate) async fn run(
         let Some(Prepared {
             request,
             max_tokens,
+            composition,
         }) = prepare(&scope, &mut history, &step, inputs.turn()).await?
         else {
             return Ok(QueryStop::Aborted);
         };
-        let responded = match respond(&scope, &mut history, request, state.responses).await {
+        let responded = match respond(
+            &scope,
+            &mut history,
+            (request, composition),
+            state.responses,
+        )
+        .await
+        {
             // 上下文超限的反应式压缩排在其他恢复分支之前（query.md §1）；压缩成功就重发，不计轮数。
             Err(QueryError::Model(ModelError::PromptTooLong { message })) => {
                 if state

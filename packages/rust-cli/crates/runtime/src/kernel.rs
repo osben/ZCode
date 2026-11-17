@@ -179,7 +179,9 @@ impl Kernel for LocalKernel {
     fn context_composition_changes(
         &self,
     ) -> Option<
-        tokio::sync::broadcast::Receiver<rust_cli_kernel_api::context_composition::CompositionChange>,
+        tokio::sync::broadcast::Receiver<
+            rust_cli_kernel_api::context_composition::CompositionChange,
+        >,
     > {
         Some(self.compositions.subscribe())
     }

@@ -8,7 +8,7 @@ mod flow {
     use std::time::Duration;
 
     use futures_util::StreamExt;
-    use rust_cli_kernel_api::context_composition::{CompositionPhase, CompositionChange};
+    use rust_cli_kernel_api::context_composition::{CompositionChange, CompositionPhase};
     use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
     use rust_cli_kernel_api::ids::{CommandId, EnvironmentId};
     use rust_cli_kernel_api::message::Usage;
@@ -147,14 +147,19 @@ mod flow {
         // Every change reached the stream, and the last one carries the answer's revision (Node: the notification's
         // revision equals the query's).
         let seen = drain(&mut changes);
-        let last = seen.iter().filter(|c| c.session == id).last().expect("a change");
+        let last = seen.iter().rfind(|c| c.session == id).expect("a change");
         assert_eq!(last.revision, measured.revision);
 
         // A model switch: a larger revision, the request record is dropped, the query answers a draft for the new model.
         let before = measured.revision;
         let other = ModelSelection::new("fixture".to_owned(), "other".to_owned());
         session
-            .send(command("c2", Command::SetModel { selection: other.clone() }))
+            .send(command(
+                "c2",
+                Command::SetModel {
+                    selection: other.clone(),
+                },
+            ))
             .await;
         let switched = kernel
             .context_composition(&id, Some(other))
@@ -164,11 +169,17 @@ mod flow {
         assert_eq!(switched.phase, CompositionPhase::DraftPreview);
         assert_eq!(switched.revision, before + 1);
         let seen = drain(&mut changes);
-        assert!(seen.iter().any(|c| c.session == id && c.revision == before + 1));
+        assert!(
+            seen.iter()
+                .any(|c| c.session == id && c.revision == before + 1)
+        );
         let _ = seq;
     }
 
-    fn category_tokens(record: &rust_cli_kernel_api::context_composition::CompositionRecord, id: &str) -> u64 {
+    fn category_tokens(
+        record: &rust_cli_kernel_api::context_composition::CompositionRecord,
+        id: &str,
+    ) -> u64 {
         record
             .categories
             .iter()

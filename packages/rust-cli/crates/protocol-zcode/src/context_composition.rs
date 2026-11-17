@@ -43,26 +43,28 @@ pub(crate) fn forward(peer: Peer, kernel: &dyn Kernel, spawner: &Spawner) {
         return;
     };
     // Resident in the connection's scope: dropping the handle does not stop it.
-    drop(spawner.spawn_resident("context-composition-changed", async move {
-        loop {
-            let first = match changes.recv().await {
-                Ok(change) => change,
-                // Skipped changes cannot be named; the App re-reads a session's composition when it asks.
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
-            };
-            let mut batch = vec![first];
-            tokio::task::yield_now().await;
-            while let Ok(change) = changes.try_recv() {
-                batch.push(change);
-            }
-            for change in coalesce(&batch) {
-                if !peer.notify(CHANGED, &changed_params(&change)).await {
-                    return;
+    drop(
+        spawner.spawn_resident("context-composition-changed", async move {
+            loop {
+                let first = match changes.recv().await {
+                    Ok(change) => change,
+                    // Skipped changes cannot be named; the App re-reads a session's composition when it asks.
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+                };
+                let mut batch = vec![first];
+                tokio::task::yield_now().await;
+                while let Ok(change) = changes.try_recv() {
+                    batch.push(change);
+                }
+                for change in coalesce(&batch) {
+                    if !peer.notify(CHANGED, &changed_params(&change)).await {
+                        return;
+                    }
                 }
             }
-        }
-    }));
+        }),
+    );
 }
 
 /// The method's result for `answer`: `{composition: null}` when there is no answer.

@@ -242,11 +242,11 @@ enum Ending {
 pub(crate) async fn respond(
     scope: &Arc<RunScope>,
     history: &mut Vec<Message>,
-    request: ModelRequest,
+    (request, composition): (ModelRequest, crate::composition::Breakdown),
     response: usize,
 ) -> Result<Responded, QueryError> {
     let assistant_id = scope.parts.ids.message();
-    let mut streamed = stream(scope, request, response, &assistant_id).await;
+    let mut streamed = stream(scope, request, composition, response, &assistant_id).await;
     let aborted_streaming = scope.abort.is_aborted();
     // 流读完却没有正常收尾（没有 `message_stop`、有没结束的块）：与流中途出错同样处理（R5-1，原来用 `?` 提前
     // 返回，丢下已经开工的工具）。
@@ -302,14 +302,17 @@ pub(crate) async fn respond(
 async fn stream(
     scope: &Arc<RunScope>,
     request: ModelRequest,
+    composition: crate::composition::Breakdown,
     response: usize,
     assistant_id: &MessageId,
 ) -> Streamed {
+    let started = scope.parts.clock.now_ms();
+    crate::request::record_composition(scope, &request, &composition, started);
     let mut timing = Timing {
         message: assistant_id.clone(),
         source: request.source.clone(),
         selection: request.selection.clone(),
-        started: scope.parts.clock.now_ms(),
+        started,
         first_token: None,
         first_content: None,
         retries: 0,

@@ -90,6 +90,8 @@ fn model_shape(
 pub(crate) struct Prepared {
     pub(crate) request: ModelRequest,
     pub(crate) max_tokens: u32,
+    /// The request's measured composition, stored when the request starts (`record_composition`).
+    pub(crate) composition: crate::composition::Breakdown,
 }
 
 /// 上下文宣布（规则文件、会话上下文、日期、署名）落库，再组装请求。已中止时写中断标记、返回 None。
@@ -208,37 +210,47 @@ async fn assemble(
             ..shape.options
         },
     };
-    record_composition(scope, history, &request, capabilities);
+    let composition = measure_composition(history, &request, capabilities);
     Prepared {
         request,
         max_tokens,
+        composition,
     }
 }
 
-/// Node `runtime/context-composition`: the request is measured and stored for the session before it is sent, so the
-/// query reads the request that actually goes out (its system blocks, its tools with their deferral, its messages).
-fn record_composition(
-    scope: &RunScope,
+/// Node `runtime/context-composition`: the request is measured before it is sent, so the composition describes the
+/// request that actually goes out (its system blocks, its tools with their deferral, its messages). No clock is read
+/// here: `record_composition` stores it with the request's start time, the same reading the metering takes.
+fn measure_composition(
     history: &[Message],
     request: &ModelRequest,
     capabilities: Option<&ModelCapabilities>,
-) {
+) -> crate::composition::Breakdown {
     let active = history::active(history);
     let active: Vec<&Message> = active.iter().map(AsRef::as_ref).collect();
     let configured = capabilities.map(|found| found.supports_mid_conversation_system);
-    let breakdown = crate::composition::measure(
+    crate::composition::measure(
         &request.system,
         &active,
         &request.tools,
         &request.options.tool_flags,
         &request.selection.model,
         configured,
-    );
+    )
+}
+
+/// Stores the measured request for the session, at the time the request starts (see `measure_composition`).
+pub(crate) fn record_composition(
+    scope: &RunScope,
+    request: &ModelRequest,
+    composition: &crate::composition::Breakdown,
+    started_at_ms: u64,
+) {
     let record = crate::composition::record(
         &request.selection.provider,
         &request.selection.model,
-        scope.parts.clock.now_ms(),
-        &breakdown,
+        started_at_ms,
+        composition,
     );
     scope.parts.compositions.record(&scope.session, record);
 }
