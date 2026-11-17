@@ -9,6 +9,7 @@
 
 mod actor;
 mod agent_signals;
+mod browser_turn;
 // Fork: specs/fork-rust-node-helper.md F3.
 mod app_tool_context;
 mod append;

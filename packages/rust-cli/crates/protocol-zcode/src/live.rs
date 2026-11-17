@@ -8,7 +8,9 @@ use rust_cli_base::sync::LockUnpoisoned;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use async_trait::async_trait;
-use rust_cli_kernel_api::session_api::{KernelEvent, SequencedEvent, SessionHandle, SessionView};
+use rust_cli_kernel_api::session_api::{
+    KernelEvent, SequencedEvent, SessionHandle, SessionView, TurnOutcome,
+};
 use rust_cli_protocol_core::delivery::TopicLog;
 use rust_cli_protocol_core::sessions::SessionSink;
 use serde_json::{Value, json};
@@ -97,6 +99,8 @@ pub(crate) type ChildWatch =
     dyn Fn(&str, u64, bool) -> Option<rust_cli_base::Task<()>> + Send + Sync;
 
 pub struct Live {
+    /// Fork (D2): the generation of this Live's screenshot port binding; drop removes only that binding.
+    screenshot_binding: u64,
     context: Arc<Context>,
     topics: Arc<Topics>,
     session: String,
@@ -169,6 +173,15 @@ impl Live {
             preparation,
             worktree_creation,
         } = restored;
+        // Fork (D2): the end-of-turn screenshot of this session goes through this server's helper.
+        let screenshot_binding = rust_cli_kernel_api::browser_turn::bind(
+            view.meta.id.as_str(),
+            Arc::new(
+                crate::fork::browser_turn_screenshot::HelperTurnScreenshots {
+                    context: context.clone(),
+                },
+            ),
+        );
         let levels = view.selection.reasoning.iter().cloned().collect();
         // A subagent's child session (`sess_subagent_<agentId>`) is reported by its parent.
         let telemetry = (!view.meta.id.as_str().starts_with(SUBAGENT_SESSION_PREFIX))
@@ -178,6 +191,7 @@ impl Live {
         context.register(view.meta.id.as_str(), &workspace);
         Self {
             session: view.meta.id.as_str().to_owned(),
+            screenshot_binding,
             workspace,
             created_at: view.meta.created_at_ms,
             handle,
@@ -1029,6 +1043,9 @@ impl Live {
 
 impl Drop for Live {
     fn drop(&mut self) {
+        // Fork (D2): the session's screenshot port and any candidate it still holds go with it.
+        rust_cli_kernel_api::browser_turn::unbind(&self.session, self.screenshot_binding);
+        rust_cli_kernel_api::browser_turn::forget_session(&self.session);
         for (_, task) in self.state().watches.drain() {
             task.abort();
         }
@@ -1122,6 +1139,18 @@ impl SessionSink for Live {
         }
         let deltas = state.projection.apply(&event, now);
         state.log.record(deltas);
+        // F4b: the helper's broker runs turnEnded once per finished turn, after the turn's own calls answered.
+        if let KernelEvent::TurnFinished { turn, outcome, .. } = &event.event
+            && let Some(helper) = self.context.node_helper()
+        {
+            // A failed turn is not a completed one: the helper's wire reason must not read as success.
+            let reason = match outcome {
+                TurnOutcome::Interrupted => "interrupted",
+                TurnOutcome::Failed { .. } => "failed",
+                _ => "completed",
+            };
+            helper.turn_ended(&self.session, turn.as_str(), reason);
+        }
         let provider = provider_of(&state.projection);
         // The automation the Host sent with the input this turn starts (remembered by sendText, the only writer).
         let automation = match &event.event {

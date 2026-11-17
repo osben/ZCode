@@ -34,10 +34,13 @@ pub(super) fn rows(projection: &mut Projection, view: &SessionView) {
         Some((turn, last)) if last == index => turn.as_str().to_owned(),
         _ => format!("{user}:turn:{turns}"),
     };
+    // Fork (D2): the user message of the turn being projected; its stored screenshot goes before the turn closes.
+    let mut anchor: Option<String> = None;
     for (index, message) in view.messages.iter().enumerate() {
         match message {
             Message::User(user) if opening(message, turn_ended) && !is_notice(message) => {
                 if projection.turn.is_some() {
+                    flush_screenshots(projection, &mut anchor, view, at, &mut out);
                     projection.close_cold_turn(interrupted, at, &mut out);
                 }
                 interrupted = false;
@@ -45,6 +48,7 @@ pub(super) fn rows(projection: &mut Projection, view: &SessionView) {
                 turns += 1;
                 turn_ended = false;
                 let turn = turn_id(index, user.id.as_str(), turns);
+                anchor = Some(user.id.as_str().to_owned());
                 // Fork: the stored submitting command, so the App settles its pending command after a restart.
                 let command = view.commands.get(&user.id).map(|c| c.as_str().to_owned());
                 let model = super::model_change::cold_turn_model(view, index, opens_turn);
@@ -74,12 +78,14 @@ pub(super) fn rows(projection: &mut Projection, view: &SessionView) {
             }
             Message::User(user) if opening(message, turn_ended) => {
                 if projection.turn.is_some() {
+                    flush_screenshots(projection, &mut anchor, view, at, &mut out);
                     projection.close_cold_turn(interrupted, at, &mut out);
                 }
                 interrupted = false;
                 turns += 1;
                 turn_ended = false;
                 let turn = turn_id(index, user.id.as_str(), turns);
+                anchor = Some(user.id.as_str().to_owned());
                 let model = super::model_change::cold_turn_model(view, index, opens_turn);
                 projection.start_turn(&turn, None, model, at, 0, &mut out);
                 projection.message(message, at, 0, &mut out);
@@ -176,8 +182,22 @@ pub(super) fn rows(projection: &mut Projection, view: &SessionView) {
         if view.running {
             projection.phase = Phase::Running;
         } else {
+            flush_screenshots(projection, &mut anchor, view, at, &mut out);
             projection.close_cold_turn(interrupted, at, &mut out);
         }
+    }
+}
+
+/// Fork (D2): the stored screenshots of the turn anchored to `anchor`, before the turn closes.
+fn flush_screenshots(
+    projection: &mut super::Projection,
+    anchor: &mut Option<String>,
+    view: &SessionView,
+    at: u64,
+    out: &mut Vec<serde_json::Value>,
+) {
+    if let Some(anchor) = anchor.take() {
+        projection.cold_browser_screenshots(&anchor, &view.browser_screenshots, at, 0, out);
     }
 }
 

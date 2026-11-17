@@ -7,6 +7,7 @@ mod actions;
 mod background_result;
 mod background_shells;
 mod bash_progress;
+mod browser_screenshot;
 mod cold;
 pub mod elicitation;
 mod external_agent_config;
@@ -930,6 +931,18 @@ impl Projection {
                     &mut out,
                 );
             }
+            KernelEvent::BrowserTurnScreenshot {
+                turn,
+                tool_use,
+                display,
+            } => self.browser_turn_screenshot(
+                turn.as_str(),
+                tool_use.as_str(),
+                display,
+                now,
+                seq,
+                &mut out,
+            ),
             KernelEvent::ExternalToolRow {
                 tool_use,
                 name,

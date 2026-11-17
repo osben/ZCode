@@ -407,6 +407,7 @@ Status: decided 2026-11-16 (the user accepted the recommendations below). Built 
 - **F4-D4 (E2E).** The browser-pane specs need Main and a macOS desktop. They run on macOS only, and the box runs what it can run. Nothing opens an Electron window on the user's Mac from an agent run.
 - **F4-D5 (broker scope: full port, 2026-11-16).** F4b ports Node's browser control broker (`zcode-protocol/browser-control-broker.ts`) in full into the helper, including child-session parents (`childSessionParents`, `forChildSession`) and tab-owner routing (`parentTabOwnerChildren`). Reason: the goal is Node parity, and subagents of Rust sessions use the browser. A top-level-only subset would refuse browser calls from subagents that Node serves. Red tests use Node's broker tests as the oracle where they can be ported.
 - **F4-D6 (computer-use socket, 2026-11-16).** `ZCODE_CUA_PERMISSION_BROKER_SOCKET` reaches node_repl's config only, and no other helper-hosted server. The value is the in-process capture first, then the helper's env (the CLI entry strips the variable from process.env before the helper runs). With it, node_repl gets Node's trusted markers (`ZCODE_CUA_NODE_REPL_HOST`, `ZCODE_PLUGIN_ID`, plugin authority, refresh marker), because node_repl's plugin-host child restores the socket only when they are present. Only a stdio node_repl is touched, as in Node. Known gap, not fixed in F4c: Rust's other child processes (MCP stdio, tools) still inherit the variable from the Rust process env, as they did before this change. Clearing it for them is a separate change.
+- **F4-D7 (child-session registration, 2026-11-16).** Rust is the only sender of child-session facts. It sends `helper/browser/childSession` when a subagent session is opened in the helper, and `helper/browser/childSessionEnd` when it ends. The helper never reads a parent from the store, so Node's `forChildSession` bookkeeping is driven by these two messages only. Rust always uses `tabOwner: "parent"` for subagents, which is what Node's core subagent runner passes (`core/src/runtime/methods/subagent.ts`). A registration whose request times out, or whose open caller is dropped, is ended too (the helper may have accepted it). A session closed while its open is in flight ends its registration when the open succeeds. A browser relay is answered only for a session this agent opened in the helper or runs live: the store row is shared with other agents and the Node main agent, so it does not prove ownership. A failed turn reaches the helper with reason `failed`, not `completed`.
 
 #### Owners
 
@@ -449,6 +450,95 @@ Ordering guarantees (kept from F3): `helper/turn/ended` goes only after the turn
 - Rust: `select.rs` serves browser-use and computer-use with a helper (they load, with their skills), and attaches one `node_repl` server (transport NodeHelper, timeout 600000 ms) to the first admitted of them. The node-repl-host plugin itself stays skipped. Known gap: when browser-use and computer-use are both disabled, node_repl is not attached, as in Node; when the host plugin is missing, Node's helper returns no config and the open logs an unknown server, so the tool errors on its call.
 - Cancel: the existing F3 pipe path (`notifications/cancelled`) carries a node_repl cancel. No separate test yet.
 - Shutdown: when Rust drops the helper generation, it first releases the helper's stdin (the protocol writer task is aborted, so the write half closes; the reader's peer clone would otherwise hold it open until the helper exits). The helper then sees EOF and closes its sessions (`mcpHost.dispose`: pipes, then session leases) and `pool.close()`. Rust waits 3 s (`HELPER_STOP_GRACE`) for the process to exit, then `Shutdown::Immediate` if it did, or `Shutdown::Graceful` (TERM, then KILL) if not. The stdin release is unit-tested in protocol-zcode (`retiring_a_helper_closes_its_stdin_so_it_can_exit_on_eof`); the grace-then-TERM choice is only checked by the stop-mode tests in the cli crate, and the whole path is checked in the box only by reading the code.
+
+#### F4b browser broker (design, 2026-11-16)
+
+Owners: helper (broker socket, scope state machine, child registrations); Rust (relays the broker's Host requests after an owned-session check, and sends child-session facts); Main (the browser).
+
+Port: the helper reuses Node's `createProtocolBrowserControlBroker` (`zcode-protocol/browser-control-broker.ts`) unchanged, with its `requestClient` routed through the helper's request link to Rust, which relays to Main. The Node broker tests (`bootstrap/tests/browser-control-broker.test.ts`) are the oracle for the port.
+
+Messages (Rust ↔ helper), strict zod on the helper side:
+
+| Message                                                 | Kind                  | Params                                                  | Answer / refusal                                                                   |
+| ------------------------------------------------------- | --------------------- | ------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `helper/browser/childSession`                           | request               | `{childSessionId, parentSessionId, tabOwner: "parent"}` | `{}`; `-32602` when the child is already registered to another parent or tab owner |
+| `helper/browser/childSessionEnd`                        | notification          | `{childSessionId}`                                      | none; unknown id logged and ignored                                                |
+| `helper/turn/ended`                                     | notification          | `{sessionId, turnId, reason}`                           | none; drives the broker `turnEnded`                                                |
+| `interaction/browserList`, `interaction/browserExecute` | helper → Rust request | Node's broker params                                    | the Host's answer; Rust refuses an unowned `sessionId`                             |
+
+Idempotency:
+
+- A duplicate `childSession` with the same id, parent and tab owner is a no-op answer `{}`.
+- A `childSession` with the same id and another parent or tab owner is refused.
+- A `childSessionEnd` for an unknown id is logged and ignored.
+- A parent that closes before its child keeps the child's registration. The child's later `childSessionEnd` still releases it. Until then the child's browser calls fail, because its parent record is gone.
+
+Order: Rust sends `childSessionEnd` before it closes the child session. For each session, the helper runs the broker `closeSession` (scope release) before its MCP lease closes.
+
+Built in F4b: `fork-rust-helper/browser-control.ts` (Node's broker reused unchanged, child registrations under strict zod); `server.ts` dispatches the child messages and `helper/turn/ended`; `mcp-host.ts` injects node_repl's broker socket and token at open, and releases the session's scope before its lease closes; Rust relays `interaction/browserList` and `interaction/browserExecute` for owned sessions (`browser_request`), strips `requestKey`, and sends `childSession` (a request, before the open; a refused one fails the open) and `childSessionEnd` (a notification, in the same task before the close, and after a failed open). Red tests are the seven cases of `f4b-browser-control.test.ts`, a subset of Node's `browser-control-broker.test.ts` (not all 30+ cases yet). D2, the end-of-turn screenshot, is built in its own PR (below).
+
+Acceptance: the Node broker test cases port as red tests; box E2E `conversation-session-node-repl-stateless-browser-multisession` passes on Rust.
+
+#### D2 end-of-turn screenshot (design, 2026-11-16, approved A + A1 + C2)
+
+Port of Node's `appendBrowserTurnScreenshot` (`core/src/runtime/methods/browser-turn-screenshot.ts`), decision D2 above. Node reference facts, checked in the code:
+
+- Order: the screenshot runs in Node's turn loop after the model loop completed and before `TurnComplete` (`turn.ts` ~1019). `browserControlPort.turnEnded` runs later, in the turn's `finally` (`turn.ts` ~1262). So the screenshot settles before `turnEnded`.
+- Candidate: the only production writer is the `zcode/browserTurnScreenshot` key of a node_repl tool result's `_meta` (`browser-bridge.ts`, `recordBrowserTurnToolResult`). `recordBrowserTurnPageActivity` has no production caller (tests only), so it is not ported.
+- Timeout and abort: Node's capture passes `turnAbortSignal` to `port.execute`, and the broker sends `cancelRequest` to Main when it aborts (`browser-control-broker.ts` ~220-260). Rust matches this: the capture's cancel token is the turn's abort token (`Running::abort`), and a cancel drops the helper request. Node has no timeout. Rust adds one safety net: the helper request is bounded by the helper's default request timeout (`Timing::default_request`, 180 s), so a stuck Main cannot hold the turn end. Known differences: (a) Rust's cancel drops the helper request but does not send `cancelRequest` to Main; (b) the Rust actor is single-threaded, so an interrupt that arrives during the capture waits for the capture (or the 180 s bound) instead of cancelling it. Both are open for the coordinator.
+- Part: a tool part with `state.input.source = "browser_turn_end"` and `metadata.display` of kind `node_repl_images`, image at most 200 KiB base64 and at most 2048 px (`HOST_NODE_REPL_IMAGE_MAX_DIMENSION`). The part is excluded from model blocks (`isBrowserTurnScreenshotPart`).
+
+Decisions:
+
+- **D2-A (hook point).** The screenshot settles inside the session crate's `finish_turn` (`session/src/turn.rs`, the new module `session/src/browser_turn.rs`): after the model loop's result is known and before the `KernelEvent::TurnFinished` append. Only an outcome of `Success` (Node: the loop completed) with a prompt is captured. Rejected: the protocol sink `Live::event` (`protocol-zcode/src/live.rs`). It runs after `TurnFinished` is logged, so it cannot persist anything, and `helper/turn/ended` (sent there) would come before the capture. Order: capture, persist, log the row event, log `TurnFinished`, and then `helper/turn/ended` from `Live::event`, as Node. A capture failure, a write failure or a missing port logs and skips the row; the turn's outcome never changes.
+- **D2-A1 (persisted shape).** One fork entry per captured screenshot, `Fact::Entry { kind: "fork_browser_turn_screenshot", id: <tool use id>, data: { anchor: <the turn's prompt message id>, toolUseId, display } }`. The store writes it as `session_entry` type `rust-cli/fork_browser_turn_screenshot` (`node-store/src/facts.rs`). Compatibility: Node reads `session_entry` by type and never selects an unknown type, so Node ignores it; an older fork build reads only the kinds it knows, so it ignores this one too. The entry is not a `Message`, so it never enters model history. The cold projection reads it with `store.entries(session, kind)` at actor open, as `peer_restore` does. Rejected: a model-invisible `Message`, because every model request would have to filter it, and Node's `isBrowserTurnScreenshotPart` filter is not a Rust precedent. The shared `tasks-index.sqlite` has no `session_entry`, so it is not affected.
+- **D2-C2 (candidate channel, single owner).** Written only by `ext/src/mcp/tool.rs`, when a helper-hosted `tools/call` answer carries `_meta["zcode/browserTurnScreenshot"]` with a string `browserId` and an integer `browserGeneration` (Node's guard in `recordBrowserTurnToolResult`). The registry is in `kernel-api` (`browser_turn.rs`), a process-level map like Node's module-level `Map`. It is keyed by (session, run): the tool context carries the run id, not the turn id, and a main-loop turn's run is the `Running::run` that `finish_turn` reads. It is consumed exactly once, by `finish_turn`, right after the model task settles and before the outcome is decided, whatever the outcome. A session's Live drop removes its candidates (`forget_session`). A later call in the same turn replaces the candidate, as Node does.
+- **D2-H (helper side).** The helper forwards `_meta` already (`f3-protocol.ts` `toWireResult`); the Rust tools/call path dropped it until D2. New helper request `helper/browser/turnScreenshot`, params `{sessionId, turnId, browserId, browserGeneration}` (strict zod). The helper runs Node's `list` then `screenshot` on the session's broker port (its child registration's port, else the top-level port), and answers `{image?: {base64, mimeType}}`. Broker failures and refused captures are logged and answered with `{}`, as Node swallows them. Rust sends it with `NodeHelper::turn_screenshot` (only for a session this generation holds open), and the scope state stays in the helper (F4-D2).
+- **D2-P (display).** The protocol server's port (`protocol-zcode/src/fork/browser_turn_screenshot.rs`) re-encodes the image with `rust-cli-image` (`prepare`, budget 200 KiB base64, 2048 px) only when it is over the limit, like Node's `imageProcessorPort.prepareForModel`; an image that still does not fit is dropped. The row carries the display on the row display channel (`row.display`), live and cold, as Node's `toProtocolToolCallDisplay` allows. The output display path that drops `node_repl_images` (`projection/mod.rs`) is unchanged for other tools.
+- **D2-Bind (port owner).** `Live::new` binds the session's port (`kernel_api::browser_turn::bind`) and `Live::drop` unbinds it and forgets its candidates. The session crate reads the port through the kernel-api registry; no `SessionDeps` change. Known race: a Live dropped after a newer Live bound the same session would unbind it; the reopen path has not been seen to do that.
+
+Owners:
+
+| Thing                                                         | Owner                                                                       |
+| ------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| Candidate `{browserId, browserGeneration}` per (session, run) | `kernel-api` registry; writer `ext` MCP tool result; consumer `finish_turn` |
+| Capture (list, screenshot) and scope state                    | Helper (`helper/browser/turnScreenshot` on the broker port)                 |
+| Downscale and the entry, persisted once per capture           | Rust session (`finish_turn`)                                                |
+| Row (live `KernelEvent`, cold entry read)                     | Rust projection (`protocol-zcode`)                                          |
+| `helper/turn/ended`                                           | Rust `Live::event`, after `TurnFinished` (unchanged)                        |
+
+Event order:
+
+```
+Model loop   finish_turn (session)          Helper                 Main         Projection / Host
+  │ tool result _meta candidate ─► registry[(session,turn)]
+  │ loop Completed ─► take candidate (always, once)
+  │               ── helper/browser/turnScreenshot ─► list, screenshot ─ interaction/browserExecute ─► (scope in helper)
+  │               ◄── {image} or {} (failure: no row, turn unchanged)
+  │               downscale if over limit
+  │               commit Fact::Entry fork_browser_turn_screenshot (one batch; failure: logged, no row)
+  │               log KernelEvent::BrowserTurnScreenshot ────────────────────────────────────► live row (row.display)
+  │               log KernelEvent::TurnFinished ─► Live::event ─► helper/turn/ended ─► broker turnEnded
+```
+
+Acceptance (red first):
+
+1. The candidate is recorded only from a helper-hosted `tools/call` answer whose `_meta` has the key; the registry consumes it exactly once; an error, an abort, a superseded turn, or a session close leaves no candidate (Node's `browser-turn-screenshot.test.ts` cases: record from the MCP child marker, skip without a candidate, consume clears it).
+2. A turn with a candidate and a Success outcome appends one `fork_browser_turn_screenshot` entry and one `BrowserTurnScreenshot` event before `TurnFinished`, in that order.
+3. A failed or absent capture appends nothing, logs, and the turn outcome is unchanged. An aborted turn runs no capture and consumes its candidate.
+4. The entry is not in the next model request's messages (explicit test).
+5. The live row and the cold reopen both show the row with `display.kind == "node_repl_images"` on the row display channel, placed after the turn's assistant output.
+6. Helper: `helper/browser/turnScreenshot` lists, then screenshots the active tab, and answers `{}` on any broker failure.
+
+Tests as built:
+
+- Binding race (kernel-api `browser_turn_tests.rs`): `dropping_an_older_binding_keeps_the_newer_one`. Binds are generation tokens; `unbind` removes only its own generation.
+- Full-turn (session `browser_turn_tests.rs`, own session id per test): success (one capture, one entry, row before `TurnFinished`, one candidate consumed); the next model request carries no trace of the screenshot; abort (interrupt) consumes the candidate, no capture, no entry; failed turn (`InvalidRequest`), same; superseded (interrupt, then a newer input), the first turn captures nothing and the second captures with its own candidate, two candidates consumed.
+- Projection (`browser_screenshot_tests.rs`): live row keeps the display; cold row placed after its turn's output; a cut turn's row is dropped.
+- Node-store (`lib_mode_tests.rs`): the entry is a `rust-cli/` session_entry and writes no message.
+- Helper (`f4-d2-turn-screenshot.test.ts`): list then screenshot; no active tab; refused screenshot; Host failure; child routed by tab owner.
+
+E2E: the spec `conversation-session-node-repl-stateless-browser-multisession` checks, after its last session check, that a `node-repl-browser-turn-screenshot` row exists. Node's debug run (temporary logging, removed) shows the path up to the capture: the candidate is recorded (`_meta["zcode/browserTurnScreenshot"]` on both js results), `list` returns the active tab, and `screenshot` returns `backend_unavailable`. The cause is the platform gate: `packages/desktop/src/main/browserView/browserScreenshotSurfaceCoordinatorWiring.ts:37-38` enables the transparent-window bootstrap only on darwin and win32, and `browserGuestManager.ts:2012-2013` maps the surface failure to `backend_unavailable`. So the row is darwin-only. The assertion is gated with `if (process.platform !== "darwin") this.skip();` as `acp-agent-delegation` does. Box results: Node `1 skipped (11.6s)`, Rust `1 skipped (23.7s)`, shard exit 0 in both. Because `this.skip()` marks the whole `it` skipped, the Linux run reports skipped, not passed. The row is not verified on Linux; it needs a macOS run.
 
 #### Shutdown order (F4a)
 

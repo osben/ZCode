@@ -68,6 +68,15 @@ import {
   FORK_RUST_HELPER_PROTOCOL_VERSION,
 } from "./methods.js";
 import { errorMessage, FORK_RUST_HELPER_F3, requireString } from "./f3-protocol.js";
+import {
+  FORK_RUST_HELPER_BROWSER_CHILD_SESSION,
+  FORK_RUST_HELPER_BROWSER_CHILD_SESSION_END,
+  FORK_RUST_HELPER_BROWSER_TURN_SCREENSHOT,
+  FORK_RUST_HELPER_TURN_ENDED,
+  type ForkRustBrowserControl,
+  turnScreenshotParamsSchema,
+} from "./browser-control.js";
+import { z } from "zod";
 import type { Logger } from "@zcode/contracts";
 import type { ForkRustHelperMcpHost } from "./mcp-host.js";
 import type { ForkRustHelperClient } from "./rust-client.js";
@@ -84,6 +93,8 @@ export interface ForkRustHelperServerDeps {
   client: ForkRustHelperClient;
   /** F3: Rust's MCP pipes and the helper sessions. */
   mcpHost: ForkRustHelperMcpHost;
+  /** F4b: the browser control; its child-session and turn-end messages are refused without it. */
+  browser?: ForkRustBrowserControl;
   logger?: Logger;
 }
 
@@ -187,8 +198,21 @@ export class ForkRustHelperServer {
     };
     this.handlers = new Map(Object.entries(handlers));
     const host = deps.mcpHost;
+    const browser = deps.browser;
     this.helperRequests = new Map<string, HelperRequestHandler>([
       [FORK_RUST_HELPER_F3.mcpConnect, (params) => host.connect(params)],
+      // F4-D7: child-session facts come from Rust only; a conflict is refused with -32602.
+      [FORK_RUST_HELPER_BROWSER_CHILD_SESSION, async (params) => {
+        if (!browser) throw new ProtocolRequestError(-32601, "The browser control is not configured");
+        browser.childSession(params);
+        return {};
+      }],
+      [FORK_RUST_HELPER_BROWSER_TURN_SCREENSHOT, async (params) => {
+        if (!browser) throw new ProtocolRequestError(-32601, "The browser control is not configured");
+        const parsed = turnScreenshotParamsSchema.safeParse(params);
+        if (!parsed.success) throw new ProtocolRequestError(-32602, "Invalid helper/browser/turnScreenshot params");
+        return browser.turnScreenshot(parsed.data);
+      }],
       [FORK_RUST_HELPER_F3.sessionOpen, (params) => host.openSession(params)],
       [FORK_RUST_HELPER_F3.appToolsCall, (params) => host.callAppTool(params)],
       [FORK_RUST_HELPER_F3.ping, async () => ({})],
@@ -199,6 +223,11 @@ export class ForkRustHelperServer {
       [FORK_RUST_HELPER_F3.mcpClose, async (params) => host.closePipe(requireString(params, "connection"))],
       [FORK_RUST_HELPER_F3.sessionClose, (params) => host.closeSession(params)],
       [FORK_RUST_HELPER_F3.appToolsCancel, async (params) => host.cancelAppTool(params)],
+      [FORK_RUST_HELPER_BROWSER_CHILD_SESSION_END, (params) => browser?.childSessionEnd(params) ?? Promise.resolve()],
+      [FORK_RUST_HELPER_TURN_ENDED, async (params) => {
+        const { sessionId, turnId } = requireTurnEnded(params);
+        await browser?.turnEnded(sessionId, turnId);
+      }],
     ]);
   }
 
@@ -299,4 +328,19 @@ export class ForkRustHelperServer {
     this.operations.delete(params.operationId);
     return { operationId: params.operationId, cancelled: true };
   }
+}
+
+const turnEndedParamsSchema = z
+  .object({
+    sessionId: z.string().trim().min(1),
+    turnId: z.string().trim().min(1),
+    reason: z.string().optional(),
+  })
+  .strict();
+
+/** `helper/turn/ended {sessionId, turnId, reason}`: strict, so a malformed turn end is refused and logged. */
+function requireTurnEnded(params: unknown): { sessionId: string; turnId: string } {
+  const parsed = turnEndedParamsSchema.safeParse(params);
+  if (!parsed.success) throw new ProtocolRequestError(-32602, "Invalid helper/turn/ended params");
+  return { sessionId: parsed.data.sessionId, turnId: parsed.data.turnId };
 }

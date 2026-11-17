@@ -366,7 +366,12 @@ export function NodeReplToolCallBlock(context: ToolCallBlockRenderContext) {
   );
 
   if (model.displaySource === "browser_turn_end") {
-    return <NodeReplImageGrid images={model.images} resultImageLabel={resultImageLabel} />;
+    // The E2E spec finds the end-of-turn screenshot row by this testid (Node and Rust share the row shape).
+    return (
+      <div data-testid="node-repl-browser-turn-screenshot">
+        <NodeReplImageGrid images={model.images} resultImageLabel={resultImageLabel} />
+      </div>
+    );
   }
 
   return (

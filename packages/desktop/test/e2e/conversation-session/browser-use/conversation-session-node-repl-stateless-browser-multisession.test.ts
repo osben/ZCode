@@ -34,6 +34,8 @@ const SESSION_A_MARKER = "E2E_NODE_REPL_BROWSER_STATELESS_A";
 const SESSION_B_MARKER = "E2E_NODE_REPL_BROWSER_STATELESS_B";
 const SESSION_A_DONE = "E2E_NODE_REPL_BROWSER_STATELESS_A_DONE";
 const SESSION_B_DONE = "E2E_NODE_REPL_BROWSER_STATELESS_B_DONE";
+// The end-of-turn browser screenshot row (Node appendBrowserTurnScreenshot, Rust D2); the UI marks it with this testid.
+const TURN_END_SCREENSHOT_TESTID = "node-repl-browser-turn-screenshot";
 const E2E_PATHS = getE2EAppDataPaths();
 
 interface McpLogContext extends Record<string, unknown> {
@@ -101,6 +103,26 @@ describe("Node REPL Browser Use 无状态多 Session E2E", () => {
         !snapshot.timelineText.includes(SESSION_A_DONE),
       "切回 Session B 后出现了 Session A 的结果",
     );
+
+    // D2 (end-of-turn screenshot): Node and Rust append a node_repl_images row after the turn that used the browser.
+    // The capture needs the macOS screenshot surface: on Linux the candidate and the list succeed, but the screenshot
+    // answers backend_unavailable (packages/desktop/src/main/browserView/browserScreenshotSurfaceCoordinatorWiring.ts:37-38
+    // gates the transparent bootstrap to darwin/win32; browserGuestManager.ts:2012-2013 maps the failure), so no row exists.
+    // Guarded off macOS only: the rest of this test runs and passes on Linux.
+    if (process.platform === "darwin") {
+      await selectV4TaskById(sessionA);
+      await browser.waitUntil(
+        async () =>
+          browser.execute(
+            (testId) => document.querySelectorAll(`[data-testid="${testId}"]`).length > 0,
+            TURN_END_SCREENSHOT_TESTID,
+          ),
+        {
+          timeout: 60_000,
+          timeoutMsg: "Session A 的 Browser Use 轮次结束后没有出现截图行",
+        },
+      );
+    }
   });
 });
 

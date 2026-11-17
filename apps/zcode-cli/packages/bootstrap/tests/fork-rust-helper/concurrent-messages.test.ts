@@ -4,6 +4,11 @@
 import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
 import type { ZCodeProtocolMessage } from "@zcode/shared";
+import {
+  FORK_RUST_HELPER_BROWSER_CHILD_SESSION,
+  FORK_RUST_HELPER_BROWSER_CHILD_SESSION_END,
+  FORK_RUST_HELPER_TURN_ENDED,
+} from "../../src/fork-rust-helper/browser-control.js";
 import { isConcurrent } from "../../src/fork-rust-helper/runtime.js";
 import { ZCodeProtocolNdjsonConnection } from "../../src/zcode-protocol/transport.js";
 
@@ -62,6 +67,18 @@ describe("fork: concurrent messages on the protocol connection", () => {
     await vi.waitFor(() => expect(answers).toHaveLength(2));
     link.input.end();
     await link.connection.waitForClose();
+  });
+
+  // Rust awaits childSession with the open timeout before session/open, and sends childSessionEnd and turn/ended
+  // before session/close. Behind a queued plugin install those would wait for the install (F4b, F4-D5).
+  it("lets the F4b session-lifecycle methods bypass the serial queue", () => {
+    for (const method of [
+      FORK_RUST_HELPER_BROWSER_CHILD_SESSION,
+      FORK_RUST_HELPER_BROWSER_CHILD_SESSION_END,
+      FORK_RUST_HELPER_TURN_ENDED,
+    ]) {
+      expect(isConcurrent({ jsonrpc: "2.0", id: 1, method, params: {} } as ZCodeProtocolMessage)).toBe(true);
+    }
   });
 
   it("keeps the serial order for messages the option does not name", async () => {

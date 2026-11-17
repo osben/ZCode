@@ -175,6 +175,13 @@ pub enum KernelEvent {
     TurnControlOnly {
         turn: TurnId,
     },
+    /// Fork (D2): the end-of-turn browser screenshot of `turn`, appended before its `TurnFinished` (Node's
+    /// `browser_turn_end` tool part, shown as one completed row). `display` is the `node_repl_images` display.
+    BrowserTurnScreenshot {
+        turn: TurnId,
+        tool_use: ToolUseId,
+        display: Value,
+    },
     TurnFinished {
         turn: TurnId,
         outcome: TurnOutcome,
