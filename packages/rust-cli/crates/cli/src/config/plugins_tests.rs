@@ -149,7 +149,14 @@ async fn candidates_follow_the_node_order() {
         suppressed_builtins: vec!["zcode-guide@zcode-plugins-official".to_owned()],
         options: BTreeMap::new(),
     };
-    let sources = sources(section.clone(), "/Users/dev/repo", &root).await;
+    // Fork: the entry-captured process environment rides along for the plugin MCP servers' `${NAME}` references
+    // (Node `adapters/src/plugins/template.ts`); assert the wiring with a populated snapshot.
+    let process_env: rust_cli_base::secret::EnvSnapshot =
+        [("E2E_PLUGIN_SECRET".to_owned(), "s3cret".to_owned())]
+            .into_iter()
+            .collect();
+    let sources = sources(section.clone(), "/Users/dev/repo", &root, &process_env).await;
+    assert_eq!(sources.env.get("E2E_PLUGIN_SECRET"), Some("s3cret"));
     let candidates: Vec<(String, &str, PluginOrigin)> = sources
         .candidates
         .iter()
@@ -195,7 +202,7 @@ async fn sources_of(
     section: PluginSection,
     root: &rust_cli_paths::StoragePath,
 ) -> rust_cli_ext::plugins::PluginSources {
-    sources(section, "/Users/dev/repo", root).await
+    sources(section, "/Users/dev/repo", root, &Default::default()).await
 }
 
 #[test]

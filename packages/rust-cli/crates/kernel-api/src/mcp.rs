@@ -5,6 +5,7 @@
 //! 换成远端执行环境的实现。
 
 use std::collections::BTreeMap;
+use std::fmt;
 
 use async_trait::async_trait;
 use futures_util::StreamExt;
@@ -17,7 +18,10 @@ use crate::env::WorkspaceRef;
 /// 一个服务器的传输配置（stdio / sse / http 三种）。
 /// 本机的服务器：`${VAR}` 已由入口层按来源的规则处理（`--mcp-config` 展开，配置文件原样）。绑定到远端机器的
 /// 服务器：值是配置的原文，由那台机器的执行器用它自己的环境展开（[`crate::mcp_vars`]，remote-exec.md §22.7）。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// `Debug` 是手写的：`env` 与 `headers` 的值可能带着展开后的秘密（插件的 `${NAME}` 在敏感位解析），只印名字
+/// （base R2-13）；其余字段原样。
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum McpTransportConfig {
     Stdio {
@@ -47,6 +51,45 @@ pub enum McpTransportConfig {
     /// (`McpConnect.server`) crosses to the helper, which takes the config from its own Node plugin resolution. Always
     /// on the main env: the helper is a child of this process.
     NodeHelper,
+}
+
+impl fmt::Debug for McpTransportConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Stdio {
+                command,
+                args,
+                env,
+                cwd,
+            } => f
+                .debug_struct("Stdio")
+                .field("command", command)
+                .field("args", args)
+                .field("env", &NamesOnly(env))
+                .field("cwd", cwd)
+                .finish(),
+            Self::Sse { url, headers } => f
+                .debug_struct("Sse")
+                .field("url", url)
+                .field("headers", &NamesOnly(headers))
+                .finish(),
+            Self::Http { url, headers } => f
+                .debug_struct("Http")
+                .field("url", url)
+                .field("headers", &NamesOnly(headers))
+                .finish(),
+            Self::NodeHelper => f.debug_struct("NodeHelper").finish(),
+        }
+    }
+}
+
+/// `env` / `headers` 的 `Debug`：只印名字（值可能带着展开后的秘密，R2-13）。
+struct NamesOnly<'a>(&'a BTreeMap<String, String>);
+
+impl fmt::Debug for NamesOnly<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_list().entries(self.0.keys()).finish()
+    }
 }
 
 impl McpTransportConfig {

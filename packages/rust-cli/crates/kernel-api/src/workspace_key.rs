@@ -57,6 +57,13 @@ impl SessionWorkspaces {
 pub trait WorkspaceLayerHost: Send + Sync {
     async fn load(&self, workspace: &WorkspaceRef);
 
+    /// Loads ahead of a session open that is about to follow (the print `--continue` prewarm): the
+    /// next open of the workspace reuses this read instead of re-reading
+    /// (specs/fork-rust-workspace-plugins-mcp.md, "As built: session-open re-read").
+    async fn prewarm(&self, workspace: &WorkspaceRef) {
+        self.load(workspace).await;
+    }
+
     /// Re-reads the workspace's layer past the loaded-slot reuse, after a config or trust write
     /// the caller committed (specs/fork-rust-workspace-plugins-mcp.md, "As built: layer reload");
     /// epoch-ordered against a load that is still in flight.

@@ -16,6 +16,7 @@ use rust_cli_kernel_api::machine::Files;
 use rust_cli_kernel_api::mcp::McpTransportConfig;
 use serde_json::Value;
 
+use self::template::environment_name;
 use crate::mcp::{McpScope, McpServer, parse_servers};
 use crate::skills::PluginSkillRoot;
 
@@ -110,9 +111,31 @@ fn paths(value: Option<&Value>) -> Vec<String> {
     }
 }
 
+/// [`Reader::mcp_servers`](Reader::mcp_servers) 的查表（Node `template.ts` `resolveTemplate` 的一个名字）：
+/// 插件目录与项目目录两处都给；`ZCODE_` 前缀的名字也两处都查（Node 在 `allowSensitive` 判定之前解析它们），
+/// 其余名字只在敏感位查、还得是合法环境变量名（[`environment_name`]）。
+fn env_lookup(
+    name: &str,
+    sensitive: bool,
+    root: &str,
+    project: &str,
+    snapshot: &rust_cli_base::secret::EnvSnapshot,
+) -> Option<String> {
+    match name {
+        vars::CLAUDE_PLUGIN_ROOT | vars::ZCODE_PLUGIN_ROOT => Some(root.to_owned()),
+        vars::CLAUDE_PROJECT_DIR | vars::ZCODE_PROJECT_DIR => Some(project.to_owned()),
+        other => (other.starts_with("ZCODE_") || (sensitive && environment_name(other)))
+            .then(|| snapshot.get(other).map(str::to_owned))
+            .flatten(),
+    }
+}
+
 struct Reader<'a> {
     files: &'a dyn Files,
     workspace: &'a WorkspaceRef,
+    /// Fork: the process environment the MCP servers' `${NAME}` references resolve against (Node
+    /// `adapters/src/plugins/template.ts`; carried by [`PluginSources`](self::PluginSources)).
+    env: &'a rust_cli_base::secret::EnvSnapshot,
 }
 
 impl Reader<'_> {
@@ -228,10 +251,29 @@ impl Reader<'_> {
 
     /// `project` 是工作区根：stdio 服务器的环境按 Node（`adapters/src/plugins/mcp.ts`）给插件目录与项目目录，两套
     /// 名字，配置里的 `env` 优先（修复线 F42，config.md §2.5.1；以前不给）。数据目录与插件 ID 不给（ext.md D13）。
-    fn mcp_servers(plugin: &str, dir: &str, project: &str, tables: &[Value]) -> Vec<McpServer> {
-        let root = dir.to_owned();
-        let lookup = move |name: &str| {
-            matches!(name, vars::CLAUDE_PLUGIN_ROOT | vars::ZCODE_PLUGIN_ROOT).then(|| root.clone())
+    /// Fork: 其它名字从入口给的进程环境展开，但分两套（Node `template.ts` `resolveTemplate` 的 `allowSensitive`
+    /// 之分，`mcp.ts` 把 command、args、url 走普通位、env 与 headers 的值走敏感位）：普通位只解析插件目录、项目
+    /// 目录与 `ZCODE_` 前缀的名字（Node 在 `allowSensitive` 判定之前解析它们），任意合法环境变量名只在敏感位解析，
+    /// 秘密不进 command、args 或 URL。环境里没有的名字保持原样并记 missing（插件表既有的容错约定，不像 Node 抛错）。
+    fn mcp_servers(
+        &self,
+        plugin: &str,
+        dir: &str,
+        project: &str,
+        tables: &[Value],
+    ) -> Vec<McpServer> {
+        let snapshot = &self.env;
+        let plain = {
+            let (root, project_dir) = (dir.to_owned(), project.to_owned());
+            move |name: &str| env_lookup(name, false, &root, &project_dir, snapshot)
+        };
+        let sensitive = {
+            let (root, project_dir) = (dir.to_owned(), project.to_owned());
+            move |name: &str| env_lookup(name, true, &root, &project_dir, snapshot)
+        };
+        let lookups = crate::mcp::EnvLookups {
+            plain: &plain,
+            sensitive: &sensitive,
         };
         let provided = [
             (vars::CLAUDE_PLUGIN_ROOT, dir),
@@ -241,7 +283,7 @@ impl Reader<'_> {
         ];
         let mut servers = Vec::new();
         for table in tables {
-            let (found, warnings) = parse_servers(table, McpScope::Plugin, &lookup);
+            let (found, warnings) = parse_servers(table, McpScope::Plugin, &lookups);
             for warning in warnings {
                 tracing::warn!(plugin, warning, "plugin MCP configuration");
             }
@@ -339,7 +381,7 @@ impl Reader<'_> {
                 }
             }
         }
-        let mcp_servers = Self::mcp_servers(&name, dir, self.workspace.root.as_str(), tables);
+        let mcp_servers = self.mcp_servers(&name, dir, self.workspace.root.as_str(), tables);
         Plugin {
             id,
             name,

@@ -79,7 +79,7 @@ pub(crate) async fn open(
 ) -> Result<Session, String> {
     let timed_out = || {
         format!(
-            "MCP server \"{}\" connection timed out after {}ms",
+            "MCP server {} connection timed out after {}ms",
             server.name,
             timeout.as_millis()
         )
