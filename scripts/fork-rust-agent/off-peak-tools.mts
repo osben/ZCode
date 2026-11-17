@@ -18,10 +18,7 @@ import {
 const ENTRIES = [offPeakCreateToolEntry, offPeakListToolEntry];
 
 const assetPath = fileURLToPath(
-  new URL(
-    "../../packages/rust-cli/crates/tools/assets/node_off_peak_tools.json",
-    import.meta.url,
-  ),
+  new URL("../../packages/rust-cli/crates/tools/assets/node_off_peak_tools.json", import.meta.url),
 );
 
 // Node `toolDescriptionForProvider`.
