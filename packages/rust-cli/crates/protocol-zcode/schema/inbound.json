@@ -2029,6 +2029,98 @@
       ],
       "additionalProperties": false
     },
+    "v4/conversation/offPeakControl": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "sessionId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "executionId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "action": {
+              "type": "string",
+              "const": "replace_ticket"
+            },
+            "renewalId": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "ticketId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "requestAuth": {
+              "type": "object",
+              "properties": {
+                "apiKey": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "apiKeyId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "accountScope": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "headers": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "additionalProperties": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "sessionId",
+            "executionId",
+            "action",
+            "renewalId",
+            "ticketId",
+            "requestAuth"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "sessionId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "executionId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "action": {
+              "type": "string",
+              "const": "cancel"
+            }
+          },
+          "required": [
+            "sessionId",
+            "executionId",
+            "action"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
     "v4/conversation/resync": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",

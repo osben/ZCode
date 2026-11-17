@@ -512,6 +512,11 @@ impl Server {
                 .await
                 .map(Reply::new),
             "v4/conversation/rowsRange" => self.rows_range(&params).await.map(Reply::new),
+            "v4/conversation/offPeakControl" => {
+                crate::off_peak_control::control_request(&self.context, &params)
+                    .await
+                    .map(Reply::new)
+            }
             "v4/conversation/contextComposition" => crate::context_composition::read(self, &params)
                 .await
                 .map(Reply::new),

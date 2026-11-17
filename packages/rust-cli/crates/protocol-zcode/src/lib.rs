@@ -28,6 +28,8 @@ mod legacy;
 mod lifecycle;
 mod live;
 mod network_capture;
+mod off_peak_control;
+mod off_peak_lifecycle;
 mod off_peak_port;
 mod preparation;
 mod presence_gate;
