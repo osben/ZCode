@@ -63,9 +63,16 @@ fn only_on_demand_defers_tools_and_disabled_is_not_on_demand() {
 }
 
 #[test]
-fn a_mode_is_ignored_while_the_gate_is_closed() {
-    let gate = resolve_gate(Some(false), Some(ON_DEMAND), &prefs(false, Some(ON_DEMAND)));
+fn a_closed_gate_is_off_even_when_the_parameters_name_on_demand() {
+    let gate = resolve_gate(Some(false), Some(ON_DEMAND), &prefs(false, None));
     assert!(!gate.enabled);
+    assert!(!gate.tools_on_demand);
+}
+
+#[test]
+fn the_parameter_mode_wins_when_the_gate_opened_from_the_preference() {
+    let gate = resolve_gate(None, Some(ALWAYS_ON), &prefs(true, Some(ON_DEMAND)));
+    assert!(gate.enabled);
     assert!(!gate.tools_on_demand);
 }
 
@@ -99,20 +106,20 @@ fn the_mode_takes_only_the_three_wire_values() {
 
 #[test]
 fn the_workflow_tool_set_is_exactly_the_ten_node_names() {
-    let mut names = DYNAMIC_WORKFLOW_TOOLS.to_vec();
-    names.sort_unstable();
-    let mut expected = vec![
-        "AmendWorkflow",
-        "CreateWorkflow",
-        "EvalWorkflowSnippet",
-        "FillWorkflowHole",
-        "GetWorkflowRun",
-        "ListSavedWorkflows",
-        "ListWorkflowRuns",
-        "ResolveWorkflowQuestion",
-        "ResumeWorkflowRun",
-        "SaveWorkflow",
-    ];
-    expected.sort_unstable();
-    assert_eq!(names, expected);
+    // Node's declaration order (`DYNAMIC_WORKFLOW_TOOL_NAMES`, core/src/tool/handlers/index.ts).
+    assert_eq!(
+        DYNAMIC_WORKFLOW_TOOLS,
+        [
+            "CreateWorkflow",
+            "AmendWorkflow",
+            "SaveWorkflow",
+            "ListSavedWorkflows",
+            "EvalWorkflowSnippet",
+            "ListWorkflowRuns",
+            "GetWorkflowRun",
+            "ResumeWorkflowRun",
+            "ResolveWorkflowQuestion",
+            "FillWorkflowHole",
+        ]
+    );
 }

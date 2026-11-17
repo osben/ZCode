@@ -40,8 +40,10 @@ pub struct DynamicWorkflowGate {
     pub tools_on_demand: bool,
 }
 
-/// Node `resolveDynamicWorkflowRuntimeGate`. The create parameters win; the cached preference is the fallback; with
-/// neither the gate is closed (fail-closed). The mode is read only while enabled, and it defaults to `alwaysOn`.
+/// Node `resolveDynamicWorkflowRuntimeGate`. `enabled` is an OR: a `true` parameter or an enabled preference opens the
+/// gate, and a `false` parameter does not close an enabled preference. The mode is read only while the gate is open:
+/// the parameter mode wins over the preference mode, and with neither it is `alwaysOn`. With no open source the gate
+/// is closed (fail-closed).
 pub fn resolve_gate(
     params_enabled: Option<bool>,
     params_mode: Option<DynamicWorkflowMode>,

@@ -83,6 +83,8 @@ pub(super) async fn delete(
     server.topics.remove(&workspace, session);
     // Protocol-owned preference for this id; a later session with the same id starts default.
     server.followups.lock_unpoisoned().remove(&id);
+    // Fork (W1): the dynamic-workflow gate is per record, so a deleted id takes its gate with it.
+    server.dynamic_workflow_gates.lock_unpoisoned().remove(&id);
     tracing::info!(
         event = "protocol.session.deleted",
         session,

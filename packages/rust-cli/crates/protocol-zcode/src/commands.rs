@@ -813,12 +813,12 @@ pub(crate) async fn create_session_with(
     };
     // Fork (W1): the record takes its dynamic-workflow gate from the create parameters, then the Host's cached fact.
     // Nothing reads it before W7, and the policy answer stays disabled until W9.
-    let gate = resolve_gate(
+    let workflow_gate = resolve_gate(
         payload.dynamic_workflow_enabled,
         payload.dynamic_workflow_mode,
         &server.dynamic_workflow_preferences(),
     );
-    server.record_dynamic_workflow_gate(&id, gate);
+    server.record_dynamic_workflow_gate(&id, workflow_gate);
     // B1.1: the creation fact is durable before the session opens on it, so the open below seeds the projection
     // with the marker like a cold restore does. Node persists its `worktree_creation` timeline part after the
     // first turn's session persistence and before TurnStarted (`turn.ts`); here the row's creation is that first

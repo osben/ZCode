@@ -82,7 +82,7 @@ pub struct Server {
         Mutex<HashMap<SessionId, Option<rust_cli_kernel_api::incognito::IncognitoProfile>>>,
     /// Fork: the dynamic-workflow gate each session was created with (specs/fork-rust-workflow-engine.md 9.2). Memory
     /// only, as Node's `runtimeConfig`: a create or resume resolves it again, so nothing is stored in a row.
-    dynamic_workflow_gates: Mutex<HashMap<SessionId, DynamicWorkflowGate>>,
+    pub(crate) dynamic_workflow_gates: Mutex<HashMap<SessionId, DynamicWorkflowGate>>,
     /// Fork: session lifecycle revisions (crate::lifecycle).
     pub(crate) lifecycles: crate::lifecycle::Lifecycles,
     /// Fork: running `workspace/generateText` calls by operation id (crate::fork::WorkspaceOperations).
