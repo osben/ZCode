@@ -12,6 +12,9 @@ use crate::actor::Actor;
 use crate::inbox::LaneItem;
 use crate::lane::Waiting;
 
+/// The meta source of a subagent's message to its coordinator (Node's `subagent_message` carrier).
+pub(crate) const SUBAGENT_MESSAGE_SOURCE: &str = "subagent_message";
+
 /// 子代理的信号流（流结束后不再等它）。
 pub(crate) type AgentStream = crate::watched::Watched<AgentSignal>;
 
@@ -23,6 +26,19 @@ impl Actor {
             }
             AgentSignal::Notice(notice) => self.on_agent_notice(notice).await,
             AgentSignal::Stall(stall) => self.on_agent_stall(stall).await,
+            AgentSignal::SubagentMessage { text } => self.on_subagent_message(text).await,
+        }
+    }
+
+    /// A child's RespondToCoordinator message (Node `enqueueSubagentMessage`): queued as a `next` item, merged at the
+    /// next tool boundary, or it opens a turn when the session is idle. It is not background work and not acknowledged.
+    async fn on_subagent_message(&mut self, text: String) {
+        if self.closing.is_some() {
+            return;
+        }
+        self.inbox.push_notice(Waiting::SubagentMessage(text));
+        if self.running.is_none() {
+            self.start_next().await;
         }
     }
 

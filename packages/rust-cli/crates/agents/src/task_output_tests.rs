@@ -20,7 +20,7 @@ use rust_cli_kernel_api::machine::{Background, Files, MachineEnv, Shell};
 use rust_cli_kernel_api::testing::unsupported_machine;
 use serde_json::json;
 
-use crate::task_output::{TaskView, model_text, truncate};
+use crate::task_output::{TaskView, model_text, task_output_display, truncate};
 use crate::test_support::{desktop_harness, text};
 
 /// TaskOutput 看到的执行环境替身：后台账本（可变状态，供阻塞等待的测试翻转）、会话的输出
@@ -407,6 +407,7 @@ fn truncation_keeps_the_tail_and_names_the_full_output() {
 fn the_model_text_orders_the_blocks_like_node() {
     let task = TaskView {
         id: "b1",
+        kind: "local_bash",
         status: "running",
         output: "  \ninterim\n\n".to_owned(),
         output_file: Some("/tmp/outputs/b1.output".to_owned()),
@@ -419,6 +420,7 @@ fn the_model_text_orders_the_blocks_like_node() {
     );
     let blank = TaskView {
         id: "b2",
+        kind: "local_bash",
         status: "completed",
         output: "  \n".to_owned(),
         output_file: None,
@@ -427,5 +429,56 @@ fn the_model_text_orders_the_blocks_like_node() {
         model_text("success", &blank),
         "<retrieval_status>success</retrieval_status>\n\n<task_id>b2</task_id>\n\n\
          <task_type>local_bash</task_type>\n\n<status>completed</status>"
+    );
+}
+
+/// Node's TaskOutput display (`result-display.ts`): the UI reads the retrieval, the status and a bounded output from the
+/// result's display, not from the model text. The status is capped at 64 characters and the output at 2,000.
+#[test]
+fn a_task_output_result_carries_the_bounded_display_the_ui_reads() {
+    let task = TaskView {
+        id: "agent_1",
+        kind: "local_agent",
+        status: "completed",
+        output: "E2E_SUBAGENT_FINAL_RESULT\n\n".to_owned(),
+        output_file: None,
+    };
+    assert_eq!(
+        task_output_display("success", &task),
+        serde_json::json!({
+            "kind": "task_output",
+            "retrievalStatus": "success",
+            "taskStatus": "completed",
+            "output": "E2E_SUBAGENT_FINAL_RESULT",
+        })
+    );
+    let long = TaskView {
+        id: "agent_2",
+        kind: "local_agent",
+        status: "completed",
+        output: "x".repeat(2_001),
+        output_file: None,
+    };
+    let display = task_output_display("success", &long);
+    assert_eq!(display["output"].as_str().map(str::len), Some(2_000));
+    assert_eq!(display["truncated"], serde_json::json!(true));
+}
+
+/// Node's `projectAgentTask` (`task-output-projection.ts`): a subagent is read by its agent id as a `local_agent`, and
+/// its output is the final report of its last completed run.
+#[test]
+fn a_completed_subagent_is_read_as_a_local_agent_with_its_report() {
+    let task = TaskView {
+        id: "agent_1",
+        kind: "local_agent",
+        status: "completed",
+        output: "E2E_SUBAGENT_FINAL_RESULT".to_owned(),
+        output_file: None,
+    };
+    assert_eq!(
+        model_text("success", &task),
+        "<retrieval_status>success</retrieval_status>\n\n<task_id>agent_1</task_id>\n\n\
+         <task_type>local_agent</task_type>\n\n<status>completed</status>\n\n\
+         <output>\nE2E_SUBAGENT_FINAL_RESULT\n</output>"
     );
 }

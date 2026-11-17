@@ -111,7 +111,9 @@ impl FoldState {
                     // 人类输入、定时任务、后台通知（有来源的输入）都算外来输入；其余 meta 不算。
                     UserOrigin::Human | UserOrigin::CompactSummary => return None,
                     UserOrigin::Meta { source }
-                        if source == CRON_SOURCE || source == NOTICE_SOURCE =>
+                        if source == CRON_SOURCE
+                            || source == NOTICE_SOURCE
+                            || source == crate::agent_signals::SUBAGENT_MESSAGE_SOURCE =>
                     {
                         return None;
                     }

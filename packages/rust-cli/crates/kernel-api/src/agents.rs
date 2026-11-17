@@ -113,6 +113,11 @@ pub enum AgentSignal {
     TasksChanged {
         tasks: Value,
     },
+    /// 子代理经 RespondToCoordinator 发给父会话的消息：`text` 是 `<subagent-message>` 块。不 ack，交出后即不再保留
+    /// （Node 的 subagent-message 命令）。
+    SubagentMessage {
+        text: String,
+    },
 }
 
 #[async_trait]

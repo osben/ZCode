@@ -94,7 +94,7 @@ parent run R2 of S starts ──▶ a new read; cache[S] = (R2, snapshot')
    - `injectAgentsMd` carries over (rule 15).
    - Not used:
      - `path` and `color`: the Node runtime does not read them either (`color` is set only on the built-in profiles in core `subagent/profile.ts`; the Settings page reads it from its own files).
-     - `memory`, `skills` and `mcpServers`: open gaps. zcode-rs supports none of them for agent files either, so each is its own feature, not part of this snapshot:
+     - `memory`, `skills` and `mcpServers`: open gaps, moved to a follow-up PR (not in #516). zcode-rs supports none of them for agent files either, so each is its own feature, not part of this snapshot:
        - `memory`: Node loads the agent's persistent memory into its prompt (`loadPersistentAgentMemory`, core `runtime/methods/subagent.ts`) and adds the memory tools (`projectPersistentAgentMemoryTools`, `runtime/agent-runtime.ts`).
        - `skills`: an allowlist, not a preload. Node adds the `Skill` tool and limits the child's skill listing and loads to the granted skills (`runtime/methods/subagent.ts`, `resolveSubagentSkillGrants`).
        - `mcpServers`: Node scopes the child's borrowed parent MCP servers to the listed names (`runtime/methods/subagent.ts`, `createBorrowedSubagentMcpAccess`).
@@ -132,6 +132,34 @@ parent run R2 of S starts ──▶ a new read; cache[S] = (R2, snapshot')
     - It applies on both surfaces (the TUI as well), as in Node.
     - The child's auto-compaction follows it too. In Node the child runtime's context builder has no user instructions at all, compaction included. In zcode-rs the child run carries the flag (`QueryRequest::inject_agents_md`) into its compaction request and the summary run, so the summary request does not re-announce the rule files or the session context.
     - Git status: Node gives no child the git status (the child's `createSubagentContextBuilder`, core `runtime/methods/context.ts`, has no project context). On the desktop (`node_desktop`, `ContextConfig::subagent_git_status` off) no zcode-rs subagent gets it either, whatever its `injectAgentsMd`, and neither does a child's summary request; the main thread keeps it. The TUI keeps it for a child with the flag on.
+
+## Cache breakpoint on a mid-conversation system message
+
+Node puts the message cache breakpoint on the latest **non-system** message (`finalizeLatestNonSystemMessageCacheControl`, core `runtime/helpers/provider-request-messages.ts`). Node's provider adapters map a message's cache control onto that message, so a system message never carries the breakpoint.
+
+zcode-rs (`query` `normalize.rs`) now does the same on the cache-write path: the breakpoint goes on the last block of the latest message whose role is not `system`. A trailing system message (a mid-conversation reminder, or the `output_config`-only system message) is skipped.
+
+The summary request (`skip_cache_write`) keeps its rule: the breakpoint goes on the message before the last stampable one (`skip_write_marker`). `stampable` still refuses thinking and empty assistant endings, because the provider rejects a cache marker there.
+
+Tests: `query` `normalize_tests` `a_first_turn_folds_the_attachments_after_the_input` (the breakpoint is on the user message, not on the trailing system message) and `a_summary_request_marks_the_message_before_the_last` (main-loop expectation).
+
+## RespondToCoordinator
+
+Node: `apps/zcode-cli/packages/core/src/tool/handlers/respond-to-coordinator.ts`, the port in `subagent/coordinator-response.ts`, the parent-side carrier in `runtime/methods/subagent-messages.ts`, availability in `runtime/helpers/runtime-tools.ts` (`includeRespondToCoordinator`). Design: `docs/subagent-respond-to-coordinator.md`.
+
+zcode-rs (`agents` crate, `respond.rs`) matches Node's contract:
+
+- **Who has it.** Every subagent child (foreground and background, desktop and TUI), never the main thread. Node gives the port to every child spawn (`runtime/methods/subagent.ts`). It is added to the child's tool set whatever its `tools` allowlist says (Node `runtime-tool-allowlist.test.ts`), and a `disallowedTools` entry still removes it. It is not in the main registry: `FilteredTools` and `ForkChildTools` add it for child runs only.
+- **Input.** Strict object: `summary` (1 to 200 characters) and `message` (1 to 20000 characters). Nothing else.
+- **Routing.** The target is bound by the runtime, not by the model: the child's own agent id and the agent's parent session (`LiveAgent.parent`). On the desktop a subagent has no subagent tools, so its parent is always the main session. A child whose parent is another subagent queues the block in that subagent's mailbox (`Mail::SubagentMessage`, Node `enqueueSubagentMessage` on the parent runtime). The parent takes it at its next tool boundary as Node's `subagent_reply_steer` (`SteerSender::Subagent`, in a system-reminder). A parent that is not running gives a failed result (`Failure: the coordinator is no longer running`). Open gaps: a block still in the mailbox when the parent's run ends is reported and not resumed (`routing.rs` `settle`); the parent-parked path is not covered; no E2E covers a subagent parent yet.
+- **Delivery.** Success means the message entered the parent session's signal channel (`Hub::subagent_message`). It does not mean the parent has read it. The channel keeps the message until the parent's session actor takes it: it is not background work and is not acknowledged (like a stall reminder).
+- **Parent side.** The session actor queues it as a `next` item with source `subagent_message` (Node's carrier, user role, model-only). It is merged at the parent's next tool boundary, or it starts a turn when the parent is idle. The text is Node's `<subagent-message>` block (`formatSubagentMessage`, XML-escaped), without a response id.
+- **Result.** Model text (capped at 4096 bytes):
+  - success: `Response <responseId> was queued for the coordinator. Continue the current task unless the coordinator explicitly changed or ended it.`
+  - failure: `Response <responseId> failed to queue for the coordinator. Continue the current task unless the coordinator explicitly changed or ended it. Failure: <error>.`
+- **Tool metadata.** Deferred (`ToolSearch`), read-only false, concurrency safe, no approval, description `Respond to the coordinator that owns this subagent.` plus Node's model instructions.
+
+Not covered: a subagent parent (see Routing), and the desktop renderer's display of the call (it already has `RespondToCoordinator` in `packages/ui`).
 
 ## Out of scope
 
@@ -189,9 +217,25 @@ A case that fails on Node too is not a parity gap.
 
 The refresh specs (`subagent-refresh-capture.ts`, and the explicit tool lists in the model-override and reasoning specs) expect Node's child tool list, which includes `RespondToCoordinator`. zcode-rs has no such tool. That is a separate parity gap, outside this spec, so on Rust these specs run from a copy without that one tool name.
 
-Results on Rust (2026-11-13). The following failures are not gaps of this spec:
+Results on Rust (2026-11-13). RespondToCoordinator is implemented on Rust (see "RespondToCoordinator" above); the refresh and override specs now run from their original tool lists, and the catalog-refresh `user` case fails on its tool list only when the tool is missing. The following failures are not gaps of this spec:
 
 - `runtime-refresh` passes.
-- `catalog-refresh`: the `user` case passes. The `mcs` case fails afterwards, at the provider-prefix check. When a request ends with a mid-conversation system message, Rust puts the message cache breakpoint on that system message. Node puts it on the latest non-system message (`finalizeLatestNonSystemMessageCacheControl`, core `runtime/helpers/provider-request-messages.ts`); the Rust counterpart is `query` `normalize.rs`. That is a request-shaping gap, outside this spec.
-- `plugin-subagent-override-cold` passes on Node but fails on Rust: zcode-rs skips the whole `documents` plugin, because its MCP server runs in the Node CLI plugin host (`ext` `plugins/select.rs`, `NodeDependency::PluginHost`). Its agents are never loaded, so `documents:visual-judge` is not found. That gap belongs to the plugin host work. The override mapping itself is covered by the `agents` unit tests.
+- `catalog-refresh` (2026-11-13): the `user` case passes. The `mcs` case fails afterwards, at the provider-prefix check (fixed on 2026-11-17, see below). When a request ends with a mid-conversation system message, Rust puts the message cache breakpoint on that system message. Node puts it on the latest non-system message (`finalizeLatestNonSystemMessageCacheControl`, core `runtime/helpers/provider-request-messages.ts`); the Rust counterpart is `query` `normalize.rs`. That is a request-shaping gap, outside this spec.
+- `conversation-session-subagent-respond-to-coordinator` (2026-11-17, box): Node 3 passing, 4 failing (the four BG25 cases); Rust 1 passing, 6 failing. Rust also fails the two `MCS`/`non-MCS` render cases, which Node passes. Diagnosis (2026-11-17, box rerun, log `conversation-session_subagents_conversation-session-subagent-respond-to-coordinator.log`):
+  - The first failing assertion is the parent's `subagent_reply` check (spec line 201, `peerEvidence`), not `coordinator_steer`. The `coordinator_steer` check at line 189 passes on Rust: the child's steer text is byte-identical to Node's template (`The coordinator sent a message while you were working:\n{body}\n\nAddress this before completing your current task.`, `prompts/agents/stranded_message.txt`, `kernel-api` `hooks.rs` `steer_text`).
+  - The parent receives the RespondToCoordinator message as the raw `<subagent-message>` block. Node wraps it in its `subagent_reply` template (`Another ZCode session sent a message:\n{body}\n\n<permission guidance>`, `system-reminder/incoming-message.ts`), and the mid-turn form `subagent_reply_steer` when merged at a tool boundary.
+  - Fix: `session` `lane.rs` `subagent_message_text`; `Waiting::text()` gives the steer form (wrapped in `<system-reminder>`), `turn_text()` the new-turn form. Red test first: `lane_order_tests` `a_subagent_message_keeps_its_arrival_place_and_source`, which failed on the raw block and passes now (session crate 398/398).
+  - Later fixes in the same case: the subagent TaskOutput read (`agents` `task_output.rs` `agent_output`: the agent id is read as `local_agent` with its last report, `LiveAgent.result`); the TaskOutput display and the RespondToCoordinator display (`task_output_display`, `reply_display`, Node `result-display.ts`); and the cold read of a stored RespondToCoordinator reply (`protocol-zcode` `projection/cold.rs` `cold_display`), since the subagent transcript is loaded cold and a stored result keeps only its text.
+  - Rust result (2026-11-17, after the cold fix): 4 passing, 3 failing. Passing: MCS render, non-MCS render, the combined case, and BG25 MCS tool (Node fails this one). Failing: BG25 MCS text, BG25 non-MCS tool, BG25 non-MCS text.
+  - Node result (same spec, same code as origin/fork: the PR changes only `packages/rust-cli` and this spec, so the Node-side tree is identical): 3 passing (MCS render, non-MCS render, combined), 4 failing (the four BG25 cases) with `provider 未发出预期阶段 incoming-tool-compact-summary` / `incoming-text-compact-summary`. The BG25 failures are pre-existing on the Node side (test or fixture stage), not a Rust gap. Not investigated further.
+  - A tab crash (`WebDriverError: tab crashed`) appeared once in the `afterEach` of an earlier Rust run and did not recur in the last run.
+- Rust `catalog-refresh` (2026-11-17, box): passes, both `user` and `mcs` cases. The `mcs` case needed the cache breakpoint fix (`query` `normalize.rs`) and the RespondToCoordinator entry in the child tool list in Node order (after the restored search tools).
+- `plugin-subagent-override-cold`: PASS on Rust and PASS on Node (2026-11-17, box). It used to fail on Rust: zcode-rs skipped the `documents` plugin, whose MCP server runs in the Node CLI plugin host (`ext` `plugins/select.rs`, `NodeDependency::PluginHost`). The helper-hosted admission in `select.rs` (`node_helper`, `served`) now loads it; only a plugin whose server has an `auth` block stays out (`OfficialAuth`). No change was needed for this spec.
 - `built-in-subagent-model-overrides` (an E2E helper import is missing), `runtime-catalog-reasoning` (the custom form overflows horizontally) and `subagent-coding-plan-login-catalog-stale` (the OAuth URL is not captured) fail on Node too.
+
+Results of the four task-5 specs (2026-11-17, box; Rust / Node):
+
+- `subagent-catalog-refresh`: PASS / PASS.
+- `subagent-runtime-refresh`: PASS / FAIL. Node failed twice (two box runs, logs `pr516-task5-node` and `pr516-task5-node2`) at `conversation-session-subagent-runtime-refresh.test.ts:129`, `expect(compacts.length).toBeGreaterThan(0)`: no request matched the `shr-compact` fixture on Node, so no post-compaction trajectory was exported. Rust reaches that compaction and passes. Recorded as a Node-side divergence in the spec; not a Rust gap, and not investigated further.
+- `built-in-subagent-model-overrides`: FAIL / FAIL, both with `Cannot find module '@/request-security-edition/messages.js'` in the test setup. Pre-existing, same on both runtimes.
+- `runtime-catalog-reasoning`: FAIL / FAIL, both at `I68` (`catalog-reasoning.test.ts:130/256/293/669/702`). Pre-existing, same on both runtimes.

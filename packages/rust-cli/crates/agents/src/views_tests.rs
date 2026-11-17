@@ -40,6 +40,7 @@ fn running(agent: &str, root: &str) -> crate::live::LiveAgent {
         mode: rust_cli_kernel_api::permission::PermissionMode::Default,
         background: true,
         asks: None,
+        result: None,
         state: AgentState::Running {
             abort: Abort::new(),
             mailbox: Vec::new(),
