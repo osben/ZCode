@@ -231,11 +231,50 @@ are not gated (the Host routes requests by workspace ref); the Host's `toolSearc
 
 ### Slice 3: off-peak
 
-OffPeakCreate / OffPeakList through `offPeak/create|list`, registered only when the Host enabled them
-(`offPeakToolEnabled` on create/resume or `workspace/updateOffPeakToolPolicy`); the `sendText` off-peak fields
+Target (unchanged): OffPeakCreate / OffPeakList through `offPeak/create|list`, registered only when the Host enabled
+them (`offPeakToolEnabled` on create/resume or `workspace/updateOffPeakToolPolicy`); the `sendText` off-peak fields
 (`offPeakTaskId`, `offPeakRunType`, `modelExecution.offPeak`), the `v4/offPeak/lifecycle` notifications matched on
-`executionId`, and `v4/conversation/offPeakControl` (`replace_ticket`, `cancel`). Until slice 3 lands,
+`executionId`, and `v4/conversation/offPeakControl` (`replace_ticket`, `cancel`). Until the dispatch path is honoured,
 `workspace/updateOffPeakToolPolicy` answers `enabled: false`, so the Host does not assume the tools exist.
+
+**As built (layer A, branch `feat/rust-offpeak-slice3`).** Layer A is the tool surface, the Host port and the turn
+identity. Layer B (the execution runtime) is not built. The policy stays `false` and the app-server does not wire the
+port, so no off-peak tool is registered in production.
+
+Why layer B is not in this slice: a Host-dispatched off-peak run needs its model requests to carry the ticket
+(`modelExecution.offPeak.ticketId`, `requestAuth`) and to wait for and replace it on the provider's expiry code
+(Node `core/src/runtime/off-peak/model-binding.ts`, `lifecycle.ts`). zcode-rs has no per-turn request-auth or
+per-turn execution selection path (`platform` `request_auth` is per provider, not per turn). Flipping the policy before
+that exists would let the Host create tasks whose runs bill the plan quota, so the flip waits for layer B.
+
+Owners:
+
+| Owner | Owns |
+| --- | --- |
+| Host | `off_peak_tasks`, the `offPeak/create|list` answers, ticket issue and dispatch, the policy |
+| Tools (`tools/src/off_peak_tools.rs`) | Parse, the bound-session check, `offPeak/create` params, output and Node's error texts; the 30 s deadline; refusal on an off-peak turn |
+| Port (`kernel-api/src/off_peak.rs`, `protocol-zcode/src/off_peak_port.rs`) | The transport only: the `workspace` ref, the reply check against the inbound schema, the Host's error code |
+| Turn (`kernel-api/src/turn_limits.rs` via `sendText`) | `OffPeakCreate` hidden on the turn whose input carries `offPeakTaskId` (Node `OFF_PEAK_EXECUTION_TOOL_DENYLIST`) |
+| Inbound schema (`scripts/fork-rust-agent/inbound-schema.mts`) | Reply shapes of `offPeak/create` (the `ok` union) and `offPeak/list` |
+
+Wire:
+
+- `offPeak/create` params: `{workspace, title, prompt, permissionMode?, model?, thoughtLevel?, boundSessionId}`.
+  `boundSessionId` is the calling session. The reply is `{ok: true, task}` or
+  `{ok: false, failureStage, errorCategory, errorCode}`; a failure keeps its classification (Node
+  `createProtocolOffPeakPort`).
+- `offPeak/list` params `{workspace}`; reply `{tasks: [...]}`.
+- Event order for OffPeakCreate: the turn refusal, then `offPeak/list` (the bound check: a non-terminal task with
+  `sessionId` = the calling session refuses; a list error fails closed with Node's text), then `offPeak/create`, then
+  the Node error text for each `errorCategory`/`errorCode`. The 30 s deadline covers both requests.
+
+Node divergences kept: the session's `activeOffPeakTaskId` recursion guard is not ported yet (it belongs to layer B's
+session record). The turn denylist is the only guard here; the handler also refuses on an off-peak turn. The title is
+not frozen (Node `createProtocolOffPeakPort`). OffPeakCreate needs approval; OffPeakList does not.
+
+Not built (layer B): `v4/offPeak/lifecycle` notifications, `v4/conversation/offPeakControl` (answers `-32601` as
+before), the ticket authority and model binding, takeover, and the session's off-peak record. The
+`offPeakToolEnabled` create and resume flags are accepted and ignored, as before.
 
 ## Not ported (stay `-32601`)
 
