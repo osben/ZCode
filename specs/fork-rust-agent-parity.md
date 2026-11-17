@@ -1353,9 +1353,49 @@ crash        [Node]           next inspect: kill(pid, 0) = ESRCH -> deletes the 
 ### (c) Model-facing, telemetry and skew-safe
 
 - Background subagent stall reminder (core `subagent-stall-reminder.ts`, config `subagents.backgroundStallNotifyMs`): done on this branch, see "Background subagent stall reminder" below.
-- `v4/conversation/contextComposition`, `v4/telemetry/model-request-metrics` and `v4/storage/sessionData/deletion*`: absent; the Host treats their absence as unsupported.
+- `v4/conversation/contextComposition`, `v4/telemetry/model-request-metrics` and `v4/storage/sessionData/deletion*`: absent; the Host treats their absence as unsupported. Scoped in detail under "Context composition, session deletion and model-request metrics (gap analysis)" below; none of the three is ported yet.
 
 Order: A1 then A2, then A3, then the database check, then B2, B3 and B5, then B4, then the stall reminder. B1's managed-worktree support waits for a design agreed with the user; its interim `cwd`/`targetCwd` refusal is in (2026-11-15).
+
+## Context composition, session deletion and model-request metrics (gap analysis)
+
+Status (2026-11-16): gap analysis only. None of the three methods is ported. This section records what Node does, what Rust has, and the order of work, so that each port starts from verified facts.
+
+### `v4/storage/sessionData/deletionPreview` and `deletionExecute`
+
+- **Node.** Bootstrap `zcode-protocol/session-data/permanent-deletion.ts` (`previewSessionDeletion`, `executeSessionDeletion`). Store: `adapters/src/storage/session-store/repositories/sessions.ts` `inspectSessionDeletion` (~l.542), `beginSessionDeletion` (~l.692), `completeSessionDeletion` (~l.730). Files: `adapters/src/storage/session-data-files/index.ts` (`listSessionFiles`, `removeSession(id, retained)`). Schemas: `packages/shared/src/zcode-protocol-v4/session-data/contract.ts`.
+- **Rust today.** Upstream migration `0025_session_permanent_deletion` tables (`session_purge`, `session_runtime_presence`) are read by the presence code in `node-store/src/presence.rs`, and the request gate reads them in `protocol-zcode/src/presence_gate.rs`. Nothing else exists: no inspect, begin or complete, no file manifest, no dispatch arm. The refusal is `method_not_found` from the dispatcher in `protocol-zcode/src/server.rs` (the `other =>` arm), not from `presence_gate.rs`.
+- **Correction to earlier wording.** `DELETION_METHODS` in `presence_gate.rs` is the request-gate exemption, not a refusal list. It must stay. `beginSessionDeletion` writes the barrier row that the gate checks, so an `incomplete` deletion could never be retried if these methods were gated. Node exempts them for the same reason.
+- **Revision.** Node: sha256 over `JSON.stringify` of `{ids, facts, forks, references, pendingWork}` (inspect) and, in the preview, sha256 over `JSON.stringify([revision, [[relativePath, bytes]...], blockedReason])`. Rust must reproduce key order and `undefined`-as-`null` exactly, or a preview from Node and an execute from Rust disagree.
+- **Admission.** `begin` runs inside `begin immediate`. It rejects a foreign live runtime or pending work with `running`, and a revision mismatch with `changed`. Only then does it insert the `deleting` rows. `complete` purges the rows and sets `deleted`.
+- **Out of scope.** `sessionDataPurge` and `sessionDataMeasure` (same Node module) stay `method_not_found`. The Host does not gate them by runtime, so permanent deletion fails with that error in Rust mode (item 9 above).
+- **Acceptance.** Red tests first: execute on a session whose purge row is `deleting` is not refused by the request gate; preview and execute over the same fixture produce the same `revision` in Node and Rust; a deletion touches exactly the rows and files that Node's `purgeSessions` and file port touch.
+
+### `v4/conversation/contextComposition`
+
+- **Node.** Core `runtime/context-composition/`: `classifier.ts` (354 lines, the 11 fine categories and 7 coarse ones, token rules), `preview.ts`, `state.ts` (request record and change reasons), `query.ts`, `items.ts`. Bootstrap `zcode-protocol/context-composition/` (`handler.ts`, `tracker.ts`).
+- **Rust today.** No method, no `contextCompositionChanged` notification, no classifier, no request record.
+- **Blocker.** The classifier is written against Node's message model: `ModelInputMessage`, origin entries from the provider projection, MCS-merged reminders, system-reminder sources, ToolSearch exposure, skill and instruction items. Rust's prompt assembly has to be mapped onto those categories first, and the token estimator (`context/utils.ts` `estimateTokens`) must be checked against Rust's for equal counts. A handler that returns `null` for every session would pass the shape check and would not be parity, so it is not acceptable as a partial port.
+- **Acceptance.** Response shape identical to Node (`composition: null` for unknown sessions, `revision` starting at 0 per process, one coalesced notification per tick, no timers). Token accounting rules as in `classifier.ts`. Node's `core/tests/context-composition/runtime.test.ts` and `bootstrap/tests/context-composition/tracker.test.ts` ported as red tests first.
+
+### `v4/telemetry/model-request-metrics`
+
+- **Not a Host-only method.** Node produces it in the agent process: `bootstrap/src/zcode-protocol-v4/v4-gateway.ts` (~l.1009-1015) normalizes each model event with `conversation-telemetry-facts.ts` `normalizeModelRequestMetrics` and calls `host.emitModelRequestMetrics`, which `zcode-protocol/v4-bridge.ts` (~l.2453) sends as `v4/telemetry/model-request-metrics`. The notification is live-only, and older Apps ignore it.
+- **Rust today.** No producer. This is a real gap. It is a notification fed from model-completion events, so it depends on the same per-request data as the request phase of context composition.
+
+### Desktop E2E inventory
+
+- No active desktop spec calls `contextComposition` or `deletionPreview` or `deletionExecute`. The grep hit on `sessionData` in `conversation-session-turn-error-history-activity.test.ts` is `sessionDatabase`, a false positive.
+- The only permanent-delete spec is `packages/desktop/test/e2e/conversation-session/task-management/manual-review/pending/conversation-session-permanent-delete.test.ts` (DEL01). It is pending in `manual-review`. It drives the sidebar delete and reads `~/.zcode` rows; it does not call the methods directly.
+- No E2E covers the context-composition panel. `packages/services/src/extensions/contextPump.ts` consumes the query, with no spec.
+
+### Order of work
+
+1. Deletion store in `node-store` (inspect, begin, complete) with red tests from Node's `adapters/tests/session-store-permanent-deletion.test.ts`. No migration: the tables are upstream and already exist.
+2. Deletion file manifest and removal, matching `session-data-files/index.ts` roots (`artifacts`, `exec`, `agents`, `sessions`, `debug|rollout/model-io-<id>.jsonl`).
+3. Dispatch arms for `deletionPreview` and `deletionExecute` in `server.rs`, keeping the gate exemption.
+4. Context composition: token-estimator parity check, then the Rust mapping onto the 11 categories, then the request record and tracker.
+5. `model-request-metrics` producer, fed from the same per-request record as step 4.
 
 ## Background subagent stall reminder (Node `subagent-stall-reminder.ts`, `background-stall.ts`)
 
