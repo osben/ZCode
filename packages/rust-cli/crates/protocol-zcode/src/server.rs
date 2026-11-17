@@ -7,6 +7,9 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use rust_cli_kernel_api::default_model::DefaultModel;
+use rust_cli_kernel_api::dynamic_workflow::{
+    DynamicWorkflowGate, DynamicWorkflowMode, DynamicWorkflowPreferences,
+};
 use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
 use rust_cli_kernel_api::ids::{EnvironmentId, SessionId};
 use rust_cli_kernel_api::permission::PermissionMode;
@@ -44,6 +47,8 @@ pub struct Defaults {
 struct Preferences {
     ask_auto_resolution: bool,
     full_retention: bool,
+    /// Fork: the Host's dynamic-workflow rollout fact (specs/fork-rust-workflow-engine.md 9.2).
+    dynamic_workflow: DynamicWorkflowPreferences,
 }
 
 pub struct Server {
@@ -75,6 +80,9 @@ pub struct Server {
     /// never carries the choice (Node `persistPreparedWorktreeStatus`).
     pub(crate) prepared_incognito:
         Mutex<HashMap<SessionId, Option<rust_cli_kernel_api::incognito::IncognitoProfile>>>,
+    /// Fork: the dynamic-workflow gate each session was created with (specs/fork-rust-workflow-engine.md 9.2). Memory
+    /// only, as Node's `runtimeConfig`: a create or resume resolves it again, so nothing is stored in a row.
+    dynamic_workflow_gates: Mutex<HashMap<SessionId, DynamicWorkflowGate>>,
     /// Fork: session lifecycle revisions (crate::lifecycle).
     pub(crate) lifecycles: crate::lifecycle::Lifecycles,
     /// Fork: running `workspace/generateText` calls by operation id (crate::fork::WorkspaceOperations).
@@ -147,6 +155,7 @@ impl Server {
             reservations: crate::preparation::ReservationGate::default(),
             unreceipted: Mutex::new(std::collections::HashSet::new()),
             prepared_incognito: Mutex::new(HashMap::new()),
+            dynamic_workflow_gates: Mutex::new(HashMap::new()),
             lifecycles: crate::lifecycle::Lifecycles::default(),
             workspace_operations: crate::fork::WorkspaceOperations::default(),
         }
@@ -399,6 +408,32 @@ impl Server {
         self.preferences.lock_unpoisoned()
     }
 
+    /// Fork: the Host's cached dynamic-workflow fact (specs/fork-rust-workflow-engine.md 9.2).
+    pub(crate) fn dynamic_workflow_preferences(&self) -> DynamicWorkflowPreferences {
+        self.preferences().dynamic_workflow
+    }
+
+    /// Fork: the gate a session was created with, `None` for a session this process did not create through the
+    /// direct createSession route. W7 reads it to register the tools; until then only the tests do.
+    #[allow(dead_code)]
+    pub(crate) fn dynamic_workflow_gate(&self, session: &SessionId) -> Option<DynamicWorkflowGate> {
+        self.dynamic_workflow_gates
+            .lock_unpoisoned()
+            .get(session)
+            .copied()
+    }
+
+    /// Fork: records the gate a new session was created with (Node `createRecord` writing `runtimeConfig`).
+    pub(crate) fn record_dynamic_workflow_gate(
+        &self,
+        session: &SessionId,
+        gate: DynamicWorkflowGate,
+    ) {
+        self.dynamic_workflow_gates
+            .lock_unpoisoned()
+            .insert(session.clone(), gate);
+    }
+
     async fn read_presentation(&self, params: &Value) -> Value {
         let workspace = params["workspace"].clone();
         let path = workspace["workspacePath"].as_str().unwrap_or_default();
@@ -492,8 +527,14 @@ impl Server {
             "workspace/updateOffPeakToolPolicy" => {
                 reply(json!({"workspace": params["workspace"], "enabled": false}))
             }
-            // 动态工作流不移植（P4 决定）：回 disabled 生效。
+            // Fork (specs/fork-rust-workflow-engine.md 9.2, W1): the Host's fact is cached for the records created later,
+            // but the answer stays disabled until the tools are registered (W9).
             "workspace/updateDynamicWorkflowPolicy" => {
+                let enabled = params["enabled"].as_bool().unwrap_or(false);
+                // The inbound schema has already refused any other value; an absent mode is None.
+                let mode =
+                    serde_json::from_value::<DynamicWorkflowMode>(params["mode"].clone()).ok();
+                self.preferences().dynamic_workflow.set(enabled, mode);
                 reply(json!({"workspace": params["workspace"], "enabled": false}))
             }
             "workspace/readPresentation" => reply(self.read_presentation(&params).await),

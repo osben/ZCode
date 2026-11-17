@@ -1,6 +1,7 @@
 //! 命令的处理（[`crate::inbox`] 的裁决与转交）：P1 的五个命令。
 
 use rust_cli_base::sync::LockUnpoisoned;
+use rust_cli_kernel_api::dynamic_workflow::{DynamicWorkflowMode, resolve_gate};
 use rust_cli_kernel_api::ids::{CommandId, InteractionId, SessionId, ToolUseId};
 use rust_cli_kernel_api::incognito::IncognitoProfile;
 use rust_cli_kernel_api::interaction::PermissionAnswer;
@@ -152,6 +153,10 @@ struct CreateSessionPayload {
     /// for the source directory's HEAD.
     #[serde(default, deserialize_with = "typed_creation")]
     worktree_creation: Option<crate::worktree::Creation>,
+    /// Fork: the Host's dynamic-workflow rollout fields for the record (specs/fork-rust-workflow-engine.md 9.2). Both
+    /// are resolved with the cached fact by `resolve_gate`; the inbound schema has already refused other values.
+    dynamic_workflow_enabled: Option<bool>,
+    dynamic_workflow_mode: Option<DynamicWorkflowMode>,
 }
 
 /// B1: the shared `guard.worktreeCwdLocalOnly` refusal (Node `resolveWorkspaceRefFromId` then
@@ -774,6 +779,14 @@ pub(crate) async fn create_session_with(
         Ok(id) => id,
         Err(error) => return refused(error.to_string()),
     };
+    // Fork (W1): the record takes its dynamic-workflow gate from the create parameters, then the Host's cached fact.
+    // Nothing reads it before W7, and the policy answer stays disabled until W9.
+    let gate = resolve_gate(
+        payload.dynamic_workflow_enabled,
+        payload.dynamic_workflow_mode,
+        &server.dynamic_workflow_preferences(),
+    );
+    server.record_dynamic_workflow_gate(&id, gate);
     // B1.1: the creation fact is durable before the session opens on it, so the open below seeds the projection
     // with the marker like a cold restore does. Node persists its `worktree_creation` timeline part after the
     // first turn's session persistence and before TurnStarted (`turn.ts`); here the row's creation is that first

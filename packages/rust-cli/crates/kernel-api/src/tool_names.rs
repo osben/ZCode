@@ -38,6 +38,32 @@ pub const NOTEBOOK_EDIT: &str = "NotebookEdit";
 /// Fork: the desktop agent's off-peak tools (specs/fork-rust-automations.md, slice 3).
 pub const OFF_PEAK_CREATE: &str = "OffPeakCreate";
 pub const OFF_PEAK_LIST: &str = "OffPeakList";
+/// Fork: the ten dynamic-workflow tools (Node `DYNAMIC_WORKFLOW_TOOL_NAMES`, `core/src/tool/handlers/index.ts`;
+/// specs/fork-rust-workflow-engine.md 9.2). They are named here and not registered before W7, and the rollout gate
+/// stays closed until W9.
+pub const AMEND_WORKFLOW: &str = "AmendWorkflow";
+pub const CREATE_WORKFLOW: &str = "CreateWorkflow";
+pub const EVAL_WORKFLOW_SNIPPET: &str = "EvalWorkflowSnippet";
+pub const FILL_WORKFLOW_HOLE: &str = "FillWorkflowHole";
+pub const GET_WORKFLOW_RUN: &str = "GetWorkflowRun";
+pub const LIST_SAVED_WORKFLOWS: &str = "ListSavedWorkflows";
+pub const LIST_WORKFLOW_RUNS: &str = "ListWorkflowRuns";
+pub const RESOLVE_WORKFLOW_QUESTION: &str = "ResolveWorkflowQuestion";
+pub const RESUME_WORKFLOW_RUN: &str = "ResumeWorkflowRun";
+pub const SAVE_WORKFLOW: &str = "SaveWorkflow";
+/// Fork: every dynamic-workflow tool, in Node's order (`DYNAMIC_WORKFLOW_TOOL_NAMES`).
+pub const DYNAMIC_WORKFLOW_TOOLS: [&str; 10] = [
+    CREATE_WORKFLOW,
+    AMEND_WORKFLOW,
+    SAVE_WORKFLOW,
+    LIST_SAVED_WORKFLOWS,
+    EVAL_WORKFLOW_SNIPPET,
+    LIST_WORKFLOW_RUNS,
+    GET_WORKFLOW_RUN,
+    RESUME_WORKFLOW_RUN,
+    RESOLVE_WORKFLOW_QUESTION,
+    FILL_WORKFLOW_HOLE,
+];
 /// 本工程没有这个工具：子代理的工具表与工作区信任的授权表按名字认它（与 shell 的名字无关）。
 pub const POWER_SHELL: &str = "PowerShell";
 pub const READ: &str = "Read";

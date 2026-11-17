@@ -75,6 +75,7 @@ pub mod conversation_quote;
 pub mod cron;
 pub mod cron_store;
 pub mod default_model;
+pub mod dynamic_workflow;
 pub mod env;
 pub mod env_command;
 pub mod env_files;
