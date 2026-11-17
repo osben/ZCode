@@ -43,12 +43,11 @@ export const turnScreenshotParamsSchema = z
   .strict();
 export type TurnScreenshotParams = z.infer<typeof turnScreenshotParamsSchema>;
 
-export const turnScreenshotCancelParamsSchema = z
-  .object({
-    sessionId: z.string().trim().min(1),
-    turnId: z.string().trim().min(1),
-  })
-  .strict();
+/** The turn key of a capture, derived from the capture's params so the two shapes cannot drift (strict is kept). */
+export const turnScreenshotCancelParamsSchema = turnScreenshotParamsSchema.pick({
+  sessionId: true,
+  turnId: true,
+});
 
 /** One display image, as Node's browser command result carries it. */
 export interface TurnScreenshotImage {
@@ -194,6 +193,13 @@ export class ForkRustBrowserControl {
       }
       return { image: captured.image };
     } catch (error) {
+      // An abort is Rust's cancel of the turn (D2 C1), a routine outcome of an interrupt rather than a broker failure.
+      if (controller.signal.aborted) {
+        this.deps.logger?.debug("Browser turn screenshot cancelled with the turn", {
+          event: "fork_rust_helper.browser.turn_screenshot_cancelled",
+        });
+        return {};
+      }
       this.deps.logger?.warn("Browser turn screenshot failed", {
         event: "fork_rust_helper.browser.turn_screenshot_failed",
         error: error instanceof Error ? error.message : String(error),

@@ -2,8 +2,12 @@
 // appendBrowserTurnScreenshot (core/src/runtime/methods/browser-turn-screenshot.ts) is the oracle: list the
 // session's tabs, screenshot the active one, answer the image; any broker failure answers {} and logs.
 import { describe, expect, it, vi } from "vitest";
+import type { Logger } from "@zcode/contracts";
 import type { ZCodeProtocolAgentServerContext } from "../../src/zcode-protocol/server-types.js";
-import { ForkRustBrowserControl } from "../../src/fork-rust-helper/browser-control.js";
+import {
+  ForkRustBrowserControl,
+  turnScreenshotCancelParamsSchema,
+} from "../../src/fork-rust-helper/browser-control.js";
 
 interface Sent {
   method: string;
@@ -12,7 +16,7 @@ interface Sent {
 
 type Answer = (command: Record<string, unknown>) => Record<string, unknown> | Error | Promise<Record<string, unknown>>;
 
-function harness(answer: Answer, sessions: string[] = ["parent", "child"]) {
+function harness(answer: Answer, sessions: string[] = ["parent", "child"], logger?: Logger) {
   const sent: Sent[] = [];
   const context = {
     sessions: new Map(
@@ -41,7 +45,19 @@ function harness(answer: Answer, sessions: string[] = ["parent", "child"]) {
     deps: {},
     logger: undefined,
   } as unknown as ZCodeProtocolAgentServerContext;
-  return { sent, control: new ForkRustBrowserControl({ context }) };
+  return { sent, control: new ForkRustBrowserControl({ context, logger }) };
+}
+
+/** A logger whose calls are recorded, so a test can assert the level and event of a log line. */
+function recordingLogger() {
+  const logger = {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    child: () => logger,
+  };
+  return logger;
 }
 
 const request = { sessionId: "parent", turnId: "turn-1", browserId: "iab-1", browserGeneration: 2 };
@@ -109,5 +125,41 @@ describe("helper turn screenshot (F4 D2-H)", () => {
     await vi.waitFor(() => expect(executes(sent)).toHaveLength(3));
     const methods = executes(sent).map((call) => (call.params.command as { method: string }).method);
     expect(methods).toEqual(["list", "screenshot", "cancelRequest"]);
+  });
+
+  it("logs a capture cancelled with its turn at debug under its own event, not as a failure", async () => {
+    const logger = recordingLogger();
+    const { control, sent } = harness(
+      (command) => {
+        if (command.method === "list") return { ok: true, tabs: [{ tabId: "t1", active: true }] };
+        if (command.method === "cancelRequest") return { ok: true };
+        return new Promise<Record<string, unknown>>(() => {}); // held until the abort reaches it
+      },
+      ["parent", "child"],
+      logger as unknown as Logger,
+    );
+    const answered = control.turnScreenshot(request);
+    await vi.waitFor(() => expect(executes(sent)).toHaveLength(2));
+    control.cancelTurnScreenshot(request.sessionId, request.turnId);
+    await expect(answered).resolves.toEqual({});
+    expect(logger.warn).not.toHaveBeenCalled();
+    expect(logger.debug).toHaveBeenCalledWith(
+      "Browser turn screenshot cancelled with the turn",
+      expect.objectContaining({ event: "fork_rust_helper.browser.turn_screenshot_cancelled" }),
+    );
+  });
+});
+
+describe("helper turn screenshot cancel params (F4 D2 C1)", () => {
+  it("accept exactly the turn key", () => {
+    expect(turnScreenshotCancelParamsSchema.safeParse({ sessionId: "s1", turnId: "turn-1" }).success).toBe(true);
+    expect(turnScreenshotCancelParamsSchema.safeParse({ sessionId: "s1" }).success).toBe(false);
+    expect(turnScreenshotCancelParamsSchema.safeParse({ sessionId: " ", turnId: "turn-1" }).success).toBe(false);
+  });
+
+  it("refuse the capture's other fields, as the strict wire shape does", () => {
+    expect(
+      turnScreenshotCancelParamsSchema.safeParse({ sessionId: "s1", turnId: "turn-1", browserId: "iab-1" }).success,
+    ).toBe(false);
   });
 });

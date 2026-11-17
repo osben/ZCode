@@ -503,14 +503,10 @@ impl NodeHelper {
         let deadline = self.timing.timeout_for(TURN_SCREENSHOT);
         let cancel_peer = peer.clone();
         let cancel_params = json!({"sessionId": session, "turnId": turn});
+        // Biased: an answer that is ready is kept even when the turn was cancelled in the same tick, so a completed capture
+        // is never dropped and only a capture still in flight gets the cancel notification.
         tokio::select! {
-            () = cancel.cancelled() => {
-                // C1: the helper aborts its broker calls, which send `cancelRequest` to Main (Node's turnAbortSignal).
-                drop(self.spawner.spawn("node-helper-turn-screenshot-cancel", async move {
-                    cancel_peer.notify(TURN_SCREENSHOT_CANCEL, &cancel_params).await;
-                }));
-                None
-            },
+            biased;
             answer = tokio::time::timeout(deadline, peer.request(TURN_SCREENSHOT, &params)) => match answer {
                 Ok(Ok(value)) => Some(value),
                 Ok(Err(error)) => {
@@ -521,6 +517,13 @@ impl NodeHelper {
                     tracing::warn!(event = "fork_rust_helper.browser.turn_screenshot_timeout", "the helper did not capture the turn screenshot in time");
                     None
                 }
+            },
+            () = cancel.cancelled() => {
+                // C1: the helper aborts its broker calls, which send `cancelRequest` to Main (Node's turnAbortSignal).
+                drop(self.spawner.spawn("node-helper-turn-screenshot-cancel", async move {
+                    cancel_peer.notify(TURN_SCREENSHOT_CANCEL, &cancel_params).await;
+                }));
+                None
             },
         }
     }
