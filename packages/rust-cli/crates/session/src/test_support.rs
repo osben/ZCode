@@ -285,6 +285,7 @@ impl Setup {
             ))
         });
         let runner = Arc::new(QueryLoop::new(QueryParts {
+            compositions: Default::default(),
             model: self.model,
             context: self.context.unwrap_or_else(|| {
                 Arc::new(FixedContext(vec![SystemBlock {

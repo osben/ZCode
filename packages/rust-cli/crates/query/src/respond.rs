@@ -620,6 +620,23 @@ fn partial(
     })))
 }
 
+/// The response's provider usage goes onto the session's composition record: the record is the request this response
+/// answers. A response without usage leaves the record as it is. The session's record is dropped by an invalidation
+/// (see `CompositionStore::invalidate`), so a late usage cannot attach to a newer request's record.
+fn attach_usage(scope: &RunScope, call: &ModelCall) {
+    if let Some(usage) = &call.usage {
+        scope.parts.compositions.set_usage(
+            &scope.session,
+            crate::composition::provider_usage(
+                usage.input_tokens,
+                usage.cache_creation_input_tokens,
+                usage.cache_read_input_tokens,
+                usage.output_tokens,
+            ),
+        );
+    }
+}
+
 /// 提交 assistant（没有内容时只提交计量）与这批工具的结果：先是流还开着时暂存的，再按交出规则等其余的。
 async fn commit_batch(
     scope: &RunScope,
@@ -628,6 +645,7 @@ async fn commit_batch(
     handed: Vec<Ready>,
     batch: &mut ToolBatch,
 ) -> Result<(), QueryError> {
+    attach_usage(scope, &call);
     if assistant.content.is_empty() {
         scope
             .sink

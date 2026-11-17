@@ -93,6 +93,7 @@ async fn session_as(
     store.create(meta.clone()).await.unwrap();
     let ids = Arc::new(SequentialIds::default());
     let runner = Arc::new(QueryLoop::new(QueryParts {
+        compositions: Default::default(),
         model,
         context: Arc::new(FixedContext(Vec::new())),
         tools: Arc::new(ListTools(tools)),

@@ -118,6 +118,20 @@ impl Kernel for LocalKernel {
             .map_err(KernelError::from)
     }
 
+    /// `v4/conversation/contextComposition`: read from the store the main loop writes. No session is opened or restored.
+    async fn context_composition(
+        &self,
+        session: &SessionId,
+    ) -> Result<
+        (
+            u64,
+            Option<rust_cli_kernel_api::context_composition::CompositionRecord>,
+        ),
+        KernelError,
+    > {
+        Ok(self.compositions.snapshot(session))
+    }
+
     /// `/context`（context-usage.md §2）：有会话时按会话 actor 的当前视图（历史、模型、模式），只读。
     async fn context_usage(
         &self,

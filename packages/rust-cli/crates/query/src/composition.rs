@@ -1,26 +1,31 @@
 //! Context composition (Node `runtime/context-composition/classifier.ts`, spec
-//! `specs/fork-rust-agent-parity.md`, "Context composition, session deletion and model-request metrics"): one model
-//! request split into the eleven categories of `v4/conversation/contextComposition`, and the coarse seven of the
-//! usage ring.
+//! `specs/fork-rust-agent-parity.md`, "Rust port"): one model request split into the eleven categories of
+//! `v4/conversation/contextComposition`, and the coarse seven of the usage ring.
 //!
-//! Pure functions only. The request is read, never changed. Sizes are UTF-16 units (`chars`) and Node's token
-//! estimate (`estimate_text`). Where Rust's request model has no Node counterpart, the difference is listed in the
-//! spec; the names of the categories and the wire shape follow Node.
+//! The classifier is pure. [`measure`] builds its input from the request the query loop is about to send, and
+//! [`record`] stores the result for the session. Sizes are UTF-16 units (`chars`) and Node's token estimate
+//! (`estimate_text`), taken over the provider wire form of each message (the normalized `ApiMessage`s, as Node takes
+//! its projected messages).
 
 use rust_cli_base::js::json::stringify;
 use rust_cli_base::js::string::{utf16_len, utf16_prefix};
 use rust_cli_base::tokens::estimate_text;
+use rust_cli_kernel_api::context_composition::{
+    CompositionRecord, ProviderUsage, WireCategory, WireItem,
+};
+use rust_cli_kernel_api::ids::MessageId;
 use rust_cli_kernel_api::message::{Message, SystemMessage, UserOrigin};
-use rust_cli_kernel_api::model::{SystemBlock, ToolDefinition};
+use rust_cli_kernel_api::model::{ApiMessage, SystemBlock, ToolDefinition, ToolFlags};
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 
 /// Node `CONTEXT_COMPOSITION_MAX_ITEMS`.
 pub const MAX_ITEMS: usize = 50;
 /// Node `CONTEXT_COMPOSITION_MAX_ITEM_NAME_CHARS` (UTF-16 units, as JS `slice` counts them).
 pub const MAX_ITEM_NAME_UNITS: usize = 200;
 
-/// Node's reminder sources that Rust also raises as attachments (`SYSTEM_REMINDER_SOURCES` names that have a Rust
-/// attachment source). An attachment or meta message with one of these sources is counted as `reminders`.
+/// Node's reminder sources that Rust also raises as attachments. An attachment or meta message with one of these sources
+/// is counted as `reminders`.
 const REMINDER_SOURCES: &[&str] = &[
     "environment",
     "date",
@@ -42,7 +47,8 @@ const INSTRUCTION_SOURCE: &str = "instructions";
 const MCP_PREFIX: &str = "mcp__";
 const APP_PREFIX: &str = "app__";
 
-/// The eleven categories, in Node's order.
+/// The eleven categories, in Node's order. The declaration order is the order of [`CategoryId::ALL`]; the index is the
+/// discriminant.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CategoryId {
     SystemPrompt,
@@ -89,8 +95,8 @@ impl CategoryId {
         }
     }
 
-    /// The coarse usage-ring source of this category (Node `USAGE_SOURCE_BY_CATEGORY`). Deferred tools are projected
-    /// by origin in Node; Rust has no deferred tools in its request model, so they follow the built-in source here.
+    /// The coarse usage-ring source of this category (Node `USAGE_SOURCE_BY_CATEGORY`). Deferred tools are projected by
+    /// origin in Node; here an MCP deferred tool goes to MCP and the rest to the built-in source.
     pub const fn usage_source(self) -> UsageSource {
         match self {
             Self::SystemPrompt => UsageSource::SystemPrompt,
@@ -104,14 +110,10 @@ impl CategoryId {
             Self::CompactSummary | Self::Messages => UsageSource::Messages,
         }
     }
-
-    /// Position in [`Self::ALL`]; the declaration order above is that order (checked by `category_ids_follow_node_order`).
-    fn index(self) -> usize {
-        self as usize
-    }
 }
 
-/// The seven coarse sources of the usage ring (Node `ContextCompositionUsageSource`), in ring order.
+/// The seven coarse sources of the usage ring (Node `ContextCompositionUsageSource`), in ring order. The declaration
+/// order is the order of [`UsageSource::ORDER`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UsageSource {
     SystemPrompt,
@@ -147,9 +149,9 @@ impl UsageSource {
     }
 }
 
-/// One named part of a category: a tool, a system block, a reminder source, a message role.
+/// A part of a category, before the wire form: its name, UTF-16 size and estimated tokens.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Item {
+pub struct Part {
     pub name: String,
     pub chars: u64,
     pub tokens: u64,
@@ -160,7 +162,7 @@ pub struct Category {
     pub id: CategoryId,
     pub chars: u64,
     pub tokens: u64,
-    pub items: Vec<Item>,
+    pub items: Vec<Part>,
 }
 
 /// One request's full breakdown: always the eleven categories, in [`CategoryId::ALL`] order, zero values included.
@@ -169,34 +171,31 @@ pub struct Breakdown {
     pub categories: Vec<Category>,
 }
 
+/// A message of the request with the provider wire form it was sent as.
+pub struct MessagePart<'a> {
+    pub message: &'a Message,
+    /// The normalized messages this one contributed (usually one; folded reminders and split user turns make more).
+    pub wire: &'a [ApiMessage],
+}
+
+/// A tool of the request and whether it was sent deferred (name and description only, ToolSearch loads the rest).
+pub struct ToolPart<'a> {
+    pub definition: &'a ToolDefinition,
+    pub deferred: bool,
+}
+
 /// The request parts the classifier reads. Borrowed: classifying never changes the request.
 pub struct Input<'a> {
     pub system: &'a [SystemBlock],
-    pub messages: &'a [Message],
-    pub tools: &'a [ToolDefinition],
-}
-
-/// Node `toContextCompositionCategories`: a category as it goes on the wire (zero categories dropped, items sorted by
-/// tokens descending, at most [`MAX_ITEMS`], names cut to [`MAX_ITEM_NAME_UNITS`]).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct WireCategory {
-    pub id: &'static str,
-    pub tokens: u64,
-    pub chars: u64,
-    pub items: Option<Vec<WireItem>>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct WireItem {
-    pub name: String,
-    pub tokens: u64,
+    pub messages: &'a [MessagePart<'a>],
+    pub tools: &'a [ToolPart<'a>],
 }
 
 #[derive(Default)]
 struct Accumulator {
     chars: u64,
     tokens: u64,
-    items: Vec<Item>,
+    items: Vec<Part>,
 }
 
 struct Builder {
@@ -217,7 +216,7 @@ impl Builder {
     fn add(&mut self, id: CategoryId, name: &str, content: &str) {
         let chars = utf16_len(content) as u64;
         let tokens = estimate_text(content);
-        let slot = &mut self.slots[id.index()];
+        let slot = &mut self.slots[id as usize];
         slot.chars += chars;
         slot.tokens += tokens;
         match slot.items.iter_mut().find(|item| item.name == name) {
@@ -225,7 +224,7 @@ impl Builder {
                 item.chars += chars;
                 item.tokens += tokens;
             }
-            None => slot.items.push(Item {
+            None => slot.items.push(Part {
                 name: name.to_owned(),
                 chars,
                 tokens,
@@ -251,32 +250,59 @@ impl Builder {
 
 /// Splits one request into the eleven categories.
 ///
-/// - System blocks are `system_prompt`. Rust does not keep Node's per-section metadata, so there are no
-///   `skills` or `tool_prompt` sections here (see the spec's deviation list).
-/// - Each message is sized by its JSON, the way Node sizes its projected message.
+/// - System blocks are `system_prompt`. There are no `skills` or `tool_prompt` sections yet: the request keeps no
+///   per-section source (see the spec's deviation list).
+/// - Each message is sized by its wire form: the JSON of its normalized messages.
 /// - Attachments and meta messages go by source: instructions to `meta_user_context`, the reminder sources to
 ///   `reminders`, the rest to `messages`.
 /// - A compact boundary is `compact_summary`. A turn is `messages`, named by its role.
 /// - Tools go by name: `mcp__` to `mcp_tool_schemas`, `app__` to `app_tool_schemas`, the rest to
-///   `system_tool_schemas`. Each is sized by its name, description and input schema.
+///   `system_tool_schemas`. A deferred tool is `deferred_tool_schemas` and is sized by name and description only.
 pub fn classify(input: &Input<'_>) -> Breakdown {
     let mut builder = Builder::new();
     for block in input.system {
         builder.add(CategoryId::SystemPrompt, "system_block", &block.text);
     }
-    for message in input.messages {
-        let (id, name) = message_category(message);
-        let content = serde_json::to_value(message).unwrap_or(Value::Null);
-        builder.add(id, &name, &stringify(&content));
+    // A compact boundary has no wire message of its own; its summary is a separate message, which is the compact summary.
+    let summaries: Vec<&MessageId> = input
+        .messages
+        .iter()
+        .filter_map(|part| match part.message {
+            Message::System(SystemMessage::CompactBoundary(boundary)) => Some(&boundary.summary),
+            _ => None,
+        })
+        .collect();
+    for part in input.messages {
+        let (id, name) = if summaries.contains(&part.message.id()) {
+            (CategoryId::CompactSummary, "compact_summary".to_owned())
+        } else {
+            message_category(part.message)
+        };
+        let content: String = part
+            .wire
+            .iter()
+            .map(|wire| stringify(&serde_json::to_value(wire).unwrap_or(Value::Null)))
+            .collect();
+        builder.add(id, &name, &content);
     }
-    for tool in input.tools {
-        let id = tool_category(&tool.name);
-        let content = json!({
-            "name": tool.name,
-            "description": tool.description,
-            "inputSchema": tool.input_schema,
-        });
-        builder.add(id, &tool.name, &stringify(&content));
+    for part in input.tools {
+        let tool = part.definition;
+        let (id, content) = if part.deferred {
+            (
+                CategoryId::DeferredToolSchemas,
+                stringify(&json!({"name": tool.name, "description": tool.description})),
+            )
+        } else {
+            (
+                tool_category(&tool.name),
+                stringify(&json!({
+                    "name": tool.name,
+                    "description": tool.description,
+                    "inputSchema": tool.input_schema,
+                })),
+            )
+        };
+        builder.add(id, &tool.name, &content);
     }
     builder.finish()
 }
@@ -335,7 +361,8 @@ pub fn usage_sources(breakdown: &Breakdown) -> Vec<(UsageSource, u64, u64)> {
         .collect()
 }
 
-/// Node `toContextCompositionCategories`.
+/// Node `toContextCompositionCategories`: zero categories dropped, items sorted by tokens, at most [`MAX_ITEMS`],
+/// names cut to [`MAX_ITEM_NAME_UNITS`] UTF-16 units.
 pub fn wire_categories(breakdown: &Breakdown) -> Vec<WireCategory> {
     breakdown
         .categories
@@ -362,6 +389,77 @@ pub fn wire_categories(breakdown: &Breakdown) -> Vec<WireCategory> {
             }
         })
         .collect()
+}
+
+/// The provider usage of a measured response, as the usage ring reads it: input with cache reads and writes, and that
+/// plus the output tokens (Node `getModelUsageInputWindowTokens` / `getModelUsageContextTokens`).
+pub fn provider_usage(
+    input: u64,
+    cache_creation: u64,
+    cache_read: u64,
+    output: u64,
+) -> ProviderUsage {
+    let input_tokens = input + cache_creation + cache_read;
+    ProviderUsage {
+        input_tokens,
+        context_tokens: input_tokens + output,
+    }
+}
+
+/// Builds the classifier input from the request the loop is about to send and classifies it.
+///
+/// The messages are the session's active history, each sized by the wire messages it normalizes to on its own. A
+/// message whose wire form depends on its neighbours (a reminder folded into a tool result) is sized alone here, so the
+/// fold is not reflected in the split between categories; the total is the same up to that fold.
+pub fn measure(
+    system: &[SystemBlock],
+    active: &[&Message],
+    tools: &[ToolDefinition],
+    flags: &BTreeMap<String, ToolFlags>,
+    model: &str,
+    configured: Option<bool>,
+) -> Breakdown {
+    let wire: Vec<Vec<ApiMessage>> = active
+        .iter()
+        .map(|message| crate::api_messages(std::iter::once(*message), model, configured))
+        .collect();
+    let parts: Vec<MessagePart<'_>> = active
+        .iter()
+        .zip(&wire)
+        .map(|(message, wire)| MessagePart { message, wire })
+        .collect();
+    let tool_parts: Vec<ToolPart<'_>> = tools
+        .iter()
+        .map(|definition| ToolPart {
+            definition,
+            deferred: flags
+                .get(&definition.name)
+                .is_some_and(|flag| flag.defer_loading),
+        })
+        .collect();
+    classify(&Input {
+        system,
+        messages: &parts,
+        tools: &tool_parts,
+    })
+}
+
+/// The stored record for a measured request: the wire categories and the estimate over all of them.
+pub fn record(
+    provider_id: &str,
+    model_id: &str,
+    measured_at_ms: u64,
+    breakdown: &Breakdown,
+) -> CompositionRecord {
+    let categories = wire_categories(breakdown);
+    CompositionRecord {
+        provider_id: provider_id.to_owned(),
+        model_id: model_id.to_owned(),
+        measured_at_ms,
+        estimated_tokens: breakdown.categories.iter().map(|c| c.tokens).sum(),
+        categories,
+        provider_usage: None,
+    }
 }
 
 #[cfg(test)]

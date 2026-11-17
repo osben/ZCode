@@ -63,6 +63,7 @@ async fn an_agent_notice_starts_a_turn_and_is_acked_after_the_commit() {
     let model = Arc::new(ScriptedModel::new(vec![text_response(&["noted"])]));
     let env = Arc::new(UnusedEnvironment);
     let runner = Arc::new(QueryLoop::new(QueryParts {
+        compositions: Default::default(),
         model,
         context: Arc::new(FixedContext(Vec::new())),
         tools: Arc::new(NoTools),
@@ -183,6 +184,7 @@ async fn open_with(signals: Arc<FakeSignals>, scope: &TaskScope) -> Session {
     let model = Arc::new(ScriptedModel::new(vec![text_response(&["noted"])]));
     let env = Arc::new(UnusedEnvironment);
     let runner = Arc::new(QueryLoop::new(QueryParts {
+        compositions: Default::default(),
         model,
         context: Arc::new(FixedContext(Vec::new())),
         tools: Arc::new(NoTools),

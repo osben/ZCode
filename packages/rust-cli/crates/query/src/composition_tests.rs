@@ -5,8 +5,9 @@ use rust_cli_kernel_api::message::{
     AssistantMessage, AttachmentMessage, CompactBoundary, CompactTrigger, ContentBlock, Message,
     SystemMessage, UserMessage, UserOrigin,
 };
-use rust_cli_kernel_api::model::{SystemBlock, ToolDefinition};
+use rust_cli_kernel_api::model::{ApiMessage, SystemBlock, ToolDefinition, ToolFlags};
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 
 use super::*;
 
@@ -64,10 +65,26 @@ fn classify_parts(
     messages: &[Message],
     tools: &[ToolDefinition],
 ) -> Breakdown {
+    let wire: Vec<Vec<ApiMessage>> = messages
+        .iter()
+        .map(|message| crate::api_messages(std::iter::once(message), "m", None))
+        .collect();
+    let parts: Vec<MessagePart<'_>> = messages
+        .iter()
+        .zip(&wire)
+        .map(|(message, wire)| MessagePart { message, wire })
+        .collect();
+    let tool_parts: Vec<ToolPart<'_>> = tools
+        .iter()
+        .map(|definition| ToolPart {
+            definition,
+            deferred: false,
+        })
+        .collect();
     classify(&Input {
         system,
-        messages,
-        tools,
+        messages: &parts,
+        tools: &tool_parts,
     })
 }
 
@@ -77,6 +94,58 @@ fn category(breakdown: &Breakdown, id: CategoryId) -> &Category {
         .iter()
         .find(|category| category.id == id)
         .expect("every category is present")
+}
+
+#[test]
+fn a_deferred_tool_is_sized_by_name_and_description_only() {
+    let definition = ToolDefinition {
+        name: "WebFetch".to_owned(),
+        description: "fetch".to_owned(),
+        input_schema: json!({"type": "object", "properties": {"url": {"type": "string"}}}),
+        cache_control: None,
+    };
+    let tool_parts = [ToolPart {
+        definition: &definition,
+        deferred: true,
+    }];
+    let breakdown = classify(&Input {
+        system: &[],
+        messages: &[],
+        tools: &tool_parts,
+    });
+    let deferred = category(&breakdown, CategoryId::DeferredToolSchemas);
+    let expected = stringify(&json!({"name": "WebFetch", "description": "fetch"}));
+    assert_eq!(deferred.chars, utf16_len(&expected) as u64);
+    assert_eq!(
+        category(&breakdown, CategoryId::SystemToolSchemas).tokens,
+        0
+    );
+}
+
+#[test]
+fn measure_reads_the_deferred_flag_per_tool_name() {
+    let fetch = tool("WebFetch");
+    let read = tool("Read");
+    let flags = BTreeMap::from([(
+        "WebFetch".to_owned(),
+        ToolFlags {
+            defer_loading: true,
+            ..ToolFlags::default()
+        },
+    )]);
+    let breakdown = measure(&[], &[], &[fetch, read], &flags, "m", None);
+    assert!(category(&breakdown, CategoryId::DeferredToolSchemas).tokens > 0);
+    assert_eq!(
+        category(&breakdown, CategoryId::SystemToolSchemas).items[0].name,
+        "Read"
+    );
+}
+
+#[test]
+fn provider_usage_is_input_with_cache_and_context_with_output() {
+    let usage = provider_usage(10, 2, 3, 4);
+    assert_eq!(usage.input_tokens, 15);
+    assert_eq!(usage.context_tokens, 19);
 }
 
 /// Node's CONTEXT_COMPOSITION_CATEGORY_IDS (packages/shared/src/zcode-protocol-v4/context-composition/contract.ts).
@@ -199,7 +268,13 @@ fn compact_boundary_is_compact_summary_and_turns_are_messages() {
         preserved: None,
         discovered_tools: Vec::new(),
     }));
-    let messages = [human("h", "hello"), assistant("x", "hi"), boundary];
+    // The summary is the message the boundary names; it is the compact summary, not a user turn.
+    let messages = [
+        human("h", "hello"),
+        assistant("x", "hi"),
+        human("s", "summary of earlier turns"),
+        boundary,
+    ];
     let breakdown = classify_parts(&[], &messages, &[]);
     assert!(category(&breakdown, CategoryId::CompactSummary).tokens > 0);
     let turns = category(&breakdown, CategoryId::Messages);

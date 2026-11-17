@@ -208,8 +208,37 @@ async fn assemble(
             ..shape.options
         },
     };
+    record_composition(scope, history, &request, capabilities);
     Prepared {
         request,
         max_tokens,
     }
+}
+
+/// Node `runtime/context-composition`: the request is measured and stored for the session before it is sent, so the
+/// query reads the request that actually goes out (its system blocks, its tools with their deferral, its messages).
+fn record_composition(
+    scope: &RunScope,
+    history: &[Message],
+    request: &ModelRequest,
+    capabilities: Option<&ModelCapabilities>,
+) {
+    let active = history::active(history);
+    let active: Vec<&Message> = active.iter().map(AsRef::as_ref).collect();
+    let configured = capabilities.map(|found| found.supports_mid_conversation_system);
+    let breakdown = crate::composition::measure(
+        &request.system,
+        &active,
+        &request.tools,
+        &request.options.tool_flags,
+        &request.selection.model,
+        configured,
+    );
+    let record = crate::composition::record(
+        &request.selection.provider,
+        &request.selection.model,
+        scope.parts.clock.now_ms(),
+        &breakdown,
+    );
+    scope.parts.compositions.record(&scope.session, record);
 }

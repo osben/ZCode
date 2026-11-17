@@ -863,6 +863,17 @@ pub trait Kernel: Send + Sync {
         })
     }
 
+    /// `v4/conversation/contextComposition` (spec "Rust port"): the session's revision and its last measured request, read
+    /// together. Existing sessions only: an unknown session has revision 0 and no record. Read-only.
+    async fn context_composition(
+        &self,
+        _session: &SessionId,
+    ) -> Result<(u64, Option<crate::context_composition::CompositionRecord>), KernelError> {
+        Err(KernelError::Unsupported {
+            what: "context composition".to_owned(),
+        })
+    }
+
     /// `@` 补全的文件清单（docs/specs/rust-cli/tui-input.md §1.2）：相对 shell 当前目录的文件路径。
     async fn workspace_files(
         &self,
