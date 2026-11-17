@@ -6,6 +6,33 @@ use rust_cli_kernel_api::user_input::INTERRUPT_TEXTS;
 
 use super::{Projection, state::Phase, tool_key};
 
+/// The display a stored RespondToCoordinator reply reads back to (Node's `respond_to_coordinator` display). A stored
+/// result keeps only its text, so the status is read from the reply text (`agents` `respond.rs` `reply_text`); any
+/// other text has no display.
+fn cold_display(text: &str) -> serde_json::Value {
+    let Some(rest) = text.strip_prefix("Response ") else {
+        return serde_json::Value::Null;
+    };
+    let Some((response_id, tail)) = rest.split_once(' ') else {
+        return serde_json::Value::Null;
+    };
+    if !response_id.starts_with("response_") {
+        return serde_json::Value::Null;
+    }
+    let status = if tail.starts_with("was queued for the coordinator.") {
+        "success"
+    } else if tail.starts_with("failed to queue for the coordinator.") {
+        "failed"
+    } else {
+        return serde_json::Value::Null;
+    };
+    serde_json::json!({ "kind": "respond_to_coordinator", "status": status })
+}
+
+#[cfg(test)]
+#[path = "cold_tests.rs"]
+mod tests;
+
 /// 从视图的消息建行；阶段按最后一个回合与 `running` 定。
 pub(super) fn rows(projection: &mut Projection, view: &SessionView) {
     let at = view.meta.created_at_ms;
@@ -117,7 +144,7 @@ pub(super) fn rows(projection: &mut Projection, view: &SessionView) {
                         let output = rust_cli_kernel_api::tool::ToolOutput {
                             content: content.clone(),
                             is_error: *is_error,
-                            display: serde_json::Value::Null,
+                            display: cold_display(&super::text_of_result(content)),
                         };
                         let event = SequencedEvent {
                             seq: 0,
