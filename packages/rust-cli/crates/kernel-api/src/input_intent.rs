@@ -18,6 +18,8 @@ pub const QUOTES: &str = "conversationQuotes";
 pub const HIGHSPEED: &str = "highspeed";
 /// A bot-group input's source, as the Host sent it with `sendText`; never produced here.
 pub const BOT_GROUP_SOURCE: &str = "botGroupSource";
+/// The Gen UI widget state of the input, as sent (`gen_ui_context`); absent when the input carried none.
+pub const GEN_UI_CONTEXT: &str = "genUiContext";
 /// The App's model selection, as sent.
 pub const MODEL_SELECTION: &str = "modelSelection";
 /// Node's mode name.

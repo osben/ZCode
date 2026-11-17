@@ -566,7 +566,9 @@ pub(crate) fn capabilities(node_helper: bool) -> Value {
         "independentPlanState": true,
         "historyFirst": false,
         "sessionDirectorySource": false,
-        "genUiContext": false,
+        // Fork: `sendText.genUiContext` is validated (inbound) and rendered once per request from the input's intent
+        // (query normalize, specs/fork-rust-agent-parity.md "Gen UI widget state").
+        "genUiContext": true,
         "sessionWorkspaceRouting": true,
         "residentRowsRange": true,
         // Fork: incognito sessions with per-capability toggles (kernel_api::incognito,

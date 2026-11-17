@@ -20,8 +20,10 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 
+use rust_cli_kernel_api::gen_ui_context;
 use rust_cli_kernel_api::hooks::queued_command;
 use rust_cli_kernel_api::ids::ToolUseId;
+use rust_cli_kernel_api::input_intent::{self, InputIntent};
 use rust_cli_kernel_api::message::{AttachedBody, AttachmentRole, ContentBlock, Message};
 use rust_cli_kernel_api::model::{ApiContent, ApiMessage, ApiRole, CacheControl, TurnOutputConfig};
 use rust_cli_kernel_api::reminder_fold::{array_result, fold_into_tool_result};
@@ -404,6 +406,21 @@ fn without_rows(message: &Message) -> Option<Cow<'_, Message>> {
     (!assistant.content.is_empty()).then(|| Cow::Owned(Message::Assistant(assistant)))
 }
 
+/// The Gen UI reminder body of an input whose intent carries a non-empty `genUiContext`: a human input, or a steer
+/// (its attachment keeps the intent). `None` for every other message (Node `attachGenUiContext`).
+fn gen_ui_body(message: &Message) -> Option<String> {
+    let owned;
+    let intent: &InputIntent = match message {
+        Message::User(user) => user.intent.as_deref()?,
+        Message::Attachment(attachment) => {
+            owned = queued_command::intent(attachment)?;
+            &owned
+        }
+        Message::Assistant(_) | Message::System(_) => return None,
+    };
+    gen_ui_context::reminder_body(intent.get(input_intent::GEN_UI_CONTEXT)?)
+}
+
 pub(crate) fn normalize<'a>(
     messages: impl IntoIterator<Item = &'a Message>,
     options: &NormalizeOptions,
@@ -499,6 +516,11 @@ pub(crate) fn normalize<'a>(
                 }
             }
             Message::System(_) => {}
+        }
+        // Gen UI widget state: right after the input it belongs to (Node `deriveGenUiStates`, `[input][state]`). The
+        // input is not hoisted, so this follows it; a steer keeps its state beside it (the hoist moves both).
+        if let Some(body) = gen_ui_body(item) {
+            builder.push_reminder(reminder::wrap(&body));
         }
     }
     builder.flush();
