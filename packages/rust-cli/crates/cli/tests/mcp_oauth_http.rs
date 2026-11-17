@@ -1074,24 +1074,14 @@ async fn a_follower_lane_reconnects_after_the_lead_publishes_over_real_http() {
 
     // The follower lane starts while the lead's transaction is open: it follows instead of opening a second one.
     follower.start(workspace(&work), servers);
-    // The follower's first connect is refused with 401. The flow it starts reads the follower baseline
-    // (`McpOAuthCoordinator::start`); the failed status is reported before that task runs, so the status alone
-    // is not a sync point. The settle below lets the flow task reach its follow wait before the lead publishes.
-    // Without it the follower reads a baseline that already includes the lead's publish and never reconnects.
-    // Known gap: the integration harness has no hook for the flow task's start, so this is a bounded settle.
-    until("the follower's first connect is refused with 401", || {
-        follower
-            .server_infos()
-            .iter()
-            .any(|info| {
-                info.name == "e2e-remote"
-                    && info.state == rust_cli_kernel_api::manage::McpServerState::Failed
-                    && info.reason.as_deref().is_some_and(|reason| reason.contains("401"))
-            })
-            .then_some(())
+    // The follower's first connect is refused with 401, and its flow is registered only after it has read the
+    // follower baseline (`McpOAuthCoordinator::start`). A registered flow is therefore the point where the lead's
+    // publish can be observed as a change. Publishing before it would leave the follower waiting for a change that
+    // already happened.
+    until("the follower's authorization flow is registered", || {
+        follower.oauth_flow_running("e2e-remote").then_some(())
     })
     .await;
-    tokio::time::sleep(Duration::from_millis(500)).await;
 
     // The browser answers the lead's callback; the lead publishes, and the follower's client reconnects.
     let state_value = query_value(&authorization_url, "state");
@@ -1112,9 +1102,11 @@ async fn a_follower_lane_reconnects_after_the_lead_publishes_over_real_http() {
     }
     assert!(
         lists_ping(&follower),
-        "the follower did not reconnect: {:?}; mock: {:?}",
+        "the follower did not reconnect: {:?}; mock: {:?}; rejected: {:?}; token requests: {:?}",
         follower.server_infos(),
-        mock.lock().expect("mock").mcp_methods
+        mock.lock().expect("mock").mcp_methods,
+        mock.lock().expect("mock").rejected,
+        mock.lock().expect("mock").token_requests
     );
     let mock = mock.lock().expect("mock");
     assert!(

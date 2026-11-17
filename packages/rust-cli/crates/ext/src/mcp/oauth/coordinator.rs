@@ -188,6 +188,15 @@ impl McpOAuthCoordinator {
         false
     }
 
+    /// Whether a flow for `server_name` is registered and still running. `start` registers the flow only after it has
+    /// read the follower baseline, so a registered flow is the observable point where a publish is safe to make.
+    pub fn flow_running(&self, server_name: &str) -> bool {
+        self.flows
+            .lock_unpoisoned()
+            .get(server_name)
+            .is_some_and(|task| !task.handle.is_finished())
+    }
+
     /// Cancel the running flow for `server_name`. Its wait ends, its own pending record is removed and its
     /// lease is released by `run_lead`.
     pub fn cancel(&self, server_name: &str) {

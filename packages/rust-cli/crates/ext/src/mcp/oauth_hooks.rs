@@ -72,6 +72,11 @@ impl McpManager {
         self.0.oauth.get().cloned()
     }
 
+    /// Whether an OAuth authorization flow for `name` is registered and running on this manager's coordinator.
+    pub fn oauth_flow_running(&self, name: &str) -> bool {
+        self.0.oauth.get().is_some_and(|coordinator| coordinator.flow_running(name))
+    }
+
     /// Wire the OAuth coordinator: the flow's store and runtime, and a reconnect of the server after success.
     pub fn enable_oauth(&self, store: Arc<dyn McpOAuthStore>, runtime: Arc<dyn McpOAuthRuntime>) {
         self.0.enable_oauth(Arc::downgrade(&self.0), store, runtime);
