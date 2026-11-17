@@ -131,6 +131,7 @@ fn bash_timeouts_read_both_variables() {
             ("BASH_DEFAULT_TIMEOUT_MS", "5000"),
         ]),
         Some(64_000),
+        false,
     );
     assert_eq!(all.request.max_output_tokens, Some(64_000));
     assert_eq!(all.request.thinking, ThinkingTokens::Disabled);
@@ -142,8 +143,8 @@ fn bash_timeouts_read_both_variables() {
 #[test]
 fn enable_tool_search_maps_to_the_setting() {
     use rust_cli_prompts::models::ToolSearchSetting::{Auto, Off, On};
-    let read = |value: &str| tool_search(&env(&[("ENABLE_TOOL_SEARCH", value)]));
-    assert_eq!(tool_search(&env(&[])), On);
+    let read = |value: &str| tool_search(&env(&[("ENABLE_TOOL_SEARCH", value)]), false);
+    assert_eq!(tool_search(&env(&[]), false), On);
     for value in [
         "", "1", "true", " TRUE ", "yes", "on", "force", "AUTO", " auto", "maybe",
     ] {
@@ -166,6 +167,38 @@ fn enable_tool_search_maps_to_the_setting() {
     assert_eq!(read("auto:100"), Off);
     assert_eq!(read("auto:150"), Off);
     // 交给内核的开关里带着它。
-    let limits = limits(&env(&[("ENABLE_TOOL_SEARCH", "false")]), None);
+    let limits = limits(&env(&[("ENABLE_TOOL_SEARCH", "false")]), None, false);
     assert_eq!(limits.request.tool_search, Off);
+}
+
+/// Fork (node_desktop): Node 的桌面端按 Host 的 `toolSearchMode` 偏好跑，缺省是 "off"（shared
+/// `DEFAULT_APP_TOOL_SEARCH_MODE`，`app-runtime-preferences.ts`）。没设 `ENABLE_TOOL_SEARCH` 时 app-server 因此保持
+/// 关——插件的 MCP 工具像 Node 一样内联进首个请求，不再被 ToolSearch 延迟隐藏；CLI 自己的界面（TUI、`-p`）缺省
+/// 仍是开。显式设置的两个面都照读。
+#[test]
+fn an_unset_tool_search_stays_off_under_the_desktop_app_server() {
+    use rust_cli_prompts::models::ToolSearchSetting::{Off, On};
+    assert_eq!(
+        tool_search(&env(&[]), true),
+        Off,
+        "the app-server defaults off"
+    );
+    assert_eq!(
+        tool_search(&env(&[]), false),
+        On,
+        "the CLI's own surfaces default on"
+    );
+    assert_eq!(
+        tool_search(&env(&[("ENABLE_TOOL_SEARCH", "1")]), true),
+        On,
+        "an explicit value applies on the app-server"
+    );
+    assert_eq!(
+        tool_search(&env(&[("ENABLE_TOOL_SEARCH", "off")]), false),
+        Off
+    );
+    let desktop = limits(&env(&[]), None, true);
+    assert_eq!(desktop.request.tool_search, Off);
+    let cli = limits(&env(&[]), None, false);
+    assert_eq!(cli.request.tool_search, On);
 }

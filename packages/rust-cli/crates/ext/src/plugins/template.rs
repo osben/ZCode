@@ -1,6 +1,7 @@
 //! Fork: the `${…}` resolver for plugin-declared language servers (specs/fork-rust-lsp.md "Templates"), Node
 //! adapters `plugins/template.ts`. Node shares it with MCP servers; Rust's MCP path keeps its own narrower expansion
-//! (ext.md D13), so this one is used by [`super::lsp`] only.
+//! (ext.md D13), so this one is used by [`super::lsp`] only — the env-var name rule
+//! ([`environment_name`]) is shared with the MCP path's sensitive lookup.
 
 use rust_cli_base::secret::EnvSnapshot;
 use serde_json::{Map, Value};
@@ -130,8 +131,9 @@ fn js_string(value: &Value) -> String {
     }
 }
 
-/// `^[A-Za-z_][A-Za-z0-9_]*$`.
-fn environment_name(name: &str) -> bool {
+/// `^[A-Za-z_][A-Za-z0-9_]*$`（Node `ENVIRONMENT_VARIABLE_NAME_PATTERN`）。规则只有这一份：语言服务器的模板与
+/// 插件 MCP 的敏感位查表（[`super`](super) 的 `env_lookup`）共用。
+pub(super) fn environment_name(name: &str) -> bool {
     let mut chars = name.chars();
     chars
         .next()

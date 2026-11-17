@@ -35,11 +35,55 @@ fn string_map(value: Option<&Value>) -> BTreeMap<String, String> {
         .unwrap_or_default()
 }
 
+/// `${VAR}` 的查表对（Node `adapters/src/plugins/template.ts` `resolveTemplate` 的 `allowSensitive` 之分）：
+/// 普通位（command、args、url）查 [`Self::plain`]，敏感位（`env` 与 `headers` 的值）查 [`Self::sensitive`]——任意
+/// 环境变量名只在敏感位解析，秘密不进 command、args 或 URL。两套一样时（非插件的配置：入口的进程环境）用
+/// [`EnvLookups::same`]。
+pub struct EnvLookups<'a> {
+    pub plain: &'a dyn Fn(&str) -> Option<String>,
+    pub sensitive: &'a dyn Fn(&str) -> Option<String>,
+}
+
+impl<'a> EnvLookups<'a> {
+    /// 两套同一个查表。
+    pub fn same(lookup: &'a dyn Fn(&str) -> Option<String>) -> Self {
+        Self {
+            plain: lookup,
+            sensitive: lookup,
+        }
+    }
+}
+
+/// 一台服务器的字符串字段展开：查表对（见 [`EnvLookups`]）加这台服务器自己的状态（远端绑定的按原文、缺的名字）。
+struct Fields<'a> {
+    lookups: &'a EnvLookups<'a>,
+    /// 远端绑定的服务器（R5，remote-exec.md §22.7）：按原文，`${VAR}` 留给那台机器的执行器，也不记 missing。
+    kept: bool,
+    missing: Vec<String>,
+}
+
+impl Fields<'_> {
+    /// 普通位（Node `allowSensitive: false`）：command、args、url。
+    fn plain(&mut self, text: &str) -> String {
+        self.expand(text, self.lookups.plain)
+    }
+
+    /// 敏感位（Node `allowSensitive: true`）：`env` 与 `headers` 的值。
+    fn sensitive(&mut self, text: &str) -> String {
+        self.expand(text, self.lookups.sensitive)
+    }
+
+    fn expand(&mut self, text: &str, lookup: &dyn Fn(&str) -> Option<String>) -> String {
+        if self.kept {
+            text.to_owned()
+        } else {
+            expand_vars(text, lookup, &mut self.missing)
+        }
+    }
+}
+
 /// 一个服务器的配置；不认识的形状返回原因。
-fn transport(
-    config: &Value,
-    expand: &mut dyn FnMut(&str) -> String,
-) -> Result<McpTransportConfig, String> {
+fn transport(config: &Value, fields: &mut Fields<'_>) -> Result<McpTransportConfig, String> {
     let kind = config
         .get("type")
         .and_then(Value::as_str)
@@ -57,23 +101,23 @@ fn transport(
                 .and_then(Value::as_str)
                 .ok_or_else(|| "missing command".to_owned())?;
             Ok(McpTransportConfig::Stdio {
-                command: expand(command),
+                command: fields.plain(command),
                 args: strings(config.get("args"))
                     .iter()
-                    .map(|arg| expand(arg))
+                    .map(|arg| fields.plain(arg))
                     .collect(),
                 env: string_map(config.get("env"))
                     .into_iter()
-                    .map(|(key, value)| (key, expand(&value)))
+                    .map(|(key, value)| (key, fields.sensitive(&value)))
                     .collect(),
                 cwd: None,
             })
         }
         "sse" | "http" => {
-            let url = expand(url()?);
+            let url = fields.plain(url()?);
             let headers = string_map(config.get("headers"))
                 .into_iter()
-                .map(|(key, value)| (key, expand(&value)))
+                .map(|(key, value)| (key, fields.sensitive(&value)))
                 .collect();
             Ok(if kind == "sse" {
                 McpTransportConfig::sse(url, headers)
@@ -89,16 +133,16 @@ fn transport(
 pub fn parse_servers(
     servers: &Value,
     scope: McpScope,
-    lookup: &dyn Fn(&str) -> Option<String>,
+    lookups: &EnvLookups<'_>,
 ) -> (Vec<McpServer>, Vec<String>) {
-    parse_servers_keeping(servers, scope, lookup, &|_| false)
+    parse_servers_keeping(servers, scope, lookups, &|_| false)
 }
 
 /// 同 [`parse_servers`]；`keep(名字)` 为真的服务器按原文、不展开 `${VAR}`（绑定到远端机器的，本机的值不进请求）。
 pub fn parse_servers_keeping(
     servers: &Value,
     scope: McpScope,
-    lookup: &dyn Fn(&str) -> Option<String>,
+    lookups: &EnvLookups<'_>,
     keep: &dyn Fn(&str) -> bool,
 ) -> (Vec<McpServer>, Vec<String>) {
     let mut found = Vec::new();
@@ -112,21 +156,18 @@ pub fn parse_servers_keeping(
     let mut names: Vec<&String> = entries.keys().collect();
     names.sort();
     for name in names {
-        let mut missing = Vec::new();
-        let parsed = {
-            let mut expand = |text: &str| match keep(name) {
-                // 绑定到远端机器的服务器（R5，remote-exec.md §22.7）：按原文，`${VAR}` 留给那台机器的执行器展开。
-                true => text.to_owned(),
-                false => expand_vars(text, lookup, &mut missing),
-            };
-            transport(&entries[name], &mut expand)
+        let mut fields = Fields {
+            lookups,
+            kept: keep(name),
+            missing: Vec::new(),
         };
+        let parsed = transport(&entries[name], &mut fields);
         match parsed {
             Ok(transport) => {
-                if !missing.is_empty() {
+                if !fields.missing.is_empty() {
                     warnings.push(format!(
                         "MCP server \"{name}\": missing environment variables: {}",
-                        missing.join(", ")
+                        fields.missing.join(", ")
                     ));
                 }
                 found.push(McpServer {

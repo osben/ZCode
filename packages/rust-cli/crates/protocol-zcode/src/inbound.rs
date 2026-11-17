@@ -121,6 +121,12 @@ impl Inbound {
                     "/payload/modelExecution: modelExecution requires modelSelection".to_owned(),
                 );
             }
+            // Gen UI widget state: Node's zod refinements of `genUiModelContextSchema` (paths and sizes), checked
+            // here so a refused value never reaches the kernel.
+            if let Some(context) = payload.get("genUiContext") {
+                rust_cli_kernel_api::gen_ui_context::validate(context)
+                    .map_err(|reason| format!("/payload/genUiContext: {reason}"))?;
+            }
         }
         if kind == "createSession" {
             create_session_rules(payload)?;

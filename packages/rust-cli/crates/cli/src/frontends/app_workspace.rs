@@ -14,14 +14,20 @@ use async_trait::async_trait;
 use rust_cli_base::Spawner;
 use rust_cli_base::secret::EnvSnapshot;
 use rust_cli_base::sync::LockUnpoisoned;
+use rust_cli_ext::WorkspaceConfigLoader;
+use rust_cli_ext::mcp::oauth::{
+    McpOAuthStore, ServerOAuthIdentity, authorization_status, is_authorization_challenge,
+    may_show_pending, pending_authorization_for,
+};
 use rust_cli_ext::mcp::{McpManager, McpScope, McpServer, McpSettings, parse_node_servers};
+use rust_cli_ext::plugins::load_all;
 use rust_cli_hooks::ProjectHookSlots;
 use rust_cli_kernel_api::clock::Clock;
 use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
 use rust_cli_kernel_api::ids::EnvironmentId;
 use rust_cli_kernel_api::machine::Files;
 use rust_cli_kernel_api::manage::{McpAction, McpServerInfo, McpServerState};
-use rust_cli_kernel_api::mcp::McpTransport;
+use rust_cli_kernel_api::mcp::{McpTransport, McpTransportConfig};
 use rust_cli_kernel_api::workspace_key::WorkspaceLayerHost;
 use rust_cli_node_store::LOCAL_ENVIRONMENT;
 use rust_cli_paths::StoragePaths;
@@ -34,6 +40,10 @@ use serde_json::{Map, Value, json};
 use crate::commands::hooks_trust::{self, TrustContext};
 use crate::config::mcp_trust::{self, Inspection, Review, Target};
 use crate::config::{ConfigInputs, read_files};
+
+#[cfg(test)]
+#[path = "app_workspace_oauth_tests.rs"]
+mod oauth_tests;
 
 /// The app-server's process environment. Trust changes name their own workspace, so the App holds no process root.
 pub(crate) struct ProcessConfig {
@@ -49,9 +59,15 @@ pub(crate) struct AppWorkspace {
     /// Fork: the workspace layer this admin's committed trust writes reload (a seam, like
     /// `project_hooks`; specs/fork-rust-workspace-plugins-mcp.md, "As built: layer reload").
     pub(crate) workspace_layer: Arc<dyn WorkspaceLayerHost>,
+    /// Fork: the workspace's plugin view, read per request for the plugin MCP rows (Node `resolveStartupPlugins`).
+    /// The app-server takes no `--plugin-dir`, so the view's session plugin directories are empty.
+    pub(crate) plugins: Arc<dyn WorkspaceConfigLoader>,
     pub(crate) transport: Arc<dyn McpTransport>,
     pub(crate) spawner: Spawner,
     pub(crate) clock: Arc<dyn Clock>,
+    /// Fork: the MCP OAuth state (pending authorizations). None when the admin is built without a platform,
+    /// so no row reads it (`with_mcp_oauth`).
+    pub(crate) mcp_oauth: Option<Arc<dyn McpOAuthStore>>,
     /// Connect and tool settings for the settings lane (defaults; the handshake carries the agent version).
     pub(crate) mcp: McpSettings,
     pub(crate) version: &'static str,
@@ -86,6 +102,7 @@ impl AppWorkspace {
         project_hooks: Arc<dyn ProjectHookSlots>,
         workspace_layer: Arc<dyn WorkspaceLayerHost>,
         (transport, spawner, clock): (Arc<dyn McpTransport>, Spawner, Arc<dyn Clock>),
+        plugins: Arc<dyn WorkspaceConfigLoader>,
     ) -> Self {
         Self {
             files,
@@ -93,9 +110,11 @@ impl AppWorkspace {
             process,
             project_hooks,
             workspace_layer,
+            plugins,
             transport,
             spawner,
             clock,
+            mcp_oauth: None,
             mcp: McpSettings {
                 client_version: crate::VERSION.to_owned(),
                 ..McpSettings::default()
@@ -104,6 +123,55 @@ impl AppWorkspace {
             lane: StdMutex::new(None),
             arrivals: AtomicU64::new(0),
             toggles: tokio::sync::Semaphore::new(1),
+        }
+    }
+
+    /// Fork: read the MCP OAuth state of the status rows from the platform's credential store.
+    pub(crate) fn with_mcp_oauth(mut self, store: Arc<dyn McpOAuthStore>) -> Self {
+        self.mcp_oauth = Some(store);
+        self
+    }
+
+    /// Fork: a pending OAuth authorization of the server turns a `connecting`, `failed` or `disconnected` row
+    /// into Node's `connecting` row with an `authorization` object (Node `createOAuthAuthorizationStatus`). Other
+    /// statuses keep their own state. A store that cannot be read keeps the row as it is, so a status read never
+    /// fails on it.
+    async fn with_pending_authorization(
+        &self,
+        name: &str,
+        config: &Map<String, Value>,
+        mut status: Value,
+    ) -> Value {
+        let Some(store) = self.mcp_oauth.as_ref() else {
+            return status;
+        };
+        let shown = status
+            .get("status")
+            .and_then(Value::as_str)
+            .is_some_and(may_show_pending);
+        let Some(identity) = authorization_identity(name, config).filter(|_| shown) else {
+            return status;
+        };
+        let now = i64::try_from(self.clock.now_ms()).unwrap_or(i64::MAX);
+        match pending_authorization_for(store.as_ref(), &identity, now).await {
+            Ok(Some(pending)) => {
+                if let Some(row) = status.as_object_mut() {
+                    row.insert("status".into(), json!("connecting"));
+                    row.insert(
+                        "authorization".into(),
+                        authorization_status(&pending, &self.now()),
+                    );
+                    row.remove("error");
+                    row.remove("failureKind");
+                }
+                status
+            }
+            Ok(None) => status,
+            Err(error) => {
+                // The store's message names the reason only; keys and values never reach the log.
+                tracing::warn!(server = name, error = %error, "MCP OAuth state unreadable; row unchanged");
+                status
+            }
         }
     }
 
@@ -146,10 +214,34 @@ impl AppWorkspace {
         }
     }
 
-    /// Node's configured servers: the Host's DTO when given, else the config's (project declarations and user
-    /// servers, each tagged with its source).
-    fn configured(read: &Read, servers: Option<&[Value]>) -> Vec<(String, Map<String, Value>)> {
-        let mut out: BTreeMap<String, Map<String, Value>> = BTreeMap::new();
+    /// The plugin set of `workspace`, read without installing anything: the workspace view's servers, or none when
+    /// its config cannot be read (the layer fails closed the same way).
+    async fn plugin_servers(&self, workspace: &WorkspaceRef) -> BTreeMap<String, McpServer> {
+        let Some(config) = self.plugins.load(workspace).await else {
+            return BTreeMap::new();
+        };
+        let loaded = load_all(self.files.as_ref(), workspace, &[], &config.plugins)
+            .await
+            .plugins;
+        loaded
+            .mcp_servers()
+            .into_iter()
+            .map(|server| (server.name.clone(), server))
+            .collect()
+    }
+
+    /// Node's configured servers: the plugin servers first (`plugin:<plugin>:<server>`, source kind `plugin`), then the
+    /// Host's DTO when given, else the config's (project declarations and user servers, each tagged with its source).
+    /// A later entry of the same name replaces a plugin server (Node `{...plugins, ...config}`).
+    fn configured(
+        read: &Read,
+        servers: Option<&[Value]>,
+        plugins: &BTreeMap<String, McpServer>,
+    ) -> Vec<(String, Map<String, Value>)> {
+        let mut out: BTreeMap<String, Map<String, Value>> = plugins
+            .iter()
+            .map(|(name, server)| (name.clone(), plugin_row_config(server)))
+            .collect();
         if let Some(servers) = servers {
             for (name, config) in servers.iter().filter_map(mcp_trust::dto_config) {
                 out.insert(name, config);
@@ -185,6 +277,7 @@ impl AppWorkspace {
         &self,
         read: &Read,
         configured: &[(String, Map<String, Value>)],
+        plugins: &BTreeMap<String, McpServer>,
         untrusted: &BTreeSet<&str>,
     ) -> (Vec<McpServer>, BTreeMap<String, Value>) {
         let mut admitted = Vec::new();
@@ -197,6 +290,11 @@ impl AppWorkspace {
             {
                 let status = if disabled { "disabled" } else { "untrusted" };
                 blocked.insert(name.clone(), self.idle(status, transport(config)));
+                continue;
+            }
+            // A plugin row is admitted as the server its plugin produced, so its env (plugin root, project dir) survives.
+            if mcp_trust::source_kind(config) == Some("plugin") {
+                admitted.extend(plugins.get(name).cloned());
                 continue;
             }
             let scope = match mcp_trust::source_kind(config) {
@@ -235,6 +333,10 @@ impl AppWorkspace {
         });
         if let Some(reason) = &info.reason {
             value["error"] = json!(reason);
+            // Fork: a 401 is an authorization challenge (Node's `unauthorized` trigger), not a plain failure.
+            if info.state == McpServerState::Failed && is_authorization_challenge(reason) {
+                value["failureKind"] = json!("not_authenticated");
+            }
         }
         value
     }
@@ -318,6 +420,8 @@ impl AppWorkspace {
             let servers = std::mem::take(&mut *fresh.pending.lock_unpoisoned());
             fresh.manager.start(workspace, servers);
         }
+        // Node awaits every connection of the lane (each one bounded by its own connect timeout, so a server that
+        // never answers ends `failed` instead of holding the read).
         fresh.manager.wait_ready().await;
     }
 
@@ -346,7 +450,8 @@ impl AppWorkspace {
         arrival: Option<u64>,
     ) -> Result<Value, String> {
         let read = self.read(target).await;
-        let configured = Self::configured(&read, servers);
+        let plugins = self.plugin_servers(&read.workspace).await;
+        let configured = Self::configured(&read, servers, &plugins);
         // Node's `inspect()` throws from `displayConfig` before anything connects.
         let reviews = read
             .inspection
@@ -358,7 +463,7 @@ impl AppWorkspace {
             .map(|review| review.name.as_str())
             .collect();
         if let Some(arrival) = arrival {
-            let admitted = self.admit(&read, &configured, &untrusted);
+            let admitted = self.admit(&read, &configured, &plugins, &untrusted);
             self.connect(arrival, &target.key, read.workspace.clone(), admitted)
                 .await;
         }
@@ -396,6 +501,7 @@ impl AppWorkspace {
             } else {
                 self.idle("disconnected", kind)
             };
+            let status = self.with_pending_authorization(name, config, status).await;
             statuses.insert(name.clone(), status);
         }
         self.with_reviews(&mut statuses, &configured, &reviews);
@@ -443,11 +549,43 @@ async fn close(lane: &Lane) {
     lane.manager.control(McpAction::Disable, &names).await;
 }
 
+/// The OAuth identity a configured server declares: its `url` and an `authorization_code` `oauth` block. Stdio
+/// servers and client-credential servers have no pending authorization.
+fn authorization_identity(name: &str, config: &Map<String, Value>) -> Option<ServerOAuthIdentity> {
+    let url = config.get("url")?.as_str()?;
+    let oauth = config.get("oauth")?.as_object()?;
+    if oauth.get("type")?.as_str()? != "authorization_code" {
+        return None;
+    }
+    let text = |key: &str| oauth.get(key).and_then(Value::as_str).map(str::to_owned);
+    Some(ServerOAuthIdentity {
+        name: name.to_owned(),
+        url: url.to_owned(),
+        client_id: text("clientId"),
+        scope: text("scope"),
+        redirect_path: text("redirectPath"),
+    })
+}
+
 fn transport(config: &Map<String, Value>) -> &str {
     config
         .get("type")
         .and_then(Value::as_str)
         .unwrap_or("stdio")
+}
+
+/// The settings row config of a plugin server: its transport as Node reports it, tagged with the plugin source
+/// (no `workspaceTrust`, and `allows` passes it).
+fn plugin_row_config(server: &McpServer) -> Map<String, Value> {
+    let kind = match &server.transport {
+        McpTransportConfig::Sse { .. } => "sse",
+        McpTransportConfig::Http { .. } => "http",
+        McpTransportConfig::Stdio { .. } | McpTransportConfig::NodeHelper => "stdio",
+    };
+    let mut config = Map::new();
+    config.insert("type".into(), json!(kind));
+    config.insert("source".into(), json!({"kind": "plugin"}));
+    config
 }
 
 #[async_trait]

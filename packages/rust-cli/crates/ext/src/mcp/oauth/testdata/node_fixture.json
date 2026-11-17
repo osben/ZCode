@@ -1,0 +1,10 @@
+{
+  "keyPrefix": "mcp:oauth:169077245c7eff5a2c01d143",
+  "leaseBasename": "mcp-oauth-169077245c7eff5a2c01d143.authz",
+  "raw": {
+    "mcp:oauth:169077245c7eff5a2c01d143:authorization_credentials": "{\"client_information\":{\"client_id\":\"client-1\"},\"expires_at\":1700003600000,\"generation\":\"gen-fixture-1\",\"issuer\":\"https://auth.example.test\",\"obtained_at\":1700000000000,\"published_by\":\"tx-1\",\"tokens\":{\"access_token\":\"access-fixture\",\"token_type\":\"Bearer\",\"expires_in\":3600},\"version\":2}",
+    "mcp:oauth:169077245c7eff5a2c01d143:discovery_state": "{\"authorizationServerUrl\":\"https://auth.example.test\",\"resourceMetadataUrl\":\"https://mcp.example.test/.well-known/oauth-protected-resource\",\"authorizationServerMetadata\":{\"issuer\":\"https://auth.example.test\",\"authorization_endpoint\":\"https://auth.example.test/authorize\",\"token_endpoint\":\"https://auth.example.test/token\"}}",
+    "mcp:oauth:169077245c7eff5a2c01d143:discovery_state_fetched_at": "1700000000000",
+    "mcp:oauth:169077245c7eff5a2c01d143:pending_authorization": "{\"attempt_id\":\"attempt-fixture-1\",\"authorization_url\":\"https://auth.example.test/authorize?state=s1\",\"baseline_generation\":\"gen-fixture-1\",\"expires_at\":1700000300000,\"state\":\"s1\"}"
+  }
+}

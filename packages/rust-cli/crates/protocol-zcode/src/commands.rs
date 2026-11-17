@@ -77,6 +77,9 @@ pub(crate) struct Input {
     /// B4: the input's structured source (`conversationInputSourceSchema`, e.g. `{kind: "extension", pluginId}`). The
     /// inbound schema checks its shape before this is read; it is copied onto the intent as it is ([`input_intent`]).
     source: Option<Value>,
+    /// Gen UI widget state (`genUiContext`): checked by the inbound schema and `gen_ui_context::validate`, kept on the
+    /// intent as sent (`[]` included, like Node's `!== undefined`) and rendered by the request normalizer.
+    gen_ui_context: Option<Value>,
     /// Fork: the scheduled automation that dispatched this input (specs/fork-rust-automations.md, slice 1). With
     /// `toolDisallowlist` it limits the turn the input opens ([`TurnLimits`]), never the session.
     automation_id: Option<String>,
@@ -1408,6 +1411,13 @@ fn input_intent(
         fields.insert(
             rust_cli_kernel_api::input_intent::BOT_GROUP_SOURCE.into(),
             source.clone(),
+        );
+    }
+    // Gen UI widget state travels with the input (queue, guide, retry, cold restore), as Node's canonical intent.
+    if let Some(context) = input.gen_ui_context.as_ref() {
+        fields.insert(
+            rust_cli_kernel_api::input_intent::GEN_UI_CONTEXT.into(),
+            context.clone(),
         );
     }
     let command = envelope.command_id.as_str();
