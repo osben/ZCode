@@ -1,0 +1,23 @@
+[package]
+name = "rust-cli-workflow"
+description = "The dynamic workflow engine core (deterministic, no I/O beyond the journal port) for rust-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+doctest = false
+
+[dependencies]
+anyhow.workspace = true
+# 日志的 dwf_* 仓储（W2）：端口的一个实现直接落在它上面。
+rust-cli-node-store.workspace = true
+rusqlite.workspace = true
+# JS 语义的 JSON 文本（JSON.stringify 的字符串转义与数字形式）。
+rust-cli-base.workspace = true
+serde_json.workspace = true

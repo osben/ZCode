@@ -1,0 +1,587 @@
+{
+  "scenarios": [
+    {
+      "input": {
+        "name": "complete-with-retunes",
+        "runId": "run_plain",
+        "lifetimes": [
+          {
+            "caps": 4,
+            "steps": [
+              {
+                "op": "log",
+                "message": "hello 中文 😀"
+              },
+              {
+                "op": "retune",
+                "value": 8
+              },
+              {
+                "op": "retune",
+                "value": 8
+              },
+              {
+                "op": "retune",
+                "value": 2.7
+              },
+              {
+                "op": "retune",
+                "value": null
+              },
+              {
+                "op": "retune",
+                "value": 0
+              },
+              {
+                "op": "usage",
+                "tokens": 5
+              },
+              {
+                "op": "complete",
+                "artifact": {
+                  "ok": true,
+                  "items": [
+                    1,
+                    "two",
+                    null
+                  ]
+                }
+              },
+              {
+                "op": "log",
+                "message": "after settlement"
+              },
+              {
+                "op": "complete",
+                "artifact": "second"
+              },
+              {
+                "op": "retune",
+                "value": 9
+              }
+            ]
+          }
+        ]
+      },
+      "lifetimes": [
+        {
+          "results": [
+            null,
+            true,
+            false,
+            true,
+            false,
+            true,
+            null,
+            null,
+            null,
+            null,
+            false
+          ],
+          "run": {
+            "runId": "run_plain",
+            "caps": {
+              "maxConcurrency": 1
+            },
+            "spentTokens": 5,
+            "status": "completed",
+            "result": {
+              "ok": true,
+              "items": [
+                1,
+                "two",
+                null
+              ]
+            }
+          },
+          "disposed": 1
+        }
+      ],
+      "events": [
+        {
+          "sequence": 0,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"run_plain\",\"caps\":{\"maxConcurrency\":4}}"
+        },
+        {
+          "sequence": 1,
+          "payloadJson": "{\"type\":\"log\",\"message\":\"hello 中文 😀\"}"
+        },
+        {
+          "sequence": 2,
+          "payloadJson": "{\"type\":\"run-caps-changed\",\"runId\":\"run_plain\",\"caps\":{\"maxConcurrency\":8},\"previous\":{\"maxConcurrency\":4}}"
+        },
+        {
+          "sequence": 3,
+          "payloadJson": "{\"type\":\"run-caps-changed\",\"runId\":\"run_plain\",\"caps\":{\"maxConcurrency\":2},\"previous\":{\"maxConcurrency\":8}}"
+        },
+        {
+          "sequence": 4,
+          "payloadJson": "{\"type\":\"run-caps-changed\",\"runId\":\"run_plain\",\"caps\":{\"maxConcurrency\":1},\"previous\":{\"maxConcurrency\":2}}"
+        },
+        {
+          "sequence": 5,
+          "payloadJson": "{\"type\":\"usage-updated\",\"spentTokens\":5}"
+        },
+        {
+          "sequence": 6,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"completed\"}"
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "stopped-user-with-inherited-usage",
+        "runId": "run_user",
+        "lifetimes": [
+          {
+            "scriptHash": "h-user",
+            "scriptText": "return 1;",
+            "name": "nightly",
+            "args": {
+              "b": [
+                2,
+                {
+                  "z": 1,
+                  "a": "x"
+                }
+              ],
+              "a": 1.5
+            },
+            "caps": 2,
+            "inheritedTokens": 12.9,
+            "toolCallId": "call_1",
+            "parentSessionId": "sess_parent",
+            "cwd": "/work/repo",
+            "resumedFrom": "run_prior",
+            "steps": [
+              {
+                "op": "usage",
+                "tokens": 3
+              },
+              {
+                "op": "stop",
+                "reason": "user"
+              },
+              {
+                "op": "stop",
+                "reason": "model"
+              },
+              {
+                "op": "fail",
+                "error": {
+                  "code": "DriverError",
+                  "message": "late"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "lifetimes": [
+        {
+          "results": [
+            null,
+            null,
+            null,
+            null
+          ],
+          "run": {
+            "runId": "run_user",
+            "caps": {
+              "maxConcurrency": 2
+            },
+            "spentTokens": 15,
+            "status": "stopped",
+            "scriptText": "return 1;",
+            "args": {
+              "b": [
+                2,
+                {
+                  "z": 1,
+                  "a": "x"
+                }
+              ],
+              "a": 1.5
+            },
+            "name": "nightly",
+            "scriptHash": "h-user",
+            "parentSessionId": "sess_parent",
+            "cwd": "/work/repo",
+            "toolCallId": "call_1",
+            "resumedFrom": "run_prior",
+            "stopReason": "user"
+          },
+          "disposed": 1
+        }
+      ],
+      "events": [
+        {
+          "sequence": 0,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"run_user\",\"caps\":{\"maxConcurrency\":2}}"
+        },
+        {
+          "sequence": 1,
+          "payloadJson": "{\"type\":\"usage-updated\",\"spentTokens\":12}"
+        },
+        {
+          "sequence": 2,
+          "payloadJson": "{\"type\":\"usage-updated\",\"spentTokens\":15}"
+        },
+        {
+          "sequence": 3,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"stopped\",\"stopReason\":\"user\"}"
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "errored-run",
+        "runId": "run_error",
+        "lifetimes": [
+          {
+            "caps": 3,
+            "steps": [
+              {
+                "op": "log",
+                "message": "about to fail"
+              },
+              {
+                "op": "fail",
+                "error": {
+                  "code": "DriverError",
+                  "message": "boom"
+                }
+              },
+              {
+                "op": "complete",
+                "artifact": 1
+              }
+            ]
+          }
+        ]
+      },
+      "lifetimes": [
+        {
+          "results": [
+            null,
+            null,
+            null
+          ],
+          "run": {
+            "runId": "run_error",
+            "caps": {
+              "maxConcurrency": 3
+            },
+            "spentTokens": 0,
+            "status": "errored",
+            "failure": {
+              "code": "DriverError",
+              "message": "boom"
+            }
+          },
+          "disposed": 1
+        }
+      ],
+      "events": [
+        {
+          "sequence": 0,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"run_error\",\"caps\":{\"maxConcurrency\":3}}"
+        },
+        {
+          "sequence": 1,
+          "payloadJson": "{\"type\":\"log\",\"message\":\"about to fail\"}"
+        },
+        {
+          "sequence": 2,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"errored\",\"error\":{\"code\":\"DriverError\",\"message\":\"boom\"}}"
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "stopped-interrupted-and-superseded",
+        "runId": "run_interrupted",
+        "lifetimes": [
+          {
+            "caps": 3,
+            "steps": [
+              {
+                "op": "stop",
+                "reason": "interrupted",
+                "error": {
+                  "code": "Interrupted",
+                  "message": "sandbox exited"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "lifetimes": [
+        {
+          "results": [
+            null
+          ],
+          "run": {
+            "runId": "run_interrupted",
+            "caps": {
+              "maxConcurrency": 3
+            },
+            "spentTokens": 0,
+            "status": "stopped",
+            "stopReason": "interrupted",
+            "failure": {
+              "code": "Interrupted",
+              "message": "sandbox exited"
+            }
+          },
+          "disposed": 1
+        }
+      ],
+      "events": [
+        {
+          "sequence": 0,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"run_interrupted\",\"caps\":{\"maxConcurrency\":3}}"
+        },
+        {
+          "sequence": 1,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"stopped\",\"stopReason\":\"interrupted\",\"error\":{\"code\":\"Interrupted\",\"message\":\"sandbox exited\"}}"
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "superseded-by-successor",
+        "runId": "run_superseded",
+        "lifetimes": [
+          {
+            "caps": 3,
+            "steps": [
+              {
+                "op": "stop",
+                "reason": "superseded",
+                "supersededBy": "run_successor"
+              }
+            ]
+          }
+        ]
+      },
+      "lifetimes": [
+        {
+          "results": [
+            null
+          ],
+          "run": {
+            "runId": "run_superseded",
+            "caps": {
+              "maxConcurrency": 3
+            },
+            "spentTokens": 0,
+            "status": "stopped",
+            "stopReason": "superseded",
+            "supersededBy": "run_successor"
+          },
+          "disposed": 1
+        }
+      ],
+      "events": [
+        {
+          "sequence": 0,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"run_superseded\",\"caps\":{\"maxConcurrency\":3}}"
+        },
+        {
+          "sequence": 1,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"stopped\",\"stopReason\":\"superseded\",\"supersededBy\":\"run_successor\"}"
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "resume-after-interrupt",
+        "runId": "run_resume",
+        "lifetimes": [
+          {
+            "scriptHash": "h1",
+            "scriptText": "s",
+            "caps": 4,
+            "toolCallId": "tc1",
+            "parentSessionId": "sess1",
+            "cwd": "/w",
+            "launch": {
+              "inputId": "in-1",
+              "phaseNames": [
+                "plan",
+                "work"
+              ],
+              "subagentModel": "zai/glm$high",
+              "modelBindings": {
+                "sonnet": "anthropic/claude"
+              },
+              "subagentPermissionMode": "yolo",
+              "scriptPath": "/w/script.ts",
+              "phaseAlongside": [
+                [],
+                [
+                  0
+                ]
+              ],
+              "holes": [
+                1
+              ]
+            },
+            "steps": [
+              {
+                "op": "usage",
+                "tokens": 7
+              },
+              {
+                "op": "stop",
+                "reason": "interrupted",
+                "error": {
+                  "code": "Interrupted",
+                  "message": "crash"
+                }
+              }
+            ]
+          },
+          {
+            "scriptHash": "h1",
+            "caps": 9,
+            "steps": [
+              {
+                "op": "usage",
+                "tokens": 2
+              },
+              {
+                "op": "retune",
+                "value": 6
+              },
+              {
+                "op": "complete",
+                "artifact": "done"
+              }
+            ]
+          },
+          {
+            "scriptHash": "h2",
+            "caps": 1,
+            "steps": []
+          }
+        ]
+      },
+      "lifetimes": [
+        {
+          "results": [
+            null,
+            null
+          ],
+          "run": {
+            "runId": "run_resume",
+            "caps": {
+              "maxConcurrency": 4
+            },
+            "spentTokens": 7,
+            "status": "stopped",
+            "scriptText": "s",
+            "scriptHash": "h1",
+            "parentSessionId": "sess1",
+            "cwd": "/w",
+            "toolCallId": "tc1",
+            "stopReason": "interrupted",
+            "failure": {
+              "code": "Interrupted",
+              "message": "crash"
+            }
+          },
+          "disposed": 1
+        },
+        {
+          "results": [
+            null,
+            true,
+            null
+          ],
+          "run": {
+            "runId": "run_resume",
+            "caps": {
+              "maxConcurrency": 6
+            },
+            "spentTokens": 9,
+            "status": "completed",
+            "scriptText": "s",
+            "scriptHash": "h1",
+            "parentSessionId": "sess1",
+            "cwd": "/w",
+            "toolCallId": "tc1",
+            "result": "done"
+          },
+          "disposed": 2
+        },
+        {
+          "constructError": {
+            "code": "ScriptHashMismatch",
+            "message": "Cannot resume run run_resume: its script changed (recorded hash h1, got h2). Resume needs the byte-identical script; to run a revised script, start a new run with resume_from instead.",
+            "mismatch": {
+              "expected": "h1",
+              "got": "h2"
+            }
+          },
+          "results": [],
+          "run": {
+            "runId": "run_resume",
+            "caps": {
+              "maxConcurrency": 6
+            },
+            "spentTokens": 9,
+            "status": "completed",
+            "scriptText": "s",
+            "scriptHash": "h1",
+            "parentSessionId": "sess1",
+            "cwd": "/w",
+            "toolCallId": "tc1",
+            "result": "done"
+          },
+          "disposed": 2
+        }
+      ],
+      "events": [
+        {
+          "sequence": 0,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"run_resume\",\"caps\":{\"maxConcurrency\":4}}"
+        },
+        {
+          "sequence": 1,
+          "payloadJson": "{\"type\":\"run-launched\",\"inputId\":\"in-1\",\"toolCallId\":\"tc1\",\"parentSessionId\":\"sess1\",\"phaseNames\":[\"plan\",\"work\"],\"subagentModel\":\"zai/glm$high\",\"subagentPermissionMode\":\"yolo\",\"modelBindings\":{\"sonnet\":\"anthropic/claude\"},\"scriptPath\":\"/w/script.ts\",\"phaseAlongside\":[[],[0]],\"holes\":[1]}"
+        },
+        {
+          "sequence": 2,
+          "payloadJson": "{\"type\":\"usage-updated\",\"spentTokens\":7}"
+        },
+        {
+          "sequence": 3,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"stopped\",\"stopReason\":\"interrupted\",\"error\":{\"code\":\"Interrupted\",\"message\":\"crash\"}}"
+        },
+        {
+          "sequence": 4,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"run_resume\",\"caps\":{\"maxConcurrency\":9}}"
+        },
+        {
+          "sequence": 5,
+          "payloadJson": "{\"type\":\"usage-updated\",\"spentTokens\":7}"
+        },
+        {
+          "sequence": 6,
+          "payloadJson": "{\"type\":\"usage-updated\",\"spentTokens\":9}"
+        },
+        {
+          "sequence": 7,
+          "payloadJson": "{\"type\":\"run-caps-changed\",\"runId\":\"run_resume\",\"caps\":{\"maxConcurrency\":6},\"previous\":{\"maxConcurrency\":9}}"
+        },
+        {
+          "sequence": 8,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"completed\"}"
+        }
+      ]
+    }
+  ]
+}
