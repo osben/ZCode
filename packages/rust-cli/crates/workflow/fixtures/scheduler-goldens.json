@@ -1,0 +1,1911 @@
+{
+  "scenarios": [
+    {
+      "name": "fifo-retune-repair-resume",
+      "input": {
+        "name": "fifo-retune-repair-resume",
+        "runId": "run_fifo",
+        "askSpecs": {
+          "ask#1": {
+            "typed": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "ask#2": {
+            "typed": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "ask#3": {
+            "typed": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "free#1": {
+            "typed": false
+          }
+        },
+        "sitePhases": {
+          "ask#2": "review"
+        },
+        "lifetimes": [
+          {
+            "caps": 1,
+            "scriptHash": "h-fifo",
+            "steps": [
+              {
+                "op": "createActor",
+                "site": "actor#1",
+                "name": "alpha"
+              },
+              {
+                "op": "createActor",
+                "site": "actor#2",
+                "persona": {
+                  "system": "sys b",
+                  "model": "zai/glm"
+                }
+              },
+              {
+                "op": "phase",
+                "name": "plan"
+              },
+              {
+                "op": "ask",
+                "tag": "a1",
+                "site": "ask#1",
+                "actor": "actor#1@1",
+                "instructions": "first"
+              },
+              {
+                "op": "ask",
+                "tag": "a2",
+                "site": "ask#2",
+                "actor": "actor#1@1",
+                "instructions": "second"
+              },
+              {
+                "op": "phase",
+                "name": "work"
+              },
+              {
+                "op": "ask",
+                "tag": "b1",
+                "site": "ask#1",
+                "actor": "actor#2@1",
+                "instructions": "third"
+              },
+              {
+                "op": "retune",
+                "value": 2
+              },
+              {
+                "op": "retune",
+                "value": 2
+              },
+              {
+                "op": "submit",
+                "at": {
+                  "site": "ask#1",
+                  "ordinal": 1
+                },
+                "payload": "done-1"
+              },
+              {
+                "op": "stats",
+                "at": {
+                  "site": "ask#1",
+                  "ordinal": 1
+                },
+                "stats": {
+                  "tokens": 5,
+                  "toolCalls": 2,
+                  "turns": 1,
+                  "worldToolCalls": 1
+                }
+              },
+              {
+                "op": "submit",
+                "at": {
+                  "site": "ask#2",
+                  "ordinal": 1
+                },
+                "payload": 42
+              },
+              {
+                "op": "submit",
+                "at": {
+                  "site": "ask#2",
+                  "ordinal": 1
+                },
+                "payload": "fixed"
+              },
+              {
+                "op": "turnEnded",
+                "at": {
+                  "site": "ask#1",
+                  "ordinal": 2
+                },
+                "finalText": "no submit yet"
+              },
+              {
+                "op": "turnEnded",
+                "at": {
+                  "site": "ask#1",
+                  "ordinal": 2
+                },
+                "finalText": "still none"
+              },
+              {
+                "op": "stats",
+                "at": {
+                  "site": "ask#1",
+                  "ordinal": 2
+                },
+                "stats": {
+                  "tokens": 3,
+                  "toolCalls": 0,
+                  "turns": 2
+                }
+              },
+              {
+                "op": "ask",
+                "tag": "c1",
+                "site": "ask#3",
+                "actor": "actor#1@1",
+                "instructions": "fourth"
+              },
+              {
+                "op": "ask",
+                "tag": "c2",
+                "site": "ask#3",
+                "actor": "actor#2@1",
+                "instructions": "fifth"
+              },
+              {
+                "op": "stop",
+                "reason": "interrupted",
+                "error": {
+                  "code": "Interrupted",
+                  "message": "sandbox exited"
+                }
+              }
+            ]
+          },
+          {
+            "caps": 3,
+            "scriptHash": "h-fifo",
+            "inheritedTokens": 0,
+            "steps": [
+              {
+                "op": "createActor",
+                "site": "actor#1",
+                "name": "alpha"
+              },
+              {
+                "op": "createActor",
+                "site": "actor#2",
+                "persona": {
+                  "system": "sys b",
+                  "model": "zai/glm"
+                }
+              },
+              {
+                "op": "phase",
+                "name": "plan"
+              },
+              {
+                "op": "ask",
+                "tag": "a1",
+                "site": "ask#1",
+                "actor": "actor#1@1",
+                "instructions": "first"
+              },
+              {
+                "op": "phase",
+                "name": "work"
+              },
+              {
+                "op": "ask",
+                "tag": "b1",
+                "site": "ask#1",
+                "actor": "actor#2@1",
+                "instructions": "third"
+              },
+              {
+                "op": "ask",
+                "tag": "a2",
+                "site": "ask#2",
+                "actor": "actor#1@1",
+                "instructions": "second"
+              },
+              {
+                "op": "ask",
+                "tag": "c1",
+                "site": "ask#3",
+                "actor": "actor#1@1",
+                "instructions": "fourth"
+              },
+              {
+                "op": "ask",
+                "tag": "c2",
+                "site": "ask#3",
+                "actor": "actor#2@1",
+                "instructions": "fifth"
+              },
+              {
+                "op": "submit",
+                "at": {
+                  "site": "ask#3",
+                  "ordinal": 1
+                },
+                "payload": "c1-done"
+              },
+              {
+                "op": "submit",
+                "at": {
+                  "site": "ask#3",
+                  "ordinal": 2
+                },
+                "payload": "c2-done"
+              },
+              {
+                "op": "stats",
+                "at": {
+                  "site": "ask#3",
+                  "ordinal": 2
+                },
+                "stats": {
+                  "tokens": 4,
+                  "toolCalls": 1,
+                  "turns": 1
+                }
+              },
+              {
+                "op": "complete",
+                "artifact": {
+                  "ok": true
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "lifetimes": [
+        {
+          "results": [
+            {
+              "actorId": "actor#1@1"
+            },
+            {
+              "actorId": "actor#2@1"
+            },
+            null,
+            null,
+            null,
+            null,
+            null,
+            true,
+            false,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "run": {
+            "runId": "run_fifo",
+            "caps": {
+              "maxConcurrency": 2
+            },
+            "spentTokens": 8,
+            "status": "stopped",
+            "scriptHash": "h-fifo",
+            "stopReason": "interrupted",
+            "failure": {
+              "code": "Interrupted",
+              "message": "sandbox exited"
+            }
+          },
+          "nodes": [
+            {
+              "runId": "run_fifo",
+              "siteId": "ask#1",
+              "ordinal": 1,
+              "kind": "ask",
+              "actorSiteId": "actor#1",
+              "actorOrdinal": 1,
+              "actorSeq": 0,
+              "inputHash": "78209f39",
+              "status": "completed",
+              "result": "done-1",
+              "stats": {
+                "tokens": 5,
+                "toolCalls": 2,
+                "turns": 1,
+                "worldToolCalls": 1
+              }
+            },
+            {
+              "runId": "run_fifo",
+              "siteId": "ask#2",
+              "ordinal": 1,
+              "kind": "ask",
+              "actorSiteId": "actor#1",
+              "actorOrdinal": 1,
+              "actorSeq": 1,
+              "inputHash": "f866e64d",
+              "status": "completed",
+              "result": "fixed"
+            },
+            {
+              "runId": "run_fifo",
+              "siteId": "ask#1",
+              "ordinal": 2,
+              "kind": "ask",
+              "actorSiteId": "actor#2",
+              "actorOrdinal": 1,
+              "actorSeq": 0,
+              "inputHash": "c1e3d8f4",
+              "status": "failed",
+              "error": {
+                "code": "ResultNotSubmitted",
+                "message": "The typed ask ended without a submit_result call, so there is no result.",
+                "finalText": "still none"
+              },
+              "stats": {
+                "tokens": 3,
+                "toolCalls": 0,
+                "turns": 2
+              }
+            },
+            {
+              "runId": "run_fifo",
+              "siteId": "ask#3",
+              "ordinal": 1,
+              "kind": "ask",
+              "actorSiteId": "actor#1",
+              "actorOrdinal": 1,
+              "actorSeq": 2,
+              "inputHash": "57aa9b09",
+              "status": "running"
+            },
+            {
+              "runId": "run_fifo",
+              "siteId": "ask#3",
+              "ordinal": 2,
+              "kind": "ask",
+              "actorSiteId": "actor#2",
+              "actorOrdinal": 1,
+              "actorSeq": 1,
+              "inputHash": "d96e82d4",
+              "status": "running"
+            }
+          ],
+          "actors": [
+            {
+              "runId": "run_fifo",
+              "siteId": "actor#1",
+              "ordinal": 1,
+              "name": "alpha",
+              "sessionId": "sess:actor#1@1"
+            },
+            {
+              "runId": "run_fifo",
+              "siteId": "actor#2",
+              "ordinal": 1,
+              "sessionId": "sess:actor#2@1"
+            }
+          ],
+          "disposed": 1
+        },
+        {
+          "results": [
+            {
+              "actorId": "actor#1@1"
+            },
+            {
+              "actorId": "actor#2@1"
+            },
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "run": {
+            "runId": "run_fifo",
+            "caps": {
+              "maxConcurrency": 2
+            },
+            "spentTokens": 12,
+            "status": "completed",
+            "scriptHash": "h-fifo",
+            "result": {
+              "ok": true
+            }
+          },
+          "nodes": [
+            {
+              "runId": "run_fifo",
+              "siteId": "ask#1",
+              "ordinal": 1,
+              "kind": "ask",
+              "actorSiteId": "actor#1",
+              "actorOrdinal": 1,
+              "actorSeq": 0,
+              "inputHash": "78209f39",
+              "status": "completed",
+              "result": "done-1",
+              "stats": {
+                "tokens": 5,
+                "toolCalls": 2,
+                "turns": 1,
+                "worldToolCalls": 1
+              }
+            },
+            {
+              "runId": "run_fifo",
+              "siteId": "ask#2",
+              "ordinal": 1,
+              "kind": "ask",
+              "actorSiteId": "actor#1",
+              "actorOrdinal": 1,
+              "actorSeq": 1,
+              "inputHash": "f866e64d",
+              "status": "completed",
+              "result": "fixed"
+            },
+            {
+              "runId": "run_fifo",
+              "siteId": "ask#1",
+              "ordinal": 2,
+              "kind": "ask",
+              "actorSiteId": "actor#2",
+              "actorOrdinal": 1,
+              "actorSeq": 0,
+              "inputHash": "c1e3d8f4",
+              "status": "failed",
+              "error": {
+                "code": "ResultNotSubmitted",
+                "message": "The typed ask ended without a submit_result call, so there is no result.",
+                "finalText": "still none"
+              },
+              "stats": {
+                "tokens": 3,
+                "toolCalls": 0,
+                "turns": 2
+              }
+            },
+            {
+              "runId": "run_fifo",
+              "siteId": "ask#3",
+              "ordinal": 1,
+              "kind": "ask",
+              "actorSiteId": "actor#1",
+              "actorOrdinal": 1,
+              "actorSeq": 2,
+              "inputHash": "57aa9b09",
+              "status": "completed",
+              "result": "c1-done"
+            },
+            {
+              "runId": "run_fifo",
+              "siteId": "ask#3",
+              "ordinal": 2,
+              "kind": "ask",
+              "actorSiteId": "actor#2",
+              "actorOrdinal": 1,
+              "actorSeq": 1,
+              "inputHash": "d96e82d4",
+              "status": "completed",
+              "result": "c2-done",
+              "stats": {
+                "tokens": 4,
+                "toolCalls": 1,
+                "turns": 1
+              }
+            }
+          ],
+          "actors": [
+            {
+              "runId": "run_fifo",
+              "siteId": "actor#1",
+              "ordinal": 1,
+              "name": "alpha",
+              "sessionId": "sess:actor#1@1"
+            },
+            {
+              "runId": "run_fifo",
+              "siteId": "actor#2",
+              "ordinal": 1,
+              "sessionId": "sess:actor#2@1"
+            }
+          ],
+          "disposed": 2
+        }
+      ],
+      "outcomes": [
+        {
+          "tag": "a1",
+          "ok": true,
+          "value": "done-1"
+        },
+        {
+          "tag": "a2",
+          "ok": true,
+          "value": "fixed"
+        },
+        {
+          "tag": "b1",
+          "ok": false,
+          "error": {
+            "code": "ResultNotSubmitted",
+            "message": "The typed ask ended without a submit_result call, so there is no result.",
+            "finalText": "still none"
+          }
+        },
+        {
+          "tag": "c1",
+          "ok": false,
+          "error": {
+            "code": "Cancelled",
+            "message": "Run stopped."
+          }
+        },
+        {
+          "tag": "c2",
+          "ok": false,
+          "error": {
+            "code": "Cancelled",
+            "message": "Run stopped."
+          }
+        },
+        {
+          "tag": "a1",
+          "ok": true,
+          "value": "done-1"
+        },
+        {
+          "tag": "a2",
+          "ok": true,
+          "value": "fixed"
+        },
+        {
+          "tag": "b1",
+          "ok": false,
+          "error": {
+            "code": "ResultNotSubmitted",
+            "message": "The typed ask ended without a submit_result call, so there is no result.",
+            "finalText": "still none"
+          }
+        },
+        {
+          "tag": "c1",
+          "ok": true,
+          "value": "c1-done"
+        },
+        {
+          "tag": "c2",
+          "ok": true,
+          "value": "c2-done"
+        }
+      ],
+      "driverCalls": [
+        {
+          "op": "createActorSession",
+          "actor": "actor#1@1"
+        },
+        {
+          "op": "startAsk",
+          "session": "sess:actor#1@1",
+          "instance": "ask#1@1",
+          "instructions": "first",
+          "typed": true
+        },
+        {
+          "op": "createActorSession",
+          "actor": "actor#2@1"
+        },
+        {
+          "op": "startAsk",
+          "session": "sess:actor#2@1",
+          "instance": "ask#1@2",
+          "instructions": "third",
+          "typed": true
+        },
+        {
+          "op": "respondToSubmit",
+          "instance": "ask#1@1",
+          "verdict": {
+            "kind": "accept"
+          }
+        },
+        {
+          "op": "startAsk",
+          "session": "sess:actor#1@1",
+          "instance": "ask#2@1",
+          "instructions": "second",
+          "typed": true
+        },
+        {
+          "op": "respondToSubmit",
+          "instance": "ask#2@1",
+          "verdict": {
+            "kind": "reject",
+            "violations": [
+              {
+                "path": "$",
+                "expected": "string",
+                "got": "number"
+              }
+            ]
+          }
+        },
+        {
+          "op": "respondToSubmit",
+          "instance": "ask#2@1",
+          "verdict": {
+            "kind": "accept"
+          }
+        },
+        {
+          "op": "respondToSubmit",
+          "instance": "ask#1@2",
+          "verdict": {
+            "kind": "nudge"
+          }
+        },
+        {
+          "op": "cancelAsk",
+          "instance": "ask#1@2"
+        },
+        {
+          "op": "startAsk",
+          "session": "sess:actor#1@1",
+          "instance": "ask#3@1",
+          "instructions": "fourth",
+          "typed": true
+        },
+        {
+          "op": "startAsk",
+          "session": "sess:actor#2@1",
+          "instance": "ask#3@2",
+          "instructions": "fifth",
+          "typed": true
+        },
+        {
+          "op": "cancelAsk",
+          "instance": "ask#3@1"
+        },
+        {
+          "op": "cancelAsk",
+          "instance": "ask#3@2"
+        },
+        {
+          "op": "createActorSession",
+          "actor": "actor#1@1"
+        },
+        {
+          "op": "startAsk",
+          "session": "sess:actor#1@1",
+          "instance": "ask#3@1",
+          "instructions": "fourth",
+          "typed": true
+        },
+        {
+          "op": "createActorSession",
+          "actor": "actor#2@1"
+        },
+        {
+          "op": "startAsk",
+          "session": "sess:actor#2@1",
+          "instance": "ask#3@2",
+          "instructions": "fifth",
+          "typed": true
+        },
+        {
+          "op": "respondToSubmit",
+          "instance": "ask#3@1",
+          "verdict": {
+            "kind": "accept"
+          }
+        },
+        {
+          "op": "respondToSubmit",
+          "instance": "ask#3@2",
+          "verdict": {
+            "kind": "accept"
+          }
+        }
+      ],
+      "events": [
+        {
+          "sequence": 0,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"run_fifo\",\"caps\":{\"maxConcurrency\":1}}"
+        },
+        {
+          "sequence": 1,
+          "payloadJson": "{\"type\":\"actor-created\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"name\":\"alpha\",\"persona\":{\"name\":\"alpha\"}}"
+        },
+        {
+          "sequence": 2,
+          "payloadJson": "{\"type\":\"actor-created\",\"actor\":{\"siteId\":\"actor#2\",\"ordinal\":1},\"persona\":{\"system\":\"sys b\",\"model\":\"zai/glm\"}}"
+        },
+        {
+          "sequence": 3,
+          "payloadJson": "{\"type\":\"phase-entered\",\"name\":\"plan\",\"ordinal\":1}"
+        },
+        {
+          "sequence": 4,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorSeq\":0,\"instructionsHead\":\"first\",\"phaseName\":\"plan\"}"
+        },
+        {
+          "sequence": 5,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorName\":\"alpha\",\"instructionsHead\":\"first\",\"phaseName\":\"plan\"}"
+        },
+        {
+          "sequence": 6,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"ask#2\",\"ordinal\":1},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorSeq\":1,\"instructionsHead\":\"second\",\"phaseName\":\"review\"}"
+        },
+        {
+          "sequence": 7,
+          "payloadJson": "{\"type\":\"phase-entered\",\"name\":\"work\",\"ordinal\":1}"
+        },
+        {
+          "sequence": 8,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":2},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#2\",\"ordinal\":1},\"actorSeq\":0,\"instructionsHead\":\"third\",\"phaseName\":\"work\"}"
+        },
+        {
+          "sequence": 9,
+          "payloadJson": "{\"type\":\"run-caps-changed\",\"runId\":\"run_fifo\",\"caps\":{\"maxConcurrency\":2},\"previous\":{\"maxConcurrency\":1}}"
+        },
+        {
+          "sequence": 10,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":2},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#2\",\"ordinal\":1},\"actorPersonaModel\":\"zai/glm\",\"instructionsHead\":\"third\",\"phaseName\":\"work\"}"
+        },
+        {
+          "sequence": 11,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"outcome\":\"ok\"}"
+        },
+        {
+          "sequence": 12,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"ask#2\",\"ordinal\":1},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorName\":\"alpha\",\"instructionsHead\":\"second\",\"phaseName\":\"review\"}"
+        },
+        {
+          "sequence": 13,
+          "payloadJson": "{\"type\":\"usage-updated\",\"spentTokens\":5}"
+        },
+        {
+          "sequence": 14,
+          "payloadJson": "{\"type\":\"node-repairing\",\"instance\":{\"siteId\":\"ask#2\",\"ordinal\":1},\"attempt\":1,\"violations\":[{\"path\":\"$\",\"expected\":\"string\",\"got\":\"number\"}]}"
+        },
+        {
+          "sequence": 15,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"ask#2\",\"ordinal\":1},\"outcome\":\"ok\"}"
+        },
+        {
+          "sequence": 16,
+          "payloadJson": "{\"type\":\"node-nudged\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":2}}"
+        },
+        {
+          "sequence": 17,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":2},\"outcome\":\"failed\",\"error\":{\"code\":\"ResultNotSubmitted\",\"message\":\"The typed ask ended without a submit_result call, so there is no result.\",\"finalText\":\"still none\"}}"
+        },
+        {
+          "sequence": 18,
+          "payloadJson": "{\"type\":\"usage-updated\",\"spentTokens\":8}"
+        },
+        {
+          "sequence": 19,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"ask#3\",\"ordinal\":1},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorSeq\":2,\"instructionsHead\":\"fourth\",\"phaseName\":\"work\"}"
+        },
+        {
+          "sequence": 20,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"ask#3\",\"ordinal\":1},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorName\":\"alpha\",\"instructionsHead\":\"fourth\",\"phaseName\":\"work\"}"
+        },
+        {
+          "sequence": 21,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"ask#3\",\"ordinal\":2},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#2\",\"ordinal\":1},\"actorSeq\":1,\"instructionsHead\":\"fifth\",\"phaseName\":\"work\"}"
+        },
+        {
+          "sequence": 22,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"ask#3\",\"ordinal\":2},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#2\",\"ordinal\":1},\"actorPersonaModel\":\"zai/glm\",\"instructionsHead\":\"fifth\",\"phaseName\":\"work\"}"
+        },
+        {
+          "sequence": 23,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"ask#3\",\"ordinal\":1},\"outcome\":\"cancelled\"}"
+        },
+        {
+          "sequence": 24,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"ask#3\",\"ordinal\":2},\"outcome\":\"cancelled\"}"
+        },
+        {
+          "sequence": 25,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"stopped\",\"stopReason\":\"interrupted\",\"error\":{\"code\":\"Interrupted\",\"message\":\"sandbox exited\"}}"
+        },
+        {
+          "sequence": 26,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"run_fifo\",\"caps\":{\"maxConcurrency\":3}}"
+        },
+        {
+          "sequence": 27,
+          "payloadJson": "{\"type\":\"usage-updated\",\"spentTokens\":8}"
+        },
+        {
+          "sequence": 28,
+          "payloadJson": "{\"type\":\"actor-created\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"name\":\"alpha\",\"persona\":{\"name\":\"alpha\"}}"
+        },
+        {
+          "sequence": 29,
+          "payloadJson": "{\"type\":\"actor-created\",\"actor\":{\"siteId\":\"actor#2\",\"ordinal\":1},\"persona\":{\"system\":\"sys b\",\"model\":\"zai/glm\"}}"
+        },
+        {
+          "sequence": 30,
+          "payloadJson": "{\"type\":\"phase-entered\",\"name\":\"plan\",\"ordinal\":1}"
+        },
+        {
+          "sequence": 31,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"outcome\":\"ok\",\"cached\":true,\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorSeq\":0,\"instructionsHead\":\"first\",\"phaseName\":\"plan\"}"
+        },
+        {
+          "sequence": 32,
+          "payloadJson": "{\"type\":\"phase-entered\",\"name\":\"work\",\"ordinal\":1}"
+        },
+        {
+          "sequence": 33,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"ask#2\",\"ordinal\":1},\"outcome\":\"ok\",\"cached\":true,\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorSeq\":1,\"instructionsHead\":\"second\",\"phaseName\":\"review\"}"
+        },
+        {
+          "sequence": 34,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":2},\"outcome\":\"failed\",\"cached\":true,\"error\":{\"code\":\"ResultNotSubmitted\",\"message\":\"The typed ask ended without a submit_result call, so there is no result.\",\"finalText\":\"still none\"},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#2\",\"ordinal\":1},\"actorSeq\":0,\"instructionsHead\":\"third\",\"phaseName\":\"work\"}"
+        },
+        {
+          "sequence": 35,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"ask#3\",\"ordinal\":1},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorSeq\":2,\"instructionsHead\":\"fourth\",\"phaseName\":\"work\"}"
+        },
+        {
+          "sequence": 36,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"ask#3\",\"ordinal\":1},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorName\":\"alpha\",\"instructionsHead\":\"fourth\",\"phaseName\":\"work\"}"
+        },
+        {
+          "sequence": 37,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"ask#3\",\"ordinal\":2},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#2\",\"ordinal\":1},\"actorSeq\":1,\"instructionsHead\":\"fifth\",\"phaseName\":\"work\"}"
+        },
+        {
+          "sequence": 38,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"ask#3\",\"ordinal\":2},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#2\",\"ordinal\":1},\"actorPersonaModel\":\"zai/glm\",\"instructionsHead\":\"fifth\",\"phaseName\":\"work\"}"
+        },
+        {
+          "sequence": 39,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"ask#3\",\"ordinal\":1},\"outcome\":\"ok\"}"
+        },
+        {
+          "sequence": 40,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"ask#3\",\"ordinal\":2},\"outcome\":\"ok\"}"
+        },
+        {
+          "sequence": 41,
+          "payloadJson": "{\"type\":\"usage-updated\",\"spentTokens\":12}"
+        },
+        {
+          "sequence": 42,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"completed\"}"
+        }
+      ],
+      "emittedCount": 43
+    },
+    {
+      "name": "complete-with-asks-in-flight",
+      "input": {
+        "name": "complete-with-asks-in-flight",
+        "runId": "run_complete",
+        "askSpecs": {
+          "ask#1": {
+            "typed": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "ask#2": {
+            "typed": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "ask#3": {
+            "typed": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "free#1": {
+            "typed": false
+          }
+        },
+        "lifetimes": [
+          {
+            "caps": 2,
+            "scriptHash": "h-complete",
+            "steps": [
+              {
+                "op": "createActor",
+                "site": "actor#1",
+                "name": "x"
+              },
+              {
+                "op": "createActor",
+                "site": "actor#2",
+                "name": "y"
+              },
+              {
+                "op": "createActor",
+                "site": "actor#3",
+                "name": "z"
+              },
+              {
+                "op": "ask",
+                "tag": "x1",
+                "site": "ask#1",
+                "actor": "actor#1@1",
+                "instructions": "one"
+              },
+              {
+                "op": "ask",
+                "tag": "y1",
+                "site": "ask#1",
+                "actor": "actor#2@1",
+                "instructions": "two"
+              },
+              {
+                "op": "ask",
+                "tag": "z1",
+                "site": "ask#1",
+                "actor": "actor#3@1",
+                "instructions": "three"
+              },
+              {
+                "op": "complete",
+                "artifact": "partial"
+              },
+              {
+                "op": "stats",
+                "at": {
+                  "site": "ask#1",
+                  "ordinal": 1
+                },
+                "stats": {
+                  "tokens": 7,
+                  "toolCalls": 0,
+                  "turns": 1
+                }
+              },
+              {
+                "op": "log",
+                "message": "after settlement"
+              }
+            ]
+          }
+        ]
+      },
+      "lifetimes": [
+        {
+          "results": [
+            {
+              "actorId": "actor#1@1"
+            },
+            {
+              "actorId": "actor#2@1"
+            },
+            {
+              "actorId": "actor#3@1"
+            },
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "run": {
+            "runId": "run_complete",
+            "caps": {
+              "maxConcurrency": 2
+            },
+            "spentTokens": 7,
+            "status": "completed",
+            "scriptHash": "h-complete",
+            "result": "partial"
+          },
+          "nodes": [
+            {
+              "runId": "run_complete",
+              "siteId": "ask#1",
+              "ordinal": 1,
+              "kind": "ask",
+              "actorSiteId": "actor#1",
+              "actorOrdinal": 1,
+              "actorSeq": 0,
+              "inputHash": "9fe84b97",
+              "status": "running",
+              "stats": {
+                "tokens": 7,
+                "toolCalls": 0,
+                "turns": 1
+              }
+            },
+            {
+              "runId": "run_complete",
+              "siteId": "ask#1",
+              "ordinal": 2,
+              "kind": "ask",
+              "actorSiteId": "actor#2",
+              "actorOrdinal": 1,
+              "actorSeq": 0,
+              "inputHash": "0c902231",
+              "status": "running"
+            },
+            {
+              "runId": "run_complete",
+              "siteId": "ask#1",
+              "ordinal": 3,
+              "kind": "ask",
+              "actorSiteId": "actor#3",
+              "actorOrdinal": 1,
+              "actorSeq": 0,
+              "inputHash": "1e6d1393",
+              "status": "running"
+            }
+          ],
+          "actors": [
+            {
+              "runId": "run_complete",
+              "siteId": "actor#1",
+              "ordinal": 1,
+              "name": "x",
+              "sessionId": "sess:actor#1@1"
+            },
+            {
+              "runId": "run_complete",
+              "siteId": "actor#2",
+              "ordinal": 1,
+              "name": "y",
+              "sessionId": "sess:actor#2@1"
+            },
+            {
+              "runId": "run_complete",
+              "siteId": "actor#3",
+              "ordinal": 1,
+              "name": "z"
+            }
+          ],
+          "disposed": 1
+        }
+      ],
+      "outcomes": [
+        {
+          "tag": "x1",
+          "ok": false,
+          "error": {
+            "code": "Cancelled",
+            "message": "Run completed; in-flight subagent tasks were abandoned."
+          }
+        },
+        {
+          "tag": "y1",
+          "ok": false,
+          "error": {
+            "code": "Cancelled",
+            "message": "Run completed; in-flight subagent tasks were abandoned."
+          }
+        },
+        {
+          "tag": "z1",
+          "ok": false,
+          "error": {
+            "code": "Cancelled",
+            "message": "Run completed; in-flight subagent tasks were abandoned."
+          }
+        }
+      ],
+      "driverCalls": [
+        {
+          "op": "createActorSession",
+          "actor": "actor#1@1"
+        },
+        {
+          "op": "startAsk",
+          "session": "sess:actor#1@1",
+          "instance": "ask#1@1",
+          "instructions": "one",
+          "typed": true
+        },
+        {
+          "op": "createActorSession",
+          "actor": "actor#2@1"
+        },
+        {
+          "op": "startAsk",
+          "session": "sess:actor#2@1",
+          "instance": "ask#1@2",
+          "instructions": "two",
+          "typed": true
+        },
+        {
+          "op": "cancelAsk",
+          "instance": "ask#1@1"
+        },
+        {
+          "op": "cancelAsk",
+          "instance": "ask#1@2"
+        }
+      ],
+      "events": [
+        {
+          "sequence": 0,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"run_complete\",\"caps\":{\"maxConcurrency\":2}}"
+        },
+        {
+          "sequence": 1,
+          "payloadJson": "{\"type\":\"actor-created\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"name\":\"x\",\"persona\":{\"name\":\"x\"}}"
+        },
+        {
+          "sequence": 2,
+          "payloadJson": "{\"type\":\"actor-created\",\"actor\":{\"siteId\":\"actor#2\",\"ordinal\":1},\"name\":\"y\",\"persona\":{\"name\":\"y\"}}"
+        },
+        {
+          "sequence": 3,
+          "payloadJson": "{\"type\":\"actor-created\",\"actor\":{\"siteId\":\"actor#3\",\"ordinal\":1},\"name\":\"z\",\"persona\":{\"name\":\"z\"}}"
+        },
+        {
+          "sequence": 4,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorSeq\":0,\"instructionsHead\":\"one\"}"
+        },
+        {
+          "sequence": 5,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorName\":\"x\",\"instructionsHead\":\"one\"}"
+        },
+        {
+          "sequence": 6,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":2},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#2\",\"ordinal\":1},\"actorSeq\":0,\"instructionsHead\":\"two\"}"
+        },
+        {
+          "sequence": 7,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":2},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#2\",\"ordinal\":1},\"actorName\":\"y\",\"instructionsHead\":\"two\"}"
+        },
+        {
+          "sequence": 8,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":3},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#3\",\"ordinal\":1},\"actorSeq\":0,\"instructionsHead\":\"three\"}"
+        },
+        {
+          "sequence": 9,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"outcome\":\"cancelled\"}"
+        },
+        {
+          "sequence": 10,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":2},\"outcome\":\"cancelled\"}"
+        },
+        {
+          "sequence": 11,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":3},\"outcome\":\"cancelled\"}"
+        },
+        {
+          "sequence": 12,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"completed\"}"
+        }
+      ],
+      "emittedCount": 13
+    },
+    {
+      "name": "fail-rejects-in-flight",
+      "input": {
+        "name": "fail-rejects-in-flight",
+        "runId": "run_fail",
+        "askSpecs": {
+          "ask#1": {
+            "typed": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "ask#2": {
+            "typed": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "ask#3": {
+            "typed": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "free#1": {
+            "typed": false
+          }
+        },
+        "lifetimes": [
+          {
+            "caps": 1,
+            "steps": [
+              {
+                "op": "createActor",
+                "site": "actor#1",
+                "name": "solo"
+              },
+              {
+                "op": "ask",
+                "tag": "s1",
+                "site": "free#1",
+                "actor": "actor#1@1",
+                "instructions": "go"
+              },
+              {
+                "op": "fail",
+                "error": {
+                  "code": "DriverError",
+                  "message": "boom"
+                }
+              },
+              {
+                "op": "complete",
+                "artifact": 1
+              }
+            ]
+          }
+        ]
+      },
+      "lifetimes": [
+        {
+          "results": [
+            {
+              "actorId": "actor#1@1"
+            },
+            null,
+            null,
+            null
+          ],
+          "run": {
+            "runId": "run_fail",
+            "caps": {
+              "maxConcurrency": 1
+            },
+            "spentTokens": 0,
+            "status": "errored",
+            "failure": {
+              "code": "DriverError",
+              "message": "boom"
+            }
+          },
+          "nodes": [
+            {
+              "runId": "run_fail",
+              "siteId": "free#1",
+              "ordinal": 1,
+              "kind": "ask",
+              "actorSiteId": "actor#1",
+              "actorOrdinal": 1,
+              "actorSeq": 0,
+              "inputHash": "20b1f72b",
+              "status": "running"
+            }
+          ],
+          "actors": [
+            {
+              "runId": "run_fail",
+              "siteId": "actor#1",
+              "ordinal": 1,
+              "name": "solo",
+              "sessionId": "sess:actor#1@1"
+            }
+          ],
+          "disposed": 1
+        }
+      ],
+      "outcomes": [
+        {
+          "tag": "s1",
+          "ok": false,
+          "error": {
+            "code": "DriverError",
+            "message": "boom"
+          }
+        }
+      ],
+      "driverCalls": [
+        {
+          "op": "createActorSession",
+          "actor": "actor#1@1"
+        },
+        {
+          "op": "startAsk",
+          "session": "sess:actor#1@1",
+          "instance": "free#1@1",
+          "instructions": "go",
+          "typed": false
+        },
+        {
+          "op": "cancelAsk",
+          "instance": "free#1@1"
+        }
+      ],
+      "events": [
+        {
+          "sequence": 0,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"run_fail\",\"caps\":{\"maxConcurrency\":1}}"
+        },
+        {
+          "sequence": 1,
+          "payloadJson": "{\"type\":\"actor-created\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"name\":\"solo\",\"persona\":{\"name\":\"solo\"}}"
+        },
+        {
+          "sequence": 2,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"free#1\",\"ordinal\":1},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorSeq\":0,\"instructionsHead\":\"go\"}"
+        },
+        {
+          "sequence": 3,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"free#1\",\"ordinal\":1},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorName\":\"solo\",\"instructionsHead\":\"go\"}"
+        },
+        {
+          "sequence": 4,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"errored\",\"error\":{\"code\":\"DriverError\",\"message\":\"boom\"}}"
+        }
+      ],
+      "emittedCount": 5
+    },
+    {
+      "name": "stop-user-cancels-asks",
+      "input": {
+        "name": "stop-user-cancels-asks",
+        "runId": "run_user",
+        "askSpecs": {
+          "ask#1": {
+            "typed": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "ask#2": {
+            "typed": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "ask#3": {
+            "typed": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "free#1": {
+            "typed": false
+          }
+        },
+        "lifetimes": [
+          {
+            "caps": 2,
+            "steps": [
+              {
+                "op": "createActor",
+                "site": "actor#1",
+                "name": "solo"
+              },
+              {
+                "op": "ask",
+                "tag": "s1",
+                "site": "ask#1",
+                "actor": "actor#1@1",
+                "instructions": "go"
+              },
+              {
+                "op": "ask",
+                "tag": "s2",
+                "site": "ask#1",
+                "actor": "actor#1@1",
+                "instructions": "again"
+              },
+              {
+                "op": "stop",
+                "reason": "user"
+              }
+            ]
+          }
+        ]
+      },
+      "lifetimes": [
+        {
+          "results": [
+            {
+              "actorId": "actor#1@1"
+            },
+            null,
+            null,
+            null
+          ],
+          "run": {
+            "runId": "run_user",
+            "caps": {
+              "maxConcurrency": 2
+            },
+            "spentTokens": 0,
+            "status": "stopped",
+            "stopReason": "user"
+          },
+          "nodes": [
+            {
+              "runId": "run_user",
+              "siteId": "ask#1",
+              "ordinal": 1,
+              "kind": "ask",
+              "actorSiteId": "actor#1",
+              "actorOrdinal": 1,
+              "actorSeq": 0,
+              "inputHash": "20b1f72b",
+              "status": "running"
+            },
+            {
+              "runId": "run_user",
+              "siteId": "ask#1",
+              "ordinal": 2,
+              "kind": "ask",
+              "actorSiteId": "actor#1",
+              "actorOrdinal": 1,
+              "actorSeq": 1,
+              "inputHash": "ed0b22f7",
+              "status": "running"
+            }
+          ],
+          "actors": [
+            {
+              "runId": "run_user",
+              "siteId": "actor#1",
+              "ordinal": 1,
+              "name": "solo",
+              "sessionId": "sess:actor#1@1"
+            }
+          ],
+          "disposed": 1
+        }
+      ],
+      "outcomes": [
+        {
+          "tag": "s1",
+          "ok": false,
+          "error": {
+            "code": "Cancelled",
+            "message": "Run stopped."
+          }
+        },
+        {
+          "tag": "s2",
+          "ok": false,
+          "error": {
+            "code": "Cancelled",
+            "message": "Run stopped."
+          }
+        }
+      ],
+      "driverCalls": [
+        {
+          "op": "createActorSession",
+          "actor": "actor#1@1"
+        },
+        {
+          "op": "startAsk",
+          "session": "sess:actor#1@1",
+          "instance": "ask#1@1",
+          "instructions": "go",
+          "typed": true
+        },
+        {
+          "op": "cancelAsk",
+          "instance": "ask#1@1"
+        }
+      ],
+      "events": [
+        {
+          "sequence": 0,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"run_user\",\"caps\":{\"maxConcurrency\":2}}"
+        },
+        {
+          "sequence": 1,
+          "payloadJson": "{\"type\":\"actor-created\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"name\":\"solo\",\"persona\":{\"name\":\"solo\"}}"
+        },
+        {
+          "sequence": 2,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorSeq\":0,\"instructionsHead\":\"go\"}"
+        },
+        {
+          "sequence": 3,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorName\":\"solo\",\"instructionsHead\":\"go\"}"
+        },
+        {
+          "sequence": 4,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":2},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorSeq\":1,\"instructionsHead\":\"again\"}"
+        },
+        {
+          "sequence": 5,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"outcome\":\"cancelled\"}"
+        },
+        {
+          "sequence": 6,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":2},\"outcome\":\"cancelled\"}"
+        },
+        {
+          "sequence": 7,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"stopped\",\"stopReason\":\"user\"}"
+        }
+      ],
+      "emittedCount": 8
+    },
+    {
+      "name": "duplicate-actor-name",
+      "input": {
+        "name": "duplicate-actor-name",
+        "runId": "run_dup",
+        "askSpecs": {
+          "ask#1": {
+            "typed": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "ask#2": {
+            "typed": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "ask#3": {
+            "typed": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "free#1": {
+            "typed": false
+          }
+        },
+        "lifetimes": [
+          {
+            "caps": 1,
+            "steps": [
+              {
+                "op": "createActor",
+                "site": "actor#1",
+                "name": "alpha"
+              },
+              {
+                "op": "createActor",
+                "site": "actor#2",
+                "name": "alpha"
+              },
+              {
+                "op": "createActor",
+                "site": "actor#3",
+                "name": "gamma"
+              }
+            ]
+          }
+        ]
+      },
+      "lifetimes": [
+        {
+          "results": [
+            {
+              "actorId": "actor#1@1"
+            },
+            {
+              "error": {
+                "code": "DuplicateActorName",
+                "message": "Subagent name \"alpha\" is used twice in this run (actor#1@1 and actor#2@1). A named subagent is the identity an amended re-run matches its cache by, so names must be unique; give this one its own name or drop the name to make it anonymous."
+              }
+            },
+            {
+              "error": {
+                "code": "DuplicateActorName",
+                "message": "Subagent name \"alpha\" is used twice in this run (actor#1@1 and actor#2@1). A named subagent is the identity an amended re-run matches its cache by, so names must be unique; give this one its own name or drop the name to make it anonymous."
+              }
+            }
+          ],
+          "run": {
+            "runId": "run_dup",
+            "caps": {
+              "maxConcurrency": 1
+            },
+            "spentTokens": 0,
+            "status": "errored",
+            "failure": {
+              "code": "DuplicateActorName",
+              "message": "Subagent name \"alpha\" is used twice in this run (actor#1@1 and actor#2@1). A named subagent is the identity an amended re-run matches its cache by, so names must be unique; give this one its own name or drop the name to make it anonymous."
+            }
+          },
+          "nodes": [],
+          "actors": [
+            {
+              "runId": "run_dup",
+              "siteId": "actor#1",
+              "ordinal": 1,
+              "name": "alpha"
+            }
+          ],
+          "disposed": 1
+        }
+      ],
+      "outcomes": [],
+      "driverCalls": [],
+      "events": [
+        {
+          "sequence": 0,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"run_dup\",\"caps\":{\"maxConcurrency\":1}}"
+        },
+        {
+          "sequence": 1,
+          "payloadJson": "{\"type\":\"actor-created\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"name\":\"alpha\",\"persona\":{\"name\":\"alpha\"}}"
+        },
+        {
+          "sequence": 2,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"errored\",\"error\":{\"code\":\"DuplicateActorName\",\"message\":\"Subagent name \\\"alpha\\\" is used twice in this run (actor#1@1 and actor#2@1). A named subagent is the identity an amended re-run matches its cache by, so names must be unique; give this one its own name or drop the name to make it anonymous.\"}}"
+        }
+      ],
+      "emittedCount": 3
+    },
+    {
+      "name": "replay-hash-mismatch",
+      "input": {
+        "name": "replay-hash-mismatch",
+        "runId": "run_hash",
+        "askSpecs": {
+          "ask#1": {
+            "typed": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "ask#2": {
+            "typed": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "ask#3": {
+            "typed": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "free#1": {
+            "typed": false
+          }
+        },
+        "lifetimes": [
+          {
+            "caps": 1,
+            "scriptHash": "h-hash",
+            "steps": [
+              {
+                "op": "createActor",
+                "site": "actor#1",
+                "name": "alpha"
+              },
+              {
+                "op": "ask",
+                "tag": "a1",
+                "site": "ask#1",
+                "actor": "actor#1@1",
+                "instructions": "original"
+              },
+              {
+                "op": "submit",
+                "at": {
+                  "site": "ask#1",
+                  "ordinal": 1
+                },
+                "payload": "ok"
+              }
+            ]
+          },
+          {
+            "caps": 1,
+            "scriptHash": "h-hash",
+            "steps": [
+              {
+                "op": "createActor",
+                "site": "actor#1",
+                "name": "alpha"
+              },
+              {
+                "op": "ask",
+                "tag": "a1",
+                "site": "ask#1",
+                "actor": "actor#1@1",
+                "instructions": "changed"
+              }
+            ]
+          }
+        ]
+      },
+      "lifetimes": [
+        {
+          "results": [
+            {
+              "actorId": "actor#1@1"
+            },
+            null,
+            null
+          ],
+          "run": {
+            "runId": "run_hash",
+            "caps": {
+              "maxConcurrency": 1
+            },
+            "spentTokens": 0,
+            "status": "running",
+            "scriptHash": "h-hash"
+          },
+          "nodes": [
+            {
+              "runId": "run_hash",
+              "siteId": "ask#1",
+              "ordinal": 1,
+              "kind": "ask",
+              "actorSiteId": "actor#1",
+              "actorOrdinal": 1,
+              "actorSeq": 0,
+              "inputHash": "d0d07350",
+              "status": "completed",
+              "result": "ok"
+            }
+          ],
+          "actors": [
+            {
+              "runId": "run_hash",
+              "siteId": "actor#1",
+              "ordinal": 1,
+              "name": "alpha",
+              "sessionId": "sess:actor#1@1"
+            }
+          ],
+          "disposed": 0
+        },
+        {
+          "results": [
+            {
+              "actorId": "actor#1@1"
+            },
+            null
+          ],
+          "run": {
+            "runId": "run_hash",
+            "caps": {
+              "maxConcurrency": 1
+            },
+            "spentTokens": 0,
+            "status": "errored",
+            "scriptHash": "h-hash",
+            "failure": {
+              "code": "InputHashMismatch",
+              "message": "Replay hit at ask#1@1 but inputHash differs (expected d0d07350, got 114d839b): the script is not deterministic, so the journal cannot be replayed.",
+              "mismatch": {
+                "expected": "d0d07350",
+                "got": "114d839b"
+              }
+            }
+          },
+          "nodes": [
+            {
+              "runId": "run_hash",
+              "siteId": "ask#1",
+              "ordinal": 1,
+              "kind": "ask",
+              "actorSiteId": "actor#1",
+              "actorOrdinal": 1,
+              "actorSeq": 0,
+              "inputHash": "d0d07350",
+              "status": "completed",
+              "result": "ok"
+            }
+          ],
+          "actors": [
+            {
+              "runId": "run_hash",
+              "siteId": "actor#1",
+              "ordinal": 1,
+              "name": "alpha",
+              "sessionId": "sess:actor#1@1"
+            }
+          ],
+          "disposed": 1
+        }
+      ],
+      "outcomes": [
+        {
+          "tag": "a1",
+          "ok": true,
+          "value": "ok"
+        },
+        {
+          "tag": "a1",
+          "ok": false,
+          "error": {
+            "code": "InputHashMismatch",
+            "message": "Replay hit at ask#1@1 but inputHash differs (expected d0d07350, got 114d839b): the script is not deterministic, so the journal cannot be replayed.",
+            "mismatch": {
+              "expected": "d0d07350",
+              "got": "114d839b"
+            }
+          }
+        }
+      ],
+      "driverCalls": [
+        {
+          "op": "createActorSession",
+          "actor": "actor#1@1"
+        },
+        {
+          "op": "startAsk",
+          "session": "sess:actor#1@1",
+          "instance": "ask#1@1",
+          "instructions": "original",
+          "typed": true
+        },
+        {
+          "op": "respondToSubmit",
+          "instance": "ask#1@1",
+          "verdict": {
+            "kind": "accept"
+          }
+        }
+      ],
+      "events": [
+        {
+          "sequence": 0,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"run_hash\",\"caps\":{\"maxConcurrency\":1}}"
+        },
+        {
+          "sequence": 1,
+          "payloadJson": "{\"type\":\"actor-created\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"name\":\"alpha\",\"persona\":{\"name\":\"alpha\"}}"
+        },
+        {
+          "sequence": 2,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorSeq\":0,\"instructionsHead\":\"original\"}"
+        },
+        {
+          "sequence": 3,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorName\":\"alpha\",\"instructionsHead\":\"original\"}"
+        },
+        {
+          "sequence": 4,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"outcome\":\"ok\"}"
+        },
+        {
+          "sequence": 5,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"run_hash\",\"caps\":{\"maxConcurrency\":1}}"
+        },
+        {
+          "sequence": 6,
+          "payloadJson": "{\"type\":\"actor-created\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"name\":\"alpha\",\"persona\":{\"name\":\"alpha\"}}"
+        },
+        {
+          "sequence": 7,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"errored\",\"error\":{\"code\":\"InputHashMismatch\",\"message\":\"Replay hit at ask#1@1 but inputHash differs (expected d0d07350, got 114d839b): the script is not deterministic, so the journal cannot be replayed.\",\"mismatch\":{\"expected\":\"d0d07350\",\"got\":\"114d839b\"}}}"
+        }
+      ],
+      "emittedCount": 8
+    }
+  ]
+}
