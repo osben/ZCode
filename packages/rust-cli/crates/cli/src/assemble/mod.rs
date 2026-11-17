@@ -715,6 +715,12 @@ pub(crate) async fn kernel(
     extensions.monitor = opened.monitor;
     extensions.node_desktop = spec.node_desktop;
     extensions.subagent_config = spec.subagent_config.clone();
+    // Fork (rule 18): Node's `memory.storageRoot` is the configured storage dir (not its `cli` subdirectory).
+    extensions.agent_memory_root = rust_cli_runtime::configured_agent_memory_root(
+        config.memory_enabled,
+        config.memory_use,
+        Some(opened.paths.root().as_path()),
+    );
     // Fork: a desktop subagent's own selection is checked against the catalog (rule 9 of
     // specs/fork-rust-subagent-runtime-config.md); none under an explicit API key.
     if spec.node_desktop {

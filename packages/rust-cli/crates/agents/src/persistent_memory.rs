@@ -270,3 +270,16 @@ pub(crate) async fn load(
 #[cfg(test)]
 #[path = "persistent_memory_tests.rs"]
 mod tests;
+
+/// Fork (rule 18, Node `loadPersistentAgentMemory`'s gate): the agent-memory storage root when `features.memory`
+/// and `memory.use` both allow memory and the runtime has a storage root; otherwise None.
+pub fn configured_root(
+    enabled: bool,
+    use_memory: bool,
+    storage_root: Option<&Path>,
+) -> Option<PathBuf> {
+    if !enabled || !use_memory {
+        return None;
+    }
+    storage_root.map(Path::to_path_buf)
+}

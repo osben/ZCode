@@ -2,6 +2,8 @@
 
 use std::sync::Arc;
 
+use rust_cli_kernel_api::mcp_state::{McpConnections, McpView};
+
 use rust_cli_kernel_api::orchestration::ToolRegistry;
 use rust_cli_kernel_api::testing::{FakeTool, ListTools};
 use rust_cli_kernel_api::tool::Tool;
@@ -692,4 +694,105 @@ fn a_child_with_a_skills_list_is_offered_the_skill_tool() {
         child_tools: Vec::new(),
     };
     assert_eq!(tool_names_of(&filtered), vec!["Read".to_owned()]);
+}
+
+// Fork (rule 16, Node `servers_for_tool`): a tool belongs to the longest server-name prefix in the live view.
+#[test]
+fn an_mcp_tool_belongs_to_the_longest_matching_server_name() {
+    let server = |name: &str| rust_cli_kernel_api::mcp_state::McpServerView {
+        name: name.to_owned(),
+        state: rust_cli_kernel_api::manage::McpServerState::Connected,
+        reconnecting: false,
+    };
+    let tools: Vec<Arc<dyn Tool>> = ["mcp__docs__x__search", "mcp__docs__search"]
+        .iter()
+        .map(|name| Arc::new(FakeTool::new(name, true, "")) as Arc<dyn Tool>)
+        .collect();
+    let registry: Arc<dyn ToolRegistry> = Arc::new(ScopedRegistry {
+        inner: Arc::new(ListTools(tools)),
+        mcp: Arc::new(StaticMcp(McpView {
+            servers: vec![server("docs"), server("docs__x")],
+            instructions: Vec::new(),
+        })),
+    });
+    let mut definition = builtins().remove(0);
+    definition.mcp_servers = Some(vec!["docs".to_owned()]);
+    let filtered = FilteredTools {
+        inner: registry,
+        rule: ToolRule::new(&definition, false, 1),
+        child_tools: Vec::new(),
+    };
+    assert_eq!(
+        tool_names_of(&filtered),
+        vec!["mcp__docs__search".to_owned()]
+    );
+}
+
+/// A parent view whose listed server is still connecting; its first-connection wait connects it.
+struct PendingMcp(std::sync::Mutex<McpView>);
+
+#[async_trait::async_trait]
+impl rust_cli_kernel_api::mcp_state::McpConnections for PendingMcp {
+    fn view(&self) -> McpView {
+        self.0.lock().unwrap().clone()
+    }
+
+    async fn wait(
+        &self,
+        _wait_ms: u64,
+        _done: &(dyn for<'v> Fn(&'v McpView) -> bool + Send + Sync),
+    ) -> McpView {
+        self.view()
+    }
+
+    fn declare_wait_tool(&self, _session: &rust_cli_kernel_api::ids::SessionId) {}
+
+    fn tool_wait_ms(&self) -> u64 {
+        0
+    }
+
+    async fn wait_for_first_connections(&self) -> bool {
+        for server in self.0.lock().unwrap().servers.iter_mut() {
+            server.state = rust_cli_kernel_api::manage::McpServerState::Connected;
+        }
+        true
+    }
+}
+
+#[tokio::test]
+async fn a_listed_server_still_connecting_is_awaited_before_the_start_is_refused() {
+    let mut definition = builtins().remove(0);
+    definition.mcp_servers = Some(vec!["docs".to_owned()]);
+    let pending = McpView {
+        servers: vec![rust_cli_kernel_api::mcp_state::McpServerView {
+            name: "docs".to_owned(),
+            state: rust_cli_kernel_api::manage::McpServerState::Pending,
+            reconnecting: false,
+        }],
+        instructions: Vec::new(),
+    };
+    let mcp: Arc<dyn McpConnections> = Arc::new(PendingMcp(std::sync::Mutex::new(pending)));
+    assert_eq!(
+        super::mcp_refusal_settled(&definition, Some(mcp)).await,
+        None
+    );
+}
+
+#[tokio::test]
+async fn a_listed_server_that_failed_is_refused_after_the_wait() {
+    let mut definition = builtins().remove(0);
+    definition.mcp_servers = Some(vec!["docs".to_owned()]);
+    let failed = McpView {
+        servers: vec![rust_cli_kernel_api::mcp_state::McpServerView {
+            name: "docs".to_owned(),
+            state: rust_cli_kernel_api::manage::McpServerState::Failed,
+            reconnecting: false,
+        }],
+        instructions: Vec::new(),
+    };
+    let mcp: Arc<dyn McpConnections> = Arc::new(StaticMcp(failed));
+    assert_eq!(
+        super::mcp_refusal_settled(&definition, Some(mcp)).await,
+        Some("Required MCP server is not connected: docs".to_owned())
+    );
 }

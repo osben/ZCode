@@ -198,11 +198,8 @@ impl Tool for AgentTool {
             return Err(ToolError::Failed { message });
         }
         // Fork (rule 16): a listed `mcpServers` server that the parent does not show as connected fails the call.
-        let mcp_view = core
-            .registry()
-            .and_then(|registry| registry.mcp())
-            .map(|mcp| mcp.view());
-        if let Some(message) = crate::toolset::mcp_refusal(&definition, mcp_view.as_ref()) {
+        let mcp = core.registry().and_then(|registry| registry.mcp());
+        if let Some(message) = crate::toolset::mcp_refusal_settled(&definition, mcp).await {
             return Err(ToolError::Failed { message });
         }
         // 子代理里派生时同样按参数（以前总在前台：子会话没有 actor 接收通知）。嵌套的后台子代理的

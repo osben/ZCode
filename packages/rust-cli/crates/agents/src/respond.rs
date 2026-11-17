@@ -182,7 +182,10 @@ impl RespondToCoordinator {
                         if self.core.live.enqueue_subagent_message(owner, message) {
                             Ok(response_id)
                         } else {
-                            Err((response_id, "the coordinator is no longer running".to_owned()))
+                            Err((
+                                response_id,
+                                "the coordinator is no longer running".to_owned(),
+                            ))
                         }
                     }
                     None => {

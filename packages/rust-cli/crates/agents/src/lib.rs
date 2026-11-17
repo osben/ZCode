@@ -24,6 +24,7 @@ mod mirror;
 mod monitors;
 mod peer_send;
 mod persistent_memory;
+pub use persistent_memory::configured_root;
 mod plugin;
 mod report;
 mod respond;

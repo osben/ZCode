@@ -390,9 +390,16 @@ async fn run_loop(
     // Fork (rule 18): a child with a `memory` scope gets its memory tools and the persistent-memory prompt, when the
     // runtime has a storage root for agent memory.
     let mut definition = agent.definition.as_ref().clone();
-    if let (Some(scope), Some(storage_root)) =
-        (definition.memory, core.agent_memory_root.as_deref())
-    {
+    // A session that excludes memory (incognito) gets none, as Node's `incognitoExcludes(…, "memory")` gate.
+    let memory_root = if core.ports.incognito.excludes(
+        &agent.child,
+        rust_cli_kernel_api::incognito::IncognitoKey::Memory,
+    ) {
+        None
+    } else {
+        core.agent_memory_root.as_deref()
+    };
+    if let (Some(scope), Some(storage_root)) = (definition.memory, memory_root) {
         let memory_prompt = crate::persistent_memory::load(
             scope,
             storage_root,

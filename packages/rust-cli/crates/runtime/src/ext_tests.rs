@@ -102,6 +102,7 @@ async fn plugin_agents_reach_the_agent_listing() {
         CompactConfig::default(),
         Arc::new(MemoryTaskLists::default()),
         Extensions {
+            agent_memory_root: None,
             config: ExtConfig {
                 plugin_dirs: vec![EnvPath::new(KIT)],
                 workspace: Some(workspace()),
@@ -217,6 +218,7 @@ async fn the_session_catalog_follows_the_incognito_profile() {
         CompactConfig::default(),
         Arc::new(MemoryTaskLists::default()),
         Extensions {
+            agent_memory_root: None,
             config: ExtConfig {
                 plugin_dirs: vec![EnvPath::new(KIT)],
                 workspace: Some(workspace()),
@@ -345,12 +347,14 @@ fn the_host_automation_port_replaces_the_local_cron_tools() {
     // The swap keys on the port alone: without `node_desktop`, and `node_desktop` without a port keeps the local tools.
     assert_eq!(
         names(&Extensions {
+            agent_memory_root: None,
             node_desktop: true,
             ..Extensions::none()
         }),
         local
     );
     let desktop = Extensions {
+        agent_memory_root: None,
         automation: Some(Arc::new(Unused)),
         ..Extensions::none()
     };
@@ -424,6 +428,7 @@ async fn read_topic_resource_is_registered_only_with_topic_resources() {
             CompactConfig::default(),
             Arc::new(MemoryTaskLists::default()),
             Extensions {
+                agent_memory_root: None,
                 topic_resources: resources,
                 ..Extensions::none()
             },
@@ -482,11 +487,13 @@ fn the_host_automation_port_leaves_the_local_cron_without_a_store() {
     let store: Arc<dyn rust_cli_kernel_api::cron_store::CronStore> =
         Arc::new(rust_cli_kernel_api::testing::MemoryCronStore::default());
     let local = Extensions {
+        agent_memory_root: None,
         cron_store: Some(store.clone()),
         ..Extensions::none()
     };
     assert!(crate::assemble::cron_store(&local).is_some());
     let desktop = Extensions {
+        agent_memory_root: None,
         cron_store: Some(store),
         automation: Some(Arc::new(NoAutomations)),
         ..Extensions::none()
@@ -502,6 +509,7 @@ fn host_automations_follow_the_automation_port() {
     stale.config.host_automations = true;
     assert!(!crate::assemble::ext_config(&stale).host_automations);
     let desktop = Extensions {
+        agent_memory_root: None,
         automation: Some(Arc::new(NoAutomations)),
         ..Extensions::none()
     };
@@ -570,6 +578,7 @@ async fn a_session_resolves_its_workspaces_plugins() {
         CompactConfig::default(),
         Arc::new(MemoryTaskLists::default()),
         Extensions {
+            agent_memory_root: None,
             config: ExtConfig {
                 workspace: Some(workspace()),
                 ..ExtConfig::default()
@@ -656,6 +665,7 @@ async fn a_workspace_layer_reload_replaces_the_loaded_slot() {
         CompactConfig::default(),
         Arc::new(MemoryTaskLists::default()),
         Extensions {
+            agent_memory_root: None,
             config: ExtConfig {
                 workspace: Some(workspace()),
                 ..ExtConfig::default()
@@ -812,6 +822,7 @@ where
         CompactConfig::default(),
         Arc::new(MemoryTaskLists::default()),
         Extensions {
+            agent_memory_root: None,
             config: ExtConfig {
                 workspace: Some(workspace()),
                 ..ExtConfig::default()
@@ -1221,6 +1232,7 @@ async fn mcp_enable_and_disable_reload_the_named_workspaces_layer() {
         CompactConfig::default(),
         Arc::new(MemoryTaskLists::default()),
         Extensions {
+            agent_memory_root: None,
             config: ExtConfig {
                 workspace: Some(workspace()),
                 ..ExtConfig::default()

@@ -299,7 +299,12 @@ const DISPLAY_OUTPUT_CHARS: usize = 2_000;
 /// Node's TaskOutput display (`result-display.ts`): the bounded projection the UI reads, separate from the model text.
 pub(crate) fn task_output_display(retrieval: &str, task: &TaskView<'_>) -> serde_json::Value {
     let mut display = serde_json::json!({ "kind": "task_output", "retrievalStatus": retrieval });
-    let status: String = task.status.trim().chars().take(DISPLAY_STATUS_CHARS).collect();
+    let status: String = task
+        .status
+        .trim()
+        .chars()
+        .take(DISPLAY_STATUS_CHARS)
+        .collect();
     if !status.is_empty() {
         display["taskStatus"] = serde_json::json!(status);
     }
@@ -390,7 +395,9 @@ impl Tool for TaskOutputTool {
         let timeout = Duration::from_millis(parsed.timeout.max(0.0) as u64);
         // A subagent is a task too (Node's runtime registry holds `local_agent` entries): it is read from its report.
         if let Some(agent) = self.agent_of(&id, &context) {
-            return self.agent_output(&id, agent, block, timeout, &context).await;
+            return self
+                .agent_output(&id, agent, block, timeout, &context)
+                .await;
         }
         // `find` first, then the kept-file fallback; together they decide "known".
         let mut found = self.known(&id, &context).await;

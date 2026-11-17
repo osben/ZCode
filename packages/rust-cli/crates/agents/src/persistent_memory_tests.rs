@@ -115,3 +115,15 @@ fn a_child_without_memory_or_without_a_tool_list_keeps_its_tools() {
     project_memory_tools(&mut inherit);
     assert_eq!(inherit.tools, None);
 }
+
+#[test]
+fn the_storage_root_is_configured_only_when_memory_is_enabled_and_used() {
+    let storage = Path::new("/store");
+    assert_eq!(
+        super::configured_root(true, true, Some(storage)),
+        Some(PathBuf::from("/store"))
+    );
+    assert_eq!(super::configured_root(false, true, Some(storage)), None);
+    assert_eq!(super::configured_root(true, false, Some(storage)), None);
+    assert_eq!(super::configured_root(true, true, None), None);
+}

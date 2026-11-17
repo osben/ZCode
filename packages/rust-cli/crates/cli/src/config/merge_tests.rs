@@ -298,3 +298,13 @@ fn the_auto_compact_threshold_is_taken_from_the_last_layer_with_a_positive_count
     );
     assert!(warnings.is_empty());
 }
+
+#[test]
+fn features_memory_and_memory_use_are_read_from_the_layers() {
+    let user = object(json!({"features": {"memory": false}}));
+    assert!(!memory_enabled(&layers(&user, &[])));
+    assert!(memory_enabled(&layers(&object(json!({})), &[])));
+    let user = object(json!({"memory": {"use": false}}));
+    assert!(!memory_use(&layers(&user, &[])));
+    assert!(memory_use(&layers(&object(json!({})), &[])));
+}

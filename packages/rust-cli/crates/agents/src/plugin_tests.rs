@@ -154,3 +154,24 @@ async fn plugin_agents_sit_between_built_ins_and_user_agents() {
     );
     assert_eq!(found.len(), sources(SessionId::new("normal")).await.len());
 }
+
+// Fork (rule 16-18): Node parses a plugin agent with the same profile parser as a user agent, so its skills, memory and
+// MCP servers are kept (only permissionMode is restricted).
+#[test]
+fn plugin_agents_keep_skills_memory_and_mcp_servers() {
+    let raw = "---\nname: lead\nwhen_to_use: Leads.\nskills: review, lint\nmemory: user\nmcpServers:\n  - docs\n---\nBody.\n";
+    let (agent, _) = parse(
+        raw,
+        &file("agents/team/lead.md", &["team"]),
+        "/Users/dev/repo",
+    );
+    assert_eq!(
+        agent.skills,
+        Some(vec!["review".to_owned(), "lint".to_owned()])
+    );
+    assert_eq!(
+        agent.memory,
+        Some(rust_cli_kernel_api::subagent_config::AgentMemoryScope::User)
+    );
+    assert_eq!(agent.mcp_servers, Some(vec!["docs".to_owned()]));
+}

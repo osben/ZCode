@@ -90,13 +90,13 @@ pub(crate) fn parse(
     });
     // 缺陷修复（F132 的 T8，只影响日志）：以前 agents 自己那份解析器丢掉嵌套的键，`hooks:` / `mcpServers:` 下是
     // 对象（唯一实际的写法）时不警告；共用 base 的解析器之后嵌套块（`Value::Block`）也算写了。
-    if ["permissionMode", "hooks", "mcpServers"]
+    if ["permissionMode", "hooks"]
         .iter()
         .any(|key| map.contains_key(*key))
     {
         tracing::warn!(
             path = file.path,
-            "plugin agent sets permissionMode, hooks or mcpServers, which are ignored"
+            "plugin agent sets permissionMode or hooks, which are ignored"
         );
     }
     let definition = AgentDefinition {
@@ -116,9 +116,10 @@ pub(crate) fn parse(
         background: text("background") == Some("true"),
         selection: None,
         inject_agents_md: frontmatter::inject_agents_md(text("injectAgentsMd")),
-        mcp_servers: None,
-        skills: None,
-        memory: None,
+        mcp_servers: frontmatter::names(map.get("mcpServers")),
+        skills: frontmatter::names(map.get("skills")),
+        memory: text("memory")
+            .and_then(rust_cli_kernel_api::subagent_config::AgentMemoryScope::from_name),
     };
     (definition, name.to_owned())
 }

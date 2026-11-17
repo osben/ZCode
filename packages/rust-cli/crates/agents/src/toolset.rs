@@ -128,17 +128,6 @@ impl ToolRule {
         self
     }
 
-    /// Fork (rule 16): whether the MCP tool `name` belongs to one of the child's scoped servers (`mcp__<server>__`).
-    fn in_mcp_scope(&self, name: &str) -> bool {
-        self.mcp_servers.as_ref().is_none_or(|servers| {
-            servers.iter().any(|server| {
-                name.starts_with(&rust_cli_kernel_api::mcp_name::server_prefix(
-                    &rust_cli_kernel_api::mcp_state::normalize_name(server),
-                ))
-            })
-        })
-    }
-
     pub(crate) fn allows(&self, name: &str) -> bool {
         // Node gives every child the coordinator port (`includeRespondToCoordinator`), so the child's `tools`
         // allowlist does not remove it; only `disallowedTools` does.
@@ -146,10 +135,6 @@ impl ToolRule {
             return !self.deny.iter().any(|tool| tool == name);
         }
         let mcp = rust_cli_kernel_api::mcp_name::is_mcp(name);
-        // Fork (rule 16): an MCP tool reaches the child only from a server in its `mcpServers` list.
-        if mcp && !self.in_mcp_scope(name) {
-            return false;
-        }
         let asks = self.questions && name == tool_names::ASK_USER_QUESTION;
         if !mcp && !asks && ALL_AGENT_DISALLOWED.contains(&name) {
             return false;
@@ -208,6 +193,35 @@ impl FilteredTools {
 }
 
 impl FilteredTools {
+    /// Fork (rule 16): the parent's live MCP view, when the child is scoped to `mcpServers` (the owner of each MCP
+    /// tool is read from it).
+    fn live_view(&self) -> Option<McpView> {
+        self.rule
+            .mcp_servers
+            .as_ref()
+            .and_then(|_| self.inner.mcp())
+            .map(|mcp| mcp.view())
+    }
+
+    /// Fork (rule 16, Node `servers_for_tool`): an MCP tool is the child's when its owner, the longest server-name
+    /// prefix in the live view, is one of the scoped servers. A tool with no known owner is out of scope.
+    fn mcp_in_scope(&self, view: Option<&McpView>, name: &str) -> bool {
+        let Some(scope) = self.rule.mcp_servers.as_deref() else {
+            return true;
+        };
+        view.is_some_and(|view| {
+            rust_cli_kernel_api::mcp_state::servers_for_tool(view, name)
+                .iter()
+                .any(|owner| scope.contains(&owner.name))
+        })
+    }
+
+    /// The rule's verdict for `name`, plus the `mcpServers` scope for an MCP tool.
+    fn allowed(&self, view: Option<&McpView>, name: &str) -> bool {
+        self.rule.allows(name)
+            && (!rust_cli_kernel_api::mcp_name::is_mcp(name) || self.mcp_in_scope(view, name))
+    }
+
     /// Fork (rule 16): the parent's connections narrowed to the child's `mcpServers`; unchanged without a scope.
     fn scoped_connections(&self, inner: Arc<dyn McpConnections>) -> Arc<dyn McpConnections> {
         match &self.rule.mcp_servers {
@@ -230,10 +244,11 @@ impl FilteredTools {
         let Some(allow) = &self.rule.allow else {
             return Vec::new();
         };
+        let view = self.live_view();
         let wanted = allow
             .iter()
             .map(String::as_str)
-            .filter(|name| self.rule.allows(name));
+            .filter(|name| self.allowed(view.as_ref(), name));
         search_fallback(resolved, wanted, |name| self.inner.withheld(name))
     }
 }
@@ -241,9 +256,10 @@ impl FilteredTools {
 impl FilteredTools {
     /// 主注册表的工具（`tools()` 或快照里的）按规则过滤、按清单排序。
     fn resolve(&self, tools: Vec<Arc<dyn Tool>>) -> Vec<Arc<dyn Tool>> {
+        let view = self.live_view();
         let mut pool: Vec<Arc<dyn Tool>> = tools
             .into_iter()
-            .filter(|tool| self.rule.allows(tool.name()))
+            .filter(|tool| self.allowed(view.as_ref(), tool.name()))
             .collect();
         pool.extend(self.child_pool());
         let Some(allow) = &self.rule.allow else {
@@ -307,10 +323,11 @@ impl ToolRegistry for FilteredTools {
     }
 
     fn find(&self, name: &str) -> Option<Arc<dyn Tool>> {
+        let view = self.live_view();
         if let Some(tool) = self
             .inner
             .find(name)
-            .filter(|tool| self.rule.allows(tool.name()))
+            .filter(|tool| self.allowed(view.as_ref(), tool.name()))
         {
             return Some(tool);
         }
@@ -328,10 +345,11 @@ impl ToolRegistry for FilteredTools {
     }
 
     fn find_for(&self, session: &SessionId, name: &str) -> Option<Arc<dyn Tool>> {
+        let view = self.live_view();
         if let Some(tool) = self
             .inner
             .find_for(session, name)
-            .filter(|tool| self.rule.allows(tool.name()))
+            .filter(|tool| self.allowed(view.as_ref(), tool.name()))
         {
             return Some(tool);
         }
@@ -388,6 +406,30 @@ pub(crate) fn mcp_refusal(definition: &AgentDefinition, view: Option<&McpView>) 
             missing.join(", ")
         )
     })
+}
+
+/// Fork (rule 16, Node `resolveSubagentMcpAccess` awaiting `mcpStartupPromise`): when a listed server is still
+/// connecting, waits for the parent's first connections (bounded by the connect wait), then refuses as
+/// [`mcp_refusal`] does.
+pub(crate) async fn mcp_refusal_settled(
+    definition: &AgentDefinition,
+    mcp: Option<Arc<dyn McpConnections>>,
+) -> Option<String> {
+    let listed = definition
+        .mcp_servers
+        .as_ref()
+        .filter(|servers| !servers.is_empty())?;
+    let connecting = mcp.as_ref().is_some_and(|mcp| {
+        mcp.view()
+            .servers
+            .iter()
+            .any(|server| server.state == McpServerState::Pending && listed.contains(&server.name))
+    });
+    if connecting && let Some(mcp) = &mcp {
+        mcp.wait_for_first_connections().await;
+    }
+    let view = mcp.as_ref().map(|mcp| mcp.view());
+    mcp_refusal(definition, view.as_ref())
 }
 
 /// Fork (rule 16): a parent's MCP view narrowed to the servers named in `servers` (None: all of them). The server

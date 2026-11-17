@@ -57,6 +57,8 @@ pub struct Extensions {
     /// Fork: command hooks get Node's stdin and a transcript file (specs/fork-rust-agent-parity.md "Command hook
     /// stdin"). Only the app-server gives it.
     pub hook_transcripts: Option<Arc<dyn rust_cli_kernel_api::hooks::HookTranscripts>>,
+    /// Fork (rule 18): the storage root of subagent persistent memory; None when memory is off or the Host gives none.
+    pub agent_memory_root: Option<std::path::PathBuf>,
 }
 
 impl Extensions {
@@ -76,6 +78,7 @@ impl Extensions {
             subagent_config: None,
             models: None,
             hook_transcripts: None,
+            agent_memory_root: None,
         }
     }
 }

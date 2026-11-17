@@ -117,12 +117,8 @@ impl Messaging {
             return Err(ToolError::Failed { message });
         }
         // Fork (rule 16): the same `mcpServers` check as the Agent call, before the task is restarted.
-        let mcp_view = self
-            .core
-            .registry()
-            .and_then(|registry| registry.mcp())
-            .map(|mcp| mcp.view());
-        if let Some(message) = crate::toolset::mcp_refusal(&definition, mcp_view.as_ref()) {
+        let mcp = self.core.registry().and_then(|registry| registry.mcp());
+        if let Some(message) = crate::toolset::mcp_refusal_settled(&definition, mcp).await {
             return Err(ToolError::Failed { message });
         }
         // The parent run's current model and mode, as Node reads the session's selection when the child starts.
