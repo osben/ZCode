@@ -602,6 +602,15 @@ impl Live {
         self.state().projection.followup()
     }
 
+    /// Fork: whether the session is busy for permanent deletion and purge (Node `readSessionBusyState`): a turn runs,
+    /// an interaction waits for an answer, or inputs are queued behind the turn.
+    pub fn residency_busy(&self) -> bool {
+        let state = self.state();
+        state.projection.phase() == Phase::Running
+            || state.projection.has_pending_interactions()
+            || state.projection.has_queue()
+    }
+
     /// 投影的阶段与 revision（命令裁决的读数；revision 来自会话 actor）。
     pub fn status(&self) -> (Phase, u64) {
         let state = self.state();

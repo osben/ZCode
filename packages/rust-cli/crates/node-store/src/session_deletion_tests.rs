@@ -238,3 +238,37 @@ fn collation_matches_icu_root_order_for_identifiers() {
     assert_eq!(super::collate("ab-c", "abc"), Less);
     assert_eq!(super::collate("b", "A"), Greater);
 }
+
+/// Node's `inspectSessionDeletion` over `fixtures/session_deletion_golden.sql`, produced by Node's repository
+/// (`SqliteSessionStore.inspectSessionDeletion`, 2026-11-17). The revision is Node's sha256 of the same snapshot.
+const GOLDEN_SQL: &str = include_str!("fixtures/session_deletion_golden.sql");
+const GOLDEN_REVISION: &str = "de4b7789b234d0191a50a7593a3aacc3b944078e292d35303f641a5f9b60ace5";
+
+#[tokio::test]
+async fn the_revision_matches_nodes_on_the_shared_golden_fixture() {
+    let store = TestStore::new();
+    store.store.create(meta("seed", "/w", "t")).await.unwrap();
+    store.connection().execute_batch(UPSTREAM_0025).unwrap();
+    store.connection().execute_batch(GOLDEN_SQL).unwrap();
+    let snapshot = store
+        .store
+        .inspect_session_deletion(&sid("root"))
+        .await
+        .unwrap();
+    assert_eq!(snapshot.session_ids, ["root", "child"]);
+    let references: Vec<(&str, &str)> = snapshot
+        .references
+        .iter()
+        .map(|reference| {
+            (
+                reference.session_id.as_str(),
+                reference.artifact_id.as_str(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        references,
+        [("child", "ä2"), ("child", "art1"), ("root", "艺")]
+    );
+    assert_eq!(snapshot.revision, GOLDEN_REVISION);
+}

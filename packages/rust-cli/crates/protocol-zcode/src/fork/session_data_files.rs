@@ -36,14 +36,14 @@ pub(crate) enum FileError {
 }
 
 impl FileError {
-    /// The reason a failed file step reports (Node `error.code`, or `unavailable`).
-    pub(crate) fn code(&self) -> String {
+    /// The reason a failed file step reports: Node's `error.code` (the errno name), or `fallback` when the error has
+    /// none. Execute falls back to `unavailable`; purge's per-session failure to `unknown`.
+    pub(crate) fn code_or(&self, fallback: &str) -> String {
         match self {
             Self::Refused(code) => (*code).to_owned(),
-            Self::Io(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
-                "EACCES".to_owned()
+            Self::Io(error) => {
+                rust_cli_fs::error_code(error).map_or_else(|| fallback.to_owned(), str::to_owned)
             }
-            Self::Io(_) => "unavailable".to_owned(),
         }
     }
 }
@@ -63,7 +63,7 @@ pub(crate) fn is_safe_session_id(session_id: &str) -> bool {
 }
 
 /// Node `sessionPaths`: the six locations a session's files can be in.
-fn session_paths(cli: &Path, session_id: &str) -> Result<Vec<PathBuf>, FileError> {
+pub(crate) fn session_paths(cli: &Path, session_id: &str) -> Result<Vec<PathBuf>, FileError> {
     if !is_safe_session_id(session_id) {
         return Err(FileError::Refused("session-data.invalid-session-id"));
     }

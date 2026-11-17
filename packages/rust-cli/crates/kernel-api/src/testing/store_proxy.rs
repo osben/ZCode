@@ -199,6 +199,24 @@ impl<H: StoreHooks> StoreQueries for StoreProxy<H> {
         self.inner.complete_session_deletion(root).await
     }
 
+    async fn list_owned_session_trees(
+        &self,
+        roots: &[SessionId],
+    ) -> Result<Vec<(SessionId, Vec<SessionId>)>, StoreError> {
+        self.inner.list_owned_session_trees(roots).await
+    }
+
+    async fn list_artifact_referrers(
+        &self,
+        sessions: &[SessionId],
+    ) -> Result<Vec<(SessionId, Vec<SessionId>)>, StoreError> {
+        self.inner.list_artifact_referrers(sessions).await
+    }
+
+    async fn purge_session_rows(&self, sessions: &[SessionId]) -> Result<(), StoreError> {
+        self.inner.purge_session_rows(sessions).await
+    }
+
     async fn metering(&self, session: &SessionId) -> Result<SessionMetering, StoreError> {
         self.inner.metering(session).await
     }

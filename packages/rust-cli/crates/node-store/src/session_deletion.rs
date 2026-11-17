@@ -534,6 +534,80 @@ fn purge_sessions(conn: &mut Connection, ids: &[String]) -> Result<(), StoreErro
     Ok(())
 }
 
+/// Node `listOwnedSessionTrees` for several roots, in the order given.
+pub(crate) fn owned_trees(
+    conn: &Connection,
+    roots: &[String],
+) -> Result<Vec<(String, Vec<String>)>, StoreError> {
+    roots
+        .iter()
+        .map(|root| Ok((root.clone(), owned_tree(conn, root)?)))
+        .collect()
+}
+
+/// Node `listArtifactReferrers`: for each target, the other undeleted sessions whose parts name `zcode-artifact://<target>/`
+/// (the scan is over parts only, by value, as Node does). A session never refers to its own artifacts.
+pub(crate) fn artifact_referrers(
+    conn: &Connection,
+    targets: &[String],
+) -> Result<Vec<(String, Vec<String>)>, StoreError> {
+    let targets: HashSet<&str> = targets.iter().map(String::as_str).collect();
+    if targets.is_empty() {
+        return Ok(Vec::new());
+    }
+    let rows: Vec<(String, String)> = conn
+        .prepare(
+            "select p.session_id, p.data from part p join session s on s.id = p.session_id
+             where s.time_deleted is null and instr(p.data, ?1) > 0",
+        )
+        .storage()?
+        .query_map([ARTIFACT_SCHEME], |row| Ok((row.get(0)?, row.get(1)?)))
+        .storage()?
+        .collect::<rusqlite::Result<_>>()
+        .storage()?;
+    let mut referrers: Vec<(String, Vec<String>)> = Vec::new();
+    for (session, body) in rows {
+        for target in artifact_sessions(&body)? {
+            if target == session || !targets.contains(target.as_str()) {
+                continue;
+            }
+            match referrers.iter_mut().find(|(known, _)| *known == target) {
+                Some((_, sessions)) => {
+                    if !sessions.contains(&session) {
+                        sessions.push(session.clone());
+                    }
+                }
+                None => referrers.push((target, vec![session.clone()])),
+            }
+        }
+    }
+    Ok(referrers)
+}
+
+/// Node's `zcode-artifact://(<session>)/` matches in a body (the session only, the path after it is not needed).
+fn artifact_sessions(body: &str) -> Result<Vec<String>, StoreError> {
+    let mut found = Vec::new();
+    let mut from = 0;
+    while let Some(offset) = body[from..].find(ARTIFACT_SCHEME) {
+        let start = from + offset + ARTIFACT_SCHEME.len();
+        let rest = &body[start..];
+        let end = rest.find(|c: char| matches!(c, '/' | '"' | '\\') || c.is_whitespace());
+        match end {
+            Some(end) if end > 0 && rest[end..].starts_with('/') => {
+                found.push(decode_component(&rest[..end])?);
+                from = start + end + 1;
+            }
+            _ => from = start,
+        }
+    }
+    Ok(found)
+}
+
+/// Node `purgeSessions` for the given sessions (their owned trees, in one transaction).
+pub(crate) fn purge_rows(conn: &mut Connection, sessions: &[String]) -> Result<(), StoreError> {
+    purge_sessions(conn, sessions)
+}
+
 fn fork_json(fork: &DeletionFork) -> String {
     format!(
         "{{\"sessionId\":{},\"title\":{}}}",

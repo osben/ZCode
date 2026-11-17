@@ -387,3 +387,13 @@ async fn a_store_without_the_protocol_answers_method_not_found() {
         rust_cli_protocol_core::rpc::RpcError::method_not_found("").code
     );
 }
+
+/// Node reports the errno name of a removal failure; a failure without an errno falls back to the caller's reason.
+#[test]
+fn file_failures_report_node_error_codes() {
+    let errno = super::session_data_files::FileError::Io(std::io::Error::from_raw_os_error(13));
+    assert_eq!(errno.code_or("unavailable"), "EACCES");
+    let without = super::session_data_files::FileError::Io(std::io::Error::other("boom"));
+    assert_eq!(without.code_or("unavailable"), "unavailable");
+    assert_eq!(without.code_or("unknown"), "unknown");
+}

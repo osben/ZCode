@@ -651,6 +651,50 @@ impl StoreQueries for NodeStore {
             .await
     }
 
+    async fn list_owned_session_trees(
+        &self,
+        roots: &[SessionId],
+    ) -> Result<Vec<(SessionId, Vec<SessionId>)>, StoreError> {
+        let roots: Vec<String> = roots.iter().map(|id| id.as_str().to_owned()).collect();
+        let trees = self
+            .with_db(move |conn, _| session_deletion::owned_trees(conn, &roots))
+            .await?;
+        Ok(trees
+            .into_iter()
+            .map(|(root, ids)| {
+                (
+                    SessionId::new(root),
+                    ids.into_iter().map(SessionId::new).collect(),
+                )
+            })
+            .collect())
+    }
+
+    async fn list_artifact_referrers(
+        &self,
+        sessions: &[SessionId],
+    ) -> Result<Vec<(SessionId, Vec<SessionId>)>, StoreError> {
+        let targets: Vec<String> = sessions.iter().map(|id| id.as_str().to_owned()).collect();
+        let referrers = self
+            .with_db(move |conn, _| session_deletion::artifact_referrers(conn, &targets))
+            .await?;
+        Ok(referrers
+            .into_iter()
+            .map(|(target, ids)| {
+                (
+                    SessionId::new(target),
+                    ids.into_iter().map(SessionId::new).collect(),
+                )
+            })
+            .collect())
+    }
+
+    async fn purge_session_rows(&self, sessions: &[SessionId]) -> Result<(), StoreError> {
+        let sessions: Vec<String> = sessions.iter().map(|id| id.as_str().to_owned()).collect();
+        self.with_db(move |conn, _| session_deletion::purge_rows(conn, &sessions))
+            .await
+    }
+
     async fn erase_session_tree(
         &self,
         root_ids: Vec<String>,

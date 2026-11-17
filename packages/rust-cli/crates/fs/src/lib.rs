@@ -184,6 +184,33 @@ pub async fn link_stat(path: &Path) -> io::Result<Option<LinkStat>> {
     }
 }
 
+/// Fork: the Node `error.code` (the errno name, such as `EACCES`) of an OS error, for the errors a removal can meet.
+/// `None` for an error without an errno, and off Unix, where Node's codes differ from the names here.
+#[cfg(unix)]
+pub fn error_code(error: &io::Error) -> Option<&'static str> {
+    const NAMES: [(i32, &str); 14] = [
+        (libc::EACCES, "EACCES"),
+        (libc::EPERM, "EPERM"),
+        (libc::EBUSY, "EBUSY"),
+        (libc::ENOTEMPTY, "ENOTEMPTY"),
+        (libc::EISDIR, "EISDIR"),
+        (libc::ENOTDIR, "ENOTDIR"),
+        (libc::EROFS, "EROFS"),
+        (libc::EIO, "EIO"),
+        (libc::ENOSPC, "ENOSPC"),
+        (libc::EMFILE, "EMFILE"),
+        (libc::ENFILE, "ENFILE"),
+        (libc::EXDEV, "EXDEV"),
+        (libc::ELOOP, "ELOOP"),
+        (libc::ENAMETOOLONG, "ENAMETOOLONG"),
+    ];
+    let errno = error.raw_os_error()?;
+    NAMES
+        .iter()
+        .find(|(known, _)| *known == errno)
+        .map(|(_, name)| *name)
+}
+
 /// Fork: the entries of a directory as full paths, in the order the platform lists them; a missing directory has none.
 pub async fn dir_entries(path: &Path) -> io::Result<Vec<PathBuf>> {
     let mut entries = match tokio::fs::read_dir(path).await {

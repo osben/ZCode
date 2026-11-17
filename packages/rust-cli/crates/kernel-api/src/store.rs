@@ -956,6 +956,35 @@ pub trait StoreQueries: Send + Sync {
         Ok(())
     }
 
+    /// Fork: the owned tree of each root (Node `listOwnedSessionTrees`): the root and its owned descendants, empty when the
+    /// root row does not exist. Used by session-data measure and purge.
+    async fn list_owned_session_trees(
+        &self,
+        _roots: &[SessionId],
+    ) -> Result<Vec<(SessionId, Vec<SessionId>)>, StoreError> {
+        Err(StoreError::Unsupported {
+            what: "owned session trees".to_owned(),
+        })
+    }
+
+    /// Fork: for each session, the other undeleted sessions that name one of its artifacts (Node `listArtifactReferrers`).
+    /// Only sessions that have referrers appear in the result.
+    async fn list_artifact_referrers(
+        &self,
+        _sessions: &[SessionId],
+    ) -> Result<Vec<(SessionId, Vec<SessionId>)>, StoreError> {
+        Err(StoreError::Unsupported {
+            what: "artifact referrers".to_owned(),
+        })
+    }
+
+    /// Fork: hard-delete the rows of the owned trees of `sessions` (Node `purgeSessions`). The caller removed the files.
+    async fn purge_session_rows(&self, _sessions: &[SessionId]) -> Result<(), StoreError> {
+        Err(StoreError::Unsupported {
+            what: "purge session rows".to_owned(),
+        })
+    }
+
     /// Fork: the permanent-deletion snapshot of the owned tree of `root` (Node `inspectSessionDeletion`). `Unsupported`
     /// for a store without the shared database; the protocol answers `method_not_found` then.
     async fn inspect_session_deletion(

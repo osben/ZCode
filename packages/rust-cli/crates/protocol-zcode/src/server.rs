@@ -525,6 +525,12 @@ impl Server {
             }
             // Fork: archived-session permanent deletion (specs/fork-rust-agent-parity.md). The request gate exempts these
             // two methods (presence_gate.rs), because their barrier row is what the gate checks.
+            "v4/storage/sessionData/measure" => crate::fork::session_data::measure(self, &params)
+                .await
+                .map(Reply::new),
+            "v4/storage/sessionData/purge" => crate::fork::session_data::purge(self, &params)
+                .await
+                .map(Reply::new),
             "v4/storage/sessionData/deletionPreview" => {
                 crate::fork::session_deletion::preview(self, &params)
                     .await

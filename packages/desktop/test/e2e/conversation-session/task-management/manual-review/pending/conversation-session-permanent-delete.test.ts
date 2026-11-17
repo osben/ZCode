@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
   TID_TASK_DELETE,
@@ -14,7 +14,11 @@ import {
   waitForWorkspaceApp,
 } from "../../../../helpers/desktop-app.js";
 import { ensureProjectExpanded } from "../../../../helpers/project-sidebar.js";
-import { PROVIDER_READINESS_HISTORY_SESSION_ID } from "../../../../helpers/provider-readiness-history-fixture.js";
+import { restartIntoWorkspacePreservingProfile } from "../../../../helpers/model-provider-restart-runtime.js";
+import {
+  PROVIDER_READINESS_HISTORY_SESSION_ID,
+  seedProviderReadinessHistoryFixture,
+} from "../../../../helpers/provider-readiness-history-fixture.js";
 
 const TASK_ID = PROVIDER_READINESS_HISTORY_SESSION_ID;
 const CASE_TIMEOUT_MS = 120_000;
@@ -48,6 +52,23 @@ async function openDeleteDialog() {
 }
 
 describe("DEL01: permanent task deletion from the sidebar", () => {
+  // The task row and its CLI session must exist before the Host starts (the seed is read at startup).
+  before(async () => {
+    // The restart helper may call the hook again when its reload retries, so the insert runs once.
+    let seeded = false;
+    await restartIntoWorkspacePreservingProfile(DEFAULT_WORKSPACE, {
+      afterElectronProcessExit: async () => {
+        if (seeded) return;
+        seeded = true;
+        await seedProviderReadinessHistoryFixture({
+          cliEntryPoint: resolve("../../apps/zcode-cli/packages/cli/dist/zcode.cjs"),
+          e2eHomeDir: process.env.ZCODE_E2E_HOME_DIR ?? "",
+          workspacePath: DEFAULT_WORKSPACE,
+        });
+      },
+    });
+  });
+
   after(async () => {
     await browser.electron.restoreAllMocks();
     await clearAppData();

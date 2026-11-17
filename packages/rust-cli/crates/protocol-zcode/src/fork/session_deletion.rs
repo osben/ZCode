@@ -201,9 +201,7 @@ async fn inspect(server: &Server, method: &str, request: &Request) -> Result<Ins
             .any(|id| server.bridge.get(&SessionId::new(id)).is_none())
     {
         Some("in-use")
-    } else if snapshot.pending_work
-        || !running_session_ids(server, &snapshot.session_ids).is_empty()
-    {
+    } else if snapshot.pending_work || !busy_session_ids(server, &snapshot.session_ids).is_empty() {
         Some("running")
     } else if snapshot.session_ids.is_empty() {
         Some("not-found")
@@ -228,6 +226,23 @@ async fn inspect(server: &Server, method: &str, request: &Request) -> Result<Ins
         blocked,
         revision,
     })
+}
+
+/// Node `busy(id)` over the tree: a running turn, a pending interaction or a queued input (`residency_busy`), or a
+/// running subagent in the tree (`running_session_ids`). Order follows `ids`.
+pub(crate) fn busy_session_ids(server: &Server, ids: &[String]) -> Vec<String> {
+    let mut busy: std::collections::HashSet<String> =
+        running_session_ids(server, ids).into_iter().collect();
+    for bridged in server.bridge.sessions() {
+        let id = bridged.handle.id().as_str().to_owned();
+        if ids.contains(&id) && bridged.sink.residency_busy() {
+            busy.insert(id);
+        }
+    }
+    ids.iter()
+        .filter(|id| busy.contains(*id))
+        .cloned()
+        .collect()
 }
 
 fn retained_entry(reference: &DeletionReference, file_name: String) -> Retained {
@@ -285,7 +300,7 @@ pub(crate) async fn execute(server: &Server, params: &Value) -> Result<Value, Rp
         Outcome::Blocked(reason.to_owned())
     } else if !snapshot.deleting && inspection.revision != request.revision {
         Outcome::Blocked("changed".to_owned())
-    } else if !running_session_ids(server, &snapshot.session_ids).is_empty() {
+    } else if !busy_session_ids(server, &snapshot.session_ids).is_empty() {
         Outcome::Blocked("running".to_owned())
     } else {
         // Node: a failure before the barrier is written is `blocked`; after it, `incomplete` (a retry finishes it).
@@ -370,7 +385,7 @@ async fn run(
             .collect();
         session_data_files::remove(&cli, id, &kept)
             .await
-            .map_err(|error| error.code())?;
+            .map_err(|error| error.code_or("unavailable"))?;
     }
     queries
         .complete_session_deletion(&root)
