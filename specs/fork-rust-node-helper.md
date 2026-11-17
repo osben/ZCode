@@ -407,6 +407,17 @@ Status: design only, no code. Facts checked against the Node source (`apps/zcode
 
 **Elicitation from helper-hosted servers.** Node's MCP adapter (`adapters/src/mcp/index.ts:1152`) passes the session from `activeCallTraces`, which is set during `callTool` from the request's `trace.sessionId` and `trace.turnId`. Without a trace it declines, because the session cannot be determined (`contracts/src/interfaces/mcp.port.ts:465`). The helper's `runtime.ts:104` always declines, and the pipe path never sets a trace, so the trace has to be rebuilt from the `_meta["zcode/helperContext"]` of the in-flight `tools/call` on the pipe. Rust has no MCP elicitation interaction: only AskUserQuestion and ExitPlanMode exist (`projection/elicitation.rs`). A helper relay alone is not enough. Needed: a kernel `InteractionRequest` variant for MCP elicitation, its projection to a `userInput` pending interaction with the requested schema, the answer mapping, and the helper request `helper/elicitation` that carries the request key.
 
+**F3b(a) session-only allow: decided shape (2026-11-16, PR 1 of the stack).**
+
+- `Tool::allow_session()` (default false) says the tool offers "Always allow in this session". Only tools that set it (app-provided `app__` tools, later the workflow tools) get the option. `once` and `independent` asks never offer it, as with the project option.
+- `InteractionRequest::Permission` gains `session_allow: bool` (serde default, omitted when false). It is set by the pipeline from the tool, never by the gate.
+- The v4 projection adds option `optionId: "allowSession"`, `kind: "allowAlways"`, label "Always allow in this session", in the project option's slot. The project option `allowAlways` is not offered on such an ask.
+- The answer `allowSession` (Rust `PermissionAnswer::AllowSession`, wire `decision: "allow_session"`) is accepted only when offered; otherwise it is a deny, like any option the ask did not offer.
+- Owner: the session actor. It keeps a set of tool names granted for the session. Resolving `AllowSession` adds the tool name and resolves the waiter as `Allow { remember: [] }`, so the pipeline is unchanged. It commits nothing: no `PermissionRulesAdded` fact, no LocalSettings row, no `local_rules_committed`.
+- A later permission ask in the same session whose tool is in that set is answered `Allow` at once, with no pending interaction and no prompt event. The set lives in the actor: it dies with it, which gives Node's lifetime (restart, cold resume, `/new`).
+- Another session has its own actor and set, so it still asks.
+- Tests: `runtime/src/session_allow_tests.rs` (red first): the grant is session-scoped, it does not reach a second session, it writes no project rule, and a not-offered `allowSession` is refused.
+
 **F5 workflow execution.** Needs the session-only allow above. Open decision D1(A) still stands. Before any code, a written decision is needed on who owns the actors' `dwf/<runId>/...` session rows under rule 2 (Rust owns conversations), because each Node actor is a full `AgentRuntime` with its own session row.
 
 **F7 MCP Apps on Rust-run servers.** Needs the lease and sampling ledger in Rust, as described in "MCP Apps on Rust-hosted servers" below. It is the largest family and is not started.
