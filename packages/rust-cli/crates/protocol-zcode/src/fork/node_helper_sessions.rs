@@ -116,6 +116,9 @@ struct AbandonedOpen<'a> {
     peer: &'a Peer,
     session: &'a str,
     open_id: Option<u64>,
+    /// The child registration this call may have made and not yet handed to the session's lifecycle. A caller that
+    /// drops the open mid-way must end it too, since the helper may already have accepted it.
+    child: bool,
 }
 
 /// A session call that its caller dropped before the open finished. When no other call waits on that open, its unset
@@ -150,10 +153,16 @@ impl Drop for Waiting<'_> {
 
 impl Drop for AbandonedOpen<'_> {
     fn drop(&mut self) {
-        if let Some(open_id) = self.open_id.take()
-            && !self.peer.is_closed()
-        {
-            self.helper.send_close(self.peer, self.session, open_id);
+        if self.peer.is_closed() {
+            return;
+        }
+        let child = std::mem::take(&mut self.child);
+        match self.open_id.take() {
+            Some(open_id) => self
+                .helper
+                .send_close_ending(self.peer, self.session, open_id, child),
+            None if child => self.helper.send_child_end(self.peer, self.session),
+            None => {}
         }
     }
 }
@@ -220,7 +229,12 @@ impl NodeHelper {
             match self.ensure_on_registered(generation, peer, session).await {
                 Err(Attempt::Unregistered) => {}
                 Err(Attempt::Failed(error)) => return Err(error),
-                Ok(()) => return Ok(()),
+                Ok(()) => {
+                    self.opened_here
+                        .lock_unpoisoned()
+                        .insert(session.to_owned());
+                    return Ok(());
+                }
             }
         }
         Err(unavailable("the session open kept failing"))
@@ -288,14 +302,15 @@ impl NodeHelper {
                     if opened_here.load(std::sync::atomic::Ordering::Relaxed)
                         && current.is_none() =>
                 {
-                    forgotten = Some(open_id);
+                    // The open's child registration, made while the session was closing, ends with the close.
+                    forgotten = Some((open_id, running.children.remove(session)));
                 }
                 Ok(_) => {}
             }
         });
         waiting.done = true;
-        if let Some(open_id) = forgotten {
-            self.send_close(peer, session, open_id);
+        if let Some((open_id, child)) = forgotten {
+            self.send_close_ending(peer, session, open_id, child);
         }
         result.map(|_| ())
     }
@@ -341,29 +356,41 @@ impl NodeHelper {
         // F4-D7: a subagent's browser registration goes before its open, so its first browser call finds it. A
         // refused registration fails the open.
         let parent = answers.session_parent(session).await;
+        // Until the open is answered, a caller that drops this call ends what it made: the child registration, and
+        // the open (its close) once it was sent.
+        let mut abandoned = AbandonedOpen {
+            helper: self,
+            peer,
+            session,
+            open_id: Some(open_id),
+            child: false,
+        };
         if let Some(parent) = &parent {
             let registration = json!({
                 "childSessionId": session,
                 "parentSessionId": parent,
                 "tabOwner": "parent",
             });
+            // Set before the request: the helper may accept it even when this call times out or is dropped, and the
+            // registration then has to be ended (the drop of `abandoned` does it, as the open's own close).
+            abandoned.child = true;
             let deadline = self.timing.timeout_for(OPEN);
             match tokio::time::timeout(deadline, peer.request(CHILD_SESSION, &registration)).await {
                 Ok(Ok(_)) => {}
-                Ok(Err(error)) => return Err(error),
+                Ok(Err(error)) => {
+                    // Refused: nothing was registered, so there is nothing to end.
+                    abandoned.child = false;
+                    return Err(error);
+                }
                 Err(_elapsed) => {
+                    // No open was sent. The late registration is ended by the drop of `abandoned`.
+                    abandoned.open_id = None;
                     return Err(unavailable(
                         "the helper did not register the child session in time",
                     ));
                 }
             }
         }
-        let mut abandoned = AbandonedOpen {
-            helper: self,
-            peer,
-            session,
-            open_id: Some(open_id),
-        };
         let deadline = self.timing.timeout_for(OPEN);
         let answer = tokio::time::timeout(deadline, peer.request(OPEN, &params)).await;
         if answer.is_ok() {
@@ -373,9 +400,9 @@ impl NodeHelper {
         let outcome = match answer {
             Ok(Ok(_)) => {
                 self.heard(generation);
-                if let Some(parent) = parent.as_ref() {
+                if parent.is_some() {
                     self.with_running(generation, |running| {
-                        running.children.insert(session.to_owned(), parent.clone());
+                        running.children.insert(session.to_owned());
                     });
                 }
                 Ok(open_id)
@@ -390,7 +417,9 @@ impl NodeHelper {
             }
             Err(_elapsed) => Err(unavailable("the helper did not open the session in time")),
         };
-        // A failed open of a registered subagent ends its registration, so nothing outlives the session.
+        // The registration is settled here: kept by the session's lifecycle on success, ended on a failed open. The
+        // `abandoned` guard must not end it a second time.
+        abandoned.child = false;
         if outcome.is_err() && parent.is_some() {
             self.send_child_end(peer, session);
         }
@@ -405,7 +434,7 @@ impl NodeHelper {
                 return;
             };
             running.panels.forget_session(session);
-            let child = running.children.remove(session).is_some();
+            let child = running.children.remove(session);
             match running.sessions.remove(session) {
                 Some(opening) => {
                     running.last_used = tokio::time::Instant::now();
@@ -506,15 +535,6 @@ impl NodeHelper {
         let params = json!({"childSessionId": session});
         drop(self.spawner.spawn("node-helper-child-end", async move {
             peer.notify(CHILD_SESSION_END, &params).await;
-        }));
-    }
-
-    /// Closes one open of `session`: the helper ignores a close whose `openId` is not the session's open one.
-    fn send_close(&self, peer: &Peer, session: &str, open_id: u64) {
-        let peer = peer.clone();
-        let params = json!({"sessionId": session, "openId": open_id});
-        drop(self.spawner.spawn("node-helper-session-close", async move {
-            peer.notify(CLOSE, &params).await;
         }));
     }
 }

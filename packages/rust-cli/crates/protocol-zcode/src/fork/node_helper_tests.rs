@@ -71,6 +71,8 @@ struct Fake {
     helper: Arc<OnceLock<Weak<NodeHelper>>>,
     /// Incremented when a guard is dropped while the helper's state lock is held.
     dropped_under_lock: Arc<AtomicUsize>,
+    /// Incremented when a fake helper sees its stdin reach EOF (the helper is asked to shut itself down).
+    stdin_eofs: Arc<AtomicUsize>,
 }
 
 struct Stop {
@@ -113,6 +115,7 @@ impl NodeHelperLauncher for Fake {
             behaviour: self.behaviour.clone(),
             answers: self.answers.clone(),
             received: self.received.clone(),
+            stdin_eofs: self.stdin_eofs.clone(),
         };
         tokio::spawn(run_helper(script, helper_in, helper_out));
         Ok(NodeHelperProcess {
@@ -135,6 +138,7 @@ struct Script {
     behaviour: Arc<Behaviour>,
     answers: Arc<StdMutex<Vec<Value>>>,
     received: Arc<StdMutex<Vec<(String, Value)>>>,
+    stdin_eofs: Arc<AtomicUsize>,
 }
 
 async fn write_line(output: &mut DuplexStream, line: String) {
@@ -212,6 +216,7 @@ async fn run_helper(script: Script, input: DuplexStream, mut output: DuplexStrea
             }
         }
     }
+    script.stdin_eofs.fetch_add(1, Ordering::SeqCst);
 }
 
 fn behaviour(f: impl Fn(usize, &str, &Value) -> Act + Send + Sync + 'static) -> Arc<Behaviour> {
@@ -244,6 +249,7 @@ fn fake(advertised: &[&str], behaviour: Arc<Behaviour>) -> Fake {
         received: Arc::new(StdMutex::new(Vec::new())),
         helper: Arc::new(OnceLock::new()),
         dropped_under_lock: Arc::new(AtomicUsize::new(0)),
+        stdin_eofs: Arc::new(AtomicUsize::new(0)),
     }
 }
 
@@ -535,6 +541,23 @@ async fn three_crashes_within_the_window_keep_the_helper_down() {
     expect_unavailable(&error);
     // The breaker answers without starting another helper.
     assert_eq!(rig.fake.launches.load(Ordering::SeqCst), 3);
+}
+
+/// Retiring an idle helper must close its stdin: the helper exits on EOF within its stop grace (F4a), and that
+/// only happens if the write half is released with the process, not held by the reader's peer clone.
+#[tokio::test(start_paused = true)]
+async fn retiring_a_helper_closes_its_stdin_so_it_can_exit_on_eof() {
+    let rig = rig(fake(&["plugins/list"], echo()), timing());
+    forward_ok(&rig.helper, "plugins/list", json!({"n": 1})).await;
+
+    tokio::time::sleep(Duration::from_secs(301)).await;
+    assert_eq!(rig.fake.stopped.load(Ordering::SeqCst), 1, "reclaimed");
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    assert_eq!(
+        rig.fake.stdin_eofs.load(Ordering::SeqCst),
+        1,
+        "the retired helper saw EOF on stdin"
+    );
 }
 
 #[tokio::test(start_paused = true)]

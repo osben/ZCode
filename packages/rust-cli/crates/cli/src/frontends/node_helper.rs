@@ -168,10 +168,6 @@ impl NodeHelperLauncher for ProcessLauncher {
     }
 }
 
-/// The helper's process tree, stopped when the helper drops it (idle reclaim, timeout, crash restart). The stop runs
-/// in a task so it is confirmed: the tree is reaped and its ledger record removed, instead of one record per
-/// generation waiting for the next process's sweep. If the task never runs (the scope is closing), dropping the tree
-/// still kills it.
 /// Fork (F4a): how long a helper gets to exit on EOF before its tree is terminated.
 const HELPER_STOP_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
 
@@ -184,6 +180,10 @@ async fn stop_mode<F: std::future::Future>(exit: F, grace: std::time::Duration) 
     }
 }
 
+/// The helper's process tree, stopped when the helper drops it (idle reclaim, timeout, crash restart). The stop runs
+/// in a task so it is confirmed: the tree is reaped and its ledger record removed, instead of one record per
+/// generation waiting for the next process's sweep. If the task never runs (the scope is closing), dropping the tree
+/// still kills it.
 struct StopOnDrop {
     tree: Option<Tracked>,
     spawner: Spawner,
