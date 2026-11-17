@@ -6,11 +6,25 @@
 //! `error.code` or `error.type`. None of them falls back to another billing path.
 
 use rust_cli_base::proto::http;
-use rust_cli_kernel_api::model::ModelError;
+use rust_cli_kernel_api::model::{ModelError, ProviderFailure};
 
 use super::{Class, Shape, Verdict, error_of};
 
 /// One code's class and the Node message (shown instead of the server text).
+/// The plan codes this table knows; `provider_table_tests` checks them against the Node fixture in both directions.
+#[cfg(test)]
+pub(super) const CODES: [&str; 9] = [
+    "subscription_sharing_user_not_eligible",
+    "subscription_sharing_usage_limit_exceeded",
+    "subscription_sharing_unsupported_capability",
+    "subscription_sharing_route_not_supported",
+    "subscription_sharing_invalid_user",
+    "chatpass_v2_scope_not_authorized",
+    "chatpass_v2_invalid_authorization_context",
+    "subscription_sharing_usage_unavailable",
+    "subscription_sharing_user_unavailable",
+];
+
 fn entry(code: &str) -> Option<(Class, &'static str)> {
     Some(match code {
         "subscription_sharing_user_not_eligible" => (
@@ -47,24 +61,56 @@ fn entry(code: &str) -> Option<(Class, &'static str)> {
     })
 }
 
+/// Node's `reason` for a plan code (`failure-provider-business-codes.ts`; the Node fixture `node-provider-codes.json`).
+fn reason_of(code: &str) -> &'static str {
+    match code {
+        "subscription_sharing_usage_limit_exceeded" => "rate_limited",
+        "subscription_sharing_invalid_user"
+        | "chatpass_v2_scope_not_authorized"
+        | "chatpass_v2_invalid_authorization_context" => "auth_failed",
+        "subscription_sharing_usage_unavailable" | "subscription_sharing_user_unavailable" => {
+            "server_error"
+        }
+        _ => "invalid_request",
+    }
+}
+
 /// The verdict for the first known code among `codes` (`type`, then `code`). `status` is absent for stream errors.
 pub(super) fn classify(
     status: Option<u16>,
     codes: &[Option<&str>],
     retry_after_ms: Option<u64>,
+    kind: &'static str,
 ) -> Option<Verdict> {
-    let (class, message) = codes.iter().flatten().find_map(|code| entry(code))?;
+    let (code, (class, message)) = codes
+        .iter()
+        .flatten()
+        .find_map(|code| entry(code).map(|found| (*code, found)))?;
     let shape = Shape {
         message: message.to_owned(),
         retry_after_ms,
     };
     // The error is always the code's own (Node's final classification): the scope codes are a sign-in error
     // (Node `ProviderNotConfigured`) with or without an HTTP status, so a stream error gets the same error as a 403.
-    let error = match class {
+    let classified = match class {
         Class::AccessDenied => ModelError::Authentication {
             message: shape.message,
         },
         _ => error_of(class, status, shape),
+    };
+    // Node `context.providerCode` / `statusCode` / `retryable`: the unavailable codes are the only retryable ones.
+    let error = ModelError::Provider {
+        provider: Box::new(ProviderFailure::new(
+            code,
+            status,
+            matches!(
+                code,
+                "subscription_sharing_usage_unavailable" | "subscription_sharing_user_unavailable"
+            ),
+            reason_of(code),
+            kind,
+        )),
+        error: Box::new(classified),
     };
     // Node `AccountRequestRetry` renews on the 401 status, whatever the code (`isProjectTokenRejection`): only the
     // disposition becomes a renewal; once that one renewal is spent the request ends with the code's own error.

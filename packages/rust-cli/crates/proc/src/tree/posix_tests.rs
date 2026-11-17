@@ -59,7 +59,7 @@ async fn snapshot_failure_still_terminates_the_leader_and_its_descendants() {
     for shutdown in [Shutdown::Graceful, Shutdown::Immediate] {
         let (mut child, pid, background) = spawn("sleep 30 & echo $!; sleep 30").await;
         let _cleanup = Cleanup(pid as i32);
-        terminate_with(Root::Child(&mut child), pid, shutdown, &failing)
+        terminate_with(Root::Child(&mut child), pid, shutdown, GRACE, &failing)
             .await
             .unwrap();
         assert!(child.try_wait().unwrap().is_some(), "{shutdown:?}: leader");
@@ -80,9 +80,15 @@ async fn snapshot_failure_inside_the_kill_loop_falls_back_to_the_root_group() {
             failing().await
         }
     };
-    terminate_with(Root::Child(&mut child), pid, Shutdown::Graceful, &flaky)
-        .await
-        .unwrap();
+    terminate_with(
+        Root::Child(&mut child),
+        pid,
+        Shutdown::Graceful,
+        GRACE,
+        &flaky,
+    )
+    .await
+    .unwrap();
     assert!(calls.load(Ordering::SeqCst) >= 2);
     assert!(child.try_wait().unwrap().is_some());
     assert!(gone(background).await);
@@ -116,4 +122,43 @@ async fn a_descendant_in_its_own_session_is_terminated_too() {
         .unwrap();
     assert!(child.try_wait().unwrap().is_some());
     assert!(gone(background).await, "the escaped background job is left");
+}
+
+/// The default TERM-to-KILL grace stays at 1.5 s: shell and MCP teardown keep their current timing.
+#[tokio::test]
+async fn the_default_term_to_kill_grace_is_one_and_a_half_seconds() {
+    let (mut child, pid, _) = spawn("trap '' TERM; echo $$; sleep 30").await;
+    let _cleanup = Cleanup(pid as i32);
+    let began = std::time::Instant::now();
+    terminate(&mut child, pid, Shutdown::Graceful)
+        .await
+        .unwrap();
+    let elapsed = began.elapsed();
+    assert!(
+        elapsed >= std::time::Duration::from_millis(1400)
+            && elapsed < std::time::Duration::from_millis(2500),
+        "the default grace is 1.5 s, took {elapsed:?}"
+    );
+}
+
+/// Node `killGraceMs` is the caller's: a tree that ignores TERM is killed after the given grace, not the default.
+#[tokio::test]
+async fn the_term_to_kill_grace_is_the_one_given() {
+    let (mut child, pid, _) = spawn("trap '' TERM; echo $$; sleep 30").await;
+    let _cleanup = Cleanup(pid as i32);
+    let began = std::time::Instant::now();
+    terminate_with_grace(
+        &mut child,
+        pid,
+        Shutdown::Graceful,
+        std::time::Duration::from_millis(3000),
+    )
+    .await
+    .unwrap();
+    let elapsed = began.elapsed();
+    assert!(
+        elapsed >= std::time::Duration::from_millis(2900)
+            && elapsed < std::time::Duration::from_millis(4500),
+        "the given grace is 3 s, took {elapsed:?}"
+    );
 }

@@ -125,17 +125,30 @@ pub(crate) fn classify_response(
         retry_after.map(|delay| u64::try_from(delay.as_millis()).unwrap_or(u64::MAX));
     let value: Value = serde_json::from_str(body).unwrap_or(Value::Null);
     let found = match vendor {
-        Vendor::Zhipu => zhipu::response(status, &value, body, retry_after_ms),
+        Vendor::Zhipu => zhipu::response(
+            status,
+            &value,
+            body,
+            retry_after_ms,
+            provider_kind(protocol),
+        ),
         Vendor::Generic => None,
     };
     let mut verdict = found.unwrap_or_else(|| match protocol {
         WireProtocol::AnthropicMessages => {
             anthropic::response(status, &value, body, retry_after_ms)
         }
-        WireProtocol::OpenAiChatCompletions | WireProtocol::OpenAiResponses => {
-            openai::response(status, &value, body, retry_after_ms)
-        }
+        WireProtocol::OpenAiChatCompletions | WireProtocol::OpenAiResponses => openai::response(
+            status,
+            &value,
+            body,
+            retry_after_ms,
+            provider_kind(protocol),
+        ),
     });
+    if vendor == Vendor::Zhipu {
+        verdict = zhipu::attach_unmapped(verdict, &value, Some(status), provider_kind(protocol));
+    }
     verdict.retry_after = retry_after;
     verdict.should_retry = should_retry(headers);
     verdict
@@ -150,15 +163,24 @@ pub(crate) fn classify_stream_error(
     raw: &str,
 ) -> Verdict {
     let found = match vendor {
-        Vendor::Zhipu => zhipu::stream(value, raw),
+        Vendor::Zhipu => zhipu::stream(value, raw, provider_kind(protocol)),
         Vendor::Generic => None,
     };
     found.unwrap_or_else(|| match protocol {
         WireProtocol::AnthropicMessages => anthropic::stream(value, raw),
         WireProtocol::OpenAiChatCompletions | WireProtocol::OpenAiResponses => {
-            openai::stream(value, raw)
+            openai::stream(value, raw, provider_kind(protocol))
         }
     })
+}
+
+/// Node `providerKind` of a wire protocol (`AiSdkProviderKind`: `openai`, `anthropic`, `openai-compatible`).
+fn provider_kind(protocol: WireProtocol) -> &'static str {
+    match protocol {
+        WireProtocol::AnthropicMessages => "anthropic",
+        WireProtocol::OpenAiResponses => "openai",
+        WireProtocol::OpenAiChatCompletions => "openai-compatible",
+    }
 }
 
 /// 不带事件名的 SSE 块是不是错误（provider-errors.md D20）：正文是 `{"type":"error",…}` 或带非空的 `error`；
@@ -170,7 +192,7 @@ pub(crate) fn unnamed_frame(
     raw: &str,
 ) -> Option<Verdict> {
     if vendor == Vendor::Zhipu
-        && let Some(verdict) = zhipu::frame(value, raw)
+        && let Some(verdict) = zhipu::frame(value, raw, provider_kind(protocol))
     {
         return Some(verdict);
     }
@@ -339,3 +361,7 @@ fn error_of(class: Class, status: Option<u16>, error: Shape) -> ModelError {
 #[cfg(test)]
 #[path = "mod_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "provider_table_tests.rs"]
+mod provider_table_tests;

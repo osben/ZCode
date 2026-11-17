@@ -255,15 +255,20 @@ pub(crate) async fn run(
         return Attempt::Aborted;
     }
     match stopped {
-        Err(QueryError::Model(ModelError::PromptTooLong { message })) => Attempt::PromptTooLong {
-            // 与主循环的初始差同一个解析函数（kernel-api）。
-            gap: prompt_too_long_gap(&message),
-        },
-        Err(QueryError::Model(ModelError::Cancelled)) | Ok(QueryStop::Aborted) => Attempt::Aborted,
+        Err(QueryError::Model(error)) if error.prompt_too_long_message().is_some() => {
+            Attempt::PromptTooLong {
+                // 与主循环的初始差同一个解析函数（kernel-api）。
+                gap: prompt_too_long_gap(error.prompt_too_long_message().unwrap_or_default()),
+            }
+        }
+        Err(QueryError::Model(error)) if matches!(error.peel(), ModelError::Cancelled) => {
+            Attempt::Aborted
+        }
+        Ok(QueryStop::Aborted) => Attempt::Aborted,
         Err(error) => Attempt::Failed {
             detail: error.to_string(),
         },
-        Ok(QueryStop::ApiError { message } | QueryStop::Blocked { message }) => {
+        Ok(QueryStop::ApiError { message, .. } | QueryStop::Blocked { message }) => {
             Attempt::Failed { detail: message }
         }
         // 摘要请求的工具一律拒绝，不会有工具的 hook 要求停止；摘要不跑 Stop hooks。照完成处理（query.md §3）。

@@ -31,6 +31,10 @@ pub enum TurnOutcome {
         /// (`lastError.code`); `None` is the generic turn fault.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         code: Option<String>,
+        /// Fork: the provider business failure (Node `lastError.attribution`: `providerErrorCode` is its code, with
+        /// the status and retryability); `None` for a failure without a provider code.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        provider: Option<Box<crate::model::ProviderFailure>>,
     },
 }
 

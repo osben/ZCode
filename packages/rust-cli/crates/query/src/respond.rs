@@ -448,7 +448,9 @@ fn log_end(scope: &RunScope, streamed: &Streamed, completed: u64, aborted_stream
     let retries = streamed.timing.retries;
     let tools = streamed.batch.len();
     tracing::debug!(event = "model.stream", session = %scope.session, deltas = streamed.deltas, "model stream events");
-    if let Some(ModelError::StreamIdle { idle_ms }) = &streamed.failure {
+    if let Some(ModelError::StreamIdle { idle_ms }) =
+        streamed.failure.as_ref().map(ModelError::peel)
+    {
         // 看门狗中止且不再重发（静默重发记的是 `model.retry`，logging.md §4）。
         tracing::warn!(
             event = "model.stream.idle",
@@ -498,10 +500,14 @@ fn finish(
     let (assembled, error_of_call) = match failure {
         None if keep_partial => (assembler.finish_aborted(), None),
         None => (assembler.finish(), None),
-        Some(error) => match partial(&assistant_id, assembler, error, (&timing, completed)) {
-            Partial::WithTools(assembled, error) => (assembled, Some(error)),
-            Partial::Ended(ending) => return *ending,
-        },
+        Some(error) => {
+            // Node `providerId` / `modelId` of the error context: the request's own selection.
+            let error = error.with_model(&timing.selection.provider, &timing.selection.model);
+            match partial(&assistant_id, assembler, error, (&timing, completed)) {
+                Partial::WithTools(assembled, error) => (assembled, Some(error)),
+                Partial::Ended(ending) => return *ending,
+            }
+        }
     };
     let tool_uses = assembled
         .content

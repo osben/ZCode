@@ -333,7 +333,7 @@ pub(crate) async fn drive(
     let mut text = report::final_text(last.as_ref());
     let (ending, error) = match result {
         Ok(QueryStop::Aborted) => (Ending::Killed, None),
-        Ok(QueryStop::ApiError { message } | QueryStop::Blocked { message }) => {
+        Ok(QueryStop::ApiError { message, .. } | QueryStop::Blocked { message }) => {
             // 子循环以一条 API 错误消息结束，它就是最后的文本。
             if text.is_empty() {
                 text = message;
