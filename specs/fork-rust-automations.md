@@ -276,6 +276,48 @@ Not built (layer B): `v4/offPeak/lifecycle` notifications, `v4/conversation/offP
 before), the ticket authority and model binding, takeover, and the session's off-peak record. The
 `offPeakToolEnabled` create and resume flags are accepted and ignored, as before.
 
+### Slice 3 layer B: decision needed before the model binding
+
+Status: blocked on one design decision. No layer B code exists on `feat/rust-offpeak-slice3-b`.
+
+What is blocked: an off-peak run's model requests must carry the ticket (`x-off-peak-ticket-id`, request auth from
+`modelExecution.requestAuth`), wait for a ticket when none is held, retry on the ticket-expired code
+(`ticket_needed`, then `replace_ticket` resumes the waiting request), and fall back on takeover. Node does this in
+`core/src/runtime/off-peak/model-binding.ts` (`OffPeakTicketAuthority.createBinding`, a model wrapper that retries on
+`providerErrorCode`) and `lifecycle.ts`.
+
+What exists in zcode-rs: request auth is resolved per provider template in `platform/src/lib.rs` `request_auth`
+(`Access::Account` and `Access::ChatGpt` go to the Host's `HeaderSource` with `HeaderRequest { selection, access,
+session, rejected_fingerprint }`; everything else uses `credential`). There is no turn-scoped override. The header
+source is keyed by session and selection only, so it cannot tell an off-peak attempt from an ordinary one on the same
+session. No per-turn model wrapper exists either.
+
+Options:
+
+1. **Per-call override parameter (recommended).** Add `ticket: Option<OffPeakAuthOverride>` to the model request
+   (the `request_auth` call site), default `None`. When set, `request_auth` returns the override's headers and key and
+   skips the template path. The agent-side authority (wait, replace, retry on the expired code) is a wrapper created
+   per off-peak turn, which sets the override on each attempt. Ordinary turns pass `None` and see no change. Cost: a
+   new field on the model request type and one early branch in `request_auth`; both are shared-path edits, but each is
+   inert for `None`.
+2. **Host-resolved ticket.** Extend `HeaderRequest` with a ticket reference and let the Host's header source return
+   the ticket headers and wait for a replacement inside `request_auth`. Less agent code, but the wait and the replace
+   protocol move into the Host round trip, and the agent's lifecycle state (`ticket_needed`, `replace_ticket`) would
+   still need to observe it. Couples the model path to the Host's timing.
+3. **Turn-scoped task-local.** Set a task-local override around the turn's model calls and read it in `request_auth`.
+   No signature changes, but implicit state crosses the model path, and a subagent or a background task on the same
+   task would inherit it. Rejected on that ground.
+
+Recommendation: option 1. It keeps the authority in the agent, as Node does, and changes the shared path only by an
+inert optional field. Before coding, confirm: (a) the model request type may gain an optional field, and (b) the
+replace/wait state lives in the agent (not the Host).
+
+Independent of this decision, the lifecycle state machine (Node `lifecycle.ts`), the `v4/offPeak/lifecycle`
+notifications, `v4/conversation/offPeakControl` (`cancel` and `replace_ticket` route to the matching execution by
+`sessionId` and `executionId`), registration (`Extensions.off_peak`, the app-server wiring of `HostOffPeak`,
+`offPeakToolEnabled` honoured, incognito and subagent exclusion) could be built first. The policy flip stays last and
+waits for the model binding.
+
 ## Not ported (stay `-32601`)
 
 - `session/send`: on the automation path it is only the Host's attachment fallback. Node's legacy `session/send`
