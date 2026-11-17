@@ -42,8 +42,8 @@ pub(super) async fn settle_capture<T>(
     }
 }
 
-/// The forwarded methods that always name a session: the 16 `mcp/ui*` methods, `mcp/readResource` and
-/// `plugins/mentionItems`.
+/// The methods that always name a session: the 16 `mcp/ui*` methods, `mcp/readResource`, `plugins/mentionItems` and the
+/// app tool call, which is sent by its own path (`node_helper_app_tools.rs`) through `send_on`, not forwarded.
 pub(crate) const SESSION_METHODS: &[&str] = &[
     "mcp/uiOpenInstance",
     "mcp/uiValidateInstance",
@@ -57,6 +57,9 @@ pub(crate) const SESSION_METHODS: &[&str] = &[
     "mcp/uiCancelCall",
     "mcp/uiSampling",
     "mcp/uiCancelSampling",
+    // F3b(b): an app tool call runs in its session's helper session (the set lives in that session's record). Its
+    // cancel is not session-scoped: it must not open a session, so it is sent without `ensure_session`.
+    "helper/appTools/call",
     "mcp/uiRegisterAppTools",
     "mcp/uiUnregisterAppTools",
     "mcp/uiClaimAppToolCall",
