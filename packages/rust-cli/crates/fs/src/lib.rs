@@ -262,6 +262,25 @@ pub fn remove_dir_all_optional_blocking(path: &Path) -> io::Result<()> {
 
 /// 在文件末尾追加 `bytes`（按需建父目录与文件）。只给"一个写者、按顺序追加"的日志类文件用
 /// （例如 TUI 输入历史）；调用方保证同一个文件只有一个写者。
+/// Writes `bytes` to `path` only when nothing is there yet (`create_new`, the `wx` flag): an existing file is left as it
+/// is, so a user's edit is never overwritten, even by a writer that raced past a read. Returns whether it was created.
+pub async fn create_new_file(path: &Path, bytes: &[u8]) -> io::Result<bool> {
+    match tokio::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .await
+    {
+        Ok(mut file) => {
+            tokio::io::AsyncWriteExt::write_all(&mut file, bytes).await?;
+            tokio::io::AsyncWriteExt::flush(&mut file).await?;
+            Ok(true)
+        }
+        Err(error) if error.kind() == ErrorKind::AlreadyExists => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
 pub async fn append(path: &Path, bytes: &[u8]) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent).await?;

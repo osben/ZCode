@@ -2,19 +2,21 @@
 //!
 //! Owner: this loop owns the child's stdio for one run. It keeps the child's local handles, the requests in flight and
 //! the order of the lines. It does not interpret asks, world reads, reports or artifacts: the [`ChildHandler`] does, and
-//! W5 to W6 supply it. A line that does not parse, a handle the host cannot resolve, or a child that exits before
-//! `complete` ends the run as `stopped(interrupted)`. The cause names the line or the stderr tail, never a script value.
+//! W5 to W6 supply it. A line that does not parse, a handle the host cannot resolve, an engine refusal, a line over the
+//! cap, or a child that exits before `complete` ends the run as `stopped(interrupted)`. The cause names the line and the
+//! reason, or the stderr tail, never a script value. Blank lines are skipped, as the reference host (`harness.ts`) does.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::time::Duration;
 
 use futures_util::future::BoxFuture;
 use futures_util::stream::{FuturesUnordered, StreamExt};
 use serde_json::Value;
-use tokio::io::{
-    AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt,
-};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
+pub use super::workflow_lines::MAX_LINE_BYTES;
+use super::workflow_lines::{Line, NdjsonLines};
 use super::workflow_wire::{
     ChildEvent, ChildMessage, ChildRequest, Completion, CreateActor, WireError, response_line,
 };
@@ -22,7 +24,8 @@ use super::workflow_wire::{
 /// The engine side of Boundary A. Methods are synchronous except the request's future, which runs while the host
 /// keeps reading lines, so asks in flight do not hold up the child's next message.
 pub trait ChildHandler: Send + Sync {
-    /// Creates the actor in the engine and returns its engine id. An `Err` refuses the actor, which ends the run.
+    /// Creates the actor in the engine and returns its engine id. An `Err` refuses the actor and carries the reason,
+    /// which ends the run.
     fn create_actor(&self, actor: &CreateActor) -> Result<String, String>;
 
     /// Starts one request. `actor_id` is the engine id of the request's actor, resolved by the host.
@@ -62,28 +65,31 @@ pub enum StopReason {
 const STDERR_TAIL_BYTES: usize = 4096;
 /// The stderr text a cause carries, in characters.
 const STDERR_CAUSE_CHARS: usize = 2000;
+/// The whole stderr drain before a stop, however the writer paces its bytes. A grandchild that keeps the pipe open
+/// cannot hold the stop, settlement or guard drop up for longer than this.
+const STDERR_DRAIN: Duration = Duration::from_millis(500);
 
 type Answer = (String, Result<Value, WireError>);
 
 /// Runs the NDJSON host for one child until its `complete`, or until the stream stops.
 pub async fn run<R, W, E>(io: ChildIo<R, W, E>, handler: Arc<dyn ChildHandler>) -> Outcome
 where
-    R: AsyncBufRead + Unpin + Send,
+    R: tokio::io::AsyncBufRead + Unpin + Send,
     W: AsyncWrite + Unpin + Send,
     E: AsyncRead + Unpin + Send,
 {
     let ChildIo {
-        mut stdout,
+        stdout,
         mut stdin,
         mut stderr,
     } = io;
+    let mut lines = NdjsonLines::new(stdout);
     let mut host = Host {
         handler,
         locals: HashMap::new(),
         in_flight: HashSet::new(),
         pending: FuturesUnordered::new(),
     };
-    let mut line = Vec::new();
     let mut line_no = 0usize;
     let mut stderr_open = true;
     let mut tail = Vec::new();
@@ -99,33 +105,32 @@ where
                 }
                 host.in_flight.remove(&id);
             }
-            read = stdout.read_until(b'\n', &mut line) => {
+            read = lines.next() => {
                 match read {
-                    Ok(0) => {
-                        // EOF. A last line without its newline is still a line, as readline emits it on close.
-                        if !line.is_empty() {
-                            line_no += 1;
-                            if let Some(outcome) = host.take_line(&line, line_no) {
-                                return outcome;
-                            }
+                    Ok(Line::Text(bytes)) => {
+                        line_no += 1;
+                        if bytes.trim_ascii().is_empty() {
+                            continue;
                         }
-                        // The child's stderr may still hold its last words: drain what is left, bounded, so the cause
-                        // carries them even when stdout closed first.
+                        if let Some(outcome) = host.take_line(&bytes, line_no) {
+                            return outcome;
+                        }
+                    }
+                    Ok(Line::TooLong) => {
+                        return Outcome::Stopped {
+                            reason: StopReason::Interrupted,
+                            cause: format!(
+                                "the child wrote a line over {MAX_LINE_BYTES} bytes at line {}",
+                                line_no + 1
+                            ),
+                        };
+                    }
+                    Ok(Line::End) => {
+                        // The child's stderr may still hold its last words: drain what is left, bounded.
                         if stderr_open {
                             drain_stderr(&mut stderr, &mut tail).await;
                         }
                         return stopped("the child exited before it completed", &tail);
-                    }
-                    Ok(_) => {
-                        if !line.ends_with(b"\n") {
-                            // Only the EOF case above sees an unterminated line; keep reading for its newline.
-                            continue;
-                        }
-                        line_no += 1;
-                        let text = std::mem::take(&mut line);
-                        if let Some(outcome) = host.take_line(&text, line_no) {
-                            return outcome;
-                        }
                     }
                     Err(_) => return stopped("the child's stdout could not be read", &tail),
                 }
@@ -133,40 +138,34 @@ where
             read = stderr.read(&mut chunk), if stderr_open => {
                 match read {
                     Ok(0) | Err(_) => stderr_open = false,
-                    Ok(count) => {
-                        tail.extend_from_slice(&chunk[..count]);
-                        if tail.len() > STDERR_TAIL_BYTES {
-                            let excess = tail.len() - STDERR_TAIL_BYTES;
-                            tail.drain(..excess);
-                        }
-                    }
+                    Ok(count) => push_tail(&mut tail, &chunk[..count]),
                 }
             }
         }
     }
 }
 
-/// Reads the child's remaining stderr into the tail until it closes, or until a read stalls. A grandchild that keeps the
-/// pipe open cannot hold the stop up for longer than one short read window.
+/// Keeps the last [`STDERR_TAIL_BYTES`] of stderr.
+fn push_tail(tail: &mut Vec<u8>, bytes: &[u8]) {
+    tail.extend_from_slice(bytes);
+    if tail.len() > STDERR_TAIL_BYTES {
+        let excess = tail.len() - STDERR_TAIL_BYTES;
+        tail.drain(..excess);
+    }
+}
+
+/// Reads the child's remaining stderr into the tail until it closes, or until [`STDERR_DRAIN`] has passed in total.
 async fn drain_stderr<E: AsyncRead + Unpin>(stderr: &mut E, tail: &mut Vec<u8>) {
     let mut chunk = [0u8; 1024];
-    loop {
-        match tokio::time::timeout(
-            std::time::Duration::from_millis(100),
-            stderr.read(&mut chunk),
-        )
-        .await
-        {
-            Ok(Ok(count)) if count > 0 => {
-                tail.extend_from_slice(&chunk[..count]);
-                if tail.len() > STDERR_TAIL_BYTES {
-                    let excess = tail.len() - STDERR_TAIL_BYTES;
-                    tail.drain(..excess);
-                }
+    let _ = tokio::time::timeout(STDERR_DRAIN, async {
+        loop {
+            match stderr.read(&mut chunk).await {
+                Ok(count) if count > 0 => push_tail(tail, &chunk[..count]),
+                _ => return,
             }
-            _ => return,
         }
-    }
+    })
+    .await;
 }
 
 fn stopped(reason: &str, stderr_tail: &[u8]) -> Outcome {
@@ -212,7 +211,10 @@ impl Host {
                         self.locals.insert(actor.local_id, engine_id);
                         None
                     }
-                    Err(_) => Some(malformed(line_no)),
+                    Err(reason) => Some(Outcome::Stopped {
+                        reason: StopReason::Interrupted,
+                        cause: format!("the engine refused an actor at line {line_no}: {reason}"),
+                    }),
                 }
             }
             ChildMessage::Request(request) => {
@@ -244,7 +246,7 @@ impl Host {
 fn malformed(line_no: usize) -> Outcome {
     Outcome::Stopped {
         reason: StopReason::Interrupted,
-        cause: format!("the child wrote a malformed or refused message at line {line_no}"),
+        cause: format!("the child wrote a malformed message at line {line_no}"),
     }
 }
 

@@ -2,27 +2,29 @@
 //! The fake writes child lines, reads the host's responses, and never runs a script.
 
 use std::sync::Mutex as StdMutex;
+use std::time::Duration;
 
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, DuplexStream, Lines, duplex};
 
+use super::super::workflow_wire::RequestType;
 use super::*;
 
 /// Records what the host hands the handler, and answers asks with their instructions.
 #[derive(Default)]
 struct Recorder {
-    created: StdMutex<Vec<String>>,
-    refuse_actor: bool,
-    requests: StdMutex<Vec<(String, Option<String>)>>,
+    created: StdMutex<Vec<CreateActor>>,
+    refuse_actor: Option<String>,
+    requests: StdMutex<Vec<(ChildRequest, Option<String>)>>,
     events: StdMutex<Vec<ChildEvent>>,
 }
 
 impl ChildHandler for Recorder {
     fn create_actor(&self, actor: &CreateActor) -> Result<String, String> {
-        if self.refuse_actor {
-            return Err("refused".to_owned());
+        if let Some(reason) = &self.refuse_actor {
+            return Err(reason.clone());
         }
-        self.created.lock().unwrap().push(actor.local_id.clone());
+        self.created.lock().unwrap().push(actor.clone());
         Ok(format!("engine-{}", actor.local_id))
     }
 
@@ -31,11 +33,8 @@ impl ChildHandler for Recorder {
         request: ChildRequest,
         actor_id: Option<String>,
     ) -> BoxFuture<'static, Result<Value, WireError>> {
-        self.requests
-            .lock()
-            .unwrap()
-            .push((request.id.clone(), actor_id.clone()));
         let answer = json!({"answered": request.id, "actor": actor_id});
+        self.requests.lock().unwrap().push((request, actor_id));
         Box::pin(async move { Ok(answer) })
     }
 
@@ -92,6 +91,14 @@ impl FakeChild {
             .expect("a response line");
         serde_json::from_str(&line).unwrap()
     }
+}
+
+fn stop_cause(outcome: Outcome) -> String {
+    let Outcome::Stopped { reason, cause } = outcome else {
+        panic!("expected a stop, got {outcome:?}");
+    };
+    assert_eq!(reason, StopReason::Interrupted);
+    cause
 }
 
 #[tokio::test]
@@ -165,7 +172,98 @@ async fn create_actor_maps_the_local_handle_before_a_request_names_it() {
     );
     child.send(json!({"kind": "complete", "ok": true})).await;
     host.await.unwrap();
-    assert_eq!(*handler.created.lock().unwrap(), vec!["local#1".to_owned()]);
+    let created = handler.created.lock().unwrap();
+    assert_eq!(created.len(), 1);
+    assert_eq!(created[0].local_id, "local#1");
+    assert_eq!(created[0].name.as_deref(), Some("reviewer"));
+}
+
+#[tokio::test]
+async fn an_ask_carries_every_optional_field_it_was_sent_with() {
+    let handler = Arc::new(Recorder::default());
+    let (mut child, host) = start(handler.clone());
+    child
+        .send(json!({
+            "kind": "create-actor",
+            "localId": "local#2",
+            "siteId": "s1",
+            "name": "reviewer",
+            "persona": {"role": "auditor"},
+        }))
+        .await;
+    child
+        .send(json!({
+            "kind": "request",
+            "id": "r2",
+            "type": "ask",
+            "siteId": "s1",
+            "actor": "local#2",
+            "instructions": "check the diff",
+        }))
+        .await;
+    child
+        .send(json!({
+            "kind": "request",
+            "id": "r3",
+            "type": "world-read",
+            "siteId": "s2",
+            "op": "files.grep",
+            "args": ["TODO", "*.ts"],
+        }))
+        .await;
+    child
+        .send(json!({
+            "kind": "request",
+            "id": "r4",
+            "type": "publish-artifact",
+            "siteId": "s3",
+            "artifactOp": "file",
+            "args": ["id", {"path": "a.md"}],
+        }))
+        .await;
+    child
+        .send(json!({
+            "kind": "request",
+            "id": "r5",
+            "type": "hole",
+            "siteId": "s4",
+            "name": "fill-me",
+            "prompt": "Explain the cache",
+        }))
+        .await;
+    for _ in 0..4 {
+        child.answer().await;
+    }
+    child.send(json!({"kind": "complete", "ok": true})).await;
+    host.await.unwrap();
+
+    let requests = handler.requests.lock().unwrap();
+    let by_id = |id: &str| {
+        requests
+            .iter()
+            .find(|(request, _)| request.id == id)
+            .map(|(request, actor)| (request.clone(), actor.clone()))
+            .unwrap_or_else(|| panic!("request {id} reached the handler"))
+    };
+    let (ask, actor) = by_id("r2");
+    assert_eq!(ask.request_type, RequestType::Ask);
+    assert_eq!(ask.instructions.as_deref(), Some("check the diff"));
+    assert_eq!(actor.as_deref(), Some("engine-local#2"));
+    let (read, _) = by_id("r3");
+    assert_eq!(read.request_type, RequestType::WorldRead);
+    assert_eq!(read.op.as_deref(), Some("files.grep"));
+    assert_eq!(read.args, Some(vec![json!("TODO"), json!("*.ts")]));
+    let (publish, _) = by_id("r4");
+    assert_eq!(publish.request_type, RequestType::PublishArtifact);
+    assert_eq!(publish.artifact_op.as_deref(), Some("file"));
+    assert_eq!(
+        publish.args,
+        Some(vec![json!("id"), json!({"path": "a.md"})])
+    );
+    let (hole, _) = by_id("r5");
+    assert_eq!(hole.request_type, RequestType::Hole);
+    assert_eq!(hole.name.as_deref(), Some("fill-me"));
+    assert_eq!(hole.prompt.as_deref(), Some("Explain the cache"));
 }
 
 #[tokio::test]
@@ -195,15 +293,61 @@ async fn a_malformed_line_interrupts_the_run_and_nothing_after_it_is_handled() {
     child
         .send(json!({"kind": "event", "type": "log", "message": "after"}))
         .await;
-    let outcome = host.await.unwrap();
-    let Outcome::Stopped { reason, cause } = outcome else {
-        panic!("expected a stop, got {outcome:?}");
-    };
-    assert_eq!(reason, StopReason::Interrupted);
+    let cause = stop_cause(host.await.unwrap());
     assert!(cause.contains("line 2"), "cause names the line: {cause}");
     // The line content never reaches the cause.
     assert!(!cause.contains("not json"));
     assert_eq!(handler.events.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn whitespace_only_lines_are_skipped_as_the_reference_host_skips_them() {
+    let handler = Arc::new(Recorder::default());
+    let (mut child, host) = start(handler.clone());
+    child.raw("\n   \r\n\t\n").await;
+    child
+        .send(json!({"kind": "event", "type": "log", "message": "after blanks"}))
+        .await;
+    child.send(json!({"kind": "complete", "ok": true})).await;
+    assert!(matches!(host.await.unwrap(), Outcome::Completed(_)));
+    assert_eq!(
+        *handler.events.lock().unwrap(),
+        vec![ChildEvent::Log {
+            message: "after blanks".to_owned()
+        }]
+    );
+}
+
+#[tokio::test]
+async fn a_line_split_across_writes_is_read_whole() {
+    let handler = Arc::new(Recorder::default());
+    let (mut child, host) = start(handler.clone());
+    child.raw(r#"{"kind":"event","#).await;
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    child.raw(r#""type":"log","message":"split"}"#).await;
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    child.raw("\n").await;
+    child.send(json!({"kind": "complete", "ok": true})).await;
+    assert!(matches!(host.await.unwrap(), Outcome::Completed(_)));
+    assert_eq!(
+        *handler.events.lock().unwrap(),
+        vec![ChildEvent::Log {
+            message: "split".to_owned()
+        }]
+    );
+}
+
+#[tokio::test]
+async fn a_line_over_the_cap_stops_the_run_without_handling_it() {
+    let handler = Arc::new(Recorder::default());
+    let (mut child, host) = start(handler.clone());
+    let oversized = "x".repeat(MAX_LINE_BYTES + 1);
+    // The host stops reading at the cap, so the rest of the line is never read: the write may be cut short.
+    let _ = child.stdout.write_all(oversized.as_bytes()).await;
+    let _ = child.stdout.write_all(b"\n").await;
+    let cause = stop_cause(host.await.unwrap());
+    assert!(cause.contains("line 1"), "cause names the line: {cause}");
+    assert!(handler.events.lock().unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -260,22 +404,20 @@ async fn a_repeated_local_handle_interrupts_the_run() {
 }
 
 #[tokio::test]
-async fn an_actor_the_engine_refuses_interrupts_the_run() {
+async fn an_actor_the_engine_refuses_interrupts_the_run_and_carries_the_reason() {
     let handler = Arc::new(Recorder {
-        refuse_actor: true,
+        refuse_actor: Some("site s1 is not an actor site".to_owned()),
         ..Recorder::default()
     });
     let (mut child, host) = start(handler);
     child
         .send(json!({"kind": "create-actor", "localId": "local#1", "siteId": "s1"}))
         .await;
-    assert!(matches!(
-        host.await.unwrap(),
-        Outcome::Stopped {
-            reason: StopReason::Interrupted,
-            ..
-        }
-    ));
+    let cause = stop_cause(host.await.unwrap());
+    assert!(
+        cause.contains("site s1 is not an actor site"),
+        "cause carries the refusal: {cause}"
+    );
 }
 
 #[tokio::test]
@@ -292,15 +434,44 @@ async fn an_early_exit_interrupts_the_run_and_names_the_stderr_tail() {
         .await;
     // Dropping the child's ends is the exit: EOF on its stdout and stderr.
     drop(child);
-    let outcome = host.await.unwrap();
-    let Outcome::Stopped { reason, cause } = outcome else {
-        panic!("expected a stop, got {outcome:?}");
-    };
-    assert_eq!(reason, StopReason::Interrupted);
+    let cause = stop_cause(host.await.unwrap());
     assert!(
         cause.contains("Maximum call stack"),
         "cause carries the stderr tail: {cause}"
     );
+}
+
+#[tokio::test]
+async fn a_stderr_that_never_closes_does_not_hold_the_stop_up() {
+    let handler = Arc::new(Recorder::default());
+    let (child, host) = start(handler);
+    let FakeChild {
+        stdout,
+        answers: _,
+        mut stderr,
+    } = child;
+    // A grandchild keeps stderr open and trickles bytes faster than any per-read timeout would catch.
+    let trickle = tokio::spawn(async move {
+        loop {
+            if stderr.write_all(b".").await.is_err() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    });
+    drop(stdout);
+    let outcome = tokio::time::timeout(Duration::from_secs(5), host)
+        .await
+        .expect("the stop is bounded by the drain deadline, not by the writer's pace")
+        .unwrap();
+    assert!(matches!(
+        outcome,
+        Outcome::Stopped {
+            reason: StopReason::Interrupted,
+            ..
+        }
+    ));
+    trickle.abort();
 }
 
 #[tokio::test]

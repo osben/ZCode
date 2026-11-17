@@ -82,11 +82,8 @@ pub async fn write_entry(
 
 async fn write_into(dir: &Path, file_name: &str, source: &str) -> io::Result<PathBuf> {
     rust_cli_fs::create_dir_all(dir).await?;
-    let ignore = dir.join(".gitignore");
-    // Written only when absent, so a user's edit of it is never overwritten.
-    if rust_cli_fs::read_optional(&ignore).await?.is_none() {
-        rust_cli_fs::atomic_write(&ignore, b"*\n", WRITE).await?;
-    }
+    // Created only when absent (`wx`): an existing file, a user's edit included, is left as it is.
+    rust_cli_fs::create_new_file(&dir.join(".gitignore"), b"*\n").await?;
     let path = dir.join(file_name);
     rust_cli_fs::atomic_write(&path, source.as_bytes(), WRITE).await?;
     Ok(path)

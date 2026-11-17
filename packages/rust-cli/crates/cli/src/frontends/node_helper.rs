@@ -162,10 +162,11 @@ impl NodeHelperLauncher for ProcessLauncher {
         Ok(NodeHelperProcess {
             stdin: Box::new(stdin),
             stdout: Box::new(BufReader::new(stdout)),
-            guard: Box::new(StopOnDrop {
-                tree: Some(tree),
-                spawner: self.spawner.clone(),
-            }),
+            guard: Box::new(StopOnDrop::new(
+                tree,
+                self.spawner.clone(),
+                NODE_HELPER_TREE,
+            )),
         })
     }
 }
@@ -182,13 +183,39 @@ async fn stop_mode<F: std::future::Future>(exit: F, grace: std::time::Duration) 
     }
 }
 
-/// The helper's process tree, stopped when the helper drops it (idle reclaim, timeout, crash restart). The stop runs
-/// in a task so it is confirmed: the tree is reaped and its ledger record removed, instead of one record per
-/// generation waiting for the next process's sweep. If the task never runs (the scope is closing), dropping the tree
-/// still kills it.
+/// A process tree stopped when its owner drops it. The stop runs in a task so it is confirmed: the tree is reaped and
+/// its ledger record removed, instead of one record per generation waiting for the next process's sweep. If the task
+/// never runs (the scope is closing), dropping the tree still kills it. Used by the helper's tree (idle reclaim,
+/// timeout, crash restart) and by a sandbox child's tree (a run ends, aborts or settles).
 pub(crate) struct StopOnDrop {
-    pub(crate) tree: Option<Tracked>,
-    pub(crate) spawner: Spawner,
+    tree: Option<Tracked>,
+    spawner: Spawner,
+    label: StopLabel,
+}
+
+/// Names a tree's stop: the task it runs as, its log event, and the words of its log line.
+#[derive(Clone, Copy)]
+pub(crate) struct StopLabel {
+    pub(crate) task: &'static str,
+    pub(crate) event: &'static str,
+    pub(crate) what: &'static str,
+}
+
+/// The node helper's tree.
+pub(crate) const NODE_HELPER_TREE: StopLabel = StopLabel {
+    task: "node-helper-stop",
+    event: "helper.stop_unconfirmed",
+    what: "the node helper's process tree",
+};
+
+impl StopOnDrop {
+    pub(crate) fn new(tree: Tracked, spawner: Spawner, label: StopLabel) -> Self {
+        Self {
+            tree: Some(tree),
+            spawner,
+            label,
+        }
+    }
 }
 
 impl Drop for StopOnDrop {
@@ -196,16 +223,18 @@ impl Drop for StopOnDrop {
         let Some(mut tree) = self.tree.take() else {
             return;
         };
-        drop(self.spawner.spawn("node-helper-stop", async move {
+        let label = self.label;
+        drop(self.spawner.spawn(label.task, async move {
             // F4a: the helper's stdin was dropped with the process (EOF) before this task ran, so it closes its
             // sessions and MCP children itself, in order. Only a helper still alive after the grace period gets TERM
             // and KILL; one that exited meanwhile has its leftovers killed without a TERM.
             let shutdown = stop_mode(tree.child().wait(), HELPER_STOP_GRACE).await;
             if let Err(error) = tree.terminate(shutdown).await {
                 tracing::debug!(
-                    event = "helper.stop_unconfirmed",
+                    event = label.event,
                     %error,
-                    "the node helper's process tree could not be confirmed stopped"
+                    "{} could not be confirmed stopped",
+                    label.what
                 );
             }
         }));

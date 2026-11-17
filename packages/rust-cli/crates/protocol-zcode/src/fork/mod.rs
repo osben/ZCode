@@ -45,6 +45,7 @@ pub mod workflow_child;
 pub mod workflow_compile;
 pub mod workflow_entry;
 pub mod workflow_host;
+pub mod workflow_lines;
 pub mod workflow_wire;
 pub use workspace_trust::{
     Admission, ReviewBundle, ReviewItem, ReviewLookup, ReviewSource, StoredTrust, ToggleError,

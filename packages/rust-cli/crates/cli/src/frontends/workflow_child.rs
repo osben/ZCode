@@ -16,7 +16,22 @@ use rust_cli_protocol_zcode::{
 };
 use tokio::io::{AsyncBufRead, AsyncRead, AsyncWrite, BufReader};
 
-use super::node_helper::StopOnDrop;
+use super::node_helper::{StopLabel, StopOnDrop};
+
+/// The sandbox child's tree: stopped when its run ends, aborts or settles (dropping its guard).
+const SANDBOX_CHILD_TREE: StopLabel = StopLabel {
+    task: "workflow-child-stop",
+    event: "workflow.child_stop_unconfirmed",
+    what: "the sandbox child's process tree",
+};
+
+/// The entry file's name only: the directory can hold the user's name, and launch failures are logged.
+fn entry_file(entry: &Path) -> String {
+    entry.file_name().map_or_else(
+        || "the entry".to_owned(),
+        |name| name.to_string_lossy().into_owned(),
+    )
+}
 
 /// Starts sandbox children from the helper command's program and environment.
 pub(crate) struct ProcessChildLauncher {
@@ -56,12 +71,18 @@ impl ChildLauncher for ProcessChildLauncher {
                 Containment::OwnJob,
             )
             .await
-            .map_err(|error| io::Error::new(error.kind(), format!("the sandbox child: {error}")))?;
+            .map_err(|error| {
+                io::Error::new(
+                    error.kind(),
+                    format!("the sandbox child for {}: {error}", entry_file(entry)),
+                )
+            })?;
         if !tree.ends_with_drop() {
             let _ = tree.terminate(Shutdown::Graceful).await;
-            return Err(io::Error::other(
-                "the sandbox child's process tree cannot be contained in its own Job",
-            ));
+            return Err(io::Error::other(format!(
+                "the sandbox child for {}: its process tree cannot be contained in its own Job",
+                entry_file(entry)
+            )));
         }
         let child = tree.child();
         let stdin = child
@@ -83,10 +104,15 @@ impl ChildLauncher for ProcessChildLauncher {
         };
         Ok(LaunchedChild {
             streams,
-            guard: Box::new(StopOnDrop {
-                tree: Some(tree),
-                spawner: self.spawner.clone(),
-            }),
+            guard: Box::new(StopOnDrop::new(
+                tree,
+                self.spawner.clone(),
+                SANDBOX_CHILD_TREE,
+            )),
         })
     }
 }
+
+#[cfg(test)]
+#[path = "workflow_child_tests.rs"]
+mod tests;

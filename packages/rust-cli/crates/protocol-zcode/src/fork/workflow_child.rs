@@ -37,11 +37,26 @@ impl std::fmt::Debug for ChildCommand {
 }
 
 /// What a launcher starts: the program, its arguments and the environment (the inherited one plus these).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Invocation {
     pub program: String,
     pub args: Vec<String>,
     pub env: Vec<(String, String)>,
+}
+
+/// Names only, as [`ChildCommand`]: the environment can carry credentials, so no value reaches a log through `{:?}`.
+impl std::fmt::Debug for Invocation {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Invocation")
+            .field("program", &self.program)
+            .field("args", &self.args)
+            .field(
+                "env",
+                &self.env.iter().map(|(name, _)| name).collect::<Vec<_>>(),
+            )
+            .finish()
+    }
 }
 
 /// The invocation of one child for `entry`: `execPath --max-old-space-size=256 <entry>` with `ELECTRON_RUN_AS_NODE=1`.
