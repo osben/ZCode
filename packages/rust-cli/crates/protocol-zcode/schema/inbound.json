@@ -7434,6 +7434,165 @@
         }
       ]
     },
+    "offPeak/create": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "ok": {
+              "type": "boolean",
+              "const": true
+            },
+            "task": {
+              "type": "object",
+              "properties": {
+                "offPeakTaskId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "title": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "queued",
+                    "paused",
+                    "running",
+                    "completed",
+                    "failed",
+                    "cancelled"
+                  ]
+                },
+                "queuePosition": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "createdAt": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "offPeakTaskId",
+                "title",
+                "status",
+                "createdAt"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "ok",
+            "task"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "ok": {
+              "type": "boolean",
+              "const": false
+            },
+            "failureStage": {
+              "type": "string",
+              "enum": [
+                "client_validation",
+                "ticket_request",
+                "local_persist"
+              ]
+            },
+            "errorCategory": {
+              "type": "string",
+              "enum": [
+                "client_validation",
+                "eligibility_3101",
+                "quota_3103",
+                "network",
+                "invalid_response",
+                "local_persist",
+                "unknown"
+              ]
+            },
+            "errorCode": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "ok",
+            "failureStage",
+            "errorCategory",
+            "errorCode"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "offPeak/list": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "tasks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "offPeakTaskId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "title": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "queued",
+                  "paused",
+                  "running",
+                  "completed",
+                  "failed",
+                  "cancelled"
+                ]
+              },
+              "queuePosition": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "sessionId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "createdAt": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "offPeakTaskId",
+              "title",
+              "status",
+              "createdAt"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "tasks"
+      ],
+      "additionalProperties": false
+    },
     "session/requestRuntimePreferences": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",

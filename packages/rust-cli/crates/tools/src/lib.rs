@@ -54,6 +54,7 @@ mod monitor;
 mod monitor_input;
 mod notebook;
 mod notebook_edit;
+mod off_peak_tools;
 #[cfg(test)]
 #[path = "permission_subject_tests.rs"]
 mod permission_subject_tests;
@@ -113,6 +114,7 @@ pub use grep::GrepTool;
 pub use lsp_tool::{LspTool, LspTools};
 pub use monitor::MonitorTool;
 pub use notebook_edit::NotebookEditTool;
+pub use off_peak_tools::off_peak_tools;
 pub use pipeline::Pipeline;
 pub use plan_mode::{EnterPlanModeTool, ExitPlanModeTool};
 pub use policy_filter::PolicyFiltered;

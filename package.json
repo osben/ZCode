@@ -89,6 +89,8 @@
     "db:migrations:check": "node --test scripts/test/upstream-migration-baseline.test.mjs && tsx --test scripts/test/check-upstream-migrations.test.ts && tsx scripts/check-upstream-migrations.ts",
     "rust-agent:inbound-schema:check": "tsx scripts/fork-rust-agent/inbound-schema.mts --check",
     "rust-agent:automation-tools:check": "tsx --tsconfig scripts/fork-rust-agent/tsconfig.automation-tools.json scripts/fork-rust-agent/automation-tools.mts --check",
+    "rust-agent:off-peak-tools:check": "tsx --tsconfig scripts/fork-rust-agent/tsconfig.automation-tools.json scripts/fork-rust-agent/off-peak-tools.mts --check",
+    "rust-agent:off-peak-tools:update": "tsx --tsconfig scripts/fork-rust-agent/tsconfig.automation-tools.json scripts/fork-rust-agent/off-peak-tools.mts",
     "rust-agent:automation-tools:update": "tsx --tsconfig scripts/fork-rust-agent/tsconfig.automation-tools.json scripts/fork-rust-agent/automation-tools.mts",
     "rust-agent:lsp-tool:check": "tsx --tsconfig scripts/fork-rust-agent/tsconfig.automation-tools.json scripts/fork-rust-agent/lsp-tool.mts --check",
     "rust-agent:lsp-tool:update": "tsx --tsconfig scripts/fork-rust-agent/tsconfig.automation-tools.json scripts/fork-rust-agent/lsp-tool.mts",

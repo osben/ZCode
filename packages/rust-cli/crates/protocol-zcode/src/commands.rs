@@ -85,6 +85,9 @@ pub(crate) struct Input {
     automation_id: Option<String>,
     #[serde(default)]
     tool_disallowlist: Vec<String>,
+    /// Fork: the off-peak task whose run this input is (specs/fork-rust-automations.md, slice 3). It hides OffPeakCreate
+    /// on the turn it opens ([`TurnLimits`]); the off-peak dispatch itself is not ported yet.
+    off_peak_task_id: Option<String>,
 }
 
 /// Fork: `heldQueueDisposition` (`command.ts`).
@@ -1588,10 +1591,16 @@ fn input_execution(
     // Each field overrides the session's own (Node `resolveExecutionState(payload, current)`): a plan switch without a
     // mode keeps the session's mode, and the legacy `mode: "plan"` keeps it too.
     let resolved = resolve_execution(input.mode.as_deref(), input.plan_enabled, current);
-    let limits = TurnLimits::new(
-        input.automation_id.as_deref(),
-        input.tool_disallowlist.clone(),
-    );
+    // Fork: an off-peak run's turn never queues more off-peak work (Node `OFF_PEAK_EXECUTION_TOOL_DENYLIST`).
+    let mut hidden = input.tool_disallowlist.clone();
+    if input
+        .off_peak_task_id
+        .as_deref()
+        .is_some_and(|id| !id.trim().is_empty())
+    {
+        hidden.push(rust_cli_kernel_api::tool_names::OFF_PEAK_CREATE.to_owned());
+    }
+    let limits = TurnLimits::new(input.automation_id.as_deref(), hidden);
     if chosen.is_none() && resolved.is_none() && limits.is_empty() {
         return None;
     }

@@ -14,6 +14,8 @@ import {
   zcodeMcpListParamsSchema,
   zcodeMcpReadResourceParamsSchema,
   zcodeAutomationCheckTaskBindingResultSchema,
+  zcodeOffPeakCreateResultSchema,
+  zcodeOffPeakListResultSchema,
   zcodeAutomationCreateResultSchema,
   zcodeAutomationDeleteResultSchema,
   zcodeAutomationListResultSchema,
@@ -118,6 +120,9 @@ const REPLIES = {
   "automation/list": zcodeAutomationListResultSchema,
   "automation/pause": zcodeAutomationPauseResultSchema,
   "automation/update": zcodeAutomationUpdateResultSchema,
+  // The Host's answers to the desktop off-peak tools (specs/fork-rust-automations.md, slice 3).
+  "offPeak/create": zcodeOffPeakCreateResultSchema,
+  "offPeak/list": zcodeOffPeakListResultSchema,
   "interaction/requestProviderRuntimeHeaders": zcodeProviderRuntimeHeadersResponseSchema,
   // Desktop credentials: the Host's answer to the Rust agent's encrypt/decrypt request (specs/fork-rust-credential-cipher.md).
   "interaction/requestCredentialCipher": credentialCipherReplySchema,
