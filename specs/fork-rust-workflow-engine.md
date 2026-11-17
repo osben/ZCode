@@ -470,6 +470,8 @@ Each PR updates the F5 row and D1 in `specs/fork-rust-node-helper.md` and the "O
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.
 
+Decided 2026-11-17 by the user: Q1 = Q1-A (engine core in Rust), Q2 = (a) `SessionKind::Subagent` plus the `session_task_link` `workflow_actor` row, Q7 = the admission hook lands in W6b with its own focused review. Q3–Q6 and Q8–Q10 follow their recommendations.
+
 **Q1. Engine core in Rust, or in the child?** Recommendation: Rust (Q1-A), as the decision says. Reason: W1 and the single-writer argument. Cost of Q1-A: about 6,600 TypeScript lines to port with replay goldens, roughly 4,000 Rust lines (W5a and W5b). Cost of Q1-B: a second writer of `dwf_*` in a non-Rust process and a split in ownership that W1 forbids.
 
 **Q2. Actor session kind.** Options: (a) `SessionKind::Subagent` with a parent, plus a `session_task_link` row with role `workflow_actor` in Node's format; (b) a new kind `Workflow`. Recommendation: (a). It reuses the subagent machinery and the existing session kinds, and the link row keeps Node's sidebar and index rules. Not verified yet: how Node hides these rows in the sessions index. PR W6a must check `bootstrap/src/zcode-protocol-v4/sessions-index-projection.ts` and the adapters' session queries before choosing.
