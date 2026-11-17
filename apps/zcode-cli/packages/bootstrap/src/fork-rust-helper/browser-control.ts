@@ -43,12 +43,11 @@ export const turnScreenshotParamsSchema = z
   .strict();
 export type TurnScreenshotParams = z.infer<typeof turnScreenshotParamsSchema>;
 
-export const turnScreenshotCancelParamsSchema = z
-  .object({
-    sessionId: z.string().trim().min(1),
-    turnId: z.string().trim().min(1),
-  })
-  .strict();
+/** The turn key of a capture, derived from the capture's params so the two shapes cannot drift (strict is kept). */
+export const turnScreenshotCancelParamsSchema = turnScreenshotParamsSchema.pick({
+  sessionId: true,
+  turnId: true,
+});
 
 /** One display image, as Node's browser command result carries it. */
 export interface TurnScreenshotImage {
@@ -59,6 +58,13 @@ export interface TurnScreenshotImage {
 interface ChildRegistration {
   parentSessionId: string;
   port: BrowserControlPort;
+}
+
+/** An abort rejection (DOMException or Error named AbortError), as the broker throws it for an aborted call. */
+function isAbortError(error: unknown): boolean {
+  return (
+    typeof error === "object" && error !== null && (error as { name?: unknown }).name === "AbortError"
+  );
 }
 
 /** The key of one end-of-turn capture: a turn has at most one in flight per session. */
@@ -194,6 +200,14 @@ export class ForkRustBrowserControl {
       }
       return { image: captured.image };
     } catch (error) {
+      // The broker rejects an aborted call with an AbortError (Rust's cancel of the turn, D2 C1): a routine outcome of an
+      // interrupt. Any other rejection is a broker failure, even when it lands after the abort, and stays a warning.
+      if (controller.signal.aborted && isAbortError(error)) {
+        this.deps.logger?.debug("Browser turn screenshot cancelled with the turn", {
+          event: "fork_rust_helper.browser.turn_screenshot_cancelled",
+        });
+        return {};
+      }
       this.deps.logger?.warn("Browser turn screenshot failed", {
         event: "fork_rust_helper.browser.turn_screenshot_failed",
         error: error instanceof Error ? error.message : String(error),
