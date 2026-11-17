@@ -1,0 +1,673 @@
+{
+  "checksums": {
+    "0019_dwf_journal": "1c8da5568d2357f25c392be486fae80e1f3ad3ebc830dab1bee941634573e8ba"
+  },
+  "runIds": [
+    "run_a",
+    "run_b",
+    "run_c",
+    "run_d",
+    "run_e",
+    "run_f",
+    "run_g"
+  ],
+  "runs": [
+    {
+      "runId": "run_a",
+      "caps": {
+        "maxConcurrency": 6
+      },
+      "spentTokens": 512,
+      "status": "completed",
+      "parentSessionId": "sess_parent",
+      "cwd": "/work/a",
+      "name": "Alpha",
+      "toolCallId": "call_1",
+      "scriptText": "export default async () => 2",
+      "scriptHash": "hash_a2",
+      "args": {
+        "n": 2,
+        "tags": [
+          "x",
+          "y"
+        ]
+      },
+      "result": {
+        "ok": true,
+        "items": [
+          1,
+          2
+        ]
+      }
+    },
+    {
+      "runId": "run_b",
+      "caps": {
+        "maxConcurrency": 2
+      },
+      "spentTokens": 9,
+      "status": "stopped",
+      "stopReason": "interrupted",
+      "parentSessionId": "sess_parent",
+      "resumedFrom": "run_a",
+      "args": {},
+      "failure": {
+        "code": "Interrupted",
+        "message": "sandbox crashed"
+      }
+    },
+    {
+      "runId": "run_c",
+      "caps": {
+        "maxConcurrency": 3
+      },
+      "spentTokens": 0,
+      "status": "stopped",
+      "stopReason": "superseded",
+      "supersededBy": "run_d",
+      "parentSessionId": "sess_parent"
+    },
+    {
+      "runId": "run_d",
+      "caps": {
+        "maxConcurrency": 3
+      },
+      "spentTokens": 0,
+      "status": "errored",
+      "parentSessionId": "sess_parent",
+      "resumedFrom": "run_c",
+      "failure": {
+        "code": "ScriptError",
+        "message": "boom"
+      }
+    },
+    {
+      "runId": "run_e",
+      "caps": {
+        "maxConcurrency": 1
+      },
+      "spentTokens": 0,
+      "status": "stopped",
+      "stopReason": "interrupted",
+      "name": "Orphan",
+      "failure": {
+        "code": "Interrupted",
+        "message": "owner gone"
+      }
+    },
+    {
+      "runId": "run_f",
+      "caps": {
+        "maxConcurrency": 1
+      },
+      "spentTokens": 0,
+      "status": "completed",
+      "parentSessionId": "sess_parent",
+      "result": null
+    },
+    {
+      "runId": "run_g",
+      "caps": {
+        "maxConcurrency": 2
+      },
+      "spentTokens": 3,
+      "status": "running",
+      "parentSessionId": "sess_parent",
+      "cwd": "/work/g"
+    }
+  ],
+  "actors": {
+    "run_a": [
+      {
+        "runId": "run_a",
+        "siteId": "site#1",
+        "ordinal": 0,
+        "name": "researcher",
+        "persona": {
+          "name": "researcher",
+          "system": "Find things.",
+          "model": "glm-5.3",
+          "budget": {
+            "webSearch": 8
+          }
+        },
+        "sessionId": "sess_child_1",
+        "resolvedModel": "zai/glm-5.3"
+      },
+      {
+        "runId": "run_a",
+        "siteId": "site#1",
+        "ordinal": 1
+      }
+    ],
+    "run_b": [],
+    "run_c": [],
+    "run_d": [],
+    "run_e": [],
+    "run_f": [],
+    "run_g": []
+  },
+  "nodes": {
+    "run_a": [
+      {
+        "runId": "run_a",
+        "siteId": "site#1",
+        "ordinal": 0,
+        "kind": "ask",
+        "inputHash": "ih_ask",
+        "status": "completed",
+        "actorSiteId": "site#1",
+        "actorOrdinal": 0,
+        "actorSeq": 1,
+        "result": {
+          "answer": "yes",
+          "files": []
+        },
+        "stats": {
+          "tokens": 120,
+          "toolCalls": 3,
+          "turns": 2
+        },
+        "messageBoundary": 4
+      },
+      {
+        "runId": "run_a",
+        "siteId": "site#2",
+        "ordinal": 0,
+        "kind": "world-read",
+        "inputHash": "ih_glob",
+        "status": "completed",
+        "result": [
+          "a.ts",
+          "b.ts"
+        ],
+        "input": {
+          "op": "glob",
+          "args": [
+            "**/*.ts"
+          ]
+        }
+      },
+      {
+        "runId": "run_a",
+        "siteId": "site#3",
+        "ordinal": 0,
+        "kind": "world-run",
+        "inputHash": "ih_run",
+        "status": "failed",
+        "error": {
+          "code": "WorldRunFailed",
+          "message": "exit 2"
+        },
+        "input": {
+          "op": "run",
+          "args": [
+            "echo hi"
+          ]
+        }
+      },
+      {
+        "runId": "run_a",
+        "siteId": "site#4",
+        "ordinal": 0,
+        "kind": "report",
+        "inputHash": "ih_report",
+        "status": "completed",
+        "result": {
+          "title": "Row 1"
+        },
+        "artifactId": "art_board"
+      },
+      {
+        "runId": "run_a",
+        "siteId": "site#5",
+        "ordinal": 0,
+        "kind": "artifact",
+        "inputHash": "ih_artifact",
+        "status": "failed",
+        "error": {
+          "code": "ArtifactFailed",
+          "message": "no space"
+        },
+        "artifactId": "art_doc"
+      }
+    ],
+    "run_b": [],
+    "run_c": [],
+    "run_d": [],
+    "run_e": [],
+    "run_f": [],
+    "run_g": [
+      {
+        "runId": "run_g",
+        "siteId": "site#1",
+        "ordinal": 0,
+        "kind": "ask",
+        "inputHash": "ih_g",
+        "status": "running",
+        "actorSiteId": "site#1",
+        "actorOrdinal": 0,
+        "actorSeq": 1
+      }
+    ]
+  },
+  "events": {
+    "run_a": [
+      {
+        "sequence": 0,
+        "event": {
+          "type": "run-started",
+          "runId": "run_a",
+          "caps": {
+            "maxConcurrency": 4
+          }
+        }
+      },
+      {
+        "sequence": 1,
+        "event": {
+          "type": "run-launched",
+          "inputId": "in_1",
+          "toolCallId": "call_1",
+          "parentSessionId": "sess_parent",
+          "phaseNames": [
+            "plan",
+            "build"
+          ],
+          "subagentModel": "glm-5.3",
+          "subagentPermissionMode": "acceptEdits",
+          "modelBindings": {
+            "fast": "zai/glm-5.3"
+          },
+          "scriptPath": "/work/a/.zcode/workflow-runs/run_a.mjs",
+          "phaseAlongside": [
+            [
+              0,
+              1
+            ]
+          ],
+          "holes": [
+            2
+          ]
+        }
+      },
+      {
+        "sequence": 2,
+        "event": {
+          "type": "actor-created",
+          "actor": {
+            "siteId": "site#1",
+            "ordinal": 0
+          },
+          "name": "researcher",
+          "persona": {
+            "name": "researcher"
+          },
+          "phaseName": "plan"
+        }
+      },
+      {
+        "sequence": 3,
+        "event": {
+          "type": "node-queued",
+          "instance": {
+            "siteId": "site#1",
+            "ordinal": 0
+          },
+          "kind": "ask",
+          "actor": {
+            "siteId": "site#1",
+            "ordinal": 0
+          },
+          "actorSeq": 1,
+          "phaseName": "plan",
+          "instructionsHead": "Find things"
+        }
+      },
+      {
+        "sequence": 4,
+        "event": {
+          "type": "node-dispatched",
+          "instance": {
+            "siteId": "site#1",
+            "ordinal": 0
+          },
+          "kind": "ask",
+          "actor": {
+            "siteId": "site#1",
+            "ordinal": 0
+          },
+          "actorName": "researcher",
+          "actorPhaseName": "plan",
+          "actorPersonaModel": "glm-5.3",
+          "phaseName": "plan",
+          "instructionsHead": "Find things"
+        }
+      },
+      {
+        "sequence": 5,
+        "event": {
+          "type": "node-repairing",
+          "instance": {
+            "siteId": "site#1",
+            "ordinal": 0
+          },
+          "attempt": 1,
+          "violations": [
+            {
+              "path": "/answer",
+              "message": "required"
+            }
+          ]
+        }
+      },
+      {
+        "sequence": 6,
+        "event": {
+          "type": "node-nudged",
+          "instance": {
+            "siteId": "site#1",
+            "ordinal": 0
+          }
+        }
+      },
+      {
+        "sequence": 7,
+        "event": {
+          "type": "node-waiting",
+          "instance": {
+            "siteId": "site#1",
+            "ordinal": 0
+          },
+          "cause": "backoff",
+          "reason": "rate_limited",
+          "attempt": 2,
+          "delayMs": 1500,
+          "retryAfterMs": 1200
+        }
+      },
+      {
+        "sequence": 8,
+        "event": {
+          "type": "node-executing",
+          "instance": {
+            "siteId": "site#1",
+            "ordinal": 0
+          }
+        }
+      },
+      {
+        "sequence": 9,
+        "event": {
+          "type": "concurrency-changed",
+          "key": "zai/glm-5.3",
+          "previous": 4,
+          "next": 2,
+          "reason": "rate_limited",
+          "lastGood": 4,
+          "lastBad": 4,
+          "cooldownMs": 30000
+        }
+      },
+      {
+        "sequence": 10,
+        "event": {
+          "type": "run-caps-changed",
+          "runId": "run_a",
+          "caps": {
+            "maxConcurrency": 6
+          },
+          "previous": {
+            "maxConcurrency": 4
+          }
+        }
+      },
+      {
+        "sequence": 11,
+        "event": {
+          "type": "node-settled",
+          "instance": {
+            "siteId": "site#1",
+            "ordinal": 0
+          },
+          "outcome": "ok",
+          "cached": false,
+          "phaseName": "plan",
+          "kind": "ask",
+          "actor": {
+            "siteId": "site#1",
+            "ordinal": 0
+          },
+          "actorSeq": 1,
+          "instructionsHead": "Find things",
+          "sourceSessionId": "sess_child_1"
+        }
+      },
+      {
+        "sequence": 12,
+        "event": {
+          "type": "node-progress",
+          "instance": {
+            "siteId": "site#1",
+            "ordinal": 0
+          },
+          "turn": 2,
+          "toolCalls": 3,
+          "lastTool": {
+            "name": "Grep"
+          }
+        }
+      },
+      {
+        "sequence": 13,
+        "event": {
+          "type": "usage-updated",
+          "spentTokens": 512
+        }
+      },
+      {
+        "sequence": 14,
+        "event": {
+          "type": "log",
+          "message": "scanned 2 files"
+        }
+      },
+      {
+        "sequence": 15,
+        "event": {
+          "type": "import-cache-closed",
+          "instance": {
+            "siteId": "site#1",
+            "ordinal": 0
+          },
+          "cause": "mutating-tool",
+          "actorName": "researcher"
+        }
+      },
+      {
+        "sequence": 16,
+        "event": {
+          "type": "phase-entered",
+          "name": "plan",
+          "ordinal": 0
+        }
+      },
+      {
+        "sequence": 17,
+        "event": {
+          "type": "hole-reached",
+          "instance": {
+            "siteId": "site#6",
+            "ordinal": 0
+          },
+          "name": "pick",
+          "prompt": "Pick one",
+          "phaseName": "build"
+        }
+      },
+      {
+        "sequence": 18,
+        "event": {
+          "type": "hole-filled",
+          "siteId": "site#6",
+          "filledAt": 1318,
+          "filledBy": "user",
+          "phaseNames": [
+            "plan",
+            "build"
+          ],
+          "holes": [
+            2
+          ],
+          "scriptPath": "/work/a/.zcode/workflow-runs/run_a.mjs"
+        }
+      },
+      {
+        "sequence": 19,
+        "event": {
+          "type": "report",
+          "instance": {
+            "siteId": "site#4",
+            "ordinal": 0
+          },
+          "item": {
+            "title": "Row 1"
+          },
+          "artifactId": "art_board"
+        }
+      },
+      {
+        "sequence": 20,
+        "event": {
+          "type": "artifact-published",
+          "instance": {
+            "siteId": "site#7",
+            "ordinal": 0
+          },
+          "artifact": {
+            "id": "art_doc",
+            "kind": "markdown",
+            "version": 1,
+            "title": "Notes",
+            "contentType": "text/markdown",
+            "bytes": 42,
+            "publishedAt": 1320,
+            "primary": true
+          }
+        }
+      },
+      {
+        "sequence": 21,
+        "event": {
+          "type": "artifact-failed",
+          "instance": {
+            "siteId": "site#5",
+            "ordinal": 0
+          },
+          "id": "art_doc",
+          "op": "publish",
+          "error": {
+            "code": "ArtifactFailed",
+            "message": "no space"
+          }
+        }
+      },
+      {
+        "sequence": 22,
+        "event": {
+          "type": "compaction",
+          "actor": {
+            "siteId": "site#1",
+            "ordinal": 0
+          }
+        }
+      },
+      {
+        "sequence": 23,
+        "event": {
+          "type": "escalation-raised",
+          "qid": "q_1",
+          "actor": {
+            "siteId": "site#1",
+            "ordinal": 0
+          },
+          "actorName": "researcher",
+          "question": "Which file?",
+          "context": "two candidates",
+          "askedAt": 1323
+        }
+      },
+      {
+        "sequence": 24,
+        "event": {
+          "type": "escalation-resolved",
+          "qid": "q_1",
+          "answer": "a.ts"
+        }
+      },
+      {
+        "sequence": 25,
+        "event": {
+          "type": "run-stalled",
+          "sinceMs": 90000,
+          "reason": "no progress",
+          "cap": 60000
+        }
+      },
+      {
+        "sequence": 26,
+        "event": {
+          "type": "run-settled",
+          "status": "completed"
+        }
+      }
+    ],
+    "run_b": [
+      {
+        "sequence": 0,
+        "event": {
+          "type": "run-settled",
+          "status": "stopped",
+          "stopReason": "interrupted"
+        }
+      }
+    ],
+    "run_c": [],
+    "run_d": [],
+    "run_e": [],
+    "run_f": [],
+    "run_g": []
+  },
+  "nonTerminalByParent": {
+    "sess_parent": [
+      {
+        "runId": "run_g",
+        "caps": {
+          "maxConcurrency": 2
+        },
+        "spentTokens": 3,
+        "status": "running",
+        "parentSessionId": "sess_parent",
+        "cwd": "/work/g"
+      }
+    ]
+  },
+  "taskLinks": [
+    {
+      "id": "tasklink_1",
+      "root_workflow_run_id": null,
+      "parent_link_id": null,
+      "activity_id": null,
+      "parent_session_id": "sess_parent",
+      "child_session_id": "sess_child_1",
+      "role": "workflow_actor",
+      "depth": 0,
+      "path": "dwf/run_a/site#1@0",
+      "phase": null,
+      "label": null,
+      "agent_type": null,
+      "model": null,
+      "status": "running"
+    }
+  ]
+}

@@ -5,6 +5,9 @@
 //! 这里只有 Node 原文 SQL 与行编解码，不知道内核的事实；事实到记录的映射在 `facts`。
 //! 所有函数都是同步的，只在存储的阻塞线程里调用。
 pub use rust_cli_node_records::codecs;
+// W2 library: nothing in the running agent calls it until the engine core (W5a) lands; the gate stays off.
+#[allow(dead_code)]
+pub mod dwf;
 pub mod entries;
 pub mod messages;
 pub mod migrations;

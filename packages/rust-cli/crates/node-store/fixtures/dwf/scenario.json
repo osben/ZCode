@@ -1,0 +1,100 @@
+{
+  "description": "Shared journal scenario for the dwf_* cross-runtime goldens (W2). Applied in order by the Node generator (scripts/rust-cli/dwf-journal-goldens.ts) and by the Rust repository tests. Times are fixed by `now`. Field names are Node's record names.",
+  "ops": [
+    { "op": "createSession", "now": 1000, "input": { "id": "sess_parent", "projectID": "proj_dwf", "directory": "/work", "slug": "sess_parent", "title": "Parent", "version": "0.0.0" } },
+    { "op": "createSession", "now": 1001, "input": { "id": "sess_child_1", "projectID": "proj_dwf", "directory": "/work", "slug": "sess_child_1", "title": "workflow subagent site#1@0", "version": "0.0.0", "parentID": "sess_parent" } },
+
+    { "op": "createRun", "now": 1100, "record": {
+        "runId": "run_a", "parentSessionId": "sess_parent", "cwd": "/work/a", "name": "Alpha",
+        "toolCallId": "call_1", "scriptText": "export default async () => 1", "scriptHash": "hash_a",
+        "args": { "n": 2, "tags": ["x", "y"] }, "caps": { "maxConcurrency": 4 }, "spentTokens": 0, "status": "running" } },
+    { "op": "updateRunScript", "now": 1110, "runId": "run_a", "scriptText": "export default async () => 2", "scriptHash": "hash_a2" },
+    { "op": "updateRunCaps", "now": 1120, "runId": "run_a", "caps": { "maxConcurrency": 6 } },
+    { "op": "updateRunUsage", "now": 1130, "runId": "run_a", "spentTokens": 512 },
+    { "op": "putActor", "now": 1140, "record": {
+        "runId": "run_a", "siteId": "site#1", "ordinal": 0, "name": "researcher",
+        "persona": { "name": "researcher", "system": "Find things.", "model": "glm-5.3", "budget": { "webSearch": 8 } },
+        "sessionId": "sess_child_1", "resolvedModel": "zai/glm-5.3" } },
+    { "op": "putActor", "now": 1141, "record": { "runId": "run_a", "siteId": "site#1", "ordinal": 1 } },
+    { "op": "putNode", "now": 1150, "record": {
+        "runId": "run_a", "siteId": "site#1", "ordinal": 0, "kind": "ask", "actorSiteId": "site#1", "actorOrdinal": 0,
+        "actorSeq": 1, "inputHash": "ih_ask", "status": "running" } },
+    { "op": "putNode", "now": 1160, "record": {
+        "runId": "run_a", "siteId": "site#1", "ordinal": 0, "kind": "ask", "actorSiteId": "site#1", "actorOrdinal": 0,
+        "actorSeq": 1, "inputHash": "ih_ask", "status": "completed", "result": { "answer": "yes", "files": [] },
+        "stats": { "tokens": 120, "toolCalls": 3, "turns": 2 }, "messageBoundary": 4 } },
+    { "op": "putNode", "now": 1170, "record": {
+        "runId": "run_a", "siteId": "site#2", "ordinal": 0, "kind": "world-read", "inputHash": "ih_glob",
+        "input": { "op": "glob", "args": ["**/*.ts"] }, "status": "completed", "result": ["a.ts", "b.ts"] } },
+    { "op": "putNode", "now": 1180, "record": {
+        "runId": "run_a", "siteId": "site#3", "ordinal": 0, "kind": "world-run", "inputHash": "ih_run",
+        "input": { "op": "run", "args": ["echo hi"] }, "status": "failed", "error": { "code": "WorldRunFailed", "message": "exit 2" } } },
+    { "op": "putNode", "now": 1190, "record": {
+        "runId": "run_a", "siteId": "site#4", "ordinal": 0, "kind": "report", "inputHash": "ih_report",
+        "status": "completed", "result": { "title": "Row 1" }, "artifactId": "art_board" } },
+    { "op": "putNode", "now": 1200, "record": {
+        "runId": "run_a", "siteId": "site#5", "ordinal": 0, "kind": "artifact", "inputHash": "ih_artifact",
+        "status": "failed", "artifactId": "art_doc", "error": { "code": "ArtifactFailed", "message": "no space" } } },
+
+    { "op": "appendEvent", "now": 1300, "runId": "run_a", "event": { "type": "run-started", "runId": "run_a", "caps": { "maxConcurrency": 4 } } },
+    { "op": "appendEvent", "now": 1301, "runId": "run_a", "event": { "type": "run-launched", "inputId": "in_1", "toolCallId": "call_1", "parentSessionId": "sess_parent", "phaseNames": ["plan", "build"], "subagentModel": "glm-5.3", "subagentPermissionMode": "acceptEdits", "modelBindings": { "fast": "zai/glm-5.3" }, "scriptPath": "/work/a/.zcode/workflow-runs/run_a.mjs", "phaseAlongside": [[0, 1]], "holes": [2] } },
+    { "op": "appendEvent", "now": 1302, "runId": "run_a", "event": { "type": "actor-created", "actor": { "siteId": "site#1", "ordinal": 0 }, "name": "researcher", "persona": { "name": "researcher" }, "phaseName": "plan" } },
+    { "op": "appendEvent", "now": 1303, "runId": "run_a", "event": { "type": "node-queued", "instance": { "siteId": "site#1", "ordinal": 0 }, "kind": "ask", "actor": { "siteId": "site#1", "ordinal": 0 }, "actorSeq": 1, "phaseName": "plan", "instructionsHead": "Find things" } },
+    { "op": "appendEvent", "now": 1304, "runId": "run_a", "event": { "type": "node-dispatched", "instance": { "siteId": "site#1", "ordinal": 0 }, "kind": "ask", "actor": { "siteId": "site#1", "ordinal": 0 }, "actorName": "researcher", "actorPhaseName": "plan", "actorPersonaModel": "glm-5.3", "phaseName": "plan", "instructionsHead": "Find things" } },
+    { "op": "appendEvent", "now": 1305, "runId": "run_a", "event": { "type": "node-repairing", "instance": { "siteId": "site#1", "ordinal": 0 }, "attempt": 1, "violations": [{ "path": "/answer", "message": "required" }] } },
+    { "op": "appendEvent", "now": 1306, "runId": "run_a", "event": { "type": "node-nudged", "instance": { "siteId": "site#1", "ordinal": 0 } } },
+    { "op": "appendEvent", "now": 1307, "runId": "run_a", "event": { "type": "node-waiting", "instance": { "siteId": "site#1", "ordinal": 0 }, "cause": "backoff", "reason": "rate_limited", "attempt": 2, "delayMs": 1500, "retryAfterMs": 1200 } },
+    { "op": "appendEvent", "now": 1308, "runId": "run_a", "event": { "type": "node-executing", "instance": { "siteId": "site#1", "ordinal": 0 } } },
+    { "op": "appendEvent", "now": 1309, "runId": "run_a", "event": { "type": "concurrency-changed", "key": "zai/glm-5.3", "previous": 4, "next": 2, "reason": "rate_limited", "lastGood": 4, "lastBad": 4, "cooldownMs": 30000 } },
+    { "op": "appendEvent", "now": 1310, "runId": "run_a", "event": { "type": "run-caps-changed", "runId": "run_a", "caps": { "maxConcurrency": 6 }, "previous": { "maxConcurrency": 4 } } },
+    { "op": "appendEvent", "now": 1311, "runId": "run_a", "event": { "type": "node-settled", "instance": { "siteId": "site#1", "ordinal": 0 }, "outcome": "ok", "cached": false, "phaseName": "plan", "kind": "ask", "actor": { "siteId": "site#1", "ordinal": 0 }, "actorSeq": 1, "instructionsHead": "Find things", "sourceSessionId": "sess_child_1" } },
+    { "op": "appendEvent", "now": 1312, "runId": "run_a", "event": { "type": "node-progress", "instance": { "siteId": "site#1", "ordinal": 0 }, "turn": 2, "toolCalls": 3, "lastTool": { "name": "Grep" } } },
+    { "op": "appendEvent", "now": 1313, "runId": "run_a", "event": { "type": "usage-updated", "spentTokens": 512 } },
+    { "op": "appendEvent", "now": 1314, "runId": "run_a", "event": { "type": "log", "message": "scanned 2 files" } },
+    { "op": "appendEvent", "now": 1315, "runId": "run_a", "event": { "type": "import-cache-closed", "instance": { "siteId": "site#1", "ordinal": 0 }, "cause": "mutating-tool", "actorName": "researcher" } },
+    { "op": "appendEvent", "now": 1316, "runId": "run_a", "event": { "type": "phase-entered", "name": "plan", "ordinal": 0 } },
+    { "op": "appendEvent", "now": 1317, "runId": "run_a", "event": { "type": "hole-reached", "instance": { "siteId": "site#6", "ordinal": 0 }, "name": "pick", "prompt": "Pick one", "phaseName": "build" } },
+    { "op": "appendEvent", "now": 1318, "runId": "run_a", "event": { "type": "hole-filled", "siteId": "site#6", "filledAt": 1318, "filledBy": "user", "phaseNames": ["plan", "build"], "holes": [2], "scriptPath": "/work/a/.zcode/workflow-runs/run_a.mjs" } },
+    { "op": "appendEvent", "now": 1319, "runId": "run_a", "event": { "type": "report", "instance": { "siteId": "site#4", "ordinal": 0 }, "item": { "title": "Row 1" }, "artifactId": "art_board" } },
+    { "op": "appendEvent", "now": 1320, "runId": "run_a", "event": { "type": "artifact-published", "instance": { "siteId": "site#7", "ordinal": 0 }, "artifact": { "id": "art_doc", "kind": "markdown", "version": 1, "title": "Notes", "contentType": "text/markdown", "bytes": 42, "publishedAt": 1320, "primary": true } } },
+    { "op": "appendEvent", "now": 1321, "runId": "run_a", "event": { "type": "artifact-failed", "instance": { "siteId": "site#5", "ordinal": 0 }, "id": "art_doc", "op": "publish", "error": { "code": "ArtifactFailed", "message": "no space" } } },
+    { "op": "appendEvent", "now": 1322, "runId": "run_a", "event": { "type": "compaction", "actor": { "siteId": "site#1", "ordinal": 0 } } },
+    { "op": "appendEvent", "now": 1323, "runId": "run_a", "event": { "type": "escalation-raised", "qid": "q_1", "actor": { "siteId": "site#1", "ordinal": 0 }, "actorName": "researcher", "question": "Which file?", "context": "two candidates", "askedAt": 1323 } },
+    { "op": "appendEvent", "now": 1324, "runId": "run_a", "event": { "type": "escalation-resolved", "qid": "q_1", "answer": "a.ts" } },
+    { "op": "appendEvent", "now": 1325, "runId": "run_a", "event": { "type": "run-stalled", "sinceMs": 90000, "reason": "no progress", "cap": 60000 } },
+    { "op": "appendEvent", "now": 1326, "runId": "run_a", "event": { "type": "run-settled", "status": "completed" } },
+    { "op": "updateRunStatus", "now": 1400, "runId": "run_a", "status": "completed", "settlement": { "result": { "ok": true, "items": [1, 2] } } },
+
+    { "op": "createRun", "now": 1500, "record": {
+        "runId": "run_b", "parentSessionId": "sess_parent", "resumedFrom": "run_a", "caps": { "maxConcurrency": 2 },
+        "spentTokens": 9, "status": "running", "args": {} } },
+    { "op": "appendEvent", "now": 1501, "runId": "run_b", "event": { "type": "run-settled", "status": "stopped", "stopReason": "interrupted" } },
+    { "op": "updateRunStatus", "now": 1502, "runId": "run_b", "status": "stopped", "settlement": { "stopReason": "interrupted", "failure": { "code": "Interrupted", "message": "sandbox crashed" } } },
+
+    { "op": "createRun", "now": 1600, "record": {
+        "runId": "run_c", "parentSessionId": "sess_parent", "caps": { "maxConcurrency": 3 }, "spentTokens": 0, "status": "pending" } },
+    { "op": "updateRunStatus", "now": 1610, "runId": "run_c", "status": "running" },
+    { "op": "updateRunStatus", "now": 1620, "runId": "run_c", "status": "stopped", "settlement": { "stopReason": "superseded", "supersededBy": "run_d" } },
+
+    { "op": "createRun", "now": 1700, "record": {
+        "runId": "run_d", "parentSessionId": "sess_parent", "resumedFrom": "run_c", "caps": { "maxConcurrency": 3 }, "spentTokens": 0, "status": "running" } },
+    { "op": "updateRunStatus", "now": 1710, "runId": "run_d", "status": "errored", "settlement": { "failure": { "code": "ScriptError", "message": "boom" } } },
+
+    { "op": "createRun", "now": 1800, "record": {
+        "runId": "run_e", "caps": { "maxConcurrency": 1 }, "spentTokens": 0, "status": "running", "name": "Orphan" } },
+    { "op": "updateRunStatus", "now": 1810, "runId": "run_e", "status": "errored", "settlement": { "failure": { "code": "Interrupted", "message": "owner gone" } } },
+
+    { "op": "createRun", "now": 1900, "record": {
+        "runId": "run_f", "parentSessionId": "sess_parent", "caps": { "maxConcurrency": 1 }, "spentTokens": 0, "status": "running" } },
+    { "op": "updateRunStatus", "now": 1910, "runId": "run_f", "status": "running" },
+    { "op": "updateRunStatus", "now": 1920, "runId": "run_f", "status": "completed", "settlement": { "result": null } },
+
+    { "op": "createRun", "now": 1950, "record": {
+        "runId": "run_g", "parentSessionId": "sess_parent", "cwd": "/work/g", "caps": { "maxConcurrency": 2 }, "spentTokens": 3, "status": "running" } },
+    { "op": "putNode", "now": 1960, "record": {
+        "runId": "run_g", "siteId": "site#1", "ordinal": 0, "kind": "ask", "actorSiteId": "site#1", "actorOrdinal": 0,
+        "actorSeq": 1, "inputHash": "ih_g", "status": "running" } },
+
+    { "op": "workflowActorLink", "now": 2000, "id": "tasklink_1", "childSessionId": "sess_child_1", "parentSessionId": "sess_parent", "path": "dwf/run_a/site#1@0", "status": "running" }
+  ]
+}
