@@ -291,6 +291,8 @@ impl rust_cli_kernel_api::off_peak_ticket::OffPeakTicketSource for Tickets {
 /// Endpoints of a run: the credential and the ticket id come from the query's ticket, as the platform gives them.
 struct TicketedEndpoints {
     base_url: String,
+    /// Whether the endpoint names the ticket an attempt is sent on (the header the Host's answer carries).
+    ticket_header: bool,
 }
 
 #[async_trait]
@@ -306,10 +308,14 @@ impl ModelEndpoints for TicketedEndpoints {
             base_url: self.base_url.clone(),
             model: format!("{}-api", selection.model),
             credential: Credential::ApiKey(key),
-            headers: vec![(
-                rust_cli_kernel_api::off_peak_ticket::TICKET_HEADER.to_owned(),
-                RedactedString::new(granted.id),
-            )],
+            headers: if self.ticket_header {
+                vec![(
+                    rust_cli_kernel_api::off_peak_ticket::TICKET_HEADER.to_owned(),
+                    RedactedString::new(granted.id),
+                )]
+            } else {
+                Vec::new()
+            },
             body_patches: Vec::new(),
             capabilities: ModelCapabilities {
                 supports_mid_conversation_system: true,
@@ -342,6 +348,7 @@ async fn an_expired_ticket_is_renewed_and_resent_without_spending_retries() {
         egress,
         Arc::new(TicketedEndpoints {
             base_url: server.url(),
+            ticket_header: true,
         }),
         clock(),
         RouteOptions {
@@ -359,4 +366,67 @@ async fn an_expired_ticket_is_renewed_and_resent_without_spending_retries() {
     assert_eq!(requests[1].header("x-api-key"), Some("token-2"));
     assert_eq!(requests[1].header("x-off-peak-ticket-id"), Some("tkt_2"));
     assert_eq!(*tickets.renewed.lock().unwrap(), ["tkt_1"]);
+}
+
+/// Fork (slice 3 layer B): renewals of one request are bounded. A provider that keeps refusing the renewed ticket ends
+/// the request with the refusal instead of renewing forever (the cap is `MAX_TICKET_RENEWALS`, 3).
+#[tokio::test]
+async fn the_renewals_of_one_request_are_bounded() {
+    let server = Fixture::start((0..6).map(|_| error(401, "authentication_error")).collect()).await;
+    let tickets = Arc::new(Tickets {
+        issued: Mutex::new(0),
+        refusals: Mutex::new(100),
+        renewed: Mutex::new(Vec::new()),
+    });
+    let source = rust_cli_kernel_api::off_peak_ticket::TicketSource(tickets.clone());
+    let egress = Arc::new(Egress::new(NetworkPolicy::default()).await.unwrap());
+    let model = ProviderModel::new(
+        egress,
+        Arc::new(TicketedEndpoints {
+            base_url: server.url(),
+            ticket_header: true,
+        }),
+        clock(),
+        RouteOptions {
+            retry: fast_retry(0),
+            ..RouteOptions::default()
+        },
+    );
+    let mut ticketed = request("hi", QuerySource::MainThread);
+    ticketed.options.off_peak_ticket = Some(source);
+    let events = collect(&model, ticketed).await;
+    assert!(events.iter().any(Result::is_err), "{events:?}");
+    assert_eq!(tickets.renewed.lock().unwrap().len(), 3);
+    assert_eq!(server.requests().len(), 4);
+}
+
+/// Fork (slice 3 layer B): a refusal of an attempt that names no ticket (no ticket header) has no ticket to renew. It
+/// fails like any other refusal: nothing is asked of the run with an empty ticket id.
+#[tokio::test]
+async fn a_refusal_without_the_ticket_header_is_not_renewed() {
+    let server = Fixture::start(vec![error(401, "authentication_error")]).await;
+    let tickets = Arc::new(Tickets {
+        issued: Mutex::new(0),
+        refusals: Mutex::new(1),
+        renewed: Mutex::new(Vec::new()),
+    });
+    let source = rust_cli_kernel_api::off_peak_ticket::TicketSource(tickets.clone());
+    let egress = Arc::new(Egress::new(NetworkPolicy::default()).await.unwrap());
+    let model = ProviderModel::new(
+        egress,
+        Arc::new(TicketedEndpoints {
+            base_url: server.url(),
+            ticket_header: false,
+        }),
+        clock(),
+        RouteOptions {
+            retry: fast_retry(0),
+            ..RouteOptions::default()
+        },
+    );
+    let mut ticketed = request("hi", QuerySource::MainThread);
+    ticketed.options.off_peak_ticket = Some(source);
+    let events = collect(&model, ticketed).await;
+    assert!(events.iter().any(Result::is_err), "{events:?}");
+    assert!(tickets.renewed.lock().unwrap().is_empty());
 }

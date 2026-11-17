@@ -12,14 +12,18 @@ use serde_json::Value;
 
 use crate::off_peak_control::{Expiry, OffPeakRuns, Poll};
 
-/// Where the run's lifecycle notifications go (production: `peer.try_notify(LIFECYCLE, …)`).
-pub(crate) type Notify = Arc<dyn Fn(&Value) + Send + Sync>;
+/// Where the run's lifecycle notifications go (production: the peer's awaited `v4/offPeak/lifecycle` notification).
+#[async_trait]
+pub(crate) trait LifecycleSink: Send + Sync {
+    /// Sends one notification. False when it could not be delivered (the connection is closed).
+    async fn send(&self, note: &Value) -> bool;
+}
 
 pub struct RunTickets {
     runs: Arc<OffPeakRuns>,
     session: String,
     execution_id: String,
-    notify: Notify,
+    sink: Arc<dyn LifecycleSink>,
 }
 
 impl RunTickets {
@@ -27,21 +31,27 @@ impl RunTickets {
         runs: Arc<OffPeakRuns>,
         session: impl Into<String>,
         execution_id: impl Into<String>,
-        notify: Notify,
+        sink: Arc<dyn LifecycleSink>,
     ) -> Self {
         Self {
             runs,
             session: session.into(),
             execution_id: execution_id.into(),
-            notify,
+            sink,
         }
     }
 }
 
-/// The error an attempt ends with: the Node code, as the message.
-fn ended(code: &str) -> ModelError {
-    ModelError::Authentication {
-        message: code.to_owned(),
+/// The error an attempt ends with once its run has ended. A run that ends (cancelled or completed) stops its attempts as
+/// cancelled: the run's Node code is its state, and it must not reach the user as a rejected credential.
+fn ended(_code: &str) -> ModelError {
+    ModelError::Cancelled
+}
+
+/// The renewal request could not be sent, so no answer can come: the attempt fails rather than wait for it.
+fn undelivered() -> ModelError {
+    ModelError::Network {
+        message: "off_peak_ticket_request_undelivered".to_owned(),
     }
 }
 
@@ -50,8 +60,10 @@ impl OffPeakTicketSource for RunTickets {
     /// Node `waitForTicket`: waits until the run may use a ticket, then returns it with its credentials.
     async fn acquire(&self) -> Result<Ticket, ModelError> {
         loop {
-            // The waiter exists before the state is read, so a change in between is not missed.
+            // The waiter is registered before the state is read: a change after the read wakes it, so none is lost.
             let changed = self.runs.changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
             match self.runs.poll_ticket(&self.session, &self.execution_id) {
                 Poll::Ready(ticket) => return Ok(ticket),
                 Poll::Ended(code) => return Err(ended(code)),
@@ -75,12 +87,17 @@ impl OffPeakTicketSource for RunTickets {
             Expiry::Immediate => return Ok(()),
             Expiry::Renewing(notes) => {
                 for note in &notes {
-                    (self.notify)(note);
+                    if !self.sink.send(note).await {
+                        return Err(undelivered());
+                    }
                 }
             }
         }
         loop {
+            // Registered before the state is read, as in `acquire`.
             let changed = self.runs.changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
             match self.runs.poll_ticket(&self.session, &self.execution_id) {
                 // Replaced: the next acquire takes the renewed ticket.
                 Poll::Ready(ticket) if ticket.id != ticket_id => return Ok(()),

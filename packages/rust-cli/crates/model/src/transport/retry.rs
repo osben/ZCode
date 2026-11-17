@@ -17,6 +17,10 @@ use crate::trace::tape::{End, Tape, end};
 /// 账号或套餐的并发上限最多重试这么多次（D5 暂定）。
 const CAPACITY_RETRIES: u32 = 2;
 
+/// Fork (slice 3 layer B): a request renews its expired ticket at most this many times. A provider that keeps refusing
+/// the renewed ticket ends the request with the refusal; the renewals never spend the retry budget, so this is their bound.
+const MAX_TICKET_RENEWALS: u32 = 3;
+
 /// 交出边界之前的截断最多重试这么多次，之后走 G（provider-errors.md D17 暂定）。
 const TRUNCATION_RETRIES: u32 = 1;
 
@@ -31,13 +35,19 @@ impl Connect {
     ) -> Result<(ModelNotice, Box<Self>, Duration), ModelError> {
         // Fork (slice 3 layer B, Node `retryExpired`): a refusal of the run's expired ticket, before anything was handed
         // out. The attempt waits for the ticket's renewal and resends at once; the retry budget is not spent.
+        // Only an attempt that names its ticket can renew it: without the header there is no ticket to ask for.
         if phase == Phase::Head
             && let Some(source) = self.ticket.clone()
+            && let Some(refused) = self.refused_ticket()
             && source
                 .0
                 .refused_as_expired(&self.selection.provider, &verdict.error)
         {
-            return self.renew_ticket(source, verdict, tape).await;
+            if self.renewals >= MAX_TICKET_RENEWALS {
+                end(tape, End::Failed(verdict.error.clone(), None));
+                return Err(verdict.error);
+            }
+            return self.renew_ticket(source, refused, verdict, tape).await;
         }
         let renew = verdict.class == Class::AuthRejected && self.endpoint.renewable;
         // Fork (specs/fork-rust-chatgpt-plan.md rule 10): one renewal per request, like Node `AccountRequestRetry`.
@@ -104,24 +114,29 @@ impl Connect {
         Ok((notice, self, delay))
     }
 
-    /// Fork (slice 3 layer B): renews the run's expired ticket, then re-resolves the endpoint on the renewed ticket. The
-    /// notice keeps the attempt number and has no delay; the wait itself is the run's (`waiting_ticket`), not a retry.
-    async fn renew_ticket(
-        mut self: Box<Self>,
-        source: rust_cli_kernel_api::off_peak_ticket::TicketSource,
-        verdict: Verdict,
-        tape: Option<Tape>,
-    ) -> Result<(ModelNotice, Box<Self>, Duration), ModelError> {
-        end(tape, End::Failed(verdict.error.clone(), None));
-        let refused = self
-            .endpoint
+    /// The ticket the attempt was sent on, as its endpoint named it. None when the header is absent or empty: an empty
+    /// id is not a ticket the Host issued, so it is never asked to renew.
+    fn refused_ticket(&self) -> Option<String> {
+        self.endpoint
             .headers
             .iter()
             .find(|(name, _)| {
                 name.eq_ignore_ascii_case(rust_cli_kernel_api::off_peak_ticket::TICKET_HEADER)
             })
             .map(|(_, value)| value.expose().to_owned())
-            .unwrap_or_default();
+            .filter(|id| !id.is_empty())
+    }
+
+    /// Fork (slice 3 layer B): renews the run's expired ticket, then re-resolves the endpoint on the renewed ticket. The
+    /// notice keeps the attempt number and has no delay; the wait itself is the run's (`waiting_ticket`), not a retry.
+    async fn renew_ticket(
+        mut self: Box<Self>,
+        source: rust_cli_kernel_api::off_peak_ticket::TicketSource,
+        refused: String,
+        verdict: Verdict,
+        tape: Option<Tape>,
+    ) -> Result<(ModelNotice, Box<Self>, Duration), ModelError> {
+        end(tape, End::Failed(verdict.error.clone(), None));
         let waited = self
             .cancel
             .run_until_cancelled(source.0.expired(&refused))
@@ -146,10 +161,26 @@ impl Connect {
                 self.endpoint.headers = endpoint.headers;
             }
         }
-        self.ticket = Some(source);
+        self.renewals += 1;
+        let max_retries = self.route.options.retry.max_retries;
+        // The renewal is a send with no backoff and no spent budget: the debug event is the only trace of it, so it
+        // carries the ticket context that the `Retrying` notice does not.
+        tracing::debug!(
+            event = "model.attempt.failed",
+            model = %self.selection.model,
+            attempt = self.attempt,
+            max_retries,
+            delay_ms = 0_u64,
+            phase = ?Phase::Head,
+            class = ?verdict.class,
+            error = %verdict.error,
+            ticket = %refused,
+            renewal = self.renewals,
+            "model request refused as expired; its ticket was renewed"
+        );
         let notice = ModelNotice::Retrying {
             attempt: self.attempt,
-            max_retries: self.route.options.retry.max_retries,
+            max_retries,
             delay_ms: 0,
             error: verdict.error,
         };

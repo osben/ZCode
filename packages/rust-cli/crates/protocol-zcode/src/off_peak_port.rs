@@ -14,7 +14,7 @@ use rust_cli_kernel_api::off_peak_ticket::TicketSource;
 use crate::context::Context;
 use crate::inbound::Inbound;
 use crate::off_peak_control::LIFECYCLE;
-use crate::off_peak_ticket::{Notify, RunTickets};
+use crate::off_peak_ticket::{LifecycleSink, RunTickets};
 
 pub struct HostOffPeak {
     context: Arc<Context>,
@@ -26,20 +26,32 @@ impl HostOffPeak {
     }
 }
 
+/// The run's lifecycle notifications to the Host. Awaited: `ticket_needed` is the only trigger of the Host's renewal,
+/// so it must not be dropped when the outbound queue is full.
+struct PeerLifecycle {
+    context: Arc<Context>,
+}
+
+#[async_trait]
+impl LifecycleSink for PeerLifecycle {
+    async fn send(&self, note: &Value) -> bool {
+        self.context.peer.notify(LIFECYCLE, note).await
+    }
+}
+
 #[async_trait]
 impl OffPeakPort for HostOffPeak {
     /// Fork (slice 3 layer B): the ticket source of the open run `execution`, bound to the run's own session.
     fn ticket(&self, _session: &SessionId, execution: &str) -> Option<TicketSource> {
         let owner = self.context.off_peak.open_session(execution)?;
-        let context = self.context.clone();
-        let notify: Notify = Arc::new(move |note: &Value| {
-            context.peer.try_notify(LIFECYCLE, note);
+        let sink: Arc<dyn LifecycleSink> = Arc::new(PeerLifecycle {
+            context: self.context.clone(),
         });
         Some(TicketSource(Arc::new(RunTickets::new(
             self.context.off_peak.clone(),
             owner,
             execution,
-            notify,
+            sink,
         ))))
     }
 

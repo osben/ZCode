@@ -170,17 +170,31 @@ impl OffPeakRuns {
                 }
             }
             Some("replace_ticket") => {
-                let renewal = params["renewalId"].as_u64();
-                let ticket = params["ticketId"].as_str();
-                let accepted = match (renewal, ticket) {
-                    (Some(renewal), Some(ticket)) => run.lifecycle.replace_ticket(renewal, ticket),
+                let auth = &params["requestAuth"];
+                let accepted = match (params["renewalId"].as_u64(), params["ticketId"].as_str()) {
+                    (Some(renewal), Some(ticket)) if account_identity_applied(auth) => {
+                        // The runtime's facts now (Node `readWork`): the turn is open only while `turn` is set.
+                        let work = WorkSnapshot {
+                            main_running: run.turn.is_some(),
+                            ..WorkSnapshot::default()
+                        };
+                        let accepted = run.lifecycle.replace_ticket(renewal, ticket, work);
+                        if accepted {
+                            run.request_auth = supplied_auth(auth);
+                        }
+                        accepted
+                    }
+                    (Some(_), Some(_)) => {
+                        // Refused, not installed without the identity: the attempt would send with another account.
+                        tracing::warn!(
+                            event = "off_peak.ticket_auth_unsupported",
+                            session,
+                            "the renewal names an account identity this agent cannot apply; refused"
+                        );
+                        false
+                    }
                     _ => false,
                 };
-                if accepted {
-                    run.request_auth = params["requestAuth"]
-                        .is_object()
-                        .then(|| supplied_auth(&params["requestAuth"]));
-                }
                 Control {
                     accepted,
                     notifications: notifications(run),
@@ -198,8 +212,10 @@ impl OffPeakRuns {
     /// Admits an off-peak input: its run opens when its turn starts. A session with an open run refuses it (Node
     /// `off_peak_execution_already_active`).
     pub fn admit(&self, session: &str, command: &str, run: PendingRun) -> Result<(), StartError> {
-        if self
-            .lock()
+        // The runs lock is held across the check and the insert: a run cannot open in between, so an admission that
+        // passed the check is never refused later by `start`. Lock order: runs, then pending (never the reverse).
+        let runs = self.lock();
+        if runs
             .get(session)
             .is_some_and(|open| !open.lifecycle.terminal())
         {
@@ -209,7 +225,25 @@ impl OffPeakRuns {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(command.to_owned(), run);
+        drop(runs);
         Ok(())
+    }
+
+    /// Node `off_peak` session delete: the session's run ends (its attempts end with it), and its flag and admitted inputs
+    /// go, so a deleted session leaves no state behind.
+    pub fn remove_session(&self, session: &str) {
+        if let Some(mut run) = self.lock().remove(session) {
+            run.lifecycle.cancel();
+        }
+        self.session_flags
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(session);
+        self.pending
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .retain(|_, pending| pending.session != session);
+        self.changed.notify_waiters();
     }
 
     /// The provider an admitted off-peak input's run binds to, after its model was edited while queued.
@@ -231,12 +265,18 @@ impl OffPeakRuns {
         let Some(command) = command else {
             return;
         };
-        let pending = self
-            .pending
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .remove(command);
-        let Some(pending) = pending.filter(|pending| pending.session == session) else {
+        // Only the admission of this session is taken: another session's turn with the same command id leaves it be.
+        let pending = {
+            let mut admitted = self
+                .pending
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            match admitted.get(command) {
+                Some(pending) if pending.session == session => admitted.remove(command),
+                _ => None,
+            }
+        };
+        let Some(pending) = pending else {
             return;
         };
         if self
@@ -403,22 +443,29 @@ fn ended_code(state: State) -> &'static str {
     }
 }
 
-/// The credentials of a `replace_ticket` (Node `ModelRequestAuth`): the headers and the key.
-fn supplied_auth(auth: &Value) -> SuppliedAuth {
-    SuppliedAuth {
-        api_key: auth["apiKey"].as_str().map(RedactedString::new),
-        headers: auth["headers"]
-            .as_object()
-            .map(|headers| {
-                headers
-                    .iter()
-                    .filter_map(|(name, value)| {
-                        Some((name.clone(), RedactedString::new(value.as_str()?)))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default(),
-    }
+/// Whether a `replace_ticket`'s credentials carry no account identity this agent cannot apply. Node routes a zhipu
+/// account's request by `apiKeyId` and checks `accountScope` against the account; neither is implemented here, so a
+/// renewal that names either is refused rather than sent with the wrong account.
+fn account_identity_applied(auth: &Value) -> bool {
+    auth["apiKeyId"].is_null() && auth["accountScope"].is_null()
+}
+
+/// The credentials of a `replace_ticket` (Node `ModelRequestAuth`): the key and the headers. None when the answer
+/// carries neither, so the ordinary request auth source keeps supplying the credentials (an empty set would suppress it).
+fn supplied_auth(auth: &Value) -> Option<SuppliedAuth> {
+    let api_key = auth["apiKey"].as_str().map(RedactedString::new);
+    let headers: Vec<(String, RedactedString)> = auth["headers"]
+        .as_object()
+        .map(|headers| {
+            headers
+                .iter()
+                .filter_map(|(name, value)| {
+                    Some((name.clone(), RedactedString::new(value.as_str()?)))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    (api_key.is_some() || !headers.is_empty()).then_some(SuppliedAuth { api_key, headers })
 }
 
 fn notifications(run: &mut Run) -> Vec<Value> {
