@@ -32,6 +32,7 @@ rust-cli-protocol-core.workspace = true
 rust-cli-prompts.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "sync", "time"] }
 # Fork: cancels workspace model calls (the model port's cancellation token).
 tokio-util.workspace = true

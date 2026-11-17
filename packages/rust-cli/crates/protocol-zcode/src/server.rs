@@ -523,6 +523,18 @@ impl Server {
             "v4/attachment/previewSource" => {
                 crate::attachments::preview_source(self, &params).await
             }
+            // Fork: archived-session permanent deletion (specs/fork-rust-agent-parity.md). The request gate exempts these
+            // two methods (presence_gate.rs), because their barrier row is what the gate checks.
+            "v4/storage/sessionData/deletionPreview" => {
+                crate::fork::session_deletion::preview(self, &params)
+                    .await
+                    .map(Reply::new)
+            }
+            "v4/storage/sessionData/deletionExecute" => {
+                crate::fork::session_deletion::execute(self, &params)
+                    .await
+                    .map(Reply::new)
+            }
             // Fork: method families ported for desktop parity (specs/fork-rust-agent-parity.md).
             other => match crate::fork::methods::dispatch(self, other, params).await {
                 Some(result) => result,

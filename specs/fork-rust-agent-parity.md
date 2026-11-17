@@ -1359,9 +1359,17 @@ Order: A1 then A2, then A3, then the database check, then B2, B3 and B5, then B4
 
 ## Context composition, session deletion and model-request metrics (gap analysis)
 
-Status (2026-11-16): gap analysis only. None of the three methods is ported. This section records what Node does, what Rust has, and the order of work, so that each port starts from verified facts.
+Status (2026-11-16): `deletionPreview` and `deletionExecute` are ported (below, "Ported"). `contextComposition` and `model-request-metrics` are not: this section records what Node does, what Rust has, and the order of work, so that each port starts from verified facts.
 
 ### `v4/storage/sessionData/deletionPreview` and `deletionExecute`
+
+- **Ported.** Store: `node-store/src/session_deletion.rs` (`inspect_session_deletion`, `begin_session_deletion`, `complete_session_deletion`; Node's SQL, the sha256 revision with Node's key order, `locale_compare` for Node's `localeCompare` sorts in `kernel-api/src/session_deletion.rs`). Files: `protocol-zcode/src/fork/session_data_files.rs` (Node's roots: `artifacts`, `exec`, `agents`, `sessions`, `debug|rollout/model-io-<id>.jsonl`; `lstat` semantics; `rust_cli_fs::link_stat`, `dir_entries`, `remove_path_force`). Protocol: `protocol-zcode/src/fork/session_deletion.rs`, dispatched in `server.rs`. The request gate keeps its exemption for both methods (`presence_gate.rs`): `begin` writes the barrier row that the gate checks.
+- **Node behaviour kept.** Blockers `in-use` (foreign live runtime, or a local runtime not loaded), `running` (pending work or a busy session), `not-found`; execute order `completed` → blocker → `changed` → busy recheck → admission. A failure before the barrier reports `blocked`; after it, `incomplete`, and a retry finishes the deletion. Idle runtimes are released without a removal announcement; forgotten sessions leave the sessions index.
+- **Deliberate differences.** A file error reports `EACCES` or `unavailable`, not every Node `error.code`. Busy is the bridge's running phase or a running subagent (`session_tree::running_session_ids`); Node also counts creation ids and pending interactions and queued commands, which Rust does not expose to this layer yet.
+- **Tests.** node-store: 7 tests ported from Node's `session-store-permanent-deletion.test.ts` (plus 2 for the URI parser and the collation). protocol-zcode: 8 tests in `fork/session_deletion_tests.rs`.
+- **Out of scope** (as before): `sessionDataPurge` and `sessionDataMeasure` (same Node module) stay `method_not_found`. The Host does not gate them by runtime.
+
+#### Original gap analysis (2026-11-16)
 
 - **Node.** Bootstrap `zcode-protocol/session-data/permanent-deletion.ts` (`previewSessionDeletion`, `executeSessionDeletion`). Store: `adapters/src/storage/session-store/repositories/sessions.ts` `inspectSessionDeletion` (~l.542), `beginSessionDeletion` (~l.692), `completeSessionDeletion` (~l.730). Files: `adapters/src/storage/session-data-files/index.ts` (`listSessionFiles`, `removeSession(id, retained)`). Schemas: `packages/shared/src/zcode-protocol-v4/session-data/contract.ts`.
 - **Rust today.** Upstream migration `0025_session_permanent_deletion` tables (`session_purge`, `session_runtime_presence`) are read by the presence code in `node-store/src/presence.rs`, and the request gate reads them in `protocol-zcode/src/presence_gate.rs`. Nothing else exists: no inspect, begin or complete, no file manifest, no dispatch arm. The refusal is `method_not_found` from the dispatcher in `protocol-zcode/src/server.rs` (the `other =>` arm), not from `presence_gate.rs`.

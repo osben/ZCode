@@ -161,6 +161,53 @@ pub async fn remove_dir_all_optional(path: &Path) -> io::Result<()> {
     }
 }
 
+/// Fork: what [`link_stat`] found at a path, without following a symlink (Node `lstat`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LinkStat {
+    pub is_symlink: bool,
+    /// A real directory (a symlink to one is `is_symlink`, not `is_dir`).
+    pub is_dir: bool,
+    pub len: u64,
+}
+
+/// Fork: the path's metadata without following a symlink; `None` when it does not exist (Node `lstat`). Permanent
+/// deletion sizes and walks session files with it, so a link inside a session directory is never followed.
+pub async fn link_stat(path: &Path) -> io::Result<Option<LinkStat>> {
+    match tokio::fs::symlink_metadata(path).await {
+        Ok(metadata) => Ok(Some(LinkStat {
+            is_symlink: metadata.file_type().is_symlink(),
+            is_dir: metadata.is_dir(),
+            len: metadata.len(),
+        })),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+/// Fork: the entries of a directory as full paths, in the order the platform lists them; a missing directory has none.
+pub async fn dir_entries(path: &Path) -> io::Result<Vec<PathBuf>> {
+    let mut entries = match tokio::fs::read_dir(path).await {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error),
+    };
+    let mut paths = Vec::new();
+    while let Some(entry) = entries.next_entry().await? {
+        paths.push(entry.path());
+    }
+    Ok(paths)
+}
+
+/// Fork: remove a file, a symlink (the link itself) or a directory tree at `path`, as Node `rm(path, { recursive: true,
+/// force: true })`. A missing path is not an error.
+pub async fn remove_path_force(path: &Path) -> io::Result<()> {
+    match link_stat(path).await? {
+        None => Ok(()),
+        Some(stat) if stat.is_dir => tokio::fs::remove_dir_all(path).await,
+        Some(_) => tokio::fs::remove_file(path).await,
+    }
+}
+
 /// Fork: [`remove_dir_all_optional`], synchronously (a drop guard's last resort when no runtime can run the async
 /// removal).
 pub fn remove_dir_all_optional_blocking(path: &Path) -> io::Result<()> {

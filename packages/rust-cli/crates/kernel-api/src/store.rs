@@ -956,6 +956,40 @@ pub trait StoreQueries: Send + Sync {
         Ok(())
     }
 
+    /// Fork: the permanent-deletion snapshot of the owned tree of `root` (Node `inspectSessionDeletion`). `Unsupported`
+    /// for a store without the shared database; the protocol answers `method_not_found` then.
+    async fn inspect_session_deletion(
+        &self,
+        _root: &SessionId,
+    ) -> Result<crate::session_deletion::SessionDeletionSnapshot, StoreError> {
+        Err(StoreError::Unsupported {
+            what: "session deletion inspect".to_owned(),
+        })
+    }
+
+    /// Fork: writes the `deleting` barrier rows for the tree of `root` in one `BEGIN IMMEDIATE` transaction (Node
+    /// `beginSessionDeletion`). `retained` holds `(session, artifact)` pairs whose files survive. A refusal is
+    /// `DeletionBegin::Running` or `Changed`, not an error.
+    async fn begin_session_deletion(
+        &self,
+        _root: &SessionId,
+        _revision: &str,
+        _operation_id: &str,
+        _retained: &[(SessionId, String)],
+    ) -> Result<crate::session_deletion::DeletionBegin, StoreError> {
+        Err(StoreError::Unsupported {
+            what: "session deletion begin".to_owned(),
+        })
+    }
+
+    /// Fork: purges the rows of the tree of `root` and marks its barrier rows `deleted` (Node `completeSessionDeletion`).
+    /// The caller removed the files first.
+    async fn complete_session_deletion(&self, _root: &SessionId) -> Result<(), StoreError> {
+        Err(StoreError::Unsupported {
+            what: "session deletion complete".to_owned(),
+        })
+    }
+
     /// Fork: hard-delete the trees of the given roots in one `BEGIN IMMEDIATE` transaction (Node
     /// `deleteSessionTree`, with the fork-usage preserve step inside it). The caller closes open
     /// runtimes first.

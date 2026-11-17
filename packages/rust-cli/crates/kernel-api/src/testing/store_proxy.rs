@@ -176,6 +176,29 @@ impl<H: StoreHooks> StoreQueries for StoreProxy<H> {
         self.inner.assert_not_deleting(sessions).await
     }
 
+    async fn inspect_session_deletion(
+        &self,
+        root: &SessionId,
+    ) -> Result<crate::session_deletion::SessionDeletionSnapshot, StoreError> {
+        self.inner.inspect_session_deletion(root).await
+    }
+
+    async fn begin_session_deletion(
+        &self,
+        root: &SessionId,
+        revision: &str,
+        operation_id: &str,
+        retained: &[(SessionId, String)],
+    ) -> Result<crate::session_deletion::DeletionBegin, StoreError> {
+        self.inner
+            .begin_session_deletion(root, revision, operation_id, retained)
+            .await
+    }
+
+    async fn complete_session_deletion(&self, root: &SessionId) -> Result<(), StoreError> {
+        self.inner.complete_session_deletion(root).await
+    }
+
     async fn metering(&self, session: &SessionId) -> Result<SessionMetering, StoreError> {
         self.inner.metering(session).await
     }
