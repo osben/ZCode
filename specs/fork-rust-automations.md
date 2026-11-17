@@ -306,10 +306,14 @@ Node `ticketExpired`: a stale ticket retries at once, a current one waits for th
 with `off_peak_cancelled`. `refused_as_expired` matches the run's provider and its `providerErrorCode` or 3102/3106.
 
 A `sendText` carrying `modelExecution.offPeak` is admitted as a pending run (`admit_off_peak_run`: it needs a model and
-an `offPeakTaskId`, else `off_peak_execution_identity_missing`; a session with an open run refuses it). The run opens when
+an `offPeakTaskId`, else `off_peak_execution_identity_missing`; its execution id is trimmed like the turn's limits, and a
+blank id is the same missing identity; a session with an open run refuses it). The run opens when
 its turn starts (`turn_started`, Node `prepareOffPeakTurn`), so an input refused after admission, or dropped from the
-queue, opens nothing and blocks nothing. `firstInput` and `startNow` carrying `modelExecution.offPeak` are refused (not
-ported; refusal rather than a model without a ticket). A queued off-peak input's edited model is the run's model, and
+queue, opens nothing and blocks nothing. An admitted input the kernel refuses (`guard.inputRejected`) or whose draft cannot
+be admitted is removed from the pending runs at once (`OffPeakRuns::discard`). A createSession whose `firstInput` carries
+`modelExecution.offPeak` is refused before anything is created (`off_peak_first_input_unsupported`), on every create
+route. `startNow` carrying `modelExecution.offPeak` is refused too (not ported; refusal rather than a model without a
+ticket). A queued off-peak input's edited model is the run's model, and
 its edited provider the run's provider (`set_pending_provider`).
 
 Takeover is removed: no Rust caller existed, so the lifecycle has no `user_owned` state and no `UserTakeover` event.
