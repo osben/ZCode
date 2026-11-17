@@ -595,6 +595,19 @@ Deviations and gaps (open, with the owner):
 - Row comparison in the goldens is canonical JSON (key order not compared); events are compared byte for byte, as the spec requires.
 - The generator and the goldens were built on the worktree's Node sources. Those differ from the shared checkout in `index.ts`, `persona.ts` and `types.ts` (the persona budget). The engine files the scheduler uses are identical in both. The lifecycle fixture from part 1 was not regenerated and still matches.
 
+### 9.4 As built (W3)
+
+Spec-first design, then the code. The gate stays off and nothing calls the port.
+
+- Code: `packages/rust-cli/crates/node-store/src/workflow_runs/`. `mod.rs` holds the reducer dispatch, `eviction.rs` the slot admission and groups, `caps.rs` the unlisted counters and buckets, `delta.rs` the diff and apply, `js.rs` the JS-compatible string and number helpers, `replay.rs` the cold replay from `dwf_event`, `projection.rs` the snapshot hook, and `tests.rs`. The module is `#[allow(dead_code)]` until the engine core (W5a) calls it.
+- State is an ordered JSON map (`serde_json`, `preserve_order` is already workspace-wide), not typed structs. Node grows entries with `{...run, key: v}`, so the key order of actor and node entries follows arrival order. Typed structs would change that order and break byte-identity. `canonicalWorkflowRun` runs at the same points as in Node, on the run's top level only.
+- Goldens: the generator is `packages/shared/src/zcode-protocol-v4/workflow-runs-goldens.ts` (it records Node's `reduceWorkflowRunsState` and `diffWorkflowRunsState`); `scripts/rust-cli/workflow-runs-goldens.ts` writes `packages/rust-cli/crates/node-store/fixtures/workflow-runs/goldens.json`. It lives in the shared package so the drift guard can typecheck. Two scenario sets: default limits, and small injected limits that exercise eviction, unlisted buckets and truncation. The Vitest drift guard regenerates and compares; it is registered in `scripts/fork-test-files.json`.
+- Property: `applyAll(prior, diff(prior, next))` serializes byte-identical to `next` for every golden step and for a seeded pseudo-random stream. No new dependency (`proptest` is not in the lock).
+- Cold replay: `replay.rs` reads `dwf_event` through W2's `list_events`, mints the envelope fields that `toProgressPayload` derives (`actorSessionId`, `resumedFrom`, `subagentModel`, the persona `model` and `actorModel` through `modelBindings`, `concurrencyCeiling`, `resumable`, `reachedAt`), and applies the `boundDynamicWorkflowRunEventPayload` bounds. Not ported: `holeTypeOf`, which needs the compiled script and so lands with the helper (W4). A replayed `hole-reached` therefore has no `type`.
+- Runtime switch: nothing reads the replay yet. The snapshot hook returns `{"runs": []}` when no run exists, the same answer Rust gives today.
+- Surrogates: the reducer's own cuts (`slice(0, limit - 1) + "…"`, bounded text fields) round down to a code point boundary, as `truncateSurrogateSafe` does in the contracts bounding. Node can keep a lone surrogate there, and `JSON.stringify` writes it as an escape that Rust cannot hold. This is a deliberate deviation; the golden set avoids the case and a unit test pins the rounding.
+- Size and checks: 4,289 lines of Rust in `workflow_runs/` (3,665 excluding `tests.rs`), 14 `workflow_runs` unit tests, 326 passed in the `rust-cli-node-store` lib suite (1 ignored). `clippy --workspace --all-targets -- -D warnings` is clean.
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.

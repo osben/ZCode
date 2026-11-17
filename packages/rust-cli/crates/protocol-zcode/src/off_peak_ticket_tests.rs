@@ -3,12 +3,13 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use async_trait::async_trait;
 use rust_cli_kernel_api::model::ModelError;
 use rust_cli_kernel_api::off_peak_ticket::OffPeakTicketSource;
 use serde_json::{Value, json};
 
 use crate::off_peak_control::OffPeakRuns;
-use crate::off_peak_ticket::RunTickets;
+use crate::off_peak_ticket::{LifecycleSink, RunTickets};
 
 const PROVIDER: &str = "account:zai-offpeak-idle-plan";
 
@@ -19,20 +20,35 @@ fn runs_with_run() -> Arc<OffPeakRuns> {
     runs
 }
 
-/// A sink that keeps what the run reports, in order.
+/// A sink that keeps what the run reports, in order, and delivers all of it.
 type Sent = Arc<Mutex<Vec<Value>>>;
-type Sink = Arc<dyn Fn(&Value) + Send + Sync>;
 
-fn sink() -> (Sent, Sink) {
-    let sent = Arc::new(Mutex::new(Vec::new()));
-    let kept = sent.clone();
-    (
-        sent,
-        Arc::new(move |value: &Value| kept.lock().unwrap().push(value.clone())),
-    )
+struct Keep(Sent);
+
+#[async_trait]
+impl LifecycleSink for Keep {
+    async fn send(&self, note: &Value) -> bool {
+        self.0.lock().unwrap().push(note.clone());
+        true
+    }
 }
 
-fn tickets(runs: &Arc<OffPeakRuns>, sink: Arc<dyn Fn(&Value) + Send + Sync>) -> RunTickets {
+/// A sink whose connection is closed: nothing is delivered.
+struct Closed;
+
+#[async_trait]
+impl LifecycleSink for Closed {
+    async fn send(&self, _note: &Value) -> bool {
+        false
+    }
+}
+
+fn sink() -> (Sent, Arc<dyn LifecycleSink>) {
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    (sent.clone(), Arc::new(Keep(sent)))
+}
+
+fn tickets(runs: &Arc<OffPeakRuns>, sink: Arc<dyn LifecycleSink>) -> RunTickets {
     RunTickets::new(runs.clone(), "sess_1", "exe_1", sink)
 }
 
@@ -56,6 +72,17 @@ fn replace(runs: &OffPeakRuns, renewal: u64, ticket: &str, auth: Value) {
             "renewalId": renewal, "ticketId": ticket, "requestAuth": auth}),
     );
     assert!(control.accepted);
+}
+
+/// Waits until `done` holds, yielding to the runtime between checks instead of sleeping for a fixed time.
+async fn until(mut done: impl FnMut() -> bool) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !done() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the condition holds");
 }
 
 #[tokio::test]
@@ -99,13 +126,13 @@ async fn an_expired_ticket_waits_for_the_renewal_and_then_uses_the_renewed_crede
         tokio::spawn(async move { source.expired("tkt_1").await })
     };
     // The renewal is asked for: the Host gets a `ticket_needed` notification.
-    tokio::time::sleep(Duration::from_millis(20)).await;
-    assert!(
+    until(|| {
         sent.lock()
             .unwrap()
             .iter()
             .any(|note| note["type"] == "ticket_needed")
-    );
+    })
+    .await;
     assert!(!expiring.is_finished(), "waits for the renewal");
     replace(
         &runs,
@@ -133,7 +160,8 @@ async fn a_stale_refusal_retries_at_once_on_the_current_ticket() {
     assert_eq!(source.acquire().await.unwrap().id, "tkt_2");
 }
 
-/// A cancelled run fails the waiting attempts with the Node code, and so does a later acquire.
+/// A cancelled run fails the waiting attempts with a cancellation, and so does a later acquire. The Node code is the
+/// run's state, not a rejected credential, so it must not surface as an authentication failure.
 #[tokio::test]
 async fn a_cancelled_run_ends_its_attempts() {
     let runs = runs_with_run();
@@ -144,14 +172,61 @@ async fn a_cancelled_run_ends_its_attempts() {
         let source = source.clone();
         tokio::spawn(async move { source.expired("tkt_1").await })
     };
-    tokio::time::sleep(Duration::from_millis(20)).await;
     let _ = runs.control(
         "sess_1",
         &json!({"sessionId": "sess_1", "executionId": "exe_1", "action": "cancel"}),
     );
     let error = waiting.await.unwrap().unwrap_err();
     assert!(
-        matches!(error, ModelError::Authentication { ref message } if message == "off_peak_cancelled")
+        matches!(error, ModelError::Cancelled),
+        "a cancellation, not {error:?}"
     );
     assert!(source.acquire().await.is_err());
+}
+
+/// A renewal answered before the attempt starts waiting is not waited for: the waiter sees the state it was answered
+/// into, so no wake-up is needed.
+#[tokio::test]
+async fn a_renewal_answered_before_the_wait_starts_is_not_waited_for() {
+    let runs = runs_with_run();
+    let (_sent, sink) = sink();
+    let source = tickets(&runs, sink);
+    let _ = runs.expire_ticket("sess_1", "exe_1", "tkt_1");
+    replace(&runs, 1, "tkt_2", Value::Null);
+    tokio::time::timeout(Duration::from_secs(5), source.expired("tkt_1"))
+        .await
+        .expect("not waiting for a renewal already answered")
+        .unwrap();
+}
+
+/// A renewal request that cannot be delivered (the connection is closed) ends the run, so its expired attempt ends too:
+/// nobody will answer that request, so the attempt must not wait for it.
+#[tokio::test]
+async fn an_undelivered_renewal_request_ends_the_run_instead_of_waiting() {
+    let runs = runs_with_run();
+    let source = tickets(&runs, Arc::new(Closed));
+    let outcome = tokio::time::timeout(Duration::from_secs(5), source.expired("tkt_1"))
+        .await
+        .expect("the attempt must not wait for a renewal nobody was asked for");
+    assert!(outcome.is_err());
+    assert!(source.acquire().await.is_err(), "the run has ended");
+}
+
+/// The renewal request is sent even when its attempt is dropped right after asking for it (its turn ends): the request
+/// is the only trigger of the Host's renewal, so it must not depend on the attempt's future staying alive.
+#[tokio::test]
+async fn a_renewal_request_is_sent_even_when_its_attempt_is_dropped() {
+    use futures_util::FutureExt;
+    let runs = runs_with_run();
+    let (sent, sink) = sink();
+    let source = tickets(&runs, sink);
+    // One poll asks for the renewal; the attempt is then dropped.
+    let _ = source.expired("tkt_1").now_or_never();
+    until(|| {
+        sent.lock()
+            .unwrap()
+            .iter()
+            .any(|note| note["type"] == "ticket_needed")
+    })
+    .await;
 }

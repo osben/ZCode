@@ -359,6 +359,7 @@ impl Start {
             truncations: 0,
             resent: false,
             renewed: false,
+            renewals: 0,
             notified: false,
             limits,
             cancel,
@@ -431,6 +432,9 @@ pub(crate) struct Connect {
     /// Fork (slice 3 layer B): the off-peak ticket the request is sent on; a refusal as expired renews it (Node
     /// `retryExpired`), and the renewal re-resolves the endpoint with it.
     ticket: Option<rust_cli_kernel_api::off_peak_ticket::TicketSource>,
+    /// Fork (slice 3 layer B): the ticket renewals this request has made. A renewal is a send that spends no retry
+    /// budget, so the send ordinal of the model-io trace is `attempt + renewals`, which stays unique per send.
+    renewals: u32,
     /// 发过 `Retrying` 通知、还没有产出 `Resumed`。
     notified: bool,
     /// 这个端点上的看门狗上限。
@@ -460,7 +464,7 @@ impl Connect {
         let mut tape = self
             .trail
             .as_ref()
-            .map(|trail| trail.tape(self.attempt, &http));
+            .map(|trail| trail.tape(self.attempt + self.renewals, &http));
         // Fork: compressed after the tape, so the model-io trace keeps the plain body (rule 14).
         if let Some(limit) = self.endpoint.compress_body_over
             && http.body.len() > limit

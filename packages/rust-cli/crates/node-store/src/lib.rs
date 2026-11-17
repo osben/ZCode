@@ -45,6 +45,8 @@ mod usage;
 mod usage_query;
 mod usage_stats;
 mod usage_v4;
+#[allow(dead_code)]
+mod workflow_runs;
 mod workspace_trust;
 
 // 记录格式的纯函数在 node-records（F128）：这里按 `crate::records` 这样的路径照常引用。

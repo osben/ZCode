@@ -194,3 +194,132 @@ fn an_open_run_refuses_another_admission() {
         Err(crate::off_peak_control::StartError::AlreadyActive)
     );
 }
+
+/// Node `waitForTicket` and `releaseIdleModelRound`: a renewal answered after its turn ended completes the run, because
+/// the turn's end left no work and the Host's answer is the last thing the run was waiting for.
+#[test]
+fn a_renewal_answered_after_the_turn_ended_completes_the_run() {
+    let runs = OffPeakRuns::default();
+    runs.admit("sess_1", "cmd_1", pending("sess_1", "exe_1"))
+        .unwrap();
+    runs.turn_started("sess_1", "turn_1", Some("cmd_1"));
+    // An attempt is refused as expired and waits for the renewal; the turn ends before the Host answers.
+    let Expiry::Renewing(_) = runs.expire_ticket("sess_1", "exe_1", "tkt_1") else {
+        panic!("the current ticket asks for a renewal");
+    };
+    let _ = runs.turn_finished("sess_1", "turn_1", &TurnOutcome::Interrupted);
+    let control = runs.control(
+        "sess_1",
+        &json!({"sessionId": "sess_1", "executionId": "exe_1", "action": "replace_ticket",
+            "renewalId": 1, "ticketId": "tkt_2", "requestAuth": {"apiKey": "k"}}),
+    );
+    assert!(control.accepted);
+    assert!(
+        control
+            .notifications
+            .iter()
+            .any(|note| note["type"] == "completed"),
+        "the run completes: {:?}",
+        control.notifications
+    );
+    assert_eq!(runs.open_session("exe_1"), None);
+}
+
+/// The admission of an input is consumed by the turn of its own command and session only: another session's turn with
+/// the same command id must not drop it.
+#[test]
+fn a_turn_of_another_session_leaves_the_admission_for_its_own_session() {
+    let runs = OffPeakRuns::default();
+    runs.admit("sess_1", "cmd_1", pending("sess_1", "exe_1"))
+        .unwrap();
+    runs.turn_started("sess_2", "turn_x", Some("cmd_1"));
+    runs.turn_started("sess_1", "turn_1", Some("cmd_1"));
+    assert_eq!(runs.open_session("exe_1").as_deref(), Some("sess_1"));
+}
+
+fn replace_with(auth: Value) -> Value {
+    json!({
+        "sessionId": "sess_1", "executionId": "exe_1", "action": "replace_ticket",
+        "renewalId": 1, "ticketId": "tkt_2", "requestAuth": auth,
+    })
+}
+
+/// Node `ticket.requestAuth` without a key or headers: the ordinary request auth source supplies the credentials, so
+/// the run must not install an empty set that suppresses it.
+#[test]
+fn a_renewal_with_no_key_or_headers_leaves_the_ordinary_source_its_credentials() {
+    let runs = runs_with_one();
+    let _ = runs.expire_ticket("sess_1", "exe_1", "tkt_1");
+    assert!(runs.control("sess_1", &replace_with(json!({}))).accepted);
+    let Poll::Ready(ticket) = runs.poll_ticket("sess_1", "exe_1") else {
+        panic!("the renewed ticket is usable");
+    };
+    assert_eq!(ticket.id, "tkt_2");
+    assert_eq!(ticket.auth, None);
+}
+
+/// A renewal that carries an account identity this agent does not apply (`apiKeyId` routing, `accountScope` check) is
+/// refused, not installed with its key silently dropped: the attempt would then use the wrong account.
+#[test]
+fn a_renewal_with_an_account_identity_this_agent_cannot_apply_is_refused() {
+    let runs = runs_with_one();
+    let _ = runs.expire_ticket("sess_1", "exe_1", "tkt_1");
+    assert!(
+        !runs
+            .control(
+                "sess_1",
+                &replace_with(json!({"apiKey": "k", "apiKeyId": "key-1"}))
+            )
+            .accepted
+    );
+    assert!(matches!(runs.poll_ticket("sess_1", "exe_1"), Poll::Pending));
+}
+
+/// A deleted session leaves no run, flag or admission behind: its attempts end and the policy is the default again.
+#[test]
+fn a_deleted_session_leaves_no_run_flag_or_admission_behind() {
+    let runs = runs_with_one();
+    runs.set_policy(false);
+    runs.set_session_enabled("sess_1", true);
+    runs.admit("sess_2", "cmd_9", pending("sess_2", "exe_9"))
+        .unwrap();
+    runs.remove_session("sess_1");
+    runs.remove_session("sess_2");
+    assert_eq!(runs.open_session("exe_1"), None);
+    assert!(!runs.tools_enabled("sess_1"), "back to the policy");
+    runs.turn_started("sess_2", "turn_9", Some("cmd_9"));
+    assert_eq!(runs.open_session("exe_9"), None, "the admission is gone");
+}
+
+/// A repeat of an applied renewal is accepted with no effect, so its credentials must not replace the installed ones.
+#[test]
+fn a_repeated_renewal_does_not_replace_the_credentials_it_installed() {
+    let runs = runs_with_one();
+    let _ = runs.expire_ticket("sess_1", "exe_1", "tkt_1");
+    assert!(
+        runs.control("sess_1", &replace_with(json!({"apiKey": "k1"})))
+            .accepted
+    );
+    assert!(
+        runs.control("sess_1", &replace_with(json!({"apiKey": "k2"})))
+            .accepted,
+        "the repeat is accepted"
+    );
+    let Poll::Ready(ticket) = runs.poll_ticket("sess_1", "exe_1") else {
+        panic!("the renewed ticket is usable");
+    };
+    assert_eq!(ticket.auth.unwrap().api_key.unwrap().expose(), "k1");
+}
+
+/// Ending a run tells the Host its final state: a deleted session's run sends its last notifications, not silence.
+#[test]
+fn removing_a_session_returns_the_run_s_final_notifications() {
+    let runs = runs_with_one();
+    let notes = runs.remove_session("sess_1");
+    assert!(
+        notes
+            .iter()
+            .any(|note| note["type"] == "completed" && note["outcome"] == "stopped"),
+        "{notes:?}"
+    );
+}

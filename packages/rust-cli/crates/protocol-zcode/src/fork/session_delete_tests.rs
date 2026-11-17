@@ -210,12 +210,46 @@ async fn an_idle_session_is_closed_deleted_and_forgotten() {
             tools_on_demand: false,
         },
     );
+    // Off-peak state of the session: an admitted input, an open run, and its own flag (off, against the policy on).
+    let off_peak = &server.context.off_peak;
+    off_peak.set_policy(true);
+    off_peak.set_session_enabled("s1", false);
+    off_peak
+        .admit(
+            "s1",
+            "cmd_1",
+            crate::off_peak_control::PendingRun {
+                session: "s1".to_owned(),
+                execution_id: "exe_queued".to_owned(),
+                off_peak_task_id: "oft_1".to_owned(),
+                ticket_id: "tkt_1".to_owned(),
+                provider_id: "prov".to_owned(),
+                provider_error_code: "3105".to_owned(),
+            },
+        )
+        .unwrap();
+    off_peak
+        .start("s1", "exe_1", "oft_1", "tkt_1", "prov", "3105")
+        .unwrap();
     let ack = delete(&server, &live, &envelope(), 7).await;
     assert_eq!(ack.status, Status::Accepted);
     assert_eq!(ack.result, None);
     assert_eq!(ack.revision_at_decision, 7);
     assert_eq!(*kernel.deleted.lock().unwrap(), vec!["s1"]);
     assert_eq!(*handle.closes.lock().unwrap(), vec![EndReason::Other]);
+    // The deleted session leaves no off-peak state: its run is gone, its flag falls back to the policy, and its
+    // admitted input never opens a run.
+    assert_eq!(off_peak.open_session("exe_1"), None);
+    assert!(
+        off_peak.tools_enabled("s1"),
+        "the flag is gone: the policy answers"
+    );
+    off_peak.turn_started("s1", "turn_1", Some("cmd_1"));
+    assert_eq!(
+        off_peak.open_session("exe_queued"),
+        None,
+        "the admission is gone"
+    );
     assert!(server.bridge.get(&SessionId::new("s1")).is_none());
     assert!(
         !server

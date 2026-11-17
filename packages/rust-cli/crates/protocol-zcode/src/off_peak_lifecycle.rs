@@ -100,6 +100,7 @@ impl OffPeakLifecycle {
         }
     }
 
+    #[cfg(test)]
     pub fn state(&self) -> State {
         self.phase
     }
@@ -190,8 +191,10 @@ impl OffPeakLifecycle {
         Some(renewal)
     }
 
-    /// Node `replaceTicket`: installs the Host's renewal. A repeat of the applied answer is accepted with no effect.
-    pub fn replace_ticket(&mut self, renewal_id: u64, ticket_id: &str) -> bool {
+    /// Node `replaceTicket`: installs the Host's renewal. A repeat of the applied answer is accepted with no effect. `work`
+    /// is the runtime's current facts (Node `readWork`): the run is judged by them, not by an assumed running turn, so a
+    /// renewal answered after the turn ended completes the run.
+    pub fn replace_ticket(&mut self, renewal_id: u64, ticket_id: &str, work: WorkSnapshot) -> bool {
         if let Some((applied, id)) = &self.applied_renewal
             && *applied == renewal_id
             && id == ticket_id
@@ -211,10 +214,7 @@ impl OffPeakLifecycle {
         if let Some(old) = previous {
             self.release_ticket(old);
         }
-        self.work_changed(WorkSnapshot {
-            main_running: true,
-            ..WorkSnapshot::default()
-        });
+        self.work_changed(work);
         true
     }
 

@@ -520,8 +520,15 @@ impl Inbox {
             let selection = edit.model_selection.clone().or(previous_selection);
             // Fork (slice 3 layer B, Node `prepareOffPeakTurn`): an off-peak run takes its model from the item's selection
             // when the turn starts, so the edited model is the run's model; the run's id and its other limits stay.
+            // An edit that leaves the model unset (a mode-only edit of a run frozen with no model) keeps the run's own
+            // off-peak model, so the turn is not tagged off-peak while it runs on the session's model.
             let limits = match limits.off_peak_execution().map(str::to_owned) {
-                Some(execution) => limits.with_off_peak_run(Some(&execution), selection.clone()),
+                Some(execution) => {
+                    let run_selection = selection
+                        .clone()
+                        .or_else(|| limits.off_peak_selection().cloned());
+                    limits.with_off_peak_run(Some(&execution), run_selection)
+                }
                 None => limits,
             };
             queued.input.execution = Some(InputExecution {

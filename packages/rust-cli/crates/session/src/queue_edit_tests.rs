@@ -600,3 +600,68 @@ async fn an_edited_off_peak_input_runs_on_the_edited_model() {
         "the stale model is not used"
     );
 }
+
+/// Fork (slice 3 layer B): a mode-only edit of an off-peak input whose frozen selection is unset keeps the run's own
+/// model. The turn is tagged off-peak, so it must run on the model the run was admitted with, not the session's.
+#[tokio::test]
+async fn a_mode_only_edit_keeps_the_off_peak_run_on_its_model() {
+    use rust_cli_kernel_api::model::ModelSelection;
+    use rust_cli_kernel_api::permission::PermissionMode;
+    use rust_cli_kernel_api::session_api::{Delivery, InputExecution, QueuedKind};
+    use rust_cli_kernel_api::turn_limits::TurnLimits;
+
+    let scope = TaskScope::root("test", |_| {});
+    let (_store, model, session) = asking_session(&scope).await;
+    let mut events = session.subscribe(Some(0));
+    session.send(submit("c1", "ask me")).await;
+    let interaction = asked(&mut events).await;
+    let run_model = ModelSelection::new("zai", "glm-idle");
+    let queued = session
+        .send(CommandEnvelope {
+            id: CommandId::new("c2"),
+            command: Command::SubmitWith {
+                kind: QueuedKind::Text,
+                text: "tidy".to_owned(),
+                content: Vec::new(),
+                delivery: Delivery::Queue,
+                execution: Some(InputExecution {
+                    state: rust_cli_kernel_api::permission::ExecutionState::from_parts(
+                        PermissionMode::Default,
+                        false,
+                    ),
+                    selection: None,
+                    limits: TurnLimits::new(None, Vec::new())
+                        .with_off_peak_run(Some("exe_1"), Some(run_model.clone())),
+                    keeps_session_state: false,
+                }),
+                behind_held: false,
+                intent: None,
+                lease: None,
+            },
+        })
+        .await;
+    assert!(matches!(queued, Ack::Accepted { .. }), "{queued:?}");
+    let plan_only = CommandEnvelope {
+        id: CommandId::new("c3"),
+        command: Command::EditQueued {
+            command: CommandId::new("c2"),
+            edit: rust_cli_kernel_api::session_api::QueuedEdit {
+                plan_enabled: Some(false),
+                ..Default::default()
+            },
+        },
+    };
+    assert!(matches!(
+        session.send(plan_only).await,
+        Ack::Accepted { .. }
+    ));
+    session.send(answer("c4", interaction)).await;
+    until_finished(&mut events, 2).await;
+    let requests = model.requests();
+    assert!(
+        requests
+            .iter()
+            .any(|request| request.selection == run_model),
+        "the off-peak turn runs on the run's model"
+    );
+}

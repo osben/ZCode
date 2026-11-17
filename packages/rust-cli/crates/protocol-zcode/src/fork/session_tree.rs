@@ -250,6 +250,9 @@ pub(crate) async fn erase_tree(server: &Server, params: &Value) -> Result<Value,
         .kernel
         .sessions_erased(erased.erased_ids.iter().map(SessionId::new).collect())
         .await;
+    // Fork (slice 3): the erased sessions' off-peak runs, flags and admitted inputs go with them.
+    let erased_ids: Vec<&str> = erased.erased_ids.iter().map(String::as_str).collect();
+    crate::off_peak_control::forget_sessions(&server.context, &erased_ids).await;
     // Tell the sessions index each erased root is gone (the store returns the workspace the row
     // carried, read before the delete). Node's erase has no announcement; the Rust sessions
     // index needs one or the row lingers until the next reconcile.
