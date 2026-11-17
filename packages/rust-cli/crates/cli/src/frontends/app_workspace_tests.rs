@@ -1077,3 +1077,18 @@ async fn a_silent_plugin_server_does_not_hold_the_settings_read() {
         "MCP server plugin:toolkit:db connection timed out after 200ms"
     );
 }
+
+/// Red test (E2E: the workspace group keeps the process-start user servers): a settings connect is the re-read of
+/// the user config, so it reloads the workspace's layer and its group runs the current user servers. A status read
+/// never reloads.
+#[tokio::test]
+async fn a_settings_connect_reloads_the_workspace_layer_and_a_status_read_does_not() {
+    let fixture = fixture(
+        json!({}),
+        json!({"mcp": {"servers": {"mine": {"command": "user-tool"}}}}),
+    );
+    list(&fixture, "k", false).await;
+    assert!(fixture.layer.reloaded().is_empty(), "a status read must not reload");
+    list(&fixture, "k", true).await;
+    assert_eq!(fixture.layer.reloaded().len(), 1, "a connect re-reads the layer once");
+}
