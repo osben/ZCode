@@ -52,6 +52,7 @@ fn main_request(model: &str, carded: bool) -> ModelRequest {
         },
     );
     let tool = |name: &str| ToolDefinition {
+        contract: Default::default(),
         name: name.to_owned(),
         description: "d".to_owned(),
         input_schema: json!({"type": "object"}),

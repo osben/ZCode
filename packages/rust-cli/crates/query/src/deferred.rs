@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use rust_cli_kernel_api::message::{ContentBlock, Message, ToolResultContent, tool_reference_text};
-use rust_cli_kernel_api::model::{ToolDefinition, ToolFlags};
+use rust_cli_kernel_api::model::{ToolContract, ToolDefinition, ToolFlags};
 use rust_cli_kernel_api::provider::ModelCapabilities;
 use rust_cli_kernel_api::tool::{PromptContext, Tool};
 use rust_cli_kernel_api::tool_names::TOOL_SEARCH;
@@ -203,7 +203,16 @@ pub(crate) fn wire_tools<'a>(
         if deferred && native {
             flags.insert(tool.name().to_owned(), deferred_flag());
         }
+        // Node's `readOnly` and `destructive` are per tool. The Rust trait answers per input, so the empty input stands for
+        // a call with no arguments (spec step 4, item C: the approximation is recorded there).
+        let no_input = json!({});
+        let contract = ToolContract {
+            read_only: Some(tool.is_read_only(&no_input)),
+            destructive: Some(tool.is_destructive(&no_input)),
+            ..ToolContract::default()
+        };
         definitions.push(ToolDefinition {
+            contract,
             name: tool.name().to_owned(),
             description: tool.description(prompt),
             input_schema: tool.input_schema(),
@@ -216,6 +225,7 @@ pub(crate) fn wire_tools<'a>(
         definitions.insert(
             at,
             ToolDefinition {
+                contract: Default::default(),
                 name: PLACEHOLDER.to_owned(),
                 description: PLACEHOLDER_DESCRIPTION.to_owned(),
                 input_schema: json!({"type": "object", "properties": {}}),

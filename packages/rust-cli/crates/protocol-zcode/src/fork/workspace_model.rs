@@ -683,6 +683,7 @@ fn tools(value: &Value) -> Vec<ToolDefinition> {
         .into_iter()
         .flatten()
         .map(|tool| ToolDefinition {
+            contract: Default::default(),
             name: str_field(tool, "name").trim().to_owned(),
             description: str_field(tool, "description").to_owned(),
             input_schema: tool

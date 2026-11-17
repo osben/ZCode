@@ -46,6 +46,7 @@ fn assistant(id: &str, value: &str) -> Message {
 
 fn tool(name: &str) -> ToolDefinition {
     ToolDefinition {
+        contract: Default::default(),
         name: name.to_owned(),
         description: "does things".to_owned(),
         input_schema: json!({"type": "object"}),
@@ -99,6 +100,7 @@ fn category(breakdown: &Breakdown, id: CategoryId) -> &Category {
 #[test]
 fn a_deferred_tool_is_sized_by_name_and_description_only() {
     let definition = ToolDefinition {
+        contract: Default::default(),
         name: "WebFetch".to_owned(),
         description: "fetch".to_owned(),
         input_schema: json!({"type": "object", "properties": {"url": {"type": "string"}}}),
@@ -355,4 +357,50 @@ fn usage_projection_keeps_the_seven_coarse_sources_in_order() {
             "messages",
         ]
     );
+}
+
+/// Node names a tool result's item `tool`, apart from the turn's `user` item (review finding 10): `messages` has both.
+#[test]
+fn a_tool_result_is_its_own_tool_item_apart_from_the_turn() {
+    use rust_cli_kernel_api::ids::ToolUseId;
+    use rust_cli_kernel_api::message::ToolResultContent;
+    use rust_cli_kernel_api::model::{ApiContent, ApiRole};
+    let content = |block: ContentBlock| ApiContent {
+        block,
+        cache_control: None,
+        meta: false,
+    };
+    let message = human("u1", "thanks");
+    let wire = vec![ApiMessage {
+        role: ApiRole::User,
+        content: vec![
+            content(ContentBlock::ToolResult {
+                tool_use_id: ToolUseId::new("toolu_1"),
+                content: vec![ToolResultContent::Text {
+                    text: "ok".to_owned(),
+                }],
+                is_error: false,
+            }),
+            content(ContentBlock::Text {
+                text: "thanks".to_owned(),
+            }),
+        ],
+        output_config: None,
+    }];
+    let parts = vec![MessagePart {
+        message: &message,
+        wire: &wire,
+    }];
+    let breakdown = classify(&Input {
+        system: &[],
+        messages: &parts,
+        tools: &[],
+    });
+    let mut names: Vec<&str> = category(&breakdown, CategoryId::Messages)
+        .items
+        .iter()
+        .map(|item| item.name.as_str())
+        .collect();
+    names.sort_unstable();
+    assert_eq!(names, vec!["tool", "user"]);
 }

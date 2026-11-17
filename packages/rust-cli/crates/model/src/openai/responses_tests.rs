@@ -16,6 +16,7 @@ fn a_conversation_encodes_in_the_node_order() {
         cache_control: None,
     }];
     request.tools = vec![ToolDefinition {
+        contract: Default::default(),
         name: "Read".to_owned(),
         description: "Read a file".to_owned(),
         input_schema: json!({"type": "object"}),

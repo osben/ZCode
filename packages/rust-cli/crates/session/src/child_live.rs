@@ -120,6 +120,8 @@ impl Actor {
             }
             ChildLive::Committed(message) => self.mirrored_message(message),
             ChildLive::Finished(outcome) => self.finish_mirrored(outcome),
+            // The side tab shows the run's conversation; its request metrics go to telemetry from the child's own feed.
+            ChildLive::ModelRequestCompleted(_) => {}
         }
     }
 

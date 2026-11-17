@@ -83,6 +83,8 @@ pub(crate) struct ChildRuns {
 #[derive(Debug, Default)]
 pub(crate) struct Read {
     pub facts: Vec<Value>,
+    /// The `v4/telemetry/model-request-metrics` notifications of the item (a completed request of the run).
+    pub metrics: Vec<Value>,
     /// The watch closed with a run still being read (the feed fell behind): open a new one.
     pub reopen: bool,
 }
@@ -147,6 +149,25 @@ impl ChildRuns {
                 read.reopen = record.reading.is_some();
                 return read;
             }
+            Some(ChildLive::ModelRequestCompleted(call)) => {
+                // Live only: a replayed request was reported when it completed, and a skipped run is not read.
+                if replayed || watch.skipping {
+                    return read;
+                }
+                let Some(reading) = record.reading.as_ref() else {
+                    return read;
+                };
+                let at = Observed {
+                    scope: &reading.scope,
+                    seq: reading.seq,
+                    now,
+                    provider: &reading.provider,
+                    automation: None,
+                };
+                read.metrics
+                    .push(record.telemetry.model_request_metrics(&call, &at));
+                return read;
+            }
             Some(ChildLive::Started { run, selection }) => {
                 if run <= record.last_run {
                     match &mut record.reading {
@@ -202,7 +223,9 @@ impl ChildRuns {
                             }
                         }
                         ChildLive::Finished(_) => {}
-                        ChildLive::Event(_) | ChildLive::Started { .. } => return read,
+                        ChildLive::Event(_)
+                        | ChildLive::Started { .. }
+                        | ChildLive::ModelRequestCompleted(_) => return read,
                     }
                 }
                 if matches!(item, ChildLive::Committed(_)) {
@@ -217,7 +240,7 @@ impl ChildRuns {
                         outcome,
                         usage: None,
                     },
-                    ChildLive::Started { .. } => return read,
+                    ChildLive::Started { .. } | ChildLive::ModelRequestCompleted(_) => return read,
                 }
             }
         };

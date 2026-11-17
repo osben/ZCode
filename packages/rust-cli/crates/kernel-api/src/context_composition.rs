@@ -3,8 +3,11 @@
 //! after the request is assembled and read by `v4/conversation/contextComposition`.
 //!
 //! One value per session, shared by the writer (query) and the reader (runtime kernel), so both see the same record.
-//! The revision is per process and starts at 0 for each session; it goes up on every change (a request measured, its
-//! provider usage attached, or an invalidation).
+//! The revision is per process and starts at 0 for each session. It goes up once per batch of changes (Node
+//! `tracker.ts` `markChanged`), and a batch is decided by the caller, not by the runtime: a batch is one call of
+//! [`CompositionStore::batch`], and each single-change method is a batch of one. The change is published when its batch
+//! ends, so a subscriber always reads the batch-final state. Nothing is spawned, so the result does not depend on the
+//! runtime flavour or on when a task gets polled.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -84,6 +87,47 @@ pub struct CompositionChange {
 /// notification carries only the session and the consumer re-reads the current revision.
 const CHANGES: usize = 256;
 
+/// The changes of one batch on one session. Every change in it shares one revision bump and one notification, sent when
+/// [`CompositionStore::batch`] returns.
+pub struct Batch<'a> {
+    slots: &'a mut HashMap<SessionId, Slot>,
+    session: &'a SessionId,
+    changed: bool,
+}
+
+impl Batch<'_> {
+    fn slot(&mut self) -> &mut Slot {
+        self.changed = true;
+        self.slots.entry(self.session.clone()).or_default()
+    }
+
+    /// A request was measured: it becomes the session's record.
+    pub fn record(&mut self, record: CompositionRecord) {
+        self.slot().record = Some(record);
+    }
+
+    /// The session's composition changed in a way that makes its record stale (compaction, a model switch, a tool cache
+    /// or context-prefix rebuild). The record is dropped.
+    pub fn invalidate(&mut self) {
+        self.slot().record = None;
+    }
+
+    /// The provider's usage arrived for the session's current record. Returns `false` and changes nothing when there is no
+    /// record (an invalidation dropped it), so a late response never attaches usage to a newer request's record.
+    pub fn set_usage(&mut self, usage: ProviderUsage) -> bool {
+        let Some(record) = self
+            .slots
+            .get_mut(self.session)
+            .and_then(|slot| slot.record.as_mut())
+        else {
+            return false;
+        };
+        record.provider_usage = Some(usage);
+        self.changed = true;
+        true
+    }
+}
+
 /// The per-session composition slots, and the channel that publishes each revision change. Cheap to share behind an `Arc`.
 pub struct CompositionStore {
     slots: Mutex<HashMap<SessionId, Slot>>,
@@ -106,51 +150,57 @@ impl CompositionStore {
         self.changes.subscribe()
     }
 
-    fn publish(&self, session: &SessionId, revision: u64) {
-        // No subscriber is not an error: nothing is waiting for the change.
-        let _ = self.changes.send(CompositionChange {
-            session: session.clone(),
-            revision,
-        });
+    /// Runs `change` as one batch on `session`. If it changed anything, the revision goes up once and the change is
+    /// published once, after every change of the closure. The slots lock is held for the whole batch, so no other
+    /// writer can interleave with it, and the publish happens under the same lock, so subscribers see revisions in order.
+    pub fn batch<R>(&self, session: &SessionId, change: impl FnOnce(&mut Batch<'_>) -> R) -> R {
+        self.run(session, change).0
     }
 
-    // Each change publishes while it holds the slots lock. The revision is bumped and sent in one critical section, so
-    // two writers cannot publish their revisions out of order (the subscriber takes the last one as the current value).
+    /// Runs one batch and returns its result with the session's revision after it.
+    fn run<R>(&self, session: &SessionId, change: impl FnOnce(&mut Batch<'_>) -> R) -> (R, u64) {
+        let mut slots = self.slots.lock_unpoisoned();
+        let (out, changed) = {
+            let mut batch = Batch {
+                slots: &mut slots,
+                session,
+                changed: false,
+            };
+            let out = change(&mut batch);
+            (out, batch.changed)
+        };
+        let revision = if changed {
+            let slot = slots.entry(session.clone()).or_default();
+            slot.revision += 1;
+            // No subscriber is not an error: nothing is waiting for the change.
+            let _ = self.changes.send(CompositionChange {
+                session: session.clone(),
+                revision: slot.revision,
+            });
+            slot.revision
+        } else {
+            slots.get(session).map_or(0, |slot| slot.revision)
+        };
+        (out, revision)
+    }
 
     /// A request was measured: it becomes the session's record and the revision goes up. Returns the new revision.
     pub fn record(&self, session: &SessionId, record: CompositionRecord) -> u64 {
-        let mut slots = self.slots.lock_unpoisoned();
-        let slot = slots.entry(session.clone()).or_default();
-        slot.revision += 1;
-        slot.record = Some(record);
-        let revision = slot.revision;
-        self.publish(session, revision);
-        revision
+        self.run(session, |batch| batch.record(record)).1
     }
 
-    /// The provider's usage arrived for the session's current record. Ignored when there is no record (an invalidation
-    /// dropped it), so a late response never attaches usage to a newer request's record.
+    /// The provider's usage arrived for the session's current record. `None` when there is no record to attach it to.
     pub fn set_usage(&self, session: &SessionId, usage: ProviderUsage) -> Option<u64> {
-        let mut slots = self.slots.lock_unpoisoned();
-        let slot = slots.get_mut(session)?;
-        let record = slot.record.as_mut()?;
-        record.provider_usage = Some(usage);
-        slot.revision += 1;
-        let revision = slot.revision;
-        self.publish(session, revision);
-        Some(revision)
+        let (applied, revision) = self.run(session, |batch| batch.set_usage(usage));
+        applied.then_some(revision)
     }
 
-    /// The session's composition changed in a way that makes its record stale (compaction, a model switch, a tool cache
-    /// or context-prefix rebuild). The record is dropped and the revision goes up. Returns the new revision.
+    /// The session's composition changed in a way that makes its record stale. Returns the new revision.
     pub fn invalidate(&self, session: &SessionId) -> u64 {
-        let mut slots = self.slots.lock_unpoisoned();
-        let slot = slots.entry(session.clone()).or_default();
-        slot.revision += 1;
-        slot.record = None;
-        let revision = slot.revision;
-        self.publish(session, revision);
-        revision
+        self.run(session, |batch| {
+            batch.invalidate();
+        })
+        .1
     }
 
     /// The session closed: its record (the largest part of a slot) is dropped. The revision stays, as Node's tracker keeps

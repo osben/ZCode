@@ -10,6 +10,7 @@ use crate::wire::tests::request;
 
 fn read_tool() -> ToolDefinition {
     ToolDefinition {
+        contract: Default::default(),
         name: "Read".to_owned(),
         description: "Read a file".to_owned(),
         input_schema: json!({"type": "object", "properties": {"file_path": {"type": "string"}}}),

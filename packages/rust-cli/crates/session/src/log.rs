@@ -180,6 +180,7 @@ fn changes_state(event: &KernelEvent) -> bool {
             | KernelEvent::ContextUsage { .. }
             | KernelEvent::ContextNotice { .. }
             | KernelEvent::OutputSpeed { .. }
+            | KernelEvent::ModelRequestCompleted { .. }
             | KernelEvent::ScheduledFire { .. }
             | KernelEvent::SystemNotice { .. }
             | KernelEvent::ModelNotice { .. }
@@ -217,6 +218,8 @@ fn shape(event: &KernelEvent) -> Shape<'_> {
         KernelEvent::ToolProgress { tool_use, progress } => {
             progress_shape(tool_use, &progress.data)
         }
+        // Broadcast only: a replay of the session does not carry the request metrics (Node sends them live).
+        KernelEvent::ModelRequestCompleted { .. } => Shape::LiveOnly,
         _ => Shape::Plain,
     }
 }

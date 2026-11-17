@@ -1,0 +1,187 @@
+{
+  "generator": "packages/rust-cli/tools/composition-fixture/generate.ts",
+  "source": "apps/zcode-cli/packages/core/src/runtime/context-composition/classifier.ts (message loop and toolCategory); helpers/tool-result.ts stringifyForEstimation; context/utils.ts estimateTokens; shared usage-stats.ts divisor",
+  "cases": [
+    {
+      "name": "user_text",
+      "message": {
+        "role": "user",
+        "content": "hello"
+      },
+      "projected": "{\"role\":\"user\",\"content\":\"hello\"}",
+      "chars": 33,
+      "tokens": 11
+    },
+    {
+      "name": "user_two_text_blocks",
+      "message": {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "第一段 abc"
+          },
+          {
+            "type": "text",
+            "text": "second"
+          }
+        ]
+      },
+      "projected": "{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"第一段 abc\"},{\"type\":\"text\",\"text\":\"second\"}]}",
+      "chars": 92,
+      "tokens": 32
+    },
+    {
+      "name": "assistant_text_and_tool_call",
+      "message": {
+        "role": "assistant",
+        "content": "Let me check.",
+        "toolCalls": [
+          {
+            "id": "toolu_1",
+            "name": "Read",
+            "input": {
+              "file_path": "/a/b.ts"
+            }
+          }
+        ]
+      },
+      "projected": "{\"role\":\"assistant\",\"content\":\"Let me check.\",\"toolCalls\":[{\"id\":\"toolu_1\",\"name\":\"Read\",\"input\":{\"file_path\":\"/a/b.ts\"}}]}",
+      "chars": 123,
+      "tokens": 41
+    },
+    {
+      "name": "assistant_tool_calls_only",
+      "message": {
+        "role": "assistant",
+        "content": "",
+        "toolCalls": [
+          {
+            "id": "toolu_2",
+            "name": "Bash",
+            "input": {
+              "command": "ls -la"
+            }
+          },
+          {
+            "id": "toolu_3",
+            "name": "Grep",
+            "input": {
+              "pattern": "a\"b",
+              "path": "x"
+            }
+          }
+        ]
+      },
+      "projected": "{\"role\":\"assistant\",\"content\":\"\",\"toolCalls\":[{\"id\":\"toolu_2\",\"name\":\"Bash\",\"input\":{\"command\":\"ls -la\"}},{\"id\":\"toolu_3\",\"name\":\"Grep\",\"input\":{\"pattern\":\"a\\\"b\",\"path\":\"x\"}}]}",
+      "chars": 176,
+      "tokens": 59
+    },
+    {
+      "name": "tool_result_text",
+      "message": {
+        "role": "tool",
+        "content": "file body 中文 text\nline two",
+        "toolCallId": "toolu_1",
+        "toolName": "Read",
+        "isError": false
+      },
+      "projected": "{\"role\":\"tool\",\"content\":\"file body 中文 text\\nline two\",\"toolCallId\":\"toolu_1\",\"toolName\":\"Read\"}",
+      "chars": 96,
+      "tokens": 33
+    },
+    {
+      "name": "tool_result_error",
+      "message": {
+        "role": "tool",
+        "content": "Exit code 1",
+        "toolCallId": "toolu_2",
+        "toolName": "Bash",
+        "isError": true
+      },
+      "projected": "{\"role\":\"tool\",\"content\":\"Exit code 1\",\"toolCallId\":\"toolu_2\",\"toolName\":\"Bash\"}",
+      "chars": 80,
+      "tokens": 27
+    },
+    {
+      "name": "system_text",
+      "message": {
+        "role": "system",
+        "content": "You are a helpful agent."
+      },
+      "projected": "{\"role\":\"system\",\"content\":\"You are a helpful agent.\"}",
+      "chars": 54,
+      "tokens": 18
+    },
+    {
+      "name": "escapes_and_non_bmp",
+      "message": {
+        "role": "user",
+        "content": "a\"b\\c\nd\u0001 😀 中"
+      },
+      "projected": "{\"role\":\"user\",\"content\":\"a\\\"b\\\\c\\nd\\u0001 😀 中\"}",
+      "chars": 49,
+      "tokens": 17
+    }
+  ],
+  "tools": [
+    {
+      "name": "read_tool_full_contract",
+      "deferred": false,
+      "tool": {
+        "name": "Read",
+        "description": "Read a file",
+        "capability": "file_read",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "file_path": {
+              "type": "string"
+            }
+          }
+        },
+        "readOnly": true,
+        "destructive": false,
+        "sideEffectScope": "none"
+      },
+      "projected": "{\"name\":\"Read\",\"description\":\"Read a file\",\"capability\":\"file_read\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"file_path\":{\"type\":\"string\"}}},\"readOnly\":true,\"destructive\":false,\"sideEffectScope\":\"none\"}",
+      "chars": 206,
+      "tokens": 69
+    },
+    {
+      "name": "bash_tool_no_contract_flags",
+      "deferred": false,
+      "tool": {
+        "name": "Bash",
+        "description": "Run a shell command",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "command": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "projected": "{\"name\":\"Bash\",\"description\":\"Run a shell command\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"command\":{\"type\":\"string\"}}}}",
+      "chars": 126,
+      "tokens": 42
+    },
+    {
+      "name": "deferred_mcp_tool",
+      "deferred": true,
+      "tool": {
+        "name": "mcp__github__search",
+        "description": "Search repositories",
+        "capability": "network",
+        "inputSchema": {
+          "type": "object"
+        },
+        "readOnly": true
+      },
+      "projected": "{\"name\":\"mcp__github__search\",\"description\":\"Search repositories\"}",
+      "chars": 66,
+      "tokens": 22
+    }
+  ]
+}

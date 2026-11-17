@@ -860,3 +860,40 @@ async fn a_session_with_title_generation_disabled_keeps_its_first_input_title() 
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     assert!(title_model.requests().is_empty());
 }
+
+/// Fork (parity step 4, item D, review finding 0): a completed session-title request is announced like the other completed
+/// model requests, with Node's query source `session_title`, and the announcement matches its stored usage row.
+#[tokio::test]
+async fn the_title_request_is_announced_as_a_completed_request() {
+    let main = Arc::new(ScriptedModel::new(vec![text_response(&["Sure."])]));
+    let title_model = Arc::new(ScriptedModel::new(vec![text_response(&[
+        "{\"title\":\"Hook trust digest\"}",
+    ])]));
+    let mut setup = Setup::new(main);
+    setup.titles = titles(title_model);
+    let built = setup.build().await;
+    let mut events = built.session.subscribe(None);
+    built
+        .session
+        .send(submit("c1", "Explain the hook trust digest"))
+        .await;
+    let seen = until(&mut events, |event| titled(event, "Hook trust digest")).await;
+    let announced: Vec<ModelCall> = seen
+        .iter()
+        .filter_map(|event| match event {
+            KernelEvent::ModelRequestCompleted { call }
+                if call.source.node_name() == "session_title" =>
+            {
+                Some((**call).clone())
+            }
+            _ => None,
+        })
+        .collect();
+    let stored = title_calls(&built.store.facts(&SessionId::new("sess_1")));
+    assert_eq!(stored.len(), 1, "one title usage row");
+    let [call] = announced
+        .try_into()
+        .expect("one announcement for the title request");
+    assert_eq!(call.status, CallStatus::Completed);
+    assert_eq!(call.message, stored[0].message);
+}

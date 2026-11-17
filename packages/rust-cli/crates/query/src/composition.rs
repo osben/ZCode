@@ -14,10 +14,12 @@ use rust_cli_kernel_api::context_composition::{
     CompositionRecord, ProviderUsage, WireCategory, WireItem,
 };
 use rust_cli_kernel_api::ids::MessageId;
-use rust_cli_kernel_api::message::{Message, SystemMessage, UserOrigin};
-use rust_cli_kernel_api::model::{ApiMessage, SystemBlock, ToolDefinition, ToolFlags};
-use serde_json::{Value, json};
-use std::collections::BTreeMap;
+use rust_cli_kernel_api::message::{
+    ContentBlock, Message, SystemMessage, ToolResultContent, UserOrigin,
+};
+use rust_cli_kernel_api::model::{ApiMessage, ApiRole, SystemBlock, ToolDefinition, ToolFlags};
+use serde_json::{Map, Value, json};
+use std::collections::{BTreeMap, HashMap};
 
 /// Node `CONTEXT_COMPOSITION_MAX_ITEMS`.
 pub const MAX_ITEMS: usize = 50;
@@ -272,39 +274,134 @@ pub fn classify(input: &Input<'_>) -> Breakdown {
             _ => None,
         })
         .collect();
+    let names = tool_names(input.messages);
     for part in input.messages {
         let (id, name) = if summaries.contains(&part.message.id()) {
             (CategoryId::CompactSummary, "compact_summary".to_owned())
         } else {
             message_category(part.message)
         };
-        let content: String = part
-            .wire
-            .iter()
-            .map(|wire| stringify(&serde_json::to_value(wire).unwrap_or(Value::Null)))
-            .collect();
-        builder.add(id, &name, &content);
+        // Node sizes each of its messages on its own (its tokens are ceil'd per message), so each projected message is
+        // added separately.
+        for value in project(part.wire, &names) {
+            // Node's tool result is its own `tool` item of the messages category (its `role`), apart from the turn's
+            // `user` or `assistant` item. Other sources keep their own name.
+            let item = if matches!(id, CategoryId::Messages) && value["role"] == "tool" {
+                "tool"
+            } else {
+                name.as_str()
+            };
+            builder.add(id, item, &stringify(&value));
+        }
     }
     for part in input.tools {
         let tool = part.definition;
-        let (id, content) = if part.deferred {
-            (
-                CategoryId::DeferredToolSchemas,
-                stringify(&json!({"name": tool.name, "description": tool.description})),
-            )
+        let id = if part.deferred {
+            CategoryId::DeferredToolSchemas
         } else {
-            (
-                tool_category(&tool.name),
-                stringify(&json!({
-                    "name": tool.name,
-                    "description": tool.description,
-                    "inputSchema": tool.input_schema,
-                })),
-            )
+            tool_category(&tool.name)
         };
-        builder.add(id, &tool.name, &content);
+        builder.add(id, &tool.name, &tool_content(tool, part.deferred));
     }
     builder.finish()
+}
+
+/// The name of every tool call in the request, by its id. A tool result takes its `toolName` from here, as Node's
+/// tool message carries the name of the call it answers.
+fn tool_names<'a>(messages: &[MessagePart<'a>]) -> HashMap<&'a str, &'a str> {
+    let mut names = HashMap::new();
+    for part in messages {
+        for wire in part.wire {
+            for content in &wire.content {
+                if let ContentBlock::ToolUse { id, name, .. } = &content.block {
+                    names.insert(id.as_str(), name.as_str());
+                }
+            }
+        }
+    }
+    names
+}
+
+/// Node's `ModelInputMessage`s for one request message, in the shape the classifier sizes: `{role, content, toolCalls,
+/// toolCallId, toolName}` with keys in that order and absent when unset (`JSON.stringify` drops `undefined`).
+///
+/// - A tool result is a message of its own, role `tool`, with `toolCallId` and the call's `toolName`. It comes before
+///   the turn's own message, as Node orders a turn's tool results ahead of its text.
+/// - The turn's own message carries its text and its tool calls (`{id, name, input}`). With no text its `content` is `""`.
+/// - `content` is a string when there is at most one text block, otherwise an array of `{type, ...}` blocks.
+fn project(wire: &[ApiMessage], names: &HashMap<&str, &str>) -> Vec<Value> {
+    let mut out = Vec::new();
+    for message in wire {
+        let role = match message.role {
+            ApiRole::User => "user",
+            ApiRole::Assistant => "assistant",
+            ApiRole::System => "system",
+        };
+        let mut parts: Vec<Value> = Vec::new();
+        let mut results_count = 0usize;
+        let mut tool_calls: Vec<Value> = Vec::new();
+        let mut results: Vec<Value> = Vec::new();
+        for content in &message.content {
+            match &content.block {
+                ContentBlock::Text { text } => {
+                    parts.push(json!({"type": "text", "text": text}));
+                }
+                ContentBlock::ToolUse { id, name, input } => {
+                    tool_calls.push(json!({"id": id.as_str(), "name": name, "input": input}));
+                }
+                ContentBlock::ToolResult {
+                    tool_use_id,
+                    content,
+                    ..
+                } => {
+                    results_count += 1;
+                    let body: Vec<Value> = content.iter().map(tool_result_part).collect();
+                    let mut result = Map::new();
+                    result.insert("role".into(), json!("tool"));
+                    result.insert("content".into(), content_value(body));
+                    result.insert("toolCallId".into(), json!(tool_use_id.as_str()));
+                    if let Some(name) = names.get(tool_use_id.as_str()) {
+                        result.insert("toolName".into(), json!(name));
+                    }
+                    results.push(Value::Object(result));
+                }
+                other => {
+                    // Blocks other than text, tool calls and results are sized by their wire JSON.
+                    parts.push(serde_json::to_value(other).unwrap_or(Value::Null));
+                }
+            }
+        }
+        // A message whose content is only tool results has no message of its own.
+        let has_own = !parts.is_empty() || !tool_calls.is_empty() || results_count == 0;
+        out.extend(results);
+        if has_own {
+            let mut own = Map::new();
+            own.insert("role".into(), json!(role));
+            own.insert("content".into(), content_value(parts));
+            if !tool_calls.is_empty() {
+                own.insert("toolCalls".into(), Value::Array(tool_calls));
+            }
+            out.push(Value::Object(own));
+        }
+    }
+    out
+}
+
+/// One tool result's content block as Node's text part (or the block's own JSON for non-text blocks).
+fn tool_result_part(content: &ToolResultContent) -> Value {
+    match content {
+        ToolResultContent::Text { text } => json!({"type": "text", "text": text}),
+        other => serde_json::to_value(other).unwrap_or(Value::Null),
+    }
+}
+
+/// `content` of a projected message: `""` for none, the text itself for one text block, otherwise the blocks.
+fn content_value(parts: Vec<Value>) -> Value {
+    match parts.as_slice() {
+        [] => json!(""),
+        [single] if single["type"] == "text" => single["text"].clone(),
+        _ => Value::Array(parts),
+    }
 }
 
 fn message_category(message: &Message) -> (CategoryId, String) {
@@ -339,6 +436,49 @@ fn source_category(source: &str) -> (CategoryId, String) {
         CategoryId::Messages
     };
     (id, source.to_owned())
+}
+
+/// The sized JSON of one tool (Node `toolCategory`). A deferred tool is its name and description only. A tool sent in
+/// full carries the ten contract fields in Node's order; a field the tool does not set is an absent key, as Node's
+/// `undefined` is.
+fn tool_content(tool: &ToolDefinition, deferred: bool) -> String {
+    let mut object = Map::new();
+    object.insert("name".into(), json!(tool.name));
+    object.insert("description".into(), json!(tool.description));
+    if !deferred {
+        let contract = &tool.contract;
+        insert_if_set(
+            &mut object,
+            "capability",
+            contract.capability.as_deref().map(|v| json!(v)),
+        );
+        object.insert("inputSchema".into(), tool.input_schema.clone());
+        insert_if_set(&mut object, "outputSchema", contract.output_schema.clone());
+        insert_if_set(
+            &mut object,
+            "readOnly",
+            contract.read_only.map(|v| json!(v)),
+        );
+        insert_if_set(
+            &mut object,
+            "destructive",
+            contract.destructive.map(|v| json!(v)),
+        );
+        insert_if_set(
+            &mut object,
+            "sideEffectScope",
+            contract.side_effect_scope.as_deref().map(|v| json!(v)),
+        );
+        insert_if_set(&mut object, "permission", contract.permission.clone());
+        insert_if_set(&mut object, "resultBudget", contract.result_budget.clone());
+    }
+    stringify(&Value::Object(object))
+}
+
+fn insert_if_set(object: &mut Map<String, Value>, key: &str, value: Option<Value>) {
+    if let Some(value) = value {
+        object.insert(key.to_owned(), value);
+    }
 }
 
 fn tool_category(name: &str) -> CategoryId {
@@ -503,3 +643,11 @@ pub fn record(
 #[cfg(test)]
 #[path = "composition_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "composition_projection_tests.rs"]
+mod projection_tests;
+
+#[cfg(test)]
+#[path = "composition_tool_tests.rs"]
+mod tool_tests;

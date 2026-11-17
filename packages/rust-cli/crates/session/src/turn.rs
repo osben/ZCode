@@ -36,6 +36,18 @@ pub(crate) fn output_speed(call: &ModelCall) -> Option<OutputSpeed> {
         .flatten()
 }
 
+impl Actor {
+    /// Fork (parity step 4, item D): a completed model request is announced live once its usage row is stored (Node
+    /// `model_request_completed`). Failed and cancelled requests are not announced.
+    pub(crate) fn announce_completed(&self, call: ModelCall) {
+        if call.status == CallStatus::Completed {
+            self.log.append(KernelEvent::ModelRequestCompleted {
+                call: Box::new(call),
+            });
+        }
+    }
+}
+
 /// 成批进同一个回合的一条后续输入（修复线 L-A，query.md §4.3）。
 #[derive(Debug)]
 pub(crate) struct MorePrompt {
@@ -337,11 +349,21 @@ impl Actor {
                 };
                 // 没有消息的计量（没有内容的失败请求、丢弃的响应）单独一批。
                 let messages = message.into_iter().collect();
+                // Only a call that will be announced is carried past the commit (`announce_completed` drops the others).
+                let completed = match metered.as_ref() {
+                    Metered::Model(call) if call.status == CallStatus::Completed => {
+                        Some(call.clone())
+                    }
+                    _ => None,
+                };
                 let result = self.record(messages, vec![Fact::from(*metered)]).await;
                 // 先落库，再记下并发出（只在内存，F105）。
                 if let (Ok(()), Some(speed)) = (&result, speed) {
                     self.output_speed = Some(speed);
                     self.log.append(KernelEvent::OutputSpeed { speed });
+                }
+                if let (Ok(()), Some(call)) = (&result, completed) {
+                    self.announce_completed(call);
                 }
                 let _ = reply.send(result);
             }

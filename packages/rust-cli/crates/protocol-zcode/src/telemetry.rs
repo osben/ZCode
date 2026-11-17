@@ -10,13 +10,18 @@ use std::collections::{HashMap, HashSet};
 
 use rust_cli_kernel_api::hooks::queued_command;
 use rust_cli_kernel_api::message::{ContentBlock, Message, ToolResultContent, UserOrigin};
-use rust_cli_kernel_api::model::BlockDelta;
+use rust_cli_kernel_api::metering::ModelCall;
+use rust_cli_kernel_api::model::{BlockDelta, QuerySource};
 use rust_cli_kernel_api::session_api::{KernelEvent, TurnOutcome};
 use rust_cli_kernel_api::tool_names;
 use serde_json::{Map, Value, json};
 
 /// The notification method (Node `V4_NOTIFICATIONS.conversationTelemetryFact`).
 pub const FACT: &str = "v4/telemetry/event";
+
+/// The notification method of one completed model request (Node `V4_NOTIFICATIONS.modelRequestMetrics`). Its own
+/// method, not a `FACT`: the App ignores it when it does not know it.
+pub const METRICS: &str = "v4/telemetry/model-request-metrics";
 
 /// Whose facts these are: the open session itself, or a subagent child read through the parent's feed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -441,6 +446,50 @@ impl Telemetry {
         out.push(Value::Object(fact));
     }
 
+    /// The `v4/telemetry/model-request-metrics` notification of one completed model request (Node
+    /// `normalizeModelRequestMetrics`). The Host's schema is strict, so only these fields go out, and a value the
+    /// request did not have is left out rather than zeroed. Input is the total input including the cache, as Node's.
+    pub fn model_request_metrics(&mut self, call: &ModelCall, at: &Observed<'_>) -> Value {
+        let mut fact = self.base("model.request.metrics", at);
+        fact.insert("requestId".into(), json!(call.message.as_str()));
+        fact.insert("providerId".into(), json!(call.selection.provider));
+        fact.insert("modelId".into(), json!(call.selection.model));
+        fact.insert("querySource".into(), json!(call.source.node_name()));
+        let main_turn = call.source == QuerySource::MainThread && self.role == Role::Main;
+        if let Some(command) = self.turn.as_ref().map(|turn| turn.command.clone())
+            && main_turn
+        {
+            fact.insert("queryId".into(), json!(command));
+        }
+        fact.insert(
+            "durationMs".into(),
+            json!(call.completed_at_ms.saturating_sub(call.started_at_ms)),
+        );
+        if let Some(first) = call.first_content_at_ms {
+            fact.insert(
+                "timeToFirstContentMs".into(),
+                json!(first.saturating_sub(call.started_at_ms)),
+            );
+        }
+        if let Some(usage) = &call.usage {
+            let input = usage
+                .input_tokens
+                .saturating_add(usage.cache_creation_input_tokens)
+                .saturating_add(usage.cache_read_input_tokens);
+            fact.insert("inputTokens".into(), json!(input));
+            fact.insert("outputTokens".into(), json!(usage.output_tokens));
+            fact.insert(
+                "cacheReadTokens".into(),
+                json!(usage.cache_read_input_tokens),
+            );
+            fact.insert(
+                "cacheWriteTokens".into(),
+                json!(usage.cache_creation_input_tokens),
+            );
+        }
+        Value::Object(fact)
+    }
+
     fn request_started(&mut self, response: u32, at: &Observed<'_>, out: &mut Vec<Value>) {
         let Some(turn) = &mut self.turn else {
             return;
@@ -688,3 +737,7 @@ pub fn uuid_v7(now_ms: u64) -> String {
 #[cfg(test)]
 #[path = "telemetry_tests.rs"]
 pub(crate) mod tests;
+
+#[cfg(test)]
+#[path = "telemetry_metrics_tests.rs"]
+mod metrics_tests;

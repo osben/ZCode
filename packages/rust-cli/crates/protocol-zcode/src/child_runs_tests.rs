@@ -407,3 +407,45 @@ fn after_the_open_a_settled_first_sight_reads_the_kept_run() {
     let plan = parent.table(&[entry("agent_1", SubagentStatus::Completed)]);
     assert_eq!(plan.open, [(CHILD.to_owned(), false)]);
 }
+
+/// Fork (parity step 4, review finding 7): a subagent's completed request is a `model_request_completed` of the child
+/// session in Node, so it is reported as `v4/telemetry/model-request-metrics` with query source `subagent`. It is live
+/// only: a replayed copy of it is not reported again.
+#[test]
+fn a_child_completed_request_is_reported_live_and_not_on_replay() {
+    use rust_cli_kernel_api::metering::{CallStatus, ModelCall};
+    use rust_cli_kernel_api::model::QuerySource;
+    let mut parent = Parent::new();
+    let id = parent.runs.open(CHILD).expect("watch");
+    parent.feed(CHILD, id, vec![], vec![Some(started(1)), Some(delta("hi"))]);
+    let call = ModelCall::new(
+        MessageId::new("msg_child_1"),
+        QuerySource::Subagent("agent_1".to_owned()),
+        selection("child-model"),
+        100,
+        200,
+        CallStatus::Completed,
+    );
+    let live = parent.runs.item(
+        CHILD,
+        id,
+        false,
+        Some(ChildLive::ModelRequestCompleted(Box::new(call.clone()))),
+        1_500,
+        &resolve,
+    );
+    assert_eq!(live.metrics.len(), 1);
+    assert_eq!(live.metrics[0]["querySource"], "subagent");
+    assert_eq!(live.metrics[0]["requestId"], "msg_child_1");
+    assert_eq!(live.metrics[0]["modelId"], "child-model");
+    assert!(live.metrics[0].get("queryId").is_none());
+    let replayed = parent.runs.item(
+        CHILD,
+        id,
+        true,
+        Some(ChildLive::ModelRequestCompleted(Box::new(call))),
+        1_501,
+        &resolve,
+    );
+    assert!(replayed.metrics.is_empty());
+}
