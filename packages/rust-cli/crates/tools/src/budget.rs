@@ -44,12 +44,16 @@ pub enum Limit {
     Chars(usize),
     /// Fork: `result_budget_bytes`, a Node byte budget: UTF-8 bytes, no cap, Node's generic envelope.
     Bytes(usize),
+    /// Fork: `result_budget_truncate_bytes`, a Node byte budget with the truncate strategy: an oversized result is
+    /// head-cut to the budget with Node's suffix and nothing is persisted.
+    Truncate(usize),
 }
 
 impl Limit {
     pub fn of(tool: &dyn rust_cli_kernel_api::tool::Tool) -> Option<Self> {
-        tool.result_budget_bytes()
-            .map(Self::Bytes)
+        tool.result_budget_truncate_bytes()
+            .map(Self::Truncate)
+            .or_else(|| tool.result_budget_bytes().map(Self::Bytes))
             .or_else(|| tool.max_result_size_chars().map(Self::Chars))
     }
 }
@@ -80,10 +84,21 @@ pub async fn apply(
         Limit::Chars(limit) => {
             parts.iter().map(|part| utf16_len(part)).sum::<usize>() <= limit.min(DEFAULT_MAX_CHARS)
         }
-        Limit::Bytes(limit) => parts.iter().map(|part| part.len()).sum::<usize>() <= limit,
+        Limit::Bytes(limit) | Limit::Truncate(limit) => {
+            parts.iter().map(|part| part.len()).sum::<usize>() <= limit
+        }
     };
     if within {
         return output;
+    }
+    // Node `serializeToolResult` with strategy truncate: the cut is kept inline, nothing is persisted.
+    if let Limit::Truncate(limit) = declared {
+        return ToolOutput {
+            content: vec![ToolResultContent::Text {
+                text: truncate_to_budget(&parts, limit, "truncate"),
+            }],
+            ..output
+        };
     }
     // 单段文本存原文；多段存 JSON（`JSON.stringify(blocks, null, 2)` 的写法）。
     let (body, media_type) = match parts.as_slice() {
@@ -102,13 +117,15 @@ pub async fn apply(
         Limit::Bytes(_) => {
             persisted_output::persist_generic(artifacts, session, &body, media_type).await
         }
+        // Returned above: a truncate budget never persists.
+        Limit::Truncate(_) => return output,
     };
     let text = match (persisted, declared) {
         (Ok(text), _) => text,
         // Node `serializeToolResult`: a byte budget that cannot persist falls back to its head truncation.
-        (Err(_), Limit::Bytes(limit)) => truncate_to_budget(&parts, limit),
+        (Err(_), Limit::Bytes(limit)) => truncate_to_budget(&parts, limit, "artifact"),
         // 存不下时原样返回。
-        (Err(_), Limit::Chars(_)) => return output,
+        (Err(_), Limit::Chars(_) | Limit::Truncate(_)) => return output,
     };
     ToolOutput {
         content: vec![ToolResultContent::Text { text }],
@@ -117,8 +134,9 @@ pub async fn apply(
 }
 
 /// Node `fitContentWithSuffix(content, maxModelBytes, suffix, "head")` over `modelMessageContentToText` (the non-empty
-/// text blocks joined by a blank line), with the `resultBudget` suffix of the artifact strategy.
-fn truncate_to_budget(parts: &[&str], limit: usize) -> String {
+/// text blocks joined by a blank line), with the `resultBudget` suffix of `strategy` (`artifact` when the persist failed,
+/// `truncate` for a truncate budget; neither carries an artifactPath).
+fn truncate_to_budget(parts: &[&str], limit: usize, strategy: &str) -> String {
     let content = parts
         .iter()
         .filter(|part| !part.is_empty())
@@ -126,7 +144,7 @@ fn truncate_to_budget(parts: &[&str], limit: usize) -> String {
         .collect::<Vec<_>>()
         .join("\n\n");
     let suffix = format!(
-        "\n\n[Tool output truncated by resultBudget: originalBytes={}, maxModelBytes={limit}, strategy=artifact]",
+        "\n\n[Tool output truncated by resultBudget: originalBytes={}, maxModelBytes={limit}, strategy={strategy}]",
         content.len()
     );
     if limit == 0 {
