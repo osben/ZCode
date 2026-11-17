@@ -194,3 +194,17 @@ fn parses_skills_as_a_comma_list_or_a_yaml_list() {
     assert_eq!(parse(list, AgentSource::User).unwrap().skills, expected);
     assert_eq!(parse(absent, AgentSource::User).unwrap().skills, None);
 }
+
+// Fork (rule 18): `memory` in an agent file names the scope; any other value is no scope.
+#[test]
+fn parses_the_memory_scope() {
+    let scoped = "---\nname: notes\ndescription: Keeps notes.\nmemory: project\n---\nBody.\n";
+    let unknown = "---\nname: notes\ndescription: Keeps notes.\nmemory: global\n---\nBody.\n";
+    let absent = "---\nname: notes\ndescription: Keeps notes.\n---\nBody.\n";
+    assert_eq!(
+        parse(scoped, AgentSource::User).unwrap().memory,
+        Some(rust_cli_kernel_api::subagent_config::AgentMemoryScope::Project)
+    );
+    assert_eq!(parse(unknown, AgentSource::User).unwrap().memory, None);
+    assert_eq!(parse(absent, AgentSource::User).unwrap().memory, None);
+}

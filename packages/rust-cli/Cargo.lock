@@ -1941,6 +1941,7 @@ dependencies = [
  "futures-util",
  "rust-cli-base",
  "rust-cli-kernel-api",
+ "rust-cli-memory",
  "rust-cli-prompts",
  "serde",
  "serde_json",

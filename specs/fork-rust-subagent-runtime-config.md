@@ -190,7 +190,9 @@ These three fields come from an agent file's frontmatter (user and project scope
 - Root (Node `resolvePersistentAgentMemoryRoot`): `user` is `<storageRoot>/agent-memory/<key>`; `project` is `<workspace>/.zcode/agent-memory/<key>`; `local` is `<workspace>/.zcode/agent-memory-local/<key>`. `<key>` is the agent type with every character outside `[a-zA-Z0-9_-]` replaced by `-` (empty becomes `unknown`).
 - The root directory is created before the child's first request. The prompt is the agent's system prompt followed by the persistent-memory prompt, which embeds the `MEMORY.md` index (empty when missing). The prompt text is ported verbatim from `persistent-memory-prompt.ts`.
 - Tools: when enabled, `Write` and `Edit` are added to a child whose `tools` allowlist is present (Node `withPersistentAgentMemoryTools`); a child without an allowlist already has them.
-- Owner: the agents crate builds the child prompt; the memory root comes from the runtime's memory config (storage root and enabled flag), passed in through the agents ports.
+- Owner: the agents crate builds the child prompt (`agents/src/persistent_memory.rs`, verbatim Node text). The storage root is `AgentsConfig::agent_memory_root`; the runtime passes None for now, so the memory scope is inert in the shipped runtime until the Host supplies Node's `memory.storageRoot`. Not ported: Node's `enabled` and `use` flags (the runtime has no such setting in Rust yet).
+- The memory root is created and its index read through `rust-cli-fs` (the local storage IO rule); an index that cannot be read counts as empty.
+- The index goes through `rust-cli-memory`'s index formatter (the Node `formatMemoryIndexContent` port).
 
 ### Tests and verification
 

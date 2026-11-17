@@ -750,6 +750,7 @@ fn built_full(
             hidden,
         }),
         AgentsConfig {
+            agent_memory_root: None,
             task_tools: crate::TaskTools::On,
             keep_alive,
             // 交互模式（停放）时后台子代理也能询问（agents.md §4.1.1）；测试的交互替身不给会话级入口。

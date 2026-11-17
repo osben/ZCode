@@ -53,6 +53,18 @@ pub enum AgentMemoryScope {
     Local,
 }
 
+impl AgentMemoryScope {
+    /// The frontmatter and Host value (`user`, `project` or `local`); any other value is no scope.
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "user" => Some(Self::User),
+            "project" => Some(Self::Project),
+            "local" => Some(Self::Local),
+            _ => None,
+        }
+    }
+}
+
 /// The Host's answer. One value per root session, read at most once per root turn, so the unboxed `Ready` is not worth
 /// boxing (clippy `large_enum_variant`).
 #[allow(clippy::large_enum_variant)]

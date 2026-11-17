@@ -422,6 +422,7 @@ pub(crate) fn agents(
         },
         parts.tools.clone(),
         AgentsConfig {
+            agent_memory_root: None,
             task_tools: match defaults.task_tools {
                 Some(true) => TaskTools::On,
                 Some(false) => TaskTools::Off,
