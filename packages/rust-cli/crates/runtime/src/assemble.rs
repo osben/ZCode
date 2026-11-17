@@ -385,6 +385,8 @@ pub(crate) fn query_parts(
             hook_rows: node_desktop,
             ..defaults.limits.request
         },
+        // Replaced by the main loop's store where the parts are bound (runtime lib.rs); child loops keep this one.
+        compositions: Default::default(),
     }
 }
 

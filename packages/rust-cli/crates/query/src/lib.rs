@@ -12,6 +12,8 @@
 
 mod assembler;
 mod compaction;
+// Classifier for `v4/conversation/contextComposition`; its consumer (the protocol handler) follows in the next PR.
+pub mod composition;
 mod defaults;
 mod deferred;
 mod executor;
@@ -98,6 +100,8 @@ pub struct QueryParts {
     pub non_interactive: bool,
     /// 入口按环境变量给的输出上限与 thinking 开关（query.md §1.5，修复线 F42）。
     pub limits: RequestLimits,
+    /// 每个会话最近一次请求的组成（`v4/conversation/contextComposition`）：主循环在组好请求后写，runtime 读。
+    pub compositions: Arc<rust_cli_kernel_api::context_composition::CompositionStore>,
 }
 
 /// 一次运行内不变的上下文。

@@ -863,6 +863,28 @@ pub trait Kernel: Send + Sync {
         })
     }
 
+    /// `v4/conversation/contextComposition` (spec "Rust port"): the composition of the session's next request for
+    /// `selection` (the session's model when `None`). `Ok(None)` for a session that is not in memory: this never opens or
+    /// restores one. Read-only.
+    async fn context_composition(
+        &self,
+        _session: &SessionId,
+        _selection: Option<ModelSelection>,
+    ) -> Result<Option<crate::context_composition::CompositionAnswer>, KernelError> {
+        Err(KernelError::Unsupported {
+            what: "context composition".to_owned(),
+        })
+    }
+
+    /// The composition change stream behind `v4/conversation/contextCompositionChanged`: every later revision change.
+    /// `None` when the kernel publishes no changes (test doubles, `-p`).
+    fn context_composition_changes(
+        &self,
+    ) -> Option<tokio::sync::broadcast::Receiver<crate::context_composition::CompositionChange>>
+    {
+        None
+    }
+
     /// `@` 补全的文件清单（docs/specs/rust-cli/tui-input.md §1.2）：相对 shell 当前目录的文件路径。
     async fn workspace_files(
         &self,

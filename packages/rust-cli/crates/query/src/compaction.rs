@@ -65,6 +65,8 @@ async fn commit(
     history: &mut Vec<Message>,
     result: CompactResult,
 ) -> Result<(), QueryError> {
+    // Node: a compaction makes the next request different, so the last measured request is no longer its composition.
+    scope.parts.compositions.invalidate(&scope.session);
     let CompactResult {
         boundary,
         summary,

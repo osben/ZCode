@@ -68,6 +68,7 @@ pub mod catalog;
 pub mod checkpoint;
 pub mod clock;
 pub mod compaction;
+pub mod context_composition;
 pub mod context_usage;
 pub mod controller_services;
 pub mod conversation_quote;
