@@ -658,12 +658,6 @@ impl WorkspaceAdmin for AppWorkspace {
         servers: Option<&[Value]>,
         connect: bool,
     ) -> Result<Value, String> {
-        // A connect re-reads the user config (Node's connect revalidates the app's servers), so the workspace's
-        // layer re-reads it too: a group loaded before a user config change would keep the old user servers, and
-        // its sessions would lose tools the settings page now shows. A status read never reloads.
-        if connect {
-            self.reload_layer(target).await;
-        }
         let arrival = connect.then(|| self.arrival());
         self.list(target, servers, arrival).await
     }
