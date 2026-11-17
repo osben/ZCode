@@ -504,9 +504,17 @@ canonical `issuer`); on a miss it discovers and saves the record, as Node `resol
   54.268 (pid 9160), 54.271 (9161 while 9160 alive), 54.350 (9191 while 9160 alive); the displaced child closed at
   54.336. A pid read mid-burst is therefore not the live child. Fixed in the test: the pid is taken only after no new
   `started` for 500 ms.
-- Follower baseline. `McpOAuthCoordinator::start` reads the follower baseline before it registers the flow, and it
-  registers the flow only after that read. A registered flow is therefore the observable point where a publish is
-  seen as a change. `McpManager::oauth_flow_running` exposes it, and the follower test waits for it. No sleep.
+- Follower race (fixed). The lead releases the authorization lease after it publishes. A follower whose baseline
+  predates the publish could take that free lease and start its own transaction. Its callback never reaches its
+  listener, so it never reconnected (the earlier 500 ms settle hid this). `run_lead` now takes the canonical generation
+  after acquiring the lease; when it differs from the caller's baseline it releases the lease and returns `Pending`, and
+  `follow` then sees the change (Node `followAuthorization`: `already-authorized`). Red test:
+  `a_caller_that_takes_the_lease_after_a_publish_follows_and_starts_no_transaction`, which failed by timeout before the
+  fix. Evidence: the follower's task printed no outcome while the lead's did; the lease was taken after the lead
+  released it.
+- Follower signal. `McpOAuthCoordinator::start` reads the baseline before it registers the flow, so a registered flow
+  (`McpManager::oauth_flow_running`) is the observable point the integration test waits for. No sleep. The integration
+  scenario is bounded by a 90 s `tokio::time::timeout`.
 - Canva "not signed in" (fixed): the code exchange and the refresh sent only `client_id` when the configuration had no
   secret. The E2E fixture's `/register` issues `client_secret`, and its `/token` requires `client_secret_basic`, so the
   exchange got `invalid_client`. Both now authenticate with the registered secret, as Node's SDK does. A configured
@@ -515,7 +523,7 @@ canonical `issuer`); on a miss it discovers and saves the record, as Node `resol
   with the plain-HTTP server's pre-auth count, which is a different server. The number of live clients that re-initialize
   depends on the connection model: Node keeps one client per session and lane, while Rust closes a displaced lane's
   client. The E2E now requires at least one bearer initialize, and the plain-HTTP count is unchanged.
-- Node "No such tool available: mcp__everything__ping" (open, Node product race, not fixed). The first upstream request
+- Node "No such tool available: mcp**everything**ping" (open, Node product race, not fixed). The first upstream request
   advertised `mcp__everything__ping` (the E2E's own wait saw it). The second stdio child for the session started about
   270 ms before the tool call and the call then failed. Hypothesis: a second `connectServer` for the same session lease
   closes the first client while its tools are still advertised, and calls are routed by name against the live registry.
