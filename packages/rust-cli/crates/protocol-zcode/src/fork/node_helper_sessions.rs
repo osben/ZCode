@@ -26,6 +26,21 @@ const CHILD_SESSION_END: &str = "helper/browser/childSessionEnd";
 const TURN_ENDED: &str = "helper/turn/ended";
 /// D2-H: the end-of-turn screenshot of the active tab (specs/fork-rust-node-helper.md, "D2 end-of-turn screenshot").
 const TURN_SCREENSHOT: &str = "helper/browser/turnScreenshot";
+/// C1: the turn's abort reached a capture in flight; the helper aborts it (`helper/browser/turnScreenshotCancel`).
+const TURN_SCREENSHOT_CANCEL: &str = "helper/browser/turnScreenshotCancel";
+
+/// Settles a turn-end capture against the turn's cancel. Biased: a ready answer wins over a cancel that is ready in the
+/// same tick, so a capture that finished is kept rather than dropped. `None` means the cancel fired first.
+pub(super) async fn settle_capture<T>(
+    answer: impl std::future::Future<Output = T>,
+    cancel: &CancellationToken,
+) -> Option<T> {
+    tokio::select! {
+        biased;
+        value = answer => Some(value),
+        () = cancel.cancelled() => None,
+    }
+}
 
 /// The forwarded methods that always name a session: the 16 `mcp/ui*` methods, `mcp/readResource` and
 /// `plugins/mentionItems`.
@@ -499,19 +514,47 @@ impl NodeHelper {
             "browserGeneration": candidate.browser_generation,
         });
         let deadline = self.timing.timeout_for(TURN_SCREENSHOT);
-        tokio::select! {
-            () = cancel.cancelled() => None,
-            answer = tokio::time::timeout(deadline, peer.request(TURN_SCREENSHOT, &params)) => match answer {
-                Ok(Ok(value)) => Some(value),
-                Ok(Err(error)) => {
-                    tracing::warn!(event = "fork_rust_helper.browser.turn_screenshot_failed", code = error.code, "the helper could not capture the turn screenshot");
-                    None
+        let cancel_peer = peer.clone();
+        let cancel_params = json!({"sessionId": session, "turnId": turn});
+        match settle_capture(
+            tokio::time::timeout(deadline, peer.request(TURN_SCREENSHOT, &params)),
+            cancel,
+        )
+        .await
+        {
+            Some(Ok(Ok(value))) => Some(value),
+            settled => {
+                // Any other end while the turn is cancelled (an error, the timeout, or the cancel itself) still sends the
+                // cancel: a timed-out capture may be in flight in the helper.
+                if cancel.is_cancelled() {
+                    // C1: the helper aborts its broker calls, which send `cancelRequest` to Main (Node's turnAbortSignal).
+                    drop(
+                        self.spawner
+                            .spawn("node-helper-turn-screenshot-cancel", async move {
+                                cancel_peer
+                                    .notify(TURN_SCREENSHOT_CANCEL, &cancel_params)
+                                    .await;
+                            }),
+                    );
                 }
-                Err(_elapsed) => {
-                    tracing::warn!(event = "fork_rust_helper.browser.turn_screenshot_timeout", "the helper did not capture the turn screenshot in time");
-                    None
+                match settled {
+                    Some(Ok(Err(error))) => {
+                        tracing::warn!(
+                            event = "fork_rust_helper.browser.turn_screenshot_failed",
+                            code = error.code,
+                            "the helper could not capture the turn screenshot"
+                        );
+                    }
+                    Some(Err(_elapsed)) => {
+                        tracing::warn!(
+                            event = "fork_rust_helper.browser.turn_screenshot_timeout",
+                            "the helper did not capture the turn screenshot in time"
+                        );
+                    }
+                    _ => {}
                 }
-            },
+                None
+            }
         }
     }
 

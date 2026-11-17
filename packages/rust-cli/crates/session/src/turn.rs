@@ -14,9 +14,9 @@ use rust_cli_kernel_api::orchestration::{
 };
 use rust_cli_kernel_api::session_api::{Ack, KernelEvent, TurnOutcome};
 use rust_cli_kernel_api::store::{Fact, StoreError};
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
 
-use crate::actor::{Actor, Pending, accepted, rejected};
+use crate::actor::{Actor, Pending, Request, accepted, rejected};
 use crate::lane::Waiting;
 use crate::sink::SinkRequest;
 
@@ -495,7 +495,13 @@ impl Actor {
             });
     }
 
-    pub(crate) async fn finish_turn(&mut self) {
+    /// `requests` is the actor's request channel: the end-of-turn capture serves it while it runs (see
+    /// `browser_turn_screenshot`), and the requests it keeps are pushed to `deferred` in arrival order.
+    pub(crate) async fn finish_turn(
+        &mut self,
+        requests: &mut mpsc::Receiver<Request>,
+        deferred: &mut Vec<Request>,
+    ) {
         let Some(running) = self.running.take() else {
             return;
         };
@@ -589,8 +595,15 @@ impl Actor {
         // turnEnded follows the turn. Only a successful turn with a prompt gets the screenshot; the row goes before
         // TurnFinished so the protocol sink sends helper/turn/ended after it.
         let shot = if matches!(outcome, TurnOutcome::Success) {
-            self.browser_turn_screenshot(&turn, running.prompt.as_ref(), candidate, abort)
-                .await
+            self.browser_turn_screenshot(
+                &turn,
+                running.prompt.as_ref(),
+                candidate,
+                abort,
+                requests,
+                deferred,
+            )
+            .await
         } else {
             None
         };
