@@ -232,3 +232,10 @@ Results on Rust (2026-11-13). RespondToCoordinator is implemented on Rust (see "
 - Rust `catalog-refresh` (2026-11-17, box): passes, both `user` and `mcs` cases. The `mcs` case needed the cache breakpoint fix (`query` `normalize.rs`) and the RespondToCoordinator entry in the child tool list in Node order (after the restored search tools).
 - `plugin-subagent-override-cold` passes on Node but fails on Rust: zcode-rs skips the whole `documents` plugin, because its MCP server runs in the Node CLI plugin host (`ext` `plugins/select.rs`, `NodeDependency::PluginHost`). Its agents are never loaded, so `documents:visual-judge` is not found. That gap belongs to the plugin host work. The override mapping itself is covered by the `agents` unit tests.
 - `built-in-subagent-model-overrides` (an E2E helper import is missing), `runtime-catalog-reasoning` (the custom form overflows horizontally) and `subagent-coding-plan-login-catalog-stale` (the OAuth URL is not captured) fail on Node too.
+
+Results of the four task-5 specs (2026-11-17, box; Rust / Node):
+
+- `subagent-catalog-refresh`: PASS / PASS.
+- `subagent-runtime-refresh`: PASS / FAIL. Node failed twice (two box runs, logs `pr516-task5-node` and `pr516-task5-node2`) at `conversation-session-subagent-runtime-refresh.test.ts:129`, `expect(compacts.length).toBeGreaterThan(0)`: no request matched the `shr-compact` fixture on Node, so no post-compaction trajectory was exported. Rust reaches that compaction and passes. Recorded as a Node-side divergence in the spec; not a Rust gap, and not investigated further.
+- `built-in-subagent-model-overrides`: FAIL / FAIL, both with `Cannot find module '@/request-security-edition/messages.js'` in the test setup. Pre-existing, same on both runtimes.
+- `runtime-catalog-reasoning`: FAIL / FAIL, both at `I68` (`catalog-reasoning.test.ts:130/256/293/669/702`). Pre-existing, same on both runtimes.
