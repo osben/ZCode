@@ -318,7 +318,12 @@ Divergences kept: the run's background tasks and queued notifications are not ob
 turn end); the run opens at admission, not at turn start; the renewal is a `Retrying` notice (Node emits
 `waiting_ticket`).
 
-Not built yet: the ticket for subagent requests inside an off-peak turn, the selection-persistence check (`mode.rs`),
+Subagents: a child run inherits its parent run's off-peak execution (`RunInfo.off_peak_execution` recorded from the
+request, `LiveAgent.off_peak_execution` set by the Agent tool, `QueryRequest.off_peak_execution` on the child), nested
+children included. The port resolves the open run by execution from any session, so a child is sent on the run's ticket;
+an ended run gives none.
+
+Not built yet: the selection-persistence check (`mode.rs`),
 and the policy flip (`workspace/updateOffPeakToolPolicy` still answers `enabled: false`). The flip stays last.
 
 What is blocked: an off-peak run's model requests must carry the ticket (`x-off-peak-ticket-id`, request auth from

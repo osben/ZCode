@@ -121,3 +121,17 @@ fn the_tools_follow_the_session_flag_and_fall_back_to_the_policy() {
     );
     assert!(!runs.tools_enabled("sess_1"));
 }
+
+/// Fork (slice 3 layer B): the open run is found by its execution from any session (a subagent of the turn asks with its
+/// own session); an ended run is not.
+#[test]
+fn an_open_run_is_found_by_its_execution_and_an_ended_one_is_not() {
+    let runs = runs_with_one();
+    assert_eq!(runs.open_session("exe_1").as_deref(), Some("sess_1"));
+    assert_eq!(runs.open_session("exe_9"), None);
+    let _ = runs.control(
+        "sess_1",
+        &json!({"sessionId": "sess_1", "executionId": "exe_1", "action": "cancel"}),
+    );
+    assert_eq!(runs.open_session("exe_1"), None);
+}

@@ -291,11 +291,12 @@ impl OffPeakRuns {
             && (failure.code == run.provider_error_code || is_expired_code(&failure.code))
     }
 
-    /// Whether `execution` is the open run of `session`.
-    pub(crate) fn has_run(&self, session: &str, execution: &str) -> bool {
+    /// The session of the open (not ended) run `execution`, whichever session asks for it.
+    pub(crate) fn open_session(&self, execution: &str) -> Option<String> {
         self.lock()
-            .get(session)
-            .is_some_and(|run| run.execution_id == execution)
+            .values()
+            .find(|run| run.execution_id == execution && !run.lifecycle.terminal())
+            .map(|run| run.session.clone())
     }
 
     /// Whether the off-peak tools are offered to `session`: its own flag when it was created or resumed with one, the

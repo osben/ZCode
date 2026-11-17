@@ -28,18 +28,16 @@ impl HostOffPeak {
 
 #[async_trait]
 impl OffPeakPort for HostOffPeak {
-    /// Fork (slice 3 layer B): the run's ticket source, while the run is open for `session`.
-    fn ticket(&self, session: &SessionId, execution: &str) -> Option<TicketSource> {
-        if !self.context.off_peak.has_run(session.as_str(), execution) {
-            return None;
-        }
+    /// Fork (slice 3 layer B): the ticket source of the open run `execution`, bound to the run's own session.
+    fn ticket(&self, _session: &SessionId, execution: &str) -> Option<TicketSource> {
+        let owner = self.context.off_peak.open_session(execution)?;
         let context = self.context.clone();
         let notify: Notify = Arc::new(move |note: &Value| {
             context.peer.try_notify(LIFECYCLE, note);
         });
         Some(TicketSource(Arc::new(RunTickets::new(
             self.context.off_peak.clone(),
-            session.as_str(),
+            owner,
             execution,
             notify,
         ))))

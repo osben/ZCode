@@ -31,8 +31,8 @@ impl OffPeakError {
 
 #[async_trait]
 pub trait OffPeakPort: Send + Sync {
-    /// Fork (slice 3 layer B): the ticket source of the run `execution` of `session`, the model requests of its turn
-    /// are sent on. None when no such run is open (the ordinary requests then carry no ticket).
+    /// Fork (slice 3 layer B): the ticket source of the open run `execution`, whichever session asks: the requests of
+    /// its turn and of the subagents it started are sent on it. None when no such run is open.
     fn ticket(
         &self,
         _session: &SessionId,
