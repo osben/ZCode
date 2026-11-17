@@ -100,6 +100,7 @@ async fn enablement_follows_enabled_plugins_and_the_defaults() {
         suppressed_builtins: vec![format!("zcode-guide@{OFFICIAL}")],
         view_host: false,
         node_helper: false,
+        env: Default::default(),
     };
     let loaded = load_all(&env(&files), &workspace(), &[], &sources).await;
     // 配置目录缺省启用；官方插件只有缺省名单里的启用；已安装插件要 `enabledPlugins` 打开。
@@ -443,6 +444,7 @@ async fn plugin_host_plugins_load_with_a_node_helper() {
             official("image-search"),
         ],
         node_helper: true,
+        env: Default::default(),
         ..PluginSources::default()
     };
     let loaded = load_all(&env(&files), &workspace(), &[], &sources).await;
@@ -488,6 +490,7 @@ async fn a_plugin_host_plugin_with_an_auth_server_stays_skipped_with_a_node_help
         let sources = PluginSources {
             candidates: vec![official("documents")],
             node_helper: true,
+            env: Default::default(),
             ..PluginSources::default()
         };
         let loaded = load_all(&env(&files), &workspace(), &[], &sources).await;
@@ -543,6 +546,7 @@ async fn mcp_app_plugins_are_helper_hosted_with_a_node_helper() {
     let helper = PluginSources {
         candidates: candidates.clone(),
         node_helper: true,
+        env: Default::default(),
         ..PluginSources::default()
     };
     let loaded = load_all(&env(&files), &workspace(), &session, &helper).await;

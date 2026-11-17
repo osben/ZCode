@@ -209,8 +209,10 @@ Rules:
 - CronCreate, CronUpdate, CronDelete ask for approval (Node `needsApproval: true`: the generic chain asks unless a
   bypass mode or an allow rule); CronList and CronPauseSelf are allowed.
 - Exposure: Node's desktop agent runs with `toolSearchMode: "off"` (the Host default), so its first request carries
-  the Cron contracts directly. zcode-rs does not read the Host's tool-search preference yet; the desktop Cron tools are
-  therefore not deferred, which matches Node's default request. A Host that turns tool search on is a known gap.
+  the Cron contracts directly. zcode-rs does not read the Host's tool-search preference yet; an unset
+  `ENABLE_TOOL_SEARCH` is therefore off under the app-server (`assemble::limits::tool_search`), which matches Node's
+  default request and keeps deferred plugin MCP tools advertised inline like Node's. An explicit `ENABLE_TOOL_SEARCH`
+  value still applies. A Host that turns tool search on is a known gap.
 - Subagents get no Cron tools under `node_desktop` (Node registers them for the main session only).
 - The five Cron names are one list (`tool_names::CRON_TOOLS`), read by the main-session-only rule and by the incognito
   `automationTools` switch, which hides all five.

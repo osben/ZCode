@@ -121,8 +121,15 @@ const OFF_PERCENT: f64 = rust_cli_base::units::PERCENT_F64;
 /// `ENABLE_TOOL_SEARCH`（工作线 F89，tools-more.md §3.2.1）：只决定 ToolSearch 开不开，开时一律本地。没设、空串、真值与
 /// 不认识的值是开；`0` / `false` / `no` / `off`（去首尾空白、不分大小写）是关；`auto` 与 `auto:N` 按原值比较（不去空白、
 /// 区分大小写），N 按 `js_int` 读、夹到 0–100：0 是开，100 是关，其余自动；读不出时自动、门槛 10%。
-pub(crate) fn tool_search(env: &EnvSnapshot) -> ToolSearchSetting {
+///
+/// Fork (node_desktop): 没设时 app-server 关——Node 的桌面端按 Host 的 `toolSearchMode` 偏好跑，缺省 "off"（shared
+/// `DEFAULT_APP_TOOL_SEARCH_MODE`），插件的 MCP 工具于是内联进首个模型请求，不被 ToolSearch 的延迟清单藏掉；CLI 自己的
+/// 界面（TUI、`-p`）缺省仍开。Host 把偏好开起来的情形仍是既有已知缺口（specs/fork-rust-automations.md "Known gaps"）。
+pub(crate) fn tool_search(env: &EnvSnapshot, node_desktop: bool) -> ToolSearchSetting {
     let Some(value) = env.raw(rust_cli_base::names::env::ENABLE_TOOL_SEARCH) else {
+        if node_desktop {
+            return ToolSearchSetting::Off;
+        }
         return ToolSearchSetting::On;
     };
     if let Some(rest) = value.strip_prefix("auto:") {
@@ -170,12 +177,16 @@ pub(crate) fn bash(env: &EnvSnapshot) -> BashTimeouts {
 
 /// 交给内核的全部开关（runtime `Defaults.limits`）。`max_output_tokens` 是入口读一次的值（修复线 F58：以前模型端口、
 /// 平台层、压缩与这里各读一次，无效值的警告写 4 次）。
-pub(crate) fn limits(env: &EnvSnapshot, max_output_tokens: Option<u32>) -> Limits {
+pub(crate) fn limits(
+    env: &EnvSnapshot,
+    max_output_tokens: Option<u32>,
+    node_desktop: bool,
+) -> Limits {
     Limits {
         request: RequestLimits {
             max_output_tokens,
             thinking: thinking(env),
-            tool_search: tool_search(env),
+            tool_search: tool_search(env, node_desktop),
             // The runtime sets the Stop continuation rule and the tool hook context order from its surface.
             ..RequestLimits::default()
         },

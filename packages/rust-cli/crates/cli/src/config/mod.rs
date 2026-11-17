@@ -289,7 +289,7 @@ pub(crate) async fn plugin_view_of(inputs: &ConfigInputs<'_>, files: &Files) -> 
     let storage = inputs
         .paths
         .plugin_storage(storage_layers.dir.as_deref(), std::path::Path::new(root));
-    let sources = plugins::sources(section, root, &storage).await;
+    let sources = plugins::sources(section, root, &storage, inputs.process_env).await;
     for warning in &warnings {
         tracing::debug!(warning, "configuration (plugin view)");
     }
@@ -362,7 +362,7 @@ pub(crate) async fn assemble(inputs: &ConfigInputs<'_>) -> ConfigSnapshot {
     let plugin_root = inputs
         .paths
         .plugin_storage(storage.dir.as_deref(), std::path::Path::new(root));
-    let plugins = plugins::sources(plugin_section, root, &plugin_root).await;
+    let plugins = plugins::sources(plugin_section, root, &plugin_root, inputs.process_env).await;
     let user_hooks = match user_object.and_then(|object| object.get("hooks")) {
         Some(value) => {
             let (parsed, found) = NodeHooks::from_json(value);
