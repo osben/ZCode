@@ -196,7 +196,7 @@ pub(crate) async fn purge(server: &Server, params: &Value) -> Result<Value, RpcE
         } else if referenced.contains(root) {
             kept.push(json!({"sessionId": root, "reason": "referenced"}));
         } else {
-            match delete_tree(server, &cli, root, members, &busy, &request.directories).await {
+            match delete_tree(server, &cli, root, members, &busy).await {
                 Ok(bytes) => deleted.push(json!({"sessionId": root, "bytes": bytes})),
                 Err(code) => failed.push(json!({"sessionId": root, "code": code})),
             }
@@ -301,7 +301,6 @@ async fn delete_tree(
     root: &str,
     members: &[String],
     busy: &[String],
-    directories: &[Directory],
 ) -> Result<u64, String> {
     for id in members {
         if busy.contains(id) {
@@ -323,10 +322,9 @@ async fn delete_tree(
         .purge_session_rows(&[SessionId::new(root)])
         .await
         .map_err(|_| UNKNOWN.to_owned())?;
-    for directory in directories {
-        for id in members {
-            server.topics.remove(&directory.workspace_path, id);
-        }
+    // Node `forgetIndexedSession` is global: the session leaves every loaded index, whichever directory it was listed under.
+    for id in members {
+        server.topics.remove_everywhere(id);
     }
     Ok(bytes)
 }

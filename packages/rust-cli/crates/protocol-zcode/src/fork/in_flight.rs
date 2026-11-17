@@ -27,10 +27,7 @@ impl InFlight {
             }
         }
         {
-            let mut requests = self
-                .requests
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner);
+            let mut requests = self.requests.lock().unwrap_or_else(PoisonError::into_inner);
             for id in &unique {
                 *requests.entry(id.clone()).or_insert(0) += 1;
             }

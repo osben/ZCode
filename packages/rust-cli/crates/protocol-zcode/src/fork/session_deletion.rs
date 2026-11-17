@@ -397,14 +397,9 @@ async fn run(
         .complete_session_deletion(&root)
         .await
         .map_err(|_| "unavailable".to_owned())?;
-    if let Some(path) = snapshot
-        .workspace_path
-        .as_deref()
-        .filter(|path| !path.is_empty())
-    {
-        for id in &snapshot.session_ids {
-            server.topics.remove(path, id);
-        }
+    // Node `forgetIndexedSession` is global: the session leaves every loaded index, not only its own workspace's.
+    for id in &snapshot.session_ids {
+        server.topics.remove_everywhere(id);
     }
     Ok(())
 }
