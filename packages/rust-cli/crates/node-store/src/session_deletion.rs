@@ -80,6 +80,7 @@ pub(crate) fn inspect(
     root: &str,
     held: &Held,
 ) -> Result<SessionDeletionSnapshot, StoreError> {
+    require_deletion_tables(conn)?;
     let receipt: Vec<(String, String, String)> = conn
         .prepare("select session_id,retained_artifacts,state from session_purge where root_id=?1 order by session_id")
         .storage()?
@@ -361,7 +362,11 @@ fn decode_component(value: &str) -> Result<String, StoreError> {
     let mut index = 0;
     while index < bytes.len() {
         if bytes[index] == b'%' {
-            let hex = value.get(index + 1..index + 3).ok_or_else(bad)?;
+            // Two hex digits exactly: `from_str_radix` would accept a leading `+` (`%+f` is not an escape in JS).
+            let hex = value
+                .get(index + 1..index + 3)
+                .filter(|hex| hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
+                .ok_or_else(bad)?;
             out.push(u8::from_str_radix(hex, 16).map_err(|_| bad())?);
             index += 3;
         } else {
@@ -483,7 +488,10 @@ pub(crate) fn begin(
 
 /// Node `completeSessionDeletion`: purge the rows of the receipt's tree, then mark its barrier rows `deleted`. The
 /// barrier rows are kept as tombstones, so a later create or upsert of the same id is refused by the triggers.
+/// Fork: both writes share one transaction. Node runs them as two statements; there a failed mark leaves the rows
+/// purged with the barrier still `deleting`, and the retry only repeats the mark.
 pub(crate) fn complete(conn: &mut Connection, root: &str) -> Result<(), StoreError> {
+    require_deletion_tables(conn)?;
     let receipt: Vec<String> = conn
         .prepare("select session_id from session_purge where root_id=?1")
         .storage()?
@@ -491,34 +499,56 @@ pub(crate) fn complete(conn: &mut Connection, root: &str) -> Result<(), StoreErr
         .storage()?
         .collect::<rusqlite::Result<_>>()
         .storage()?;
-    purge_sessions(conn, &receipt)?;
-    conn.execute(
+    // Before BEGIN: SQLite ignores `foreign_keys` inside a transaction (Node's purgeSessions re-asserts it too).
+    conn.execute_batch("pragma foreign_keys = on").storage()?;
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .storage()?;
+    purge_in(&tx, &receipt)?;
+    tx.execute(
         "update session_purge set state='deleted' where root_id=?1",
         [root],
     )
     .storage()?;
+    tx.commit().storage()?;
     Ok(())
+}
+
+/// Migration 0025 (`session_purge`, `session_runtime_presence`) is created by a Node build only. Without it there is no
+/// barrier to read or write, so the deletion is unsupported here and the protocol answers `method_not_found`.
+fn require_deletion_tables(conn: &Connection) -> Result<(), StoreError> {
+    if crate::presence::has_tables(conn).storage()? {
+        return Ok(());
+    }
+    Err(StoreError::Unsupported {
+        what: "session deletion: migration 0025 is not applied".to_owned(),
+    })
 }
 
 /// Node `purgeSessions`: the owned trees of `ids`, their input history, workflow runs and rows, in one transaction.
 /// Message, part, todo and usage rows cascade by foreign key.
 fn purge_sessions(conn: &mut Connection, ids: &[String]) -> Result<(), StoreError> {
+    // Before BEGIN, as in `complete`: foreign keys cannot be switched inside a transaction.
+    conn.execute_batch("pragma foreign_keys = on").storage()?;
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .storage()?;
+    purge_in(&tx, ids)?;
+    tx.commit().storage()?;
+    Ok(())
+}
+
+/// The delete statements of [`purge_sessions`], inside the caller's transaction.
+fn purge_in(tx: &Connection, ids: &[String]) -> Result<(), StoreError> {
     let mut all: Vec<String> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
     for id in ids {
-        for tree_id in owned_tree(conn, id)? {
+        for tree_id in owned_tree(tx, id)? {
             if seen.insert(tree_id.clone()) {
                 all.push(tree_id);
             }
         }
     }
-    if all.is_empty() {
-        return Ok(());
-    }
-    conn.execute_batch("pragma foreign_keys = on").storage()?;
-    let tx = conn
-        .transaction_with_behavior(TransactionBehavior::Immediate)
-        .storage()?;
     for chunk in all.chunks(SQL_ID_CHUNK) {
         let marks = vec!["?"; chunk.len()].join(",");
         for sql in [
@@ -530,7 +560,6 @@ fn purge_sessions(conn: &mut Connection, ids: &[String]) -> Result<(), StoreErro
             tx.execute(&sql, params_from_iter(chunk.iter())).storage()?;
         }
     }
-    tx.commit().storage()?;
     Ok(())
 }
 

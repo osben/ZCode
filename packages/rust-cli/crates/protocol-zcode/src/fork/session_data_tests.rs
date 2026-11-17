@@ -266,6 +266,39 @@ async fn an_unknown_key_is_invalid_params() {
     );
 }
 
+/// Node's purge `running` is `residency === "busy"` alone: a request in flight for a member (`sessionRequestCounts`)
+/// does not keep the tree, so the purge deletes it as Node does.
+#[tokio::test]
+async fn a_request_in_flight_does_not_keep_a_tree_from_the_purge() {
+    let storage = tempfile::tempdir().unwrap();
+    lay_out(storage.path()).await;
+    let (_scope, server, store) = server(store(None), storage.path());
+    let _request = server.in_flight.request(&[CHILD.to_owned()]);
+    let result = purge(&server, &params(json!({}))).await.unwrap();
+    assert_eq!(result["kept"], json!([]));
+    assert_eq!(result["deleted"], json!([{"sessionId": ROOT, "bytes": 8}]));
+    assert_eq!(*store.purged.lock().unwrap(), vec![vec![ROOT.to_owned()]]);
+}
+
+/// A file name with a backslash is a name on Unix: the manifest keeps the backslash, so the removal reaches the file.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_backslash_in_a_file_name_is_kept_as_node_keeps_it() {
+    let storage = tempfile::tempdir().unwrap();
+    let cli = storage.path().join("cli");
+    let file = cli.join("artifacts/sess_root/odd\\name.txt");
+    rust_cli_fs::append(&file, b"abc").await.unwrap();
+    let files = crate::fork::session_data_files::list(&cli, ROOT)
+        .await
+        .unwrap();
+    assert_eq!(files[0].relative_path, "artifacts/sess_root/odd\\name.txt");
+    let bytes = crate::fork::session_data_files::remove(&cli, ROOT, &["keep".to_owned()])
+        .await
+        .unwrap();
+    assert_eq!(bytes, 3);
+    assert!(!exists(&file).await);
+}
+
 #[tokio::test]
 async fn a_store_without_the_protocol_answers_method_not_found() {
     let storage = tempfile::tempdir().unwrap();

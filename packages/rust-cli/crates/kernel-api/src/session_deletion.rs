@@ -136,8 +136,14 @@ fn primary_weight(character: char) -> u32 {
     if character.is_ascii_digit() {
         return 100 + (character as u32 - '0' as u32);
     }
-    if character.is_ascii_alphabetic() {
-        return 200 + (character as u32 - 'a' as u32);
+    // Lowercased here: `'A' - 'a'` underflows the u32 arithmetic for a caller that does not lowercase first.
+    let lower = character.to_ascii_lowercase();
+    if lower.is_ascii_alphabetic() {
+        return 200 + (lower as u32 - 'a' as u32);
     }
     300 + character as u32
 }
+
+#[cfg(test)]
+#[path = "session_deletion_tests.rs"]
+mod tests;

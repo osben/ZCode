@@ -185,7 +185,8 @@ pub async fn link_stat(path: &Path) -> io::Result<Option<LinkStat>> {
 }
 
 /// Fork: the Node `error.code` (the errno name, such as `EACCES`) of an OS error, for the errors a removal can meet.
-/// `None` for an error without an errno, and off Unix, where Node's codes differ from the names here.
+/// `None` for an error without an errno. Off Unix it is always `None`: Node reports libuv's names there (`EPERM`,
+/// `EBUSY`, ...), which this crate does not map from Windows error codes, so the caller reports its fallback code.
 #[cfg(unix)]
 pub fn error_code(error: &io::Error) -> Option<&'static str> {
     const NAMES: [(i32, &str); 14] = [
@@ -211,6 +212,12 @@ pub fn error_code(error: &io::Error) -> Option<&'static str> {
         .map(|(_, name)| *name)
 }
 
+/// Fork: off Unix there is no errno name to report (see the Unix definition).
+#[cfg(not(unix))]
+pub fn error_code(_error: &io::Error) -> Option<&'static str> {
+    None
+}
+
 /// Fork: the entries of a directory as full paths, in the order the platform lists them; a missing directory has none.
 pub async fn dir_entries(path: &Path) -> io::Result<Vec<PathBuf>> {
     let mut entries = match tokio::fs::read_dir(path).await {
@@ -228,10 +235,18 @@ pub async fn dir_entries(path: &Path) -> io::Result<Vec<PathBuf>> {
 /// Fork: remove a file, a symlink (the link itself) or a directory tree at `path`, as Node `rm(path, { recursive: true,
 /// force: true })`. A missing path is not an error.
 pub async fn remove_path_force(path: &Path) -> io::Result<()> {
-    match link_stat(path).await? {
-        None => Ok(()),
-        Some(stat) if stat.is_dir => tokio::fs::remove_dir_all(path).await,
-        Some(_) => tokio::fs::remove_file(path).await,
+    let Some(stat) = link_stat(path).await? else {
+        return Ok(());
+    };
+    let removed = if stat.is_dir {
+        tokio::fs::remove_dir_all(path).await
+    } else {
+        tokio::fs::remove_file(path).await
+    };
+    match removed {
+        // Node's `force` swallows ENOENT in the removal itself: another process may remove the path after the stat.
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        other => other,
     }
 }
 

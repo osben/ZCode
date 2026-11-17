@@ -45,23 +45,47 @@ pub(crate) fn project_memory_folder(
     workspace_path: &str,
     workspace_identity: Option<&str>,
 ) -> PathBuf {
+    project_memory_folder_for(cli, workspace_path, workspace_identity, cfg!(windows))
+}
+
+/// [`project_memory_folder`] for the platform rules named by `windows`: Node's win32 `path.resolve` and `basename`
+/// (drive-absolute paths, both separators, lowercased key) or the POSIX ones. Tests pass both.
+pub(crate) fn project_memory_folder_for(
+    cli: &Path,
+    workspace_path: &str,
+    workspace_identity: Option<&str>,
+    windows: bool,
+) -> PathBuf {
     let identity = workspace_identity
         .map(str::trim)
         .filter(|value| !value.is_empty());
-    let normalized = normalize_path(workspace_path);
+    let normalized = if windows {
+        normalize_win32_path(workspace_path)
+    } else {
+        normalize_path(workspace_path)
+    };
     let key = match identity {
         Some(identity) => identity.to_owned(),
-        None if cfg!(windows) => normalized.to_lowercase(),
+        None if windows => normalized.to_lowercase(),
         None => normalized.clone(),
     };
     let digest = format!("{:x}", Sha256::digest(key.as_bytes()));
     let slug = match identity {
         Some(_) => "project".to_owned(),
-        None => sanitize_slug(normalized.rsplit('/').next().unwrap_or_default()),
+        None => sanitize_slug(basename(&normalized, windows)),
     };
     cli.join("memories")
         .join("projects")
         .join(format!("{slug}-{}", &digest[..16]))
+}
+
+/// Node `path.basename` of a normalized path: the last segment, split on `/` (and `\` on win32).
+fn basename(normalized: &str, windows: bool) -> &str {
+    if windows {
+        normalized.rsplit(['/', '\\']).next().unwrap_or_default()
+    } else {
+        normalized.rsplit('/').next().unwrap_or_default()
+    }
 }
 
 /// Node `sanitizeProjectSlug`: lowercase, each run of other characters becomes `-`, trimmed, at most 48 characters,
@@ -87,6 +111,32 @@ fn sanitize_slug(value: &str) -> String {
     }
 }
 
+/// Node `path.win32.resolve` of a drive-absolute path (`C:\dir`, `C:/dir`): both separators, `.` and `..` resolved, no
+/// trailing separator, the drive letter kept as given. A path without a drive is not resolved against the cwd's drive
+/// (Node does that); it takes the POSIX form, which the Host does not send on Windows.
+fn normalize_win32_path(path: &str) -> String {
+    let bytes = path.as_bytes();
+    let drive_absolute = bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'/' | b'\\');
+    if !drive_absolute {
+        return normalize_path(path);
+    }
+    let (drive, rest) = path.split_at(2);
+    let mut parts: Vec<&str> = Vec::new();
+    for part in rest.split(['/', '\\']) {
+        match part {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            other => parts.push(other),
+        }
+    }
+    format!("{drive}\\{}", parts.join("\\"))
+}
+
 /// Lexical normalization of an absolute POSIX path (Node `path.resolve` for the paths the Host sends).
 fn normalize_path(path: &str) -> String {
     let mut parts: Vec<&str> = Vec::new();
@@ -104,7 +154,7 @@ fn normalize_path(path: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::project_memory_folder;
+    use super::{project_memory_folder, project_memory_folder_for};
     use std::path::Path;
 
     /// Goldens from Node's `resolveProjectMemoryRoot` (`core/src/memory/project-root.ts`, cliStorageRoot `/cli`) with the
@@ -132,6 +182,46 @@ mod tests {
         assert_eq!(
             folder("/", None),
             "/cli/memories/projects/project-8a5edab282632443"
+        );
+    }
+
+    /// Goldens from Node's `resolveProjectMemoryRoot` on win32 (`path.win32.resolve`, `path.win32.basename`, the key
+    /// lowercased), run with Node for drive-absolute paths. The folder names do not depend on the host platform.
+    #[test]
+    fn project_folders_match_nodes_win32_resolve_project_memory_root() {
+        let cli = Path::new("/cli");
+        let folder = |path: &str, identity: Option<&str>| {
+            project_memory_folder_for(cli, path, identity, true)
+                .to_string_lossy()
+                .into_owned()
+        };
+        assert_eq!(
+            folder("C:\\Work\\Example Project\\", None),
+            "/cli/memories/projects/example-project-aa3ffddafeed2e6f"
+        );
+        assert_eq!(
+            folder("D:/work/a/../My_Repo!!--x/", None),
+            "/cli/memories/projects/my_repo---x-7dc976376d4eda73"
+        );
+        assert_eq!(
+            folder("D:\\work\\a\\..\\My_Repo!!--x\\", None),
+            "/cli/memories/projects/my_repo---x-7dc976376d4eda73"
+        );
+        assert_eq!(
+            folder("c:\\Mixed\\CASE\\Dir", None),
+            "/cli/memories/projects/dir-aa9f63d771ea4391"
+        );
+        assert_eq!(
+            folder("C:/Users/Me/Dev/ZCode", None),
+            "/cli/memories/projects/zcode-85a9226d5beff670"
+        );
+        assert_eq!(
+            folder("C:\\", None),
+            "/cli/memories/projects/project-3dc8472eaebe1a9d"
+        );
+        assert_eq!(
+            folder("E:\\Work\\Some Repo", Some(" ident ")),
+            "/cli/memories/projects/project-e77c4b3f81059b97"
         );
     }
 }

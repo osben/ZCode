@@ -51,7 +51,7 @@ pub(crate) async fn check(
 
 /// Node `V4_METHODS.sessionDeletionPreview` / `sessionDeletionExecute`. Exempt from the gate, as in Node: `begin` writes
 /// the barrier row the gate checks, so a gated execute could never resume an `incomplete` deletion.
-const DELETION_METHODS: [&str; 2] = [
+pub(crate) const DELETION_METHODS: [&str; 2] = [
     "v4/storage/sessionData/deletionPreview",
     "v4/storage/sessionData/deletionExecute",
 ];

@@ -1,7 +1,9 @@
 //! Fork: the permanent-deletion store (Node `adapters/tests/session-store-permanent-deletion.test.ts`).
 use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::session_deletion::DeletionBegin;
-use rust_cli_kernel_api::store::{SessionKind, SessionMeta, SessionStore, StoreQueries};
+use rust_cli_kernel_api::store::{
+    SessionKind, SessionMeta, SessionStore, StoreError, StoreQueries,
+};
 
 use crate::tests::{TestStore, meta};
 
@@ -271,4 +273,87 @@ async fn the_revision_matches_nodes_on_the_shared_golden_fixture() {
         [("child", "ä2"), ("child", "art1"), ("root", "艺")]
     );
     assert_eq!(snapshot.revision, GOLDEN_REVISION);
+}
+
+/// Node's `decodeURIComponent` needs two hex digits after `%`: `+` is a sign to `from_str_radix`, not a digit, and a
+/// byte sequence that is not UTF-8 throws as well. Either fails the whole inspection.
+#[test]
+fn a_percent_escape_needs_two_hex_digits_and_valid_utf8() {
+    assert_eq!(super::decode_component("a%20f").unwrap(), "a f");
+    assert!(super::decode_component("a%+f").is_err());
+    assert!(super::decode_component("a%-1").is_err());
+    assert!(super::decode_component("%FF").is_err());
+    assert!(super::decode_component("%C3").is_err());
+}
+
+/// `complete` purges the tree and marks the barrier rows `deleted` in one transaction: when the mark fails the rows
+/// stay, so the retry still finds the tree and its files, and the barrier keeps the tree refused.
+#[tokio::test]
+async fn a_failed_completion_keeps_the_rows_for_the_retry() {
+    let store = tree().await;
+    let snapshot = store
+        .store
+        .inspect_session_deletion(&sid("root"))
+        .await
+        .unwrap();
+    store
+        .store
+        .begin_session_deletion(&sid("root"), &snapshot.revision, "operation", &[])
+        .await
+        .unwrap();
+    store
+        .connection()
+        .execute_batch(
+            "create trigger refuse_mark before update of state on session_purge \
+             begin select raise(abort, 'mark refused'); end;",
+        )
+        .unwrap();
+    assert!(
+        store
+            .store
+            .complete_session_deletion(&sid("root"))
+            .await
+            .is_err()
+    );
+    assert_eq!(session_rows(&store, "root"), 1);
+    assert_eq!(session_rows(&store, "child"), 1);
+}
+
+/// Migration 0025 belongs to the Node build: a database only the Rust store opened has no `session_purge` barrier,
+/// so the deletion methods are unsupported (the protocol answers `method_not_found`). Measure and purge do not need it.
+#[tokio::test]
+async fn deletion_is_unsupported_without_migration_0025() {
+    let store = TestStore::new();
+    store
+        .store
+        .create(meta("root", "/work/example", "root"))
+        .await
+        .unwrap();
+    match store.store.inspect_session_deletion(&sid("root")).await {
+        Err(StoreError::Unsupported { .. }) => {}
+        other => panic!("inspect: {:?}", other.map(|snapshot| snapshot.revision)),
+    }
+    assert!(matches!(
+        store
+            .store
+            .begin_session_deletion(&sid("root"), "revision", "operation", &[])
+            .await,
+        Err(StoreError::Unsupported { .. })
+    ));
+    assert!(matches!(
+        store.store.complete_session_deletion(&sid("root")).await,
+        Err(StoreError::Unsupported { .. })
+    ));
+    let owned = store
+        .store
+        .list_owned_session_trees(&[sid("root")])
+        .await
+        .unwrap();
+    assert_eq!(owned[0].1, [sid("root")]);
+    store
+        .store
+        .purge_session_rows(&[sid("root")])
+        .await
+        .unwrap();
+    assert_eq!(session_rows(&store, "root"), 0);
 }

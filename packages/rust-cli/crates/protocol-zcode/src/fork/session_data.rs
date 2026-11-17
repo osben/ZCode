@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 
 use super::session_data_files::{self, FileError};
 use super::session_data_size::{measure_path, measure_session, project_memory_folder};
-use super::session_deletion::busy_session_ids;
+use super::session_deletion::residency_busy_session_ids;
 use super::session_tree::store_error;
 use crate::server::Server;
 
@@ -175,7 +175,9 @@ pub(crate) async fn purge(server: &Server, params: &Value) -> Result<Value, RpcE
         .iter()
         .flat_map(|(_, members)| members.clone())
         .collect();
-    let busy = busy_session_ids(server, &all);
+    // Node decides `running` and the release of idle members from `host.residency` only, so in-flight requests (which
+    // the deletion preview and execute count) do not keep a tree here.
+    let busy = residency_busy_session_ids(server, &all);
     let running: HashSet<&str> = trees
         .iter()
         .filter(|(_, members)| members.iter().any(|id| busy.contains(id)))

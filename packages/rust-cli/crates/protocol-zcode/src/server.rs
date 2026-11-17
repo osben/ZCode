@@ -569,11 +569,9 @@ impl Service for Handler {
         // Fork: Node asserts that no purge started for the request's sessions before it dispatches and validates
         // (specs/fork-rust-agent-parity.md "Session runtime presence on the shared database").
         crate::presence_gate::check(self.0.kernel.queries().as_ref(), method, &params).await?;
-        // Fork: Node `sessionRequestCounts`. The count covers the request's sessions while it runs, so a purge that
-        // starts meanwhile sees it as busy. The deletion methods carry none (Node excludes them).
-        let deletion = method == "v4/storage/sessionData/deletionPreview"
-            || method == "v4/storage/sessionData/deletionExecute";
-        let ids = if deletion {
+        // Fork: Node `sessionRequestCounts`. The count covers the request's sessions while it runs, so a deletion
+        // preview or execute that starts meanwhile sees it as busy. The deletion methods carry none (Node excludes them).
+        let ids = if crate::presence_gate::DELETION_METHODS.contains(&method) {
             Vec::new()
         } else {
             crate::presence_gate::session_ids(&params)

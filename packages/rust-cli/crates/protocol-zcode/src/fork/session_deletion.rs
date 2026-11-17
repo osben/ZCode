@@ -228,21 +228,33 @@ async fn inspect(server: &Server, method: &str, request: &Request) -> Result<Ins
     })
 }
 
-/// Node `busy(id)` over the tree: a running turn, a pending interaction or a queued input (`residency_busy`), or a
-/// running subagent in the tree (`running_session_ids`). Order follows `ids`.
+/// Node `busy(id)` over the tree for preview and execute: the residency facts of [`residency_busy_session_ids`], and a
+/// request or a create in flight for the session (Node `sessionRequestCounts`, `sessionCreationIds`). Order follows `ids`.
 pub(crate) fn busy_session_ids(server: &Server, ids: &[String]) -> Vec<String> {
+    let mut busy: std::collections::HashSet<String> = residency_busy_session_ids(server, ids)
+        .into_iter()
+        .collect();
+    for id in ids {
+        if server.in_flight.busy(id) {
+            busy.insert(id.clone());
+        }
+    }
+    ids.iter()
+        .filter(|id| busy.contains(*id))
+        .cloned()
+        .collect()
+}
+
+/// Node session-data `running` (`host.residency(id) === "busy"`): a running turn, a pending interaction or a queued
+/// input (`residency_busy`), or a running subagent in the tree (`running_session_ids`). In-flight requests do not count,
+/// as in Node. Order follows `ids`.
+pub(crate) fn residency_busy_session_ids(server: &Server, ids: &[String]) -> Vec<String> {
     let mut busy: std::collections::HashSet<String> =
         running_session_ids(server, ids).into_iter().collect();
     for bridged in server.bridge.sessions() {
         let id = bridged.handle.id().as_str().to_owned();
         if ids.contains(&id) && bridged.sink.residency_busy() {
             busy.insert(id);
-        }
-    }
-    // Node `sessionRequestCounts` and `sessionCreationIds`: a request or a create in flight for the session.
-    for id in ids {
-        if server.in_flight.busy(id) {
-            busy.insert(id.clone());
         }
     }
     ids.iter()

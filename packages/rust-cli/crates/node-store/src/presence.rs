@@ -67,7 +67,7 @@ pub(crate) fn pending(held: &Held, session: &str, owner: &str) {
 }
 
 /// Whether a Node build created 0025's tables in this database.
-fn has_tables(conn: &Connection) -> rusqlite::Result<bool> {
+pub(crate) fn has_tables(conn: &Connection) -> rusqlite::Result<bool> {
     conn.query_row(
         "select count(*) = 2 from sqlite_master where type = 'table'
            and name in ('session_runtime_presence', 'session_purge')",

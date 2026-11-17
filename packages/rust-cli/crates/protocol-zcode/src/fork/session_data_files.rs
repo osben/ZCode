@@ -22,7 +22,8 @@ pub(crate) enum FileKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SessionFile {
     pub(crate) name: String,
-    /// Relative to the CLI storage root, with `/` separators (Node `relative(root, current)`).
+    /// Relative to the CLI storage root, with the platform's separators (Node `relative(root, current)`): a backslash
+    /// in a Unix file name stays part of the name.
     pub(crate) relative_path: String,
     pub(crate) kind: FileKind,
     pub(crate) bytes: u64,
@@ -106,7 +107,7 @@ pub(crate) async fn list(cli: &Path, session_id: &str) -> Result<Vec<SessionFile
                 .strip_prefix(cli)
                 .unwrap_or(&current)
                 .to_string_lossy()
-                .replace('\\', "/");
+                .into_owned();
             let name = current
                 .file_name()
                 .unwrap_or_default()
