@@ -28,6 +28,7 @@ fn ext(env: MemoryEnvironment, fake: Arc<FakeMcp>, scope: &TaskScope, servers: M
         clock: crate::clock_tests::clock(),
         incognito: Default::default(),
         sessions: Default::default(),
+        app_tools: None,
     };
     let config = ExtConfig {
         mcp: McpSettings {

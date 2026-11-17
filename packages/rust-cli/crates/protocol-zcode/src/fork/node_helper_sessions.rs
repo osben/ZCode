@@ -44,6 +44,9 @@ pub(crate) const SESSION_METHODS: &[&str] = &[
     "mcp/uiCancelCall",
     "mcp/uiSampling",
     "mcp/uiCancelSampling",
+    // F3b(b): an app tool runs in its session's helper session (the set lives in that session's record).
+    "helper/appTools/call",
+    "helper/appTools/cancel",
     "mcp/uiRegisterAppTools",
     "mcp/uiUnregisterAppTools",
     "mcp/uiClaimAppToolCall",

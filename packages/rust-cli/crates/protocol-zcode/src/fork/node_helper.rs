@@ -47,6 +47,9 @@ pub(crate) const FORWARDED_METHODS: &[&str] = &[
     "plugins/marketplace/update",
     "plugins/resolveSuggestedReference",
     "plugins/cancelOperation",
+    // F3b(b): the app tool call and its cancel (Rust to helper), see node_helper_app_tools.rs.
+    "helper/appTools/call",
+    "helper/appTools/cancel",
     "plugins/readUserOptions",
     "plugins/listUiSurfaces",
     "plugins/referenceCatalog",
@@ -209,6 +212,8 @@ pub struct NodeHelper {
     /// Every session this agent has opened in the helper (never removed: a close-time relay still arrives after the
     /// close, and the session stays this agent's). Browser relays are answered only for these or a live session.
     opened_here: StdMutex<HashSet<String>>,
+    /// F3b(b): the app-provided tools each session's `helper/appTools/replace` set, with the process that set them.
+    app_tools: StdMutex<app_tools::AppToolSets>,
 }
 
 struct State {
@@ -290,6 +295,7 @@ impl NodeHelper {
             requests: StdMutex::default(),
             last_open: AtomicU64::new(0),
             opened_here: StdMutex::new(HashSet::new()),
+            app_tools: StdMutex::default(),
         })
     }
 
@@ -514,6 +520,8 @@ fn unavailable(message: &str) -> RpcError {
         .with_data(json!({"reasonCode": NODE_HELPER_UNAVAILABLE}))
 }
 
+#[path = "node_helper_app_tools.rs"]
+mod app_tools;
 #[path = "node_helper_launch.rs"]
 mod launch;
 #[path = "node_helper_link.rs"]

@@ -60,6 +60,7 @@ impl NodeHelper {
                 // The slot goes first, so a request that begins after it starts cancelled (requests::begin).
                 helper.link_lost(generation);
                 helper.requests_lost(generation);
+                helper.app_tools_lost(generation);
             }
         }));
 

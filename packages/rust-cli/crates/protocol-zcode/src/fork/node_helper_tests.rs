@@ -315,7 +315,9 @@ async fn forward_ok(helper: &NodeHelper, method: &str, params: Value) -> Value {
 
 #[test]
 fn forwarded_table_is_the_spec_list() {
-    assert_eq!(FORWARDED_METHODS.len(), 53);
+    assert_eq!(FORWARDED_METHODS.len(), 55);
+    // F3b(b): the app tool call is forwarded, session-scoped (the helper opens the session first).
+    assert!(FORWARDED_METHODS.contains(&"helper/appTools/call"));
     let plugins = FORWARDED_METHODS
         .iter()
         .filter(|method| method.starts_with("plugins/"))
@@ -2345,6 +2347,8 @@ async fn a_timed_out_call_drops_a_process_that_misses_the_ping_deadline() {
 #[path = "node_helper_sessions_tests.rs"]
 mod sessions;
 
+#[path = "node_helper_app_tools_tests.rs"]
+mod app_tools;
 #[path = "node_helper_requests_tests.rs"]
 mod requests;
 
