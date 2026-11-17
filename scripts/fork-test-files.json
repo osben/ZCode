@@ -464,5 +464,6 @@
   "packages/web/test/webRemoteControlV2Pairing.test.ts",
   "packages/web/test/webRemoteControlWorkspaceOpen.test.ts",
   "packages/zcode-server-cli/test/componentCacheTarOutput.test.ts",
-  "packages/zcode-server-cli/test/lockAtomicPublish.test.ts"
+  "packages/zcode-server-cli/test/lockAtomicPublish.test.ts",
+  "packages/shared/src/zcode-protocol-v4/workflow-runs-goldens.test.ts"
 ]

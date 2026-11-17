@@ -502,6 +502,18 @@ Each PR updates the F5 row and D1 in `specs/fork-rust-node-helper.md` and the "O
 - Goldens: `fixtures/dwf/scenario.json` is the shared input (27 event kinds, every status decoding path, a non-terminal run, a workflow actor link). `node-written.sqlite` and `node-expected.json` come from Node: `scripts/rust-cli/dwf-journal-goldens.ts`, run with `pnpm exec tsx`. `rust-written.sqlite` comes from the ignored test `regenerate_rust_written_golden`. Direction 1 is `golden_tests::rust_reads_what_node_wrote`; direction 2 is `apps/zcode-cli/packages/adapters/tests/dwf-rust-goldens.test.ts` (fork Vitest). Timestamps are not compared.
 - Pin: `dwf_tests::the_0019_checksum_is_pinned_to_the_upstream_ledger` pins `1c8da556…` (`fork-upstream-migrations.json`); the Node golden checks the ledger value. No migration or DDL changed.
 
+### 9.2 As built (W3)
+
+Spec-first design, then the code. The gate stays off and nothing calls the port.
+
+- Code: `packages/rust-cli/crates/node-store/src/workflow_runs/`. `mod.rs` holds the reducer dispatch, `eviction.rs` the slot admission and groups, `caps.rs` the unlisted counters and buckets, `delta.rs` the diff and apply, `js.rs` the JS-compatible string and number helpers, `replay.rs` the cold replay from `dwf_event`, `projection.rs` the snapshot hook, and `tests.rs`. The module is `#[allow(dead_code)]` until the engine core (W5a) calls it.
+- State is an ordered JSON map (`serde_json`, `preserve_order` is already workspace-wide), not typed structs. Node grows entries with `{...run, key: v}`, so the key order of actor and node entries follows arrival order. Typed structs would change that order and break byte-identity. `canonicalWorkflowRun` runs at the same points as in Node, on the run's top level only.
+- Goldens: `scripts/rust-cli/workflow-runs-goldens.ts` writes `packages/rust-cli/crates/node-store/fixtures/workflow-runs/goldens.json` from Node's `reduceWorkflowRunsState` and `diffWorkflowRunsState`. Two scenario sets: default limits, and small injected limits that exercise eviction, unlisted buckets and truncation. The Vitest drift guard regenerates and compares; it is registered in `scripts/fork-test-files.json`.
+- Property: `applyAll(prior, diff(prior, next))` serializes byte-identical to `next` for every golden step and for a seeded pseudo-random stream. No new dependency (`proptest` is not in the lock).
+- Cold replay: `replay.rs` reads `dwf_event` through W2's `list_events`, mints the envelope fields that `toProgressPayload` derives (`actorSessionId`, `resumedFrom`, `subagentModel`, the persona `model` and `actorModel` through `modelBindings`, `concurrencyCeiling`, `resumable`, `reachedAt`), and applies the `boundDynamicWorkflowRunEventPayload` bounds. Not ported: `holeTypeOf`, which needs the compiled script and so lands with the helper (W4). A replayed `hole-reached` therefore has no `type`.
+- Runtime switch: nothing reads the replay yet. The snapshot hook returns `{"runs": []}` when no run exists, the same answer Rust gives today.
+- Surrogates: the reducer's own cuts (`slice(0, limit - 1) + "…"`, bounded text fields) round down to a code point boundary, as `truncateSurrogateSafe` does in the contracts bounding. Node can keep a lone surrogate there, and `JSON.stringify` writes it as an escape that Rust cannot hold. This is a deliberate deviation; the golden set avoids the case and a unit test pins the rounding.
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.

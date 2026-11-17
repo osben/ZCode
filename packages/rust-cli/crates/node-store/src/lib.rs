@@ -32,6 +32,8 @@ mod project_rules;
 mod query;
 mod reconcile_row;
 mod repo;
+#[allow(dead_code)]
+mod workflow_runs;
 mod rewind;
 mod rust_entries;
 mod session_deletion;
