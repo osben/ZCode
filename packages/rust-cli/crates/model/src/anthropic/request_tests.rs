@@ -122,12 +122,14 @@ fn a_full_request_has_the_fixed_field_order() {
     ];
     request.tools = vec![
         ToolDefinition {
+            contract: Default::default(),
             name: "Read".to_owned(),
             description: "Reads a file.".to_owned(),
             input_schema: json!({"type": "object", "properties": {"file_path": {"type": "string"}}}),
             cache_control: None,
         },
         ToolDefinition {
+            contract: Default::default(),
             name: "Bash".to_owned(),
             description: "Runs a command.".to_owned(),
             input_schema: json!({"type": "object"}),

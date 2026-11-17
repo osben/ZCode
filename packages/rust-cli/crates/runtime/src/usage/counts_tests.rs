@@ -15,6 +15,7 @@ fn text_tools_and_images_follow_the_local_estimate() {
     assert_eq!(counter.text("é😀"), 1);
     assert_eq!(Counter { per_token: 4 }.text("abcdefghij"), 3);
     let tool = ToolDefinition {
+        contract: Default::default(),
         name: "Read".to_owned(),
         description: "Reads a file.".to_owned(),
         input_schema: json!({"type": "object"}),

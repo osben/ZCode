@@ -67,6 +67,7 @@ fn definitions(group: &[&Arc<dyn Tool>], mode: PermissionMode) -> Vec<ToolDefini
     group
         .iter()
         .map(|tool| ToolDefinition {
+            contract: Default::default(),
             name: tool.name().to_owned(),
             description: tool.description(&prompt),
             input_schema: tool.input_schema(),

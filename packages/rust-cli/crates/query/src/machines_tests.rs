@@ -21,6 +21,7 @@ use crate::run::tests::{parts, request, scope};
 
 fn definition(name: &str) -> ToolDefinition {
     ToolDefinition {
+        contract: Default::default(),
         name: name.to_owned(),
         description: format!("{name} tool"),
         input_schema: json!({"type": "object", "properties": {"x": {"type": "string"}}, "required": ["x"]}),

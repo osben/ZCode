@@ -124,6 +124,7 @@ fn scoped_request() -> rust_cli_kernel_api::model::ModelRequest {
         cache_control: global(),
     }];
     request.tools = vec![rust_cli_kernel_api::model::ToolDefinition {
+        contract: Default::default(),
         name: "Read".to_owned(),
         description: "Read a file".to_owned(),
         input_schema: json!({"type": "object"}),

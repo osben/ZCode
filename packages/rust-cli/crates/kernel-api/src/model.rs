@@ -82,6 +82,22 @@ pub struct ToolDefinition {
     pub input_schema: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_control: Option<CacheControl>,
+    /// The contract fields Node's composition sizes (`ModelToolContract`). They are not sent to the provider, so they
+    /// are not serialized; an absent field is an absent key in the sized JSON, as Node's `undefined` is.
+    #[serde(skip)]
+    pub contract: ToolContract,
+}
+
+/// Node `ModelToolContract` fields other than name, description and input schema (see [`ToolDefinition::contract`]).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ToolContract {
+    pub capability: Option<String>,
+    pub output_schema: Option<Value>,
+    pub read_only: Option<bool>,
+    pub destructive: Option<bool>,
+    pub side_effect_scope: Option<String>,
+    pub permission: Option<Value>,
+    pub result_budget: Option<Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

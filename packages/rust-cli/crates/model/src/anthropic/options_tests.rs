@@ -50,6 +50,7 @@ fn tool_flags_and_message_output_keep_their_key_order() {
         },
     ]);
     request.tools = vec![ToolDefinition {
+        contract: Default::default(),
         name: "Search".to_owned(),
         description: "d".to_owned(),
         input_schema: json!({"type": "object"}),

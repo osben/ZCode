@@ -289,22 +289,12 @@ pub fn classify(input: &Input<'_>) -> Breakdown {
     }
     for part in input.tools {
         let tool = part.definition;
-        let (id, content) = if part.deferred {
-            (
-                CategoryId::DeferredToolSchemas,
-                stringify(&json!({"name": tool.name, "description": tool.description})),
-            )
+        let id = if part.deferred {
+            CategoryId::DeferredToolSchemas
         } else {
-            (
-                tool_category(&tool.name),
-                stringify(&json!({
-                    "name": tool.name,
-                    "description": tool.description,
-                    "inputSchema": tool.input_schema,
-                })),
-            )
+            tool_category(&tool.name)
         };
-        builder.add(id, &tool.name, &content);
+        builder.add(id, &tool.name, &tool_content(tool, part.deferred));
     }
     builder.finish()
 }
@@ -439,6 +429,49 @@ fn source_category(source: &str) -> (CategoryId, String) {
         CategoryId::Messages
     };
     (id, source.to_owned())
+}
+
+/// The sized JSON of one tool (Node `toolCategory`). A deferred tool is its name and description only. A tool sent in
+/// full carries the ten contract fields in Node's order; a field the tool does not set is an absent key, as Node's
+/// `undefined` is.
+pub fn tool_content(tool: &ToolDefinition, deferred: bool) -> String {
+    let mut object = Map::new();
+    object.insert("name".into(), json!(tool.name));
+    object.insert("description".into(), json!(tool.description));
+    if !deferred {
+        let contract = &tool.contract;
+        insert_if_set(
+            &mut object,
+            "capability",
+            contract.capability.as_deref().map(|v| json!(v)),
+        );
+        object.insert("inputSchema".into(), tool.input_schema.clone());
+        insert_if_set(&mut object, "outputSchema", contract.output_schema.clone());
+        insert_if_set(
+            &mut object,
+            "readOnly",
+            contract.read_only.map(|v| json!(v)),
+        );
+        insert_if_set(
+            &mut object,
+            "destructive",
+            contract.destructive.map(|v| json!(v)),
+        );
+        insert_if_set(
+            &mut object,
+            "sideEffectScope",
+            contract.side_effect_scope.as_deref().map(|v| json!(v)),
+        );
+        insert_if_set(&mut object, "permission", contract.permission.clone());
+        insert_if_set(&mut object, "resultBudget", contract.result_budget.clone());
+    }
+    stringify(&Value::Object(object))
+}
+
+fn insert_if_set(object: &mut Map<String, Value>, key: &str, value: Option<Value>) {
+    if let Some(value) = value {
+        object.insert(key.to_owned(), value);
+    }
 }
 
 fn tool_category(name: &str) -> CategoryId {
@@ -607,3 +640,7 @@ mod tests;
 #[cfg(test)]
 #[path = "composition_projection_tests.rs"]
 mod projection_tests;
+
+#[cfg(test)]
+#[path = "composition_tool_tests.rs"]
+mod tool_tests;

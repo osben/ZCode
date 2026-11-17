@@ -22,6 +22,7 @@ fn names(request: &ModelRequest, first_party: bool) -> Vec<String> {
 
 fn tool(name: &str) -> rust_cli_kernel_api::model::ToolDefinition {
     rust_cli_kernel_api::model::ToolDefinition {
+        contract: Default::default(),
         name: name.to_owned(),
         description: String::new(),
         input_schema: serde_json::json!({"type": "object"}),

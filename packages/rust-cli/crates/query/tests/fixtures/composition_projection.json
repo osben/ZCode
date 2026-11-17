@@ -1,6 +1,6 @@
 {
   "generator": "packages/rust-cli/tools/composition-fixture/generate.ts",
-  "source": "apps/zcode-cli/packages/core/src/runtime/context-composition/classifier.ts (message loop); helpers/tool-result.ts stringifyForEstimation; context/utils.ts estimateTokens; shared usage-stats.ts divisor",
+  "source": "apps/zcode-cli/packages/core/src/runtime/context-composition/classifier.ts (message loop and toolCategory); helpers/tool-result.ts stringifyForEstimation; context/utils.ts estimateTokens; shared usage-stats.ts divisor",
   "cases": [
     {
       "name": "user_text",
@@ -122,6 +122,66 @@
       "projected": "{\"role\":\"user\",\"content\":\"a\\\"b\\\\c\\nd\\u0001 😀 中\"}",
       "chars": 49,
       "tokens": 17
+    }
+  ],
+  "tools": [
+    {
+      "name": "read_tool_full_contract",
+      "deferred": false,
+      "tool": {
+        "name": "Read",
+        "description": "Read a file",
+        "capability": "file_read",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "file_path": {
+              "type": "string"
+            }
+          }
+        },
+        "readOnly": true,
+        "destructive": false,
+        "sideEffectScope": "none"
+      },
+      "projected": "{\"name\":\"Read\",\"description\":\"Read a file\",\"capability\":\"file_read\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"file_path\":{\"type\":\"string\"}}},\"readOnly\":true,\"destructive\":false,\"sideEffectScope\":\"none\"}",
+      "chars": 206,
+      "tokens": 69
+    },
+    {
+      "name": "bash_tool_no_contract_flags",
+      "deferred": false,
+      "tool": {
+        "name": "Bash",
+        "description": "Run a shell command",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "command": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "projected": "{\"name\":\"Bash\",\"description\":\"Run a shell command\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"command\":{\"type\":\"string\"}}}}",
+      "chars": 126,
+      "tokens": 42
+    },
+    {
+      "name": "deferred_mcp_tool",
+      "deferred": true,
+      "tool": {
+        "name": "mcp__github__search",
+        "description": "Search repositories",
+        "capability": "network",
+        "inputSchema": {
+          "type": "object"
+        },
+        "readOnly": true
+      },
+      "projected": "{\"name\":\"mcp__github__search\",\"description\":\"Search repositories\"}",
+      "chars": 66,
+      "tokens": 22
     }
   ]
 }

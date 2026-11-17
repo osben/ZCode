@@ -134,11 +134,86 @@ const projected = cases.map(({ name, message }) => {
   };
 });
 
+// Tool cases: the classifier's `toolCategory` literal, for a non-deferred tool (the ten contract fields, in Node's
+// order) and for a deferred one (name and description only). Each value is the tool's `ModelToolContract` as Node holds
+// it when the Rust side would hold the same data.
+interface ToolCase {
+  name: string;
+  deferred: boolean;
+  tool: Record<string, unknown>;
+}
+
+const toolCases: ToolCase[] = [
+  {
+    name: "read_tool_full_contract",
+    deferred: false,
+    tool: {
+      name: "Read",
+      description: "Read a file",
+      capability: "file_read",
+      inputSchema: { type: "object", properties: { file_path: { type: "string" } } },
+      outputSchema: undefined,
+      readOnly: true,
+      destructive: false,
+      sideEffectScope: "none",
+      permission: undefined,
+      resultBudget: undefined,
+    },
+  },
+  {
+    name: "bash_tool_no_contract_flags",
+    deferred: false,
+    tool: {
+      name: "Bash",
+      description: "Run a shell command",
+      inputSchema: { type: "object", properties: { command: { type: "string" } } },
+    },
+  },
+  {
+    name: "deferred_mcp_tool",
+    deferred: true,
+    tool: {
+      name: "mcp__github__search",
+      description: "Search repositories",
+      capability: "network",
+      inputSchema: { type: "object" },
+      readOnly: true,
+    },
+  },
+];
+
+const toolProjected = toolCases.map(({ name, deferred, tool }) => {
+  // The classifier's literal in `toolCategory`.
+  const content: string = deferred
+    ? stringifyForEstimation({ name: tool.name, description: tool.description })
+    : stringifyForEstimation({
+        name: tool.name,
+        description: tool.description,
+        capability: tool.capability,
+        inputSchema: tool.inputSchema,
+        outputSchema: tool.outputSchema,
+        readOnly: tool.readOnly,
+        destructive: tool.destructive,
+        sideEffectScope: tool.sideEffectScope,
+        permission: tool.permission,
+        resultBudget: tool.resultBudget,
+      });
+  return {
+    name,
+    deferred,
+    tool,
+    projected: content,
+    chars: content.length,
+    tokens: estimateTokens(content) as number,
+  };
+});
+
 const out = {
   generator: "packages/rust-cli/tools/composition-fixture/generate.ts",
   source:
-    "apps/zcode-cli/packages/core/src/runtime/context-composition/classifier.ts (message loop); helpers/tool-result.ts stringifyForEstimation; context/utils.ts estimateTokens; shared usage-stats.ts divisor",
+    "apps/zcode-cli/packages/core/src/runtime/context-composition/classifier.ts (message loop and toolCategory); helpers/tool-result.ts stringifyForEstimation; context/utils.ts estimateTokens; shared usage-stats.ts divisor",
   cases: projected,
+  tools: toolProjected,
 };
 
 const target = fileURLToPath(

@@ -70,6 +70,7 @@ fn sse(events: &[serde_json::Value], done: bool) -> Reply {
 
 fn read_tool() -> ToolDefinition {
     ToolDefinition {
+        contract: Default::default(),
         name: "Read".to_owned(),
         description: "Read".to_owned(),
         input_schema: json!({"type": "object"}),

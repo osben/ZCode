@@ -46,6 +46,7 @@ fn assistant(id: &str, value: &str) -> Message {
 
 fn tool(name: &str) -> ToolDefinition {
     ToolDefinition {
+        contract: Default::default(),
         name: name.to_owned(),
         description: "does things".to_owned(),
         input_schema: json!({"type": "object"}),
@@ -99,6 +100,7 @@ fn category(breakdown: &Breakdown, id: CategoryId) -> &Category {
 #[test]
 fn a_deferred_tool_is_sized_by_name_and_description_only() {
     let definition = ToolDefinition {
+        contract: Default::default(),
         name: "WebFetch".to_owned(),
         description: "fetch".to_owned(),
         input_schema: json!({"type": "object", "properties": {"url": {"type": "string"}}}),
