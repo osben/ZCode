@@ -13,6 +13,21 @@ pub const fn estimate(units: u64, chars_per_token: u64) -> u64 {
     (units * 2 + chars_per_token) / (chars_per_token * 2)
 }
 
+/// Node `estimateTokens` (apps/zcode-cli/packages/core/src/context/utils.ts): a CJK ideograph (U+4E00–U+9FFF) counts
+/// twice, every other UTF-16 unit once, then `Math.ceil(... / ESTIMATED_TOKEN_CHAR_DIVISOR)` with the divisor 3
+/// (packages/shared/src/usage-stats.ts). Use this for any estimate that must equal Node's.
+pub fn estimate_text(text: &str) -> u64 {
+    let cjk = text
+        .chars()
+        .filter(|c| ('\u{4e00}'..='\u{9fff}').contains(c))
+        .count() as u64;
+    let other = crate::js::string::utf16_len(text) as u64 - cjk;
+    (cjk * 2 + other).div_ceil(NODE_ESTIMATED_TOKEN_CHAR_DIVISOR)
+}
+
+/// `ESTIMATED_TOKEN_CHAR_DIVISOR` in Node's shared package.
+pub const NODE_ESTIMATED_TOKEN_CHAR_DIVISOR: u64 = 3;
+
 #[cfg(test)]
 #[path = "tokens_tests.rs"]
 mod tests;

@@ -130,6 +130,9 @@ async fn conclude(
         Outcome::Retry { fate, .. } => *fate,
         Outcome::Completed | Outcome::Failed { .. } => Fate::Keep,
     };
+    // The response's usage belongs to the request it answers: attach it before the call is committed (a plain answer
+    // ends here, a tool-use answer goes through `commit_batch` in respond.rs).
+    crate::respond::attach_usage(scope, &call);
     let metered = Metered::Model(call);
     if assistant.content.is_empty() {
         scope.sink.commit_metered(None, metered).await?;
@@ -363,11 +366,19 @@ pub(crate) async fn run(
         let Some(Prepared {
             request,
             max_tokens,
+            composition,
         }) = prepare(&scope, &mut history, &step, inputs.turn()).await?
         else {
             return Ok(QueryStop::Aborted);
         };
-        let responded = match respond(&scope, &mut history, request, state.responses).await {
+        let responded = match respond(
+            &scope,
+            &mut history,
+            (request, composition),
+            state.responses,
+        )
+        .await
+        {
             // 上下文超限的反应式压缩排在其他恢复分支之前（query.md §1）；压缩成功就重发，不计轮数。
             Err(QueryError::Model(error)) if error.prompt_too_long_message().is_some() => {
                 let Some(message) = error.prompt_too_long_message().map(str::to_owned) else {

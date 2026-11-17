@@ -7,6 +7,8 @@ use std::path::Path;
 
 use encoding_rs::{Encoding, GB18030, GBK, UTF_8, UTF_16LE};
 use rust_cli_base::js::string::{trim, utf16_len, utf16_prefix};
+// Node's `estimateTokens`, the shared base implementation (tokens.rs `estimate_text`).
+use rust_cli_base::tokens::estimate_text as estimate_tokens;
 use rust_cli_kernel_api::message::{AttachedBody, TextRead};
 use tokio::io::AsyncReadExt;
 
@@ -99,17 +101,6 @@ fn utf8_completion_bytes(buffer: &[u8]) -> usize {
         _ => 0,
     };
     length.saturating_sub(buffer.len() - start)
-}
-
-/// Node's estimate (`context/utils.ts` `estimateTokens`): a CJK ideograph (U+4E00–U+9FFF) counts twice, everything
-/// else once per UTF-16 unit, three per token.
-fn estimate_tokens(text: &str) -> u64 {
-    let cjk = text
-        .chars()
-        .filter(|c| ('\u{4e00}'..='\u{9fff}').contains(c))
-        .count() as u64;
-    let other = utf16_len(text) as u64 - cjk;
-    (cjk * 2 + other).div_ceil(3)
 }
 
 /// The lines of a decoded file, collected as Node's adapter does: every line is counted, the first `limit` are kept.

@@ -310,6 +310,7 @@ pub(super) async fn tool_session_with(
     let ids = Arc::new(SequentialIds::default());
     let env = Arc::new(UnusedEnvironment);
     let runner = Arc::new(QueryLoop::new(QueryParts {
+        compositions: Default::default(),
         model: model.clone(),
         context: Arc::new(FixedContext(Vec::new())),
         tools: Arc::new(rust_cli_kernel_api::testing::ListTools(tools)),
@@ -327,6 +328,7 @@ pub(super) async fn tool_session_with(
     let env = Arc::new(UnusedEnvironment);
     let session = Session::spawn(
         SessionDeps {
+            compositions: Default::default(),
             agents: Arc::new(rust_cli_kernel_api::agents::NoAgentSignals),
             cron: Arc::new(rust_cli_kernel_api::cron::NoCron),
             store: store.clone(),

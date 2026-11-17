@@ -191,6 +191,7 @@ async fn session_with_hooks(
     let env = Arc::new(UnusedEnvironment);
     let ids: Arc<dyn rust_cli_kernel_api::clock::Ids> = Arc::new(SequentialIds::default());
     let runner = Arc::new(rust_cli_query::QueryLoop::new(rust_cli_query::QueryParts {
+        compositions: Default::default(),
         model: Arc::new(ScriptedModel::new(Vec::new())),
         context: Arc::new(rust_cli_kernel_api::testing::FixedContext(Vec::new())),
         tools: Arc::new(rust_cli_kernel_api::testing::NoTools),
@@ -220,6 +221,7 @@ async fn session_with_hooks(
     let env = Arc::new(UnusedEnvironment);
     let session = Session::spawn(
         SessionDeps {
+            compositions: Default::default(),
             agents: Arc::new(rust_cli_kernel_api::agents::NoAgentSignals),
             cron: Arc::new(rust_cli_kernel_api::cron::NoCron),
             store: store.clone(),

@@ -512,6 +512,9 @@ impl Server {
                 .await
                 .map(Reply::new),
             "v4/conversation/rowsRange" => self.rows_range(&params).await.map(Reply::new),
+            "v4/conversation/contextComposition" => crate::context_composition::read(self, &params)
+                .await
+                .map(Reply::new),
             "v4/connection/flow" => crate::subscribe::flow(self, &params).await,
             "v4/sessionsIndex/reconcile" => crate::subscribe::reconcile(self, &params).await,
             "v4/command" => crate::commands::command(self, params).await.map(Reply::new),

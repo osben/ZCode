@@ -94,6 +94,7 @@ fn spawn(
     let ids = Arc::new(SequentialIds::default());
     let env = Arc::new(UnusedEnvironment);
     let runner = Arc::new(QueryLoop::new(QueryParts {
+        compositions: Default::default(),
         model: model.clone(),
         context: Arc::new(FixedContext(Vec::new())),
         tools: Arc::new(ListTools(vec![Arc::new(ModeTool)])),
@@ -111,6 +112,7 @@ fn spawn(
     let env = Arc::new(UnusedEnvironment);
     Session::spawn(
         SessionDeps {
+            compositions: Default::default(),
             agents: Arc::new(rust_cli_kernel_api::agents::NoAgentSignals),
             cron: Arc::new(rust_cli_kernel_api::cron::NoCron),
             store: store.clone(),

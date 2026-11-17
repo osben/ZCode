@@ -242,11 +242,11 @@ enum Ending {
 pub(crate) async fn respond(
     scope: &Arc<RunScope>,
     history: &mut Vec<Message>,
-    request: ModelRequest,
+    (request, composition): (ModelRequest, crate::composition::Breakdown),
     response: usize,
 ) -> Result<Responded, QueryError> {
     let assistant_id = scope.parts.ids.message();
-    let mut streamed = stream(scope, request, response, &assistant_id).await;
+    let mut streamed = stream(scope, request, composition, response, &assistant_id).await;
     let aborted_streaming = scope.abort.is_aborted();
     // 流读完却没有正常收尾（没有 `message_stop`、有没结束的块）：与流中途出错同样处理（R5-1，原来用 `?` 提前
     // 返回，丢下已经开工的工具）。
@@ -302,14 +302,17 @@ pub(crate) async fn respond(
 async fn stream(
     scope: &Arc<RunScope>,
     request: ModelRequest,
+    composition: crate::composition::Breakdown,
     response: usize,
     assistant_id: &MessageId,
 ) -> Streamed {
+    let started = scope.parts.clock.now_ms();
+    crate::request::record_composition(scope, &request, &composition, started);
     let mut timing = Timing {
         message: assistant_id.clone(),
         source: request.source.clone(),
         selection: request.selection.clone(),
-        started: scope.parts.clock.now_ms(),
+        started,
         first_token: None,
         first_content: None,
         retries: 0,
@@ -626,6 +629,23 @@ fn partial(
     })))
 }
 
+/// The response's provider usage goes onto the session's composition record: the record is the request this response
+/// answers. A response without usage leaves the record as it is. The session's record is dropped by an invalidation
+/// (see `CompositionStore::invalidate`), so a late usage cannot attach to a newer request's record.
+pub(crate) fn attach_usage(scope: &RunScope, call: &ModelCall) {
+    if let Some(usage) = &call.usage {
+        scope.parts.compositions.set_usage(
+            &scope.session,
+            crate::composition::provider_usage(
+                usage.input_tokens,
+                usage.cache_creation_input_tokens,
+                usage.cache_read_input_tokens,
+                usage.output_tokens,
+            ),
+        );
+    }
+}
+
 /// 提交 assistant（没有内容时只提交计量）与这批工具的结果：先是流还开着时暂存的，再按交出规则等其余的。
 async fn commit_batch(
     scope: &RunScope,
@@ -634,6 +654,7 @@ async fn commit_batch(
     handed: Vec<Ready>,
     batch: &mut ToolBatch,
 ) -> Result<(), QueryError> {
+    attach_usage(scope, &call);
     if assistant.content.is_empty() {
         scope
             .sink

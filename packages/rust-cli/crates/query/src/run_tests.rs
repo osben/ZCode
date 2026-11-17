@@ -22,6 +22,7 @@ pub(crate) fn parts(model: Arc<dyn ModelPort>, tools: Vec<Arc<dyn Tool>>) -> Que
     let env = Arc::new(UnusedEnvironment);
     let ids: Arc<dyn rust_cli_kernel_api::clock::Ids> = Arc::new(SequentialIds::default());
     QueryParts {
+        compositions: Default::default(),
         model,
         context: Arc::new(FixedContext(vec![SystemBlock {
             text: "system".to_owned(),

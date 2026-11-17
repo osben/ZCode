@@ -144,6 +144,8 @@ pub struct LocalKernel {
     titles: Option<TitleModel>,
     /// `/context` 的分析（context-usage.md），与主循环共用同一批实例。
     usage: Arc<usage::UsageAnalyzer>,
+    /// 每个会话最近一次请求的组成：主循环写（`QueryParts::compositions`），`v4/conversation/contextComposition` 读。
+    compositions: Arc<rust_cli_kernel_api::context_composition::CompositionStore>,
     /// 用户输入的 `@` 提及与 bash 模式（tui-input.md §1.1、§2.2）：基础注册表里的 Read 与 Bash。
     inputs: Arc<dyn rust_cli_kernel_api::user_input::UserInputs>,
     /// 操作上下文的工厂（执行环境的实例 + 注入的 Ids，F134）：会话 actor 与 `/export` 用它。
@@ -361,10 +363,15 @@ impl LocalKernel {
                 scope.spawner(),
             ))
         });
+        // The main loop's requests are measured into the store the kernel reads (the summary loop above keeps its own).
+        // The closer forgets a session's record too, so the store must exist before the closer is built.
+        let compositions =
+            Arc::new(rust_cli_kernel_api::context_composition::CompositionStore::default());
         // Fork: built after the agents so a release also reaches them (their notice forwarders).
         let closer = Arc::new(Closer {
             sessions: Arc::downgrade(&sessions),
             scoped: table::SessionScoped {
+                compositions: compositions.clone(),
                 context: assembler.clone(),
                 read_files: base.read_files.clone(),
                 worktrees: base.worktrees.clone(),
@@ -398,7 +405,11 @@ impl LocalKernel {
         // 第三处晚绑定：主循环与子循环拿到的压缩器句柄。
         late.bind(compactor.clone());
         let operations = parts.operations.clone();
-        let parts = QueryParts { tools, ..parts };
+        let parts = QueryParts {
+            tools,
+            compositions: compositions.clone(),
+            ..parts
+        };
         let main_loop: Arc<dyn QueryRunner> = Arc::new(QueryLoop::new(parts));
         // Fork: the session's `LSP` tool fact is settled before the run's first tool snapshot.
         let main_loop: Arc<dyn QueryRunner> = match extensions.code_intelligence.clone() {
@@ -443,6 +454,7 @@ impl LocalKernel {
             agent_catalog,
             titles: None,
             usage,
+            compositions,
             inputs: base.inputs,
             operations,
             scope,

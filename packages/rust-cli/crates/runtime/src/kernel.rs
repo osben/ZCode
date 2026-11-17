@@ -2,6 +2,7 @@
 
 use super::*;
 use rust_cli_kernel_api::env::EnvPath;
+use rust_cli_kernel_api::model::ModelSelection;
 use rust_cli_kernel_api::permission::ExecutionState;
 
 #[async_trait]
@@ -116,6 +117,73 @@ impl Kernel for LocalKernel {
             .list(filter)
             .await
             .map_err(KernelError::from)
+    }
+
+    /// `v4/conversation/contextComposition`: read from the store the main loop writes. No session is opened or restored.
+    async fn context_composition(
+        &self,
+        session: &SessionId,
+        selection: Option<ModelSelection>,
+    ) -> Result<Option<rust_cli_kernel_api::context_composition::CompositionAnswer>, KernelError>
+    {
+        use rust_cli_kernel_api::context_composition::{CompositionAnswer, CompositionPhase};
+        // Existing-only: a session that is not open is answered as absent, not restored.
+        let Some(handle) = self.settled(session).await else {
+            return Ok(None);
+        };
+        let view = handle.view().await?;
+        let selection = selection.unwrap_or_else(|| view.selection.clone());
+        let (revision, record) = self.compositions.snapshot(session);
+        let context_window = self
+            .usage
+            .model
+            .capabilities(&selection)
+            .await
+            .map(|found| found.context_window);
+        // A measured request answers only for the model it was sent to (the reasoning level does not count).
+        if let Some(record) = record.filter(|found| {
+            found.provider_id == selection.provider && found.model_id == selection.model
+        }) {
+            return Ok(Some(CompositionAnswer {
+                revision,
+                phase: CompositionPhase::Request,
+                record,
+                context_window,
+            }));
+        }
+        let mode = ExecutionState::from_parts(view.mode, view.plan).effective();
+        let breakdown = self
+            .usage
+            .composition_draft(
+                session,
+                &view.meta.workspace,
+                mode,
+                &selection,
+                &view.messages,
+            )
+            .await?;
+        let record = rust_cli_query::composition::record(
+            &selection.provider,
+            &selection.model,
+            self.ports.clock.now_ms(),
+            &breakdown,
+        );
+        Ok(Some(CompositionAnswer {
+            revision,
+            phase: CompositionPhase::DraftPreview,
+            record,
+            context_window,
+        }))
+    }
+
+    fn context_composition_changes(
+        &self,
+    ) -> Option<
+        tokio::sync::broadcast::Receiver<
+            rust_cli_kernel_api::context_composition::CompositionChange,
+        >,
+    > {
+        Some(self.compositions.subscribe())
     }
 
     /// `/context`（context-usage.md §2）：有会话时按会话 actor 的当前视图（历史、模型、模式），只读。

@@ -444,6 +444,11 @@ impl Actor {
             selection: selection.clone(),
         };
         self.commit(command, vec![fact]).await?;
+        // The last measured request was sent to the previous model: its composition is stale once the model changes.
+        // Invalidating before the event goes out means a reader of `ModelChanged` never sees the old record.
+        if self.selection != selection {
+            self.deps.compositions.invalidate(&self.meta.id);
+        }
         self.selection = selection.clone();
         self.log.append(KernelEvent::ModelChanged { selection });
         // F27：有效窗口随模型变，上下文提示与 footer 的 ctx 按新模型重算（按当前模型算）；修前要等下一条回复。
