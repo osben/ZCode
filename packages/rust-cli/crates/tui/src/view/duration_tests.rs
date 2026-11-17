@@ -46,6 +46,7 @@ fn the_line_comes_after_the_error_of_its_turn() {
             outcome: TurnOutcome::Failed {
                 message: "bad request".into(),
                 code: None,
+                provider: None,
             },
             usage: None,
         },

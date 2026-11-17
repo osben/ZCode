@@ -504,6 +504,7 @@ async fn a_failed_compaction_finishes_the_turn_with_the_reason() {
             outcome: TurnOutcome::Failed {
                 message: "Not enough messages to compact.".to_owned(),
                 code: None,
+                provider: None,
             },
             usage: None,
         })

@@ -274,7 +274,8 @@ async fn thrashing_ends_the_run_with_the_compactor_message() {
     assert_eq!(
         stop,
         QueryStop::ApiError {
-            message: "Autocompact is thrashing".to_owned()
+            message: "Autocompact is thrashing".to_owned(),
+            provider: None,
         }
     );
     assert!(model.requests().is_empty());
@@ -295,7 +296,8 @@ async fn the_blocking_line_ends_the_run_without_a_request() {
     assert_eq!(
         stop,
         QueryStop::ApiError {
-            message: "Prompt is too long".to_owned()
+            message: "Prompt is too long".to_owned(),
+            provider: None,
         }
     );
     assert!(model.requests().is_empty());
