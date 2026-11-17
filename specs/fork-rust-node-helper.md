@@ -441,6 +441,13 @@ UI/Host        Rust (owner)                       Helper                        
 
 Ordering guarantees (kept from F3): `helper/turn/ended` goes only after the turn's last tool call settled or was cancelled; `helper/session/close` goes only after `turn/ended`.
 
+#### Built in F4a (what the code does now)
+
+- Helper: `withNodeReplServer` (fork-rust-helper/node-repl.ts) adds `node_repl` to the resolved outcome. The session open's `servers` names it through the admitted catalog.
+- Rust: `select.rs` serves browser-use and computer-use with a helper (they load, with their skills), and attaches one `node_repl` server (transport NodeHelper, timeout 600000 ms) to the first admitted of them. The node-repl-host plugin itself stays skipped. Known gap: when browser-use and computer-use are both disabled, node_repl is not attached, as in Node; when the host plugin is missing, Node's helper returns no config and the open logs an unknown server, so the tool errors on its call.
+- Cancel: the existing F3 pipe path (`notifications/cancelled`) carries a node_repl cancel. No separate test yet.
+- Shutdown: when Rust drops the helper generation, its stdin is already at EOF, so the helper closes its sessions (`mcpHost.dispose`: pipes, then session leases) and `pool.close()`. Rust waits 3 s (`HELPER_STOP_GRACE`) for the process to exit, then `Shutdown::Immediate` if it did, or `Shutdown::Graceful` (TERM, then KILL) if not. This is not unit-tested; it is checked in the box only by reading the code path.
+
 #### Shutdown order (F4a)
 
 1. Rust closes the helper's stdin.

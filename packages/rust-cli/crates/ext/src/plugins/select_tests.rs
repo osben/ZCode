@@ -446,7 +446,8 @@ async fn plugin_host_plugins_load_with_a_node_helper() {
         ..PluginSources::default()
     };
     let loaded = load_all(&env(&files), &workspace(), &[], &sources).await;
-    assert_eq!(names(&loaded), ["documents"]);
+    // browser-use is served by the helper too (F4a), and carries node_repl; its own servers are none.
+    assert_eq!(names(&loaded), ["documents", "browser-use"]);
     assert_eq!(
         transports(&loaded, "documents"),
         [
@@ -459,16 +460,10 @@ async fn plugin_host_plugins_load_with_a_node_helper() {
     );
     assert_eq!(
         reasons(&loaded),
-        [
-            (
-                Some("browser-use@zcode-plugins-official"),
-                &SkipReason::NodeRuntime(NodeDependency::NodeRepl)
-            ),
-            (
-                Some("image-search@zcode-plugins-official"),
-                &SkipReason::NodeRuntime(NodeDependency::OfficialAuth)
-            ),
-        ]
+        [(
+            Some("image-search@zcode-plugins-official"),
+            &SkipReason::NodeRuntime(NodeDependency::OfficialAuth)
+        )]
     );
 }
 
@@ -574,4 +569,49 @@ async fn mcp_app_plugins_are_helper_hosted_with_a_node_helper() {
             "{plugin}"
         );
     }
+}
+
+/// Fork (specs/fork-rust-node-helper.md "F4 node_repl and browser", F4a): with a helper, browser-use and computer-use
+/// load, and the node_repl server (helper-hosted, 600 s tool timeout) is attached to the first of them. The
+/// node-repl-host plugin itself stays skipped: it is a host, not a plugin users see.
+#[tokio::test]
+async fn node_repl_is_served_by_the_helper_for_browser_use_and_computer_use() {
+    let files = [
+        official_manifest("browser-use", r#", "skills": "skills""#),
+        official_manifest("computer-use", ""),
+        official_manifest("node-repl-host", ""),
+    ];
+    let sources = PluginSources {
+        candidates: vec![
+            official("browser-use"),
+            official("computer-use"),
+            official("node-repl-host"),
+        ],
+        enabled_plugins: enabled(&[
+            ("browser-use@zcode-plugins-official", true),
+            ("computer-use@zcode-plugins-official", true),
+            ("node-repl-host@zcode-plugins-official", true),
+        ]),
+        node_helper: true,
+        ..PluginSources::default()
+    };
+    let loaded = load_all(&env(&files), &workspace(), &[], &sources).await;
+    assert_eq!(names(&loaded), ["browser-use", "computer-use"]);
+    assert_eq!(
+        reasons(&loaded),
+        [(
+            Some("node-repl-host@zcode-plugins-official"),
+            &SkipReason::NodeRuntime(NodeDependency::NodeRepl)
+        )]
+    );
+    let servers: Vec<_> = loaded
+        .plugins
+        .0
+        .iter()
+        .flat_map(|plugin| plugin.mcp_servers.iter())
+        .filter(|server| server.name == "node_repl")
+        .collect();
+    assert_eq!(servers.len(), 1, "node_repl is attached once");
+    assert_eq!(servers[0].transport, McpTransportConfig::NodeHelper);
+    assert_eq!(servers[0].options.timeout_ms, Some(600_000));
 }

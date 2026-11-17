@@ -172,6 +172,9 @@ impl NodeHelperLauncher for ProcessLauncher {
 /// in a task so it is confirmed: the tree is reaped and its ledger record removed, instead of one record per
 /// generation waiting for the next process's sweep. If the task never runs (the scope is closing), dropping the tree
 /// still kills it.
+/// Fork (F4a): how long a helper gets to exit on EOF before its tree is terminated.
+const HELPER_STOP_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
+
 struct StopOnDrop {
     tree: Option<Tracked>,
     spawner: Spawner,
@@ -183,7 +186,15 @@ impl Drop for StopOnDrop {
             return;
         };
         drop(self.spawner.spawn("node-helper-stop", async move {
-            if let Err(error) = tree.terminate(Shutdown::Graceful).await {
+            // F4a: the helper's stdin was dropped with the process (EOF) before this task ran, so it closes its
+            // sessions and MCP children itself, in order. Only a helper still alive after the grace period gets TERM
+            // and KILL; one that exited meanwhile has its leftovers killed without a TERM.
+            let shutdown = match tokio::time::timeout(HELPER_STOP_GRACE, tree.child().wait()).await
+            {
+                Ok(_) => Shutdown::Immediate,
+                Err(_) => Shutdown::Graceful,
+            };
+            if let Err(error) = tree.terminate(shutdown).await {
                 tracing::debug!(
                     event = "helper.stop_unconfirmed",
                     %error,
