@@ -22,6 +22,7 @@ import { ZCodeProtocolNdjsonConnection } from "../zcode-protocol/transport.js";
 import type { ZCodeProtocolAgentServerContext } from "../zcode-protocol/server-types.js";
 import { V4InteractionRegistry } from "../zcode-protocol-v4/interaction-registry.js";
 import { FORK_RUST_HELPER_F3 } from "./f3-protocol.js";
+import { withNodeReplServer } from "./node-repl.js";
 import { ForkRustHelperMcpHost } from "./mcp-host.js";
 import { ForkRustHelperClient } from "./rust-client.js";
 import { ForkRustHelperServer } from "./server.js";
@@ -143,15 +144,18 @@ export async function runForkRustHelper(options: RunForkRustHelperOptions): Prom
     client,
     notify: (method, params) => send({ method, params }),
     pool,
-    resolvePlugins: (workspace) =>
-      resolveZCodePlugins({
-        pluginPreparation,
-        pluginDiscovery,
-        logger,
-        workingDirectory: workspace.workspacePath,
-        ...(workspace.workspaceIdentity ? { workspaceIdentity: workspace.workspaceIdentity } : {}),
-        env,
-      }),
+    resolvePlugins: async (workspace) =>
+      withNodeReplServer(
+        await resolveZCodePlugins({
+          pluginPreparation,
+          pluginDiscovery,
+          logger,
+          workingDirectory: workspace.workspacePath,
+          ...(workspace.workspaceIdentity ? { workspaceIdentity: workspace.workspaceIdentity } : {}),
+          env,
+        }),
+        workspace.workspacePath,
+      ),
     logger,
   });
 

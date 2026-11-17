@@ -10,9 +10,13 @@ use std::sync::Mutex as StdMutex;
 use futures_util::StreamExt;
 use futures_util::stream::BoxStream;
 use rust_cli_base::TaskScope;
+use rust_cli_ext::WorkspaceConfig;
+use rust_cli_ext::plugins::{PluginCandidate, PluginOrigin, PluginSources};
 use rust_cli_hooks::ProjectEntry;
 use rust_cli_kernel_api::env::EnvFacts;
-use rust_cli_kernel_api::mcp::{McpConnect, McpConnectionId, McpError, McpTransportEvent};
+use rust_cli_kernel_api::mcp::{
+    McpConnect, McpConnectionId, McpError, McpTransportConfig, McpTransportEvent,
+};
 use rust_cli_kernel_api::testing::{FixedClock, MemoryEnvironment};
 
 use std::collections::BTreeSet;
@@ -23,11 +27,30 @@ pub(super) const ROOT: &str = "/Users/dev/repo";
 
 /// Records which servers the lane tried to start; every connect fails, so `wait_ready` settles at once.
 #[derive(Default)]
-struct Recording(StdMutex<Vec<String>>);
+struct Recording(StdMutex<Vec<McpConnect>>);
 
 impl Recording {
     fn started(&self) -> Vec<String> {
-        self.0.lock().unwrap().clone()
+        self.0
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|request| request.server.clone())
+            .collect()
+    }
+
+    /// The stdio env the lane handed to `server`'s connect.
+    fn stdio_env(&self, server: &str) -> BTreeMap<String, String> {
+        self.0
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|request| request.server == server)
+            .and_then(|request| match &request.transport {
+                McpTransportConfig::Stdio { env, .. } => Some(env.clone()),
+                _ => None,
+            })
+            .unwrap_or_default()
     }
 }
 
@@ -44,7 +67,7 @@ impl McpTransport for Recording {
         } else {
             "refused"
         };
-        self.0.lock().unwrap().push(request.server);
+        self.0.lock().unwrap().push(request);
         Err(McpError::Connect {
             message: message.to_owned(),
         })
@@ -98,17 +121,27 @@ impl ProjectHookSlots for Slots {
 #[derive(Default)]
 pub(super) struct Layer {
     reloaded: StdMutex<Vec<String>>,
+    loaded: StdMutex<Vec<String>>,
 }
 
 impl Layer {
     pub(super) fn reloaded(&self) -> Vec<String> {
         self.reloaded.lock().unwrap().clone()
     }
+
+    fn loaded(&self) -> Vec<String> {
+        self.loaded.lock().unwrap().clone()
+    }
 }
 
 #[async_trait]
 impl rust_cli_kernel_api::workspace_key::WorkspaceLayerHost for Layer {
-    async fn load(&self, _workspace: &WorkspaceRef) {}
+    async fn load(&self, workspace: &WorkspaceRef) {
+        self.loaded
+            .lock()
+            .unwrap()
+            .push(workspace.root.as_str().to_owned());
+    }
 
     async fn reload(&self, workspace: &WorkspaceRef) {
         self.reloaded
@@ -116,6 +149,42 @@ impl rust_cli_kernel_api::workspace_key::WorkspaceLayerHost for Layer {
             .unwrap()
             .push(workspace.root.as_str().to_owned());
     }
+}
+
+/// The workspace plugin view seam (`config::workspace_layer::Loader` in the app-server): the fixed view of the
+/// test workspace, `None` for an unreadable config.
+struct Plugins(Option<WorkspaceConfig>);
+
+#[async_trait]
+impl WorkspaceConfigLoader for Plugins {
+    async fn load(&self, _workspace: &WorkspaceRef) -> Option<WorkspaceConfig> {
+        self.0.clone()
+    }
+}
+
+/// A plugin `toolkit` in `/Users/dev/plugins/kit` whose manifest declares the stdio server `db`.
+const PLUGIN_DIR: &str = "/Users/dev/plugins/kit";
+
+fn plugin_files() -> Vec<(String, String)> {
+    vec![(
+        format!("{PLUGIN_DIR}/.claude-plugin/plugin.json"),
+        r#"{"name": "toolkit", "mcpServers": {"db": {"command": "${CLAUDE_PLUGIN_ROOT}/bin/db"}}}"#
+            .to_owned(),
+    )]
+}
+
+fn plugin_view() -> Option<WorkspaceConfig> {
+    Some(WorkspaceConfig {
+        plugins: PluginSources {
+            candidates: vec![PluginCandidate {
+                dir: EnvPath::new(PLUGIN_DIR),
+                marketplace: "inline".to_owned(),
+                origin: PluginOrigin::ConfigDir,
+            }],
+            ..PluginSources::default()
+        },
+        servers: Vec::new(),
+    })
 }
 
 /// Shared with `app_hook_review_tests.rs`.
@@ -143,6 +212,27 @@ pub(super) fn fixture_files(
     user: Value,
     wrap: impl FnOnce(Arc<dyn Files>) -> Arc<dyn Files>,
 ) -> Fixture {
+    fixture_with(project, user, Vec::new(), None, wrap)
+}
+
+/// A fixture whose workspace has the plugin `toolkit` ([`plugin_files`], [`plugin_view`]).
+fn fixture_with_plugin(project: Value, user: Value) -> Fixture {
+    fixture_with(
+        &project.to_string(),
+        user,
+        plugin_files(),
+        plugin_view(),
+        |env| env,
+    )
+}
+
+fn fixture_with(
+    project: &str,
+    user: Value,
+    extra_files: Vec<(String, String)>,
+    plugins: Option<WorkspaceConfig>,
+    wrap: impl FnOnce(Arc<dyn Files>) -> Arc<dyn Files>,
+) -> Fixture {
     let facts = EnvFacts {
         cwd: EnvPath::new(ROOT),
         platform: "linux".to_owned(),
@@ -152,9 +242,12 @@ pub(super) fn fixture_files(
         home: Some(EnvPath::new("/Users/dev")),
         uid: None,
     };
-    let env = MemoryEnvironment::new(facts)
+    let mut env = MemoryEnvironment::new(facts)
         .with_file("/Users/dev/repo/.git/HEAD", "ref")
         .with_file("/Users/dev/repo/.zcode/config.json", project);
+    for (path, text) in &extra_files {
+        env = env.with_file(path, text);
+    }
     let home = tempfile::tempdir().unwrap();
     let file = home.path().join(".zcode/cli/config.json");
     std::fs::create_dir_all(file.parent().unwrap()).unwrap();
@@ -177,6 +270,7 @@ pub(super) fn fixture_files(
             scope.spawner(),
             Arc::new(FixedClock(1_767_225_600_000)),
         ),
+        Arc::new(Plugins(plugins)),
     );
     Fixture {
         _home: home,
@@ -540,10 +634,10 @@ async fn a_displaced_connect_starts_nothing_and_a_pending_lane_shows_connecting(
         let admin = &fixture.admin;
         async move {
             let read = admin.read(&target(key)).await;
-            let configured = AppWorkspace::configured(&read, None);
+            let configured = AppWorkspace::configured(&read, None, &BTreeMap::new());
             (
                 read.workspace.clone(),
-                admin.admit(&read, &configured, &BTreeSet::new()),
+                admin.admit(&read, &configured, &BTreeMap::new(), &BTreeSet::new()),
             )
         }
     };
@@ -840,5 +934,127 @@ fn the_production_app_server_wires_mcp_oauth_into_the_workspace() {
     assert!(
         source.contains(".with_mcp_oauth(opened.platform.mcp_oauth_store(),opened.platform.mcp_oauth_runtime(),)"),
         "app_server.rs no longer wires the MCP OAuth store and runtime into the workspace"
+    );
+}
+
+#[tokio::test]
+async fn a_status_read_lists_plugin_servers_without_loading_the_layer() {
+    let fixture = fixture_with_plugin(json!({}), json!({}));
+    let statuses = list(&fixture, "k", false).await;
+    let row = &statuses["plugin:toolkit:db"];
+    assert_eq!(row["status"], "disconnected");
+    assert_eq!(row["transport"], "stdio");
+    assert_eq!(row["toolCount"], 0);
+    assert!(row.get("workspaceTrust").is_none());
+    // Node reads the plugin set per request and starts nothing for it: no lane, no layer load.
+    assert!(fixture.transport.started().is_empty());
+    assert!(fixture.layer.loaded().is_empty());
+}
+
+#[tokio::test]
+async fn a_connect_admits_the_plugin_server_with_its_plugin_env() {
+    let fixture = fixture_with_plugin(json!({}), json!({}));
+    let statuses = list(&fixture, "k", true).await;
+    // The read does not wait for the plugin server, so its connect task records the request a little later.
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while fixture.transport.started().is_empty() {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the plugin server was never connected");
+    assert_eq!(fixture.transport.started(), ["plugin:toolkit:db"]);
+    assert_eq!(
+        fixture
+            .transport
+            .stdio_env("plugin:toolkit:db")
+            .get("CLAUDE_PLUGIN_ROOT")
+            .map(String::as_str),
+        Some(PLUGIN_DIR)
+    );
+    // The read no longer waits for plugin servers, so the refused connect may still be in flight when it returns.
+    assert!(matches!(
+        statuses["plugin:toolkit:db"]["status"].as_str(),
+        Some("connecting" | "failed")
+    ));
+    assert!(
+        statuses["plugin:toolkit:db"]
+            .get("workspaceTrust")
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn a_host_dto_entry_replaces_the_plugin_server_of_the_same_name() {
+    let fixture = fixture_with_plugin(json!({}), json!({}));
+    let dtos =
+        [json!({"name": "plugin:toolkit:db", "command": "node", "args": ["mine.js"], "env": []})];
+    let result = fixture
+        .admin
+        .mcp_list(&target("k"), Some(&dtos), true)
+        .await
+        .unwrap();
+    let statuses = result["statuses"].as_object().unwrap();
+    assert_eq!(fixture.transport.started(), ["plugin:toolkit:db"]);
+    // The DTO replaced the plugin server: its env no longer carries the plugin root.
+    assert!(
+        !fixture
+            .transport
+            .stdio_env("plugin:toolkit:db")
+            .contains_key("CLAUDE_PLUGIN_ROOT")
+    );
+    assert_eq!(statuses["plugin:toolkit:db"]["status"], "failed");
+}
+
+#[tokio::test]
+async fn an_unreadable_workspace_config_lists_no_plugin_rows() {
+    let fixture = fixture_with("{}", json!({}), plugin_files(), None, |env| env);
+    let statuses = list(&fixture, "k", false).await;
+    assert!(statuses.get("plugin:toolkit:db").is_none());
+}
+
+/// A transport whose connects never complete, as a server that never answers its handshake behaves.
+#[derive(Default)]
+struct Silent;
+
+#[async_trait]
+impl McpTransport for Silent {
+    async fn connect(&self, _: &WorkspaceRef, _: McpConnect) -> Result<McpConnectionId, McpError> {
+        std::future::pending().await
+    }
+
+    async fn send(&self, _: &McpConnectionId, _: Value) -> Result<(), McpError> {
+        Ok(())
+    }
+
+    fn events(&self, _: &McpConnectionId) -> BoxStream<'static, McpTransportEvent> {
+        futures_util::stream::pending().boxed()
+    }
+
+    async fn close(&self, _: &McpConnectionId) -> Result<(), McpError> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn a_silent_plugin_server_does_not_hold_the_settings_read() {
+    let mut fixture = fixture_with_plugin(json!({}), json!({}));
+    fixture.admin.transport = Arc::new(Silent);
+    // The plugin server gets a 200 ms connect timeout (its `timeoutMs` default is the settings default, 30 s in
+    // production). Node awaits each connection of the lane within that bound, so the read returns with the server
+    // `failed` and the timeout message, well inside the Desktop's read timeout.
+    fixture.admin.mcp.connect_timeout_ms = 200;
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        fixture.admin.mcp_list(&target("k"), None, true),
+    )
+    .await
+    .expect("mcp/list waited past the connect timeout of a silent plugin server")
+    .unwrap();
+    let row = &result["statuses"]["plugin:toolkit:db"];
+    assert_eq!(row["status"], "failed");
+    assert_eq!(
+        row["error"],
+        "MCP server plugin:toolkit:db connection timed out after 200ms"
     );
 }

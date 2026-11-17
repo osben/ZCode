@@ -153,3 +153,21 @@ fn alive(pid: libc::pid_t) -> bool {
     let found = unsafe { libc::kill(pid, 0) } == 0;
     found
 }
+
+// Fork (F4a): the stop mode of a dropped helper. A helper that exits within the grace period after EOF needs no TERM;
+// one still alive after it gets TERM and KILL.
+#[tokio::test]
+async fn a_helper_that_exits_within_the_grace_is_not_terminated() {
+    let mode = stop_mode(async {}, std::time::Duration::from_secs(1)).await;
+    assert!(matches!(mode, Shutdown::Immediate));
+}
+
+#[tokio::test]
+async fn a_helper_alive_after_the_grace_is_terminated_gracefully() {
+    let mode = stop_mode(
+        std::future::pending::<()>(),
+        std::time::Duration::from_millis(5),
+    )
+    .await;
+    assert!(matches!(mode, Shutdown::Graceful));
+}

@@ -619,6 +619,8 @@ impl McpManager {
     }
 
     /// 等全部服务器离开 `Pending`（连上或失败）。
+    /// Waits until no server is connecting. A deferred helper server (`start` does not spawn its task) stays `Pending`
+    /// until a session first needs it, so it is not waited for: nothing in this wait can settle it.
     pub async fn wait_ready(&self) {
         let mut changes = self.0.changed.subscribe();
         loop {
@@ -626,7 +628,7 @@ impl McpManager {
                 .0
                 .servers()
                 .values()
-                .any(|server| server.status.pending());
+                .any(|server| server.status.pending() && !server.deferred);
             if !pending || changes.changed().await.is_err() {
                 return;
             }
