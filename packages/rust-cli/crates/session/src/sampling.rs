@@ -205,9 +205,12 @@ fn messages(
 impl Actor {
     /// The usage row of a sampling call: its own batch, anchored to no turn. A draft session is stored by it.
     pub(crate) async fn record_model_call(&self, call: ModelCall) -> Result<(), String> {
+        let announced = call.clone();
         self.commit_in_turn(None, vec![Fact::ModelCalled { call }])
             .await
-            .map_err(|reason| reason.to_string())
+            .map_err(|reason| reason.to_string())?;
+        self.announce_completed(announced);
+        Ok(())
     }
 }
 

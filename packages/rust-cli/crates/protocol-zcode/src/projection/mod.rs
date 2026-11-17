@@ -1235,6 +1235,7 @@ impl Projection {
             KernelEvent::SessionCreated { .. }
             | KernelEvent::ContextNotice { .. }
             | KernelEvent::OutputSpeed { .. }
+            | KernelEvent::ModelRequestCompleted { .. }
             | KernelEvent::TasksChanged { .. }
             | KernelEvent::HistoryRewritten { .. }
             | KernelEvent::ScheduledFire { .. }

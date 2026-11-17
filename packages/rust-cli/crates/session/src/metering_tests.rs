@@ -2,7 +2,7 @@
 //! `TurnEnded`。
 use std::sync::Arc;
 
-use rust_cli_kernel_api::ids::SessionId;
+use rust_cli_kernel_api::ids::{MessageId, SessionId};
 use rust_cli_kernel_api::message::{Message, UserOrigin};
 use rust_cli_kernel_api::metering::CallStatus;
 use rust_cli_kernel_api::session_api::SessionHandle;
@@ -226,4 +226,51 @@ fn only_completed_main_requests_have_an_output_speed() {
     })
     .unwrap();
     assert_eq!(unknown.tokens_per_second(), None);
+}
+
+/// Fork (parity step 4, item D): every completed model request, main or side, is broadcast once as
+/// `ModelRequestCompleted` after its usage row is stored. It is live only: a new subscriber's replay does not carry it.
+#[tokio::test]
+async fn completed_requests_are_broadcast_once_and_not_replayed() {
+    use rust_cli_kernel_api::session_api::KernelEvent;
+
+    let model = Arc::new(ScriptedModel::new(vec![
+        tool_use_response("toolu_1", "Echo", &json!({})),
+        text_response(&["done"]),
+    ]));
+    let mut setup = Setup::new(model);
+    setup.tools = vec![Arc::new(FakeTool::new("Echo", true, "ok"))];
+    let built = setup.build().await;
+    let mut events = built.session.subscribe(None);
+    built.session.send(submit("c1", "hi")).await;
+    let seen = until(&mut events, finished).await;
+    let broadcast: Vec<MessageId> = seen
+        .iter()
+        .filter_map(|event| match event {
+            KernelEvent::ModelRequestCompleted { call } => {
+                assert_eq!(call.status, CallStatus::Completed);
+                Some(call.message.clone())
+            }
+            _ => None,
+        })
+        .collect();
+    let stored: Vec<MessageId> = built
+        .store
+        .facts(&SessionId::new("sess_1"))
+        .iter()
+        .filter_map(|fact| match fact {
+            Fact::ModelCalled { call } => Some(call.message.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(broadcast.len(), 2);
+    assert_eq!(broadcast, stored);
+    // `after` = 0: the replay of everything the log still holds.
+    let mut replay = built.session.subscribe(Some(0));
+    let replayed = until(&mut replay, finished).await;
+    assert!(
+        !replayed
+            .iter()
+            .any(|event| matches!(event, KernelEvent::ModelRequestCompleted { .. }))
+    );
 }

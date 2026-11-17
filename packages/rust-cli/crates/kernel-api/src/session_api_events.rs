@@ -281,6 +281,11 @@ pub enum KernelEvent {
     OutputSpeed {
         speed: crate::metering::OutputSpeed,
     },
+    /// Fork: a completed model request (main or side), sent once its usage row is stored (Node
+    /// `model_request_completed`, the source of `v4/telemetry/model-request-metrics`). Live only: it is not replayed.
+    ModelRequestCompleted {
+        call: Box<crate::metering::ModelCall>,
+    },
     TasksChanged {
         tasks: Value,
     },

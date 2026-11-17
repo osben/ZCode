@@ -84,6 +84,8 @@ struct State {
     watches: std::collections::HashMap<String, rust_cli_base::Task<()>>,
     /// Fork: facts waiting for the next write, in order.
     facts: Vec<Value>,
+    /// Fork: model request metrics waiting for the next write, in order (`v4/telemetry/model-request-metrics`).
+    metrics: Vec<Value>,
 }
 
 /// 锁里算好、锁外写出的东西：（订阅、区间、payload）与变了的会话列表行。
@@ -91,6 +93,7 @@ struct Outgoing {
     frames: Vec<(String, (u64, u64), Value)>,
     summary: Option<Value>,
     facts: Vec<Value>,
+    metrics: Vec<Value>,
 }
 
 /// Fork: starts watch `id` on a subagent child's runs for the parent's telemetry (child, watch ID, whether the child
@@ -216,6 +219,7 @@ impl Live {
                 child_runs: crate::child_runs::ChildRuns::default(),
                 watches: std::collections::HashMap::new(),
                 facts: Vec::new(),
+                metrics: Vec::new(),
             }),
             context,
             topics,
@@ -333,6 +337,7 @@ impl Live {
                     frames: Vec::new(),
                     summary: None,
                     facts: std::mem::take(&mut state.facts),
+                    metrics: Vec::new(),
                 },
                 read.reopen,
             )
@@ -992,6 +997,7 @@ impl Live {
             })
             .collect();
         let facts = std::mem::take(&mut state.facts);
+        let metrics = std::mem::take(&mut state.metrics);
         let row = self.summary_of(state);
         let mut comparable = row.clone();
         comparable["lastActivityAt"] = json!(0);
@@ -1003,6 +1009,7 @@ impl Live {
             frames,
             summary,
             facts,
+            metrics,
         }
     }
 
@@ -1027,6 +1034,12 @@ impl Live {
             self.context
                 .peer
                 .notify(crate::telemetry::FACT, &fact)
+                .await;
+        }
+        for metric in outgoing.metrics {
+            self.context
+                .peer
+                .notify(crate::telemetry::METRICS, &metric)
                 .await;
         }
     }
@@ -1161,17 +1174,23 @@ impl SessionSink for Live {
             _ => None,
         };
         if let Some(telemetry) = &mut state.telemetry {
-            let facts = telemetry.observe(
-                &event.event,
-                &Observed {
-                    scope: "",
-                    seq: event.seq,
-                    now,
-                    provider: &provider,
-                    automation: automation.as_deref(),
-                },
-            );
+            let at = Observed {
+                scope: "",
+                seq: event.seq,
+                now,
+                provider: &provider,
+                automation: automation.as_deref(),
+            };
+            let facts = telemetry.observe(&event.event, &at);
+            // The metrics notification is its own method, not a fact: it goes out with the write.
+            let metric = match &event.event {
+                KernelEvent::ModelRequestCompleted { call } => {
+                    Some(telemetry.model_request_metrics(call, &at))
+                }
+                _ => None,
+            };
             state.facts.extend(facts);
+            state.metrics.extend(metric);
         }
         let spawned = Self::subagent_facts(&mut state, "", event.seq, now);
         drop(state);
