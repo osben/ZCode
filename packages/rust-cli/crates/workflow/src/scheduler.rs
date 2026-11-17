@@ -16,6 +16,7 @@ use crate::model::{ActorRow, NodeKind, NodeRow, NodeStatus, Ref};
 use crate::persona::persona_model;
 use crate::replay::{CachedOutcome, CachedSettle, Job, Release};
 use anyhow::{Result, anyhow};
+use rust_cli_base::js::string::{trim as js_trim, utf16_prefix};
 use serde_json::{Map, Value};
 use std::collections::{BTreeMap, VecDeque};
 
@@ -48,23 +49,16 @@ pub fn hash_mismatch(instance: &Ref, expected: &str, got: &str) -> WorkflowError
     }
 }
 
-/// Node `headOfInstructions`: the trimmed instructions, bounded; absent for empty text.
+/// Node `headOfInstructions`: the trimmed instructions, bounded to 240 UTF-16 units; absent for empty text.
+/// Deviation: when a surrogate pair straddles unit 240, Node keeps the high half (a lone surrogate, which
+/// `JSON.stringify` writes as `\ud83d`). A Rust `String` cannot hold that, so the pair is dropped and the
+/// head is one unit shorter. Pinned by `engine_tests::instructions_head_cuts_by_utf16_units`.
 pub fn instructions_head(instructions: &str) -> Option<String> {
-    let trimmed = instructions.trim();
+    let trimmed = js_trim(instructions);
     if trimmed.is_empty() {
         return None;
     }
-    let mut units = 0;
-    let mut head = String::new();
-    for ch in trimmed.chars() {
-        let width = ch.len_utf16();
-        if units + width > INSTRUCTIONS_HEAD_MAX_UNITS {
-            break;
-        }
-        units += width;
-        head.push(ch);
-    }
-    Some(head)
+    Some(utf16_prefix(trimmed, INSTRUCTIONS_HEAD_MAX_UNITS).to_owned())
 }
 
 /// How an actor's session is obtained (Node `actor.sessionPromise`).

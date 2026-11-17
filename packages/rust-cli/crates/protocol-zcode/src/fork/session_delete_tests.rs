@@ -203,6 +203,13 @@ async fn an_idle_session_is_closed_deleted_and_forgotten() {
         .followups
         .lock_unpoisoned()
         .insert(SessionId::new("s1"), Followup::Guide);
+    server.record_dynamic_workflow_gate(
+        &SessionId::new("s1"),
+        rust_cli_kernel_api::dynamic_workflow::DynamicWorkflowGate {
+            enabled: true,
+            tools_on_demand: false,
+        },
+    );
     let ack = delete(&server, &live, &envelope(), 7).await;
     assert_eq!(ack.status, Status::Accepted);
     assert_eq!(ack.result, None);
@@ -215,6 +222,11 @@ async fn an_idle_session_is_closed_deleted_and_forgotten() {
             .followups
             .lock_unpoisoned()
             .contains_key(&SessionId::new("s1"))
+    );
+    assert!(
+        server
+            .dynamic_workflow_gate(&SessionId::new("s1"))
+            .is_none()
     );
 }
 

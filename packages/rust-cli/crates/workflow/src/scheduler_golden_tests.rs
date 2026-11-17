@@ -281,6 +281,8 @@ fn replay<J: JournalPort>(scenario: &Value, journal: &mut J) -> Value {
                     .downcast_ref::<WorkflowError>()
                     .expect("constructor refuses with a workflow error");
                 construct_error = Some(error.to_json());
+                // The generator has no engine to call, so every step's result is null (`runStep`).
+                results = vec![Value::Null; lifetime["steps"].as_array().expect("steps").len()];
             }
             Ok(mut engine) => {
                 for step in lifetime["steps"].as_array().expect("steps") {
@@ -328,6 +330,7 @@ fn replay<J: JournalPort>(scenario: &Value, journal: &mut J) -> Value {
         "lifetimes": lifetimes,
         "outcomes": outcomes,
         "driverCalls": recording.calls,
+        "emittedCount": recording.emitted.len(),
         "events": events,
     })
 }
@@ -365,6 +368,10 @@ fn check(scenario: &Value, actual: &Value) {
         canonical_json(&actual["driverCalls"]),
         canonical_json(&scenario["driverCalls"]),
         "{name}: driver calls"
+    );
+    assert_eq!(
+        actual["emittedCount"], scenario["emittedCount"],
+        "{name}: events the driver was told about"
     );
     assert_eq!(
         actual["events"], scenario["events"],

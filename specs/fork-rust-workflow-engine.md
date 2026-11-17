@@ -502,9 +502,23 @@ Each PR updates the F5 row and D1 in `specs/fork-rust-node-helper.md` and the "O
 - Goldens: `fixtures/dwf/scenario.json` is the shared input (27 event kinds, every status decoding path, a non-terminal run, a workflow actor link). `node-written.sqlite` and `node-expected.json` come from Node: `scripts/rust-cli/dwf-journal-goldens.ts`, run with `pnpm exec tsx`. `rust-written.sqlite` comes from the ignored test `regenerate_rust_written_golden`. Direction 1 is `golden_tests::rust_reads_what_node_wrote`; direction 2 is `apps/zcode-cli/packages/adapters/tests/dwf-rust-goldens.test.ts` (fork Vitest). Timestamps are not compared.
 - Pin: `dwf_tests::the_0019_checksum_is_pinned_to_the_upstream_ledger` pins `1c8da556…` (`fork-upstream-migrations.json`); the Node golden checks the ledger value. No migration or DDL changed.
 
-### 9.2 As built (W5a, partial)
+### 9.2 As built (W1)
 
-Status: part of W5a is built on branch `feat/rust-workflow-engine-core`; gate off, nothing calls it. The rest of W5a is listed below as remaining, not as done.
+Gate plumbing only. Nothing runs, nothing is registered, and the policy answer stays `enabled: false` (W4).
+
+- Pure rules: `crates/kernel-api/src/dynamic_workflow.rs`. `DynamicWorkflowMode` (wire values `disabled`, `onDemand`, `alwaysOn`), `DynamicWorkflowPreferences` (the Host's workspace fact), and `resolve_gate`, which follows Node's `resolveDynamicWorkflowRuntimeGate` (`bootstrap/src/zcode-protocol/dynamic-workflow-policy.ts`): the create parameters win, then the cached preference, then closed. A mode is read only when enabled, and it defaults to `alwaysOn`. `onDemand` is the only mode that defers tools. The Node rules are the test table (`dynamic_workflow_tests.rs`).
+- Workspace fact: `workspace/updateDynamicWorkflowPolicy` caches `enabled` and `mode` in `Preferences` (`server.rs`). A disabled update clears the mode, as Node does. The reply is still `enabled: false`.
+- Record fact: `createSession` reads `dynamicWorkflowEnabled` and `dynamicWorkflowMode` (the fields the Host already sends; the inbound schema accepts them). The direct route records the resolved gate for the new session in `Server::dynamic_workflow_gates`. The record is memory-only and is rebuilt at every create or resume, as Node does: Node writes `runtimeConfig` at createRecord and reads the process preference on cold recovery (`v4-bridge.ts`, `dynamic-workflow-policy.ts`). Nothing reads the gate yet; W7 registers the tools from it.
+- Tool names: the ten Node names (section 2.2) are constants in `tool_names.rs` with `DYNAMIC_WORKFLOW_TOOLS`. They are not in any registration list and have no `Tool` implementation. Contracts and implementations are W7.
+- Not in W1: the activation route (`preparedSessionId`), the submission reservation, and the worktree activation do not record a gate yet. W7 must read it there before it registers tools. Legacy `session/create` and `session/resume` do not read the fields either.
+
+### 9.3 As built (W5a)
+
+W5a is built in two parts. Part 1 (PR 529, branch `feat/rust-workflow-engine-core`) is the lifecycle and the journal port. Part 2 (PR 531, branch `feat/rust-workflow-engine-scheduler`) is identity, scheduler, replay and usage, and is described after part 1.
+
+#### Part 1: lifecycle and journal port
+
+Status: part 1 is built; gate off, nothing calls it.
 
 Code: `packages/rust-cli/crates/workflow` (package `rust-cli-workflow`).
 
@@ -516,14 +530,14 @@ Code: `packages/rust-cli/crates/workflow` (package `rust-cli-workflow`).
 - `journal_dwf.rs`: `DwfJournal`, the port over the W2 repository. `rust-cli-node-store` exports `dwf`, `open_session_database`, `StartupError` and `MIGRATION_LOCK_WAIT` for it (re-export lines in `lib.rs`; `dwf` has a boundary comment there). Non-integer caps or tokens are an error, because `dwf_run` stores integers. The accepted range is `[-2^63, 2^63)`, half-open at the top, because `i64::MAX as f64` rounds up to `2^63`.
 - `engine.rs`: `WorkflowEngine` lifecycle. Create or resume (`ScriptHashMismatch` before any write); `run-started`, then `run-launched` on create only, then `usage-updated` when the spent tokens are above 0; `log`; `record_usage`; `set_max_concurrency` (floor, minimum 1, no-op when settled or unchanged); `complete`, `stop`, `fail` (first settlement wins; order: journal status, `run-settled`, dispose).
 - Failed journal writes (pinned by `engine_tests.rs` with a journal that fails one chosen write once). Node has the same ordering, so the outcome is Node's:
-  - Settlement latches before the journal status write: `complete`, `stop` and `fail` set the settlement, then `finish_run` writes the status. A failed status write leaves the engine settled, appends no `run-settled`, calls no dispose, and a retry returns `Ok(())` as a no-op. The row keeps its previous status.
+  - Settlement latches before the journal writes: `complete`, `stop` and `fail` set the latch and the settlement value together (`begin_settlement`), then the cancelled `node-settled` events and `finish_run` write. Each settlement step runs even when an earlier write fails, so every in-flight ask still settles; the first error is returned. A failed status write leaves the engine settled, appends no `run-settled`, calls no dispose, and a retry returns `Ok(())` as a no-op. The row keeps its previous status.
   - `record_usage` adds to the spent total before `update_run_usage`. A failed write leaves the total ahead of the row; the next usage write persists the full total.
   - `set_max_concurrency` replaces the caps before `update_run_caps`. A failed write leaves the engine on the new value and the row on the old one. A retry with the same value returns `Ok(false)`, so the row stays stale until the value changes again. This matches Node (`this.caps = caps`, then `updateRunCaps`).
 - Goldens: `scripts/rust-cli/workflow-lifecycle-goldens.ts` runs Node's `WorkflowEngine` on `InMemoryJournalStore` for six scenarios (complete with retunes, user stop with inherited usage, errored, interrupted, superseded, resume across three lifetimes including a script-hash mismatch). It writes `fixtures/lifecycle-goldens.json` with the inputs, the step results, the run row after each lifetime, the constructor error, the dispose count, and every event's sequence and payload text. `lifecycle_golden_tests.rs` replays the same inputs on `MemoryJournal` and on `DwfJournal` over an in-memory session database, and compares all of it. Payloads are compared as text, not as values.
 
-Tests (box, `cargo test -p rust-cli-workflow -p rust-cli-node-store --lib`): workflow 17 pass (4 canon, 4 error, 2 event, 2 lifecycle golden, 2 `journal_dwf` integer bounds, 3 engine failed-write). Node-store lib: 312 pass, 1 ignored. `cargo clippy -p rust-cli-workflow -p rust-cli-node-store --all-targets -- -D warnings` is clean.
+Tests: the part 1 counts are in the part 2 test paragraph below (the totals there cover both parts).
 
-Remaining in W5a as of part 1 (items 1 to 4 are built in part 2, see 9.3; the list is kept as written):
+Remaining as of part 1 (all four are built in part 2, below; the list is kept as written):
 
 1. Identity: `nextOrdinal` (per-site ordinals, phase counters, `sitePhases` and `currentPhase`, instance birth-phase table) and `stampBirthPhase` (`engine-phase-stamp.ts`, 83 lines).
 2. Scheduler: `scheduler.ts` (573), `scheduler-types.ts` (138), `scheduler-submit.ts` (124). Actors and `createActor` (duplicate-name check), `admitAsk` (ordinal, input hash, the miss path with `node-queued`, the `running` row at admission), per-actor FIFO by `actorSeq`, `pumpActor` against the cap, `node-dispatched`, `node-settled` (ok, failed, cancelled), `abortInFlight` at settlement, and submit/turn callbacks (repair, nudge, cancel).
@@ -534,7 +548,7 @@ Not in the W5a row, and needing an owner: `engine-holes.ts` (226), `engine-artif
 
 Deviations and facts found while porting:
 
-- serde_json's default float parser is not correctly rounded: `123456789012345680000` parsed one ulp off and printed differently. The workspace `serde_json` declaration enables `float_roundtrip` (no new crates), and members take it with `.workspace = true`, so every crate parses JSON numbers the same way. The NDJSON host (W4) parses the same way; its float handling should be checked.
+- serde_json's default float parser is not correctly rounded: `123456789012345680000` parsed one ulp off and printed differently. The workspace `serde_json` declaration enables `float_roundtrip` (no new crates), and members take it with `.workspace = true`, so every crate parses JSON numbers the same way. The NDJSON host (W4) was outside that graph at first; part 2 enables the feature in `rust-cli-protocol-zcode` too.
 - W2's `append_event` writes the payload with serde's `to_string`, not `JSON.stringify`. The two agree on integers, strings and nested objects, but not on exponent-form numbers such as a cap of `1e21`. The adapter re-stringifies on read, so the engine goldens pass, but the raw `payload_json` bytes are not guaranteed to match Node. Fix in W2 by writing `base::js::json::stringify`; not changed here.
 - Lone surrogates cannot cross into Rust (serde rejects them, `String` cannot hold them). Node's canonical form of a lone surrogate (`\ud800`) is therefore not reproduced. No golden case uses one.
 - The resume `run-started` carries the config's caps, not the stored row's (Node does the same). Reproduced by the golden.
@@ -543,9 +557,9 @@ Deviations and facts found while porting:
 
 Size re-check (`wc -l`): the built Rust is 1,473 lines including tests (canon 117, engine 324, error 108, event 170, journal 160, journal_dwf 188, model 159, lib 16, lifecycle tests 231). The goldens are 583 + 144 lines of JSON and 370 lines of TypeScript generators. The remaining in-scope Node code is about 1,470 TypeScript lines (scheduler, scheduler-types and scheduler-submit 835, replay-order 258, engine-resume 44, engine-phase-stamp 83, the ask and identity paths of `engine.ts` about 250). At the spec's 1.2 to 1.5 ratio that is about 1,800 to 2,200 Rust lines, so W5a's in-scope total comes to about 3,300 to 3,700 Rust lines including tests. That is below the 4,000 estimate. If holes, artifacts and reports are added to W5a (about 960 TypeScript lines, roughly 1,200 Rust), the total reaches about 4,500 to 5,000. Recommendation: give holes, artifacts and reports their own row before W6a.
 
-### 9.3 As built (W5a part 2)
+#### Part 2: identity, scheduler, replay and usage
 
-Status: built on `feat/rust-workflow-engine-scheduler`, on top of part 1. Gate off; nothing calls it. The four remaining items of 9.2 (identity, scheduler, replay, usage) are done. The deviations below are the ones that matter for W5b and W6a.
+Status: built on `feat/rust-workflow-engine-scheduler`, on top of part 1. Gate off; nothing calls it. The four remaining items of part 1 (identity, scheduler, replay, usage) are done. The deviations below are the ones that matter for W5b and W6a.
 
 Code, `packages/rust-cli/crates/workflow`:
 
@@ -559,12 +573,17 @@ Node's promises are modelled, not hidden. An ask returns a ticket, and its settl
 
 Fixes found on the way:
 
+- Review of PR 531: the settlement latch and value are set together, and each settlement step runs after an earlier write fails (part 1 failed-write bullets). Pinned by `engine_tests::a_failed_cancel_write_during_settlement_still_settles_every_ask`.
+- Full-row node upserts keep `artifact_id`, `input` and `message_boundary`: the adapter reads the stored row first. Pinned by `journal_dwf::tests::a_full_row_upsert_keeps_the_columns_the_port_does_not_carry`.
+- Resume refuses a run with world rows until W5b (`engine_tests::resume_refuses_settled_world_rows_instead_of_holding_the_gate`). Node claims world rows on replay; this port would hold their order slots forever.
+- JavaScript whitespace: `describeCause`, `enterPhase` and `instructionsHead` use `rust_cli_base::js::string::trim` (U+FEFF stripped, U+0085 kept). Bounds count UTF-16 units.
+
 - W2 (part 1 item): `dwf` writes now use `JSON.stringify` text. `append_event`, the JSON columns (`encode_json`, `encode_result_json`) and the cancelled failure envelope used serde's `to_string`. Test `the_stored_payload_text_is_javascript_json_text` (1e21 stores as `1e+21`).
 - W4 NDJSON host: the spec said `float_roundtrip` was workspace-wide. It was not in the protocol crate's graph, so `123456789012345680000` parsed one ulp off there. `rust-cli-protocol-zcode` now enables `float_roundtrip` on serde_json (feature only, no new crate). Test `a_number_in_a_child_line_is_the_nearest_double`.
 
 Goldens: `scripts/rust-cli/workflow-scheduler-goldens.ts` (a second generator beside the lifecycle one, run on Node's real `WorkflowEngine` with a recording driver) writes `fixtures/scheduler-goldens.json`. Six scenarios: `fifo-retune-repair-resume` (two lifetimes; the resumed one calls asks in a different order from the first lifetime, so the gate has to reorder the cached settlements), `complete-with-asks-in-flight`, `fail-rejects-in-flight`, `stop-user-cancels-asks`, `duplicate-actor-name`, `replay-hash-mismatch`. `scheduler_golden_tests.rs` replays each on `MemoryJournal` and on `DwfJournal` and compares, per lifetime, the step results, the constructor error, and the run, node and actor rows; and for the whole run, the ask outcomes in settlement order, the driver calls in call order, and every event's sequence and exact payload text.
 
-Tests: `cargo test -p rust-cli-workflow --lib` 20 pass (part 1 had 10; part 2 adds the scheduler goldens on each journal, and unit tests for events, errors, persona, heads and the hash). `rust-cli-node-store` lib 313 pass (dwf 1e21 test included). `rust-cli-protocol-zcode` workflow tests 38 pass. `clippy -D warnings --all-targets` clean for workflow, node-store and protocol-zcode. Run on the Linux box; the root-run CLI integration suites were not run.
+Tests (Linux box, after the PR 531 review round): `cargo test -p rust-cli-workflow` 36 pass (part 2 adds the scheduler goldens on each journal, the settlement, UTF-16 and JS-trim regressions, the world-row refusal, the corrupt-event message and the `journal_dwf` carry-through). `rust-cli-node-store` lib 313 pass, 1 ignored. `rust-cli-protocol-zcode` lib 800 pass. `cargo clippy --workspace --all-targets -- -D warnings` clean. `cargo fmt --all -- --check` clean. The Node goldens regenerate byte-identical (`scripts/rust-cli/workflow-scheduler-goldens.ts`). The root-run CLI integration suites were not run.
 
 Deviations and gaps (open, with the owner):
 
@@ -572,7 +591,7 @@ Deviations and gaps (open, with the owner):
 - Journal reads are not filtered: `list_nodes` returns every row (Node reads work rows without results and the artifact rows separately), and `list_events` returns every event and the settle gate filters by type in process (Node filters in the store). Resume reads everything. Fine for the goldens; a long run needs the filters (`kinds`, `withResult`, `types`) before W9. `countNodes` and `sumResultBytes` (the report tally) are not ported; they belong to the report row.
 - Not ported, by row: the import cache and `import-cache-closed` (W5b: `tryImportedSettle`, `reconcile`, `carried`, `sourceSessionId` are absent, so the goldens have no import path); holes, artifacts and reports (own row); `askProgress`, `askWaiting`, `askExecuting`, `askMutating`, `concurrencyChanged`, `runStalled`, `stopRun` with `enrichProviderStopPhase` (W6a and W6b; their event kinds are not in `RunEvent` yet); escalation (W6a); the governor (W6b).
 - `complete(undefined)` is still stored as `null` (the item from part 1, unchanged).
-- Instructions heads: Node's `slice(0, 240)` counts UTF-16 units and can cut a surrogate pair in two, which leaves a lone surrogate. Rust stops before the pair (239 units when the pair straddles 240). Lone surrogates cannot be held in a Rust `String` at all (9.2 item), so a golden with that case needs a decision on the head format first.
+- Instructions heads: Node's `slice(0, 240)` counts UTF-16 units and can cut a surrogate pair in two, which leaves a lone surrogate. Rust drops the pair, so the head is 239 units when the pair straddles 240. A Rust `String` cannot hold the lone surrogate Node keeps, so the bytes differ in that case. `describeCause` (300 units) has the same deviation. Pinned by `engine_tests::instructions_head_cuts_by_utf16_units` and `describe_cause_bounds_by_utf16_units`. No Node golden covers a straddling pair yet.
 - Row comparison in the goldens is canonical JSON (key order not compared); events are compared byte for byte, as the spec requires.
 - The generator and the goldens were built on the worktree's Node sources. Those differ from the shared checkout in `index.ts`, `persona.ts` and `types.ts` (the persona budget). The engine files the scheduler uses are identical in both. The lifecycle fixture from part 1 was not regenerated and still matches.
 

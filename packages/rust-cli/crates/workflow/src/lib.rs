@@ -1,4 +1,4 @@
-//! The dynamic workflow engine core in Rust (W5a of specs/fork-rust-workflow-engine.md, section 9.2).
+//! The dynamic workflow engine core in Rust (W5a of specs/fork-rust-workflow-engine.md, section 9.3).
 //!
 //! Deterministic state machine: identity, input hashing, run lifecycle, the ask scheduler, replay and
 //! settlement. It reads no clock and draws no random numbers; its only I/O is the journal port and the

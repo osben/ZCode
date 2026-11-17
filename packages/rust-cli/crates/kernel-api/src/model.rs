@@ -196,6 +196,10 @@ pub struct RequestOptions {
     /// titles.md §3）；没有补丁的端点（显式覆盖）不看它。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_max_output_tokens: Option<u32>,
+    /// Fork: the off-peak ticket this request is sent on (specs/fork-rust-automations.md, slice 3 layer B). Never
+    /// serialized, so traces and queued inputs do not carry it; `None` for every ordinary request.
+    #[serde(skip)]
+    pub off_peak_ticket: Option<crate::off_peak_ticket::TicketSource>,
 }
 
 /// 模型输出的格式约束（Anthropic `output_config.format`）。

@@ -212,7 +212,7 @@ impl JournalPort for MemoryJournal {
     }
 
     fn put_actor(&mut self, row: ActorRow) -> Result<()> {
-        let key = Ref::new(row.site_id.clone(), row.ordinal).key();
+        let key = Ref::key_of(&row.site_id, row.ordinal);
         let run = self.run_mut(&row.run_id)?;
         run.actors.upsert(key, row);
         Ok(())

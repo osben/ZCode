@@ -1,7 +1,7 @@
 #!/usr/bin/env -S pnpm exec tsx
 /**
  * Node side of the scheduler and replay goldens (rust-cli crates/workflow, W5a part 2;
- * specs/fork-rust-workflow-engine.md section 9.2).
+ * specs/fork-rust-workflow-engine.md section 9.3).
  *
  * Runs the real `WorkflowEngine` (apps/zcode-cli/packages/dynamic-workflow/src/engine/engine.ts) with
  * a recording driver, for the scenarios below, and writes
@@ -442,7 +442,14 @@ const out = join(here, "../../packages/rust-cli/crates/workflow/fixtures/schedul
 
 async function main(): Promise<void> {
   const results: unknown[] = [];
-  for (const scenario of scenarios) results.push(await runScenario(scenario));
+  for (const scenario of scenarios) {
+    try {
+      results.push(await runScenario(scenario));
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new Error(`scheduler scenario "${scenario.name}" failed: ${reason}`, { cause: error });
+    }
+  }
   writeFileSync(out, `${JSON.stringify({ scenarios: results }, null, 2)}\n`);
   console.log(`wrote ${results.length} scheduler scenarios to ${out}`);
 }

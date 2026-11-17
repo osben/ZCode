@@ -44,7 +44,7 @@ impl Identity {
     }
 
     /// Node `enterPhase` after the trim check: counts the entry and makes the name current. Returns the
-    /// name and its entry count.
+    /// entry count of this name, which is the marker's ordinal.
     pub fn enter_phase(&mut self, trimmed: &str) -> u64 {
         let ordinal = self.phase_ordinals.get(trimmed).copied().unwrap_or(0) + 1;
         self.phase_ordinals.insert(trimmed.to_owned(), ordinal);

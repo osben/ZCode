@@ -189,6 +189,11 @@ pub(crate) fn base_tools(
     };
     let bash = bash_settings(defaults, extensions, traits);
     // Fork: under the desktop Host the Cron tools are Node's, scheduling in the Host's store.
+    // Fork: the off-peak tools exist only where the Host serves `offPeak/*` (specs/fork-rust-automations.md, slice 3).
+    let off_peak_tools: Vec<Arc<dyn rust_cli_kernel_api::tool::Tool>> = match &extensions.off_peak {
+        Some(port) => rust_cli_tools::off_peak_tools(port.clone()),
+        None => Vec::new(),
+    };
     let cron_tools = match &extensions.automation {
         Some(port) => rust_cli_tools::automation_tools(port.clone()),
         None => rust_cli_tools::cron_tools(&cron, extensions.monitor),
@@ -215,6 +220,7 @@ pub(crate) fn base_tools(
             ))
             .with_tools(rust_cli_tools::web_tools(side_model(), ports.clock.clone()))
             .with_tools(cron_tools)
+            .with_tools(off_peak_tools)
             // `/loop` 动态模式的自定节奏（L17，tools-more.md §17.2）：默认注册、不延迟。
             .with_tools(vec![Arc::new(rust_cli_tools::ScheduleWakeupTool::new(
                 &cron,

@@ -175,7 +175,12 @@ impl Ref {
 
     /// Node `refToString`: `site@ordinal`, the key of the instance and actor tables.
     pub fn key(&self) -> String {
-        format!("{}@{}", self.site_id, self.ordinal)
+        Self::key_of(&self.site_id, self.ordinal)
+    }
+
+    /// The key of `site@ordinal` without building a `Ref` (for rows that already own their site).
+    pub fn key_of(site_id: &str, ordinal: u64) -> String {
+        format!("{site_id}@{ordinal}")
     }
 
     /// `{siteId, ordinal}` as Node writes the ref in events.

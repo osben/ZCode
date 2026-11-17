@@ -1,5 +1,5 @@
 //! Run events (Node `types.ts` `RunEvent`): the lifecycle, asks and phase markers W5a emits. Holes,
-//! artifacts and reports are not here yet (spec 9.2).
+//! artifacts and reports are not here yet (spec 9.3).
 //!
 //! `to_json` builds each object in the key order Node's object literals use, so the payload text
 //! (`JSON.stringify` of the event) is byte-identical. Optional keys are omitted when absent, as Node's

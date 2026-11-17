@@ -72,7 +72,10 @@ impl Actor {
         &mut self,
         execution: InputExecution,
     ) -> Result<(), StoreError> {
-        if let Some(selection) = execution.selection
+        // Fork (slice 3 layer B): an off-peak run's model is for its own turn (`TurnLimits::off_peak_selection`); the
+        // session keeps its selection, so the next ordinary turn uses the user's own model (Node `selectionScope`).
+        if execution.limits.off_peak_execution().is_none()
+            && let Some(selection) = execution.selection
             && selection != self.selection
         {
             self.select_model(None, selection).await?;

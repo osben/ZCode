@@ -10,7 +10,7 @@
 //!   turns. A first dispatch of an actor takes two jobs (session ready, then dispatch), a later one one
 //!   job, matching the promise hops of `ensureSession`.
 //!
-//! Not here yet (spec 9.2, remaining): import cache, holes, artifacts, reports, world reads, the
+//! Not here yet (spec 9.3, remaining): import cache, holes, artifacts, reports, world reads, the
 //! driver's async session creation, and the process-level governor.
 use crate::error::{ErrorCode, WorkflowError};
 use crate::event::{LaunchFields, RunEvent};
@@ -23,6 +23,7 @@ use crate::persona::normalize_persona;
 use crate::replay::{Job, Release, ReplayGate};
 use crate::scheduler::{Actor, AskNode};
 use anyhow::Result;
+use rust_cli_base::js::string::{trim as js_trim, utf16_len, utf16_prefix};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
@@ -75,8 +76,9 @@ pub struct AskMessage {
     pub schema: Option<Value>,
 }
 
-/// Node `EngineConfig`, for the fields the scheduler and the lifecycle use.
-#[derive(Clone)]
+/// Node `EngineConfig`, for the fields the scheduler and the lifecycle use. `Default` is manual because
+/// `validate` is a function pointer, which has no default.
+#[derive(Debug, Clone)]
 pub struct EngineConfig {
     pub run_id: String,
     pub caps: Caps,
@@ -184,14 +186,15 @@ pub struct AskOutcome {
 }
 
 /// Node `DriverError` text for a failed session: the cause, trimmed and bounded (`describeCause`).
+/// The bound counts UTF-16 units, as `String.prototype.slice` does. A surrogate pair straddling unit 300
+/// is dropped whole; see `scheduler::instructions_head` for the same deviation.
 pub fn describe_cause(text: &str) -> String {
-    let trimmed = text.trim();
+    let trimmed = js_trim(text);
     if trimmed.is_empty() {
         return "unknown error".to_owned();
     }
-    if trimmed.chars().count() > 300 {
-        let head: String = trimmed.chars().take(300).collect();
-        return format!("{head}…");
+    if utf16_len(trimmed) > 300 {
+        return format!("{}…", utf16_prefix(trimmed, 300));
     }
     trimmed.to_owned()
 }
@@ -260,17 +263,14 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
                 if let (Some(recorded), Some(got)) = (&row.script_hash, &config.script_hash)
                     && recorded != got
                 {
-                    let mut error = WorkflowError::new(
+                    let error = WorkflowError::new(
                         ErrorCode::ScriptHashMismatch,
                         format!(
                             "Cannot resume run {}: its script changed (recorded hash {recorded}, got {got}). Resume needs the byte-identical script; to run a revised script, start a new run with resume_from instead.",
                             config.run_id
                         ),
-                    );
-                    error.mismatch = Some(crate::error::Mismatch {
-                        expected: recorded.clone(),
-                        got: got.clone(),
-                    });
+                    )
+                    .with_mismatch(recorded.clone(), got.clone());
                     return Err(error.into());
                 }
                 journal.update_run_status(
@@ -463,6 +463,7 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
         Ok(ticket)
     }
 
+    /// Node `log`: a no-op after settlement.
     pub fn log(&mut self, message: &str) -> Result<()> {
         if self.settled {
             return Ok(());
@@ -477,7 +478,7 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
         if self.settled {
             return Ok(());
         }
-        let trimmed = name.trim();
+        let trimmed = js_trim(name);
         if trimmed.is_empty() {
             return Ok(());
         }
@@ -495,7 +496,11 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
         self.record_usage(stats.tokens)
     }
 
-    /// The run-level usage part of `askStats`: accumulate, persist, and emit while the run is live.
+    /// The run-level usage part of `askStats`: the total is persisted at once; the event is emitted only
+    /// while the run is live. The total is added before the journal write, as Node does (`spentTokens +=
+    /// tokens`, then `updateRunUsage`). When the write fails, the in-memory total stays ahead of the row
+    /// until the next successful usage write, which writes the full total. Do not move the add after the
+    /// write: that changes which total a retry persists.
     pub fn record_usage(&mut self, tokens: f64) -> Result<()> {
         self.spent_tokens += tokens;
         self.journal
@@ -510,7 +515,9 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
 
     /// Node `setMaxConcurrency`: returns whether anything changed. A non-finite value, a settled run and
     /// an unchanged value are no-ops; the value is floored and raised to at least 1. Raising the limit
-    /// starts queued asks at once.
+    /// starts queued asks at once. The caps are replaced before the journal write, as Node does (`this.caps
+    /// = caps`, then `updateRunCaps`): when the write fails, the engine keeps the new value, the row keeps
+    /// the old one, and a retry with the same value returns `Ok(false)`. Pinned by `engine_tests`.
     pub fn set_max_concurrency(&mut self, max_concurrency: f64) -> Result<bool> {
         if self.settled || !max_concurrency.is_finite() {
             return Ok(false);
@@ -557,18 +564,20 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
         if self.settled {
             return Ok(());
         }
-        self.begin_settlement(None)?;
-        self.abort_in_flight(
+        let opened = self.begin_settlement(
+            RunSettlement::Completed {
+                artifact: artifact.clone(),
+            },
+            None,
+        );
+        let aborted = self.abort_in_flight(
             &WorkflowError::new(
                 ErrorCode::Cancelled,
                 "Run completed; in-flight subagent tasks were abandoned.",
             ),
             true,
-        )?;
-        self.settlement = Some(RunSettlement::Completed {
-            artifact: artifact.clone(),
-        });
-        self.finish_run(
+        );
+        let finished = self.finish_run(
             RunStatus::Completed,
             None,
             None,
@@ -577,7 +586,8 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
                 result: Some(artifact),
                 ..Settlement::default()
             },
-        )
+        );
+        opened.and(aborted).and(finished)
     }
 
     /// Node `stop`: settle as `stopped(reason)`. Completed work stays resumable. First settlement wins.
@@ -590,18 +600,20 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
         if self.settled {
             return Ok(());
         }
-        self.begin_settlement(None)?;
-        self.abort_in_flight(
+        let failure = error.as_ref().map(WorkflowError::to_json);
+        let opened = self.begin_settlement(
+            RunSettlement::Stopped {
+                reason,
+                superseded_by: superseded_by.clone(),
+                error: failure.clone(),
+            },
+            None,
+        );
+        let aborted = self.abort_in_flight(
             &WorkflowError::new(ErrorCode::Cancelled, "Run stopped."),
             true,
-        )?;
-        let failure = error.as_ref().map(WorkflowError::to_json);
-        self.settlement = Some(RunSettlement::Stopped {
-            reason,
-            superseded_by: superseded_by.clone(),
-            error: failure.clone(),
-        });
-        self.finish_run(
+        );
+        let finished = self.finish_run(
             RunStatus::Stopped,
             Some(reason),
             superseded_by.clone(),
@@ -612,7 +624,8 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
                 failure,
                 result: None,
             },
-        )
+        );
+        opened.and(aborted).and(finished)
     }
 
     /// Node `fail`: the run failed (script error or host failure). First settlement wins.
@@ -625,13 +638,15 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
         if self.settled {
             return Ok(());
         }
-        self.begin_settlement(Some(error.clone()))?;
-        self.abort_in_flight(&error, false)?;
         let failure = error.to_json();
-        self.settlement = Some(RunSettlement::Errored {
-            error: failure.clone(),
-        });
-        self.finish_run(
+        let opened = self.begin_settlement(
+            RunSettlement::Errored {
+                error: failure.clone(),
+            },
+            Some(error.clone()),
+        );
+        let aborted = self.abort_in_flight(&error, false);
+        let finished = self.finish_run(
             RunStatus::Errored,
             None,
             None,
@@ -640,20 +655,31 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
                 failure: Some(failure),
                 ..Settlement::default()
             },
-        )
+        );
+        opened.and(aborted).and(finished)
     }
 
-    /// Node `markSettled`: the first settlement step. The replay gate opens here, so parked cached
-    /// settlements are released before the run's own abort and terminal event.
-    fn begin_settlement(&mut self, failure: Option<WorkflowError>) -> Result<()> {
+    /// Node `markSettled`: the first settlement step. The settlement value and the latch are set together,
+    /// so `settled` and `settlement` agree whatever the later writes do. The replay gate opens here, so
+    /// parked cached settlements are released before the run's own abort and terminal event.
+    fn begin_settlement(
+        &mut self,
+        settlement: RunSettlement,
+        failure: Option<WorkflowError>,
+    ) -> Result<()> {
         self.settled = true;
+        self.settlement = Some(settlement);
         if failure.is_some() {
             self.run_failure = failure;
         }
         self.gate_open()
     }
 
-    /// Node `finishRun`: the journal status first, then `run-settled`, then dispose.
+    /// Node `finishRun`: the journal status first, then `run-settled`, then dispose. The latch is set by
+    /// `begin_settlement` before this runs, as Node's `markSettled()` precedes `finishRun`. So when the
+    /// status write fails, the engine stays settled: `run-settled` is not appended, dispose is not called,
+    /// and a retry is a no-op. The row keeps its previous status. Do not move the latch after the write:
+    /// a retry would then settle twice. Pinned by `engine_tests::failed_status_write_latches_the_settlement`.
     fn finish_run(
         &mut self,
         status: RunStatus,
@@ -729,6 +755,7 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
         emit_cancelled: bool,
     ) -> Result<()> {
         let ids: Vec<u64> = self.live.keys().copied().collect();
+        let mut first_error = None;
         for id in ids {
             let Some(node) = self.live.remove(&id) else {
                 continue;
@@ -737,7 +764,10 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
             if node.dispatched {
                 self.driver.cancel_ask(&node.instance);
             }
-            if emit_cancelled {
+            // Node records the cancellation, then rejects. A failed write does not stop the loop: every
+            // in-flight ticket still gets its outcome and the live set is empty, so no ask is left
+            // waiting. The first write error is returned after the loop.
+            let written = if emit_cancelled {
                 self.record(RunEvent::NodeSettled {
                     instance: node.instance.clone(),
                     outcome: crate::event::NodeOutcome::Cancelled,
@@ -745,15 +775,20 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
                     error: None,
                     facts: None,
                     phase: None,
-                })?;
-            }
+                })
+            } else {
+                Ok(())
+            };
             self.outcomes.push(AskOutcome {
                 ticket: node.ticket,
                 result: Err(error.clone()),
             });
+            if let Err(write) = written {
+                first_error.get_or_insert(write);
+            }
         }
         self.active_asks = 0.0;
-        Ok(())
+        first_error.map_or(Ok(()), Err)
     }
 
     pub(crate) fn push_outcome(&mut self, ticket: u64, result: Result<Value, WorkflowError>) {

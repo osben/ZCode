@@ -59,6 +59,10 @@ pub struct QueryRequest {
     /// (specs/fork-rust-subagent-runtime-config.md rule 15).
     #[serde(default = "inject_by_default", skip_serializing_if = "is_injected")]
     pub inject_agents_md: bool,
+    /// Fork: the off-peak execution this run belongs to (specs/fork-rust-automations.md, slice 3 layer B); its model
+    /// requests are sent on that run's ticket. None for every other run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub off_peak_execution: Option<String>,
 }
 
 impl QueryRequest {
@@ -86,6 +90,7 @@ impl QueryRequest {
             default_machine: crate::ids::MachineName::primary(),
             prompt_hook_messages: Vec::new(),
             inject_agents_md: true,
+            off_peak_execution: None,
         }
     }
 }

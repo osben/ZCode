@@ -13,9 +13,14 @@ use serde_json::Value;
 use std::collections::HashSet;
 
 /// Node `recoverSettleOrder`: the instance keys of the settled work, in the order the first lifetime
-/// settled them. Only rows that settle a promise on replay are claimable (asks here; reports and
-/// artifacts are excluded by the caller).
-pub fn recover_settle_order(rows: &[NodeRow], events: &[StoredEvent]) -> Result<Vec<String>> {
+/// settled them. Node's `claimsOnReplay` admits a work row once it is `completed` or `failed`; this port
+/// keeps the same test (`status != Running`, since `NodeStatus` has no other value). The caller passes
+/// work rows only: reports and artifacts are excluded, as Node's `REPLAY_WORK_KINDS` excludes them.
+pub fn recover_settle_order(
+    run_id: &str,
+    rows: &[NodeRow],
+    events: &[StoredEvent],
+) -> Result<Vec<String>> {
     let claimable: HashSet<String> = rows
         .iter()
         .filter(|row| row.status != NodeStatus::Running)
@@ -27,7 +32,12 @@ pub fn recover_settle_order(rows: &[NodeRow], events: &[StoredEvent]) -> Result<
     let mut order = Vec::new();
     let mut seen = HashSet::new();
     for event in events {
-        let value: Value = serde_json::from_str(&event.payload_json)?;
+        let value: Value = serde_json::from_str(&event.payload_json).map_err(|error| {
+            anyhow::anyhow!(
+                "run {run_id}: event at sequence {} is not JSON: {error}",
+                event.sequence
+            )
+        })?;
         if value.get("type").and_then(Value::as_str) != Some("node-settled") {
             continue;
         }
@@ -59,8 +69,21 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
             .into_iter()
             .filter(|row| row.kind != NodeKind::Report && row.kind != NodeKind::Artifact)
             .collect();
+        // World reads and runs settle through the replay gate in Node (`heldResolution`), so their rows
+        // claim order slots. This port has no world path yet (W5b); refusing here is better than a gate
+        // that waits forever for a settlement nothing will make.
+        if let Some(row) = rows
+            .iter()
+            .find(|row| matches!(row.kind, NodeKind::WorldRead | NodeKind::WorldRun))
+        {
+            return Err(anyhow::anyhow!(
+                "run {}: cannot resume a run with {} rows before the world path is ported (W5b)",
+                self.run_id,
+                row.kind.as_str()
+            ));
+        }
         let events = self.journal.list_events(&self.run_id)?;
-        let order = recover_settle_order(&rows, &events)?;
+        let order = recover_settle_order(&self.run_id, &rows, &events)?;
         self.gate = ReplayGate::new(&order);
         for row in &rows {
             if row.kind != NodeKind::Ask {

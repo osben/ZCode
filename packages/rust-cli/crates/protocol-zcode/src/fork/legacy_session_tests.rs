@@ -8,6 +8,7 @@ use async_trait::async_trait;
 use futures_util::StreamExt;
 use futures_util::stream::{self, BoxStream};
 use rust_cli_base::TaskScope;
+use rust_cli_kernel_api::dynamic_workflow::{DynamicWorkflowMode, DynamicWorkflowPreferences};
 use rust_cli_kernel_api::ids::{EnvironmentId, SessionId, TraceId};
 use rust_cli_kernel_api::model::ModelSelection;
 use rust_cli_kernel_api::permission::PermissionMode;
@@ -595,18 +596,51 @@ async fn set_mode_thought_and_model_switch_the_live_session() {
     assert_eq!(missing.code, crate::server::SESSION_UNAVAILABLE);
 }
 
+/// Node `updateOffPeakToolPolicy` answers the policy it stored (`enabled: params.enabled`); the off-peak tools follow it
+/// for the sessions without their own flag (slice 3 layer B).
 #[tokio::test]
-async fn the_off_peak_tool_policy_answers_disabled_until_the_tools_are_ported() {
+async fn the_off_peak_tool_policy_answers_the_policy_it_stored() {
+    let (_scope, server, _kernel) = server();
+    let workspace = json!({"workspacePath": WORKSPACE, "workspaceKey": WORKSPACE});
+    for enabled in [true, false] {
+        let reply = call(
+            &server,
+            "workspace/updateOffPeakToolPolicy",
+            json!({"workspace": workspace, "enabled": enabled}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(reply, json!({"workspace": workspace, "enabled": enabled}));
+    }
+}
+
+/// W1 (specs/fork-rust-workflow-engine.md 9.2): the Host's dynamic-workflow fact is cached (Node
+/// `updateDynamicWorkflowPolicy`: the mode is cleared when disabled) while the answer stays `enabled: false` until W9.
+#[tokio::test]
+async fn the_dynamic_workflow_policy_caches_the_host_fact_and_still_answers_disabled() {
     let (_scope, server, _kernel) = server();
     let workspace = json!({"workspacePath": WORKSPACE, "workspaceKey": WORKSPACE});
     let reply = call(
         &server,
-        "workspace/updateOffPeakToolPolicy",
-        json!({"workspace": workspace, "enabled": true}),
+        "workspace/updateDynamicWorkflowPolicy",
+        json!({"workspace": workspace, "enabled": true, "mode": "onDemand"}),
     )
     .await
     .unwrap();
     assert_eq!(reply, json!({"workspace": workspace, "enabled": false}));
+    let mut expected = DynamicWorkflowPreferences::default();
+    expected.set(true, Some(DynamicWorkflowMode::OnDemand));
+    assert_eq!(server.dynamic_workflow_preferences(), expected);
+    call(
+        &server,
+        "workspace/updateDynamicWorkflowPolicy",
+        json!({"workspace": workspace, "enabled": false, "mode": "onDemand"}),
+    )
+    .await
+    .unwrap();
+    let mut disabled = DynamicWorkflowPreferences::default();
+    disabled.set(false, None);
+    assert_eq!(server.dynamic_workflow_preferences(), disabled);
 }
 
 /// Each legacy call is its own command: the session actor dedupes command ids for its whole lifetime, so a repeated

@@ -1,6 +1,6 @@
 #!/usr/bin/env -S pnpm exec tsx
 /**
- * Node side of the workflow engine goldens (rust-cli crates/workflow, W5a; specs/fork-rust-workflow-engine.md section 9.2).
+ * Node side of the workflow engine goldens (rust-cli crates/workflow, W5a; specs/fork-rust-workflow-engine.md section 9.3).
  *
  * Writes packages/rust-cli/crates/workflow/fixtures/hash-goldens.json from the real Node functions
  * (`canonicalJson` and `inputHash` in apps/zcode-cli/packages/dynamic-workflow/src/engine/hash.ts).
