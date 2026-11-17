@@ -59,6 +59,12 @@ pub struct AgentDefinition {
     /// Fork: `injectAgentsMd`: false (the built-in Explore and Plan) gives the child no rule files, nested rules or
     /// git status (specs/fork-rust-subagent-runtime-config.md rule 15).
     pub inject_agents_md: bool,
+    /// Fork: `mcpServers`, the parent MCP servers the child is scoped to (rule 16); None or empty: all of them.
+    pub mcp_servers: Option<Vec<String>>,
+    /// Fork: `skills`, the skills the child is granted (rule 17); None: the profile declares no skill list.
+    pub skills: Option<Vec<String>>,
+    /// Fork: `memory`, the persistent agent memory scope (rule 18).
+    pub memory: Option<rust_cli_kernel_api::subagent_config::AgentMemoryScope>,
 }
 
 impl AgentDefinition {
@@ -120,6 +126,9 @@ fn built_in(agent_type: &str, when_to_use: &str, prompt: &str) -> AgentDefinitio
         background: false,
         selection: None,
         inject_agents_md: true,
+        mcp_servers: None,
+        skills: None,
+        memory: None,
     }
 }
 
@@ -137,6 +146,9 @@ pub fn builtins() -> Vec<AgentDefinition> {
         disallowed_tools: names(READ_ONLY_DISALLOWED),
         model: Some("inherit".to_owned()),
         inject_agents_md: false,
+        mcp_servers: None,
+        skills: None,
+        memory: None,
         ..built_in(agent_type, when_to_use, prompt)
     };
     vec![

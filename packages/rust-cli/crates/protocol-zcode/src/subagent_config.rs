@@ -194,6 +194,10 @@ fn profile(value: &Value) -> Result<SubagentProfile, String> {
             .map(|turns| u32::try_from(turns).unwrap_or(u32::MAX)),
         background: value["background"] == true,
         inject_agents_md: value["injectAgentsMd"] != false,
+        mcp_servers: names("mcpServers"),
+        // Rule 17 (skills) reads this list in its own commit.
+        skills: None,
+        memory: None,
         permission_mode: value["permissionMode"]
             .as_str()
             .and_then(PermissionMode::from_cli_choice),

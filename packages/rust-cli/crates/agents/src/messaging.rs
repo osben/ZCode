@@ -116,6 +116,15 @@ impl Messaging {
         if let Some(message) = self.core.catalog.selection_refusal(&definition).await {
             return Err(ToolError::Failed { message });
         }
+        // Fork (rule 16): the same `mcpServers` check as the Agent call, before the task is restarted.
+        let mcp_view = self
+            .core
+            .registry()
+            .and_then(|registry| registry.mcp())
+            .map(|mcp| mcp.view());
+        if let Some(message) = crate::toolset::mcp_refusal(&definition, mcp_view.as_ref()) {
+            return Err(ToolError::Failed { message });
+        }
         // The parent run's current model and mode, as Node reads the session's selection when the child starts.
         let (parent_selection, parent_mode) = match self.core.runs.get(&context.run) {
             Some(parent) => (parent.selection.clone(), parent.mode),

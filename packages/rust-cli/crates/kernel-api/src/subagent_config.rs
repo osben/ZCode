@@ -36,6 +36,20 @@ pub struct SubagentProfile {
     pub permission_mode: Option<PermissionMode>,
     /// `injectAgentsMd`: false gives the child no project instructions; absent means true (Node `!== false`).
     pub inject_agents_md: bool,
+    /// `mcpServers` (rule 16): None or empty means every parent server.
+    pub mcp_servers: Option<Vec<String>>,
+    /// `skills` (rule 17): None means the profile declares no skill list.
+    pub skills: Option<Vec<String>>,
+    /// `memory` (rule 18).
+    pub memory: Option<AgentMemoryScope>,
+}
+
+/// Node `AgentMemoryScope`: where the persistent agent memory of a profile lives (rule 18).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentMemoryScope {
+    User,
+    Project,
+    Local,
 }
 
 /// The Host's answer. One value per root session, read at most once per root turn, so the unboxed `Ready` is not worth

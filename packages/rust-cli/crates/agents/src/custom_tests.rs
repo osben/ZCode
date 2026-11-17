@@ -163,3 +163,21 @@ async fn the_project_walk_stops_below_home_or_at_the_git_root() {
         .with_file("/Users/dev/a/b/.git", "gitdir: x");
     assert_eq!(walk(&repo).await, ["/Users/dev/a/b"]);
 }
+
+// Fork (rule 16): `mcpServers` in an agent file is a comma list or a YAML list; absent means no scope.
+#[test]
+fn parses_mcp_servers_as_a_comma_list_or_a_yaml_list() {
+    let comma = "---\nname: docs-reader\ndescription: Reads the docs.\nmcpServers: docs, wiki\n---\nBody.\n";
+    let list = "---\nname: docs-reader\ndescription: Reads the docs.\nmcpServers:\n  - docs\n  - wiki\n---\nBody.\n";
+    let absent = "---\nname: docs-reader\ndescription: Reads the docs.\n---\nBody.\n";
+    let expected = Some(vec!["docs".to_owned(), "wiki".to_owned()]);
+    assert_eq!(
+        parse(comma, AgentSource::User).unwrap().mcp_servers,
+        expected
+    );
+    assert_eq!(
+        parse(list, AgentSource::User).unwrap().mcp_servers,
+        expected
+    );
+    assert_eq!(parse(absent, AgentSource::User).unwrap().mcp_servers, None);
+}

@@ -116,6 +116,9 @@ pub(crate) fn parse(
         background: text("background") == Some("true"),
         selection: None,
         inject_agents_md: frontmatter::inject_agents_md(text("injectAgentsMd")),
+        mcp_servers: None,
+        skills: None,
+        memory: None,
     };
     (definition, name.to_owned())
 }

@@ -94,7 +94,7 @@ parent run R2 of S starts ──▶ a new read; cache[S] = (R2, snapshot')
    - `injectAgentsMd` carries over (rule 15).
    - Not used:
      - `path` and `color`: the Node runtime does not read them either (`color` is set only on the built-in profiles in core `subagent/profile.ts`; the Settings page reads it from its own files).
-     - `memory`, `skills` and `mcpServers`: open gaps. zcode-rs supports none of them for agent files either, so each is its own feature, not part of this snapshot:
+     - `memory`, `skills` and `mcpServers`: see rules 16–18 (the open gaps, now implemented one by one).
        - `memory`: Node loads the agent's persistent memory into its prompt (`loadPersistentAgentMemory`, core `runtime/methods/subagent.ts`) and adds the memory tools (`projectPersistentAgentMemoryTools`, `runtime/agent-runtime.ts`).
        - `skills`: an allowlist, not a preload. Node adds the `Skill` tool and limits the child's skill listing and loads to the granted skills (`runtime/methods/subagent.ts`, `resolveSubagentSkillGrants`).
        - `mcpServers`: Node scopes the child's borrowed parent MCP servers to the listed names (`runtime/methods/subagent.ts`, `createBorrowedSubagentMcpAccess`).
@@ -160,6 +160,42 @@ zcode-rs (`agents` crate, `respond.rs`) matches Node's contract:
 - **Tool metadata.** Deferred (`ToolSearch`), read-only false, concurrency safe, no approval, description `Respond to the coordinator that owns this subagent.` plus Node's model instructions.
 
 Not covered: a subagent parent (see Routing), and the desktop renderer's display of the call (it already has `RespondToCoordinator` in `packages/ui`).
+
+## Subagent `mcpServers`, `skills` and `memory` (rules 16–18)
+
+These three fields come from an agent file's frontmatter (user and project scope) and from a Host profile (`subagents/readRuntimeConfig`). A plugin agent file's `mcpServers` is ignored, as Node warns (`agents/src/plugin.rs`); plugin agents get no `skills` or `memory` either. Each field is one feature, implemented in this order, each with its own commit: `mcpServers`, then `skills`, then `memory`.
+
+### 16. `mcpServers` (allowlist of parent MCP servers)
+
+- An empty or absent list is "not declared" (Node `?.length`): the child inherits every parent server, as before.
+- A non-empty list scopes the child to those servers by name. The child borrows the parent's MCP connections even when its `tools` allowlist names no MCP tool (Node `shouldBorrowParentMcp`).
+- Visibility: an MCP tool reaches the child only when its server is in the list. The scope applies to the child's tool set (`ToolRule`) and to its MCP view (`ScopedMcp`: the server statuses, the instructions and the wait), so a server outside the list is neither listed nor called. A call to such a tool is "not found" (Node says `outside visible scope`; the text differs, the outcome is the same).
+- Tool-to-server matching uses the `mcp__<normalized server>__` prefix (`kernel-api/src/mcp_state.rs` normalization). Known difference: when one normalized server name is a prefix of another, the prefix rule can attribute a tool to the shorter name, where Node takes the longest prefix from the live view.
+- Required servers: when a listed server is not `connected` in the parent's current view (the Agent call does not wait for a server still connecting; Node awaits the startup snapshot), the Agent call fails before a child session starts, with `Required MCP server is not connected: <names>` (Node `resolveSubagentMcpAccess`). The same check applies to a SendMessage resume.
+- Owner: the runtime's per-session MCP view (`ToolRegistry::mcp`/`mcp_for`) stays the single source; the scope is a filter over it in `agents/src/toolset.rs`. The child never owns the connection lifecycle.
+
+### 17. `skills` (allowlist and grants, not a preload)
+
+- Entries are resolved once at child start against the child's workspace discovery (Node `resolveSubagentSkillGrants`): a qualified entry (`name:x` or contains `/`) matches `qualifiedName` exactly; a bare entry matches `name` or `qualifiedName`, the first non-plugin match wins alone, and all-plugin matches are granted together. Entries that match nothing are logged once at warn (`subagent.skill_grants.unresolved`).
+- Identity: a skill's physical identity is its directory (`Skill::dir`). Built-in skills have no directory and use `builtin:<name>`. Symlinked copies with one identity count once.
+- Grants are frozen per child session. The skill catalog (`ext/src/skills`) filters its `skills_in`, `find_in` and `listing` results for a session that has a grant set; the set lives in a kernel-api map keyed by session (the same pattern as `IncognitoProfiles`) and is dropped when the child session closes.
+- Discovery failure fails closed: the child starts with an empty grant set and a warn log (`subagent.skill_grants.discovery_failed`).
+- The `Skill` tool is offered to the child whenever `skills` is declared and non-empty, even when the `tools` allowlist omits it (Node adds the tool with the grants). A `disallowedTools` entry still removes it.
+- Not ported: the official CUA skill rules (`FilteredSkillPort` `cuaPolicy`), which keep their own owner.
+
+### 18. `memory` (persistent agent memory)
+
+- Values: `user`, `project`, `local`. Any other value is ignored.
+- Enabled only when the runtime's agent memory is enabled (Node `isPersistentAgentMemoryEnabled`: memory enabled, `use !== false`, a storage root).
+- Root (Node `resolvePersistentAgentMemoryRoot`): `user` is `<storageRoot>/agent-memory/<key>`; `project` is `<workspace>/.zcode/agent-memory/<key>`; `local` is `<workspace>/.zcode/agent-memory-local/<key>`. `<key>` is the agent type with every character outside `[a-zA-Z0-9_-]` replaced by `-` (empty becomes `unknown`).
+- The root directory is created before the child's first request. The prompt is the agent's system prompt followed by the persistent-memory prompt, which embeds the `MEMORY.md` index (empty when missing). The prompt text is ported verbatim from `persistent-memory-prompt.ts`.
+- Tools: when enabled, `Write` and `Edit` are added to a child whose `tools` allowlist is present (Node `withPersistentAgentMemoryTools`); a child without an allowlist already has them.
+- Owner: the agents crate builds the child prompt; the memory root comes from the runtime's memory config (storage root and enabled flag), passed in through the agents ports.
+
+### Tests and verification
+
+- Each item's red tests land before its implementation: the toolset filter and MCP view for 16, grant resolution and the session filter for 17, the root resolution, prompt text and tool projection for 18.
+- Node E2E: none exists for these three fields under `packages/desktop/test/e2e` (the matching `memory` specs cover the main session's auto memory). The box runs are recorded with that finding.
 
 ## Out of scope
 

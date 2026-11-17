@@ -6,7 +6,8 @@
 use std::sync::Arc;
 
 use rust_cli_kernel_api::ids::SessionId;
-use rust_cli_kernel_api::mcp_state::McpConnections;
+use rust_cli_kernel_api::manage::McpServerState;
+use rust_cli_kernel_api::mcp_state::{McpConnections, McpView};
 use rust_cli_kernel_api::orchestration::{ToolRegistry, ToolSnapshot};
 use rust_cli_kernel_api::tool::Tool;
 use rust_cli_kernel_api::tool_search::{SEARCH_TOOLS, search_fallback};
@@ -84,6 +85,8 @@ pub(crate) struct ToolRule {
     questions: bool,
     /// Fork (node_desktop): a child of Node's desktop agent ([`node_child_lacks`]).
     node_child: bool,
+    /// Fork (rule 16, `mcpServers`): the parent servers the child is scoped to; None (or empty) means all of them.
+    mcp_servers: Option<Vec<String>>,
 }
 
 impl ToolRule {
@@ -98,6 +101,10 @@ impl ToolRule {
             depth,
             questions: false,
             node_child: false,
+            mcp_servers: definition
+                .mcp_servers
+                .clone()
+                .filter(|servers| !servers.is_empty()),
         }
     }
 
@@ -115,6 +122,17 @@ impl ToolRule {
         self
     }
 
+    /// Fork (rule 16): whether the MCP tool `name` belongs to one of the child's scoped servers (`mcp__<server>__`).
+    fn in_mcp_scope(&self, name: &str) -> bool {
+        self.mcp_servers.as_ref().is_none_or(|servers| {
+            servers.iter().any(|server| {
+                name.starts_with(&rust_cli_kernel_api::mcp_name::server_prefix(
+                    &rust_cli_kernel_api::mcp_state::normalize_name(server),
+                ))
+            })
+        })
+    }
+
     pub(crate) fn allows(&self, name: &str) -> bool {
         // Node gives every child the coordinator port (`includeRespondToCoordinator`), so the child's `tools`
         // allowlist does not remove it; only `disallowedTools` does.
@@ -122,6 +140,10 @@ impl ToolRule {
             return !self.deny.iter().any(|tool| tool == name);
         }
         let mcp = rust_cli_kernel_api::mcp_name::is_mcp(name);
+        // Fork (rule 16): an MCP tool reaches the child only from a server in its `mcpServers` list.
+        if mcp && !self.in_mcp_scope(name) {
+            return false;
+        }
         let asks = self.questions && name == tool_names::ASK_USER_QUESTION;
         if !mcp && !asks && ALL_AGENT_DISALLOWED.contains(&name) {
             return false;
@@ -176,6 +198,22 @@ impl FilteredTools {
 }
 
 impl FilteredTools {
+    /// Fork (rule 16): the parent's connections narrowed to the child's `mcpServers`; unchanged without a scope.
+    fn scoped_connections(&self, inner: Arc<dyn McpConnections>) -> Arc<dyn McpConnections> {
+        match &self.rule.mcp_servers {
+            None => inner,
+            Some(servers) => Arc::new(ScopedMcp {
+                inner,
+                servers: servers.clone(),
+            }),
+        }
+    }
+
+    /// Fork (rule 16): a parent MCP view narrowed to the child's `mcpServers`.
+    fn scope_view(&self, view: McpView) -> McpView {
+        scope_mcp_view(view, self.rule.mcp_servers.as_deref())
+    }
+
     /// 补回的搜索工具（按清单里出现的顺序，kernel-api `tool_search::search_fallback`）；没有点名清单、或解析出的
     /// 工具里有 Bash 时为空。
     fn restored(&self, resolved: &[Arc<dyn Tool>]) -> Vec<Arc<dyn Tool>> {
@@ -233,12 +271,12 @@ impl ToolRegistry for FilteredTools {
         let snapshot = self.inner.snapshot(session);
         ToolSnapshot {
             tools: self.resolve(snapshot.tools),
-            mcp: snapshot.mcp,
+            mcp: snapshot.mcp.map(|view| self.scope_view(view)),
         }
     }
 
     fn mcp(&self) -> Option<Arc<dyn McpConnections>> {
-        self.inner.mcp()
+        self.inner.mcp().map(|inner| self.scoped_connections(inner))
     }
 
     /// Fork (specs/fork-rust-workspace-plugins-mcp.md): forward the session's workspace group.
@@ -246,7 +284,9 @@ impl ToolRegistry for FilteredTools {
         &self,
         session: &rust_cli_kernel_api::ids::SessionId,
     ) -> Option<Arc<dyn McpConnections>> {
-        self.inner.mcp_for(session)
+        self.inner
+            .mcp_for(session)
+            .map(|inner| self.scoped_connections(inner))
     }
 
     fn find(&self, name: &str) -> Option<Arc<dyn Tool>> {
@@ -304,6 +344,88 @@ impl ToolRegistry for FilteredTools {
     /// 同上：没有叠在它上面的工具（以前的缺省）。
     fn hides(&self, _name: &str) -> bool {
         false
+    }
+}
+
+/// Fork (rule 16): Node's `Required MCP server is not connected` for a definition whose `mcpServers` name a server that
+/// the parent's view does not show as connected. None when no server is listed or every listed one is connected.
+pub(crate) fn mcp_refusal(definition: &AgentDefinition, view: Option<&McpView>) -> Option<String> {
+    let servers = definition
+        .mcp_servers
+        .as_ref()
+        .filter(|servers| !servers.is_empty())?;
+    let missing: Vec<&str> = servers
+        .iter()
+        .map(String::as_str)
+        .filter(|name| {
+            !view.is_some_and(|view| {
+                view.servers
+                    .iter()
+                    .any(|server| server.name == *name && server.state == McpServerState::Connected)
+            })
+        })
+        .collect();
+    (!missing.is_empty()).then(|| {
+        format!(
+            "Required MCP server is not connected: {}",
+            missing.join(", ")
+        )
+    })
+}
+
+/// Fork (rule 16): a parent's MCP view narrowed to the servers named in `servers` (None: all of them). The server
+/// statuses and their instructions are narrowed alike, so the child's listings never name an out-of-scope server.
+fn scope_mcp_view(view: McpView, servers: Option<&[String]>) -> McpView {
+    let Some(servers) = servers else {
+        return view;
+    };
+    let keep = |name: &str| servers.iter().any(|server| server == name);
+    McpView {
+        servers: view
+            .servers
+            .into_iter()
+            .filter(|server| keep(&server.name))
+            .collect(),
+        instructions: view
+            .instructions
+            .into_iter()
+            .filter(|entry| keep(&entry.name))
+            .collect(),
+    }
+}
+
+/// Fork (rule 16): the parent's connections, narrowed to the child's `mcpServers`. The child never owns the connection
+/// lifecycle, so only the view and the wait are narrowed; the calls and the waits go to the parent.
+struct ScopedMcp {
+    inner: Arc<dyn McpConnections>,
+    servers: Vec<String>,
+}
+
+#[async_trait::async_trait]
+impl McpConnections for ScopedMcp {
+    fn view(&self) -> McpView {
+        scope_mcp_view(self.inner.view(), Some(&self.servers))
+    }
+
+    async fn wait(
+        &self,
+        wait_ms: u64,
+        done: &(dyn for<'v> Fn(&'v McpView) -> bool + Send + Sync),
+    ) -> McpView {
+        let scoped = |view: &McpView| done(&scope_mcp_view(view.clone(), Some(&self.servers)));
+        scope_mcp_view(self.inner.wait(wait_ms, &scoped).await, Some(&self.servers))
+    }
+
+    fn declare_wait_tool(&self, session: &rust_cli_kernel_api::ids::SessionId) {
+        self.inner.declare_wait_tool(session);
+    }
+
+    fn tool_wait_ms(&self) -> u64 {
+        self.inner.tool_wait_ms()
+    }
+
+    async fn wait_for_first_connections(&self) -> bool {
+        self.inner.wait_for_first_connections().await
     }
 }
 
