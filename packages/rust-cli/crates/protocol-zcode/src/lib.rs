@@ -28,6 +28,7 @@ mod legacy;
 mod lifecycle;
 mod live;
 mod network_capture;
+mod off_peak_port;
 mod preparation;
 mod presence_gate;
 mod projection;
@@ -64,6 +65,7 @@ pub use fork::{
 };
 pub use headers::HostHeaders;
 pub use network_capture::{NetworkCapture, with_network_capture};
+pub use off_peak_port::HostOffPeak;
 pub use server::Defaults;
 pub use subagent_config::HostSubagentConfig;
 pub use topic_resource::HostTopicResources;

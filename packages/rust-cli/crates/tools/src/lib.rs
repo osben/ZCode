@@ -47,6 +47,7 @@ mod grep_output;
 mod html_markdown;
 mod line_diff;
 mod lsp_range;
+mod off_peak_tools;
 // Fork: the `LSP` agent tool (specs/fork-rust-lsp.md "Tool (D2)").
 mod lsp_tool;
 mod mentions;
@@ -113,6 +114,7 @@ pub use grep::GrepTool;
 pub use lsp_tool::{LspTool, LspTools};
 pub use monitor::MonitorTool;
 pub use notebook_edit::NotebookEditTool;
+pub use off_peak_tools::off_peak_tools;
 pub use pipeline::Pipeline;
 pub use plan_mode::{EnterPlanModeTool, ExitPlanModeTool};
 pub use policy_filter::PolicyFiltered;
