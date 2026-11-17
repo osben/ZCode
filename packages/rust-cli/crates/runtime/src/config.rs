@@ -56,7 +56,7 @@ impl LocalKernel {
             self.scope
                 .spawner()
                 .spawn("continue-layer-prewarm", async move {
-                    layer.load(&target).await
+                    layer.prewarm(&target).await
                 }),
         );
     }

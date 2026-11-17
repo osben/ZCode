@@ -297,7 +297,7 @@ async fn a_loaded_slot_hands_its_plugin_set_to_the_hooks_sink() {
             .collect::<Vec<_>>(),
         [1]
     );
-    // A loaded slot is reused, not installed again: the sink does not fire a second time.
+    // An unchanged re-read at the next open installs nothing: the sink does not fire a second time.
     layer.load(&workspace()).await;
     assert_eq!(seen.lock().unwrap().len(), 1);
 }
@@ -468,4 +468,156 @@ async fn a_reload_of_a_never_loaded_workspace_loads_nothing() {
 
     assert!(layer.slot("/w").is_none());
     assert!(mcp.group("/w").is_none());
+}
+
+/// Fork (PLM-LC-010, "As built: session-open re-read"): a plugin installed by another process (the
+/// desktop Host's plugin-workspace agent) after this process loaded the workspace's slot reaches
+/// the next session open — the open re-reads past the loaded slot and installs the new group, like
+/// Node's per-session app construction re-reads its config.
+#[tokio::test]
+async fn a_session_open_re_reads_a_stale_loaded_slot() {
+    let scope = TaskScope::root("test", |_| {});
+    let fake: Arc<FakeMcp> = Arc::new(FakeMcp::default());
+    let (mcp, layer) = layer(&fake, &scope);
+    let seen: Arc<std::sync::Mutex<Vec<String>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+    layer.set_plugin_hooks_sink({
+        let seen = seen.clone();
+        Box::new(move |key, _plugins| seen.lock().unwrap().push(key.to_owned()))
+    });
+    layer.set_loader(Arc::new(Seq(std::sync::Mutex::new(
+        [
+            Some(config_with_server("first")),
+            Some(config_with_server("installed-later")),
+        ]
+        .into(),
+    ))));
+
+    layer.load(&workspace()).await;
+    assert_eq!(names(&mcp, "/w"), ["first"]);
+
+    // The next session of the same workspace opens after the install.
+    layer.load(&workspace()).await;
+
+    assert_eq!(names(&mcp, "/w"), ["installed-later"]);
+    assert_eq!(
+        seen.lock().unwrap().clone(),
+        ["/w".to_owned(), "/w".to_owned()],
+        "the changed set re-registers its hooks once"
+    );
+}
+
+/// An unchanged re-read at a session open installs nothing: the slot, the group (its live
+/// connections) and the hooks registration stay exactly as the first load put them.
+#[tokio::test]
+async fn an_unchanged_re_read_keeps_the_slot_the_group_and_the_sink() {
+    let scope = TaskScope::root("test", |_| {});
+    let fake: Arc<FakeMcp> = Arc::new(FakeMcp::default());
+    let (mcp, layer) = layer(&fake, &scope);
+    let seen: Arc<std::sync::Mutex<Vec<String>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+    layer.set_plugin_hooks_sink({
+        let seen = seen.clone();
+        Box::new(move |key, _plugins| seen.lock().unwrap().push(key.to_owned()))
+    });
+    let (loader, answers) = gated(2);
+    layer.set_loader(loader.clone());
+    for answer in answers {
+        answer
+            .send(Some(config_with_server("same")))
+            .unwrap_or_else(|_| panic!("the gated receiver is held by the loader"));
+    }
+
+    layer.load(&workspace()).await;
+    let plugins = layer.plugins_of(&workspace()).expect("the slot is loaded");
+    let group = mcp.group("/w").expect("the group started");
+
+    layer.load(&workspace()).await;
+
+    assert_eq!(loader.calls(), 2, "the second open re-read the layer");
+    assert!(Arc::ptr_eq(
+        &plugins,
+        &layer.plugins_of(&workspace()).expect("the slot is loaded")
+    ));
+    assert!(
+        Arc::ptr_eq(&group, &mcp.group("/w").expect("the group runs")),
+        "an equal read never restarts the group"
+    );
+    assert_eq!(seen.lock().unwrap().clone(), ["/w".to_owned()]);
+}
+
+/// A concurrent open of the same workspace waits for the in-flight re-read and reuses its result:
+/// it neither reads again (the gated loader has only two answers) nor proceeds on the stale group.
+#[tokio::test]
+async fn a_concurrent_open_waits_for_the_in_flight_re_read() {
+    let scope = TaskScope::root("test", |_| {});
+    let fake: Arc<FakeMcp> = Arc::new(FakeMcp::default());
+    let (mcp, owned) = layer(&fake, &scope);
+    let layer = Arc::new(owned);
+    let (loader, mut answers) = gated(2);
+    layer.set_loader(loader.clone());
+    answers
+        .remove(0)
+        .send(Some(config_with_server("first")))
+        .unwrap_or_else(|_| panic!("the gated receiver is held by the loader"));
+    layer.load(&workspace()).await;
+    assert_eq!(names(&mcp, "/w"), ["first"]);
+
+    let re_read = {
+        let layer = layer.clone();
+        tokio::spawn(async move { layer.load(&workspace()).await })
+    };
+    let entered = async {
+        while loader.calls() < 2 {
+            tokio::task::yield_now().await;
+        }
+    };
+    tokio::time::timeout(std::time::Duration::from_millis(500), entered)
+        .await
+        .expect("the re-read started");
+    let concurrent = {
+        let layer = layer.clone();
+        tokio::spawn(async move { layer.load(&workspace()).await })
+    };
+    for _ in 0..20 {
+        tokio::task::yield_now().await;
+    }
+    assert!(
+        !concurrent.is_finished(),
+        "the concurrent open waits for the in-flight re-read"
+    );
+
+    answers
+        .remove(0)
+        .send(Some(config_with_server("second")))
+        .unwrap_or_else(|_| panic!("the re-read's answer was not awaited"));
+    re_read.await.expect("the re-read finished");
+    concurrent.await.expect("the concurrent open finished");
+    assert_eq!(names(&mcp, "/w"), ["second"]);
+    assert_eq!(loader.calls(), 2);
+}
+
+/// The print `--continue` prewarm reads ahead of the open that follows: that open reuses the
+/// prewarm's read once (no second read), and the open after it re-reads as usual.
+#[tokio::test]
+async fn the_open_after_a_prewarm_reuses_its_read_once() {
+    let scope = TaskScope::root("test", |_| {});
+    let fake: Arc<FakeMcp> = Arc::new(FakeMcp::default());
+    let (mcp, layer) = layer(&fake, &scope);
+    layer.set_loader(Arc::new(Seq(std::sync::Mutex::new(
+        [
+            Some(config_with_server("prewarmed")),
+            Some(config_with_server("re-read")),
+        ]
+        .into(),
+    ))));
+
+    layer.prewarm(&workspace()).await;
+    layer.load(&workspace()).await;
+    assert_eq!(
+        names(&mcp, "/w"),
+        ["prewarmed"],
+        "the open used the prewarm's read"
+    );
+
+    layer.load(&workspace()).await;
+    assert_eq!(names(&mcp, "/w"), ["re-read"]);
 }
