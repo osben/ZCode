@@ -238,6 +238,22 @@ fn reminder_attachments_are_reminders_and_instructions_are_meta_user_context() {
     assert_eq!(messages_category.items[0].name, "file");
 }
 
+/// The skill listing (Node's `skills` category: the announced skills) is `skills`; an invoked skill's body is conversation
+/// content, not the listing, so it stays a message.
+#[test]
+fn a_skill_listing_is_skills_and_an_invoked_skill_body_is_a_message() {
+    let messages = [
+        attachment("a1", "skill_listing", "- review: reviews a diff"),
+        attachment("a2", "invoked_skills", "the skill body"),
+    ];
+    let breakdown = classify_parts(&[], &messages, &[]);
+    let skills = category(&breakdown, CategoryId::Skills);
+    let names: Vec<&str> = skills.items.iter().map(|i| i.name.as_str()).collect();
+    assert_eq!(names, ["skill_listing"]);
+    let messages_category = category(&breakdown, CategoryId::Messages);
+    assert_eq!(messages_category.items[0].name, "invoked_skills");
+}
+
 #[test]
 fn meta_origin_user_messages_use_their_source() {
     let meta = Message::User(UserMessage {

@@ -324,9 +324,15 @@ fn message_category(message: &Message) -> (CategoryId, String) {
     }
 }
 
+/// The skill listing attachment (context `skill_listing`): the announced skills, Node's `skills` category. Invoked skill
+/// bodies (`invoked_skills`) are conversation content and stay messages.
+const SKILL_LISTING_SOURCE: &str = "skill_listing";
+
 fn source_category(source: &str) -> (CategoryId, String) {
     let id = if source == INSTRUCTION_SOURCE {
         CategoryId::MetaUserContext
+    } else if source == SKILL_LISTING_SOURCE {
+        CategoryId::Skills
     } else if REMINDER_SOURCES.contains(&source) {
         CategoryId::Reminders
     } else {
