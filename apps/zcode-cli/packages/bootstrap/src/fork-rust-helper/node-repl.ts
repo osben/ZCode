@@ -16,14 +16,13 @@ export function withNodeReplServer(
   const nodeRepl = resolveBuiltInNodeReplMcpServers({ pluginOutcome: outcome, workingDirectory });
   if (Object.keys(nodeRepl).length === 0) return outcome;
   const socket = env[ZCODE_CUA_BROKER_SOCKET_ENV_KEY]?.trim();
-  const withSocket = socket
-    ? {
-        ...nodeRepl,
-        node_repl: {
-          ...nodeRepl.node_repl,
-          env: { ...nodeRepl.node_repl?.env, [ZCODE_CUA_BROKER_SOCKET_ENV_KEY]: socket },
-        },
-      }
-    : nodeRepl;
+  const server = nodeRepl.node_repl;
+  const withSocket =
+    socket && server?.type === "stdio"
+      ? {
+          ...nodeRepl,
+          node_repl: { ...server, env: { ...server.env, [ZCODE_CUA_BROKER_SOCKET_ENV_KEY]: socket } },
+        }
+      : nodeRepl;
   return { ...outcome, mcpServers: { ...outcome.mcpServers, ...withSocket } };
 }

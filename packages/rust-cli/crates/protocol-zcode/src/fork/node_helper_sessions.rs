@@ -17,6 +17,9 @@ use super::{NodeHelper, Slot, unavailable};
 
 const OPEN: &str = "helper/session/open";
 const CLOSE: &str = "helper/session/close";
+/// F4-D7: Rust is the only sender of a subagent's browser registration (specs/fork-rust-node-helper.md "F4b").
+const CHILD_SESSION: &str = "helper/browser/childSession";
+const CHILD_SESSION_END: &str = "helper/browser/childSessionEnd";
 
 /// The forwarded methods that always name a session: the 16 `mcp/ui*` methods, `mcp/readResource` and
 /// `plugins/mentionItems`.
@@ -329,6 +332,26 @@ impl NodeHelper {
         {
             params["rootSessionId"] = Value::String(root);
         }
+        // F4-D7: a subagent's browser registration goes before its open, so its first browser call finds it. A
+        // refused registration fails the open.
+        let parent = answers.session_parent(session).await;
+        if let Some(parent) = &parent {
+            let registration = json!({
+                "childSessionId": session,
+                "parentSessionId": parent,
+                "tabOwner": "parent",
+            });
+            let deadline = self.timing.timeout_for(OPEN);
+            match tokio::time::timeout(deadline, peer.request(CHILD_SESSION, &registration)).await {
+                Ok(Ok(_)) => {}
+                Ok(Err(error)) => return Err(error),
+                Err(_elapsed) => {
+                    return Err(unavailable(
+                        "the helper did not register the child session in time",
+                    ));
+                }
+            }
+        }
         let mut abandoned = AbandonedOpen {
             helper: self,
             peer,
@@ -341,9 +364,14 @@ impl NodeHelper {
             // The helper answered: it keeps nothing of a failed open.
             abandoned.open_id = None;
         }
-        match answer {
+        let outcome = match answer {
             Ok(Ok(_)) => {
                 self.heard(generation);
+                if let Some(parent) = parent.as_ref() {
+                    self.with_running(generation, |running| {
+                        running.children.insert(session.to_owned(), parent.clone());
+                    });
+                }
                 Ok(open_id)
             }
             Ok(Err(error)) if error.code == CONNECTION_CLOSED && peer.is_closed() => {
@@ -355,7 +383,12 @@ impl NodeHelper {
                 Err(error)
             }
             Err(_elapsed) => Err(unavailable("the helper did not open the session in time")),
+        };
+        // A failed open of a registered subagent ends its registration, so nothing outlives the session.
+        if outcome.is_err() && parent.is_some() {
+            self.send_child_end(peer, session);
         }
+        outcome
     }
 
     /// Rust closed `session`. When the running generation opened it, the helper closes it too (fire and forget).
@@ -366,20 +399,44 @@ impl NodeHelper {
                 return;
             };
             running.panels.forget_session(session);
+            let child = running.children.remove(session).is_some();
             match running.sessions.remove(session) {
                 Some(opening) => {
                     running.last_used = tokio::time::Instant::now();
                     // An open still in flight closes the session itself once it succeeds (`ensure_session`).
                     opening
                         .get()
-                        .map(|open_id| (running.peer.clone(), *open_id))
+                        .map(|open_id| (running.peer.clone(), *open_id, child))
                 }
                 None => None,
             }
         };
-        if let Some((peer, open_id)) = peer {
-            self.send_close(&peer, session, open_id);
+        if let Some((peer, open_id, child)) = peer {
+            self.send_close_ending(&peer, session, open_id, child);
         }
+    }
+
+    /// F4-D7: `helper/browser/childSessionEnd` for a subagent session. One task sends it and then the close, so the
+    /// helper releases the registration before the session closes.
+    fn send_close_ending(&self, peer: &Peer, session: &str, open_id: u64, child: bool) {
+        let peer = peer.clone();
+        let close = json!({"sessionId": session, "openId": open_id});
+        let end = json!({"childSessionId": session});
+        drop(self.spawner.spawn("node-helper-session-close", async move {
+            if child {
+                peer.notify(CHILD_SESSION_END, &end).await;
+            }
+            peer.notify(CLOSE, &close).await;
+        }));
+    }
+
+    /// F4-D7: ends a child registration whose open failed after it was made (fire and forget).
+    fn send_child_end(&self, peer: &Peer, session: &str) {
+        let peer = peer.clone();
+        let params = json!({"childSessionId": session});
+        drop(self.spawner.spawn("node-helper-child-end", async move {
+            peer.notify(CHILD_SESSION_END, &params).await;
+        }));
     }
 
     /// Closes one open of `session`: the helper ignores a close whose `openId` is not the session's open one.

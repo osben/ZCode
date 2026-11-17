@@ -1,4 +1,5 @@
 import type { McpConnectionPool } from "@zcode/adapters/mcp";
+import { injectNodeReplBrowserBroker } from "../app/node-repl-browser-broker.js";
 import {
   createRootTraceContext,
   McpResourceSubscribeUnsupportedError,
@@ -43,6 +44,7 @@ import {
   type HelperWorkspace,
 } from "./f3-protocol.js";
 import type { ForkRustHelperClient } from "./rust-client.js";
+import type { ForkRustBrowserControl } from "./browser-control.js";
 import { PluginOutcomes } from "./plugin-outcomes.js";
 import { SessionLanes } from "./session-lanes.js";
 import { createHelperSessionRecord, type HelperSession } from "./session-record.js";
@@ -77,6 +79,8 @@ export interface ForkRustHelperMcpHostDeps {
   pool: McpConnectionPool;
   resolvePlugins(workspace: HelperWorkspace): Promise<PluginLoadOutcome>;
   logger?: Logger;
+  /** The helper's browser control (F4b): node_repl's broker socket, and each session's release before its lease closes. */
+  browser?: ForkRustBrowserControl;
 }
 
 const SESSION_NOT_OPEN = -32602;
@@ -376,9 +380,13 @@ export class ForkRustHelperMcpHost {
         ? { rootSessionId: rootSessionId as SessionId }
         : {}),
     };
+    // node_repl gets the browser broker's socket and token (Node `injectNodeReplBrowserBroker`, F4b).
+    const withBroker = this.deps.browser && servers.node_repl
+      ? injectNodeReplBrowserBroker(servers, this.deps.browser.nodeRepl())
+      : servers;
     const port = this.deps.pool.acquireLease({ leaseId: sessionId, sessionId });
     try {
-      const snapshot = await port.connectConfiguredServers(servers, {
+      const snapshot = await port.connectConfiguredServers(withBroker, {
         ...this.connectOptions(workspace, directory),
         trace: traceContext,
       });
@@ -439,6 +447,13 @@ export class ForkRustHelperMcpHost {
     clearMcpUiAppToolsForSession(this.deps.context, sessionId);
     for (const controller of session.appToolCalls.values())
       controller.abort(new Error("Session closed"));
+    // Node's close steps: the browser scope is released before the lease closes (F4b).
+    await this.deps.browser?.closeSession(sessionId).catch((error: unknown) =>
+      this.deps.logger?.warn("Helper session browser release failed", {
+        event: "fork_rust_helper.session.browser_release_failed",
+        error: errorMessage(error),
+      }),
+    );
     try {
       await session.port.unsubscribeResourcesBySubscriber?.(`${sessionId}|`);
     } catch (error) {

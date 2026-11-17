@@ -46,6 +46,37 @@ where
 
 #[async_trait]
 impl HelperRequests for Server {
+    async fn browser_request(&self, method: &str, params: Value) -> Result<Value, RpcError> {
+        // Owned sessions only: the broker names the session its browser call belongs to (F4-D5).
+        let owned = params
+            .get("sessionId")
+            .and_then(Value::as_str)
+            .filter(|session| !session.is_empty());
+        let Some(session) = owned else {
+            return Err(RpcError::invalid_params("sessionId is required"));
+        };
+        if self.session_workspace(session).await.is_none() {
+            return Err(RpcError::invalid_params(
+                "the session is not one of this agent's",
+            ));
+        }
+        self.context
+            .peer
+            .request(method, &params)
+            .await
+            .map_err(|error| RpcError::new(error.code, error.message))
+    }
+
+    async fn session_parent(&self, session: &str) -> Option<String> {
+        use rust_cli_kernel_api::store::SessionKind;
+        let id = rust_cli_kernel_api::ids::SessionId::new(session);
+        let meta = self.kernel.session_snapshot(&id).await.ok()?.meta;
+        match (meta.kind, meta.parent) {
+            (SessionKind::Subagent, Some(parent)) => Some(parent.as_str().to_owned()),
+            _ => None,
+        }
+    }
+
     async fn session_workspace(&self, session: &str) -> Option<Value> {
         let workspace = self
             .kernel

@@ -233,7 +233,7 @@ enum Slot {
     Idle,
     /// A start in progress. Concurrent first calls await the same future.
     Starting(Shared<BoxFuture<'static, Result<(), RpcError>>>),
-    Running(Running),
+    Running(Box<Running>),
     /// The breaker tripped, or the helper speaks another protocol version: every call fails fast.
     Down,
 }
@@ -253,6 +253,9 @@ struct Running {
     pipes: HashMap<String, mcp::Pipe>,
     /// F3: the helper sessions opened (or opening) in this generation. An open session blocks idle reclaim.
     sessions: HashMap<String, sessions::Opening>,
+    /// F4-D7: the subagent sessions whose child registration this generation made, with their parents. Ending one
+    /// sends `helper/browser/childSessionEnd` before its close.
+    children: HashMap<String, String>,
     /// F3: the panel instances this generation opened and nobody closed. Dropped with the slot, it closes them on
     /// their sessions' streams.
     panels: Box<panels::Panels>,
@@ -521,7 +524,7 @@ impl NodeHelper {
         }
         let now = Instant::now();
         let mut state = self.state.lock_unpoisoned();
-        state.slot = Slot::Running(Running {
+        state.slot = Slot::Running(Box::new(Running {
             generation,
             peer,
             methods,
@@ -530,12 +533,13 @@ impl NodeHelper {
             heard: 0,
             pipes: HashMap::new(),
             sessions: HashMap::new(),
+            children: HashMap::new(),
             panels: Box::new(panels::Panels::new(
                 self.myself.clone(),
                 self.spawner.clone(),
             )),
             _guard: guard,
-        });
+        }));
         state.retry_at = None;
         drop(state);
         self.warned.store(false, Ordering::Relaxed);

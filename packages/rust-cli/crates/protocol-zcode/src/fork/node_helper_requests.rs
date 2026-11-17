@@ -18,6 +18,9 @@ use super::{NodeHelper, unavailable};
 
 pub(crate) const AUTHORIZE_APP_TOOL: &str = "helper/authorizeAppTool";
 pub(crate) const SAMPLE_MODEL: &str = "helper/sampleModel";
+/// F4b: the browser broker's Host requests, relayed to Main after an owned-session check (F4-D5).
+pub(crate) const BROWSER_LIST: &str = "interaction/browserList";
+pub(crate) const BROWSER_EXECUTE: &str = "interaction/browserExecute";
 pub(super) const CANCEL_REQUEST: &str = "helper/cancelRequest";
 
 /// Cancels remembered for requests that have not begun yet.
@@ -39,6 +42,17 @@ pub(crate) trait HelperRequests: Send + Sync {
         params: Value,
         cancel: CancellationToken,
     ) -> Result<Value, RpcError>;
+
+    /// `interaction/browserList` or `interaction/browserExecute` (F4b): forwarded to the Host after the session is
+    /// checked to be one of this agent's. `requestKey` is already removed from `params`.
+    async fn browser_request(&self, method: &str, _params: Value) -> Result<Value, RpcError> {
+        Err(RpcError::method_not_found(method))
+    }
+
+    /// The direct parent of a subagent session (F4-D7); `None` for a session that is not a subagent.
+    async fn session_parent(&self, _session: &str) -> Option<String> {
+        None
+    }
 
     /// `helper/session/delta`: a live plugin UI delta for `session`'s stream (one of Node's four `pluginUi.*` ops).
     /// Called in the helper connection's read loop, so it must not block.
@@ -81,7 +95,8 @@ impl NodeHelper {
         method: &str,
         params: Value,
     ) -> Result<Value, RpcError> {
-        if method != AUTHORIZE_APP_TOOL && method != SAMPLE_MODEL {
+        let browser = method == BROWSER_LIST || method == BROWSER_EXECUTE;
+        if method != AUTHORIZE_APP_TOOL && method != SAMPLE_MODEL && !browser {
             return Err(RpcError::method_not_found(method));
         }
         let Some(key) = params
@@ -96,6 +111,19 @@ impl NodeHelper {
             return Err(unavailable("the agent does not answer helper requests yet"));
         };
         let cancel = self.begin(generation, &key);
+        if browser {
+            // The helper abandons a browser call with `helper/cancelRequest`; the Host's own cancel is the broker's.
+            let mut forwarded = params;
+            if let Some(object) = forwarded.as_object_mut() {
+                object.remove("requestKey");
+            }
+            let result = tokio::select! {
+                result = answers.browser_request(method, forwarded) => result,
+                () = cancel.cancelled() => Err(unavailable("the browser request was abandoned")),
+            };
+            self.requests.lock_unpoisoned().live.remove(&key);
+            return result;
+        }
         let result = if method == SAMPLE_MODEL {
             answers.sample_model(params, cancel).await
         } else {

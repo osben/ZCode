@@ -407,6 +407,7 @@ Status: decided 2026-11-16 (the user accepted the recommendations below). Built 
 - **F4-D4 (E2E).** The browser-pane specs need Main and a macOS desktop. They run on macOS only, and the box runs what it can run. Nothing opens an Electron window on the user's Mac from an agent run.
 - **F4-D5 (broker scope: full port, 2026-11-16).** F4b ports Node's browser control broker (`zcode-protocol/browser-control-broker.ts`) in full into the helper, including child-session parents (`childSessionParents`, `forChildSession`) and tab-owner routing (`parentTabOwnerChildren`). Reason: the goal is Node parity, and subagents of Rust sessions use the browser. A top-level-only subset would refuse browser calls from subagents that Node serves. Red tests use Node's broker tests as the oracle where they can be ported.
 - **F4-D6 (computer-use socket, 2026-11-16).** `ZCODE_CUA_PERMISSION_BROKER_SOCKET` reaches node_repl's config only, read from the helper's env, and no other helper-hosted server. Known gap, not fixed in F4c: Rust's other child processes (MCP stdio, tools) still inherit the variable from the Rust process env, as they did before this change. Clearing it for them is a separate change.
+- **F4-D7 (child-session registration, 2026-11-16).** Rust is the only sender of child-session facts. It sends `helper/browser/childSession` when a subagent session is opened in the helper, and `helper/browser/childSessionEnd` when it ends. The helper never reads a parent from the store, so Node's `forChildSession` bookkeeping is driven by these two messages only. Rust always uses `tabOwner: "parent"` for subagents, which is what Node's core subagent runner passes (`core/src/runtime/methods/subagent.ts`).
 
 #### Owners
 
@@ -449,6 +450,34 @@ Ordering guarantees (kept from F3): `helper/turn/ended` goes only after the turn
 - Rust: `select.rs` serves browser-use and computer-use with a helper (they load, with their skills), and attaches one `node_repl` server (transport NodeHelper, timeout 600000 ms) to the first admitted of them. The node-repl-host plugin itself stays skipped. Known gap: when browser-use and computer-use are both disabled, node_repl is not attached, as in Node; when the host plugin is missing, Node's helper returns no config and the open logs an unknown server, so the tool errors on its call.
 - Cancel: the existing F3 pipe path (`notifications/cancelled`) carries a node_repl cancel. No separate test yet.
 - Shutdown: when Rust drops the helper generation, its stdin is already at EOF, so the helper closes its sessions (`mcpHost.dispose`: pipes, then session leases) and `pool.close()`. Rust waits 3 s (`HELPER_STOP_GRACE`) for the process to exit, then `Shutdown::Immediate` if it did, or `Shutdown::Graceful` (TERM, then KILL) if not. This is not unit-tested; it is checked in the box only by reading the code path.
+
+#### F4b browser broker (design, 2026-11-16)
+
+Owners: helper (broker socket, scope state machine, child registrations); Rust (relays the broker's Host requests after an owned-session check, and sends child-session facts); Main (the browser).
+
+Port: the helper reuses Node's `createProtocolBrowserControlBroker` (`zcode-protocol/browser-control-broker.ts`) unchanged, with its `requestClient` routed through the helper's request link to Rust, which relays to Main. The Node broker tests (`bootstrap/tests/browser-control-broker.test.ts`) are the oracle for the port.
+
+Messages (Rust ↔ helper), strict zod on the helper side:
+
+| Message                                                 | Kind                  | Params                                                  | Answer / refusal                                                                   |
+| ------------------------------------------------------- | --------------------- | ------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `helper/browser/childSession`                           | request               | `{childSessionId, parentSessionId, tabOwner: "parent"}` | `{}`; `-32602` when the child is already registered to another parent or tab owner |
+| `helper/browser/childSessionEnd`                        | notification          | `{childSessionId}`                                      | none; unknown id logged and ignored                                                |
+| `helper/turn/ended`                                     | notification          | `{sessionId, turnId, reason}`                           | none; drives the broker `turnEnded`                                                |
+| `interaction/browserList`, `interaction/browserExecute` | helper → Rust request | Node's broker params                                    | the Host's answer; Rust refuses an unowned `sessionId`                             |
+
+Idempotency:
+
+- A duplicate `childSession` with the same id, parent and tab owner is a no-op answer `{}`.
+- A `childSession` with the same id and another parent or tab owner is refused.
+- A `childSessionEnd` for an unknown id is logged and ignored.
+- A parent that closes before its child keeps the child's registration. The child's later `childSessionEnd` still releases it. Until then the child's browser calls fail, because its parent record is gone.
+
+Order: Rust sends `childSessionEnd` before it closes the child session. For each session, the helper runs the broker `closeSession` (scope release) before its MCP lease closes.
+
+Built in F4b: `fork-rust-helper/browser-control.ts` (Node's broker reused unchanged, child registrations under strict zod); `server.ts` dispatches the child messages and `helper/turn/ended`; `mcp-host.ts` injects node_repl's broker socket and token at open, and releases the session's scope before its lease closes; Rust relays `interaction/browserList` and `interaction/browserExecute` for owned sessions (`browser_request`), strips `requestKey`, and sends `childSession` (a request, before the open; a refused one fails the open) and `childSessionEnd` (a notification, in the same task before the close, and after a failed open). Red tests are the seven cases of `f4b-browser-control.test.ts`, a subset of Node's `browser-control-broker.test.ts` (not all 30+ cases yet). Not built: D2, the end-of-turn screenshot (its own PR).
+
+Acceptance: the Node broker test cases port as red tests; box E2E `conversation-session-node-repl-stateless-browser-multisession` passes on Rust.
 
 #### Shutdown order (F4a)
 
