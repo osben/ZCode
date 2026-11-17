@@ -171,5 +171,6 @@ fn describe(request: &InteractionRequest) -> (&'static str, &str) {
         InteractionRequest::Permission { tool, .. } => ("permission", tool.as_str()),
         InteractionRequest::Question { .. } => ("question", ""),
         InteractionRequest::PlanApproval { .. } => ("plan_approval", ""),
+        InteractionRequest::McpElicitation { .. } => ("mcp_elicitation", "McpElicitation"),
     }
 }

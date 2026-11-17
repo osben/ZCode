@@ -514,6 +514,12 @@ fn ask_of(request: &InteractionRequest, lang: super::i18n::Lang) -> PeerAsk {
                     .collect(),
             }
         }
+        // The terminal shows an MCP elicitation's message without answer buttons; see interaction_ask.rs.
+        InteractionRequest::McpElicitation { message, .. } => PeerAsk {
+            question: clip(message),
+            detail: None,
+            answers: Vec::new(),
+        },
         InteractionRequest::PlanApproval { .. } => PeerAsk {
             question: say(lang, "Approve this plan?", "批准这个计划？").to_owned(),
             detail: None,

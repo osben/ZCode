@@ -2165,6 +2165,19 @@ async fn resolve_elicitation(
             live.current_config().1,
         )
         .into(),
+        // Fork (F3b(c)): the App's answer, mapped to the server's result by the requested schema.
+        InteractionRequest::McpElicitation {
+            message,
+            requested_schema,
+            ..
+        } => elicitation::mcp_answer(
+            message,
+            requested_schema,
+            action,
+            content,
+            resolved.answer.free_text.as_deref(),
+        )
+        .into(),
     };
     let command = Command::ResolveInteraction {
         interaction: InteractionId::new(&resolved.interaction_id),

@@ -101,6 +101,24 @@ pub enum Answer {
     Permission(PermissionAnswer),
     Question(QuestionAnswer),
     PlanApproval(PlanApprovalAnswer),
+    McpElicitation(McpElicitationAnswer),
+}
+
+/// MCP elicitation's answer (`elicitation/create`, specs/fork-rust-node-helper.md F3b(c)). `content` is already the MCP
+/// `ElicitResult.content`: the App's answer mapped by the requested schema (protocol-zcode). Serialized as the result's
+/// `action`, so the three kinds are distinct JSON under `untagged`, as the other answers are.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "decision", rename_all = "snake_case")]
+pub enum McpElicitationAnswer {
+    /// The user gave the values the server asked for (`accept`).
+    Accept {
+        #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
+        content: serde_json::Map<String, serde_json::Value>,
+    },
+    /// The user declined to answer (`decline`).
+    Decline,
+    /// The user dismissed the question (`cancel`).
+    Cancel,
 }
 
 impl Answer {
@@ -112,6 +130,10 @@ impl Answer {
             InteractionRequest::Question { .. } => Self::Question(QuestionAnswer::Declined),
             InteractionRequest::PlanApproval { .. } => {
                 Self::PlanApproval(PlanApprovalAnswer::KeepPlanning { feedback: None })
+            }
+            // No one can answer the server's question, so the server gets a decline (Node's no-prompt path).
+            InteractionRequest::McpElicitation { .. } => {
+                Self::McpElicitation(McpElicitationAnswer::Decline)
             }
         }
     }
@@ -128,6 +150,9 @@ impl Answer {
             Self::Question(QuestionAnswer::Declined) => "declined",
             Self::PlanApproval(PlanApprovalAnswer::Approve { .. }) => "approve",
             Self::PlanApproval(PlanApprovalAnswer::KeepPlanning { .. }) => "keep_planning",
+            Self::McpElicitation(McpElicitationAnswer::Accept { .. }) => "accept",
+            Self::McpElicitation(McpElicitationAnswer::Decline) => "decline",
+            Self::McpElicitation(McpElicitationAnswer::Cancel) => "cancel",
         }
     }
 
@@ -142,7 +167,8 @@ impl Answer {
                 | PermissionAnswer::NoPrompts,
             )
             | Self::Question(_)
-            | Self::PlanApproval(_) => &[],
+            | Self::PlanApproval(_)
+            | Self::McpElicitation(_) => &[],
         }
     }
 }
@@ -165,6 +191,25 @@ impl From<PlanApprovalAnswer> for Answer {
     }
 }
 
+impl From<McpElicitationAnswer> for Answer {
+    fn from(answer: McpElicitationAnswer) -> Self {
+        Self::McpElicitation(answer)
+    }
+}
+
+impl TryFrom<Answer> for McpElicitationAnswer {
+    type Error = Answer;
+
+    fn try_from(answer: Answer) -> Result<Self, Answer> {
+        match answer {
+            Answer::McpElicitation(answer) => Ok(answer),
+            other @ (Answer::Permission(_) | Answer::Question(_) | Answer::PlanApproval(_)) => {
+                Err(other)
+            }
+        }
+    }
+}
+
 /// 工具按询问的种类取回答：回答是别的种类时原样退回（工具按没有回答处理）。
 impl TryFrom<Answer> for PermissionAnswer {
     type Error = Answer;
@@ -172,7 +217,9 @@ impl TryFrom<Answer> for PermissionAnswer {
     fn try_from(answer: Answer) -> Result<Self, Answer> {
         match answer {
             Answer::Permission(answer) => Ok(answer),
-            other @ (Answer::Question(_) | Answer::PlanApproval(_)) => Err(other),
+            other @ (Answer::Question(_) | Answer::PlanApproval(_) | Answer::McpElicitation(_)) => {
+                Err(other)
+            }
         }
     }
 }
@@ -183,7 +230,9 @@ impl TryFrom<Answer> for QuestionAnswer {
     fn try_from(answer: Answer) -> Result<Self, Answer> {
         match answer {
             Answer::Question(answer) => Ok(answer),
-            other @ (Answer::Permission(_) | Answer::PlanApproval(_)) => Err(other),
+            other @ (Answer::Permission(_)
+            | Answer::PlanApproval(_)
+            | Answer::McpElicitation(_)) => Err(other),
         }
     }
 }
@@ -194,7 +243,9 @@ impl TryFrom<Answer> for PlanApprovalAnswer {
     fn try_from(answer: Answer) -> Result<Self, Answer> {
         match answer {
             Answer::PlanApproval(answer) => Ok(answer),
-            other @ (Answer::Permission(_) | Answer::Question(_)) => Err(other),
+            other @ (Answer::Permission(_) | Answer::Question(_) | Answer::McpElicitation(_)) => {
+                Err(other)
+            }
         }
     }
 }

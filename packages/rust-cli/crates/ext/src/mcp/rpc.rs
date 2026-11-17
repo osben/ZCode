@@ -12,7 +12,9 @@ use std::time::Duration;
 use futures_util::StreamExt;
 use rust_cli_base::Spawner;
 use rust_cli_kernel_api::env_files::PathStyle;
+use rust_cli_kernel_api::ids::ToolUseId;
 use rust_cli_kernel_api::mcp::{McpConnectionId, McpError, McpTransport, McpTransportEvent};
+use rust_cli_kernel_api::orchestration::{InteractionRequest, Interactions, McpElicitationAnswer};
 
 use super::notices::{self, NoticeReceiver, NoticeSender};
 use serde_json::{Value, json};
@@ -74,12 +76,55 @@ pub(crate) enum Notice {
 
 type Pending = HashMap<u64, oneshot::Sender<Result<Value, RpcError>>>;
 
+/// Fork (F3b(c)): a tool call in flight on this connection, which an elicitation the server sends during it attaches
+/// to (Node `activeCallTraces`). `cancel` is the call's own token (the turn or the caller cancelled it).
+pub(crate) struct ElicitationCall {
+    pub(crate) tool_use: ToolUseId,
+    /// The MCP server's name, as the question names it.
+    pub(crate) server: String,
+    /// The session's interactions: the question is asked of the session the call runs in.
+    pub(crate) interactions: Arc<dyn Interactions>,
+    pub(crate) cancel: CancellationToken,
+}
+
+/// A registered call: its fields, and `ended`, which its guard cancels when the call ends.
+#[derive(Clone)]
+struct Registered {
+    id: u64,
+    tool_use: ToolUseId,
+    server: String,
+    interactions: Arc<dyn Interactions>,
+    cancel: CancellationToken,
+    ended: CancellationToken,
+}
+
+/// Keeps a call registered on its connection. Dropping it ends the call, which withdraws any question the call still
+/// has open (its answer is `cancel`). It cancels only its own token, never the caller's.
+#[must_use = "dropping the guard ends the call at once"]
+pub(crate) struct CallGuard {
+    calls: Arc<Mutex<Vec<Registered>>>,
+    id: u64,
+    ended: CancellationToken,
+}
+
+impl Drop for CallGuard {
+    fn drop(&mut self) {
+        self.calls
+            .lock_unpoisoned()
+            .retain(|call| call.id != self.id);
+        self.ended.cancel();
+    }
+}
+
 pub(crate) struct Client {
     transport: Arc<dyn McpTransport>,
     connection: McpConnectionId,
     next: AtomicU64,
     pending: Arc<Mutex<Pending>>,
     closed: CancellationToken,
+    /// Fork (F3b(c)): the tool calls in flight on this connection, oldest first.
+    calls: Arc<Mutex<Vec<Registered>>>,
+    next_call: AtomicU64,
 }
 
 /// 服务器发来的请求的回答：`ping`、`roots/list`；其余回 Method not found。
@@ -161,6 +206,8 @@ impl Client {
             next: AtomicU64::new(0),
             pending: Arc::default(),
             closed: CancellationToken::new(),
+            calls: Arc::default(),
+            next_call: AtomicU64::new(0),
         });
         let (notices, receiver) = notices::channel();
         let reader = Reader {
@@ -170,6 +217,8 @@ impl Client {
             closed: client.closed.clone(),
             notices,
             roots,
+            calls: client.calls.clone(),
+            spawner: spawner.clone(),
         };
         spawner.spawn_resident("mcp-reader", reader.run());
         (client, receiver)
@@ -177,6 +226,26 @@ impl Client {
 
     pub(crate) fn is_closed(&self) -> bool {
         self.closed.is_cancelled()
+    }
+
+    /// Fork (F3b(c)): registers a tool call while its `tools/call` is in flight. The returned guard ends the call when
+    /// dropped; an elicitation the server sends in between attaches to the newest registered call.
+    pub(crate) fn enter_call(&self, call: ElicitationCall) -> CallGuard {
+        let id = self.next_call.fetch_add(1, Ordering::Relaxed);
+        let ended = CancellationToken::new();
+        self.calls.lock_unpoisoned().push(Registered {
+            id,
+            tool_use: call.tool_use,
+            server: call.server,
+            interactions: call.interactions,
+            cancel: call.cancel,
+            ended: ended.clone(),
+        });
+        CallGuard {
+            calls: self.calls.clone(),
+            id,
+            ended,
+        }
     }
 
     pub(crate) async fn notify(&self, method: &str, params: Option<Value>) -> Result<(), RpcError> {
@@ -243,6 +312,8 @@ struct Reader {
     closed: CancellationToken,
     notices: NoticeSender,
     roots: Vec<String>,
+    calls: Arc<Mutex<Vec<Registered>>>,
+    spawner: Spawner,
 }
 
 impl Reader {
@@ -281,6 +352,10 @@ impl Reader {
         let id = message.get("id").cloned().filter(|id| !id.is_null());
         match (method, id) {
             (None, Some(id)) => self.response(&id, &message),
+            (Some("elicitation/create"), Some(id)) => {
+                let params = message.get("params").cloned().unwrap_or(Value::Null);
+                self.elicit(id, params);
+            }
             (Some(method), Some(id)) => self.server_request(method, id).await,
             (Some(method), None) => self.notification(method),
             (None, None) => tracing::debug!("ignored an MCP message without method or id"),
@@ -321,6 +396,22 @@ impl Reader {
         }
     }
 
+    /// Fork (F3b(c)): answers `elicitation/create` in its own task. The answer waits for the user, and the reader keeps
+    /// serving the connection meanwhile (the tool call's response included).
+    fn elicit(&self, id: Value, params: Value) {
+        let call = self.calls.lock_unpoisoned().last().cloned();
+        let transport = self.transport.clone();
+        let connection = self.connection.clone();
+        // Dropping the task handle detaches it; the task ends by answering.
+        drop(self.spawner.spawn("mcp-elicitation", async move {
+            let result = elicitation_answer(call, &params).await;
+            let reply = json!({"jsonrpc": "2.0", "id": id, "result": result});
+            if let Err(error) = transport.send(&connection, reply).await {
+                tracing::debug!(%error, "could not answer an MCP elicitation");
+            }
+        }));
+    }
+
     fn notification(&self, method: &str) {
         let kind = method
             .strip_prefix("notifications/")
@@ -329,6 +420,67 @@ impl Reader {
             Some(kind) => self.notices.send(Notice::ListChanged(kind.to_owned())),
             None => tracing::debug!(method, "MCP notification"),
         }
+    }
+}
+
+/// Fork (F3b(c)): the answer to `elicitation/create` (Node `installElicitationHandler`). Only form mode is asked; with no
+/// call in flight the question cannot be attributed to a session, so it is declined without a question. A question
+/// still open when its call ends is withdrawn and answered `cancel`. Failures decline.
+async fn elicitation_answer(call: Option<Registered>, params: &Value) -> Value {
+    let decline = json!({"action": "decline"});
+    if !supported_mode(params.get("mode")) {
+        return decline;
+    }
+    let Some(call) = call else {
+        return decline;
+    };
+    let message = params
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    let request = InteractionRequest::McpElicitation {
+        tool_use: call.tool_use.clone(),
+        server: call.server.clone(),
+        message,
+        requested_schema: params
+            .get("requestedSchema")
+            .cloned()
+            .unwrap_or(Value::Null),
+        origin: None,
+    };
+    let withdrawn = async {
+        tokio::select! {
+            () = call.ended.cancelled() => {}
+            () = call.cancel.cancelled() => {}
+        }
+    };
+    tokio::select! {
+        asked = call.interactions.ask(request) => {
+            let answer = asked
+                .ok()
+                .and_then(|answer| McpElicitationAnswer::try_from(answer.answer).ok());
+            match answer {
+                Some(McpElicitationAnswer::Accept { content }) => {
+                    json!({"action": "accept", "content": content})
+                }
+                Some(McpElicitationAnswer::Cancel) => json!({"action": "cancel"}),
+                Some(McpElicitationAnswer::Decline) | None => decline,
+            }
+        }
+        () = withdrawn => {
+            call.interactions.cancel_ask(&call.tool_use).await;
+            json!({"action": "cancel"})
+        }
+    }
+}
+
+/// Node's `isSupportedElicitationMode`: an absent mode is form; the form names are the form mode, others decline.
+fn supported_mode(mode: Option<&Value>) -> bool {
+    match mode {
+        None => true,
+        Some(Value::String(mode)) => matches!(mode.as_str(), "form" | "openai/form" | "openaiForm"),
+        Some(_) => false,
     }
 }
 

@@ -9,7 +9,9 @@ use crate::view::BASH;
 pub(in crate::ui) fn seed(request: &InteractionRequest) -> Option<String> {
     match request {
         InteractionRequest::Permission { rule_seed, .. } => rule_seed.clone(),
-        InteractionRequest::Question { .. } | InteractionRequest::PlanApproval { .. } => None,
+        InteractionRequest::Question { .. }
+        | InteractionRequest::PlanApproval { .. }
+        | InteractionRequest::McpElicitation { .. } => None,
     }
 }
 

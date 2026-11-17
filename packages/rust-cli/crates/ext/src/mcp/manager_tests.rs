@@ -76,6 +76,26 @@ fn text(output: &ToolOutput) -> String {
         .collect()
 }
 
+/// F3b(c): the client advertises form elicitation next to roots (Node's `{form: {}}`).
+#[tokio::test]
+async fn initialize_advertises_form_elicitation() {
+    let fake = Arc::new(FakeMcp::default().with("files", files_server()));
+    let scope = TaskScope::root("test", |_| {});
+    let manager = manager(fake.clone(), &scope);
+    manager.start(workspace(), vec![config("files", false)]);
+    manager.wait_ready().await;
+    let initialize = fake
+        .received()
+        .into_iter()
+        .map(|(_, message)| message)
+        .find(|message| message["method"] == "initialize")
+        .expect("an initialize request");
+    assert_eq!(
+        initialize["params"]["capabilities"],
+        json!({"roots": {}, "elicitation": {"form": {}}})
+    );
+}
+
 #[tokio::test]
 async fn connects_lists_and_calls_tools() {
     let fake = Arc::new(

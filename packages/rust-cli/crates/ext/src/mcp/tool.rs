@@ -23,6 +23,7 @@ use super::connection::truncate_description;
 use super::manager::Inner;
 use super::manager::McpManager;
 use super::result;
+use super::rpc::ElicitationCall;
 use super::rpc::RpcError;
 
 /// 结果的字符上限（通用值只定义在 kernel-api）。
@@ -229,6 +230,14 @@ impl Tool for McpTool {
                 None => manager.reconnect_dormant(server).await,
             }
             .ok_or_else(|| failed(format!("MCP server \"{server}\" is not connected")))?;
+            // Fork (F3b(c)): an elicitation the server sends during this call attaches to it. The guard ends the call
+            // when this attempt ends, which withdraws a question still open.
+            let _in_flight = client.enter_call(ElicitationCall {
+                tool_use: context.tool_use.clone(),
+                server: server.clone(),
+                interactions: context.interactions.clone(),
+                cancel: context.cancel.clone(),
+            });
             match client
                 .request("tools/call", params.clone(), timeout, &context.cancel)
                 .await

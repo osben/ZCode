@@ -100,10 +100,16 @@ pub fn ask_text(request: &InteractionRequest, lang: Lang) -> &'static str {
         (Lang::En, InteractionRequest::PlanApproval { .. }) => {
             "ZCode needs your approval for the plan"
         }
-        (Lang::En, InteractionRequest::Question { .. }) => "ZCode needs your input",
+        (
+            Lang::En,
+            InteractionRequest::Question { .. } | InteractionRequest::McpElicitation { .. },
+        ) => "ZCode needs your input",
         (Lang::Zh, InteractionRequest::Permission { .. }) => "ZCode 需要你的许可",
         (Lang::Zh, InteractionRequest::PlanApproval { .. }) => "ZCode 需要你批准计划",
-        (Lang::Zh, InteractionRequest::Question { .. }) => "ZCode 需要你的输入",
+        (
+            Lang::Zh,
+            InteractionRequest::Question { .. } | InteractionRequest::McpElicitation { .. },
+        ) => "ZCode 需要你的输入",
     }
 }
 
