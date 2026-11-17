@@ -73,7 +73,7 @@ pub fn utf16_len(text: &str) -> usize {
 }
 
 /// JS `text.slice(0, n)` counted in UTF-16 code units, rounded **down** when the cut would split a
-/// surrogate pair. A lone surrogate cannot be held in a Rust `String` (see the spec, section 9.3).
+/// surrogate pair. A lone surrogate cannot be held in a Rust `String` (see the spec, section 9.4).
 pub fn utf16_prefix(text: &str, n: usize) -> String {
     let mut units = 0;
     let mut end = 0;

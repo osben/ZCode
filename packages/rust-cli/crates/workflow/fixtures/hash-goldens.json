@@ -1,0 +1,144 @@
+{
+  "cases": [
+    {
+      "text": "null",
+      "canonical": "null",
+      "hash": "77074ba4"
+    },
+    {
+      "text": "true",
+      "canonical": "true",
+      "hash": "4db211e5"
+    },
+    {
+      "text": "false",
+      "canonical": "false",
+      "hash": "0b069958"
+    },
+    {
+      "text": "0",
+      "canonical": "0",
+      "hash": "350ca8af"
+    },
+    {
+      "text": "-0",
+      "canonical": "0",
+      "hash": "350ca8af"
+    },
+    {
+      "text": "1.0",
+      "canonical": "1",
+      "hash": "340ca71c"
+    },
+    {
+      "text": "1e21",
+      "canonical": "1e+21",
+      "hash": "b6a7b1f5"
+    },
+    {
+      "text": "1e+21",
+      "canonical": "1e+21",
+      "hash": "b6a7b1f5"
+    },
+    {
+      "text": "1e-7",
+      "canonical": "1e-7",
+      "hash": "5228e5cf"
+    },
+    {
+      "text": "0.000001",
+      "canonical": "0.000001",
+      "hash": "4ff86a68"
+    },
+    {
+      "text": "0.1",
+      "canonical": "0.1",
+      "hash": "5080ae86"
+    },
+    {
+      "text": "123456789012345680000",
+      "canonical": "123456789012345680000",
+      "hash": "9bc4c0c1"
+    },
+    {
+      "text": "9007199254740993",
+      "canonical": "9007199254740992",
+      "hash": "adb18b3e"
+    },
+    {
+      "text": "5e-324",
+      "canonical": "5e-324",
+      "hash": "299ce309"
+    },
+    {
+      "text": "-1.5e300",
+      "canonical": "-1.5e+300",
+      "hash": "6c85d2ef"
+    },
+    {
+      "text": "1.7976931348623157e308",
+      "canonical": "1.7976931348623157e+308",
+      "hash": "0d2c2de0"
+    },
+    {
+      "text": "\"\"",
+      "canonical": "\"\"",
+      "hash": "ffcaaa85"
+    },
+    {
+      "text": "\"a\\\"b\\\\c\\n\\t\\r\\b\\f\\u0001\\u001f\\u007f\"",
+      "canonical": "\"a\\\"b\\\\c\\n\\t\\r\\b\\f\\u0001\\u001f\"",
+      "hash": "54ff51cc"
+    },
+    {
+      "text": "\"emoji \\ud83d\\ude00 and 中文 and \\u2028\"",
+      "canonical": "\"emoji 😀 and 中文 and  \"",
+      "hash": "14eb8ee3"
+    },
+    {
+      "text": "[]",
+      "canonical": "[]",
+      "hash": "741638a5"
+    },
+    {
+      "text": "{}",
+      "canonical": "{}",
+      "hash": "5465b825"
+    },
+    {
+      "text": "[1,\"two\",null,[true,false],{\"k\":[]}]",
+      "canonical": "[1,\"two\",null,[true,false],{\"k\":[]}]",
+      "hash": "f9bb1dd5"
+    },
+    {
+      "text": "{\"b\":1,\"a\":2}",
+      "canonical": "{\"a\":2,\"b\":1}",
+      "hash": "af62f0e3"
+    },
+    {
+      "text": "{\"\\ue000\":1,\"\\ud83d\\ude00\":2,\"a\":3,\"Z\":4}",
+      "canonical": "{\"Z\":4,\"a\":3,\"😀\":2,\"\":1}",
+      "hash": "84c803f3"
+    },
+    {
+      "text": "{\"nested\":{\"z\":[{\"y\":1,\"x\":2}],\"a\":null},\"m\":\"x\"}",
+      "canonical": "{\"m\":\"x\",\"nested\":{\"a\":null,\"z\":[{\"x\":2,\"y\":1}]}}",
+      "hash": "437fdc27"
+    },
+    {
+      "text": "{\"create\":{\"name\":\"ask\",\"typed\":true},\"ordinal\":1}",
+      "canonical": "{\"create\":{\"name\":\"ask\",\"typed\":true},\"ordinal\":1}",
+      "hash": "7f150fd5"
+    },
+    {
+      "text": "[\"ask#3\",\"instruction with 中文 and emoji 😀 and\\nnewline\"]",
+      "canonical": "[\"ask#3\",\"instruction with 中文 and emoji 😀 and\\nnewline\"]",
+      "hash": "8088484c"
+    },
+    {
+      "text": "{\"op\":\"files.grep\",\"args\":[\"needle\",{\"glob\":\"**/*.ts\"}]}",
+      "canonical": "{\"args\":[\"needle\",{\"glob\":\"**/*.ts\"}],\"op\":\"files.grep\"}",
+      "hash": "8734cb13"
+    }
+  ]
+}

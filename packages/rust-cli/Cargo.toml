@@ -12,6 +12,7 @@ members = [
   "crates/kernel-api",
   "crates/prompts",
   "crates/node-store",
+  "crates/workflow",
   "crates/node-records",
   "crates/model",
   "crates/env-local",
@@ -158,7 +159,10 @@ webpki-root-certs = "1"
 rusqlite = { version = "0.37", features = ["bundled"] }
 serde = { version = "1", default-features = false, features = ["std"] }
 # preserve_order：JS 的 JSON 文本按插入顺序输出键（rust_cli_base::js::json），Node 记录逐字节一致依赖它。
-serde_json = { version = "1", features = ["preserve_order"] }
+# float_roundtrip: JSON.parse is correctly rounded; serde_json's default float parser is one ulp off
+# for some inputs (found by hash-goldens.json, 123456789012345680000). Set on the workspace so every
+# member parses JSON numbers the same way (features unify across the workspace anyway).
+serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
 # Node 迁移校验和 sha256(sql.trim())。
 sha2 = "0.10"
 tempfile = "3"
