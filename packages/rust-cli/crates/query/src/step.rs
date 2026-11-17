@@ -11,6 +11,7 @@
 
 use std::sync::Arc;
 
+use rust_cli_kernel_api::manage::McpServerState;
 use rust_cli_kernel_api::mcp_state::McpView;
 use rust_cli_kernel_api::model::{ModelSelection, QuerySource};
 use rust_cli_kernel_api::orchestration::{ContextRequest, ToolSnapshot};
@@ -113,9 +114,28 @@ impl StepTools {
 /// still-pending server already waits at dispatch (`mcp_wait`); the settle covers the advertisement, not the call.
 async fn settled_snapshot(scope: &RunScope) -> ToolSnapshot {
     let snapshot = scope.parts.tools.snapshot(&scope.session);
-    if let Some(mcp) = scope.parts.tools.mcp_for(&scope.session)
-        && mcp.wait_for_first_connections().await
-    {
+    let Some(mcp) = scope.parts.tools.mcp_for(&scope.session) else {
+        return snapshot;
+    };
+    let waited = mcp.wait_for_first_connections().await;
+    // A first connection that settles between this snapshot and the settle's own pending check reports nothing to
+    // wait for; a server this snapshot saw on its first connection and the group's view no longer shows pending still
+    // decides the re-take (ocr review of #498). A server that is still pending keeps the one snapshot per step.
+    let settled_since = || {
+        let Some(seen) = snapshot.mcp.as_ref() else {
+            return false;
+        };
+        let now = mcp.view();
+        seen.servers
+            .iter()
+            .filter(|server| server.state == McpServerState::Pending && !server.reconnecting)
+            .any(|server| {
+                now.servers.iter().any(|current| {
+                    current.name == server.name && current.state != McpServerState::Pending
+                })
+            })
+    };
+    if waited || settled_since() {
         return scope.parts.tools.snapshot(&scope.session);
     }
     snapshot

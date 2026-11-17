@@ -201,8 +201,9 @@ impl McpManager {
     ///
     /// Waits until every server of this group that is on its FIRST connection has settled (connected or failed),
     /// bounded by the connect wait, and returns whether there was one to wait for. Print sessions keep the startup
-    /// wait's own policy ([`Self::wait_for_print`]); deferred helper-hosted servers and later reconnects never wait
-    /// here (their turns proceed; a call to a still-pending server waits at dispatch, `mcp_wait`).
+    /// wait's own policy ([`Self::wait_for_print`]); later reconnects and still-deferred helper-hosted servers never
+    /// wait here (a call to a still-pending server waits at dispatch, `mcp_wait`). A deferred server the turn's
+    /// snapshot just woke is on its first connection and does wait, so its tools reach that turn's request.
     pub async fn wait_for_first_connections(&self) -> bool {
         let inner = &self.0;
         if inner.print.load(std::sync::atomic::Ordering::Relaxed) {

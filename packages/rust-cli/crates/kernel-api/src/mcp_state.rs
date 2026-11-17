@@ -108,11 +108,13 @@ pub trait McpConnections: Send + Sync {
     fn tool_wait_ms(&self) -> u64;
 
     /// Fork (PLM-LC-010, Node parity): waits until every server of this group that is on its FIRST connection has
-    /// settled (connected or failed), bounded by the connect wait, and returns whether it waited — the turn's tool
-    /// snapshot ([`crate::orchestration::ToolRegistry::snapshot`]) calls this before it is taken, so a freshly loaded
-    /// plugin's tools are advertised in the very request that needs them, like Node's first request does. The default
-    /// is “nothing to settle” (registries whose connections have no first-connection state); a `true` tells the caller
-    /// to take the snapshot again.
+    /// settled (connected or failed), bounded by the connect wait, and returns whether it waited. The turn's tool
+    /// snapshot ([`crate::orchestration::ToolRegistry::snapshot`]) is taken first (it wakes deferred servers), then
+    /// this settles, and the snapshot is taken again when this returns `true` OR a server the first snapshot
+    /// showed on its first connection is no longer pending in [`Self::view`] (a server that settles between the two
+    /// reads makes this return `false`), so a
+    /// freshly loaded plugin's tools are advertised in the very request that needs them, like Node's first request
+    /// does. The default is “nothing to settle” (registries whose connections have no first-connection state).
     async fn wait_for_first_connections(&self) -> bool {
         false
     }

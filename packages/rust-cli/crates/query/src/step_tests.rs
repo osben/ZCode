@@ -212,6 +212,9 @@ struct SettlingConnections {
     view: Mutex<McpView>,
     settles: AtomicUsize,
     hook: Mutex<Option<Box<dyn Fn() + Send>>>,
+    /// What the settle reports; `false` models a first connection that settled between the turn's snapshot and the
+    /// settle's own pending check.
+    reports_wait: std::sync::atomic::AtomicBool,
 }
 
 impl SettlingConnections {
@@ -223,6 +226,7 @@ impl SettlingConnections {
             }),
             settles: AtomicUsize::new(0),
             hook: Mutex::new(None),
+            reports_wait: std::sync::atomic::AtomicBool::new(true),
         })
     }
 }
@@ -252,7 +256,7 @@ impl McpConnections for SettlingConnections {
         if let Some(hook) = self.hook.lock().unwrap().take() {
             hook();
         }
-        true
+        self.reports_wait.load(Ordering::SeqCst)
     }
 }
 
@@ -331,6 +335,51 @@ async fn the_snapshot_settles_first_connections_before_the_request() {
         registry.snapshots.load(Ordering::SeqCst),
         2,
         "the snapshot was taken again after the settle"
+    );
+    assert_eq!(connections.settles.load(Ordering::SeqCst), 1);
+}
+
+/// Fork (PLM-LC-010): a first connection that settles between the turn's snapshot and the settle's pending check
+/// makes the settle report nothing to wait for; the pending server the first snapshot saw still makes it re-take.
+#[tokio::test]
+async fn the_snapshot_retakes_when_a_first_connection_settled_before_the_check() {
+    let connections = SettlingConnections::new();
+    connections.reports_wait.store(false, Ordering::SeqCst);
+    let registry = Arc::new(SettlingRegistry {
+        base: vec![Arc::new(FakeTool::new("Echo", true, "echo")) as Arc<dyn Tool>],
+        late: Mutex::new(Vec::new()),
+        connections: connections.clone(),
+        snapshots: AtomicUsize::new(0),
+    });
+    const PLUGIN_TOOL: &str = "mcp__plugin__verify";
+    connections.hook.lock().unwrap().replace(Box::new({
+        let registry = registry.clone();
+        let connections = connections.clone();
+        move || {
+            registry.late.lock().unwrap().push(Arc::new(FakeTool::new(
+                PLUGIN_TOOL,
+                true,
+                "verify",
+            )));
+            let mut view = connections.view.lock().unwrap();
+            for server in &mut view.servers {
+                server.state = McpServerState::Connected;
+            }
+        }
+    }));
+    let scripted = Arc::new(ScriptedModel::new(vec![text_response(&["done"])]));
+    let mut parts = parts(scripted.clone(), Vec::new());
+    parts.tools = registry.clone();
+    let request = request("go");
+    let (run_scope, _) = scope(parts, &request, Abort::new());
+    crate::run::run(run_scope, request).await.unwrap();
+
+    let requests = scripted.requests();
+    assert!(wire_names(&requests[0]).contains(&PLUGIN_TOOL.to_owned()));
+    assert_eq!(
+        registry.snapshots.load(Ordering::SeqCst),
+        2,
+        "the pending server the first snapshot saw makes the snapshot be taken again"
     );
     assert_eq!(connections.settles.load(Ordering::SeqCst), 1);
 }
