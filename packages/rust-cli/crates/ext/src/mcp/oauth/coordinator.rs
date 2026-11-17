@@ -121,7 +121,13 @@ impl McpOAuthCoordinator {
     }
 
     /// Start the authorization flow for `server_name` unless one is still running. Returns whether it started.
-    pub fn start(self: &Arc<Self>, server_name: String, input: FlowInput) -> bool {
+    ///
+    /// The follower's baseline (the canonical generation Node's `followAuthorization` compares against) is read
+    /// here, before the flow task exists. Read inside the task, it could come after the lead's publish, and the
+    /// follower would then wait for a change that already happened.
+    pub async fn start(self: &Arc<Self>, server_name: String, input: FlowInput) -> bool {
+        let key_prefix = key_prefix_of(&input);
+        let baseline = canonical_generation(&*self.store, &key_prefix).await;
         let mut flows = self.flows.lock_unpoisoned();
         if flows
             .get(&server_name)
@@ -134,8 +140,6 @@ impl McpOAuthCoordinator {
         let task_cancel = cancel.clone();
         let name = server_name.clone();
         let handle = tokio::spawn(async move {
-            let key_prefix = key_prefix_of(&input);
-            let baseline = canonical_generation(&*this.store, &key_prefix).await;
             let outcome = run_lead(&*this.store, &*this.runtime, &input, &task_cancel).await;
             let authorized = match outcome {
                 FlowOutcome::Authorized => true,

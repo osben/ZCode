@@ -1030,3 +1030,106 @@ async fn delete_guarded_keeps_a_newer_write_in_the_platform_store() {
 fn futures_block<T>(future: impl std::future::Future<Output = T>) -> T {
     tokio::task::block_in_place(|| tokio::runtime::Handle::current().block_on(future))
 }
+
+/// Acceptance 9 (PR4 follower reconnect): a second lane's manager waits on the lead's authorization and
+/// reconnects with the credentials the lead publishes, over real HTTP.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_follower_lane_reconnects_after_the_lead_publishes_over_real_http() {
+    let mock = Arc::new(Mutex::new(Mock::default()));
+    let base = serve(mock.clone()).await;
+    let harness = harness().await;
+    let work = harness.work.path().to_path_buf();
+    let egress = Arc::new(Egress::new(NetworkPolicy::default()).await.expect("egress"));
+    let follower = McpManager::new(
+        Arc::new(LocalMcpTransport::new(
+            work.join("follower-ledger.json"),
+            EnvSnapshot::default(),
+            Some(egress),
+        )),
+        harness._scope.spawner(),
+        McpSettings::default(),
+        Arc::new(SystemClock::utc()),
+    );
+    follower.enable_oauth(
+        harness.platform.mcp_oauth_store(),
+        harness.platform.mcp_oauth_runtime(),
+    );
+    let url = format!("{base}/mcp");
+    let servers = vec![server("e2e-remote", url.clone(), None)];
+
+    // The lead lane starts first and is refused with 401; it publishes the pending authorization.
+    harness.manager.start(workspace(&work), servers.clone());
+    let store = harness.platform.mcp_oauth_store();
+    let prefix = credential_key_prefix("e2e-remote", &url, None, None, None);
+    let pending_key = credential_key(&prefix, "pending_authorization");
+    let pending = until("the lead's pending authorization", || {
+        let raw = futures_block(store.load(&pending_key)).ok().flatten()?;
+        serde_json::from_str::<Value>(&raw).ok()
+    })
+    .await;
+    let authorization_url = pending["authorization_url"]
+        .as_str()
+        .expect("url")
+        .to_owned();
+
+    // The follower lane starts while the lead's transaction is open: it follows instead of opening a second one.
+    follower.start(workspace(&work), servers);
+    // The follower's first connect is refused with 401. The flow it starts reads the follower baseline
+    // (`McpOAuthCoordinator::start`); the failed status is reported before that task runs, so the status alone
+    // is not a sync point. The settle below lets the flow task reach its follow wait before the lead publishes.
+    // Without it the follower reads a baseline that already includes the lead's publish and never reconnects.
+    // Known gap: the integration harness has no hook for the flow task's start, so this is a bounded settle.
+    until("the follower's first connect is refused with 401", || {
+        follower
+            .server_infos()
+            .iter()
+            .any(|info| {
+                info.name == "e2e-remote"
+                    && info.state == rust_cli_kernel_api::manage::McpServerState::Failed
+                    && info.reason.as_deref().is_some_and(|reason| reason.contains("401"))
+            })
+            .then_some(())
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // The browser answers the lead's callback; the lead publishes, and the follower's client reconnects.
+    let state_value = query_value(&authorization_url, "state");
+    let redirect_uri = query_value(&authorization_url, "redirect_uri");
+    let response = browser_callback(&redirect_uri, &state_value).await;
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+    // The follower's reconnect starts after the lead publishes; give it the full wait budget and report the
+    // follower's state when it does not list its tool.
+    let lists_ping = |manager: &McpManager| {
+        manager
+            .tools()
+            .iter()
+            .any(|tool| tool.name().contains("e2e-remote") && tool.name().ends_with("ping"))
+    };
+    let deadline = Instant::now() + WAIT;
+    while !lists_ping(&follower) && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(
+        lists_ping(&follower),
+        "the follower did not reconnect: {:?}; mock: {:?}",
+        follower.server_infos(),
+        mock.lock().expect("mock").mcp_methods
+    );
+    let mock = mock.lock().expect("mock");
+    assert!(
+        mock.mcp_methods
+            .iter()
+            .any(|(method, bearer)| method == "tools/list" && bearer == "real-token"),
+        "the follower must reconnect with the published token: {:?}",
+        mock.mcp_methods
+    );
+    assert_eq!(
+        mock.token_requests
+            .iter()
+            .filter(|(grant, _)| grant == "authorization_code")
+            .count(),
+        1,
+        "only the lead exchanges the code"
+    );
+}

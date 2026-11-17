@@ -214,7 +214,7 @@ impl Inner {
 
     /// A connect that fails with HTTP 401 starts the authorization flow for this server (Node: the SDK asks for
     /// authorization on 401). The row then reports `connecting` through the pending record. Deduplicated per server.
-    pub(super) fn start_oauth_on_challenge(&self, config: &McpServer, failure: &ConnectFailure) {
+    pub(super) async fn start_oauth_on_challenge(&self, config: &McpServer, failure: &ConnectFailure) {
         let (Some(coordinator), Some(oauth), Some((url, _))) = (
             self.oauth.get(),
             effective_oauth(config),
@@ -224,7 +224,7 @@ impl Inner {
         };
         if is_authorization_challenge(&failure.reason) {
             if let Some(input) = oauth.flow_input(&config.name, url) {
-                coordinator.start(config.name.clone(), input);
+                coordinator.start(config.name.clone(), input).await;
             }
             return;
         }
@@ -250,7 +250,7 @@ impl Inner {
         // The union with the stored token's scope is computed by the flow task (`flow::requested_scope`).
         input.challenge_scope = challenge.scope;
         input.resource_metadata = challenge.resource_metadata;
-        coordinator.start(config.name.clone(), input);
+        coordinator.start(config.name.clone(), input).await;
     }
 }
 
@@ -276,7 +276,7 @@ impl McpManager {
             }
             Some(ChallengeRefresh::Failed) => false,
             Some(ChallengeRefresh::Reauthorize) | None => {
-                self.0.start_oauth_on_challenge(&config, failure);
+                self.0.start_oauth_on_challenge(&config, failure).await;
                 false
             }
         }

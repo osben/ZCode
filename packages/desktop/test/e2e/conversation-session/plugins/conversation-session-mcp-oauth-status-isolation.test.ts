@@ -454,13 +454,22 @@ interface DirectMcpLogEntry {
 }
 
 async function waitForDirectMcpProcessStarted(timeoutMs: number): Promise<number> {
+  // Cause: every connect starts a new stdio child and closes the child of the lane it displaces (Node and Rust
+  // alike). Startup connects arrive in a burst (several "started" entries within about 100 ms), so a PID read
+  // mid-burst is closed by the next replacement. Only the last PID after the burst is quiet for 500 ms is live.
+  const quietMs = 500;
   let latest: DirectMcpLogEntry[] = [];
   let pid = 0;
+  let stableSince = 0;
   await waitUntilReportingLatest(
     async () => {
       latest = await readDirectMcpCalls();
-      pid = [...latest].reverse().find((entry) => entry.event === "started")?.pid ?? 0;
-      return pid > 0;
+      const last = [...latest].reverse().find((entry) => entry.event === "started")?.pid ?? 0;
+      if (last !== pid) {
+        pid = last;
+        stableSince = Date.now();
+      }
+      return pid > 0 && Date.now() - stableSince >= quietMs;
     },
     () => `用户级 MCP 没有记录启动 PID: ${JSON.stringify(latest)}`,
     timeoutMs,

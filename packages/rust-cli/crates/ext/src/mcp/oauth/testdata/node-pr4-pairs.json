@@ -1,0 +1,152 @@
+{
+  "keyPrefix": "mcp:oauth:0123456789abcdef01234567",
+  "canonicalRaw": "{\"client_information\":{\"client_id\":\"client-1\",\"redirect_uris\":[\"http://127.0.0.1:9/cb\"]},\"expires_at\":1700003600000,\"generation\":\"fe40092a8fa4d11c9354c8c0e9bccfd7\",\"issuer\":\"https://auth.example.test\",\"obtained_at\":1700000000000,\"published_by\":\"refresh:mcp:oauth:0123456789abcdef01234567\",\"tokens\":{\"access_token\":\"access-a\",\"token_type\":\"Bearer\",\"expires_in\":3600,\"refresh_token\":\"refresh-a\"},\"version\":2}",
+  "pairs": {
+    "v2_mirror_matches": {
+      "clientInformation": {
+        "client_id": "client-1",
+        "redirect_uris": [
+          "http://127.0.0.1:9/cb"
+        ]
+      },
+      "expiresAt": 1700003600000,
+      "generation": "fe40092a8fa4d11c9354c8c0e9bccfd7",
+      "issuer": "https://auth.example.test",
+      "obtainedAt": 1700000000000,
+      "raw": "{\"client_information\":{\"client_id\":\"client-1\",\"redirect_uris\":[\"http://127.0.0.1:9/cb\"]},\"expires_at\":1700003600000,\"generation\":\"fe40092a8fa4d11c9354c8c0e9bccfd7\",\"issuer\":\"https://auth.example.test\",\"obtained_at\":1700000000000,\"published_by\":\"refresh:mcp:oauth:0123456789abcdef01234567\",\"tokens\":{\"access_token\":\"access-a\",\"token_type\":\"Bearer\",\"expires_in\":3600,\"refresh_token\":\"refresh-a\"},\"version\":2}",
+      "source": "canonical",
+      "tokens": {
+        "access_token": "access-a",
+        "token_type": "Bearer",
+        "expires_in": 3600,
+        "refresh_token": "refresh-a"
+      }
+    },
+    "v2_without_mirror": {
+      "clientInformation": {
+        "client_id": "client-1",
+        "redirect_uris": [
+          "http://127.0.0.1:9/cb"
+        ]
+      },
+      "source": "legacy"
+    },
+    "v2_mirror_differs_client_same": {
+      "clientInformation": {
+        "client_id": "client-1",
+        "redirect_uris": [
+          "http://127.0.0.1:9/cb"
+        ]
+      },
+      "source": "legacy",
+      "tokens": {
+        "access_token": "access-b",
+        "token_type": "Bearer",
+        "expires_in": 3600,
+        "refresh_token": "refresh-b"
+      }
+    },
+    "v2_mirror_and_client_differ": {
+      "clientInformation": {
+        "client_id": "client-2",
+        "redirect_uris": [
+          "http://127.0.0.1:9/cb"
+        ]
+      },
+      "source": "legacy"
+    },
+    "v1_adopts_legacy_tokens": {
+      "clientInformation": {
+        "client_id": "client-1",
+        "redirect_uris": [
+          "http://127.0.0.1:9/cb"
+        ]
+      },
+      "source": "legacy",
+      "tokens": {
+        "access_token": "access-b",
+        "token_type": "Bearer",
+        "expires_in": 3600,
+        "refresh_token": "refresh-b"
+      }
+    },
+    "v1_without_mirror": {
+      "clientInformation": {
+        "client_id": "client-1",
+        "redirect_uris": [
+          "http://127.0.0.1:9/cb"
+        ]
+      },
+      "expiresAt": 1700003600000,
+      "generation": "fe40092a8fa4d11c9354c8c0e9bccfd7",
+      "issuer": "https://auth.example.test",
+      "obtainedAt": 1700000000000,
+      "raw": "{\"client_information\":{\"client_id\":\"client-1\",\"redirect_uris\":[\"http://127.0.0.1:9/cb\"]},\"expires_at\":1700003600000,\"generation\":\"fe40092a8fa4d11c9354c8c0e9bccfd7\",\"issuer\":\"https://auth.example.test\",\"obtained_at\":1700000000000,\"published_by\":\"refresh:mcp:oauth:0123456789abcdef01234567\",\"tokens\":{\"access_token\":\"access-a\",\"token_type\":\"Bearer\",\"expires_in\":3600,\"refresh_token\":\"refresh-a\"},\"version\":1}",
+      "source": "canonical",
+      "tokens": {
+        "access_token": "access-a",
+        "token_type": "Bearer",
+        "expires_in": 3600,
+        "refresh_token": "refresh-a"
+      }
+    },
+    "legacy_only": {
+      "clientInformation": {
+        "client_id": "client-1",
+        "redirect_uris": [
+          "http://127.0.0.1:9/cb"
+        ]
+      },
+      "source": "legacy",
+      "tokens": {
+        "access_token": "access-b",
+        "token_type": "Bearer",
+        "expires_in": 3600,
+        "refresh_token": "refresh-b"
+      }
+    }
+  },
+  "inputs": {
+    "v2_mirror_matches": {
+      "canonicalRaw": "{\"client_information\":{\"client_id\":\"client-1\",\"redirect_uris\":[\"http://127.0.0.1:9/cb\"]},\"expires_at\":1700003600000,\"generation\":\"fe40092a8fa4d11c9354c8c0e9bccfd7\",\"issuer\":\"https://auth.example.test\",\"obtained_at\":1700000000000,\"published_by\":\"refresh:mcp:oauth:0123456789abcdef01234567\",\"tokens\":{\"access_token\":\"access-a\",\"token_type\":\"Bearer\",\"expires_in\":3600,\"refresh_token\":\"refresh-a\"},\"version\":2}",
+      "legacyClientRaw": "{\"client_id\":\"client-1\",\"redirect_uris\":[\"http://127.0.0.1:9/cb\"]}",
+      "legacyTokensRaw": "{\"access_token\":\"access-a\",\"token_type\":\"Bearer\",\"expires_in\":3600,\"refresh_token\":\"refresh-a\"}"
+    },
+    "v2_without_mirror": {
+      "canonicalRaw": "{\"client_information\":{\"client_id\":\"client-1\",\"redirect_uris\":[\"http://127.0.0.1:9/cb\"]},\"expires_at\":1700003600000,\"generation\":\"fe40092a8fa4d11c9354c8c0e9bccfd7\",\"issuer\":\"https://auth.example.test\",\"obtained_at\":1700000000000,\"published_by\":\"refresh:mcp:oauth:0123456789abcdef01234567\",\"tokens\":{\"access_token\":\"access-a\",\"token_type\":\"Bearer\",\"expires_in\":3600,\"refresh_token\":\"refresh-a\"},\"version\":2}",
+      "legacyClientRaw": "{\"client_id\":\"client-1\",\"redirect_uris\":[\"http://127.0.0.1:9/cb\"]}"
+    },
+    "v2_mirror_differs_client_same": {
+      "canonicalRaw": "{\"client_information\":{\"client_id\":\"client-1\",\"redirect_uris\":[\"http://127.0.0.1:9/cb\"]},\"expires_at\":1700003600000,\"generation\":\"fe40092a8fa4d11c9354c8c0e9bccfd7\",\"issuer\":\"https://auth.example.test\",\"obtained_at\":1700000000000,\"published_by\":\"refresh:mcp:oauth:0123456789abcdef01234567\",\"tokens\":{\"access_token\":\"access-a\",\"token_type\":\"Bearer\",\"expires_in\":3600,\"refresh_token\":\"refresh-a\"},\"version\":2}",
+      "legacyClientRaw": "{\"client_id\":\"client-1\",\"redirect_uris\":[\"http://127.0.0.1:9/cb\"]}",
+      "legacyTokensRaw": "{\"access_token\":\"access-b\",\"token_type\":\"Bearer\",\"expires_in\":3600,\"refresh_token\":\"refresh-b\"}"
+    },
+    "v2_mirror_and_client_differ": {
+      "canonicalRaw": "{\"client_information\":{\"client_id\":\"client-1\",\"redirect_uris\":[\"http://127.0.0.1:9/cb\"]},\"expires_at\":1700003600000,\"generation\":\"fe40092a8fa4d11c9354c8c0e9bccfd7\",\"issuer\":\"https://auth.example.test\",\"obtained_at\":1700000000000,\"published_by\":\"refresh:mcp:oauth:0123456789abcdef01234567\",\"tokens\":{\"access_token\":\"access-a\",\"token_type\":\"Bearer\",\"expires_in\":3600,\"refresh_token\":\"refresh-a\"},\"version\":2}",
+      "legacyClientRaw": "{\"client_id\":\"client-2\",\"redirect_uris\":[\"http://127.0.0.1:9/cb\"]}",
+      "legacyTokensRaw": "{\"access_token\":\"access-b\",\"token_type\":\"Bearer\",\"expires_in\":3600,\"refresh_token\":\"refresh-b\"}"
+    },
+    "v1_adopts_legacy_tokens": {
+      "canonicalRaw": "{\"client_information\":{\"client_id\":\"client-1\",\"redirect_uris\":[\"http://127.0.0.1:9/cb\"]},\"expires_at\":1700003600000,\"generation\":\"fe40092a8fa4d11c9354c8c0e9bccfd7\",\"issuer\":\"https://auth.example.test\",\"obtained_at\":1700000000000,\"published_by\":\"refresh:mcp:oauth:0123456789abcdef01234567\",\"tokens\":{\"access_token\":\"access-a\",\"token_type\":\"Bearer\",\"expires_in\":3600,\"refresh_token\":\"refresh-a\"},\"version\":1}",
+      "legacyClientRaw": "{\"client_id\":\"client-1\",\"redirect_uris\":[\"http://127.0.0.1:9/cb\"]}",
+      "legacyTokensRaw": "{\"access_token\":\"access-b\",\"token_type\":\"Bearer\",\"expires_in\":3600,\"refresh_token\":\"refresh-b\"}"
+    },
+    "v1_without_mirror": {
+      "canonicalRaw": "{\"client_information\":{\"client_id\":\"client-1\",\"redirect_uris\":[\"http://127.0.0.1:9/cb\"]},\"expires_at\":1700003600000,\"generation\":\"fe40092a8fa4d11c9354c8c0e9bccfd7\",\"issuer\":\"https://auth.example.test\",\"obtained_at\":1700000000000,\"published_by\":\"refresh:mcp:oauth:0123456789abcdef01234567\",\"tokens\":{\"access_token\":\"access-a\",\"token_type\":\"Bearer\",\"expires_in\":3600,\"refresh_token\":\"refresh-a\"},\"version\":1}"
+    },
+    "legacy_only": {
+      "legacyClientRaw": "{\"client_id\":\"client-1\",\"redirect_uris\":[\"http://127.0.0.1:9/cb\"]}",
+      "legacyTokensRaw": "{\"access_token\":\"access-b\",\"token_type\":\"Bearer\",\"expires_in\":3600,\"refresh_token\":\"refresh-b\"}"
+    }
+  },
+  "discovery": {
+    "now": 1700000000000,
+    "raw": {
+      "mcp:oauth:0123456789abcdef01234567:authorization_credentials": "{\"client_information\":{\"client_id\":\"client-1\",\"redirect_uris\":[\"http://127.0.0.1:9/cb\"]},\"expires_at\":1700003600000,\"generation\":\"fe40092a8fa4d11c9354c8c0e9bccfd7\",\"issuer\":\"https://auth.example.test\",\"obtained_at\":1700000000000,\"published_by\":\"refresh:mcp:oauth:0123456789abcdef01234567\",\"tokens\":{\"access_token\":\"access-a\",\"token_type\":\"Bearer\",\"expires_in\":3600,\"refresh_token\":\"refresh-a\"},\"version\":2}",
+      "mcp:oauth:0123456789abcdef01234567:client_information": "{\"client_id\":\"client-1\",\"redirect_uris\":[\"http://127.0.0.1:9/cb\"]}",
+      "mcp:oauth:0123456789abcdef01234567:tokens": "{\"access_token\":\"access-a\",\"token_type\":\"Bearer\",\"expires_in\":3600,\"refresh_token\":\"refresh-a\"}",
+      "mcp:oauth:0123456789abcdef01234567:discovery_state": "{\"authorizationServerUrl\":\"https://auth.example.test\",\"authorizationServerMetadata\":{\"issuer\":\"https://auth.example.test\",\"authorization_endpoint\":\"https://auth.example.test/authorize\",\"token_endpoint\":\"https://auth.example.test/token\",\"registration_endpoint\":\"https://auth.example.test/register\"},\"resourceMetadata\":{\"resource\":\"http://127.0.0.1:9/mcp\"}}",
+      "mcp:oauth:0123456789abcdef01234567:discovery_state_fetched_at": "1700000000000"
+    }
+  }
+}
