@@ -7,6 +7,7 @@ mod args;
 mod body;
 mod builtin;
 mod closest;
+mod grants;
 mod inline;
 mod invoked;
 mod listing;
@@ -134,6 +135,8 @@ pub struct SkillCatalog {
     looping: bool,
     /// Fork: the sessions' incognito profiles; a session without plugins discovers no plugin skills.
     incognito: std::sync::OnceLock<rust_cli_kernel_api::incognito::IncognitoProfiles>,
+    /// Fork (rule 17): the grant of each running subagent child (its frozen identities), by child session.
+    grants: Mutex<HashMap<rust_cli_kernel_api::ids::SessionId, HashSet<String>>>,
 }
 
 impl SkillCatalog {
@@ -147,6 +150,7 @@ impl SkillCatalog {
             print: AtomicBool::new(false),
             looping: true,
             incognito: std::sync::OnceLock::new(),
+            grants: Mutex::default(),
         }
     }
 
@@ -240,8 +244,31 @@ impl SkillCatalog {
                 return Vec::new();
             }
         };
-        self.skills_with(workspace, &facts, self.keeps_plugins(session))
-            .await
+        let skills = self
+            .skills_with(workspace, &facts, self.keeps_plugins(session))
+            .await;
+        self.granted(session, skills)
+    }
+
+    /// Fork (rule 17): `skills` as the child run of `session` sees them: only the granted identities, when it has a grant.
+    fn granted(
+        &self,
+        session: Option<&rust_cli_kernel_api::ids::SessionId>,
+        skills: Vec<Arc<Skill>>,
+    ) -> Vec<Arc<Skill>> {
+        let Some(session) = session else {
+            return skills;
+        };
+        let grant = self
+            .grants
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(session)
+            .cloned();
+        match grant {
+            Some(identities) => grants::filter_granted(&skills, &identities),
+            None => skills,
+        }
     }
 
     async fn skills_with(
@@ -325,6 +352,7 @@ impl SkillCatalog {
         let skills = self
             .skills_with(workspace, &facts, self.keeps_plugins(session))
             .await;
+        let skills = self.granted(session, skills);
         let touched = paths::touched(history, facts.cwd.as_str());
         let visible: Vec<Arc<Skill>> = skills
             .iter()
@@ -376,3 +404,33 @@ fn reference(skill: &Skill) -> Option<rust_cli_kernel_api::user_command::SkillRe
 #[cfg(test)]
 #[path = "mod_tests.rs"]
 mod tests;
+
+#[async_trait::async_trait]
+impl rust_cli_kernel_api::subagent_config::SubagentSkillGrants for SkillCatalog {
+    async fn grant(
+        &self,
+        child: &rust_cli_kernel_api::ids::SessionId,
+        workspace: &WorkspaceRef,
+        entries: &[String],
+    ) -> Vec<String> {
+        // Drop an earlier grant first: the discovery for the child must see every skill.
+        self.grants
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(child);
+        let skills = self.skills_in(workspace, Some(child)).await;
+        let resolved = grants::resolve(entries, &skills);
+        self.grants
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(child.clone(), resolved.identities);
+        resolved.unresolved
+    }
+
+    fn forget(&self, child: &rust_cli_kernel_api::ids::SessionId) {
+        self.grants
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(child);
+    }
+}

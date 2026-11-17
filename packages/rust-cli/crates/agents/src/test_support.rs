@@ -741,6 +741,7 @@ fn built_full(
         ),
         incognito: Default::default(),
         sessions: Default::default(),
+        skill_grants: Arc::new(NoSkillGrants),
     };
     let agents = Agents::new(
         ports,
@@ -749,6 +750,7 @@ fn built_full(
             hidden,
         }),
         AgentsConfig {
+            agent_memory_root: None,
             task_tools: crate::TaskTools::On,
             keep_alive,
             // 交互模式（停放）时后台子代理也能询问（agents.md §4.1.1）；测试的交互替身不给会话级入口。
@@ -893,4 +895,21 @@ impl Default for crate::live::Live {
     fn default() -> Self {
         Self::new(Arc::new(FixedClock(0)))
     }
+}
+
+/// Fork (rule 17): a test double with no skill catalog; every entry is unresolved and no grant is kept.
+struct NoSkillGrants;
+
+#[async_trait::async_trait]
+impl rust_cli_kernel_api::subagent_config::SubagentSkillGrants for NoSkillGrants {
+    async fn grant(
+        &self,
+        _child: &rust_cli_kernel_api::ids::SessionId,
+        _workspace: &rust_cli_kernel_api::env::WorkspaceRef,
+        entries: &[String],
+    ) -> Vec<String> {
+        entries.to_vec()
+    }
+
+    fn forget(&self, _child: &rust_cli_kernel_api::ids::SessionId) {}
 }

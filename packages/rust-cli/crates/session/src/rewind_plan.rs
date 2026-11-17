@@ -67,7 +67,7 @@ pub(crate) fn rewind_anchor<'a>(
             let opener = messages[..index].iter().rev().find(|m| {
                 selectable(m).is_some()
                     || matches!(m, Message::User(user) if matches!(&user.origin,
-                        UserOrigin::Meta { source } if source == NOTICE_SOURCE || source == PEER_SOURCE))
+                        UserOrigin::Meta { source } if source == NOTICE_SOURCE || source == PEER_SOURCE || source == crate::agent_signals::SUBAGENT_MESSAGE_SOURCE))
             });
             Some(opener.unwrap_or(&messages[index]).id())
         }

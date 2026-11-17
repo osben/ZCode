@@ -73,6 +73,10 @@ pub(crate) struct ConfigSnapshot {
     pub(crate) mcp_origins: std::collections::BTreeMap<String, merge::McpOrigin>,
     /// `features.mcp` 不为 false。
     pub(crate) mcp_enabled: bool,
+    /// Fork (rule 18): `features.memory` (Node `memory.enabled` without the Host override).
+    pub(crate) memory_enabled: bool,
+    /// Fork (rule 18): `memory.use`.
+    pub(crate) memory_use: bool,
     /// 启用但未信任的项目 hooks（`-p` 结束时提示，config.md §4.4）。
     pub(crate) pending: Option<Pending>,
     /// 插件候选与启用设置（config.md §2.1、ext.md §4.1）。
@@ -352,6 +356,8 @@ pub(crate) async fn assemble(inputs: &ConfigInputs<'_>) -> ConfigSnapshot {
     let mut mcp_disabled = mcp_disabled;
     mcp_disabled.retain(|server| !untrusted(server, &granted));
     let mcp_enabled = merge::mcp_enabled(&layers);
+    let memory_enabled = merge::memory_enabled(&layers);
+    let memory_use = merge::memory_use(&layers);
     let locale = merge::locale(&layers, &mut warnings);
     let check_for_update = merge::check_for_update(&layers, &mut warnings);
     let question_timeout = merge::question_timeout(&layers, &mut warnings);
@@ -413,6 +419,8 @@ pub(crate) async fn assemble(inputs: &ConfigInputs<'_>) -> ConfigSnapshot {
         mcp_disabled,
         mcp_origins,
         mcp_enabled,
+        memory_enabled,
+        memory_use,
         pending: workspace.pending(),
         plugins,
         locale,

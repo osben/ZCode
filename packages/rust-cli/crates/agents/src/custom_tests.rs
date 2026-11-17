@@ -163,3 +163,48 @@ async fn the_project_walk_stops_below_home_or_at_the_git_root() {
         .with_file("/Users/dev/a/b/.git", "gitdir: x");
     assert_eq!(walk(&repo).await, ["/Users/dev/a/b"]);
 }
+
+// Fork (rule 16): `mcpServers` in an agent file is a comma list or a YAML list; absent means no scope.
+#[test]
+fn parses_mcp_servers_as_a_comma_list_or_a_yaml_list() {
+    let comma = "---\nname: docs-reader\ndescription: Reads the docs.\nmcpServers: docs, wiki\n---\nBody.\n";
+    let list = "---\nname: docs-reader\ndescription: Reads the docs.\nmcpServers:\n  - docs\n  - wiki\n---\nBody.\n";
+    let absent = "---\nname: docs-reader\ndescription: Reads the docs.\n---\nBody.\n";
+    let expected = Some(vec!["docs".to_owned(), "wiki".to_owned()]);
+    assert_eq!(
+        parse(comma, AgentSource::User).unwrap().mcp_servers,
+        expected
+    );
+    assert_eq!(
+        parse(list, AgentSource::User).unwrap().mcp_servers,
+        expected
+    );
+    assert_eq!(parse(absent, AgentSource::User).unwrap().mcp_servers, None);
+}
+
+// Fork (rule 17): `skills` in an agent file is a comma list or a YAML list; absent means no skill list.
+#[test]
+fn parses_skills_as_a_comma_list_or_a_yaml_list() {
+    let comma = "---\nname: reviewer\ndescription: Reviews.\nskills: review, lint\n---\nBody.\n";
+    let list =
+        "---\nname: reviewer\ndescription: Reviews.\nskills:\n  - review\n  - lint\n---\nBody.\n";
+    let absent = "---\nname: reviewer\ndescription: Reviews.\n---\nBody.\n";
+    let expected = Some(vec!["review".to_owned(), "lint".to_owned()]);
+    assert_eq!(parse(comma, AgentSource::User).unwrap().skills, expected);
+    assert_eq!(parse(list, AgentSource::User).unwrap().skills, expected);
+    assert_eq!(parse(absent, AgentSource::User).unwrap().skills, None);
+}
+
+// Fork (rule 18): `memory` in an agent file names the scope; any other value is no scope.
+#[test]
+fn parses_the_memory_scope() {
+    let scoped = "---\nname: notes\ndescription: Keeps notes.\nmemory: project\n---\nBody.\n";
+    let unknown = "---\nname: notes\ndescription: Keeps notes.\nmemory: global\n---\nBody.\n";
+    let absent = "---\nname: notes\ndescription: Keeps notes.\n---\nBody.\n";
+    assert_eq!(
+        parse(scoped, AgentSource::User).unwrap().memory,
+        Some(rust_cli_kernel_api::subagent_config::AgentMemoryScope::Project)
+    );
+    assert_eq!(parse(unknown, AgentSource::User).unwrap().memory, None);
+    assert_eq!(parse(absent, AgentSource::User).unwrap().memory, None);
+}

@@ -428,6 +428,9 @@ fn from_profile(profile: SubagentProfile) -> AgentDefinition {
         background: profile.background,
         selection: profile.selection,
         inject_agents_md: profile.inject_agents_md,
+        mcp_servers: profile.mcp_servers,
+        skills: profile.skills,
+        memory: profile.memory,
     }
 }
 

@@ -68,7 +68,7 @@ fn texts(message: &ApiMessage) -> Vec<String> {
 }
 
 /// 第一个回合的形状：署名（user 角色）排在人类输入前，补一个换行；system 角色的
-/// attachment 去包装、空行连接，成为紧跟其后的 system 消息，并带最后的缓存断点。
+/// attachment 去包装、空行连接，成为紧跟其后的 system 消息。缓存断点落在最后一条非 system 消息上。
 #[test]
 fn a_first_turn_folds_the_attachments_after_the_input() {
     let messages = [
@@ -93,18 +93,14 @@ fn a_first_turn_folds_the_attachments_after_the_input() {
         texts(&api[1]),
         ["# Environment\n\nYou are powered by the model m.\n\nToday's date is 2026-10-17."]
     );
+    // Node marks the latest non-system message (`finalizeLatestNonSystemMessageCacheControl`),
+    // so the trailing system message is skipped and the user message's last block carries it.
+    assert_eq!(marked(&api), [(0, api[0].content.len() - 1)]);
     assert!(
-        api[0]
+        api[1]
             .content
             .iter()
             .all(|item| item.cache_control.is_none())
-    );
-    assert_eq!(
-        api[1].content[0]
-            .cache_control
-            .as_ref()
-            .map(|cache| cache.kind.as_str()),
-        Some("ephemeral")
     );
 }
 
@@ -328,8 +324,9 @@ fn a_summary_request_marks_the_message_before_the_last() {
         ]
     );
     assert_eq!(marked(&api), [(1, 0)]);
-    // 主循环照旧：最后一条有内容的消息。
-    assert_eq!(marked(&normalize(&messages, &ON)), [(3, 0)]);
+    // 主循环：最后一条非 system 消息的最后一块（Node `finalizeLatestNonSystemMessageCacheControl`），
+    // 末尾的 system 消息不盖章。
+    assert_eq!(marked(&normalize(&messages, &ON)), [(2, 1)]);
     // 以 thinking 结尾的 assistant 不能盖章，再往前找；找不到就不加。
     let thinking = ContentBlock::Thinking {
         thinking: "t".to_owned(),

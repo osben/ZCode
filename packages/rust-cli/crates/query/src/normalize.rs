@@ -532,9 +532,12 @@ pub(crate) fn normalize<'a>(
     let marker = if options.skip_cache_write {
         skip_write_marker(&mut out)
     } else {
+        // Node `finalizeLatestNonSystemMessageCacheControl`: the latest non-system message, so a
+        // trailing mid-conversation system message does not take the breakpoint.
         out.iter_mut()
             .rev()
-            .find_map(|item| item.content.last_mut())
+            .find(|message| message.role != ApiRole::System)
+            .and_then(|message| message.content.last_mut())
     };
     if let Some(last) = marker {
         last.cache_control = Some(CacheControl {

@@ -43,6 +43,9 @@ pub(crate) fn definition() -> AgentDefinition {
         background: true,
         selection: None,
         inject_agents_md: true,
+        mcp_servers: None,
+        skills: None,
+        memory: None,
     }
 }
 

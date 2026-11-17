@@ -2,6 +2,8 @@
 
 use std::sync::Arc;
 
+use rust_cli_kernel_api::mcp_state::{McpConnections, McpView};
+
 use rust_cli_kernel_api::orchestration::ToolRegistry;
 use rust_cli_kernel_api::testing::{FakeTool, ListTools};
 use rust_cli_kernel_api::tool::Tool;
@@ -49,6 +51,7 @@ fn names(agent: &str, background: bool) -> Vec<String> {
     let filtered = FilteredTools {
         inner: registry(),
         rule: ToolRule::new(&definition, background, 1),
+        child_tools: Vec::new(),
     };
     filtered
         .tools()
@@ -128,6 +131,7 @@ fn find_respects_the_rule() {
     let filtered = FilteredTools {
         inner: registry(),
         rule: ToolRule::new(&definition, false, 1),
+        child_tools: Vec::new(),
     };
     assert!(filtered.find("Read").is_some());
     assert!(filtered.find("Edit").is_none());
@@ -145,6 +149,7 @@ fn the_agent_tool_depends_on_the_depth_only() {
         FilteredTools {
             inner: registry(),
             rule: ToolRule::new(&definition, background, depth),
+            child_tools: Vec::new(),
         }
         .find("Agent")
         .is_some()
@@ -190,7 +195,46 @@ fn custom(tools: &[&str], disallowed: &[&str]) -> FilteredTools {
     FilteredTools {
         inner: Arc::new(HidingSearch(all)),
         rule: ToolRule::new(&definition, false, 1),
+        child_tools: Vec::new(),
     }
+}
+
+fn respond_tool() -> Arc<dyn Tool> {
+    Arc::new(FakeTool::new("RespondToCoordinator", true, ""))
+}
+
+/// Node gives every subagent child the coordinator port, so RespondToCoordinator is in every child's tool set,
+/// whatever its `tools` allowlist says. The main thread never gets it: its registry does not hold it.
+#[test]
+fn every_child_gets_respond_to_coordinator_whatever_its_allowlist_says() {
+    let mut foreground = custom(&["Read"], &[]);
+    foreground.child_tools = vec![respond_tool()];
+    assert_eq!(listed(&foreground), ["Read", "RespondToCoordinator"]);
+
+    let definition = builtins()
+        .into_iter()
+        .find(|definition| definition.agent_type == EXPLORE)
+        .unwrap();
+    let background = FilteredTools {
+        inner: registry(),
+        rule: ToolRule::new(&definition, true, 1),
+        child_tools: vec![respond_tool()],
+    };
+    assert!(
+        background
+            .tools()
+            .iter()
+            .any(|tool| tool.name() == "RespondToCoordinator")
+    );
+    assert!(background.find("RespondToCoordinator").is_some());
+    assert!(!names(GENERAL_PURPOSE, false).contains(&"RespondToCoordinator".to_owned()));
+}
+
+#[test]
+fn a_disallowed_respond_to_coordinator_is_removed() {
+    let mut filtered = custom(&["Read"], &["RespondToCoordinator"]);
+    filtered.child_tools = vec![respond_tool()];
+    assert_eq!(listed(&filtered), ["Read"]);
 }
 
 fn listed(filtered: &FilteredTools) -> Vec<String> {
@@ -277,6 +321,7 @@ fn a_desktop_fork_keeps_the_main_registry_without_the_cron_and_subagent_tools() 
     let fork = super::ForkChildTools {
         inner: registry(),
         node_child: true,
+        child_tools: Vec::new(),
     };
     let listed: Vec<String> = fork
         .tools()
@@ -335,6 +380,7 @@ fn a_desktop_fork_withholds_none_of_the_five_cron_tools() {
     let fork = super::ForkChildTools {
         inner: Arc::new(Withholding(tools)),
         node_child: true,
+        child_tools: Vec::new(),
     };
     let session = rust_cli_kernel_api::ids::SessionId::new("s");
     for name in cron {
@@ -383,6 +429,7 @@ fn a_fork_child_never_sees_the_lsp_tool() {
     let fork = super::ForkChildTools {
         inner: Arc::new(ListTools(tools)),
         node_child: false,
+        child_tools: Vec::new(),
     };
     let session = rust_cli_kernel_api::ids::SessionId::new("s");
     let listed: Vec<String> = fork
@@ -413,6 +460,7 @@ fn a_desktop_subagent_launches_no_subagents() {
             let desktop = FilteredTools {
                 inner: registry(),
                 rule: ToolRule::new(&definition, background, 1).node_child(true),
+                child_tools: Vec::new(),
             };
             let listed = listed(&desktop);
             for name in gone {
@@ -435,6 +483,7 @@ fn a_desktop_subagent_launches_no_subagents() {
     let desktop = FilteredTools {
         inner: registry(),
         rule: ToolRule::new(&named, false, 1).node_child(true),
+        child_tools: Vec::new(),
     };
     assert_eq!(listed(&desktop), ["TaskStop", "Read"]);
     // The TUI: a general-purpose subagent below the depth limit still has them.
@@ -445,4 +494,305 @@ fn a_desktop_subagent_launches_no_subagents() {
     let tui = ToolRule::new(&general, false, 1);
     assert!(tui.allows("Agent") && tui.allows("SendMessage"));
     assert!(ToolRule::new(&named, false, 1).allows("Agent"));
+}
+
+// Fork (rule 16, specs/fork-rust-subagent-runtime-config.md): `mcpServers` scopes the child to the named parent servers.
+
+/// A parent registry with the Read tool and two MCP servers (`docs`, `other`), exposed through its MCP view.
+struct ScopedRegistry {
+    inner: Arc<dyn ToolRegistry>,
+    mcp: Arc<StaticMcp>,
+}
+
+/// A fixed MCP view: the servers given, no instructions.
+struct StaticMcp(rust_cli_kernel_api::mcp_state::McpView);
+
+#[async_trait::async_trait]
+impl rust_cli_kernel_api::mcp_state::McpConnections for StaticMcp {
+    fn view(&self) -> rust_cli_kernel_api::mcp_state::McpView {
+        self.0.clone()
+    }
+
+    async fn wait(
+        &self,
+        _wait_ms: u64,
+        _done: &(dyn for<'v> Fn(&'v rust_cli_kernel_api::mcp_state::McpView) -> bool + Send + Sync),
+    ) -> rust_cli_kernel_api::mcp_state::McpView {
+        self.0.clone()
+    }
+
+    fn declare_wait_tool(&self, _session: &rust_cli_kernel_api::ids::SessionId) {}
+
+    fn tool_wait_ms(&self) -> u64 {
+        0
+    }
+}
+
+impl ToolRegistry for ScopedRegistry {
+    fn tools(&self) -> Vec<Arc<dyn Tool>> {
+        self.inner.tools()
+    }
+
+    fn find(&self, name: &str) -> Option<Arc<dyn Tool>> {
+        self.inner.find(name)
+    }
+
+    fn find_for(
+        &self,
+        session: &rust_cli_kernel_api::ids::SessionId,
+        name: &str,
+    ) -> Option<Arc<dyn Tool>> {
+        self.inner.find_for(session, name)
+    }
+
+    fn snapshot(
+        &self,
+        session: &rust_cli_kernel_api::ids::SessionId,
+    ) -> rust_cli_kernel_api::orchestration::ToolSnapshot {
+        self.inner.snapshot(session)
+    }
+
+    fn withheld(&self, name: &str) -> Option<Arc<dyn Tool>> {
+        self.inner.withheld(name)
+    }
+
+    fn hides(&self, name: &str) -> bool {
+        self.inner.hides(name)
+    }
+
+    fn keeps_order(&self) -> bool {
+        self.inner.keeps_order()
+    }
+
+    fn mcp(&self) -> Option<Arc<dyn rust_cli_kernel_api::mcp_state::McpConnections>> {
+        Some(self.mcp.clone())
+    }
+}
+
+fn scoped_registry() -> Arc<dyn ToolRegistry> {
+    let tools: Vec<Arc<dyn Tool>> = ["Read", "mcp__docs__search", "mcp__other__lookup"]
+        .iter()
+        .map(|name| Arc::new(FakeTool::new(name, true, "")) as Arc<dyn Tool>)
+        .collect();
+    let server = |name: &str| rust_cli_kernel_api::mcp_state::McpServerView {
+        name: name.to_owned(),
+        state: rust_cli_kernel_api::manage::McpServerState::Connected,
+        reconnecting: false,
+    };
+    Arc::new(ScopedRegistry {
+        inner: Arc::new(ListTools(tools)),
+        mcp: Arc::new(StaticMcp(rust_cli_kernel_api::mcp_state::McpView {
+            servers: vec![server("docs"), server("other")],
+            instructions: Vec::new(),
+        })),
+    })
+}
+
+fn mcp_scoped_child(servers: Option<&[&str]>, tools: Option<&[&str]>) -> FilteredTools {
+    let mut definition = builtins().remove(0);
+    definition.tools = tools.map(|tools| tools.iter().map(|name| (*name).to_owned()).collect());
+    definition.mcp_servers =
+        servers.map(|servers| servers.iter().map(|name| (*name).to_owned()).collect());
+    FilteredTools {
+        inner: scoped_registry(),
+        rule: ToolRule::new(&definition, false, 1),
+        child_tools: Vec::new(),
+    }
+}
+
+fn tool_names_of(filtered: &FilteredTools) -> Vec<String> {
+    filtered
+        .tools()
+        .iter()
+        .map(|tool| tool.name().to_owned())
+        .collect()
+}
+
+#[test]
+fn a_scoped_child_sees_only_the_tools_of_its_servers() {
+    let names = tool_names_of(&mcp_scoped_child(Some(&["docs"]), None));
+    assert!(names.contains(&"mcp__docs__search".to_owned()), "{names:?}");
+    assert!(names.contains(&"Read".to_owned()), "{names:?}");
+    assert!(
+        !names.contains(&"mcp__other__lookup".to_owned()),
+        "{names:?}"
+    );
+}
+
+#[test]
+fn a_scoped_child_with_a_tool_list_keeps_the_list_inside_its_servers() {
+    let names = tool_names_of(&mcp_scoped_child(
+        Some(&["docs"]),
+        Some(&["mcp__other__lookup", "mcp__docs__search"]),
+    ));
+    assert_eq!(names, vec!["mcp__docs__search".to_owned()]);
+}
+
+#[test]
+fn an_unscoped_child_sees_every_server() {
+    let names = tool_names_of(&mcp_scoped_child(None, None));
+    assert!(
+        names.contains(&"mcp__other__lookup".to_owned()),
+        "{names:?}"
+    );
+    assert!(names.contains(&"mcp__docs__search".to_owned()), "{names:?}");
+}
+
+#[test]
+fn an_empty_server_list_is_not_a_scope() {
+    let names = tool_names_of(&mcp_scoped_child(Some(&[]), None));
+    assert!(
+        names.contains(&"mcp__other__lookup".to_owned()),
+        "{names:?}"
+    );
+}
+
+#[test]
+fn a_scoped_child_mcp_view_lists_only_its_servers() {
+    let filtered = mcp_scoped_child(Some(&["docs"]), None);
+    let view = filtered.mcp().expect("the parent's MCP connections").view();
+    let names: Vec<&str> = view
+        .servers
+        .iter()
+        .map(|server| server.name.as_str())
+        .collect();
+    assert_eq!(names, vec!["docs"]);
+}
+
+#[test]
+fn a_listed_server_that_is_not_connected_refuses_the_start() {
+    let mut definition = builtins().remove(0);
+    definition.mcp_servers = Some(vec!["docs".to_owned(), "gone".to_owned()]);
+    let view = scoped_registry().mcp().expect("connections").view();
+    assert_eq!(
+        super::mcp_refusal(&definition, Some(&view)),
+        Some("Required MCP server is not connected: gone".to_owned())
+    );
+    definition.mcp_servers = Some(vec!["docs".to_owned()]);
+    assert_eq!(super::mcp_refusal(&definition, Some(&view)), None);
+    definition.mcp_servers = None;
+    assert_eq!(super::mcp_refusal(&definition, None), None);
+}
+
+// Fork (rule 17): a child with a `skills` list gets the Skill tool, even when its `tools` list omits it.
+#[test]
+fn a_child_with_a_skills_list_is_offered_the_skill_tool() {
+    let mut definition = builtins().remove(0);
+    definition.tools = Some(vec!["Read".to_owned()]);
+    definition.skills = Some(vec!["review".to_owned()]);
+    let filtered = FilteredTools {
+        inner: registry(),
+        rule: ToolRule::new(&definition, false, 1),
+        child_tools: Vec::new(),
+    };
+    let names = tool_names_of(&filtered);
+    assert_eq!(names, vec!["Read".to_owned(), "Skill".to_owned()]);
+    definition.skills = None;
+    let filtered = FilteredTools {
+        inner: registry(),
+        rule: ToolRule::new(&definition, false, 1),
+        child_tools: Vec::new(),
+    };
+    assert_eq!(tool_names_of(&filtered), vec!["Read".to_owned()]);
+}
+
+// Fork (rule 16, Node `servers_for_tool`): a tool belongs to the longest server-name prefix in the live view.
+#[test]
+fn an_mcp_tool_belongs_to_the_longest_matching_server_name() {
+    let server = |name: &str| rust_cli_kernel_api::mcp_state::McpServerView {
+        name: name.to_owned(),
+        state: rust_cli_kernel_api::manage::McpServerState::Connected,
+        reconnecting: false,
+    };
+    let tools: Vec<Arc<dyn Tool>> = ["mcp__docs__x__search", "mcp__docs__search"]
+        .iter()
+        .map(|name| Arc::new(FakeTool::new(name, true, "")) as Arc<dyn Tool>)
+        .collect();
+    let registry: Arc<dyn ToolRegistry> = Arc::new(ScopedRegistry {
+        inner: Arc::new(ListTools(tools)),
+        mcp: Arc::new(StaticMcp(McpView {
+            servers: vec![server("docs"), server("docs__x")],
+            instructions: Vec::new(),
+        })),
+    });
+    let mut definition = builtins().remove(0);
+    definition.mcp_servers = Some(vec!["docs".to_owned()]);
+    let filtered = FilteredTools {
+        inner: registry,
+        rule: ToolRule::new(&definition, false, 1),
+        child_tools: Vec::new(),
+    };
+    assert_eq!(
+        tool_names_of(&filtered),
+        vec!["mcp__docs__search".to_owned()]
+    );
+}
+
+/// A parent view whose listed server is still connecting; its first-connection wait connects it.
+struct PendingMcp(std::sync::Mutex<McpView>);
+
+#[async_trait::async_trait]
+impl rust_cli_kernel_api::mcp_state::McpConnections for PendingMcp {
+    fn view(&self) -> McpView {
+        self.0.lock().unwrap().clone()
+    }
+
+    async fn wait(
+        &self,
+        _wait_ms: u64,
+        _done: &(dyn for<'v> Fn(&'v McpView) -> bool + Send + Sync),
+    ) -> McpView {
+        self.view()
+    }
+
+    fn declare_wait_tool(&self, _session: &rust_cli_kernel_api::ids::SessionId) {}
+
+    fn tool_wait_ms(&self) -> u64 {
+        0
+    }
+
+    async fn wait_for_first_connections(&self) -> bool {
+        for server in self.0.lock().unwrap().servers.iter_mut() {
+            server.state = rust_cli_kernel_api::manage::McpServerState::Connected;
+        }
+        true
+    }
+}
+
+#[tokio::test]
+async fn a_listed_server_still_connecting_is_awaited_before_the_start_is_refused() {
+    let mut definition = builtins().remove(0);
+    definition.mcp_servers = Some(vec!["docs".to_owned()]);
+    let pending = McpView {
+        servers: vec![rust_cli_kernel_api::mcp_state::McpServerView {
+            name: "docs".to_owned(),
+            state: rust_cli_kernel_api::manage::McpServerState::Pending,
+            reconnecting: false,
+        }],
+        instructions: Vec::new(),
+    };
+    let mcp: Arc<dyn McpConnections> = Arc::new(PendingMcp(std::sync::Mutex::new(pending)));
+    assert_eq!(
+        super::mcp_refusal_settled(&definition, Some(mcp)).await,
+        None
+    );
+}
+
+#[tokio::test]
+async fn a_listed_server_that_failed_is_refused_after_the_wait() {
+    let mut definition = builtins().remove(0);
+    definition.mcp_servers = Some(vec!["docs".to_owned()]);
+    let failed = McpView {
+        servers: vec![rust_cli_kernel_api::mcp_state::McpServerView {
+            name: "docs".to_owned(),
+            state: rust_cli_kernel_api::manage::McpServerState::Failed,
+            reconnecting: false,
+        }],
+        instructions: Vec::new(),
+    };
+    let mcp: Arc<dyn McpConnections> = Arc::new(StaticMcp(failed));
+    assert_eq!(
+        super::mcp_refusal_settled(&definition, Some(mcp)).await,
+        Some("Required MCP server is not connected: docs".to_owned())
+    );
 }

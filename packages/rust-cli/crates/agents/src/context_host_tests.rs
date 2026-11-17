@@ -80,6 +80,9 @@ fn profile(name: &str, source: ProfileSource) -> SubagentProfile {
         background: true,
         permission_mode: Some(PermissionMode::AcceptEdits),
         inject_agents_md: true,
+        mcp_servers: None,
+        skills: None,
+        memory: None,
     }
 }
 

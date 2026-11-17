@@ -16,6 +16,7 @@ pub fn automatic_turn_subject(messages: &[Message]) -> Option<&'static str> {
     match source.as_str() {
         crate::cron::CRON_SOURCE => Some("automation turns"),
         crate::notices::NOTICE_SOURCE | crate::peers::PEER_SOURCE => Some("background results"),
+        crate::agent_signals::SUBAGENT_MESSAGE_SOURCE => Some("background results"),
         rust_cli_kernel_api::goal::CONTINUATION_SOURCE => Some("runtime continuations"),
         _ => None,
     }
