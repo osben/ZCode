@@ -40,8 +40,24 @@ pub(crate) async fn dispatch(
         "session/eraseTree" => super::session_tree::erase_tree(server, &params).await,
         "session/debug" => session_debug(&params),
         // Fork: the legacy session methods behind the Host's automation runs (specs/fork-rust-automations.md).
-        "session/create" => super::legacy_session::create(server, &params).await,
-        "session/resume" => super::legacy_session::resume(server, &params).await,
+        "session/create" => {
+            let reply = super::legacy_session::create(server, &params).await;
+            if let Ok(value) = &reply
+                && let Some(id) = value["sessionId"].as_str()
+            {
+                server.context.off_peak.note_session_flag(id, &params);
+            }
+            reply
+        }
+        "session/resume" => {
+            let reply = super::legacy_session::resume(server, &params).await;
+            if reply.is_ok()
+                && let Some(id) = params["sessionId"].as_str()
+            {
+                server.context.off_peak.note_session_flag(id, &params);
+            }
+            reply
+        }
         "session/setMode" => super::legacy_session::set_mode(server, &params).await,
         "session/setThoughtLevel" => {
             super::legacy_session::set_thought_level(server, &params).await

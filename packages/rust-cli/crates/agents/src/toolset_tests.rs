@@ -796,3 +796,18 @@ async fn a_listed_server_that_failed_is_refused_after_the_wait() {
         Some("Required MCP server is not connected: docs".to_owned())
     );
 }
+
+/// Fork (slice 3 layer B): every Cron and off-peak tool is withheld from a desktop subagent. The predicate reads the
+/// canonical arrays, so a new member of either is covered here without a second list.
+#[test]
+fn every_main_session_only_tool_is_withheld_from_a_subagent() {
+    for name in rust_cli_kernel_api::tool_names::CRON_TOOLS
+        .iter()
+        .chain(rust_cli_kernel_api::tool_names::OFF_PEAK_TOOLS.iter())
+    {
+        assert!(
+            super::node_child_lacks(name),
+            "{name} must not reach a subagent"
+        );
+    }
+}

@@ -26,8 +26,7 @@ const GLOBAL_MCP_TOOLS: [&str; 4] = [
 
 /// Node's incognito `automationTools`: whether `profile` hides the tool `name`; `None` when it is not a Cron tool.
 fn hides_automation_tool(profile: &IncognitoProfile, name: &str) -> Option<bool> {
-    tool_names::CRON_TOOLS
-        .contains(&name)
+    (tool_names::CRON_TOOLS.contains(&name) || tool_names::OFF_PEAK_TOOLS.contains(&name))
         .then_some(!profile.automation_tools)
 }
 

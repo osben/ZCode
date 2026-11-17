@@ -88,6 +88,26 @@ pub(crate) struct Input {
     /// Fork: the off-peak task whose run this input is (specs/fork-rust-automations.md, slice 3). It hides OffPeakCreate
     /// on the turn it opens ([`TurnLimits`]); the off-peak dispatch itself is not ported yet.
     off_peak_task_id: Option<String>,
+    /// Fork: `modelExecution` (slice 3 layer B). Only its `offPeak` run is read: the run opens when the input is
+    /// admitted, and the turn's limits name its execution.
+    model_execution: Option<ModelExecutionInput>,
+}
+
+/// Fork: the `modelExecution` of an input (Node `ModelExecutionContext`); only `offPeak` is ported.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ModelExecutionInput {
+    #[serde(default)]
+    off_peak: Option<OffPeakRunInput>,
+}
+
+/// Fork: the off-peak run an input opens (`modelExecution.offPeak`, checked by the inbound schema).
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct OffPeakRunInput {
+    execution_id: String,
+    ticket_id: String,
+    provider_error_code: String,
 }
 
 /// Fork: `heldQueueDisposition` (`command.ts`).
@@ -419,7 +439,19 @@ pub(crate) async fn decide(server: &Server, envelope: &Envelope) -> Ack {
             // Node `forceStartNow`: every explicit `startNow` text takes the foreground lease, whatever the projected
             // phase (an idle projection may lag behind a promotion that holds the lease).
             let ack = if kind == QueuedKind::Text && requests_start_now(envelope) {
-                send_text_now(server, &live, envelope, phase, revision).await
+                // Fork (slice 3 layer B): a `startNow` off-peak input is not ported; it is refused rather than sent on its
+                // model without a run (its turn would have no ticket).
+                if has_off_peak_run(&envelope.payload) {
+                    Ack::refused(
+                        &envelope.command_id,
+                        Status::Rejected,
+                        "off_peak_start_now_unsupported",
+                        "off_peak_start_now_unsupported",
+                        revision,
+                    )
+                } else {
+                    send_text_now(server, &live, envelope, phase, revision).await
+                }
             } else {
                 send_text(server, &live, envelope, kind, phase, revision, None).await
             };
@@ -842,6 +874,16 @@ async fn submit_first(
     let Some(text) = first.text.clone() else {
         return Ok(None);
     };
+    // Fork (slice 3 layer B): a firstInput opens no off-peak run; refused before anything is admitted.
+    if has_off_peak_run(&envelope.payload) {
+        return Err(Box::new(Ack::refused(
+            &envelope.command_id,
+            Status::Rejected,
+            "off_peak_first_input_unsupported",
+            "off_peak_first_input_unsupported",
+            0,
+        )));
+    }
     admit_input(server, live.handle.as_ref(), &text, &envelope.command_id, 0).await?;
     live.sink.remember_input(
         &envelope.command_id,
@@ -1506,6 +1548,60 @@ fn source_in_schema_order(source: &Value) -> Value {
 /// (`heldQueueDispositionRequired`), a queue that changed since the client's confirmation is stale
 /// (`guard.heldQueueConfirmationStale`), `clearQueueAndSend` drops the waiting items and releases the hold, and
 /// `keepQueueAndSend` leaves them. The input itself then starts at once: an idle submit is not held.
+/// Fork (slice 3 layer B): an input carrying `modelExecution.offPeak` is admitted as a pending off-peak run. Its run
+/// opens when its turn starts (Node `prepareOffPeakTurn`), so a refused or dropped input opens nothing.
+fn admit_off_peak_run(
+    server: &Server,
+    session: &str,
+    input: &Input,
+    command: &str,
+    revision: u64,
+) -> Result<(), Box<Ack>> {
+    let Some(run) = input
+        .model_execution
+        .as_ref()
+        .and_then(|execution| execution.off_peak.as_ref())
+    else {
+        return Ok(());
+    };
+    // Node `prepareOffPeakTurn` needs both: the model the run uses and the task it runs for.
+    let provider = selection(input.model_selection.as_ref()).map(|chosen| chosen.provider);
+    let task = input
+        .off_peak_task_id
+        .as_deref()
+        .filter(|id| !id.trim().is_empty());
+    let (Some(provider), Some(task)) = (provider, task) else {
+        return Err(Box::new(Ack::refused(
+            command,
+            Status::Failed,
+            "off_peak_execution_identity_missing",
+            "off_peak_execution_identity_missing",
+            revision,
+        )));
+    };
+    let pending = crate::off_peak_control::PendingRun {
+        session: session.to_owned(),
+        execution_id: run.execution_id.clone(),
+        off_peak_task_id: task.to_owned(),
+        ticket_id: run.ticket_id.clone(),
+        provider_id: provider,
+        provider_error_code: run.provider_error_code.clone(),
+    };
+    server
+        .context
+        .off_peak
+        .admit(session, command, pending)
+        .map_err(|_| {
+            Box::new(Ack::refused(
+                command,
+                Status::Failed,
+                "off_peak_execution_already_active",
+                "off_peak_execution_already_active",
+                revision,
+            ))
+        })
+}
+
 async fn held_queue_choice(
     handle: &dyn SessionHandle,
     live: &crate::live::Live,
@@ -1600,7 +1696,14 @@ fn input_execution(
     {
         hidden.push(rust_cli_kernel_api::tool_names::OFF_PEAK_CREATE.to_owned());
     }
-    let limits = TurnLimits::new(input.automation_id.as_deref(), hidden);
+    // Fork (slice 3 layer B): the turn's model requests are sent on the off-peak run's ticket.
+    let off_peak = input
+        .model_execution
+        .as_ref()
+        .and_then(|execution| execution.off_peak.as_ref())
+        .map(|run| run.execution_id.as_str());
+    let limits = TurnLimits::new(input.automation_id.as_deref(), hidden)
+        .with_off_peak_run(off_peak, chosen.clone());
     if chosen.is_none() && resolved.is_none() && limits.is_empty() {
         return None;
     }
@@ -1666,6 +1769,14 @@ fn unsteerable(with_attachments: bool, execution: Option<&InputExecution>) -> bo
 }
 
 /// Fork: `sendText` with `requestedDelivery: "startNow"` (the composer's modifier-key send in queue mode).
+/// Fork: whether an input payload carries `modelExecution.offPeak`.
+fn has_off_peak_run(payload: &Value) -> bool {
+    payload
+        .get("modelExecution")
+        .and_then(|execution| execution.get("offPeak"))
+        .is_some()
+}
+
 fn requests_start_now(envelope: &Envelope) -> bool {
     envelope
         .payload
@@ -1843,6 +1954,16 @@ async fn send_text(
     )
     .await
     {
+        return *ack;
+    }
+    // Fork (slice 3 layer B): an off-peak input opens its run before it is admitted.
+    if let Err(ack) = admit_off_peak_run(
+        server,
+        handle.id().as_str(),
+        &input,
+        envelope.command_id.as_str(),
+        revision,
+    ) {
         return *ack;
     }
     let execution = input_execution(&input, view.as_ref());

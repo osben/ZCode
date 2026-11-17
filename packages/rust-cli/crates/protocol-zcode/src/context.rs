@@ -24,6 +24,8 @@ pub struct Context {
     counter: Mutex<u64>,
     /// 打开着的会话 → 所在的工作区（取账号凭据的反向请求要带工作区）。
     sessions: Mutex<HashMap<String, String>>,
+    /// Fork: the off-peak runs of this agent (specs/fork-rust-automations.md, slice 3).
+    pub(crate) off_peak: std::sync::Arc<crate::off_peak_control::OffPeakRuns>,
     /// 本进程的随机前缀（代际标识与订阅 ID 用）。
     prefix: String,
     /// Fork: the model directory the projection reads reasoning levels from (Node `listThoughtLevels`).
@@ -191,6 +193,7 @@ impl Context {
             ordinals: Mutex::new(HashMap::new()),
             counter: Mutex::new(0),
             sessions: Mutex::new(HashMap::new()),
+            off_peak: Default::default(),
             prefix,
             models: std::sync::OnceLock::new(),
             storage_root: std::sync::OnceLock::new(),

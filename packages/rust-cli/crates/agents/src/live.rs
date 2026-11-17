@@ -92,6 +92,8 @@ pub(crate) struct LiveAgent {
     pub(crate) machine: MachineName,
     pub(crate) selection: ModelSelection,
     pub(crate) mode: PermissionMode,
+    /// Fork (slice 3 layer B): the off-peak execution the parent run belongs to; the child's requests inherit its ticket.
+    pub(crate) off_peak_execution: Option<String>,
     pub(crate) background: bool,
     /// 父会话的会话级询问入口（交互界面里才有，agents.md §4.1.1）：后台运行（含续跑、停放后的唤醒）经它询问。
     pub(crate) asks: Option<crate::child::Asks>,

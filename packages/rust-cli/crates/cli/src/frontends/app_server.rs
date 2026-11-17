@@ -18,7 +18,7 @@ use rust_cli_node_store::LOCAL_ENVIRONMENT;
 use rust_cli_protocol_core::connection::{self, Options};
 use rust_cli_protocol_zcode::{
     Context, Defaults, HOST_ATTACH_ACK_ENV, HostAutomations, HostCredentialCipher, HostHeaders,
-    HostSubagentConfig, HostTopicResources, NetworkCapture, Startup,
+    HostOffPeak, HostSubagentConfig, HostTopicResources, NetworkCapture, Startup,
 };
 
 use crate::assemble::{self, Controller};
@@ -159,6 +159,8 @@ async fn serve(
         desktop_context,
     );
     spec.node_helper = node_helper;
+    // Fork: the Host's off-peak store (specs/fork-rust-automations.md, slice 3).
+    spec.off_peak = Some(Arc::new(HostOffPeak::new(context.clone())));
     let opened = assemble::open(&spec, facts, (paths, clock)).await?;
     // Fork: the process entry releases this store's session runtime presence after the runtime has shut down
     // (specs/fork-rust-agent-parity.md "Session runtime presence on the shared database").
