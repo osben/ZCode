@@ -94,7 +94,7 @@ parent run R2 of S starts ──▶ a new read; cache[S] = (R2, snapshot')
    - `injectAgentsMd` carries over (rule 15).
    - Not used:
      - `path` and `color`: the Node runtime does not read them either (`color` is set only on the built-in profiles in core `subagent/profile.ts`; the Settings page reads it from its own files).
-     - `memory`, `skills` and `mcpServers`: open gaps. zcode-rs supports none of them for agent files either, so each is its own feature, not part of this snapshot:
+     - `memory`, `skills` and `mcpServers`: open gaps (see "Subagent memory, skills and MCP servers" below). zcode-rs supports none of them for agent files either, so each is its own feature, not part of this snapshot:
        - `memory`: Node loads the agent's persistent memory into its prompt (`loadPersistentAgentMemory`, core `runtime/methods/subagent.ts`) and adds the memory tools (`projectPersistentAgentMemoryTools`, `runtime/agent-runtime.ts`).
        - `skills`: an allowlist, not a preload. Node adds the `Skill` tool and limits the child's skill listing and loads to the granted skills (`runtime/methods/subagent.ts`, `resolveSubagentSkillGrants`).
        - `mcpServers`: Node scopes the child's borrowed parent MCP servers to the listed names (`runtime/methods/subagent.ts`, `createBorrowedSubagentMcpAccess`).
@@ -132,6 +132,16 @@ parent run R2 of S starts ──▶ a new read; cache[S] = (R2, snapshot')
     - It applies on both surfaces (the TUI as well), as in Node.
     - The child's auto-compaction follows it too. In Node the child runtime's context builder has no user instructions at all, compaction included. In zcode-rs the child run carries the flag (`QueryRequest::inject_agents_md`) into its compaction request and the summary run, so the summary request does not re-announce the rule files or the session context.
     - Git status: Node gives no child the git status (the child's `createSubagentContextBuilder`, core `runtime/methods/context.ts`, has no project context). On the desktop (`node_desktop`, `ContextConfig::subagent_git_status` off) no zcode-rs subagent gets it either, whatever its `injectAgentsMd`, and neither does a child's summary request; the main thread keeps it. The TUI keeps it for a child with the flag on.
+
+## Cache breakpoint on a mid-conversation system message
+
+Node puts the message cache breakpoint on the latest **non-system** message (`finalizeLatestNonSystemMessageCacheControl`, core `runtime/helpers/provider-request-messages.ts`). Node's provider adapters map a message's cache control onto that message, so a system message never carries the breakpoint.
+
+zcode-rs (`query` `normalize.rs`) now does the same on the cache-write path: the breakpoint goes on the last block of the latest message whose role is not `system`. A trailing system message (a mid-conversation reminder, or the `output_config`-only system message) is skipped.
+
+The summary request (`skip_cache_write`) keeps its rule: the breakpoint goes on the message before the last stampable one (`skip_write_marker`). `stampable` still refuses thinking and empty assistant endings, because the provider rejects a cache marker there.
+
+Tests: `query` `normalize_tests` `a_first_turn_folds_the_attachments_after_the_input` (the breakpoint is on the user message, not on the trailing system message) and `a_summary_request_marks_the_message_before_the_last` (main-loop expectation).
 
 ## Out of scope
 
