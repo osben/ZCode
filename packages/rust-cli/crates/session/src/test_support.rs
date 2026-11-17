@@ -183,6 +183,8 @@ pub(crate) struct Setup {
     pub machines: Option<Arc<dyn rust_cli_kernel_api::env_registry::EnvironmentRegistry>>,
     /// 会话的工作目录；缺省是 [`meta`] 的 `/work`（workspace_tests.rs 的 Windows 用例改它，F57）。
     pub root: &'static str,
+    /// Overrides the session id (default `sess_1`): a test with process-level state names its own session.
+    pub session_id: Option<&'static str>,
     /// 会话 actor 的时钟（回合结束那一行的用时，duration_tests.rs 拨动它）；缺省固定在 1000。
     pub clock: Arc<dyn rust_cli_kernel_api::clock::Clock>,
     /// Fork: the mirrored child run (`SessionState::child_live`); none by default.
@@ -199,6 +201,7 @@ impl Setup {
     pub(crate) fn new(model: Arc<dyn ModelPort>) -> Self {
         let env = env();
         Self {
+            session_id: None,
             model,
             hooks: Arc::new(rust_cli_kernel_api::testing::NoHooks),
             compactor: None,
@@ -260,6 +263,9 @@ impl Setup {
         let reused = self.store.is_some();
         let store = self.store.unwrap_or_default();
         let mut meta = meta();
+        if let Some(id) = self.session_id {
+            meta.id = SessionId::new(id);
+        }
         meta.workspace.root = EnvPath::new(self.root);
         if self.stored && !reused {
             store.create(meta.clone()).await.unwrap();

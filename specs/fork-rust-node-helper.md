@@ -485,7 +485,7 @@ Port of Node's `appendBrowserTurnScreenshot` (`core/src/runtime/methods/browser-
 
 - Order: the screenshot runs in Node's turn loop after the model loop completed and before `TurnComplete` (`turn.ts` ~1019). `browserControlPort.turnEnded` runs later, in the turn's `finally` (`turn.ts` ~1262). So the screenshot settles before `turnEnded`.
 - Candidate: the only production writer is the `zcode/browserTurnScreenshot` key of a node_repl tool result's `_meta` (`browser-bridge.ts`, `recordBrowserTurnToolResult`). `recordBrowserTurnPageActivity` has no production caller (tests only), so it is not ported.
-- Timeout: Node has none. Its broker `execute` runs under the turn's abort signal and sends `cancelRequest` when it aborts (`browser-control-broker.ts` ~220-260). Rust differs on purpose: the helper request is bounded by the helper's default request timeout (`Timing::default_request`, 180 s), so a stuck Main cannot hold the turn end. The capture's cancel token is not the turn's abort signal: after the loop completed, the turn's abort is no longer used. Both differences are open for the coordinator to decide.
+- Timeout and abort: Node's capture passes `turnAbortSignal` to `port.execute`, and the broker sends `cancelRequest` to Main when it aborts (`browser-control-broker.ts` ~220-260). Rust matches this: the capture's cancel token is the turn's abort token (`Running::abort`), and a cancel drops the helper request. Node has no timeout. Rust adds one safety net: the helper request is bounded by the helper's default request timeout (`Timing::default_request`, 180 s), so a stuck Main cannot hold the turn end. Known differences: (a) Rust's cancel drops the helper request but does not send `cancelRequest` to Main; (b) the Rust actor is single-threaded, so an interrupt that arrives during the capture waits for the capture (or the 180 s bound) instead of cancelling it. Both are open for the coordinator.
 - Part: a tool part with `state.input.source = "browser_turn_end"` and `metadata.display` of kind `node_repl_images`, image at most 200 KiB base64 and at most 2048 px (`HOST_NODE_REPL_IMAGE_MAX_DIMENSION`). The part is excluded from model blocks (`isBrowserTurnScreenshotPart`).
 
 Decisions:
@@ -530,7 +530,15 @@ Acceptance (red first):
 5. The live row and the cold reopen both show the row with `display.kind == "node_repl_images"` on the row display channel, placed after the turn's assistant output.
 6. Helper: `helper/browser/turnScreenshot` lists, then screenshots the active tab, and answers `{}` on any broker failure.
 
-E2E: no existing spec asserts the screenshot row (`grep` of `apps/zcode-cli/packages/*/tests` and `~/Dev/zcode-qa` finds only unit and hydration tests). The browser-use specs need macOS. The box run is compared Node against Rust on a node_repl browser spec by the projection output.
+Tests as built:
+
+- Binding race (kernel-api `browser_turn_tests.rs`): `dropping_an_older_binding_keeps_the_newer_one`. Binds are generation tokens; `unbind` removes only its own generation.
+- Full-turn (session `browser_turn_tests.rs`, own session id per test): success (one capture, one entry, row before `TurnFinished`, one candidate consumed); the next model request carries no trace of the screenshot; abort (interrupt) consumes the candidate, no capture, no entry; failed turn (`InvalidRequest`), same; superseded (interrupt, then a newer input), the first turn captures nothing and the second captures with its own candidate, two candidates consumed.
+- Projection (`browser_screenshot_tests.rs`): live row keeps the display; cold row placed after its turn's output; a cut turn's row is dropped.
+- Node-store (`lib_mode_tests.rs`): the entry is a `rust-cli/` session_entry and writes no message.
+- Helper (`f4-d2-turn-screenshot.test.ts`): list then screenshot; no active tab; refused screenshot; Host failure; child routed by tab owner.
+
+E2E (blocked, not on this branch): an assertion that the spec `conversation-session-node-repl-stateless-browser-multisession` shows a `node-repl-browser-turn-screenshot` testid row after session A's turn was written and run red on Node in the box (the testid is in `ToolCallBlocks/renderers/node-repl.tsx`). The Node run still did not show the row: the pane's testid list at the failure point has no repl or turn-end row, while the assistant history is collapsed. Whether Node produces the capture in the Linux box (the candidate, or the helper capture) is not established. The assertion is kept out of the branch until Node passes it, as the review asked. The browser-pane specs need macOS and are not run.
 
 #### Shutdown order (F4a)
 

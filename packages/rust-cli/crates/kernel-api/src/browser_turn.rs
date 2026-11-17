@@ -3,6 +3,7 @@
 //! once by the session's turn end; the port captures the active tab through the helper.
 
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -65,6 +66,14 @@ pub fn take(session: &str, turn: &str) -> Option<BrowserCandidate> {
     candidates().remove(&(session.to_owned(), turn.to_owned()))
 }
 
+/// The candidates still held for a session.
+pub fn pending(session: &str) -> usize {
+    candidates()
+        .keys()
+        .filter(|(owner, _)| owner == session)
+        .count()
+}
+
 /// Drops every candidate of a session (its close).
 pub fn forget_session(session: &str) {
     candidates().retain(|(owner, _), _| owner != session);
@@ -100,27 +109,42 @@ pub trait TurnScreenshotPort: Send + Sync {
     ) -> Option<CapturedScreenshot>;
 }
 
-static PORTS: Mutex<BTreeMap<String, Arc<dyn TurnScreenshotPort>>> = Mutex::new(BTreeMap::new());
+/// The bound capture ports by session, each with the generation of its binding. A binding is removed only by the
+/// generation that made it, so an older owner closing cannot take away a newer owner's port for the same session.
+/// A session's binding: its generation and its port.
+type PortBinding = (u64, Arc<dyn TurnScreenshotPort>);
 
-fn ports() -> std::sync::MutexGuard<'static, BTreeMap<String, Arc<dyn TurnScreenshotPort>>> {
+static PORTS: Mutex<BTreeMap<String, PortBinding>> = Mutex::new(BTreeMap::new());
+static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
+
+fn ports() -> std::sync::MutexGuard<'static, BTreeMap<String, PortBinding>> {
     PORTS
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-/// Binds the capture port of a session (its live projection's server).
-pub fn bind(session: &str, port: Arc<dyn TurnScreenshotPort>) {
-    ports().insert(session.to_owned(), port);
+/// Binds the capture port of a session (its live projection's server). The returned generation is the one
+/// [`unbind`] needs; a newer bind of the same session replaces the port.
+pub fn bind(session: &str, port: Arc<dyn TurnScreenshotPort>) -> u64 {
+    let generation = NEXT_GENERATION.fetch_add(1, Ordering::Relaxed);
+    ports().insert(session.to_owned(), (generation, port));
+    generation
 }
 
-/// Unbinds a session's capture port (its close).
-pub fn unbind(session: &str) {
-    ports().remove(session);
+/// Unbinds a session's port only if `generation` is still the current binding (compare-and-remove).
+pub fn unbind(session: &str, generation: u64) {
+    let mut ports = ports();
+    if ports
+        .get(session)
+        .is_some_and(|(current, _)| *current == generation)
+    {
+        ports.remove(session);
+    }
 }
 
 /// The capture port of a session, if its server bound one.
 pub fn port_for(session: &str) -> Option<Arc<dyn TurnScreenshotPort>> {
-    ports().get(session).cloned()
+    ports().get(session).map(|(_, port)| port.clone())
 }
 
 /// The `node_repl_images` display of a screenshot (Node `createBrowserTurnScreenshotDisplay`).

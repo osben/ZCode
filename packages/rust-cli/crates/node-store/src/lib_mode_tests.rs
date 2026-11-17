@@ -494,5 +494,8 @@ async fn a_browser_turn_screenshot_entry_is_a_session_entry_and_no_message() {
         vec![vec![Value::from("rust-cli/fork_browser_turn_screenshot")]]
     );
     let messages = t.rows("select id from message where session_id = 'sess_1'");
-    assert!(messages.is_empty(), "a screenshot entry is not a message: {messages:?}");
+    assert!(
+        messages.is_empty(),
+        "a screenshot entry is not a message: {messages:?}"
+    );
 }

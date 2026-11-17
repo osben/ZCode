@@ -500,6 +500,8 @@ impl Actor {
             return;
         };
         self.cancel_turn_asks();
+        // Fork (D2): Node's capture runs under the turn's abort signal; the same token reaches the capture here.
+        let abort = running.abort.token().clone();
         let result = running.task.await;
         // Fork (D2): the turn's browser candidate is consumed here, once, whatever the outcome (no stale candidate). The
         // tool side keys it by the run (`ToolUseContext::run`), the turn's run; a compaction turn has none.
@@ -575,7 +577,7 @@ impl Actor {
         // turnEnded follows the turn. Only a successful turn with a prompt gets the screenshot; the row goes before
         // TurnFinished so the protocol sink sends helper/turn/ended after it.
         let shot = if matches!(outcome, TurnOutcome::Success) {
-            self.browser_turn_screenshot(&turn, running.prompt.as_ref(), candidate)
+            self.browser_turn_screenshot(&turn, running.prompt.as_ref(), candidate, abort)
                 .await
         } else {
             None

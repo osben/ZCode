@@ -111,23 +111,38 @@ fn the_display_budget_is_node_s_200_kib_of_base64() {
     ));
 }
 
+struct Never;
+
+#[async_trait]
+impl TurnScreenshotPort for Never {
+    async fn capture(
+        &self,
+        _session: &str,
+        _turn: &str,
+        _candidate: &BrowserCandidate,
+        _cancel: tokio_util::sync::CancellationToken,
+    ) -> Option<CapturedScreenshot> {
+        None
+    }
+}
+
 #[test]
 fn a_bound_port_is_found_by_its_session_until_unbound() {
-    struct Never;
-    #[async_trait]
-    impl TurnScreenshotPort for Never {
-        async fn capture(
-            &self,
-            _session: &str,
-            _turn: &str,
-            _candidate: &BrowserCandidate,
-            _cancel: tokio_util::sync::CancellationToken,
-        ) -> Option<CapturedScreenshot> {
-            None
-        }
-    }
-    bind("s-port", Arc::new(Never));
+    let generation = bind("s-port", Arc::new(Never));
     assert!(port_for("s-port").is_some());
-    unbind("s-port");
+    unbind("s-port", generation);
     assert!(port_for("s-port").is_none());
+}
+
+/// A dropping older Live must not remove the newer Live's binding for the same session.
+#[test]
+fn dropping_an_older_binding_keeps_the_newer_one() {
+    let older = bind("s-race", Arc::new(Never));
+    let newer_port: Arc<dyn TurnScreenshotPort> = Arc::new(Never);
+    let newer = bind("s-race", newer_port.clone());
+    unbind("s-race", older);
+    let still = port_for("s-race").expect("the newer binding survives the older unbind");
+    assert!(Arc::ptr_eq(&still, &newer_port));
+    unbind("s-race", newer);
+    assert!(port_for("s-race").is_none());
 }

@@ -43,18 +43,14 @@ impl Actor {
         turn: &TurnId,
         prompt: Option<&MessageId>,
         candidate: Option<BrowserCandidate>,
+        cancel: CancellationToken,
     ) -> Option<KernelEvent> {
         let candidate = candidate?;
         let anchor = prompt?.clone();
         let session = self.meta.id.as_str().to_owned();
         let port = browser_turn::port_for(&session)?;
         let shot = port
-            .capture(
-                &session,
-                turn.as_str(),
-                &candidate,
-                CancellationToken::new(),
-            )
+            .capture(&session, turn.as_str(), &candidate, cancel)
             .await?;
         if !browser_turn::fits_display(&shot.base64) {
             tracing::warn!(
@@ -88,3 +84,7 @@ impl Actor {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "browser_turn_tests.rs"]
+mod tests;
