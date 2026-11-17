@@ -12,6 +12,7 @@ members = [
   "crates/kernel-api",
   "crates/prompts",
   "crates/node-store",
+  "crates/workflow",
   "crates/node-records",
   "crates/model",
   "crates/env-local",
