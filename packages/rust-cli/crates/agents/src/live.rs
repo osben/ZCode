@@ -613,9 +613,7 @@ impl Live {
     fn take(&self, agent: &AgentId, wanted: fn(&Mail) -> bool) -> Vec<Mail> {
         match self.agents().get_mut(agent).map(|entry| &mut entry.state) {
             Some(AgentState::Running { abort, mailbox }) if !abort.is_aborted() => {
-                let (taken, kept) = std::mem::take(mailbox)
-                    .into_iter()
-                    .partition(wanted);
+                let (taken, kept) = std::mem::take(mailbox).into_iter().partition(wanted);
                 *mailbox = kept;
                 taken
             }
