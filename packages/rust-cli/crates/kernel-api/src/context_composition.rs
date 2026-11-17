@@ -171,6 +171,15 @@ impl CompositionStore {
         self.apply(slot, session, |slot| slot.record = None)
     }
 
+    /// The session closed: its record (the largest part of a slot) is dropped. The revision stays, as Node's tracker keeps
+    /// its revision map for the life of the process: a session reopened in the same process must not restart at 0,
+    /// because the App compares revisions for staleness.
+    pub fn forget(&self, session: &SessionId) {
+        if let Some(slot) = self.slots.lock_unpoisoned().get_mut(session) {
+            slot.record = None;
+        }
+    }
+
     /// The current revision; 0 for a session that has never changed.
     pub fn revision(&self, session: &SessionId) -> u64 {
         self.slots

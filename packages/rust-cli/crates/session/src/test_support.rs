@@ -288,7 +288,8 @@ impl Setup {
             ))
         });
         let runner = Arc::new(QueryLoop::new(QueryParts {
-            compositions: Default::default(),
+            // One store for the query loop and the session, as in production (runtime lib.rs).
+            compositions: self.compositions.clone(),
             model: self.model,
             context: self.context.unwrap_or_else(|| {
                 Arc::new(FixedContext(vec![SystemBlock {

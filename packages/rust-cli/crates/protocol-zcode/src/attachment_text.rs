@@ -7,6 +7,8 @@ use std::path::Path;
 
 use encoding_rs::{Encoding, GB18030, GBK, UTF_8, UTF_16LE};
 use rust_cli_base::js::string::{trim, utf16_len, utf16_prefix};
+// Node's `estimateTokens`, the shared base implementation (tokens.rs `estimate_text`).
+use rust_cli_base::tokens::estimate_text as estimate_tokens;
 use rust_cli_kernel_api::message::{AttachedBody, TextRead};
 use tokio::io::AsyncReadExt;
 
@@ -100,9 +102,6 @@ fn utf8_completion_bytes(buffer: &[u8]) -> usize {
     };
     length.saturating_sub(buffer.len() - start)
 }
-
-/// Node's `estimateTokens`, the shared base implementation (tokens.rs `estimate_text`).
-use rust_cli_base::tokens::estimate_text as estimate_tokens;
 
 /// The lines of a decoded file, collected as Node's adapter does: every line is counted, the first `limit` are kept.
 struct Lines {
