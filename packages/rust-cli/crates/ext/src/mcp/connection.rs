@@ -7,7 +7,7 @@ use rust_cli_base::Spawner;
 use rust_cli_kernel_api::env::WorkspaceRef;
 use rust_cli_kernel_api::env_registry::EnvironmentRegistry;
 use rust_cli_kernel_api::ids::MachineName;
-use rust_cli_kernel_api::mcp::{McpConnect, McpTransport};
+use rust_cli_kernel_api::mcp::{McpConnect, McpError, McpTransport};
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
@@ -70,13 +70,45 @@ impl Pipe<'_> {
 
 /// 连接并握手；整个过程受 `MCP_TIMEOUT` 限制（绑定到远端的服务器等它的机器连上也算在里面）。`client_version` 是入口
 /// 给的本工程版本（`clientInfo`）。
+/// Why a connect failed: the text the row shows, and the `WWW-Authenticate` header of an HTTP 401/403 answer
+/// (the OAuth hooks read the challenge from it).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ConnectFailure {
+    pub(crate) reason: String,
+    pub(crate) www_authenticate: Option<String>,
+}
+
+impl From<String> for ConnectFailure {
+    fn from(reason: String) -> Self {
+        Self {
+            reason,
+            www_authenticate: None,
+        }
+    }
+}
+
+/// A transport error at connect time, keeping the challenge of an HTTP status.
+fn connect_failure(error: McpError) -> ConnectFailure {
+    match error {
+        McpError::Http {
+            message,
+            www_authenticate,
+            ..
+        } => ConnectFailure {
+            reason: message,
+            www_authenticate,
+        },
+        other => other.to_string().into(),
+    }
+}
+
 pub(crate) async fn open(
     pipe: &Pipe<'_>,
     spawner: &Spawner,
     server: &McpServer,
     timeout: Duration,
     client_version: &str,
-) -> Result<Session, String> {
+) -> Result<Session, ConnectFailure> {
     let timed_out = || {
         format!(
             "MCP server {} connection timed out after {}ms",
@@ -97,7 +129,7 @@ pub(crate) async fn open(
                 },
             )
             .await
-            .map_err(|error| error.to_string())?;
+            .map_err(connect_failure)?;
         let roots = vec![workspace.root.as_str().to_owned()];
         let (client, notices) = Client::start(transport.clone(), connection, spawner, roots);
         let params = json!({
@@ -113,14 +145,21 @@ pub(crate) async fn open(
                 // 缺陷修复：initialize 自己的期限与整个握手的期限相同，总是先到，原来报的是 RPC 的
                 // `timed out`；按 spec（ext.md §3.3）报连接超时的文本。
                 return Err(match error {
-                    RpcError::TimedOut => timed_out(),
-                    other => other.to_string(),
+                    RpcError::TimedOut => timed_out().into(),
+                    RpcError::Http {
+                        message,
+                        www_authenticate,
+                    } => ConnectFailure {
+                        reason: message,
+                        www_authenticate,
+                    },
+                    other => other.to_string().into(),
                 });
             }
         };
         if let Err(error) = client.notify("notifications/initialized", None).await {
             client.close().await;
-            return Err(error.to_string());
+            return Err(connect_failure_of_rpc(error));
         }
         let instructions = result
             .get("instructions")
@@ -136,7 +175,20 @@ pub(crate) async fn open(
     };
     match tokio::time::timeout(timeout, handshake).await {
         Ok(result) => result,
-        Err(_) => Err(timed_out()),
+        Err(_) => Err(timed_out().into()),
+    }
+}
+
+fn connect_failure_of_rpc(error: RpcError) -> ConnectFailure {
+    match error {
+        RpcError::Http {
+            message,
+            www_authenticate,
+        } => ConnectFailure {
+            reason: message,
+            www_authenticate,
+        },
+        other => other.to_string().into(),
     }
 }
 

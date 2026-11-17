@@ -12,6 +12,7 @@ use ring::rand::{SecureRandom, SystemRandom};
 use rust_cli_ext::mcp::oauth::{
     AuthorizationLease, LoopbackConnection, LoopbackListener, McpOAuthRuntime, McpOAuthStore,
     McpOAuthStoreError, McpOAuthWrite, OAuthHttpError, OAuthHttpRequest, OAuthHttpResponse,
+    REFRESH_LOCK_MAX_WAIT,
 };
 use rust_cli_fs::{FileLock, LockOptions, acquire_file_lock};
 use rust_cli_net::{Egress, HttpRequest, loopback};
@@ -63,6 +64,19 @@ impl McpOAuthStore for CredentialsMcpOAuthStore {
                                 credentials.remove(key);
                             }
                         }
+                        // Node `invalidateCanonicalCredentials`: the guard is checked before any key is removed.
+                        McpOAuthWrite::DeleteGuarded {
+                            guard_key,
+                            expected,
+                            keys,
+                        } => {
+                            let current = credentials.get(guard_key).await?;
+                            if current.is_some_and(|secret| secret.expose() == expected.as_str()) {
+                                for key in keys {
+                                    credentials.remove(key);
+                                }
+                            }
+                        }
                     }
                 }
                 Ok(())
@@ -76,22 +90,46 @@ impl McpOAuthStore for CredentialsMcpOAuthStore {
         key_prefix: &str,
     ) -> Result<Option<Box<dyn AuthorizationLease>>, McpOAuthStoreError> {
         let path = rust_cli_ext::mcp::oauth::lease_path(self.store.file().as_path(), key_prefix);
+        self.try_lock(&path, LEASE_MAX_WAIT)
+            .await
+            .map(|lease| lease.map(|lock| Box::new(lock) as Box<dyn AuthorizationLease>))
+    }
+
+    async fn try_acquire_refresh_lock(
+        &self,
+        key_prefix: &str,
+    ) -> Result<Option<Box<dyn AuthorizationLease>>, McpOAuthStoreError> {
+        let path =
+            rust_cli_ext::mcp::oauth::refresh_lock_path(self.store.file().as_path(), key_prefix);
+        self.try_lock(&path, REFRESH_LOCK_MAX_WAIT)
+            .await
+            .map(|lease| lease.map(|lock| Box::new(lock) as Box<dyn AuthorizationLease>))
+    }
+}
+
+impl CredentialsMcpOAuthStore {
+    /// Take the file lock at `path`, waiting at most `max_wait`. `Ok(None)` means the wait ran out.
+    async fn try_lock(
+        &self,
+        path: &std::path::Path,
+        max_wait: Duration,
+    ) -> Result<Option<FileLease>, McpOAuthStoreError> {
         // The lock directory sits beside `credentials.json`; on a fresh home that directory may not exist yet,
-        // and the lease must not fail for it (the lock is the first write of an authorization).
+        // and the lock must not fail for it (it is the first write of an authorization or of a refresh).
         if let Some(dir) = path.parent() {
             rust_cli_fs::create_private_dir_all(dir)
                 .await
-                .map_err(|error| McpOAuthStoreError(format!("authorization lease: {error}")))?;
+                .map_err(|error| McpOAuthStoreError(format!("OAuth lock: {error}")))?;
         }
         let options = LockOptions {
             retry_delays: vec![LEASE_RETRY],
             ownerless_grace: LEASE_OWNERLESS_GRACE,
-            max_wait: LEASE_MAX_WAIT,
+            max_wait,
         };
-        match acquire_file_lock(&path, &options).await {
-            Ok(lock) => Ok(Some(Box::new(FileLease(lock)))),
+        match acquire_file_lock(path, &options).await {
+            Ok(lock) => Ok(Some(FileLease(lock))),
             Err(error) if error.kind() == std::io::ErrorKind::TimedOut => Ok(None),
-            Err(error) => Err(McpOAuthStoreError(format!("authorization lease: {error}"))),
+            Err(error) => Err(McpOAuthStoreError(format!("OAuth lock: {error}"))),
         }
     }
 }

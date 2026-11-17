@@ -22,11 +22,16 @@ use rust_cli_base::clock::SystemClock;
 use rust_cli_base::secret::{EnvSnapshot, RedactedString};
 use rust_cli_env_local::LocalMcpTransport;
 use rust_cli_ext::mcp::McpServerOptions;
-use rust_cli_ext::mcp::oauth::{McpOAuthConfig, credential_key, credential_key_prefix};
+use rust_cli_ext::mcp::oauth::{
+    McpOAuthConfig, McpOAuthRuntime, McpOAuthStore, McpOAuthWrite, RefreshInput, credential_key,
+    credential_key_prefix, refresh_under_lock,
+};
 use rust_cli_ext::{McpManager, McpScope, McpServer, McpSettings};
 use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
 use rust_cli_kernel_api::ids::EnvironmentId;
 use rust_cli_kernel_api::mcp::McpTransportConfig;
+use rust_cli_kernel_api::message::ToolResultContent;
+use rust_cli_kernel_api::testing::tool_use_context;
 use rust_cli_net::{Egress, NetworkPolicy};
 use rust_cli_paths::{StoragePaths, StorageSettings};
 use rust_cli_platform::{AccountOrigins, AccountServices, CredentialSecret, Platform};
@@ -44,6 +49,14 @@ struct Mock {
     token_requests: Vec<(String, Option<String>)>,
     /// MCP methods answered, by bearer that was presented.
     mcp_methods: Vec<(String, String)>,
+    /// The `refresh_token` of every refresh grant (PR3).
+    refresh_grants: Vec<String>,
+    /// The `Authorization` header values the MCP endpoint refused with 401 (PR3).
+    rejected: Vec<String>,
+    /// `Authorization` header values the server no longer accepts (revoked mid-session).
+    revoked: Vec<String>,
+    /// Every GET path the mock answered (discovery and the custom `resource_metadata`).
+    get_paths: Vec<String>,
 }
 
 async fn serve(state: Arc<Mutex<Mock>>) -> String {
@@ -117,7 +130,13 @@ fn route(
     base: &str,
     state: &Mutex<Mock>,
 ) -> Reply {
+    if method == "GET" {
+        state.lock().expect("mock").get_paths.push(path.to_owned());
+    }
     match (method, path) {
+        ("GET", "/prm-custom") => {
+            ok(json!({"resource": format!("{base}/mcp"), "authorization_servers": [base]}))
+        }
         ("GET", p) if p.starts_with("/.well-known/oauth-protected-resource") => {
             ok(json!({"resource": format!("{base}/mcp"), "authorization_servers": [base]}))
         }
@@ -171,6 +190,32 @@ fn token(body: &str, authorization: Option<String>, state: &Mutex<Mock>) -> Repl
         "client_credentials" if authorization.as_deref() == Some(CC_BASIC) => {
             ok(json!({"access_token": "cc-token", "token_type": "Bearer", "expires_in": 3600}))
         }
+        "refresh_token" => {
+            let refresh = fields.get("refresh_token").cloned().unwrap_or_default();
+            state
+                .lock()
+                .expect("mock")
+                .refresh_grants
+                .push(refresh.clone());
+            match refresh.as_str() {
+                // Omits refresh_token: the client must keep the one it spent (PR3 acceptance 4).
+                r if r.starts_with("refresh-ok") => ok(json!({
+                    "access_token": "refreshed-token",
+                    "token_type": "Bearer",
+                    "expires_in": 3600,
+                })),
+                "refresh-broken" => (
+                    "503 Service Unavailable",
+                    String::new(),
+                    json!({"error": "server_error"}).to_string(),
+                ),
+                _ => (
+                    "400 Bad Request",
+                    String::new(),
+                    json!({"error": "invalid_grant"}).to_string(),
+                ),
+            }
+        }
         _ => (
             "400 Bad Request",
             String::new(),
@@ -181,7 +226,7 @@ fn token(body: &str, authorization: Option<String>, state: &Mutex<Mock>) -> Repl
 
 fn mcp(
     method: &str,
-    _path: &str,
+    path: &str,
     authorization: Option<String>,
     body: &str,
     base: &str,
@@ -190,10 +235,39 @@ fn mcp(
     if method != "POST" {
         return ("405 Method Not Allowed", String::new(), "{}".to_owned());
     }
+    let revoked = authorization
+        .as_ref()
+        .is_some_and(|value| state.lock().expect("mock").revoked.contains(value));
+    if revoked {
+        state
+            .lock()
+            .expect("mock")
+            .rejected
+            .push(authorization.unwrap_or_default());
+        let challenge = format!(
+            "WWW-Authenticate: Bearer error=\"invalid_token\", resource_metadata=\"{base}/.well-known/oauth-protected-resource/mcp\"\r\n"
+        );
+        return ("401 Unauthorized", challenge, "unauthorized".to_owned());
+    }
+    // A scope-restricted server: the token it was issued lacks `mcp:write`, so the server answers 403 with the
+    // scope and a custom `resource_metadata` (RFC 6750 section 3, RFC 9728).
+    if path == "/mcp-scope" && authorization.as_deref() == Some("Bearer scope-token") {
+        let challenge = format!(
+            "WWW-Authenticate: Bearer error=\"insufficient_scope\", scope=\"mcp:write\", resource_metadata=\"{base}/prm-custom\"\r\n"
+        );
+        return ("403 Forbidden", challenge, "forbidden".to_owned());
+    }
     let bearer = match authorization.as_deref() {
         Some("Bearer real-token") => "real-token",
         Some("Bearer cc-token") => "cc-token",
+        Some("Bearer refreshed-token") => "refreshed-token",
+        Some("Bearer live-old") => "live-old",
         _ => {
+            state
+                .lock()
+                .expect("mock")
+                .rejected
+                .push(authorization.clone().unwrap_or_default());
             let challenge = format!(
                 "WWW-Authenticate: Bearer resource_metadata=\"{base}/.well-known/oauth-protected-resource/mcp\"\r\n"
             );
@@ -215,6 +289,7 @@ fn mcp(
             "serverInfo": {"name": "mock", "version": "1"},
         }),
         "tools/list" => json!({"tools": [{"name": "ping", "inputSchema": {"type": "object"}}]}),
+        "tools/call" => json!({"content": [{"type": "text", "text": "pong"}]}),
         "notifications/initialized" => return ("202 Accepted", String::new(), String::new()),
         _ => return (
             "200 OK",
@@ -444,6 +519,483 @@ async fn authorization_code_and_client_credentials_work_over_real_http() {
             .iter()
             .any(|(method, bearer)| method == "tools/list" && bearer == "cc-token")
     );
+}
+
+/// The platform store and runtime of a fresh home, with the manager wired to them. Shared by the PR3 scenarios.
+struct Harness {
+    _home: tempfile::TempDir,
+    work: tempfile::TempDir,
+    platform: Arc<Platform>,
+    manager: McpManager,
+    _scope: TaskScope,
+}
+
+async fn harness() -> Harness {
+    let home = tempfile::tempdir().expect("home");
+    let work = tempfile::tempdir().expect("work");
+    let paths = StoragePaths::resolve(&StorageSettings::default(), home.path(), work.path());
+    let egress = Arc::new(Egress::new(NetworkPolicy::default()).await.expect("egress"));
+    let clock = Arc::new(SystemClock::utc());
+    let origin = "http://127.0.0.1:9".to_owned();
+    let services = AccountServices {
+        egress: egress.clone(),
+        clock: clock.clone(),
+        origins: AccountOrigins {
+            zcode_api: format!("{origin}/api/v1"),
+            zai_api: origin.clone(),
+            bigmodel_team_plans: format!("{origin}/coding-plan/team/plans"),
+            bigmodel_api: origin,
+            client_version: "0.0.0-test".to_owned(),
+            usage_quota_url: None,
+        },
+    };
+    let secret = CredentialSecret {
+        explicit: Some(RedactedString::new("test-secret")),
+        platform: rust_cli_platform::node_platform().to_owned(),
+        home: home.path().to_string_lossy().into_owned(),
+        username: "dev".to_owned(),
+    };
+    let platform = Arc::new(Platform::new(&paths, &secret, services));
+    let transport = Arc::new(LocalMcpTransport::new(
+        work.path().join("ledger.json"),
+        EnvSnapshot::default(),
+        Some(egress),
+    ));
+    let scope = TaskScope::root("test", |_| {});
+    let manager = McpManager::new(transport, scope.spawner(), McpSettings::default(), clock);
+    manager.enable_oauth(platform.mcp_oauth_store(), platform.mcp_oauth_runtime());
+    Harness {
+        _home: home,
+        work,
+        platform,
+        manager,
+        _scope: scope,
+    }
+}
+
+/// A stored canonical record as Node writes it (version 2), for one server's credential key prefix.
+fn canonical_record(access: &str, refresh: &str, expires_at_ms: i64) -> String {
+    json!({
+        "client_information": {"client_id": "client-1"},
+        "tokens": {"access_token": access, "token_type": "Bearer", "refresh_token": refresh},
+        "generation": "gen-seed",
+        "expires_at": expires_at_ms,
+        "obtained_at": 0,
+        "published_by": "seed",
+        "version": 2,
+    })
+    .to_string()
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_millis() as i64
+}
+
+/// PR3 scenarios over real HTTP (`specs/fork-rust-mcp-oauth.md`, PR3 acceptance 2, 3, 5, 7, 9, 10). Four servers
+/// share one mock, each with its own stored token and refresh token, so the outcomes stay separate:
+/// `fresh` (expired token refreshed before connect), `retry` (401 on connect, refresh and retry),
+/// `revoked` (invalid_grant, re-authorization) and `broken` (5xx on refresh, credentials kept).
+#[tokio::test(flavor = "multi_thread")]
+async fn refresh_and_reauthorization_work_over_real_http() {
+    let mock = Arc::new(Mutex::new(Mock::default()));
+    let base = serve(mock.clone()).await;
+    let home = tempfile::tempdir().expect("home");
+    let work = tempfile::tempdir().expect("work");
+    let paths = StoragePaths::resolve(&StorageSettings::default(), home.path(), work.path());
+    let egress = Arc::new(Egress::new(NetworkPolicy::default()).await.expect("egress"));
+    let clock = Arc::new(SystemClock::utc());
+    let origin = "http://127.0.0.1:9".to_owned();
+    let services = AccountServices {
+        egress: egress.clone(),
+        clock: clock.clone(),
+        origins: AccountOrigins {
+            zcode_api: format!("{origin}/api/v1"),
+            zai_api: origin.clone(),
+            bigmodel_team_plans: format!("{origin}/coding-plan/team/plans"),
+            bigmodel_api: origin,
+            client_version: "0.0.0-test".to_owned(),
+            usage_quota_url: None,
+        },
+    };
+    let secret = CredentialSecret {
+        explicit: Some(RedactedString::new("test-secret")),
+        platform: rust_cli_platform::node_platform().to_owned(),
+        home: home.path().to_string_lossy().into_owned(),
+        username: "dev".to_owned(),
+    };
+    let platform = Arc::new(Platform::new(&paths, &secret, services));
+    let transport = Arc::new(LocalMcpTransport::new(
+        work.path().join("ledger.json"),
+        EnvSnapshot::default(),
+        Some(egress.clone()),
+    ));
+    let scope = TaskScope::root("test", |_| {});
+    let manager = McpManager::new(
+        transport,
+        scope.spawner(),
+        McpSettings::default(),
+        clock.clone(),
+    );
+    manager.enable_oauth(platform.mcp_oauth_store(), platform.mcp_oauth_runtime());
+    let store = platform.mcp_oauth_store();
+
+    // Seed the stored tokens. `fresh` is past its expiry; the others are valid far into the future, so their
+    // first connect sends the stale token and the mock refuses it.
+    let later = now_ms() + 3_600_000;
+    let seeds = [
+        (
+            "fresh",
+            "stale-fresh",
+            "refresh-ok-fresh",
+            now_ms() - 60_000,
+        ),
+        ("retry", "stale-retry", "refresh-ok-retry", later),
+        ("revoked", "stale-revoked", "refresh-revoked", later),
+        ("broken", "stale-broken", "refresh-broken", later),
+    ];
+    for (name, access, refresh, expires_at) in seeds {
+        let prefix = credential_key_prefix(name, &format!("{base}/mcp-{name}"), None, None, None);
+        store
+            .apply(&[McpOAuthWrite::Put {
+                key: credential_key(&prefix, "authorization_credentials"),
+                value: canonical_record(access, refresh, expires_at),
+            }])
+            .await
+            .expect("seed");
+    }
+
+    let servers = ["fresh", "retry", "revoked", "broken"]
+        .into_iter()
+        .map(|name| server(name, format!("{base}/mcp-{name}"), None))
+        .collect();
+    manager.start(workspace(work.path()), servers);
+
+    // 1. `fresh`: refreshed before the connect, so the first request already carries the new token.
+    until("the refreshed server lists its tool", || {
+        manager
+            .tools()
+            .iter()
+            .any(|tool| tool.name().contains("fresh") && tool.name().ends_with("ping"))
+            .then_some(())
+    })
+    .await;
+
+    // 2. `retry`: the stale token is refused with 401, the refresh runs, and the connect is retried once.
+    until("the retried server lists its tool", || {
+        manager
+            .tools()
+            .iter()
+            .any(|tool| tool.name().contains("retry") && tool.name().ends_with("ping"))
+            .then_some(())
+    })
+    .await;
+
+    // 3. `revoked`: invalid_grant drops the tokens and the authorization flow starts (a pending record appears).
+    let revoked_prefix =
+        credential_key_prefix("revoked", &format!("{base}/mcp-revoked"), None, None, None);
+    let pending_key = credential_key(&revoked_prefix, "pending_authorization");
+    until("re-authorization after invalid_grant", || {
+        let raw = futures_block(store.load(&pending_key)).ok().flatten()?;
+        serde_json::from_str::<Value>(&raw).ok()
+    })
+    .await;
+    let revoked_canonical = futures_block(store.load(&credential_key(
+        &revoked_prefix,
+        "authorization_credentials",
+    )))
+    .expect("store");
+    assert!(
+        revoked_canonical.is_none(),
+        "invalid_grant must drop the tokens"
+    );
+
+    // 4. `broken`: a 5xx on refresh keeps the stored credentials and starts no flow.
+    until("the broken refresh was attempted", || {
+        mock.lock()
+            .expect("mock")
+            .refresh_grants
+            .iter()
+            .any(|grant| grant == "refresh-broken")
+            .then_some(())
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let broken_prefix =
+        credential_key_prefix("broken", &format!("{base}/mcp-broken"), None, None, None);
+    let kept =
+        futures_block(store.load(&credential_key(&broken_prefix, "authorization_credentials")))
+            .expect("store");
+    assert!(
+        kept.is_some(),
+        "a temporary refresh failure keeps the credentials"
+    );
+    let started =
+        futures_block(store.load(&credential_key(&broken_prefix, "pending_authorization")))
+            .expect("store");
+    assert!(
+        started.is_none(),
+        "a temporary refresh failure starts no authorization flow"
+    );
+
+    let mock = mock.lock().expect("mock");
+    // Each scenario refreshed exactly once: the refresh token is spent once.
+    for refresh in [
+        "refresh-ok-fresh",
+        "refresh-ok-retry",
+        "refresh-revoked",
+        "refresh-broken",
+    ] {
+        let count = mock
+            .refresh_grants
+            .iter()
+            .filter(|grant| *grant == refresh)
+            .count();
+        assert_eq!(count, 1, "{refresh} was refreshed {count} times");
+    }
+    assert!(
+        !mock.rejected.contains(&"Bearer stale-fresh".to_owned()),
+        "{:?}",
+        mock.rejected
+    );
+    assert!(
+        mock.rejected.contains(&"Bearer stale-retry".to_owned()),
+        "{:?}",
+        mock.rejected
+    );
+    assert!(
+        mock.mcp_methods
+            .iter()
+            .any(|(method, bearer)| method == "tools/list" && bearer == "refreshed-token")
+    );
+}
+
+/// Mid-session 401 on a tool call (Node `recoverToolCallAuthorization`): the server revokes the token of a live
+/// connection; the call refreshes once, reconnects with the new token and returns the tool's result.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_401_during_a_tool_call_refreshes_and_retries_over_real_http() {
+    let mock = Arc::new(Mutex::new(Mock::default()));
+    let base = serve(mock.clone()).await;
+    let h = harness().await;
+    let store = h.platform.mcp_oauth_store();
+    let prefix = credential_key_prefix("live", &format!("{base}/mcp-live"), None, None, None);
+    store
+        .apply(&[McpOAuthWrite::Put {
+            key: credential_key(&prefix, "authorization_credentials"),
+            value: canonical_record("live-old", "refresh-ok-live", now_ms() + 3_600_000),
+        }])
+        .await
+        .expect("seed");
+    h.manager.start(
+        workspace(h.work.path()),
+        vec![server("live", format!("{base}/mcp-live"), None)],
+    );
+    let tool = until("the live server lists its tool", || {
+        h.manager
+            .tools()
+            .into_iter()
+            .find(|tool| tool.name().contains("live") && tool.name().ends_with("ping"))
+    })
+    .await;
+
+    // The server revokes the token it issued; the next call is refused with 401.
+    mock.lock()
+        .expect("mock")
+        .revoked
+        .push("Bearer live-old".to_owned());
+    let (progress, _events) = tokio::sync::mpsc::channel(8);
+    let output = tool
+        .call(json!({}), tool_use_context(), progress)
+        .await
+        .expect("the call recovers");
+    assert!(
+        output
+            .content
+            .iter()
+            .any(|part| matches!(part, ToolResultContent::Text { text } if text == "pong")),
+        "{output:?}"
+    );
+    let mock = mock.lock().expect("mock");
+    assert_eq!(
+        mock.refresh_grants
+            .iter()
+            .filter(|grant| *grant == "refresh-ok-live")
+            .count(),
+        1,
+        "one refresh for one 401"
+    );
+    assert!(
+        mock.mcp_methods
+            .iter()
+            .any(|(method, bearer)| method == "tools/call" && bearer == "refreshed-token"),
+        "the retried call carries the refreshed token"
+    );
+}
+
+/// A 403 `insufficient_scope` starts re-authorization with the scope named in the header, and the discovery
+/// uses the header's `resource_metadata` (RFC 6750, RFC 9728; Node `resourceMetadataUrl`).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_403_insufficient_scope_reauthorizes_with_the_header_scope_over_real_http() {
+    let mock = Arc::new(Mutex::new(Mock::default()));
+    let base = serve(mock.clone()).await;
+    let h = harness().await;
+    let store = h.platform.mcp_oauth_store();
+    let prefix = credential_key_prefix("scope", &format!("{base}/mcp-scope"), None, None, None);
+    store
+        .apply(&[McpOAuthWrite::Put {
+            key: credential_key(&prefix, "authorization_credentials"),
+            value: canonical_record("scope-token", "refresh-ok-scope", now_ms() + 3_600_000),
+        }])
+        .await
+        .expect("seed");
+    h.manager.start(
+        workspace(h.work.path()),
+        vec![server("scope", format!("{base}/mcp-scope"), None)],
+    );
+    let pending_key = credential_key(&prefix, "pending_authorization");
+    let pending = until("the scope re-authorization", || {
+        let raw = futures_block(store.load(&pending_key)).ok().flatten()?;
+        serde_json::from_str::<Value>(&raw).ok()
+    })
+    .await;
+    let authorization_url = pending["authorization_url"]
+        .as_str()
+        .expect("url")
+        .to_owned();
+    assert_eq!(
+        query_value(&authorization_url, "scope"),
+        "mcp:write",
+        "{authorization_url}"
+    );
+    let mock = mock.lock().expect("mock");
+    assert!(
+        mock.get_paths.iter().any(|path| path == "/prm-custom"),
+        "discovery starts at the header's resource_metadata: {:?}",
+        mock.get_paths
+    );
+    assert!(
+        mock.refresh_grants.is_empty(),
+        "a 403 is not a token expiry: it does not refresh"
+    );
+}
+
+/// Two refreshes that read the same generation make one token request over the real platform lock.
+#[tokio::test(flavor = "multi_thread")]
+async fn concurrent_refreshes_make_one_token_request_over_real_http() {
+    let mock = Arc::new(Mutex::new(Mock::default()));
+    let base = serve(mock.clone()).await;
+    let h = harness().await;
+    let store = h.platform.mcp_oauth_store();
+    let runtime = h.platform.mcp_oauth_runtime();
+    let url = format!("{base}/mcp-concurrent");
+    let prefix = credential_key_prefix("concurrent", &url, None, None, None);
+    store
+        .apply(&[McpOAuthWrite::Put {
+            key: credential_key(&prefix, "authorization_credentials"),
+            value: canonical_record("stale-c", "refresh-ok-concurrent", now_ms() - 60_000),
+        }])
+        .await
+        .expect("seed");
+
+    // Hold the refresh lock so both callers read the same generation and queue behind it.
+    let holder = store
+        .try_acquire_refresh_lock(&prefix)
+        .await
+        .expect("lock")
+        .expect("free lock");
+    let input = RefreshInput {
+        server_name: "concurrent".to_owned(),
+        server_url: url,
+        key_prefix: prefix,
+        static_client_id: None,
+        client_secret: None,
+        reactive: true,
+    };
+    let spawn =
+        |store: Arc<dyn McpOAuthStore>, runtime: Arc<dyn McpOAuthRuntime>, input: RefreshInput| {
+            tokio::spawn(async move { refresh_under_lock(&*store, &*runtime, &input).await })
+        };
+    let first = spawn(store.clone(), runtime.clone(), input.clone());
+    let second = spawn(store.clone(), runtime.clone(), input.clone());
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    holder.release().await;
+
+    assert_eq!(
+        first.await.expect("join").expect("refresh"),
+        "refreshed-token"
+    );
+    assert_eq!(
+        second.await.expect("join").expect("refresh"),
+        "refreshed-token"
+    );
+    let mock = mock.lock().expect("mock");
+    assert_eq!(
+        mock.refresh_grants
+            .iter()
+            .filter(|grant| *grant == "refresh-ok-concurrent")
+            .count(),
+        1,
+        "the second caller reuses the winner's token"
+    );
+}
+
+/// `DeleteGuarded` on the platform store: a publication made after the failure was observed survives.
+#[tokio::test(flavor = "multi_thread")]
+async fn delete_guarded_keeps_a_newer_write_in_the_platform_store() {
+    let h = harness().await;
+    let store = h.platform.mcp_oauth_store();
+    let prefix = credential_key_prefix("guard", "https://guard.example.test/mcp", None, None, None);
+    let canonical_key = credential_key(&prefix, "authorization_credentials");
+    let tokens_key = credential_key(&prefix, "tokens");
+    let observed = canonical_record("older", "refresh-older", now_ms() + 3_600_000);
+    store
+        .apply(&[
+            McpOAuthWrite::Put {
+                key: canonical_key.clone(),
+                value: observed.clone(),
+            },
+            McpOAuthWrite::Put {
+                key: tokens_key.clone(),
+                value: "{}".to_owned(),
+            },
+        ])
+        .await
+        .expect("seed");
+    let newer = canonical_record("newer", "refresh-newer", now_ms() + 7_200_000);
+    store
+        .apply(&[McpOAuthWrite::Put {
+            key: canonical_key.clone(),
+            value: newer.clone(),
+        }])
+        .await
+        .expect("newer publication");
+
+    store
+        .apply(&[McpOAuthWrite::DeleteGuarded {
+            guard_key: canonical_key.clone(),
+            expected: observed,
+            keys: vec![canonical_key.clone(), tokens_key.clone()],
+        }])
+        .await
+        .expect("guarded delete");
+    assert_eq!(
+        store.load(&canonical_key).await.expect("load").as_deref(),
+        Some(newer.as_str()),
+        "the newer publication survives a stale invalidation"
+    );
+
+    store
+        .apply(&[McpOAuthWrite::DeleteGuarded {
+            guard_key: canonical_key.clone(),
+            expected: newer,
+            keys: vec![canonical_key.clone(), tokens_key.clone()],
+        }])
+        .await
+        .expect("guarded delete");
+    assert!(store.load(&canonical_key).await.expect("load").is_none());
+    assert!(store.load(&tokens_key).await.expect("load").is_none());
 }
 
 /// Run a store read to completion inside a synchronous probe (the probe runs on the test task).

@@ -12,7 +12,7 @@ use std::time::Duration;
 use futures_util::StreamExt;
 use rust_cli_base::Spawner;
 use rust_cli_kernel_api::env_files::PathStyle;
-use rust_cli_kernel_api::mcp::{McpConnectionId, McpTransport, McpTransportEvent};
+use rust_cli_kernel_api::mcp::{McpConnectionId, McpError, McpTransport, McpTransportEvent};
 
 use super::notices::{self, NoticeReceiver, NoticeSender};
 use serde_json::{Value, json};
@@ -38,6 +38,27 @@ pub(crate) enum RpcError {
     Cancelled,
     #[error("{0}")]
     Send(String),
+    /// The HTTP transport answered a non-success status. Kept typed so the OAuth hooks can read the challenge.
+    #[error("{message}")]
+    Http {
+        message: String,
+        www_authenticate: Option<String>,
+    },
+}
+
+/// A transport send failure: an HTTP status keeps its challenge header, everything else is text.
+fn send_failure(error: McpError) -> RpcError {
+    match error {
+        McpError::Http {
+            message,
+            www_authenticate,
+            ..
+        } => RpcError::Http {
+            message,
+            www_authenticate,
+        },
+        other => RpcError::Send(other.to_string()),
+    }
 }
 
 /// 交给连接任务的事件。
@@ -166,7 +187,7 @@ impl Client {
         self.transport
             .send(&self.connection, message)
             .await
-            .map_err(|error| RpcError::Send(error.to_string()))
+            .map_err(send_failure)
     }
 
     /// 发一个请求并等它的结果；超时或取消时发 `notifications/cancelled`。
@@ -186,7 +207,7 @@ impl Client {
         let message = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
         if let Err(error) = self.transport.send(&self.connection, message).await {
             self.pending.lock_unpoisoned().remove(&id);
-            return Err(RpcError::Send(error.to_string()));
+            return Err(send_failure(error));
         }
         let outcome = tokio::select! {
             answered = receiver => answered.unwrap_or_else(|_| Err(RpcError::Closed("connection closed".to_owned()))),

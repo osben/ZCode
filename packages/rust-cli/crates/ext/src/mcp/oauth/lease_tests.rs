@@ -33,9 +33,27 @@ impl McpOAuthStore for FakeStore {
                         raw.remove(key);
                     }
                 }
+                McpOAuthWrite::DeleteGuarded {
+                    guard_key,
+                    expected,
+                    keys,
+                } => {
+                    if raw.get(guard_key) == Some(expected) {
+                        for key in keys {
+                            raw.remove(key);
+                        }
+                    }
+                }
             }
         }
         Ok(())
+    }
+
+    async fn try_acquire_refresh_lock(
+        &self,
+        _key_prefix: &str,
+    ) -> Result<Option<Box<dyn AuthorizationLease>>, McpOAuthStoreError> {
+        Ok(None)
     }
 
     async fn try_acquire_lease(

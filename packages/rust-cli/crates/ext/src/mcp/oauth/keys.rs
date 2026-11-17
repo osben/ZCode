@@ -47,6 +47,13 @@ pub fn sanitize_key_prefix(prefix: &str) -> String {
         .collect()
 }
 
+/// Node `resolveRefreshLockPath`: `<credentials dir>/<sanitized prefix>.refresh`. It is kept apart from the
+/// `.authz` lease: the refresh lock is held while the credential file is written.
+pub fn refresh_lock_path(credentials_file: &Path, key_prefix: &str) -> PathBuf {
+    let dir = credentials_file.parent().unwrap_or_else(|| Path::new(""));
+    dir.join(format!("{}.refresh", sanitize_key_prefix(key_prefix)))
+}
+
 /// Node `resolveAuthorizationLeasePath`: `<credentials dir>/<sanitized prefix>.authz`.
 pub fn lease_path(credentials_file: &Path, key_prefix: &str) -> PathBuf {
     let dir = credentials_file.parent().unwrap_or_else(|| Path::new(""));

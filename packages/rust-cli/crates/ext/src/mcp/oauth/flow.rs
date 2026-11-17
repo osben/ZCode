@@ -43,6 +43,11 @@ pub struct FlowInput {
     pub redirect_path: Option<String>,
     /// Lifetime of the transaction: the pending record and the callback wait (Node: 5 minutes).
     pub transaction_ttl_ms: i64,
+    /// The scope the authorization request asks for when it differs from the configured `scope` (a 403
+    /// `insufficient_scope` challenge). The credential key prefix always uses the configured `scope`.
+    pub requested_scope: Option<String>,
+    /// The `resource_metadata` URL of a 403/401 challenge (RFC 9728), tried before the well-known URLs.
+    pub resource_metadata: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -141,7 +146,12 @@ async fn run_transaction(
         listener.local_addr().port()
     );
 
-    let (authorization_server, metadata) = discover(runtime, &input.server_url).await?;
+    let (authorization_server, metadata) = discover(
+        runtime,
+        &input.server_url,
+        input.resource_metadata.as_deref(),
+    )
+    .await?;
     let client = match &input.client_id {
         Some(client_id) => json!({ "client_id": client_id }),
         None => register(runtime, &metadata, input, &redirect_uri).await?,
@@ -159,7 +169,7 @@ async fn run_transaction(
         &code_challenge(&verifier),
         &redirect_uri,
         &state,
-        input.scope.as_deref(),
+        input.requested_scope.as_deref().or(input.scope.as_deref()),
     )?;
     let now = runtime.now_ms();
     publish_pending(
@@ -236,11 +246,15 @@ fn random_hex(runtime: &dyn McpOAuthRuntime, len: usize) -> Result<String, Strin
 pub(super) async fn discover(
     runtime: &dyn McpOAuthRuntime,
     server_url: &str,
+    resource_metadata: Option<&str>,
 ) -> Result<(String, Value), String> {
     // SDK order: a 2xx answers; a 4xx (or 502) moves to the next URL; any other failure ends the PRM
     // lookup, and the SDK then uses the server origin. A broken PRM document is treated the same way.
+    // A `resource_metadata` named by the server's challenge (RFC 9728) is tried before the well-known URLs.
+    let mut urls: Vec<String> = resource_metadata.map(str::to_owned).into_iter().collect();
+    urls.extend(prm_urls(server_url)?);
     let mut authorization_server = None;
-    for url in prm_urls(server_url)? {
+    for url in urls {
         let response = get(runtime, &url).await?;
         if (200..300).contains(&response.status) {
             authorization_server = parse_json(&response.body, "protected resource metadata")
@@ -486,7 +500,7 @@ async fn exchange_code(
 
 /// Node `publishCanonicalCredentials`: canonical v2 record and the legacy `client_information` and
 /// `tokens` keys, written in one batch so no reader sees one without the other.
-async fn publish_canonical(
+pub(super) async fn publish_canonical(
     store: &dyn McpOAuthStore,
     runtime: &dyn McpOAuthRuntime,
     key_prefix: &str,

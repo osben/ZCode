@@ -10,11 +10,24 @@ use std::sync::{Arc, Weak};
 use rust_cli_kernel_api::mcp::McpTransportConfig;
 
 use super::config::{McpScope, McpServer};
+use super::connection::ConnectFailure;
 use super::manager::{Inner, McpManager};
 use super::oauth::{
-    McpOAuthConfig, McpOAuthCoordinator, McpOAuthRuntime, McpOAuthStore, ReconnectFn,
-    is_authorization_challenge,
+    McpOAuthConfig, McpOAuthCoordinator, McpOAuthRuntime, McpOAuthStore, ReconnectFn, RefreshError,
+    RefreshInput, is_authorization_challenge, parse_www_authenticate,
 };
+use super::rpc::Client;
+
+/// What a 401 on connect leads to (see [`Inner::refresh_on_challenge`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ChallengeRefresh {
+    /// The token was refreshed: retry the connect once with the new bearer.
+    Retry,
+    /// The grant is invalid or absent: start the authorization flow.
+    Reauthorize,
+    /// The refresh failed temporarily or the static client was rejected: keep the credentials, report the failure.
+    Failed,
+}
 
 #[cfg(test)]
 #[path = "oauth_hooks_tests.rs"]
@@ -98,11 +111,23 @@ impl Inner {
             return unchanged;
         }
         let bearer = match &oauth {
-            McpOAuthConfig::AuthorizationCode { .. } => {
-                let Some(prefix) = oauth.key_prefix(&config.name, url) else {
+            McpOAuthConfig::AuthorizationCode {
+                client_id,
+                client_secret,
+                ..
+            } => {
+                let Some(key_prefix) = oauth.key_prefix(&config.name, url) else {
                     return unchanged;
                 };
-                match coordinator.bearer_for(&prefix, coordinator.now_ms()).await {
+                let refresh = RefreshInput {
+                    server_name: config.name.clone(),
+                    server_url: url.to_owned(),
+                    key_prefix,
+                    static_client_id: client_id.clone(),
+                    client_secret: client_secret.clone(),
+                    reactive: false,
+                };
+                match coordinator.fresh_bearer(&refresh).await {
                     Ok(bearer) => bearer,
                     Err(error) => {
                         tracing::warn!(server = config.name.as_str(), %error, "MCP OAuth credentials unreadable");
@@ -143,12 +168,49 @@ impl Inner {
         }
     }
 
+    /// A connect failed with HTTP 401: refresh the canonical token under the lock (reactive) and say what the
+    /// connect should do next. `None` when the server has no authorization_code OAuth or the failure is not a 401.
+    pub(super) async fn refresh_on_challenge(
+        &self,
+        config: &McpServer,
+        failure: &ConnectFailure,
+    ) -> Option<ChallengeRefresh> {
+        if !is_authorization_challenge(&failure.reason) {
+            return None;
+        }
+        let coordinator = self.oauth.get()?;
+        let oauth = effective_oauth(config)?;
+        let (url, _) = remote_parts(config)?;
+        let McpOAuthConfig::AuthorizationCode {
+            client_id,
+            client_secret,
+            ..
+        } = &oauth
+        else {
+            return None;
+        };
+        let input = RefreshInput {
+            server_name: config.name.clone(),
+            server_url: url.to_owned(),
+            key_prefix: oauth.key_prefix(&config.name, url)?,
+            static_client_id: client_id.clone(),
+            client_secret: client_secret.clone(),
+            reactive: true,
+        };
+        Some(match coordinator.refresh(&input).await {
+            Ok(_) => ChallengeRefresh::Retry,
+            // The refresh token was rejected, or none is stored: the authorization flow starts.
+            Err(RefreshError::InteractiveRequired { .. }) => ChallengeRefresh::Reauthorize,
+            // A static client that the server rejects, or a temporary failure: the credentials stay.
+            Err(RefreshError::Configuration(_) | RefreshError::Temporary(_)) => {
+                ChallengeRefresh::Failed
+            }
+        })
+    }
+
     /// A connect that fails with HTTP 401 starts the authorization flow for this server (Node: the SDK asks for
     /// authorization on 401). The row then reports `connecting` through the pending record. Deduplicated per server.
-    pub(super) fn start_oauth_on_challenge(&self, config: &McpServer, reason: &str) {
-        if !is_authorization_challenge(reason) {
-            return;
-        }
+    pub(super) fn start_oauth_on_challenge(&self, config: &McpServer, failure: &ConnectFailure) {
         let (Some(coordinator), Some(oauth), Some((url, _))) = (
             self.oauth.get(),
             effective_oauth(config),
@@ -156,8 +218,78 @@ impl Inner {
         ) else {
             return;
         };
-        if let Some(input) = oauth.flow_input(&config.name, url) {
-            coordinator.start(config.name.clone(), input);
+        if is_authorization_challenge(&failure.reason) {
+            if let Some(input) = oauth.flow_input(&config.name, url) {
+                coordinator.start(config.name.clone(), input);
+            }
+            return;
+        }
+        // 403 `insufficient_scope` (RFC 6750 section 3.1): authorize again for the scope the server names, and
+        // discover from its `resource_metadata` (RFC 9728). The authorization is always a new one (no refresh
+        // can add scopes, RFC 6749 section 6), as Node's `forceReauthorization`.
+        if !failure.reason.starts_with("HTTP 403") {
+            return;
+        }
+        let Some(challenge) = failure
+            .www_authenticate
+            .as_deref()
+            .and_then(parse_www_authenticate)
+        else {
+            return;
+        };
+        if challenge.error.as_deref() != Some("insufficient_scope") {
+            return;
+        }
+        let Some(mut input) = oauth.flow_input(&config.name, url) else {
+            return;
+        };
+        input.requested_scope = union_scopes(input.scope.as_deref(), challenge.scope.as_deref());
+        input.resource_metadata = challenge.resource_metadata;
+        coordinator.start(config.name.clone(), input);
+    }
+}
+
+/// The union of the configured scope and the scope a challenge names, in order, without repeats
+/// (Node `computeScopeUnion`, without the token scope: the stored token's scope is not read here).
+fn union_scopes(configured: Option<&str>, required: Option<&str>) -> Option<String> {
+    let mut scopes: Vec<&str> = Vec::new();
+    for scope in configured
+        .into_iter()
+        .chain(required)
+        .flat_map(str::split_whitespace)
+    {
+        if !scopes.contains(&scope) {
+            scopes.push(scope);
+        }
+    }
+    (!scopes.is_empty()).then(|| scopes.join(" "))
+}
+
+impl McpManager {
+    /// A tool call failed with an HTTP challenge on a live connection (Node `recoverToolCallAuthorization`): a 401
+    /// refreshes the token once and reconnects; a rejected refresh or a 403 starts the authorization flow. Returns
+    /// whether the server reconnected, so that the caller retries its call once. The caller returns the original
+    /// error otherwise, as Node rethrows the original error when recovery does not connect.
+    pub(crate) async fn recover_call_challenge(
+        &self,
+        server: &str,
+        client: &Arc<Client>,
+        failure: &ConnectFailure,
+    ) -> bool {
+        let Some(config) = self.0.config_of(server) else {
+            return false;
+        };
+        match self.0.refresh_on_challenge(&config, failure).await {
+            Some(ChallengeRefresh::Retry) => {
+                self.restart(server).await;
+                self.0.wait_reconnected(server, client).await;
+                self.0.client(server).is_some()
+            }
+            Some(ChallengeRefresh::Failed) => false,
+            Some(ChallengeRefresh::Reauthorize) | None => {
+                self.0.start_oauth_on_challenge(&config, failure);
+                false
+            }
         }
     }
 }

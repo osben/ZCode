@@ -29,6 +29,13 @@ impl McpOAuthStore for MemoryStore {
     ) -> Result<Option<Box<dyn AuthorizationLease>>, McpOAuthStoreError> {
         Ok(None)
     }
+
+    async fn try_acquire_refresh_lock(
+        &self,
+        _key_prefix: &str,
+    ) -> Result<Option<Box<dyn AuthorizationLease>>, McpOAuthStoreError> {
+        Ok(None)
+    }
 }
 
 fn node_store() -> MemoryStore {

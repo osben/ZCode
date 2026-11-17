@@ -755,12 +755,30 @@ impl McpOAuthStore for MemoryOAuthStore {
                         raw.remove(key);
                     }
                 }
+                McpOAuthWrite::DeleteGuarded {
+                    guard_key,
+                    expected,
+                    keys,
+                } => {
+                    if raw.get(guard_key) == Some(expected) {
+                        for key in keys {
+                            raw.remove(key);
+                        }
+                    }
+                }
             }
         }
         Ok(())
     }
 
     async fn try_acquire_lease(
+        &self,
+        _key_prefix: &str,
+    ) -> Result<Option<Box<dyn AuthorizationLease>>, McpOAuthStoreError> {
+        Ok(Some(Box::new(NoLease)))
+    }
+
+    async fn try_acquire_refresh_lock(
         &self,
         _key_prefix: &str,
     ) -> Result<Option<Box<dyn AuthorizationLease>>, McpOAuthStoreError> {
