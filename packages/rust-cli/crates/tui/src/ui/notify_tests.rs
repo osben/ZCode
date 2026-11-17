@@ -71,6 +71,7 @@ fn permission() -> InteractionRequest {
         asked_by: None,
         once: false,
         independent: false,
+        session_allow: false,
     }
 }
 

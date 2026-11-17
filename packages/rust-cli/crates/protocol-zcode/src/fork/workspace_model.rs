@@ -131,7 +131,7 @@ fn protocol_error(code: &str, message: impl Into<String>) -> RpcError {
 
 /// Node `classifyModelFailure` for each model port failure: the classified message and its stable code.
 fn model_failure(error: &ModelError) -> RpcError {
-    let (code, message) = match error {
+    let (code, message) = match error.peel() {
         ModelError::Cancelled => ("model_request_cancelled", "Model request was cancelled."),
         ModelError::Authentication { .. } => {
             ("provider_not_configured", "Provider authentication failed.")
@@ -166,6 +166,9 @@ fn model_failure(error: &ModelError) -> RpcError {
         ModelError::ContentBlocked { .. }
         | ModelError::Unsupported { .. }
         | ModelError::FallbackTriggered { .. } => ("model_request_failed", "Model request failed."),
+        // `peel` strips the provider wrapper, so this arm is not reached; it classifies the wrapped error all the same
+        // instead of panicking in the request handler if `peel` ever stops unwrapping.
+        ModelError::Provider { error, .. } => return model_failure(error),
     };
     protocol_error(code, message)
 }

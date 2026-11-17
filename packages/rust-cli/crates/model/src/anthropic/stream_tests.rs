@@ -214,7 +214,10 @@ fn vendor_codes_and_finish_reasons_on_the_zhipu_endpoint() {
         ],
     );
     assert!(
-        matches!(limited, Some(ModelError::RateLimited { .. })),
+        matches!(
+            limited.as_ref().map(ModelError::peel),
+            Some(ModelError::RateLimited { .. })
+        ),
         "{limited:?}"
     );
     let delta = |reason: &str| {

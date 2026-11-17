@@ -129,7 +129,7 @@ async fn the_fourth_cut_reply_ends_with_the_api_error() {
     assert_eq!(meta_sources(&messages).len(), 3);
     // 第四次的响应照常提交。
     assert!(matches!(messages.last(), Some(Message::Assistant(_))));
-    let QueryStop::ApiError { message } = stop else {
+    let QueryStop::ApiError { message, .. } = stop else {
         panic!("expected an API error: {stop:?}");
     };
     assert!(
@@ -157,7 +157,8 @@ async fn a_tool_use_stop_without_a_tool_call_is_discarded_and_retried_once() {
     assert_eq!(
         stop,
         QueryStop::ApiError {
-            message: "The model's tool call could not be parsed (retry also failed).".to_owned()
+            message: "The model's tool call could not be parsed (retry also failed).".to_owned(),
+            provider: None,
         }
     );
 }
@@ -280,7 +281,8 @@ async fn an_interactive_turn_ends_with_the_cut_off_error_and_keeps_the_blocks() 
         QueryStop::ApiError {
             message:
                 "API Error: Connection lost mid-response. The response above may be incomplete."
-                    .to_owned()
+                    .to_owned(),
+            provider: None,
         }
     );
 }
@@ -365,7 +367,8 @@ async fn a_refusal_keeps_the_text_and_ends_with_the_reason() {
         stop,
         QueryStop::ApiError {
             message: "API Error: Model output was blocked by the provider's content safety filter."
-                .to_owned()
+                .to_owned(),
+            provider: None,
         }
     );
     assert!(matches!(messages.last(), Some(Message::Assistant(_))));

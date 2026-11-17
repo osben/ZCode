@@ -284,6 +284,27 @@ impl Tracked {
         }
     }
 
+    /// [`Self::terminate`] with the TERM-to-KILL grace given by the caller. The grace applies on Unix only: Windows has
+    /// no TERM stage.
+    pub async fn terminate_with_grace(
+        &mut self,
+        shutdown: Shutdown,
+        grace: std::time::Duration,
+    ) -> anyhow::Result<()> {
+        #[cfg(unix)]
+        {
+            crate::tree::terminate_with_grace(&mut self.child, self.pid, shutdown, grace).await?;
+            self.confirmed = true;
+            self.forget().await;
+            Ok(())
+        }
+        #[cfg(windows)]
+        {
+            let _ = (shutdown, grace);
+            windows::terminate(&mut self.child, self.pid, self.job.as_ref()).await
+        }
+    }
+
     /// 根进程已退出并被回收，其余进程有意保留（hook 留下的后台进程）：删除记录。根进程还没有被
     /// 回收时什么都不做，记录留给清扫。
     pub async fn release(mut self) {

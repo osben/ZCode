@@ -24,7 +24,18 @@ const POLL: Duration = Duration::from_millis(10);
 /// `pid` 单独传入：`child` 已被 `wait` 回收后 `Child::id()` 返回 `None`，但残留的后代仍要清理。
 /// 返回错误表示无法确认整棵树已结束；调用方据此报告进程清理失败。
 pub async fn terminate(child: &mut Child, pid: u32, shutdown: Shutdown) -> Result<()> {
-    terminate_with(Root::Child(child), pid, shutdown, &table::snapshot).await
+    terminate_with_grace(child, pid, shutdown, GRACE).await
+}
+
+/// [`terminate`] with the TERM-to-KILL grace given by the caller (Node `killGraceMs` for an ACP agent). `grace` only
+/// applies to [`Shutdown::Graceful`].
+pub async fn terminate_with_grace(
+    child: &mut Child,
+    pid: u32,
+    shutdown: Shutdown,
+    grace: Duration,
+) -> Result<()> {
+    terminate_with(Root::Child(child), pid, shutdown, grace, &table::snapshot).await
 }
 
 /// [`terminate_adopted`] 的结果。
@@ -60,11 +71,12 @@ where
                 Shutdown::Graceful,
                 began,
                 &table,
+                GRACE,
                 &table::snapshot,
             )
             .await?;
         }
-        Err(error) => fall_back(&mut leader, root, Shutdown::Graceful, &error).await?,
+        Err(error) => fall_back(&mut leader, root, Shutdown::Graceful, GRACE, &error).await?,
     }
     Ok(Adopted::Ended)
 }
@@ -106,6 +118,7 @@ async fn terminate_with(
     mut leader: Root<'_>,
     pid: u32,
     shutdown: Shutdown,
+    grace: Duration,
     snapshot: &impl AsyncFn() -> Result<Table>,
 ) -> Result<()> {
     let root = i32::try_from(pid).context("Invalid process id")?;
@@ -117,9 +130,9 @@ async fn terminate_with(
     // 没有发出，整棵树继续运行。现在退回对根进程组 killpg（spec §4.1）。
     let table = match snapshot().await {
         Ok(table) => table,
-        Err(error) => return fall_back(&mut leader, root, shutdown, &error).await,
+        Err(error) => return fall_back(&mut leader, root, shutdown, grace, &error).await,
     };
-    end(&mut leader, root, shutdown, began, &table, snapshot).await
+    end(&mut leader, root, shutdown, began, &table, grace, snapshot).await
 }
 
 /// 有了第一张进程表之后：TERM、宽限，再循环快照与 KILL，直到快照中没有存活成员。
@@ -129,12 +142,13 @@ async fn end(
     shutdown: Shutdown,
     began: Instant,
     table: &Table,
+    grace: Duration,
     snapshot: &impl AsyncFn() -> Result<Table>,
 ) -> Result<()> {
     let mut tree = Tree::new(root, table);
     if shutdown == Shutdown::Graceful {
         tree.signal(libc::SIGTERM, table, snapshot).await?;
-        while began.elapsed() < GRACE {
+        while began.elapsed() < grace {
             leader.reap_if_exited()?;
             if !tree.maybe_live() {
                 return Ok(());
@@ -149,7 +163,7 @@ async fn end(
         let table = match snapshot().await {
             Ok(table) => table,
             // TERM 阶段已经结束（Immediate 本来就跳过它），退回时直接 KILL 根进程组。
-            Err(error) => return fall_back(leader, root, Shutdown::Immediate, &error).await,
+            Err(error) => return fall_back(leader, root, Shutdown::Immediate, grace, &error).await,
         };
         tree.refresh(&table);
         if !tree.live(&table) {
@@ -175,6 +189,7 @@ async fn fall_back(
     leader: &mut Root<'_>,
     root: i32,
     shutdown: Shutdown,
+    grace: Duration,
     cause: &anyhow::Error,
 ) -> Result<()> {
     tracing::warn!(
@@ -185,7 +200,7 @@ async fn fall_back(
     if shutdown == Shutdown::Graceful {
         signal_root(leader, root, libc::SIGTERM);
         let began = Instant::now();
-        while began.elapsed() < GRACE {
+        while began.elapsed() < grace {
             if settled(leader, root)? {
                 return Ok(());
             }

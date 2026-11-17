@@ -231,7 +231,13 @@ pub(crate) struct Actor {
     /// 已从任务表取走、还没开回合的定时任务（排在通道与 `Queue` 输入之后）。
     pub(crate) cron_fires: VecDeque<rust_cli_kernel_api::cron::CronFire>,
     pub(crate) pending: Vec<Pending>,
+    /// Fork (F3b a): tools the user allowed for this session ("Always allow in this session", Node
+    /// `PermissionService.sessionRules`). Lives in the actor: restart, cold resume and `/new` start empty.
+    pub(crate) session_grants: std::collections::BTreeSet<String>,
     pub(crate) running: Option<Running>,
+    /// Fork (D2 follow-up): the end-of-turn capture's cancel token while `finish_turn` awaits it. The actor keeps
+    /// serving requests meanwhile, and an interrupt or shutdown cancels the capture through this token.
+    pub(crate) capture_cancel: Option<CancellationToken>,
     pub(crate) job: Option<Job>,
     /// 没有被代码回退撤销的 checkpoint，按写入顺序（spec §4）。
     pub(crate) checkpoints: Vec<WorkspaceCheckpoint>,
@@ -372,7 +378,9 @@ impl Actor {
             inbox: crate::inbox::Inbox::default(),
             cron_fires: VecDeque::new(),
             pending: Vec::new(),
+            session_grants: Default::default(),
             running: None,
+            capture_cancel: None,
             job: None,
             checkpoints: state.checkpoints,
             turn_files: std::collections::HashMap::new(),
@@ -609,7 +617,15 @@ impl Actor {
                 Next::Monitor(task, event) => self.on_monitor_event(task, event).await,
                 Next::MonitorDue => self.on_monitor_due().await,
                 // 主循环的输出端已全部释放：它已经返回，收尾本回合。
-                Next::Sink(None) => self.finish_turn().await,
+                Next::Sink(None) => {
+                    // Fork (D2 follow-up): requests that arrive during the end-of-turn capture wait behind it, in
+                    // arrival order, except an interrupt or shutdown, which the capture serves at once.
+                    let mut deferred = Vec::new();
+                    self.finish_turn(&mut requests, &mut deferred).await;
+                    for request in deferred {
+                        self.handle(request).await;
+                    }
+                }
             }
             // 登记里的状态只看 actor 自己的状态，变化时才写（cross-session.md §2.1）。
             self.peer_status(self.status_now()).await;
@@ -618,7 +634,7 @@ impl Actor {
         }
     }
 
-    async fn handle(&mut self, request: Request) {
+    pub(crate) async fn handle(&mut self, request: Request) {
         match request {
             Request::View { reply } => {
                 let _ = reply.send(self.view().await);
@@ -689,6 +705,14 @@ impl Actor {
             // 关闭中不接新命令：会话即将退出。
             Request::Command { reply, .. } if self.closing.is_some() => {
                 let _ = reply.send(rejected("the session is closed"));
+            }
+            // Fork (D2 follow-up, C2): Shutdown is final and no turn starts after it (session_api `Command::Shutdown`).
+            // A request that would start a turn and arrives after it, such as one deferred behind the end-of-turn
+            // capture, is refused here: `start_next` is not the only way a turn starts.
+            Request::Command { envelope, reply }
+                if self.shutting_down && crate::child_live::starts_turn(&envelope.command) =>
+            {
+                let _ = reply.send(rejected("the session is shutting down"));
             }
             Request::Command { envelope, reply } => {
                 if !self.seen.insert(envelope.id.clone()) {

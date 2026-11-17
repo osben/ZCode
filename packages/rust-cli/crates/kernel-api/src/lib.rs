@@ -126,6 +126,7 @@ pub mod remote_identity;
 pub mod run_ledger;
 pub mod sampling;
 pub mod session_api;
+pub mod session_deletion;
 pub mod session_follow;
 pub mod session_ops;
 pub mod side_request;

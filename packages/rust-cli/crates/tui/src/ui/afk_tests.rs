@@ -119,6 +119,7 @@ fn only_questions_are_timed() {
         asked_by: None,
         once: false,
         independent: false,
+        session_allow: false,
     };
     afk.dialog(Some((&id, &permission)), start);
     assert_eq!(afk.next_due(start), None);

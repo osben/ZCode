@@ -30,6 +30,14 @@ impl Actor {
                 self.cancel_turn_asks();
                 accepted()
             }
+            // Fork (D2 follow-up, C2): the end-of-turn capture runs in `finish_turn`. The interrupt cancels it and the
+            // turn keeps its outcome, as Node's turn abort does during the capture.
+            None if self.capture_cancel.is_some() => {
+                if let Some(capture) = &self.capture_cancel {
+                    capture.cancel();
+                }
+                accepted()
+            }
             None => match self.job.as_ref().and_then(|job| job.cancel.as_ref()) {
                 Some(cancel) => {
                     cancel.cancel();
@@ -48,6 +56,9 @@ impl Actor {
         self.shutting_down = true;
         if let Some(running) = &self.running {
             running.abort.abort(AbortReason::Shutdown);
+        } else if let Some(capture) = &self.capture_cancel {
+            // Fork (D2 follow-up, C2): the end-of-turn capture is cancelled, as an abort of the turn would.
+            capture.cancel();
         } else if let Some(cancel) = self.job.as_ref().and_then(|job| job.cancel.as_ref()) {
             cancel.cancel();
         }

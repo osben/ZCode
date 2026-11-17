@@ -265,7 +265,9 @@ async fn a_failed_start_keeps_its_message_and_another_client_cannot_use_a_connec
     assert_eq!(
         reply(&mut client).await,
         ReplyResult::Err(WireError::Io {
-            message: "MCP server \"broken\" failed to start: no such file".to_owned()
+            message: "MCP server \"broken\" failed to start: no such file".to_owned(),
+            http_status: None,
+            www_authenticate: None,
         })
     );
     client

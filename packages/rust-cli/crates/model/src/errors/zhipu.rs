@@ -6,64 +6,233 @@
 
 use rust_cli_base::proto::http;
 use rust_cli_kernel_api::message::StopReason;
-use rust_cli_kernel_api::model::ModelError;
+use rust_cli_kernel_api::model::{ModelError, ProviderFailure};
 use serde_json::Value;
 
 use super::{Class, Finish, Shape, Verdict, error_of, message_text};
 
-/// 码 → 中性分类（§5.3 的两张表）。
-const CODES: [(&str, Class); 42] = [
-    // GLM 原生码。
-    ("500", Class::ServerError),
-    ("1008", Class::InvalidRequest),
-    ("1113", Class::QuotaExhausted),
-    ("1120", Class::ServerError),
-    ("1210", Class::InvalidRequest),
-    ("1211", Class::AccessDenied),
-    ("1213", Class::InvalidRequest),
-    ("1214", Class::AccessDenied),
-    ("1230", Class::ServerError),
-    ("1234", Class::Network),
-    ("1261", Class::ContextOverflow),
-    ("1301", Class::ContentBlocked),
-    ("1302", Class::RateLimited),
-    ("1303", Class::RateLimited),
-    ("1304", Class::QuotaExhausted),
-    ("1305", Class::RateLimited),
-    ("1308", Class::QuotaExhausted),
-    ("1309", Class::QuotaExhausted),
-    ("1310", Class::QuotaExhausted),
-    ("1311", Class::AccessDenied),
-    ("1312", Class::Overloaded),
-    ("1313", Class::QuotaExhausted),
-    ("1314", Class::QuotaExhausted),
-    ("1315", Class::QuotaExhausted),
-    ("1316", Class::QuotaExhausted),
-    ("1317", Class::QuotaExhausted),
-    ("1318", Class::QuotaExhausted),
-    ("1319", Class::QuotaExhausted),
-    ("1320", Class::QuotaExhausted),
-    ("1321", Class::QuotaExhausted),
-    ("2056", Class::QuotaExhausted),
-    ("20097", Class::QuotaExhausted),
-    // ZCode 套餐网关的码。
-    ("1005", Class::QuotaExhausted),
-    ("1006", Class::AuthRejected),
-    ("2007", Class::ServerError),
-    ("3001", Class::InvalidRequest),
-    ("3002", Class::RateLimited),
-    ("3006", Class::AccessDenied),
-    ("3007", Class::AccessDenied),
-    ("3008", Class::CapacityLimited),
-    ("3009", Class::CapacityLimited),
-    ("3010", Class::CapacityLimited),
+/// 码 → 中性分类（§5.3 的两张表）与 Node 的 `reason` / `retryable`（`failure-provider-business-codes.ts`，
+/// 夹具 `tests/fixtures/node-provider-codes.json`）。
+pub(super) const CODES: [(&str, Class, Terms); 42] = [
+    (
+        "500",
+        Class::ServerError,
+        Terms::Mapped("server_error", true),
+    ),
+    (
+        "1008",
+        Class::InvalidRequest,
+        Terms::Mapped("unknown", false),
+    ),
+    (
+        "1113",
+        Class::QuotaExhausted,
+        Terms::Mapped("unknown", false),
+    ),
+    (
+        "1120",
+        Class::ServerError,
+        Terms::Mapped("server_error", true),
+    ),
+    ("1210", Class::InvalidRequest, Terms::Fallback),
+    ("1211", Class::AccessDenied, Terms::Fallback),
+    ("1213", Class::InvalidRequest, Terms::Fallback),
+    ("1214", Class::AccessDenied, Terms::Fallback),
+    (
+        "1230",
+        Class::ServerError,
+        Terms::Mapped("server_error", true),
+    ),
+    ("1234", Class::Network, Terms::Mapped("network_error", true)),
+    (
+        "1261",
+        Class::ContextOverflow,
+        Terms::Mapped("context_exceeded", false),
+    ),
+    ("1301", Class::ContentBlocked, Terms::Fallback),
+    (
+        "1302",
+        Class::RateLimited,
+        Terms::Mapped("rate_limited", true),
+    ),
+    (
+        "1303",
+        Class::RateLimited,
+        Terms::Mapped("rate_limited", true),
+    ),
+    (
+        "1304",
+        Class::QuotaExhausted,
+        Terms::Mapped("rate_limited", false),
+    ),
+    (
+        "1305",
+        Class::RateLimited,
+        Terms::Mapped("rate_limited", true),
+    ),
+    (
+        "1308",
+        Class::QuotaExhausted,
+        Terms::Mapped("rate_limited", false),
+    ),
+    (
+        "1309",
+        Class::QuotaExhausted,
+        Terms::Mapped("unknown", false),
+    ),
+    (
+        "1310",
+        Class::QuotaExhausted,
+        Terms::Mapped("rate_limited", false),
+    ),
+    ("1311", Class::AccessDenied, Terms::Mapped("unknown", false)),
+    (
+        "1312",
+        Class::Overloaded,
+        Terms::Mapped("provider_overloaded", true),
+    ),
+    (
+        "1313",
+        Class::QuotaExhausted,
+        Terms::Mapped("rate_limited", false),
+    ),
+    (
+        "1314",
+        Class::QuotaExhausted,
+        Terms::Mapped("unknown", false),
+    ),
+    (
+        "1315",
+        Class::QuotaExhausted,
+        Terms::Mapped("unknown", false),
+    ),
+    (
+        "1316",
+        Class::QuotaExhausted,
+        Terms::Mapped("rate_limited", false),
+    ),
+    (
+        "1317",
+        Class::QuotaExhausted,
+        Terms::Mapped("rate_limited", false),
+    ),
+    (
+        "1318",
+        Class::QuotaExhausted,
+        Terms::Mapped("rate_limited", false),
+    ),
+    (
+        "1319",
+        Class::QuotaExhausted,
+        Terms::Mapped("rate_limited", false),
+    ),
+    (
+        "1320",
+        Class::QuotaExhausted,
+        Terms::Mapped("rate_limited", false),
+    ),
+    (
+        "1321",
+        Class::QuotaExhausted,
+        Terms::Mapped("rate_limited", false),
+    ),
+    (
+        "2056",
+        Class::QuotaExhausted,
+        Terms::Mapped("rate_limited", false),
+    ),
+    (
+        "20097",
+        Class::QuotaExhausted,
+        Terms::Mapped("rate_limited", false),
+    ),
+    (
+        "1005",
+        Class::QuotaExhausted,
+        Terms::Mapped("invalid_request", false),
+    ),
+    (
+        "1006",
+        Class::AuthRejected,
+        Terms::Mapped("auth_failed", false),
+    ),
+    (
+        "2007",
+        Class::ServerError,
+        Terms::Mapped("server_error", true),
+    ),
+    (
+        "3001",
+        Class::InvalidRequest,
+        Terms::Mapped("invalid_request", false),
+    ),
+    (
+        "3002",
+        Class::RateLimited,
+        Terms::Mapped("rate_limited", true),
+    ),
+    (
+        "3006",
+        Class::AccessDenied,
+        Terms::Mapped("invalid_request", false),
+    ),
+    (
+        "3007",
+        Class::AccessDenied,
+        Terms::Mapped("auth_failed", false),
+    ),
+    (
+        "3008",
+        Class::CapacityLimited,
+        Terms::Mapped("rate_limited", false),
+    ),
+    (
+        "3009",
+        Class::CapacityLimited,
+        Terms::Mapped("rate_limited", false),
+    ),
+    (
+        "3010",
+        Class::CapacityLimited,
+        Terms::Mapped("rate_limited", false),
+    ),
 ];
 
-fn class_of(code: &str) -> Option<Class> {
+/// Node's `reason` and `retryable` for a table code (`failure-provider-business-codes.ts`).
+#[derive(Clone, Copy)]
+pub(super) enum Terms {
+    /// Node maps the code: its reason and retryability, whatever the status.
+    Mapped(&'static str, bool),
+    /// Node does not map the code and classifies it by the HTTP status: a 429 is a rate limit that retries; without a
+    /// status it is unknown and does not retry. Other statuses are not in the Node fixture.
+    Fallback,
+}
+
+fn entry(code: &str) -> Option<(Class, Terms)> {
     CODES
         .iter()
-        .find(|(known, _)| *known == code)
-        .map(|(_, class)| *class)
+        .find(|(known, _, _)| *known == code)
+        .map(|(_, class, terms)| (*class, *terms))
+}
+
+fn class_of(code: &str) -> Option<Class> {
+    entry(code).map(|(class, _)| class)
+}
+
+/// Node's `reason` and `retryable` for a code at `status`.
+fn terms_of(terms: Terms, status: Option<u16>) -> (&'static str, bool) {
+    match terms {
+        Terms::Mapped(reason, retryable) => (reason, retryable),
+        // Node `classifyProviderBusinessFailure` for an unmapped code: by HTTP status (the Node fixture
+        // `fallbackByStatus` rows), then `unknown` without a status.
+        Terms::Fallback => match status {
+            Some(http::UNAUTHORIZED | http::FORBIDDEN) => ("auth_failed", false),
+            Some(http::BAD_REQUEST | http::NOT_FOUND | 422) => ("invalid_request", false),
+            Some(http::TOO_MANY_REQUESTS) => ("rate_limited", true),
+            Some(status) if status >= http::SERVER_ERROR_MIN => ("server_error", true),
+            _ => ("unknown", false),
+        },
+    }
 }
 
 /// 正文里的业务码：依次取 `providerCode`、`error_code`、`code`（先看 `error` 下的同名字段），再认消息开头的 `[1302]`。
@@ -102,50 +271,103 @@ fn message_of(value: &Value) -> Option<&str> {
         })
 }
 
+/// `provider` is the business code the body carried with its Node terms and provider kind; the failure then names it.
 fn verdict(
     class: Class,
     status: Option<u16>,
     value: &Value,
     raw: &str,
     retry_after_ms: Option<u64>,
+    provider: Option<(&str, Terms, &'static str)>,
 ) -> Verdict {
     let message = message_text(status.unwrap_or(http::OK), message_of(value), raw);
     let shape = Shape {
         message,
         retry_after_ms,
     };
-    Verdict::new(class, error_of(class, status, shape))
+    let classified = error_of(class, status, shape);
+    let error = match provider {
+        Some((code, terms, kind)) => {
+            let (reason, retryable) = terms_of(terms, status);
+            ModelError::Provider {
+                provider: Box::new(ProviderFailure::new(code, status, retryable, reason, kind)),
+                error: Box::new(classified),
+            }
+        }
+        None => classified,
+    };
+    Verdict::new(class, error)
 }
 
-/// 非 2xx 响应：码在表里时按表（不看状态）；否则交给协议层。
+/// 非 2xx 响应：码在表里时按表（不看状态）；否则交给协议层。`kind` is Node's `providerKind` for the protocol.
 pub(super) fn response(
     status: u16,
     value: &Value,
     raw: &str,
     retry_after_ms: Option<u64>,
+    kind: &'static str,
 ) -> Option<Verdict> {
-    let class = class_of(&code(value, message_of(value))?)?;
-    Some(verdict(class, Some(status), value, raw, retry_after_ms))
+    let code = code(value, message_of(value))?;
+    let (class, terms) = entry(&code)?;
+    Some(verdict(
+        class,
+        Some(status),
+        value,
+        raw,
+        retry_after_ms,
+        Some((&code, terms, kind)),
+    ))
 }
 
 /// 流里的错误块：码在表里时按表；有码却不在表里时是参数错误（没有状态可看，不重试）；没有码时交给协议层。
-pub(super) fn stream(value: &Value, raw: &str) -> Option<Verdict> {
+pub(super) fn stream(value: &Value, raw: &str, kind: &'static str) -> Option<Verdict> {
     let code = code(value, message_of(value))?;
-    let class = class_of(&code).unwrap_or(Class::InvalidRequest);
-    Some(verdict(class, None, value, raw, None))
+    let (class, terms) =
+        entry(&code).unwrap_or((Class::InvalidRequest, Terms::Mapped("unknown", false)));
+    Some(verdict(
+        class,
+        None,
+        value,
+        raw,
+        None,
+        Some((&code, terms, kind)),
+    ))
 }
 
 /// 不带事件名的块：`success: false`，或带表里的码（带非错误的码的普通块不算）。
-pub(super) fn frame(value: &Value, raw: &str) -> Option<Verdict> {
+pub(super) fn frame(value: &Value, raw: &str, kind: &'static str) -> Option<Verdict> {
     let failed = value.get("success").and_then(Value::as_bool) == Some(false);
     let known = code(value, message_of(value)).is_some_and(|code| class_of(&code).is_some());
     if !failed && !known {
         return None;
     }
     Some(
-        stream(value, raw)
-            .unwrap_or_else(|| verdict(Class::InvalidRequest, None, value, raw, None)),
+        stream(value, raw, kind)
+            .unwrap_or_else(|| verdict(Class::InvalidRequest, None, value, raw, None, None)),
     )
+}
+
+/// A response whose body carried a code the table does not know keeps the protocol's classification, and names the
+/// provider code with the status ladder (Node attaches every code it reads, `readCode`). Nothing changes for a body
+/// without a code, or one the classifier already named.
+pub(super) fn attach_unmapped(
+    mut verdict: Verdict,
+    value: &Value,
+    status: Option<u16>,
+    kind: &'static str,
+) -> Verdict {
+    if verdict.error.provider().is_some() {
+        return verdict;
+    }
+    let Some(code) = code(value, message_of(value)) else {
+        return verdict;
+    };
+    let (reason, retryable) = terms_of(Terms::Fallback, status);
+    verdict.error = ModelError::Provider {
+        provider: Box::new(ProviderFailure::new(&code, status, retryable, reason, kind)),
+        error: Box::new(verdict.error),
+    };
+    verdict
 }
 
 /// 智谱专有的结束原因（§5.3 的第三张表）：`sensitive` 是内容拦截；`network_error` 不是结束，是流内的网络失败

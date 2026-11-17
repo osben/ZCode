@@ -90,7 +90,7 @@ fn detail(error: &ModelError) -> Option<Detail> {
         let line = text.lines().next().unwrap_or_default().trim();
         (!line.is_empty()).then(|| line.to_owned())
     };
-    match error {
+    match error.peel() {
         ModelError::Server { status, .. } => Some(Detail::Fact(format!("HTTP {status}"))),
         ModelError::Network { message } => {
             let line = message.lines().next().unwrap_or_default();
@@ -106,7 +106,7 @@ fn detail(error: &ModelError) -> Option<Detail> {
 
 /// 重试的 reasonCode（照 Puffin 宿主 `host/fold/turns.rs` 的 `retry_code`）。
 fn retry_code(error: &ModelError) -> &'static str {
-    match error {
+    match error.peel() {
         ModelError::RateLimited { .. } => "fault.provider.rateLimited",
         ModelError::Network { .. } => "fault.network.unreachable",
         ModelError::StreamIdle { .. } => "fault.network.sseStalled",

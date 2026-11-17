@@ -161,6 +161,95 @@ pub async fn remove_dir_all_optional(path: &Path) -> io::Result<()> {
     }
 }
 
+/// Fork: what [`link_stat`] found at a path, without following a symlink (Node `lstat`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LinkStat {
+    pub is_symlink: bool,
+    /// A real directory (a symlink to one is `is_symlink`, not `is_dir`).
+    pub is_dir: bool,
+    pub len: u64,
+}
+
+/// Fork: the path's metadata without following a symlink; `None` when it does not exist (Node `lstat`). Permanent
+/// deletion sizes and walks session files with it, so a link inside a session directory is never followed.
+pub async fn link_stat(path: &Path) -> io::Result<Option<LinkStat>> {
+    match tokio::fs::symlink_metadata(path).await {
+        Ok(metadata) => Ok(Some(LinkStat {
+            is_symlink: metadata.file_type().is_symlink(),
+            is_dir: metadata.is_dir(),
+            len: metadata.len(),
+        })),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+/// Fork: the Node `error.code` (the errno name, such as `EACCES`) of an OS error, for the errors a removal can meet.
+/// `None` for an error without an errno. Off Unix it is always `None`: Node reports libuv's names there (`EPERM`,
+/// `EBUSY`, ...), which this crate does not map from Windows error codes, so the caller reports its fallback code.
+#[cfg(unix)]
+pub fn error_code(error: &io::Error) -> Option<&'static str> {
+    const NAMES: [(i32, &str); 14] = [
+        (libc::EACCES, "EACCES"),
+        (libc::EPERM, "EPERM"),
+        (libc::EBUSY, "EBUSY"),
+        (libc::ENOTEMPTY, "ENOTEMPTY"),
+        (libc::EISDIR, "EISDIR"),
+        (libc::ENOTDIR, "ENOTDIR"),
+        (libc::EROFS, "EROFS"),
+        (libc::EIO, "EIO"),
+        (libc::ENOSPC, "ENOSPC"),
+        (libc::EMFILE, "EMFILE"),
+        (libc::ENFILE, "ENFILE"),
+        (libc::EXDEV, "EXDEV"),
+        (libc::ELOOP, "ELOOP"),
+        (libc::ENAMETOOLONG, "ENAMETOOLONG"),
+    ];
+    let errno = error.raw_os_error()?;
+    NAMES
+        .iter()
+        .find(|(known, _)| *known == errno)
+        .map(|(_, name)| *name)
+}
+
+/// Fork: off Unix there is no errno name to report (see the Unix definition).
+#[cfg(not(unix))]
+pub fn error_code(_error: &io::Error) -> Option<&'static str> {
+    None
+}
+
+/// Fork: the entries of a directory as full paths, in the order the platform lists them; a missing directory has none.
+pub async fn dir_entries(path: &Path) -> io::Result<Vec<PathBuf>> {
+    let mut entries = match tokio::fs::read_dir(path).await {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error),
+    };
+    let mut paths = Vec::new();
+    while let Some(entry) = entries.next_entry().await? {
+        paths.push(entry.path());
+    }
+    Ok(paths)
+}
+
+/// Fork: remove a file, a symlink (the link itself) or a directory tree at `path`, as Node `rm(path, { recursive: true,
+/// force: true })`. A missing path is not an error.
+pub async fn remove_path_force(path: &Path) -> io::Result<()> {
+    let Some(stat) = link_stat(path).await? else {
+        return Ok(());
+    };
+    let removed = if stat.is_dir {
+        tokio::fs::remove_dir_all(path).await
+    } else {
+        tokio::fs::remove_file(path).await
+    };
+    match removed {
+        // Node's `force` swallows ENOENT in the removal itself: another process may remove the path after the stat.
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        other => other,
+    }
+}
+
 /// Fork: [`remove_dir_all_optional`], synchronously (a drop guard's last resort when no runtime can run the async
 /// removal).
 pub fn remove_dir_all_optional_blocking(path: &Path) -> io::Result<()> {

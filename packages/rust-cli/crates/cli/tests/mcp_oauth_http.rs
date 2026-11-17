@@ -138,7 +138,15 @@ fn route(
             ok(json!({"resource": format!("{base}/mcp"), "authorization_servers": [base]}))
         }
         ("GET", p) if p.starts_with("/.well-known/oauth-protected-resource") => {
-            ok(json!({"resource": format!("{base}/mcp"), "authorization_servers": [base]}))
+            // The resource is the server path the metadata was asked for (RFC 9728), so every test server
+            // (`/mcp`, `/mcp-live`, `/mcp-concurrent`, ...) is covered by its own metadata.
+            let server_path = p.trim_start_matches("/.well-known/oauth-protected-resource");
+            let server_path = if server_path.is_empty() {
+                "/mcp"
+            } else {
+                server_path
+            };
+            ok(json!({"resource": format!("{base}{server_path}"), "authorization_servers": [base]}))
         }
         ("GET", "/.well-known/oauth-authorization-server") => ok(json!({
             "issuer": base,
@@ -573,6 +581,26 @@ async fn harness() -> Harness {
     }
 }
 
+/// The canonical record and its legacy mirror (`client_information`, `tokens`), written in one batch as Node's
+/// `publishCanonicalCredentials` does. A v2 record without its mirror reads as invalidated (Node).
+fn mirrored(prefix: &str, canonical: String) -> Vec<McpOAuthWrite> {
+    let parsed: serde_json::Value = serde_json::from_str(&canonical).expect("canonical JSON");
+    vec![
+        McpOAuthWrite::Put {
+            key: credential_key(prefix, "authorization_credentials"),
+            value: canonical,
+        },
+        McpOAuthWrite::Put {
+            key: credential_key(prefix, "client_information"),
+            value: parsed["client_information"].to_string(),
+        },
+        McpOAuthWrite::Put {
+            key: credential_key(prefix, "tokens"),
+            value: parsed["tokens"].to_string(),
+        },
+    ]
+}
+
 /// A stored canonical record as Node writes it (version 2), for one server's credential key prefix.
 fn canonical_record(access: &str, refresh: &str, expires_at_ms: i64) -> String {
     json!({
@@ -659,10 +687,10 @@ async fn refresh_and_reauthorization_work_over_real_http() {
     for (name, access, refresh, expires_at) in seeds {
         let prefix = credential_key_prefix(name, &format!("{base}/mcp-{name}"), None, None, None);
         store
-            .apply(&[McpOAuthWrite::Put {
-                key: credential_key(&prefix, "authorization_credentials"),
-                value: canonical_record(access, refresh, expires_at),
-            }])
+            .apply(&mirrored(
+                &prefix,
+                canonical_record(access, refresh, expires_at),
+            ))
             .await
             .expect("seed");
     }
@@ -782,10 +810,10 @@ async fn a_401_during_a_tool_call_refreshes_and_retries_over_real_http() {
     let store = h.platform.mcp_oauth_store();
     let prefix = credential_key_prefix("live", &format!("{base}/mcp-live"), None, None, None);
     store
-        .apply(&[McpOAuthWrite::Put {
-            key: credential_key(&prefix, "authorization_credentials"),
-            value: canonical_record("live-old", "refresh-ok-live", now_ms() + 3_600_000),
-        }])
+        .apply(&mirrored(
+            &prefix,
+            canonical_record("live-old", "refresh-ok-live", now_ms() + 3_600_000),
+        ))
         .await
         .expect("seed");
     h.manager.start(
@@ -844,10 +872,10 @@ async fn a_403_insufficient_scope_reauthorizes_with_the_header_scope_over_real_h
     let store = h.platform.mcp_oauth_store();
     let prefix = credential_key_prefix("scope", &format!("{base}/mcp-scope"), None, None, None);
     store
-        .apply(&[McpOAuthWrite::Put {
-            key: credential_key(&prefix, "authorization_credentials"),
-            value: canonical_record("scope-token", "refresh-ok-scope", now_ms() + 3_600_000),
-        }])
+        .apply(&mirrored(
+            &prefix,
+            canonical_record("scope-token", "refresh-ok-scope", now_ms() + 3_600_000),
+        ))
         .await
         .expect("seed");
     h.manager.start(
@@ -892,10 +920,10 @@ async fn concurrent_refreshes_make_one_token_request_over_real_http() {
     let url = format!("{base}/mcp-concurrent");
     let prefix = credential_key_prefix("concurrent", &url, None, None, None);
     store
-        .apply(&[McpOAuthWrite::Put {
-            key: credential_key(&prefix, "authorization_credentials"),
-            value: canonical_record("stale-c", "refresh-ok-concurrent", now_ms() - 60_000),
-        }])
+        .apply(&mirrored(
+            &prefix,
+            canonical_record("stale-c", "refresh-ok-concurrent", now_ms() - 60_000),
+        ))
         .await
         .expect("seed");
 
@@ -1001,4 +1029,112 @@ async fn delete_guarded_keeps_a_newer_write_in_the_platform_store() {
 /// Run a store read to completion inside a synchronous probe (the probe runs on the test task).
 fn futures_block<T>(future: impl std::future::Future<Output = T>) -> T {
     tokio::task::block_in_place(|| tokio::runtime::Handle::current().block_on(future))
+}
+
+/// Acceptance 9 (PR4 follower reconnect): a second lane's manager waits on the lead's authorization and
+/// reconnects with the credentials the lead publishes, over real HTTP.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_follower_lane_reconnects_after_the_lead_publishes_over_real_http() {
+    // A bounded scenario: a stall fails the test instead of hanging the run.
+    tokio::time::timeout(Duration::from_secs(90), follower_lane_scenario())
+        .await
+        .expect("the follower scenario did not finish within 90 s");
+}
+
+async fn follower_lane_scenario() {
+    let mock = Arc::new(Mutex::new(Mock::default()));
+    let base = serve(mock.clone()).await;
+    let harness = harness().await;
+    let work = harness.work.path().to_path_buf();
+    let egress = Arc::new(Egress::new(NetworkPolicy::default()).await.expect("egress"));
+    let follower = McpManager::new(
+        Arc::new(LocalMcpTransport::new(
+            work.join("follower-ledger.json"),
+            EnvSnapshot::default(),
+            Some(egress),
+        )),
+        harness._scope.spawner(),
+        McpSettings::default(),
+        Arc::new(SystemClock::utc()),
+    );
+    follower.enable_oauth(
+        harness.platform.mcp_oauth_store(),
+        harness.platform.mcp_oauth_runtime(),
+    );
+    let url = format!("{base}/mcp");
+    let servers = vec![server("e2e-remote", url.clone(), None)];
+
+    // The lead lane starts first and is refused with 401; it publishes the pending authorization.
+    harness.manager.start(workspace(&work), servers.clone());
+    let store = harness.platform.mcp_oauth_store();
+    let prefix = credential_key_prefix("e2e-remote", &url, None, None, None);
+    let pending_key = credential_key(&prefix, "pending_authorization");
+    let pending = until("the lead's pending authorization", || {
+        let raw = futures_block(store.load(&pending_key)).ok().flatten()?;
+        serde_json::from_str::<Value>(&raw).ok()
+    })
+    .await;
+    let authorization_url = pending["authorization_url"]
+        .as_str()
+        .expect("url")
+        .to_owned();
+
+    // The follower lane starts while the lead's transaction is open: it follows instead of opening a second one.
+    follower.start(workspace(&work), servers);
+    // The follower's first connect is refused with 401, and its flow is registered only after it has read the
+    // follower baseline (`McpOAuthCoordinator::start`). A registered flow is therefore the point where the lead's
+    // publish can be observed as a change. Publishing before it would leave the follower waiting for a change that
+    // already happened.
+    until("the follower's authorization flow is registered", || {
+        follower.oauth_flow_running("e2e-remote").then_some(())
+    })
+    .await;
+
+    // The browser answers the lead's callback; the lead publishes, and the follower's client reconnects.
+    let state_value = query_value(&authorization_url, "state");
+    let redirect_uri = query_value(&authorization_url, "redirect_uri");
+    let response = browser_callback(&redirect_uri, &state_value).await;
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+    // The follower's reconnect starts after the lead publishes; give it the full wait budget and report the
+    // follower's state when it does not list its tool.
+    let lists_ping = |manager: &McpManager| {
+        manager
+            .tools()
+            .iter()
+            .any(|tool| tool.name().contains("e2e-remote") && tool.name().ends_with("ping"))
+    };
+    let deadline = Instant::now() + WAIT;
+    while !lists_ping(&follower) && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    // One snapshot of the mock: taking the lock twice inside one assertion deadlocks on the same thread.
+    let (methods, rejected, token_requests) = {
+        let guard = mock.lock().expect("mock");
+        (
+            guard.mcp_methods.clone(),
+            guard.rejected.clone(),
+            guard.token_requests.clone(),
+        )
+    };
+    assert!(
+        lists_ping(&follower),
+        "the follower did not reconnect: {:?}; mock: {methods:?}; rejected: {rejected:?}; token requests: {token_requests:?}",
+        follower.server_infos(),
+    );
+    let mock = mock.lock().expect("mock");
+    assert!(
+        mock.mcp_methods
+            .iter()
+            .any(|(method, bearer)| method == "tools/list" && bearer == "real-token"),
+        "the follower must reconnect with the published token: {:?}",
+        mock.mcp_methods
+    );
+    assert_eq!(
+        mock.token_requests
+            .iter()
+            .filter(|(grant, _)| grant == "authorization_code")
+            .count(),
+        1,
+        "only the lead exchanges the code"
+    );
 }

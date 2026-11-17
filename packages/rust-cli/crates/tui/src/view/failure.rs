@@ -26,7 +26,7 @@ pub struct Failure {
 
 /// 失败的原因、HTTP 状态与能不能再试，按 `ModelError`（Puffin `reason_of_error`）。
 fn reason_of_error(error: &ModelError) -> (&'static str, u16, bool) {
-    match error {
+    match error.peel() {
         ModelError::RateLimited { .. } => ("rate_limited", 429, true),
         ModelError::Overloaded { .. } => ("provider_overloaded", 529, true),
         ModelError::PromptTooLong { .. } => ("context_exceeded", 0, false),

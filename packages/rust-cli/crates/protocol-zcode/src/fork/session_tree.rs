@@ -76,7 +76,7 @@ fn parse_session_ids(params: &Value) -> Result<Vec<String>, RpcError> {
 
 /// A store without the shared database answers like Node's "Session tree operations are not
 /// supported": the same code as an unknown method, so callers have a single unsupported path.
-fn store_error(method: &str, error: StoreError) -> RpcError {
+pub(crate) fn store_error(method: &str, error: StoreError) -> RpcError {
     match error {
         StoreError::Unsupported { .. } => RpcError::method_not_found(method),
         other => RpcError::internal(other.to_string()),
@@ -88,7 +88,7 @@ fn store_error(method: &str, error: StoreError) -> RpcError {
 /// would race the erase). Node also counts its running detached subagents
 /// (`getDetachedChildSessionFacts().running`); here the kernel answers for the child sessions its
 /// running subagents run in. A parked subagent does not count: the erase ends it as stopped.
-fn running_session_ids(server: &Server, tree_ids: &[String]) -> Vec<String> {
+pub(crate) fn running_session_ids(server: &Server, tree_ids: &[String]) -> Vec<String> {
     let mut running: HashSet<String> = HashSet::new();
     for bridged in server.bridge.sessions() {
         if bridged.sink.status().0 == Phase::Running {

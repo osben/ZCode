@@ -1,18 +1,30 @@
 // Fork F4 D2 (specs/fork-rust-node-helper.md "D2 end-of-turn screenshot", D2-H). Node's
 // appendBrowserTurnScreenshot (core/src/runtime/methods/browser-turn-screenshot.ts) is the oracle: list the
 // session's tabs, screenshot the active one, answer the image; any broker failure answers {} and logs.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type { Logger } from "@zcode/contracts";
 import type { ZCodeProtocolAgentServerContext } from "../../src/zcode-protocol/server-types.js";
-import { ForkRustBrowserControl } from "../../src/fork-rust-helper/browser-control.js";
+import {
+  ForkRustBrowserControl,
+  turnScreenshotCancelParamsSchema,
+} from "../../src/fork-rust-helper/browser-control.js";
 
 interface Sent {
   method: string;
   params: Record<string, unknown>;
 }
 
-type Answer = (command: Record<string, unknown>) => Record<string, unknown> | Error;
+type Answer = (command: Record<string, unknown>) => Record<string, unknown> | Error | Promise<Record<string, unknown>>;
 
-function harness(answer: Answer, sessions: string[] = ["parent", "child"]) {
+/** What an aborted broker call rejects with: the broker throws an AbortError when the turn's signal fires. */
+const abortError = () => new DOMException("This operation was aborted", "AbortError");
+
+function harness(
+  answer: Answer,
+  sessions: string[] = ["parent", "child"],
+  logger?: Logger,
+  abortReason: () => unknown = abortError,
+) {
   const sent: Sent[] = [];
   const context = {
     sessions: new Map(
@@ -21,16 +33,39 @@ function harness(answer: Answer, sessions: string[] = ["parent", "child"]) {
         { sessionId: id, workspace: { workspacePath: "/work" }, deliveryKind: "desktop-continuous" },
       ]),
     ),
-    requestClient: (method: string, params: Record<string, unknown>) => {
+    requestClient: (
+      method: string,
+      params: Record<string, unknown>,
+      _schema?: unknown,
+      options?: { signal?: AbortSignal },
+    ) => {
       sent.push({ method, params });
       if (method !== "interaction/browserExecute") return Promise.resolve({});
       const response = answer(params.command as Record<string, unknown>);
-      return response instanceof Error ? Promise.reject(response) : Promise.resolve(response);
+      if (response instanceof Error) return Promise.reject(response);
+      // As the Host request does: an abort of the call's signal rejects it.
+      return new Promise((resolve, reject) => {
+        const abort = () => reject(abortReason());
+        options?.signal?.addEventListener("abort", abort, { once: true });
+        Promise.resolve(response).then(resolve, reject);
+      });
     },
     deps: {},
     logger: undefined,
   } as unknown as ZCodeProtocolAgentServerContext;
-  return { sent, control: new ForkRustBrowserControl({ context }) };
+  return { sent, control: new ForkRustBrowserControl({ context, logger }) };
+}
+
+/** A logger whose calls are recorded, so a test can assert the level and event of a log line. */
+function recordingLogger() {
+  const logger = {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    child: () => logger,
+  };
+  return logger;
 }
 
 const request = { sessionId: "parent", turnId: "turn-1", browserId: "iab-1", browserGeneration: 2 };
@@ -83,5 +118,85 @@ describe("helper turn screenshot (F4 D2-H)", () => {
     expect(browserExecute).toHaveLength(1);
     // tabOwner "parent": the Host sees the parent's session, as Node's broker routes a subagent's tab (F4-D5).
     expect(browserExecute[0].params.sessionId).toBe("parent");
+  });
+
+  it("cancelling the capture aborts its broker calls, so Main is sent cancelRequest for the screenshot", async () => {
+    const { control, sent } = harness((command) => {
+      if (command.method === "list") return { ok: true, tabs: [{ tabId: "t1", active: true }] };
+      if (command.method === "cancelRequest") return { ok: true };
+      return new Promise<Record<string, unknown>>(() => {}); // the screenshot stays in flight until it is aborted
+    });
+    const answered = control.turnScreenshot(request);
+    await vi.waitFor(() => expect(executes(sent)).toHaveLength(2));
+    control.cancelTurnScreenshot(request.sessionId, request.turnId);
+    await expect(answered).resolves.toEqual({});
+    await vi.waitFor(() => expect(executes(sent)).toHaveLength(3));
+    const methods = executes(sent).map((call) => (call.params.command as { method: string }).method);
+    expect(methods).toEqual(["list", "screenshot", "cancelRequest"]);
+  });
+
+  it("logs a capture cancelled with its turn at debug under its own event, not as a failure", async () => {
+    const logger = recordingLogger();
+    const { control, sent } = harness(
+      (command) => {
+        if (command.method === "list") return { ok: true, tabs: [{ tabId: "t1", active: true }] };
+        if (command.method === "cancelRequest") return { ok: true };
+        return new Promise<Record<string, unknown>>(() => {}); // held until the abort reaches it
+      },
+      ["parent", "child"],
+      logger as unknown as Logger,
+    );
+    const answered = control.turnScreenshot(request);
+    await vi.waitFor(() => expect(executes(sent)).toHaveLength(2));
+    control.cancelTurnScreenshot(request.sessionId, request.turnId);
+    await expect(answered).resolves.toEqual({});
+    expect(logger.warn).not.toHaveBeenCalled();
+    expect(logger.debug).toHaveBeenCalledWith(
+      "Browser turn screenshot cancelled with the turn",
+      expect.objectContaining({ event: "fork_rust_helper.browser.turn_screenshot_cancelled" }),
+    );
+  });
+
+  it("still warns when the capture was cancelled but the broker failed with a real error", async () => {
+    const logger = recordingLogger();
+    const { control, sent } = harness(
+      (command) => {
+        if (command.method === "list") return { ok: true, tabs: [{ tabId: "t1", active: true }] };
+        if (command.method === "cancelRequest") return { ok: true };
+        return new Promise<Record<string, unknown>>(() => {});
+      },
+      ["parent", "child"],
+      logger as unknown as Logger,
+      () => new Error("Browser control scope is closing"),
+    );
+    const answered = control.turnScreenshot(request);
+    await vi.waitFor(() => expect(executes(sent)).toHaveLength(2));
+    control.cancelTurnScreenshot(request.sessionId, request.turnId);
+    await expect(answered).resolves.toEqual({});
+    expect(logger.warn).toHaveBeenCalledWith(
+      "Browser turn screenshot failed",
+      expect.objectContaining({
+        event: "fork_rust_helper.browser.turn_screenshot_failed",
+        error: "Browser control scope is closing",
+      }),
+    );
+    expect(logger.debug).not.toHaveBeenCalledWith(
+      "Browser turn screenshot cancelled with the turn",
+      expect.anything(),
+    );
+  });
+});
+
+describe("helper turn screenshot cancel params (F4 D2 C1)", () => {
+  it("accept exactly the turn key", () => {
+    expect(turnScreenshotCancelParamsSchema.safeParse({ sessionId: "s1", turnId: "turn-1" }).success).toBe(true);
+    expect(turnScreenshotCancelParamsSchema.safeParse({ sessionId: "s1" }).success).toBe(false);
+    expect(turnScreenshotCancelParamsSchema.safeParse({ sessionId: " ", turnId: "turn-1" }).success).toBe(false);
+  });
+
+  it("refuse the capture's other fields, as the strict wire shape does", () => {
+    expect(
+      turnScreenshotCancelParamsSchema.safeParse({ sessionId: "s1", turnId: "turn-1", browserId: "iab-1" }).success,
+    ).toBe(false);
   });
 });

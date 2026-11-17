@@ -38,7 +38,11 @@ pub(crate) enum Outcome {
         source: &'static str,
     },
     /// 以 API 错误结束；响应照常提交。
-    Failed { message: String },
+    Failed {
+        message: String,
+        /// Fork: the provider business failure behind the message, for `lastError` (see `ModelError::Provider`).
+        provider: Option<Box<rust_cli_kernel_api::model::ProviderFailure>>,
+    },
 }
 
 /// 一次 query 内的恢复计数。
@@ -56,7 +60,7 @@ pub(crate) struct Guards {
 /// 只交出了 thinking 之后可以重发的错误（处置表 P2t 列是“重发”的分类交给 query 的形状，provider-errors.md §2.4）。
 pub(crate) fn resends_after_thinking(error: &ModelError) -> bool {
     matches!(
-        error,
+        error.peel(),
         ModelError::Server { .. }
             | ModelError::Network { .. }
             | ModelError::Protocol { .. }
@@ -69,7 +73,7 @@ pub(crate) fn resends_after_thinking(error: &ModelError) -> bool {
 /// 部分收尾时直接终止、给错误自己的说明的错误（provider-errors.md §2.4 的 P2 列）：等也不会好，续写没有用。
 fn ends_partial_output(error: &ModelError) -> bool {
     matches!(
-        error,
+        error.peel(),
         ModelError::QuotaExhausted { .. }
             | ModelError::ContentBlocked { .. }
             | ModelError::RequestTooLarge { .. }
@@ -110,7 +114,7 @@ impl Guards {
     /// 只交出了 thinking 之后的流内失败（provider-errors.md §3.3，修复线 F113）：次数没满时记一次、返回真，主循环
     /// 不提交这次回复、重发同一个请求；满了返回假，照部分收尾。以前一律部分收尾（stall-visibility.md D3）。
     pub(crate) fn resend_after_thinking(&mut self, error: &ModelError) -> bool {
-        let (count, limit) = if matches!(error, ModelError::StreamIdle { .. }) {
+        let (count, limit) = if matches!(error.peel(), ModelError::StreamIdle { .. }) {
             (&mut self.thinking_stalls, THINKING_STALL_LIMIT)
         } else {
             (&mut self.thinking_resends, THINKING_RESEND_LIMIT)
@@ -135,6 +139,7 @@ impl Guards {
         if ends_partial_output(error) {
             return Outcome::Failed {
                 message: error.to_string(),
+                provider: error.provider().cloned().map(Box::new),
             };
         }
         let nudge = match source {
@@ -156,6 +161,7 @@ impl Guards {
             }
             _ => Outcome::Failed {
                 message: texts::truncated_error(error),
+                provider: error.provider().cloned().map(Box::new),
             },
         }
     }
@@ -184,18 +190,23 @@ impl Guards {
                 } else {
                     texts::CONTEXT_WINDOW_EXHAUSTED.to_owned()
                 };
-                Outcome::Failed { message }
+                Outcome::Failed {
+                    message,
+                    provider: None,
+                }
             }
             // 修 bug（F113，用户决定 2026-10-29“内容拦截要显示给用户”）：以前落到下面的 `Completed`，静默按成功结束。
             // 响应照常提交，以错误结束，给原因文字；不重试（provider-errors.md D6 暂定）。
             Some(StopReason::Refusal) => Outcome::Failed {
                 message: rust_cli_kernel_api::model::CONTENT_BLOCKED.to_owned(),
+                provider: None,
             },
             // 能走到这里说明没有完整的 tool_use 块。
             Some(StopReason::ToolUse) => {
                 if self.malformed_retried {
                     return Outcome::Failed {
                         message: texts::MALFORMED_TOOL_USE_EXHAUSTED.to_owned(),
+                        provider: None,
                     };
                 }
                 // malformed 重试时输出上限续写次数一起清零。

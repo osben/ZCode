@@ -41,6 +41,8 @@ impl RemoteEnvironment {
             ReplyResult::Ok(reply) if reply.op() == op => Ok(reply),
             ReplyResult::Ok(reply) => Err(Ok(WireError::Io {
                 message: crate::mismatch(op.as_str(), reply.op().as_str()).to_string(),
+                http_status: None,
+                www_authenticate: None,
             })),
             ReplyResult::Err(wire) => Err(Ok(wire)),
         }
@@ -98,6 +100,8 @@ impl McpTransport for RemoteEnvironment {
             Err(Err(error)) => Err(McpError::Connect {
                 message: error.to_string(),
             }),
+            // An HTTP challenge at connect keeps its status and `WWW-Authenticate` (the OAuth hooks read them).
+            Err(Ok(wire)) if from_wire::is_http_challenge(&wire) => Err(from_wire::mcp_error(wire)),
             Err(Ok(wire)) => Err(McpError::Connect {
                 message: from_wire::mcp_text(&wire),
             }),

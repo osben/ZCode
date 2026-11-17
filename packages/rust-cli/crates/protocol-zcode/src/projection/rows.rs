@@ -496,6 +496,7 @@ impl Projection {
                 once,
                 independent,
                 origin,
+                session_allow,
                 ..
             } => {
                 let mut payload = json!({
@@ -509,6 +510,8 @@ impl Projection {
                         // Node `approvalMode: "user-once"` and `optionsPolicy: "no-always-allow"`: only allow once /
                         // deny.
                         state::single_use_permission_options()
+                    } else if *session_allow {
+                        state::session_permission_options()
                     } else {
                         state::permission_options()
                     },
