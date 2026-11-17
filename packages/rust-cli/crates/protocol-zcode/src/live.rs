@@ -1166,13 +1166,16 @@ impl SessionSink for Live {
         state.log.record(deltas);
         // Fork (slice 3 layer B): the off-peak run follows its own turn's start and end (Node `prepareOffPeakTurn`).
         let lifecycle = match &event.event {
-            KernelEvent::TurnStarted { turn, command } => self.context.off_peak.turn_started(
-                self.session.as_str(),
-                turn.as_str(),
-                command
-                    .as_ref()
-                    .map(rust_cli_kernel_api::ids::CommandId::as_str),
-            ),
+            KernelEvent::TurnStarted { turn, command } => {
+                self.context.off_peak.turn_started(
+                    self.session.as_str(),
+                    turn.as_str(),
+                    command
+                        .as_ref()
+                        .map(rust_cli_kernel_api::ids::CommandId::as_str),
+                );
+                Vec::new()
+            }
             KernelEvent::TurnFinished { turn, outcome, .. } => {
                 self.context
                     .off_peak

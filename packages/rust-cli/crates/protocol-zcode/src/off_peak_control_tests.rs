@@ -135,3 +135,62 @@ fn an_open_run_is_found_by_its_execution_and_an_ended_one_is_not() {
     );
     assert_eq!(runs.open_session("exe_1"), None);
 }
+
+fn pending(session: &str, execution: &str) -> crate::off_peak_control::PendingRun {
+    crate::off_peak_control::PendingRun {
+        session: session.to_owned(),
+        execution_id: execution.to_owned(),
+        off_peak_task_id: "oft_1".to_owned(),
+        ticket_id: "tkt_1".to_owned(),
+        provider_id: "prov".to_owned(),
+        provider_error_code: "3105".to_owned(),
+    }
+}
+
+/// Node `prepareOffPeakTurn`: an admitted off-peak input opens no run; its turn's start does. An input that is refused
+/// after admission, or dropped from the queue, leaves no run and wedges nothing.
+#[test]
+fn admission_opens_no_run_until_its_turn_starts() {
+    let runs = OffPeakRuns::default();
+    runs.admit("sess_1", "cmd_1", pending("sess_1", "exe_1"))
+        .unwrap();
+    assert_eq!(runs.open_session("exe_1"), None, "admitted only");
+    runs.turn_started("sess_1", "turn_1", Some("cmd_1"));
+    assert_eq!(runs.open_session("exe_1").as_deref(), Some("sess_1"));
+}
+
+#[test]
+fn a_dropped_admission_does_not_block_the_next_one() {
+    let runs = OffPeakRuns::default();
+    runs.admit("sess_1", "cmd_dropped", pending("sess_1", "exe_1"))
+        .unwrap();
+    // The first input never starts (refused or dropped); a new admission is accepted and starts normally.
+    runs.admit("sess_1", "cmd_2", pending("sess_1", "exe_2"))
+        .unwrap();
+    runs.turn_started("sess_1", "turn_2", Some("cmd_2"));
+    assert_eq!(runs.open_session("exe_2").as_deref(), Some("sess_1"));
+    assert_eq!(runs.open_session("exe_1"), None);
+}
+
+#[test]
+fn a_turn_of_another_command_or_session_opens_nothing() {
+    let runs = OffPeakRuns::default();
+    runs.admit("sess_1", "cmd_1", pending("sess_1", "exe_1"))
+        .unwrap();
+    runs.turn_started("sess_2", "turn_x", Some("cmd_1"));
+    runs.turn_started("sess_1", "turn_x", Some("cmd_other"));
+    runs.turn_started("sess_1", "turn_x", None);
+    assert_eq!(runs.open_session("exe_1"), None);
+}
+
+#[test]
+fn an_open_run_refuses_another_admission() {
+    let runs = OffPeakRuns::default();
+    runs.admit("sess_1", "cmd_1", pending("sess_1", "exe_1"))
+        .unwrap();
+    runs.turn_started("sess_1", "turn_1", Some("cmd_1"));
+    assert_eq!(
+        runs.admit("sess_1", "cmd_2", pending("sess_1", "exe_2")),
+        Err(crate::off_peak_control::StartError::AlreadyActive)
+    );
+}

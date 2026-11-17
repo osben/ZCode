@@ -34,6 +34,17 @@ pub(crate) fn is_expired_code(code: &str) -> bool {
     matches!(code, "3102" | "3106")
 }
 
+/// An admitted off-peak input, before its turn opens the run (`modelExecution.offPeak` and the task it creates).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingRun {
+    pub session: String,
+    pub execution_id: String,
+    pub off_peak_task_id: String,
+    pub ticket_id: String,
+    pub provider_id: String,
+    pub provider_error_code: String,
+}
+
 /// One run of a session.
 struct Run {
     session: String,
@@ -45,8 +56,7 @@ struct Run {
     lifecycle: OffPeakLifecycle,
     /// The credentials the Host sent with the ticket it installed by `replace_ticket` (None for the start ticket).
     request_auth: Option<SuppliedAuth>,
-    /// The admitted input's command, and the turn it started (the run's own turn only).
-    command: Option<String>,
+    /// The turn the run's input started (Node's `ownsTurn`): the turn whose end releases the run's idle round.
     turn: Option<String>,
 }
 
@@ -84,6 +94,9 @@ pub struct OffPeakRuns {
     runs: Mutex<HashMap<String, Run>>,
     /// Woken on every change of a run, for the attempts waiting for a ticket (Node `waiters`).
     pub(crate) changed: Notify,
+    /// Admitted off-peak inputs whose turn has not started, by command id. A run is opened when its turn starts (Node
+    /// `prepareOffPeakTurn`), so a refused or dropped input never leaves a run behind.
+    pending: Mutex<HashMap<String, PendingRun>>,
     /// The workspace policy (`workspace/updateOffPeakToolPolicy`): the default of a session without its own flag.
     policy: AtomicBool,
     /// `offPeakToolEnabled` of the sessions created or resumed with one (Node records it on the session at create).
@@ -119,7 +132,6 @@ impl OffPeakRuns {
                 provider_error_code: provider_error_code.to_owned(),
                 lifecycle: OffPeakLifecycle::new(ticket_id),
                 request_auth: None,
-                command: None,
                 turn: None,
             },
         );
@@ -183,28 +195,67 @@ impl OffPeakRuns {
         control
     }
 
-    /// The session's input `command` admitted for the run `execution` (Node `prepareOffPeakTurn`): the turn it starts
-    /// is the run's.
-    pub fn note_command(&self, session: &str, execution: &str, command: &str) {
-        if let Some(run) = self
+    /// Admits an off-peak input: its run opens when its turn starts. A session with an open run refuses it (Node
+    /// `off_peak_execution_already_active`).
+    pub fn admit(&self, session: &str, command: &str, run: PendingRun) -> Result<(), StartError> {
+        if self
             .lock()
-            .get_mut(session)
-            .filter(|run| run.execution_id == execution)
+            .get(session)
+            .is_some_and(|open| !open.lifecycle.terminal())
         {
-            run.command = Some(command.to_owned());
+            return Err(StartError::AlreadyActive);
+        }
+        self.pending
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(command.to_owned(), run);
+        Ok(())
+    }
+
+    /// The provider an admitted off-peak input's run binds to, after its model was edited while queued.
+    pub fn set_pending_provider(&self, command: &str, provider: &str) {
+        if let Some(pending) = self
+            .pending
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get_mut(command)
+        {
+            pending.provider_id = provider.to_owned();
         }
     }
 
-    /// A turn started with `command`: when it is the run's turn, the run records it (Node `createBinding`).
-    pub fn turn_started(&self, session: &str, turn: &str, command: Option<&str>) -> Vec<Value> {
-        let mut runs = self.lock();
-        let Some(run) = runs.get_mut(session) else {
-            return Vec::new();
+    /// A turn started with `command`. When the input was admitted as an off-peak run, the run opens now and this turn is
+    /// its turn (Node `prepareOffPeakTurn`). Turns of one session run one at a time, so a run from an earlier turn has
+    /// ended before this one starts; were it not so, the start is refused and the turn stays ordinary.
+    pub fn turn_started(&self, session: &str, turn: &str, command: Option<&str>) {
+        let Some(command) = command else {
+            return;
         };
-        if run.turn.is_none() && run.command.is_some() && run.command.as_deref() == command {
+        let pending = self
+            .pending
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(command);
+        let Some(pending) = pending.filter(|pending| pending.session == session) else {
+            return;
+        };
+        if self
+            .start(
+                session,
+                &pending.execution_id,
+                &pending.off_peak_task_id,
+                &pending.ticket_id,
+                &pending.provider_id,
+                &pending.provider_error_code,
+            )
+            .is_err()
+        {
+            return;
+        }
+        if let Some(run) = self.lock().get_mut(session) {
             run.turn = Some(turn.to_owned());
         }
-        notifications(run)
+        self.changed.notify_waiters();
     }
 
     /// A turn finished. When it is the run's turn, the run's main side ends with the turn's outcome and the idle round

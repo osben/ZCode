@@ -45,15 +45,14 @@ impl Actor {
     }
 
     /// 主循环的回合：新的运行 ID 与这一回合的请求（[`Self::main_request`]）。
-    /// `off_peak` is the off-peak execution the turn's input opens (its limits), if any.
+    /// `limits` are the turn's limits: an off-peak run and its model travel together in them.
     pub(crate) fn open_main_turn(
         &self,
         turn: TurnId,
-        off_peak: Option<String>,
-        turn_selection: Option<rust_cli_kernel_api::model::ModelSelection>,
+        limits: &rust_cli_kernel_api::turn_limits::TurnLimits,
     ) -> (Opening, QueryRequest) {
         let run = self.deps.ids.run();
-        let request = self.main_request(run.clone(), off_peak, turn_selection);
+        let request = self.main_request(run.clone(), limits);
         (self.open_turn(turn, Some(run), SINK_REQUESTS), request)
     }
 
@@ -61,19 +60,21 @@ impl Actor {
     fn main_request(
         &self,
         run: RunId,
-        off_peak: Option<String>,
-        turn_selection: Option<rust_cli_kernel_api::model::ModelSelection>,
+        limits: &rust_cli_kernel_api::turn_limits::TurnLimits,
     ) -> QueryRequest {
         QueryRequest {
             max_turns: self.deps.max_turns,
-            off_peak_execution: off_peak,
+            off_peak_execution: limits.off_peak_execution().map(str::to_owned),
             ..QueryRequest::new(
                 self.meta.id.clone(),
                 run,
                 self.meta.workspace.clone(),
                 self.messages.clone(),
                 // Fork (slice 3 layer B): an off-peak run's turn uses its own model; the session's stays as it is.
-                turn_selection.unwrap_or_else(|| self.selection.clone()),
+                limits
+                    .off_peak_selection()
+                    .cloned()
+                    .unwrap_or_else(|| self.selection.clone()),
                 self.mode(),
                 QuerySource::MainThread,
             )

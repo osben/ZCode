@@ -71,11 +71,7 @@ impl Actor {
             }
         }
         let hook = self.user_prompt_submit(&text);
-        let (opening, request) = self.open_main_turn(
-            turn,
-            limits.off_peak_execution().map(str::to_owned),
-            limits.off_peak_selection().cloned(),
-        );
+        let (opening, request) = self.open_main_turn(turn, &limits);
         let hooks = self.deps.hooks.clone();
         let runner = self.deps.runner.clone();
         let commands = self.deps.commands.clone();

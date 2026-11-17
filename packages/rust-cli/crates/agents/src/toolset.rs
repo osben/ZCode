@@ -28,16 +28,12 @@ const ALL_AGENT_DISALLOWED: &[&str] = &[
     tool_names::LSP,
 ];
 
-/// Fork: the desktop Cron tools (Node registers them for the main session only).
-const MAIN_SESSION_CRON: &[&str] = &[
-    tool_names::CRON_CREATE,
-    tool_names::CRON_DELETE,
-    tool_names::CRON_LIST,
-    tool_names::CRON_UPDATE,
-    tool_names::CRON_PAUSE_SELF,
-    tool_names::OFF_PEAK_CREATE,
-    tool_names::OFF_PEAK_LIST,
-];
+/// Fork: the desktop main-session-only tools, the Cron tools and the off-peak tools (Node registers them for the main
+/// session only). Both are read from their canonical arrays in `tool_names`, so a new member is withheld from subagents
+/// with no second list to update.
+fn main_session_only(name: &str) -> bool {
+    tool_names::CRON_TOOLS.contains(&name) || tool_names::OFF_PEAK_TOOLS.contains(&name)
+}
 
 /// Fork (node_desktop): the subagent tools. Node runs every child runtime with `subagents.enabled: false` (core
 /// `runtime/methods/subagent.ts`), so a child has no subagent port, no Agent and no SendMessage; Node has no ListAgents.
@@ -50,7 +46,7 @@ const NODE_CHILD_SUBAGENT_TOOLS: &[&str] = &[
 /// Fork (node_desktop): the tools no subagent child of Node's desktop agent has, fork or not: the Cron tools, which
 /// Node registers for the main session only, and the subagent tools (a desktop subagent launches no subagents).
 fn node_child_lacks(name: &str) -> bool {
-    MAIN_SESSION_CRON.contains(&name) || NODE_CHILD_SUBAGENT_TOOLS.contains(&name)
+    main_session_only(name) || NODE_CHILD_SUBAGENT_TOOLS.contains(&name)
 }
 
 /// 后台子代理只能用的工具（含 SendMessage、TaskStop、Monitor）。

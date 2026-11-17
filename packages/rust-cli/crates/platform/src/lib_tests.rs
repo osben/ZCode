@@ -787,3 +787,36 @@ async fn an_ordinary_request_is_unchanged_by_the_ticket_binding() {
     assert_eq!(seen[0].session, None);
     assert_eq!(seen[0].rejected_fingerprint, None);
 }
+
+/// Fork (slice 3 layer B): a ticket's key refused as a plain 401 (not an expired code) is not renewed by the platform:
+/// the ticket hands back the same key, so the endpoint fails at once as a rejected credential. Renewal of an expired
+/// ticket belongs to the transport (`refused_as_expired`); the same-key rule is the ordinary one (Node re-resolves the
+/// same request auth on a 401 and gets the same material).
+#[tokio::test]
+async fn a_ticket_key_rejected_again_ends_the_request_as_rejected() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = Arc::new(Supplied(std::sync::Mutex::new(Vec::new())));
+    let (platform, select) = zai_account_platform(dir.path(), source).await;
+    let ticket = rust_cli_kernel_api::off_peak_ticket::TicketSource(Arc::new(Ticketed {
+        issued: std::sync::Mutex::new(0),
+        supplies: true,
+    }));
+    let first = platform
+        .endpoint(EndpointQuery {
+            ticket: Some(&ticket),
+            ..EndpointQuery::new(&select)
+        })
+        .await
+        .unwrap();
+    let again = platform
+        .endpoint(EndpointQuery {
+            ticket: Some(&ticket),
+            rejected: Some(&first),
+            ..EndpointQuery::new(&select)
+        })
+        .await;
+    assert!(
+        matches!(again, Err(ModelError::Authentication { ref message }) if message.contains("was rejected")),
+        "{again:?}"
+    );
+}

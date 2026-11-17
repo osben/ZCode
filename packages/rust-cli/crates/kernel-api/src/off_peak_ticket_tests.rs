@@ -32,5 +32,9 @@ fn a_ticket_source_is_equal_only_to_itself() {
     let same = TicketSource(source.clone());
     assert_eq!(same, TicketSource(source));
     assert_ne!(same, TicketSource(Arc::new(Fixed)));
-    assert_eq!(format!("{same:?}"), "OffPeakTicketSource");
+    assert!(format!("{same:?}").starts_with("OffPeakTicketSource("));
+    assert_ne!(
+        format!("{same:?}"),
+        format!("{:?}", TicketSource(Arc::new(Fixed)))
+    );
 }

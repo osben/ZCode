@@ -810,6 +810,28 @@ impl Harness {
         input: Value,
         tool_use: Option<&str>,
     ) -> (ToolOutput, Vec<Value>) {
+        self.call_as_in(
+            session,
+            tool,
+            input,
+            tool_use,
+            &format!("run_parent_{tool}"),
+            None,
+        )
+        .await
+    }
+
+    /// [`Self::call_as`] for a request of run `run`, which belongs to the off-peak execution `off_peak` when given
+    /// (Fork, slice 3 layer B): a subagent that call starts inherits it.
+    pub(crate) async fn call_as_in(
+        &self,
+        session: &str,
+        tool: &str,
+        input: Value,
+        tool_use: Option<&str>,
+        run: &str,
+        off_peak: Option<&str>,
+    ) -> (ToolOutput, Vec<Value>) {
         let output = Arc::new(Mutex::new(None));
         let progress = Arc::new(Mutex::new(Vec::new()));
         let parent = ParentRunner {
@@ -848,9 +870,10 @@ impl Harness {
             .map(rust_cli_kernel_api::ids::AgentId::new);
         let request = QueryRequest {
             agent,
+            off_peak_execution: off_peak.map(str::to_owned),
             ..QueryRequest::new(
                 session,
-                RunId::new(format!("run_parent_{tool}")),
+                RunId::new(run),
                 workspace(),
                 Vec::new(),
                 selection(),

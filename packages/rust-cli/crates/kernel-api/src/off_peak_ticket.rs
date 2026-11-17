@@ -41,8 +41,9 @@ pub trait OffPeakTicketSource: Send + Sync {
 pub struct TicketSource(pub Arc<dyn OffPeakTicketSource>);
 
 impl fmt::Debug for TicketSource {
+    /// The identity equality is defined by, so two unequal sources can be told apart when debugging.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("OffPeakTicketSource")
+        write!(f, "OffPeakTicketSource({:p})", Arc::as_ptr(&self.0))
     }
 }
 
@@ -51,6 +52,8 @@ impl PartialEq for TicketSource {
         Arc::ptr_eq(&self.0, &other.0)
     }
 }
+
+impl Eq for TicketSource {}
 
 #[cfg(test)]
 #[path = "off_peak_ticket_tests.rs"]

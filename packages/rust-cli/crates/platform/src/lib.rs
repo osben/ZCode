@@ -380,11 +380,14 @@ impl ModelEndpoints for Platform {
         };
         // Fork (slice 3 layer B): a ticket of an off-peak run supplies the credentials before the ordinary source (Node
         // `this.requestAuth ?? initial.requestAuthSource`). Without one the path below is the ordinary one.
-        let granted = match ticket {
-            Some(source) => Some(source.0.acquire().await?),
-            None => None,
+        let (ticket_id, ticket_auth) = match ticket {
+            Some(source) => {
+                let granted = source.0.acquire().await?;
+                (Some(granted.id), granted.auth)
+            }
+            None => (None, None),
         };
-        let (key, supplied) = match granted.as_ref().and_then(|granted| granted.auth.clone()) {
+        let (key, supplied) = match ticket_auth {
             Some(auth) => (auth.api_key, auth.headers),
             None => {
                 self.request_auth(template, selection, previous, session)
@@ -412,13 +415,13 @@ impl ModelEndpoints for Platform {
             headers.push((name, value));
         }
         // Fork (slice 3 layer B): the attempt names its ticket; the transport reads it back to renew an expired one.
-        if let Some(granted) = granted {
+        if let Some(id) = ticket_id {
             headers.retain(|(known, _)| {
                 !known.eq_ignore_ascii_case(rust_cli_kernel_api::off_peak_ticket::TICKET_HEADER)
             });
             headers.push((
                 rust_cli_kernel_api::off_peak_ticket::TICKET_HEADER.to_owned(),
-                RedactedString::new(granted.id),
+                RedactedString::new(id),
             ));
         }
         if let Some(key) = &key

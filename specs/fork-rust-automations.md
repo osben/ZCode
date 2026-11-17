@@ -305,12 +305,12 @@ usable, then returns its id and the credentials of its `replace_ticket` (None fo
 Node `ticketExpired`: a stale ticket retries at once, a current one waits for the renewal; a cancel fails the waiters
 with `off_peak_cancelled`. `refused_as_expired` matches the run's provider and its `providerErrorCode` or 3102/3106.
 
-A `sendText` carrying `modelExecution.offPeak` opens the run at admission (`open_off_peak_run`); a second active run
-is refused. The run keeps one idle model round from admission until its turn ends (pending inputs count as work). The
-live pump calls `turn_started` (records the turn whose `TurnStarted` carries the admitted command) and `turn_finished`
-(`main_ended` with the turn outcome, then `release_idle_model_round`). Cancel clears held rounds. The turn's limits carry
-the execution id (`TurnLimits.off_peak_execution`); the query run resolves its ticket through `OffPeakPort::ticket` and
-sends only that run's requests on it.
+A `sendText` carrying `modelExecution.offPeak` is admitted as a pending run (`admit_off_peak_run`: it needs a model and
+an `offPeakTaskId`, else `off_peak_execution_identity_missing`; a session with an open run refuses it). The run opens when
+its turn starts (`turn_started`, Node `prepareOffPeakTurn`), so an input refused after admission, or dropped from the
+queue, opens nothing and blocks nothing. `firstInput` and `startNow` carrying `modelExecution.offPeak` are refused (not
+ported; refusal rather than a model without a ticket). A queued off-peak input's edited model is the run's model, and
+its edited provider the run's provider (`set_pending_provider`).
 
 Takeover is removed: no Rust caller existed, so the lifecycle has no `user_owned` state and no `UserTakeover` event.
 

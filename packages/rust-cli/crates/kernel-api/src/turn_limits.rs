@@ -12,15 +12,14 @@ use crate::tool_names::{CRON_CREATE, CRON_DELETE, CRON_PAUSE_SELF, CRON_UPDATE};
 /// manage its own definition. CronList stays (read-only).
 pub const AUTOMATION_MUTATION_TOOLS: [&str; 3] = [CRON_CREATE, CRON_UPDATE, CRON_DELETE];
 
+/// Decoded limits: every field goes through the same normalization as the constructor, so a stored or replayed value
+/// cannot hold a blank id, an untrimmed id, or a model without its run (see [`From<TurnLimitsWire>`]).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "TurnLimitsWire")]
 pub struct TurnLimits {
     /// The automation that dispatched the turn (the Host's explicit `automationId`, trimmed and non-empty, also when
     /// decoded). It is the only target CronPauseSelf can pause; it is never derived from a command or input id.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "trimmed_id"
-    )]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     automation: Option<String>,
     /// Tool names the input hides from its turn (`toolDisallowlist`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -118,16 +117,26 @@ impl TurnLimits {
     }
 }
 
-/// The `new` rule for a decoded id: trimmed, a blank one is none.
-fn trimmed_id<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Option<String>, D::Error> {
-    let raw = Option::<String>::deserialize(deserializer)?;
-    Ok(raw
-        .as_deref()
-        .map(str::trim)
-        .filter(|id| !id.is_empty())
-        .map(str::to_owned))
+/// The wire form of [`TurnLimits`] as decoded.
+#[derive(Deserialize)]
+struct TurnLimitsWire {
+    #[serde(default)]
+    automation: Option<String>,
+    #[serde(default)]
+    hidden_tools: Vec<String>,
+    #[serde(default)]
+    off_peak_execution: Option<String>,
+    #[serde(default)]
+    off_peak_selection: Option<Box<crate::model::ModelSelection>>,
+}
+
+impl From<TurnLimitsWire> for TurnLimits {
+    fn from(wire: TurnLimitsWire) -> Self {
+        TurnLimits::new(wire.automation.as_deref(), wire.hidden_tools).with_off_peak_run(
+            wire.off_peak_execution.as_deref(),
+            wire.off_peak_selection.map(|selection| *selection),
+        )
+    }
 }
 
 #[cfg(test)]
