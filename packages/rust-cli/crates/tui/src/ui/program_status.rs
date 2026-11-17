@@ -160,7 +160,9 @@ fn blocked(request: &InteractionRequest, app: &App) -> Report {
         InteractionRequest::PlanApproval { .. } => {
             Report::root(State::Blocked(Kind::Permission), text)
         }
-        InteractionRequest::Question { .. } => Report::root(State::Blocked(Kind::Question), text),
+        InteractionRequest::Question { .. } | InteractionRequest::McpElicitation { .. } => {
+            Report::root(State::Blocked(Kind::Question), text)
+        }
     }
 }
 

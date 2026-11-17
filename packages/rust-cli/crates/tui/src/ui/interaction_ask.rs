@@ -400,6 +400,28 @@ pub fn ask_of(
                 },
             }
         }
+        // Fork (F3b(c)): the terminal has no form for an MCP elicitation yet. Its message shows as a question without
+        // options, and an answer from here is not an elicitation answer, so the server gets a decline.
+        InteractionRequest::McpElicitation {
+            tool_use, message, ..
+        } => {
+            let questions =
+                serde_json::json!([{"question": message, "header": message, "options": []}]);
+            Ask {
+                id: id.to_string(),
+                item_id: item_of(view, tool_use.as_str()),
+                name: display_name("McpElicitation"),
+                summary: message.clone(),
+                tool_name: "McpElicitation".to_owned(),
+                origin: None,
+                machine: None,
+                body: AskBody::Question {
+                    pages: pages_of(&questions),
+                    snoozable: false,
+                    deadline_at: 0,
+                },
+            }
+        }
         InteractionRequest::PlanApproval { tool_use, plan, .. } => Ask {
             id: id.to_string(),
             item_id: item_of(view, tool_use.as_str()),

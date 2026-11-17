@@ -776,6 +776,17 @@ pub enum InteractionRequest {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         origin: Option<Box<AskOrigin>>,
     },
+    /// Fork (F3b(c)): a server the client runs asks the user for input during the tool call `tool_use`
+    /// (`elicitation/create`). `requested_schema` is the server's flat form schema, as sent.
+    McpElicitation {
+        tool_use: ToolUseId,
+        server: String,
+        message: String,
+        requested_schema: Value,
+        /// Fork: the subagent that asked, as for the other asks.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        origin: Option<Box<AskOrigin>>,
+    },
 }
 
 /// Fork: the subagent an ask came from (Node `zcodeInteractionRequestOriginSchema`, `kind: "subagent"`).
@@ -800,7 +811,8 @@ impl InteractionRequest {
         match self {
             Self::Permission { tool_use, .. }
             | Self::Question { tool_use, .. }
-            | Self::PlanApproval { tool_use, .. } => tool_use,
+            | Self::PlanApproval { tool_use, .. }
+            | Self::McpElicitation { tool_use, .. } => tool_use,
         }
     }
 
@@ -809,7 +821,8 @@ impl InteractionRequest {
         match self {
             Self::Permission { origin, .. }
             | Self::Question { origin, .. }
-            | Self::PlanApproval { origin, .. } => origin.as_deref(),
+            | Self::PlanApproval { origin, .. }
+            | Self::McpElicitation { origin, .. } => origin.as_deref(),
         }
     }
 
@@ -818,7 +831,8 @@ impl InteractionRequest {
     pub fn asked_from(mut self, from: AskOrigin) -> Self {
         let (Self::Permission { origin, .. }
         | Self::Question { origin, .. }
-        | Self::PlanApproval { origin, .. }) = &mut self;
+        | Self::PlanApproval { origin, .. }
+        | Self::McpElicitation { origin, .. }) = &mut self;
         if origin.is_none() {
             *origin = Some(Box::new(from));
         }
@@ -827,8 +841,8 @@ impl InteractionRequest {
 }
 
 pub use crate::interaction::{
-    Answer, DetachedAsk, DetachedEvent, InteractionAnswer, PermissionAnswer, PlanApprovalAnswer,
-    QuestionAnnotation, QuestionAnswer,
+    Answer, DetachedAsk, DetachedEvent, InteractionAnswer, McpElicitationAnswer, PermissionAnswer,
+    PlanApprovalAnswer, QuestionAnnotation, QuestionAnswer,
 };
 pub use crate::session_ops::{RunView, SessionOps};
 
