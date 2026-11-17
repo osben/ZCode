@@ -102,10 +102,15 @@ pub fn encode_result_json(value: Option<&Value>) -> Option<String> {
 }
 
 /// Node `decodeJson`: NULL and JSON `null` are absent. Unparsable text is absent too (Node would throw).
-pub fn decode_json(text: Option<&str>) -> Option<Value> {
-    match serde_json::from_str::<Value>(text?) {
-        Ok(Value::Null) | Err(_) => None,
-        Ok(value) => Some(value),
+/// Corrupt text is an error, not an absent value: Node's decodeJson throws, and a silent `None` would
+/// make a damaged failure or error read as "no failure".
+pub fn decode_json(text: Option<&str>) -> Result<Option<Value>, serde_json::Error> {
+    match text {
+        None | Some("") => Ok(None),
+        Some(text) => Ok(match serde_json::from_str::<Value>(text)? {
+            Value::Null => None,
+            value => Some(value),
+        }),
     }
 }
 
@@ -153,15 +158,15 @@ pub fn encode_run_settlement(status: RunStatus, settlement: &Settlement) -> Enco
 pub fn decode_run_settlement(
     status: PhysicalStatus,
     failure_json: Option<&str>,
-) -> RunSettlementFields {
-    let raw = decode_json(failure_json);
+) -> Result<RunSettlementFields, serde_json::Error> {
+    let raw = decode_json(failure_json)?;
     let plain = |status: RunStatus, failure: Option<Value>| RunSettlementFields {
         status,
         stop_reason: None,
         superseded_by: None,
         failure,
     };
-    match status {
+    Ok(match status {
         PhysicalStatus::Cancelled => {
             let mut fields = RunSettlementFields {
                 status: RunStatus::Stopped,
@@ -208,5 +213,5 @@ pub fn decode_run_settlement(
         PhysicalStatus::Completed => plain(RunStatus::Completed, raw),
         PhysicalStatus::Pending => plain(RunStatus::Pending, None),
         PhysicalStatus::Running => plain(RunStatus::Running, None),
-    }
+    })
 }

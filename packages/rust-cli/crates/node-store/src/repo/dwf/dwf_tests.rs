@@ -13,6 +13,11 @@ fn database() -> Connection {
     conn
 }
 
+/// The codec on well-formed input; corrupt input has its own test.
+fn decode(status: PhysicalStatus, failure_json: Option<&str>) -> RunSettlementFields {
+    decode_run_settlement(status, failure_json).expect("well-formed failure_json")
+}
+
 fn add_session(conn: &Connection, id: &str, parent: Option<&str>) {
     conn.execute(
         "insert into session (id, project_id, parent_id, slug, directory, title, version, time_created, time_updated)
@@ -109,7 +114,7 @@ fn completed_and_non_terminal_states_keep_their_physical_names() {
 
 #[test]
 fn decoding_cancelled_reads_the_envelope_and_defaults_to_user() {
-    let with_envelope = decode_run_settlement(
+    let with_envelope = decode(
         PhysicalStatus::Cancelled,
         Some(r#"{"stopReason":"model","error":{"code":"X","message":"y"}}"#),
     );
@@ -124,7 +129,7 @@ fn decoding_cancelled_reads_the_envelope_and_defaults_to_user() {
     );
     // Older rows have no envelope, and an unknown reason is not in the allowlist: both decode as user.
     for raw in [None, Some(r#"{"stopReason":"unknown"}"#)] {
-        let fields = decode_run_settlement(PhysicalStatus::Cancelled, raw);
+        let fields = decode(PhysicalStatus::Cancelled, raw);
         assert_eq!(fields.status, RunStatus::Stopped);
         assert_eq!(fields.stop_reason, Some(StopReason::User));
         assert_eq!(fields.failure, None);
@@ -133,7 +138,7 @@ fn decoding_cancelled_reads_the_envelope_and_defaults_to_user() {
 
 #[test]
 fn decoding_failed_splits_interrupted_from_errored() {
-    let interrupted = decode_run_settlement(
+    let interrupted = decode(
         PhysicalStatus::Failed,
         Some(r#"{"code":"Interrupted","message":"gone"}"#),
     );
@@ -144,7 +149,7 @@ fn decoding_failed_splits_interrupted_from_errored() {
         Some(json!({ "code": "Interrupted", "message": "gone" }))
     );
 
-    let errored = decode_run_settlement(PhysicalStatus::Failed, None);
+    let errored = decode(PhysicalStatus::Failed, None);
     assert_eq!(errored.status, RunStatus::Errored);
     assert_eq!(errored.failure, None);
 }
@@ -505,4 +510,129 @@ fn the_0019_checksum_is_pinned_to_the_upstream_ledger() {
         .find(|m| m.id == "0019_dwf_journal")
         .expect("0019 is embedded");
     assert_eq!(crate::repo::migrations::checksum(migration.sql), PINNED);
+}
+
+// ---- Fail closed: a corrupt column is an error, never an absent value (Node's decodeJson / JSON.parse throw).
+
+/// A connection that accepts the CHECK-violating values a corrupt database could hold.
+fn corrupt_writes(conn: &Connection) {
+    conn.execute_batch("pragma ignore_check_constraints = 1")
+        .unwrap();
+}
+
+#[test]
+fn a_corrupt_run_failure_column_is_an_error() {
+    let conn = database();
+    create_run(&conn, &run("run_1", RunStatus::Running), 10).unwrap();
+    conn.execute(
+        "update dwf_run set status = 'failed', failure_json = '{' where id = 'run_1'",
+        [],
+    )
+    .unwrap();
+    assert!(get_run(&conn, "run_1").is_err());
+}
+
+#[test]
+fn a_corrupt_run_result_column_is_an_error() {
+    let conn = database();
+    create_run(&conn, &run("run_1", RunStatus::Completed), 10).unwrap();
+    conn.execute(
+        "update dwf_run set result_json = '[1,' where id = 'run_1'",
+        [],
+    )
+    .unwrap();
+    assert!(get_run(&conn, "run_1").is_err());
+}
+
+#[test]
+fn a_corrupt_run_args_column_is_an_error() {
+    let conn = database();
+    create_run(&conn, &run("run_1", RunStatus::Running), 10).unwrap();
+    conn.execute(
+        "update dwf_run set args_json = 'nope' where id = 'run_1'",
+        [],
+    )
+    .unwrap();
+    assert!(get_run(&conn, "run_1").is_err());
+}
+
+#[test]
+fn a_corrupt_actor_persona_column_is_an_error() {
+    let conn = database();
+    create_run(&conn, &run("run_1", RunStatus::Running), 10).unwrap();
+    let actor = ActorRecord {
+        run_id: "run_1".into(),
+        site_id: "s".into(),
+        ordinal: 0,
+        ..ActorRecord::default()
+    };
+    put_actor(&conn, &actor, 11).unwrap();
+    conn.execute(
+        "update dwf_actor set persona_json = '{\"name\":' where run_id = 'run_1'",
+        [],
+    )
+    .unwrap();
+    assert!(get_actor(&conn, "run_1", "s", 0).is_err());
+    assert!(list_actors(&conn, "run_1").is_err());
+}
+
+#[test]
+fn corrupt_node_columns_are_errors() {
+    for (column, text) in [
+        ("result_json", "{"),
+        ("error_json", "{"),
+        ("stats_json", "x"),
+        ("input_json", "["),
+    ] {
+        let conn = database();
+        create_run(&conn, &run("run_1", RunStatus::Running), 10).unwrap();
+        let node = NodeRecord {
+            run_id: "run_1".into(),
+            site_id: "s".into(),
+            ordinal: 0,
+            input_hash: "ih".into(),
+            ..NodeRecord::default()
+        };
+        put_node(&conn, &node, 11).unwrap();
+        conn.execute(&format!("update dwf_node set {column} = ?1"), [text])
+            .unwrap();
+        assert!(get_node(&conn, "run_1", "s", 0).is_err(), "{column}");
+        assert!(list_nodes(&conn, "run_1").is_err(), "{column}");
+    }
+}
+
+#[test]
+fn an_unknown_node_status_is_an_error_like_an_unknown_kind() {
+    let conn = database();
+    create_run(&conn, &run("run_1", RunStatus::Running), 10).unwrap();
+    let node = NodeRecord {
+        run_id: "run_1".into(),
+        site_id: "s".into(),
+        ordinal: 0,
+        input_hash: "ih".into(),
+        ..NodeRecord::default()
+    };
+    put_node(&conn, &node, 11).unwrap();
+    corrupt_writes(&conn);
+    conn.execute("update dwf_node set status = 'bogus'", [])
+        .unwrap();
+    assert!(get_node(&conn, "run_1", "s", 0).is_err());
+    conn.execute("update dwf_node set status = 'running', kind = 'bogus'", [])
+        .unwrap();
+    assert!(get_node(&conn, "run_1", "s", 0).is_err());
+}
+
+#[test]
+fn a_duplicate_run_keeps_the_underlying_sqlite_error_as_its_cause() {
+    let conn = database();
+    create_run(&conn, &run("run_1", RunStatus::Running), 10).unwrap();
+    let error = create_run(&conn, &run("run_1", RunStatus::Running), 11).unwrap_err();
+    let chain: Vec<String> = error.chain().map(ToString::to_string).collect();
+    assert!(chain[0].contains("run already exists: run_1"), "{chain:?}");
+    assert!(
+        chain
+            .iter()
+            .any(|link| link.contains("UNIQUE constraint failed")),
+        "{chain:?}"
+    );
 }

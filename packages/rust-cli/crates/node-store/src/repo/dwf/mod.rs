@@ -15,7 +15,6 @@ use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde_json::Value;
 #[cfg(test)]
-#[cfg(test)]
 use std::path::Path;
 
 use codecs::{
@@ -172,6 +171,26 @@ pub struct WorkflowActorLink<'a> {
 const RUN_COLUMNS: &str = "id, parent_session_id, cwd, name, script_text, script_hash, args_json, \
      tool_call_id, resumed_from, caps_max_concurrency, spent_tokens, status, failure_json, result_json";
 
+/// A corrupt JSON column fails the row and names the column. It is never read as an absent value.
+fn corrupt_column(row: &Row<'_>, name: &str, error: serde_json::Error) -> rusqlite::Error {
+    let index = row.as_ref().column_index(name).unwrap_or(0);
+    rusqlite::Error::FromSqlConversionFailure(index, rusqlite::types::Type::Text, Box::new(error))
+}
+
+/// An optional JSON column where JSON `null` is absent (Node `decodeJson`).
+fn json_column(row: &Row<'_>, name: &str) -> rusqlite::Result<Option<Value>> {
+    let text: Option<String> = row.get(name)?;
+    decode_json(text.as_deref()).map_err(|error| corrupt_column(row, name, error))
+}
+
+/// A result column, where only SQL NULL is absent: a stored JSON `null` is a valid result (Node
+/// `result_json !== null`, then JSON.parse).
+fn value_column(row: &Row<'_>, name: &str) -> rusqlite::Result<Option<Value>> {
+    let text: Option<String> = row.get(name)?;
+    text.map(|text| serde_json::from_str(&text).map_err(|error| corrupt_column(row, name, error)))
+        .transpose()
+}
+
 fn run_from_row(row: &Row<'_>) -> rusqlite::Result<RunRecord> {
     let physical: String = row.get("status")?;
     let physical = PhysicalStatus::from_column(&physical).ok_or_else(|| {
@@ -182,9 +201,8 @@ fn run_from_row(row: &Row<'_>) -> rusqlite::Result<RunRecord> {
         )
     })?;
     let failure_json: Option<String> = row.get("failure_json")?;
-    let settlement = decode_run_settlement(physical, failure_json.as_deref());
-    let args_json: Option<String> = row.get("args_json")?;
-    let result_json: Option<String> = row.get("result_json")?;
+    let settlement = decode_run_settlement(physical, failure_json.as_deref())
+        .map_err(|error| corrupt_column(row, "failure_json", error))?;
     Ok(RunRecord {
         run_id: row.get("id")?,
         parent_session_id: row.get("parent_session_id")?,
@@ -193,7 +211,7 @@ fn run_from_row(row: &Row<'_>) -> rusqlite::Result<RunRecord> {
         tool_call_id: row.get("tool_call_id")?,
         script_text: row.get("script_text")?,
         script_hash: row.get("script_hash")?,
-        args: decode_json(args_json.as_deref()),
+        args: json_column(row, "args_json")?,
         resumed_from: row.get("resumed_from")?,
         max_concurrency: row.get("caps_max_concurrency")?,
         spent_tokens: row.get("spent_tokens")?,
@@ -201,20 +219,19 @@ fn run_from_row(row: &Row<'_>) -> rusqlite::Result<RunRecord> {
         stop_reason: settlement.stop_reason,
         superseded_by: settlement.superseded_by,
         failure: settlement.failure,
-        // Node: `result_json !== null` decodes, and a stored JSON null is a valid result.
-        result: result_json
-            .as_deref()
-            .and_then(|text| serde_json::from_str(text).ok()),
+        result: value_column(row, "result_json")?,
     })
 }
 
 /// Node `createRun`: writes the run with its settlement (if the record already has one).
 pub fn create_run(conn: &Connection, run: &RunRecord, now: i64) -> Result<()> {
+    // The encoder reads only stop_reason, superseded_by and failure. The result is written from
+    // `run.result` below, so it is not copied into the settlement.
     let settlement = Settlement {
         stop_reason: run.stop_reason,
         superseded_by: run.superseded_by.clone(),
         failure: run.failure.clone(),
-        result: run.result.clone(),
+        result: None,
     };
     let encoded = encode_run_settlement(run.status, &settlement);
     let inserted = conn.execute(
@@ -245,7 +262,9 @@ pub fn create_run(conn: &Connection, run: &RunRecord, now: i64) -> Result<()> {
         Ok(_) => Ok(()),
         Err(error) => {
             if get_run(conn, &run.run_id)?.is_some() {
-                bail!("dwf journal: run already exists: {}", run.run_id);
+                // Node keeps the sqlite error as `cause`; the chain shows the real constraint.
+                return Err(anyhow::Error::new(error)
+                    .context(format!("dwf journal: run already exists: {}", run.run_id)));
             }
             Err(error.into())
         }
@@ -392,13 +411,12 @@ const ACTOR_COLUMNS: &str =
     "run_id, site_id, ordinal, name, persona_json, session_id, resolved_model";
 
 fn actor_from_row(row: &Row<'_>) -> rusqlite::Result<ActorRecord> {
-    let persona: Option<String> = row.get("persona_json")?;
     Ok(ActorRecord {
         run_id: row.get("run_id")?,
         site_id: row.get("site_id")?,
         ordinal: row.get("ordinal")?,
         name: row.get("name")?,
-        persona: decode_json(persona.as_deref()),
+        persona: json_column(row, "persona_json")?,
         session_id: row.get("session_id")?,
         resolved_model: row.get("resolved_model")?,
     })
@@ -494,13 +512,26 @@ fn node_kind_from_column(value: &str) -> rusqlite::Result<NodeKind> {
     })
 }
 
+/// An unknown status is corruption (the CHECK set is running, completed, failed): it errors like an
+/// unknown kind instead of defaulting to a terminal state.
+fn node_status_from_column(value: &str) -> rusqlite::Result<NodeStatus> {
+    Ok(match value {
+        "running" => NodeStatus::Running,
+        "completed" => NodeStatus::Completed,
+        "failed" => NodeStatus::Failed,
+        other => {
+            return Err(rusqlite::Error::FromSqlConversionFailure(
+                0,
+                rusqlite::types::Type::Text,
+                format!("unknown dwf_node status {other}").into(),
+            ));
+        }
+    })
+}
+
 fn node_from_row(row: &Row<'_>) -> rusqlite::Result<NodeRecord> {
     let kind: String = row.get("kind")?;
     let status: String = row.get("status")?;
-    let result_json: Option<String> = row.get("result_json")?;
-    let error_json: Option<String> = row.get("error_json")?;
-    let stats_json: Option<String> = row.get("stats_json")?;
-    let input_json: Option<String> = row.get("input_json")?;
     Ok(NodeRecord {
         run_id: row.get("run_id")?,
         site_id: row.get("site_id")?,
@@ -510,18 +541,12 @@ fn node_from_row(row: &Row<'_>) -> rusqlite::Result<NodeRecord> {
         actor_ordinal: row.get("actor_ordinal")?,
         actor_seq: row.get("actor_seq")?,
         input_hash: row.get("input_hash")?,
-        status: match status.as_str() {
-            "running" => NodeStatus::Running,
-            "completed" => NodeStatus::Completed,
-            _ => NodeStatus::Failed,
-        },
-        result: result_json
-            .as_deref()
-            .and_then(|text| serde_json::from_str(text).ok()),
-        error: decode_json(error_json.as_deref()),
-        stats: decode_json(stats_json.as_deref()),
+        status: node_status_from_column(&status)?,
+        result: value_column(row, "result_json")?,
+        error: json_column(row, "error_json")?,
+        stats: json_column(row, "stats_json")?,
         artifact_id: row.get("artifact_id")?,
-        input: decode_json(input_json.as_deref()),
+        input: json_column(row, "input_json")?,
         message_boundary: row.get("message_boundary")?,
     })
 }

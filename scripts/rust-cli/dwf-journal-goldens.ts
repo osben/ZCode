@@ -10,8 +10,12 @@
  *   (direction 1), and Node's readers must reproduce it on the Rust-written database (direction 2,
  *   apps/zcode-cli/packages/adapters/tests/dwf-rust-goldens.test.ts).
  *
+ * The scenario is read by both runtimes, so its ops are typed as a discriminated union on `op`: a
+ * misspelled field fails here instead of silently producing an absent value on both sides.
+ *
  * Timestamps are not compared (the journal's clocks are wall-clock); the scenario's `now` is only a
- * label. Run from the repository root with:
+ * label. The stale expected file is removed first, so a crash mid-run cannot leave it beside a new
+ * database. Run from the repository root with:
  *   pnpm exec tsx scripts/rust-cli/dwf-journal-goldens.ts
  * (from a worktree without node_modules, run it by absolute path from the checkout that has them).
  */
@@ -27,6 +31,53 @@ import {
   ensureSqliteSchemaMigrationTable,
 } from "../../packages/shared/src/sqlite-migrations/index.ts";
 
+// Type-only imports: erased at runtime, so the script needs no domain package resolution, and the
+// journal calls below check against the same records Node's engine uses.
+import type {
+  ActorRecord,
+  Caps,
+  NodeRecord,
+  RunEvent,
+  RunRecord,
+  RunSettlementRecord,
+  RunStatus,
+} from "../../apps/zcode-cli/packages/dynamic-workflow/src/engine/types.ts";
+
+/**
+ * The shared scenario, as a discriminated union on `op`. The fields are Node's record names, so a
+ * misspelled key fails the type check of the journal call it feeds.
+ */
+type ScenarioOp =
+  | { op: "createSession"; now: number; input: Record<string, string> }
+  | { op: "createRun"; now: number; record: RunRecord }
+  | {
+      op: "updateRunStatus";
+      now: number;
+      runId: string;
+      status: RunStatus;
+      settlement?: RunSettlementRecord;
+    }
+  | { op: "updateRunUsage"; now: number; runId: string; spentTokens: number }
+  | { op: "updateRunCaps"; now: number; runId: string; caps: Caps }
+  | { op: "updateRunScript"; now: number; runId: string; scriptText: string; scriptHash: string }
+  | { op: "putActor"; now: number; record: ActorRecord }
+  | { op: "putNode"; now: number; record: NodeRecord }
+  | { op: "appendEvent"; now: number; runId: string; event: RunEvent }
+  | {
+      op: "workflowActorLink";
+      now: number;
+      id: string;
+      childSessionId: string;
+      parentSessionId: string;
+      path: string;
+      status: string;
+    };
+
+interface Scenario {
+  description: string;
+  ops: ScenarioOp[];
+}
+
 const here = dirname(fileURLToPath(import.meta.url));
 const fixtures = join(here, "../../packages/rust-cli/crates/node-store/fixtures/dwf");
 const databasePath = join(fixtures, "node-written.sqlite");
@@ -36,13 +87,14 @@ const expectedPath = join(fixtures, "node-expected.json");
 const ALL_EVENTS = { types: "all", reportItems: "all" } as const;
 const SESSION_PARENT = "sess_parent";
 
-interface Scenario {
-  ops: Array<Record<string, any>>;
-}
+// Fresh outputs only: the directory exists before anything is written, and the stale expected file
+// goes first, so a crash mid-run cannot leave it beside a new database.
+mkdirSync(fixtures, { recursive: true });
+rmSync(expectedPath, { force: true });
+rmSync(databasePath, { force: true });
 
 const scenario = JSON.parse(readFileSync(join(fixtures, "scenario.json"), "utf8")) as Scenario;
 
-rmSync(databasePath, { force: true });
 const db = new DatabaseSync(databasePath);
 // Same bootstrap the Node journal tests use: the migrated schema, then the journal store over it.
 db.exec("BEGIN IMMEDIATE");
@@ -71,24 +123,22 @@ const runIds: string[] = [];
 
 for (const op of scenario.ops) {
   switch (op.op) {
-    case "createSession": {
-      const input = op.input as Record<string, string>;
+    case "createSession":
       db.prepare(
         `insert into session (id, project_id, parent_id, slug, directory, title, version, time_created, time_updated)
          values (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
-        input.id,
-        input.projectID,
-        input.parentID ?? null,
-        input.slug,
-        input.directory,
-        input.title,
-        input.version,
+        op.input.id,
+        op.input.projectID,
+        op.input.parentID ?? null,
+        op.input.slug,
+        op.input.directory,
+        op.input.title,
+        op.input.version,
         op.now,
         op.now,
       );
       break;
-    }
     case "createRun":
       journal.createRun(op.record);
       runIds.push(op.record.runId);
@@ -124,12 +174,10 @@ for (const op of scenario.ops) {
         status: op.status,
       });
       break;
-    default:
-      throw new Error(`unknown scenario op: ${op.op}`);
   }
 }
 
-const stripTimes = (event: { sequence: number; event: unknown; timeCreated?: number }) => ({
+const stripTimes = (event: { sequence: number; event: unknown }) => ({
   sequence: event.sequence,
   event: event.event,
 });
@@ -164,6 +212,5 @@ const expected = {
 };
 
 db.close();
-mkdirSync(fixtures, { recursive: true });
 writeFileSync(expectedPath, `${JSON.stringify(expected, null, 2)}\n`);
 process.stdout.write(`wrote ${databasePath}\nwrote ${expectedPath}\n`);
