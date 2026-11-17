@@ -3,7 +3,7 @@
 
 use serde_json::json;
 
-use super::{input_schema, message_text, parse, reply_text};
+use super::{input_schema, message_text, parse, reply_display, reply_text};
 
 #[test]
 fn input_is_strict_and_bounded_like_node() {
@@ -33,6 +33,19 @@ fn the_parent_gets_the_subagent_message_block_escaped() {
     assert_eq!(
         message_text("a1", "Explore", "s & t", "<m>"),
         "<subagent-message>\n<agent-id>a1</agent-id>\n<agent-type>Explore</agent-type>\n<summary>s &amp; t</summary>\n<message>&lt;m&gt;</message>\n</subagent-message>"
+    );
+}
+
+/// Node's RespondToCoordinator display (`result-display.ts`): the card reads its status (`success` or `failed`).
+#[test]
+fn the_reply_display_carries_the_status_the_card_reads() {
+    assert_eq!(
+        reply_display(&Ok("response_1".to_owned())),
+        json!({"kind": "respond_to_coordinator", "status": "success"})
+    );
+    assert_eq!(
+        reply_display(&Err(("response_1".to_owned(), "boom".to_owned()))),
+        json!({"kind": "respond_to_coordinator", "status": "failed"})
     );
 }
 

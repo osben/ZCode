@@ -101,6 +101,12 @@ pub(crate) fn message_text(
     .join("\n")
 }
 
+/// Node's RespondToCoordinator display (`result-display.ts`): the card reads its status, not the model text.
+pub(crate) fn reply_display(outcome: &Result<String, (String, String)>) -> serde_json::Value {
+    let status = if outcome.is_ok() { "success" } else { "failed" };
+    serde_json::json!({ "kind": "respond_to_coordinator", "status": status })
+}
+
 /// The result text the model reads. `Ok` carries the response id; `Err` carries the response id and the failure.
 pub(crate) fn reply_text(outcome: &Result<String, (String, String)>) -> String {
     let text = match outcome {
@@ -180,7 +186,9 @@ impl RespondToCoordinator {
             )),
             None => Err((response_id, "the subagent is no longer running".to_owned())),
         };
-        Ok(text(reply_text(&outcome)))
+        let mut shown = text(reply_text(&outcome));
+        shown.display = reply_display(&outcome);
+        Ok(shown)
     }
 }
 
