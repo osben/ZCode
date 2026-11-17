@@ -51,6 +51,7 @@ fn configured() -> Vec<McpServer> {
             transport: McpTransportConfig::stdio("configured".to_owned(), Vec::new()),
             options: Default::default(),
             machine: Default::default(),
+            oauth: None,
         })
         .collect()
 }

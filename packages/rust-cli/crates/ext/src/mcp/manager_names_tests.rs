@@ -15,6 +15,7 @@ fn stdio(name: &str) -> McpServer {
         scope: McpScope::Project,
         transport: McpTransportConfig::stdio("node".to_owned(), Vec::new()),
         options: Default::default(),
+        oauth: None,
         machine: Default::default(),
     }
 }

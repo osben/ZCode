@@ -7,6 +7,7 @@ mod manager;
 mod node_config;
 mod notices;
 pub mod oauth;
+mod oauth_hooks;
 mod parse;
 mod resources;
 mod result;

@@ -18,6 +18,17 @@ impl McpOAuthStore for MemoryStore {
     async fn load(&self, key: &str) -> Result<Option<String>, McpOAuthStoreError> {
         Ok(self.0.get(key).cloned())
     }
+
+    async fn apply(&self, _writes: &[McpOAuthWrite]) -> Result<(), McpOAuthStoreError> {
+        Ok(())
+    }
+
+    async fn try_acquire_lease(
+        &self,
+        _key_prefix: &str,
+    ) -> Result<Option<Box<dyn AuthorizationLease>>, McpOAuthStoreError> {
+        Ok(None)
+    }
 }
 
 fn node_store() -> MemoryStore {

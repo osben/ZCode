@@ -61,9 +61,15 @@ impl McpTransport for Recording {
         _: &WorkspaceRef,
         request: McpConnect,
     ) -> Result<McpConnectionId, McpError> {
+        // `oauth-` servers answer HTTP 401 without a bearer, as a remote MCP server behind OAuth does.
+        let message = if request.server.starts_with("oauth-") {
+            "HTTP 401: unauthorized"
+        } else {
+            "refused"
+        };
         self.0.lock().unwrap().push(request);
         Err(McpError::Connect {
-            message: "refused".to_owned(),
+            message: message.to_owned(),
         })
     }
 
@@ -703,6 +709,232 @@ async fn an_older_connect_never_replaces_a_newer_lane() {
     assert_eq!(
         list(&fixture, "new", false).await["mine"]["status"],
         "failed"
+    );
+}
+
+// ---- MCP OAuth through `with_mcp_oauth` (PR2, `specs/fork-rust-mcp-oauth.md`): the lane manager starts the flow
+// after a 401, and the status row shows `connecting` with the authorization.
+
+use std::collections::BTreeMap as OAuthMap;
+use std::net::SocketAddr;
+use std::time::{Duration, Instant};
+
+use rust_cli_ext::mcp::oauth::{
+    AuthorizationLease, LoopbackConnection, LoopbackListener, McpOAuthRuntime, McpOAuthStore,
+    McpOAuthStoreError, McpOAuthWrite, OAuthHttpError, OAuthHttpRequest, OAuthHttpResponse,
+    credential_key, credential_key_prefix,
+};
+
+/// The credential map of the flow, in memory.
+#[derive(Default)]
+struct MemoryOAuthStore(StdMutex<OAuthMap<String, String>>);
+
+/// The lease the flow takes here: this fixture has no other flow to exclude.
+struct NoLease;
+
+#[async_trait]
+impl AuthorizationLease for NoLease {
+    async fn release(self: Box<Self>) {}
+}
+
+#[async_trait]
+impl McpOAuthStore for MemoryOAuthStore {
+    async fn load(&self, key: &str) -> Result<Option<String>, McpOAuthStoreError> {
+        Ok(self.0.lock().unwrap().get(key).cloned())
+    }
+
+    async fn apply(&self, writes: &[McpOAuthWrite]) -> Result<(), McpOAuthStoreError> {
+        let mut raw = self.0.lock().unwrap();
+        for write in writes {
+            match write {
+                McpOAuthWrite::Put { key, value } => {
+                    raw.insert(key.clone(), value.clone());
+                }
+                McpOAuthWrite::DeleteIfValue { key, expected } => {
+                    if raw.get(key) == Some(expected) {
+                        raw.remove(key);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn try_acquire_lease(
+        &self,
+        _key_prefix: &str,
+    ) -> Result<Option<Box<dyn AuthorizationLease>>, McpOAuthStoreError> {
+        Ok(Some(Box::new(NoLease)))
+    }
+}
+
+/// A loopback listener that never receives the browser's callback: the flow stays pending.
+struct Parked;
+
+#[async_trait]
+impl LoopbackListener for Parked {
+    fn local_addr(&self) -> SocketAddr {
+        SocketAddr::from(([127, 0, 0, 1], 1))
+    }
+
+    async fn accept(&mut self) -> Result<Box<dyn LoopbackConnection>, OAuthHttpError> {
+        std::future::pending().await
+    }
+}
+
+/// Discovery answers from the authorization server at the MCP origin; the rest is never reached.
+struct DiscoveryOnly;
+
+#[async_trait]
+impl McpOAuthRuntime for DiscoveryOnly {
+    fn random_bytes(&self, len: usize) -> Result<Vec<u8>, OAuthHttpError> {
+        Ok(vec![7; len])
+    }
+
+    fn now_ms(&self) -> i64 {
+        1_767_225_600_000
+    }
+
+    async fn http(&self, request: OAuthHttpRequest) -> Result<OAuthHttpResponse, OAuthHttpError> {
+        let reply = |status: u16, body: Value| OAuthHttpResponse {
+            status,
+            body: body.to_string(),
+            www_authenticate: None,
+        };
+        Ok(
+            if let Some(base) = request
+                .url
+                .strip_suffix("/.well-known/oauth-authorization-server")
+            {
+                reply(
+                    200,
+                    json!({
+                        "issuer": base,
+                        "authorization_endpoint": format!("{base}/authorize"),
+                        "token_endpoint": format!("{base}/token"),
+                        "registration_endpoint": format!("{base}/register"),
+                        "response_types_supported": ["code"],
+                        "code_challenge_methods_supported": ["S256"],
+                    }),
+                )
+            } else if request.url.ends_with("/register") {
+                reply(201, json!({"client_id": "dcr-client"}))
+            } else {
+                reply(404, json!({}))
+            },
+        )
+    }
+
+    async fn bind_loopback(&self) -> Result<Box<dyn LoopbackListener>, OAuthHttpError> {
+        Ok(Box::new(Parked))
+    }
+}
+
+/// [`fixture`] with the OAuth store and runtime wired through `with_mcp_oauth`, as `app_server` does.
+fn oauth_fixture(user: Value) -> (Fixture, Arc<MemoryOAuthStore>) {
+    let facts = EnvFacts {
+        cwd: EnvPath::new(ROOT),
+        platform: "linux".to_owned(),
+        os_version: "Linux".to_owned(),
+        shell: "bash".to_owned(),
+        is_git_repo: true,
+        home: Some(EnvPath::new("/Users/dev")),
+        uid: None,
+    };
+    let env = MemoryEnvironment::new(facts).with_file("/Users/dev/repo/.git/HEAD", "ref");
+    let home = tempfile::tempdir().unwrap();
+    let file = home.path().join(".zcode/cli/config.json");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, user.to_string()).unwrap();
+    let paths = StoragePaths::resolve(&Default::default(), home.path(), home.path());
+    let scope = TaskScope::root("app-workspace-oauth-test", |_| {});
+    let transport = Arc::new(Recording::default());
+    let slots = Arc::new(Slots::default());
+    let layer = Arc::new(Layer::default());
+    let hooks = slots.accepted.clone();
+    let store = Arc::new(MemoryOAuthStore::default());
+    let admin = AppWorkspace::new(
+        (Arc::new(env) as Arc<dyn Files>, paths),
+        ProcessConfig {
+            process_env: EnvSnapshot::default(),
+        },
+        slots.clone(),
+        layer.clone(),
+        (
+            transport.clone(),
+            scope.spawner(),
+            Arc::new(FixedClock(1_767_225_600_000)),
+        ),
+        Arc::new(Plugins(None)),
+    )
+    .with_mcp_oauth(store.clone(), Arc::new(DiscoveryOnly));
+    let fixture = Fixture {
+        _home: home,
+        _scope: scope,
+        admin,
+        transport,
+        hooks,
+        slots,
+        layer,
+    };
+    (fixture, store)
+}
+
+#[tokio::test]
+async fn a_401_starts_the_flow_and_the_row_shows_connecting_with_the_authorization() {
+    let (fixture, store) = oauth_fixture(json!({"mcp": {"servers": {
+        "oauth-remote": {"type": "http", "url": "https://mcp.example.test/mcp"},
+    }}}));
+    // The connect is refused with 401; the lane manager starts the flow once.
+    let _ = list(&fixture, "k", true).await;
+    assert_eq!(fixture.transport.started(), ["oauth-remote"]);
+
+    // The flow publishes its pending record and the status read turns the row into `connecting`.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let row = loop {
+        let row = list(&fixture, "k", false).await["oauth-remote"].clone();
+        if row["status"] == "connecting" {
+            break row;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the row never showed connecting: {row}"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    assert_eq!(row["authorization"]["type"], "oauth_authorization_code");
+    let url = row["authorization"]["authorizationUrl"].as_str().unwrap();
+    assert!(
+        url.starts_with("https://mcp.example.test/authorize?"),
+        "{url}"
+    );
+    assert!(url.contains("code_challenge_method=S256"), "{url}");
+    assert!(row["authorization"]["startedAt"].is_string());
+    // The status reads did not connect again.
+    assert_eq!(fixture.transport.started(), ["oauth-remote"]);
+    let prefix = credential_key_prefix(
+        "oauth-remote",
+        "https://mcp.example.test/mcp",
+        None,
+        None,
+        None,
+    );
+    assert!(
+        store
+            .load(&credential_key(&prefix, "pending_authorization"))
+            .await
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[test]
+fn the_production_app_server_wires_mcp_oauth_into_the_workspace() {
+    // Guard on the production call site: if `app_server` stops passing the store and runtime, this fails.
+    let source: String = include_str!("app_server.rs").split_whitespace().collect();
+    assert!(
+        source.contains(".with_mcp_oauth(opened.platform.mcp_oauth_store(),opened.platform.mcp_oauth_runtime(),)"),
+        "app_server.rs no longer wires the MCP OAuth store and runtime into the workspace"
     );
 }
 

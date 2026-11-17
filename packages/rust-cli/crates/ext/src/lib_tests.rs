@@ -73,6 +73,7 @@ async fn the_registry_adds_skill_and_mcp_tools_after_the_base() {
         scope: McpScope::Project,
         transport: McpTransportConfig::stdio("node".to_owned(), Vec::new()),
         options: Default::default(),
+        oauth: None,
         machine: Default::default(),
     }];
     let ext = ext(env, fake, &scope, servers);
@@ -117,6 +118,7 @@ async fn the_wait_tool_follows_pending_servers_and_the_declared_session() {
         scope: McpScope::Project,
         transport: McpTransportConfig::stdio("node".to_owned(), Vec::new()),
         options: Default::default(),
+        oauth: None,
         machine: Default::default(),
     }];
     let ext = ext(

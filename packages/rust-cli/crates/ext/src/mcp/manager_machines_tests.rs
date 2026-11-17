@@ -93,6 +93,7 @@ fn bound(name: &str, machine: Option<&str>) -> McpServer {
         scope: McpScope::User,
         transport: McpTransportConfig::stdio("npx".to_owned(), vec!["@playwright/mcp".to_owned()]),
         options: Default::default(),
+        oauth: None,
         machine: rust_cli_kernel_api::ids::MachineName::new(machine.unwrap_or_default()),
     }
 }

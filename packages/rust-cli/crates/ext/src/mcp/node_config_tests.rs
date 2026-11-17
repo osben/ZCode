@@ -74,7 +74,7 @@ fn a_non_object_table_is_ignored() {
     assert_eq!(warnings.len(), 1);
 }
 
-/// L19：`cwd`、`timeoutMs`、`alwaysLoad` 按 Node 接上；`protocolVersion`、`oauth` 未覆盖，记警告照常连接
+/// L19：`cwd`、`timeoutMs`、`alwaysLoad` 按 Node 接上；`protocolVersion` 未覆盖，记警告照常连接；`oauth` 按 PR2 解析
 /// （ext.md §3.1）。
 #[test]
 fn node_server_fields_are_read_or_reported() {
@@ -92,7 +92,6 @@ fn node_server_fields_are_read_or_reported() {
         warnings,
         vec![
             "mcp.servers.b: protocolVersion \"auto\" is not supported; connecting with the 2025-06-18 handshake".to_owned(),
-            "mcp.servers.b: oauth is not supported; connecting without it".to_owned(),
         ]
     );
     assert_eq!(

@@ -175,6 +175,7 @@ pub fn parse_servers_keeping(
                     scope,
                     transport,
                     options: Default::default(),
+                    oauth: None,
                     machine: Default::default(),
                 });
             }

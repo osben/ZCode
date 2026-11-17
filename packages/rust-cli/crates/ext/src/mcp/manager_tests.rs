@@ -24,6 +24,7 @@ fn config(name: &str, remote: bool) -> McpServer {
             McpTransportConfig::stdio("node".to_owned(), Vec::new())
         },
         options: Default::default(),
+        oauth: None,
         machine: Default::default(),
     }
 }

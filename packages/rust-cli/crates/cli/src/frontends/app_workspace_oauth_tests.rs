@@ -31,7 +31,7 @@ fn authorization_identity_needs_a_url_and_an_authorization_code_block() {
 }
 
 #[test]
-fn servers_without_an_authorization_code_block_have_no_identity() {
+fn a_remote_server_without_a_block_is_authorization_code_for_the_row() {
     let stdio = json!({"command": "node", "oauth": {"type": "authorization_code"}});
     assert!(authorization_identity("s", stdio.as_object().unwrap()).is_none());
     let client_credentials = json!({
@@ -39,6 +39,7 @@ fn servers_without_an_authorization_code_block_have_no_identity() {
         "oauth": {"type": "client_credentials", "clientId": "c", "clientSecret": "s"}
     });
     assert!(authorization_identity("s", client_credentials.as_object().unwrap()).is_none());
+    // Node: a remote server with no oauth block is authorization_code (`resolveOAuthConfig`).
     let plain = json!({"url": "https://mcp.example.test/mcp"});
-    assert!(authorization_identity("s", plain.as_object().unwrap()).is_none());
+    assert!(authorization_identity("s", plain.as_object().unwrap()).is_some());
 }

@@ -19,6 +19,7 @@ fn helper_config(name: &str) -> McpServer {
         scope: McpScope::Plugin,
         transport: McpTransportConfig::NodeHelper,
         options: Default::default(),
+        oauth: None,
         machine: Default::default(),
     }
 }

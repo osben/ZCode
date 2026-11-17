@@ -196,6 +196,11 @@ impl Platform {
         mcp_oauth::CredentialsMcpOAuthStore::new(self.credentials.clone()).into_dyn()
     }
 
+    /// Entropy, clock, egress and loopback for the MCP OAuth flow (`specs/fork-rust-mcp-oauth.md`, PR2).
+    pub fn mcp_oauth_runtime(&self) -> Arc<dyn rust_cli_ext::mcp::oauth::McpOAuthRuntime> {
+        mcp_oauth::McpOAuthRuntimeImpl::new(self.services.egress.clone()).into_dyn()
+    }
+
     /// 凭据文件 `credentials.json` 的位置。
     pub fn credentials_file(&self) -> &StoragePath {
         self.credentials.file()

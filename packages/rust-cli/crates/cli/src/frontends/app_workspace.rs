@@ -16,8 +16,8 @@ use rust_cli_base::secret::EnvSnapshot;
 use rust_cli_base::sync::LockUnpoisoned;
 use rust_cli_ext::WorkspaceConfigLoader;
 use rust_cli_ext::mcp::oauth::{
-    McpOAuthStore, ServerOAuthIdentity, authorization_status, is_authorization_challenge,
-    may_show_pending, pending_authorization_for,
+    McpOAuthRuntime, McpOAuthStore, ServerOAuthIdentity, authorization_status,
+    is_authorization_challenge, may_show_pending, pending_authorization_for,
 };
 use rust_cli_ext::mcp::{McpManager, McpScope, McpServer, McpSettings, parse_node_servers};
 use rust_cli_ext::plugins::load_all;
@@ -68,6 +68,8 @@ pub(crate) struct AppWorkspace {
     /// Fork: the MCP OAuth state (pending authorizations). None when the admin is built without a platform,
     /// so no row reads it (`with_mcp_oauth`).
     pub(crate) mcp_oauth: Option<Arc<dyn McpOAuthStore>>,
+    /// PR2: entropy, clock, egress and loopback for the OAuth flow (`with_mcp_oauth`).
+    pub(crate) mcp_oauth_runtime: Option<Arc<dyn McpOAuthRuntime>>,
     /// Connect and tool settings for the settings lane (defaults; the handshake carries the agent version).
     pub(crate) mcp: McpSettings,
     pub(crate) version: &'static str,
@@ -115,6 +117,7 @@ impl AppWorkspace {
             spawner,
             clock,
             mcp_oauth: None,
+            mcp_oauth_runtime: None,
             mcp: McpSettings {
                 client_version: crate::VERSION.to_owned(),
                 ..McpSettings::default()
@@ -127,8 +130,13 @@ impl AppWorkspace {
     }
 
     /// Fork: read the MCP OAuth state of the status rows from the platform's credential store.
-    pub(crate) fn with_mcp_oauth(mut self, store: Arc<dyn McpOAuthStore>) -> Self {
+    pub(crate) fn with_mcp_oauth(
+        mut self,
+        store: Arc<dyn McpOAuthStore>,
+        runtime: Arc<dyn McpOAuthRuntime>,
+    ) -> Self {
         self.mcp_oauth = Some(store);
+        self.mcp_oauth_runtime = Some(runtime);
         self
     }
 
@@ -375,6 +383,11 @@ impl AppWorkspace {
             self.mcp.clone(),
             self.clock.clone(),
         );
+        if let (Some(store), Some(runtime)) =
+            (self.mcp_oauth.clone(), self.mcp_oauth_runtime.clone())
+        {
+            manager.enable_oauth(store, runtime);
+        }
         let fresh = Arc::new(Lane {
             arrival,
             key: key.to_owned(),
@@ -553,10 +566,19 @@ async fn close(lane: &Lane) {
 /// servers and client-credential servers have no pending authorization.
 fn authorization_identity(name: &str, config: &Map<String, Value>) -> Option<ServerOAuthIdentity> {
     let url = config.get("url")?.as_str()?;
-    let oauth = config.get("oauth")?.as_object()?;
-    if oauth.get("type")?.as_str()? != "authorization_code" {
-        return None;
-    }
+    // A remote server without an `oauth` block is `authorization_code` for Node (`resolveOAuthConfig`), and the
+    // connect hook starts its flow on 401; the row must show that flow too.
+    let empty = Map::new();
+    let oauth = match config.get("oauth") {
+        None => &empty,
+        Some(value) => {
+            let block = value.as_object()?;
+            if block.get("type")?.as_str()? != "authorization_code" {
+                return None;
+            }
+            block
+        }
+    };
     let text = |key: &str| oauth.get(key).and_then(Value::as_str).map(str::to_owned);
     Some(ServerOAuthIdentity {
         name: name.to_owned(),

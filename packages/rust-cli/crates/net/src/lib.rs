@@ -22,6 +22,7 @@ mod egress;
 mod error;
 pub mod header;
 mod http;
+pub mod loopback;
 mod no_proxy;
 pub mod retry;
 mod roots;
