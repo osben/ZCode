@@ -327,8 +327,13 @@ Selection: an off-peak input's model travels in its turn limits (`TurnLimits.off
 request selection (`main_request`). `submitted_execution` persists no selection for an off-peak input, so the session's
 model, and the next ordinary turn's, is the user's own. Test: `an_off_peak_input_does_not_persist_its_model`.
 
-Not built yet:
-and the policy flip (`workspace/updateOffPeakToolPolicy` still answers `enabled: false`). The flip stays last.
+Policy flip (last): `workspace/updateOffPeakToolPolicy` stores the policy and answers `enabled` as stored (Node
+`appRuntimePreferences.offPeakToolEnabled`). The off-peak tools follow it for sessions without their own
+`offPeakToolEnabled` flag (`OffPeakRuns::tools_enabled`); the port refuses a session whose tools are off.
+
+Known gap (not in this slice): the off-peak tools are registered for every session in the app-server, so the model sees
+OffPeakCreate and OffPeakList even when the policy is off; a call is refused with "not enabled". Node registers them only
+when enabled. Gating registration per session needs the tool list to know the session (follow-up).
 
 What is blocked: an off-peak run's model requests must carry the ticket (`x-off-peak-ticket-id`, request auth from
 `modelExecution.requestAuth`), wait for a ticket when none is held, retry on the ticket-expired code
