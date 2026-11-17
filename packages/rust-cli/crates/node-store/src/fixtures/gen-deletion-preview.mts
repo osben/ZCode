@@ -48,4 +48,20 @@ const revision = createHash("sha256")
   .update(JSON.stringify([snapshot.revision, listed.map((f) => [f.relativePath, f.bytes]), null]))
   .digest("hex");
 console.log(JSON.stringify({ revision, sessionIds: snapshot.sessionIds, forks: snapshot.forks, retainedArtifacts: retained, deletedFiles, incomplete: snapshot.deleting, completed: snapshot.completed }, null, 2));
+
+// Execute, as Node's executeSessionDeletionWith does on this state: the barrier (Node's beginSessionDeletion with the
+// preview's revision), the files (removeSession keeps the retained artifacts), then the rows (completeSessionDeletion).
+// Its result is Node's: status "deleted", retainedArtifacts = the count of retained references.
+await store.beginSessionDeletion("root", snapshot.revision, "integration-op", retained.map((ref) => ({ sessionId: ref.sessionId, artifactId: ref.artifactId })));
+for (const id of snapshot.sessionIds) {
+  await files.removeSession(id, retained.filter((ref) => ref.sessionId === id).map((ref) => ref.artifactId));
+}
+await store.completeSessionDeletion("root");
+const left = [];
+for (const path of ["artifacts/root/own.txt", "artifacts/child/art1-ref.bin", "artifacts/child/other.txt", "exec/child/log.txt"]) {
+  left.push({ path, exists: (await import("node:fs")).existsSync(join(cli, path)) });
+}
+// The steps above ran to completion (no throw); this script does not call Node's executeSessionDeletionWith, whose
+// workspace graph does not load outside the CLI build, so no status is reported here.
+console.log(JSON.stringify({ executeSteps: { completed: true, sessionIds: snapshot.sessionIds, retainedArtifacts: retained.length }, filesAfter: left }, null, 2));
 store.close();
