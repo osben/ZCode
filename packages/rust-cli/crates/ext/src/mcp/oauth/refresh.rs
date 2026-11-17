@@ -123,7 +123,9 @@ async fn refresh_locked(
     // A discovery failure is never an invalid grant: it is handled like a network failure.
     let resolved = match resolve_authorization_server(store, runtime, input, &current).await {
         Ok(resolved) => resolved,
-        Err(message) => return fail_soft(input, &current, message),
+        // A credential-store failure is a temporary error (the credentials were kept), not a discovery failure.
+        Err(ResolveFailure::Store(message)) => return Err(RefreshError::Temporary(message)),
+        Err(ResolveFailure::Discovery(message)) => return fail_soft(input, &current, message),
     };
     let Some(endpoint) = resolved.metadata["token_endpoint"].as_str() else {
         return fail_soft(
@@ -249,16 +251,23 @@ struct Resolved {
 
 /// The cached discovery record when it is fresh and matches the stored issuer (Node `loadDiscoveryRecord`).
 /// Otherwise discover and save the record, so the next refresh within 24 h makes no discovery request.
+/// Why the authorization server could not be resolved. A store failure keeps the credentials and is a temporary error;
+/// a discovery or resource failure is handled like a network failure.
+enum ResolveFailure {
+    Store(String),
+    Discovery(String),
+}
+
 async fn resolve_authorization_server(
     store: &dyn McpOAuthStore,
     runtime: &dyn McpOAuthRuntime,
     input: &RefreshInput,
     current: &CredentialPair,
-) -> Result<Resolved, String> {
+) -> Result<Resolved, ResolveFailure> {
     let now = runtime.now_ms();
     let cached = load_discovery(store, &input.key_prefix, current.issuer.as_deref(), now)
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| ResolveFailure::Store(error.to_string()))?;
     let found = match cached.filter(|state| state["authorizationServerMetadata"].is_object()) {
         Some(state) => Discovered {
             authorization_server: state["authorizationServerUrl"]
@@ -272,7 +281,9 @@ async fn resolve_authorization_server(
                 .cloned(),
         },
         None => {
-            let found = discover(runtime, &input.server_url, None).await?;
+            let found = discover(runtime, &input.server_url, None)
+                .await
+                .map_err(ResolveFailure::Discovery)?;
             save_discovery(
                 store,
                 &input.key_prefix,
@@ -281,11 +292,13 @@ async fn resolve_authorization_server(
                 found.resource_metadata.as_ref(),
                 now,
             )
-            .await?;
+            .await
+            .map_err(ResolveFailure::Store)?;
             found
         }
     };
-    let resource = select_resource(&input.server_url, found.resource_metadata.as_ref())?;
+    let resource = select_resource(&input.server_url, found.resource_metadata.as_ref())
+        .map_err(ResolveFailure::Discovery)?;
     Ok(Resolved {
         metadata: found.metadata,
         resource,
