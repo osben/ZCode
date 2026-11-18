@@ -774,6 +774,76 @@ Remaining (W6a part 2, owner: W6a; not in this part):
 5. Wiring the escalation book into the driver owner's messages and the engine journal (the book is written, the engine is not yet called from a session).
 6. Port the driver tests that apply to W6a: `bootstrap/tests/workflow-driver.test.ts` (1,344 lines), `workflow-driver-submit-profile.test.ts`, and the escalation cases. Concurrency and the seat gate are W6b.
 
+### 9.8 W6a part 2: the driver owner (design, then as built)
+
+Status: part 2a built on `feat/rust-workflow-actor-runtime`, stacked on W6a part 1 (#536). Gate off; nothing calls it. The turn side (part 2b) is open.
+
+**The index question (answered).** Node hides `workflow_actor` child sessions from the sessions index by their parent, not by their role. Evidence:
+
+- The actor session is created with `parentSessionId` (`dynamic-workflow-run-launch.ts` `createActorSession`, and `persistActorSession`). Its `task_type` is `workflow_child`, the runtime's `taskType`.
+- The index lists roots only: `apps/zcode-cli/packages/adapters/src/storage/session-store/repositories/sessions.ts`, `listSessions`, `if (input.roots) clauses.push("parent_id is null")`.
+- The sidebar child scope covers only `selection_side_chat` (`CHILD_SESSION_TASK_TYPES`, same file). Subagents are reached from the parent conversation, not from the list.
+- `sessions-index-projection.ts` and the shared `sessions-index.ts` schema have no reference to the role. The projection shows only what the store returns.
+- Rust mirrors the filter: `packages/rust-cli/crates/node-store/src/repo/sessions.rs:315`, `(parent_id is null or task_type = 'fork')`.
+
+So the rule is: a `workflow_actor` child has a parent, and the parent filter hides it. The link row is not part of the listing. The Rust actor session therefore needs `parent_id` set to the run's parent session, and must not be a fork. Its `task_type` in Rust is the subagent kind's value (`subagent_child`) rather than Node's `workflow_child`; this is a recorded deviation (section 9.8 "Deviations"). The owned-tree deletion and the usage counts key on `workflow_child`, so this has to be settled before the session is written in the real runtime.
+
+Owners (part 2 additions):
+
+- **driver owner** (`crates/workflow/src/driver_owner.rs`, `ActorDriverOwner`): the single owner of the engine, the escalation book, and the active-ask table. Every message from a turn is handled inside `handle_*`, one at a time. After each engine call it runs `pump`, which applies the engine's queued starts and failures.
+- **actor port** (`ActorPort`, the engine's `WorkflowDriver`): owns the session map and the per-session submit profile. It queues starts, failures and verdicts. It never calls the book. It calls the turn side through `ActorSessions`.
+- **turn side** (`ActorSessions`, implemented later by the async runtime on the child session): creates the session and link row, starts and cancels turns, and rejects withdrawn parked questions. No engine access.
+
+Event order (part 2; the submit and turn-end paths of 9.7 are unchanged):
+
+```
+turn side           ActorDriverOwner (owner)                  ActorPort (driver)        engine
+  │ start (engine.ask)  ─────────────────────────────────────────────────────────────►│ start_ask(session)
+  │                                                    │◄─ queued start ──────────────│
+  │                    pump: book.start_ask (withdraw parked), profile_fit,            │
+  │                          Fits / FallBack → active; Fail → engine.ask_failed        │
+  │ submit_result(v) ─SubmitResult{session,v}─────────►│ submit_route: refused text, or engine.submit_attempted
+  │                                                    │───────────────────────────────►│ respond_to_submit → verdict slot
+  │◄── reply: refusal text, or verdict ───────────────│◄───────────────────────────────│
+  │                    reconcile: ask no longer live → book.end_ask, reject parked       │
+  │ escalate(q) ─────────────────────────────────────►│ book.escalate (write via engine.record, raise before park)
+```
+
+Rules that follow:
+
+- A message is handled only by the owner. The turn side waits for the reply, and nothing in the port blocks.
+- `pump` runs before and after each message, and loops until the queues are empty. A start is applied before any message from its turn can be handled, because the turn starts after the start is queued.
+- The active-ask table is derived from the engine: an ask that is no longer live is ended in the book, and its parked questions are rejected. Accept, budget exhaustion and cancel all end the ask this way, so no path has to remember to end it.
+- A world read in a turn-driven ask is not supported in this part (W6b); the port fails such an ask with a `DriverError`, as a fault rather than a panic.
+
+Node driver tests applied in part 2: the port refusals (`workflow-driver-submit-bridge.ts`), the profile fit, the escalation budget and withdrawal, and the nudge and repair verdicts through the engine. The turn-loop tests (`workflow-driver.test.ts`) need the real child session and stay in the remaining list.
+
+As built (part 2a: the owner and the port, synchronous, no turn runtime):
+
+- `crates/workflow/src/driver_owner.rs`: `ActorDriverOwner<J, S>` (the engine, the escalation book, the active-ask table) and `ActorPort<S>` (the engine's `WorkflowDriver`). `ActorSessions` is the turn-side trait; `ActorSessionRequest` carries Node's title (`workflow subagent <site>@<ordinal>`), the parent, and the link path (`dwf/<run>/<site>@<ordinal>`).
+- Owner entry points: `create_actor`, `ask`, `drain`, `complete`, `submit_result` (refusals from `submit_route`, else `engine.submit_attempted` and the verdict slot), `turn_ended` (Nudge, a settlement, or a repair, from the engine), `escalate` and `answer` (the book, writing through `engine.record`), `set_message_boundary` and `ask_mutating` (the engine's existing methods, on the session's active ask), `set_actor_profile` (the caller's ask-to-actor analysis).
+- `pump` applies the port's queued starts (book start, withdrawn questions rejected, turn start), failures (`ask_failed`), and then `reconcile`, which ends every active ask the engine no longer has live (accept, budget exhaustion, cancel, complete). `reconcile` also runs when the queues are empty, because `complete` queues nothing.
+- A profile fit that fails (untyped profile on a typed ask) fails the ask with `DriverError` before any turn starts. A mono miss falls back to generic and the turn starts.
+- Tests: `crates/workflow/src/driver_owner_tests.rs`, 15 cases (session title, parent and link path; the two port refusals with the engine writing nothing; accept, invalid submit, nudge; mono fallback and untyped failure; escalation refusal without an ask, park, answer, budget, withdrawal on accept, cancel on complete; boundary write; mutating observation on an idle session).
+- Red first, as recorded: `cargo test -p rust-cli-workflow --lib driver_owner` failed to compile (`file not found for module driver_owner`) before the module existed. Then 12 of 13 ran red on the tests' own assumptions (a session exists only after the first dispatch, so `session_of` before a drain is `None`). The test was fixed to drain first. The `complete` case then failed because `pump` returned before `reconcile` on an empty queue; the fix is in `pump`. Both are in the commit.
+- Box, 2026-11-17: `cargo test -p rust-cli-workflow --lib` 79 pass (after the owner tests); `cargo fmt --all -- --check` exit 0; `cargo clippy --workspace --all-targets -- -D warnings` exit 0.
+
+Deviations (part 2a):
+
+- Actor session `task_type`: Node writes `workflow_child` (the runtime's `taskType`). The Rust turn side will write the subagent kind's task type; `workflow_child` is the owned-tree and usage key in Node (`session-store` `OWNED_CHILD_TASK_TYPES`, `session_tree.rs`), so the turn side must either use it or add the Rust equivalent to those lists. Not settled in this part; the owner does not write sessions.
+- Seeds (`ActorSessionSeed`) are passed through the trait signature but not used. Diverged actors are part 2b.
+- World reads fail the ask with `DriverError` as a fault (W6b).
+- The owner is synchronous and single-threaded by construction; the async turn side must send messages to it, not call it from inside a turn.
+
+Remaining (W6a part 2b, the turn side; not in this part):
+
+1. An `ActorSessions` implementation over the agents crate: a child session of kind `Subagent` with the parent, the title, and the `workflow_actor` link row (`insert_workflow_actor_link` in node-store), created at dispatch. Decide the task type first (Deviations above).
+2. The turn loop: `start_turn` runs a turn on the child; `submit_result` and `escalate` tools modelled on `respond.rs` (blocking on a oneshot, the result is the reply); `turn_ended` → Nudge → a fresh turn with `NUDGE_PROMPT`; the typed epilogue (`schema_epilogue` / `TYPED_TOOL_EPILOGUE`) and mono profile in the instructions.
+3. Permission origin (`ChildSink::with_origin`, `actor_interaction_description`) and session-scoped "always allow" grants.
+4. `ask_mutating` from tool activity and `set_message_boundary` from the transcript (the owner methods exist; the callers do not).
+5. The `countSource` adapter for the import builder (W5b) and the per-ask tool counts for `statsFromTurn`.
+6. Port the turn-loop cases of `bootstrap/tests/workflow-driver.test.ts` and `workflow-driver-submit-profile.test.ts` that need a session; these need the real child session from item 1.
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.

@@ -6,6 +6,7 @@
 
 pub mod artifact_spec;
 pub mod canon;
+pub mod driver_owner;
 pub mod driver_rules;
 pub mod engine;
 pub mod engine_artifacts;
@@ -29,6 +30,8 @@ pub mod scheduler_submit;
 
 #[cfg(test)]
 mod driver_golden_tests;
+#[cfg(test)]
+mod driver_owner_tests;
 #[cfg(test)]
 mod engine_tests;
 #[cfg(test)]
