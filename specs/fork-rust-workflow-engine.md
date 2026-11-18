@@ -844,6 +844,66 @@ Remaining (W6a part 2b, the turn side; not in this part):
 5. The `countSource` adapter for the import builder (W5b) and the per-ask tool counts for `statsFromTurn`.
 6. Port the turn-loop cases of `bootstrap/tests/workflow-driver.test.ts` and `workflow-driver-submit-profile.test.ts` that need a session; these need the real child session from item 1.
 
+### 9.8b W6a part 2b: the turn side (design, then as built)
+
+Status: part 2b (session side) built on `feat/rust-workflow-actor-runtime`, stacked on part 2a (f4f710534). The turn side (2c) is open.
+
+Decision (coordinator, 2026-11-17): the actor session's `task_type` is Node's `workflow_child`, not the Rust subagent kind's `subagent_child`. Reason: the DB is shared with upstream, and `workflow_child` is the key for owned-tree deletion (`OWNED_CHILD_TASK_TYPES`) and the tree walk (`SESSION_TREE_CHILD_TASK_TYPES`). The actor keeps `parent_id` set and is never a fork.
+
+Checked on the Rust side, the owned-child paths already include `workflow_child`:
+
+- `crates/node-store/src/session_deletion.rs` `OWNED_CHILD_TASK_TYPES`: `selection_side_chat`, `workflow_child`, `subagent_child`, `nested_workflow_child`. Forks are excluded.
+- `crates/node-store/src/session_tree.rs` `SESSION_TREE_CHILD_TASK_TYPES`: the same four. The counts split `workflow_child` and `nested_workflow_child` into `workflow_sessions`.
+- Before this part, `load.rs` read `workflow_child` as `SessionKind::Interactive`. That is wrong for a child with a parent, so this part maps it to `Subagent`. Node-written `workflow_child` rows change kind on read. Nothing in the sessions list shows them (`parent_id is null or task_type = 'fork'`).
+
+Owners (part 2b additions):
+
+- **session store** (node-store, the only writer of `session` rows): `create_workflow_actor_session` writes the row with `task_type = 'workflow_child'`, `parent_id`, and the run's directory. It goes through the same `repo::sessions::create` as every session.
+- **actor session adapter** (`crates/workflow/src/actor_sessions.rs`, `NodeActorSessions`, the `ActorSessions` impl): for `create_session`, it mints the session id with `mint_actor_session_id` (the replay envelope's function), writes the session row, then the `workflow_actor` link. It is synchronous and runs on the driver owner's thread. It owns no state of its own beyond the connection.
+- **turn side** (later, in `crates/agents`): runs the turns on the session. It is not in this part.
+
+Event order for session creation (one owner, one write path):
+
+```
+engine (dispatch)   driver owner / port        NodeActorSessions                 node-store
+  create_actor_session ─► create_session(req) ─► mint id, create_workflow_actor_session ─► session row (workflow_child)
+                                                 insert_workflow_actor_link ───────────────► session_task_link (workflow_actor)
+                       ◄── session id ───────────┘
+```
+
+Deviations recorded in this part:
+
+- Link id: Node uses `tasklink_<randomUUID()>`. This adapter uses `tasklink_<session id>`, which is unique because `child_session_id` is unique in the table. The id is not random, so a re-created session keeps the same link id (the upsert path moves only status and time).
+- `persona` is recorded by the owner's request and not written to the session row here; the turn side writes the frozen persona.
+
+As built: see the end of this section.
+
+As built (part 2b, the session side; the turn loop is not in this part):
+
+- `crates/node-store/src/repo/dwf/mod.rs`: `WorkflowActorSession` and `create_workflow_actor_session`, the writer of the `workflow_child` row under the run's parent (through `repo::sessions::create`, not a parallel insert). Exported as `rust_cli_node_store::dwf`.
+- `crates/node-store/src/load.rs`: `workflow_child` and `nested_workflow_child` read as `SessionKind::Subagent` (were `Interactive`). Node-written rows change kind on read; the sessions list is still filtered by `parent_id is null or task_type = 'fork'`.
+- Owned-child paths, checked and tested: `session_deletion::OWNED_CHILD_TASK_TYPES` and `session_tree::SESSION_TREE_CHILD_TASK_TYPES` already include `workflow_child` (no code change). Test `a_workflow_child_is_an_owned_member_of_its_parent_tree` (node-store) asserts the owned tree of the parent contains the actor session.
+- `crates/workflow/src/actor_sessions.rs`: `NodeActorSessions<T: ActorTurns>`, the `ActorSessions` impl. `create_session` mints the id with `mint_actor_session_id`, writes the row, then the `workflow_actor` link (`tasklink_<session id>`, path from the request). A request with no parent session is refused and writes nothing. The turn calls are delegated to `ActorTurns`, the injected turn side.
+- Tests (workflow): `actor_sessions_tests.rs`, 4 cases (row and link written; id equals the replay function's id; no-parent refusal; delegation). Tests (node-store): 2 in `repo/dwf/workflow_actor_tests.rs`.
+- Red first, as recorded: node-store `cargo test -p rust-cli-node-store --lib workflow_actor` failed to compile (`WorkflowActorSession` and `create_workflow_actor_session` not in scope). Workflow `cargo test -p rust-cli-workflow --lib actor_sessions` failed to compile (`file not found for module actor_sessions`). After the module existed, one case failed on an expectation of mine: the sanitiser escapes `_` to `__` (Node's rule), so the prefix is `sess_dwf-run__1-`. The test was corrected; the code was right.
+- Box, 2026-11-17: node-store `cargo test -p rust-cli-node-store --lib` 330 pass, 1 ignored (was 328 pass); workflow `cargo test -p rust-cli-workflow --lib` 85 pass.
+
+Deviations (part 2b):
+
+- The link id is `tasklink_<session id>`, not Node's `tasklink_<randomUUID()>`. `child_session_id` is unique, so it cannot collide, and a re-created session keeps its link id.
+- `trace_id` of the actor session is the parent session id. Node's trace is not verified here; the Rust subagent path uses the root agent id.
+- The persona is not written to the session row here; the turn side writes the frozen persona.
+
+Remaining (part 2c, the turn side):
+
+1. An `ActorTurns` implementation over `crates/agents`: each ask runs as a turn on the child session (turn-by-turn entry on the existing subagent machinery; `spawn.rs` runs to completion today).
+2. The `submit_result` and `escalate` tools, modelled on `respond.rs`: `escalate` blocks on a oneshot and its answer is the tool result; `submit_result` sends `submit_result` to the owner and returns the verdict as the tool result.
+3. The nudge turn with `NUDGE_PROMPT`, the typed epilogue (`schema_epilogue`, `TYPED_TOOL_EPILOGUE`) and the mono profile in the instructions, and the repair budget path in the turn loop.
+4. Permission origin (`ChildSink::with_origin`, `actor_interaction_description`) and session-scoped "always allow".
+5. Callers for `ask_mutating` (tool activity) and `set_message_boundary` (the transcript). The owner methods exist.
+   5b. The `countSource` adapter for the import builder (W5b) and the per-ask tool counts for `statsFromTurn`.
+6. Port the session-dependent cases of `bootstrap/tests/workflow-driver.test.ts` and `workflow-driver-submit-profile.test.ts`.
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.
