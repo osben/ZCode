@@ -237,6 +237,7 @@ fn undriven(harness: &crate::test_support::Harness, agent: &str) -> AgentId {
         background: true,
         asks: None,
         result: None,
+        actor_port: None,
         state: crate::live::AgentState::Running {
             abort: Abort::new(),
             mailbox: Vec::new(),

@@ -16,6 +16,7 @@
 
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use rust_cli_kernel_api::env::WorkspaceRef;
 use rust_cli_kernel_api::env_shell::BackgroundStatus;
 use rust_cli_kernel_api::ids::{AgentId, MachineName, SessionId};
@@ -23,6 +24,7 @@ use rust_cli_kernel_api::message::UserOrigin;
 use rust_cli_kernel_api::model::ModelSelection;
 use rust_cli_kernel_api::orchestration::Interactions;
 use rust_cli_kernel_api::permission::PermissionMode;
+use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 use crate::child::Asks;
@@ -54,8 +56,40 @@ pub fn actor_turn_end(killed: bool, failure: Option<&str>, text: &str) -> ActorT
     }
 }
 
+/// One violation of a submitted result (Node `SubmitViolation`): where the result differs from the schema.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActorViolation {
+    pub path: String,
+    pub expected: String,
+    pub got: String,
+}
+
+/// The engine's answer to a submitted result (Node `SubmitVerdict`). A refusal of the port is an `Err`, not a verdict.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ActorSubmit {
+    Accepted,
+    Rejected(Vec<ActorViolation>),
+}
+
+/// The submit port of one actor turn (Node `workflowSubmitPort`): the `submit_result` tool hands the result here and
+/// waits for the engine's verdict. The port is bound to the actor's session, so the model cannot pick another one.
+#[async_trait]
+pub trait ActorPort: Send + Sync + 'static {
+    async fn submit(&self, result: Value) -> Result<ActorSubmit, String>;
+}
+
+/// A turn's submit port as the live entry holds it. Its `Debug` says only that there is one, as `child::Asks` does.
+#[derive(Clone)]
+pub struct SubmitPort(pub Arc<dyn ActorPort>);
+
+impl std::fmt::Debug for SubmitPort {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SubmitPort")
+    }
+}
+
 /// The parts of an actor's run the workflow supplies: its child session (created by the workflow), the parent
-/// session of the run, the persona's system prompt, and the run's workspace, model and permission mode.
+/// session of the run, the persona's system prompt, the run's workspace, model and permission mode, and the submit port.
 #[derive(Clone)]
 pub struct ActorRun {
     pub child: SessionId,
@@ -70,6 +104,8 @@ pub struct ActorRun {
     pub workspace: WorkspaceRef,
     pub selection: ModelSelection,
     pub mode: PermissionMode,
+    /// The submit port of this turn. None means the child has no `submit_result` tool.
+    pub port: Option<Arc<dyn ActorPort>>,
 }
 
 /// Renders the interactions by presence, as `child::Asks` does: the channel is a trait object with no `Debug`.
@@ -87,6 +123,7 @@ impl std::fmt::Debug for ActorRun {
             .field("workspace", &self.workspace)
             .field("selection", &self.selection)
             .field("mode", &self.mode)
+            .field("port", &self.port.as_ref().map(|_| "present"))
             .finish()
     }
 }
@@ -169,6 +206,7 @@ impl LiveAgent {
             mode: run.mode,
             background: true,
             asks: None,
+            actor_port: run.port.map(SubmitPort),
             state: AgentState::Finished(Ending::Completed),
             result: None,
             shown: Shown::default(),
@@ -198,6 +236,7 @@ impl crate::Agents {
         let asks = actor_asks(core.background_prompts, run.interactions.clone());
         let description = run.interaction_description.clone();
         let fresh_asks = asks.clone();
+        let port = run.port.clone();
         // The first-use check, the insert, the refresh and the run start share one lock section (`Live::begin_actor_run`).
         let started = core.live.begin_actor_run(
             &agent_id,
@@ -209,6 +248,7 @@ impl crate::Agents {
             |entry| {
                 entry.description = description;
                 entry.asks = asks;
+                entry.actor_port = port.map(SubmitPort);
             },
             execution_id,
         );

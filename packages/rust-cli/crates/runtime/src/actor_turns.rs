@@ -20,14 +20,17 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use rust_cli_agents::actor_turn::{ActorRun, ActorTurnEnd};
+use rust_cli_agents::actor_turn::{ActorPort, ActorRun, ActorSubmit, ActorTurnEnd, ActorViolation};
 use rust_cli_kernel_api::env::WorkspaceRef;
 use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::model::ModelSelection;
 use rust_cli_kernel_api::orchestration::Interactions;
 use rust_cli_kernel_api::permission::PermissionMode;
+use rust_cli_workflow::actor_mailbox::ActorHandle;
 use rust_cli_workflow::actor_turns::TurnRunner;
+use rust_cli_workflow::driver_owner::SubmitReply;
 use rust_cli_workflow::driver_rules::{actor_permission_policy, parse_subagent_permission_mode};
+use rust_cli_workflow::engine::SubmitVerdict;
 use serde_json::Value;
 use tokio::runtime::Handle;
 use tokio_util::sync::CancellationToken;
@@ -104,15 +107,56 @@ pub struct AgentTurnRunner<A: ActorAgents> {
     agents: Arc<A>,
     handle: Handle,
     base: ActorRunBase,
+    mailbox: ActorHandle,
 }
 
 impl<A: ActorAgents> AgentTurnRunner<A> {
-    /// `handle` must be the handle of the runtime `agents` runs on.
-    pub fn new(agents: Arc<A>, handle: Handle, base: ActorRunBase) -> Self {
+    /// `handle` must be the handle of the runtime `agents` runs on. `mailbox` is the turn side's handle to the owner:
+    /// the submit port of each turn sends its result through it.
+    pub fn new(agents: Arc<A>, handle: Handle, base: ActorRunBase, mailbox: ActorHandle) -> Self {
         Self {
             agents,
             handle,
             base,
+            mailbox,
+        }
+    }
+}
+
+/// The submit port of one turn over the workflow's mailbox (Node `workflowSubmitPort`). The engine decides the result on
+/// the owner's thread, so the call waits on the blocking pool, not on a runtime worker.
+struct MailboxPort {
+    mailbox: ActorHandle,
+    session: String,
+}
+
+#[async_trait]
+impl ActorPort for MailboxPort {
+    async fn submit(&self, result: Value) -> Result<ActorSubmit, String> {
+        let mailbox = self.mailbox.clone();
+        let session = self.session.clone();
+        let reply = tokio::task::spawn_blocking(move || mailbox.submit(&session, result))
+            .await
+            .map_err(|error| error.to_string())?
+            .map_err(|error| error.to_string())?;
+        match reply {
+            SubmitReply::Verdict(SubmitVerdict::Accept) => Ok(ActorSubmit::Accepted),
+            SubmitReply::Verdict(SubmitVerdict::Reject { violations }) => {
+                Ok(ActorSubmit::Rejected(
+                    violations
+                        .into_iter()
+                        .map(|violation| ActorViolation {
+                            path: violation.path,
+                            expected: violation.expected,
+                            got: violation.got,
+                        })
+                        .collect(),
+                ))
+            }
+            SubmitReply::Verdict(SubmitVerdict::Nudge) => {
+                Err("the engine nudged a submitted result".to_owned())
+            }
+            SubmitReply::Refused(text) | SubmitReply::Cancelled(text) => Err(text),
         }
     }
 }
@@ -141,6 +185,10 @@ impl<A: ActorAgents> TurnRunner for AgentTurnRunner<A> {
             workspace: self.base.workspace.clone(),
             selection: self.base.selection.clone(),
             mode: self.base.mode,
+            port: Some(Arc::new(MailboxPort {
+                mailbox: self.mailbox.clone(),
+                session: session.to_owned(),
+            })),
         };
         let end = self.handle.block_on(async {
             let work = self.agents.run_actor_turn(run, prompt, token.clone());

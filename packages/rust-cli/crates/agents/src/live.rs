@@ -97,6 +97,8 @@ pub(crate) struct LiveAgent {
     pub(crate) background: bool,
     /// 父会话的会话级询问入口（交互界面里才有，agents.md §4.1.1）：后台运行（含续跑、停放后的唤醒）经它询问。
     pub(crate) asks: Option<crate::child::Asks>,
+    /// A workflow actor's submit port for its current turn (None for every other agent).
+    pub(crate) actor_port: Option<crate::actor_turn::SubmitPort>,
     pub(crate) state: AgentState,
     /// The final report of the last run that finished (Node's completed task result, read by TaskOutput). A parked agent
     /// reads its parked report instead; a run that was stopped keeps none.
