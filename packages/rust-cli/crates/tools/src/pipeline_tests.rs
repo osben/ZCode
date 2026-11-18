@@ -127,7 +127,7 @@ async fn a_denied_call_never_runs() {
 
 /// Counts the start signals the pipeline sends.
 #[derive(Default)]
-struct StartCount(std::sync::atomic::AtomicUsize);
+pub(super) struct StartCount(pub(super) std::sync::atomic::AtomicUsize);
 
 #[async_trait]
 impl ToolStart for StartCount {
@@ -159,6 +159,27 @@ async fn a_refused_call_never_signals_its_start() {
         .await;
     assert!(execution.output.is_error);
     assert_eq!(refused.0.load(std::sync::atomic::Ordering::SeqCst), 0);
+
+    // Input that fails the schema is refused before any hook or permission check, so it never starts either.
+    let malformed = Arc::new(StartCount::default());
+    let pipeline = Pipeline::new(
+        Arc::new(FixedGate(PermissionDecision::Allow {
+            updated_input: None,
+        })),
+        Arc::new(RecordingHooks::default()),
+    );
+    let (progress, _updates) = mpsc::channel(4);
+    let execution = pipeline
+        .execute(
+            Arc::new(FakeTool::new("Bash", false, "out")),
+            json!("not an object"),
+            context(allow()),
+            progress,
+            malformed.clone(),
+        )
+        .await;
+    assert!(execution.output.is_error);
+    assert_eq!(malformed.0.load(std::sync::atomic::Ordering::SeqCst), 0);
 
     let admitted = Arc::new(StartCount::default());
     let pipeline = Pipeline::new(

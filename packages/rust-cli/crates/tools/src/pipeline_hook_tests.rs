@@ -21,6 +21,7 @@ use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
 use super::*;
+use super::tests::StartCount;
 
 /// 回显 `command` 的工具；schema 要求 `command` 是字符串。
 struct Echo;
@@ -955,16 +956,7 @@ async fn without_the_switch_the_execution_carries_no_dispatch() {
 /// signals no start, and the handler does not run.
 #[tokio::test]
 async fn a_hook_refused_call_never_signals_its_start() {
-    struct Starts(std::sync::atomic::AtomicUsize);
-
-    #[async_trait]
-    impl ToolStart for Starts {
-        async fn started(&self) {
-            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        }
-    }
-
-    let starts = Arc::new(Starts(std::sync::atomic::AtomicUsize::new(0)));
+    let starts = Arc::new(StartCount::default());
     let gate = Gate::new(
         PermissionDecision::Allow {
             updated_input: None,
