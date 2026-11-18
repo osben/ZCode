@@ -47,6 +47,9 @@ mod usage_stats;
 mod usage_v4;
 #[allow(dead_code)]
 mod workflow_runs;
+// The actor session id (`mintActorSessionId`) and its segment sanitiser: one implementation, shared by the
+// replay envelope and the workflow driver (W6a), so the detail page opens the session the driver created.
+pub use workflow_runs::replay::{mint_actor_session_id, sanitize_id_segment};
 mod workspace_trust;
 
 // 记录格式的纯函数在 node-records（F128）：这里按 `crate::records` 这样的路径照常引用。

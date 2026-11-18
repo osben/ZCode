@@ -146,6 +146,21 @@ pub enum RunEvent {
     NodeNudged {
         instance: Ref,
     },
+    /// Node `escalation-raised` (driver-written, W6a): a parked question. Field order is Node's literal order.
+    EscalationRaised {
+        qid: String,
+        actor: Ref,
+        actor_name: Option<String>,
+        question: String,
+        context: Option<String>,
+        /// Epoch milliseconds, read once by the driver and shared between the event and the parked record.
+        asked_at: u64,
+    },
+    /// Node `escalation-resolved` (driver-written, W6a).
+    EscalationResolved {
+        qid: String,
+        answer: String,
+    },
     /// Node `node-settled`. A cached settlement sets `cached` and repeats the facts; a live one does not.
     NodeSettled {
         instance: Ref,
@@ -344,6 +359,27 @@ impl RunEvent {
             Self::NodeNudged { instance } => {
                 put_type(&mut map, "node-nudged");
                 map.insert("instance".into(), instance.to_json());
+            }
+            Self::EscalationRaised {
+                qid,
+                actor,
+                actor_name,
+                question,
+                context,
+                asked_at,
+            } => {
+                put_type(&mut map, "escalation-raised");
+                map.insert("qid".into(), Value::String(qid.clone()));
+                map.insert("actor".into(), actor.to_json());
+                put_text(&mut map, "actorName", actor_name);
+                map.insert("question".into(), Value::String(question.clone()));
+                put_text(&mut map, "context", context);
+                map.insert("askedAt".into(), Value::from(*asked_at));
+            }
+            Self::EscalationResolved { qid, answer } => {
+                put_type(&mut map, "escalation-resolved");
+                map.insert("qid".into(), Value::String(qid.clone()));
+                map.insert("answer".into(), Value::String(answer.clone()));
             }
             Self::NodeSettled {
                 instance,

@@ -6,12 +6,14 @@
 
 pub mod artifact_spec;
 pub mod canon;
+pub mod driver_rules;
 pub mod engine;
 pub mod engine_artifacts;
 pub mod engine_holes;
 pub mod engine_report;
 pub mod engine_world;
 pub mod error;
+pub mod escalation;
 pub mod event;
 pub mod identity;
 pub mod import_build;
@@ -26,7 +28,11 @@ pub mod scheduler;
 pub mod scheduler_submit;
 
 #[cfg(test)]
+mod driver_golden_tests;
+#[cfg(test)]
 mod engine_tests;
+#[cfg(test)]
+mod escalation_tests;
 #[cfg(test)]
 mod holes_golden_tests;
 #[cfg(test)]

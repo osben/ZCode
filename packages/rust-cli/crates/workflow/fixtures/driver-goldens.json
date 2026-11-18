@@ -1,0 +1,837 @@
+{
+  "mintActorSessionId": [
+    {
+      "runId": "dwfrun-abc123",
+      "actor": {
+        "siteId": "plan#1",
+        "ordinal": 1
+      },
+      "id": "sess_dwf-dwfrun-abc123-plan_1_1"
+    },
+    {
+      "runId": "dwfrun-abcdefghijklmnop",
+      "actor": {
+        "siteId": "plan#1",
+        "ordinal": 1
+      },
+      "id": "sess_dwf-dwfrun-abcdefghijklmnop-plan_1_1"
+    },
+    {
+      "runId": "dwfrun-short",
+      "actor": {
+        "siteId": "plan#1",
+        "ordinal": 1
+      },
+      "id": "sess_dwf-dwfrun-short-plan_1_1"
+    },
+    {
+      "runId": "x",
+      "actor": {
+        "siteId": "plan#1",
+        "ordinal": 1
+      },
+      "id": "sess_dwf-x-plan_1_1"
+    },
+    {
+      "runId": "",
+      "actor": {
+        "siteId": "plan#1",
+        "ordinal": 1
+      },
+      "id": "sess_dwf--plan_1_1"
+    },
+    {
+      "runId": "dwfrun-a_b_c",
+      "actor": {
+        "siteId": "plan#1",
+        "ordinal": 1
+      },
+      "id": "sess_dwf-dwfrun-a__b__c-plan_1_1"
+    },
+    {
+      "runId": "run#1",
+      "actor": {
+        "siteId": "plan#1",
+        "ordinal": 1
+      },
+      "id": "sess_dwf-run_1-plan_1_1"
+    },
+    {
+      "runId": "dwfrun-é-ü",
+      "actor": {
+        "siteId": "plan#1",
+        "ordinal": 1
+      },
+      "id": "sess_dwf-dwfrun-_-_-plan_1_1"
+    },
+    {
+      "runId": "dwfrun-😀x",
+      "actor": {
+        "siteId": "plan#1",
+        "ordinal": 1
+      },
+      "id": "sess_dwf-dwfrun-__x-plan_1_1"
+    },
+    {
+      "runId": "dwfrun-",
+      "actor": {
+        "siteId": "plan#1",
+        "ordinal": 1
+      },
+      "id": "sess_dwf-dwfrun--plan_1_1"
+    },
+    {
+      "runId": "dwfrun-.-.-",
+      "actor": {
+        "siteId": "plan#1",
+        "ordinal": 1
+      },
+      "id": "sess_dwf-dwfrun-.-.--plan_1_1"
+    },
+    {
+      "runId": "dwfrun-abc123",
+      "actor": {
+        "siteId": "a_b",
+        "ordinal": 2
+      },
+      "id": "sess_dwf-dwfrun-abc123-a__b_2"
+    },
+    {
+      "runId": "dwfrun-abcdefghijklmnop",
+      "actor": {
+        "siteId": "a_b",
+        "ordinal": 2
+      },
+      "id": "sess_dwf-dwfrun-abcdefghijklmnop-a__b_2"
+    },
+    {
+      "runId": "dwfrun-short",
+      "actor": {
+        "siteId": "a_b",
+        "ordinal": 2
+      },
+      "id": "sess_dwf-dwfrun-short-a__b_2"
+    },
+    {
+      "runId": "x",
+      "actor": {
+        "siteId": "a_b",
+        "ordinal": 2
+      },
+      "id": "sess_dwf-x-a__b_2"
+    },
+    {
+      "runId": "",
+      "actor": {
+        "siteId": "a_b",
+        "ordinal": 2
+      },
+      "id": "sess_dwf--a__b_2"
+    },
+    {
+      "runId": "dwfrun-a_b_c",
+      "actor": {
+        "siteId": "a_b",
+        "ordinal": 2
+      },
+      "id": "sess_dwf-dwfrun-a__b__c-a__b_2"
+    },
+    {
+      "runId": "run#1",
+      "actor": {
+        "siteId": "a_b",
+        "ordinal": 2
+      },
+      "id": "sess_dwf-run_1-a__b_2"
+    },
+    {
+      "runId": "dwfrun-é-ü",
+      "actor": {
+        "siteId": "a_b",
+        "ordinal": 2
+      },
+      "id": "sess_dwf-dwfrun-_-_-a__b_2"
+    },
+    {
+      "runId": "dwfrun-😀x",
+      "actor": {
+        "siteId": "a_b",
+        "ordinal": 2
+      },
+      "id": "sess_dwf-dwfrun-__x-a__b_2"
+    },
+    {
+      "runId": "dwfrun-",
+      "actor": {
+        "siteId": "a_b",
+        "ordinal": 2
+      },
+      "id": "sess_dwf-dwfrun--a__b_2"
+    },
+    {
+      "runId": "dwfrun-.-.-",
+      "actor": {
+        "siteId": "a_b",
+        "ordinal": 2
+      },
+      "id": "sess_dwf-dwfrun-.-.--a__b_2"
+    },
+    {
+      "runId": "dwfrun-abc123",
+      "actor": {
+        "siteId": "😀",
+        "ordinal": 3
+      },
+      "id": "sess_dwf-dwfrun-abc123-___3"
+    },
+    {
+      "runId": "dwfrun-abcdefghijklmnop",
+      "actor": {
+        "siteId": "😀",
+        "ordinal": 3
+      },
+      "id": "sess_dwf-dwfrun-abcdefghijklmnop-___3"
+    },
+    {
+      "runId": "dwfrun-short",
+      "actor": {
+        "siteId": "😀",
+        "ordinal": 3
+      },
+      "id": "sess_dwf-dwfrun-short-___3"
+    },
+    {
+      "runId": "x",
+      "actor": {
+        "siteId": "😀",
+        "ordinal": 3
+      },
+      "id": "sess_dwf-x-___3"
+    },
+    {
+      "runId": "",
+      "actor": {
+        "siteId": "😀",
+        "ordinal": 3
+      },
+      "id": "sess_dwf--___3"
+    },
+    {
+      "runId": "dwfrun-a_b_c",
+      "actor": {
+        "siteId": "😀",
+        "ordinal": 3
+      },
+      "id": "sess_dwf-dwfrun-a__b__c-___3"
+    },
+    {
+      "runId": "run#1",
+      "actor": {
+        "siteId": "😀",
+        "ordinal": 3
+      },
+      "id": "sess_dwf-run_1-___3"
+    },
+    {
+      "runId": "dwfrun-é-ü",
+      "actor": {
+        "siteId": "😀",
+        "ordinal": 3
+      },
+      "id": "sess_dwf-dwfrun-_-_-___3"
+    },
+    {
+      "runId": "dwfrun-😀x",
+      "actor": {
+        "siteId": "😀",
+        "ordinal": 3
+      },
+      "id": "sess_dwf-dwfrun-__x-___3"
+    },
+    {
+      "runId": "dwfrun-",
+      "actor": {
+        "siteId": "😀",
+        "ordinal": 3
+      },
+      "id": "sess_dwf-dwfrun--___3"
+    },
+    {
+      "runId": "dwfrun-.-.-",
+      "actor": {
+        "siteId": "😀",
+        "ordinal": 3
+      },
+      "id": "sess_dwf-dwfrun-.-.--___3"
+    },
+    {
+      "runId": "dwfrun-abc123",
+      "actor": {
+        "siteId": "x.y-z",
+        "ordinal": 10
+      },
+      "id": "sess_dwf-dwfrun-abc123-x.y-z_10"
+    },
+    {
+      "runId": "dwfrun-abcdefghijklmnop",
+      "actor": {
+        "siteId": "x.y-z",
+        "ordinal": 10
+      },
+      "id": "sess_dwf-dwfrun-abcdefghijklmnop-x.y-z_10"
+    },
+    {
+      "runId": "dwfrun-short",
+      "actor": {
+        "siteId": "x.y-z",
+        "ordinal": 10
+      },
+      "id": "sess_dwf-dwfrun-short-x.y-z_10"
+    },
+    {
+      "runId": "x",
+      "actor": {
+        "siteId": "x.y-z",
+        "ordinal": 10
+      },
+      "id": "sess_dwf-x-x.y-z_10"
+    },
+    {
+      "runId": "",
+      "actor": {
+        "siteId": "x.y-z",
+        "ordinal": 10
+      },
+      "id": "sess_dwf--x.y-z_10"
+    },
+    {
+      "runId": "dwfrun-a_b_c",
+      "actor": {
+        "siteId": "x.y-z",
+        "ordinal": 10
+      },
+      "id": "sess_dwf-dwfrun-a__b__c-x.y-z_10"
+    },
+    {
+      "runId": "run#1",
+      "actor": {
+        "siteId": "x.y-z",
+        "ordinal": 10
+      },
+      "id": "sess_dwf-run_1-x.y-z_10"
+    },
+    {
+      "runId": "dwfrun-é-ü",
+      "actor": {
+        "siteId": "x.y-z",
+        "ordinal": 10
+      },
+      "id": "sess_dwf-dwfrun-_-_-x.y-z_10"
+    },
+    {
+      "runId": "dwfrun-😀x",
+      "actor": {
+        "siteId": "x.y-z",
+        "ordinal": 10
+      },
+      "id": "sess_dwf-dwfrun-__x-x.y-z_10"
+    },
+    {
+      "runId": "dwfrun-",
+      "actor": {
+        "siteId": "x.y-z",
+        "ordinal": 10
+      },
+      "id": "sess_dwf-dwfrun--x.y-z_10"
+    },
+    {
+      "runId": "dwfrun-.-.-",
+      "actor": {
+        "siteId": "x.y-z",
+        "ordinal": 10
+      },
+      "id": "sess_dwf-dwfrun-.-.--x.y-z_10"
+    },
+    {
+      "runId": "dwfrun-abc123",
+      "actor": {
+        "siteId": "site",
+        "ordinal": 1234567
+      },
+      "id": "sess_dwf-dwfrun-abc123-site_1234567"
+    },
+    {
+      "runId": "dwfrun-abcdefghijklmnop",
+      "actor": {
+        "siteId": "site",
+        "ordinal": 1234567
+      },
+      "id": "sess_dwf-dwfrun-abcdefghijklmnop-site_1234567"
+    },
+    {
+      "runId": "dwfrun-short",
+      "actor": {
+        "siteId": "site",
+        "ordinal": 1234567
+      },
+      "id": "sess_dwf-dwfrun-short-site_1234567"
+    },
+    {
+      "runId": "x",
+      "actor": {
+        "siteId": "site",
+        "ordinal": 1234567
+      },
+      "id": "sess_dwf-x-site_1234567"
+    },
+    {
+      "runId": "",
+      "actor": {
+        "siteId": "site",
+        "ordinal": 1234567
+      },
+      "id": "sess_dwf--site_1234567"
+    },
+    {
+      "runId": "dwfrun-a_b_c",
+      "actor": {
+        "siteId": "site",
+        "ordinal": 1234567
+      },
+      "id": "sess_dwf-dwfrun-a__b__c-site_1234567"
+    },
+    {
+      "runId": "run#1",
+      "actor": {
+        "siteId": "site",
+        "ordinal": 1234567
+      },
+      "id": "sess_dwf-run_1-site_1234567"
+    },
+    {
+      "runId": "dwfrun-é-ü",
+      "actor": {
+        "siteId": "site",
+        "ordinal": 1234567
+      },
+      "id": "sess_dwf-dwfrun-_-_-site_1234567"
+    },
+    {
+      "runId": "dwfrun-😀x",
+      "actor": {
+        "siteId": "site",
+        "ordinal": 1234567
+      },
+      "id": "sess_dwf-dwfrun-__x-site_1234567"
+    },
+    {
+      "runId": "dwfrun-",
+      "actor": {
+        "siteId": "site",
+        "ordinal": 1234567
+      },
+      "id": "sess_dwf-dwfrun--site_1234567"
+    },
+    {
+      "runId": "dwfrun-.-.-",
+      "actor": {
+        "siteId": "site",
+        "ordinal": 1234567
+      },
+      "id": "sess_dwf-dwfrun-.-.--site_1234567"
+    }
+  ],
+  "questionIdFragments": [
+    {
+      "runId": "dwfrun-abc123",
+      "fragments": [
+        "abc123"
+      ]
+    },
+    {
+      "runId": "dwfrun-abcdefghijklmnop",
+      "fragments": [
+        "abcdefgh",
+        "abcdefghijklmnop"
+      ]
+    },
+    {
+      "runId": "dwfrun-short",
+      "fragments": [
+        "short"
+      ]
+    },
+    {
+      "runId": "x",
+      "fragments": [
+        "x"
+      ]
+    },
+    {
+      "runId": "",
+      "fragments": [
+        ""
+      ]
+    },
+    {
+      "runId": "dwfrun-a_b_c",
+      "fragments": [
+        "a__b__c"
+      ]
+    },
+    {
+      "runId": "run#1",
+      "fragments": [
+        "run_1"
+      ]
+    },
+    {
+      "runId": "dwfrun-é-ü",
+      "fragments": [
+        "_-_"
+      ]
+    },
+    {
+      "runId": "dwfrun-😀x",
+      "fragments": [
+        "__x"
+      ]
+    },
+    {
+      "runId": "dwfrun-",
+      "fragments": [
+        ""
+      ]
+    },
+    {
+      "runId": "dwfrun-.-.-",
+      "fragments": [
+        ".-.-"
+      ]
+    }
+  ],
+  "constants": {
+    "nudgePrompt": "You ended your turn without submitting a result. Call the submit_result tool now with a payload conforming to the required schema.",
+    "typedToolEpilogue": "\n\n---\nWhen you have finished, call the `submit_result` tool to submit your final result. Its `result` argument must match the tool's declared schema — pass the conforming JSON directly, do not wrap it or add commentary.",
+    "escalationBudgetExhausted": "Escalation budget exhausted: at most 3 escalations per task. Do not call escalate again. Proceed on your best judgement with the information you have, and state in your final result the assumptions you relied on and the doubts that remain.",
+    "maxEscalationsPerAsk": 3
+  },
+  "schemaEpilogue": [
+    {
+      "name": "absent",
+      "absent": true,
+      "schema": null,
+      "text": "\n\n---\nWhen you have finished, call the `submit_result` tool to submit your final result. Its `result` argument must be a JSON value conforming to this JSON Schema:\n\n(any JSON value)\n\nPass the conforming JSON as the `result` argument — do not wrap it or add commentary."
+    },
+    {
+      "name": "null",
+      "absent": false,
+      "schema": null,
+      "text": "\n\n---\nWhen you have finished, call the `submit_result` tool to submit your final result. Its `result` argument must be a JSON value conforming to this JSON Schema:\n\nnull\n\nPass the conforming JSON as the `result` argument — do not wrap it or add commentary."
+    },
+    {
+      "name": "string",
+      "absent": false,
+      "schema": "plain",
+      "text": "\n\n---\nWhen you have finished, call the `submit_result` tool to submit your final result. Its `result` argument must be a JSON value conforming to this JSON Schema:\n\n\"plain\"\n\nPass the conforming JSON as the `result` argument — do not wrap it or add commentary."
+    },
+    {
+      "name": "nested",
+      "absent": false,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "a": {
+            "type": "number",
+            "minimum": 0
+          },
+          "b": {
+            "type": "array",
+            "items": []
+          },
+          "c": {},
+          "d": "é\n\"q\"",
+          "e": 1.5,
+          "f": true,
+          "g": null,
+          "h": {},
+          "i": 1e+21,
+          "j": 123456789012345680000,
+          "k": 0.1
+        },
+        "required": []
+      },
+      "text": "\n\n---\nWhen you have finished, call the `submit_result` tool to submit your final result. Its `result` argument must be a JSON value conforming to this JSON Schema:\n\n{\n  \"type\": \"object\",\n  \"properties\": {\n    \"a\": {\n      \"type\": \"number\",\n      \"minimum\": 0\n    },\n    \"b\": {\n      \"type\": \"array\",\n      \"items\": []\n    },\n    \"c\": {},\n    \"d\": \"é\\n\\\"q\\\"\",\n    \"e\": 1.5,\n    \"f\": true,\n    \"g\": null,\n    \"h\": {},\n    \"i\": 1e+21,\n    \"j\": 123456789012345680000,\n    \"k\": 0.1\n  },\n  \"required\": []\n}\n\nPass the conforming JSON as the `result` argument — do not wrap it or add commentary."
+    },
+    {
+      "name": "array",
+      "absent": false,
+      "schema": [
+        1,
+        [
+          2,
+          [
+            3
+          ]
+        ],
+        {
+          "z": 1,
+          "a": 2
+        }
+      ],
+      "text": "\n\n---\nWhen you have finished, call the `submit_result` tool to submit your final result. Its `result` argument must be a JSON value conforming to this JSON Schema:\n\n[\n  1,\n  [\n    2,\n    [\n      3\n    ]\n  ],\n  {\n    \"z\": 1,\n    \"a\": 2\n  }\n]\n\nPass the conforming JSON as the `result` argument — do not wrap it or add commentary."
+    }
+  ],
+  "normalizeEscalationContext": [
+    {
+      "input": null,
+      "output": null
+    },
+    {
+      "input": "",
+      "output": null
+    },
+    {
+      "input": "   ",
+      "output": null
+    },
+    {
+      "input": " a ",
+      "output": "a"
+    },
+    {
+      "input": " x ",
+      "output": "x"
+    },
+    {
+      "input": "﻿x",
+      "output": "x"
+    },
+    {
+      "input": "x",
+      "output": "x"
+    },
+    {
+      "input": "line\n",
+      "output": "line"
+    },
+    {
+      "input": " y ",
+      "output": "y"
+    }
+  ],
+  "effectiveActorName": [
+    {
+      "name": null,
+      "output": null
+    },
+    {
+      "name": "",
+      "output": null
+    },
+    {
+      "name": "  ",
+      "output": "  "
+    },
+    {
+      "name": "Ada",
+      "output": "Ada"
+    },
+    {
+      "name": " Ada ",
+      "output": " Ada "
+    }
+  ],
+  "subagentLabel": [
+    {
+      "actor": {
+        "siteId": "s",
+        "ordinal": 1
+      },
+      "actorName": null,
+      "output": "s@1"
+    },
+    {
+      "actor": {
+        "siteId": "s",
+        "ordinal": 2
+      },
+      "actorName": "Ada",
+      "output": "Ada"
+    },
+    {
+      "actor": {
+        "siteId": "s",
+        "ordinal": 3
+      },
+      "actorName": "",
+      "output": ""
+    }
+  ],
+  "rejectWith": [
+    {
+      "message": "this ask does not accept submit_result; provide your answer as your final message",
+      "verdict": {
+        "accept": false,
+        "violations": [
+          {
+            "path": "$",
+            "expected": "this ask does not accept submit_result; provide your answer as your final message",
+            "got": "submit_result call"
+          }
+        ]
+      }
+    },
+    {
+      "message": "",
+      "verdict": {
+        "accept": false,
+        "violations": [
+          {
+            "path": "$",
+            "expected": "",
+            "got": "submit_result call"
+          }
+        ]
+      }
+    }
+  ],
+  "permissionMode": {
+    "subagentPermissionModeOf": [
+      {
+        "input": null,
+        "output": null
+      },
+      {
+        "input": "plan",
+        "output": "build"
+      },
+      {
+        "input": "build",
+        "output": "build"
+      },
+      {
+        "input": "edit",
+        "output": "edit"
+      },
+      {
+        "input": "yolo",
+        "output": "yolo"
+      },
+      {
+        "input": "guarded",
+        "output": "guarded"
+      },
+      {
+        "input": "auto",
+        "output": "auto"
+      }
+    ],
+    "parse": [
+      {
+        "input": null,
+        "output": null
+      },
+      {
+        "input": "plan",
+        "output": null
+      },
+      {
+        "input": "build",
+        "output": "build"
+      },
+      {
+        "input": "edit",
+        "output": "edit"
+      },
+      {
+        "input": "yolo",
+        "output": "yolo"
+      },
+      {
+        "input": "guarded",
+        "output": "guarded"
+      },
+      {
+        "input": "auto",
+        "output": "auto"
+      },
+      {
+        "input": "unknown-mode",
+        "output": null
+      },
+      {
+        "input": "BUILD",
+        "output": null
+      },
+      {
+        "input": 42,
+        "output": null
+      },
+      {
+        "input": null,
+        "output": null
+      }
+    ],
+    "policy": [
+      {
+        "input": null,
+        "output": "yolo"
+      },
+      {
+        "input": "build",
+        "output": "build"
+      },
+      {
+        "input": "edit",
+        "output": "edit"
+      },
+      {
+        "input": "yolo",
+        "output": "yolo"
+      },
+      {
+        "input": "guarded",
+        "output": "guarded"
+      },
+      {
+        "input": "auto",
+        "output": "auto"
+      }
+    ],
+    "interactionDescription": [
+      {
+        "actor": {
+          "siteId": "plan#1",
+          "ordinal": 2
+        },
+        "name": null,
+        "output": "subagent (plan#1@2)"
+      },
+      {
+        "actor": {
+          "siteId": "plan#1",
+          "ordinal": 2
+        },
+        "name": "",
+        "output": " (plan#1@2)"
+      },
+      {
+        "actor": {
+          "siteId": "plan#1",
+          "ordinal": 2
+        },
+        "name": "  ",
+        "output": "   (plan#1@2)"
+      },
+      {
+        "actor": {
+          "siteId": "a_b",
+          "ordinal": 1
+        },
+        "name": "Ada",
+        "output": "Ada (a_b@1)"
+      }
+    ]
+  }
+}
