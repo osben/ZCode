@@ -76,6 +76,8 @@ pub const READ_TOPIC_RESOURCE: &str = "ReadTopicResource";
 pub const REPORT_FINDINGS: &str = "ReportFindings";
 pub const SCHEDULE_WAKEUP: &str = "ScheduleWakeup";
 pub const SEND_MESSAGE: &str = "SendMessage";
+/// Fork: the session-context reader (Node `read-session-context`, side-effect scope `session`).
+pub const READ_SESSION_CONTEXT: &str = "ReadSessionContext";
 pub const SEND_USER_MESSAGE: &str = "SendUserMessage";
 pub const SKILL: &str = "Skill";
 pub const TASK_CREATE: &str = "TaskCreate";

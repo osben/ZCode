@@ -66,8 +66,8 @@ pub(crate) struct RunStats {
 }
 
 impl RunStats {
-    /// A tool call started. Counted from the started event, as Node counts `ToolCallStarted`: a call that a permission
-    /// check or a schema check rejects never starts, so it is not counted.
+    /// A tool call started, counted from the started event as Node counts `ToolCallStarted`. Until 2c-4f, rejected calls
+    /// are counted too: the started event came before the permission check. From 2c-4f on, it follows admission.
     pub(crate) fn tool_started(&mut self, name: &str) {
         self.tool_calls += 1;
         if is_world_touching(name) {
@@ -89,20 +89,21 @@ impl RunStats {
 /// other tool, and a tool whose scope is undefined, touches the world. These are the protocol-only tools in Node's
 /// handlers (`sideEffectScope: "session" | "userInteraction"`).
 pub(crate) fn is_world_touching(name: &str) -> bool {
+    use rust_cli_kernel_api::tool_names as names;
     !matches!(
         name,
-        "Agent"
-            | "AskUserQuestion"
-            | "escalate"
-            | "EnterPlanMode"
-            | "ExitPlanMode"
-            | "ReadSessionContext"
-            | "RespondToCoordinator"
-            | "SendMessage"
-            | "Skill"
-            | "submit_result"
-            | "TodoWrite"
-            | "TaskStop"
+        names::AGENT
+            | names::ASK_USER_QUESTION
+            | crate::escalate::NAME
+            | names::ENTER_PLAN_MODE
+            | names::EXIT_PLAN_MODE
+            | names::READ_SESSION_CONTEXT
+            | crate::respond::NAME
+            | names::SEND_MESSAGE
+            | names::SKILL
+            | crate::submit::NAME
+            | names::TASK_STOP
+            | names::TODO_WRITE
     )
 }
 
@@ -223,12 +224,12 @@ impl ChildSink {
         self.record.lock_unpoisoned()
     }
 
-    /// 本次运行最后一条 assistant 消息与 tool_use 块数。
     /// What this run counted, from the started tool calls and the committed responses.
     pub(crate) fn run_stats(&self) -> RunStats {
         self.record().stats
     }
 
+    /// 本次运行最后一条 assistant 消息与 tool_use 块数。
     pub(crate) fn outcome(&self) -> (Option<AssistantMessage>, usize) {
         let record = self.record();
         (record.last.clone(), record.tool_uses)
@@ -498,15 +499,10 @@ impl RunSink for ChildSink {
             }
             _ => None,
         };
-        // A request that completed or failed with usage counts toward the turn's usage (Node `ModelComplete`, and a
-        // failed request's usage); a cancelled one reports none.
-        if let rust_cli_kernel_api::metering::Metered::Model(call) = &metered
-            && matches!(
-                call.status,
-                rust_cli_kernel_api::metering::CallStatus::Completed
-                    | rust_cli_kernel_api::metering::CallStatus::Error
-            )
-        {
+        // Every request that carries a usage record counts toward the turn's usage, whatever its status (Node
+        // `createModelUsageSummaryFromEvents` sums the usage of each request that has it). `model_request` ignores a
+        // request without usage.
+        if let rust_cli_kernel_api::metering::Metered::Model(call) = &metered {
             self.record().stats.model_request(call.usage);
         }
         let fact = Fact::from(metered);

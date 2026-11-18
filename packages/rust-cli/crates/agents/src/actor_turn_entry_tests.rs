@@ -465,7 +465,7 @@ async fn a_nudged_turns_prompt_is_stored_with_the_boundary_zero() {
 
 #[tokio::test]
 async fn a_finished_turn_keeps_its_counts_for_the_bridge() {
-    // The turn committed one response and started no tool, so the bridge reads one request and no tool calls.
+    // The turn's response carries no usage record, so the bridge reads no request, no tokens, and no tool calls.
     let h = harness(None);
     let parent = SessionId::new("ses_parent");
     let child = SessionId::new("sess_turn_stats");

@@ -1054,3 +1054,33 @@ fn a_cancelled_ask_takes_no_message_boundary() {
         .expect("the cancelled ask's node exists");
     assert_eq!(node.message_boundary, None);
 }
+
+#[test]
+fn a_settled_asks_stats_are_not_written_to_the_next_ask() {
+    // Node reports an ask's stats before its turn ends. A newer ask started since the settlement must not take them: the
+    // report names the instance it belongs to.
+    let (mut owner, sessions, actor, session) = running_ask();
+    let settled = first_turn_instance(&sessions);
+    owner.turn_ended(&session, "I am done.").expect("turn end");
+    assert_eq!(
+        owner.turn_ended(&session, "Still done.").expect("turn end"),
+        TurnEndReply::AskEnded
+    );
+    owner.ask("site", &actor, "again").expect("the next ask");
+    owner.drain().expect("drain");
+    owner
+        .ask_stats(
+            &settled,
+            crate::engine::AskStats {
+                tokens: 42.0,
+                tool_calls: 3.0,
+                turns: 2.0,
+                world_tool_calls: Some(1.0),
+            },
+        )
+        .expect("stats");
+    for node in owner.journal().list_nodes("run_1").expect("nodes") {
+        let is_settled = node.site_id == settled.site_id && node.ordinal == settled.ordinal;
+        assert_eq!(node.stats.is_some(), is_settled, "{node:?}");
+    }
+}

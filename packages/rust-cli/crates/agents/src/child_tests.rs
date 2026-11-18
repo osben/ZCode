@@ -375,3 +375,97 @@ async fn the_tool_count_comes_from_the_started_stream_not_from_the_transcript() 
         "Read and Bash both touch the world"
     );
 }
+
+/// Node `createModelUsageSummaryFromEvents` sums the usage of every request that carries it, whatever its status: a
+/// cancelled request that reports usage counts its request and its tokens.
+#[tokio::test]
+async fn a_cancelled_request_with_usage_counts_its_request_and_tokens() {
+    let store = Arc::new(MemoryStore::default());
+    let child = SessionId::new("sess_subagent_agent_cancelled_usage");
+    store
+        .create(SessionMeta {
+            id: child.clone(),
+            kind: SessionKind::Subagent,
+            parent: Some(SessionId::new("sess_parent")),
+            workspace: WorkspaceRef {
+                environment: EnvironmentId::new("local"),
+                root: EnvPath::new("/Users/dev/work"),
+            },
+            title: "cancelled".to_owned(),
+            trace: TraceId::new("trace"),
+            created_at_ms: 1,
+            incognito: None,
+        })
+        .await
+        .unwrap();
+    let sink = ChildSink::new(
+        store.clone(),
+        Arc::new(SequentialIds::default()),
+        Arc::new(Live::default()),
+        AgentId::new("agent_cancelled_usage"),
+        child.clone(),
+        MessageId::new("prompt_cancelled_usage"),
+        None,
+    );
+    let call = rust_cli_kernel_api::metering::ModelCall {
+        usage: Some(rust_cli_kernel_api::message::Usage {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+        }),
+        ..rust_cli_kernel_api::metering::ModelCall::new(
+            MessageId::new("msg_cancelled"),
+            rust_cli_kernel_api::model::QuerySource::Subagent("Explore".to_owned()),
+            rust_cli_kernel_api::testing::selection(),
+            1_000,
+            4_000,
+            rust_cli_kernel_api::metering::CallStatus::Cancelled,
+        )
+    };
+    sink.commit_metered(None, rust_cli_kernel_api::metering::Metered::Model(call))
+        .await
+        .unwrap();
+    let stats = sink.run_stats();
+    assert_eq!(
+        stats.usage_requests, 1,
+        "a cancelled request with usage is counted"
+    );
+    assert_eq!(stats.usage_tokens, 15, "its input and output tokens");
+}
+
+/// Node's `isWorldTouchingToolCall` excludes exactly the tools whose side-effect scope is `session` or `userInteraction`
+/// (Node's handlers: Agent, AskUserQuestion, escalate, EnterPlanMode, ExitPlanMode, ReadSessionContext,
+/// RespondToCoordinator, SendMessage, Skill, submit_result, TaskStop, TodoWrite). Pinned by name, so a rename shows here.
+#[test]
+fn the_protocol_only_set_is_exactly_nodes_session_and_user_interaction_tools() {
+    use rust_cli_kernel_api::tool_names as names;
+    let protocol = [
+        names::AGENT,
+        names::ASK_USER_QUESTION,
+        crate::escalate::NAME,
+        names::ENTER_PLAN_MODE,
+        names::EXIT_PLAN_MODE,
+        names::READ_SESSION_CONTEXT,
+        crate::respond::NAME,
+        names::SEND_MESSAGE,
+        names::SKILL,
+        crate::submit::NAME,
+        names::TASK_STOP,
+        names::TODO_WRITE,
+    ];
+    for name in protocol {
+        assert!(
+            !crate::child::is_world_touching(name),
+            "{name} is protocol-only"
+        );
+    }
+    assert!(
+        crate::child::is_world_touching(names::READ),
+        "Read touches the world"
+    );
+    assert!(
+        crate::child::is_world_touching(names::READ_TOPIC_RESOURCE),
+        "ReadTopicResource touches the world"
+    );
+}

@@ -93,7 +93,7 @@ pub(crate) enum ActorRequest {
     },
     /// One turn's ask stats (Node `reportTurnObservations`), sent before the turn's end.
     AskStats {
-        session: String,
+        instance: Ref,
         stats: crate::engine::AskStats,
         reply: Sender<Result<()>>,
     },
@@ -186,11 +186,11 @@ fn dispatch<J: JournalPort, S: ActorSessions>(
             let _ = reply.send(owner.set_message_boundary(&instance, boundary));
         }
         ActorRequest::AskStats {
-            session,
+            instance,
             stats,
             reply,
         } => {
-            let _ = reply.send(owner.ask_stats(&session, stats));
+            let _ = reply.send(owner.ask_stats(&instance, stats));
         }
     }
 }
@@ -272,11 +272,11 @@ impl ActorHandle {
     /// One turn's ask stats, before the turn's end. The owner writes them to the ask's node.
     pub fn ask_stats(
         &self,
-        session: &str,
+        instance: &Ref,
         stats: crate::engine::AskStats,
     ) -> Result<(), MailboxError> {
         self.call(|reply| ActorRequest::AskStats {
-            session: session.to_owned(),
+            instance: instance.clone(),
             stats,
             reply,
         })

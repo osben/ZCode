@@ -206,9 +206,14 @@ fn run_ask(
         // Node `reportTurnObservations`: the turn's stats before its end. The counts are summed over the ask so far (Node
         // resets them at the ask's start and keeps them across nudges); tokens and turns are the turn's, and a failed
         // usage read takes Node's defaults, 0 tokens and 1 turn.
-        // A panic in the stats read counts as no stats, and the turn's end is still reported.
-        let stats =
-            panic::catch_unwind(AssertUnwindSafe(|| runner.turn_stats(session))).unwrap_or(None);
+        // A panic in the stats read counts as no stats, logged with its payload, and the turn's end is still reported.
+        let stats = match panic::catch_unwind(AssertUnwindSafe(|| runner.turn_stats(session))) {
+            Ok(stats) => stats,
+            Err(payload) => {
+                tracing::warn!(%session, panic = %panic_text(payload.as_ref()), "an actor's turn stats read panicked; the stats are unknown");
+                None
+            }
+        };
         if let Some(stats) = stats {
             tool_calls += stats.tool_calls;
             world_tool_calls += stats.world_tool_calls;
@@ -221,7 +226,7 @@ fn run_ask(
                 turns: turns as f64,
                 world_tool_calls: Some(world_tool_calls as f64),
             };
-            if let Err(error) = handle.ask_stats(session, report) {
+            if let Err(error) = handle.ask_stats(instance, report) {
                 tracing::warn!(%session, error = %error, "an actor's ask stats could not be reported");
             }
         }
