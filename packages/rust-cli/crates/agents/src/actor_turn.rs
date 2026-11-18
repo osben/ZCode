@@ -16,8 +16,8 @@
 
 use std::sync::Arc;
 
-use rust_cli_kernel_api::abort::Abort;
 use rust_cli_kernel_api::env::WorkspaceRef;
+use rust_cli_kernel_api::env_shell::BackgroundStatus;
 use rust_cli_kernel_api::ids::{AgentId, MachineName, SessionId};
 use rust_cli_kernel_api::message::UserOrigin;
 use rust_cli_kernel_api::model::ModelSelection;
@@ -71,24 +71,16 @@ fn actor_agent_id(child: &SessionId) -> AgentId {
     AgentId::new(format!("actor-{}", child.as_str()))
 }
 
-/// Whether a finished run was stopped rather than finished.
-fn killed(ending: Ending) -> bool {
-    matches!(
-        ending,
-        Ending::Killed | Ending::KilledParked | Ending::KilledByUser
-    )
-}
-
 impl LiveAgent {
     /// The live entry of an actor, as the Agent tool builds one before `spawn::create`, with the actor's values: no
     /// owner, depth 1, no tool use, no interaction channel, and no fork prefix. It starts finished; each turn begins a
-    /// run on it.
-    pub(crate) fn for_actor(run: &ActorRun, agent: AgentId, root: SessionId) -> Self {
+    /// run on it. The run's fields are moved in, not cloned.
+    pub(crate) fn for_actor(run: ActorRun, agent: AgentId, root: SessionId) -> Self {
         Self {
             off_peak_execution: None,
             agent,
-            child: run.child.clone(),
-            parent: run.parent.clone(),
+            child: run.child,
+            parent: run.parent,
             root,
             owner: None,
             depth: 1,
@@ -96,13 +88,13 @@ impl LiveAgent {
             stopped_by_user: false,
             erased: false,
             late_messages: Vec::new(),
-            description: run.description.clone(),
+            description: run.description,
             definition: Arc::new(AgentDefinition {
                 agent_type: "workflow_actor".to_owned(),
                 when_to_use: String::new(),
                 tools: None,
                 disallowed_tools: Vec::new(),
-                prompt: run.persona_prompt.clone(),
+                prompt: run.persona_prompt,
                 source: AgentSource::BuiltIn,
                 model: None,
                 effort: None,
@@ -115,10 +107,10 @@ impl LiveAgent {
                 skills: None,
                 memory: None,
             }),
-            workspace: run.workspace.clone(),
+            workspace: run.workspace,
             execution_worktree: false,
             machine: MachineName::primary(),
-            selection: run.selection.clone(),
+            selection: run.selection,
             mode: run.mode,
             background: true,
             asks: None,
@@ -136,8 +128,8 @@ impl crate::Agents {
     ///
     /// The first call for a child makes its live entry. Each call starts a run on that entry, appends `prompt` to the
     /// child's transcript (`spawn::resume`), and drives the model loop until it stops (`spawn::drive`). `cancel` stops
-    /// the loop; the turn then ends as `Stopped`. Turns of one actor must not overlap: the workflow's per-actor FIFO
-    /// guarantees that, and this entry does not check it.
+    /// the loop; the turn then ends as `Stopped`. A call on an actor whose turn is still running is refused as
+    /// `Failed`, and it does not touch the running turn; the workflow's per-actor FIFO keeps this from happening.
     pub async fn run_actor_turn(
         &self,
         run: ActorRun,
@@ -146,17 +138,17 @@ impl crate::Agents {
     ) -> ActorTurnEnd {
         let core = &self.core;
         let agent_id = actor_agent_id(&run.child);
-        if core.live.get(&agent_id).is_none() {
-            let root = core.live.root_of(&run.parent);
-            core.live
-                .insert(LiveAgent::for_actor(&run, agent_id.clone(), root));
-        }
+        let root = core.live.root_of(&run.parent);
         let execution_id = core.ports.ids.execution();
-        core.live.with(|agents| {
-            if let Some(entry) = agents.get_mut(&agent_id) {
-                entry.begin_run(Abort::new(), Vec::new(), execution_id);
-            }
-        });
+        // The first-use check, the insert and the run start share one lock section (`Live::begin_actor_run`).
+        let started = core.live.begin_actor_run(
+            &agent_id,
+            || LiveAgent::for_actor(run, agent_id.clone(), root),
+            execution_id,
+        );
+        if let Err(message) = started {
+            return ActorTurnEnd::Failed(message);
+        }
         let Some(entry) = core.live.get(&agent_id) else {
             return ActorTurnEnd::Failed("the actor's session is not live".to_owned());
         };
@@ -170,7 +162,7 @@ impl crate::Agents {
         let finished = spawn::drive(core, &entry, opening, None, Some(cancel)).await;
         core.live.finish(&agent_id, finished.ending);
         actor_turn_end(
-            killed(finished.ending),
+            finished.ending.status() == BackgroundStatus::Killed,
             finished.failure(core.node_desktop).as_deref(),
             &finished.report.text,
         )
