@@ -443,6 +443,33 @@ impl Live {
         self.change(|agents| agents.insert(agent.agent.clone(), agent));
     }
 
+    /// Start a workflow actor's run: the first-use check, the insert of `fresh` when the entry is new, and the run start,
+    /// in one lock section. An entry that is already running refuses (Node's restart is refused the same way, and
+    /// `Live::restart` returns None for a running entry). The insert stamps the order and the start time as
+    /// [`Self::insert`] does, so the entry lists the same way.
+    pub(crate) fn begin_actor_run(
+        &self,
+        agent: &AgentId,
+        fresh: impl FnOnce() -> LiveAgent,
+        execution_id: String,
+    ) -> Result<(), String> {
+        self.change(|agents| {
+            if let Some(entry) = agents.get_mut(agent) {
+                if matches!(entry.state, AgentState::Running { .. }) {
+                    return Err("the actor already has a turn running".to_owned());
+                }
+                entry.begin_run(Abort::new(), Vec::new(), execution_id);
+                return Ok(());
+            }
+            let mut entry = fresh();
+            entry.shown.order = self.order.fetch_add(1, Ordering::Relaxed);
+            entry.shown.started_ms = self.clock.now_ms();
+            entry.begin_run(Abort::new(), Vec::new(), execution_id);
+            agents.insert(entry.agent.clone(), entry);
+            Ok(())
+        })
+    }
+
     /// 子代理经父会话询问时记一次等待（`waiting` 为假时结束一次）。
     pub(crate) fn waiting(&self, agent: &AgentId, execution: u64, waiting: bool) {
         self.change(|agents| {

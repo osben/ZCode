@@ -26,6 +26,9 @@ mod peer_send;
 mod persistent_memory;
 pub use persistent_memory::configured_root;
 pub mod actor_turn;
+#[cfg(test)]
+#[path = "actor_turn_entry_tests.rs"]
+mod actor_turn_entry_tests;
 mod plugin;
 mod report;
 mod respond;
