@@ -15,7 +15,9 @@ use crate::driver_rules::NUDGE_PROMPT;
 use crate::engine::{AskMessage, SubmitVerdict};
 use crate::model::Ref;
 use anyhow::{Result, anyhow, bail};
+use std::any::Any;
 use std::collections::HashMap;
+use std::panic::{self, AssertUnwindSafe};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
@@ -91,7 +93,13 @@ fn run_ask(
 ) {
     let mut prompt = first;
     loop {
-        let text = match runner.run_turn(session, &prompt, cancel) {
+        // Node catches every throw from a turn and reports it as the ask's failure. A panic is the Rust equivalent,
+        // and it must not leave the ask waiting on a thread that is gone.
+        let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
+            runner.run_turn(session, &prompt, cancel)
+        }))
+        .unwrap_or_else(|payload| Err(panic_text(payload.as_ref())));
+        let text = match outcome {
             Ok(text) => text,
             Err(error) => {
                 if !cancel.load(Ordering::SeqCst)
@@ -117,4 +125,14 @@ fn run_ask(
             }
         }
     }
+}
+
+/// The text of a panic payload: `panic!` with a literal gives `&str`, with a format gives `String`.
+fn panic_text(payload: &(dyn Any + Send)) -> String {
+    let message = payload
+        .downcast_ref::<&str>()
+        .map(|text| (*text).to_owned())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "a non-text panic".to_owned());
+    format!("the actor turn panicked: {message}")
 }

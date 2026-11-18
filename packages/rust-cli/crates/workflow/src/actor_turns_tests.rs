@@ -185,3 +185,37 @@ fn a_cancelled_turn_sends_no_turn_end_and_the_ask_is_cancelled() {
     let error = outcomes[0].result.as_ref().expect_err("cancelled");
     assert_eq!(error.code, ErrorCode::Cancelled);
 }
+
+/// Panics on every turn, as a runner whose model client throws would.
+struct PanickingRunner;
+
+impl TurnRunner for PanickingRunner {
+    fn run_turn(
+        &self,
+        _session: &str,
+        _prompt: &str,
+        _cancel: &AtomicBool,
+    ) -> std::result::Result<String, String> {
+        panic!("runner exploded mid-turn");
+    }
+}
+
+#[test]
+fn a_panicking_turn_fails_the_ask_with_the_panic_text_and_nothing_hangs() {
+    let (mut owner, mailbox, actor) = owner_over(Arc::new(PanickingRunner));
+    owner.ask("site", &actor, "do it").expect("ask");
+    owner.drain().expect("drain");
+    // Without the panic report, nothing is ever queued and this serve blocks forever.
+    mailbox
+        .serve_next(&mut owner)
+        .expect("the panic is reported as the turn's failure");
+    let outcomes = owner.take_outcomes();
+    assert_eq!(outcomes.len(), 1);
+    let error = outcomes[0].result.as_ref().expect_err("the ask fails");
+    assert_eq!(error.code, ErrorCode::DriverError);
+    assert!(
+        error.message.contains("runner exploded mid-turn"),
+        "{}",
+        error.message
+    );
+}
