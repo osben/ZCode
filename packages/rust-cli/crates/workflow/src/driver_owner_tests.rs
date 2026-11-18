@@ -33,6 +33,8 @@ pub(crate) struct Log {
     pub(crate) fail_next_start: bool,
     /// When set, the next `cancel_turn` fails.
     pub(crate) fail_next_cancel: bool,
+    /// When set, the next `deliver_answer` fails, as a turn that is gone refuses its answer.
+    pub(crate) fail_next_deliver: bool,
     /// When set, the next `reject_parked` fails. Only that one withdrawal fails; the rest of the queue still applies.
     pub(crate) fail_next_reject: bool,
     pub(crate) next: u64,
@@ -71,6 +73,10 @@ impl ActorSessions for Recording {
     }
 
     fn deliver_answer(&mut self, session: &str, qid: &str, answer: &str) -> Result<()> {
+        if self.0.borrow().fail_next_deliver {
+            self.0.borrow_mut().fail_next_deliver = false;
+            bail!("deliver refused");
+        }
         self.0
             .borrow_mut()
             .answered
@@ -740,4 +746,32 @@ fn an_answer_to_a_withdrawn_question_is_not_delivered() {
         .expect("submit");
     assert_eq!(owner.answer(&qid, "late").expect("answer"), None);
     assert!(sessions.0.borrow().answered.is_empty());
+}
+
+#[test]
+fn a_refused_delivery_is_reported_on_the_outcome_and_the_question_is_still_retired() {
+    let (mut owner, sessions, _actor, session) = running_ask();
+    let qid = match owner
+        .escalate(&session, request("which?"))
+        .expect("escalate")
+    {
+        EscalateOutcome::Parked { qid } => qid,
+        other => panic!("expected a park, got {other:?}"),
+    };
+    sessions.0.borrow_mut().fail_next_deliver = true;
+    let outcome = owner
+        .answer(&qid, "the second one")
+        .expect("answer")
+        .expect("the book accepted the answer");
+    assert_eq!(outcome.answer, "the second one");
+    let warning = outcome
+        .delivery_warning
+        .expect("the refused delivery is reported");
+    assert!(warning.contains("deliver refused"), "{warning}");
+    assert!(sessions.0.borrow().answered.is_empty());
+    assert_eq!(
+        owner.answer(&qid, "again").expect("answer"),
+        None,
+        "the question is retired: a retry is not a second answer"
+    );
 }

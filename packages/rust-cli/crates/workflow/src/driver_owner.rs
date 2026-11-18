@@ -440,25 +440,38 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
     /// Node `answerEscalation`: the main agent's answer to a parked question.
     pub fn answer(&mut self, qid: &str, answer: &str) -> Result<Option<AnswerOutcome>> {
         self.settle_quietly();
-        let session = self.book.session_of_question(qid);
+        // Only a parked question has a session to deliver to. The book answers exactly the questions it parks, so a
+        // question found here is accepted below.
+        let Some(session) = self.book.session_of_question(qid) else {
+            return Ok(None);
+        };
         let engine = &mut self.engine;
-        let outcome = self
+        let Some(mut outcome) = self
             .book
-            .answer(qid, answer, |event| engine.record(event.clone()));
+            .answer(qid, answer, |event| engine.record(event.clone()))
+        else {
+            return Err(anyhow!(
+                "the escalation book lost parked question {qid} between its lookup and its answer"
+            ));
+        };
         // Node delivers the answer whether or not the resolved event was journaled, so delivery follows the book's
-        // acceptance and not the journal write. A refused delivery is logged: the question is already answered.
-        if let (Some(_), Some(session)) = (&outcome, session)
-            && let Err(error) = self
-                .engine
-                .driver
-                .sessions
-                .deliver_answer(&session, qid, answer)
+        // acceptance and not the journal write. Node's resolve cannot fail, but the Rust turn can be gone; a refused
+        // delivery is reported on the outcome (the question is retired either way) and logged.
+        if let Err(error) = self
+            .engine
+            .driver
+            .sessions
+            .deliver_answer(&session, qid, answer)
         {
             tracing::warn!(
-                "an accepted escalation answer was not delivered to its session: {error:#}"
+                session = %session,
+                qid = %qid,
+                error = ?error,
+                "an accepted escalation answer was not delivered to its blocked turn"
             );
+            outcome.delivery_warning = Some(format!("{error:#}"));
         }
-        Ok(outcome)
+        Ok(Some(outcome))
     }
 
     /// Apply what the port queued, until nothing is queued, then reconcile. Every exit path reconciles. Every queued

@@ -34,6 +34,7 @@ struct Turns {
     started: Vec<String>,
     cancelled: Vec<String>,
     rejected: Vec<(String, String)>,
+    answered: Vec<(String, String, String)>,
 }
 
 impl ActorTurns for Turns {
@@ -57,7 +58,9 @@ impl ActorTurns for Turns {
         Ok(())
     }
 
-    fn deliver_answer(&mut self, _session: &str, _qid: &str, _answer: &str) -> anyhow::Result<()> {
+    fn deliver_answer(&mut self, session: &str, qid: &str, answer: &str) -> anyhow::Result<()> {
+        self.answered
+            .push((session.to_owned(), qid.to_owned(), answer.to_owned()));
         Ok(())
     }
 }
@@ -157,11 +160,22 @@ fn turn_calls_are_delegated_to_the_turn_side_unchanged() {
     sessions
         .reject_parked("sess_x", "dwfq-run-0")
         .expect("reject");
+    sessions
+        .deliver_answer("sess_x", "dwfq-run-0", "yes")
+        .expect("deliver");
     let turns = sessions.into_turns();
     assert_eq!(turns.started, vec!["sess_x".to_owned()]);
     assert_eq!(turns.cancelled, vec!["sess_x".to_owned()]);
     assert_eq!(
         turns.rejected,
         vec![("sess_x".to_owned(), "dwfq-run-0".to_owned())]
+    );
+    assert_eq!(
+        turns.answered,
+        vec![(
+            "sess_x".to_owned(),
+            "dwfq-run-0".to_owned(),
+            "yes".to_owned()
+        )]
     );
 }

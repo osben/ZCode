@@ -66,6 +66,9 @@ pub struct AnswerOutcome {
     pub answer: String,
     /// Set when the `escalation-resolved` write failed. The answer is still delivered.
     pub journal_warning: Option<String>,
+    /// Set by the owner when the accepted answer could not be delivered to the blocked turn (its send failed). The
+    /// question is retired either way: the answer cannot be given again.
+    pub delivery_warning: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -193,6 +196,7 @@ impl EscalationBook {
         Some(AnswerOutcome {
             answer: answer.to_owned(),
             journal_warning,
+            delivery_warning: None,
         })
     }
 

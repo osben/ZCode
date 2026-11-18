@@ -972,6 +972,21 @@ Tests for 2c-1 (written first; red recorded in the commit message and the report
 
 As built (2c-1): `ActorSessions::deliver_answer` (and `ActorTurns`) resolves the blocked escalate with the answer; `ActorDriverOwner::answer` delivers to the question's session when the book accepted it (the journal write does not gate delivery, as in Node). `crates/workflow/src/actor_mailbox.rs`: `ActorMailbox` (owner side, `serve_next`) and `ActorHandle` (turn side: `submit`, `turn_ended`, `escalate`, `answer`), std mpsc, errors as text. Tests: `driver_owner_tests` (two delivery cases), `actor_mailbox_tests` (four). Red: the module and the trait method were missing at first, so the run failed to compile; the delivery behaviour was not run red separately. Box: workflow lib 102 pass; fmt and clippy clean.
 
+Review of 2c-1 (ocr on bb65c05f9), verdicts:
+
+- Delegation test (fixed): the stub records the call; the test asserts session, qid and answer are forwarded unchanged.
+- Mailbox shutdown and panic (fixed): the mailbox keeps no sender. `ActorMailbox::new` returns the receiver and one handle, and handles are cloned from it. When every handle drops, `serve_next` returns `MailboxError::Closed`. A panic in the owner drops the request's reply sender, so the turn gets `NoAnswer`. The panic path is not driven by a test; the drop is tested by taking a request and dropping it.
+- Send versus receive failure (fixed): `NotDelivered` (the send failed; safe to retry) and `NoAnswer` (the owner took the request and stopped; it may already be applied) are distinct variants with distinct text.
+- Error type (fixed): the reply carries `anyhow::Result`, and `MailboxError::Owner` keeps the chain. The text-only design is removed.
+- `ActorRequest` (fixed): `pub(crate)`.
+- Refused delivery (fixed; parity decision). Node's `respondToParkedEscalation` calls `deferred.resolve(answer)`, which cannot fail. Rust's turn can be gone, so a refused delivery is possible. The Rust answer therefore carries `AnswerOutcome.delivery_warning`, and the question is retired either way. This is a Rust addition with no Node counterpart.
+- Refused delivery test (fixed): `fail_next_deliver` on the recorder; the test checks the warning, the empty delivery list, and that a retry returns `None`.
+- Structured log fields (fixed): `session`, `qid` and `error` are tracing fields.
+- Dead Some/None guard (fixed): the session is looked up first. The book answers exactly the questions it parks, so a missing session returns `None` before any write. A book that refuses after the lookup is an error, not a silent drop.
+- Owner error through the mailbox (fixed): a journal that refuses appends, switched on after the ask runs, makes `escalate` fail inside the owner. The turn gets `MailboxError::Owner` with `journal refused the append` in its chain.
+
+Box, after the fixes: workflow lib 106 pass; fmt --check and clippy --workspace -D warnings exit 0.
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.

@@ -118,6 +118,7 @@ fn an_answer_resolves_the_park_and_writes_the_resolved_event_in_node_key_order()
         Some(AnswerOutcome {
             answer: "yes".into(),
             journal_warning: None,
+            delivery_warning: None,
         })
     );
     assert_eq!(
