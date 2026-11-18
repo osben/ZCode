@@ -1081,6 +1081,11 @@ impl Projection {
                 }
                 // Node settles a denied prompt as `cancelled` (onPermissionResolved): a refused call never runs.
                 if let Some(tool) = tool {
+                    // The denial goes into the same set `deny()` fills, so the ToolDone that follows settles
+                    // from one source, whether or not the live command path called `deny()`.
+                    if *denied {
+                        self.denied.insert(tool.clone());
+                    }
                     let status = if *denied {
                         ToolStatus::Cancelled
                     } else {

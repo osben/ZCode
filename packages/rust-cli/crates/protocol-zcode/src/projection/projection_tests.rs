@@ -437,6 +437,19 @@ fn a_denied_permission_does_not_turn_the_card_running() {
     );
     assert_eq!(resolved[0]["row"]["status"], "cancelled");
     assert_eq!(resolved[1]["patch"]["pendingInteractions"], json!([]));
+    // The refusal's result is an error ToolDone, and no live deny() call was made (a withdrawn prompt): it
+    // settles from the same denial, so the card stays cancelled rather than failing.
+    let done = feed.apply(KernelEvent::ToolDone {
+        tool_use: ToolUseId::new("toolu_1"),
+        output: rust_cli_kernel_api::tool::ToolOutput {
+            content: vec![ToolResultContent::Text {
+                text: rust_cli_kernel_api::tool::REJECT_MESSAGE.into(),
+            }],
+            is_error: true,
+            display: Value::Null,
+        },
+    });
+    assert_eq!(done[0]["row"]["status"], "cancelled");
 }
 
 /// A guarded dangerous command asks once (Node `approvalMode: "user-once"`): only allow once and
