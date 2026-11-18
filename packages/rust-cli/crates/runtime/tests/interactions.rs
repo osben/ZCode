@@ -345,12 +345,57 @@ mod interactions {
             !rest.iter().any(|event| started_call(event, "toolu_read")),
             "a denied call never starts: {rest:?}"
         );
+        assert!(session.view().await.unwrap().pending.is_empty());
         assert!(
             rest.iter().any(|event| matches!(
                 event,
                 KernelEvent::InteractionResolved { denied: true, .. }
             )),
             "a refusal resolves its prompt as denied: {rest:?}"
+        );
+    }
+
+    /// The allow sibling of the denied call: an Allow resolution journals as not denied, and the admitted call starts.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_allowed_call_is_not_denied_and_starts() {
+        let store = Arc::new(MemoryStore::default());
+        let model = Arc::new(ScriptedModel::new(vec![
+            tool_use_response("toolu_read", "Read", &json!({"file_path": "/etc/hosts"})),
+            text_response(&["after the allow"]),
+        ]));
+        let kernel = kernel(model, unsupported_machine(), store);
+        let session = open(&kernel).await;
+        let mut events = session.subscribe(Some(0));
+        session.send(submit("c1", "read the hosts file")).await;
+        let seen = until(&mut events, |event| permission_asked(event).is_some()).await;
+        let interaction = seen.iter().find_map(permission_asked).unwrap();
+        let answer = session
+            .send(CommandEnvelope {
+                id: CommandId::new("c2"),
+                command: Command::ResolveInteraction {
+                    interaction,
+                    answer: rust_cli_kernel_api::orchestration::PermissionAnswer::Allow {
+                        remember: Vec::new(),
+                    }
+                    .into(),
+                },
+            })
+            .await;
+        assert!(matches!(answer, Ack::Accepted { .. }), "{answer:?}");
+        let rest = until(&mut events, |event| {
+            matches!(event, KernelEvent::TurnFinished { .. })
+        })
+        .await;
+        assert!(
+            rest.iter().any(|event| matches!(
+                event,
+                KernelEvent::InteractionResolved { denied: false, .. }
+            )),
+            "an allow resolves its prompt as not denied: {rest:?}"
+        );
+        assert!(
+            rest.iter().any(|event| started_call(event, "toolu_read")),
+            "the admitted call starts: {rest:?}"
         );
     }
 
