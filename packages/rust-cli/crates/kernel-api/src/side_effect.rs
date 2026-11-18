@@ -60,7 +60,7 @@ const TABLE: &[(&str, Option<Scope>)] = &[
     (names::READ, Some(Scope::None)),
     (names::READ_MCP_RESOURCE, None),
     (names::READ_MCP_RESOURCE_DIR, None),
-    (names::READ_TOPIC_RESOURCE, None),
+    (names::READ_TOPIC_RESOURCE, Some(Scope::Session)),
     (names::REPORT_FINDINGS, None),
     (names::SCHEDULE_WAKEUP, None),
     (names::SEND_MESSAGE, Some(Scope::Session)),
