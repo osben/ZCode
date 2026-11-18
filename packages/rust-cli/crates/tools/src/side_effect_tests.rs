@@ -123,3 +123,17 @@ fn read_topic_resource_is_session_scoped_and_not_mutating() {
         false
     ));
 }
+
+/// The predicate's two branches a table lookup does not reach: a scope-none tool that is not read-only (Grep declares
+/// no workspace scope) is not mutating, and an unknown name is mutating (undeclared means mutating).
+#[test]
+fn a_scope_none_tool_is_not_mutating_and_an_unknown_name_is_mutating() {
+    assert!(!rust_cli_kernel_api::side_effect::is_workspace_mutating(
+        names::GREP,
+        false
+    ));
+    assert!(rust_cli_kernel_api::side_effect::is_workspace_mutating(
+        "mcp_server_tool",
+        false
+    ));
+}

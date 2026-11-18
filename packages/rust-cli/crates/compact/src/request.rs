@@ -133,6 +133,9 @@ impl RunSink for CollectSink {
         true
     }
 
+    /// A compaction's collecting sink is not a workflow child: nothing reports a write to an owner.
+    async fn tool_mutating(&self) {}
+
     async fn commit_messages(&self, messages: Vec<Message>) -> Result<(), StoreError> {
         self.messages.lock_unpoisoned().extend(messages);
         Ok(())

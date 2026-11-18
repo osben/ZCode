@@ -341,6 +341,9 @@ impl Interactions for SessionAsks {
 
 #[async_trait]
 impl RunSink for ActorSink {
+    /// A session's own sink is not a workflow child: nothing reports a write to an owner.
+    async fn tool_mutating(&self) {}
+
     async fn external_title(&self, title: String) {
         let _ = self.sender.send(SinkRequest::ExternalTitle(title)).await;
     }
