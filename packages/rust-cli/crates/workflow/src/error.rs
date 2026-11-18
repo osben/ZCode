@@ -20,6 +20,18 @@ pub enum ErrorCode {
     ScriptHashMismatch,
     Interrupted,
     ProviderStop,
+    ReportCapExceeded,
+    ArtifactSourceMissing,
+    ArtifactPathOutsideWorkspace,
+    ArtifactTooLarge,
+    ArtifactStoreUnavailable,
+    ArtifactVersionCapExceeded,
+    ArtifactKindMismatch,
+    ArtifactCapExceeded,
+    ArtifactSpecInvalid,
+    ArtifactRedeclared,
+    ArtifactUndeclared,
+    ArtifactPrimaryConflict,
 }
 
 impl ErrorCode {
@@ -36,6 +48,18 @@ impl ErrorCode {
             Self::ScriptHashMismatch => "ScriptHashMismatch",
             Self::Interrupted => "Interrupted",
             Self::ProviderStop => "ProviderStop",
+            Self::ReportCapExceeded => "ReportCapExceeded",
+            Self::ArtifactSourceMissing => "ArtifactSourceMissing",
+            Self::ArtifactPathOutsideWorkspace => "ArtifactPathOutsideWorkspace",
+            Self::ArtifactTooLarge => "ArtifactTooLarge",
+            Self::ArtifactStoreUnavailable => "ArtifactStoreUnavailable",
+            Self::ArtifactVersionCapExceeded => "ArtifactVersionCapExceeded",
+            Self::ArtifactKindMismatch => "ArtifactKindMismatch",
+            Self::ArtifactCapExceeded => "ArtifactCapExceeded",
+            Self::ArtifactSpecInvalid => "ArtifactSpecInvalid",
+            Self::ArtifactRedeclared => "ArtifactRedeclared",
+            Self::ArtifactUndeclared => "ArtifactUndeclared",
+            Self::ArtifactPrimaryConflict => "ArtifactPrimaryConflict",
         }
     }
 
@@ -52,6 +76,18 @@ impl ErrorCode {
             "ScriptHashMismatch" => Self::ScriptHashMismatch,
             "Interrupted" => Self::Interrupted,
             "ProviderStop" => Self::ProviderStop,
+            "ReportCapExceeded" => Self::ReportCapExceeded,
+            "ArtifactSourceMissing" => Self::ArtifactSourceMissing,
+            "ArtifactPathOutsideWorkspace" => Self::ArtifactPathOutsideWorkspace,
+            "ArtifactTooLarge" => Self::ArtifactTooLarge,
+            "ArtifactStoreUnavailable" => Self::ArtifactStoreUnavailable,
+            "ArtifactVersionCapExceeded" => Self::ArtifactVersionCapExceeded,
+            "ArtifactKindMismatch" => Self::ArtifactKindMismatch,
+            "ArtifactCapExceeded" => Self::ArtifactCapExceeded,
+            "ArtifactSpecInvalid" => Self::ArtifactSpecInvalid,
+            "ArtifactRedeclared" => Self::ArtifactRedeclared,
+            "ArtifactUndeclared" => Self::ArtifactUndeclared,
+            "ArtifactPrimaryConflict" => Self::ArtifactPrimaryConflict,
             _ => return None,
         })
     }

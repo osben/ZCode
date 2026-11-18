@@ -4,8 +4,12 @@
 //! settlement, and the amend-resume import cache. It reads no clock and draws no random numbers; its only I/O is
 //! the journal port and the driver port. Nothing here is wired into a session yet (the gate stays off until W9).
 
+pub mod artifact_spec;
 pub mod canon;
 pub mod engine;
+pub mod engine_artifacts;
+pub mod engine_holes;
+pub mod engine_report;
 pub mod engine_world;
 pub mod error;
 pub mod event;
@@ -23,6 +27,8 @@ pub mod scheduler_submit;
 
 #[cfg(test)]
 mod engine_tests;
+#[cfg(test)]
+mod holes_golden_tests;
 #[cfg(test)]
 mod import_golden_tests;
 #[cfg(test)]

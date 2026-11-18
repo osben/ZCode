@@ -292,6 +292,7 @@ pub fn imported_ask_record(
         stats: entry.stats.clone(),
         input: None,
         message_boundary: Some(entry.message_boundary),
+        artifact_id: None,
     }
 }
 

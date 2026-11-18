@@ -1,0 +1,1940 @@
+{
+  "scenarios": [
+    {
+      "name": "reports-and-presets-resume",
+      "input": {
+        "name": "reports-and-presets-resume",
+        "runId": "run_reports",
+        "caps": 2,
+        "lifetimes": [
+          {
+            "scriptHash": "h-holes",
+            "steps": [
+              {
+                "op": "phase",
+                "name": "plan",
+                "now": 10
+              },
+              {
+                "op": "declare",
+                "site": "artifact.chart#1",
+                "preset": "chart",
+                "args": [
+                  "perf",
+                  {
+                    "title": "Perf",
+                    "x": {
+                      "field": "t"
+                    },
+                    "y": [
+                      {
+                        "field": "v",
+                        "label": "V"
+                      }
+                    ]
+                  }
+                ],
+                "now": 11
+              },
+              {
+                "op": "declare",
+                "site": "artifact.table#1",
+                "preset": "table",
+                "args": [
+                  "rows",
+                  {
+                    "title": "Rows",
+                    "columns": [
+                      {
+                        "field": "a"
+                      }
+                    ],
+                    "key": "a"
+                  }
+                ],
+                "now": 12
+              },
+              {
+                "op": "declare",
+                "site": "artifact.chart#2",
+                "preset": "chart",
+                "args": [
+                  "perf",
+                  {
+                    "title": "Perf",
+                    "x": {
+                      "field": "t"
+                    },
+                    "y": [
+                      {
+                        "field": "v",
+                        "label": "V"
+                      }
+                    ]
+                  }
+                ],
+                "now": 13
+              },
+              {
+                "op": "report",
+                "site": "report#1",
+                "item": {
+                  "n": 1
+                },
+                "now": 14
+              },
+              {
+                "op": "report",
+                "site": "report#2",
+                "item": {
+                  "n": 2,
+                  "tags": [
+                    "a",
+                    "b"
+                  ]
+                },
+                "artifactId": "perf",
+                "now": 15
+              },
+              {
+                "op": "phase",
+                "name": "work",
+                "now": 16
+              },
+              {
+                "op": "report",
+                "site": "report#3",
+                "item": "三",
+                "artifactId": "rows",
+                "now": 17
+              },
+              {
+                "op": "stop",
+                "reason": "interrupted",
+                "error": {
+                  "code": "Interrupted",
+                  "message": "sandbox exited"
+                },
+                "now": 18
+              }
+            ]
+          },
+          {
+            "scriptHash": "h-holes",
+            "steps": [
+              {
+                "op": "phase",
+                "name": "plan",
+                "now": 20
+              },
+              {
+                "op": "declare",
+                "site": "artifact.chart#1",
+                "preset": "chart",
+                "args": [
+                  "perf",
+                  {
+                    "title": "Perf",
+                    "x": {
+                      "field": "t"
+                    },
+                    "y": [
+                      {
+                        "field": "v",
+                        "label": "V"
+                      }
+                    ]
+                  }
+                ],
+                "now": 21
+              },
+              {
+                "op": "declare",
+                "site": "artifact.table#1",
+                "preset": "table",
+                "args": [
+                  "rows",
+                  {
+                    "title": "Rows",
+                    "columns": [
+                      {
+                        "field": "a"
+                      }
+                    ],
+                    "key": "a"
+                  }
+                ],
+                "now": 22
+              },
+              {
+                "op": "declare",
+                "site": "artifact.chart#2",
+                "preset": "chart",
+                "args": [
+                  "perf",
+                  {
+                    "title": "Perf",
+                    "x": {
+                      "field": "t"
+                    },
+                    "y": [
+                      {
+                        "field": "v",
+                        "label": "V"
+                      }
+                    ]
+                  }
+                ],
+                "now": 23
+              },
+              {
+                "op": "report",
+                "site": "report#1",
+                "item": {
+                  "n": 1
+                },
+                "now": 24
+              },
+              {
+                "op": "report",
+                "site": "report#2",
+                "item": {
+                  "n": 2,
+                  "tags": [
+                    "a",
+                    "b"
+                  ]
+                },
+                "artifactId": "perf",
+                "now": 25
+              },
+              {
+                "op": "phase",
+                "name": "work",
+                "now": 26
+              },
+              {
+                "op": "report",
+                "site": "report#3",
+                "item": "三",
+                "artifactId": "rows",
+                "now": 27
+              },
+              {
+                "op": "report",
+                "site": "report#4",
+                "item": [
+                  null,
+                  1.5e+21
+                ],
+                "now": 28
+              },
+              {
+                "op": "complete",
+                "artifact": {
+                  "done": true
+                },
+                "now": 29
+              }
+            ]
+          }
+        ]
+      },
+      "lifetimes": [
+        {
+          "results": [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "run": {
+            "runId": "run_reports",
+            "caps": {
+              "maxConcurrency": 2
+            },
+            "spentTokens": 0,
+            "status": "stopped",
+            "scriptHash": "h-holes",
+            "stopReason": "interrupted",
+            "failure": {
+              "code": "Interrupted",
+              "message": "sandbox exited"
+            }
+          },
+          "nodes": [
+            {
+              "runId": "run_reports",
+              "siteId": "artifact.chart#1",
+              "ordinal": 1,
+              "kind": "artifact",
+              "inputHash": "d1e6de5e",
+              "status": "completed",
+              "result": {
+                "id": "perf",
+                "kind": "chart",
+                "version": 1,
+                "title": "Perf",
+                "spec": {
+                  "title": "Perf",
+                  "x": {
+                    "field": "t"
+                  },
+                  "y": [
+                    {
+                      "field": "v",
+                      "label": "V"
+                    }
+                  ]
+                }
+              },
+              "artifactId": "perf"
+            },
+            {
+              "runId": "run_reports",
+              "siteId": "artifact.table#1",
+              "ordinal": 1,
+              "kind": "artifact",
+              "inputHash": "fc24d145",
+              "status": "completed",
+              "result": {
+                "id": "rows",
+                "kind": "table",
+                "version": 1,
+                "title": "Rows",
+                "spec": {
+                  "title": "Rows",
+                  "columns": [
+                    {
+                      "field": "a"
+                    }
+                  ],
+                  "key": "a"
+                }
+              },
+              "artifactId": "rows"
+            },
+            {
+              "runId": "run_reports",
+              "siteId": "report#1",
+              "ordinal": 1,
+              "kind": "report",
+              "inputHash": "fdef5c20",
+              "status": "completed",
+              "result": {
+                "n": 1
+              }
+            },
+            {
+              "runId": "run_reports",
+              "siteId": "report#2",
+              "ordinal": 1,
+              "kind": "report",
+              "inputHash": "8740a749",
+              "status": "completed",
+              "result": {
+                "n": 2,
+                "tags": [
+                  "a",
+                  "b"
+                ]
+              },
+              "artifactId": "perf"
+            },
+            {
+              "runId": "run_reports",
+              "siteId": "report#3",
+              "ordinal": 1,
+              "kind": "report",
+              "inputHash": "d1ec21ec",
+              "status": "completed",
+              "result": "三",
+              "artifactId": "rows"
+            }
+          ],
+          "openHoles": [],
+          "filledHoles": [],
+          "disposed": 1
+        },
+        {
+          "results": [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "run": {
+            "runId": "run_reports",
+            "caps": {
+              "maxConcurrency": 2
+            },
+            "spentTokens": 0,
+            "status": "completed",
+            "scriptHash": "h-holes",
+            "result": {
+              "done": true
+            }
+          },
+          "nodes": [
+            {
+              "runId": "run_reports",
+              "siteId": "artifact.chart#1",
+              "ordinal": 1,
+              "kind": "artifact",
+              "inputHash": "d1e6de5e",
+              "status": "completed",
+              "result": {
+                "id": "perf",
+                "kind": "chart",
+                "version": 1,
+                "title": "Perf",
+                "spec": {
+                  "title": "Perf",
+                  "x": {
+                    "field": "t"
+                  },
+                  "y": [
+                    {
+                      "field": "v",
+                      "label": "V"
+                    }
+                  ]
+                }
+              },
+              "artifactId": "perf"
+            },
+            {
+              "runId": "run_reports",
+              "siteId": "artifact.table#1",
+              "ordinal": 1,
+              "kind": "artifact",
+              "inputHash": "fc24d145",
+              "status": "completed",
+              "result": {
+                "id": "rows",
+                "kind": "table",
+                "version": 1,
+                "title": "Rows",
+                "spec": {
+                  "title": "Rows",
+                  "columns": [
+                    {
+                      "field": "a"
+                    }
+                  ],
+                  "key": "a"
+                }
+              },
+              "artifactId": "rows"
+            },
+            {
+              "runId": "run_reports",
+              "siteId": "report#1",
+              "ordinal": 1,
+              "kind": "report",
+              "inputHash": "fdef5c20",
+              "status": "completed",
+              "result": {
+                "n": 1
+              }
+            },
+            {
+              "runId": "run_reports",
+              "siteId": "report#2",
+              "ordinal": 1,
+              "kind": "report",
+              "inputHash": "8740a749",
+              "status": "completed",
+              "result": {
+                "n": 2,
+                "tags": [
+                  "a",
+                  "b"
+                ]
+              },
+              "artifactId": "perf"
+            },
+            {
+              "runId": "run_reports",
+              "siteId": "report#3",
+              "ordinal": 1,
+              "kind": "report",
+              "inputHash": "d1ec21ec",
+              "status": "completed",
+              "result": "三",
+              "artifactId": "rows"
+            },
+            {
+              "runId": "run_reports",
+              "siteId": "report#4",
+              "ordinal": 1,
+              "kind": "report",
+              "inputHash": "eb9538ab",
+              "status": "completed",
+              "result": [
+                null,
+                1.5e+21
+              ]
+            }
+          ],
+          "openHoles": [],
+          "filledHoles": [],
+          "disposed": 2
+        }
+      ],
+      "outcomes": [],
+      "driverCalls": [],
+      "events": [
+        {
+          "sequence": 0,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"run_reports\",\"caps\":{\"maxConcurrency\":2}}"
+        },
+        {
+          "sequence": 1,
+          "payloadJson": "{\"type\":\"phase-entered\",\"name\":\"plan\",\"ordinal\":1}"
+        },
+        {
+          "sequence": 2,
+          "payloadJson": "{\"type\":\"artifact-published\",\"instance\":{\"siteId\":\"artifact.chart#1\",\"ordinal\":1},\"artifact\":{\"id\":\"perf\",\"kind\":\"chart\",\"version\":1,\"title\":\"Perf\",\"spec\":{\"title\":\"Perf\",\"x\":{\"field\":\"t\"},\"y\":[{\"field\":\"v\",\"label\":\"V\"}]}}}"
+        },
+        {
+          "sequence": 3,
+          "payloadJson": "{\"type\":\"artifact-published\",\"instance\":{\"siteId\":\"artifact.table#1\",\"ordinal\":1},\"artifact\":{\"id\":\"rows\",\"kind\":\"table\",\"version\":1,\"title\":\"Rows\",\"spec\":{\"title\":\"Rows\",\"columns\":[{\"field\":\"a\"}],\"key\":\"a\"}}}"
+        },
+        {
+          "sequence": 4,
+          "payloadJson": "{\"type\":\"report\",\"instance\":{\"siteId\":\"report#1\",\"ordinal\":1},\"item\":{\"n\":1}}"
+        },
+        {
+          "sequence": 5,
+          "payloadJson": "{\"type\":\"report\",\"instance\":{\"siteId\":\"report#2\",\"ordinal\":1},\"item\":{\"n\":2,\"tags\":[\"a\",\"b\"]},\"artifactId\":\"perf\"}"
+        },
+        {
+          "sequence": 6,
+          "payloadJson": "{\"type\":\"phase-entered\",\"name\":\"work\",\"ordinal\":1}"
+        },
+        {
+          "sequence": 7,
+          "payloadJson": "{\"type\":\"report\",\"instance\":{\"siteId\":\"report#3\",\"ordinal\":1},\"item\":\"三\",\"artifactId\":\"rows\"}"
+        },
+        {
+          "sequence": 8,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"stopped\",\"stopReason\":\"interrupted\",\"error\":{\"code\":\"Interrupted\",\"message\":\"sandbox exited\"}}"
+        },
+        {
+          "sequence": 9,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"run_reports\",\"caps\":{\"maxConcurrency\":2}}"
+        },
+        {
+          "sequence": 10,
+          "payloadJson": "{\"type\":\"phase-entered\",\"name\":\"plan\",\"ordinal\":1}"
+        },
+        {
+          "sequence": 11,
+          "payloadJson": "{\"type\":\"phase-entered\",\"name\":\"work\",\"ordinal\":1}"
+        },
+        {
+          "sequence": 12,
+          "payloadJson": "{\"type\":\"report\",\"instance\":{\"siteId\":\"report#4\",\"ordinal\":1},\"item\":[null,1.5e+21]}"
+        },
+        {
+          "sequence": 13,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"completed\"}"
+        }
+      ],
+      "emittedCount": 14
+    },
+    {
+      "name": "report-undeclared-and-redeclared",
+      "input": {
+        "name": "report-undeclared-and-redeclared",
+        "runId": "run_undeclared",
+        "caps": 1,
+        "lifetimes": [
+          {
+            "scriptHash": "h-holes",
+            "steps": [
+              {
+                "op": "declare",
+                "site": "artifact.metrics#1",
+                "preset": "metrics",
+                "args": [
+                  "kpi",
+                  {
+                    "title": "KPI",
+                    "metrics": [
+                      {
+                        "field": "x"
+                      }
+                    ]
+                  }
+                ],
+                "now": 1
+              },
+              {
+                "op": "report",
+                "site": "report#1",
+                "item": {
+                  "x": 1
+                },
+                "artifactId": "kpi",
+                "now": 2
+              },
+              {
+                "op": "report",
+                "site": "report#2",
+                "item": {
+                  "x": 2
+                },
+                "artifactId": "missing",
+                "now": 3
+              },
+              {
+                "op": "report",
+                "site": "report#3",
+                "item": {
+                  "x": 3
+                },
+                "now": 4
+              }
+            ]
+          }
+        ]
+      },
+      "lifetimes": [
+        {
+          "results": [
+            null,
+            null,
+            null,
+            null
+          ],
+          "run": {
+            "runId": "run_undeclared",
+            "caps": {
+              "maxConcurrency": 1
+            },
+            "spentTokens": 0,
+            "status": "errored",
+            "scriptHash": "h-holes",
+            "failure": {
+              "code": "ArtifactUndeclared",
+              "message": "report() tag \"missing\" is not a declared preset artifact (at report#2@1). Declare it once at the top of the script, e.g. artifact.chart(\"missing\", …), before tagging reports with it. Declared presets: kpi."
+            }
+          },
+          "nodes": [
+            {
+              "runId": "run_undeclared",
+              "siteId": "artifact.metrics#1",
+              "ordinal": 1,
+              "kind": "artifact",
+              "inputHash": "1d7d2bfc",
+              "status": "completed",
+              "result": {
+                "id": "kpi",
+                "kind": "metrics",
+                "version": 1,
+                "title": "KPI",
+                "spec": {
+                  "title": "KPI",
+                  "metrics": [
+                    {
+                      "field": "x"
+                    }
+                  ]
+                }
+              },
+              "artifactId": "kpi"
+            },
+            {
+              "runId": "run_undeclared",
+              "siteId": "report#1",
+              "ordinal": 1,
+              "kind": "report",
+              "inputHash": "e028e096",
+              "status": "completed",
+              "result": {
+                "x": 1
+              },
+              "artifactId": "kpi"
+            }
+          ],
+          "openHoles": [],
+          "filledHoles": [],
+          "disposed": 1
+        }
+      ],
+      "outcomes": [],
+      "driverCalls": [],
+      "events": [
+        {
+          "sequence": 0,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"run_undeclared\",\"caps\":{\"maxConcurrency\":1}}"
+        },
+        {
+          "sequence": 1,
+          "payloadJson": "{\"type\":\"artifact-published\",\"instance\":{\"siteId\":\"artifact.metrics#1\",\"ordinal\":1},\"artifact\":{\"id\":\"kpi\",\"kind\":\"metrics\",\"version\":1,\"title\":\"KPI\",\"spec\":{\"title\":\"KPI\",\"metrics\":[{\"field\":\"x\"}]}}}"
+        },
+        {
+          "sequence": 2,
+          "payloadJson": "{\"type\":\"report\",\"instance\":{\"siteId\":\"report#1\",\"ordinal\":1},\"item\":{\"x\":1},\"artifactId\":\"kpi\"}"
+        },
+        {
+          "sequence": 3,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"errored\",\"error\":{\"code\":\"ArtifactUndeclared\",\"message\":\"report() tag \\\"missing\\\" is not a declared preset artifact (at report#2@1). Declare it once at the top of the script, e.g. artifact.chart(\\\"missing\\\", …), before tagging reports with it. Declared presets: kpi.\"}}"
+        }
+      ],
+      "emittedCount": 4
+    },
+    {
+      "name": "declare-redeclared-and-invalid",
+      "input": {
+        "name": "declare-redeclared-and-invalid",
+        "runId": "run_redeclared",
+        "caps": 1,
+        "lifetimes": [
+          {
+            "scriptHash": "h-holes",
+            "steps": [
+              {
+                "op": "declare",
+                "site": "artifact.board#1",
+                "preset": "board",
+                "args": [
+                  "flow",
+                  {
+                    "key": "id",
+                    "status": "stage",
+                    "columns": [
+                      "todo",
+                      "done"
+                    ]
+                  }
+                ],
+                "now": 1
+              },
+              {
+                "op": "declare",
+                "site": "artifact.board#2",
+                "preset": "board",
+                "args": [
+                  "flow",
+                  {
+                    "key": "id",
+                    "status": "stage",
+                    "columns": [
+                      "todo",
+                      "doing",
+                      "done"
+                    ]
+                  }
+                ],
+                "now": 2
+              }
+            ]
+          },
+          {
+            "scriptHash": "h-holes",
+            "steps": [
+              {
+                "op": "declare",
+                "site": "artifact.table#9",
+                "preset": "table",
+                "args": [
+                  "bad",
+                  {
+                    "columns": []
+                  }
+                ],
+                "now": 3
+              }
+            ]
+          }
+        ]
+      },
+      "lifetimes": [
+        {
+          "results": [
+            null,
+            null
+          ],
+          "run": {
+            "runId": "run_redeclared",
+            "caps": {
+              "maxConcurrency": 1
+            },
+            "spentTokens": 0,
+            "status": "errored",
+            "scriptHash": "h-holes",
+            "failure": {
+              "code": "ArtifactRedeclared",
+              "message": "Artifact \"flow\" was already declared with a different spec (at artifact.board#2@1). The spec for one id must stay identical (an identical re-declaration is a no-op); declare it once at the top of the script."
+            }
+          },
+          "nodes": [
+            {
+              "runId": "run_redeclared",
+              "siteId": "artifact.board#1",
+              "ordinal": 1,
+              "kind": "artifact",
+              "inputHash": "254e1227",
+              "status": "completed",
+              "result": {
+                "id": "flow",
+                "kind": "board",
+                "version": 1,
+                "spec": {
+                  "key": "id",
+                  "status": "stage",
+                  "columns": [
+                    "todo",
+                    "done"
+                  ]
+                }
+              },
+              "artifactId": "flow"
+            }
+          ],
+          "openHoles": [],
+          "filledHoles": [],
+          "disposed": 1
+        },
+        {
+          "results": [
+            null
+          ],
+          "run": {
+            "runId": "run_redeclared",
+            "caps": {
+              "maxConcurrency": 1
+            },
+            "spentTokens": 0,
+            "status": "errored",
+            "scriptHash": "h-holes",
+            "failure": {
+              "code": "ArtifactSpecInvalid",
+              "message": "Artifact \"bad\" has an invalid spec (at artifact.table#9@1): spec columns must be a non-empty array of fields ({ field: \"…\" })"
+            }
+          },
+          "nodes": [
+            {
+              "runId": "run_redeclared",
+              "siteId": "artifact.board#1",
+              "ordinal": 1,
+              "kind": "artifact",
+              "inputHash": "254e1227",
+              "status": "completed",
+              "result": {
+                "id": "flow",
+                "kind": "board",
+                "version": 1,
+                "spec": {
+                  "key": "id",
+                  "status": "stage",
+                  "columns": [
+                    "todo",
+                    "done"
+                  ]
+                }
+              },
+              "artifactId": "flow"
+            }
+          ],
+          "openHoles": [],
+          "filledHoles": [],
+          "disposed": 2
+        }
+      ],
+      "outcomes": [],
+      "driverCalls": [],
+      "events": [
+        {
+          "sequence": 0,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"run_redeclared\",\"caps\":{\"maxConcurrency\":1}}"
+        },
+        {
+          "sequence": 1,
+          "payloadJson": "{\"type\":\"artifact-published\",\"instance\":{\"siteId\":\"artifact.board#1\",\"ordinal\":1},\"artifact\":{\"id\":\"flow\",\"kind\":\"board\",\"version\":1,\"spec\":{\"key\":\"id\",\"status\":\"stage\",\"columns\":[\"todo\",\"done\"]}}}"
+        },
+        {
+          "sequence": 2,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"errored\",\"error\":{\"code\":\"ArtifactRedeclared\",\"message\":\"Artifact \\\"flow\\\" was already declared with a different spec (at artifact.board#2@1). The spec for one id must stay identical (an identical re-declaration is a no-op); declare it once at the top of the script.\"}}"
+        },
+        {
+          "sequence": 3,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"run_redeclared\",\"caps\":{\"maxConcurrency\":1}}"
+        },
+        {
+          "sequence": 4,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"errored\",\"error\":{\"code\":\"ArtifactSpecInvalid\",\"message\":\"Artifact \\\"bad\\\" has an invalid spec (at artifact.table#9@1): spec columns must be a non-empty array of fields ({ field: \\\"…\\\" })\"}}"
+        }
+      ],
+      "emittedCount": 5
+    },
+    {
+      "name": "publish-settle-order-and-replay",
+      "input": {
+        "name": "publish-settle-order-and-replay",
+        "runId": "run_publish",
+        "caps": 4,
+        "lifetimes": [
+          {
+            "scriptHash": "h-holes",
+            "steps": [
+              {
+                "op": "publish",
+                "tag": "p1",
+                "site": "pub#1",
+                "kind": "file",
+                "args": [
+                  "doc",
+                  "out/a.pdf",
+                  {
+                    "primary": true
+                  }
+                ],
+                "now": 1
+              },
+              {
+                "op": "publish",
+                "tag": "p2",
+                "site": "pub#2",
+                "kind": "markdown",
+                "args": [
+                  "notes",
+                  "# hi"
+                ],
+                "now": 2
+              },
+              {
+                "op": "publishSettle",
+                "tag": "p2",
+                "ok": true,
+                "now": 3
+              },
+              {
+                "op": "publishSettle",
+                "tag": "p1",
+                "ok": true,
+                "now": 4
+              },
+              {
+                "op": "publish",
+                "tag": "p3",
+                "site": "pub#3",
+                "kind": "markdown",
+                "args": [
+                  "notes",
+                  "# v2"
+                ],
+                "now": 5
+              },
+              {
+                "op": "publishSettle",
+                "tag": "p3",
+                "ok": false,
+                "error": {
+                  "code": "DriverError",
+                  "message": "disk full"
+                },
+                "now": 6
+              },
+              {
+                "op": "publish",
+                "tag": "p4",
+                "site": "pub#4",
+                "kind": "markdown",
+                "args": [
+                  "notes",
+                  "# v2 again"
+                ],
+                "now": 7
+              },
+              {
+                "op": "publishSettle",
+                "tag": "p4",
+                "ok": true,
+                "now": 8
+              },
+              {
+                "op": "publish",
+                "tag": "p5",
+                "site": "pub#5",
+                "kind": "markdown",
+                "args": [
+                  "extra",
+                  "x"
+                ],
+                "now": 9
+              },
+              {
+                "op": "publish",
+                "tag": "p6",
+                "site": "pub#6",
+                "kind": "file",
+                "args": [
+                  "other",
+                  "b.pdf",
+                  {
+                    "primary": true
+                  }
+                ],
+                "now": 10
+              },
+              {
+                "op": "publishSettle",
+                "tag": "p5",
+                "ok": true,
+                "now": 11
+              },
+              {
+                "op": "stop",
+                "reason": "interrupted",
+                "error": {
+                  "code": "Interrupted",
+                  "message": "sandbox exited"
+                },
+                "now": 13
+              }
+            ]
+          },
+          {
+            "scriptHash": "h-holes",
+            "steps": [
+              {
+                "op": "publish",
+                "tag": "q5",
+                "site": "pub#5",
+                "kind": "markdown",
+                "args": [
+                  "extra",
+                  "x"
+                ],
+                "now": 20
+              },
+              {
+                "op": "publish",
+                "tag": "q4",
+                "site": "pub#4",
+                "kind": "markdown",
+                "args": [
+                  "notes",
+                  "# v2 again"
+                ],
+                "now": 21
+              },
+              {
+                "op": "publish",
+                "tag": "q1",
+                "site": "pub#1",
+                "kind": "file",
+                "args": [
+                  "doc",
+                  "out/a.pdf",
+                  {
+                    "primary": true
+                  }
+                ],
+                "now": 22
+              },
+              {
+                "op": "publish",
+                "tag": "q3",
+                "site": "pub#3",
+                "kind": "markdown",
+                "args": [
+                  "notes",
+                  "# v2"
+                ],
+                "now": 23
+              },
+              {
+                "op": "publish",
+                "tag": "q2",
+                "site": "pub#2",
+                "kind": "markdown",
+                "args": [
+                  "notes",
+                  "# hi"
+                ],
+                "now": 24
+              },
+              {
+                "op": "publish",
+                "tag": "q7",
+                "site": "pub#7",
+                "kind": "file",
+                "args": [
+                  "third",
+                  "c.pdf"
+                ],
+                "now": 25
+              },
+              {
+                "op": "publishSettle",
+                "tag": "q7",
+                "ok": true,
+                "now": 26
+              },
+              {
+                "op": "publish",
+                "tag": "q8",
+                "site": "pub#8",
+                "kind": "file",
+                "args": [
+                  "doc",
+                  "d.pdf",
+                  {}
+                ],
+                "now": 27
+              },
+              {
+                "op": "publishSettle",
+                "tag": "q8",
+                "ok": true,
+                "now": 28
+              },
+              {
+                "op": "complete",
+                "artifact": null,
+                "now": 29
+              }
+            ]
+          }
+        ]
+      },
+      "lifetimes": [
+        {
+          "results": [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "run": {
+            "runId": "run_publish",
+            "caps": {
+              "maxConcurrency": 4
+            },
+            "spentTokens": 0,
+            "status": "stopped",
+            "scriptHash": "h-holes",
+            "stopReason": "interrupted",
+            "failure": {
+              "code": "Interrupted",
+              "message": "sandbox exited"
+            }
+          },
+          "nodes": [
+            {
+              "runId": "run_publish",
+              "siteId": "pub#1",
+              "ordinal": 1,
+              "kind": "artifact",
+              "inputHash": "5fbc002c",
+              "status": "completed",
+              "result": {
+                "id": "doc",
+                "kind": "file",
+                "version": 1,
+                "uri": "zcode-artifact://doc/v1",
+                "bytes": 4,
+                "contentType": "text/plain",
+                "sourcePath": "out/a.pdf",
+                "publishedAt": 4,
+                "primary": true
+              },
+              "artifactId": "doc"
+            },
+            {
+              "runId": "run_publish",
+              "siteId": "pub#2",
+              "ordinal": 1,
+              "kind": "artifact",
+              "inputHash": "e20924d5",
+              "status": "completed",
+              "result": {
+                "id": "notes",
+                "kind": "markdown",
+                "version": 1,
+                "uri": "zcode-artifact://notes/v1",
+                "bytes": 4,
+                "contentType": "text/plain",
+                "publishedAt": 3
+              },
+              "artifactId": "notes"
+            },
+            {
+              "runId": "run_publish",
+              "siteId": "pub#3",
+              "ordinal": 1,
+              "kind": "artifact",
+              "inputHash": "f9ce5116",
+              "status": "failed",
+              "error": {
+                "code": "DriverError",
+                "message": "disk full"
+              },
+              "artifactId": "notes"
+            },
+            {
+              "runId": "run_publish",
+              "siteId": "pub#4",
+              "ordinal": 1,
+              "kind": "artifact",
+              "inputHash": "7ad4388a",
+              "status": "completed",
+              "result": {
+                "id": "notes",
+                "kind": "markdown",
+                "version": 2,
+                "uri": "zcode-artifact://notes/v2",
+                "bytes": 4,
+                "contentType": "text/plain",
+                "publishedAt": 8
+              },
+              "artifactId": "notes"
+            },
+            {
+              "runId": "run_publish",
+              "siteId": "pub#5",
+              "ordinal": 1,
+              "kind": "artifact",
+              "inputHash": "ad21f427",
+              "status": "completed",
+              "result": {
+                "id": "extra",
+                "kind": "markdown",
+                "version": 1,
+                "uri": "zcode-artifact://extra/v1",
+                "bytes": 4,
+                "contentType": "text/plain",
+                "publishedAt": 11
+              },
+              "artifactId": "extra"
+            },
+            {
+              "runId": "run_publish",
+              "siteId": "pub#6",
+              "ordinal": 1,
+              "kind": "artifact",
+              "inputHash": "a3c6344a",
+              "status": "failed",
+              "error": {
+                "code": "ArtifactPrimaryConflict",
+                "message": "Cannot mark \"other\" as primary: \"doc\" is already this run's primary artifact. A run has one deliverable; publish \"other\" without primary, or publish it as a new version of \"doc\"."
+              },
+              "artifactId": "other"
+            }
+          ],
+          "openHoles": [],
+          "filledHoles": [],
+          "disposed": 1
+        },
+        {
+          "results": [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "run": {
+            "runId": "run_publish",
+            "caps": {
+              "maxConcurrency": 4
+            },
+            "spentTokens": 0,
+            "status": "completed",
+            "scriptHash": "h-holes",
+            "result": null
+          },
+          "nodes": [
+            {
+              "runId": "run_publish",
+              "siteId": "pub#1",
+              "ordinal": 1,
+              "kind": "artifact",
+              "inputHash": "5fbc002c",
+              "status": "completed",
+              "result": {
+                "id": "doc",
+                "kind": "file",
+                "version": 1,
+                "uri": "zcode-artifact://doc/v1",
+                "bytes": 4,
+                "contentType": "text/plain",
+                "sourcePath": "out/a.pdf",
+                "publishedAt": 4,
+                "primary": true
+              },
+              "artifactId": "doc"
+            },
+            {
+              "runId": "run_publish",
+              "siteId": "pub#2",
+              "ordinal": 1,
+              "kind": "artifact",
+              "inputHash": "e20924d5",
+              "status": "completed",
+              "result": {
+                "id": "notes",
+                "kind": "markdown",
+                "version": 1,
+                "uri": "zcode-artifact://notes/v1",
+                "bytes": 4,
+                "contentType": "text/plain",
+                "publishedAt": 3
+              },
+              "artifactId": "notes"
+            },
+            {
+              "runId": "run_publish",
+              "siteId": "pub#3",
+              "ordinal": 1,
+              "kind": "artifact",
+              "inputHash": "f9ce5116",
+              "status": "failed",
+              "error": {
+                "code": "DriverError",
+                "message": "disk full"
+              },
+              "artifactId": "notes"
+            },
+            {
+              "runId": "run_publish",
+              "siteId": "pub#4",
+              "ordinal": 1,
+              "kind": "artifact",
+              "inputHash": "7ad4388a",
+              "status": "completed",
+              "result": {
+                "id": "notes",
+                "kind": "markdown",
+                "version": 2,
+                "uri": "zcode-artifact://notes/v2",
+                "bytes": 4,
+                "contentType": "text/plain",
+                "publishedAt": 8
+              },
+              "artifactId": "notes"
+            },
+            {
+              "runId": "run_publish",
+              "siteId": "pub#5",
+              "ordinal": 1,
+              "kind": "artifact",
+              "inputHash": "ad21f427",
+              "status": "completed",
+              "result": {
+                "id": "extra",
+                "kind": "markdown",
+                "version": 1,
+                "uri": "zcode-artifact://extra/v1",
+                "bytes": 4,
+                "contentType": "text/plain",
+                "publishedAt": 11
+              },
+              "artifactId": "extra"
+            },
+            {
+              "runId": "run_publish",
+              "siteId": "pub#6",
+              "ordinal": 1,
+              "kind": "artifact",
+              "inputHash": "a3c6344a",
+              "status": "failed",
+              "error": {
+                "code": "ArtifactPrimaryConflict",
+                "message": "Cannot mark \"other\" as primary: \"doc\" is already this run's primary artifact. A run has one deliverable; publish \"other\" without primary, or publish it as a new version of \"doc\"."
+              },
+              "artifactId": "other"
+            },
+            {
+              "runId": "run_publish",
+              "siteId": "pub#7",
+              "ordinal": 1,
+              "kind": "artifact",
+              "inputHash": "5e860c55",
+              "status": "completed",
+              "result": {
+                "id": "third",
+                "kind": "file",
+                "version": 1,
+                "uri": "zcode-artifact://third/v1",
+                "bytes": 4,
+                "contentType": "text/plain",
+                "sourcePath": "c.pdf",
+                "publishedAt": 26
+              },
+              "artifactId": "third"
+            },
+            {
+              "runId": "run_publish",
+              "siteId": "pub#8",
+              "ordinal": 1,
+              "kind": "artifact",
+              "inputHash": "1dd601fc",
+              "status": "completed",
+              "result": {
+                "id": "doc",
+                "kind": "file",
+                "version": 2,
+                "uri": "zcode-artifact://doc/v2",
+                "bytes": 4,
+                "contentType": "text/plain",
+                "sourcePath": "d.pdf",
+                "publishedAt": 28,
+                "primary": true
+              },
+              "artifactId": "doc"
+            }
+          ],
+          "openHoles": [],
+          "filledHoles": [],
+          "disposed": 2
+        }
+      ],
+      "outcomes": [
+        {
+          "tag": "p2",
+          "ok": true,
+          "value": {
+            "id": "notes",
+            "version": 1
+          }
+        },
+        {
+          "tag": "p1",
+          "ok": true,
+          "value": {
+            "id": "doc",
+            "version": 1
+          }
+        },
+        {
+          "tag": "p3",
+          "ok": false,
+          "error": {
+            "code": "DriverError",
+            "message": "disk full"
+          }
+        },
+        {
+          "tag": "p4",
+          "ok": true,
+          "value": {
+            "id": "notes",
+            "version": 2
+          }
+        },
+        {
+          "tag": "p6",
+          "ok": false,
+          "error": {
+            "code": "ArtifactPrimaryConflict",
+            "message": "Cannot mark \"other\" as primary: \"doc\" is already this run's primary artifact. A run has one deliverable; publish \"other\" without primary, or publish it as a new version of \"doc\"."
+          }
+        },
+        {
+          "tag": "p5",
+          "ok": true,
+          "value": {
+            "id": "extra",
+            "version": 1
+          }
+        },
+        {
+          "tag": "q2",
+          "ok": true,
+          "value": {
+            "id": "notes",
+            "version": 1
+          }
+        },
+        {
+          "tag": "q1",
+          "ok": true,
+          "value": {
+            "id": "doc",
+            "version": 1
+          }
+        },
+        {
+          "tag": "q3",
+          "ok": false,
+          "error": {
+            "code": "DriverError",
+            "message": "disk full"
+          }
+        },
+        {
+          "tag": "q4",
+          "ok": true,
+          "value": {
+            "id": "notes",
+            "version": 2
+          }
+        },
+        {
+          "tag": "q7",
+          "ok": true,
+          "value": {
+            "id": "third",
+            "version": 1
+          }
+        },
+        {
+          "tag": "q8",
+          "ok": true,
+          "value": {
+            "id": "doc",
+            "version": 2
+          }
+        },
+        {
+          "tag": "q5",
+          "ok": true,
+          "value": {
+            "id": "extra",
+            "version": 1
+          }
+        }
+      ],
+      "driverCalls": [
+        {
+          "op": "executeArtifactPublish",
+          "request": {
+            "runId": "run_publish",
+            "siteId": "pub#1",
+            "ordinal": 1,
+            "op": "file",
+            "id": "doc",
+            "version": 1,
+            "path": "out/a.pdf",
+            "opts": {
+              "primary": true
+            }
+          }
+        },
+        {
+          "op": "executeArtifactPublish",
+          "request": {
+            "runId": "run_publish",
+            "siteId": "pub#2",
+            "ordinal": 1,
+            "op": "markdown",
+            "id": "notes",
+            "version": 1,
+            "content": "# hi"
+          }
+        },
+        {
+          "op": "executeArtifactPublish",
+          "request": {
+            "runId": "run_publish",
+            "siteId": "pub#3",
+            "ordinal": 1,
+            "op": "markdown",
+            "id": "notes",
+            "version": 2,
+            "content": "# v2"
+          }
+        },
+        {
+          "op": "executeArtifactPublish",
+          "request": {
+            "runId": "run_publish",
+            "siteId": "pub#4",
+            "ordinal": 1,
+            "op": "markdown",
+            "id": "notes",
+            "version": 2,
+            "content": "# v2 again"
+          }
+        },
+        {
+          "op": "executeArtifactPublish",
+          "request": {
+            "runId": "run_publish",
+            "siteId": "pub#5",
+            "ordinal": 1,
+            "op": "markdown",
+            "id": "extra",
+            "version": 1,
+            "content": "x"
+          }
+        },
+        {
+          "op": "executeArtifactPublish",
+          "request": {
+            "runId": "run_publish",
+            "siteId": "pub#7",
+            "ordinal": 1,
+            "op": "file",
+            "id": "third",
+            "version": 1,
+            "path": "c.pdf"
+          }
+        },
+        {
+          "op": "executeArtifactPublish",
+          "request": {
+            "runId": "run_publish",
+            "siteId": "pub#8",
+            "ordinal": 1,
+            "op": "file",
+            "id": "doc",
+            "version": 2,
+            "path": "d.pdf",
+            "opts": {}
+          }
+        }
+      ],
+      "events": [
+        {
+          "sequence": 0,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"run_publish\",\"caps\":{\"maxConcurrency\":4}}"
+        },
+        {
+          "sequence": 1,
+          "payloadJson": "{\"type\":\"artifact-published\",\"instance\":{\"siteId\":\"pub#2\",\"ordinal\":1},\"artifact\":{\"id\":\"notes\",\"kind\":\"markdown\",\"version\":1,\"uri\":\"zcode-artifact://notes/v1\",\"bytes\":4,\"contentType\":\"text/plain\",\"publishedAt\":3}}"
+        },
+        {
+          "sequence": 2,
+          "payloadJson": "{\"type\":\"artifact-published\",\"instance\":{\"siteId\":\"pub#1\",\"ordinal\":1},\"artifact\":{\"id\":\"doc\",\"kind\":\"file\",\"version\":1,\"uri\":\"zcode-artifact://doc/v1\",\"bytes\":4,\"contentType\":\"text/plain\",\"sourcePath\":\"out/a.pdf\",\"publishedAt\":4,\"primary\":true}}"
+        },
+        {
+          "sequence": 3,
+          "payloadJson": "{\"type\":\"artifact-failed\",\"instance\":{\"siteId\":\"pub#3\",\"ordinal\":1},\"id\":\"notes\",\"op\":\"markdown\",\"error\":{\"code\":\"DriverError\",\"message\":\"disk full\"}}"
+        },
+        {
+          "sequence": 4,
+          "payloadJson": "{\"type\":\"artifact-published\",\"instance\":{\"siteId\":\"pub#4\",\"ordinal\":1},\"artifact\":{\"id\":\"notes\",\"kind\":\"markdown\",\"version\":2,\"uri\":\"zcode-artifact://notes/v2\",\"bytes\":4,\"contentType\":\"text/plain\",\"publishedAt\":8}}"
+        },
+        {
+          "sequence": 5,
+          "payloadJson": "{\"type\":\"artifact-failed\",\"instance\":{\"siteId\":\"pub#6\",\"ordinal\":1},\"id\":\"other\",\"op\":\"file\",\"error\":{\"code\":\"ArtifactPrimaryConflict\",\"message\":\"Cannot mark \\\"other\\\" as primary: \\\"doc\\\" is already this run's primary artifact. A run has one deliverable; publish \\\"other\\\" without primary, or publish it as a new version of \\\"doc\\\".\"}}"
+        },
+        {
+          "sequence": 6,
+          "payloadJson": "{\"type\":\"artifact-published\",\"instance\":{\"siteId\":\"pub#5\",\"ordinal\":1},\"artifact\":{\"id\":\"extra\",\"kind\":\"markdown\",\"version\":1,\"uri\":\"zcode-artifact://extra/v1\",\"bytes\":4,\"contentType\":\"text/plain\",\"publishedAt\":11}}"
+        },
+        {
+          "sequence": 7,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"stopped\",\"stopReason\":\"interrupted\",\"error\":{\"code\":\"Interrupted\",\"message\":\"sandbox exited\"}}"
+        },
+        {
+          "sequence": 8,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"run_publish\",\"caps\":{\"maxConcurrency\":4}}"
+        },
+        {
+          "sequence": 9,
+          "payloadJson": "{\"type\":\"artifact-published\",\"instance\":{\"siteId\":\"pub#7\",\"ordinal\":1},\"artifact\":{\"id\":\"third\",\"kind\":\"file\",\"version\":1,\"uri\":\"zcode-artifact://third/v1\",\"bytes\":4,\"contentType\":\"text/plain\",\"sourcePath\":\"c.pdf\",\"publishedAt\":26}}"
+        },
+        {
+          "sequence": 10,
+          "payloadJson": "{\"type\":\"artifact-published\",\"instance\":{\"siteId\":\"pub#8\",\"ordinal\":1},\"artifact\":{\"id\":\"doc\",\"kind\":\"file\",\"version\":2,\"uri\":\"zcode-artifact://doc/v2\",\"bytes\":4,\"contentType\":\"text/plain\",\"sourcePath\":\"d.pdf\",\"publishedAt\":28,\"primary\":true}}"
+        },
+        {
+          "sequence": 11,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"completed\"}"
+        }
+      ],
+      "emittedCount": 12
+    },
+    {
+      "name": "holes-fill-and-stop",
+      "input": {
+        "name": "holes-fill-and-stop",
+        "runId": "run_holes",
+        "caps": 1,
+        "lifetimes": [
+          {
+            "scriptHash": "h-holes",
+            "steps": [
+              {
+                "op": "phase",
+                "name": "pick",
+                "now": 0
+              },
+              {
+                "op": "hole",
+                "tag": "h1",
+                "site": "hole#1",
+                "name": "pick",
+                "prompt": "Which file?",
+                "now": 1
+              },
+              {
+                "op": "hole",
+                "tag": "h2",
+                "site": "hole#1",
+                "name": "pick",
+                "now": 2
+              },
+              {
+                "op": "fill",
+                "site": "hole#1",
+                "code": "(async () => { return 1; })",
+                "script": {
+                  "text": "script v2",
+                  "hash": "h-filled"
+                },
+                "sitePhases": {
+                  "hole#2": "late"
+                },
+                "phaseNames": [
+                  "plan",
+                  "pick"
+                ],
+                "holes": [],
+                "filledBy": "sess-1",
+                "scriptPath": "/tmp/draft.ts",
+                "now": 3
+              },
+              {
+                "op": "hole",
+                "tag": "h3",
+                "site": "hole#1",
+                "name": "pick",
+                "now": 4
+              },
+              {
+                "op": "fill",
+                "site": "hole#9",
+                "code": "(async () => {})",
+                "script": {
+                  "text": "script v3",
+                  "hash": "h-filled-2"
+                },
+                "phaseNames": [
+                  "plan"
+                ],
+                "now": 5
+              },
+              {
+                "op": "hole",
+                "tag": "h4",
+                "site": "hole#2",
+                "name": "review",
+                "prompt": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+                "now": 6
+              },
+              {
+                "op": "stop",
+                "reason": "user",
+                "now": 7
+              }
+            ]
+          },
+          {
+            "scriptHash": "h-filled",
+            "steps": [
+              {
+                "op": "hole",
+                "tag": "r1",
+                "site": "hole#1",
+                "name": "pick",
+                "now": 10
+              },
+              {
+                "op": "hole",
+                "tag": "r2",
+                "site": "hole#2",
+                "name": "review",
+                "now": 11
+              },
+              {
+                "op": "complete",
+                "artifact": "done",
+                "now": 12
+              }
+            ]
+          }
+        ]
+      },
+      "lifetimes": [
+        {
+          "results": [
+            null,
+            null,
+            null,
+            {
+              "ok": true
+            },
+            null,
+            {
+              "ok": false,
+              "reason": "not_waiting"
+            },
+            null,
+            null
+          ],
+          "run": {
+            "runId": "run_holes",
+            "caps": {
+              "maxConcurrency": 1
+            },
+            "spentTokens": 0,
+            "status": "stopped",
+            "scriptHash": "h-filled",
+            "scriptText": "script v2",
+            "stopReason": "user"
+          },
+          "nodes": [],
+          "openHoles": [],
+          "filledHoles": [
+            {
+              "siteId": "hole#1",
+              "filledAt": 3,
+              "filledBy": "sess-1"
+            }
+          ],
+          "disposed": 1
+        },
+        {
+          "results": [
+            null,
+            null,
+            null
+          ],
+          "run": {
+            "runId": "run_holes",
+            "caps": {
+              "maxConcurrency": 1
+            },
+            "spentTokens": 0,
+            "status": "completed",
+            "scriptHash": "h-filled",
+            "scriptText": "script v2",
+            "result": "done"
+          },
+          "nodes": [],
+          "openHoles": [],
+          "filledHoles": [],
+          "disposed": 2
+        }
+      ],
+      "outcomes": [
+        {
+          "tag": "h1",
+          "ok": true,
+          "value": {
+            "code": "(async () => { return 1; })"
+          }
+        },
+        {
+          "tag": "h2",
+          "ok": true,
+          "value": {
+            "code": "(async () => { return 1; })"
+          }
+        },
+        {
+          "tag": "h3",
+          "ok": true,
+          "value": {
+            "code": "(async () => { return 1; })"
+          }
+        },
+        {
+          "tag": "h4",
+          "ok": false,
+          "error": {
+            "code": "Cancelled",
+            "message": "Run stopped."
+          }
+        },
+        {
+          "tag": "r1",
+          "ok": false,
+          "error": {
+            "code": "Cancelled",
+            "message": "Run completed; in-flight subagent tasks were abandoned."
+          }
+        },
+        {
+          "tag": "r2",
+          "ok": false,
+          "error": {
+            "code": "Cancelled",
+            "message": "Run completed; in-flight subagent tasks were abandoned."
+          }
+        }
+      ],
+      "driverCalls": [],
+      "events": [
+        {
+          "sequence": 0,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"run_holes\",\"caps\":{\"maxConcurrency\":1}}"
+        },
+        {
+          "sequence": 1,
+          "payloadJson": "{\"type\":\"phase-entered\",\"name\":\"pick\",\"ordinal\":1}"
+        },
+        {
+          "sequence": 2,
+          "payloadJson": "{\"type\":\"hole-reached\",\"instance\":{\"siteId\":\"hole#1\",\"ordinal\":1},\"name\":\"pick\",\"prompt\":\"Which file?\",\"phaseName\":\"pick\"}"
+        },
+        {
+          "sequence": 3,
+          "payloadJson": "{\"type\":\"hole-reached\",\"instance\":{\"siteId\":\"hole#1\",\"ordinal\":2},\"name\":\"pick\",\"phaseName\":\"pick\"}"
+        },
+        {
+          "sequence": 4,
+          "payloadJson": "{\"type\":\"hole-filled\",\"siteId\":\"hole#1\",\"filledAt\":3,\"filledBy\":\"sess-1\",\"phaseNames\":[\"plan\",\"pick\"],\"holes\":[],\"scriptPath\":\"/tmp/draft.ts\"}"
+        },
+        {
+          "sequence": 5,
+          "payloadJson": "{\"type\":\"hole-reached\",\"instance\":{\"siteId\":\"hole#2\",\"ordinal\":1},\"name\":\"review\",\"prompt\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…\",\"phaseName\":\"late\"}"
+        },
+        {
+          "sequence": 6,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"stopped\",\"stopReason\":\"user\"}"
+        },
+        {
+          "sequence": 7,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"run_holes\",\"caps\":{\"maxConcurrency\":1}}"
+        },
+        {
+          "sequence": 8,
+          "payloadJson": "{\"type\":\"hole-reached\",\"instance\":{\"siteId\":\"hole#1\",\"ordinal\":1},\"name\":\"pick\"}"
+        },
+        {
+          "sequence": 9,
+          "payloadJson": "{\"type\":\"hole-reached\",\"instance\":{\"siteId\":\"hole#2\",\"ordinal\":1},\"name\":\"review\"}"
+        },
+        {
+          "sequence": 10,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"completed\"}"
+        }
+      ],
+      "emittedCount": 11
+    }
+  ]
+}

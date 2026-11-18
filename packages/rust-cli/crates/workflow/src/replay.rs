@@ -51,6 +51,15 @@ pub enum CachedOutcome {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Release {
     Cached(CachedSettle),
+    /// A replayed artifact publish (Node `heldResolution`): the settlement is computed from the recorded row.
+    Held(HeldSettle),
+}
+
+/// The settlement a replayed artifact publish delivers at its turn in the gate.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HeldSettle {
+    pub ticket: u64,
+    pub outcome: Result<Value, WorkflowError>,
 }
 
 /// Gate state. `position` is the recorded settlement order (instance key → index); `cursor` is the next

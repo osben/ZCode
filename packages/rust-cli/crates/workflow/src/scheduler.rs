@@ -464,6 +464,7 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
             stats: None,
             input: None,
             message_boundary: None,
+            artifact_id: None,
         })?;
         self.actor_mut(actor_id)?.live_queue.push_back(node_id);
         self.record(RunEvent::NodeQueued {
@@ -761,6 +762,7 @@ fn node_row(
         stats,
         input: None,
         message_boundary: None,
+        artifact_id: None,
     }
 }
 

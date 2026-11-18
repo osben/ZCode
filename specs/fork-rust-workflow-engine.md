@@ -483,6 +483,7 @@ Each PR is independently mergeable and keeps the gate off (W4) until PR W9. Size
 | W4  | Helper: `helper/workflow/compile` and `helper/workflow/format` (stateless, JS); Rust: compile client, sandbox spawn (`execPath`, `ELECTRON_RUN_AS_NODE=1`), entry file writer, NDJSON host (Boundary A) with a fake child for tests                                                                            | 1,800 Rust, 400 JS | off  |
 | W5a | Engine core, no I/O: identity, hash, scheduler, FIFO and hold, cap and retune, usage, events, settlement; resume replay gate; journal port used through W2                                                                                                                                                     | 4,000              | off  |
 | W5b | Engine resume and amend: import cache (`imported-cache.ts`, `dynamic-workflow-import.ts` preflight), `import-cache-closed`, `superseded`                                                                                                                                                                       | 2,000              | off  |
+| W5c | Engine holes, artifacts and reports (spec 9.6): `engine-holes.ts`, `engine-artifacts.ts` and `-primary.ts`, `engine-report.ts`, the artifact spec validator and the report tally on resume; `hole-reached`, `hole-filled`, `report`, `artifact-published`, `artifact-failed`                                   | 2,400              | off  |
 | W6a | Driver for actors: `ActorRuntime` child session, per-ask turns, `submit_result` validation budgets, repair and nudge, `escalate`, permission origin for subagents, session grants                                                                                                                              | 3,000              | off  |
 | W6b | Driver for the rest: governor (process-level, admission per attempt), model failure policy, world reads, artifact publish, stall clock, quota timer, `LiveRunGuard` and session residency                                                                                                                      | 3,000              | off  |
 | W7  | The tools: `CreateWorkflow`, `AmendWorkflow`, `FillWorkflowHole`, `SaveWorkflow`, `ListSavedWorkflows`, `EvalWorkflowSnippet`, `ListWorkflowRuns`, `GetWorkflowRun`, `ResumeWorkflowRun`, `ResolveWorkflowQuestion`; window display from helper; owner exemption; child denylist; registration behind the gate | 2,500              | off  |
@@ -544,7 +545,7 @@ Remaining as of part 1 (all four are built in part 2, below; the list is kept as
 3. Replay: `replay-order.ts` (258, the settle-order gate and hold rule), `engine-resume.ts` (44, restore of counters and recorded ask counts), and the node and actor rows on the port (`put_node`, `get_node`, `put_actor`, `get_actor`, `list_nodes`), which the adapter does not expose yet.
 4. Usage from asks: `askStats` with `noteStats`, and the node backfill after settlement.
 
-Not in the W5a row, and needing an owner: `engine-holes.ts` (226), `engine-artifacts.ts` and `-primary.ts` (527 and 45), `engine-report.ts` (206). `engine-world.ts` (233) and `imported-cache*` belong to W5b. `concurrency.ts` (345, the governor) belongs to W6b.
+Not in the W5a row, and needing an owner (owned by W5c, section 9.6): `engine-holes.ts` (226), `engine-artifacts.ts` and `-primary.ts` (527 and 45), `engine-report.ts` (206). `engine-world.ts` (233) and `imported-cache*` belong to W5b. `concurrency.ts` (345, the governor) belongs to W6b.
 
 Deviations and facts found while porting:
 
@@ -660,6 +661,51 @@ Not in this row, with the owner:
 - The run service's amend orchestration: stop the predecessor with `superseded` and the successor id, build the cache, create the successor with `inheritedTokens` and `resumedFrom`, and the resume rebuild call (W7/W9). The engine already settles `superseded` (W5a lifecycle goldens).
 - The production driver's calls into `ask_mutating` (on a subagent's mutating tool), `set_message_boundary` (after each exchange) and the session seed (W6a).
 - Holes, artifacts, reports, `countNodes` / `sumResultBytes`, and the governor (W6b and their own row).
+
+### 9.6 As built (W5c): holes, artifacts and reports
+
+Status: built on `feat/rust-workflow-engine-holes`, stacked on W5b part 1 (#534). Gate off; nothing calls the port. Owner of the rows that section 9.3 left unowned ("Not in the W5a row").
+
+Scope: Node `engine/engine-holes.ts` (226), `engine-artifacts.ts` (527), `engine-artifacts-primary.ts` (45), `engine-report.ts` (206), and `artifact-spec.ts` (176, the declaration path needs it). The events `hole-reached`, `hole-filled`, `report`, `artifact-published` and `artifact-failed`; the replay gate for artifact rows; the resume restore of artifact ids and of the report tally (`countNodes` and `sumResultBytes` are read as a restore over the run's rows). Not in scope: the driver's store call and the fill orchestration of the run service (W6a, W6b, W7), and the tools.
+
+Code, `packages/rust-cli/crates/workflow/src`:
+
+- `engine_holes.rs`: `HoleRegistry` (parked branches and this lifetime's fills, both in Node's Map order), `hole`, `fill_hole`, `open_holes`, `filled_holes`, the rejection on settlement.
+- `engine_artifacts.rs`: content publish (`publish_artifact`), its settlement (`artifact_publish_settled`), preset declaration (`declare_artifact`), admission, the primary flag, `restore_artifacts`.
+- `engine_report.rs`: `report`, the three report limits, `restore_report_tally`.
+- `artifact_spec.rs`: the spec validator. Lengths are UTF-16 units and the messages use JavaScript `String()` and `describe` forms.
+- Existing files, additive only: `event.rs` (five variants), `error.rs` (twelve codes), `model.rs` (`NodeRow.artifact_id`, carried through `journal_dwf.rs`), `journal.rs` and `journal_dwf.rs` (`update_run_script`), `replay.rs` (`Release::Held`), `resume.rs` (artifact rows in the gate, artifact events in the settle order, the restores), `engine.rs` (fields, the two driver methods with defaults, the rejection on abort, the release arm), `identity.rs` (`replace_site_phases` and the `hole-reached` birth phase). Each `NodeRow` literal gets `artifact_id: None`.
+
+Driver port: `has_artifact_store()` (default `false`, so a publish fails with `ArtifactStoreUnavailable`) and `start_artifact_publish(instance, request)`. The host answers with `artifact_publish_settled` and then `drain`. The answer is never delivered inline.
+
+Promises: a hole and a publish are tickets in the outcome queue (as asks are). A parked hole is released by `fill_hole` in parked order and rejected by settlement in site order, then parked order, as Node's `rejectAll`.
+
+Clock: the host passes `now` to `hole` and `fill_hole`, the value Node's `EngineConfig.now` would return. The engine reads no clock.
+
+Golden: `scripts/rust-cli/workflow-holes-goldens.ts` runs Node's real engine on five scenarios: `reports-and-presets-resume`, `report-undeclared-and-redeclared`, `declare-redeclared-and-invalid`, `publish-settle-order-and-replay`, `holes-fill-and-stop`. It writes `fixtures/holes-goldens.json`. `holes_golden_tests.rs` replays each on `MemoryJournal` and on `DwfJournal`, and compares the outcomes in settlement order, the driver publish requests, the run, node and actor rows, the open and filled holes per lifetime, and every event's exact payload text.
+
+Deviations and facts found while porting:
+
+- A report item is a `serde_json::Value`, so the JavaScript-only refusals (a cycle, a bigint, `undefined`) cannot reach the engine. The compile-time check and Node's guard stay on the script side.
+- `null` as the `opts` argument: Node reads `args[2].primary` and throws a `TypeError` synchronously. The port treats `null` as no options. The facade validates `opts`, so this is not reachable from a script.
+- The artifact id is now a `NodeRow` field. The DWF upsert keeps the stored id only when the row has none.
+- `artifacts` is a `BTreeMap`, not an insertion-ordered map. Only the declared-id list and the primary lookup iterate it. The list is sorted as Node sorts it, and at most one id is primary, so the order cannot change an outcome.
+- A recorded failure that is not a `WorkflowError` JSON is reported as `DriverError` (Node would throw inside `fromJSON`). Rows the engine writes are always readable.
+- `ArtifactSourceMissing`, `ArtifactPathOutsideWorkspace` and `ArtifactTooLarge` are in `ErrorCode` so the host's errors round-trip. The engine never creates them.
+- A replayed publish computes its settlement from the recorded row when the hold is made, where Node computes it inside the release closure. The row cannot change in between, so the two agree.
+
+Tests (Linux box): `cargo test -p rust-cli-workflow` 42 pass, 0 fail (40 earlier, 2 new: the holes goldens on each journal). `cargo clippy --workspace --all-targets -- -D warnings` clean. `cargo fmt --all -- --check` clean.
+
+Mutation check (each mutation made the goldens fail on both journals, then was reverted): dropping the hole rejection on settlement; letting failed artifact rows stop claiming a gate slot on resume; dropping the birth phase of `hole-reached`.
+
+Red first, honestly: the harness was written before the engine methods. The first build was red (missing trait methods and the test journal's method). The first runtime red was a harness bug (the scenario inputs sit under `input` in the fixture). After that the parity checks passed on the first run.
+
+Not covered yet (open, with the owner):
+
+- The per-item, item-count and run-byte report caps and the artifact version cap have no golden, and no Rust unit test. Node's tests cover them (`journal-contract-*`, `dynamic-workflow/tests`).
+- The fill's ask spec table is always empty in the goldens, so a fill that adds ask sites is not pinned yet (W7 with the run service).
+- Driver: the store call and the publish's settlement come from the W6b driver. The hole-fill orchestration (compile, permission, draft write) is the run service (W7/W8).
+- The notifications and the snapshot projection of open holes are W8.
 
 ## 10. Open questions
 

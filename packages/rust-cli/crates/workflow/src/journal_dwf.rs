@@ -223,8 +223,7 @@ fn node_to_dwf(row: &NodeRow) -> Result<DwfNode> {
             .message_boundary
             .map(|value| ordinal_to_column(value, "message boundary"))
             .transpose()?,
-        // Placeholder: `put_node` fills it from the stored row before the full-row upsert.
-        artifact_id: None,
+        artifact_id: row.artifact_id.clone(),
     })
 }
 
@@ -244,6 +243,7 @@ fn node_from_dwf(node: DwfNode) -> Result<NodeRow> {
         stats: node.stats,
         input: node.input,
         message_boundary: node.message_boundary.map(ordinal_from_column).transpose()?,
+        artifact_id: node.artifact_id,
     })
 }
 
@@ -286,6 +286,15 @@ impl JournalPort for DwfJournal<'_> {
         )
     }
 
+    fn update_run_script(
+        &mut self,
+        run_id: &str,
+        script_text: &str,
+        script_hash: &str,
+    ) -> Result<()> {
+        dwf::update_run_script(self.conn, run_id, script_text, script_hash, (self.clock)())
+    }
+
     fn update_run_caps(&mut self, run_id: &str, caps: Caps) -> Result<()> {
         dwf::update_run_caps(
             self.conn,
@@ -318,8 +327,8 @@ impl JournalPort for DwfJournal<'_> {
     }
 
     fn put_node(&mut self, row: NodeRow) -> Result<()> {
-        // The repository's upsert rewrites every column. NodeRow has no artifact field, so carry the stored
-        // value through; the input and boundary carry through when the row leaves them out.
+        // The repository's upsert rewrites every column. The row carries its artifact id, input and boundary;
+        // a row that leaves them out keeps the stored value.
         let mut node = node_to_dwf(&row)?;
         let stored = dwf::get_node(
             self.conn,
@@ -328,7 +337,10 @@ impl JournalPort for DwfJournal<'_> {
             ordinal_to_column(row.ordinal, "node ordinal")?,
         )?;
         if let Some(stored) = stored {
-            node.artifact_id = stored.artifact_id;
+            // A row without the value keeps the stored one (Node's upsert writes the whole row).
+            if node.artifact_id.is_none() {
+                node.artifact_id = stored.artifact_id;
+            }
             // A row without the value keeps the stored one (Node writes the whole row, so a settlement
             // upsert never resets `input` or `messageBoundary`).
             if node.input.is_none() {
@@ -490,6 +502,7 @@ mod tests {
                 stats: None,
                 input: None,
                 message_boundary: None,
+                artifact_id: None,
             })
             .expect("full-row upsert");
         let stored = rust_cli_node_store::dwf::get_node(&conn, "run_keep", "s", 1)

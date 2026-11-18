@@ -84,6 +84,16 @@ impl JournalPort for FlakyJournal {
         self.inner.update_run_caps(run_id, caps)
     }
 
+    fn update_run_script(
+        &mut self,
+        run_id: &str,
+        script_text: &str,
+        script_hash: &str,
+    ) -> Result<()> {
+        self.inner
+            .update_run_script(run_id, script_text, script_hash)
+    }
+
     fn append_event(&mut self, run_id: &str, event: &RunEvent) -> Result<StoredEvent> {
         if matches!(event, RunEvent::NodeSettled { .. }) {
             self.take(Fail::NodeSettled)?;
@@ -512,6 +522,7 @@ fn a_corrupt_settle_event_names_the_run_and_sequence() {
         stats: None,
         input: None,
         message_boundary: None,
+        artifact_id: None,
     }];
     let events = vec![StoredEvent {
         sequence: 7,
