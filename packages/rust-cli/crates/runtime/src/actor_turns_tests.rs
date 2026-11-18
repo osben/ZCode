@@ -392,7 +392,7 @@ async fn a_rejected_submit_keeps_the_ask_live_and_names_each_violation() {
     let actor = owner.create_actor("site", None, None).expect("actor");
     owner.ask("site", &actor, "do it").expect("ask");
     owner.drain().expect("drain");
-    // The first submit is refused; the turn ends and is nudged; the nudged turn submits again and ends.
+    // The first submit is rejected; the turn ends and is nudged; the nudged turn submits again and ends.
     for _ in 0..4 {
         mailbox.serve_next(&mut owner).expect("the next request");
     }
