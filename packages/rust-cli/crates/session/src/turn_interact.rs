@@ -109,7 +109,16 @@ impl Actor {
             waiting = !pending.reply.is_closed(),
             "interaction resolved"
         );
-        let denied = matches!(answer, Answer::Permission(PermissionAnswer::Deny { .. }));
+        // Every answer that refuses the call: a typed Deny, and the refusals nobody typed (`-p` with no prompt,
+        // a background subagent with no prompts). Allow and AllowSession let it run.
+        let denied = matches!(
+            answer,
+            Answer::Permission(
+                PermissionAnswer::Deny { .. }
+                    | PermissionAnswer::Unavailable
+                    | PermissionAnswer::NoPrompts
+            )
+        );
         let _ = pending.reply.send(Ok(InteractionAnswer {
             interaction: interaction.clone(),
             answer,

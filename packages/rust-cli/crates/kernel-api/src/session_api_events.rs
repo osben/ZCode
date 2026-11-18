@@ -272,8 +272,9 @@ pub enum KernelEvent {
     },
     InteractionResolved {
         interaction: InteractionId,
-        /// Fork: the answer refused the call (a permission denial), or the prompt was withdrawn with its call. The
-        /// call will not run, so its card must not turn running (Node settles a denied prompt as `cancelled`).
+        /// Fork: the answer refused the call (`Deny`, or `Unavailable` / `NoPrompts` where nobody can answer), or the
+        /// prompt was withdrawn with its call. `Allow` and `AllowSession` are not refusals. The call will not run, so
+        /// its card must not turn running (Node settles a denied prompt as `cancelled`).
         /// serde default false for journals written before this field.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         denied: bool,
