@@ -7,9 +7,9 @@ use std::time::Duration;
 
 use futures_util::StreamExt;
 use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
-use rust_cli_kernel_api::ids::{CommandId, EnvironmentId, SessionId, ToolUseId};
+use rust_cli_kernel_api::ids::{AgentId, CommandId, EnvironmentId, SessionId, ToolUseId};
 use rust_cli_kernel_api::orchestration::{
-    Answer, InteractionRequest, Interactions, PermissionAnswer,
+    Answer, AskOrigin, InteractionRequest, Interactions, PermissionAnswer,
 };
 use rust_cli_kernel_api::session_api::{
     Command, CommandEnvelope, CreateSession, Kernel, KernelEvent, SessionHandle,
@@ -204,4 +204,117 @@ async fn an_unoffered_session_answer_is_refused() {
         ),
         "{refused:?}"
     );
+}
+
+/// A permission ask from a subagent: the same tool, with the subagent's origin (`child_session` is the subagent's own).
+fn ask_from_child(tool: &str, child: &SessionId, parent: &SessionId) -> InteractionRequest {
+    let mut request = ask(tool, true);
+    if let InteractionRequest::Permission { origin, .. } = &mut request {
+        *origin = Some(Box::new(AskOrigin {
+            agent: AgentId::new(format!("actor-{}", child.as_str())),
+            agent_type: "general-purpose".to_owned(),
+            child_session: child.clone(),
+            parent_session: parent.clone(),
+            description: "Ada (site@1)".to_owned(),
+            parent_tool_use: None,
+        }));
+    }
+    request
+}
+
+/// The next asked interaction, with the request it carried, so a test can read the ask's payload.
+async fn asked_request(
+    events: &mut futures_util::stream::BoxStream<
+        'static,
+        rust_cli_kernel_api::session_api::SequencedEvent,
+    >,
+) -> (rust_cli_kernel_api::ids::InteractionId, InteractionRequest) {
+    loop {
+        let event = tokio::time::timeout(Duration::from_secs(5), events.next())
+            .await
+            .expect("asked in time")
+            .unwrap();
+        if let KernelEvent::InteractionAsked {
+            interaction,
+            request,
+        } = event.event
+        {
+            return (interaction, request);
+        }
+    }
+}
+
+/// A subagent's "always allow in this session" grants the tool to that subagent only, as Node's per-subagent
+/// PermissionService holds its own session rules. The parent and a sibling subagent still prompt; the subagent is
+/// answered at once. The ask also carries the subagent's origin (the App names the subagent that asked).
+#[tokio::test]
+async fn a_subagent_grant_answers_only_that_subagent() {
+    let store = Arc::new(MemoryStore::default());
+    let kernel = Arc::new(kernel_with(store.clone()));
+    let (id, handle) = open(&kernel).await;
+    let child = SessionId::new("sess_grant_child");
+    let sibling = SessionId::new("sess_grant_sibling");
+    let mut events = handle.subscribe(Some(0));
+
+    let first = {
+        let (port, request) = (
+            port(&kernel, &id).await,
+            ask_from_child("app__search", &child, &id),
+        );
+        tokio::spawn(async move { port.ask(request).await })
+    };
+    let (interaction, request) = asked_request(&mut events).await;
+    match &request {
+        InteractionRequest::Permission {
+            origin: Some(origin),
+            ..
+        } => assert_eq!(
+            origin.child_session, child,
+            "the ask names the subagent that asked"
+        ),
+        other => panic!("the subagent's ask carries its origin: {other:?}"),
+    }
+    answer(&handle, interaction, PermissionAnswer::AllowSession).await;
+    assert!(matches!(
+        first.await.unwrap().unwrap().answer,
+        Answer::Permission(PermissionAnswer::Allow { .. })
+    ));
+
+    // The same subagent again: answered at once, nothing pending.
+    let again = tokio::time::timeout(Duration::from_secs(5), async {
+        port(&kernel, &id)
+            .await
+            .ask(ask_from_child("app__search", &child, &id))
+            .await
+    })
+    .await
+    .expect("the subagent is answered without a prompt")
+    .unwrap();
+    assert!(matches!(
+        again.answer,
+        Answer::Permission(PermissionAnswer::Allow { .. })
+    ));
+
+    // The parent asks for the same tool: it prompts.
+    let parent_ask = {
+        let (port, request) = (port(&kernel, &id).await, ask("app__search", true));
+        tokio::spawn(async move { port.ask(request).await })
+    };
+    asked(&mut events).await;
+    parent_ask.abort();
+
+    // A sibling subagent asks for the same tool: it prompts too.
+    let sibling_ask = {
+        let (port, request) = (
+            port(&kernel, &id).await,
+            ask_from_child("app__search", &sibling, &id),
+        );
+        tokio::spawn(async move { port.ask(request).await })
+    };
+    asked(&mut events).await;
+    sibling_ask.abort();
+
+    // The grant wrote no project rule.
+    let rules = store.project_rules(&workspace()).await.unwrap();
+    assert!(rules.sourced().is_empty(), "{rules:?}");
 }

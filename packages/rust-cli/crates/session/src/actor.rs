@@ -232,8 +232,10 @@ pub(crate) struct Actor {
     pub(crate) cron_fires: VecDeque<rust_cli_kernel_api::cron::CronFire>,
     pub(crate) pending: Vec<Pending>,
     /// Fork (F3b a): tools the user allowed for this session ("Always allow in this session", Node
-    /// `PermissionService.sessionRules`). Lives in the actor: restart, cold resume and `/new` start empty.
-    pub(crate) session_grants: std::collections::BTreeSet<String>,
+    /// `PermissionService.sessionRules`). Lives in the actor: restart, cold resume and `/new` start empty. Each grant is
+    /// keyed by its scope: the subagent that asked (its child session), or "" for this session's own asks. A subagent's
+    /// grant answers that subagent only, as Node gives each subagent its own service.
+    pub(crate) session_grants: std::collections::BTreeSet<(String, String)>,
     pub(crate) running: Option<Running>,
     /// Fork (D2 follow-up): the end-of-turn capture's cancel token while `finish_turn` awaits it. The actor keeps
     /// serving requests meanwhile, and an interrupt or shutdown cancels the capture through this token.

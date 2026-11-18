@@ -20,8 +20,8 @@ impl Actor {
         let (kind, tool) = describe(&request);
         // Fork (F3b a): a tool the user allowed for this session is answered without a prompt, after the
         // pipeline's deny rules and hooks, as Node's session rule is checked before its ask.
-        if let InteractionRequest::Permission { tool, .. } = &request
-            && self.session_grants.contains(tool)
+        if let Some(grant) = grant_key(&request)
+            && self.session_grants.contains(&grant)
         {
             tracing::info!(event = "permission.session_allowed", session = %self.meta.id, tool, "allowed for this session");
             let _ = reply.send(Ok(InteractionAnswer {
@@ -64,16 +64,18 @@ impl Actor {
         };
         // Fork (F3b a): "Always allow in this session" grants the tool to this actor only, and the waiter gets a plain
         // allow. An ask that did not offer it is a deny (Node: the option is not in the list, so the answer is refused).
+        let grant = grant_key(&self.pending[position].request);
         let answer = match (&self.pending[position].request, answer) {
             (
                 InteractionRequest::Permission {
-                    tool,
                     session_allow: true,
                     ..
                 },
                 Answer::Permission(PermissionAnswer::AllowSession),
             ) => {
-                self.session_grants.insert(tool.clone());
+                if let Some(grant) = &grant {
+                    self.session_grants.insert(grant.clone());
+                }
 
                 Answer::Permission(PermissionAnswer::Allow {
                     remember: Vec::new(),
@@ -173,4 +175,17 @@ fn describe(request: &InteractionRequest) -> (&'static str, &str) {
         InteractionRequest::PlanApproval { .. } => ("plan_approval", ""),
         InteractionRequest::McpElicitation { .. } => ("mcp_elicitation", "McpElicitation"),
     }
+}
+
+/// The scope and tool a session grant is keyed by. A subagent's ask is scoped to that subagent (its origin's child
+/// session); this session's own asks use the empty scope. None for a request that is not a permission ask.
+fn grant_key(request: &InteractionRequest) -> Option<(String, String)> {
+    let InteractionRequest::Permission { tool, origin, .. } = request else {
+        return None;
+    };
+    let scope = origin
+        .as_ref()
+        .map(|origin| origin.child_session.as_str().to_owned())
+        .unwrap_or_default();
+    Some((scope, tool.clone()))
 }
