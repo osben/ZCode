@@ -40,11 +40,13 @@ rust-cli-prompts.workspace = true
 rust-cli-query.workspace = true
 rust-cli-session.workspace = true
 rust-cli-tools.workspace = true
+rust-cli-workflow.workspace = true
 tracing.workspace = true
-tokio = { workspace = true, features = ["macros", "sync"] }
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
 tokio-util.workspace = true
 
 [dev-dependencies]
+anyhow.workspace = true
 futures-util.workspace = true
 rust-cli-kernel-api = { workspace = true, features = ["testing"] }
 # dev-only (ocr on the --continue prewarm): the prewarm-target pin test runs against the real

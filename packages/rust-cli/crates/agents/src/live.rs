@@ -232,6 +232,15 @@ pub(crate) struct Live {
     wake: tokio::sync::watch::Sender<u64>,
 }
 
+/// The outcome of starting a workflow actor's run (`Live::begin_actor_run`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BeginActorRun {
+    /// The run started on the entry (a new entry was made for the first run).
+    Started,
+    /// The entry is running a turn already. Nothing changed.
+    AlreadyRunning,
+}
+
 impl Live {
     pub(crate) fn new(clock: Arc<dyn Clock>) -> Self {
         Self {
@@ -444,29 +453,35 @@ impl Live {
     }
 
     /// Start a workflow actor's run: the first-use check, the insert of `fresh` when the entry is new, and the run start,
-    /// in one lock section. An entry that is already running refuses (Node's restart is refused the same way, and
-    /// `Live::restart` returns None for a running entry). The insert stamps the order and the start time as
-    /// [`Self::insert`] does, so the entry lists the same way.
+    /// in one lock section. A running entry is refused, and is not touched (Node's restart is refused the same way, and
+    /// `Live::restart` returns None for a running entry). A run begun on an existing entry clears `stopped_by_user`, as
+    /// a restart does. The fresh entry's first run publishes no previous status: the seed is not a run.
     pub(crate) fn begin_actor_run(
         &self,
         agent: &AgentId,
         fresh: impl FnOnce() -> LiveAgent,
         execution_id: String,
-    ) -> Result<(), String> {
+    ) -> BeginActorRun {
         self.change(|agents| {
             if let Some(entry) = agents.get_mut(agent) {
                 if matches!(entry.state, AgentState::Running { .. }) {
-                    return Err("the actor already has a turn running".to_owned());
+                    return BeginActorRun::AlreadyRunning;
                 }
+                entry.stopped_by_user = false;
                 entry.begin_run(Abort::new(), Vec::new(), execution_id);
-                return Ok(());
+                return BeginActorRun::Started;
             }
             let mut entry = fresh();
+            debug_assert_eq!(
+                &entry.agent, agent,
+                "a fresh entry must be keyed by the id it was begun under"
+            );
             entry.shown.order = self.order.fetch_add(1, Ordering::Relaxed);
-            entry.shown.started_ms = self.clock.now_ms();
             entry.begin_run(Abort::new(), Vec::new(), execution_id);
+            // The seed is Finished(Completed), so `begin_run` read it as the previous run. It is not one.
+            entry.shown.previous = None;
             agents.insert(entry.agent.clone(), entry);
-            Ok(())
+            BeginActorRun::Started
         })
     }
 
