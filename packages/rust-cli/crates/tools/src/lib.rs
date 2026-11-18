@@ -12,6 +12,7 @@
 
 mod ask_user_question;
 mod asking;
+// Fork: Node `isWorkspaceMutatingToolCall` (2c-4e), the predicate behind the workflow's first-write import close.
 mod automation_tools;
 mod base64;
 mod bash;
@@ -47,6 +48,7 @@ mod grep_output;
 mod html_markdown;
 mod line_diff;
 mod lsp_range;
+pub mod side_effect;
 // Fork: the `LSP` agent tool (specs/fork-rust-lsp.md "Tool (D2)").
 mod lsp_tool;
 mod mentions;
