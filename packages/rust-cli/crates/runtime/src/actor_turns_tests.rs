@@ -9,6 +9,7 @@ use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
 use rust_cli_kernel_api::ids::EnvironmentId;
 use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::model::ModelSelection;
+use rust_cli_kernel_api::orchestration::Interactions;
 use rust_cli_kernel_api::permission::PermissionMode;
 use rust_cli_workflow::actor_mailbox::ActorMailbox;
 use rust_cli_workflow::actor_sessions::ActorTurns;
@@ -90,8 +91,10 @@ impl ActorSessions for Sessions {
         session: &str,
         instance: &Ref,
         message: &AskMessage,
+        interaction: &str,
     ) -> anyhow::Result<()> {
-        self.turns.start_turn(session, instance, message)
+        self.turns
+            .start_turn(session, instance, message, interaction)
     }
 
     fn cancel_turn(&mut self, session: &str, instance: &Ref) -> anyhow::Result<()> {
@@ -147,6 +150,7 @@ fn base() -> ActorRunBase {
         selection: ModelSelection::new("account:bigmodel-team-coding-plan", GLM_5_3_ACCOUNT),
         mode: PermissionMode::Default,
         persona_prompt: PERSONA.to_owned(),
+        interactions: None,
     }
 }
 
@@ -154,11 +158,22 @@ fn base() -> ActorRunBase {
 fn owner_over(
     agents: Arc<ScriptedAgents>,
 ) -> (ActorDriverOwner<MemoryJournal, Sessions>, ActorMailbox) {
+    owner_over_with(agents, None)
+}
+
+/// The same owner, with the parent's interactions channel (or none) in the runner's base.
+fn owner_over_with(
+    agents: Arc<ScriptedAgents>,
+    interactions: Option<Arc<dyn Interactions>>,
+) -> (ActorDriverOwner<MemoryJournal, Sessions>, ActorMailbox) {
     let (mailbox, handle) = ActorMailbox::new();
     let runner = Arc::new(AgentTurnRunner::new(
         agents,
         tokio::runtime::Handle::current(),
-        base(),
+        ActorRunBase {
+            interactions,
+            ..base()
+        },
     ));
     let sessions = Sessions {
         turns: MailboxTurns::new(runner, handle),
@@ -251,5 +266,59 @@ async fn the_bridge_refuses_to_block_from_inside_a_runtime() {
     // Called from a task of the runtime itself, the bridge's block_on would panic; the debug assertion says why first.
     let cancel = AtomicBool::new(false);
     use rust_cli_workflow::actor_turns::TurnRunner;
-    let _ = runner.run_turn("sess_site", "do it", &cancel);
+    let _ = runner.run_turn("sess_site", "Ada (site@1)", "do it", &cancel);
+}
+
+#[test]
+fn the_permission_mode_of_an_actor_is_the_recorded_mode_through_the_shared_conversion() {
+    use crate::actor_turns::actor_permission_mode;
+    // Node's rules: a recordable mode maps through the one collaboration-mode table; anything else is absent, and absent
+    // is YOLO (the run before the mode was recorded).
+    let mode = |raw: Value| actor_permission_mode(Some(&raw));
+    assert_eq!(
+        actor_permission_mode(None),
+        PermissionMode::BypassPermissions
+    );
+    assert_eq!(mode(json!("build")), PermissionMode::Default);
+    assert_eq!(mode(json!("edit")), PermissionMode::AcceptEdits);
+    assert_eq!(mode(json!("yolo")), PermissionMode::BypassPermissions);
+    assert_eq!(mode(json!("guarded")), PermissionMode::Guarded);
+    assert_eq!(mode(json!("auto")), PermissionMode::Auto);
+    // `plan` is not a recordable subagent mode, so it reads as absent.
+    assert_eq!(mode(json!("plan")), PermissionMode::BypassPermissions);
+    assert_eq!(mode(json!("bogus")), PermissionMode::BypassPermissions);
+    assert_eq!(mode(json!(7)), PermissionMode::BypassPermissions);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_actor_run_is_named_by_its_interaction_description_and_carries_the_parents_interactions()
+ {
+    use rust_cli_kernel_api::testing::ScriptedInteractions;
+
+    let agents = ScriptedAgents::new(
+        vec![
+            ActorTurnEnd::Text("first".into()),
+            ActorTurnEnd::Text("second".into()),
+        ],
+        false,
+    );
+    let (mut owner, mailbox) = owner_over_with(
+        agents.clone(),
+        Some(Arc::new(ScriptedInteractions::default()) as Arc<dyn Interactions>),
+    );
+    let persona = json!({"name": "Ada"});
+    let actor = owner
+        .create_actor("site", Some("Ada"), Some(&persona))
+        .expect("actor");
+    owner.ask("site", &actor, "do it").expect("ask");
+    owner.drain().expect("drain");
+    mailbox.serve_next(&mut owner).expect("the first turn end");
+    mailbox.serve_next(&mut owner).expect("the second turn end");
+    let runs = agents.runs.lock().expect("runs");
+    // The asks are named by the interaction description, not by the session title.
+    assert_eq!(runs[0].interaction_description, "Ada (site@1)");
+    assert!(
+        runs[0].interactions.is_some(),
+        "the parent's interactions reach the actor run"
+    );
 }

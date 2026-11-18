@@ -16,7 +16,13 @@ use rust_cli_node_store::mint_actor_session_id;
 
 /// The turn side of an actor's session: runs the turns of asks, and releases what an ask leaves behind.
 pub trait ActorTurns {
-    fn start_turn(&mut self, session: &str, instance: &Ref, message: &AskMessage) -> Result<()>;
+    fn start_turn(
+        &mut self,
+        session: &str,
+        instance: &Ref,
+        message: &AskMessage,
+        interaction: &str,
+    ) -> Result<()>;
     fn cancel_turn(&mut self, session: &str, instance: &Ref) -> Result<()>;
     fn reject_parked(&mut self, session: &str, qid: &str) -> Result<()>;
     fn deliver_answer(&mut self, session: &str, qid: &str, answer: &str) -> Result<()>;
@@ -95,8 +101,15 @@ impl<T: ActorTurns> ActorSessions for NodeActorSessions<'_, T> {
         Ok(id)
     }
 
-    fn start_turn(&mut self, session: &str, instance: &Ref, message: &AskMessage) -> Result<()> {
-        self.turns.start_turn(session, instance, message)
+    fn start_turn(
+        &mut self,
+        session: &str,
+        instance: &Ref,
+        message: &AskMessage,
+        interaction: &str,
+    ) -> Result<()> {
+        self.turns
+            .start_turn(session, instance, message, interaction)
     }
 
     fn cancel_turn(&mut self, session: &str, instance: &Ref) -> Result<()> {

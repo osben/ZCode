@@ -28,6 +28,7 @@ pub trait TurnRunner: Send + Sync + 'static {
     fn run_turn(
         &self,
         session: &str,
+        interaction: &str,
         prompt: &str,
         cancel: &AtomicBool,
     ) -> std::result::Result<String, String>;
@@ -53,16 +54,32 @@ impl MailboxTurns {
 }
 
 impl ActorTurns for MailboxTurns {
-    fn start_turn(&mut self, session: &str, instance: &Ref, message: &AskMessage) -> Result<()> {
+    fn start_turn(
+        &mut self,
+        session: &str,
+        instance: &Ref,
+        message: &AskMessage,
+        interaction: &str,
+    ) -> Result<()> {
         let cancel = Arc::new(AtomicBool::new(false));
         self.cancels.insert(instance.key(), cancel.clone());
         let runner = self.runner.clone();
         let handle = self.handle.clone();
         let session = session.to_owned();
         let first = message.instructions.clone();
+        let interaction = interaction.to_owned();
         thread::Builder::new()
             .name(format!("actor-turn-{}", instance.key()))
-            .spawn(move || run_ask(runner.as_ref(), &handle, &session, first, &cancel))
+            .spawn(move || {
+                run_ask(
+                    runner.as_ref(),
+                    &handle,
+                    &session,
+                    &interaction,
+                    first,
+                    &cancel,
+                )
+            })
             .map_err(|error| anyhow!("the actor's turn thread could not start: {error}"))?;
         Ok(())
     }
@@ -88,6 +105,7 @@ fn run_ask(
     runner: &dyn TurnRunner,
     handle: &ActorHandle,
     session: &str,
+    interaction: &str,
     first: String,
     cancel: &AtomicBool,
 ) {
@@ -96,7 +114,7 @@ fn run_ask(
         // Node catches every throw from a turn and reports it as the ask's failure. A panic is the Rust equivalent,
         // and it must not leave the ask waiting on a thread that is gone.
         let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
-            runner.run_turn(session, &prompt, cancel)
+            runner.run_turn(session, interaction, &prompt, cancel)
         }))
         .unwrap_or_else(|payload| Err(panic_text(payload.as_ref())));
         let text = match outcome {

@@ -38,6 +38,7 @@ impl TurnRunner for ScriptedRunner {
     fn run_turn(
         &self,
         _session: &str,
+        _interaction: &str,
         prompt: &str,
         _cancel: &AtomicBool,
     ) -> std::result::Result<String, String> {
@@ -63,6 +64,7 @@ impl TurnRunner for UntilCancelled {
     fn run_turn(
         &self,
         _session: &str,
+        _interaction: &str,
         _prompt: &str,
         cancel: &AtomicBool,
     ) -> std::result::Result<String, String> {
@@ -85,8 +87,15 @@ impl ActorSessions for TestSessions {
         Ok(format!("sess_{}", request.actor.key()))
     }
 
-    fn start_turn(&mut self, session: &str, instance: &Ref, message: &AskMessage) -> Result<()> {
-        self.turns.start_turn(session, instance, message)
+    fn start_turn(
+        &mut self,
+        session: &str,
+        instance: &Ref,
+        message: &AskMessage,
+        interaction: &str,
+    ) -> Result<()> {
+        self.turns
+            .start_turn(session, instance, message, interaction)
     }
 
     fn cancel_turn(&mut self, session: &str, instance: &Ref) -> Result<()> {
@@ -193,6 +202,7 @@ impl TurnRunner for PanickingRunner {
     fn run_turn(
         &self,
         _session: &str,
+        _interaction: &str,
         _prompt: &str,
         _cancel: &AtomicBool,
     ) -> std::result::Result<String, String> {

@@ -27,6 +27,8 @@ pub(crate) struct Log {
     pub(crate) turns: Vec<(String, Ref, AskMessage)>,
     pub(crate) cancelled: Vec<(String, Ref)>,
     pub(crate) rejected: Vec<(String, String)>,
+    /// The interaction description each turn started with, in order.
+    pub(crate) interactions: Vec<String>,
     /// Answers delivered to blocked escalate calls: (session, qid, answer).
     pub(crate) answered: Vec<(String, String, String)>,
     /// When set, the next `start_turn` fails, as a refused send does.
@@ -51,8 +53,15 @@ impl ActorSessions for Recording {
         Ok(format!("sess_{}", log.next))
     }
 
-    fn start_turn(&mut self, session: &str, instance: &Ref, message: &AskMessage) -> Result<()> {
+    fn start_turn(
+        &mut self,
+        session: &str,
+        instance: &Ref,
+        message: &AskMessage,
+        interaction: &str,
+    ) -> Result<()> {
         let mut log = self.0.borrow_mut();
+        log.interactions.push(interaction.to_owned());
         if log.fail_next_start {
             log.fail_next_start = false;
             bail!("send refused");
@@ -772,5 +781,32 @@ fn a_refused_delivery_is_reported_on_the_outcome_and_the_question_is_still_retir
         owner.answer(&qid, "again").expect("answer"),
         None,
         "the question is retired: a retry is not a second answer"
+    );
+}
+
+#[test]
+fn a_turn_starts_with_the_interaction_description_of_its_actor_and_persona() {
+    let (mut owner, sessions) = owner();
+    let persona = json!({"name": "Ada"});
+    let actor = owner
+        .create_actor("site", Some("Ada"), Some(&persona))
+        .expect("actor");
+    owner.ask("site", &actor, "do it").expect("ask");
+    owner.drain().expect("drain");
+    assert_eq!(
+        sessions.0.borrow().interactions,
+        vec!["Ada (site@1)".to_owned()]
+    );
+}
+
+#[test]
+fn an_actor_without_a_persona_name_is_named_subagent() {
+    let (mut owner, sessions) = owner();
+    let actor = owner.create_actor("site", None, None).expect("actor");
+    owner.ask("site", &actor, "do it").expect("ask");
+    owner.drain().expect("drain");
+    assert_eq!(
+        sessions.0.borrow().interactions,
+        vec!["subagent (site@1)".to_owned()]
     );
 }

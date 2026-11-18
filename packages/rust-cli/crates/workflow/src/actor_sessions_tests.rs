@@ -43,6 +43,7 @@ impl ActorTurns for Turns {
         session: &str,
         _instance: &Ref,
         _message: &AskMessage,
+        _interaction: &str,
     ) -> anyhow::Result<()> {
         self.started.push(session.to_owned());
         Ok(())
@@ -152,7 +153,7 @@ fn turn_calls_are_delegated_to_the_turn_side_unchanged() {
         schema: None,
     };
     sessions
-        .start_turn("sess_x", &Ref::new("ask", 1), &message)
+        .start_turn("sess_x", &Ref::new("ask", 1), &message, "Ada (site@1)")
         .expect("start");
     sessions
         .cancel_turn("sess_x", &Ref::new("ask", 1))

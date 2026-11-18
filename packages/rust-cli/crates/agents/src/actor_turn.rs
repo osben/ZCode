@@ -21,9 +21,11 @@ use rust_cli_kernel_api::env_shell::BackgroundStatus;
 use rust_cli_kernel_api::ids::{AgentId, MachineName, SessionId};
 use rust_cli_kernel_api::message::UserOrigin;
 use rust_cli_kernel_api::model::ModelSelection;
+use rust_cli_kernel_api::orchestration::Interactions;
 use rust_cli_kernel_api::permission::PermissionMode;
 use tokio_util::sync::CancellationToken;
 
+use crate::child::Asks;
 use crate::definitions::{AgentDefinition, AgentSource};
 use crate::live::{AgentState, BeginActorRun, LiveAgent, Shown};
 use crate::report::Ending;
@@ -54,16 +56,33 @@ pub fn actor_turn_end(killed: bool, failure: Option<&str>, text: &str) -> ActorT
 
 /// The parts of an actor's run the workflow supplies: its child session (created by the workflow), the parent
 /// session of the run, the persona's system prompt, and the run's workspace, model and permission mode.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone)]
 pub struct ActorRun {
     pub child: SessionId,
     pub parent: SessionId,
-    pub description: String,
+    /// `<persona name ?? "subagent"> (<site>@<ordinal>)`: the origin of the actor's permission and interaction asks.
+    pub interaction_description: String,
+    /// The parent session's interactions (its broker to the user), when the runtime has them. The gate that decides
+    /// whether an actor may ask is [`actor_asks`], as it is for the Agent tool.
+    pub interactions: Option<Arc<dyn Interactions>>,
     /// The persona's system prompt, the first part of the child's system prompt.
     pub persona_prompt: String,
     pub workspace: WorkspaceRef,
     pub selection: ModelSelection,
     pub mode: PermissionMode,
+}
+
+/// The asks channel of an actor. It exists only when the parent offers background prompts and has an interactions
+/// channel, as the Agent tool's entry does (`core.background_prompts.then(|| context.interactions.lasting())`).
+pub(crate) fn actor_asks(
+    background_prompts: bool,
+    interactions: Option<Arc<dyn Interactions>>,
+) -> Option<Asks> {
+    if background_prompts {
+        interactions.map(Asks)
+    } else {
+        None
+    }
 }
 
 /// The live-map key of an actor: one per child session.
@@ -88,7 +107,7 @@ impl LiveAgent {
             stopped_by_user: false,
             erased: false,
             late_messages: Vec::new(),
-            description: run.description,
+            description: run.interaction_description,
             definition: Arc::new(AgentDefinition {
                 agent_type: "workflow_actor".to_owned(),
                 when_to_use: String::new(),
@@ -140,10 +159,15 @@ impl crate::Agents {
         let agent_id = actor_agent_id(&run.child);
         let root = core.live.root_of(&run.parent);
         let execution_id = core.ports.ids.execution();
+        let asks = actor_asks(core.background_prompts, run.interactions.clone());
         // The first-use check, the insert and the run start share one lock section (`Live::begin_actor_run`).
         let started = core.live.begin_actor_run(
             &agent_id,
-            || LiveAgent::for_actor(run, agent_id.clone(), root),
+            || {
+                let mut entry = LiveAgent::for_actor(run, agent_id.clone(), root);
+                entry.asks = asks;
+                entry
+            },
             execution_id,
         );
         if started == BeginActorRun::AlreadyRunning {
@@ -166,6 +190,24 @@ impl crate::Agents {
             finished.failure(core.node_desktop).as_deref(),
             &finished.report.text,
         )
+    }
+}
+
+#[cfg(test)]
+mod asks_tests {
+    use super::actor_asks;
+    use rust_cli_kernel_api::testing::ScriptedInteractions;
+    use std::sync::Arc;
+
+    #[test]
+    fn an_actor_has_an_asks_channel_only_when_the_parent_offers_background_prompts() {
+        let channel = || Some(Arc::new(ScriptedInteractions::default()) as Arc<_>);
+        assert!(actor_asks(true, channel()).is_some());
+        assert!(
+            actor_asks(false, channel()).is_none(),
+            "the gate applies as it does for the Agent tool"
+        );
+        assert!(actor_asks(true, None).is_none(), "no channel means no asks");
     }
 }
 
