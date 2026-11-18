@@ -4,6 +4,7 @@
 //! `workflow_child` row under the run's parent, and the `workflow_actor` task link, through node-store's writers. The
 //! session id is `mint_actor_session_id`, the same function the replay envelope uses. Turn calls are delegated to
 //! `ActorTurns`, the turn side, which is not part of this module.
+use crate::actor_turns::TurnInput;
 use crate::driver_owner::{ActorSessionRequest, ActorSessions};
 use crate::engine::AskMessage;
 use crate::model::Ref;
@@ -24,8 +25,7 @@ pub trait ActorTurns {
         &mut self,
         session: &str,
         instance: &Ref,
-        input: &str,
-        epilogue_start: usize,
+        input: &TurnInput,
         interaction: &str,
     ) -> Result<()>;
     fn cancel_turn(&mut self, session: &str, instance: &Ref) -> Result<()>;
@@ -111,12 +111,10 @@ impl<T: ActorTurns> ActorSessions for NodeActorSessions<'_, T> {
         session: &str,
         instance: &Ref,
         _message: &AskMessage,
-        input: &str,
-        epilogue_start: usize,
+        input: &TurnInput,
         interaction: &str,
     ) -> Result<()> {
-        self.turns
-            .start_turn(session, instance, input, epilogue_start, interaction)
+        self.turns.start_turn(session, instance, input, interaction)
     }
 
     fn cancel_turn(&mut self, session: &str, instance: &Ref) -> Result<()> {

@@ -30,7 +30,7 @@ use rust_cli_kernel_api::model::ModelSelection;
 use rust_cli_kernel_api::orchestration::Interactions;
 use rust_cli_kernel_api::permission::PermissionMode;
 use rust_cli_workflow::actor_mailbox::ActorHandle;
-use rust_cli_workflow::actor_turns::TurnRunner;
+use rust_cli_workflow::actor_turns::{TurnInput, TurnRunner};
 use rust_cli_workflow::driver_owner::SubmitReply;
 use rust_cli_workflow::driver_rules::{actor_permission_policy, parse_subagent_permission_mode};
 use rust_cli_workflow::engine::SubmitVerdict;
@@ -214,9 +214,7 @@ impl<A: ActorAgents> TurnRunner for AgentTurnRunner<A> {
         &self,
         session: &str,
         interaction: &str,
-        // The epilogue boundary is persisted with the user message in the next PR (spec 9.8f, 2c-3b part 2).
-        _epilogue_start: usize,
-        prompt: &str,
+        turn: &TurnInput,
         cancel: &AtomicBool,
     ) -> Result<String, String> {
         debug_assert!(
@@ -239,9 +237,10 @@ impl<A: ActorAgents> TurnRunner for AgentTurnRunner<A> {
                 clock: self.base.clock.clone(),
                 cancel: token.clone(),
             })),
+            submit_schema: turn.submit_schema.clone(),
         };
         let end = self.handle.block_on(async {
-            let work = self.agents.run_actor_turn(run, prompt, token.clone());
+            let work = self.agents.run_actor_turn(run, &turn.text, token.clone());
             tokio::pin!(work);
             loop {
                 tokio::select! {

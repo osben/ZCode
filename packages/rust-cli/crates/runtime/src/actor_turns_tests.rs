@@ -149,12 +149,10 @@ impl ActorSessions for Sessions {
         session: &str,
         instance: &Ref,
         _message: &AskMessage,
-        input: &str,
-        epilogue_start: usize,
+        input: &rust_cli_workflow::actor_turns::TurnInput,
         interaction: &str,
     ) -> anyhow::Result<()> {
-        self.turns
-            .start_turn(session, instance, input, epilogue_start, interaction)
+        self.turns.start_turn(session, instance, input, interaction)
     }
 
     fn cancel_turn(&mut self, session: &str, instance: &Ref) -> anyhow::Result<()> {
@@ -340,7 +338,16 @@ async fn the_bridge_refuses_to_block_from_inside_a_runtime() {
     // Called from a task of the runtime itself, the bridge's block_on would panic; the debug assertion says why first.
     let cancel = AtomicBool::new(false);
     use rust_cli_workflow::actor_turns::TurnRunner;
-    let _ = runner.run_turn("sess_site", "Ada (site@1)", 5, "do it", &cancel);
+    let _ = runner.run_turn(
+        "sess_site",
+        "Ada (site@1)",
+        &rust_cli_workflow::actor_turns::TurnInput {
+            text: "do it".into(),
+            epilogue_start: 5,
+            submit_schema: None,
+        },
+        &cancel,
+    );
 }
 
 #[test]
@@ -476,6 +483,32 @@ async fn a_blocked_escalation_is_answered_through_the_mailbox_and_returns_the_an
             qid: qids[0].clone(),
             answer: "the second one".to_owned(),
         })]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_mono_session_hands_its_submit_schema_to_every_turn_of_its_ask() {
+    let agents = ScriptedAgents::new(Vec::new(), false);
+    let (mut owner, mailbox) = owner_over(agents.clone());
+    let actor = owner.create_actor("site", None, None).expect("actor");
+    // The schema matches the site's ask, so the session stays mono and its turns declare the schema.
+    let schema = json!({"type": "object"});
+    owner.set_actor_profile(
+        &actor,
+        rust_cli_workflow::driver_rules::SubmitProfile::Mono {
+            schema: schema.clone(),
+        },
+    );
+    owner.ask("site", &actor, "do it").expect("ask");
+    owner.drain().expect("drain");
+    // The turn ends and is nudged; the nudged turn ends too.
+    mailbox.serve_next(&mut owner).expect("the turn end");
+    mailbox.serve_next(&mut owner).expect("the nudged turn end");
+    let runs = agents.runs.lock().expect("runs");
+    assert_eq!(runs.len(), 2);
+    assert!(
+        runs.iter()
+            .all(|run| run.submit_schema.as_ref() == Some(&schema))
     );
 }
 

@@ -21,6 +21,7 @@
 //!   engine has already settled the ask, so a returned error would make the caller retry a settled call. A reply call
 //!   returns an error only when the engine call itself failed, since then no reply exists; the pump error is logged in
 //!   that case too.
+use crate::actor_turns::TurnInput;
 use crate::driver_rules::{
     NO_ACTIVE_ASK_MESSAGE, ProfileFit, SubmitProfile, SubmitRoute, UNTYPED_ASK_MESSAGE,
     actor_interaction_description, actor_session_title, actor_task_link_path, ask_input,
@@ -67,8 +68,7 @@ pub trait ActorSessions {
         session: &str,
         instance: &Ref,
         message: &AskMessage,
-        input: &str,
-        epilogue_start: usize,
+        input: &TurnInput,
         interaction: &str,
     ) -> Result<()>;
     /// Stop the session's turn for an ask the engine cancelled.
@@ -107,9 +107,8 @@ struct QueuedStart {
     session: String,
     instance: Ref,
     message: AskMessage,
-    /// The composed turn input (instructions and epilogues) and its boundary (`ask_input`).
-    input: String,
-    epilogue_start: usize,
+    /// The turn's input: the composed text and its boundary (`ask_input`), and the mono submit schema if any.
+    turn: TurnInput,
 }
 
 /// An ask the owner has started and not yet ended.
@@ -213,18 +212,26 @@ impl<S: ActorSessions> WorkflowDriver for ActorPort<S> {
             }
         }
         // The input is composed after the fit, as Node composes it after `ensureSubmitProfileFits`.
-        let (input, epilogue_start) = ask_input(
+        let (text, epilogue_start) = ask_input(
             &message.instructions,
             message.typed,
             message.schema.as_ref(),
             &profile,
         );
+        // A mono session's turn declares its schema; a generic one, and an untyped ask, declare none.
+        let submit_schema = match (&profile, message.typed) {
+            (SubmitProfile::Mono { schema }, true) => Some(schema.clone()),
+            _ => None,
+        };
         self.queued_starts.push(QueuedStart {
             session: session.to_owned(),
             instance: instance.clone(),
             message: message.clone(),
-            input,
-            epilogue_start,
+            turn: TurnInput {
+                text,
+                epilogue_start,
+                submit_schema,
+            },
         });
     }
 
@@ -320,8 +327,11 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
             session: session.to_owned(),
             instance: instance.clone(),
             message,
-            input,
-            epilogue_start,
+            turn: TurnInput {
+                text: input,
+                epilogue_start,
+                submit_schema: None,
+            },
         });
     }
 
@@ -638,8 +648,7 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
             &start.session,
             &start.instance,
             &start.message,
-            &start.input,
-            start.epilogue_start,
+            &start.turn,
             &interaction,
         ) {
             Ok(()) => {

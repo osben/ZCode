@@ -54,8 +54,7 @@ impl TurnRunner for ScriptedRunner {
         &self,
         _session: &str,
         interaction: &str,
-        epilogue_start: usize,
-        prompt: &str,
+        turn: &crate::actor_turns::TurnInput,
         _cancel: &AtomicBool,
     ) -> std::result::Result<String, String> {
         self.interactions
@@ -65,11 +64,11 @@ impl TurnRunner for ScriptedRunner {
         self.epilogue_starts
             .lock()
             .expect("epilogue starts")
-            .push(epilogue_start);
+            .push(turn.epilogue_start);
         self.prompts
             .lock()
             .expect("prompts")
-            .push(prompt.to_owned());
+            .push(turn.text.clone());
         self.replies
             .lock()
             .expect("replies")
@@ -89,8 +88,7 @@ impl TurnRunner for UntilCancelled {
         &self,
         _session: &str,
         _interaction: &str,
-        _epilogue_start: usize,
-        _prompt: &str,
+        _turn: &crate::actor_turns::TurnInput,
         cancel: &AtomicBool,
     ) -> std::result::Result<String, String> {
         let _ = self.started.send(());
@@ -117,12 +115,10 @@ impl ActorSessions for TestSessions {
         session: &str,
         instance: &Ref,
         _message: &AskMessage,
-        input: &str,
-        epilogue_start: usize,
+        input: &crate::actor_turns::TurnInput,
         interaction: &str,
     ) -> Result<()> {
-        self.turns
-            .start_turn(session, instance, input, epilogue_start, interaction)
+        self.turns.start_turn(session, instance, input, interaction)
     }
 
     fn cancel_turn(&mut self, session: &str, instance: &Ref) -> Result<()> {
@@ -283,8 +279,7 @@ impl TurnRunner for PanickingRunner {
         &self,
         _session: &str,
         _interaction: &str,
-        _epilogue_start: usize,
-        _prompt: &str,
+        _turn: &crate::actor_turns::TurnInput,
         _cancel: &AtomicBool,
     ) -> std::result::Result<String, String> {
         panic!("runner exploded mid-turn");

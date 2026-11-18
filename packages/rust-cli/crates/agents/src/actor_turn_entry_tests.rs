@@ -31,6 +31,7 @@ fn run_for(child: &SessionId, parent: &SessionId) -> ActorRun {
         interaction_description: "Ada (site@1)".to_owned(),
         interactions: None,
         port: None,
+        submit_schema: None,
         persona_prompt: PERSONA.to_owned(),
         workspace: workspace(),
         selection: selection(),

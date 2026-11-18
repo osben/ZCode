@@ -23,6 +23,7 @@ fn run(child: &str) -> ActorRun {
         interaction_description: "Ada (site@1)".to_owned(),
         interactions: None,
         port: None,
+        submit_schema: None,
         persona_prompt: "You are a workflow actor.".to_owned(),
         workspace: workspace(),
         selection: ModelSelection::new("account:bigmodel-team-coding-plan", GLM_5_3_ACCOUNT),
@@ -203,7 +204,10 @@ fn begun_with_port(live: &Live, id: &AgentId, port: &Arc<dyn crate::actor_turn::
         || {
             let mut entry =
                 LiveAgent::for_actor(run("sess_a"), id.clone(), SessionId::new("ses_parent"));
-            entry.actor_port = Some(crate::actor_turn::SubmitPort(port.clone()));
+            entry.actor_port = Some(crate::actor_turn::SubmitPort {
+                port: port.clone(),
+                submit_schema: None,
+            });
             entry
         },
         |_| {},
@@ -228,13 +232,22 @@ fn the_next_turns_port_survives_the_previous_turns_end() {
     live.begin_actor_run(
         &id,
         || unreachable!("the entry exists"),
-        |entry| entry.actor_port = Some(crate::actor_turn::SubmitPort(second.clone())),
+        |entry| {
+            entry.actor_port = Some(crate::actor_turn::SubmitPort {
+                port: second.clone(),
+                submit_schema: None,
+            })
+        },
         "execution-2".to_owned(),
     );
     let entry = live.get(&id).expect("the entry");
     assert!(
         Arc::ptr_eq(
-            &entry.actor_port.as_ref().expect("the second turn's port").0,
+            &entry
+                .actor_port
+                .as_ref()
+                .expect("the second turn's port")
+                .port,
             &second
         ),
         "the second turn keeps the port it installed"

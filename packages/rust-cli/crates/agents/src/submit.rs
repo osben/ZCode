@@ -18,7 +18,7 @@ use rust_cli_kernel_api::tool::{
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
-use crate::actor_turn::{ActorPort, ActorSubmit, ActorViolation};
+use crate::actor_turn::{ActorPort, ActorSubmit, ActorViolation, SubmitPort};
 
 pub(crate) const NAME: &str = "submit_result";
 
@@ -32,14 +32,23 @@ const CANCELLED: &str = "submit_result was cancelled before the engine returned 
 const HEADER: &str = "The submitted result does not match the required schema:";
 
 /// The tool for an actor's port.
-pub(crate) fn tool(port: Arc<dyn ActorPort>) -> Arc<dyn Tool> {
-    Arc::new(SubmitResult { port })
+pub(crate) fn tool(port: Arc<dyn ActorPort>, submit_schema: Option<Value>) -> Arc<dyn Tool> {
+    Arc::new(SubmitResult {
+        port,
+        submit_schema,
+    })
 }
 
-/// The tools an actor's child gets for its port: `submit_result` and `escalate` when there is a port, none otherwise.
-pub(crate) fn tools_for(port: Option<&Arc<dyn ActorPort>>) -> Vec<Arc<dyn Tool>> {
-    port.map(|port| vec![tool(port.clone()), crate::escalate::tool(port.clone())])
-        .unwrap_or_default()
+/// The tools an actor's child gets for its port: `submit_result` (declaring the port's submit schema, if it has one) and
+/// `escalate` when there is a port, none otherwise.
+pub(crate) fn tools_for(port: Option<&SubmitPort>) -> Vec<Arc<dyn Tool>> {
+    port.map(|port| {
+        vec![
+            tool(port.port.clone(), port.submit_schema.clone()),
+            crate::escalate::tool(port.port.clone()),
+        ]
+    })
+    .unwrap_or_default()
 }
 
 /// Node `formatSubmitViolations`: one violation per line, `<path>: expected <expected>, got <got>`.
@@ -61,6 +70,8 @@ fn format_violations(violations: &[ActorViolation]) -> String {
 
 struct SubmitResult {
     port: Arc<dyn ActorPort>,
+    /// The mono session's schema (None for a generic session, whose `result` takes any JSON).
+    submit_schema: Option<Value>,
 }
 
 #[async_trait]
@@ -69,14 +80,31 @@ impl Tool for SubmitResult {
         NAME
     }
 
+    /// Node `typedSubmitResultInputSchema` for a mono session: the schema is the `result` property, the call requires it, and
+    /// nothing else is allowed. A generic session's `result` takes any JSON, and the ask's epilogue says the shape.
     fn input_schema(&self) -> Value {
         // Node's submit input is strict: a key other than `result` is refused (see `call_with_messages`).
-        json!({
-            "type": "object",
-            "properties": {"result": {"description": "The result, as JSON, matching the ask's schema."}},
-            "required": ["result"],
-            "additionalProperties": false,
-        })
+        match &self.submit_schema {
+            Some(schema) => {
+                let mut result = schema.as_object().cloned().unwrap_or_default();
+                result.insert(
+                    "description".to_owned(),
+                    json!("The structured result for this ask."),
+                );
+                json!({
+                    "type": "object",
+                    "properties": {"result": Value::Object(result)},
+                    "required": ["result"],
+                    "additionalProperties": false,
+                })
+            }
+            None => json!({
+                "type": "object",
+                "properties": {"result": {"description": "The result, as JSON, matching the ask's schema."}},
+                "required": ["result"],
+                "additionalProperties": false,
+            }),
+        }
     }
 
     fn cancel_message(&self) -> Option<std::borrow::Cow<'_, str>> {
@@ -84,8 +112,12 @@ impl Tool for SubmitResult {
     }
 
     fn description(&self, _context: &PromptContext) -> String {
-        "Submit the structured result for the current ask. The required JSON shape is described in the ask instructions."
-            .to_owned()
+        if self.submit_schema.is_some() {
+            "Submit the structured result for the current ask. The `result` argument must match this tool's schema.".to_owned()
+        } else {
+            "Submit the structured result for the current ask. The required JSON shape is described in the ask instructions."
+                .to_owned()
+        }
     }
 
     fn is_read_only(&self, _input: &Value) -> bool {
