@@ -263,7 +263,7 @@ fn started_calls_count_from_the_stream_and_only_world_tools_count_as_world() {
         "Read and Bash touch the world; the protocol tools do not"
     );
     assert_eq!(
-        stats.requests, 0,
+        stats.usage_requests, 0,
         "no response was committed, so no request is counted"
     );
 }
@@ -291,4 +291,87 @@ fn the_protocol_tools_are_not_world_touching_and_an_unknown_tool_is() {
     }
     assert!(is_world_touching("Write"));
     assert!(is_world_touching("some_mcp_tool"));
+}
+
+/// Node `usage.totalTokens` is the sum over the turn's requests, and `modelRequestCount` counts those with usage. Two
+/// requests with usage sum; a request without usage adds nothing to either.
+#[test]
+fn the_turns_tokens_sum_over_every_request_with_usage() {
+    use crate::child::RunStats;
+    use rust_cli_kernel_api::message::Usage;
+    let mut stats = RunStats::default();
+    stats.model_request(Some(Usage {
+        input_tokens: 10,
+        output_tokens: 5,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+    }));
+    stats.model_request(None);
+    stats.model_request(Some(Usage {
+        input_tokens: 20,
+        output_tokens: 7,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 3,
+    }));
+    assert_eq!(
+        stats.usage_requests, 2,
+        "the request without usage is not counted"
+    );
+    assert_eq!(stats.usage_tokens, 15 + 30, "each request's tokens, summed");
+}
+
+/// The tool count comes from the started stream, not from the transcript. A run that started two tools and committed no
+/// assistant message has two counted calls, while the transcript-derived count (the tool_use blocks of the committed
+/// messages, returned by `outcome`) is 0.
+#[tokio::test]
+async fn the_tool_count_comes_from_the_started_stream_not_from_the_transcript() {
+    let store = Arc::new(MemoryStore::default());
+    let child = SessionId::new("sess_subagent_agent_stream");
+    store
+        .create(SessionMeta {
+            id: child.clone(),
+            kind: SessionKind::Subagent,
+            parent: Some(SessionId::new("sess_parent")),
+            workspace: WorkspaceRef {
+                environment: EnvironmentId::new("local"),
+                root: EnvPath::new("/Users/dev/work"),
+            },
+            title: "stream".to_owned(),
+            trace: TraceId::new("trace"),
+            created_at_ms: 1,
+            incognito: None,
+        })
+        .await
+        .unwrap();
+    let sink = ChildSink::new(
+        store.clone(),
+        Arc::new(SequentialIds::default()),
+        Arc::new(Live::default()),
+        AgentId::new("agent_stream"),
+        child.clone(),
+        MessageId::new("prompt_stream"),
+        None,
+    );
+    for (id, name) in [("toolu_read", "Read"), ("toolu_bash", "Bash")] {
+        sink.emit(QueryEvent::ToolStarted {
+            tool_use: ToolUseId::new(id),
+            name: name.to_owned(),
+            input: json!({}),
+        })
+        .await;
+    }
+    let (_, transcript_tool_uses) = sink.outcome();
+    assert_eq!(
+        transcript_tool_uses, 0,
+        "no assistant message was committed, so the transcript shows no tool use"
+    );
+    let stats = sink.run_stats();
+    assert_eq!(
+        stats.tool_calls, 2,
+        "the started stream shows the two calls"
+    );
+    assert_eq!(
+        stats.world_tool_calls, 2,
+        "Read and Bash both touch the world"
+    );
 }

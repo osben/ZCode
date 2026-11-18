@@ -167,8 +167,8 @@ impl std::fmt::Debug for ActorRun {
     }
 }
 
-/// What a workflow actor's last turn counted, as the bridge reads it (Node `statsFromTurn`'s inputs). `tokens` is None when
-/// the turn's last response has no usage record: the failed usage read, which the workflow reports with Node's defaults.
+/// What a workflow actor's last turn counted, as the bridge reads it (Node `statsFromTurn`'s inputs). `requests` counts the turn's
+/// requests that carry usage, and `tokens` is their sum; None when none does: the failed usage read, which the workflow reports with Node's defaults.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ActorTurnStats {
     pub tool_calls: u64,
@@ -203,8 +203,8 @@ impl crate::Agents {
         entry.last_turn_stats.map(|stats| ActorTurnStats {
             tool_calls: stats.tool_calls,
             world_tool_calls: stats.world_tool_calls,
-            requests: stats.requests,
-            tokens: stats.last_tokens,
+            requests: stats.usage_requests,
+            tokens: (stats.usage_requests > 0).then_some(stats.usage_tokens),
         })
     }
 }

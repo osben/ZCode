@@ -59,10 +59,10 @@ pub(crate) struct RunStats {
     pub(crate) tool_calls: u64,
     /// The started calls that touch the world: every tool but the protocol ones (Node `isWorldTouchingToolCall`).
     pub(crate) world_tool_calls: u64,
-    /// Model requests: one per committed assistant message.
-    pub(crate) requests: u64,
-    /// The tokens of the run's last response, or None when that response has no usage record.
-    pub(crate) last_tokens: Option<u64>,
+    /// Model requests that carry a usage record (Node `modelRequestCount`: a request without usage is not counted).
+    pub(crate) usage_requests: u64,
+    /// The tokens of those requests, summed over the run (Node `usage.totalTokens` is the sum over the turn's requests).
+    pub(crate) usage_tokens: u64,
 }
 
 impl RunStats {
@@ -72,6 +72,15 @@ impl RunStats {
         self.tool_calls += 1;
         if is_world_touching(name) {
             self.world_tool_calls += 1;
+        }
+    }
+
+    /// A model request ended with `usage`: a request with a usage record counts, and its tokens are summed (Node
+    /// `createModelUsageSummaryFromEvents` over the turn's `ModelComplete` events and failed requests' usage).
+    pub(crate) fn model_request(&mut self, usage: Option<rust_cli_kernel_api::message::Usage>) {
+        if let Some(usage) = usage {
+            self.usage_requests += 1;
+            self.usage_tokens += crate::report::tokens(Some(usage));
         }
     }
 }
@@ -448,7 +457,6 @@ impl ChildSink {
         if let Message::Assistant(assistant) = message {
             let mut record = self.record();
             record.tool_uses += tool_use_blocks(&assistant.content);
-            record.stats.requests += 1;
             record.last = Some(assistant);
         }
         Ok(())
@@ -490,6 +498,17 @@ impl RunSink for ChildSink {
             }
             _ => None,
         };
+        // A request that completed or failed with usage counts toward the turn's usage (Node `ModelComplete`, and a
+        // failed request's usage); a cancelled one reports none.
+        if let rust_cli_kernel_api::metering::Metered::Model(call) = &metered
+            && matches!(
+                call.status,
+                rust_cli_kernel_api::metering::CallStatus::Completed
+                    | rust_cli_kernel_api::metering::CallStatus::Error
+            )
+        {
+            self.record().stats.model_request(call.usage);
+        }
         let fact = Fact::from(metered);
         let result = match message {
             Some(message) => self.commit_with(message, vec![fact], speed).await,

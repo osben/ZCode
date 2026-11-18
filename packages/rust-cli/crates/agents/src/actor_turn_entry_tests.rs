@@ -477,7 +477,14 @@ async fn a_finished_turn_keeps_its_counts_for_the_bridge() {
         .agents
         .actor_turn_stats(&child)
         .expect("the finished turn has counts");
-    assert_eq!(stats.requests, 1, "one committed response");
+    assert_eq!(
+        stats.requests, 0,
+        "the harness responses carry no usage record, so no request is counted"
+    );
+    assert_eq!(
+        stats.tokens, None,
+        "and the turn reports no usage: the failed usage read"
+    );
     assert_eq!(stats.tool_calls, 0, "no tool started");
     assert_eq!(stats.world_tool_calls, 0);
 }

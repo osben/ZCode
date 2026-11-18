@@ -370,8 +370,6 @@ pub(crate) async fn drive(
         error = failure.as_deref(),
         "subagent finished"
     );
-    // The run's own counts (started tool calls, committed responses), and the last response's tokens: None when that
-    // response has no usage record, which the workflow reports as a failed usage read.
     let last_usage = last.as_ref().and_then(|last| last.usage);
     Finished {
         ending,
@@ -381,10 +379,7 @@ pub(crate) async fn drive(
             tool_uses,
             duration_ms,
         },
-        stats: crate::child::RunStats {
-            last_tokens: last_usage.map(|usage| report::tokens(Some(usage))),
-            ..run_stats
-        },
+        stats: run_stats,
         error,
     }
 }
