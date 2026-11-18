@@ -114,3 +114,12 @@ fn every_known_tool_name_is_named_in_the_table() {
         "known tool names with no table entry: {missing:?}"
     );
 }
+
+/// ReadTopicResource is the attachment path of Node's session-scoped ReadSessionContext, so it is never a workspace write.
+#[test]
+fn read_topic_resource_is_session_scoped_and_not_mutating() {
+    assert!(!rust_cli_kernel_api::side_effect::is_workspace_mutating(
+        names::READ_TOPIC_RESOURCE,
+        false
+    ));
+}
