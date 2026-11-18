@@ -73,6 +73,7 @@ fn the_desktop_failure_reason_is_the_provider_message() {
     use rust_cli_kernel_api::model::ModelError;
     let finished = |error: ModelError| Finished {
         ending: Ending::Failed,
+        stats: Default::default(),
         report: Report {
             text: String::new(),
             tokens: 0,

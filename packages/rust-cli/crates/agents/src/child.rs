@@ -52,10 +52,66 @@ pub(crate) fn tool_use_blocks(content: &[ContentBlock]) -> usize {
         .count()
 }
 
+/// What one run of a child counted (Node's ask counts, per run here; the workflow sums them over an ask's turns).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct RunStats {
+    /// Tool calls that started, protocol tools included (Node `ToolCallStarted`).
+    pub(crate) tool_calls: u64,
+    /// The started calls that touch the world: every tool but the protocol ones (Node `isWorldTouchingToolCall`).
+    pub(crate) world_tool_calls: u64,
+    /// Model requests that carry a usage record (Node `modelRequestCount`: a request without usage is not counted).
+    pub(crate) usage_requests: u64,
+    /// The tokens of those requests, summed over the run (Node `usage.totalTokens` is the sum over the turn's requests).
+    pub(crate) usage_tokens: u64,
+}
+
+impl RunStats {
+    /// A tool call started, counted from the started event as Node counts `ToolCallStarted`. Until 2c-4f, rejected calls
+    /// are counted too: the started event came before the permission check. From 2c-4f on, it follows admission.
+    pub(crate) fn tool_started(&mut self, name: &str) {
+        self.tool_calls += 1;
+        if is_world_touching(name) {
+            self.world_tool_calls += 1;
+        }
+    }
+
+    /// A model request ended with `usage`: a request with a usage record counts, and its tokens are summed (Node
+    /// `createModelUsageSummaryFromEvents` over the turn's `ModelComplete` events and failed requests' usage).
+    pub(crate) fn model_request(&mut self, usage: Option<rust_cli_kernel_api::message::Usage>) {
+        if let Some(usage) = usage {
+            self.usage_requests += 1;
+            self.usage_tokens += crate::report::tokens(Some(usage));
+        }
+    }
+}
+
+/// Node `isWorldTouchingToolCall`: a tool with a `session` or `userInteraction` side-effect scope is protocol-only; any
+/// other tool, and a tool whose scope is undefined, touches the world. These are the protocol-only tools in Node's
+/// handlers (`sideEffectScope: "session" | "userInteraction"`).
+pub(crate) fn is_world_touching(name: &str) -> bool {
+    use rust_cli_kernel_api::tool_names as names;
+    !matches!(
+        name,
+        names::AGENT
+            | names::ASK_USER_QUESTION
+            | crate::escalate::NAME
+            | names::ENTER_PLAN_MODE
+            | names::EXIT_PLAN_MODE
+            | names::READ_TOPIC_RESOURCE
+            | crate::respond::NAME
+            | names::SEND_MESSAGE
+            | names::SKILL
+            | crate::submit::NAME
+            | names::TASK_STOP
+            | names::TODO_WRITE
+    )
+}
+
 #[derive(Default)]
 struct Record {
     last: Option<AssistantMessage>,
     tool_uses: usize,
+    stats: RunStats,
     /// 提交核心（kernel-api `RunLedger`，与会话 actor 同一份，工作线 F130）：子会话的当前轮（随每个批次交给存储，
     /// node-store.md §4，修复线 F6）、已结束而结果还没提交的工具带出的 checkpoint 与子代理关联。锁不跨 await。
     ledger: RunLedger,
@@ -166,6 +222,11 @@ impl ChildSink {
 
     fn record(&self) -> std::sync::MutexGuard<'_, Record> {
         self.record.lock_unpoisoned()
+    }
+
+    /// What this run counted, from the started tool calls and the committed responses.
+    pub(crate) fn run_stats(&self) -> RunStats {
+        self.record().stats
     }
 
     /// 本次运行最后一条 assistant 消息与 tool_use 块数。
@@ -438,6 +499,12 @@ impl RunSink for ChildSink {
             }
             _ => None,
         };
+        // Every request that carries a usage record counts toward the turn's usage, whatever its status (Node
+        // `createModelUsageSummaryFromEvents` sums the usage of each request that has it). `model_request` ignores a
+        // request without usage.
+        if let rust_cli_kernel_api::metering::Metered::Model(call) = &metered {
+            self.record().stats.model_request(call.usage);
+        }
         let fact = Fact::from(metered);
         let result = match message {
             Some(message) => self.commit_with(message, vec![fact], speed).await,
@@ -476,9 +543,11 @@ impl RunSink for ChildSink {
                 tool_use,
                 name,
                 input,
-            } => self
-                .live
-                .tool_started(&self.agent, self.execution, tool_use, name, input),
+            } => {
+                self.record().stats.tool_started(name);
+                self.live
+                    .tool_started(&self.agent, self.execution, tool_use, name, input);
+            }
             QueryEvent::ToolFinished { tool_use, .. } => {
                 self.live
                     .tool_finished(&self.agent, self.execution, tool_use)

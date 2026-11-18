@@ -245,3 +245,224 @@ async fn a_nested_agent_call_links_the_grandchild_session_in_the_same_batch() {
         }
     );
 }
+
+/// Node `ToolCallStarted` counts: every started call counts, protocol tools included, and only the world-touching ones
+/// count as world. A run with started calls and no committed assistant message (so a count of the transcript's tool
+/// uses would read 0) still reports the started calls: the count comes from the started stream.
+#[test]
+fn started_calls_count_from_the_stream_and_only_world_tools_count_as_world() {
+    use crate::child::RunStats;
+    let mut stats = RunStats::default();
+    stats.tool_started("Read");
+    stats.tool_started("Bash");
+    stats.tool_started("submit_result");
+    stats.tool_started("escalate");
+    assert_eq!(stats.tool_calls, 4, "every started call counts");
+    assert_eq!(
+        stats.world_tool_calls, 2,
+        "Read and Bash touch the world; the protocol tools do not"
+    );
+    assert_eq!(
+        stats.usage_requests, 0,
+        "no response was committed, so no request is counted"
+    );
+}
+
+/// Node `isWorldTouchingToolCall`: the protocol tools are the ones with a session or userInteraction scope, and an
+/// unknown tool is world-touching (its scope is undefined in Node).
+#[test]
+fn the_protocol_tools_are_not_world_touching_and_an_unknown_tool_is() {
+    use crate::child::is_world_touching;
+    for name in [
+        "Agent",
+        "AskUserQuestion",
+        "escalate",
+        "EnterPlanMode",
+        "ExitPlanMode",
+        "ReadTopicResource",
+        "RespondToCoordinator",
+        "SendMessage",
+        "Skill",
+        "submit_result",
+        "TodoWrite",
+        "TaskStop",
+    ] {
+        assert!(!is_world_touching(name), "{name} is protocol-only");
+    }
+    assert!(is_world_touching("Write"));
+    assert!(is_world_touching("some_mcp_tool"));
+}
+
+/// Node `usage.totalTokens` is the sum over the turn's requests, and `modelRequestCount` counts those with usage. Two
+/// requests with usage sum; a request without usage adds nothing to either.
+#[test]
+fn the_turns_tokens_sum_over_every_request_with_usage() {
+    use crate::child::RunStats;
+    use rust_cli_kernel_api::message::Usage;
+    let mut stats = RunStats::default();
+    stats.model_request(Some(Usage {
+        input_tokens: 10,
+        output_tokens: 5,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+    }));
+    stats.model_request(None);
+    stats.model_request(Some(Usage {
+        input_tokens: 20,
+        output_tokens: 7,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 3,
+    }));
+    assert_eq!(
+        stats.usage_requests, 2,
+        "the request without usage is not counted"
+    );
+    assert_eq!(stats.usage_tokens, 15 + 30, "each request's tokens, summed");
+}
+
+/// The tool count comes from the started stream, not from the transcript. A run that started two tools and committed no
+/// assistant message has two counted calls, while the transcript-derived count (the tool_use blocks of the committed
+/// messages, returned by `outcome`) is 0.
+#[tokio::test]
+async fn the_tool_count_comes_from_the_started_stream_not_from_the_transcript() {
+    let store = Arc::new(MemoryStore::default());
+    let child = SessionId::new("sess_subagent_agent_stream");
+    store
+        .create(SessionMeta {
+            id: child.clone(),
+            kind: SessionKind::Subagent,
+            parent: Some(SessionId::new("sess_parent")),
+            workspace: WorkspaceRef {
+                environment: EnvironmentId::new("local"),
+                root: EnvPath::new("/Users/dev/work"),
+            },
+            title: "stream".to_owned(),
+            trace: TraceId::new("trace"),
+            created_at_ms: 1,
+            incognito: None,
+        })
+        .await
+        .unwrap();
+    let sink = ChildSink::new(
+        store.clone(),
+        Arc::new(SequentialIds::default()),
+        Arc::new(Live::default()),
+        AgentId::new("agent_stream"),
+        child.clone(),
+        MessageId::new("prompt_stream"),
+        None,
+    );
+    for (id, name) in [("toolu_read", "Read"), ("toolu_bash", "Bash")] {
+        sink.emit(QueryEvent::ToolStarted {
+            tool_use: ToolUseId::new(id),
+            name: name.to_owned(),
+            input: json!({}),
+        })
+        .await;
+    }
+    let (_, transcript_tool_uses) = sink.outcome();
+    assert_eq!(
+        transcript_tool_uses, 0,
+        "no assistant message was committed, so the transcript shows no tool use"
+    );
+    let stats = sink.run_stats();
+    assert_eq!(
+        stats.tool_calls, 2,
+        "the started stream shows the two calls"
+    );
+    assert_eq!(
+        stats.world_tool_calls, 2,
+        "Read and Bash both touch the world"
+    );
+}
+
+/// Node `createModelUsageSummaryFromEvents` sums the usage of every request that carries it, whatever its status: a
+/// cancelled request that reports usage counts its request and its tokens.
+#[tokio::test]
+async fn a_cancelled_request_with_usage_counts_its_request_and_tokens() {
+    let store = Arc::new(MemoryStore::default());
+    let child = SessionId::new("sess_subagent_agent_cancelled_usage");
+    store
+        .create(SessionMeta {
+            id: child.clone(),
+            kind: SessionKind::Subagent,
+            parent: Some(SessionId::new("sess_parent")),
+            workspace: WorkspaceRef {
+                environment: EnvironmentId::new("local"),
+                root: EnvPath::new("/Users/dev/work"),
+            },
+            title: "cancelled".to_owned(),
+            trace: TraceId::new("trace"),
+            created_at_ms: 1,
+            incognito: None,
+        })
+        .await
+        .unwrap();
+    let sink = ChildSink::new(
+        store.clone(),
+        Arc::new(SequentialIds::default()),
+        Arc::new(Live::default()),
+        AgentId::new("agent_cancelled_usage"),
+        child.clone(),
+        MessageId::new("prompt_cancelled_usage"),
+        None,
+    );
+    let call = rust_cli_kernel_api::metering::ModelCall {
+        usage: Some(rust_cli_kernel_api::message::Usage {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+        }),
+        ..rust_cli_kernel_api::metering::ModelCall::new(
+            MessageId::new("msg_cancelled"),
+            rust_cli_kernel_api::model::QuerySource::Subagent("Explore".to_owned()),
+            rust_cli_kernel_api::testing::selection(),
+            1_000,
+            4_000,
+            rust_cli_kernel_api::metering::CallStatus::Cancelled,
+        )
+    };
+    sink.commit_metered(None, rust_cli_kernel_api::metering::Metered::Model(call))
+        .await
+        .unwrap();
+    let stats = sink.run_stats();
+    assert_eq!(
+        stats.usage_requests, 1,
+        "a cancelled request with usage is counted"
+    );
+    assert_eq!(stats.usage_tokens, 15, "its input and output tokens");
+}
+
+/// Node's `isWorldTouchingToolCall` excludes exactly the tools whose side-effect scope is `session` or `userInteraction`.
+/// In Node's handler files on origin/fork those are: Agent, AskUserQuestion, escalate, EnterPlanMode, ExitPlanMode,
+/// ReadTopicResource, RespondToCoordinator, SendMessage, Skill, submit_result, TaskStop, TodoWrite. Pinned by name: 12
+/// names.
+#[test]
+fn the_protocol_only_set_is_exactly_nodes_session_and_user_interaction_tools() {
+    use rust_cli_kernel_api::tool_names as names;
+    let protocol = [
+        names::AGENT,
+        names::ASK_USER_QUESTION,
+        crate::escalate::NAME,
+        names::ENTER_PLAN_MODE,
+        names::EXIT_PLAN_MODE,
+        names::READ_TOPIC_RESOURCE,
+        crate::respond::NAME,
+        names::SEND_MESSAGE,
+        names::SKILL,
+        crate::submit::NAME,
+        names::TASK_STOP,
+        names::TODO_WRITE,
+    ];
+    for name in protocol {
+        assert!(
+            !crate::child::is_world_touching(name),
+            "{name} is protocol-only"
+        );
+    }
+    assert!(
+        crate::child::is_world_touching(names::READ),
+        "Read touches the world"
+    );
+}

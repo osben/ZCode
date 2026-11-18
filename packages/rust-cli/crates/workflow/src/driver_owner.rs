@@ -511,6 +511,14 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
         self.after_engine(result)
     }
 
+    /// One turn's ask stats (Node `reportTurnObservations`), written to the instance the turn ran for. The report names
+    /// that instance, so it cannot land on a newer ask of the session.
+    pub fn ask_stats(&mut self, instance: &Ref, stats: crate::engine::AskStats) -> Result<()> {
+        self.pump()?;
+        let result = self.engine.ask_stats(instance, stats);
+        self.after_engine(result)
+    }
+
     /// Node `askMutating`: the session's active ask is about to run a mutating tool. Ignored when no ask is in
     /// flight, as the engine ignores observations after an ask settles.
     pub fn ask_mutating(&mut self, session: &str) -> Result<()> {

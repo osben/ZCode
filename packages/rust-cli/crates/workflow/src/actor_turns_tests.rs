@@ -2,8 +2,8 @@
 //! here, on the test thread, through the mailbox.
 use crate::actor_mailbox::ActorMailbox;
 use crate::actor_sessions::ActorTurns;
-use crate::actor_turns::{MailboxTurns, TurnInput, TurnRunner};
-use crate::driver_owner::{ActorDriverOwner, ActorSessionRequest, ActorSessions};
+use crate::actor_turns::{MailboxTurns, TurnInput, TurnRunner, TurnStats, TurnUsage};
+use crate::driver_owner::{ActorDriverOwner, ActorSessionRequest, ActorSessions, TurnEndReply};
 use crate::driver_owner_tests::config;
 use crate::driver_rules::NUDGE_PROMPT;
 use crate::engine::AskMessage;
@@ -124,6 +124,82 @@ fn a_settled_ask_gets_its_message_boundary_on_its_node_after_settlement() {
     let nodes = owner.journal().list_nodes("run_1").expect("nodes");
     assert_eq!(nodes.len(), 1);
     assert_eq!(nodes[0].message_boundary, Some(4));
+}
+
+/// A scripted runner that also reports each turn's stats, in order (None: no stats for that turn).
+struct StatsRunner {
+    inner: Arc<ScriptedRunner>,
+    stats: Mutex<VecDeque<Option<TurnStats>>>,
+}
+
+impl TurnRunner for StatsRunner {
+    fn run_turn(
+        &self,
+        session: &str,
+        interaction: &str,
+        turn: &TurnInput,
+        cancel: &AtomicBool,
+    ) -> std::result::Result<String, String> {
+        self.inner.run_turn(session, interaction, turn, cancel)
+    }
+
+    fn turn_stats(&self, _session: &str) -> Option<TurnStats> {
+        self.stats.lock().expect("stats").pop_front().flatten()
+    }
+}
+
+#[test]
+fn a_turns_stats_reach_the_settled_ask_with_cumulative_counts_and_node_defaults_for_a_failed_usage_read()
+ {
+    // Node `statsFromTurn`: the counts accumulate over the ask's turns; tokens and turns come from the turn, and a failed
+    // usage read takes Node's defaults (0 tokens, 1 turn). Each turn reports its stats before its end.
+    use crate::journal::JournalPort;
+    let runner: Arc<dyn TurnRunner> = Arc::new(StatsRunner {
+        inner: ScriptedRunner::new(vec![Ok("first".into()), Ok("second".into())]),
+        stats: Mutex::new(VecDeque::from(vec![
+            Some(TurnStats {
+                tool_calls: 2,
+                world_tool_calls: 1,
+                usage: Some(TurnUsage {
+                    tokens: 40,
+                    requests: 3,
+                }),
+            }),
+            Some(TurnStats {
+                tool_calls: 1,
+                world_tool_calls: 0,
+                usage: None,
+            }),
+        ])),
+    });
+    let (mut owner, mailbox, actor) = owner_over(runner);
+    owner.ask("site", &actor, "do it").expect("ask");
+    owner.drain().expect("drain");
+    // Stats, end, stats, end: the nudge runs in between, and the ask settles on the second end.
+    for _ in 0..4 {
+        mailbox.serve_next(&mut owner).expect("the next request");
+    }
+    let nodes = owner.journal().list_nodes("run_1").expect("nodes");
+    let stats = nodes[0]
+        .stats
+        .clone()
+        .expect("the settled ask carries its stats");
+    assert_eq!(
+        stats["toolCalls"].as_f64(),
+        Some(3.0),
+        "2 + 1 across the turns"
+    );
+    assert_eq!(
+        stats["worldToolCalls"].as_f64(),
+        Some(1.0),
+        "1 + 0 across the turns"
+    );
+    assert_eq!(
+        stats["tokens"].as_f64(),
+        Some(0.0),
+        "the failed usage read of the last turn takes Node's 0 tokens"
+    );
+    assert_eq!(stats["turns"].as_f64(), Some(1.0), "and Node's 1 turn");
 }
 
 /// Reports that it started, then runs until the owner cancels its ask, then returns. It never submits.
@@ -413,30 +489,55 @@ impl TurnRunner for PanickingCount {
     }
 }
 
-#[test]
-fn a_panicking_count_read_still_reports_the_turn_end() {
-    let (mut owner, mailbox, actor) = owner_over(Arc::new(PanickingCount));
-    owner.ask("site", &actor, "do it").expect("ask");
-    owner.drain().expect("drain");
-    // Poll instead of blocking on the mailbox: a run where the turn's end never arrives must fail, not hang.
-    let mut request = None;
+/// The next request the turn sent, polled rather than blocked on: a run where it never arrives must fail, not hang.
+fn next_request(mailbox: &ActorMailbox) -> Option<crate::actor_mailbox::ActorRequest> {
     for _ in 0..500 {
         if let Some(found) = mailbox.try_take() {
-            request = Some(found);
-            break;
+            return Some(found);
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    match request {
-        Some(crate::actor_mailbox::ActorRequest::TurnEnded {
-            session,
-            text,
-            reply,
-        }) => {
-            let verdict = owner.turn_ended(&session, &text);
-            assert!(verdict.is_ok(), "the turn's end is answered: {verdict:?}");
-            let _ = reply.send(verdict);
+    None
+}
+
+#[test]
+fn a_panicking_count_read_still_reports_the_turn_end_and_settles_without_a_boundary() {
+    let (mut owner, mailbox, actor) = owner_over(Arc::new(PanickingCount));
+    owner.ask("site", &actor, "do it").expect("ask");
+    owner.drain().expect("drain");
+    // A typed ask nudges once, so the turn end is answered until the ask settles, whichever turn settles it.
+    let mut settled = false;
+    for _ in 0..2 {
+        match next_request(&mailbox) {
+            Some(crate::actor_mailbox::ActorRequest::TurnEnded {
+                session,
+                text,
+                reply,
+            }) => {
+                let verdict = owner.turn_ended(&session, &text);
+                assert!(verdict.is_ok(), "the turn's end is answered: {verdict:?}");
+                settled = matches!(verdict, Ok(TurnEndReply::AskEnded));
+                let _ = reply.send(verdict);
+                if settled {
+                    break;
+                }
+            }
+            _ => panic!("the turn's end was never reported after the count read panicked"),
         }
-        _ => panic!("the turn's end was never reported after the count read panicked"),
     }
+    assert!(settled, "the ask settles once its turns end");
+    assert_eq!(
+        owner.take_outcomes().len(),
+        1,
+        "the settled ask is reported once"
+    );
+    // An unknown count writes no boundary: no MessageBoundary request follows the settlement.
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    assert!(
+        !matches!(
+            mailbox.try_take(),
+            Some(crate::actor_mailbox::ActorRequest::MessageBoundary { .. })
+        ),
+        "an unknown count sends no message boundary"
+    );
 }

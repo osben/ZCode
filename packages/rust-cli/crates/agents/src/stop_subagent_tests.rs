@@ -239,6 +239,7 @@ fn undriven(harness: &crate::test_support::Harness, agent: &str) -> AgentId {
         asks: None,
         result: None,
         actor_port: None,
+        last_turn_stats: None,
         state: crate::live::AgentState::Running {
             abort: Abort::new(),
             mailbox: Vec::new(),
@@ -260,6 +261,7 @@ fn undriven(harness: &crate::test_support::Harness, agent: &str) -> AgentId {
 fn completed() -> crate::spawn::Finished {
     crate::spawn::Finished {
         ending: crate::report::Ending::Completed,
+        stats: Default::default(),
         report: crate::report::Report::default(),
         error: None,
     }

@@ -91,6 +91,12 @@ pub(crate) enum ActorRequest {
         boundary: u64,
         reply: Sender<Result<()>>,
     },
+    /// One turn's ask stats (Node `reportTurnObservations`), sent before the turn's end.
+    AskStats {
+        instance: Ref,
+        stats: crate::engine::AskStats,
+        reply: Sender<Result<()>>,
+    },
 }
 
 /// The owner's side of the channel. Only the owner thread receives from it.
@@ -179,6 +185,13 @@ fn dispatch<J: JournalPort, S: ActorSessions>(
         } => {
             let _ = reply.send(owner.set_message_boundary(&instance, boundary));
         }
+        ActorRequest::AskStats {
+            instance,
+            stats,
+            reply,
+        } => {
+            let _ = reply.send(owner.ask_stats(&instance, stats));
+        }
     }
 }
 
@@ -252,6 +265,19 @@ impl ActorHandle {
         self.call(|reply| ActorRequest::MessageBoundary {
             instance: instance.clone(),
             boundary,
+            reply,
+        })
+    }
+
+    /// One turn's ask stats, before the turn's end. The owner writes them to the ask's node.
+    pub fn ask_stats(
+        &self,
+        instance: &Ref,
+        stats: crate::engine::AskStats,
+    ) -> Result<(), MailboxError> {
+        self.call(|reply| ActorRequest::AskStats {
+            instance: instance.clone(),
+            stats,
             reply,
         })
     }

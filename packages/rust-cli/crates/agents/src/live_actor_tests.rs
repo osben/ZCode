@@ -224,7 +224,7 @@ fn the_next_turns_port_survives_the_previous_turns_end() {
     let first: Arc<dyn crate::actor_turn::ActorPort> = Arc::new(NoSubmit);
     let second: Arc<dyn crate::actor_turn::ActorPort> = Arc::new(NoSubmit);
     begun_with_port(&live, &id, &first);
-    live.finish_actor_turn(&id, Ending::Completed, None);
+    live.finish_actor_turn(&id, Ending::Completed, None, None);
     assert!(
         live.get(&id).expect("the entry").actor_port.is_none(),
         "the turn's end clears its port"
@@ -261,7 +261,7 @@ fn a_restart_offers_no_submit_port() {
     let id = AgentId::new("actor-sess_a");
     let port: Arc<dyn crate::actor_turn::ActorPort> = Arc::new(NoSubmit);
     begun_with_port(&live, &id, &port);
-    live.finish_actor_turn(&id, Ending::Completed, None);
+    live.finish_actor_turn(&id, Ending::Completed, None, None);
     let restarted = live.restart(
         &id,
         rust_cli_kernel_api::abort::Abort::new(),
@@ -297,7 +297,7 @@ fn a_later_turns_port_refresh_replaces_the_submit_schema() {
         |_| {},
         "execution-1".to_owned(),
     );
-    live.finish_actor_turn(&id, Ending::Completed, None);
+    live.finish_actor_turn(&id, Ending::Completed, None, None);
     let second: Arc<dyn crate::actor_turn::ActorPort> = Arc::new(NoSubmit);
     live.begin_actor_run(
         &id,
@@ -363,6 +363,6 @@ fn a_finished_turn_keeps_the_message_count_it_captured_after_its_entry_is_releas
     let live = Live::default();
     let id = AgentId::new("agent_count");
     begin(&live, &id, "sess_count");
-    live.finish_actor_turn(&id, Ending::Completed, Some(3));
+    live.finish_actor_turn(&id, Ending::Completed, None, Some(3));
     assert_eq!(live.last_turn_messages(&id), Some(3));
 }

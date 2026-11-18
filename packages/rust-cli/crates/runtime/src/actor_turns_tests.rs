@@ -44,6 +44,8 @@ struct ScriptedAgents {
     /// A question the first turn escalates through its port (once), and the port's answer to it.
     escalate: Mutex<Option<String>>,
     escalated: Mutex<Vec<Result<ActorEscalation, String>>>,
+    /// The counts each turn reports, when a test asks for them (None: the child reports no stats).
+    stats: Option<rust_cli_agents::actor_turn::ActorTurnStats>,
 }
 
 impl ScriptedAgents {
@@ -57,6 +59,25 @@ impl ScriptedAgents {
             submitted: Mutex::new(Vec::new()),
             escalate: Mutex::new(None),
             escalated: Mutex::new(Vec::new()),
+            stats: None,
+        })
+    }
+
+    /// Replies in order, and reports `stats` for each turn.
+    fn reporting(
+        replies: Vec<ActorTurnEnd>,
+        stats: rust_cli_agents::actor_turn::ActorTurnStats,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            runs: Mutex::new(Vec::new()),
+            prompts: Mutex::new(Vec::new()),
+            replies: Mutex::new(replies.into()),
+            block: false,
+            submit: None,
+            submitted: Mutex::new(Vec::new()),
+            escalate: Mutex::new(None),
+            escalated: Mutex::new(Vec::new()),
+            stats: Some(stats),
         })
     }
 
@@ -71,6 +92,7 @@ impl ScriptedAgents {
             submitted: Mutex::new(Vec::new()),
             escalate: Mutex::new(Some(question.to_owned())),
             escalated: Mutex::new(Vec::new()),
+            stats: None,
         })
     }
 
@@ -85,6 +107,7 @@ impl ScriptedAgents {
             submitted: Mutex::new(Vec::new()),
             escalate: Mutex::new(None),
             escalated: Mutex::new(Vec::new()),
+            stats: None,
         })
     }
 }
@@ -136,7 +159,24 @@ impl ActorAgents for ScriptedAgents {
     fn turn_messages(&self, _child: &SessionId) -> Option<u64> {
         Some(MESSAGE_COUNT)
     }
+
+    fn actor_turn_stats(
+        &self,
+        _child: &SessionId,
+    ) -> Option<rust_cli_agents::actor_turn::ActorTurnStats> {
+        self.stats
+    }
 }
+
+/// The counts the scripted child reports for each turn: two tool calls (one touching the world), three requests, and 40
+/// tokens.
+const TURN_STATS: rust_cli_agents::actor_turn::ActorTurnStats =
+    rust_cli_agents::actor_turn::ActorTurnStats {
+        tool_calls: 2,
+        world_tool_calls: 1,
+        requests: 3,
+        tokens: Some(40),
+    };
 
 /// The message count the scripted child reports when its ask settles.
 const MESSAGE_COUNT: u64 = 4;
@@ -593,6 +633,87 @@ async fn a_settled_ask_writes_the_child_message_count_as_its_boundary() {
     let nodes = owner.journal().list_nodes("run_1").expect("nodes");
     assert_eq!(nodes.len(), 1);
     assert_eq!(nodes[0].message_boundary, Some(MESSAGE_COUNT));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_settled_ask_carries_the_stats_its_turns_reported_through_the_bridge() {
+    // Node `reportTurnObservations`: each turn reports its stats before its end. The counts sum over the ask's two turns;
+    // tokens and requests are the turn's own.
+    use rust_cli_workflow::journal::JournalPort;
+    let agents = ScriptedAgents::reporting(
+        vec![
+            ActorTurnEnd::Text("first".into()),
+            ActorTurnEnd::Text("second".into()),
+        ],
+        TURN_STATS,
+    );
+    let (mut owner, mailbox) = owner_over(agents);
+    let actor = owner.create_actor("site", None, None).expect("actor");
+    owner.ask("site", &actor, "do it").expect("ask");
+    owner.drain().expect("drain");
+    // Stats, end, stats, end, then the boundary.
+    for _ in 0..5 {
+        mailbox.serve_next(&mut owner).expect("the next request");
+    }
+    let nodes = owner.journal().list_nodes("run_1").expect("nodes");
+    let stats = nodes[0]
+        .stats
+        .clone()
+        .expect("the settled ask carries stats");
+    assert_eq!(
+        stats["toolCalls"].as_f64(),
+        Some(4.0),
+        "2 + 2 across the two turns"
+    );
+    assert_eq!(stats["worldToolCalls"].as_f64(), Some(2.0));
+    assert_eq!(stats["tokens"].as_f64(), Some(40.0));
+    assert_eq!(stats["turns"].as_f64(), Some(3.0));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_turn_without_usage_reports_one_turn_and_no_tokens_through_the_bridge() {
+    // Node `statsFromTurn`: `usage?.modelRequestCount ?? 1` and `usage?.totalTokens ?? 0`. A turn whose responses carry
+    // no usage record reaches the node as 1 turn and 0 tokens, with its tool counts kept.
+    use rust_cli_workflow::journal::JournalPort;
+    let agents = ScriptedAgents::reporting(
+        vec![
+            ActorTurnEnd::Text("first".into()),
+            ActorTurnEnd::Text("second".into()),
+        ],
+        rust_cli_agents::actor_turn::ActorTurnStats {
+            tool_calls: 2,
+            world_tool_calls: 1,
+            requests: 0,
+            tokens: None,
+        },
+    );
+    let (mut owner, mailbox) = owner_over(agents);
+    let actor = owner.create_actor("site", None, None).expect("actor");
+    owner.ask("site", &actor, "do it").expect("ask");
+    owner.drain().expect("drain");
+    for _ in 0..5 {
+        mailbox.serve_next(&mut owner).expect("the next request");
+    }
+    let nodes = owner.journal().list_nodes("run_1").expect("nodes");
+    let stats = nodes[0]
+        .stats
+        .clone()
+        .expect("the settled ask carries stats");
+    assert_eq!(
+        stats["turns"].as_f64(),
+        Some(1.0),
+        "no usage: Node's default of 1 turn"
+    );
+    assert_eq!(
+        stats["tokens"].as_f64(),
+        Some(0.0),
+        "no usage: Node's default of 0 tokens"
+    );
+    assert_eq!(
+        stats["toolCalls"].as_f64(),
+        Some(4.0),
+        "the counts survive a failed usage read"
+    );
 }
 
 #[test]

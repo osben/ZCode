@@ -127,6 +127,7 @@ async fn the_origin_is_fixed_at_run_start_even_when_the_agent_left_live() {
         asks: None,
         result: None,
         actor_port: None,
+        last_turn_stats: None,
         state: AgentState::Running {
             abort: rust_cli_kernel_api::abort::Abort::new(),
             mailbox: Vec::new(),

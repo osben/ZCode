@@ -43,6 +43,27 @@ pub trait TurnRunner: Send + Sync + 'static {
     fn message_boundary(&self, _session: &str) -> Option<u64> {
         None
     }
+
+    /// The stats of the turn that just ran (Node `statsFromTurn`'s inputs). None means the runner reports no stats.
+    fn turn_stats(&self, _session: &str) -> Option<TurnStats> {
+        None
+    }
+}
+
+/// One turn's stats. The tool counts are the child's own, counted from its tool-start stream (Node counts them from
+/// `ToolCallStarted`); `world_tool_calls` leaves out the protocol tools. `usage` is None when the usage read failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct TurnStats {
+    pub tool_calls: u64,
+    pub world_tool_calls: u64,
+    pub usage: Option<TurnUsage>,
+}
+
+/// A turn's usage: its tokens and its model requests (Node `usage.totalTokens` and `usage.modelRequestCount`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct TurnUsage {
+    pub tokens: u64,
+    pub requests: u64,
 }
 
 /// One turn's input: the text the model reads, the boundary in UTF-16 units where its epilogue begins (Node `runTurn`'s
@@ -146,6 +167,9 @@ fn run_ask(
     cancel: &AtomicBool,
 ) {
     let mut turn = first;
+    // The ask's tool counts, summed over its turns (Node resets them at the ask's start).
+    let mut tool_calls = 0u64;
+    let mut world_tool_calls = 0u64;
     loop {
         // Node catches every throw from a turn and reports it as the ask's failure. A panic is the Rust equivalent,
         // and it must not leave the ask waiting on a thread that is gone.
@@ -170,8 +194,42 @@ fn run_ask(
         }
         // The count the turn captured when it finished (see `TurnRunner::message_boundary`). A panic in the read is an
         // unknown count, so the turn's end below is reported either way.
-        let boundary = panic::catch_unwind(AssertUnwindSafe(|| runner.message_boundary(session)))
-            .unwrap_or(None);
+        let boundary = match panic::catch_unwind(AssertUnwindSafe(|| {
+            runner.message_boundary(session)
+        })) {
+            Ok(boundary) => boundary,
+            Err(payload) => {
+                tracing::warn!(%session, panic = %panic_text(payload.as_ref()), "an actor's message count read panicked; the count is unknown");
+                None
+            }
+        };
+        // Node `reportTurnObservations`: the turn's stats before its end. The counts are summed over the ask so far (Node
+        // resets them at the ask's start and keeps them across nudges); tokens and turns are the turn's, and a failed
+        // usage read takes Node's defaults, 0 tokens and 1 turn.
+        // A panic in the stats read counts as no stats, logged with its payload, and the turn's end is still reported.
+        let stats = match panic::catch_unwind(AssertUnwindSafe(|| runner.turn_stats(session))) {
+            Ok(stats) => stats,
+            Err(payload) => {
+                tracing::warn!(%session, panic = %panic_text(payload.as_ref()), "an actor's turn stats read panicked; the stats are unknown");
+                None
+            }
+        };
+        if let Some(stats) = stats {
+            tool_calls += stats.tool_calls;
+            world_tool_calls += stats.world_tool_calls;
+            let (tokens, turns) = stats
+                .usage
+                .map_or((0, 1), |usage| (usage.tokens, usage.requests));
+            let report = crate::engine::AskStats {
+                tokens: tokens as f64,
+                tool_calls: tool_calls as f64,
+                turns: turns as f64,
+                world_tool_calls: Some(world_tool_calls as f64),
+            };
+            if let Err(error) = handle.ask_stats(instance, report) {
+                tracing::warn!(%session, error = %error, "an actor's ask stats could not be reported");
+            }
+        }
         match handle.turn_ended(session, &text) {
             Ok(TurnEndReply::Verdict(SubmitVerdict::Nudge)) => {
                 // Node `runTurn(NUDGE_PROMPT, 0)`: the nudge has no instructions, so its epilogue starts at 0. It is the
