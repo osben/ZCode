@@ -1,5 +1,6 @@
-//! Run events (Node `types.ts` `RunEvent`): the lifecycle, asks and phase markers W5a emits. Holes,
-//! artifacts and reports are not here yet (spec 9.3).
+//! Run events (Node `types.ts` `RunEvent`): the lifecycle, asks, phase markers (W5a), and the holes, reports
+//! and artifact events (W5c, spec 9.6). The `scriptPath` of `hole-filled` and the artifact records are kept as
+//! the values the engine was given.
 //!
 //! `to_json` builds each object in the key order Node's object literals use, so the payload text
 //! (`JSON.stringify` of the event) is byte-identical. Optional keys are omitted when absent, as Node's
@@ -341,7 +342,10 @@ impl RunEvent {
                 put_type(&mut map, "import-cache-closed");
                 map.insert("instance".into(), instance.to_json());
                 map.insert("cause".into(), Value::String(cause.as_str().into()));
-                put_text(&mut map, "actorName", actor_name);
+                // Node writes the key only for a nonempty name.
+                if let Some(name) = actor_name.as_deref().filter(|name| !name.is_empty()) {
+                    map.insert("actorName".into(), Value::String(name.into()));
+                }
             }
             Self::NodeRepairing {
                 instance,
@@ -566,6 +570,26 @@ mod tests {
         assert_eq!(
             event.payload_json(),
             r#"{"type":"node-settled","instance":{"siteId":"ask#1","ordinal":1},"outcome":"ok"}"#
+        );
+    }
+}
+
+#[cfg(test)]
+mod close_tests {
+    use super::*;
+
+    /// Node omits `actorName` when it is undefined or the empty string.
+    #[test]
+    fn an_empty_actor_name_is_not_written() {
+        let event = RunEvent::ImportCacheClosed {
+            instance: Ref::new("ask#1", 2),
+            cause: ImportCloseCause::MutatingTool,
+            actor_name: Some(String::new()),
+        };
+        assert!(
+            event.to_json().get("actorName").is_none(),
+            "{}",
+            event.to_json()
         );
     }
 }

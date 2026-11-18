@@ -17,7 +17,7 @@ use crate::imported_cache::{
 };
 use crate::journal::JournalPort;
 use crate::model::{ActorRow, NodeKind, NodeRow, NodeStatus, RunRow, RunStatus};
-use anyhow::Result;
+use anyhow::{Result, bail};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -141,6 +141,12 @@ pub fn rebuild_imported_cache_for_resume<J: JournalPort>(
     predecessor_run_id: &str,
     options: BuildOptions<'_>,
 ) -> Result<Option<ImportedRunCache>> {
+    // Node passes no quiet set on resume: the predecessor is terminal and nothing writes its sessions, and
+    // omission means every session is quiet. The transcript count is kept.
+    let options = BuildOptions {
+        quiet_sessions: None,
+        ..options
+    };
     Ok(
         match build_imported_cache(journal, predecessor_run_id, options)? {
             BuildOutcome::Built { cache, .. } => Some(cache),
@@ -192,7 +198,7 @@ fn build_actor_candidate<J: JournalPort>(
         return Ok(None);
     };
     let name = actor.name.clone().unwrap_or_default();
-    let (entries, next) = completed_ask_prefix(asks);
+    let (entries, next) = completed_ask_prefix(asks)?;
     if entries.is_empty() && next.is_none_or(|row| row.status != NodeStatus::Running) {
         return Ok(None);
     }
@@ -261,7 +267,7 @@ fn resolve_in_flight_ask(
 /// Node `completedAskPrefix`: the longest run of completed asks from seq 0, and the row that stopped it.
 /// The rows are the actor's asks in journal order; a later row for the same seq replaces an earlier one, as
 /// Node's map does.
-fn completed_ask_prefix(asks: &[NodeRow]) -> (Vec<ImportedAskEntry>, Option<&NodeRow>) {
+fn completed_ask_prefix(asks: &[NodeRow]) -> Result<(Vec<ImportedAskEntry>, Option<&NodeRow>)> {
     let mut by_seq: HashMap<u64, &NodeRow> = HashMap::new();
     for node in asks {
         if let Some(seq) = node.actor_seq {
@@ -274,16 +280,20 @@ fn completed_ask_prefix(asks: &[NodeRow]) -> (Vec<ImportedAskEntry>, Option<&Nod
         let node = by_seq.get(&seq).copied();
         match node {
             Some(node) if node.status == NodeStatus::Completed => {
+                let Some(message_boundary) = node.message_boundary else {
+                    bail!(
+                        "completed ask at actor sequence {seq} has no message boundary (the boundary gate should have refused this journal)"
+                    );
+                };
                 entries.push(ImportedAskEntry {
                     input_hash: node.input_hash.clone(),
                     result: node.result.clone().unwrap_or(Value::Null),
                     stats: node.stats.clone(),
-                    // The completed-ask gate checked every completed row, so a boundary is present here.
-                    message_boundary: node.message_boundary.unwrap_or(0),
+                    message_boundary,
                 });
                 seq += 1;
             }
-            other => return (entries, other),
+            other => return Ok((entries, other)),
         }
     }
 }

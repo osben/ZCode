@@ -502,8 +502,6 @@ fn instructions_head_cuts_by_utf16_units() {
     );
 }
 
-/// A run with settled world rows cannot resume until W5b: those rows would hold replay-order slots that
-/// nothing in this engine releases.
 /// A corrupt settlement event fails the resume, and the message names the run and the event sequence.
 #[test]
 fn a_corrupt_settle_event_names_the_run_and_sequence() {

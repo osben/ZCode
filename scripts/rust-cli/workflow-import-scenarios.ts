@@ -61,8 +61,8 @@ export const scenarios: Scenario[] = [
           {
             caps: 2,
             steps: [
-              { op: "worldRead", tag: "w0", site: "w#1", worldOp: "git.log", args: ["a"] },
-              { op: "worldRead", tag: "w1", site: "w#2", worldOp: "git.log", args: ["b"] },
+              { op: "worldRead", tag: "w0", site: "w#1", worldOp: "git-log", args: ["a"] },
+              { op: "worldRead", tag: "w1", site: "w#2", worldOp: "git-log", args: ["b"] },
               { op: "worldDone", tag: "w1", ok: true, value: "second" },
               { op: "worldDone", tag: "w0", ok: true, value: "first" },
             ],
@@ -70,8 +70,8 @@ export const scenarios: Scenario[] = [
           {
             caps: 2,
             steps: [
-              { op: "worldRead", tag: "w0", site: "w#1", worldOp: "git.log", args: ["a"] },
-              { op: "worldRead", tag: "w1", site: "w#2", worldOp: "git.log", args: ["b"] },
+              { op: "worldRead", tag: "w0", site: "w#1", worldOp: "git-log", args: ["a"] },
+              { op: "worldRead", tag: "w1", site: "w#2", worldOp: "git-log", args: ["b"] },
               { op: "complete", artifact: { done: true } },
             ],
           },
@@ -88,7 +88,7 @@ export const scenarios: Scenario[] = [
           {
             caps: 1,
             steps: [
-              { op: "worldRead", tag: "w0", site: "w#1", worldOp: "git.log", args: ["x"] },
+              { op: "worldRead", tag: "w0", site: "w#1", worldOp: "git-log", args: ["x"] },
               { op: "worldDone", tag: "w0", ok: false, message: "disk gone" },
               { op: "stop", reason: "interrupted" },
             ],
@@ -96,7 +96,7 @@ export const scenarios: Scenario[] = [
           {
             caps: 1,
             steps: [
-              { op: "worldRead", tag: "w0", site: "w#1", worldOp: "git.log", args: ["x"] },
+              { op: "worldRead", tag: "w0", site: "w#1", worldOp: "git-log", args: ["x"] },
               { op: "complete", artifact: null },
             ],
           },
@@ -113,14 +113,14 @@ export const scenarios: Scenario[] = [
           {
             caps: 1,
             steps: [
-              { op: "worldRead", tag: "w0", site: "w#1", worldOp: "git.log", args: ["x"] },
+              { op: "worldRead", tag: "w0", site: "w#1", worldOp: "git-log", args: ["x"] },
               { op: "worldDone", tag: "w0", ok: true, value: 1 },
               { op: "stop", reason: "user" },
             ],
           },
           {
             caps: 1,
-            steps: [{ op: "worldRead", tag: "w0", site: "w#1", worldOp: "git.log", args: ["y"] }],
+            steps: [{ op: "worldRead", tag: "w0", site: "w#1", worldOp: "git-log", args: ["y"] }],
           },
         ],
       },
@@ -313,9 +313,9 @@ export const scenarios: Scenario[] = [
           {
             caps: 1,
             steps: [
-              { op: "worldRead", tag: "p0", site: "w#1", worldOp: "git.log", args: ["x"] },
+              { op: "worldRead", tag: "p0", site: "w#1", worldOp: "git-log", args: ["x"] },
               { op: "worldDone", tag: "p0", ok: true, value: 1 },
-              { op: "worldRead", tag: "p1", site: "w#1", worldOp: "git.log", args: ["x"] },
+              { op: "worldRead", tag: "p1", site: "w#1", worldOp: "git-log", args: ["x"] },
               { op: "worldDone", tag: "p1", ok: true, value: 2 },
               { op: "stop", reason: "user" },
             ],
@@ -329,9 +329,9 @@ export const scenarios: Scenario[] = [
           {
             caps: 1,
             steps: [
-              { op: "worldRead", tag: "s0", site: "w#1", worldOp: "git.log", args: ["x"] },
-              { op: "worldRead", tag: "s1", site: "w#1", worldOp: "git.log", args: ["x"] },
-              { op: "worldRead", tag: "s2", site: "w#1", worldOp: "git.log", args: ["x"] },
+              { op: "worldRead", tag: "s0", site: "w#1", worldOp: "git-log", args: ["x"] },
+              { op: "worldRead", tag: "s1", site: "w#1", worldOp: "git-log", args: ["x"] },
+              { op: "worldRead", tag: "s2", site: "w#1", worldOp: "git-log", args: ["x"] },
               { op: "worldDone", tag: "s2", ok: true, value: 3 },
               { op: "complete", artifact: 3 },
             ],
@@ -486,7 +486,6 @@ export const scenarios: Scenario[] = [
           },
           {
             caps: 1,
-            importFrom: "pred-resume",
             steps: [
               // The script runs again: the same asks, in the same order, before the in-flight one is answered.
               { op: "createActor", site: "actor#1", name: "alpha", persona: ALPHA },
@@ -563,6 +562,50 @@ export const scenarios: Scenario[] = [
         runId: "succ-missing",
         importFrom: "pred-absent",
         lifetimes: [{ caps: 1, steps: [{ op: "complete", artifact: null }] }],
+      },
+    ],
+  },
+  {
+    name: "amend-world-running-row-versus-the-import-queue",
+    runs: [
+      {
+        runId: "pred-world-run",
+        lifetimes: [
+          {
+            caps: 1,
+            steps: [
+              { op: "worldRead", tag: "p0", site: "w#1", worldOp: "git-log", args: ["x"] },
+              { op: "worldDone", tag: "p0", ok: true, value: 1 },
+              { op: "worldRead", tag: "p1", site: "w#1", worldOp: "git-log", args: ["x"] },
+              { op: "worldDone", tag: "p1", ok: true, value: 2 },
+              { op: "stop", reason: "user" },
+            ],
+          },
+        ],
+      },
+      {
+        runId: "succ-world-run",
+        importFrom: "pred-world-run",
+        lifetimes: [
+          {
+            caps: 1,
+            steps: [
+              { op: "worldRead", tag: "s0", site: "w#1", worldOp: "git-log", args: ["x"] },
+              { op: "worldRead", tag: "s1", site: "w#1", worldOp: "git-log", args: ["x"] },
+              { op: "worldRead", tag: "s2", site: "w#1", worldOp: "git-log", args: ["x"] },
+              { op: "stop", reason: "interrupted" },
+            ],
+          },
+          {
+            caps: 1,
+            steps: [
+              { op: "worldRead", tag: "s0", site: "w#1", worldOp: "git-log", args: ["x"] },
+              { op: "worldRead", tag: "s1", site: "w#1", worldOp: "git-log", args: ["x"] },
+              { op: "worldRead", tag: "s2", site: "w#1", worldOp: "git-log", args: ["x"] },
+              { op: "complete", artifact: null },
+            ],
+          },
+        ],
       },
     ],
   },

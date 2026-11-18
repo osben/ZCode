@@ -1,8 +1,9 @@
 //! Resume (Node `engine/engine-resume.ts` and `replay-order.ts` `recoverSettleOrder`): the run-level state
 //! a resumed lifetime restores from the journal rows and the run's own events.
 //!
-//! - The settle order comes from the `node-settled` events, not from a column: the first settlement of
-//!   each completed or failed instance, in event order. Replay releases cached settlements in that order.
+//! - The settle order comes from the `node-settled`, `artifact-published` and `artifact-failed` events, not from
+//!   a column: the first settlement of each completed or failed instance, in event order. Replay releases
+//!   cached settlements in that order.
 //! - The number of ask rows per actor is counted once, so a new admission waits for every recorded row.
 use crate::engine::{WorkflowDriver, WorkflowEngine};
 use crate::engine_artifacts::is_preset_op;
@@ -82,22 +83,16 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
     /// Node `restoreFromJournal` for the scheduler: the gate's order and the recorded ask counts.
     pub(crate) fn restore_from_journal(&mut self) -> Result<()> {
         let all_rows: Vec<NodeRow> = self.journal.list_nodes(&self.run_id)?;
-        let rows: Vec<NodeRow> = all_rows
+        // Work rows and the artifact rows that claim a slot (Node `readReplayRows`): a failure or a content member
+        // claims its slot, a preset declaration does not. One clone per row.
+        let claims: Vec<NodeRow> = all_rows
             .iter()
-            .filter(|row| row.kind != NodeKind::Report && row.kind != NodeKind::Artifact)
+            .filter(|row| match row.kind {
+                NodeKind::Report => false,
+                NodeKind::Artifact => claims_on_replay(row),
+                _ => true,
+            })
             .cloned()
-            .collect();
-        // Artifact rows settle through the same gate (Node `readReplayRows`): a failure or a content member claims
-        // its slot, a preset declaration does not.
-        let claims: Vec<NodeRow> = rows
-            .iter()
-            .cloned()
-            .chain(
-                all_rows
-                    .iter()
-                    .filter(|row| row.kind == NodeKind::Artifact && claims_on_replay(row))
-                    .cloned(),
-            )
             .collect();
         // World rows settle through the replay gate too (Node `heldResolution`), so they claim order slots like
         // asks do. `recover_settle_order` takes them from the same `node-settled` events.
@@ -107,12 +102,12 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
         // Node `recoverImportClosure`: the closure state and the asks that ran live, from this run's events.
         // Only an amended run has a cache to recover.
         if self.imported_cache.is_some() {
-            let recovered = recover_import_closure(&events);
+            let recovered = recover_import_closure(&events)?;
             self.live_before_resume = recovered.live;
             self.queued_before_close = recovered.queued_before_close;
             self.import_closed = recovered.closed;
         }
-        for row in &rows {
+        for row in &claims {
             if row.kind != NodeKind::Ask {
                 continue;
             }

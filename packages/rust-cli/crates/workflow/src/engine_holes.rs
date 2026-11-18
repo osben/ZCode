@@ -264,23 +264,35 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
         if !self.holes.is_waiting_or_filled(&fill.site_id) {
             return Ok(FillHoleResult::NotWaiting);
         }
-        self.ask_specs = fill.ask_specs.clone();
-        self.identity.replace_site_phases(fill.site_phases.clone());
+        let HoleFill {
+            site_id,
+            code,
+            script_text,
+            script_hash,
+            ask_specs,
+            site_phases,
+            phase_names,
+            holes,
+            filled_by,
+            script_path,
+        } = fill;
+        self.ask_specs = ask_specs;
+        self.identity.replace_site_phases(site_phases);
         self.journal
-            .update_run_script(&self.run_id, &fill.script_text, &fill.script_hash)?;
+            .update_run_script(&self.run_id, &script_text, &script_hash)?;
         self.record(RunEvent::HoleFilled {
-            site_id: fill.site_id.clone(),
+            site_id: site_id.clone(),
             filled_at: now,
-            filled_by: fill.filled_by.clone(),
-            phase_names: fill.phase_names.clone(),
-            holes: fill.holes.clone(),
-            script_path: fill.script_path.clone(),
+            filled_by: filled_by.clone(),
+            phase_names,
+            holes,
+            script_path,
         })?;
         for ticket in self
             .holes
-            .release(&fill.site_id, &fill.code, now, fill.filled_by.as_deref())
+            .release(&site_id, &code, now, filled_by.as_deref())
         {
-            self.push_outcome(ticket, Ok(json!({"code": fill.code})));
+            self.push_outcome(ticket, Ok(json!({"code": code})));
         }
         Ok(FillHoleResult::Filled)
     }
