@@ -144,6 +144,37 @@ fn the_first_run_is_stamped_with_the_clock() {
     );
 }
 
+#[test]
+fn an_actor_is_denied_the_tools_node_denies_its_subagents() {
+    // Node `workflowActorToolPolicy` (`ACTOR_DISALLOWED_TOOLS`): the plan pair (nobody approves in a headless child),
+    // the questions to the user (an actor escalates through `escalate`; only the main session answers), the meta tools
+    // that would let an actor submit or amend another workflow, and the topic resource.
+    let entry = LiveAgent::for_actor(
+        run("sess_a"),
+        AgentId::new("actor-sess_a"),
+        SessionId::new("ses_parent"),
+    );
+    assert_eq!(
+        entry.definition.disallowed_tools,
+        crate::actor_turn::WORKFLOW_ACTOR_DISALLOWED_TOOLS
+            .iter()
+            .map(|tool| (*tool).to_owned())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        crate::actor_turn::WORKFLOW_ACTOR_DISALLOWED_TOOLS,
+        [
+            "AskUserQuestion",
+            "EnterPlanMode",
+            "ExitPlanMode",
+            "CreateWorkflow",
+            "AmendWorkflow",
+            "ReadTopicResource",
+            "ResolveWorkflowQuestion",
+        ]
+    );
+}
+
 // The invariant is a debug_assert, so the test exists only where debug assertions are compiled in.
 #[cfg(debug_assertions)]
 #[test]

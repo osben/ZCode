@@ -104,6 +104,20 @@ pub(crate) fn actor_asks(
     interactions.and_then(|parent| parent.lasting()).map(Asks)
 }
 
+/// The tools an actor is denied: Node `workflowActorToolPolicy` (`ACTOR_DISALLOWED_TOOLS`). The plan pair has nobody to
+/// approve it in a headless child. The questions to the user go through `escalate`, so only the main session answers
+/// them. The meta tools would let an actor submit or amend another workflow, and the topic resource belongs to the
+/// main session's inbound input. The deny list is enforced by the child's toolset (`toolset.rs`).
+pub const WORKFLOW_ACTOR_DISALLOWED_TOOLS: [&str; 7] = [
+    "AskUserQuestion",
+    "EnterPlanMode",
+    "ExitPlanMode",
+    "CreateWorkflow",
+    "AmendWorkflow",
+    "ReadTopicResource",
+    "ResolveWorkflowQuestion",
+];
+
 /// The live-map key of an actor: one per child session.
 fn actor_agent_id(child: &SessionId) -> AgentId {
     AgentId::new(format!("actor-{}", child.as_str()))
@@ -131,7 +145,10 @@ impl LiveAgent {
                 agent_type: "workflow_actor".to_owned(),
                 when_to_use: String::new(),
                 tools: None,
-                disallowed_tools: Vec::new(),
+                disallowed_tools: WORKFLOW_ACTOR_DISALLOWED_TOOLS
+                    .iter()
+                    .map(|tool| (*tool).to_owned())
+                    .collect(),
                 prompt: run.persona_prompt,
                 source: AgentSource::BuiltIn,
                 model: None,
