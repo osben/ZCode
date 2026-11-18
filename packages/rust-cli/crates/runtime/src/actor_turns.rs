@@ -139,9 +139,6 @@ pub struct AgentTurnRunner<A: ActorAgents> {
     handle: Handle,
     base: ActorRunBase,
     mailbox: ActorHandle,
-    /// The ask's first-write gate, made by its first turn. The runner serves every turn of one ask, so the gate fires
-    /// once per ask.
-    mutating: std::sync::Mutex<Option<Arc<FirstMutating>>>,
 }
 
 impl<A: ActorAgents> AgentTurnRunner<A> {
@@ -153,7 +150,6 @@ impl<A: ActorAgents> AgentTurnRunner<A> {
             handle,
             base,
             mailbox,
-            mutating: std::sync::Mutex::new(None),
         }
     }
 }
@@ -170,15 +166,12 @@ impl MutatingNotify for MailboxGate {
         let mailbox = self.mailbox.clone();
         let session = self.session.clone();
         // The owner answers on its own thread: the call waits on the blocking pool, not on a runtime worker.
-        match tokio::task::spawn_blocking(move || mailbox.mutating(&session)).await {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => {
-                tracing::warn!(session = %self.session, error = %error, "an actor's mutating call could not be reported");
-            }
-            Err(error) => {
-                tracing::warn!(session = %self.session, error = %error, "an actor's mutating call could not be reported");
-            }
-        }
+        let error = match tokio::task::spawn_blocking(move || mailbox.mutating(&session)).await {
+            Ok(Ok(())) => return,
+            Ok(Err(error)) => error.to_string(),
+            Err(error) => error.to_string(),
+        };
+        tracing::warn!(session = %self.session, error = %error, "an actor's mutating call could not be reported");
     }
 }
 
@@ -274,19 +267,12 @@ impl<A: ActorAgents> TurnRunner for AgentTurnRunner<A> {
             "the ask thread must not be inside a runtime: block_on would panic there"
         );
         let token = CancellationToken::new();
-        let gate = {
-            let mut slot = self
-                .mutating
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            slot.get_or_insert_with(|| {
-                Arc::new(FirstMutating::new(Arc::new(MailboxGate {
-                    mailbox: self.mailbox.clone(),
-                    session: session.to_owned(),
-                })))
-            })
-            .clone()
-        };
+        // One gate per turn, bound to this turn's session: the owner reports a write by session, so a gate kept from
+        // an earlier ask would name that ask's session. The owner dedupes the reports of one ask.
+        let gate = Arc::new(FirstMutating::new(Arc::new(MailboxGate {
+            mailbox: self.mailbox.clone(),
+            session: session.to_owned(),
+        })));
         let run = ActorRun {
             child: SessionId::new(session),
             parent: self.base.parent.clone(),

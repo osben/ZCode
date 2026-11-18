@@ -137,20 +137,23 @@ pub struct ActorRun {
     /// The turn's epilogue boundary (UTF-16 units), stored on the turn's user message as `metadata.epilogueStart`. None
     /// stores nothing; a nudged turn passes Some(0).
     pub epilogue_start: Option<usize>,
-    /// The ask's first-write gate (Node `onMutating`), shared by the ask's turns. None when the caller does not track
-    /// writes.
+    /// The turn's first-write gate (Node `onMutating`). None when the caller does not track writes.
     pub on_mutating: Option<Arc<FirstMutating>>,
 }
 
 /// Forwards an ask's first workspace write to its owner (Node `sink.askMutating`).
+///
+/// Delivery must not depend on the future being polled to completion: a caller may drop the `ask_mutating` future
+/// after the gate has fired, and the report must still reach the owner. The bridge's implementation runs the owner call
+/// on the blocking pool, which keeps running once started.
 #[async_trait::async_trait]
 pub trait MutatingNotify: Send + Sync {
     async fn ask_mutating(&self);
 }
 
-/// The per-ask gate of Node's `askMutating`: the first workspace-mutating call of an ask is forwarded, and no later call
-/// of that ask is. The bridge creates one per ask (its runner serves every turn of the ask), so a nudged turn does not
-/// fire again and a new ask does.
+/// The first-write gate of Node's `askMutating`: the first workspace-mutating call a turn makes is forwarded, and no
+/// later call of that turn is. The bridge makes one per turn, bound to that turn's session. The owner dedupes the
+/// reports of one ask, so a nudged turn's report does not change the ask's result.
 pub struct FirstMutating {
     fired: std::sync::atomic::AtomicBool,
     notify: Arc<dyn MutatingNotify>,
@@ -198,6 +201,7 @@ impl std::fmt::Debug for ActorRun {
             .field("workspace", &self.workspace)
             .field("selection", &self.selection)
             .field("mode", &self.mode)
+            .field("on_mutating", &self.on_mutating)
             .field("port", &self.port.as_ref().map(|_| "present"))
             .field("epilogue_start", &self.epilogue_start)
             .field(
