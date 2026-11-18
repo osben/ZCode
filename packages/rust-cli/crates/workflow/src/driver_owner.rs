@@ -11,11 +11,16 @@
 //! exit path, so no caller reconciles on its own. Ending an ask is one rule for every path (accept, budget
 //! exhaustion, cancel), not a step each path has to remember.
 //!
-//! Errors. A turn that cannot start fails its ask as a `DriverError` (Node's `askFailed` on a turn error). A turn-side
-//! error that the engine cannot receive (a refused withdrawal, a refused cancel) is returned by the call that caused
-//! it, after the rest of the queue is applied. Calls that answer a reply (submit, turn end, escalate, answer) never
-//! return such an error in place of the reply: they log it, because the engine has already settled the ask and a
-//! returned error would make the caller retry a settled call.
+//! Errors. A turn that cannot start fails its ask as a `DriverError` (Node's `askFailed` on a turn error). Any other
+//! error from the pump (a turn-side error the engine cannot receive, such as a refused withdrawal or cancel, or a
+//! journal write inside `ask_failed`) is handled by the kind of call that raised the pump:
+//!
+//! - Non-reply calls (`create_actor`, `ask`, `drain`, `complete`, `set_message_boundary`, `ask_mutating`) return every
+//!   pump error, after the engine's own error if they have one.
+//! - Reply calls (`submit_result`, `turn_ended`, `escalate`, `answer`) return the reply and log the pump error. The
+//!   engine has already settled the ask, so a returned error would make the caller retry a settled call. A reply call
+//!   returns an error only when the engine call itself failed, since then no reply exists; the pump error is logged in
+//!   that case too.
 use crate::driver_rules::{
     NO_ACTIVE_ASK_MESSAGE, ProfileFit, SubmitProfile, SubmitRoute, UNTYPED_ASK_MESSAGE,
     actor_session_title, actor_task_link_path, profile_fit, submit_route,
@@ -207,6 +212,16 @@ impl<S: ActorSessions> WorkflowDriver for ActorPort<S> {
     }
 }
 
+/// The log line for a pump error that a reply call cannot return. Its source may be a turn-side error or an engine
+/// journal write inside `ask_failed`.
+fn log_settle_error(result: Result<()>) {
+    if let Err(error) = result {
+        tracing::warn!(
+            "the owner's pump failed while settling an ask; the reply is unchanged: {error:#}"
+        );
+    }
+}
+
 /// The owner for one actor run: the engine, its driver port, and the escalation book.
 pub struct ActorDriverOwner<J: JournalPort, S: ActorSessions> {
     engine: WorkflowEngine<J, ActorPort<S>>,
@@ -314,23 +329,20 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
         Ok(value)
     }
 
-    /// The pump for a call that answers a reply (a submit, a turn end, an escalation). Its turn-side errors are
-    /// logged, not returned: the reply is the engine's, and a returned error would make the caller retry a call the
-    /// engine has already settled.
+    /// The pump for a call that answers a reply. Its error is logged, not returned: the reply is the engine's, and a
+    /// returned error would make the caller retry a call the engine has already settled.
     fn settle_quietly(&mut self) {
-        if let Err(error) = self.pump() {
-            tracing::warn!("actor turn side failed while settling an ask: {error:#}");
-        }
+        log_settle_error(self.pump());
     }
 
-    /// The reply is the engine's whether or not the turn side fails while it settles. A failed engine call returns
-    /// its error, since no reply exists.
+    /// The reply is the engine's whether or not the pump fails while it settles. A failed engine call returns its
+    /// error, since no reply exists; the pump error is logged in that case too, so it is not lost.
     fn reply_after<T>(
         &mut self,
         engine_result: Result<()>,
         reply: impl FnOnce(&mut Self) -> Result<T>,
     ) -> Result<T> {
-        self.settle_quietly();
+        log_settle_error(self.pump());
         engine_result?;
         reply(self)
     }
@@ -391,7 +403,7 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
     /// Node `workflow-driver-transcript.ts`: the ask's message boundary, written on its node row. A session with no
     /// ask in flight writes nothing.
     pub fn set_message_boundary(&mut self, session: &str, boundary: u64) -> Result<()> {
-        self.settle_quietly();
+        self.pump()?;
         let Some(ask) = self.active.get(session).cloned() else {
             return Ok(());
         };
@@ -402,7 +414,7 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
     /// Node `askMutating`: the session's active ask is about to run a mutating tool. Ignored when no ask is in
     /// flight, as the engine ignores observations after an ask settles.
     pub fn ask_mutating(&mut self, session: &str) -> Result<()> {
-        self.settle_quietly();
+        self.pump()?;
         let Some(ask) = self.active.get(session).cloned() else {
             return Ok(());
         };
@@ -471,9 +483,18 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
 
     /// One queued start: the book starts the ask (withdrawing the previous one's parked questions), then the turn is
     /// started. A refused turn ends the ask again and fails it with the send error (Node `askFailed`).
+    // Withdrawal (here, `reconcile`, and the refused-start path) retires each question in the book before it rejects
+    // the turn side's deferred. Node does the same (`withdrawSessionEscalations` retires the registry entry, then
+    // rejects), and a promise rejection cannot fail there. So a refused reject is returned by the pump, not retried:
+    // the question is gone from the book either way, and the caller sees the error.
     fn apply_start(&mut self, start: QueuedStart, first: &mut Option<anyhow::Error>) {
         // A start queued before the engine cancelled or completed its ask must not start a turn for a dead ask.
         if !self.engine.is_live_ask(&start.instance) {
+            tracing::debug!(
+                instance = %start.instance.key(),
+                session = %start.session,
+                "dropped a queued start: its ask is no longer live"
+            );
             return;
         }
         let withdrawn = self.book.start_ask(&start.session);

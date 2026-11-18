@@ -857,6 +857,15 @@ Review round 2 (ocr, on 58cd5fced):
 
 Red record for round 2: `cargo test -p rust-cli-workflow --lib driver_owner` failed to compile before the change (`no method named queue_start_for_test`). The behaviour tests were not run against the round-1 code separately, so the behaviour part of the red record is not observed.
 
+Review round 3 (ocr, on 63e0a578e):
+
+- Engine error with a pump error (fixed): a reply call that fails in the engine logs the pump error before it returns the engine's error (`reply_after`, `log_settle_error`). Before, the pump error was dropped.
+- Log wording and module doc (fixed): the message names no source, since a pump error may be a turn-side error or an engine journal write in `ask_failed`. The module doc says which calls return pump errors and which log them.
+- Mixed behaviour (fixed): `set_message_boundary` and `ask_mutating` return every pump error, before and after the engine write, as non-reply calls. Before, the pre-call pump was logged and the post-call one returned.
+- Stale start (fixed, logged): the guard logs a `debug` line with the instance key and the session when it drops a start.
+- Stale-start test (fixed): it rebuilds the race (admit the ask, its turn runs, `complete` settles it, then a start is queued and applied). It is red without the guard (two turns instead of one; checked by disabling the guard for one run and restoring it).
+- Refused reject (parity decision, documented): Node's `withdrawSessionEscalations` retires the registry entry, then rejects the deferred, and a promise rejection cannot fail there. The Rust book also retires the question before the reject, so a refused reject drops the question in both. The error is logged or returned by the pump, not retried. Comments at the withdrawal sites and on the refused-reject test say so.
+
 Remaining (W6a part 2b, the turn side; not in this part):
 
 1. An `ActorSessions` implementation over the agents crate: a child session of kind `Subagent` with the parent, the title, and the `workflow_actor` link row (`insert_workflow_actor_link` in node-store), created at dispatch. Decide the task type first (Deviations above).

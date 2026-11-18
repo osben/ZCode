@@ -595,6 +595,9 @@ fn a_repair_exhausted_by_a_refused_cancel_still_answers_the_submit_and_fails_the
 }
 
 #[test]
+// Parity with Node: a refused reject retires the question in the book anyway, as Node retires the registry entry
+// before it rejects the deferred (workflow-driver-escalation.ts withdrawSessionEscalations). The error is logged/returned,
+// not retried.
 fn an_accept_with_a_refused_withdrawal_still_returns_the_accept_and_releases_the_rest() {
     let (mut owner, sessions, _actor, session) = running_ask();
     let first = match owner.escalate(&session, request("one")).expect("escalate") {
@@ -669,13 +672,15 @@ fn a_refused_cancel_on_complete_is_returned_and_the_rest_of_the_queue_still_appl
 }
 
 #[test]
-fn a_start_queued_for_an_ask_that_is_no_longer_live_starts_no_turn() {
-    let (mut owner, sessions) = owner();
-    // A start the engine queued for an ask that was cancelled or completed before the pump applied it.
-    let session = "sess_1".to_owned();
+fn a_start_queued_for_an_ask_the_engine_already_settled_starts_no_turn() {
+    // The race: the ask is admitted and its turn runs, then the engine settles it (complete cancels the turn). A start
+    // the engine queued for that ask before it settled is applied afterwards and must not start a second turn.
+    let (mut owner, sessions, _actor, session) = running_ask();
+    let instance = first_turn_instance(&sessions);
+    owner.complete(json!("done")).expect("complete");
     owner.queue_start_for_test(
         &session,
-        &Ref::new("site", 9),
+        &instance,
         AskMessage {
             instructions: "stale".into(),
             typed: true,
@@ -683,8 +688,9 @@ fn a_start_queued_for_an_ask_that_is_no_longer_live_starts_no_turn() {
         },
     );
     owner.drain().expect("drain");
-    assert!(
-        sessions.0.borrow().turns.is_empty(),
-        "no turn starts for a dead ask"
+    assert_eq!(
+        sessions.0.borrow().turns.len(),
+        1,
+        "only the original turn ran; the settled ask starts no second turn"
     );
 }
