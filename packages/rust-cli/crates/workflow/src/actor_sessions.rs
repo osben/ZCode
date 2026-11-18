@@ -19,6 +19,7 @@ pub trait ActorTurns {
     fn start_turn(&mut self, session: &str, instance: &Ref, message: &AskMessage) -> Result<()>;
     fn cancel_turn(&mut self, session: &str, instance: &Ref) -> Result<()>;
     fn reject_parked(&mut self, session: &str, qid: &str) -> Result<()>;
+    fn deliver_answer(&mut self, session: &str, qid: &str, answer: &str) -> Result<()>;
 }
 
 /// Session creation on the shared session database, with the turn side injected.
@@ -104,5 +105,9 @@ impl<T: ActorTurns> ActorSessions for NodeActorSessions<'_, T> {
 
     fn reject_parked(&mut self, session: &str, qid: &str) -> Result<()> {
         self.turns.reject_parked(session, qid)
+    }
+
+    fn deliver_answer(&mut self, session: &str, qid: &str, answer: &str) -> Result<()> {
+        self.turns.deliver_answer(session, qid, answer)
     }
 }

@@ -22,22 +22,26 @@ use std::rc::Rc;
 
 /// Everything the turn side was asked to do, in order.
 #[derive(Default)]
-struct Log {
-    created: Vec<ActorSessionRequest>,
-    turns: Vec<(String, Ref, AskMessage)>,
-    cancelled: Vec<(String, Ref)>,
-    rejected: Vec<(String, String)>,
+pub(crate) struct Log {
+    pub(crate) created: Vec<ActorSessionRequest>,
+    pub(crate) turns: Vec<(String, Ref, AskMessage)>,
+    pub(crate) cancelled: Vec<(String, Ref)>,
+    pub(crate) rejected: Vec<(String, String)>,
+    /// Answers delivered to blocked escalate calls: (session, qid, answer).
+    pub(crate) answered: Vec<(String, String, String)>,
     /// When set, the next `start_turn` fails, as a refused send does.
-    fail_next_start: bool,
+    pub(crate) fail_next_start: bool,
     /// When set, the next `cancel_turn` fails.
-    fail_next_cancel: bool,
+    pub(crate) fail_next_cancel: bool,
+    /// When set, the next `deliver_answer` fails, as a turn that is gone refuses its answer.
+    pub(crate) fail_next_deliver: bool,
     /// When set, the next `reject_parked` fails. Only that one withdrawal fails; the rest of the queue still applies.
-    fail_next_reject: bool,
-    next: u64,
+    pub(crate) fail_next_reject: bool,
+    pub(crate) next: u64,
 }
 
 #[derive(Clone, Default)]
-struct Recording(Rc<RefCell<Log>>);
+pub(crate) struct Recording(pub(crate) Rc<RefCell<Log>>);
 
 impl ActorSessions for Recording {
     fn create_session(&mut self, request: &ActorSessionRequest) -> Result<String> {
@@ -68,6 +72,17 @@ impl ActorSessions for Recording {
         Ok(())
     }
 
+    fn deliver_answer(&mut self, session: &str, qid: &str, answer: &str) -> Result<()> {
+        let mut log = self.0.borrow_mut();
+        if log.fail_next_deliver {
+            log.fail_next_deliver = false;
+            bail!("deliver refused");
+        }
+        log.answered
+            .push((session.to_owned(), qid.to_owned(), answer.to_owned()));
+        Ok(())
+    }
+
     fn reject_parked(&mut self, session: &str, qid: &str) -> Result<()> {
         let mut log = self.0.borrow_mut();
         if log.fail_next_reject {
@@ -92,7 +107,7 @@ fn needs_ok(_schema: &Value, value: &Value) -> Vec<Violation> {
     }
 }
 
-fn config() -> EngineConfig {
+pub(crate) fn config() -> EngineConfig {
     let mut config = EngineConfig {
         run_id: "run_1".into(),
         parent_session_id: Some("ses_parent".into()),
@@ -124,11 +139,11 @@ fn owner_with(config: EngineConfig) -> (ActorDriverOwner<MemoryJournal, Recordin
     (owner, sessions)
 }
 
-fn owner() -> (ActorDriverOwner<MemoryJournal, Recording>, Recording) {
+pub(crate) fn owner() -> (ActorDriverOwner<MemoryJournal, Recording>, Recording) {
     owner_with(config())
 }
 
-fn request(question: &str) -> EscalationRequest {
+pub(crate) fn request(question: &str) -> EscalationRequest {
     EscalationRequest {
         actor: Ref::new("site", 1),
         actor_name: None,
@@ -139,7 +154,7 @@ fn request(question: &str) -> EscalationRequest {
 }
 
 /// One typed ask on a fresh actor, started and running. Returns the owner, the recorder, the actor id and session.
-fn running_ask() -> (
+pub(crate) fn running_ask() -> (
     ActorDriverOwner<MemoryJournal, Recording>,
     Recording,
     String,
@@ -692,5 +707,70 @@ fn a_start_queued_for_an_ask_the_engine_already_settled_starts_no_turn() {
         sessions.0.borrow().turns.len(),
         1,
         "only the original turn ran; the settled ask starts no second turn"
+    );
+}
+
+#[test]
+fn an_accepted_answer_is_delivered_to_the_blocked_escalate_on_its_session() {
+    let (mut owner, sessions, _actor, session) = running_ask();
+    let qid = match owner
+        .escalate(&session, request("which?"))
+        .expect("escalate")
+    {
+        EscalateOutcome::Parked { qid } => qid,
+        other => panic!("expected a park, got {other:?}"),
+    };
+    owner
+        .answer(&qid, "the second one")
+        .expect("answer")
+        .expect("parked");
+    assert_eq!(
+        sessions.0.borrow().answered,
+        vec![(session.clone(), qid.clone(), "the second one".to_owned())]
+    );
+}
+
+#[test]
+fn an_answer_to_a_withdrawn_question_is_not_delivered() {
+    let (mut owner, sessions, _actor, session) = running_ask();
+    let qid = match owner
+        .escalate(&session, request("which?"))
+        .expect("escalate")
+    {
+        EscalateOutcome::Parked { qid } => qid,
+        other => panic!("expected a park, got {other:?}"),
+    };
+    owner
+        .submit_result(&session, json!({"ok": true}))
+        .expect("submit");
+    assert_eq!(owner.answer(&qid, "late").expect("answer"), None);
+    assert!(sessions.0.borrow().answered.is_empty());
+}
+
+#[test]
+fn a_refused_delivery_is_reported_on_the_outcome_and_the_question_is_still_retired() {
+    let (mut owner, sessions, _actor, session) = running_ask();
+    let qid = match owner
+        .escalate(&session, request("which?"))
+        .expect("escalate")
+    {
+        EscalateOutcome::Parked { qid } => qid,
+        other => panic!("expected a park, got {other:?}"),
+    };
+    sessions.0.borrow_mut().fail_next_deliver = true;
+    let outcome = owner
+        .answer(&qid, "the second one")
+        .expect("answer")
+        .expect("the book accepted the answer");
+    assert_eq!(outcome.answer, "the second one");
+    let warning = outcome
+        .delivery_warning
+        .expect("the refused delivery is reported");
+    assert!(warning.contains("deliver refused"), "{warning}");
+    assert!(sessions.0.borrow().answered.is_empty());
+    assert_eq!(
+        owner.answer(&qid, "again").expect("answer"),
+        None,
+        "the question is retired: a retry is not a second answer"
     );
 }

@@ -66,6 +66,9 @@ pub struct AnswerOutcome {
     pub answer: String,
     /// Set when the `escalation-resolved` write failed. The answer is still delivered.
     pub journal_warning: Option<String>,
+    /// Set by the owner when the accepted answer could not be delivered to the blocked turn (its send failed). The
+    /// question is retired either way: the answer cannot be given again.
+    pub delivery_warning: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -193,7 +196,13 @@ impl EscalationBook {
         Some(AnswerOutcome {
             answer: answer.to_owned(),
             journal_warning,
+            delivery_warning: None,
         })
+    }
+
+    /// The session a parked question belongs to, while it is parked.
+    pub fn session_of_question(&self, qid: &str) -> Option<String> {
+        self.by_qid.get(qid).cloned()
     }
 
     /// Withdraw every parked question of a session and retire its ids (Node `withdrawSessionEscalations`).

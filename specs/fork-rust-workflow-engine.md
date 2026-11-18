@@ -935,6 +935,58 @@ Remaining (part 2c, the turn side):
    5b. The `countSource` adapter for the import builder (W5b) and the per-ask tool counts for `statsFromTurn`.
 6. Port the session-dependent cases of `bootstrap/tests/workflow-driver.test.ts` and `workflow-driver-submit-profile.test.ts`.
 
+### 9.8c W6a part 2c: the turn loop (design, split)
+
+Status: started on `feat/rust-workflow-turn-loop`, stacked on fork (9bb28da37 = #537 merged). Gate off.
+
+Why it is split. The turn loop touches four crates (`workflow` owner, `agents` turn runner, `protocol-zcode` for the tool surface, `node-store` for the transcript reads), and each needs its own review. The split:
+
+- **2c-1 (this part): the answer path and the mailbox.** The owner's `answer` writes the journal but does not deliver the answer to the blocked escalate call, so the actor would wait forever. Node resolves the deferred (`workflow-driver-escalation.ts` `respondToParkedEscalation`: `deferred.resolve(answer)`). 2c-1 adds `ActorSessions::deliver_answer` and calls it from `answer` (with the session from the book; a delivery error is logged, the journal write already happened, since Node delivers the answer even when the journal write fails). It also adds `ActorMailbox`, a std `mpsc` request channel (submit, turn end, escalate, answer; each with a reply sender), and `serve`, which drains it on the owner's thread. Turns send requests and block on their own reply channel. Nothing async is added.
+- **2c-2: ActorTurns over crates/agents.** A turn-by-turn entry on the existing subagent machinery (`spawn.rs` runs to completion today). `start_turn` runs one ask's turn on the child session; `cancel_turn` aborts it; `reject_parked` and `deliver_answer` wake the blocked tool. The transcript and the session task link come from node-store (2b).
+- **2c-3: the tools and the prompt.** `submit_result` and `escalate` tool definitions modelled on `respond.rs` (the blocking tool with a reply channel), `NUDGE_PROMPT` for a nudged turn, the typed epilogue and the mono profile in the instructions (`driver_rules`), and the repair path in the turn loop.
+- **2c-4: the callers and the ports.** `ask_mutating` from tool activity and `set_message_boundary` from the transcript; the permission origin (`ChildSink::with_origin`, `actor_interaction_description`) and session-scoped grants; the `countSource` adapter for the import builder (W5b) and per-ask tool counts for `statsFromTurn`; the Node driver tests that need a session (`workflow-driver.test.ts`, `workflow-driver-submit-profile.test.ts`).
+
+Design of 2c-1 (owners and event order):
+
+```
+turn (blocked)            ActorMailbox (std mpsc)           owner thread (ActorDriverOwner)        turn side (ActorSessions)
+  escalate(q) ─Escalate{session,req,reply}─►│ serve: owner.escalate ─► Parked{qid} ─► reply
+  │ blocks on its own receiver              │
+  │                                          │ main agent: answer(qid,text)  ─► owner.answer ─► book.answer (journal write)
+  │                                          │                                    └─► deliver_answer(session,qid,text) ─► wakes the blocked turn
+  │ submit_result ─Submit{session,payload,reply}─► serve: owner.submit_result ─► SubmitReply ─► reply
+```
+
+Owners: the owner thread is the only caller of the engine and the book. The mailbox is a plain queue; it holds no state beyond the channel. The turn side owns its blocked receivers.
+
+Deviations recorded for 2c-1:
+
+- `answer` delivers only when the book held the question. A question withdrawn earlier gets no delivery (Node: `respondToParkedEscalation` returns false, `run_not_in_flight`).
+- The mailbox is synchronous. A turn that is not on a thread that can block must not call `serve`'s caller; the agents side (2c-2) runs turns on their own threads or tasks.
+
+Tests for 2c-1 (written first; red recorded in the commit message and the report):
+
+- the recorder's `deliver_answer` is called with the session, qid and answer when an answer is accepted, and not when it is refused (driver_owner_tests);
+- a withdrawn question is not delivered;
+- the mailbox round trip: a submit through the mailbox gets its `SubmitReply`; an escalate gets `Parked`; an answer sent through the mailbox is delivered to the recorder.
+
+As built (2c-1): `ActorSessions::deliver_answer` (and `ActorTurns`) resolves the blocked escalate with the answer; `ActorDriverOwner::answer` delivers to the question's session when the book accepted it (the journal write does not gate delivery, as in Node). `crates/workflow/src/actor_mailbox.rs`: `ActorMailbox` (owner side, `serve_next`) and `ActorHandle` (turn side: `submit`, `turn_ended`, `escalate`, `answer`), std mpsc, errors as text. Tests: `driver_owner_tests` (two delivery cases), `actor_mailbox_tests` (four). Red: the module and the trait method were missing at first, so the run failed to compile; the delivery behaviour was not run red separately. Box: workflow lib 102 pass; fmt and clippy clean.
+
+Review of 2c-1 (ocr on bb65c05f9), verdicts:
+
+- Delegation test (fixed): the stub records the call; the test asserts session, qid and answer are forwarded unchanged.
+- Mailbox shutdown and panic (fixed): the mailbox keeps no sender. `ActorMailbox::new` returns the receiver and one handle, and handles are cloned from it. When every handle drops, `serve_next` returns `MailboxError::Closed`. A panic in the owner drops the request's reply sender, so the turn gets `NoAnswer`. The panic path is not driven by a test; the drop is tested by taking a request and dropping it.
+- Send versus receive failure (fixed): `NotDelivered` (the send failed; safe to retry) and `NoAnswer` (the owner took the request and stopped; it may already be applied) are distinct variants with distinct text.
+- Error type (fixed): the reply carries `anyhow::Result`, and `MailboxError::Owner` keeps the chain. The text-only design is removed.
+- `ActorRequest` (fixed): `pub(crate)`.
+- Refused delivery (fixed; parity decision). Node's `respondToParkedEscalation` calls `deferred.resolve(answer)`, which cannot fail. Rust's turn can be gone, so a refused delivery is possible. The Rust answer therefore carries `AnswerOutcome.delivery_warning`, and the question is retired either way. This is a Rust addition with no Node counterpart.
+- Refused delivery test (fixed): `fail_next_deliver` on the recorder; the test checks the warning, the empty delivery list, and that a retry returns `None`.
+- Structured log fields (fixed): `session`, `qid` and `error` are tracing fields.
+- Dead Some/None guard (fixed): the session is looked up first. The book answers exactly the questions it parks, so a missing session returns `None` before any write. A book that refuses after the lookup is an error, not a silent drop.
+- Owner error through the mailbox (fixed): a journal that refuses appends, switched on after the ask runs, makes `escalate` fail inside the owner. The turn gets `MailboxError::Owner` with `journal refused the append` in its chain.
+
+Box, after the fixes: workflow lib 106 pass; fmt --check and clippy --workspace -D warnings exit 0.
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.
