@@ -135,6 +135,8 @@ pub struct ActorPort<S: ActorSessions> {
     interaction_of_session: HashMap<String, String>,
     /// Session of each ask whose turn has started and not ended, keyed by instance. Removed when the ask ends.
     session_of_instance: HashMap<String, String>,
+    /// Instances the engine cancelled while they ran. A cancelled ask takes no message boundary.
+    cancelled: std::collections::HashSet<String>,
     queued_starts: Vec<QueuedStart>,
     queued_failures: Vec<(Ref, WorkflowError)>,
     /// Errors the engine cannot receive (its trait methods return nothing); the owner returns them.
@@ -248,6 +250,11 @@ impl<S: ActorSessions> WorkflowDriver for ActorPort<S> {
         self.verdicts.insert(instance.key(), verdict.clone());
     }
 
+    fn abort_ask(&mut self, instance: &Ref) {
+        self.cancelled.insert(instance.key());
+        self.cancel_ask(instance);
+    }
+
     fn cancel_ask(&mut self, instance: &Ref) {
         self.verdicts.remove(&instance.key());
         let Some(session) = self.session_of_instance.remove(&instance.key()) else {
@@ -290,9 +297,6 @@ pub struct ActorDriverOwner<J: JournalPort, S: ActorSessions> {
     engine: WorkflowEngine<J, ActorPort<S>>,
     book: EscalationBook,
     active: BTreeMap<String, ActiveAsk>,
-    /// The instance of each session's last settled ask, until its next ask starts (Node `currentInstance` after the
-    /// settlement). The message boundary is written here, because the settled record replaces the node row.
-    settled: BTreeMap<String, Ref>,
 }
 
 impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
@@ -307,6 +311,7 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
             identity_of_session: HashMap::new(),
             interaction_of_session: HashMap::new(),
             session_of_instance: HashMap::new(),
+            cancelled: std::collections::HashSet::new(),
             queued_starts: Vec::new(),
             queued_failures: Vec::new(),
             deferred_errors: Vec::new(),
@@ -318,7 +323,6 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
             engine,
             book,
             active: BTreeMap::new(),
-            settled: BTreeMap::new(),
         })
     }
 
@@ -495,21 +499,15 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
         self.after_engine(result)
     }
 
-    /// Node `workflow-driver-transcript.ts`: the ask's message boundary, written on its node row. A session with no
-    /// ask in flight writes nothing.
-    pub fn set_message_boundary(&mut self, session: &str, boundary: u64) -> Result<()> {
+    /// Node `workflow-driver-transcript.ts`: the ask's message boundary, written on its node row. The turn thread names
+    /// the instance it ran, so the boundary lands on that ask even if a newer ask has started since it settled. A
+    /// cancelled ask takes none (Node returns early on `state.cancelled`).
+    pub fn set_message_boundary(&mut self, instance: &Ref, boundary: u64) -> Result<()> {
         self.pump()?;
-        // The active ask, or else the ask that just settled: Node writes the boundary after settlement, while no newer
-        // ask has started (a newer one clears `settled`).
-        let instance = self
-            .active
-            .get(session)
-            .map(|ask| ask.instance.clone())
-            .or_else(|| self.settled.get(session).cloned());
-        let Some(instance) = instance else {
+        if self.engine.driver.cancelled.contains(&instance.key()) {
             return Ok(());
-        };
-        let result = self.engine.set_message_boundary(&instance, boundary);
+        }
+        let result = self.engine.set_message_boundary(instance, boundary);
         self.after_engine(result)
     }
 
@@ -672,8 +670,6 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
             &interaction,
         ) {
             Ok(()) => {
-                // A newer ask has started, so the session's last settled ask no longer takes a boundary.
-                self.settled.remove(&start.session);
                 self.active.insert(
                     start.session.clone(),
                     ActiveAsk {
@@ -726,7 +722,6 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
         let mut first: Option<anyhow::Error> = None;
         for session in ended {
             if let Some(ask) = self.active.remove(&session) {
-                self.settled.insert(session.clone(), ask.instance.clone());
                 let key = ask.instance.key();
                 self.engine.driver.session_of_instance.remove(&key);
                 self.engine.driver.verdicts.remove(&key);

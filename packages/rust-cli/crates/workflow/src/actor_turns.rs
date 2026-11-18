@@ -88,6 +88,7 @@ impl ActorTurns for MailboxTurns {
         let session = session.to_owned();
         let first = input.clone();
         let interaction = interaction.to_owned();
+        let turn_instance = instance.clone();
         thread::Builder::new()
             .name(format!("actor-turn-{}", instance.key()))
             .spawn(move || {
@@ -95,6 +96,7 @@ impl ActorTurns for MailboxTurns {
                     runner.as_ref(),
                     &handle,
                     &session,
+                    &turn_instance,
                     &interaction,
                     first,
                     &cancel,
@@ -136,6 +138,7 @@ fn run_ask(
     runner: &dyn TurnRunner,
     handle: &ActorHandle,
     session: &str,
+    instance: &Ref,
     interaction: &str,
     first: TurnInput,
     cancel: &AtomicBool,
@@ -163,6 +166,9 @@ fn run_ask(
         if cancel.load(Ordering::SeqCst) {
             return;
         }
+        // Counted while the ask is still active: a newer ask cannot start before this one settles, so this is the count
+        // at settlement (Node reads it there) and no race with a later prompt can change it.
+        let boundary = runner.message_boundary(session);
         match handle.turn_ended(session, &text) {
             Ok(TurnEndReply::Verdict(SubmitVerdict::Nudge)) => {
                 // Node `runTurn(NUDGE_PROMPT, 0)`: the nudge has no instructions, so its epilogue starts at 0. It is the
@@ -171,10 +177,9 @@ fn run_ask(
                 turn.epilogue_start = 0;
             }
             Ok(_) => {
-                // The ask settled. Its message boundary goes on its node row now, after settlement, because the settled
-                // record replaces the row (Node writes it after settlement too).
-                if let Some(boundary) = runner.message_boundary(session)
-                    && let Err(report) = handle.message_boundary(session, boundary)
+                // The ask settled. Its message boundary goes on its node row, named by the instance this turn ran for.
+                if let Some(boundary) = boundary
+                    && let Err(report) = handle.message_boundary(instance, boundary)
                 {
                     tracing::warn!(%session, error = %report, "an actor's message boundary could not be reported");
                 }

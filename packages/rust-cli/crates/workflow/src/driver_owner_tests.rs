@@ -699,12 +699,9 @@ fn completing_the_run_cancels_the_in_flight_turn_and_withdraws_its_questions() {
 
 #[test]
 fn the_message_boundary_is_written_to_the_active_ask_node_and_nothing_else() {
-    let (mut owner, sessions, _actor, session) = running_ask();
+    let (mut owner, sessions, _actor, _session) = running_ask();
     let instance = first_turn_instance(&sessions);
-    owner
-        .set_message_boundary("sess_unasked", 9)
-        .expect("boundary");
-    owner.set_message_boundary(&session, 5).expect("boundary");
+    owner.set_message_boundary(&instance, 5).expect("boundary");
     let node = owner
         .journal()
         .get_node("run_1", &instance)
@@ -723,7 +720,7 @@ fn a_boundary_written_after_the_ask_settles_reaches_the_settled_ask_node() {
     assert_eq!(first, TurnEndReply::Verdict(SubmitVerdict::Nudge));
     let second = owner.turn_ended(&session, "Still done.").expect("turn end");
     assert_eq!(second, TurnEndReply::AskEnded);
-    owner.set_message_boundary(&session, 7).expect("boundary");
+    owner.set_message_boundary(&instance, 7).expect("boundary");
     let node = owner
         .journal()
         .get_node("run_1", &instance)
@@ -990,4 +987,45 @@ fn an_actor_without_a_persona_name_is_named_subagent() {
         sessions.0.borrow().interactions,
         vec!["subagent (site@1)".to_owned()]
     );
+}
+
+#[test]
+fn a_settled_asks_boundary_is_not_written_to_the_next_ask() {
+    // Node writes the boundary after settlement, while the ask thread waits on the store. A new ask on the same
+    // session that starts in that window must not take the boundary.
+    let (mut owner, sessions, actor, session) = running_ask();
+    let settled = first_turn_instance(&sessions);
+    owner.turn_ended(&session, "I am done.").expect("turn end");
+    assert_eq!(
+        owner.turn_ended(&session, "Still done.").expect("turn end"),
+        TurnEndReply::AskEnded
+    );
+    owner.ask("site", &actor, "again").expect("the next ask");
+    owner.drain().expect("drain");
+    owner.set_message_boundary(&settled, 7).expect("boundary");
+    let node = owner
+        .journal()
+        .get_node("run_1", &settled)
+        .expect("node")
+        .expect("the settled ask's node exists");
+    assert_eq!(
+        node.message_boundary,
+        Some(7),
+        "the settled ask keeps its boundary"
+    );
+}
+
+#[test]
+fn a_cancelled_ask_takes_no_message_boundary() {
+    // Node returns early on a cancelled ask: a boundary for it is not written.
+    let (mut owner, sessions, _actor, _session) = running_ask();
+    let instance = first_turn_instance(&sessions);
+    owner.complete(json!("done")).expect("complete");
+    owner.set_message_boundary(&instance, 5).expect("boundary");
+    let boundary = owner
+        .journal()
+        .get_node("run_1", &instance)
+        .expect("node")
+        .and_then(|node| node.message_boundary);
+    assert_eq!(boundary, None);
 }

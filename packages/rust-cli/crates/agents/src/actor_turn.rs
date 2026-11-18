@@ -171,7 +171,13 @@ impl crate::Agents {
     /// The message count of a child session, read when its ask settles (Node `journalAskMessageBoundary`'s count). None
     /// when the session cannot be read, and then no boundary is written.
     pub async fn child_message_count(&self, child: &SessionId) -> Option<u64> {
-        let loaded = self.core.ports.store.load(child).await.ok()?;
+        let loaded = match self.core.ports.store.load(child).await {
+            Ok(loaded) => loaded,
+            Err(error) => {
+                tracing::warn!(session = child.as_str(), error = %error, "the child's message count could not be read");
+                return None;
+            }
+        };
         u64::try_from(loaded.messages.len()).ok()
     }
 }

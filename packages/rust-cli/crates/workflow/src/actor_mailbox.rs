@@ -17,6 +17,7 @@
 use crate::driver_owner::{ActorDriverOwner, ActorSessions, SubmitReply, TurnEndReply};
 use crate::escalation::{AnswerOutcome, EscalateOutcome, EscalationRequest};
 use crate::journal::JournalPort;
+use crate::model::Ref;
 use crate::parked_answers::ParkedAnswers;
 use anyhow::Result;
 use serde_json::Value;
@@ -86,7 +87,7 @@ pub(crate) enum ActorRequest {
     },
     /// The message boundary of a settled ask (Node `journalAskMessageBoundary`), sent after its settlement.
     MessageBoundary {
-        session: String,
+        instance: Ref,
         boundary: u64,
         reply: Sender<Result<()>>,
     },
@@ -172,11 +173,11 @@ fn dispatch<J: JournalPort, S: ActorSessions>(
             let _ = reply.send(owner.turn_failed(&session, &message));
         }
         ActorRequest::MessageBoundary {
-            session,
+            instance,
             boundary,
             reply,
         } => {
-            let _ = reply.send(owner.set_message_boundary(&session, boundary));
+            let _ = reply.send(owner.set_message_boundary(&instance, boundary));
         }
     }
 }
@@ -247,9 +248,9 @@ impl ActorHandle {
     }
 
     /// The message boundary of the session's settled ask. The owner writes it to that ask's node.
-    pub fn message_boundary(&self, session: &str, boundary: u64) -> Result<(), MailboxError> {
+    pub fn message_boundary(&self, instance: &Ref, boundary: u64) -> Result<(), MailboxError> {
         self.call(|reply| ActorRequest::MessageBoundary {
-            session: session.to_owned(),
+            instance: instance.clone(),
             boundary,
             reply,
         })

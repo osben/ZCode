@@ -149,6 +149,10 @@ pub trait WorkflowDriver {
     fn start_ask(&mut self, session: &str, instance: &Ref, message: &AskMessage);
     fn respond_to_submit(&mut self, instance: &Ref, verdict: &SubmitVerdict);
     fn cancel_ask(&mut self, instance: &Ref);
+    /// Node `abortInFlight`: the engine cancels a dispatched ask (not a submit that failed). Defaults to `cancel_ask`.
+    fn abort_ask(&mut self, instance: &Ref) {
+        self.cancel_ask(instance);
+    }
     /// Execute a live world read or run (Node `executeWorldRead`). The result comes back through
     /// `WorkflowEngine::world_read_settled` with the same instance.
     fn start_world_read(&mut self, instance: &Ref, op: &str, args: &Value);
@@ -196,6 +200,10 @@ impl<T: WorkflowDriver + ?Sized> WorkflowDriver for &mut T {
 
     fn cancel_ask(&mut self, instance: &Ref) {
         (**self).cancel_ask(instance);
+    }
+
+    fn abort_ask(&mut self, instance: &Ref) {
+        (**self).abort_ask(instance);
     }
 
     fn emit(&mut self, event: &RunEvent) {
@@ -845,7 +853,7 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
             };
             self.live_index.remove(&node.instance.key());
             if node.dispatched {
-                self.driver.cancel_ask(&node.instance);
+                self.driver.abort_ask(&node.instance);
             }
             // Node records the cancellation, then rejects. A failed write does not stop the loop: every
             // in-flight ticket still gets its outcome and the live set is empty, so no ask is left

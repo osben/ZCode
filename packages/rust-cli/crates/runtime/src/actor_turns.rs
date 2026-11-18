@@ -273,6 +273,10 @@ impl<A: ActorAgents> TurnRunner for AgentTurnRunner<A> {
     }
 
     fn message_boundary(&self, session: &str) -> Option<u64> {
+        debug_assert!(
+            Handle::try_current().is_err(),
+            "the ask thread must not be inside a runtime: block_on would panic there"
+        );
         // The ask thread is outside any runtime (`run_turn` asserts it), so the count can block on the runtime's handle.
         self.handle
             .block_on(self.agents.message_count(&SessionId::new(session)))
