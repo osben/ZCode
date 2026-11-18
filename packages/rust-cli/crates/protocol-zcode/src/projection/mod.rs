@@ -1079,14 +1079,18 @@ impl Projection {
                 if self.pending.len() != before {
                     patch.insert("pendingInteractions".into(), json!(self.pending));
                 }
-                // A refused call never runs: its card leaves the approval state when the call ends (Node settles a
-                // denied prompt as `cancelled`), not as running.
-                if let Some(tool) = tool.filter(|_| !denied) {
+                // Node settles a denied prompt as `cancelled` (onPermissionResolved): a refused call never runs.
+                if let Some(tool) = tool {
+                    let status = if *denied {
+                        ToolStatus::Cancelled
+                    } else {
+                        ToolStatus::Running
+                    };
                     self.upsert(
                         &tool_key(&tool),
                         |row| {
                             if ToolStatus::of(row) == Some(ToolStatus::PendingApproval) {
-                                row.insert("status".into(), json!(ToolStatus::Running.as_str()));
+                                row.insert("status".into(), json!(status.as_str()));
                             }
                         },
                         &mut out,

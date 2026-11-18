@@ -435,7 +435,8 @@ fn a_denied_permission_does_not_turn_the_card_running() {
             .all(|event| event["row"]["status"] != "running"),
         "a denied call must not run: {resolved:?}"
     );
-    assert_eq!(resolved[0]["patch"]["pendingInteractions"], json!([]));
+    assert_eq!(resolved[0]["row"]["status"], "cancelled");
+    assert_eq!(resolved[1]["patch"]["pendingInteractions"], json!([]));
 }
 
 /// A guarded dangerous command asks once (Node `approvalMode: "user-once"`): only allow once and

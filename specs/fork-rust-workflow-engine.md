@@ -1103,7 +1103,7 @@ Node's order, per call: the card is scheduled before hooks and the permission ch
 
 **Wire.** `ToolScheduled` stays internal. Its projection row is Node's scheduled row (`status: inputStreaming`), so no wire slot is added. A scheduled call that exists keeps its status and takes the call's name and input.
 
-**Denied prompts.** `KernelEvent::InteractionResolved` gained `denied` (serde default false, skipped when false). The session sets it on a permission denial and on a withdrawn prompt. The projection no longer moves a call to running when its prompt resolves as a denial. Node settles a denied prompt as `cancelled` (`product-projection.ts`, `onPermissionResolved`); Rust keeps the card in its approval state until the call's result lands as an error. Known difference: the final state of a denied call comes from the result, not from the prompt.
+**Denied prompts.** `KernelEvent::InteractionResolved` gained `denied` (serde default false, skipped when false). The session sets it on a permission denial and on a withdrawn prompt. A denied prompt settles its card as `cancelled`, as Node does (`product-projection.ts`, `onPermissionResolved`), and never as running. The call's result then lands as an error, which Rust keeps as the final state. Known difference: Node's final state for a denied call is not verified here, so Rust's final state comes from the result.
 
 **Audit: every consumer of the started and finished events.** "Before" is the tree before this part, 2c-4d (started before admission).
 
@@ -1133,7 +1133,7 @@ No finished event panics or underflows without a start: the stall list uses `ret
 - `a_refused_call_is_scheduled_and_finished_but_not_counted` (agents `child_tests`): written after `ToolScheduled` existed. It pins the count: the refused call is not counted, the call that starts is.
 - `a_refused_call_never_signals_its_start` (tools `pipeline_tests`): pins that a denial sends no start and an admitted call sends exactly one.
 - `a_scheduled_call_has_its_card_before_the_prompt` (projection): a scheduled call has an `inputStreaming` card, and the prompt then makes it `pendingApproval` with the same row id. Pinned; passes once Scheduled exists.
-- `a_denied_permission_does_not_turn_the_card_running` (projection): written after the fix, so it was not seen red. Without the `denied` check the resolve arm sets running, which is the behaviour the test rejects.
+- `a_denied_permission_does_not_turn_the_card_running` (projection): written after the fix, so it was not seen red. It pins the denial's card as `cancelled`, not running.
 - The existing `a_permission_wait_pauses_the_clock_and_the_answer_restarts_it` (agents `stall_tests`) pins the stall clock during a permission wait. No new stall test was written.
 
 **Not covered, and why.**
@@ -1141,7 +1141,9 @@ No finished event panics or underflows without a start: the stall list uses `ret
 - Unknown tool: the MCP wait's miss path returns before the executor, so Rust emits neither a card nor a start. Node emits an error card (`call-runner.ts`, `emitToolCallError`). This predates 2c-4f and is not changed here.
 - Subagent queued calls: `ChildSink::tool_scheduled` in `agents/src/child.rs` has no caller, so a subagent's live activity never lists a queued call. It was unused before this part too. Wiring it would change the subagent reminder list, so it is left for its own part.
 - Stall: a permission wait of a background child is suppressed because the child sets `waiting` around the ask (`child.rs`) and the stall tick skips a waiting candidate (`stall.rs`). No end-to-end test with a background child awaiting permission exists yet.
-- Hook refusal: no start (`Rejection::ByHook` returns before the callback); no test pins the callback for a hook refusal.
+- Hook refusal: no start (`Rejection::ByHook` returns before the callback), pinned by `a_hook_refused_call_never_signals_its_start` (tools `pipeline_hook_tests`).
+
+**Follow-ups (not in scope of 2c-4f).** (1) The unknown-tool error card, Node's `emitToolCallError` on a registry miss. (2) Wiring `ChildSink::tool_scheduled` so a subagent's live activity lists queued calls; the helper has no caller today.
 
 **Fixtures.** Desktop and E2E fixtures: none in the Rust data files pin tool event order (checked). The Node E2E suite is unaffected. No golden changed in this part.
 

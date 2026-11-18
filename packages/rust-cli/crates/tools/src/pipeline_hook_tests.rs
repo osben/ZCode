@@ -950,3 +950,50 @@ async fn without_the_switch_the_execution_carries_no_dispatch() {
     .await;
     assert!(ran.execution.hook_invocations.is_empty());
 }
+
+/// Node `call-runner.ts`: `ToolCallStarted` follows the hooks and the permission check, so a PreToolUse refusal
+/// signals no start, and the handler does not run.
+#[tokio::test]
+async fn a_hook_refused_call_never_signals_its_start() {
+    struct Starts(std::sync::atomic::AtomicUsize);
+
+    #[async_trait]
+    impl ToolStart for Starts {
+        async fn started(&self) {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    let starts = Arc::new(Starts(std::sync::atomic::AtomicUsize::new(0)));
+    let gate = Gate::new(
+        PermissionDecision::Allow {
+            updated_input: None,
+        },
+        None,
+    );
+    let refused = HookOutcome {
+        decision: Some(PermissionDecision::Deny {
+            message: "frozen".to_owned(),
+        }),
+        prevent_continuation: true,
+        ..HookOutcome::default()
+    };
+    let hooks = Arc::new(Hooks {
+        outcomes: HashMap::from([(HookEventName::PreToolUse, refused)]),
+        ..Hooks::default()
+    });
+    let asked = Arc::new(ScriptedInteractions::allowing());
+    let pipeline = Pipeline::new(gate, hooks);
+    let (progress, _updates) = mpsc::channel(4);
+    let execution = pipeline
+        .execute(
+            Arc::new(Echo),
+            json!({"command": "ls"}),
+            context(asked),
+            progress,
+            starts.clone(),
+        )
+        .await;
+    assert_eq!(text(&execution.output), "frozen");
+    assert_eq!(starts.0.load(std::sync::atomic::Ordering::SeqCst), 0);
+}
