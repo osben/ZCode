@@ -1143,7 +1143,7 @@ No finished event panics or underflows without a start: the stall list uses `ret
 - Stall: a permission wait of a background child is suppressed because the child sets `waiting` around the ask (`child.rs`) and the stall tick skips a waiting candidate (`stall.rs`). No end-to-end test with a background child awaiting permission exists yet.
 - Hook refusal: no start (`Rejection::ByHook` returns before the callback), pinned by `a_hook_refused_call_never_signals_its_start` (tools `pipeline_hook_tests`).
 
-**Follow-ups (not in scope of 2c-4f).** (1) The unknown-tool error card, Node's `emitToolCallError` on a registry miss. (2) Wiring `ChildSink::tool_scheduled` so a subagent's live activity lists queued calls; the helper has no caller today.
+**Follow-ups (not in scope of 2c-4f).** (1) The unknown-tool error card, Node's `emitToolCallError` on a registry miss. (2) Wiring `ChildSink::tool_scheduled` so a subagent's live activity lists queued calls; the helper has no caller today. (3) Child-grant eviction: a subagent's `AllowSession` grant (`GrantScope::Child`, in `session_grants`) is never removed when the child session ends. No clean hook exists: no child-close signal reaches the parent actor, so the entries live until the parent session ends. They cannot match anything later, because child session ids are not reused, so this costs memory only.
 
 **Fixtures.** Desktop and E2E fixtures: none in the Rust data files pin tool event order (checked). The Node E2E suite is unaffected. No golden changed in this part.
 

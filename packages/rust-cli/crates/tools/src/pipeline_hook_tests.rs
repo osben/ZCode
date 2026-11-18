@@ -20,8 +20,8 @@ use rust_cli_kernel_api::tool::PromptContext;
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
-use super::*;
 use super::tests::StartCount;
+use super::*;
 
 /// 回显 `command` 的工具；schema 要求 `command` 是字符串。
 struct Echo;
