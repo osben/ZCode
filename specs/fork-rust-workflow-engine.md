@@ -1022,7 +1022,7 @@ As built (2c-2a): `crates/workflow/src/actor_turns.rs`: `TurnRunner` (one model 
 
 ### 9.8e W6a part 2c-2b: the agents-side TurnRunner (design, split)
 
-Status: started on `feat/rust-workflow-agent-turn-runner`, stacked on fork (4d7efae74 = #539 merged). Gate off. This section records a design decision that is open; no code is in this part.
+Status: decided (option C). 2c-2b-1 is on `feat/rust-workflow-agent-turn-runner` (PR #540). Gate off.
 
 **What the runner must do.** One model turn of an actor's ask on the child session: `run_turn(session, prompt, cancel)` returns the turn's final text, or an error text. The existing machinery is `spawn::resume` (appends a user message to a stored child and commits a turn) and `spawn::drive` (runs the model loop until the run ends, returning `Finished { ending, report, error }`).
 
@@ -1031,18 +1031,17 @@ Status: started on `feat/rust-workflow-agent-turn-runner`, stacked on fork (4d7e
 1. A child agent needs a full `LiveAgent` (`crates/agents/src/live.rs`, about 25 fields). Several are fork or background specific: `owner`, `tool_use`, `execution_worktree`, `off_peak_execution`, `background`, `asks`, `delivered`, `fork_prefix`, `stopped_by_user`. An actor child is none of those. A constructor for an actor (`LiveAgent::for_actor`) must set each field to Node's actor value, and the reason for each non-default value must be written down.
 2. `Ending` and `Report` are `pub(crate)` in `agents`. A bridge in another crate cannot name them, so the bridge has to call a function that is inside `agents`.
 
-**The open decision: which crate hosts the bridge.** `workflow` cannot depend on `agents` (the engine would pull in the whole agent machinery, and the engine's rule is to read no clock and run no I/O). `agents` cannot depend on `workflow` (the turn runner would need the `TurnRunner` trait from `workflow`, and the dependency would point the wrong way). The bridge therefore has to sit in a crate that sees both, and there are two options:
+**Decision (coordinator, 2026-11-17): option C. The bridge lives in `crates/runtime`.** Reasons: `runtime` already depends on `agents`, `session`, `tools` and `node-store`, and it is the composition root that wires sessions. No crate depends on `workflow` yet, so `runtime -> workflow` creates no cycle. `protocol-zcode` does not depend on `agents`, so option B would add two edges. A new crate would add a workspace member and a lock entry for code that needs runtime context anyway. The only new edge is `rust-cli-runtime -> rust-cli-workflow`; its `Cargo.lock` entry is hand-edited.
 
-- **Option A: a new `actor_turns` crate** (depends on `workflow` and `agents`). It implements `workflow::actor_turns::TurnRunner` by calling a public `agents` entry point. It is clean, and the new crate is small. Cost: one new workspace member, so `Cargo.lock` gets a new package entry, which is hand-edited.
-- **Option B: the bridge lives in `protocol-zcode`** (the host, which already depends on `agents` and is where the runtime is assembled). Cost: the host gains a dependency on `workflow`. This is the wiring point the spec already names for W7, so it is the natural home for the gate later.
+Rules for the agents side (decided with the coordinator): add `pub` entry points in `agents` (a turn-by-turn entry and `LiveAgent::for_actor`). Keep `Ending` and `Report` `pub(crate)`, unless the bridge needs them; prefer a small `pub` result type. No helper lands without a caller in the same commit and a test that calls it, so clippy stays clean.
 
-Recommendation: A for 2c-2b, so the bridge can be tested without the host. The coordinator should decide before the code is written.
+**The turn result, from Node (`workflow-driver.ts`, `runTurn` and `onTurnResolved`).** A resolved `executeTurn` gives `result.response`, the turn's final text, which is the value `askTurnEnded` reports. A rejected turn goes to `onTurnRejected`: a cancelled turn (`state.cancelled`, or an abort error, `isTurnCancelled`) is silent; any other error is `askFailed(toWorkflowError(error))`. In Rust, `spawn::drive` produces `Finished`: `Ending::Completed` carries `report.text` (the final text), `Ending::Failed` carries the error, and `Ending::Killed` and the other killed endings are the stopped case. The mapping is `ActorTurnEnd::{Text, Failed, Stopped}`.
 
 **Proposed sub-split of 2c-2b (after the decision):**
 
 - **2c-2b-1: `agents` public entry for an actor turn.** `pub` function that takes the ids, the selection and the workspace, and returns `Result<String, String>` (the final text, or the failure text). Result mapping: `Ending::Completed` and no error gives the report text. `Failed` or an error gives the failure text. `Killed`, `KilledParked` and `KilledByUser` give a "stopped" error, which the loop reads as cancelled when its flag is set. The mapping is checked against Node's `executeTurn` result before it is written; I have not read that path yet.
 - **2c-2b-2: `LiveAgent::for_actor`.** The constructor, with one line per field recording its actor value. Tests use the agents test support.
-- **2c-2b-3: the bridge crate** (Option A or B) implementing `TurnRunner`, with a scripted-model test: one turn ends with text, one turn fails, one turn is cancelled.
+- **2c-2b-3: the bridge in `crates/runtime`** (option C) implementing `TurnRunner`, with a scripted-runner test: one turn ends with text, one turn fails, one turn is cancelled. Adds the `rust-cli-runtime -> rust-cli-workflow` edge.
 - **2c-2b-4: permission origin and session-scoped grants** (`ChildSink::with_origin`, `actor_interaction_description`, "always allow" for the session). Node: `workflow-actor-permission.ts`.
 
 **What is not done here.** Nothing is compiled or tested in this part. The Node result path and the permission origin are not read yet; both are listed as open in the sub-split.
