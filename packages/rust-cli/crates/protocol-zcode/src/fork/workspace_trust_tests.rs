@@ -170,6 +170,7 @@ impl HandleOverride for TestHandle {
         if self.resumed {
             view.messages.push(Message::User(UserMessage {
                 stall_execution: None,
+                epilogue_start: None,
                 intent: None,
                 id: MessageId::new("u1"),
                 content: vec![ContentBlock::Text {

@@ -208,6 +208,7 @@ impl Actor {
             .map(|fold| {
                 vec![Message::User(UserMessage {
                     stall_execution: None,
+                    epilogue_start: None,
                     intent: None,
                     id: self.deps.ids.message(),
                     content: vec![ContentBlock::Text {

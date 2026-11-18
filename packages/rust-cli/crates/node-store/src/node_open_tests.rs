@@ -48,6 +48,7 @@ fn result(id: &str, owner: &str, call: &str) -> Fact {
     Fact::MessageAppended {
         message: Message::User(UserMessage {
             stall_execution: None,
+            epilogue_start: None,
             intent: None,
             id: MessageId::new(id),
             content: vec![ContentBlock::ToolResult {
@@ -145,6 +146,7 @@ async fn node_killed(t: &TestStore) {
 fn node_interrupted(id: &str, call: &str) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        epilogue_start: None,
         intent: None,
         id: MessageId::new(id),
         content: vec![ContentBlock::ToolResult {
@@ -230,6 +232,7 @@ async fn node_written_open_calls_get_nodes_interrupted_result_in_place() {
         loaded.messages[3],
         Message::User(UserMessage {
             stall_execution: None,
+            epilogue_start: None,
             intent: None,
             id: MessageId::new(p2),
             content: vec![ContentBlock::ToolResult {
@@ -372,6 +375,7 @@ async fn a_preserved_segment_can_end_on_an_in_memory_result() {
     }));
     let summary = Message::User(UserMessage {
         stall_execution: None,
+        epilogue_start: None,
         intent: None,
         id: MessageId::new("msg_s"),
         content: vec![text("This session is being continued…")],

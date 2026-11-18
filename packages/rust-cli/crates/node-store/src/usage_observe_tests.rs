@@ -132,6 +132,7 @@ async fn a_tool_usage_row_that_cannot_be_written_keeps_the_result() {
     break_schema(&t, "drop table tool_usage");
     let result = Message::User(UserMessage {
         stall_execution: None,
+        epilogue_start: None,
         intent: None,
         id: MessageId::new("msg_r1"),
         content: vec![ContentBlock::ToolResult {

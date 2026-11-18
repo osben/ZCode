@@ -267,6 +267,7 @@ impl Actor {
                     .map(|(content, origin, stall_execution)| {
                         Message::User(UserMessage {
                             stall_execution,
+                            epilogue_start: None,
                             intent: None,
                             id: self.deps.ids.message(),
                             content,

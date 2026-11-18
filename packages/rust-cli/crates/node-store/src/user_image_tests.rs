@@ -20,6 +20,7 @@ async fn pasted_images_round_trip_as_node_file_parts() {
     };
     let message = Message::User(UserMessage {
         stall_execution: None,
+        epilogue_start: None,
         intent: None,
         id: MessageId::new("msg_ru_u1"),
         content: vec![
@@ -74,6 +75,7 @@ async fn attachment_blocks_round_trip_as_parts_after_the_text() {
     };
     let human = Message::User(UserMessage {
         stall_execution: None,
+        epilogue_start: None,
         intent: None,
         id: MessageId::new("msg_ru_u1"),
         content: vec![ContentBlock::Text {
@@ -146,6 +148,7 @@ async fn app_attachments_round_trip_as_node_file_parts_without_model_input() {
     };
     let message = Message::User(UserMessage {
         stall_execution: None,
+        epilogue_start: None,
         intent: None,
         id: MessageId::new("msg_ru_u1"),
         content: vec![
@@ -252,6 +255,7 @@ async fn stored_app_images_are_read_back_from_their_artifacts() {
     };
     let message = Message::User(UserMessage {
         stall_execution: None,
+        epilogue_start: None,
         intent: None,
         id: MessageId::new("msg_ru_u1"),
         content: vec![
@@ -337,6 +341,7 @@ async fn stored_app_videos_are_read_back_from_their_artifacts() {
     };
     let message = Message::User(UserMessage {
         stall_execution: None,
+        epilogue_start: None,
         intent: None,
         id: MessageId::new("msg_ru_v1"),
         content: vec![
@@ -435,6 +440,7 @@ async fn a_fork_reads_media_stored_by_its_parent() {
     };
     let message = Message::User(UserMessage {
         stall_execution: None,
+        epilogue_start: None,
         intent: None,
         id: MessageId::new("msg_ru_f1"),
         content: vec![
@@ -516,6 +522,7 @@ async fn a_stored_image_over_the_budget_is_prepared_again_on_load() {
         .unwrap();
     let message = Message::User(UserMessage {
         stall_execution: None,
+        epilogue_start: None,
         intent: None,
         id: MessageId::new("msg_ru_big"),
         content: vec![ContentBlock::File {

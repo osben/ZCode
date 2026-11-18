@@ -134,6 +134,9 @@ pub struct ActorRun {
     /// The submit port of this turn, with the mono session's submit schema it declares. None means the child has no
     /// `submit_result` or `escalate` tool.
     pub port: Option<SubmitPort>,
+    /// The turn's epilogue boundary (UTF-16 units), stored on the turn's user message as `metadata.epilogueStart`. None
+    /// stores nothing; a nudged turn passes Some(0).
+    pub epilogue_start: Option<usize>,
 }
 
 /// Renders the interactions by presence, as `child::Asks` does: the channel is a trait object with no `Debug`.
@@ -152,6 +155,7 @@ impl std::fmt::Debug for ActorRun {
             .field("selection", &self.selection)
             .field("mode", &self.mode)
             .field("port", &self.port.as_ref().map(|_| "present"))
+            .field("epilogue_start", &self.epilogue_start)
             .field(
                 "submit_schema",
                 &self
@@ -271,6 +275,7 @@ impl crate::Agents {
         let asks = actor_asks(core.background_prompts, run.interactions.clone());
         let description = run.interaction_description.clone();
         let fresh_asks = asks.clone();
+        let epilogue_start = run.epilogue_start;
         let submit = run.port.clone();
         // The first-use check, the insert, the refresh and the run start share one lock section (`Live::begin_actor_run`).
         let started = core.live.begin_actor_run(
@@ -293,13 +298,14 @@ impl crate::Agents {
         let Some(entry) = core.live.get(&agent_id) else {
             return ActorTurnEnd::Failed("the actor's session is not live".to_owned());
         };
-        let opening = match spawn::resume(core, &entry, prompt, UserOrigin::Human).await {
-            Ok(opening) => opening,
-            Err(error) => {
-                core.live.finish_actor_turn(&agent_id, Ending::Failed);
-                return ActorTurnEnd::Failed(error.to_string());
-            }
-        };
+        let opening =
+            match spawn::resume(core, &entry, prompt, UserOrigin::Human, epilogue_start).await {
+                Ok(opening) => opening,
+                Err(error) => {
+                    core.live.finish_actor_turn(&agent_id, Ending::Failed);
+                    return ActorTurnEnd::Failed(error.to_string());
+                }
+            };
         let finished = spawn::drive(core, &entry, opening, None, Some(cancel)).await;
         core.live.finish_actor_turn(&agent_id, finished.ending);
         actor_turn_end(

@@ -152,6 +152,7 @@ async fn conclude(
         Outcome::Retry { nudge, source, .. } => {
             let message = Message::User(UserMessage {
                 stall_execution: None,
+                epilogue_start: None,
                 intent: None,
                 id: scope.parts.ids.message(),
                 content: vec![ContentBlock::Text {

@@ -46,6 +46,7 @@ fn assembler_with(config: ContextConfig) -> PromptAssembler {
 fn prompt() -> Vec<Message> {
     vec![Message::User(rust_cli_kernel_api::message::UserMessage {
         stall_execution: None,
+        epilogue_start: None,
         intent: None,
         id: rust_cli_kernel_api::ids::MessageId::new("msg_u"),
         content: vec![rust_cli_kernel_api::message::ContentBlock::Text {
@@ -176,6 +177,7 @@ async fn the_tokens_left_do_not_reset_at_a_compaction() {
             }),
             Message::User(UserMessage {
                 stall_execution: None,
+                epilogue_start: None,
                 intent: None,
                 id: MessageId::new(format!("r{index}")),
                 content: vec![ContentBlock::ToolResult {
@@ -203,6 +205,7 @@ async fn the_tokens_left_do_not_reset_at_a_compaction() {
     )));
     history.push(Message::User(UserMessage {
         stall_execution: None,
+        epilogue_start: None,
         intent: None,
         id: MessageId::new("s"),
         content: vec![ContentBlock::Text {

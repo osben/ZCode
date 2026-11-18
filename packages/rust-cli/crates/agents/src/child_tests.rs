@@ -67,6 +67,7 @@ async fn subagent_writes_settle_checkpoints_in_the_child_session() {
     .await;
     sink.commit_message(Message::User(UserMessage {
         stall_execution: None,
+        epilogue_start: None,
         intent: None,
         id: MessageId::new("result_1"),
         content: vec![ContentBlock::ToolResult {
@@ -207,6 +208,7 @@ async fn a_nested_agent_call_links_the_grandchild_session_in_the_same_batch() {
     .await;
     sink.commit_message(Message::User(UserMessage {
         stall_execution: None,
+        epilogue_start: None,
         intent: None,
         id: MessageId::new("result_1"),
         content: vec![ContentBlock::ToolResult {

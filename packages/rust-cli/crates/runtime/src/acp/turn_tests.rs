@@ -15,6 +15,7 @@ fn user(id: &str, origin: UserOrigin, content: Vec<ContentBlock>) -> Message {
         origin,
         intent: None,
         stall_execution: None,
+        epilogue_start: None,
     })
 }
 

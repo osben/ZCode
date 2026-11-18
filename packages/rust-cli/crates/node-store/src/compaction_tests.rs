@@ -35,6 +35,7 @@ fn boundary(preserved: Option<(&str, &str)>) -> Message {
 fn summary() -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        epilogue_start: None,
         intent: None,
         id: MessageId::new("msg_s"),
         content: vec![ContentBlock::Text {
@@ -47,6 +48,7 @@ fn summary() -> Message {
 fn summary_message(id: &str) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        epilogue_start: None,
         intent: None,
         id: MessageId::new(id),
         content: vec![ContentBlock::Text {
@@ -152,6 +154,7 @@ async fn a_tool_result_tail_maps_to_its_assistant_row() {
     });
     let result = Message::User(UserMessage {
         stall_execution: None,
+        epilogue_start: None,
         intent: None,
         id: MessageId::new("msg_r1"),
         content: vec![ContentBlock::ToolResult {

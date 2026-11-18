@@ -241,7 +241,8 @@ impl Messaging {
                 message: "the agent disappeared".to_owned(),
             });
         };
-        let opening = match spawn::resume(&self.core, &running, &input.message, origin).await {
+        let opening = match spawn::resume(&self.core, &running, &input.message, origin, None).await
+        {
             Ok(opening) => opening,
             Err(error) => {
                 self.core.live.finish(&id, crate::report::Ending::Failed);

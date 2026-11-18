@@ -912,6 +912,7 @@ impl Turn<'_> {
         ) {
             let marker = Message::User(UserMessage {
                 stall_execution: None,
+                epilogue_start: None,
                 intent: None,
                 id: self.host.ids.message(),
                 content: vec![ContentBlock::Text {

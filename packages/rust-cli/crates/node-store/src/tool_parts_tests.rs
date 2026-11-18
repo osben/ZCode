@@ -38,6 +38,7 @@ fn result(id: &str, owner: &str, call: &str, content: Vec<ToolResultContent>, er
     Fact::MessageAppended {
         message: Message::User(UserMessage {
             stall_execution: None,
+            epilogue_start: None,
             intent: None,
             id: MessageId::new(id),
             content: vec![ContentBlock::ToolResult {
@@ -276,6 +277,7 @@ async fn interrupted_and_unfinished_calls_keep_their_shape() {
         Fact::MessageAppended {
             message: Message::User(UserMessage {
                 stall_execution: None,
+                epilogue_start: None,
                 intent: None,
                 id: MessageId::new("msg_rx_i1"),
                 content: vec![text("[Request interrupted by user for tool use]")],
@@ -333,6 +335,7 @@ async fn results_need_their_pending_call() {
     let mixed = Fact::MessageAppended {
         message: Message::User(UserMessage {
             stall_execution: None,
+            epilogue_start: None,
             intent: None,
             id: MessageId::new("msg_s0_r5"),
             content: vec![text("not a result")],

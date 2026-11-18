@@ -27,6 +27,7 @@ fn display() -> Value {
 fn user(id: &str, text: &str) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        epilogue_start: None,
         intent: None,
         id: MessageId::new(id),
         content: vec![ContentBlock::Text { text: text.into() }],

@@ -222,7 +222,6 @@ impl<A: ActorAgents> TurnRunner for AgentTurnRunner<A> {
             Handle::try_current().is_err(),
             "the ask thread must not be inside a runtime: block_on would panic there"
         );
-        // The turn's `epilogue_start` is not read here: the user message that carries it is written in 2c-2 (spec 9.8f).
         let token = CancellationToken::new();
         let run = ActorRun {
             child: SessionId::new(session),
@@ -242,6 +241,8 @@ impl<A: ActorAgents> TurnRunner for AgentTurnRunner<A> {
                 }),
                 submit_schema: turn.submit_schema.clone(),
             }),
+            // Every turn of the bridge has a boundary, so it is stored, a nudged turn's 0 included.
+            epilogue_start: Some(turn.epilogue_start),
         };
         let end = self.handle.block_on(async {
             let work = self.agents.run_actor_turn(run, &turn.text, token.clone());

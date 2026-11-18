@@ -1102,6 +1102,7 @@ async fn a_cold_open_draws_the_stored_creation_marker() {
         .push(rust_cli_kernel_api::message::Message::User(
             rust_cli_kernel_api::message::UserMessage {
                 stall_execution: None,
+                epilogue_start: None,
                 intent: None,
                 id: rust_cli_kernel_api::ids::MessageId::new("m1"),
                 content: vec![rust_cli_kernel_api::message::ContentBlock::Text {
@@ -1151,6 +1152,7 @@ async fn forkable(
     let messages = vec![
         rust_cli_kernel_api::message::Message::User(rust_cli_kernel_api::message::UserMessage {
             stall_execution: None,
+            epilogue_start: None,
             intent: None,
             id: MessageId::new("msg_u1"),
             content: vec![rust_cli_kernel_api::message::ContentBlock::Text {
@@ -1556,6 +1558,7 @@ async fn activation_admits_the_first_input_in_the_worktree() {
         .push(rust_cli_kernel_api::message::Message::User(
             rust_cli_kernel_api::message::UserMessage {
                 stall_execution: None,
+                epilogue_start: None,
                 intent: None,
                 id: rust_cli_kernel_api::ids::MessageId::new("m-hook"),
                 content: vec![rust_cli_kernel_api::message::ContentBlock::Text {

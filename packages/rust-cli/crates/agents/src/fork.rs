@@ -73,6 +73,7 @@ pub(crate) fn prefix(
     }));
     messages.push(Message::User(UserMessage {
         stall_execution: None,
+        epilogue_start: None,
         intent: None,
         id: ids.message(),
         content: vec![ContentBlock::ToolResult {

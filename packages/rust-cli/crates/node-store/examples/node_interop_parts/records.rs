@@ -43,6 +43,7 @@ pub(super) async fn write(dir: &str) -> Result<()> {
             Fact::MessageAppended {
                 message: Message::User(UserMessage {
                     stall_execution: None,
+                    epilogue_start: None,
                     intent: None,
                     id,
                     content: vec![text(&body)],

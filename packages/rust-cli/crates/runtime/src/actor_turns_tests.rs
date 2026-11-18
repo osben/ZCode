@@ -277,6 +277,14 @@ async fn a_scripted_actor_turn_runs_through_the_workflow_and_settles_after_the_n
     assert_eq!(runs[0].parent, SessionId::new("ses_parent"));
     assert_eq!(runs[0].persona_prompt, PERSONA);
     assert_eq!(runs[0].mode, PermissionMode::Default);
+    // The typed turn's boundary is the instructions' UTF-16 length ("do it" is 5 units); the nudged turn's is Some(0).
+    assert_eq!(
+        runs.iter()
+            .map(|run| run.epilogue_start)
+            .collect::<Vec<_>>(),
+        vec![Some(5), Some(0)],
+        "the turn reaches the bridge with its epilogue boundary, the nudge with 0"
+    );
     // A generic session: every recorded turn carries its submit port with no schema, the nudged one included.
     assert!(
         runs.iter().all(|run| run

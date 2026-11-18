@@ -1073,6 +1073,9 @@ mod external_tools_tests;
 mod title_tests;
 
 #[cfg(test)]
+#[path = "epilogue_start_tests.rs"]
+mod epilogue_start_tests;
+#[cfg(test)]
 #[path = "quote_intent_tests.rs"]
 mod quote_intent_tests;
 

@@ -345,6 +345,7 @@ fn a_wake_turn_gets_a_fresh_command_and_its_background_source() {
     run.event(KernelEvent::MessageDone {
         message: Message::User(UserMessage {
             stall_execution: None,
+            epilogue_start: None,
             intent: None,
             id: MessageId::new("msg_n"),
             content: vec![ContentBlock::Text {
@@ -470,6 +471,7 @@ fn a_subagent_notification_merged_into_a_user_turn_marks_it_consumed() {
     run.event(KernelEvent::MessageDone {
         message: Message::User(UserMessage {
             stall_execution: None,
+            epilogue_start: None,
             intent: None,
             id: MessageId::new("msg_n"),
             content: vec![ContentBlock::Text {

@@ -64,6 +64,7 @@ fn typed(app: &mut App, seq: &mut u64, id: &str) {
         vec![KernelEvent::MessageDone {
             message: Message::User(UserMessage {
                 stall_execution: None,
+                epilogue_start: None,
                 intent: None,
                 id: MessageId::new(id),
                 content: vec![ContentBlock::Text { text: id.into() }],

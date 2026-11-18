@@ -115,6 +115,7 @@ pub(crate) fn settle(
         added.push(message.clone());
         out.push(Message::User(UserMessage {
             stall_execution: None,
+            epilogue_start: None,
             intent: None,
             id: message,
             content: vec![ContentBlock::ToolResult {
