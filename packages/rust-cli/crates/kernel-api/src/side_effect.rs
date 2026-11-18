@@ -82,7 +82,6 @@ const TABLE: &[(&str, Option<Scope>)] = &[
     ("submit_result", Some(Scope::Session)),
     ("escalate", Some(Scope::Session)),
     ("RespondToCoordinator", Some(Scope::Session)),
-    ("ReadSessionContext", Some(Scope::Session)),
 ];
 
 /// The table's entry for `name`: the outer `Option` is "listed", the inner one is the declared scope.

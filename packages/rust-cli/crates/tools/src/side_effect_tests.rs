@@ -102,7 +102,6 @@ fn every_known_tool_name_is_named_in_the_table() {
         "submit_result",
         "escalate",
         "RespondToCoordinator",
-        "ReadSessionContext",
     ];
     let missing: Vec<&str> = known
         .iter()
@@ -115,7 +114,8 @@ fn every_known_tool_name_is_named_in_the_table() {
     );
 }
 
-/// ReadTopicResource is the attachment path of Node's session-scoped ReadSessionContext, so it is never a workspace write.
+/// ReadTopicResource is session-scoped in Node's handler files (origin/fork, read-topic-resource.ts), so it is never a
+/// workspace write.
 #[test]
 fn read_topic_resource_is_session_scoped_and_not_mutating() {
     assert!(!rust_cli_kernel_api::side_effect::is_workspace_mutating(
