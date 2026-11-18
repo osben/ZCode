@@ -115,7 +115,9 @@ pub enum QueryEvent {
         tool_use: ToolUseId,
         name: String,
     },
-    /// The call is scheduled: its card exists, before hooks and the permission check (Node `ToolCallScheduled`).
+    /// The call's card exists, before hooks and the permission check (Node `ToolCallScheduled`). This event fires when
+    /// execution picks the call up. The moment a call joins its response's batch, possibly behind a running call, is
+    /// [`RunSink::tool_scheduled`], which only the subagent's no-progress reminder reads and the journal does not.
     ToolScheduled {
         tool_use: ToolUseId,
         name: String,

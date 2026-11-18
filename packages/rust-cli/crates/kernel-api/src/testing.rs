@@ -213,6 +213,8 @@ impl RegistryOverride for NoTools {
     }
 }
 
+/// Refuses every call with an error result, as a refused call is answered: it never reaches admission, so it never
+/// signals its start (unlike [`DirectExecutor`], which models an admitted call). Its `started` argument is unused on purpose.
 pub struct FailingExecutor;
 
 #[async_trait]
