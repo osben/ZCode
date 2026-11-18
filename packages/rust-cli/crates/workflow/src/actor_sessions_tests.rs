@@ -33,6 +33,7 @@ fn add_parent(conn: &rusqlite::Connection, id: &str) {
 struct Turns {
     started: Vec<String>,
     interactions: Vec<String>,
+    inputs: Vec<(String, usize)>,
     cancelled: Vec<String>,
     rejected: Vec<(String, String)>,
     answered: Vec<(String, String, String)>,
@@ -44,10 +45,13 @@ impl ActorTurns for Turns {
         session: &str,
         _instance: &Ref,
         _message: &AskMessage,
+        input: &str,
+        epilogue_start: usize,
         interaction: &str,
     ) -> anyhow::Result<()> {
         self.started.push(session.to_owned());
         self.interactions.push(interaction.to_owned());
+        self.inputs.push((input.to_owned(), epilogue_start));
         Ok(())
     }
 
@@ -155,7 +159,14 @@ fn turn_calls_are_delegated_to_the_turn_side_unchanged() {
         schema: None,
     };
     sessions
-        .start_turn("sess_x", &Ref::new("ask", 1), &message, "Ada (site@1)")
+        .start_turn(
+            "sess_x",
+            &Ref::new("ask", 1),
+            &message,
+            "composed",
+            5,
+            "Ada (site@1)",
+        )
         .expect("start");
     sessions
         .cancel_turn("sess_x", &Ref::new("ask", 1))
@@ -169,6 +180,7 @@ fn turn_calls_are_delegated_to_the_turn_side_unchanged() {
     let turns = sessions.into_turns();
     assert_eq!(turns.started, vec!["sess_x".to_owned()]);
     assert_eq!(turns.interactions, vec!["Ada (site@1)".to_owned()]);
+    assert_eq!(turns.inputs, vec![("composed".to_owned(), 5)]);
     assert_eq!(turns.cancelled, vec!["sess_x".to_owned()]);
     assert_eq!(
         turns.rejected,

@@ -28,10 +28,13 @@ use std::thread;
 /// `interaction` is the actor's interaction description (`<persona name ?? "subagent"> (<site>@<ordinal>)`), the origin
 /// its permission and interaction asks are named by. It is the same for every turn of the actor, nudged turns included.
 pub trait TurnRunner: Send + Sync + 'static {
+    /// `epilogue_start` is the boundary in UTF-16 units where the epilogue of `prompt` begins (Node `runTurn`'s
+    /// `epilogueStart`): the first turn of an ask has the instructions' length, a nudged turn has 0.
     fn run_turn(
         &self,
         session: &str,
         interaction: &str,
+        epilogue_start: usize,
         prompt: &str,
         cancel: &AtomicBool,
     ) -> std::result::Result<String, String>;
@@ -61,7 +64,9 @@ impl ActorTurns for MailboxTurns {
         &mut self,
         session: &str,
         instance: &Ref,
-        message: &AskMessage,
+        _message: &AskMessage,
+        input: &str,
+        epilogue_start: usize,
         interaction: &str,
     ) -> Result<()> {
         let cancel = Arc::new(AtomicBool::new(false));
@@ -69,7 +74,7 @@ impl ActorTurns for MailboxTurns {
         let runner = self.runner.clone();
         let handle = self.handle.clone();
         let session = session.to_owned();
-        let first = message.instructions.clone();
+        let first = input.to_owned();
         let interaction = interaction.to_owned();
         thread::Builder::new()
             .name(format!("actor-turn-{}", instance.key()))
@@ -79,6 +84,7 @@ impl ActorTurns for MailboxTurns {
                     &handle,
                     &session,
                     &interaction,
+                    epilogue_start,
                     first,
                     &cancel,
                 )
@@ -109,6 +115,7 @@ fn run_ask(
     handle: &ActorHandle,
     session: &str,
     interaction: &str,
+    mut epilogue_start: usize,
     first: String,
     cancel: &AtomicBool,
 ) {
@@ -117,7 +124,7 @@ fn run_ask(
         // Node catches every throw from a turn and reports it as the ask's failure. A panic is the Rust equivalent,
         // and it must not leave the ask waiting on a thread that is gone.
         let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
-            runner.run_turn(session, interaction, &prompt, cancel)
+            runner.run_turn(session, interaction, epilogue_start, &prompt, cancel)
         }))
         .unwrap_or_else(|payload| Err(panic_text(payload.as_ref())));
         let text = match outcome {
@@ -138,6 +145,8 @@ fn run_ask(
         match handle.turn_ended(session, &text) {
             Ok(TurnEndReply::Verdict(SubmitVerdict::Nudge)) => {
                 prompt = NUDGE_PROMPT.to_owned();
+                // Node `runTurn(NUDGE_PROMPT, 0)`: the nudge has no instructions, so its epilogue starts at 0.
+                epilogue_start = 0;
             }
             Ok(_) => return,
             Err(report) => {

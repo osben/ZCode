@@ -19,10 +19,22 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
+/// The first input of the scripted actor: "do it" with the quality and schema epilogues (schema `{"type": "object"}`).
+fn composed_do_it() -> String {
+    use crate::driver_rules as rules;
+    let schema = json!({"type": "object"});
+    format!(
+        "do it{}{}",
+        rules::quality_epilogue(Some(&schema)),
+        rules::schema_epilogue(Some(&schema))
+    )
+}
+
 /// Replies in order; records every prompt and every interaction description it was given.
 struct ScriptedRunner {
     prompts: Mutex<Vec<String>>,
     interactions: Mutex<Vec<String>>,
+    epilogue_starts: Mutex<Vec<usize>>,
     replies: Mutex<VecDeque<std::result::Result<String, String>>>,
 }
 
@@ -31,6 +43,7 @@ impl ScriptedRunner {
         Arc::new(Self {
             prompts: Mutex::new(Vec::new()),
             interactions: Mutex::new(Vec::new()),
+            epilogue_starts: Mutex::new(Vec::new()),
             replies: Mutex::new(replies.into()),
         })
     }
@@ -41,6 +54,7 @@ impl TurnRunner for ScriptedRunner {
         &self,
         _session: &str,
         interaction: &str,
+        epilogue_start: usize,
         prompt: &str,
         _cancel: &AtomicBool,
     ) -> std::result::Result<String, String> {
@@ -48,6 +62,10 @@ impl TurnRunner for ScriptedRunner {
             .lock()
             .expect("interactions")
             .push(interaction.to_owned());
+        self.epilogue_starts
+            .lock()
+            .expect("epilogue starts")
+            .push(epilogue_start);
         self.prompts
             .lock()
             .expect("prompts")
@@ -71,6 +89,7 @@ impl TurnRunner for UntilCancelled {
         &self,
         _session: &str,
         _interaction: &str,
+        _epilogue_start: usize,
         _prompt: &str,
         cancel: &AtomicBool,
     ) -> std::result::Result<String, String> {
@@ -98,10 +117,18 @@ impl ActorSessions for TestSessions {
         session: &str,
         instance: &Ref,
         message: &AskMessage,
+        input: &str,
+        epilogue_start: usize,
         interaction: &str,
     ) -> Result<()> {
-        self.turns
-            .start_turn(session, instance, message, interaction)
+        self.turns.start_turn(
+            session,
+            instance,
+            message,
+            input,
+            epilogue_start,
+            interaction,
+        )
     }
 
     fn cancel_turn(&mut self, session: &str, instance: &Ref) -> Result<()> {
@@ -145,7 +172,12 @@ fn a_turn_without_a_submit_is_nudged_and_the_nudged_turn_runs_with_the_nudge_pro
     mailbox.serve_next(&mut owner).expect("the second turn end");
     assert_eq!(
         *runner.prompts.lock().expect("prompts"),
-        vec!["do it".to_owned(), NUDGE_PROMPT.to_owned()]
+        vec![composed_do_it(), NUDGE_PROMPT.to_owned()]
+    );
+    // The first turn starts at the instructions' end, and the nudged turn starts at 0 (Node `runTurn(NUDGE_PROMPT, 0)`).
+    assert_eq!(
+        *runner.epilogue_starts.lock().expect("epilogue starts"),
+        vec![5, 0]
     );
     // The nudged turn is the same actor, so it is named by the same interaction description.
     assert_eq!(
@@ -217,6 +249,7 @@ impl TurnRunner for PanickingRunner {
         &self,
         _session: &str,
         _interaction: &str,
+        _epilogue_start: usize,
         _prompt: &str,
         _cancel: &AtomicBool,
     ) -> std::result::Result<String, String> {

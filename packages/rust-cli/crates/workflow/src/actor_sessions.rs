@@ -21,6 +21,8 @@ pub trait ActorTurns {
         session: &str,
         instance: &Ref,
         message: &AskMessage,
+        input: &str,
+        epilogue_start: usize,
         interaction: &str,
     ) -> Result<()>;
     fn cancel_turn(&mut self, session: &str, instance: &Ref) -> Result<()>;
@@ -106,10 +108,18 @@ impl<T: ActorTurns> ActorSessions for NodeActorSessions<'_, T> {
         session: &str,
         instance: &Ref,
         message: &AskMessage,
+        input: &str,
+        epilogue_start: usize,
         interaction: &str,
     ) -> Result<()> {
-        self.turns
-            .start_turn(session, instance, message, interaction)
+        self.turns.start_turn(
+            session,
+            instance,
+            message,
+            input,
+            epilogue_start,
+            interaction,
+        )
     }
 
     fn cancel_turn(&mut self, session: &str, instance: &Ref) -> Result<()> {

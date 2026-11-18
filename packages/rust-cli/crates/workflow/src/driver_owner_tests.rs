@@ -25,6 +25,8 @@ use std::rc::Rc;
 pub(crate) struct Log {
     pub(crate) created: Vec<ActorSessionRequest>,
     pub(crate) turns: Vec<(String, Ref, AskMessage)>,
+    /// The composed input and its boundary of each turn, in order.
+    pub(crate) inputs: Vec<(String, usize)>,
     pub(crate) cancelled: Vec<(String, Ref)>,
     pub(crate) rejected: Vec<(String, String)>,
     /// The interaction description each turn started with, in order.
@@ -58,6 +60,8 @@ impl ActorSessions for Recording {
         session: &str,
         instance: &Ref,
         message: &AskMessage,
+        input: &str,
+        epilogue_start: usize,
         interaction: &str,
     ) -> Result<()> {
         let mut log = self.0.borrow_mut();
@@ -66,6 +70,7 @@ impl ActorSessions for Recording {
             bail!("send refused");
         }
         log.interactions.push(interaction.to_owned());
+        log.inputs.push((input.to_owned(), epilogue_start));
         log.turns
             .push((session.to_owned(), instance.clone(), message.clone()));
         Ok(())
@@ -380,6 +385,84 @@ fn a_mono_profile_that_misses_the_ask_falls_back_and_the_ask_still_runs() {
         .submit_result(&session, json!({"ok": true}))
         .expect("submit");
     assert_eq!(reply, SubmitReply::Verdict(SubmitVerdict::Accept));
+}
+
+#[test]
+fn a_typed_turn_starts_with_its_composed_input_and_the_boundary_at_the_instructions_end() {
+    use crate::driver_rules as rules;
+    let (_owner, sessions, _actor, _session) = running_ask();
+    let log = sessions.0.borrow();
+    let schema = log.turns[0].2.schema.clone();
+    let expected = format!(
+        "do it{}{}",
+        rules::quality_epilogue(schema.as_ref()),
+        rules::schema_epilogue(schema.as_ref())
+    );
+    assert_eq!(log.inputs, vec![(expected, 5)]);
+}
+
+#[test]
+fn a_mono_profile_that_misses_falls_back_to_generic_and_the_input_carries_the_schema_epilogue() {
+    use crate::driver_rules as rules;
+    let (mut owner, sessions) = owner();
+    let actor = owner.create_actor("site", None, None).expect("actor");
+    owner.set_actor_profile(
+        &actor,
+        SubmitProfile::Mono {
+            schema: json!({"type": "array"}),
+        },
+    );
+    owner.ask("site", &actor, "do it").expect("ask");
+    owner.drain().expect("drain");
+    let log = sessions.0.borrow();
+    let schema = log.turns[0].2.schema.clone();
+    assert_eq!(
+        log.inputs,
+        vec![(
+            format!(
+                "do it{}{}",
+                rules::quality_epilogue(schema.as_ref()),
+                rules::schema_epilogue(schema.as_ref())
+            ),
+            5
+        )],
+        "the repaired session is generic, so its input ends with the schema epilogue"
+    );
+}
+
+#[test]
+fn a_mono_profile_that_fits_the_ask_ends_its_input_with_the_tool_epilogue() {
+    use crate::driver_rules as rules;
+    let (mut owner, sessions) = owner();
+    let first = owner.create_actor("site", None, None).expect("actor");
+    owner.ask("site", &first, "first").expect("ask");
+    owner.drain().expect("drain");
+    let schema = sessions.0.borrow().turns[0]
+        .2
+        .schema
+        .clone()
+        .expect("the site's ask is typed");
+    let second = owner.create_actor("site", None, None).expect("actor");
+    owner.set_actor_profile(
+        &second,
+        SubmitProfile::Mono {
+            schema: schema.clone(),
+        },
+    );
+    owner.ask("site", &second, "second").expect("ask");
+    owner.drain().expect("drain");
+    let log = sessions.0.borrow();
+    assert_eq!(
+        log.inputs[1],
+        (
+            format!(
+                "second{}{}",
+                rules::quality_epilogue(Some(&schema)),
+                rules::TYPED_TOOL_EPILOGUE
+            ),
+            6
+        )
+    );
 }
 
 #[test]
