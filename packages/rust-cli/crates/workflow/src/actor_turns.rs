@@ -92,24 +92,29 @@ impl ActorTurns for MailboxTurns {
         Ok(())
     }
 
-    fn cancel_turn(&mut self, _session: &str, instance: &Ref) -> Result<()> {
+    /// A cancelled ask's turn is gone, so the answers its session was never waited for are dropped. The owner runs on one
+    /// thread, so this is ordered before any later start on the same session.
+    fn cancel_turn(&mut self, session: &str, instance: &Ref) -> Result<()> {
         if let Some(flag) = self.cancels.remove(&instance.key()) {
             flag.store(true, Ordering::SeqCst);
         }
+        self.handle.parked().discard_session(session);
         Ok(())
     }
 
     /// The owner withdrew a parked question: its blocked escalate fails with the reason, and nothing waits on it.
-    fn reject_parked(&mut self, _session: &str, qid: &str) -> Result<()> {
-        self.handle
-            .parked()
-            .reject(qid, "the question was withdrawn before it was answered");
+    fn reject_parked(&mut self, session: &str, qid: &str) -> Result<()> {
+        self.handle.parked().reject(
+            session,
+            qid,
+            "the question was withdrawn before it was answered",
+        );
         Ok(())
     }
 
     /// The owner accepted an answer: the blocked escalate of the question returns it.
-    fn deliver_answer(&mut self, _session: &str, qid: &str, answer: &str) -> Result<()> {
-        self.handle.parked().deliver(qid, answer);
+    fn deliver_answer(&mut self, session: &str, qid: &str, answer: &str) -> Result<()> {
+        self.handle.parked().deliver(session, qid, answer);
         Ok(())
     }
 }

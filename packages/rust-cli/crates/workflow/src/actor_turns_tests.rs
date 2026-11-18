@@ -174,6 +174,27 @@ fn a_parked_question_is_answered_or_withdrawn_through_the_turn_side() {
 }
 
 #[test]
+fn cancelling_a_turn_drops_the_answers_nobody_waited_for() {
+    use crate::actor_sessions::ActorTurns;
+    let (_mailbox, handle) = crate::actor_mailbox::ActorMailbox::new();
+    let mut turns = MailboxTurns::new(ScriptedRunner::new(Vec::new()), handle.clone());
+    // An answer whose waiter never started, because its turn was cancelled before it waited.
+    turns.deliver_answer("sess", "q9", "late").expect("deliver");
+    turns
+        .deliver_answer("other", "q8", "kept")
+        .expect("deliver");
+    assert_eq!(handle.parked().len(), 2);
+    turns
+        .cancel_turn("sess", &Ref::new("ask", 1))
+        .expect("cancel");
+    assert_eq!(
+        handle.parked().len(),
+        1,
+        "only the cancelled session's answer is dropped"
+    );
+}
+
+#[test]
 fn a_turn_without_a_submit_is_nudged_and_the_nudged_turn_runs_with_the_nudge_prompt() {
     let runner = ScriptedRunner::new(vec![Ok("first".into()), Ok("second".into())]);
     let (mut owner, mailbox, actor) = owner_over(runner.clone());
