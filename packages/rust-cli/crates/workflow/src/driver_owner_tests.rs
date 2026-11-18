@@ -1,6 +1,7 @@
 //! The driver owner (W6a part 2): the engine's port, the submit and turn-end routes, the escalation book, and the
 //! session creation, pinned against the Node driver's port rules. The turn side is a recorder, so these tests run
 //! without a child session; the turn loop itself is tested in the agents crate.
+use crate::actor_turns::TurnInput;
 use crate::driver_owner::{
     ActorDriverOwner, ActorSessionRequest, ActorSessions, CANCELLED_BY_ENGINE_MESSAGE, SubmitReply,
     TurnEndReply,
@@ -62,7 +63,7 @@ impl ActorSessions for Recording {
         session: &str,
         instance: &Ref,
         message: &AskMessage,
-        input: &crate::actor_turns::TurnInput,
+        input: &TurnInput,
         interaction: &str,
     ) -> Result<()> {
         let mut log = self.0.borrow_mut();

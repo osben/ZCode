@@ -219,8 +219,9 @@ impl<S: ActorSessions> WorkflowDriver for ActorPort<S> {
             &profile,
         );
         // A mono session's turn declares its schema; a generic one, and an untyped ask, declare none.
-        let submit_schema = match (&profile, message.typed) {
-            (SubmitProfile::Mono { schema }, true) => Some(schema.clone()),
+        // The profile is this call's own copy, so the schema moves out of it rather than being cloned again.
+        let submit_schema = match (profile, message.typed) {
+            (SubmitProfile::Mono { schema }, true) => Some(schema),
             _ => None,
         };
         self.queued_starts.push(QueuedStart {

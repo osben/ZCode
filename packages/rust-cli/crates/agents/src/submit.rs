@@ -3,9 +3,9 @@
 //! error that names each violation, so the model repairs it in the same session. Only an actor that has a port gets the
 //! actor tools, `submit_result` and `escalate` (`tools_for`); every other child keeps its tool set.
 //!
-//! Deviation, recorded in the spec: the declaration is always the generic one (`result` takes any JSON). Node's typed
-//! declaration for a mono session, with that session's schema, is not built yet, so a mono turn's epilogue names a schema
-//! the declaration does not show.
+//! The declaration follows the session's profile. A mono session declares its schema (Node `typedSubmitResultInputSchema`):
+//! `result` is that schema, required, with no other key allowed. A generic session's `result` takes any JSON, and its ask's
+//! epilogue says the shape. Not built, recorded in the spec: Node's `strict: true` flag for the Anthropic adapter.
 
 use std::sync::Arc;
 
@@ -86,14 +86,15 @@ impl Tool for SubmitResult {
         // Node's submit input is strict: a key other than `result` is refused (see `call_with_messages`).
         match &self.submit_schema {
             Some(schema) => {
-                let mut result = schema.as_object().cloned().unwrap_or_default();
-                result.insert(
-                    "description".to_owned(),
-                    json!("The structured result for this ask."),
-                );
+                // Node `{description: "The structured result for this ask.", ...resultSchema}`: the schema's keys come
+                // after the description, so a description in the schema wins. A schema that is not an object adds nothing.
+                let mut result = json!({"description": "The structured result for this ask."});
+                if let (Some(result), Some(schema)) = (result.as_object_mut(), schema.as_object()) {
+                    result.extend(schema.clone());
+                }
                 json!({
                     "type": "object",
-                    "properties": {"result": Value::Object(result)},
+                    "properties": {"result": result},
                     "required": ["result"],
                     "additionalProperties": false,
                 })

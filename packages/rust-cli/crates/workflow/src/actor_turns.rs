@@ -38,8 +38,9 @@ pub trait TurnRunner: Send + Sync + 'static {
 }
 
 /// One turn's input: the text the model reads, the boundary in UTF-16 units where its epilogue begins (Node `runTurn`'s
-/// `epilogueStart`: the instructions' length for the first turn of an ask, 0 for a nudge), and the submit schema of a mono
-/// session, which the turn's `submit_result` declares (None for a generic session).
+/// `epilogueStart`: the instructions' length for the first turn of an ask, 0 for a nudge), and the submit schema the
+/// turn's `submit_result` declares. The schema is None in two cases: a generic session, and an untyped ask on a mono
+/// session (the owner sends no schema for an ask that has none). A nudge keeps the schema of the turn it follows.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TurnInput {
     pub text: String,
@@ -159,12 +160,9 @@ fn run_ask(
         match handle.turn_ended(session, &text) {
             Ok(TurnEndReply::Verdict(SubmitVerdict::Nudge)) => {
                 // Node `runTurn(NUDGE_PROMPT, 0)`: the nudge has no instructions, so its epilogue starts at 0. It is the
-                // same session, so it keeps the submit schema.
-                turn = TurnInput {
-                    text: NUDGE_PROMPT.to_owned(),
-                    epilogue_start: 0,
-                    submit_schema: turn.submit_schema.clone(),
-                };
+                // same session, so it keeps the submit schema: only the text and the boundary change.
+                turn.text = NUDGE_PROMPT.to_owned();
+                turn.epilogue_start = 0;
             }
             Ok(_) => return,
             Err(report) => {

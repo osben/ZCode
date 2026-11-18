@@ -22,6 +22,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use rust_cli_agents::actor_turn::{
     ActorEscalation, ActorPort, ActorQuestion, ActorRun, ActorSubmit, ActorTurnEnd, ActorViolation,
+    SubmitPort,
 };
 use rust_cli_kernel_api::clock::Clock;
 use rust_cli_kernel_api::env::WorkspaceRef;
@@ -221,6 +222,7 @@ impl<A: ActorAgents> TurnRunner for AgentTurnRunner<A> {
             Handle::try_current().is_err(),
             "the ask thread must not be inside a runtime: block_on would panic there"
         );
+        // The turn's `epilogue_start` is not read here: the user message that carries it is written in 2c-2 (spec 9.8f).
         let token = CancellationToken::new();
         let run = ActorRun {
             child: SessionId::new(session),
@@ -231,13 +233,15 @@ impl<A: ActorAgents> TurnRunner for AgentTurnRunner<A> {
             workspace: self.base.workspace.clone(),
             selection: self.base.selection.clone(),
             mode: self.base.mode,
-            port: Some(Arc::new(MailboxPort {
-                mailbox: self.mailbox.clone(),
-                session: session.to_owned(),
-                clock: self.base.clock.clone(),
-                cancel: token.clone(),
-            })),
-            submit_schema: turn.submit_schema.clone(),
+            port: Some(SubmitPort {
+                port: Arc::new(MailboxPort {
+                    mailbox: self.mailbox.clone(),
+                    session: session.to_owned(),
+                    clock: self.base.clock.clone(),
+                    cancel: token.clone(),
+                }),
+                submit_schema: turn.submit_schema.clone(),
+            }),
         };
         let end = self.handle.block_on(async {
             let work = self.agents.run_actor_turn(run, &turn.text, token.clone());

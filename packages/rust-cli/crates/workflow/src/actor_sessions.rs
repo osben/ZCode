@@ -17,10 +17,14 @@ use rust_cli_node_store::mint_actor_session_id;
 
 /// The turn side of an actor's session: runs the turns of asks, and releases what an ask leaves behind.
 pub trait ActorTurns {
-    /// Starts one ask's turn on `session`. `input` is the turn's text with its epilogue, composed by the owner.
-    /// `epilogue_start` is where that epilogue begins, in UTF-16 code units (Node's `epilogueStart`): an offset in
-    /// UTF-16 units, not a byte offset, so it must not be used to slice a Rust string. `interaction` is the description
-    /// the actor's asks are named by. The prompt is `input`; the ask's instructions are not read again.
+    /// Starts one ask's turn on `session`, with the input the owner composed (a `TurnInput`):
+    /// - `text`: the turn's prompt, the instructions with their epilogue. The ask's instructions are not read again.
+    /// - `epilogue_start`: where that epilogue begins, in UTF-16 code units (Node's `epilogueStart`). It is an offset in
+    ///   UTF-16 units, not a byte offset, so it must not be used to slice a Rust string.
+    /// - `submit_schema`: the mono session's schema, which the turn's `submit_result` declares. None for a generic
+    ///   session, and for an untyped ask on a mono session.
+    ///
+    /// `interaction` is the description the actor's asks are named by.
     fn start_turn(
         &mut self,
         session: &str,

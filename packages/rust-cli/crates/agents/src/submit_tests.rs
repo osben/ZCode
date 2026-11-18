@@ -79,6 +79,26 @@ fn a_mono_session_declares_its_schema_under_result_and_a_generic_one_does_not() 
     );
 }
 
+#[test]
+fn a_schema_description_wins_over_the_default_as_node_spread_does() {
+    // Node `{description: "The structured result for this ask.", ...resultSchema}`: the schema's own description comes last.
+    let port: Arc<dyn ActorPort> = ScriptedPort::replying(Ok(ActorSubmit::Accepted));
+    let schema = json!({"type": "string", "description": "a name"});
+    let declared = submit::tool(port, Some(schema)).input_schema();
+    assert_eq!(declared["properties"]["result"]["description"], "a name");
+}
+
+#[test]
+fn a_non_object_schema_adds_nothing_and_keeps_the_default_description() {
+    // Node spreads a non-object into nothing; the declaration keeps only its default description.
+    let port: Arc<dyn ActorPort> = ScriptedPort::replying(Ok(ActorSubmit::Accepted));
+    let declared = submit::tool(port, Some(json!(true))).input_schema();
+    assert_eq!(
+        declared["properties"]["result"],
+        json!({"description": "The structured result for this ask."})
+    );
+}
+
 #[tokio::test]
 async fn an_accepted_result_ends_the_turn_with_node_text() {
     let port = ScriptedPort::replying(Ok(ActorSubmit::Accepted));

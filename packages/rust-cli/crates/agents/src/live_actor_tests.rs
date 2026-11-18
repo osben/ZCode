@@ -23,7 +23,6 @@ fn run(child: &str) -> ActorRun {
         interaction_description: "Ada (site@1)".to_owned(),
         interactions: None,
         port: None,
-        submit_schema: None,
         persona_prompt: "You are a workflow actor.".to_owned(),
         workspace: workspace(),
         selection: ModelSelection::new("account:bigmodel-team-coding-plan", GLM_5_3_ACCOUNT),
@@ -273,6 +272,54 @@ fn a_restart_offers_no_submit_port() {
     assert!(
         live.get(&id).expect("the entry").actor_port.is_none(),
         "a restarted entry holds no submit port"
+    );
+}
+
+#[test]
+fn a_later_turns_port_refresh_replaces_the_submit_schema() {
+    // Each turn's begin refreshes the entry's port, schema included: a mono turn's schema is not carried into a later one.
+    let live = live_at(42);
+    let id = AgentId::new("actor-sess_a");
+    let first: Arc<dyn crate::actor_turn::ActorPort> = Arc::new(NoSubmit);
+    let first_schema = serde_json::json!({"type": "object", "required": ["first"]});
+    live.begin_actor_run(
+        &id,
+        || {
+            let mut entry =
+                LiveAgent::for_actor(run("sess_a"), id.clone(), SessionId::new("ses_parent"));
+            entry.actor_port = Some(crate::actor_turn::SubmitPort {
+                port: first.clone(),
+                submit_schema: Some(first_schema.clone()),
+            });
+            entry
+        },
+        |_| {},
+        "execution-1".to_owned(),
+    );
+    live.finish_actor_turn(&id, Ending::Completed);
+    let second: Arc<dyn crate::actor_turn::ActorPort> = Arc::new(NoSubmit);
+    live.begin_actor_run(
+        &id,
+        || unreachable!("the entry exists"),
+        |entry| {
+            entry.actor_port = Some(crate::actor_turn::SubmitPort {
+                port: second.clone(),
+                submit_schema: None,
+            });
+        },
+        "execution-2".to_owned(),
+    );
+    let schema = live
+        .get(&id)
+        .expect("the entry")
+        .actor_port
+        .as_ref()
+        .expect("the second turn's port")
+        .submit_schema
+        .clone();
+    assert_eq!(
+        schema, None,
+        "the second turn's refresh replaces the first's schema"
     );
 }
 
