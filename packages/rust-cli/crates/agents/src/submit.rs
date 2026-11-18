@@ -36,9 +36,9 @@ pub(crate) fn tool(port: Arc<dyn ActorPort>) -> Arc<dyn Tool> {
     Arc::new(SubmitResult { port })
 }
 
-/// The tools an actor's child gets for its submit port: the submit tool when there is a port, none otherwise.
+/// The tools an actor's child gets for its port: `submit_result` and `escalate` when there is a port, none otherwise.
 pub(crate) fn tools_for(port: Option<&Arc<dyn ActorPort>>) -> Vec<Arc<dyn Tool>> {
-    port.map(|port| vec![tool(port.clone())])
+    port.map(|port| vec![tool(port.clone()), crate::escalate::tool(port.clone())])
         .unwrap_or_default()
 }
 

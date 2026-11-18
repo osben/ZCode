@@ -129,6 +129,9 @@ pub struct ActorPort<S: ActorSessions> {
     profiles: HashMap<String, SubmitProfile>,
     session_of_actor: HashMap<String, String>,
     actor_of_session: HashMap<String, String>,
+    /// The actor and its persona name of each session: an escalation is named by the session's actor, whatever the caller
+    /// put in its request.
+    identity_of_session: HashMap<String, (Ref, Option<String>)>,
     /// The interaction description of each session's actor (`<persona name ?? "subagent"> (<site>@<ordinal>)`).
     interaction_of_session: HashMap<String, String>,
     /// Session of each ask whose turn has started and not ended, keyed by instance. Removed when the ask ends.
@@ -161,6 +164,11 @@ impl<S: ActorSessions> WorkflowDriver for ActorPort<S> {
             actor_interaction_description(&actor.site_id, actor.ordinal, persona_name(persona));
         self.interaction_of_session
             .insert(session.clone(), interaction);
+        // The actor's identity, which every escalation of this session is named by (Node `effectiveActorName`).
+        self.identity_of_session.insert(
+            session.clone(),
+            (actor.clone(), persona_name(persona).map(str::to_owned)),
+        );
         self.session_of_actor.insert(actor.key(), session.clone());
         self.actor_of_session.insert(session.clone(), actor.key());
         Ok(session)
@@ -277,6 +285,7 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
             profiles: HashMap::new(),
             session_of_actor: HashMap::new(),
             actor_of_session: HashMap::new(),
+            identity_of_session: HashMap::new(),
             interaction_of_session: HashMap::new(),
             session_of_instance: HashMap::new(),
             queued_starts: Vec::new(),
@@ -492,9 +501,19 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
         request: EscalationRequest,
     ) -> Result<EscalateOutcome> {
         self.settle_quietly();
+        let mut request = request;
+        if let Some((actor, name)) = self.engine.driver.identity_of_session.get(session) {
+            request.actor = actor.clone();
+            request.actor_name = name.clone();
+        }
         let engine = &mut self.engine;
         self.book
             .escalate(session, request, |event| engine.record(event.clone()))
+    }
+
+    /// The questions parked on a session, oldest first (the book's view; the turn side waits on them by id).
+    pub fn parked_questions(&self, session: &str) -> Vec<String> {
+        self.book.pending_questions(session)
     }
 
     /// Node `answerEscalation`: the main agent's answer to a parked question.

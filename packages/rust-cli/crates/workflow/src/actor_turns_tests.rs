@@ -155,6 +155,25 @@ fn owner_over(
 }
 
 #[test]
+fn a_parked_question_is_answered_or_withdrawn_through_the_turn_side() {
+    use crate::actor_sessions::ActorTurns;
+    let (_mailbox, handle) = crate::actor_mailbox::ActorMailbox::new();
+    let mut turns = MailboxTurns::new(ScriptedRunner::new(Vec::new()), handle.clone());
+    let parked = handle.parked();
+    // A blocked escalate waits on its question; the owner's answer wakes it with the text.
+    let answered = {
+        let parked = parked.clone();
+        std::thread::spawn(move || parked.wait("q1"))
+    };
+    turns.deliver_answer("sess", "q1", "yes").expect("deliver");
+    assert_eq!(answered.join().expect("join"), Ok("yes".to_owned()));
+    // A withdrawn question wakes its waiter with an error, so the tool fails instead of hanging.
+    let withdrawn = std::thread::spawn(move || parked.wait("q2"));
+    turns.reject_parked("sess", "q2").expect("reject");
+    assert!(withdrawn.join().expect("join").is_err());
+}
+
+#[test]
 fn a_turn_without_a_submit_is_nudged_and_the_nudged_turn_runs_with_the_nudge_prompt() {
     let runner = ScriptedRunner::new(vec![Ok("first".into()), Ok("second".into())]);
     let (mut owner, mailbox, actor) = owner_over(runner.clone());

@@ -3,7 +3,9 @@
 //! the agents crate's own tests (`actor_turn_entry_tests`).
 use crate::actor_turns::{ActorAgents, ActorRunBase, AgentTurnRunner};
 use async_trait::async_trait;
-use rust_cli_agents::actor_turn::{ActorRun, ActorSubmit, ActorTurnEnd, ActorViolation};
+use rust_cli_agents::actor_turn::{
+    ActorEscalation, ActorQuestion, ActorRun, ActorSubmit, ActorTurnEnd, ActorViolation,
+};
 use rust_cli_base::models::GLM_5_3_ACCOUNT;
 use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
 use rust_cli_kernel_api::ids::EnvironmentId;
@@ -39,6 +41,9 @@ struct ScriptedAgents {
     /// A result the turn submits through its port before it ends, and the port's answer to it.
     submit: Option<Value>,
     submitted: Mutex<Vec<Result<ActorSubmit, String>>>,
+    /// A question the first turn escalates through its port (once), and the port's answer to it.
+    escalate: Mutex<Option<String>>,
+    escalated: Mutex<Vec<Result<ActorEscalation, String>>>,
 }
 
 impl ScriptedAgents {
@@ -50,6 +55,22 @@ impl ScriptedAgents {
             block,
             submit: None,
             submitted: Mutex::new(Vec::new()),
+            escalate: Mutex::new(None),
+            escalated: Mutex::new(Vec::new()),
+        })
+    }
+
+    /// A first turn that escalates `question` through its port, then ends with the default text.
+    fn escalating(question: &str) -> Arc<Self> {
+        Arc::new(Self {
+            runs: Mutex::new(Vec::new()),
+            prompts: Mutex::new(Vec::new()),
+            replies: Mutex::new(VecDeque::new()),
+            block: false,
+            submit: None,
+            submitted: Mutex::new(Vec::new()),
+            escalate: Mutex::new(Some(question.to_owned())),
+            escalated: Mutex::new(Vec::new()),
         })
     }
 
@@ -62,6 +83,8 @@ impl ScriptedAgents {
             block: false,
             submit: Some(result),
             submitted: Mutex::new(Vec::new()),
+            escalate: Mutex::new(None),
+            escalated: Mutex::new(Vec::new()),
         })
     }
 }
@@ -76,9 +99,22 @@ impl ActorAgents for ScriptedAgents {
     ) -> ActorTurnEnd {
         let port = run.port.clone();
         self.runs.lock().expect("runs").push(run);
-        if let (Some(result), Some(port)) = (self.submit.clone(), port) {
-            let answer = port.submit(result).await;
-            self.submitted.lock().expect("submitted").push(answer);
+        if let Some(port) = port.as_ref() {
+            if let Some(result) = self.submit.clone() {
+                let answer = port.submit(result).await;
+                self.submitted.lock().expect("submitted").push(answer);
+            }
+            // The question is taken, so only the first turn escalates; a nudged turn does not.
+            let question = self.escalate.lock().expect("escalate").take();
+            if let Some(question) = question {
+                let answer = port
+                    .escalate(ActorQuestion {
+                        question,
+                        context: None,
+                    })
+                    .await;
+                self.escalated.lock().expect("escalated").push(answer);
+            }
         }
         self.prompts
             .lock()
@@ -175,6 +211,7 @@ fn base() -> ActorRunBase {
         mode: PermissionMode::Default,
         persona_prompt: PERSONA.to_owned(),
         interactions: None,
+        clock: Arc::new(rust_cli_kernel_api::testing::FixedClock(1_700_000_000_000)),
     }
 }
 
@@ -414,6 +451,31 @@ async fn a_rejected_submit_keeps_the_ask_live_and_names_each_violation() {
             .expect_err("no result was accepted")
             .code,
         ErrorCode::ResultNotSubmitted
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_blocked_escalation_is_answered_through_the_mailbox_and_returns_the_answer() {
+    let agents = ScriptedAgents::escalating("which gate?");
+    let (mut owner, mailbox) = owner_over(agents.clone());
+    let actor = owner.create_actor("site", None, None).expect("actor");
+    owner.ask("site", &actor, "do it").expect("ask");
+    owner.drain().expect("drain");
+    // The escalation parks its question; the turn waits on it until the owner answers.
+    mailbox.serve_next(&mut owner).expect("the escalation");
+    let session = owner.session_of(&actor).expect("session");
+    let qids = owner.parked_questions(&session);
+    assert_eq!(qids.len(), 1, "the question is parked on the session");
+    owner.answer(&qids[0], "the second one").expect("answer");
+    // The turn ends (and is nudged), and the nudged turn ends.
+    mailbox.serve_next(&mut owner).expect("the turn end");
+    mailbox.serve_next(&mut owner).expect("the nudged turn end");
+    assert_eq!(
+        *agents.escalated.lock().expect("escalated"),
+        vec![Ok(ActorEscalation::Answered {
+            qid: qids[0].clone(),
+            answer: "the second one".to_owned(),
+        })]
     );
 }
 

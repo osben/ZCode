@@ -1,7 +1,7 @@
 //! `submit_result` for a workflow actor (Node `tool/handlers/submit-result.ts`): an accepted result ends the turn with
 //! Node's text, a rejected one is a repairable error that names each violation, and only an actor that has a port gets
 //! the tool.
-use crate::actor_turn::{ActorPort, ActorSubmit, ActorViolation};
+use crate::actor_turn::{ActorEscalation, ActorPort, ActorQuestion, ActorSubmit, ActorViolation};
 use crate::submit;
 use async_trait::async_trait;
 use rust_cli_kernel_api::ids::SessionId;
@@ -29,6 +29,10 @@ impl ActorPort for ScriptedPort {
     async fn submit(&self, result: Value) -> Result<ActorSubmit, String> {
         self.seen.lock().expect("seen").push(result);
         self.reply.lock().expect("reply").clone()
+    }
+
+    async fn escalate(&self, _question: ActorQuestion) -> Result<ActorEscalation, String> {
+        Err("escalate is not under test".to_owned())
     }
 }
 
@@ -144,6 +148,6 @@ fn only_an_actor_with_a_port_gets_the_submit_tool() {
     assert!(submit::tools_for(None).is_empty());
     let port: Arc<dyn ActorPort> = ScriptedPort::replying(Ok(ActorSubmit::Accepted));
     let tools = submit::tools_for(Some(&port));
-    assert_eq!(tools.len(), 1);
-    assert_eq!(tools[0].name(), "submit_result");
+    let names: Vec<&str> = tools.iter().map(|tool| tool.name()).collect();
+    assert_eq!(names, vec!["submit_result", "escalate"]);
 }
