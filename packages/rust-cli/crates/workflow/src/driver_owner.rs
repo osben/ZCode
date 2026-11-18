@@ -7,12 +7,15 @@
 //! the book, and it never blocks.
 //!
 //! Event order for each engine call: the engine runs, `pump` applies what the port queued (book start, turn start,
-//! failed asks), then `reconcile` ends every active ask the engine no longer has live. Ending an ask is therefore one
-//! rule for every path (accept, budget exhaustion, cancel), not a step each path has to remember.
+//! failed asks), then `reconcile` ends every active ask the engine no longer has live. `pump` reconciles on every
+//! exit path, so no caller reconciles on its own. Ending an ask is one rule for every path (accept, budget
+//! exhaustion, cancel), not a step each path has to remember.
 //!
-//! Errors. A turn that cannot start fails its ask as a `DriverError` (Node's `askFailed` on a turn error). A failure
-//! that the engine cannot be told about (a rejected withdrawal, a refused cancel) is kept and returned from the next
-//! owner call, after the rest of the queue is applied. Nothing queued is dropped on the first error.
+//! Errors. A turn that cannot start fails its ask as a `DriverError` (Node's `askFailed` on a turn error). A turn-side
+//! error that the engine cannot receive (a refused withdrawal, a refused cancel) is returned by the call that caused
+//! it, after the rest of the queue is applied. Calls that answer a reply (submit, turn end, escalate, answer) never
+//! return such an error in place of the reply: they log it, because the engine has already settled the ask and a
+//! returned error would make the caller retry a settled call.
 use crate::driver_rules::{
     NO_ACTIVE_ASK_MESSAGE, ProfileFit, SubmitProfile, SubmitRoute, UNTYPED_ASK_MESSAGE,
     actor_session_title, actor_task_link_path, profile_fit, submit_route,
@@ -104,7 +107,7 @@ pub struct ActorPort<S: ActorSessions> {
     profiles: HashMap<String, SubmitProfile>,
     session_of_actor: HashMap<String, String>,
     actor_of_session: HashMap<String, String>,
-    /// Session of each ask that has started and not ended, keyed by instance. Removed when the ask ends.
+    /// Session of each ask whose turn has started and not ended, keyed by instance. Removed when the ask ends.
     session_of_instance: HashMap<String, String>,
     queued_starts: Vec<QueuedStart>,
     queued_failures: Vec<(Ref, WorkflowError)>,
@@ -235,6 +238,21 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
         })
     }
 
+    /// Queue a start as the engine's dispatch would, for a test of the liveness check at apply time.
+    #[cfg(test)]
+    pub(crate) fn queue_start_for_test(
+        &mut self,
+        session: &str,
+        instance: &Ref,
+        message: AskMessage,
+    ) {
+        self.engine.driver.queued_starts.push(QueuedStart {
+            session: session.to_owned(),
+            instance: instance.clone(),
+            message,
+        });
+    }
+
     /// The journal behind the engine, for tests that read what the owner wrote.
     #[cfg(test)]
     pub(crate) fn journal(&self) -> &J {
@@ -260,25 +278,23 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
         name: Option<&str>,
         persona: Option<&Value>,
     ) -> Result<String> {
-        let actor = self.engine.create_actor(site_id, name, persona)?;
-        self.pump()?;
-        Ok(actor)
+        let result = self.engine.create_actor(site_id, name, persona);
+        self.after_engine(result)
     }
 
     pub fn ask(&mut self, site_id: &str, actor_id: &str, instructions: &str) -> Result<u64> {
-        let ticket = self.engine.ask(site_id, actor_id, instructions)?;
-        self.pump()?;
-        Ok(ticket)
+        let result = self.engine.ask(site_id, actor_id, instructions);
+        self.after_engine(result)
     }
 
     pub fn drain(&mut self) -> Result<()> {
-        self.engine.drain()?;
-        self.pump()
+        let result = self.engine.drain();
+        self.after_engine(result)
     }
 
     pub fn complete(&mut self, artifact: Value) -> Result<()> {
-        self.engine.complete(artifact)?;
-        self.pump()
+        let result = self.engine.complete(artifact);
+        self.after_engine(result)
     }
 
     pub fn take_outcomes(&mut self) -> Vec<AskOutcome> {
@@ -289,78 +305,109 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
         self.engine.events()
     }
 
+    /// Every engine call is followed by a pump, even a failed one: a start the engine queued before it failed must
+    /// not wait for the next call. The engine's own error is returned first; the pump's error after it.
+    fn after_engine<T>(&mut self, result: Result<T>) -> Result<T> {
+        let pumped = self.pump();
+        let value = result?;
+        pumped?;
+        Ok(value)
+    }
+
+    /// The pump for a call that answers a reply (a submit, a turn end, an escalation). Its turn-side errors are
+    /// logged, not returned: the reply is the engine's, and a returned error would make the caller retry a call the
+    /// engine has already settled.
+    fn settle_quietly(&mut self) {
+        if let Err(error) = self.pump() {
+            tracing::warn!("actor turn side failed while settling an ask: {error:#}");
+        }
+    }
+
+    /// The reply is the engine's whether or not the turn side fails while it settles. A failed engine call returns
+    /// its error, since no reply exists.
+    fn reply_after<T>(
+        &mut self,
+        engine_result: Result<()>,
+        reply: impl FnOnce(&mut Self) -> Result<T>,
+    ) -> Result<T> {
+        self.settle_quietly();
+        engine_result?;
+        reply(self)
+    }
+
     /// Node `makeSessionSubmitPort`: a `submit_result` call from a session's turn.
     pub fn submit_result(&mut self, session: &str, payload: Value) -> Result<SubmitReply> {
-        self.pump()?;
+        self.settle_quietly();
         let ask = self.active.get(session).cloned();
         let typed = ask.as_ref().map(|ask| ask.typed).unwrap_or(false);
         match submit_route(ask.is_some(), typed) {
             SubmitRoute::NoActiveAsk => Ok(SubmitReply::Refused(NO_ACTIVE_ASK_MESSAGE.to_owned())),
             SubmitRoute::UntypedAsk => Ok(SubmitReply::Refused(UNTYPED_ASK_MESSAGE.to_owned())),
             SubmitRoute::Engine => {
-                let ask = ask.ok_or_else(|| anyhow!("a routed submit has an active ask"))?;
+                // submit_route admits a submit only while an ask is active, so the ask is present here.
+                let ask = ask.ok_or_else(|| {
+                    anyhow!("submit routing reached the engine with no active ask")
+                })?;
                 let key = ask.instance.key();
                 let engine_result = self.engine.submit_attempted(&ask.instance, payload);
                 let verdict = self.engine.driver.verdicts.remove(&key);
-                let reconciled = self.reconcile();
-                let pumped = self.pump();
-                engine_result?;
-                reconciled?;
-                pumped?;
-                match verdict {
+                self.reply_after(engine_result, move |owner| match verdict {
                     Some(verdict) => Ok(SubmitReply::Verdict(verdict)),
-                    // No verdict and the ask is gone: the engine settled it (repair budget spent). Node rejects the
-                    // pending submit with `Cancelled`.
-                    None if !self.active.contains_key(session) => Ok(SubmitReply::Cancelled(
-                        CANCELLED_BY_ENGINE_MESSAGE.to_owned(),
+                    // No verdict and the engine no longer has this ask live: it settled it (repair budget spent).
+                    // Node rejects the pending submit with `Cancelled`.
+                    None if !owner.engine.is_live_ask(&ask.instance) => {
+                        Ok(SubmitReply::Cancelled(CANCELLED_BY_ENGINE_MESSAGE.to_owned()))
+                    }
+                    // scheduler_submit answers every submit on a live typed ask with a verdict or a settlement.
+                    None => Err(anyhow!(
+                        "the engine answered neither a verdict nor a settlement to a submit on a live ask"
                     )),
-                    None => Err(anyhow!("the engine gave no verdict to a live submit")),
-                }
+                })
             }
         }
     }
 
     /// Node `turnEnded`: a turn finished without a submit. The engine answers Nudge, or settles the ask.
     pub fn turn_ended(&mut self, session: &str, final_text: &str) -> Result<TurnEndReply> {
-        self.pump()?;
+        self.settle_quietly();
         let Some(ask) = self.active.get(session).cloned() else {
             return Ok(TurnEndReply::NoAsk);
         };
         let key = ask.instance.key();
         let engine_result = self.engine.turn_ended(&ask.instance, final_text);
         let verdict = self.engine.driver.verdicts.remove(&key);
-        let reconciled = self.reconcile();
-        let pumped = self.pump();
-        engine_result?;
-        reconciled?;
-        pumped?;
-        match verdict {
+        self.reply_after(engine_result, move |owner| match verdict {
             Some(verdict) => Ok(TurnEndReply::Verdict(verdict)),
-            None if !self.active.contains_key(session) => Ok(TurnEndReply::AskEnded),
-            None => Err(anyhow!("the engine gave no verdict to a live turn end")),
-        }
+            // No verdict and the engine no longer has this ask live: it settled it (an untyped text result, or
+            // ResultNotSubmitted). No turn runs again.
+            None if !owner.engine.is_live_ask(&ask.instance) => Ok(TurnEndReply::AskEnded),
+            // scheduler_submit's turn-end path answers every live ask with a nudge or a settlement.
+            None => Err(anyhow!(
+                "the engine answered neither a nudge nor a settlement to a turn end on a live ask"
+            )),
+        })
     }
 
     /// Node `workflow-driver-transcript.ts`: the ask's message boundary, written on its node row. A session with no
     /// ask in flight writes nothing.
     pub fn set_message_boundary(&mut self, session: &str, boundary: u64) -> Result<()> {
-        self.pump()?;
+        self.settle_quietly();
         let Some(ask) = self.active.get(session).cloned() else {
             return Ok(());
         };
-        self.engine.set_message_boundary(&ask.instance, boundary)?;
-        self.pump()
+        let result = self.engine.set_message_boundary(&ask.instance, boundary);
+        self.after_engine(result)
     }
 
     /// Node `askMutating`: the session's active ask is about to run a mutating tool. Ignored when no ask is in
     /// flight, as the engine ignores observations after an ask settles.
     pub fn ask_mutating(&mut self, session: &str) -> Result<()> {
-        self.pump()?;
+        self.settle_quietly();
         let Some(ask) = self.active.get(session).cloned() else {
             return Ok(());
         };
-        self.engine.ask_mutating(&ask.instance)?;
-        self.pump()
+        let result = self.engine.ask_mutating(&ask.instance);
+        self.after_engine(result)
     }
 
     /// Node `makeSessionEscalatePort`: the book decides, and every write goes through the engine's journal.
@@ -369,7 +416,7 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
         session: &str,
         request: EscalationRequest,
     ) -> Result<EscalateOutcome> {
-        self.pump()?;
+        self.settle_quietly();
         let engine = &mut self.engine;
         self.book
             .escalate(session, request, |event| engine.record(event.clone()))
@@ -377,16 +424,16 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
 
     /// Node `answerEscalation`: the main agent's answer to a parked question.
     pub fn answer(&mut self, qid: &str, answer: &str) -> Result<Option<AnswerOutcome>> {
-        self.pump()?;
+        self.settle_quietly();
         let engine = &mut self.engine;
         Ok(self
             .book
             .answer(qid, answer, |event| engine.record(event.clone())))
     }
 
-    /// Apply what the port queued, until nothing is queued. Every queued item is applied even when one fails; the
-    /// first error is returned at the end. A start is applied to the book before its turn starts, so a question
-    /// raised by a turn always finds its ask active.
+    /// Apply what the port queued, until nothing is queued, then reconcile. Every exit path reconciles. Every queued
+    /// item is applied even when one fails; the first error is returned at the end. A start is applied to the book
+    /// before its turn starts, so a question raised by a turn always finds its ask active.
     fn pump(&mut self) -> Result<()> {
         let mut first: Option<anyhow::Error> = None;
         loop {
@@ -425,6 +472,10 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
     /// One queued start: the book starts the ask (withdrawing the previous one's parked questions), then the turn is
     /// started. A refused turn ends the ask again and fails it with the send error (Node `askFailed`).
     fn apply_start(&mut self, start: QueuedStart, first: &mut Option<anyhow::Error>) {
+        // A start queued before the engine cancelled or completed its ask must not start a turn for a dead ask.
+        if !self.engine.is_live_ask(&start.instance) {
+            return;
+        }
         let withdrawn = self.book.start_ask(&start.session);
         for qid in withdrawn {
             if let Err(error) = self

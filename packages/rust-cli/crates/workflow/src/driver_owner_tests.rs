@@ -29,6 +29,10 @@ struct Log {
     rejected: Vec<(String, String)>,
     /// When set, the next `start_turn` fails, as a refused send does.
     fail_next_start: bool,
+    /// When set, the next `cancel_turn` fails.
+    fail_next_cancel: bool,
+    /// When set, the next `reject_parked` fails. Only that one withdrawal fails; the rest of the queue still applies.
+    fail_next_reject: bool,
     next: u64,
 }
 
@@ -55,18 +59,22 @@ impl ActorSessions for Recording {
     }
 
     fn cancel_turn(&mut self, session: &str, instance: &Ref) -> Result<()> {
-        self.0
-            .borrow_mut()
-            .cancelled
-            .push((session.to_owned(), instance.clone()));
+        let mut log = self.0.borrow_mut();
+        if log.fail_next_cancel {
+            log.fail_next_cancel = false;
+            bail!("cancel refused");
+        }
+        log.cancelled.push((session.to_owned(), instance.clone()));
         Ok(())
     }
 
     fn reject_parked(&mut self, session: &str, qid: &str) -> Result<()> {
-        self.0
-            .borrow_mut()
-            .rejected
-            .push((session.to_owned(), qid.to_owned()));
+        let mut log = self.0.borrow_mut();
+        if log.fail_next_reject {
+            log.fail_next_reject = false;
+            bail!("reject refused");
+        }
+        log.rejected.push((session.to_owned(), qid.to_owned()));
         Ok(())
     }
 }
@@ -560,4 +568,123 @@ fn a_mutating_tool_closes_the_import_cache_once_and_an_idle_session_is_ignored()
     assert_eq!(closed(&owner), 1, "the closure is written once");
     owner.ask_mutating("sess_unasked").expect("idle session");
     assert_eq!(closed(&owner), 1, "an idle session writes nothing");
+}
+
+#[test]
+fn a_repair_exhausted_by_a_refused_cancel_still_answers_the_submit_and_fails_the_ask() {
+    let (mut owner, sessions, _actor, session) = running_ask();
+    for _ in 0..3 {
+        owner
+            .submit_result(&session, json!({"nope": 1}))
+            .expect("submit");
+    }
+    sessions.0.borrow_mut().fail_next_cancel = true;
+    let reply = owner
+        .submit_result(&session, json!({"nope": 1}))
+        .expect("the reply is the engine's, whatever the turn side does");
+    assert_eq!(
+        reply,
+        SubmitReply::Cancelled(CANCELLED_BY_ENGINE_MESSAGE.to_owned())
+    );
+    let outcomes = owner.take_outcomes();
+    assert_eq!(outcomes.len(), 1, "the ask settles once");
+    assert_eq!(
+        outcomes[0].result.as_ref().expect_err("fails").code,
+        ErrorCode::ValidationFailed
+    );
+}
+
+#[test]
+fn an_accept_with_a_refused_withdrawal_still_returns_the_accept_and_releases_the_rest() {
+    let (mut owner, sessions, _actor, session) = running_ask();
+    let first = match owner.escalate(&session, request("one")).expect("escalate") {
+        EscalateOutcome::Parked { qid } => qid,
+        other => panic!("expected a park, got {other:?}"),
+    };
+    let second = match owner.escalate(&session, request("two")).expect("escalate") {
+        EscalateOutcome::Parked { qid } => qid,
+        other => panic!("expected a park, got {other:?}"),
+    };
+    sessions.0.borrow_mut().fail_next_reject = true;
+    let reply = owner
+        .submit_result(&session, json!({"ok": true}))
+        .expect("the accept is returned even though a withdrawal failed");
+    assert_eq!(reply, SubmitReply::Verdict(SubmitVerdict::Accept));
+    assert_eq!(
+        sessions.0.borrow().rejected,
+        vec![(session.clone(), second.clone())],
+        "the failed withdrawal is skipped, the other one is still released"
+    );
+    assert_eq!(owner.answer(&first, "late").expect("answer"), None);
+    assert_eq!(owner.answer(&second, "late").expect("answer"), None);
+}
+
+#[test]
+fn a_turn_end_that_settles_with_a_refused_cancel_still_returns_ask_ended() {
+    let (mut owner, sessions, _actor, session) = running_ask();
+    assert_eq!(
+        owner.turn_ended(&session, "one").expect("turn end"),
+        TurnEndReply::Verdict(SubmitVerdict::Nudge)
+    );
+    sessions.0.borrow_mut().fail_next_cancel = true;
+    let reply = owner
+        .turn_ended(&session, "two")
+        .expect("the reply is the engine's");
+    assert_eq!(reply, TurnEndReply::AskEnded);
+    let outcomes = owner.take_outcomes();
+    assert_eq!(outcomes.len(), 1);
+    assert_eq!(
+        outcomes[0].result.as_ref().expect_err("fails").code,
+        ErrorCode::ResultNotSubmitted
+    );
+    assert_eq!(
+        owner.turn_ended(&session, "three").expect("turn end"),
+        TurnEndReply::NoAsk,
+        "a retry is the next ask state, not a second settlement"
+    );
+}
+
+#[test]
+fn a_refused_cancel_on_complete_is_returned_and_the_rest_of_the_queue_still_applies() {
+    let (mut owner, sessions, _actor, session) = running_ask();
+    let qid = match owner
+        .escalate(&session, request("which?"))
+        .expect("escalate")
+    {
+        EscalateOutcome::Parked { qid } => qid,
+        other => panic!("expected a park, got {other:?}"),
+    };
+    sessions.0.borrow_mut().fail_next_cancel = true;
+    let error = owner
+        .complete(json!("done"))
+        .expect_err("the refused cancel is returned to the caller of complete");
+    assert!(error.to_string().contains("cancel refused"), "{error:#}");
+    let log = sessions.0.borrow();
+    assert!(log.cancelled.is_empty());
+    assert_eq!(
+        log.rejected,
+        vec![(session.clone(), qid)],
+        "the withdrawal after the failed cancel is still applied"
+    );
+}
+
+#[test]
+fn a_start_queued_for_an_ask_that_is_no_longer_live_starts_no_turn() {
+    let (mut owner, sessions) = owner();
+    // A start the engine queued for an ask that was cancelled or completed before the pump applied it.
+    let session = "sess_1".to_owned();
+    owner.queue_start_for_test(
+        &session,
+        &Ref::new("site", 9),
+        AskMessage {
+            instructions: "stale".into(),
+            typed: true,
+            schema: None,
+        },
+    );
+    owner.drain().expect("drain");
+    assert!(
+        sessions.0.borrow().turns.is_empty(),
+        "no turn starts for a dead ask"
+    );
 }

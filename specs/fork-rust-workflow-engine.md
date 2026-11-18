@@ -846,6 +846,17 @@ Review fixes to part 2a (verdicts against the code and Node):
 - Import cache (fixed): the mutating-tool test runs with an imported cache, so the observable is one `import-cache-closed` event for an active ask, none for a repeat or an idle session. Before, a fresh run wrote nothing whatever the routing.
 - Test hygiene (fixed): the instance comes from the recorder, the recorded turn and message are asserted, the cancelled instance is asserted, the vacuous assertion is now `actor == "site@1"`, and the idle-session call is last in the mutating test.
 
+Review round 2 (ocr, on 58cd5fced):
+
+- Settled submit or turn end with a turn-side error (fixed): a reply-answering call returns the engine's reply whether or not the pump fails while it settles. Turn-side errors are logged (`settle_quietly`), not returned, so a retry never sees a settled ask as no ask. Engine errors still return, since no reply exists. Tests: `a_repair_exhausted_by_a_refused_cancel_still_answers_the_submit_and_fails_the_ask`, `an_accept_with_a_refused_withdrawal_still_returns_the_accept_and_releases_the_rest`, `a_turn_end_that_settles_with_a_refused_cancel_still_returns_ask_ended`.
+- Stale start (fixed): `apply_start` starts no turn for an ask the engine no longer has live. Every owner call now pumps even when the engine call failed (`after_engine`), so a queued start is never left for a later call. Test: `a_start_queued_for_an_ask_that_is_no_longer_live_starts_no_turn` (through the test-only `queue_start_for_test`).
+- Liveness keyed by instance (fixed): the settled-versus-live check on a reply is `engine.is_live_ask(instance)`, not by session.
+- Invariant messages (fixed): they name the requirement (`submit_route` admits a submit only with an active ask; `scheduler_submit` answers every submit and turn end on a live typed ask).
+- Redundant reconcile (fixed): submit and turn end no longer reconcile; `pump` reconciles on every exit path.
+- Cancel and reject failure tests (fixed): the recorder has one-shot failure flags for `cancel_turn` and `reject_parked`. Tests: the refused cancel on `complete` is returned and the rest of the queue still applies (`a_refused_cancel_on_complete_is_returned_and_the_rest_of_the_queue_still_applies`); a refused withdrawal on accept is skipped and the other question is still released.
+
+Red record for round 2: `cargo test -p rust-cli-workflow --lib driver_owner` failed to compile before the change (`no method named queue_start_for_test`). The behaviour tests were not run against the round-1 code separately, so the behaviour part of the red record is not observed.
+
 Remaining (W6a part 2b, the turn side; not in this part):
 
 1. An `ActorSessions` implementation over the agents crate: a child session of kind `Subagent` with the parent, the title, and the `workflow_actor` link row (`insert_workflow_actor_link` in node-store), created at dispatch. Decide the task type first (Deviations above).
