@@ -264,6 +264,9 @@ pub struct Transcript {
     next_id: u64,
     pending: Vec<(InteractionId, InteractionRequest)>,
     /// 权限被拒绝的工具：卡片已取消，拒绝的结果 `ToolDone` 不能再改它（回合结束时清空）。
+    /// LIVE-ONLY: 这个集合只由实时的 `InteractionResolved` 填。`from_view`（冷加载、重连的快照）不播种它，所以快照与
+    /// 拒绝的 `ToolDone` 之间重连的话，卡片会变成 Error；冷加载的已完成拒绝显示为 Error（存的结果只是一个错误）。Node 会显示
+    /// cancelled，因为它持久化 `onPermissionDenied`。见 specs/fork-rust-workflow-engine.md 9.8g 的后续项 (4)。
     denied_tools: Vec<ToolUseId>,
     /// 扣住、等批准的同伴消息（快照的 `peer_held` 与 `PeerHeldChanged`，cross-session.md §2.6）。
     peer_held: Vec<rust_cli_kernel_api::peers::HeldPeerMessage>,

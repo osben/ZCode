@@ -158,6 +158,9 @@ pub struct Projection {
     turn: Option<Turn>,
     inputs: HashMap<String, InputMeta>,
     /// 用户拒绝了的工具调用：结果投成 cancelled。
+    /// LIVE-ONLY: 由 `deny()` 与实时的 `InteractionResolved{denied}` 填入；`rebuilt()` 复制它，但从快照（`from_view`）冷建时
+    /// 它是空的，所以冷加载的已完成拒绝显示为 error（存的结果只是拒绝的文字）。持久化的拒绝记录是 specs/fork-rust-workflow-engine.md
+    /// 9.8g 的后续项 (4)。
     denied: std::collections::HashSet<String>,
     /// Fork: the queue drains on its own (`setAutoDrain`); the kernel's hold is set by the same command.
     auto_drain: bool,

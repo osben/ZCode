@@ -181,7 +181,8 @@ impl Transcript {
                 }
             }
             KernelEvent::ToolDone { tool_use, output } => {
-                // 被拒绝的卡片已取消（见 `mark_approval`）：拒绝的结果不能把它改成失败。
+                // 被拒绝的卡片已取消（见 `mark_approval`）：拒绝的结果不能把它改成失败。LIVE-ONLY（见 `denied_tools`）：
+                // 快照不播种这个集合，所以只在实时事件流里生效。
                 let status = if self.denied_tools.contains(&tool_use) {
                     ToolStatus::Cancelled
                 } else if output.is_error {
