@@ -102,6 +102,8 @@ fn the_first_run_is_stamped_with_the_clock() {
     );
 }
 
+// The invariant is a debug_assert, so the test exists only where debug assertions are compiled in.
+#[cfg(debug_assertions)]
 #[test]
 #[should_panic(expected = "keyed by the id it was begun under")]
 fn a_fresh_entry_keyed_by_another_id_is_a_programming_error() {

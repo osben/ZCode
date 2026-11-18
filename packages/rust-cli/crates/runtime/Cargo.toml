@@ -18,7 +18,6 @@ doctest = false
 parity = []
 
 [dependencies]
-anyhow.workspace = true
 async-trait.workspace = true
 # /context 的计数并发发出（`join!`）、按请求内容缓存（docs/specs/rust-cli/context-usage.md §3）。
 futures-util = { workspace = true, features = ["async-await", "async-await-macro"] }
@@ -47,6 +46,7 @@ tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
 tokio-util.workspace = true
 
 [dev-dependencies]
+anyhow.workspace = true
 futures-util.workspace = true
 rust-cli-kernel-api = { workspace = true, features = ["testing"] }
 # dev-only (ocr on the --continue prewarm): the prewarm-target pin test runs against the real

@@ -8,10 +8,10 @@
 
 mod acp;
 pub mod actor_turns;
-mod agents;
-// Fork: specs/fork-rust-node-helper.md F3.
 #[cfg(test)]
 mod actor_turns_tests;
+mod agents;
+// Fork: specs/fork-rust-node-helper.md F3.
 mod app_tool;
 mod assemble;
 mod catalog;

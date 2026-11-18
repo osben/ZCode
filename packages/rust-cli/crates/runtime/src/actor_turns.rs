@@ -29,8 +29,9 @@ use rust_cli_workflow::actor_turns::TurnRunner;
 use tokio::runtime::Handle;
 use tokio_util::sync::CancellationToken;
 
-/// How often the bridge checks the ask's cancel flag while a turn runs.
-const CANCEL_POLL: Duration = Duration::from_millis(1);
+/// How often the bridge checks the ask's cancel flag while a turn runs. Cancels are human-scale, so 20 ms is
+/// imperceptible and keeps the wakeup rate low.
+const CANCEL_POLL: Duration = Duration::from_millis(20);
 
 /// The agents boundary the bridge calls. `Agents` implements it; tests script it.
 #[async_trait]

@@ -238,6 +238,8 @@ async fn a_cancelled_turn_is_stopped_through_the_bridge_and_reports_nothing() {
     );
 }
 
+// The invariant is a debug_assert, so the test exists only where debug assertions are compiled in.
+#[cfg(debug_assertions)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[should_panic(expected = "the ask thread must not be inside a runtime")]
 async fn the_bridge_refuses_to_block_from_inside_a_runtime() {
