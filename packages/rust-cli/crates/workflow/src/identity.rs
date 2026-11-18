@@ -26,13 +26,13 @@ impl Identity {
         }
     }
 
-    /// Node `nextOrdinal`: the next ordinal for `site_id`, and the birth phase of that instance. A
-    /// lexical phase of the site wins over the current marker, as the confirmation graph shows it.
     /// Node `swapTables` in `fillHole`: later sites take their birth phase from the effective script's table.
     pub fn replace_site_phases(&mut self, site_phases: HashMap<String, String>) {
         self.site_phases = site_phases;
     }
 
+    /// Node `nextOrdinal`: the next ordinal for `site_id`, and the birth phase of that instance. A
+    /// lexical phase of the site wins over the current marker, as the confirmation graph shows it.
     pub fn next_ordinal(&mut self, site_id: &str) -> u64 {
         let next = self.ordinals.get(site_id).copied().unwrap_or(0) + 1;
         self.ordinals.insert(site_id.to_owned(), next);

@@ -16,6 +16,9 @@ pub const MAX_SPEC_SERIALIZED_BYTES: usize = 8 * 1024;
 /// The first problem with a predeclared spec, or `None` when the spec is valid. `spec` is `None` when the
 /// script passed no spec (JavaScript `undefined`).
 pub fn validate_artifact_spec(op: &str, spec: Option<&Value>) -> Option<String> {
+    if !matches!(op, "chart" | "table" | "metrics" | "board") {
+        return Some(format!("unknown artifact preset {op}"));
+    }
     let Some(map) = spec.and_then(Value::as_object) else {
         return Some(format!(
             "{op} spec must be an object literal, got {}",
@@ -54,7 +57,8 @@ fn check_shape(op: &str, spec: &Map<String, Value>) -> Option<String> {
             }
         }
         "metrics" => check_field_list(spec.get("metrics"), "metrics"),
-        _ => check_board(spec),
+        "board" => check_board(spec),
+        _ => Some(format!("unknown artifact preset {op}")),
     }
 }
 

@@ -303,7 +303,7 @@ fn replay<J: JournalPort>(scenario: &Value, journal: &mut J) -> Value {
             }
             results.push(result);
         }
-        let open_holes = engine.as_ref().map_or(Value::Null, |engine| {
+        let open_holes = engine.as_ref().map_or(Value::Array(Vec::new()), |engine| {
             Value::Array(
                 engine
                     .open_holes()
@@ -312,7 +312,7 @@ fn replay<J: JournalPort>(scenario: &Value, journal: &mut J) -> Value {
                     .collect(),
             )
         });
-        let filled_holes = engine.as_ref().map_or(Value::Null, |engine| {
+        let filled_holes = engine.as_ref().map_or(Value::Array(Vec::new()), |engine| {
             Value::Array(
                 engine
                     .filled_holes()

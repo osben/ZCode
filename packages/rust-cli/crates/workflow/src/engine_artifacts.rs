@@ -298,12 +298,9 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
             );
             return Ok(ticket);
         };
-        let opts = args.get(2).cloned();
-        let primary_option = opts
-            .as_ref()
-            .and_then(|value| value.get("primary"))
-            .cloned();
-        if let Some(value) = &primary_option
+        // Borrowed from the argument: only the flag is read here; the request keeps the whole value.
+        let primary_option = args.get(2).and_then(|value| value.get("primary"));
+        if let Some(value) = primary_option
             && !value.is_boolean()
         {
             let error = WorkflowError::new(
@@ -355,7 +352,7 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
 
         // Sticky: an id that is already primary keeps the flag whether or not `primary` is passed again.
         let existing = self.artifacts.get(&id).cloned();
-        let primary = primary_option == Some(Value::Bool(true))
+        let primary = primary_option == Some(&Value::Bool(true))
             || existing.as_ref().is_some_and(|state| state.primary);
         if let Some(problem) = self.admit_artifact(&id, op, primary) {
             self.settle_artifact_failure(&instance, &hash, &id, op, &problem)?;
@@ -418,9 +415,10 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
         Ok(ticket)
     }
 
-    /// The host's answer to a publish (Node's `.then` on `executeArtifactPublish`): the record, or the failure.
-    /// Settles the ticket with `{id, version}` or the error. A settlement after the run has settled rejects
-    /// with the run error and writes nothing, as Node does.
+    /// The host's answer to a publish (Node's `.then` on `executeArtifactPublish`). A record settles the ticket
+    /// with `{id, version}`. A failure journals the failed row and `artifact-failed` and rejects the ticket, even
+    /// when the run has settled since the publish started: Node's rejection path does the same. After settlement,
+    /// a record writes nothing and rejects with the run error.
     pub fn artifact_publish_settled(
         &mut self,
         instance: &Ref,
@@ -630,6 +628,11 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
 
     /// Node `rememberArtifactRow`, over the completed artifact rows on resume: the id's kind, spec, version
     /// count and primary flag. Failed rows claim nothing.
+    ///
+    /// Record contract at the `Value` boundary: `result` is the record this engine stored. A content version is the
+    /// driver's record with `kind`; a preset declaration is `preset_record` with `kind` and `spec`. A completed row
+    /// without a string `kind` is not a record this engine writes: it is skipped with a warning (Node skips it
+    /// silently), so a corrupt row cannot claim an id.
     pub(crate) fn restore_artifacts(&mut self, rows: &[NodeRow]) {
         for row in rows.iter().filter(|row| row.kind == NodeKind::Artifact) {
             if row.status != NodeStatus::Completed {
@@ -642,6 +645,11 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
                 continue;
             }
             let Some(kind) = result.get("kind").and_then(Value::as_str) else {
+                tracing::warn!(
+                    run_id = %self.run_id,
+                    artifact_id = id,
+                    "completed artifact row has no kind; not restored"
+                );
                 continue;
             };
             let existing = self.artifacts.get(id).cloned();
