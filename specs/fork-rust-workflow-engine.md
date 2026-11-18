@@ -1020,6 +1020,33 @@ Tests for 2c-2a (written first; red recorded in the commit message and the repor
 
 As built (2c-2a): `crates/workflow/src/actor_turns.rs`: `TurnRunner` (one model turn; `Send + Sync`), `MailboxTurns` (the `ActorTurns` implementation: one thread per ask, a per-instance cancel flag), and `run_ask` (the turn, then `turn_ended`; `Nudge` starts a turn with `NUDGE_PROMPT`; any other verdict ends the thread; a turn error is reported with `turn_failed` unless the ask was cancelled; a cancelled turn reports nothing). `ActorRequest::TurnFailed` and `ActorHandle::turn_failed` carry the failure; `ActorDriverOwner::turn_failed` calls the engine's `ask_failed` with `DriverError`. `reject_parked` and `deliver_answer` return an error until 2c-3. Tests: `actor_turns_tests.rs`, three cases (nudge then settlement with the nudge prompt; a refused turn fails the ask with its text; a cancelled turn sends no turn end). Red: the module was missing, so the first run failed to compile; the first real run hung in the cancel case because the test had not drained the owner, so the turn never started (a test error, fixed by adding `drain`). Box: workflow lib 109 pass; fmt and clippy clean. `crates/agents` is not touched by this part.
 
+### 9.8e W6a part 2c-2b: the agents-side TurnRunner (design, split)
+
+Status: started on `feat/rust-workflow-agent-turn-runner`, stacked on fork (4d7efae74 = #539 merged). Gate off. This section records a design decision that is open; no code is in this part.
+
+**What the runner must do.** One model turn of an actor's ask on the child session: `run_turn(session, prompt, cancel)` returns the turn's final text, or an error text. The existing machinery is `spawn::resume` (appends a user message to a stored child and commits a turn) and `spawn::drive` (runs the model loop until the run ends, returning `Finished { ending, report, error }`).
+
+**Two things the code shows that the design must respect.**
+
+1. A child agent needs a full `LiveAgent` (`crates/agents/src/live.rs`, about 25 fields). Several are fork or background specific: `owner`, `tool_use`, `execution_worktree`, `off_peak_execution`, `background`, `asks`, `delivered`, `fork_prefix`, `stopped_by_user`. An actor child is none of those. A constructor for an actor (`LiveAgent::for_actor`) must set each field to Node's actor value, and the reason for each non-default value must be written down.
+2. `Ending` and `Report` are `pub(crate)` in `agents`. A bridge in another crate cannot name them, so the bridge has to call a function that is inside `agents`.
+
+**The open decision: which crate hosts the bridge.** `workflow` cannot depend on `agents` (the engine would pull in the whole agent machinery, and the engine's rule is to read no clock and run no I/O). `agents` cannot depend on `workflow` (the turn runner would need the `TurnRunner` trait from `workflow`, and the dependency would point the wrong way). The bridge therefore has to sit in a crate that sees both, and there are two options:
+
+- **Option A: a new `actor_turns` crate** (depends on `workflow` and `agents`). It implements `workflow::actor_turns::TurnRunner` by calling a public `agents` entry point. It is clean, and the new crate is small. Cost: one new workspace member, so `Cargo.lock` gets a new package entry, which is hand-edited.
+- **Option B: the bridge lives in `protocol-zcode`** (the host, which already depends on `agents` and is where the runtime is assembled). Cost: the host gains a dependency on `workflow`. This is the wiring point the spec already names for W7, so it is the natural home for the gate later.
+
+Recommendation: A for 2c-2b, so the bridge can be tested without the host. The coordinator should decide before the code is written.
+
+**Proposed sub-split of 2c-2b (after the decision):**
+
+- **2c-2b-1: `agents` public entry for an actor turn.** `pub` function that takes the ids, the selection and the workspace, and returns `Result<String, String>` (the final text, or the failure text). Result mapping: `Ending::Completed` and no error gives the report text. `Failed` or an error gives the failure text. `Killed`, `KilledParked` and `KilledByUser` give a "stopped" error, which the loop reads as cancelled when its flag is set. The mapping is checked against Node's `executeTurn` result before it is written; I have not read that path yet.
+- **2c-2b-2: `LiveAgent::for_actor`.** The constructor, with one line per field recording its actor value. Tests use the agents test support.
+- **2c-2b-3: the bridge crate** (Option A or B) implementing `TurnRunner`, with a scripted-model test: one turn ends with text, one turn fails, one turn is cancelled.
+- **2c-2b-4: permission origin and session-scoped grants** (`ChildSink::with_origin`, `actor_interaction_description`, "always allow" for the session). Node: `workflow-actor-permission.ts`.
+
+**What is not done here.** Nothing is compiled or tested in this part. The Node result path and the permission origin are not read yet; both are listed as open in the sub-split.
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.
