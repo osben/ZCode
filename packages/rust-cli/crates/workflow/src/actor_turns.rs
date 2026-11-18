@@ -194,13 +194,21 @@ fn run_ask(
         }
         // The count the turn captured when it finished (see `TurnRunner::message_boundary`). A panic in the read is an
         // unknown count, so the turn's end below is reported either way.
-        let boundary = panic::catch_unwind(AssertUnwindSafe(|| runner.message_boundary(session)))
-            .unwrap_or(None);
+        let boundary = match panic::catch_unwind(AssertUnwindSafe(|| {
+            runner.message_boundary(session)
+        })) {
+            Ok(boundary) => boundary,
+            Err(payload) => {
+                tracing::warn!(%session, panic = %panic_text(payload.as_ref()), "an actor's message count read panicked; the count is unknown");
+                None
+            }
+        };
         // Node `reportTurnObservations`: the turn's stats before its end. The counts are summed over the ask so far (Node
         // resets them at the ask's start and keeps them across nudges); tokens and turns are the turn's, and a failed
         // usage read takes Node's defaults, 0 tokens and 1 turn.
         // A panic in the stats read counts as no stats, and the turn's end is still reported.
-        let stats = panic::catch_unwind(AssertUnwindSafe(|| runner.turn_stats(session))).unwrap_or(None);
+        let stats =
+            panic::catch_unwind(AssertUnwindSafe(|| runner.turn_stats(session))).unwrap_or(None);
         if let Some(stats) = stats {
             tool_calls += stats.tool_calls;
             world_tool_calls += stats.world_tool_calls;

@@ -460,8 +460,9 @@ impl Live {
     }
 
     /// A workflow actor's turn ends: the entry is finished with `ending`, its submit port is cleared, the turn's
-    /// counts are kept, and the message count it captured is kept, in one lock section. A later turn's begin (which
-    /// installs its own port) cannot be overtaken by this end's clear.
+    /// counts are kept, and `last_turn_messages` is recorded, all in the same lock section. The count is recorded here,
+    /// not after the lock is released, so a Finished entry is never observed without the count its turn captured. A
+    /// later turn's begin (which installs its own port) cannot be overtaken by this end's clear.
     pub(crate) fn finish_actor_turn(
         &self,
         agent: &AgentId,

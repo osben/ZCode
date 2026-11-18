@@ -3,7 +3,7 @@
 use crate::actor_mailbox::ActorMailbox;
 use crate::actor_sessions::ActorTurns;
 use crate::actor_turns::{MailboxTurns, TurnInput, TurnRunner, TurnStats, TurnUsage};
-use crate::driver_owner::{ActorDriverOwner, ActorSessionRequest, ActorSessions};
+use crate::driver_owner::{ActorDriverOwner, ActorSessionRequest, ActorSessions, TurnEndReply};
 use crate::driver_owner_tests::config;
 use crate::driver_rules::NUDGE_PROMPT;
 use crate::engine::AskMessage;
@@ -489,30 +489,55 @@ impl TurnRunner for PanickingCount {
     }
 }
 
-#[test]
-fn a_panicking_count_read_still_reports_the_turn_end() {
-    let (mut owner, mailbox, actor) = owner_over(Arc::new(PanickingCount));
-    owner.ask("site", &actor, "do it").expect("ask");
-    owner.drain().expect("drain");
-    // Poll instead of blocking on the mailbox: a run where the turn's end never arrives must fail, not hang.
-    let mut request = None;
+/// The next request the turn sent, polled rather than blocked on: a run where it never arrives must fail, not hang.
+fn next_request(mailbox: &ActorMailbox) -> Option<crate::actor_mailbox::ActorRequest> {
     for _ in 0..500 {
         if let Some(found) = mailbox.try_take() {
-            request = Some(found);
-            break;
+            return Some(found);
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    match request {
-        Some(crate::actor_mailbox::ActorRequest::TurnEnded {
-            session,
-            text,
-            reply,
-        }) => {
-            let verdict = owner.turn_ended(&session, &text);
-            assert!(verdict.is_ok(), "the turn's end is answered: {verdict:?}");
-            let _ = reply.send(verdict);
+    None
+}
+
+#[test]
+fn a_panicking_count_read_still_reports_the_turn_end_and_settles_without_a_boundary() {
+    let (mut owner, mailbox, actor) = owner_over(Arc::new(PanickingCount));
+    owner.ask("site", &actor, "do it").expect("ask");
+    owner.drain().expect("drain");
+    // A typed ask nudges once, so the turn end is answered until the ask settles, whichever turn settles it.
+    let mut settled = false;
+    for _ in 0..2 {
+        match next_request(&mailbox) {
+            Some(crate::actor_mailbox::ActorRequest::TurnEnded {
+                session,
+                text,
+                reply,
+            }) => {
+                let verdict = owner.turn_ended(&session, &text);
+                assert!(verdict.is_ok(), "the turn's end is answered: {verdict:?}");
+                settled = matches!(verdict, Ok(TurnEndReply::AskEnded));
+                let _ = reply.send(verdict);
+                if settled {
+                    break;
+                }
+            }
+            _ => panic!("the turn's end was never reported after the count read panicked"),
         }
-        _ => panic!("the turn's end was never reported after the count read panicked"),
     }
+    assert!(settled, "the ask settles once its turns end");
+    assert_eq!(
+        owner.take_outcomes().len(),
+        1,
+        "the settled ask is reported once"
+    );
+    // An unknown count writes no boundary: no MessageBoundary request follows the settlement.
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    assert!(
+        !matches!(
+            mailbox.try_take(),
+            Some(crate::actor_mailbox::ActorRequest::MessageBoundary { .. })
+        ),
+        "an unknown count sends no message boundary"
+    );
 }

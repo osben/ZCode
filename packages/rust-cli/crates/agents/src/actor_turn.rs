@@ -186,7 +186,7 @@ impl crate::Agents {
 
     /// The message count of a child session, read from the store (Node `journalAskMessageBoundary`'s count). None when
     /// the session cannot be read. Called when a turn finishes, before its live entry is released.
-    pub async fn child_message_count(&self, child: &SessionId) -> Option<u64> {
+    pub(crate) async fn child_message_count(&self, child: &SessionId) -> Option<u64> {
         let loaded = match self.core.ports.store.load(child).await {
             Ok(loaded) => loaded,
             Err(error) => {
@@ -347,7 +347,8 @@ impl crate::Agents {
             match spawn::resume(core, &entry, prompt, UserOrigin::Human, epilogue_start).await {
                 Ok(opening) => opening,
                 Err(error) => {
-                    core.live.finish_actor_turn(&agent_id, Ending::Failed, None, None);
+                    core.live
+                        .finish_actor_turn(&agent_id, Ending::Failed, None, None);
                     return ActorTurnEnd::Failed(error.to_string());
                 }
             };
