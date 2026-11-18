@@ -60,16 +60,17 @@ fn a_subagent_remember_still_goes_to_the_project_rules() {
     use rust_cli_kernel_api::ids::{AgentId, SessionId};
     use rust_cli_kernel_api::orchestration::AskOrigin;
     let mut request = permission();
-    if let InteractionRequest::Permission { origin, .. } = &mut request {
-        *origin = Some(Box::new(AskOrigin {
-            agent: AgentId::new("actor-child"),
-            agent_type: "general-purpose".to_owned(),
-            child_session: SessionId::new("sess_child"),
-            parent_session: SessionId::new("sess_parent"),
-            description: "Ada (site@1)".to_owned(),
-            parent_tool_use: None,
-        }));
-    }
+    let InteractionRequest::Permission { origin, .. } = &mut request else {
+        panic!("the fixture is a permission ask");
+    };
+    *origin = Some(Box::new(AskOrigin {
+        agent: AgentId::new("actor-child"),
+        agent_type: "general-purpose".to_owned(),
+        child_session: SessionId::new("sess_child"),
+        parent_session: SessionId::new("sess_parent"),
+        description: "Ada (site@1)".to_owned(),
+        parent_tool_use: None,
+    }));
     let rule = PermissionRule {
         tool: "Bash".to_owned(),
         content: Some("git status:*".to_owned()),

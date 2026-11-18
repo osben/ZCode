@@ -135,7 +135,13 @@ impl Bench {
         let (progress, _updates) = mpsc::channel(64);
         let output = self
             .pipeline
-            .execute(tool, input, context, progress)
+            .execute(
+                tool,
+                input,
+                context,
+                progress,
+                rust_cli_kernel_api::orchestration::no_tool_start(),
+            )
             .await
             .output;
         let text = output

@@ -34,6 +34,7 @@ impl ToolExecutor for DenyTools {
         _input: Value,
         _context: ToolUseContext,
         _progress: mpsc::Sender<ToolProgress>,
+        _started: Arc<dyn rust_cli_kernel_api::orchestration::ToolStart>,
     ) -> ToolExecution {
         ToolExecution::output(ToolOutput {
             content: vec![rust_cli_kernel_api::message::ToolResultContent::Text {

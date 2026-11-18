@@ -20,6 +20,7 @@ use rust_cli_kernel_api::tool::PromptContext;
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
+use super::tests::StartCount;
 use super::*;
 
 /// 回显 `command` 的工具；schema 要求 `command` 是字符串。
@@ -166,6 +167,7 @@ async fn run_ordered(
             json!({"command": "ls"}),
             context(asked.clone()),
             progress,
+            rust_cli_kernel_api::orchestration::no_tool_start(),
         )
         .await;
     let events = hooks.seen.lock().unwrap().drain(..).collect();
@@ -596,6 +598,7 @@ async fn a_stopped_call_is_an_interrupted_failure_that_keeps_its_display() {
             json!({}),
             context(Arc::new(ScriptedInteractions::allowing())),
             progress,
+            rust_cli_kernel_api::orchestration::no_tool_start(),
         )
         .await;
     let output = &execution.output;
@@ -706,6 +709,7 @@ async fn under_node_hooks_a_failure_names_its_error_type() {
                     json!({}),
                     context(Arc::new(ScriptedInteractions::allowing())),
                     progress,
+                    rust_cli_kernel_api::orchestration::no_tool_start(),
                 )
                 .await;
             let events = hooks.seen.lock().unwrap().clone();
@@ -755,6 +759,7 @@ async fn under_node_hooks_a_cancel_without_a_tool_message_sends_the_fallback() {
             json!({}),
             context(Arc::new(ScriptedInteractions::allowing())),
             progress,
+            rust_cli_kernel_api::orchestration::no_tool_start(),
         )
         .await;
     let events = hooks.seen.lock().unwrap().clone();
@@ -861,6 +866,7 @@ async fn run_rows(
             json!({"command": "ls"}),
             context(asked.clone()),
             progress,
+            rust_cli_kernel_api::orchestration::no_tool_start(),
         )
         .await;
     let events = hooks.seen.lock().unwrap().drain(..).collect();
@@ -944,4 +950,42 @@ async fn without_the_switch_the_execution_carries_no_dispatch() {
     )
     .await;
     assert!(ran.execution.hook_invocations.is_empty());
+}
+
+/// Node `call-runner.ts`: `ToolCallStarted` follows the hooks and the permission check, so a PreToolUse refusal
+/// signals no start, and the handler does not run.
+#[tokio::test]
+async fn a_hook_refused_call_never_signals_its_start() {
+    let starts = Arc::new(StartCount::default());
+    let gate = Gate::new(
+        PermissionDecision::Allow {
+            updated_input: None,
+        },
+        None,
+    );
+    let refused = HookOutcome {
+        decision: Some(PermissionDecision::Deny {
+            message: "frozen".to_owned(),
+        }),
+        prevent_continuation: true,
+        ..HookOutcome::default()
+    };
+    let hooks = Arc::new(Hooks {
+        outcomes: HashMap::from([(HookEventName::PreToolUse, refused)]),
+        ..Hooks::default()
+    });
+    let asked = Arc::new(ScriptedInteractions::allowing());
+    let pipeline = Pipeline::new(gate, hooks);
+    let (progress, _updates) = mpsc::channel(4);
+    let execution = pipeline
+        .execute(
+            Arc::new(Echo),
+            json!({"command": "ls"}),
+            context(asked),
+            progress,
+            starts.clone(),
+        )
+        .await;
+    assert_eq!(text(&execution.output), "frozen");
+    assert_eq!(starts.0.load(std::sync::atomic::Ordering::SeqCst), 0);
 }

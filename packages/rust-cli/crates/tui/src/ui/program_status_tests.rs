@@ -166,6 +166,7 @@ fn the_root_follows_asks_turns_and_seen_outcomes() {
         &mut app,
         KernelEvent::InteractionResolved {
             interaction: InteractionId::new("i1"),
+            denied: false,
         },
     );
     assert_eq!(root(&app).state, State::Working);

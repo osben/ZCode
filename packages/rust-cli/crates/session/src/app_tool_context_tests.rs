@@ -37,6 +37,57 @@ fn asked(event: &KernelEvent) -> bool {
     matches!(event, KernelEvent::InteractionAsked { .. })
 }
 
+/// Every answer that refuses the call journals as denied, so the replayed card settles cancelled: `Deny`, and the
+/// refusals nobody typed (`-p` with no prompt, a background subagent with no prompts).
+#[tokio::test]
+async fn every_refusal_answer_journals_as_denied() {
+    for refusal in [
+        PermissionAnswer::Deny { feedback: None },
+        PermissionAnswer::Unavailable,
+        PermissionAnswer::NoPrompts,
+    ] {
+        let built = Setup::new(Arc::new(ScriptedModel::new(Vec::new())))
+            .build()
+            .await;
+        let session = Arc::new(built.session);
+        let mut events = session.subscribe(Some(0));
+        let context = session
+            .app_tool_context(ToolUseId::new("tu_app"), CancellationToken::new())
+            .await
+            .expect("open session");
+        let asking = {
+            let interactions = context.interactions.clone();
+            tokio::spawn(async move { interactions.ask(permission("tu_app")).await })
+        };
+        let seen = until(&mut events, asked).await;
+        let Some(KernelEvent::InteractionAsked { interaction, .. }) = seen.last() else {
+            unreachable!()
+        };
+        let interaction = interaction.clone();
+        session
+            .send(envelope(
+                "c2",
+                Command::ResolveInteraction {
+                    interaction,
+                    answer: refusal.clone().into(),
+                },
+            ))
+            .await;
+        let seen = until(&mut events, |event| {
+            matches!(event, KernelEvent::InteractionResolved { .. })
+        })
+        .await;
+        assert!(
+            matches!(
+                seen.last(),
+                Some(KernelEvent::InteractionResolved { denied: true, .. })
+            ),
+            "{refusal:?} must journal as denied: {seen:?}"
+        );
+        let _ = asking.await;
+    }
+}
+
 #[tokio::test]
 async fn an_app_call_context_is_the_sessions_and_its_prompt_is_a_session_ask() {
     let built = Setup::new(Arc::new(ScriptedModel::new(Vec::new())))
@@ -143,7 +194,7 @@ async fn an_app_prompt_outlives_the_turn_that_was_running_when_it_was_asked() {
     assert!(
         !seen.iter().any(|event| matches!(
             event,
-            KernelEvent::InteractionResolved { interaction: resolved } if *resolved == interaction
+            KernelEvent::InteractionResolved { interaction: resolved, .. } if *resolved == interaction
         )),
         "{seen:?}"
     );

@@ -346,8 +346,9 @@ fn permission_asks_mark_the_tool_and_resolve() {
         independent: false,
         session_allow: false,
     };
+    // The 2c-4f order: the call is scheduled, then its permission ask arrives, and only admission starts it.
     feed.push(started())
-        .push(KernelEvent::ToolStarted {
+        .push(KernelEvent::ToolScheduled {
             tool_use: ToolUseId::new("tu1"),
             name: "Bash".into(),
             input: json!({"command": "rm x"}),
@@ -363,11 +364,118 @@ fn permission_asks_mark_the_tool_and_resolve() {
     );
     feed.push(KernelEvent::InteractionResolved {
         interaction: InteractionId::new("i1"),
+        denied: false,
     });
     assert!(feed.view.pending().is_none());
     assert_eq!(
         feed.view.rows()[1].tool().unwrap().status,
         ToolStatus::Running
+    );
+}
+
+#[test]
+fn a_denied_permission_settles_the_card_cancelled_and_the_rejection_keeps_it() {
+    let mut feed = Feed::new();
+    let ask = InteractionRequest::Permission {
+        origin: None,
+        machine: Default::default(),
+        tool_use: ToolUseId::new("tu1"),
+        tool: "Bash".into(),
+        input: json!({"command": "rm x"}),
+        message: "rm needs approval".into(),
+        suggestions: Vec::new(),
+        rule_seed: None,
+        asked_by: None,
+        once: false,
+        independent: false,
+        session_allow: false,
+    };
+    // The 2c-4f order: scheduled before the permission check, never started.
+    feed.push(started())
+        .push(KernelEvent::ToolScheduled {
+            tool_use: ToolUseId::new("tu1"),
+            name: "Bash".into(),
+            input: json!({"command": "rm x"}),
+        })
+        .push(KernelEvent::InteractionAsked {
+            interaction: InteractionId::new("i1"),
+            request: ask,
+        })
+        .push(KernelEvent::InteractionResolved {
+            interaction: InteractionId::new("i1"),
+            denied: true,
+        });
+    assert!(feed.view.pending().is_none());
+    assert_eq!(
+        feed.view.rows()[1].tool().unwrap().status,
+        ToolStatus::Cancelled
+    );
+    // The rejection result arrives as an error ToolDone; it must not turn the card into Error.
+    feed.push(KernelEvent::ToolDone {
+        tool_use: ToolUseId::new("tu1"),
+        output: ToolOutput {
+            content: vec![ToolResultContent::Text {
+                text: "denied".into(),
+            }],
+            is_error: true,
+            display: serde_json::Value::Null,
+        },
+    });
+    assert_eq!(
+        feed.view.rows()[1].tool().unwrap().status,
+        ToolStatus::Cancelled
+    );
+}
+
+#[test]
+fn a_scheduled_call_shows_a_pending_card_before_its_ask() {
+    let mut feed = Feed::new();
+    feed.push(started()).push(KernelEvent::ToolScheduled {
+        tool_use: ToolUseId::new("tu1"),
+        name: "Bash".into(),
+        input: json!({"command": "ls"}),
+    });
+    assert_eq!(feed.view.rows().len(), 2);
+    assert_eq!(
+        feed.view.rows()[1].tool().unwrap().status,
+        ToolStatus::Pending
+    );
+}
+
+#[test]
+fn a_scheduled_call_keeps_the_state_of_a_card_that_already_exists() {
+    let mut feed = Feed::new();
+    feed.push(started())
+        .push(KernelEvent::ToolStarted {
+            tool_use: ToolUseId::new("tu1"),
+            name: "Bash".into(),
+            input: json!({"command": "ls"}),
+        })
+        .push(KernelEvent::ToolScheduled {
+            tool_use: ToolUseId::new("tu1"),
+            name: "Bash".into(),
+            input: json!({"command": "ls -l"}),
+        });
+    assert_eq!(feed.view.rows().len(), 2);
+    assert_eq!(
+        feed.view.rows()[1].tool().unwrap().status,
+        ToolStatus::Running
+    );
+}
+
+#[test]
+fn a_never_admitted_card_settles_cancelled_at_turn_end() {
+    let mut feed = Feed::new();
+    feed.push(started())
+        .push(KernelEvent::ToolScheduled {
+            tool_use: ToolUseId::new("tu1"),
+            name: "Bash".into(),
+            input: json!({"command": "ls"}),
+        })
+        .push(finished(TurnOutcome::Success));
+    assert_eq!(
+        feed.view.rows()[1].tool().unwrap().status,
+        ToolStatus::Cancelled
     );
 }
 

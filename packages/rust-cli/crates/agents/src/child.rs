@@ -67,7 +67,8 @@ pub(crate) struct RunStats {
 
 impl RunStats {
     /// A tool call started, counted from the started event as Node counts `ToolCallStarted`. Until 2c-4f, rejected calls
-    /// are counted too: the started event came before the permission check. From 2c-4f on, it follows admission.
+    /// were counted too (the started event came before the permission check); from 2c-4f on, the started event follows
+    /// admission, and a call that a hook, the permission check or the schema check refuses is not counted.
     pub(crate) fn tool_started(&mut self, name: &str) {
         self.tool_calls += 1;
         if is_world_touching(name) {

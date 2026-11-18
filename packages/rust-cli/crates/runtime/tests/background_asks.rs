@@ -358,7 +358,10 @@ mod background_asks {
         .await;
         assert!(matches!(ack, Ack::Accepted { .. }), "{ack:?}");
         let resolved = next(&mut run.events, "the withdrawn ask", |event| match event {
-            KernelEvent::InteractionResolved { interaction } => Some(interaction.clone()),
+            KernelEvent::InteractionResolved {
+                interaction,
+                denied: true,
+            } => Some(interaction.clone()),
             _ => None,
         })
         .await;
@@ -374,7 +377,10 @@ mod background_asks {
         // `/clear`：父会话关闭，待回答的交互全部取消；子代理按拒绝处理，照样跑完。
         run.session.close(EndReason::Clear).await;
         let resolved = next(&mut run.events, "the cancelled ask", |event| match event {
-            KernelEvent::InteractionResolved { interaction } => Some(interaction.clone()),
+            KernelEvent::InteractionResolved {
+                interaction,
+                denied: true,
+            } => Some(interaction.clone()),
             _ => None,
         })
         .await;

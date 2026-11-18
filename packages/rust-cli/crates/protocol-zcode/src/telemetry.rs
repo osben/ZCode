@@ -253,6 +253,12 @@ impl Telemetry {
                 self.request_started(*response, at, &mut out);
                 self.tool_scheduled(tool_use.as_str(), name, at, &mut out);
             }
+            // The call is scheduled before its permission check: the scheduled fact is recorded here, so a call
+            // that is refused still has one and ends as a failed tool. Started (below) only counts a call that ran.
+            KernelEvent::ToolScheduled { tool_use, name, .. } => {
+                self.release_held(at, &mut out);
+                self.tool_scheduled(tool_use.as_str(), name, at, &mut out);
+            }
             KernelEvent::ToolStarted { tool_use, name, .. } => {
                 self.release_held(at, &mut out);
                 self.tool_scheduled(tool_use.as_str(), name, at, &mut out);

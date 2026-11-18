@@ -109,12 +109,24 @@ impl Actor {
             waiting = !pending.reply.is_closed(),
             "interaction resolved"
         );
+        // Every answer that refuses the call: a typed Deny, and the refusals nobody typed (`-p` with no prompt,
+        // a background subagent with no prompts). Allow and AllowSession let it run.
+        let denied = matches!(
+            answer,
+            Answer::Permission(
+                PermissionAnswer::Deny { .. }
+                    | PermissionAnswer::Unavailable
+                    | PermissionAnswer::NoPrompts
+            )
+        );
         let _ = pending.reply.send(Ok(InteractionAnswer {
             interaction: interaction.clone(),
             answer,
         }));
-        self.log
-            .append(KernelEvent::InteractionResolved { interaction });
+        self.log.append(KernelEvent::InteractionResolved {
+            interaction,
+            denied,
+        });
         accepted()
     }
 
@@ -164,6 +176,7 @@ impl Actor {
         tracing::info!(event = "interaction.cancelled", session = %self.meta.id, interaction = %pending.id, "interaction cancelled");
         self.log.append(KernelEvent::InteractionResolved {
             interaction: pending.id,
+            denied: true,
         });
     }
 }

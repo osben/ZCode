@@ -9,6 +9,7 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 
+use async_trait::async_trait;
 use futures_util::future::{BoxFuture, FutureExt, join};
 use futures_util::stream::{FuturesUnordered, StreamExt};
 use rust_cli_kernel_api::abort::AbortReason;
@@ -19,13 +20,14 @@ use rust_cli_kernel_api::message::{
     ContentBlock, Message, READ_TRUNCATION_NOTICE, ToolResultContent, UserMessage, UserOrigin,
 };
 use rust_cli_kernel_api::metering::{CallStatus, ToolCall};
-use rust_cli_kernel_api::orchestration::{QueryEvent, ToolExecution};
+use rust_cli_kernel_api::orchestration::{QueryEvent, ToolExecution, ToolStart};
 use rust_cli_kernel_api::tool::{InterruptBehavior, Tool, ToolOutput, ToolUseContext};
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::RunScope;
+use crate::RunSink;
 use crate::ToolHookContexts;
 use crate::mcp_wait;
 use crate::texts;
@@ -564,15 +566,23 @@ async fn execute(
             run: scope.run.clone(),
         },
     );
-    tracing::debug!(event = "tool.start", session = %scope.session, tool_use = %id, tool = %name, "tool started");
+    tracing::debug!(event = "tool.scheduled", session = %scope.session, tool_use = %id, tool = %name, "tool scheduled");
+    // The call is scheduled before hooks and the permission check (Node `ToolCallScheduled`): its card exists from here.
     let _ = scope
         .sink
-        .emit(QueryEvent::ToolStarted {
+        .emit(QueryEvent::ToolScheduled {
             tool_use: id.clone(),
-            name,
+            name: name.clone(),
             input: input.clone(),
         })
         .await;
+    // It starts only once admitted (Node `ToolCallStarted`, after the permission check): the pipeline calls this.
+    let started = Arc::new(StartSignal::new(
+        scope.sink.clone(),
+        id.clone(),
+        name,
+        input.clone(),
+    ));
     // 会话现在的模式与工作目录：一次读取（工作线 F134：以前分两次问会话 actor）。
     let view = scope.view().await;
     let context = ToolUseContext {
@@ -593,7 +603,10 @@ async fn execute(
         operation,
     };
     let (progress, mut updates) = mpsc::channel(PROGRESS);
-    let run = scope.parts.executor.execute(tool, input, context, progress);
+    let run = scope
+        .parts
+        .executor
+        .execute(tool, input, context, progress, started);
     let forward = async {
         while let Some(progress) = updates.recv().await {
             let event = QueryEvent::ToolProgress {
@@ -605,6 +618,56 @@ async fn execute(
     };
     let (output, ()) = join(run, forward).await;
     output
+}
+
+/// 调用通过准入后发出 `ToolStarted`（Node `ToolCallStarted` 在权限之后）；被拒绝的调用从不调用它。只发一次：
+/// 第一次 `started` 取走载荷，之后的调用什么也不做，并且准入之后不再持有克隆的输入。
+struct StartSignal {
+    sink: Arc<dyn RunSink>,
+    pending: std::sync::Mutex<Option<StartedCall>>,
+}
+
+/// What `ToolStarted` carries, held until the call is admitted.
+struct StartedCall {
+    tool_use: ToolUseId,
+    name: String,
+    input: Value,
+}
+
+impl StartSignal {
+    fn new(sink: Arc<dyn RunSink>, tool_use: ToolUseId, name: String, input: Value) -> Self {
+        Self {
+            sink,
+            pending: std::sync::Mutex::new(Some(StartedCall {
+                tool_use,
+                name,
+                input,
+            })),
+        }
+    }
+}
+
+#[async_trait]
+impl ToolStart for StartSignal {
+    async fn started(&self) {
+        // The guard is dropped before the emit, so no lock is held across the await.
+        let call = self
+            .pending
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        let Some(call) = call else {
+            return;
+        };
+        let _ = self
+            .sink
+            .emit(QueryEvent::ToolStarted {
+                tool_use: call.tool_use,
+                name: call.name,
+                input: call.input,
+            })
+            .await;
+    }
 }
 
 #[cfg(test)]

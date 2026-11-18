@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use rust_cli_base::models::GLM_4_6;
 use rust_cli_kernel_api::env::{EnvPath, OperationContext, Origin, WorkspaceRef};
 use rust_cli_kernel_api::ids::{EnvironmentId, Generation, OperationId, RunId, SessionId};
+use rust_cli_kernel_api::orchestration::no_tool_start;
 use rust_cli_kernel_api::orchestration::{
     HookEvent, HookEventName, HookOutcome, HookRunner, InteractionRequest, PermissionAnswer,
     PermissionGate,
@@ -70,7 +71,13 @@ async fn run(
     let pipeline = Pipeline::new(Arc::new(FixedGate(decision)), hooks.clone());
     let (progress, _updates) = mpsc::channel(4);
     let output = pipeline
-        .execute(Arc::new(tool), input, context(answer), progress)
+        .execute(
+            Arc::new(tool),
+            input,
+            context(answer),
+            progress,
+            no_tool_start(),
+        )
         .await
         .output;
     let events = hooks.0.lock().unwrap().clone();
@@ -117,6 +124,149 @@ async fn a_denied_call_never_runs() {
     assert!(output.is_error);
     assert_eq!(text(&output), "Permission to use Bash has been denied.");
     assert_eq!(events, vec![HookEventName::PreToolUse]);
+}
+
+/// Counts the start signals the pipeline sends.
+#[derive(Default)]
+pub(super) struct StartCount(pub(super) std::sync::atomic::AtomicUsize);
+
+#[async_trait]
+impl ToolStart for StartCount {
+    async fn started(&self) {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// Node's call-runner sends `ToolCallStarted` after the permission check: a refused call is scheduled and finished,
+/// but its start is never signalled; an admitted call signals it exactly once.
+#[tokio::test]
+async fn a_refused_call_never_signals_its_start() {
+    let refused = Arc::new(StartCount::default());
+    let pipeline = Pipeline::new(
+        Arc::new(FixedGate(PermissionDecision::Deny {
+            message: "Permission to use Bash has been denied.".to_owned(),
+        })),
+        Arc::new(RecordingHooks::default()),
+    );
+    let (progress, _updates) = mpsc::channel(4);
+    let execution = pipeline
+        .execute(
+            Arc::new(FakeTool::new("Bash", false, "out")),
+            json!({}),
+            context(allow()),
+            progress,
+            refused.clone(),
+        )
+        .await;
+    assert!(execution.output.is_error);
+    assert_eq!(refused.0.load(std::sync::atomic::Ordering::SeqCst), 0);
+
+    // Input that fails the schema is refused before any hook or permission check, so it never starts either.
+    let malformed = Arc::new(StartCount::default());
+    let pipeline = Pipeline::new(
+        Arc::new(FixedGate(PermissionDecision::Allow {
+            updated_input: None,
+        })),
+        Arc::new(RecordingHooks::default()),
+    );
+    let (progress, _updates) = mpsc::channel(4);
+    let execution = pipeline
+        .execute(
+            Arc::new(FakeTool::new("Bash", false, "out")),
+            json!("not an object"),
+            context(allow()),
+            progress,
+            malformed.clone(),
+        )
+        .await;
+    assert!(execution.output.is_error);
+    assert_eq!(malformed.0.load(std::sync::atomic::Ordering::SeqCst), 0);
+
+    let admitted = Arc::new(StartCount::default());
+    let pipeline = Pipeline::new(
+        Arc::new(FixedGate(PermissionDecision::Allow {
+            updated_input: None,
+        })),
+        Arc::new(RecordingHooks::default()),
+    );
+    let (progress, _updates) = mpsc::channel(4);
+    pipeline
+        .execute(
+            Arc::new(FakeTool::new("Bash", false, "out")),
+            json!({}),
+            context(allow()),
+            progress,
+            admitted.clone(),
+        )
+        .await;
+    assert_eq!(admitted.0.load(std::sync::atomic::Ordering::SeqCst), 1);
+}
+
+/// The start is signalled after admission and before the call runs, and before any progress the call reports. Both
+/// the tool and the start callback write one shared log, so the order is the order they ran in.
+#[tokio::test]
+async fn the_start_signal_comes_before_the_call_and_its_progress() {
+    struct Logged(Arc<Mutex<Vec<&'static str>>>);
+    #[async_trait]
+    impl Tool for Logged {
+        fn name(&self) -> &str {
+            "Bash"
+        }
+        fn input_schema(&self) -> Value {
+            json!({"type": "object"})
+        }
+        fn description(&self, _context: &rust_cli_kernel_api::tool::PromptContext) -> String {
+            String::new()
+        }
+        async fn call(
+            &self,
+            _input: Value,
+            _context: ToolUseContext,
+            progress: mpsc::Sender<ToolProgress>,
+        ) -> Result<ToolOutput, ToolError> {
+            self.0.lock().unwrap().push("call");
+            let _ = progress
+                .send(ToolProgress {
+                    data: json!({"output": "step"}),
+                })
+                .await;
+            self.0.lock().unwrap().push("progress");
+            Ok(ToolOutput {
+                content: Vec::new(),
+                is_error: false,
+                display: Value::Null,
+            })
+        }
+    }
+    struct StartLog(Arc<Mutex<Vec<&'static str>>>);
+    #[async_trait]
+    impl ToolStart for StartLog {
+        async fn started(&self) {
+            self.0.lock().unwrap().push("started");
+        }
+    }
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let pipeline = Pipeline::new(
+        Arc::new(FixedGate(PermissionDecision::Allow {
+            updated_input: None,
+        })),
+        Arc::new(RecordingHooks::default()),
+    );
+    let (progress, _updates) = mpsc::channel(4);
+    pipeline
+        .execute(
+            Arc::new(Logged(log.clone())),
+            json!({}),
+            context(allow()),
+            progress,
+            Arc::new(StartLog(log.clone())),
+        )
+        .await;
+    assert_eq!(
+        *log.lock().unwrap(),
+        ["started", "call", "progress"],
+        "the start comes first, then the call and its progress"
+    );
 }
 
 #[tokio::test]
@@ -189,7 +339,13 @@ async fn invalid_input_is_rejected_before_any_hook() {
     );
     let (progress, _updates) = mpsc::channel(4);
     let output = pipeline
-        .execute(Arc::new(Strict), json!({}), context(allow()), progress)
+        .execute(
+            Arc::new(Strict),
+            json!({}),
+            context(allow()),
+            progress,
+            no_tool_start(),
+        )
         .await
         .output;
     assert_eq!(
@@ -219,6 +375,7 @@ async fn unparsed_input_is_a_json_input_validation_error_before_any_hook() {
             input,
             context(allow()),
             progress,
+            no_tool_start(),
         )
         .await
         .output;
@@ -290,7 +447,7 @@ async fn always_allow_answers_tell_the_gate_to_reload_the_workspace_rules() {
     let (progress, _updates) = mpsc::channel(4);
     let tool = Arc::new(FakeTool::new("Bash", false, "ran"));
     let output = pipeline
-        .execute(tool, json!({}), context(answer), progress)
+        .execute(tool, json!({}), context(answer), progress, no_tool_start())
         .await
         .output;
     assert_eq!(text(&output), "ran");
@@ -334,7 +491,7 @@ async fn ask_of(
     let (progress, _updates) = mpsc::channel(4);
     let tool = Arc::new(FakeTool::new(tool, false, "ran"));
     let output = pipeline
-        .execute(tool, input, context, progress)
+        .execute(tool, input, context, progress, no_tool_start())
         .await
         .output;
     assert_eq!(text(&output), "ran");
@@ -446,7 +603,13 @@ async fn object_tools_drop_unknown_keys_and_strict_tools_reject_them() {
     });
     let (progress, _updates) = mpsc::channel(4);
     let output = pipeline
-        .execute(lenient.clone(), input.clone(), context(allow()), progress)
+        .execute(
+            lenient.clone(),
+            input.clone(),
+            context(allow()),
+            progress,
+            no_tool_start(),
+        )
         .await
         .output;
     assert!(!output.is_error, "{}", text(&output));
@@ -459,7 +622,13 @@ async fn object_tools_drop_unknown_keys_and_strict_tools_reject_them() {
     });
     let (progress, _updates) = mpsc::channel(4);
     let output = pipeline
-        .execute(strict.clone(), input, context(allow()), progress)
+        .execute(
+            strict.clone(),
+            input,
+            context(allow()),
+            progress,
+            no_tool_start(),
+        )
         .await
         .output;
     assert!(output.is_error);
@@ -495,6 +664,7 @@ async fn subagent_denials_use_the_subagent_text() {
                     json!({}),
                     context,
                     progress,
+                    no_tool_start(),
                 )
                 .await
                 .output
@@ -575,6 +745,7 @@ async fn an_incognito_gate_refuses_a_removed_tool_before_any_hook() {
             json!({}),
             context(allow()),
             progress.clone(),
+            no_tool_start(),
         )
         .await
         .output;
@@ -590,6 +761,7 @@ async fn an_incognito_gate_refuses_a_removed_tool_before_any_hook() {
             json!({}),
             context(allow()),
             progress,
+            no_tool_start(),
         )
         .await
         .output;
@@ -637,6 +809,7 @@ async fn a_tool_the_turn_hides_is_refused_before_any_hook() {
                 json!({}),
                 in_turn(),
                 progress.clone(),
+                no_tool_start(),
             )
             .await
             .output;
@@ -653,6 +826,7 @@ async fn a_tool_the_turn_hides_is_refused_before_any_hook() {
             json!({}),
             in_turn(),
             progress,
+            no_tool_start(),
         )
         .await
         .output;
@@ -704,6 +878,7 @@ async fn a_missing_view_refuses_every_automation_tool_an_ordinary_turn_only_paus
                     ..context(allow())
                 },
                 progress.clone(),
+                no_tool_start(),
             )
         };
         let output = run("CronPauseSelf").await.output;

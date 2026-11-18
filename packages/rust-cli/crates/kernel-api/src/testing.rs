@@ -213,6 +213,8 @@ impl RegistryOverride for NoTools {
     }
 }
 
+/// Refuses every call with an error result, as a refused call is answered: it never reaches admission, so it never
+/// signals its start (unlike [`DirectExecutor`], which models an admitted call). Its `started` argument is unused on purpose.
 pub struct FailingExecutor;
 
 #[async_trait]
@@ -223,6 +225,7 @@ impl ToolExecutor for FailingExecutor {
         _input: Value,
         _context: ToolUseContext,
         _progress: mpsc::Sender<ToolProgress>,
+        _started: Arc<dyn crate::orchestration::ToolStart>,
     ) -> ToolExecution {
         ToolExecution::output(ToolOutput {
             content: vec![ToolResultContent::Text {

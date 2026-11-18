@@ -466,3 +466,66 @@ fn the_protocol_only_set_is_exactly_nodes_session_and_user_interaction_tools() {
         "Read touches the world"
     );
 }
+
+/// A call refused at its permission check is scheduled and then finished with an error, and never starts (Node
+/// counts `ToolCallStarted` only): the child's tool count leaves it out, and the call that ran is counted.
+#[tokio::test]
+async fn a_refused_call_is_scheduled_and_finished_but_not_counted() {
+    let store = Arc::new(MemoryStore::default());
+    let child = SessionId::new("sess_subagent_agent_refused");
+    store
+        .create(SessionMeta {
+            id: child.clone(),
+            kind: SessionKind::Subagent,
+            parent: Some(SessionId::new("sess_parent")),
+            workspace: WorkspaceRef {
+                environment: EnvironmentId::new("local"),
+                root: EnvPath::new("/Users/dev/work"),
+            },
+            title: "refused".to_owned(),
+            trace: TraceId::new("trace"),
+            created_at_ms: 1,
+            incognito: None,
+        })
+        .await
+        .unwrap();
+    let sink = ChildSink::new(
+        store.clone(),
+        Arc::new(SequentialIds::default()),
+        Arc::new(Live::default()),
+        AgentId::new("agent_refused"),
+        child.clone(),
+        MessageId::new("prompt_refused"),
+        None,
+    );
+    sink.emit(QueryEvent::ToolScheduled {
+        tool_use: ToolUseId::new("toolu_bash"),
+        name: "Bash".to_owned(),
+        input: json!({}),
+    })
+    .await;
+    sink.emit(QueryEvent::ToolFinished {
+        tool_use: ToolUseId::new("toolu_bash"),
+        output: rust_cli_kernel_api::tool::ToolOutput {
+            content: Vec::new(),
+            is_error: true,
+            display: serde_json::Value::Null,
+        },
+    })
+    .await;
+    sink.emit(QueryEvent::ToolScheduled {
+        tool_use: ToolUseId::new("toolu_read"),
+        name: "Read".to_owned(),
+        input: json!({}),
+    })
+    .await;
+    sink.emit(QueryEvent::ToolStarted {
+        tool_use: ToolUseId::new("toolu_read"),
+        name: "Read".to_owned(),
+        input: json!({}),
+    })
+    .await;
+    let stats = sink.run_stats();
+    assert_eq!(stats.tool_calls, 1, "only the call that started is counted");
+    assert_eq!(stats.world_tool_calls, 1);
+}

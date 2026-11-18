@@ -12,6 +12,31 @@ use tokio::sync::Notify;
 
 use crate::run::tests::{parts, request, scope};
 
+/// The start is signalled once: a second `started()` emits nothing, so a call cannot start twice.
+#[tokio::test]
+async fn the_start_signal_fires_once() {
+    let sink = Arc::new(rust_cli_kernel_api::testing::RecordingSink::default());
+    let signal = super::StartSignal::new(
+        sink.clone(),
+        rust_cli_kernel_api::ids::ToolUseId::new("toolu_1"),
+        "Bash".into(),
+        json!({"command": "ls"}),
+    );
+    rust_cli_kernel_api::orchestration::ToolStart::started(&signal).await;
+    rust_cli_kernel_api::orchestration::ToolStart::started(&signal).await;
+    let starts = sink
+        .events()
+        .iter()
+        .filter(|event| {
+            matches!(
+                event,
+                rust_cli_kernel_api::orchestration::QueryEvent::ToolStarted { .. }
+            )
+        })
+        .count();
+    assert_eq!(starts, 1);
+}
+
 fn start() -> Result<ModelEvent, ModelError> {
     Ok(ModelEvent::MessageStart {
         id: "msg_api".to_owned(),
@@ -186,10 +211,11 @@ impl rust_cli_kernel_api::orchestration::ToolExecutor for ContextExecutor {
         input: Value,
         context: rust_cli_kernel_api::tool::ToolUseContext,
         progress: tokio::sync::mpsc::Sender<rust_cli_kernel_api::tool::ToolProgress>,
+        started: Arc<dyn rust_cli_kernel_api::orchestration::ToolStart>,
     ) -> rust_cli_kernel_api::orchestration::ToolExecution {
         let name = tool.name().to_owned();
         let mut execution = rust_cli_kernel_api::testing::DirectExecutor
-            .execute(tool, input, context, progress)
+            .execute(tool, input, context, progress, started)
             .await;
         execution.after = vec![
             Message::Attachment(rust_cli_kernel_api::message::AttachmentMessage {
@@ -386,6 +412,7 @@ async fn under_the_node_batch_order_a_read_notice_follows_the_held_contexts() {
             input: Value,
             context: rust_cli_kernel_api::tool::ToolUseContext,
             progress: tokio::sync::mpsc::Sender<rust_cli_kernel_api::tool::ToolProgress>,
+            started: Arc<dyn rust_cli_kernel_api::orchestration::ToolStart>,
         ) -> rust_cli_kernel_api::orchestration::ToolExecution {
             let name = tool.name().to_owned();
             let attachment = |source: &str, text: String| {
@@ -397,7 +424,7 @@ async fn under_the_node_batch_order_a_read_notice_follows_the_held_contexts() {
                 })
             };
             let mut execution = rust_cli_kernel_api::testing::DirectExecutor
-                .execute(tool, input, context, progress)
+                .execute(tool, input, context, progress, started)
                 .await;
             execution.after = vec![
                 attachment("hook_additional_context", format!("ctx {name}")),
@@ -494,9 +521,10 @@ impl rust_cli_kernel_api::orchestration::ToolExecutor for DispatchesExecutor {
         input: Value,
         context: rust_cli_kernel_api::tool::ToolUseContext,
         progress: tokio::sync::mpsc::Sender<rust_cli_kernel_api::tool::ToolProgress>,
+        started: Arc<dyn rust_cli_kernel_api::orchestration::ToolStart>,
     ) -> rust_cli_kernel_api::orchestration::ToolExecution {
         let mut execution = rust_cli_kernel_api::testing::DirectExecutor
-            .execute(tool, input, context, progress)
+            .execute(tool, input, context, progress, started)
             .await;
         execution.hook_invocations = vec![
             dispatch(

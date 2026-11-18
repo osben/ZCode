@@ -42,8 +42,11 @@ impl ToolExecutor for Wrapping {
         input: Value,
         context: ToolUseContext,
         progress: mpsc::Sender<ToolProgress>,
+        started: Arc<dyn rust_cli_kernel_api::orchestration::ToolStart>,
     ) -> ToolExecution {
-        let mut execution = DirectExecutor.execute(tool, input, context, progress).await;
+        let mut execution = DirectExecutor
+            .execute(tool, input, context, progress, started)
+            .await;
         execution.before.push(note("before"));
         execution.after.push(note("after"));
         execution
@@ -103,9 +106,12 @@ impl ToolExecutor for StopsAfterFirst {
         input: Value,
         context: ToolUseContext,
         progress: mpsc::Sender<ToolProgress>,
+        started: Arc<dyn rust_cli_kernel_api::orchestration::ToolStart>,
     ) -> ToolExecution {
         let first = context.tool_use.as_str() == "t1";
-        let mut execution = DirectExecutor.execute(tool, input, context, progress).await;
+        let mut execution = DirectExecutor
+            .execute(tool, input, context, progress, started)
+            .await;
         if first {
             execution
                 .after

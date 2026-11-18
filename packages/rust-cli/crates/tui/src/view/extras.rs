@@ -54,6 +54,8 @@ impl AgentActivity {
             self.notice = None;
         }
         match event {
+            // The scheduled call changes no activity: it has not started (Node `ToolCallScheduled`).
+            QueryEvent::ToolScheduled { .. } => {}
             QueryEvent::ToolStarted {
                 tool_use,
                 name,

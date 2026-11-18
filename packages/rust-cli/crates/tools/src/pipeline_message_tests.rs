@@ -132,7 +132,13 @@ async fn follow_up_messages_come_after_post_tool_use_messages() {
     let pipeline = Pipeline::new(Arc::new(FixedGate::allow()), Arc::new(PostNote));
     let (progress, _updates) = mpsc::channel(4);
     let execution = pipeline
-        .execute(Arc::new(Loader), json!({}), context(), progress)
+        .execute(
+            Arc::new(Loader),
+            json!({}),
+            context(),
+            progress,
+            rust_cli_kernel_api::orchestration::no_tool_start(),
+        )
         .await;
     assert_eq!(
         execution.output.content,

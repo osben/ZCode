@@ -14,7 +14,7 @@ use rust_cli_kernel_api::app_tool::AppToolRefusal;
 use rust_cli_kernel_api::message::ToolResultContent;
 use rust_cli_kernel_api::orchestration::{
     HookEventName, HookRunner, InteractionRequest, PermissionAnswer, PermissionGate, ToolExecution,
-    ToolExecutor,
+    ToolExecutor, ToolStart,
 };
 use rust_cli_kernel_api::permission::{PermissionDecision, PermissionRule};
 use rust_cli_kernel_api::tool::{
@@ -672,6 +672,7 @@ impl ToolExecutor for Pipeline {
         input: Value,
         context: ToolUseContext,
         progress: mpsc::Sender<ToolProgress>,
+        started: Arc<dyn ToolStart>,
     ) -> ToolExecution {
         if self.hidden(tool.as_ref(), &context).await {
             return ToolExecution::output(no_such_tool(tool.name()));
@@ -692,6 +693,8 @@ impl ToolExecutor for Pipeline {
                 return messages.finish(wrapped(refusal.message()), false);
             }
         };
+        // Admitted (hooks and permission passed): the call starts now, before any progress can arrive.
+        started.started().await;
         let output = self
             .call(tool.as_ref(), input, call, progress, &mut messages)
             .await;

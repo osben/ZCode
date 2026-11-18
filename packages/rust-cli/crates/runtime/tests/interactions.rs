@@ -255,9 +255,9 @@ mod interactions {
         assert!(
             seen.iter().any(|event| matches!(
                 event,
-                KernelEvent::InteractionResolved { interaction: resolved } if *resolved == interaction
+                KernelEvent::InteractionResolved { interaction: resolved, denied: true } if *resolved == interaction
             )),
-            "the prompt must close before the cancelled tool ends: {seen:?}"
+            "the prompt must close as denied before the cancelled tool ends: {seen:?}"
         );
         assert!(session.view().await.unwrap().pending.is_empty());
         // 迟到的“总是允许”：被拒绝，不写规则。
@@ -291,6 +291,112 @@ mod interactions {
             matches!(event, KernelEvent::TurnFinished { .. })
         })
         .await;
+    }
+
+    fn scheduled_call(event: &KernelEvent, id: &str) -> bool {
+        matches!(event, KernelEvent::ToolScheduled { tool_use, .. } if tool_use.as_str() == id)
+    }
+
+    fn started_call(event: &KernelEvent, id: &str) -> bool {
+        matches!(event, KernelEvent::ToolStarted { tool_use, .. } if tool_use.as_str() == id)
+    }
+
+    /// Node 的次序（call-runner：权限之后才 `ToolCallStarted`；卡片在调度时就有）：询问出现时调用已有卡片
+    /// （调度）但还没开始；拒绝之后这个调用从不开始，没有 ToolStarted。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_denied_call_is_scheduled_but_never_starts() {
+        let store = Arc::new(MemoryStore::default());
+        let model = Arc::new(ScriptedModel::new(vec![
+            tool_use_response("toolu_read", "Read", &json!({"file_path": "/etc/hosts"})),
+            text_response(&["after the denial"]),
+        ]));
+        let kernel = kernel(model, unsupported_machine(), store);
+        let session = open(&kernel).await;
+        let mut events = session.subscribe(Some(0));
+        session.send(submit("c1", "read the hosts file")).await;
+        let seen = until(&mut events, |event| permission_asked(event).is_some()).await;
+        let interaction = seen.iter().find_map(permission_asked).unwrap();
+        assert!(
+            seen.iter().any(|event| scheduled_call(event, "toolu_read")),
+            "the card exists before the prompt: {seen:?}"
+        );
+        assert!(
+            !seen.iter().any(|event| started_call(event, "toolu_read")),
+            "a call waiting for approval has not started: {seen:?}"
+        );
+        let answer = session
+            .send(CommandEnvelope {
+                id: CommandId::new("c2"),
+                command: Command::ResolveInteraction {
+                    interaction,
+                    answer: rust_cli_kernel_api::orchestration::PermissionAnswer::Deny {
+                        feedback: None,
+                    }
+                    .into(),
+                },
+            })
+            .await;
+        assert!(matches!(answer, Ack::Accepted { .. }), "{answer:?}");
+        let rest = until(&mut events, |event| {
+            matches!(event, KernelEvent::TurnFinished { .. })
+        })
+        .await;
+        assert!(
+            !rest.iter().any(|event| started_call(event, "toolu_read")),
+            "a denied call never starts: {rest:?}"
+        );
+        assert!(session.view().await.unwrap().pending.is_empty());
+        assert!(
+            rest.iter().any(|event| matches!(
+                event,
+                KernelEvent::InteractionResolved { denied: true, .. }
+            )),
+            "a refusal resolves its prompt as denied: {rest:?}"
+        );
+    }
+
+    /// The allow sibling of the denied call: an Allow resolution journals as not denied, and the admitted call starts.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_allowed_call_is_not_denied_and_starts() {
+        let store = Arc::new(MemoryStore::default());
+        let model = Arc::new(ScriptedModel::new(vec![
+            tool_use_response("toolu_read", "Read", &json!({"file_path": "/etc/hosts"})),
+            text_response(&["after the allow"]),
+        ]));
+        let kernel = kernel(model, unsupported_machine(), store);
+        let session = open(&kernel).await;
+        let mut events = session.subscribe(Some(0));
+        session.send(submit("c1", "read the hosts file")).await;
+        let seen = until(&mut events, |event| permission_asked(event).is_some()).await;
+        let interaction = seen.iter().find_map(permission_asked).unwrap();
+        let answer = session
+            .send(CommandEnvelope {
+                id: CommandId::new("c2"),
+                command: Command::ResolveInteraction {
+                    interaction,
+                    answer: rust_cli_kernel_api::orchestration::PermissionAnswer::Allow {
+                        remember: Vec::new(),
+                    }
+                    .into(),
+                },
+            })
+            .await;
+        assert!(matches!(answer, Ack::Accepted { .. }), "{answer:?}");
+        let rest = until(&mut events, |event| {
+            matches!(event, KernelEvent::TurnFinished { .. })
+        })
+        .await;
+        assert!(
+            rest.iter().any(|event| matches!(
+                event,
+                KernelEvent::InteractionResolved { denied: false, .. }
+            )),
+            "an allow resolves its prompt as not denied: {rest:?}"
+        );
+        assert!(
+            rest.iter().any(|event| started_call(event, "toolu_read")),
+            "the admitted call starts: {rest:?}"
+        );
     }
 
     fn permission_suggestions(event: &KernelEvent) -> Option<(InteractionId, Value)> {
