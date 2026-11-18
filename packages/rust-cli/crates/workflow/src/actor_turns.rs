@@ -24,6 +24,9 @@ use std::thread;
 
 /// One model turn on a child session. `cancel` is set when the owner cancels the ask; a runner should stop early when
 /// it is set. The returned text is the turn's final text.
+///
+/// `interaction` is the actor's interaction description (`<persona name ?? "subagent"> (<site>@<ordinal>)`), the origin
+/// its permission and interaction asks are named by. It is the same for every turn of the actor, nudged turns included.
 pub trait TurnRunner: Send + Sync + 'static {
     fn run_turn(
         &self,

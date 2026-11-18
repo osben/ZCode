@@ -322,3 +322,31 @@ async fn the_actor_run_is_named_by_its_interaction_description_and_carries_the_p
         "the parent's interactions reach the actor run"
     );
 }
+
+#[test]
+fn every_recordable_mode_names_a_permission_mode_through_the_shared_table() {
+    use rust_cli_workflow::driver_rules::SubagentPermissionMode;
+    // The match is exhaustive on purpose: a new recordable mode fails to compile here until it is listed, so the
+    // fallback in `actor_permission_mode` is never the path a real mode takes.
+    let modes = [
+        SubagentPermissionMode::Build,
+        SubagentPermissionMode::Edit,
+        SubagentPermissionMode::Yolo,
+        SubagentPermissionMode::Guarded,
+        SubagentPermissionMode::Auto,
+    ];
+    for mode in modes {
+        match mode {
+            SubagentPermissionMode::Build
+            | SubagentPermissionMode::Edit
+            | SubagentPermissionMode::Yolo
+            | SubagentPermissionMode::Guarded
+            | SubagentPermissionMode::Auto => {}
+        }
+        assert!(
+            PermissionMode::from_node_name(mode.as_str()).is_some(),
+            "the recordable mode {} must name a permission mode",
+            mode.as_str()
+        );
+    }
+}

@@ -63,7 +63,7 @@ pub struct ActorRun {
     /// `<persona name ?? "subagent"> (<site>@<ordinal>)`: the origin of the actor's permission and interaction asks.
     pub interaction_description: String,
     /// The parent session's interactions (its broker to the user), when the runtime has them. The gate that decides
-    /// whether an actor may ask is [`actor_asks`], as it is for the Agent tool.
+    /// whether an actor may ask is `actor_asks`, as it is for the Agent tool.
     pub interactions: Option<Arc<dyn Interactions>>,
     /// The persona's system prompt, the first part of the child's system prompt.
     pub persona_prompt: String,
@@ -72,17 +72,36 @@ pub struct ActorRun {
     pub mode: PermissionMode,
 }
 
-/// The asks channel of an actor. It exists only when the parent offers background prompts and has an interactions
-/// channel, as the Agent tool's entry does (`core.background_prompts.then(|| context.interactions.lasting())`).
+/// Renders the interactions by presence, as `child::Asks` does: the channel is a trait object with no `Debug`.
+impl std::fmt::Debug for ActorRun {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ActorRun")
+            .field("child", &self.child)
+            .field("parent", &self.parent)
+            .field("interaction_description", &self.interaction_description)
+            .field(
+                "interactions",
+                &self.interactions.as_ref().map(|_| "present"),
+            )
+            .field("persona_prompt", &self.persona_prompt)
+            .field("workspace", &self.workspace)
+            .field("selection", &self.selection)
+            .field("mode", &self.mode)
+            .finish()
+    }
+}
+
+/// The asks channel of an actor. It exists only when the parent offers background prompts and its interactions have a
+/// lasting channel, as the Agent tool's entry does (`core.background_prompts.then(|| context.interactions.lasting())`).
+/// The channel is taken from `lasting()` here, so a caller passes the parent's interactions, not a lasting one.
 pub(crate) fn actor_asks(
     background_prompts: bool,
     interactions: Option<Arc<dyn Interactions>>,
 ) -> Option<Asks> {
-    if background_prompts {
-        interactions.map(Asks)
-    } else {
-        None
+    if !background_prompts {
+        return None;
     }
+    interactions.and_then(|parent| parent.lasting()).map(Asks)
 }
 
 /// The live-map key of an actor: one per child session.
@@ -160,13 +179,19 @@ impl crate::Agents {
         let root = core.live.root_of(&run.parent);
         let execution_id = core.ports.ids.execution();
         let asks = actor_asks(core.background_prompts, run.interactions.clone());
-        // The first-use check, the insert and the run start share one lock section (`Live::begin_actor_run`).
+        let description = run.interaction_description.clone();
+        let fresh_asks = asks.clone();
+        // The first-use check, the insert, the refresh and the run start share one lock section (`Live::begin_actor_run`).
         let started = core.live.begin_actor_run(
             &agent_id,
             || {
                 let mut entry = LiveAgent::for_actor(run, agent_id.clone(), root);
-                entry.asks = asks;
+                entry.asks = fresh_asks;
                 entry
+            },
+            |entry| {
+                entry.description = description;
+                entry.asks = asks;
             },
             execution_id,
         );
@@ -196,18 +221,37 @@ impl crate::Agents {
 #[cfg(test)]
 mod asks_tests {
     use super::actor_asks;
-    use rust_cli_kernel_api::testing::ScriptedInteractions;
+    use rust_cli_kernel_api::orchestration::Interactions;
+    use rust_cli_kernel_api::testing::{AskOverride, NoOneToAsk, ScriptedInteractions};
     use std::sync::Arc;
+
+    /// A parent whose interactions have a lasting channel (the session's own), as the real turn channel does.
+    struct WithLasting;
+
+    impl AskOverride for WithLasting {
+        fn lasting(&self) -> Option<Arc<dyn Interactions>> {
+            Some(Arc::new(NoOneToAsk))
+        }
+    }
 
     #[test]
     fn an_actor_has_an_asks_channel_only_when_the_parent_offers_background_prompts() {
-        let channel = || Some(Arc::new(ScriptedInteractions::default()) as Arc<_>);
-        assert!(actor_asks(true, channel()).is_some());
+        let parent = || Some(Arc::new(WithLasting) as Arc<dyn Interactions>);
+        assert!(actor_asks(true, parent()).is_some());
         assert!(
-            actor_asks(false, channel()).is_none(),
+            actor_asks(false, parent()).is_none(),
             "the gate applies as it does for the Agent tool"
         );
+    }
+
+    #[test]
+    fn an_actor_has_no_asks_channel_without_a_parent_or_a_lasting_channel() {
         assert!(actor_asks(true, None).is_none(), "no channel means no asks");
+        let no_lasting = Some(Arc::new(ScriptedInteractions::default()) as Arc<dyn Interactions>);
+        assert!(
+            actor_asks(true, no_lasting).is_none(),
+            "a parent without a lasting channel gives the actor none"
+        );
     }
 }
 

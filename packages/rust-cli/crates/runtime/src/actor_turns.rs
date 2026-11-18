@@ -63,10 +63,11 @@ impl ActorAgents for rust_cli_agents::Agents {
 ///
 /// Node's rules, in order: only a recordable value survives the read (`parse_subagent_permission_mode`), and an absent
 /// value is YOLO (`actor_permission_policy`). The policy's name then goes through the shared collaboration-mode
-/// conversion (`PermissionMode::from_node_name`), so there is one table for the names.
+/// conversion (`PermissionMode::from_node_name`), so there is one table for the names. A name that table does not know
+/// fails closed to `Default`, which asks for each permission, never to a mode that skips them.
 pub fn actor_permission_mode(recorded: Option<&Value>) -> PermissionMode {
     let policy = actor_permission_policy(parse_subagent_permission_mode(recorded));
-    PermissionMode::from_node_name(policy.as_str()).unwrap_or(PermissionMode::BypassPermissions)
+    PermissionMode::from_node_name(policy.as_str()).unwrap_or(PermissionMode::Default)
 }
 
 /// What every actor run of one runner shares: the parent session, the workspace, the model selection, the permission
@@ -79,6 +80,23 @@ pub struct ActorRunBase {
     pub mode: PermissionMode,
     pub persona_prompt: String,
     pub interactions: Option<Arc<dyn Interactions>>,
+}
+
+/// Renders the interactions by presence: the channel is a trait object with no `Debug`.
+impl std::fmt::Debug for ActorRunBase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ActorRunBase")
+            .field("parent", &self.parent)
+            .field("workspace", &self.workspace)
+            .field("selection", &self.selection)
+            .field("mode", &self.mode)
+            .field("persona_prompt", &self.persona_prompt)
+            .field(
+                "interactions",
+                &self.interactions.as_ref().map(|_| "present"),
+            )
+            .finish()
+    }
 }
 
 /// The workflow's turn runner over the agents crate.

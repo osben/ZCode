@@ -559,6 +559,22 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
             );
             return;
         }
+        // Every session an ask starts on was made by `create_actor_session`, which records its interaction description.
+        // A session without one is a broken pairing: the ask fails loudly, and no turn starts with an empty origin.
+        let Some(interaction) = self
+            .engine
+            .driver
+            .interaction_of_session
+            .get(&start.session)
+            .cloned()
+        else {
+            let error = anyhow!(
+                "no interaction description is recorded for session {}",
+                start.session
+            );
+            self.refuse_start(start, error, first);
+            return;
+        };
         let withdrawn = self.book.start_ask(&start.session);
         for qid in withdrawn {
             if let Err(error) = self
@@ -570,13 +586,6 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
                 first.get_or_insert(error);
             }
         }
-        let interaction = self
-            .engine
-            .driver
-            .interaction_of_session
-            .get(&start.session)
-            .cloned()
-            .unwrap_or_default();
         match self.engine.driver.sessions.start_turn(
             &start.session,
             &start.instance,
@@ -596,23 +605,32 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
                     .session_of_instance
                     .insert(start.instance.key(), start.session.clone());
             }
-            Err(error) => {
-                for qid in self.book.end_ask(&start.session) {
-                    if let Err(reject) = self
-                        .engine
-                        .driver
-                        .sessions
-                        .reject_parked(&start.session, &qid)
-                    {
-                        first.get_or_insert(reject);
-                    }
-                }
-                self.engine.driver.queued_failures.push((
-                    start.instance,
-                    WorkflowError::new(ErrorCode::DriverError, format!("{error:#}")),
-                ));
+            Err(error) => self.refuse_start(start, error, first),
+        }
+    }
+
+    /// A start that could not be made: the ask's parked questions are withdrawn, and the ask fails with the error at
+    /// the next drain. Shared by a refused turn and a session with no interaction description.
+    fn refuse_start(
+        &mut self,
+        start: QueuedStart,
+        error: anyhow::Error,
+        first: &mut Option<anyhow::Error>,
+    ) {
+        for qid in self.book.end_ask(&start.session) {
+            if let Err(reject) = self
+                .engine
+                .driver
+                .sessions
+                .reject_parked(&start.session, &qid)
+            {
+                first.get_or_insert(reject);
             }
         }
+        self.engine.driver.queued_failures.push((
+            start.instance,
+            WorkflowError::new(ErrorCode::DriverError, format!("{error:#}")),
+        ));
     }
 
     /// End every active ask the engine no longer has live: the book withdraws its parked questions and the turn side

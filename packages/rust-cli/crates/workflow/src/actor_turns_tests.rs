@@ -19,9 +19,10 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-/// Replies in order; records every prompt it was given.
+/// Replies in order; records every prompt and every interaction description it was given.
 struct ScriptedRunner {
     prompts: Mutex<Vec<String>>,
+    interactions: Mutex<Vec<String>>,
     replies: Mutex<VecDeque<std::result::Result<String, String>>>,
 }
 
@@ -29,6 +30,7 @@ impl ScriptedRunner {
     fn new(replies: Vec<std::result::Result<String, String>>) -> Arc<Self> {
         Arc::new(Self {
             prompts: Mutex::new(Vec::new()),
+            interactions: Mutex::new(Vec::new()),
             replies: Mutex::new(replies.into()),
         })
     }
@@ -38,10 +40,14 @@ impl TurnRunner for ScriptedRunner {
     fn run_turn(
         &self,
         _session: &str,
-        _interaction: &str,
+        interaction: &str,
         prompt: &str,
         _cancel: &AtomicBool,
     ) -> std::result::Result<String, String> {
+        self.interactions
+            .lock()
+            .expect("interactions")
+            .push(interaction.to_owned());
         self.prompts
             .lock()
             .expect("prompts")
@@ -140,6 +146,14 @@ fn a_turn_without_a_submit_is_nudged_and_the_nudged_turn_runs_with_the_nudge_pro
     assert_eq!(
         *runner.prompts.lock().expect("prompts"),
         vec!["do it".to_owned(), NUDGE_PROMPT.to_owned()]
+    );
+    // The nudged turn is the same actor, so it is named by the same interaction description.
+    assert_eq!(
+        *runner.interactions.lock().expect("interactions"),
+        vec![
+            "subagent (site@1)".to_owned(),
+            "subagent (site@1)".to_owned()
+        ]
     );
     let outcomes = owner.take_outcomes();
     assert_eq!(outcomes.len(), 1);

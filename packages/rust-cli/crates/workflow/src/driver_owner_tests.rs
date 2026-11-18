@@ -61,11 +61,11 @@ impl ActorSessions for Recording {
         interaction: &str,
     ) -> Result<()> {
         let mut log = self.0.borrow_mut();
-        log.interactions.push(interaction.to_owned());
         if log.fail_next_start {
             log.fail_next_start = false;
             bail!("send refused");
         }
+        log.interactions.push(interaction.to_owned());
         log.turns
             .push((session.to_owned(), instance.clone(), message.clone()));
         Ok(())
@@ -790,6 +790,23 @@ fn a_turn_starts_with_the_interaction_description_of_its_actor_and_persona() {
     let persona = json!({"name": "Ada"});
     let actor = owner
         .create_actor("site", Some("Ada"), Some(&persona))
+        .expect("actor");
+    owner.ask("site", &actor, "do it").expect("ask");
+    owner.drain().expect("drain");
+    assert_eq!(
+        sessions.0.borrow().interactions,
+        vec!["Ada (site@1)".to_owned()]
+    );
+}
+
+#[test]
+fn the_persona_name_names_the_actor_not_the_create_actor_name_argument() {
+    // Node names an actor by its persona's name (`workflowActorInteractionDescription`): the `name` argument of
+    // `createActor` is not what the asks are named by. Here the two differ, and the persona's name wins.
+    let (mut owner, sessions) = owner();
+    let persona = json!({"name": "Ada"});
+    let actor = owner
+        .create_actor("site", Some("Bea"), Some(&persona))
         .expect("actor");
     owner.ask("site", &actor, "do it").expect("ask");
     owner.drain().expect("drain");

@@ -34,8 +34,49 @@ fn begin(live: &Live, id: &AgentId, child: &str) -> BeginActorRun {
     live.begin_actor_run(
         id,
         || LiveAgent::for_actor(run(child), id.clone(), SessionId::new("ses_parent")),
+        |_| {},
         "execution-1".to_owned(),
     )
+}
+
+#[test]
+fn a_later_turn_refreshes_the_origin_and_the_asks_of_the_existing_entry() {
+    let live = live_at(42);
+    let id = AgentId::new("actor-sess_a");
+    begin(&live, &id, "sess_a");
+    live.finish(&id, Ending::Completed);
+    // The second turn brings a different origin (as a changed persona name would) and no asks channel.
+    let started = live.begin_actor_run(
+        &id,
+        || unreachable!("the entry exists"),
+        |entry| {
+            entry.description = "Bea (site@1)".to_owned();
+            entry.asks = None;
+        },
+        "execution-2".to_owned(),
+    );
+    assert_eq!(started, BeginActorRun::Started);
+    let entry = live.get(&id).expect("the entry exists");
+    assert_eq!(entry.description, "Bea (site@1)");
+    assert!(entry.asks.is_none());
+}
+
+#[test]
+fn a_refused_start_does_not_refresh_the_running_entry() {
+    let live = live_at(42);
+    let id = AgentId::new("actor-sess_a");
+    begin(&live, &id, "sess_a");
+    let refused = live.begin_actor_run(
+        &id,
+        || unreachable!("the entry exists"),
+        |entry| entry.description = "changed while running".to_owned(),
+        "execution-2".to_owned(),
+    );
+    assert_eq!(refused, BeginActorRun::AlreadyRunning);
+    assert_eq!(
+        live.get(&id).expect("the entry exists").description,
+        "Ada (site@1)"
+    );
 }
 
 #[test]
@@ -119,6 +160,7 @@ fn a_fresh_entry_keyed_by_another_id_is_a_programming_error() {
                 SessionId::new("ses_parent"),
             )
         },
+        |_| {},
         "execution-1".to_owned(),
     );
 }
