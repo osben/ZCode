@@ -578,14 +578,13 @@ async fn execute(
         })
         .await;
     // It starts only once admitted (Node `ToolCallStarted`, after the permission check): the pipeline calls this.
-    // Node `onMutating` fires for an admitted call the predicate classifies as a workspace write.
-    let mutating = is_workspace_mutating_call(tool.as_ref(), &input);
+    // Node `onMutating` is decided on the admitted input, in `started`: the hooks may rewrite the scheduled input.
     let started = Arc::new(StartSignal::new(
         scope.sink.clone(),
+        tool.clone(),
         id.clone(),
         name,
         input.clone(),
-        mutating,
     ));
     // 会话现在的模式与工作目录：一次读取（工作线 F134：以前分两次问会话 actor）。
     let view = scope.view().await;
@@ -628,6 +627,8 @@ async fn execute(
 /// 第一次 `started` 取走载荷，之后的调用什么也不做，并且准入之后不再持有克隆的输入。
 struct StartSignal {
     sink: Arc<dyn RunSink>,
+    /// The call's tool: its workspace-mutating classification reads the admitted input (`started`).
+    tool: Arc<dyn Tool>,
     pending: std::sync::Mutex<Option<StartedCall>>,
 }
 
@@ -636,25 +637,23 @@ struct StartedCall {
     tool_use: ToolUseId,
     name: String,
     input: Value,
-    /// Whether the admitted call writes the workspace (`is_workspace_mutating_call`).
-    mutating: bool,
 }
 
 impl StartSignal {
     fn new(
         sink: Arc<dyn RunSink>,
+        tool: Arc<dyn Tool>,
         tool_use: ToolUseId,
         name: String,
         input: Value,
-        mutating: bool,
     ) -> Self {
         Self {
             sink,
+            tool,
             pending: std::sync::Mutex::new(Some(StartedCall {
                 tool_use,
                 name,
                 input,
-                mutating,
             })),
         }
     }
@@ -662,7 +661,7 @@ impl StartSignal {
 
 #[async_trait]
 impl ToolStart for StartSignal {
-    async fn started(&self) {
+    async fn started(&self, admitted: &Value) {
         // The guard is dropped before the emit, so no lock is held across the await.
         let call = self
             .pending
@@ -680,7 +679,8 @@ impl ToolStart for StartSignal {
                 input: call.input,
             })
             .await;
-        if call.mutating {
+        // Node `onMutating`: an admitted call the predicate classifies as a workspace write, on the input it runs with.
+        if is_workspace_mutating_call(self.tool.as_ref(), admitted) {
             self.sink.tool_mutating().await;
         }
     }

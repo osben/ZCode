@@ -132,7 +132,7 @@ pub(super) struct StartCount(pub(super) std::sync::atomic::AtomicUsize);
 
 #[async_trait]
 impl ToolStart for StartCount {
-    async fn started(&self) {
+    async fn started(&self, _admitted: &Value) {
         self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }
 }
@@ -241,7 +241,7 @@ async fn the_start_signal_comes_before_the_call_and_its_progress() {
     struct StartLog(Arc<Mutex<Vec<&'static str>>>);
     #[async_trait]
     impl ToolStart for StartLog {
-        async fn started(&self) {
+        async fn started(&self, _admitted: &Value) {
             self.0.lock().unwrap().push("started");
         }
     }
@@ -267,6 +267,37 @@ async fn the_start_signal_comes_before_the_call_and_its_progress() {
         ["started", "call", "progress"],
         "the start comes first, then the call and its progress"
     );
+}
+
+/// The start callback gets the admitted input: the permission check's `updated_input` replaces the scheduled input, and
+/// the callback sees the replacement (Node classifies a call on the input it runs with).
+#[tokio::test]
+async fn the_start_signal_carries_the_admitted_input() {
+    struct Admitted(Arc<Mutex<Vec<Value>>>);
+    #[async_trait]
+    impl ToolStart for Admitted {
+        async fn started(&self, admitted: &Value) {
+            self.0.lock().unwrap().push(admitted.clone());
+        }
+    }
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let pipeline = Pipeline::new(
+        Arc::new(FixedGate(PermissionDecision::Allow {
+            updated_input: Some(json!({"command": "rm x"})),
+        })),
+        Arc::new(RecordingHooks::default()),
+    );
+    let (progress, _updates) = mpsc::channel(4);
+    pipeline
+        .execute(
+            Arc::new(FakeTool::new("Bash", false, "out")),
+            json!({"command": "ls"}),
+            context(allow()),
+            progress,
+            Arc::new(Admitted(seen.clone())),
+        )
+        .await;
+    assert_eq!(*seen.lock().unwrap(), vec![json!({"command": "rm x"})]);
 }
 
 #[tokio::test]

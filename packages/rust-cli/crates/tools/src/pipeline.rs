@@ -694,7 +694,7 @@ impl ToolExecutor for Pipeline {
             }
         };
         // Admitted (hooks and permission passed): the call starts now, before any progress can arrive.
-        started.started().await;
+        started.started(&input).await;
         let output = self
             .call(tool.as_ref(), input, call, progress, &mut messages)
             .await;

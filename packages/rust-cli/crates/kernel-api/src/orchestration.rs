@@ -701,7 +701,9 @@ pub trait ToolExecutor: Send + Sync {
 /// 工具真正开始执行的通知（Node `ToolCallStarted`，call-runner 在权限之后发出）。
 #[async_trait]
 pub trait ToolStart: Send + Sync {
-    async fn started(&self);
+    /// The call is admitted. `admitted` is the input it will run with: after the schema, the hooks and the permission
+    /// check, which may have rewritten the scheduled input (`updatedInput`, an App refusal's rewrite).
+    async fn started(&self, admitted: &Value);
 }
 
 /// 不需要开始通知的调用方（测试替身与旁路执行）。
@@ -709,7 +711,7 @@ pub struct NoToolStart;
 
 #[async_trait]
 impl ToolStart for NoToolStart {
-    async fn started(&self) {}
+    async fn started(&self, _admitted: &Value) {}
 }
 
 /// 不需要开始通知时传入的 `started`。

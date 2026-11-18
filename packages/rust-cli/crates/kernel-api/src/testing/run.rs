@@ -33,9 +33,16 @@ pub struct RecordingSink {
     fail_commit: Mutex<Option<usize>>,
     /// Fork: the ACP agent titles handed to `external_title`, in order.
     titles: Mutex<Vec<String>>,
+    /// How many times `tool_mutating` was called.
+    mutating: Mutex<usize>,
 }
 
 impl RecordingSink {
+    /// How many times `tool_mutating` was called (the first admitted workspace write of an ask).
+    pub fn mutating_calls(&self) -> usize {
+        *self.mutating.lock_unpoisoned()
+    }
+
     /// 下一次 `take_absorbed` 取走的插话（没有 hook 消息）。
     pub fn steer(&self, text: &str) {
         self.steering.lock_unpoisoned().push(text.to_owned());
@@ -98,6 +105,10 @@ impl super::OpsOverride for RecordingSink {}
 
 #[async_trait]
 impl RunSink for RecordingSink {
+    async fn tool_mutating(&self) {
+        *self.mutating.lock_unpoisoned() += 1;
+    }
+
     async fn external_title(&self, title: String) {
         self.titles.lock_unpoisoned().push(title);
     }
@@ -287,7 +298,7 @@ impl ToolExecutor for DirectExecutor {
         started: Arc<dyn crate::orchestration::ToolStart>,
     ) -> ToolExecution {
         // Direct execution models an admitted call: it starts before it runs.
-        started.started().await;
+        started.started(&input).await;
         ToolExecution::output(match tool.call(input, context, progress).await {
             Ok(output) => output,
             Err(error) => ToolOutput {

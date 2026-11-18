@@ -12,21 +12,35 @@ use tokio::sync::Notify;
 
 use crate::run::tests::{parts, request, scope};
 
-/// The start is signalled once: a second `started()` emits nothing, so a call cannot start twice.
-#[tokio::test]
-async fn the_start_signal_fires_once() {
-    let sink = Arc::new(rust_cli_kernel_api::testing::RecordingSink::default());
-    let signal = super::StartSignal::new(
-        sink.clone(),
-        rust_cli_kernel_api::ids::ToolUseId::new("toolu_1"),
-        "Bash".into(),
-        json!({"command": "ls"}),
-        false,
-    );
-    rust_cli_kernel_api::orchestration::ToolStart::started(&signal).await;
-    rust_cli_kernel_api::orchestration::ToolStart::started(&signal).await;
-    let starts = sink
-        .events()
+/// A Bash-like tool: read-only when its command is `ls`, as Bash classifies by its command.
+struct BashLike;
+
+#[async_trait::async_trait]
+impl Tool for BashLike {
+    fn name(&self) -> &str {
+        "Bash"
+    }
+    fn input_schema(&self) -> Value {
+        json!({"type": "object"})
+    }
+    fn description(&self, _context: &rust_cli_kernel_api::tool::PromptContext) -> String {
+        String::new()
+    }
+    fn is_read_only(&self, input: &Value) -> bool {
+        input["command"] == "ls"
+    }
+    async fn call(
+        &self,
+        _input: Value,
+        _context: rust_cli_kernel_api::tool::ToolUseContext,
+        _progress: tokio::sync::mpsc::Sender<rust_cli_kernel_api::tool::ToolProgress>,
+    ) -> Result<rust_cli_kernel_api::tool::ToolOutput, rust_cli_kernel_api::tool::ToolError> {
+        unreachable!("the start signal never runs the call")
+    }
+}
+
+fn started_count(sink: &rust_cli_kernel_api::testing::RecordingSink) -> usize {
+    sink.events()
         .iter()
         .filter(|event| {
             matches!(
@@ -34,8 +48,62 @@ async fn the_start_signal_fires_once() {
                 rust_cli_kernel_api::orchestration::QueryEvent::ToolStarted { .. }
             )
         })
-        .count();
-    assert_eq!(starts, 1);
+        .count()
+}
+
+/// The start is signalled once: a second `started()` emits nothing, so a call cannot start or report a write twice.
+#[tokio::test]
+async fn the_start_signal_fires_once() {
+    let sink = Arc::new(rust_cli_kernel_api::testing::RecordingSink::default());
+    let signal = super::StartSignal::new(
+        sink.clone(),
+        Arc::new(BashLike),
+        rust_cli_kernel_api::ids::ToolUseId::new("toolu_1"),
+        "Bash".into(),
+        json!({"command": "ls"}),
+    );
+    let write = json!({"command": "rm -rf x"});
+    rust_cli_kernel_api::orchestration::ToolStart::started(&signal, &write).await;
+    rust_cli_kernel_api::orchestration::ToolStart::started(&signal, &write).await;
+    assert_eq!(started_count(&sink), 1);
+    assert_eq!(sink.mutating_calls(), 1, "one write report per start");
+}
+
+/// Node `onMutating` is decided on the admitted input: a hook rewrote the scheduled read-only `ls` into a write, so the
+/// call reports a write.
+#[tokio::test]
+async fn a_rewritten_write_reports_a_write_even_though_it_was_scheduled_read_only() {
+    let sink = Arc::new(rust_cli_kernel_api::testing::RecordingSink::default());
+    let signal = super::StartSignal::new(
+        sink.clone(),
+        Arc::new(BashLike),
+        rust_cli_kernel_api::ids::ToolUseId::new("toolu_1"),
+        "Bash".into(),
+        json!({"command": "ls"}),
+    );
+    rust_cli_kernel_api::orchestration::ToolStart::started(
+        &signal,
+        &json!({"command": "rm -rf x"}),
+    )
+    .await;
+    assert_eq!(sink.mutating_calls(), 1);
+}
+
+/// A call admitted read-only never reports a write, and its start is still signalled.
+#[tokio::test]
+async fn an_admitted_read_only_call_never_reports_a_write() {
+    let sink = Arc::new(rust_cli_kernel_api::testing::RecordingSink::default());
+    let signal = super::StartSignal::new(
+        sink.clone(),
+        Arc::new(BashLike),
+        rust_cli_kernel_api::ids::ToolUseId::new("toolu_1"),
+        "Bash".into(),
+        json!({"command": "ls"}),
+    );
+    rust_cli_kernel_api::orchestration::ToolStart::started(&signal, &json!({"command": "ls"}))
+        .await;
+    assert_eq!(started_count(&sink), 1);
+    assert_eq!(sink.mutating_calls(), 0);
 }
 
 fn start() -> Result<ModelEvent, ModelError> {
