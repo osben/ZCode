@@ -337,6 +337,55 @@ fn a_tool_turn_reports_the_tool_lifecycle() {
     assert_ne!(run.facts[1]["requestId"], run.facts[7]["requestId"]);
 }
 
+/// A call refused at its permission check is scheduled and ends as a failed tool, but it never starts: no started
+/// fact, no duration, and the turn counts no tool call.
+#[test]
+fn a_refused_tool_reports_scheduled_and_failed_but_never_started() {
+    let mut run = Run::new("sess_main", Role::Main);
+    run.event(turn_started("turn_1", Some("cmd-1")));
+    run.event(assistant("msg_1", 128, 16));
+    run.event(KernelEvent::ToolScheduled {
+        tool_use: ToolUseId::new("toolu_1"),
+        name: "Bash".into(),
+        input: json!({"command": "rm x"}),
+    });
+    run.event(KernelEvent::ToolDone {
+        tool_use: ToolUseId::new("toolu_1"),
+        output: ToolOutput {
+            content: vec![rust_cli_kernel_api::message::ToolResultContent::Text {
+                text: "Permission to use Bash has been denied.".into(),
+            }],
+            is_error: true,
+            display: Value::Null,
+        },
+    });
+    run.event(finished("turn_1"));
+
+    let kinds = run.kinds();
+    assert!(
+        kinds.contains(&"tool.lifecycle:scheduled".to_owned()),
+        "{kinds:?}"
+    );
+    assert!(
+        kinds.contains(&"tool.lifecycle:failed".to_owned()),
+        "{kinds:?}"
+    );
+    assert!(
+        !kinds.contains(&"tool.lifecycle:started".to_owned()),
+        "{kinds:?}"
+    );
+    run.assert_schema();
+    let failed = run
+        .facts
+        .iter()
+        .find(|fact| fact["phase"] == "failed")
+        .expect("the failed fact");
+    assert_eq!(failed["toolName"], "Bash");
+    assert!(failed["durationMs"].is_null(), "{failed}");
+    let terminal = run.facts.last().expect("terminal");
+    assert_eq!(terminal["toolCallCount"], 0);
+}
+
 #[test]
 fn a_wake_turn_gets_a_fresh_command_and_its_background_source() {
     let mut run = Run::new("sess_main", Role::Main);
