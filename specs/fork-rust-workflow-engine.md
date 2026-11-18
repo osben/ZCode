@@ -1151,15 +1151,34 @@ No finished event panics or underflows without a start: the stall list uses `ret
 
 **Next.** 2c-4e (the `ask_mutating` caller) is written up as 9.8h when it lands. It rebases onto this part.
 
-### 9.8h W6a part 2c-4e: the workspace-mutating predicate (part A built; part B open)
+### 9.8h W6a part 2c-4e: the workspace-mutating predicate and the first-write gate (as built)
 
-The owner's `ask_mutating` (`workflow/src/driver_owner.rs`) and the engine's close of the amend import cache on the first write already exist, and their tests use it, but nothing in production calls it. Node calls `askMutating` when a child in an active ask is about to run a mutating tool, once per ask.
+Node decides a write with `isWorkspaceMutatingToolCall` (`contracts/src/tools/contract.ts`). Its `onMutating` fires once per ask, on the first admitted call that writes (`workflow-driver-tool-activity.ts`: `reported` is local to one ask's subscription). The driver then calls `askMutating` (`workflow-driver.ts`). The owner's `ask_mutating` existed with its engine path and tests, but had no production caller until this part.
 
-**Part A (built, branch `feat/rust-workflow-actor-mutating-2c-4e`): the predicate.** `tools/src/side_effect.rs` ports Node `isWorkspaceMutatingToolCall` (`contracts/src/tools/contract.ts`): a read-only call (`Tool::is_read_only(input)`) is never mutating; otherwise the scope decides, and workspace, git and system scopes are mutating. A name the table lists with no declared scope, and a name the table does not list (MCP, plugin tools), are mutating (Node: undeclared means untrusted). The table gives Node's scope per Rust tool name, taken from Node's tool handlers in `core/src/tool/handlers/*.ts`. Tests (`side_effect_tests.rs`): the read-only rule; the scope rule for each scope family (write, edit, bash, cron, save-workflow mutating; web fetch, agent, ask-user, glob, read not); undeclared and unknown names mutating; and a completeness test that every builtin tool (`builtin(...).tools()`) has a table entry. The predicate was written together with its tests and run once (all four pass); no red run was recorded before the predicate existed.
+**The predicate.** `kernel-api/src/side_effect.rs` ports Node's rule: a read-only call (`Tool::is_read_only` on the admitted input) is never mutating; otherwise the scope decides, and workspace, git and system scopes are mutating. The table gives Node's scope per Rust tool name, from Node's tool handlers (`core/src/tool/handlers/*.ts`). A name the sources declare no scope for is listed as undeclared and is mutating, as Node treats a missing scope. A name the table does not list (MCP and plugin tools) is mutating by the same default. Tests (`tools/src/side_effect_tests.rs`): a read-only Bash call does not fire (`ls` is read-only, `rm -rf` writes); every builtin tool has a table entry; every `tool_names` constant and the four protocol literals have an entry (web, LSP, workflow, plan and protocol tools included).
 
-**Part B (open, not started in this part): the trigger and the owner call.** Planned as the approved design: the admitted `ToolStarted` (the start callback, after admission) is the trigger, computed with `Tool::is_read_only` on the admitted input. The child sends it through the bridge's mailbox to the owner, which calls `ask_mutating`. A per-run `AtomicBool` in `AgentTurnRunner` (one runner per ask) makes it fire at most once per ask, so a nudged second turn does not refire and a new ask does. A refused call does not fire (it never starts). The trigger needs a new internal `QueryEvent` variant, a mailbox request, and a callback threaded from the bridge into `ChildSink`, so it is a separate part with its own red tests (owner: nudged turn does not refire; new ask refires; refused call does not fire).
+**The trigger: the admitted start.** `query/src/executor.rs` computes `is_workspace_mutating_call(tool, input)` when it builds the start signal. After `ToolStarted`, the signal calls `RunSink::tool_mutating()`. The pipeline calls the start signal only once a call is admitted (hooks and permission passed), so a refused call (denial, hook refusal, schema refusal, hidden tool) never fires. Its test is `a_refused_call_never_signals_its_start` (tools `pipeline_tests`), which the gate depends on.
 
-**Follow-ups (not in scope of 2c-4e).** (1) The unknown-tool error card (Node `emitToolCallError` on a registry miss). (2) Wiring `ChildSink::tool_scheduled`, which has no caller. (3) Checking the table against the non-builtin registries: web, LSP, workflow and protocol tools are not covered by the completeness test yet.
+**Why a sink method and not a new `QueryEvent`.** The trigger needs the tool's own read-only classification, and `ToolStarted` carries only the name and the input (Bash classifies its command inside the tool). Adding that to `ToolStarted` would change every literal of it. A new `QueryEvent` would also need a `KernelEvent` to map to (`QueryEvent::into_kernel_event` is total), and the session journal would persist a row for every mutating call, with every exhaustive match changing. The signal is a call, not an observation: nothing records it, and only a workflow child reacts. So `RunSink::tool_mutating` is a default no-op on the trait, and `ChildSink` overrides it. If a consumer ever needs the fact on the wire, it becomes an event with one arm added then.
+
+**The path to the owner.** `ChildSink::tool_mutating` calls the ask's `FirstMutating` gate (`agents/src/actor_turn.rs`). The gate reaches the child sink the way the submit port does: `ActorRun.on_mutating` → `LiveAgent.on_mutating` → `ChildSink::with_mutating`. The bridge's `AgentTurnRunner` makes one gate per ask, on its first turn, and the gate's notifier (`MailboxGate`, `runtime/src/actor_turns.rs`) calls `ActorHandle::mutating` on a blocking thread. That sends `ActorRequest::Mutating`, and the owner dispatches it to `ask_mutating`, which acts on the session's active ask only (Node ignores the call with no ask in flight).
+
+**Once per ask.** `FirstMutating` swaps a flag. The runner serves every turn of one ask, so a nudged turn does not fire again; a new ask gets a new runner, so it fires again (Node's `reported` is local to each ask's subscription). The engine's import-cache close stays once per run, as Node's cache closes once per run; the per-ask rule lives in the bridge.
+
+**Tests.** The red runs were recorded before the code they test existed:
+
+- agents `mutating_tests`: a nudged turn of the same ask does not fire again; a new ask fires again. Red: the gate did not exist (compile).
+- runtime `actor_turns_tests::a_mutating_call_of_an_ask_reaches_the_owner_through_the_bridge`: a scripted turn calls its gate, and the owner's run records one `import-cache-closed`. Red: compile, then no event before the bridge carried the gate.
+- tools `side_effect_tests`: the read-only Bash case and the completeness tests above.
+  Green after the wiring; the touched crates' lib tests pass.
+
+**Follow-ups (not in scope of 2c-4e).**
+
+1. The owner's `settled` map stays for ask stats (2c-4c, `ask_instance`). The boundary no longer uses it. Removing the map is a separate cleanup: the stats path would need the instance carried the same way the boundary carries it.
+2. The unknown-tool error card (Node `emitToolCallError` on a registry miss).
+3. Wiring `ChildSink::tool_scheduled`, which has no caller, so a subagent's live activity lists no queued calls.
+4. Production construction of `AgentTurnRunner` (one runner per ask) is not wired; the gate's per-ask rule relies on it.
+5. The completeness test covers the builtin registry and the known constants. A tool outside them takes the default (mutating), by design.
 
 ## 10. Open questions
 
