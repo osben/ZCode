@@ -686,6 +686,44 @@ pub fn insert_workflow_actor_link(
     Ok(())
 }
 
+/// The fields of a dynamic-workflow actor's session row (Node `createActorSession`).
+pub struct WorkflowActorSession<'a> {
+    pub id: &'a str,
+    pub parent_session_id: &'a str,
+    pub directory: &'a str,
+    pub title: &'a str,
+    pub trace_id: &'a str,
+    pub version: &'a str,
+    pub created_at: i64,
+}
+
+/// Node `createActorSession`: a `workflow_child` session under the run's parent session. Node's owned-tree rules
+/// (`OWNED_CHILD_TASK_TYPES`) and the tree walk key on this task type, so it is not the subagent kind's
+/// `subagent_child`. The row goes through the same `repo::sessions::create` as every other session.
+pub fn create_workflow_actor_session(
+    conn: &Connection,
+    session: &WorkflowActorSession<'_>,
+) -> rusqlite::Result<()> {
+    let input = crate::repo::sessions::Create {
+        id: session.id.to_owned(),
+        project_id: crate::ids::project_id(session.directory),
+        workspace_id: None,
+        parent_id: Some(session.parent_session_id.to_owned()),
+        trace_id: Some(session.trace_id.to_owned()),
+        task_type: Some("workflow_child".to_owned()),
+        slug: crate::ids::slugify(session.id),
+        directory: session.directory.to_owned(),
+        path: Some(session.directory.to_owned()),
+        title: session.title.to_owned(),
+        title_source: Some("default".to_owned()),
+        version: session.version.to_owned(),
+        permission: Some(serde_json::json!({"mode": "build"})),
+        time_created: Some(session.created_at),
+        incognito: None,
+    };
+    crate::repo::sessions::create(conn, &input, session.created_at)
+}
+
 fn assert_touched(changed: usize, run_id: &str) -> Result<()> {
     if changed == 0 {
         bail!("dwf journal: unknown run: {run_id}");
@@ -696,6 +734,10 @@ fn assert_touched(changed: usize, run_id: &str) -> Result<()> {
 #[cfg(test)]
 #[path = "dwf_tests.rs"]
 mod dwf_tests;
+
+#[cfg(test)]
+#[path = "workflow_actor_tests.rs"]
+mod workflow_actor_tests;
 
 #[cfg(test)]
 #[path = "golden_tests.rs"]

@@ -186,7 +186,8 @@ pub fn list(conn: &Connection, filter: &SessionFilter) -> Result<Vec<SessionSumm
 
 fn meta(row: &SessionRow) -> SessionMeta {
     let kind = match row.task_type.as_str() {
-        "subagent_child" => SessionKind::Subagent,
+        // Node's workflow children have a parent and are owned by it, as subagents are.
+        "subagent_child" | "workflow_child" | "nested_workflow_child" => SessionKind::Subagent,
         "fork" | "selection_side_chat" => SessionKind::Fork,
         _ => SessionKind::Interactive,
     };
