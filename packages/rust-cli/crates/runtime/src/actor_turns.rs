@@ -20,7 +20,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use rust_cli_agents::actor_turn::{ActorPort, ActorRun, ActorSubmit, ActorTurnEnd, ActorViolation};
+use rust_cli_agents::actor_turn::{
+    ActorEscalation, ActorPort, ActorQuestion, ActorRun, ActorSubmit, ActorTurnEnd, ActorViolation,
+};
+use rust_cli_kernel_api::clock::Clock;
 use rust_cli_kernel_api::env::WorkspaceRef;
 use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::model::ModelSelection;
@@ -31,6 +34,8 @@ use rust_cli_workflow::actor_turns::TurnRunner;
 use rust_cli_workflow::driver_owner::SubmitReply;
 use rust_cli_workflow::driver_rules::{actor_permission_policy, parse_subagent_permission_mode};
 use rust_cli_workflow::engine::SubmitVerdict;
+use rust_cli_workflow::escalation::{EscalateOutcome, EscalationRequest};
+use rust_cli_workflow::model::Ref;
 use serde_json::Value;
 use tokio::runtime::Handle;
 use tokio_util::sync::CancellationToken;
@@ -83,6 +88,8 @@ pub struct ActorRunBase {
     pub mode: PermissionMode,
     pub persona_prompt: String,
     pub interactions: Option<Arc<dyn Interactions>>,
+    /// The runtime's clock: an escalation is stamped with the time it was asked.
+    pub clock: Arc<dyn Clock>,
 }
 
 /// Renders the interactions by presence: the channel is a trait object with no `Debug`.
@@ -128,6 +135,9 @@ impl<A: ActorAgents> AgentTurnRunner<A> {
 struct MailboxPort {
     mailbox: ActorHandle,
     session: String,
+    clock: Arc<dyn Clock>,
+    /// The turn's cancel token. A blocked escalate checks it as a backstop for a cancel that comes before its wait.
+    cancel: CancellationToken,
 }
 
 #[async_trait]
@@ -162,6 +172,41 @@ impl ActorPort for MailboxPort {
             SubmitReply::Refused(text) | SubmitReply::Cancelled(text) => Err(text),
         }
     }
+
+    async fn escalate(&self, question: ActorQuestion) -> Result<ActorEscalation, String> {
+        let mailbox = self.mailbox.clone();
+        let session = self.session.clone();
+        // The owner names the question by the session's actor, so the request's actor is a placeholder here.
+        let request = EscalationRequest {
+            actor: Ref::new("actor", 0),
+            actor_name: None,
+            question: question.question,
+            context: question.context,
+            asked_at: self.clock.now_ms(),
+        };
+        // The blocked call waits for the owner's answer on the blocking pool. The owner answers from the main agent's
+        // thread, so the answer may come before this wait starts; the store keeps it.
+        let cancel = self.cancel.clone();
+        tokio::task::spawn_blocking(move || {
+            match mailbox
+                .escalate(&session, request)
+                .map_err(|error| error.to_string())?
+            {
+                EscalateOutcome::Parked { qid } => {
+                    let answer = mailbox
+                        .parked()
+                        .wait_until(&session, &qid, &|| cancel.is_cancelled())?;
+                    Ok(ActorEscalation::Answered { qid, answer })
+                }
+                EscalateOutcome::Refused { reason, message } => Ok(ActorEscalation::Refused {
+                    reason: reason.as_str().to_owned(),
+                    message,
+                }),
+            }
+        })
+        .await
+        .map_err(|error| error.to_string())?
+    }
 }
 
 impl<A: ActorAgents> TurnRunner for AgentTurnRunner<A> {
@@ -191,6 +236,8 @@ impl<A: ActorAgents> TurnRunner for AgentTurnRunner<A> {
             port: Some(Arc::new(MailboxPort {
                 mailbox: self.mailbox.clone(),
                 session: session.to_owned(),
+                clock: self.base.clock.clone(),
+                cancel: token.clone(),
             })),
         };
         let end = self.handle.block_on(async {

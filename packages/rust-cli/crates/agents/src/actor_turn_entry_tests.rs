@@ -233,6 +233,13 @@ impl ActorPort for PortStub {
     async fn submit(&self, _result: serde_json::Value) -> Result<ActorSubmit, String> {
         Err("not under test".to_owned())
     }
+
+    async fn escalate(
+        &self,
+        _question: crate::actor_turn::ActorQuestion,
+    ) -> Result<crate::actor_turn::ActorEscalation, String> {
+        Err("not under test".to_owned())
+    }
 }
 
 fn actor_entry_id(child: &SessionId) -> AgentId {

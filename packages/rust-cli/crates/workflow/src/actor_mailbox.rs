@@ -17,9 +17,11 @@
 use crate::driver_owner::{ActorDriverOwner, ActorSessions, SubmitReply, TurnEndReply};
 use crate::escalation::{AnswerOutcome, EscalateOutcome, EscalationRequest};
 use crate::journal::JournalPort;
+use crate::parked_answers::ParkedAnswers;
 use anyhow::Result;
 use serde_json::Value;
 use std::fmt;
+use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
 /// Why a request did not get the owner's reply.
@@ -93,13 +95,15 @@ pub struct ActorMailbox {
 #[derive(Clone)]
 pub struct ActorHandle {
     tx: Sender<ActorRequest>,
+    parked: Arc<ParkedAnswers>,
 }
 
 impl ActorMailbox {
     /// The owner's receiver and the first handle. Clone the handle for each turn.
     pub fn new() -> (Self, ActorHandle) {
         let (tx, rx) = channel();
-        (Self { rx }, ActorHandle { tx })
+        let parked = Arc::new(ParkedAnswers::new());
+        (Self { rx }, ActorHandle { tx, parked })
     }
 
     /// Wait for the next request, without answering it. Crate-internal, so tests can take a request and drop it.
@@ -177,6 +181,12 @@ impl ActorHandle {
             Ok(result) => result.map_err(MailboxError::Owner),
             Err(_) => Err(MailboxError::NoAnswer),
         }
+    }
+
+    /// The answers to parked questions, shared by every handle of this mailbox. A turn waits on its question here after
+    /// the owner has parked it, and the owner's answer or withdrawal wakes the wait.
+    pub fn parked(&self) -> Arc<ParkedAnswers> {
+        self.parked.clone()
     }
 
     pub fn submit(&self, session: &str, payload: Value) -> Result<SubmitReply, MailboxError> {

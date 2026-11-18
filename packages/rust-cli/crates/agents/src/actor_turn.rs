@@ -71,11 +71,32 @@ pub enum ActorSubmit {
     Rejected(Vec<ActorViolation>),
 }
 
+/// A question an actor escalates to the main agent (Node `escalate`'s input).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActorQuestion {
+    pub question: String,
+    /// What the actor already tried and where it is stuck (Node's `context`).
+    pub context: Option<String>,
+}
+
+/// The main agent's answer to an escalated question, or the refusal that parked nothing (Node `escalate` outcome).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ActorEscalation {
+    /// The question was parked under `qid` and the main agent answered it.
+    Answered { qid: String, answer: String },
+    /// Nothing was parked: `reason` is the refusal's name and `message` is the text the model reads.
+    Refused { reason: String, message: String },
+}
+
 /// The submit port of one actor turn (Node `workflowSubmitPort`): the `submit_result` tool hands the result here and
-/// waits for the engine's verdict. The port is bound to the actor's session, so the model cannot pick another one.
+/// waits for the engine's verdict, and the `escalate` tool asks the main agent through the same port. The port is bound to
+/// the actor's session, so the model cannot pick another one.
 #[async_trait]
 pub trait ActorPort: Send + Sync + 'static {
     async fn submit(&self, result: Value) -> Result<ActorSubmit, String>;
+
+    /// Escalate a question and wait for the main agent's answer (Node `workflowEscalatePort.escalate`).
+    async fn escalate(&self, question: ActorQuestion) -> Result<ActorEscalation, String>;
 }
 
 /// A turn's submit port as the live entry holds it. Its `Debug` says only that there is one, as `child::Asks` does.

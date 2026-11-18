@@ -187,6 +187,13 @@ impl crate::actor_turn::ActorPort for NoSubmit {
     ) -> Result<crate::actor_turn::ActorSubmit, String> {
         Err("not under test".to_owned())
     }
+
+    async fn escalate(
+        &self,
+        _question: crate::actor_turn::ActorQuestion,
+    ) -> Result<crate::actor_turn::ActorEscalation, String> {
+        Err("not under test".to_owned())
+    }
 }
 
 /// An entry begun for a turn that holds `port`.

@@ -14,7 +14,7 @@ use crate::driver_owner::TurnEndReply;
 use crate::driver_rules::NUDGE_PROMPT;
 use crate::engine::SubmitVerdict;
 use crate::model::Ref;
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, anyhow};
 use std::any::Any;
 use std::collections::HashMap;
 use std::panic::{self, AssertUnwindSafe};
@@ -92,19 +92,30 @@ impl ActorTurns for MailboxTurns {
         Ok(())
     }
 
-    fn cancel_turn(&mut self, _session: &str, instance: &Ref) -> Result<()> {
+    /// A cancelled ask's turn is gone, so the answers its session was never waited for are dropped. The owner runs on one
+    /// thread, so this is ordered before any later start on the same session.
+    fn cancel_turn(&mut self, session: &str, instance: &Ref) -> Result<()> {
         if let Some(flag) = self.cancels.remove(&instance.key()) {
             flag.store(true, Ordering::SeqCst);
         }
+        self.handle.parked().discard_session(session);
         Ok(())
     }
 
-    fn reject_parked(&mut self, _session: &str, _qid: &str) -> Result<()> {
-        bail!("no escalate tool is wired to the turn side yet (W6a part 2c-3)")
+    /// The owner withdrew a parked question: its blocked escalate fails with the reason, and nothing waits on it.
+    fn reject_parked(&mut self, session: &str, qid: &str) -> Result<()> {
+        self.handle.parked().reject(
+            session,
+            qid,
+            "the question was withdrawn before it was answered",
+        );
+        Ok(())
     }
 
-    fn deliver_answer(&mut self, _session: &str, _qid: &str, _answer: &str) -> Result<()> {
-        bail!("no escalate tool is wired to the turn side yet (W6a part 2c-3)")
+    /// The owner accepted an answer: the blocked escalate of the question returns it.
+    fn deliver_answer(&mut self, session: &str, qid: &str, answer: &str) -> Result<()> {
+        self.handle.parked().deliver(session, qid, answer);
+        Ok(())
     }
 }
 

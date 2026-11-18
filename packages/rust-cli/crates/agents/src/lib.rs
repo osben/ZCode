@@ -29,6 +29,10 @@ pub mod actor_turn;
 #[cfg(test)]
 #[path = "actor_turn_entry_tests.rs"]
 mod actor_turn_entry_tests;
+mod escalate;
+#[cfg(test)]
+#[path = "escalate_tests.rs"]
+mod escalate_tests;
 #[cfg(test)]
 #[path = "live_actor_tests.rs"]
 mod live_actor_tests;

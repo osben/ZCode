@@ -542,6 +542,42 @@ fn an_escalation_without_an_ask_is_refused_and_writes_nothing() {
 }
 
 #[test]
+fn an_escalation_is_journaled_under_the_session_actor_and_persona_whatever_the_caller_sent() {
+    let (mut owner, _sessions) = owner();
+    let persona = json!({"name": "Ada"});
+    let actor = owner
+        .create_actor("site", Some("Ada"), Some(&persona))
+        .expect("actor");
+    owner.ask("site", &actor, "do it").expect("ask");
+    owner.drain().expect("drain");
+    let session = owner.session_of(&actor).expect("session");
+    // The caller names another actor and persona; the owner must not journal either.
+    let mut wrong = request("which file?");
+    wrong.actor = Ref::new("wrong", 9);
+    wrong.actor_name = Some("Mallory".to_owned());
+    owner.escalate(&session, wrong).expect("escalate");
+    let raised: Vec<String> = owner
+        .events()
+        .expect("events")
+        .iter()
+        .map(|stored| stored.payload_json.clone())
+        .filter(|payload| payload.contains("escalation-raised"))
+        .collect();
+    assert_eq!(raised.len(), 1);
+    assert!(raised[0].contains("\"Ada\""), "the persona: {}", raised[0]);
+    assert!(
+        !raised[0].contains("Mallory"),
+        "the caller's name: {}",
+        raised[0]
+    );
+    assert!(
+        !raised[0].contains("wrong"),
+        "the caller's actor: {}",
+        raised[0]
+    );
+}
+
+#[test]
 fn a_parked_question_is_raised_in_the_journal_and_answered_with_a_resolved_event() {
     let (mut owner, _sessions, _actor, session) = running_ask();
     let qid = match owner
