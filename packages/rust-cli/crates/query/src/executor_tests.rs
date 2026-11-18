@@ -12,6 +12,31 @@ use tokio::sync::Notify;
 
 use crate::run::tests::{parts, request, scope};
 
+/// The start is signalled once: a second `started()` emits nothing, so a call cannot start twice.
+#[tokio::test]
+async fn the_start_signal_fires_once() {
+    let sink = Arc::new(rust_cli_kernel_api::testing::RecordingSink::default());
+    let signal = super::StartSignal::new(
+        sink.clone(),
+        rust_cli_kernel_api::ids::ToolUseId::new("toolu_1"),
+        "Bash".into(),
+        json!({"command": "ls"}),
+    );
+    rust_cli_kernel_api::orchestration::ToolStart::started(&signal).await;
+    rust_cli_kernel_api::orchestration::ToolStart::started(&signal).await;
+    let starts = sink
+        .events()
+        .iter()
+        .filter(|event| {
+            matches!(
+                event,
+                rust_cli_kernel_api::orchestration::QueryEvent::ToolStarted { .. }
+            )
+        })
+        .count();
+    assert_eq!(starts, 1);
+}
+
 fn start() -> Result<ModelEvent, ModelError> {
     Ok(ModelEvent::MessageStart {
         id: "msg_api".to_owned(),
