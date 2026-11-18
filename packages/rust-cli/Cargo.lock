@@ -2649,6 +2649,7 @@ dependencies = [
  "rust-cli-base",
  "rust-cli-node-store",
  "serde_json",
+ "tracing",
 ]
 
 [[package]]

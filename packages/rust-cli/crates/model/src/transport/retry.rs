@@ -136,7 +136,9 @@ impl Connect {
         verdict: Verdict,
         tape: Option<Tape>,
     ) -> Result<(ModelNotice, Box<Self>, Duration), ModelError> {
-        end(tape, End::Failed(verdict.error.clone(), None));
+        // The refused send is resent at once after the renewal (`Duration::ZERO` below), so its end carries that zero
+        // delay, as the silent resend of an idle stream does (`End::Failed`: `Some(ms)` when a resend follows).
+        end(tape, End::Failed(verdict.error.clone(), Some(0)));
         let waited = self
             .cancel
             .run_until_cancelled(source.0.expired(&refused))

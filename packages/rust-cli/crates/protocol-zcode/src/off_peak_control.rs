@@ -73,7 +73,7 @@ pub(crate) enum Poll {
     Ready(Ticket),
     /// Not usable yet: a renewal is pending or the ticket is not installed.
     Pending,
-    /// The run ended; the Node error code its attempts fail with.
+    /// The run ended; its attempts fail as cancelled (`off_peak_ticket::ended`), not with the run's Node code.
     Ended,
 }
 
@@ -83,7 +83,7 @@ pub(crate) enum Expiry {
     Immediate,
     /// The renewal was asked for; the notifications it caused, to send to the Host.
     Renewing(Vec<Value>),
-    /// The run ended; the Node error code.
+    /// The run ended; its attempts fail as cancelled (`off_peak_ticket::ended`), not with the run's Node code.
     Ended,
 }
 
@@ -230,6 +230,21 @@ impl OffPeakRuns {
             .insert(command.to_owned(), run);
         drop(runs);
         Ok(())
+    }
+
+    /// Withdraws an admitted input the session refused after admission (its draft could not be admitted, or the kernel
+    /// refused its submit): no turn starts for it, so its run must not wait for one.
+    pub fn discard(&self, session: &str, command: &str) {
+        let mut admitted = self
+            .pending
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if admitted
+            .get(command)
+            .is_some_and(|pending| pending.session == session)
+        {
+            admitted.remove(command);
+        }
     }
 
     /// Node `off_peak` session delete: the session's run ends (its attempts end with it), and its flag and admitted inputs
