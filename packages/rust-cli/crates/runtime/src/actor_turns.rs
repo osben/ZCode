@@ -9,6 +9,8 @@
 //!   runtime. `run_turn` asserts this in debug builds. A second runner that wants to call the bridge from a runtime task
 //!   must move the call to a thread first.
 //! - The runtime is the one `new` captured. The handle is taken on the runtime's own thread, when the bridge is built.
+//! - The message count is the one the turn captured when it finished. The bridge never reads the store on the ask
+//!   thread, so a newer prompt cannot change it and no runtime is blocked to read it.
 //! - A cancelled turn ends as an error here (`Stopped`); the workflow loop reads its cancel flag and reports nothing.
 //!
 //! Deviations, recorded in the spec: the persona prompt and the parent are one value for the whole runner (`ActorRunBase`).
@@ -55,8 +57,9 @@ pub trait ActorAgents: Send + Sync + 'static {
         cancel: CancellationToken,
     ) -> ActorTurnEnd;
 
-    /// The child session's message count, read when its ask settles. None when it cannot be read.
-    async fn message_count(&self, child: &SessionId) -> Option<u64>;
+    /// The message count the child's last turn captured when it finished. Read from the live entry, so it is safe on
+    /// the ask thread. None when it is not known.
+    fn turn_messages(&self, child: &SessionId) -> Option<u64>;
 }
 
 #[async_trait]
@@ -70,8 +73,8 @@ impl ActorAgents for rust_cli_agents::Agents {
         rust_cli_agents::Agents::run_actor_turn(self, run, prompt, cancel).await
     }
 
-    async fn message_count(&self, child: &SessionId) -> Option<u64> {
-        self.child_message_count(child).await
+    fn turn_messages(&self, child: &SessionId) -> Option<u64> {
+        rust_cli_agents::Agents::turn_messages(self, child)
     }
 }
 
@@ -273,12 +276,6 @@ impl<A: ActorAgents> TurnRunner for AgentTurnRunner<A> {
     }
 
     fn message_boundary(&self, session: &str) -> Option<u64> {
-        debug_assert!(
-            Handle::try_current().is_err(),
-            "the ask thread must not be inside a runtime: block_on would panic there"
-        );
-        // The ask thread is outside any runtime (`run_turn` asserts it), so the count can block on the runtime's handle.
-        self.handle
-            .block_on(self.agents.message_count(&SessionId::new(session)))
+        self.agents.turn_messages(&SessionId::new(session))
     }
 }

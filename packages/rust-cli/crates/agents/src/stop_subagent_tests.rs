@@ -214,6 +214,7 @@ const UNDRIVEN_RUN: &str = "exec_u0";
 fn undriven(harness: &crate::test_support::Harness, agent: &str) -> AgentId {
     use rust_cli_kernel_api::abort::Abort;
     let entry = crate::live::LiveAgent {
+        last_turn_messages: None,
         off_peak_execution: None,
         machine: Default::default(),
         agent: AgentId::new(agent),

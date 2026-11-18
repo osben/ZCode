@@ -38,7 +38,7 @@ use crate::model::{Ref, StoredEvent};
 use crate::persona::persona_name;
 use anyhow::{Result, anyhow};
 use serde_json::Value;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// Node `cancelAsk`'s rejection of a pending submit: the text the submit's caller reads.
 pub const CANCELLED_BY_ENGINE_MESSAGE: &str = "The ask was cancelled by the engine.";
@@ -136,7 +136,7 @@ pub struct ActorPort<S: ActorSessions> {
     /// Session of each ask whose turn has started and not ended, keyed by instance. Removed when the ask ends.
     session_of_instance: HashMap<String, String>,
     /// Instances the engine cancelled while they ran. A cancelled ask takes no message boundary.
-    cancelled: std::collections::HashSet<String>,
+    cancelled: HashSet<String>,
     queued_starts: Vec<QueuedStart>,
     queued_failures: Vec<(Ref, WorkflowError)>,
     /// Errors the engine cannot receive (its trait methods return nothing); the owner returns them.
@@ -311,7 +311,7 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
             identity_of_session: HashMap::new(),
             interaction_of_session: HashMap::new(),
             session_of_instance: HashMap::new(),
-            cancelled: std::collections::HashSet::new(),
+            cancelled: HashSet::new(),
             queued_starts: Vec::new(),
             queued_failures: Vec::new(),
             deferred_errors: Vec::new(),

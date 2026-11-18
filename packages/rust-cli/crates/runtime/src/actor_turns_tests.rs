@@ -133,7 +133,7 @@ impl ActorAgents for ScriptedAgents {
             .unwrap_or_else(|| ActorTurnEnd::Text("done".to_owned()))
     }
 
-    async fn message_count(&self, _child: &SessionId) -> Option<u64> {
+    fn turn_messages(&self, _child: &SessionId) -> Option<u64> {
         Some(MESSAGE_COUNT)
     }
 }

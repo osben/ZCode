@@ -247,7 +247,7 @@ impl ActorHandle {
         })
     }
 
-    /// The message boundary of the session's settled ask. The owner writes it to that ask's node.
+    /// The message boundary of the ask instance the turn ran for. The owner writes it to that exact node.
     pub fn message_boundary(&self, instance: &Ref, boundary: u64) -> Result<(), MailboxError> {
         self.call(|reply| ActorRequest::MessageBoundary {
             instance: instance.clone(),

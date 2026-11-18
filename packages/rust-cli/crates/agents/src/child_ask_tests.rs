@@ -102,6 +102,7 @@ async fn without_an_entry_a_background_agent_is_not_asked() {
 async fn the_origin_is_fixed_at_run_start_even_when_the_agent_left_live() {
     use crate::live::{AgentState, LiveAgent};
     let agent = LiveAgent {
+        last_turn_messages: None,
         off_peak_execution: None,
         machine: Default::default(),
         agent: AgentId::new("agent_1"),

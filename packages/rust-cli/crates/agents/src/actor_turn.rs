@@ -168,8 +168,14 @@ impl std::fmt::Debug for ActorRun {
 }
 
 impl crate::Agents {
-    /// The message count of a child session, read when its ask settles (Node `journalAskMessageBoundary`'s count). None
-    /// when the session cannot be read, and then no boundary is written.
+    /// The message count a workflow actor's last turn captured (see `child_message_count`). Read from the live entry, so
+    /// it is safe on the ask thread: no store read and no runtime.
+    pub fn turn_messages(&self, child: &SessionId) -> Option<u64> {
+        self.core.live.last_turn_messages(&actor_agent_id(child))
+    }
+
+    /// The message count of a child session, read from the store (Node `journalAskMessageBoundary`'s count). None when
+    /// the session cannot be read. Called when a turn finishes, before its live entry is released.
     pub async fn child_message_count(&self, child: &SessionId) -> Option<u64> {
         let loaded = match self.core.ports.store.load(child).await {
             Ok(loaded) => loaded,
@@ -261,6 +267,7 @@ impl LiveAgent {
             background: true,
             asks: None,
             actor_port: run.port,
+            last_turn_messages: None,
             state: AgentState::Finished(Ending::Completed),
             result: None,
             shown: Shown::default(),
@@ -284,6 +291,7 @@ impl crate::Agents {
         cancel: CancellationToken,
     ) -> ActorTurnEnd {
         let core = &self.core;
+        let child = run.child.clone();
         let agent_id = actor_agent_id(&run.child);
         let root = core.live.root_of(&run.parent);
         let execution_id = core.ports.ids.execution();
@@ -317,12 +325,15 @@ impl crate::Agents {
             match spawn::resume(core, &entry, prompt, UserOrigin::Human, epilogue_start).await {
                 Ok(opening) => opening,
                 Err(error) => {
-                    core.live.finish_actor_turn(&agent_id, Ending::Failed);
+                    core.live.finish_actor_turn(&agent_id, Ending::Failed, None);
                     return ActorTurnEnd::Failed(error.to_string());
                 }
             };
         let finished = spawn::drive(core, &entry, opening, None, Some(cancel)).await;
-        core.live.finish_actor_turn(&agent_id, finished.ending);
+        // Read while the entry still runs: no turn can begin before it is released, so this is the turn's own count.
+        let messages = self.child_message_count(&child).await;
+        core.live
+            .finish_actor_turn(&agent_id, finished.ending, messages);
         actor_turn_end(
             finished.ending.status() == BackgroundStatus::Killed,
             finished.failure(core.node_desktop).as_deref(),

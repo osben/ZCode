@@ -698,9 +698,20 @@ fn completing_the_run_cancels_the_in_flight_turn_and_withdraws_its_questions() {
 }
 
 #[test]
-fn the_message_boundary_is_written_to_the_active_ask_node_and_nothing_else() {
+fn a_message_boundary_is_written_to_its_instance_and_no_other_node() {
     let (mut owner, sessions, _actor, _session) = running_ask();
     let instance = first_turn_instance(&sessions);
+    let missing = Ref {
+        site_id: "ask#missing".to_owned(),
+        ordinal: 99,
+    };
+    let before = owner.journal().list_nodes("run_1").expect("nodes");
+    owner.set_message_boundary(&missing, 9).expect("boundary");
+    assert_eq!(
+        owner.journal().list_nodes("run_1").expect("nodes"),
+        before,
+        "a boundary for an instance with no node row changes no node"
+    );
     owner.set_message_boundary(&instance, 5).expect("boundary");
     let node = owner
         .journal()
@@ -1003,6 +1014,20 @@ fn a_settled_asks_boundary_is_not_written_to_the_next_ask() {
     owner.ask("site", &actor, "again").expect("the next ask");
     owner.drain().expect("drain");
     owner.set_message_boundary(&settled, 7).expect("boundary");
+    for node in owner.journal().list_nodes("run_1").expect("nodes") {
+        if node.site_id == settled.site_id && node.ordinal == settled.ordinal {
+            assert_eq!(
+                node.message_boundary,
+                Some(7),
+                "the settled ask keeps its boundary"
+            );
+        } else {
+            assert_eq!(
+                node.message_boundary, None,
+                "the next ask takes no boundary: {node:?}"
+            );
+        }
+    }
     let node = owner
         .journal()
         .get_node("run_1", &settled)
@@ -1022,10 +1047,10 @@ fn a_cancelled_ask_takes_no_message_boundary() {
     let instance = first_turn_instance(&sessions);
     owner.complete(json!("done")).expect("complete");
     owner.set_message_boundary(&instance, 5).expect("boundary");
-    let boundary = owner
+    let node = owner
         .journal()
         .get_node("run_1", &instance)
         .expect("node")
-        .and_then(|node| node.message_boundary);
-    assert_eq!(boundary, None);
+        .expect("the cancelled ask's node exists");
+    assert_eq!(node.message_boundary, None);
 }

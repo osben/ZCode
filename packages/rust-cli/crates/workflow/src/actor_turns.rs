@@ -36,8 +36,10 @@ pub trait TurnRunner: Send + Sync + 'static {
         cancel: &AtomicBool,
     ) -> std::result::Result<String, String>;
 
-    /// The session's message count, read after its ask settles (Node `journalAskMessageBoundary`'s count). None means
-    /// the count is not known, and no boundary is written.
+    /// The session's message count as the turn left it (Node `journalAskMessageBoundary`'s count). It is captured when
+    /// the turn finishes, before the live entry is released, so this read never touches the store: a newer prompt on
+    /// the session cannot change it. None means the count is not known, and no boundary is written. A panic here counts
+    /// as None, and the turn's end is still reported.
     fn message_boundary(&self, _session: &str) -> Option<u64> {
         None
     }
@@ -166,9 +168,10 @@ fn run_ask(
         if cancel.load(Ordering::SeqCst) {
             return;
         }
-        // Counted while the ask is still active: a newer ask cannot start before this one settles, so this is the count
-        // at settlement (Node reads it there) and no race with a later prompt can change it.
-        let boundary = runner.message_boundary(session);
+        // The count the turn captured when it finished (see `TurnRunner::message_boundary`). A panic in the read is an
+        // unknown count, so the turn's end below is reported either way.
+        let boundary = panic::catch_unwind(AssertUnwindSafe(|| runner.message_boundary(session)))
+            .unwrap_or(None);
         match handle.turn_ended(session, &text) {
             Ok(TurnEndReply::Verdict(SubmitVerdict::Nudge)) => {
                 // Node `runTurn(NUDGE_PROMPT, 0)`: the nudge has no instructions, so its epilogue starts at 0. It is the

@@ -392,3 +392,51 @@ fn a_panicking_turn_fails_the_ask_with_the_panic_text_and_nothing_hangs() {
         error.message
     );
 }
+
+/// A runner whose count read panics, as `block_on` does during a runtime shutdown. The count is unknown; the turn's end
+/// is still reported, so the ask settles.
+struct PanickingCount;
+
+impl TurnRunner for PanickingCount {
+    fn run_turn(
+        &self,
+        _session: &str,
+        _interaction: &str,
+        _turn: &TurnInput,
+        _cancel: &AtomicBool,
+    ) -> std::result::Result<String, String> {
+        Ok("done".to_owned())
+    }
+
+    fn message_boundary(&self, _session: &str) -> Option<u64> {
+        panic!("the count read exploded");
+    }
+}
+
+#[test]
+fn a_panicking_count_read_still_reports_the_turn_end() {
+    let (mut owner, mailbox, actor) = owner_over(Arc::new(PanickingCount));
+    owner.ask("site", &actor, "do it").expect("ask");
+    owner.drain().expect("drain");
+    // Poll instead of blocking on the mailbox: a run where the turn's end never arrives must fail, not hang.
+    let mut request = None;
+    for _ in 0..500 {
+        if let Some(found) = mailbox.try_take() {
+            request = Some(found);
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    match request {
+        Some(crate::actor_mailbox::ActorRequest::TurnEnded {
+            session,
+            text,
+            reply,
+        }) => {
+            let verdict = owner.turn_ended(&session, &text);
+            assert!(verdict.is_ok(), "the turn's end is answered: {verdict:?}");
+            let _ = reply.send(verdict);
+        }
+        _ => panic!("the turn's end was never reported after the count read panicked"),
+    }
+}
