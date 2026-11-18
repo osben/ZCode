@@ -458,6 +458,16 @@ impl Live {
     /// in one lock section. A running entry is refused, and is not touched (Node's restart is refused the same way, and
     /// `Live::restart` returns None for a running entry). A run begun on an existing entry clears `stopped_by_user`, as
     /// a restart does. The fresh entry's first run publishes no previous status: the seed is not a run.
+    /// Clears a workflow actor's submit port once its turn has ended. The next turn sets its own, and a restart of the
+    /// finished child must not offer the old one.
+    pub(crate) fn clear_actor_port(&self, agent: &AgentId) {
+        self.change(|agents| {
+            if let Some(entry) = agents.get_mut(agent) {
+                entry.actor_port = None;
+            }
+        });
+    }
+
     pub(crate) fn begin_actor_run(
         &self,
         agent: &AgentId,

@@ -377,10 +377,9 @@ pub(crate) async fn drive(
     }
 }
 
-/// 组装子循环并跑到结束。前台时 `cancel` 是父工具调用的取消信号，收到后中止子循环并等它收尾。
 /// The tools a child gets beyond its definition's: RespondToCoordinator for every child, and the submit tool for a
 /// workflow actor that has a port (`submit::tools_for`).
-fn child_tools(
+pub(crate) fn child_tools(
     core: &Arc<Core>,
     agent: &LiveAgent,
 ) -> Vec<Arc<dyn rust_cli_kernel_api::tool::Tool>> {
@@ -391,6 +390,7 @@ fn child_tools(
     tools
 }
 
+/// 组装子循环并跑到结束。前台时 `cancel` 是父工具调用的取消信号，收到后中止子循环并等它收尾。
 async fn run_loop(
     core: &Arc<Core>,
     agent: &LiveAgent,

@@ -139,6 +139,11 @@ impl ToolRule {
         if name == crate::respond::NAME {
             return !self.deny.iter().any(|tool| tool == name);
         }
+        // A workflow actor's submit tool is a child-only tool like RespondToCoordinator: it is offered only to an actor
+        // that has a port (`submit::tools_for`), and a background actor's allowlist must not drop it.
+        if name == crate::submit::NAME {
+            return !self.deny.iter().any(|tool| tool == name);
+        }
         let mcp = rust_cli_kernel_api::mcp_name::is_mcp(name);
         let asks = self.questions && name == tool_names::ASK_USER_QUESTION;
         if !mcp && !asks && ALL_AGENT_DISALLOWED.contains(&name) {
