@@ -122,6 +122,8 @@ impl<A: ActorAgents> TurnRunner for AgentTurnRunner<A> {
         &self,
         session: &str,
         interaction: &str,
+        // The epilogue boundary is persisted with the user message in the next PR (spec 9.8f, 2c-3b part 2).
+        _epilogue_start: usize,
         prompt: &str,
         cancel: &AtomicBool,
     ) -> Result<String, String> {

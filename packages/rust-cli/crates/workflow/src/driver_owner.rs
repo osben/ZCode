@@ -23,8 +23,8 @@
 //!   that case too.
 use crate::driver_rules::{
     NO_ACTIVE_ASK_MESSAGE, ProfileFit, SubmitProfile, SubmitRoute, UNTYPED_ASK_MESSAGE,
-    actor_interaction_description, actor_session_title, actor_task_link_path, profile_fit,
-    submit_route,
+    actor_interaction_description, actor_session_title, actor_task_link_path, ask_input,
+    profile_fit, submit_route,
 };
 use crate::engine::{
     AskMessage, AskOutcome, EngineConfig, SubmitVerdict, WorkflowDriver, WorkflowEngine,
@@ -67,6 +67,8 @@ pub trait ActorSessions {
         session: &str,
         instance: &Ref,
         message: &AskMessage,
+        input: &str,
+        epilogue_start: usize,
         interaction: &str,
     ) -> Result<()>;
     /// Stop the session's turn for an ask the engine cancelled.
@@ -105,6 +107,9 @@ struct QueuedStart {
     session: String,
     instance: Ref,
     message: AskMessage,
+    /// The composed turn input (instructions and epilogues) and its boundary (`ask_input`).
+    input: String,
+    epilogue_start: usize,
 }
 
 /// An ask the owner has started and not yet ended.
@@ -173,29 +178,45 @@ impl<S: ActorSessions> WorkflowDriver for ActorPort<S> {
             ));
             return;
         };
+        let mut profile = self
+            .profiles
+            .get(&actor_key)
+            .cloned()
+            .unwrap_or(SubmitProfile::Generic);
         if message.typed {
-            let profile = self
-                .profiles
-                .get(&actor_key)
-                .cloned()
-                .unwrap_or(SubmitProfile::Generic);
             let schema = message.schema.clone().unwrap_or(Value::Null);
             // A failed fit fails the ask before any turn starts (Node `ensureSubmitProfileFits` throws inside the
             // ask's promise, so the engine sees `askFailed`).
-            if let ProfileFit::Fail { message: text } =
-                profile_fit(&profile, &schema, &instance.key(), session)
-            {
-                self.queued_failures.push((
-                    instance.clone(),
-                    WorkflowError::new(ErrorCode::DriverError, text),
-                ));
-                return;
+            match profile_fit(&profile, &schema, &instance.key(), session) {
+                ProfileFit::Fail { message: text } => {
+                    self.queued_failures.push((
+                        instance.clone(),
+                        WorkflowError::new(ErrorCode::DriverError, text),
+                    ));
+                    return;
+                }
+                // The repair (Node `ensureSubmitProfileFits` sets the session's profile to the generic one): the
+                // session keeps the generic declaration from here on, and this ask's input is composed for it.
+                ProfileFit::FallBackToGeneric => {
+                    self.profiles.insert(actor_key, SubmitProfile::Generic);
+                    profile = SubmitProfile::Generic;
+                }
+                ProfileFit::Fits => {}
             }
         }
+        // The input is composed after the fit, as Node composes it after `ensureSubmitProfileFits`.
+        let (input, epilogue_start) = ask_input(
+            &message.instructions,
+            message.typed,
+            message.schema.as_ref(),
+            &profile,
+        );
         self.queued_starts.push(QueuedStart {
             session: session.to_owned(),
             instance: instance.clone(),
             message: message.clone(),
+            input,
+            epilogue_start,
         });
     }
 
@@ -280,10 +301,18 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
         instance: &Ref,
         message: AskMessage,
     ) {
+        let (input, epilogue_start) = ask_input(
+            &message.instructions,
+            message.typed,
+            message.schema.as_ref(),
+            &SubmitProfile::Generic,
+        );
         self.engine.driver.queued_starts.push(QueuedStart {
             session: session.to_owned(),
             instance: instance.clone(),
             message,
+            input,
+            epilogue_start,
         });
     }
 
@@ -590,6 +619,8 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
             &start.session,
             &start.instance,
             &start.message,
+            &start.input,
+            start.epilogue_start,
             &interaction,
         ) {
             Ok(()) => {

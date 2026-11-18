@@ -33,6 +33,7 @@ import {
   schemaEpilogue,
   subagentLabel,
 } from "../../apps/zcode-cli/packages/bootstrap/src/app/workflow-driver-helpers.ts";
+import { qualityEpilogue } from "../../apps/zcode-cli/packages/bootstrap/src/app/workflow-ask-epilogue.ts";
 import {
   parseWorkflowSubagentPermissionMode,
   workflowActorInteractionDescription,
@@ -149,6 +150,63 @@ const modeOfInputs: Array<string | undefined> = [
   "auto",
 ];
 
+// The quality epilogue (`qualityEpilogue`) reads only the schema's top-level `properties`, so nested ones must not count.
+const qualitySchemas: Array<{ name: string; schema: unknown }> = [
+  { name: "absent", schema: undefined },
+  { name: "plain object", schema: { type: "object" } },
+  { name: "evidence", schema: { type: "object", properties: { evidence: {} } } },
+  { name: "confidence", schema: { type: "object", properties: { confidence: {} } } },
+  {
+    name: "evidence and confidence",
+    schema: { type: "object", properties: { evidence: {}, confidence: {}, other: {} } },
+  },
+  {
+    name: "nested evidence is not top level",
+    schema: { type: "object", properties: { x: { properties: { evidence: {} } } } },
+  },
+];
+
+// An ask's input (`workflow-driver.ts`): instructions, then the quality epilogue, then for a typed ask the tool epilogue of a
+// mono session or the schema epilogue. `boundary` is `instructions.length`, in UTF-16 code units.
+const askInputCases: Array<{
+  name: string;
+  instructions: string;
+  typed: boolean;
+  schema: unknown;
+  mono: boolean;
+}> = [
+  { name: "untyped", instructions: "do it", typed: false, schema: undefined, mono: false },
+  {
+    name: "typed generic",
+    instructions: "do it",
+    typed: true,
+    schema: { type: "object" },
+    mono: false,
+  },
+  {
+    name: "typed mono",
+    instructions: "do it",
+    typed: true,
+    schema: { type: "object" },
+    mono: true,
+  },
+  {
+    name: "non-ASCII boundary",
+    instructions: "é🙂 go",
+    typed: false,
+    schema: undefined,
+    mono: false,
+  },
+];
+
+function askInputOf(c: (typeof askInputCases)[number]): string {
+  return c.typed
+    ? `${c.instructions}${qualityEpilogue(c.schema)}${
+        c.mono ? TYPED_TOOL_EPILOGUE : schemaEpilogue(c.schema)
+      }`
+    : `${c.instructions}${qualityEpilogue(undefined)}`;
+}
+
 const cases = {
   mintActorSessionId: actors.flatMap((actor) =>
     runIds.map((runId) => ({ runId, actor, id: mintActorSessionId(runId, actor) })),
@@ -165,6 +223,22 @@ const cases = {
     absent: schema === undefined,
     schema: schema ?? null,
     text: schemaEpilogue(schema),
+  })),
+  qualityEpilogue: qualitySchemas.map(({ name, schema }) => ({
+    name,
+    absent: schema === undefined,
+    schema: schema ?? null,
+    text: qualityEpilogue(schema),
+  })),
+  askInput: askInputCases.map((c) => ({
+    name: c.name,
+    instructions: c.instructions,
+    typed: c.typed,
+    mono: c.mono,
+    absent: c.schema === undefined,
+    schema: c.schema ?? null,
+    input: askInputOf(c),
+    boundary: c.instructions.length,
   })),
   normalizeEscalationContext: normalizeInputs.map((input) => ({
     input: input ?? null,

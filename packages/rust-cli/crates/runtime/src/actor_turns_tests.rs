@@ -90,11 +90,13 @@ impl ActorSessions for Sessions {
         &mut self,
         session: &str,
         instance: &Ref,
-        message: &AskMessage,
+        _message: &AskMessage,
+        input: &str,
+        epilogue_start: usize,
         interaction: &str,
     ) -> anyhow::Result<()> {
         self.turns
-            .start_turn(session, instance, message, interaction)
+            .start_turn(session, instance, input, epilogue_start, interaction)
     }
 
     fn cancel_turn(&mut self, session: &str, instance: &Ref) -> anyhow::Result<()> {
@@ -161,6 +163,17 @@ fn owner_over(
     owner_over_with(agents, None)
 }
 
+/// The first input of the scripted actor: "do it" with the quality and schema epilogues.
+fn composed_do_it() -> String {
+    use rust_cli_workflow::driver_rules as rules;
+    let schema = json!({"type": "object"});
+    format!(
+        "do it{}{}",
+        rules::quality_epilogue(Some(&schema)),
+        rules::schema_epilogue(Some(&schema))
+    )
+}
+
 /// The same owner, with the parent's interactions channel (or none) in the runner's base.
 fn owner_over_with(
     agents: Arc<ScriptedAgents>,
@@ -200,7 +213,7 @@ async fn a_scripted_actor_turn_runs_through_the_workflow_and_settles_after_the_n
     mailbox.serve_next(&mut owner).expect("the second turn end");
     assert_eq!(
         *agents.prompts.lock().expect("prompts"),
-        vec!["do it".to_owned(), NUDGE_PROMPT.to_owned()]
+        vec![composed_do_it(), NUDGE_PROMPT.to_owned()]
     );
     let runs = agents.runs.lock().expect("runs");
     assert_eq!(runs[0].parent, SessionId::new("ses_parent"));
@@ -266,7 +279,7 @@ async fn the_bridge_refuses_to_block_from_inside_a_runtime() {
     // Called from a task of the runtime itself, the bridge's block_on would panic; the debug assertion says why first.
     let cancel = AtomicBool::new(false);
     use rust_cli_workflow::actor_turns::TurnRunner;
-    let _ = runner.run_turn("sess_site", "Ada (site@1)", "do it", &cancel);
+    let _ = runner.run_turn("sess_site", "Ada (site@1)", 5, "do it", &cancel);
 }
 
 #[test]

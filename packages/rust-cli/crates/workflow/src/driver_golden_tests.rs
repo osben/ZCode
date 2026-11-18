@@ -1,12 +1,13 @@
 //! Parity with Node's driver rules (W6a, specs/fork-rust-workflow-engine.md section 9.7). The fixture is
 //! written by `scripts/rust-cli/workflow-driver-goldens.ts`, which calls Node's own functions from
 //! `bootstrap/src/app/workflow-driver-helpers.ts` and `workflow-actor-permission.ts`.
+use crate::driver_rules::SubmitProfile;
 use crate::driver_rules::{
     self as rules, ESCALATION_BUDGET_EXHAUSTED, MAX_ESCALATIONS_PER_ASK, NUDGE_PROMPT,
     SubagentPermissionMode, TYPED_TOOL_EPILOGUE,
 };
 use crate::engine::SubmitVerdict;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 const FIXTURE: &str = include_str!("../fixtures/driver-goldens.json");
 
@@ -187,4 +188,66 @@ fn permission_mode_rules_match_node() {
             "description of {name:?}"
         );
     }
+}
+
+// Node `qualityEpilogue` (workflow-ask-epilogue.ts) and the ask's input composition (workflow-driver.ts): the cases come from
+// Node's own functions, written by scripts/rust-cli/workflow-driver-goldens.ts. Nothing here is copied from Node by hand.
+
+fn schema_case(case: &Value) -> Option<&Value> {
+    if case["absent"].as_bool().unwrap() {
+        None
+    } else {
+        Some(&case["schema"])
+    }
+}
+
+#[test]
+fn quality_epilogue_is_node_text_for_every_schema_shape() {
+    for case in cases("qualityEpilogue") {
+        let name = text(&case["name"]).unwrap();
+        assert_eq!(
+            rules::quality_epilogue(schema_case(&case)),
+            text(&case["text"]).unwrap(),
+            "schema case {name}"
+        );
+    }
+}
+
+#[test]
+fn ask_input_is_node_text_for_every_ask_shape() {
+    for case in cases("askInput") {
+        let name = text(&case["name"]).unwrap();
+        let profile = if case["mono"].as_bool().unwrap() {
+            SubmitProfile::Mono {
+                schema: case["schema"].clone(),
+            }
+        } else {
+            SubmitProfile::Generic
+        };
+        let (input, boundary) = rules::ask_input(
+            text(&case["instructions"]).unwrap(),
+            case["typed"].as_bool().unwrap(),
+            schema_case(&case),
+            &profile,
+        );
+        assert_eq!(input, text(&case["input"]).unwrap(), "ask case {name}");
+        assert_eq!(
+            boundary as u64,
+            case["boundary"].as_u64().unwrap(),
+            "ask case {name}"
+        );
+    }
+}
+
+#[test]
+fn quality_epilogue_reads_only_top_level_properties() {
+    let schema = json!({"properties": {"x": {"properties": {"evidence": {}}}}});
+    assert!(!rules::quality_epilogue(Some(&schema)).contains("`evidence`"));
+}
+
+#[test]
+fn the_boundary_counts_utf16_units_as_node_does() {
+    // Node's `instructions.length` counts UTF-16 code units: "é🙂 go" is 1 + 2 + 3 = 6, and 9 UTF-8 bytes.
+    let (_, boundary) = rules::ask_input("é🙂 go", false, None, &SubmitProfile::Generic);
+    assert_eq!(boundary, 6);
 }

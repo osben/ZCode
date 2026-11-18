@@ -65,6 +65,66 @@ pub fn json_pretty(value: &Value) -> String {
     out
 }
 
+/// Node `qualityEpilogue` (workflow-ask-epilogue.ts): the standard every ask's result is held to. The `evidence` and
+/// `confidence` lines appear only when the schema's top-level properties name those fields.
+pub fn quality_epilogue(schema: Option<&Value>) -> String {
+    const EVERY_FINDING: &str = "- Every finding cites what you read or ran: path and line for code; the exact command and its output for a check; the part of the ask for material the ask itself gave you.";
+    const PASSED: &str = "- A check counts as passed only if you ran it during this ask. Otherwise report it as not run.";
+    const SCALE: &str = "- Run the check the ask names, at the scale it names. A narrower or faster substitute — one test file for the suite, a build for the tests — is reported as what it is, never as the ask's check; say the exact command you ran.";
+    const UNVERIFIED: &str = "- Anything you could not do, verify, or find is stated as such — never filled with a plausible guess.";
+    const EVIDENCE: &str = "- Put each finding's citation in its `evidence` field.";
+    const CONFIDENCE: &str =
+        "- Rate `confidence` honestly; a low value with a reason beats a confident guess.";
+    const ESCALATE: &str = "- If you are blocked by something outside your reach, call `escalate` instead of inventing a value.";
+    let has = |name: &str| {
+        schema
+            .and_then(|schema| schema.get("properties"))
+            .and_then(Value::as_object)
+            .is_some_and(|properties| properties.contains_key(name))
+    };
+    let mut lines: Vec<&str> = vec![
+        "",
+        "",
+        "---",
+        "Standard for this result:",
+        EVERY_FINDING,
+        PASSED,
+        SCALE,
+        UNVERIFIED,
+    ];
+    if has("evidence") {
+        lines.push(EVIDENCE);
+    }
+    if has("confidence") {
+        lines.push(CONFIDENCE);
+    }
+    lines.push(ESCALATE);
+    lines.join("\n")
+}
+
+/// The input of an ask's turn and its boundary (Node `workflow-driver.ts`, the input composition): the instructions,
+/// then the quality epilogue for every ask, then for a typed ask the tool epilogue of a mono session or the schema
+/// epilogue of a generic one. The boundary is the instructions' length in UTF-16 units, as Node's `instructions.length`
+/// counts it; the GUI folds the epilogue at that index.
+pub fn ask_input(
+    instructions: &str,
+    typed: bool,
+    schema: Option<&Value>,
+    profile: &SubmitProfile,
+) -> (String, usize) {
+    let mut input = instructions.to_owned();
+    input.push_str(&quality_epilogue(if typed { schema } else { None }));
+    if typed {
+        match profile {
+            SubmitProfile::Mono { .. } => input.push_str(TYPED_TOOL_EPILOGUE),
+            SubmitProfile::Generic | SubmitProfile::Untyped => {
+                input.push_str(&schema_epilogue(schema))
+            }
+        }
+    }
+    (input, instructions.encode_utf16().count())
+}
+
 fn write_pretty(out: &mut String, value: &Value, depth: usize) {
     match value {
         Value::Null => out.push_str("null"),

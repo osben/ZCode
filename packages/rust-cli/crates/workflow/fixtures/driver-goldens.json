@@ -582,6 +582,118 @@
       "text": "\n\n---\nWhen you have finished, call the `submit_result` tool to submit your final result. Its `result` argument must be a JSON value conforming to this JSON Schema:\n\n[\n  1,\n  [\n    2,\n    [\n      3\n    ]\n  ],\n  {\n    \"z\": 1,\n    \"a\": 2\n  }\n]\n\nPass the conforming JSON as the `result` argument — do not wrap it or add commentary."
     }
   ],
+  "qualityEpilogue": [
+    {
+      "name": "absent",
+      "absent": true,
+      "schema": null,
+      "text": "\n\n---\nStandard for this result:\n- Every finding cites what you read or ran: path and line for code; the exact command and its output for a check; the part of the ask for material the ask itself gave you.\n- A check counts as passed only if you ran it during this ask. Otherwise report it as not run.\n- Run the check the ask names, at the scale it names. A narrower or faster substitute — one test file for the suite, a build for the tests — is reported as what it is, never as the ask's check; say the exact command you ran.\n- Anything you could not do, verify, or find is stated as such — never filled with a plausible guess.\n- If you are blocked by something outside your reach, call `escalate` instead of inventing a value."
+    },
+    {
+      "name": "plain object",
+      "absent": false,
+      "schema": {
+        "type": "object"
+      },
+      "text": "\n\n---\nStandard for this result:\n- Every finding cites what you read or ran: path and line for code; the exact command and its output for a check; the part of the ask for material the ask itself gave you.\n- A check counts as passed only if you ran it during this ask. Otherwise report it as not run.\n- Run the check the ask names, at the scale it names. A narrower or faster substitute — one test file for the suite, a build for the tests — is reported as what it is, never as the ask's check; say the exact command you ran.\n- Anything you could not do, verify, or find is stated as such — never filled with a plausible guess.\n- If you are blocked by something outside your reach, call `escalate` instead of inventing a value."
+    },
+    {
+      "name": "evidence",
+      "absent": false,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "evidence": {}
+        }
+      },
+      "text": "\n\n---\nStandard for this result:\n- Every finding cites what you read or ran: path and line for code; the exact command and its output for a check; the part of the ask for material the ask itself gave you.\n- A check counts as passed only if you ran it during this ask. Otherwise report it as not run.\n- Run the check the ask names, at the scale it names. A narrower or faster substitute — one test file for the suite, a build for the tests — is reported as what it is, never as the ask's check; say the exact command you ran.\n- Anything you could not do, verify, or find is stated as such — never filled with a plausible guess.\n- Put each finding's citation in its `evidence` field.\n- If you are blocked by something outside your reach, call `escalate` instead of inventing a value."
+    },
+    {
+      "name": "confidence",
+      "absent": false,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "confidence": {}
+        }
+      },
+      "text": "\n\n---\nStandard for this result:\n- Every finding cites what you read or ran: path and line for code; the exact command and its output for a check; the part of the ask for material the ask itself gave you.\n- A check counts as passed only if you ran it during this ask. Otherwise report it as not run.\n- Run the check the ask names, at the scale it names. A narrower or faster substitute — one test file for the suite, a build for the tests — is reported as what it is, never as the ask's check; say the exact command you ran.\n- Anything you could not do, verify, or find is stated as such — never filled with a plausible guess.\n- Rate `confidence` honestly; a low value with a reason beats a confident guess.\n- If you are blocked by something outside your reach, call `escalate` instead of inventing a value."
+    },
+    {
+      "name": "evidence and confidence",
+      "absent": false,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "evidence": {},
+          "confidence": {},
+          "other": {}
+        }
+      },
+      "text": "\n\n---\nStandard for this result:\n- Every finding cites what you read or ran: path and line for code; the exact command and its output for a check; the part of the ask for material the ask itself gave you.\n- A check counts as passed only if you ran it during this ask. Otherwise report it as not run.\n- Run the check the ask names, at the scale it names. A narrower or faster substitute — one test file for the suite, a build for the tests — is reported as what it is, never as the ask's check; say the exact command you ran.\n- Anything you could not do, verify, or find is stated as such — never filled with a plausible guess.\n- Put each finding's citation in its `evidence` field.\n- Rate `confidence` honestly; a low value with a reason beats a confident guess.\n- If you are blocked by something outside your reach, call `escalate` instead of inventing a value."
+    },
+    {
+      "name": "nested evidence is not top level",
+      "absent": false,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "properties": {
+              "evidence": {}
+            }
+          }
+        }
+      },
+      "text": "\n\n---\nStandard for this result:\n- Every finding cites what you read or ran: path and line for code; the exact command and its output for a check; the part of the ask for material the ask itself gave you.\n- A check counts as passed only if you ran it during this ask. Otherwise report it as not run.\n- Run the check the ask names, at the scale it names. A narrower or faster substitute — one test file for the suite, a build for the tests — is reported as what it is, never as the ask's check; say the exact command you ran.\n- Anything you could not do, verify, or find is stated as such — never filled with a plausible guess.\n- If you are blocked by something outside your reach, call `escalate` instead of inventing a value."
+    }
+  ],
+  "askInput": [
+    {
+      "name": "untyped",
+      "instructions": "do it",
+      "typed": false,
+      "mono": false,
+      "absent": true,
+      "schema": null,
+      "input": "do it\n\n---\nStandard for this result:\n- Every finding cites what you read or ran: path and line for code; the exact command and its output for a check; the part of the ask for material the ask itself gave you.\n- A check counts as passed only if you ran it during this ask. Otherwise report it as not run.\n- Run the check the ask names, at the scale it names. A narrower or faster substitute — one test file for the suite, a build for the tests — is reported as what it is, never as the ask's check; say the exact command you ran.\n- Anything you could not do, verify, or find is stated as such — never filled with a plausible guess.\n- If you are blocked by something outside your reach, call `escalate` instead of inventing a value.",
+      "boundary": 5
+    },
+    {
+      "name": "typed generic",
+      "instructions": "do it",
+      "typed": true,
+      "mono": false,
+      "absent": false,
+      "schema": {
+        "type": "object"
+      },
+      "input": "do it\n\n---\nStandard for this result:\n- Every finding cites what you read or ran: path and line for code; the exact command and its output for a check; the part of the ask for material the ask itself gave you.\n- A check counts as passed only if you ran it during this ask. Otherwise report it as not run.\n- Run the check the ask names, at the scale it names. A narrower or faster substitute — one test file for the suite, a build for the tests — is reported as what it is, never as the ask's check; say the exact command you ran.\n- Anything you could not do, verify, or find is stated as such — never filled with a plausible guess.\n- If you are blocked by something outside your reach, call `escalate` instead of inventing a value.\n\n---\nWhen you have finished, call the `submit_result` tool to submit your final result. Its `result` argument must be a JSON value conforming to this JSON Schema:\n\n{\n  \"type\": \"object\"\n}\n\nPass the conforming JSON as the `result` argument — do not wrap it or add commentary.",
+      "boundary": 5
+    },
+    {
+      "name": "typed mono",
+      "instructions": "do it",
+      "typed": true,
+      "mono": true,
+      "absent": false,
+      "schema": {
+        "type": "object"
+      },
+      "input": "do it\n\n---\nStandard for this result:\n- Every finding cites what you read or ran: path and line for code; the exact command and its output for a check; the part of the ask for material the ask itself gave you.\n- A check counts as passed only if you ran it during this ask. Otherwise report it as not run.\n- Run the check the ask names, at the scale it names. A narrower or faster substitute — one test file for the suite, a build for the tests — is reported as what it is, never as the ask's check; say the exact command you ran.\n- Anything you could not do, verify, or find is stated as such — never filled with a plausible guess.\n- If you are blocked by something outside your reach, call `escalate` instead of inventing a value.\n\n---\nWhen you have finished, call the `submit_result` tool to submit your final result. Its `result` argument must match the tool's declared schema — pass the conforming JSON directly, do not wrap it or add commentary.",
+      "boundary": 5
+    },
+    {
+      "name": "non-ASCII boundary",
+      "instructions": "é🙂 go",
+      "typed": false,
+      "mono": false,
+      "absent": true,
+      "schema": null,
+      "input": "é🙂 go\n\n---\nStandard for this result:\n- Every finding cites what you read or ran: path and line for code; the exact command and its output for a check; the part of the ask for material the ask itself gave you.\n- A check counts as passed only if you ran it during this ask. Otherwise report it as not run.\n- Run the check the ask names, at the scale it names. A narrower or faster substitute — one test file for the suite, a build for the tests — is reported as what it is, never as the ask's check; say the exact command you ran.\n- Anything you could not do, verify, or find is stated as such — never filled with a plausible guess.\n- If you are blocked by something outside your reach, call `escalate` instead of inventing a value.",
+      "boundary": 6
+    }
+  ],
   "normalizeEscalationContext": [
     {
       "input": null,
