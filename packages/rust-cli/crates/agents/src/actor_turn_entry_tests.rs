@@ -431,6 +431,39 @@ async fn a_turns_epilogue_boundary_is_on_its_user_message() {
 }
 
 #[tokio::test]
+async fn a_nudged_turns_prompt_is_stored_with_the_boundary_zero() {
+    // Node `runTurn(NUDGE_PROMPT, 0)`: the nudge's user message carries Some(0), not no boundary.
+    let h = harness(None);
+    let parent = SessionId::new("ses_parent");
+    let child = SessionId::new("sess_actor_nudge_boundary");
+    create_child(h.store.as_ref(), &child, &parent).await;
+    let mut first = run_for(&child, &parent);
+    first.epilogue_start = Some(5);
+    h.agents
+        .run_actor_turn(first, "do it", CancellationToken::new())
+        .await;
+    let mut nudge = run_for(&child, &parent);
+    nudge.epilogue_start = Some(0);
+    h.agents
+        .run_actor_turn(nudge, "nudge", CancellationToken::new())
+        .await;
+    let stored = h
+        .store
+        .load(&child)
+        .await
+        .expect("the child session is stored");
+    let boundaries: Vec<Option<usize>> = stored
+        .messages
+        .iter()
+        .filter_map(|message| match message {
+            Message::User(user) => Some(user.epilogue_start),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(boundaries, vec![Some(5), Some(0)]);
+}
+
+#[tokio::test]
 async fn a_turn_cancelled_before_it_runs_is_stopped_and_leaves_only_its_prompt() {
     // A gated runner waits for the abort, so the cancel is what ends the turn.
     let gate = Arc::new(Notify::new());
