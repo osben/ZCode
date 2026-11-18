@@ -708,6 +708,72 @@ Not covered yet (open, with the owner):
 - Driver: the store call and the publish's settlement come from the W6b driver. The hole-fill orchestration (compile, permission, draft write) is the run service (W7/W8).
 - The notifications and the snapshot projection of open holes are W8.
 
+### 9.7 W6a: the actor driver (design, then as built)
+
+Status: part 1 built on `feat/rust-workflow-actor-driver`, stacked on W5c (#535, which is on #534). Gate off; nothing calls it. Part 2 (the runtime that runs turns) is open, listed below.
+
+Design. Owners, one per kind of state:
+
+- **engine** (Rust, `crates/workflow`): the single writer of the journal and of every ask, node and settlement. It stays synchronous and reads no clock.
+- **driver owner** (Rust, one task per run, the run service's side of the port): holds the per-session driver state (current instance, typed flag, submit profile, the pending submit verdict, the escalation book). It is the only caller of the engine. Actor turns never call the engine directly.
+- **actor turn** (async, one per ask attempt): runs a turn on the actor's child session. It sends messages to the driver owner and waits for a oneshot reply. A `submit_result` or `escalate` tool call blocks on its reply, which becomes the tool result.
+- **actor child session** (Rust session of kind `Subagent` with a parent): its transcript, tools, and permission ask. Its id is `sess_dwf-<san(runId)>-<san(site@ordinal)>`, minted by `mint_actor_session_id` in node-store, the same function the replay envelope uses (one implementation, per Node's `mintActorSessionId`).
+- **session task link** (`workflow_actor` role, W2 writer): links the child to the run by `dwf/<runId>/<site@ordinal>`.
+
+Event order for one typed ask (the W6a target; the ticket and oneshot rules are as in section 3.2):
+
+```
+actor turn            driver owner (engine + journal)            engine
+  │ submit_result(v) ─SubmitAttempted{instance,v,reply}─►│ submit_route: no ask → reject; untyped → reject
+  │                                                      │ Engine route: engine.submit_attempted ──────►│ validate
+  │                                                      │◄─ verdict (accept | reject+violations) ──────│ settle or repair
+  │◄── reply (oneshot) = tool result ────────────────────│
+  │ turn ends without submit ─TurnEnded{instance,text}──►│ engine.turn_ended ─────────────────────────►│ nudge or settle
+  │                                                      │ Nudge: fresh turn, NUDGE_PROMPT, boundary 0
+  │ escalate(q) ─Escalate{session,req,reply}──────────►│ book.escalate: refuse, or park + write escalation-raised
+  │  (blocks)                                            │ … main agent answers: book.answer → escalation-resolved
+  │◄── reply (oneshot) = answer as the tool result ─────│
+```
+
+Rules that follow from the owners:
+
+- A submit with no ask in flight, or on an untyped ask, is refused at the port. The engine is not told, because an untyped ask would never settle its deferred (Node's submit bridge).
+- Session creation completes as a job, not inline (section 9.3, deviation 1).
+- The escalation book, not the engine, owns parked questions. The raise is written before the question counts as parked. A failed raise write revokes the park and returns the error. A failed resolved write is a warning, and the answer is still delivered (Node's asymmetry, `workflow-driver-escalation.ts`).
+- `askedAt` is read once by the driver and shared between the event and the parked record. The engine and the book read no clock.
+
+As built (part 1: the rules, with goldens; no turn runtime):
+
+- `crates/workflow/src/driver_rules.rs`: `NUDGE_PROMPT`, `TYPED_TOOL_EPILOGUE`, `schema_epilogue` with `json_pretty` (a JavaScript-faithful `JSON.stringify(v, null, 2)`: two spaces, `[]` and `{}` for empty containers, insertion order, JavaScript number form), `question_id_fragments`, `normalize_escalation_context` (JavaScript `trim`), `effective_actor_name`, `subagent_label`, `reject_with`, `submit_route` (the port's refusals, with `NO_ACTIVE_ASK_MESSAGE` and `UNTYPED_ASK_MESSAGE`), `profile_fit` (generic, mono with canonical compare, untyped with the `DriverError` text), the recorded permission mode (`subagent_permission_mode_of` with `plan` as `build`, `parse_subagent_permission_mode`, `actor_permission_policy` defaulting to YOLO), `actor_interaction_description` (`<name ?? "subagent"> (<site>@<ordinal>)`), `actor_session_title`, `actor_task_link_path`, and `WORKFLOW_ACTOR_LINK_ROLE`.
+- `crates/workflow/src/escalation.rs`: the `EscalationBook`. Per session: the active-ask flag, the per-ask budget (`MAX_ESCALATIONS_PER_ASK` 3, reset by `start_ask`), and the parked ids in raise order. Per run: the id registry and the sequence. `escalate` refuses with `no_active_ask` or `budget_exhausted` (ordinary results, nothing parked, no event). `answer` retires the id and writes `escalation-resolved`. `end_ask` and `start_ask` withdraw the parked questions. `mint_question_id` tries the fragments in order and fails when none is free.
+- `RunEvent::EscalationRaised` and `RunEvent::EscalationResolved` (additive; `event.rs`), with Node's key order: `type, qid, actor, actorName?, question, context?, askedAt` and `type, qid, answer`.
+- node-store: `mint_actor_session_id` and `sanitize_id_segment` are re-exported from the replay module (`crates/node-store/src/lib.rs`). The sanitiser now maps UTF-16 code units, as Node's `replace` does. Before this, an astral character in a run id gave one underscore instead of two, so the replay's session id differed from the id the driver would mint. Fixed in `workflow_runs/replay.rs`; pinned by `workflow_runs::tests::an_astral_character_in_a_run_id_maps_to_two_underscores_as_node_does`.
+
+Goldens and tests:
+
+- `scripts/rust-cli/workflow-driver-goldens.ts` calls Node's own `workflow-driver-helpers.ts` and `workflow-actor-permission.ts` and writes `crates/workflow/fixtures/driver-goldens.json`. The generator needs `TSX_TSCONFIG_PATH=scripts/rust-cli/tsconfig.workflow-goldens.json`. That map points `@zcode/contracts` at `scripts/rust-cli/stubs/contracts.ts` and `@zcode/dynamic-workflow` at `scripts/rust-cli/stubs/dynamic-workflow.ts`. Both stubs copy the real source (`createSessionId` returns `sess_${id}`; `CoreErrorType.TurnCancelled` is `turn_cancelled`; the dynamic-workflow stub re-exports the two symbols the helpers use from Node's own files, because the package index needs the generated compiler libs).
+- `driver_golden_tests.rs` replays the fixture: 55 session ids (11 run ids by 5 actors, including an emoji and underscores), 11 fragment lists, the constants, 6 schema epilogues (absent, null, string, nested with `1e21` and `123456789012345680000`, array), the context and name normalisers, labels, `rejectWith`, and the permission rules and descriptions.
+- Unit tests in `driver_rules.rs`, `escalation_tests.rs`: the budget and refusals, withdrawal on a new ask and on `end_ask`, the raise and resolved write failures, Node key order in the payloads, and the fragment fallback.
+- Red first, as recorded: `cargo test -p rust-cli-workflow --lib` failed to compile (`file not found for module driver_rules`) before the module existed. `rust-cli-node-store --lib astral_character` failed on `sess_dwf-dwfrun-_x-x.y-z_10` against Node's `__x`. The escalation tests failed to compile (`file not found for module escalation`) before the book existed.
+- Results on the Linux box: `cargo test -p rust-cli-workflow --lib` 62 pass; `cargo test -p rust-cli-node-store --lib` 328 pass, 1 ignored; `cargo clippy --workspace --all-targets -- -D warnings` exit 0; `cargo fmt --all -- --check` exit 0.
+
+Deviations and what is not golden-covered:
+
+- The escalation book is tested against the behaviour its Node source states, not against goldens from a running Node driver, because Node's escalation port needs an AgentRuntime. The payload key order is pinned to the Node object literals. The fragment fallback and `mint_question_id` are from source, not from a Node call (the function is not exported).
+- Node's permission mode type is `CollaborationMode`, which TypeScript cannot pass as an unknown string. A Rust `&str` can, so an unknown mode reads as absent (`None`, then YOLO).
+- `json_pretty` reads every JSON number as a double, as `JSON.parse` does in Node. A schema integer above 2^53 therefore prints the same way Node prints it.
+- The untyped-ask and no-active-ask texts are copied from `workflow-driver-submit-bridge.ts` and checked by a Rust test against the literal; there is no golden for them.
+- Not verified: how Node hides `workflow_actor` sessions from the sessions index. The index projection (`bootstrap/src/zcode-protocol-v4/sessions-index-projection.ts`) has no reference to the role. The actor session carries `parentSessionId` (`dynamic-workflow-run-launch.ts`, `persistActorSession`), so the parent is the likely filter. Part 2 must check the adapter query before it writes the link.
+
+Remaining (W6a part 2, owner: W6a; not in this part):
+
+1. The `ActorRuntime`: create the child session as a job through `crates/agents` (session kind `Subagent`, parent, title, task-link writer, persona model and tool policy). The existing `spawn.rs` runs a child to its end, so the runtime needs a turn-by-turn entry point on the same session.
+2. The per-ask turn loop on that session, the `submit_result` and `escalate` tools modelled on `respond.rs` (the blocking tool with a oneshot), the typed epilogue (`schema_epilogue` or `TYPED_TOOL_EPILOGUE`), the mono submit profile, and the nudge turn with `NUDGE_PROMPT`.
+3. The permission origin: `ChildSink::with_origin` with `actor_interaction_description`; "always allow" as the session-scoped grant (F3b(a)).
+4. `set_message_boundary` from the transcript, `ask_mutating` from tool activity, the `countSource` adapter for the import builder (W5b), and the per-ask tool counts for `statsFromTurn`.
+5. Wiring the escalation book into the driver owner's messages and the engine journal (the book is written, the engine is not yet called from a session).
+6. Port the driver tests that apply to W6a: `bootstrap/tests/workflow-driver.test.ts` (1,344 lines), `workflow-driver-submit-profile.test.ts`, and the escalation cases. Concurrency and the seat gate are W6b.
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.

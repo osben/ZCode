@@ -622,3 +622,13 @@ fn wide_fan_out_hits_the_entry_budget_and_the_run_cut() {
         serialize(&state)
     );
 }
+
+/// Node `sanitizeIdSegment` maps each UTF-16 code unit, so an astral character (two units) becomes two
+/// underscores (`dwfrun-😀x` gives `dwfrun-__x`). Golden: `scripts/rust-cli/workflow-driver-goldens.ts`.
+#[test]
+fn an_astral_character_in_a_run_id_maps_to_two_underscores_as_node_does() {
+    assert_eq!(
+        mint_actor_session_id("dwfrun-😀x", "x.y-z", 10.0),
+        "sess_dwf-dwfrun-__x-x.y-z_10"
+    );
+}

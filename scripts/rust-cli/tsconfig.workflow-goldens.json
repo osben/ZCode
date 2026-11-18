@@ -1,0 +1,9 @@
+{
+  "compilerOptions": {
+    "baseUrl": "../..",
+    "paths": {
+      "@zcode/contracts": ["scripts/rust-cli/stubs/contracts.ts"],
+      "@zcode/dynamic-workflow": ["scripts/rust-cli/stubs/dynamic-workflow.ts"]
+    }
+  }
+}

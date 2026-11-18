@@ -107,16 +107,17 @@ pub fn mint_actor_session_id(run_id: &str, site_id: &str, ordinal: f64) -> Strin
 }
 
 /// `sanitizeIdSegment`: `_` escapes to `__` first, then every char outside `[A-Za-z0-9.-]` maps to `_`.
-fn sanitize_id_segment(value: &str) -> String {
+/// Node's replace runs over UTF-16 code units, so an astral character (two units) becomes two `_`, not one.
+/// The output is always ASCII, which the driver relies on when it slices the id for question fragments.
+pub fn sanitize_id_segment(value: &str) -> String {
     let escaped = value.replace('_', "__");
     escaped
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || ch == '.' || ch == '-' {
-                ch.to_string()
-            } else {
-                "_".to_string()
+        .encode_utf16()
+        .map(|unit| match u8::try_from(unit) {
+            Ok(byte) if byte.is_ascii_alphanumeric() || byte == b'.' || byte == b'-' => {
+                char::from(byte)
             }
+            _ => '_',
         })
         .collect()
 }
