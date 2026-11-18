@@ -235,38 +235,43 @@ pub fn profile_fit(
     }
 }
 
-/// The permission mode a dynamic-workflow run records for its subagents (Node `WorkflowSubagentPermissionMode`,
-/// `CollaborationMode` without `plan`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SubagentPermissionMode {
-    Build,
-    Edit,
-    Yolo,
-    Guarded,
-    Auto,
+/// Declares the enum and its name table from one list, so `ALL` and `as_str` cannot disagree with the variants: a
+/// variant added here is in `ALL` and parses, or it does not compile.
+macro_rules! subagent_permission_modes {
+    ($($variant:ident = $name:literal),+ $(,)?) => {
+        /// The permission mode a dynamic-workflow run records for its subagents (Node `WorkflowSubagentPermissionMode`,
+        /// `CollaborationMode` without `plan`).
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        pub enum SubagentPermissionMode {
+            $($variant),+
+        }
+
+        impl SubagentPermissionMode {
+            /// Every recordable mode, generated from the same list as the variants.
+            pub const ALL: &'static [Self] = &[$(Self::$variant),+];
+
+            pub fn as_str(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $name),+
+                }
+            }
+
+            fn parse(text: &str) -> Option<Self> {
+                match text {
+                    $($name => Some(Self::$variant),)+
+                    _ => None,
+                }
+            }
+        }
+    };
 }
 
-impl SubagentPermissionMode {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Build => "build",
-            Self::Edit => "edit",
-            Self::Yolo => "yolo",
-            Self::Guarded => "guarded",
-            Self::Auto => "auto",
-        }
-    }
-
-    fn parse(text: &str) -> Option<Self> {
-        match text {
-            "build" => Some(Self::Build),
-            "edit" => Some(Self::Edit),
-            "yolo" => Some(Self::Yolo),
-            "guarded" => Some(Self::Guarded),
-            "auto" => Some(Self::Auto),
-            _ => None,
-        }
-    }
+subagent_permission_modes! {
+    Build = "build",
+    Edit = "edit",
+    Yolo = "yolo",
+    Guarded = "guarded",
+    Auto = "auto",
 }
 
 /// Node `workflowSubagentPermissionModeOf`: the session's base mode, with `plan` read as `build`.
