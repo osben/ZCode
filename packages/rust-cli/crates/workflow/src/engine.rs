@@ -12,6 +12,9 @@
 //!
 //! Holes, artifacts, reports and the process-level governor are not here yet (spec 9.3 and 9.5). The import
 //! cache and world reads are (W5b, spec 9.5).
+use crate::engine_artifacts::{ArtifactIdState, ArtifactPublishRequest, PendingPublish};
+use crate::engine_holes::HoleRegistry;
+use crate::engine_report::ReportTally;
 use crate::engine_world::WorldLive;
 use crate::error::{ErrorCode, WorkflowError};
 use crate::event::{LaunchFields, RunEvent};
@@ -149,6 +152,14 @@ pub trait WorkflowDriver {
     /// Execute a live world read or run (Node `executeWorldRead`). The result comes back through
     /// `WorkflowEngine::world_read_settled` with the same instance.
     fn start_world_read(&mut self, instance: &Ref, op: &str, args: &Value);
+    /// Whether this driver can copy artifact bytes (Node: `executeArtifactPublish` is defined). A driver without a
+    /// store fails every content publish with `ArtifactStoreUnavailable`.
+    fn has_artifact_store(&self) -> bool {
+        false
+    }
+    /// Start copying one content version (Node `executeArtifactPublish`). The answer comes back through
+    /// `WorkflowEngine::artifact_publish_settled` with the same instance; it is never delivered inline.
+    fn start_artifact_publish(&mut self, _instance: &Ref, _request: &ArtifactPublishRequest) {}
     fn emit(&mut self, event: &RunEvent);
     fn dispose(&mut self) {}
 }
@@ -165,6 +176,14 @@ impl<T: WorkflowDriver + ?Sized> WorkflowDriver for &mut T {
 
     fn start_world_read(&mut self, instance: &Ref, op: &str, args: &Value) {
         (**self).start_world_read(instance, op, args);
+    }
+
+    fn has_artifact_store(&self) -> bool {
+        (**self).has_artifact_store()
+    }
+
+    fn start_artifact_publish(&mut self, instance: &Ref, request: &ArtifactPublishRequest) {
+        (**self).start_artifact_publish(instance, request);
     }
 
     fn start_ask(&mut self, session: &str, instance: &Ref, message: &AskMessage) {
@@ -265,6 +284,14 @@ pub struct WorkflowEngine<J: JournalPort, D: WorkflowDriver> {
     pub(crate) live_before_resume: HashSet<String>,
     /// World nodes the driver is executing, by instance key.
     pub(crate) world_live: HashMap<String, WorldLive>,
+    /// User-facing artifact ids of this run (Node `artifacts`), rebuilt on resume from completed rows.
+    pub(crate) artifacts: BTreeMap<String, ArtifactIdState>,
+    /// Content publishes the host has not settled, by instance key.
+    pub(crate) pending_publishes: HashMap<String, PendingPublish>,
+    /// Holes parked or filled in this lifetime (Node `HoleRegistry`).
+    pub(crate) holes: HoleRegistry,
+    /// Items reported in this run (Node `reportTally`), continuous across resume.
+    pub(crate) report_tally: ReportTally,
 }
 
 impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
@@ -356,6 +383,10 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
             queued_before_close: HashSet::new(),
             live_before_resume: HashSet::new(),
             world_live: HashMap::new(),
+            artifacts: BTreeMap::new(),
+            pending_publishes: HashMap::new(),
+            holes: HoleRegistry::default(),
+            report_tally: ReportTally::default(),
         };
         if existing.is_some() {
             engine.restore_from_journal()?;
@@ -840,6 +871,8 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
             }
         }
         self.active_asks = 0.0;
+        // Node `abortInFlight` also rejects the parked holes with the same error.
+        self.reject_holes(error);
         first_error.map_or(Ok(()), Err)
     }
 
@@ -880,6 +913,10 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
     pub(crate) fn execute_release(&mut self, release: Release) -> Result<()> {
         match release {
             Release::Cached(cached) => self.settle_cached(cached),
+            Release::Held(held) => {
+                self.push_outcome(held.ticket, held.outcome);
+                Ok(())
+            }
         }
     }
 }

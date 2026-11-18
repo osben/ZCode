@@ -335,6 +335,7 @@ fn world_row(
         stats: None,
         input,
         message_boundary: None,
+        artifact_id: None,
     }
 }
 

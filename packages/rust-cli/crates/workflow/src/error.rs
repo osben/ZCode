@@ -20,6 +20,18 @@ pub enum ErrorCode {
     ScriptHashMismatch,
     Interrupted,
     ProviderStop,
+    ReportCapExceeded,
+    ArtifactSourceMissing,
+    ArtifactPathOutsideWorkspace,
+    ArtifactTooLarge,
+    ArtifactStoreUnavailable,
+    ArtifactVersionCapExceeded,
+    ArtifactKindMismatch,
+    ArtifactCapExceeded,
+    ArtifactSpecInvalid,
+    ArtifactRedeclared,
+    ArtifactUndeclared,
+    ArtifactPrimaryConflict,
 }
 
 impl ErrorCode {
@@ -36,6 +48,18 @@ impl ErrorCode {
             Self::ScriptHashMismatch => "ScriptHashMismatch",
             Self::Interrupted => "Interrupted",
             Self::ProviderStop => "ProviderStop",
+            Self::ReportCapExceeded => "ReportCapExceeded",
+            Self::ArtifactSourceMissing => "ArtifactSourceMissing",
+            Self::ArtifactPathOutsideWorkspace => "ArtifactPathOutsideWorkspace",
+            Self::ArtifactTooLarge => "ArtifactTooLarge",
+            Self::ArtifactStoreUnavailable => "ArtifactStoreUnavailable",
+            Self::ArtifactVersionCapExceeded => "ArtifactVersionCapExceeded",
+            Self::ArtifactKindMismatch => "ArtifactKindMismatch",
+            Self::ArtifactCapExceeded => "ArtifactCapExceeded",
+            Self::ArtifactSpecInvalid => "ArtifactSpecInvalid",
+            Self::ArtifactRedeclared => "ArtifactRedeclared",
+            Self::ArtifactUndeclared => "ArtifactUndeclared",
+            Self::ArtifactPrimaryConflict => "ArtifactPrimaryConflict",
         }
     }
 
@@ -52,6 +76,18 @@ impl ErrorCode {
             "ScriptHashMismatch" => Self::ScriptHashMismatch,
             "Interrupted" => Self::Interrupted,
             "ProviderStop" => Self::ProviderStop,
+            "ReportCapExceeded" => Self::ReportCapExceeded,
+            "ArtifactSourceMissing" => Self::ArtifactSourceMissing,
+            "ArtifactPathOutsideWorkspace" => Self::ArtifactPathOutsideWorkspace,
+            "ArtifactTooLarge" => Self::ArtifactTooLarge,
+            "ArtifactStoreUnavailable" => Self::ArtifactStoreUnavailable,
+            "ArtifactVersionCapExceeded" => Self::ArtifactVersionCapExceeded,
+            "ArtifactKindMismatch" => Self::ArtifactKindMismatch,
+            "ArtifactCapExceeded" => Self::ArtifactCapExceeded,
+            "ArtifactSpecInvalid" => Self::ArtifactSpecInvalid,
+            "ArtifactRedeclared" => Self::ArtifactRedeclared,
+            "ArtifactUndeclared" => Self::ArtifactUndeclared,
+            "ArtifactPrimaryConflict" => Self::ArtifactPrimaryConflict,
             _ => return None,
         })
     }
@@ -236,5 +272,82 @@ mod tests {
     #[test]
     fn unknown_codes_do_not_parse() {
         assert_eq!(ErrorCode::parse("Bogus"), None);
+    }
+}
+
+#[cfg(test)]
+mod code_round_trip_tests {
+    use super::*;
+
+    /// Position of each code in `ALL`. The match has no wildcard, so a new variant fails to compile until it is
+    /// listed here and in `ALL`.
+    fn position(code: ErrorCode) -> usize {
+        match code {
+            ErrorCode::ValidationFailed => 0,
+            ErrorCode::ResultNotSubmitted => 1,
+            ErrorCode::DriverError => 2,
+            ErrorCode::Cancelled => 3,
+            ErrorCode::InputHashMismatch => 4,
+            ErrorCode::UnknownActor => 5,
+            ErrorCode::MissingAskSpec => 6,
+            ErrorCode::DuplicateActorName => 7,
+            ErrorCode::ScriptHashMismatch => 8,
+            ErrorCode::Interrupted => 9,
+            ErrorCode::ProviderStop => 10,
+            ErrorCode::ReportCapExceeded => 11,
+            ErrorCode::ArtifactSourceMissing => 12,
+            ErrorCode::ArtifactPathOutsideWorkspace => 13,
+            ErrorCode::ArtifactTooLarge => 14,
+            ErrorCode::ArtifactStoreUnavailable => 15,
+            ErrorCode::ArtifactVersionCapExceeded => 16,
+            ErrorCode::ArtifactKindMismatch => 17,
+            ErrorCode::ArtifactCapExceeded => 18,
+            ErrorCode::ArtifactSpecInvalid => 19,
+            ErrorCode::ArtifactRedeclared => 20,
+            ErrorCode::ArtifactUndeclared => 21,
+            ErrorCode::ArtifactPrimaryConflict => 22,
+        }
+    }
+
+    #[test]
+    fn every_error_code_round_trips_through_as_str_and_parse() {
+        let all = [
+            ErrorCode::ValidationFailed,
+            ErrorCode::ResultNotSubmitted,
+            ErrorCode::DriverError,
+            ErrorCode::Cancelled,
+            ErrorCode::InputHashMismatch,
+            ErrorCode::UnknownActor,
+            ErrorCode::MissingAskSpec,
+            ErrorCode::DuplicateActorName,
+            ErrorCode::ScriptHashMismatch,
+            ErrorCode::Interrupted,
+            ErrorCode::ProviderStop,
+            ErrorCode::ReportCapExceeded,
+            ErrorCode::ArtifactSourceMissing,
+            ErrorCode::ArtifactPathOutsideWorkspace,
+            ErrorCode::ArtifactTooLarge,
+            ErrorCode::ArtifactStoreUnavailable,
+            ErrorCode::ArtifactVersionCapExceeded,
+            ErrorCode::ArtifactKindMismatch,
+            ErrorCode::ArtifactCapExceeded,
+            ErrorCode::ArtifactSpecInvalid,
+            ErrorCode::ArtifactRedeclared,
+            ErrorCode::ArtifactUndeclared,
+            ErrorCode::ArtifactPrimaryConflict,
+        ];
+        for (index, code) in all.iter().enumerate() {
+            assert_eq!(
+                position(*code),
+                index,
+                "{code:?} is listed in ALL at its position"
+            );
+            assert_eq!(
+                ErrorCode::parse(code.as_str()),
+                Some(*code),
+                "{code:?} parses back from as_str"
+            );
+        }
+        assert_eq!(all.len(), 23, "every variant is listed");
     }
 }

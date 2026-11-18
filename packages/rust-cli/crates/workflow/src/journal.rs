@@ -24,6 +24,13 @@ pub trait JournalPort {
     ) -> Result<()>;
     fn update_run_usage(&mut self, run_id: &str, spent_tokens: f64) -> Result<()>;
     fn update_run_caps(&mut self, run_id: &str, caps: Caps) -> Result<()>;
+    /// Node `updateRunScript`: the effective script text and its hash, written together.
+    fn update_run_script(
+        &mut self,
+        run_id: &str,
+        script_text: &str,
+        script_hash: &str,
+    ) -> Result<()>;
     fn put_actor(&mut self, row: ActorRow) -> Result<()>;
     fn get_actor(&self, run_id: &str, actor: &Ref) -> Result<Option<ActorRow>>;
     fn list_actors(&self, run_id: &str) -> Result<Vec<ActorRow>>;
@@ -58,6 +65,15 @@ impl<T: JournalPort + ?Sized> JournalPort for &mut T {
 
     fn update_run_caps(&mut self, run_id: &str, caps: Caps) -> Result<()> {
         (**self).update_run_caps(run_id, caps)
+    }
+
+    fn update_run_script(
+        &mut self,
+        run_id: &str,
+        script_text: &str,
+        script_hash: &str,
+    ) -> Result<()> {
+        (**self).update_run_script(run_id, script_text, script_hash)
     }
 
     fn put_actor(&mut self, row: ActorRow) -> Result<()> {
@@ -211,6 +227,18 @@ impl JournalPort for MemoryJournal {
         Ok(())
     }
 
+    fn update_run_script(
+        &mut self,
+        run_id: &str,
+        script_text: &str,
+        script_hash: &str,
+    ) -> Result<()> {
+        let row = self.row_mut(run_id)?;
+        row.script_text = Some(script_text.to_owned());
+        row.script_hash = Some(script_hash.to_owned());
+        Ok(())
+    }
+
     fn put_actor(&mut self, row: ActorRow) -> Result<()> {
         let key = Ref::key_of(&row.site_id, row.ordinal);
         let run = self.run_mut(&row.run_id)?;
@@ -335,6 +363,7 @@ mod tests {
             stats: None,
             input,
             message_boundary: boundary,
+            artifact_id: None,
         }
     }
 

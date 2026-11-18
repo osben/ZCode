@@ -1,5 +1,6 @@
-//! Run events (Node `types.ts` `RunEvent`): the lifecycle, asks and phase markers W5a emits. Holes,
-//! artifacts and reports are not here yet (spec 9.3).
+//! Run events (Node `types.ts` `RunEvent`): the lifecycle, asks, phase markers (W5a), and the holes, reports
+//! and artifact events (W5c, spec 9.6). The `scriptPath` of `hole-filled` and the artifact records are kept as
+//! the values the engine was given.
 //!
 //! `to_json` builds each object in the key order Node's object literals use, so the payload text
 //! (`JSON.stringify` of the event) is byte-identical. Optional keys are omitted when absent, as Node's
@@ -160,6 +161,42 @@ pub enum RunEvent {
     PhaseEntered {
         name: String,
         ordinal: u64,
+    },
+    /// Node `hole-reached`: the script parked at a hole. `phase` is the birth phase, stamped by the engine.
+    HoleReached {
+        instance: Ref,
+        name: String,
+        prompt: Option<String>,
+        phase: Option<String>,
+    },
+    /// Node `hole-filled`: the effective script is written and the parked branches resumed.
+    HoleFilled {
+        site_id: String,
+        filled_at: f64,
+        filled_by: Option<String>,
+        phase_names: Vec<String>,
+        holes: Option<Vec<u64>>,
+        script_path: Option<String>,
+    },
+    /// Node `report`: one published intermediate result. `artifact_id` is the preset it also feeds.
+    Report {
+        instance: Ref,
+        item: Value,
+        artifact_id: Option<String>,
+    },
+    /// Node `artifact-published`: a content version, or a persisted preset declaration. The record is kept in
+    /// the shape the driver (or the declaration) gave it, so its key order is the one Node stores.
+    ArtifactPublished {
+        instance: Ref,
+        artifact: Value,
+    },
+    /// Node `artifact-failed`: a content publication failed. Artifact sites are not graph nodes, so this is not
+    /// a `node-settled`.
+    ArtifactFailed {
+        instance: Ref,
+        id: String,
+        op: String,
+        error: Value,
     },
 }
 
@@ -340,6 +377,69 @@ impl RunEvent {
                 put_type(&mut map, "phase-entered");
                 map.insert("name".into(), Value::String(name.clone()));
                 map.insert("ordinal".into(), Value::from(*ordinal));
+            }
+            Self::HoleReached {
+                instance,
+                name,
+                prompt,
+                phase,
+            } => {
+                put_type(&mut map, "hole-reached");
+                map.insert("instance".into(), instance.to_json());
+                map.insert("name".into(), Value::String(name.clone()));
+                put_text(&mut map, "prompt", prompt);
+                put_text(&mut map, "phaseName", phase);
+            }
+            Self::HoleFilled {
+                site_id,
+                filled_at,
+                filled_by,
+                phase_names,
+                holes,
+                script_path,
+            } => {
+                put_type(&mut map, "hole-filled");
+                map.insert("siteId".into(), Value::String(site_id.clone()));
+                map.insert("filledAt".into(), js_number(*filled_at));
+                put_text(&mut map, "filledBy", filled_by);
+                map.insert(
+                    "phaseNames".into(),
+                    Value::Array(phase_names.iter().cloned().map(Value::String).collect()),
+                );
+                if let Some(holes) = holes {
+                    map.insert(
+                        "holes".into(),
+                        Value::Array(holes.iter().map(|index| Value::from(*index)).collect()),
+                    );
+                }
+                put_text(&mut map, "scriptPath", script_path);
+            }
+            Self::Report {
+                instance,
+                item,
+                artifact_id,
+            } => {
+                put_type(&mut map, "report");
+                map.insert("instance".into(), instance.to_json());
+                map.insert("item".into(), item.clone());
+                put_text(&mut map, "artifactId", artifact_id);
+            }
+            Self::ArtifactPublished { instance, artifact } => {
+                put_type(&mut map, "artifact-published");
+                map.insert("instance".into(), instance.to_json());
+                map.insert("artifact".into(), artifact.clone());
+            }
+            Self::ArtifactFailed {
+                instance,
+                id,
+                op,
+                error,
+            } => {
+                put_type(&mut map, "artifact-failed");
+                map.insert("instance".into(), instance.to_json());
+                map.insert("id".into(), Value::String(id.clone()));
+                map.insert("op".into(), Value::String(op.clone()));
+                map.insert("error".into(), error.clone());
             }
         }
         Value::Object(map)

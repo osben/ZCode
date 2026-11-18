@@ -302,6 +302,8 @@ pub struct NodeRow {
     /// Node `messageBoundary`: ask rows only, written by the driver after the exchange (see
     /// `Engine::set_message_boundary`). A count, invariant under prefix copies.
     pub message_boundary: Option<u64>,
+    /// Node `artifactId`: the artifact a report or an artifact row belongs to. Absent on asks and world nodes.
+    pub artifact_id: Option<String>,
 }
 
 impl NodeRow {
@@ -336,6 +338,7 @@ impl NodeRow {
         if let Some(boundary) = self.message_boundary {
             map.insert("messageBoundary".into(), Value::from(boundary));
         }
+        insert_text(&mut map, "artifactId", &self.artifact_id);
         Value::Object(map)
     }
 }
