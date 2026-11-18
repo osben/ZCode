@@ -76,6 +76,12 @@ pub(crate) enum ActorRequest {
         answer: String,
         reply: Sender<Result<Option<AnswerOutcome>>>,
     },
+    /// A turn threw (not cancelled): the owner fails the ask (Node `askFailed`).
+    TurnFailed {
+        session: String,
+        message: String,
+        reply: Sender<Result<()>>,
+    },
 }
 
 /// The owner's side of the channel. Only the owner thread receives from it.
@@ -99,6 +105,12 @@ impl ActorMailbox {
     /// Wait for the next request, without answering it. Crate-internal, so tests can take a request and drop it.
     pub(crate) fn take(&self) -> Result<ActorRequest, MailboxError> {
         self.rx.recv().map_err(|_| MailboxError::Closed)
+    }
+
+    /// The next request if one is queued. Crate-internal, for tests that assert nothing was sent.
+    #[cfg(test)]
+    pub(crate) fn try_take(&self) -> Option<ActorRequest> {
+        self.rx.try_recv().ok()
     }
 
     /// Wait for one request and answer it on the owner. The reply goes back on the request's own channel; a turn that
@@ -141,6 +153,13 @@ fn dispatch<J: JournalPort, S: ActorSessions>(
         }
         ActorRequest::Answer { qid, answer, reply } => {
             let _ = reply.send(owner.answer(&qid, &answer));
+        }
+        ActorRequest::TurnFailed {
+            session,
+            message,
+            reply,
+        } => {
+            let _ = reply.send(owner.turn_failed(&session, &message));
         }
     }
 }
@@ -192,6 +211,14 @@ impl ActorHandle {
         self.call(|reply| ActorRequest::Answer {
             qid: qid.to_owned(),
             answer: answer.to_owned(),
+            reply,
+        })
+    }
+
+    pub fn turn_failed(&self, session: &str, message: &str) -> Result<(), MailboxError> {
+        self.call(|reply| ActorRequest::TurnFailed {
+            session: session.to_owned(),
+            message: message.to_owned(),
             reply,
         })
     }

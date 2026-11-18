@@ -403,6 +403,21 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
         })
     }
 
+    /// Node `askFailed` for a turn that threw and was not cancelled (`workflow-driver.ts` `onTurnRejected`): the
+    /// engine settles the session's active ask as failed with the turn's text. A session with no ask in flight
+    /// writes nothing.
+    pub fn turn_failed(&mut self, session: &str, message: &str) -> Result<()> {
+        self.settle_quietly();
+        let Some(ask) = self.active.get(session).cloned() else {
+            return Ok(());
+        };
+        let result = self.engine.ask_failed(
+            &ask.instance,
+            WorkflowError::new(ErrorCode::DriverError, message),
+        );
+        self.after_engine(result)
+    }
+
     /// Node `workflow-driver-transcript.ts`: the ask's message boundary, written on its node row. A session with no
     /// ask in flight writes nothing.
     pub fn set_message_boundary(&mut self, session: &str, boundary: u64) -> Result<()> {
