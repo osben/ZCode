@@ -670,6 +670,52 @@ async fn a_settled_ask_carries_the_stats_its_turns_reported_through_the_bridge()
     assert_eq!(stats["turns"].as_f64(), Some(3.0));
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_turn_without_usage_reports_one_turn_and_no_tokens_through_the_bridge() {
+    // Node `statsFromTurn`: `usage?.modelRequestCount ?? 1` and `usage?.totalTokens ?? 0`. A turn whose responses carry
+    // no usage record reaches the node as 1 turn and 0 tokens, with its tool counts kept.
+    use rust_cli_workflow::journal::JournalPort;
+    let agents = ScriptedAgents::reporting(
+        vec![
+            ActorTurnEnd::Text("first".into()),
+            ActorTurnEnd::Text("second".into()),
+        ],
+        rust_cli_agents::actor_turn::ActorTurnStats {
+            tool_calls: 2,
+            world_tool_calls: 1,
+            requests: 0,
+            tokens: None,
+        },
+    );
+    let (mut owner, mailbox) = owner_over(agents);
+    let actor = owner.create_actor("site", None, None).expect("actor");
+    owner.ask("site", &actor, "do it").expect("ask");
+    owner.drain().expect("drain");
+    for _ in 0..5 {
+        mailbox.serve_next(&mut owner).expect("the next request");
+    }
+    let nodes = owner.journal().list_nodes("run_1").expect("nodes");
+    let stats = nodes[0]
+        .stats
+        .clone()
+        .expect("the settled ask carries stats");
+    assert_eq!(
+        stats["turns"].as_f64(),
+        Some(1.0),
+        "no usage: Node's default of 1 turn"
+    );
+    assert_eq!(
+        stats["tokens"].as_f64(),
+        Some(0.0),
+        "no usage: Node's default of 0 tokens"
+    );
+    assert_eq!(
+        stats["toolCalls"].as_f64(),
+        Some(4.0),
+        "the counts survive a failed usage read"
+    );
+}
+
 #[test]
 fn every_recordable_mode_names_a_permission_mode_through_the_shared_table() {
     use rust_cli_workflow::driver_rules::SubagentPermissionMode;
