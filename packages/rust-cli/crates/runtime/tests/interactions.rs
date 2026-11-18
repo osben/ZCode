@@ -336,7 +336,7 @@ mod interactions {
                 },
             })
             .await;
-        assert!(!matches!(answer, Ack::Rejected { .. }), "{answer:?}");
+        assert!(matches!(answer, Ack::Accepted { .. }), "{answer:?}");
         let rest = until(&mut events, |event| {
             matches!(event, KernelEvent::TurnFinished { .. })
         })
@@ -344,6 +344,13 @@ mod interactions {
         assert!(
             !rest.iter().any(|event| started_call(event, "toolu_read")),
             "a denied call never starts: {rest:?}"
+        );
+        assert!(
+            rest.iter().any(|event| matches!(
+                event,
+                KernelEvent::InteractionResolved { denied: true, .. }
+            )),
+            "a refusal resolves its prompt as denied: {rest:?}"
         );
     }
 
