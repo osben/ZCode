@@ -17,8 +17,8 @@ fn truthy(value: Option<&Value>) -> bool {
 }
 
 /// The message `metadata` Node writes for an input with an intent: `inputIntent`, `conversationInputIntent` and
-/// `inputClientId`.
-pub fn message_metadata(intent: &InputIntent, text: &str) -> Value {
+/// `inputClientId`. The object is returned as a `Map`, so a caller that adds keys to it cannot hand over a non-object.
+pub fn message_metadata(intent: &InputIntent, text: &str) -> Map<String, Value> {
     let mut metadata = Map::new();
     metadata.insert(
         "inputIntent".to_owned(),
@@ -31,7 +31,7 @@ pub fn message_metadata(intent: &InputIntent, text: &str) -> Value {
     if let Some(client) = intent.str("clientId").filter(|client| !client.is_empty()) {
         metadata.insert("inputClientId".to_owned(), Value::String(client.to_owned()));
     }
-    Value::Object(metadata)
+    metadata
 }
 
 /// Node `buildPersistedConversationInputIntent(text, intent, dispatchState)`, key for key.
