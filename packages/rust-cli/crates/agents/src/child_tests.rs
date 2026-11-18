@@ -279,7 +279,7 @@ fn the_protocol_tools_are_not_world_touching_and_an_unknown_tool_is() {
         "escalate",
         "EnterPlanMode",
         "ExitPlanMode",
-        "ReadSessionContext",
+        "ReadTopicResource",
         "RespondToCoordinator",
         "SendMessage",
         "Skill",
@@ -434,10 +434,10 @@ async fn a_cancelled_request_with_usage_counts_its_request_and_tokens() {
     assert_eq!(stats.usage_tokens, 15, "its input and output tokens");
 }
 
-/// Node's `isWorldTouchingToolCall` excludes exactly the tools whose side-effect scope is `session` or `userInteraction`
-/// (Node's handlers: Agent, AskUserQuestion, escalate, EnterPlanMode, ExitPlanMode, ReadSessionContext,
-/// RespondToCoordinator, SendMessage, Skill, submit_result, TaskStop, TodoWrite). ReadTopicResource is the topic-attachment
-/// path of ReadSessionContext, which Node declares session-scoped, so it is in the set too: 13 names, pinned by name.
+/// Node's `isWorldTouchingToolCall` excludes exactly the tools whose side-effect scope is `session` or `userInteraction`.
+/// In Node's handler files on origin/fork those are: Agent, AskUserQuestion, escalate, EnterPlanMode, ExitPlanMode,
+/// ReadTopicResource, RespondToCoordinator, SendMessage, Skill, submit_result, TaskStop, TodoWrite. Pinned by name: 12
+/// names.
 #[test]
 fn the_protocol_only_set_is_exactly_nodes_session_and_user_interaction_tools() {
     use rust_cli_kernel_api::tool_names as names;
@@ -447,7 +447,6 @@ fn the_protocol_only_set_is_exactly_nodes_session_and_user_interaction_tools() {
         crate::escalate::NAME,
         names::ENTER_PLAN_MODE,
         names::EXIT_PLAN_MODE,
-        names::READ_SESSION_CONTEXT,
         names::READ_TOPIC_RESOURCE,
         crate::respond::NAME,
         names::SEND_MESSAGE,
