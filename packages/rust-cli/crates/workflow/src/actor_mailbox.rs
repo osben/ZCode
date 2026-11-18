@@ -84,6 +84,12 @@ pub(crate) enum ActorRequest {
         message: String,
         reply: Sender<Result<()>>,
     },
+    /// The message boundary of a settled ask (Node `journalAskMessageBoundary`), sent after its settlement.
+    MessageBoundary {
+        session: String,
+        boundary: u64,
+        reply: Sender<Result<()>>,
+    },
 }
 
 /// The owner's side of the channel. Only the owner thread receives from it.
@@ -165,6 +171,13 @@ fn dispatch<J: JournalPort, S: ActorSessions>(
         } => {
             let _ = reply.send(owner.turn_failed(&session, &message));
         }
+        ActorRequest::MessageBoundary {
+            session,
+            boundary,
+            reply,
+        } => {
+            let _ = reply.send(owner.set_message_boundary(&session, boundary));
+        }
     }
 }
 
@@ -229,6 +242,15 @@ impl ActorHandle {
         self.call(|reply| ActorRequest::TurnFailed {
             session: session.to_owned(),
             message: message.to_owned(),
+            reply,
+        })
+    }
+
+    /// The message boundary of the session's settled ask. The owner writes it to that ask's node.
+    pub fn message_boundary(&self, session: &str, boundary: u64) -> Result<(), MailboxError> {
+        self.call(|reply| ActorRequest::MessageBoundary {
+            session: session.to_owned(),
+            boundary,
             reply,
         })
     }

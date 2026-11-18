@@ -132,7 +132,14 @@ impl ActorAgents for ScriptedAgents {
             .pop_front()
             .unwrap_or_else(|| ActorTurnEnd::Text("done".to_owned()))
     }
+
+    async fn message_count(&self, _child: &SessionId) -> Option<u64> {
+        Some(MESSAGE_COUNT)
+    }
 }
+
+/// The message count the scripted child reports when its ask settles.
+const MESSAGE_COUNT: u64 = 4;
 
 /// The turn side the owner sees: the child is named from the actor, and the turns are the bridge over the mailbox.
 struct Sessions {
@@ -561,6 +568,31 @@ async fn a_mono_session_that_misses_its_ask_falls_back_to_the_generic_declaratio
             .is_some_and(|port| port.submit_schema.is_none())),
         "no turn declares the missed schema"
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_settled_ask_writes_the_child_message_count_as_its_boundary() {
+    // Node `journalAskMessageBoundary`: the count is written on the settled ask's node, after its settlement.
+    use rust_cli_workflow::journal::JournalPort;
+    let agents = ScriptedAgents::new(
+        vec![
+            ActorTurnEnd::Text("first".into()),
+            ActorTurnEnd::Text("second".into()),
+        ],
+        false,
+    );
+    let (mut owner, mailbox) = owner_over(agents);
+    let actor = owner.create_actor("site", None, None).expect("actor");
+    owner.ask("site", &actor, "do it").expect("ask");
+    owner.drain().expect("drain");
+    mailbox.serve_next(&mut owner).expect("the first turn end");
+    mailbox.serve_next(&mut owner).expect("the nudged turn end");
+    mailbox
+        .serve_next(&mut owner)
+        .expect("the message boundary");
+    let nodes = owner.journal().list_nodes("run_1").expect("nodes");
+    assert_eq!(nodes.len(), 1);
+    assert_eq!(nodes[0].message_boundary, Some(MESSAGE_COUNT));
 }
 
 #[test]

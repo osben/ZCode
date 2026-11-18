@@ -54,6 +54,9 @@ pub trait ActorAgents: Send + Sync + 'static {
         prompt: &str,
         cancel: CancellationToken,
     ) -> ActorTurnEnd;
+
+    /// The child session's message count, read when its ask settles. None when it cannot be read.
+    async fn message_count(&self, child: &SessionId) -> Option<u64>;
 }
 
 #[async_trait]
@@ -65,6 +68,10 @@ impl ActorAgents for rust_cli_agents::Agents {
         cancel: CancellationToken,
     ) -> ActorTurnEnd {
         rust_cli_agents::Agents::run_actor_turn(self, run, prompt, cancel).await
+    }
+
+    async fn message_count(&self, child: &SessionId) -> Option<u64> {
+        self.child_message_count(child).await
     }
 }
 
@@ -263,5 +270,11 @@ impl<A: ActorAgents> TurnRunner for AgentTurnRunner<A> {
             ActorTurnEnd::Failed(error) => Err(error),
             ActorTurnEnd::Stopped => Err("the actor turn was stopped".to_owned()),
         }
+    }
+
+    fn message_boundary(&self, session: &str) -> Option<u64> {
+        // The ask thread is outside any runtime (`run_turn` asserts it), so the count can block on the runtime's handle.
+        self.handle
+            .block_on(self.agents.message_count(&SessionId::new(session)))
     }
 }

@@ -290,6 +290,9 @@ pub struct ActorDriverOwner<J: JournalPort, S: ActorSessions> {
     engine: WorkflowEngine<J, ActorPort<S>>,
     book: EscalationBook,
     active: BTreeMap<String, ActiveAsk>,
+    /// The instance of each session's last settled ask, until its next ask starts (Node `currentInstance` after the
+    /// settlement). The message boundary is written here, because the settled record replaces the node row.
+    settled: BTreeMap<String, Ref>,
 }
 
 impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
@@ -315,6 +318,7 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
             engine,
             book,
             active: BTreeMap::new(),
+            settled: BTreeMap::new(),
         })
     }
 
@@ -344,9 +348,9 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
         });
     }
 
-    /// The journal behind the engine, for tests that read what the owner wrote.
-    #[cfg(test)]
-    pub(crate) fn journal(&self) -> &J {
+    /// The journal behind the engine, read-only: the node rows an ask leaves (its message boundary, for one), for tests and
+    /// for callers that inspect what the owner wrote.
+    pub fn journal(&self) -> &J {
         &self.engine.journal
     }
 
@@ -495,10 +499,17 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
     /// ask in flight writes nothing.
     pub fn set_message_boundary(&mut self, session: &str, boundary: u64) -> Result<()> {
         self.pump()?;
-        let Some(ask) = self.active.get(session).cloned() else {
+        // The active ask, or else the ask that just settled: Node writes the boundary after settlement, while no newer
+        // ask has started (a newer one clears `settled`).
+        let instance = self
+            .active
+            .get(session)
+            .map(|ask| ask.instance.clone())
+            .or_else(|| self.settled.get(session).cloned());
+        let Some(instance) = instance else {
             return Ok(());
         };
-        let result = self.engine.set_message_boundary(&ask.instance, boundary);
+        let result = self.engine.set_message_boundary(&instance, boundary);
         self.after_engine(result)
     }
 
@@ -661,6 +672,8 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
             &interaction,
         ) {
             Ok(()) => {
+                // A newer ask has started, so the session's last settled ask no longer takes a boundary.
+                self.settled.remove(&start.session);
                 self.active.insert(
                     start.session.clone(),
                     ActiveAsk {
@@ -713,6 +726,7 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
         let mut first: Option<anyhow::Error> = None;
         for session in ended {
             if let Some(ask) = self.active.remove(&session) {
+                self.settled.insert(session.clone(), ask.instance.clone());
                 let key = ask.instance.key();
                 self.engine.driver.session_of_instance.remove(&key);
                 self.engine.driver.verdicts.remove(&key);
