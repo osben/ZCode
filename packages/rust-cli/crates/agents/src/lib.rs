@@ -29,6 +29,9 @@ pub mod actor_turn;
 #[cfg(test)]
 #[path = "actor_turn_entry_tests.rs"]
 mod actor_turn_entry_tests;
+#[cfg(test)]
+#[path = "live_actor_tests.rs"]
+mod live_actor_tests;
 mod plugin;
 mod report;
 mod respond;

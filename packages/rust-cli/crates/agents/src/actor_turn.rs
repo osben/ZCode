@@ -25,7 +25,7 @@ use rust_cli_kernel_api::permission::PermissionMode;
 use tokio_util::sync::CancellationToken;
 
 use crate::definitions::{AgentDefinition, AgentSource};
-use crate::live::{AgentState, LiveAgent, Shown};
+use crate::live::{AgentState, BeginActorRun, LiveAgent, Shown};
 use crate::report::Ending;
 use crate::spawn;
 
@@ -146,8 +146,8 @@ impl crate::Agents {
             || LiveAgent::for_actor(run, agent_id.clone(), root),
             execution_id,
         );
-        if let Err(message) = started {
-            return ActorTurnEnd::Failed(message);
+        if started == BeginActorRun::AlreadyRunning {
+            return ActorTurnEnd::Failed("the actor already has a turn running".to_owned());
         }
         let Some(entry) = core.live.get(&agent_id) else {
             return ActorTurnEnd::Failed("the actor's session is not live".to_owned());
