@@ -39,6 +39,10 @@ pub trait SinkOverride: Send + Sync {
         self.sink().emit(event).await
     }
 
+    async fn tool_mutating(&self) {
+        self.sink().tool_mutating().await
+    }
+
     async fn commit_messages(&self, messages: Vec<Message>) -> Result<(), StoreError> {
         self.sink().commit_messages(messages).await
     }
@@ -90,6 +94,10 @@ impl<T: SinkOverride + Interactions + SessionOps> RunSink for T {
 
     async fn emit(&self, event: QueryEvent) -> bool {
         SinkOverride::emit(self, event).await
+    }
+
+    async fn tool_mutating(&self) {
+        SinkOverride::tool_mutating(self).await
     }
 
     async fn commit_messages(&self, messages: Vec<Message>) -> Result<(), StoreError> {

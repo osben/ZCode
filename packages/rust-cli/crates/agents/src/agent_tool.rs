@@ -282,6 +282,7 @@ impl Tool for AgentTool {
             result: None,
             actor_port: None,
             last_turn_messages: None,
+            on_mutating: None,
             last_turn_stats: None,
             state: AgentState::Finished(Ending::Completed),
             shown: crate::live::Shown {

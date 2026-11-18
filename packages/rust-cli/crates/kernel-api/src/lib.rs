@@ -132,6 +132,7 @@ pub mod session_api;
 pub mod session_deletion;
 pub mod session_follow;
 pub mod session_ops;
+pub mod side_effect;
 pub mod side_request;
 pub mod store;
 pub mod subagent_config;

@@ -36,6 +36,9 @@ mod escalate_tests;
 #[cfg(test)]
 #[path = "live_actor_tests.rs"]
 mod live_actor_tests;
+#[cfg(test)]
+#[path = "mutating_tests.rs"]
+mod mutating_tests;
 mod plugin;
 mod report;
 mod respond;

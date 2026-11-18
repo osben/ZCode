@@ -18,6 +18,7 @@ fn live_at(now: u64) -> Live {
 
 fn run(child: &str) -> ActorRun {
     ActorRun {
+        on_mutating: None,
         child: SessionId::new(child),
         parent: SessionId::new("ses_parent"),
         interaction_description: "Ada (site@1)".to_owned(),

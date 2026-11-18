@@ -11,7 +11,7 @@ use rust_cli_kernel_api::ids::{
     EnvironmentId, Generation, MessageId, OperationId, RunId, SessionId,
 };
 use rust_cli_kernel_api::message::{AttachmentMessage, Message};
-use rust_cli_kernel_api::orchestration::InteractionRequest;
+use rust_cli_kernel_api::orchestration::{InteractionRequest, no_tool_start};
 use rust_cli_kernel_api::permission::PermissionMode;
 use rust_cli_kernel_api::testing::{
     ScriptedInteractions, UnusedEnvironment, controller_services, machine,
@@ -167,7 +167,7 @@ async fn run_ordered(
             json!({"command": "ls"}),
             context(asked.clone()),
             progress,
-            rust_cli_kernel_api::orchestration::no_tool_start(),
+            no_tool_start(),
         )
         .await;
     let events = hooks.seen.lock().unwrap().drain(..).collect();
@@ -598,7 +598,7 @@ async fn a_stopped_call_is_an_interrupted_failure_that_keeps_its_display() {
             json!({}),
             context(Arc::new(ScriptedInteractions::allowing())),
             progress,
-            rust_cli_kernel_api::orchestration::no_tool_start(),
+            no_tool_start(),
         )
         .await;
     let output = &execution.output;
@@ -709,7 +709,7 @@ async fn under_node_hooks_a_failure_names_its_error_type() {
                     json!({}),
                     context(Arc::new(ScriptedInteractions::allowing())),
                     progress,
-                    rust_cli_kernel_api::orchestration::no_tool_start(),
+                    no_tool_start(),
                 )
                 .await;
             let events = hooks.seen.lock().unwrap().clone();
@@ -759,7 +759,7 @@ async fn under_node_hooks_a_cancel_without_a_tool_message_sends_the_fallback() {
             json!({}),
             context(Arc::new(ScriptedInteractions::allowing())),
             progress,
-            rust_cli_kernel_api::orchestration::no_tool_start(),
+            no_tool_start(),
         )
         .await;
     let events = hooks.seen.lock().unwrap().clone();
@@ -866,7 +866,7 @@ async fn run_rows(
             json!({"command": "ls"}),
             context(asked.clone()),
             progress,
-            rust_cli_kernel_api::orchestration::no_tool_start(),
+            no_tool_start(),
         )
         .await;
     let events = hooks.seen.lock().unwrap().drain(..).collect();

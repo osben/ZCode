@@ -334,6 +334,11 @@ pub trait RunSink: Interactions + SessionOps {
     /// 不需要持久化的事件；返回 false 表示接收方已经关闭，主循环按中止处理。
     async fn emit(&self, event: QueryEvent) -> bool;
 
+    /// Fork: an admitted call that writes the workspace (Node `onMutating`) is about to run. Not an event: nothing is
+    /// recorded, and only a workflow child reacts (it tells the owner once per ask). Sinks that are not a workflow
+    /// child implement it as a no-op.
+    async fn tool_mutating(&self);
+
     /// 一组必须一起成立的消息（压缩的边界、摘要与附件，docs/specs/rust-cli/compact.md §6）：在一个
     /// 存储事务里提交。没有事务的输出端（只收集的、子代理的）逐条提交。
     async fn commit_messages(&self, messages: Vec<Message>) -> Result<(), StoreError>;
@@ -697,7 +702,9 @@ pub trait ToolExecutor: Send + Sync {
 /// 工具真正开始执行的通知（Node `ToolCallStarted`，call-runner 在权限之后发出）。
 #[async_trait]
 pub trait ToolStart: Send + Sync {
-    async fn started(&self);
+    /// The call is admitted. `admitted` is the input it will run with: after the schema, the hooks and the permission
+    /// check, which may have rewritten the scheduled input (`updatedInput`, an App refusal's rewrite).
+    async fn started(&self, admitted: &Value);
 }
 
 /// 不需要开始通知的调用方（测试替身与旁路执行）。
@@ -705,7 +712,7 @@ pub struct NoToolStart;
 
 #[async_trait]
 impl ToolStart for NoToolStart {
-    async fn started(&self) {}
+    async fn started(&self, _admitted: &Value) {}
 }
 
 /// 不需要开始通知时传入的 `started`。

@@ -137,6 +137,53 @@ pub struct ActorRun {
     /// The turn's epilogue boundary (UTF-16 units), stored on the turn's user message as `metadata.epilogueStart`. None
     /// stores nothing; a nudged turn passes Some(0).
     pub epilogue_start: Option<usize>,
+    /// The turn's first-write gate (Node `onMutating`). None when the caller does not track writes.
+    pub on_mutating: Option<Arc<FirstMutating>>,
+}
+
+/// Forwards an ask's first workspace write to its owner (Node `sink.askMutating`).
+///
+/// Delivery must not depend on the future being polled to completion: a caller may drop the `ask_mutating` future
+/// after the gate has fired, and the report must still reach the owner. The bridge's implementation runs the owner call
+/// on the blocking pool, which keeps running once started.
+#[async_trait::async_trait]
+pub trait MutatingNotify: Send + Sync {
+    async fn ask_mutating(&self);
+}
+
+/// The first-write gate of Node's `askMutating`: the first workspace-mutating call a turn makes is forwarded, and no
+/// later call of that turn is. The bridge makes one per turn, bound to that turn's session. The owner dedupes the
+/// reports of one ask, so a nudged turn's report does not change the ask's result.
+pub struct FirstMutating {
+    fired: std::sync::atomic::AtomicBool,
+    notify: Arc<dyn MutatingNotify>,
+}
+
+impl std::fmt::Debug for FirstMutating {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FirstMutating")
+            .field(
+                "fired",
+                &self.fired.load(std::sync::atomic::Ordering::SeqCst),
+            )
+            .finish()
+    }
+}
+
+impl FirstMutating {
+    pub fn new(notify: Arc<dyn MutatingNotify>) -> Self {
+        Self {
+            fired: std::sync::atomic::AtomicBool::new(false),
+            notify,
+        }
+    }
+
+    /// The call is about to run. Forwarded once; later calls of the ask return at once.
+    pub async fn mutating(&self) {
+        if !self.fired.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            self.notify.ask_mutating().await;
+        }
+    }
 }
 
 /// Renders the interactions by presence, as `child::Asks` does: the channel is a trait object with no `Debug`.
@@ -154,6 +201,7 @@ impl std::fmt::Debug for ActorRun {
             .field("workspace", &self.workspace)
             .field("selection", &self.selection)
             .field("mode", &self.mode)
+            .field("on_mutating", &self.on_mutating)
             .field("port", &self.port.as_ref().map(|_| "present"))
             .field("epilogue_start", &self.epilogue_start)
             .field(
@@ -289,6 +337,7 @@ impl LiveAgent {
             asks: None,
             actor_port: run.port,
             last_turn_messages: None,
+            on_mutating: run.on_mutating,
             last_turn_stats: None,
             state: AgentState::Finished(Ending::Completed),
             result: None,
@@ -322,6 +371,7 @@ impl crate::Agents {
         let fresh_asks = asks.clone();
         let epilogue_start = run.epilogue_start;
         let submit = run.port.clone();
+        let gate = run.on_mutating.clone();
         // The first-use check, the insert, the refresh and the run start share one lock section (`Live::begin_actor_run`).
         let started = core.live.begin_actor_run(
             &agent_id,
@@ -334,6 +384,7 @@ impl crate::Agents {
                 entry.description = description;
                 entry.asks = asks;
                 entry.actor_port = submit;
+                entry.on_mutating = gate;
             },
             execution_id,
         );

@@ -24,7 +24,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use rust_cli_agents::actor_turn::{
     ActorEscalation, ActorPort, ActorQuestion, ActorRun, ActorSubmit, ActorTurnEnd, ActorViolation,
-    SubmitPort,
+    FirstMutating, MutatingNotify, SubmitPort,
 };
 use rust_cli_kernel_api::clock::Clock;
 use rust_cli_kernel_api::env::WorkspaceRef;
@@ -154,6 +154,27 @@ impl<A: ActorAgents> AgentTurnRunner<A> {
     }
 }
 
+/// The owner's `askMutating` over the mailbox. The gate forwards only the first call of its ask.
+struct MailboxGate {
+    mailbox: ActorHandle,
+    session: String,
+}
+
+#[async_trait]
+impl MutatingNotify for MailboxGate {
+    async fn ask_mutating(&self) {
+        let mailbox = self.mailbox.clone();
+        let session = self.session.clone();
+        // The owner answers on its own thread: the call waits on the blocking pool, not on a runtime worker.
+        let error = match tokio::task::spawn_blocking(move || mailbox.mutating(&session)).await {
+            Ok(Ok(())) => return,
+            Ok(Err(error)) => error.to_string(),
+            Err(error) => error.to_string(),
+        };
+        tracing::warn!(session = %self.session, error = %error, "an actor's mutating call could not be reported");
+    }
+}
+
 /// The submit port of one turn over the workflow's mailbox (Node `workflowSubmitPort`). The engine decides the result on
 /// the owner's thread, so the call waits on the blocking pool, not on a runtime worker.
 struct MailboxPort {
@@ -246,6 +267,12 @@ impl<A: ActorAgents> TurnRunner for AgentTurnRunner<A> {
             "the ask thread must not be inside a runtime: block_on would panic there"
         );
         let token = CancellationToken::new();
+        // One gate per turn, bound to this turn's session: the owner reports a write by session, so a gate kept from
+        // an earlier ask would name that ask's session. The owner dedupes the reports of one ask.
+        let gate = Arc::new(FirstMutating::new(Arc::new(MailboxGate {
+            mailbox: self.mailbox.clone(),
+            session: session.to_owned(),
+        })));
         let run = ActorRun {
             child: SessionId::new(session),
             parent: self.base.parent.clone(),
@@ -266,6 +293,7 @@ impl<A: ActorAgents> TurnRunner for AgentTurnRunner<A> {
             }),
             // Every turn of the bridge has a boundary, so it is stored, a nudged turn's 0 included.
             epilogue_start: Some(turn.epilogue_start),
+            on_mutating: Some(gate),
         };
         let end = self.handle.block_on(async {
             let work = self.agents.run_actor_turn(run, &turn.text, token.clone());

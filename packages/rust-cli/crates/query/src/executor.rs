@@ -21,6 +21,7 @@ use rust_cli_kernel_api::message::{
 };
 use rust_cli_kernel_api::metering::{CallStatus, ToolCall};
 use rust_cli_kernel_api::orchestration::{QueryEvent, ToolExecution, ToolStart};
+use rust_cli_kernel_api::side_effect::is_workspace_mutating_call;
 use rust_cli_kernel_api::tool::{InterruptBehavior, Tool, ToolOutput, ToolUseContext};
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
@@ -577,11 +578,12 @@ async fn execute(
         })
         .await;
     // It starts only once admitted (Node `ToolCallStarted`, after the permission check): the pipeline calls this.
+    // Node `onMutating` is decided on the admitted input, in `started`: the hooks may rewrite the scheduled input.
     let started = Arc::new(StartSignal::new(
         scope.sink.clone(),
+        tool.clone(),
         id.clone(),
         name,
-        input.clone(),
     ));
     // 会话现在的模式与工作目录：一次读取（工作线 F134：以前分两次问会话 actor）。
     let view = scope.view().await;
@@ -624,32 +626,31 @@ async fn execute(
 /// 第一次 `started` 取走载荷，之后的调用什么也不做，并且准入之后不再持有克隆的输入。
 struct StartSignal {
     sink: Arc<dyn RunSink>,
+    /// The call's tool: its workspace-mutating classification reads the admitted input (`started`).
+    tool: Arc<dyn Tool>,
     pending: std::sync::Mutex<Option<StartedCall>>,
 }
 
-/// What `ToolStarted` carries, held until the call is admitted.
+/// What `ToolStarted` carries, held until the call is admitted. The input is not held: `ToolStarted` carries the
+/// admitted input, which `started` receives.
 struct StartedCall {
     tool_use: ToolUseId,
     name: String,
-    input: Value,
 }
 
 impl StartSignal {
-    fn new(sink: Arc<dyn RunSink>, tool_use: ToolUseId, name: String, input: Value) -> Self {
+    fn new(sink: Arc<dyn RunSink>, tool: Arc<dyn Tool>, tool_use: ToolUseId, name: String) -> Self {
         Self {
             sink,
-            pending: std::sync::Mutex::new(Some(StartedCall {
-                tool_use,
-                name,
-                input,
-            })),
+            tool,
+            pending: std::sync::Mutex::new(Some(StartedCall { tool_use, name })),
         }
     }
 }
 
 #[async_trait]
 impl ToolStart for StartSignal {
-    async fn started(&self) {
+    async fn started(&self, admitted: &Value) {
         // The guard is dropped before the emit, so no lock is held across the await.
         let call = self
             .pending
@@ -659,14 +660,19 @@ impl ToolStart for StartSignal {
         let Some(call) = call else {
             return;
         };
+        // The input the call runs with, as Node's execution input (`call-runner.ts`): the card shows what runs.
         let _ = self
             .sink
             .emit(QueryEvent::ToolStarted {
                 tool_use: call.tool_use,
                 name: call.name,
-                input: call.input,
+                input: admitted.clone(),
             })
             .await;
+        // Node `onMutating`: an admitted call the predicate classifies as a workspace write, on the input it runs with.
+        if is_workspace_mutating_call(self.tool.as_ref(), admitted) {
+            self.sink.tool_mutating().await;
+        }
     }
 }
 

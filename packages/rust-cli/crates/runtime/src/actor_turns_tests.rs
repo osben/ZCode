@@ -46,9 +46,48 @@ struct ScriptedAgents {
     escalated: Mutex<Vec<Result<ActorEscalation, String>>>,
     /// The counts each turn reports, when a test asks for them (None: the child reports no stats).
     stats: Option<rust_cli_agents::actor_turn::ActorTurnStats>,
+    /// Whether each turn runs a workspace-mutating call, in the order the turns run (the child calls the turn's gate
+    /// before it). A turn past the queue runs no write.
+    mutating: Mutex<VecDeque<bool>>,
+}
+
+/// Builds a [`ScriptedAgents`] whose turns need more than the plain replies: the per-turn write flags.
+struct ScriptedBuilder {
+    replies: Vec<ActorTurnEnd>,
+    mutating: Vec<bool>,
+}
+
+impl ScriptedBuilder {
+    /// Whether each turn runs a write, in turn order.
+    fn mutating(mut self, turns: impl IntoIterator<Item = bool>) -> Self {
+        self.mutating = turns.into_iter().collect();
+        self
+    }
+
+    fn build(self) -> Arc<ScriptedAgents> {
+        Arc::new(ScriptedAgents {
+            runs: Mutex::new(Vec::new()),
+            prompts: Mutex::new(Vec::new()),
+            replies: Mutex::new(self.replies.into()),
+            block: false,
+            submit: None,
+            submitted: Mutex::new(Vec::new()),
+            escalate: Mutex::new(None),
+            escalated: Mutex::new(Vec::new()),
+            stats: None,
+            mutating: Mutex::new(self.mutating.into()),
+        })
+    }
 }
 
 impl ScriptedAgents {
+    fn builder(replies: Vec<ActorTurnEnd>) -> ScriptedBuilder {
+        ScriptedBuilder {
+            replies,
+            mutating: Vec::new(),
+        }
+    }
+
     fn new(replies: Vec<ActorTurnEnd>, block: bool) -> Arc<Self> {
         Arc::new(Self {
             runs: Mutex::new(Vec::new()),
@@ -60,6 +99,7 @@ impl ScriptedAgents {
             escalate: Mutex::new(None),
             escalated: Mutex::new(Vec::new()),
             stats: None,
+            mutating: Mutex::new(VecDeque::new()),
         })
     }
 
@@ -78,6 +118,7 @@ impl ScriptedAgents {
             escalate: Mutex::new(None),
             escalated: Mutex::new(Vec::new()),
             stats: Some(stats),
+            mutating: Mutex::new(VecDeque::new()),
         })
     }
 
@@ -93,6 +134,7 @@ impl ScriptedAgents {
             escalate: Mutex::new(Some(question.to_owned())),
             escalated: Mutex::new(Vec::new()),
             stats: None,
+            mutating: Mutex::new(VecDeque::new()),
         })
     }
 
@@ -108,6 +150,7 @@ impl ScriptedAgents {
             escalate: Mutex::new(None),
             escalated: Mutex::new(Vec::new()),
             stats: None,
+            mutating: Mutex::new(VecDeque::new()),
         })
     }
 }
@@ -121,6 +164,15 @@ impl ActorAgents for ScriptedAgents {
         cancel: CancellationToken,
     ) -> ActorTurnEnd {
         let port = run.port.clone();
+        let writes = self
+            .mutating
+            .lock()
+            .expect("mutating")
+            .pop_front()
+            .unwrap_or(false);
+        if writes && let Some(gate) = run.on_mutating.clone() {
+            gate.mutating().await;
+        }
         self.runs.lock().expect("runs").push(run);
         if let Some(port) = port.as_ref().map(|port| &port.port) {
             if let Some(result) = self.submit.clone() {
@@ -727,4 +779,123 @@ fn every_recordable_mode_names_a_permission_mode_through_the_shared_table() {
             mode.as_str()
         );
     }
+}
+
+/// Node `askMutating`: a child's first workspace-mutating call reaches the owner, which closes the run's import cache
+/// (the observable record is `import-cache-closed`). Before the bridge carried the gate, nothing wrote it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_mutating_call_of_an_ask_reaches_the_owner_through_the_bridge() {
+    let agents = ScriptedAgents::builder(vec![ActorTurnEnd::Text("done".into())])
+        .mutating([true])
+        .build();
+    let (mailbox, handle) = ActorMailbox::new();
+    let runner = Arc::new(AgentTurnRunner::new(
+        agents,
+        tokio::runtime::Handle::current(),
+        base(),
+        handle.clone(),
+    ));
+    let sessions = Sessions {
+        turns: MailboxTurns::new(runner, handle),
+    };
+    let mut cfg = config();
+    cfg.imported_cache = Some(Default::default());
+    let mut owner = ActorDriverOwner::new(cfg, MemoryJournal::new(), sessions).expect("owner");
+    let actor = owner.create_actor("site", None, None).expect("actor");
+    owner.ask("site", &actor, "do it").expect("ask");
+    owner.drain().expect("drain");
+    // The gate request comes first, then the turn end, the nudged turn's end and its boundary, until the ask settles.
+    serve_until_settled(&mailbox, &mut owner, 1);
+    let closed = owner
+        .events()
+        .expect("events")
+        .iter()
+        .filter(|stored| stored.payload_json.contains("import-cache-closed"))
+        .count();
+    assert_eq!(
+        closed, 1,
+        "the first mutating call of the ask closes the cache"
+    );
+}
+
+/// Serves the owner's requests until `asks` asks have settled. A bound stops a request that never comes from hanging.
+fn serve_until_settled(
+    mailbox: &ActorMailbox,
+    owner: &mut ActorDriverOwner<MemoryJournal, Sessions>,
+    asks: usize,
+) {
+    use rust_cli_workflow::journal::JournalPort;
+    use rust_cli_workflow::model::NodeStatus;
+    for _ in 0..16 {
+        // A node is written when its ask starts (Running); it settles to Completed or Failed.
+        let settled = owner
+            .journal()
+            .list_nodes("run_1")
+            .expect("nodes")
+            .iter()
+            .filter(|node| node.status != NodeStatus::Running)
+            .count();
+        if settled >= asks {
+            return;
+        }
+        mailbox.serve_next(owner).expect("the next request");
+    }
+    panic!("the asks did not settle");
+}
+
+/// Ask 1 on actor `site` runs no write and ask 2 on actor `other` writes, through one runner. Ask 2's report must reach
+/// the owner: the gate is made per turn, bound to that turn's session. Before, the runner cached the first ask's gate,
+/// which had not fired, and bound it to the first session, so ask 2's report named a session with no live ask.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_write_on_a_second_actor_reaches_the_owner_after_a_read_only_ask() {
+    // Each ask takes two turns (the first is nudged), so the flags run per turn: ask 1's two turns are read-only, and
+    // ask 2's first turn writes.
+    let agents = ScriptedAgents::builder(vec![
+        ActorTurnEnd::Text("done".into()),
+        ActorTurnEnd::Text("done".into()),
+        ActorTurnEnd::Text("done".into()),
+        ActorTurnEnd::Text("done".into()),
+    ])
+    .mutating([false, false, true])
+    .build();
+    let (mailbox, handle) = ActorMailbox::new();
+    let runner = Arc::new(AgentTurnRunner::new(
+        agents,
+        tokio::runtime::Handle::current(),
+        base(),
+        handle.clone(),
+    ));
+    let sessions = Sessions {
+        turns: MailboxTurns::new(runner, handle),
+    };
+    let mut cfg = config();
+    cfg.ask_specs.insert(
+        "other".into(),
+        AskSpec {
+            typed: true,
+            schema: Some(json!({"type": "object"})),
+        },
+    );
+    cfg.imported_cache = Some(Default::default());
+    let mut owner = ActorDriverOwner::new(cfg, MemoryJournal::new(), sessions).expect("owner");
+    let first = owner.create_actor("site", None, None).expect("actor a");
+    owner.ask("site", &first, "do it").expect("ask a");
+    owner.drain().expect("drain");
+    serve_until_settled(&mailbox, &mut owner, 1);
+    let second = owner.create_actor("other", None, None).expect("actor b");
+    owner.ask("other", &second, "do it").expect("ask b");
+    owner.drain().expect("drain");
+    serve_until_settled(&mailbox, &mut owner, 2);
+    let closes: Vec<String> = owner
+        .events()
+        .expect("events")
+        .iter()
+        .filter(|stored| stored.payload_json.contains("import-cache-closed"))
+        .map(|stored| stored.payload_json.clone())
+        .collect();
+    assert_eq!(closes.len(), 1, "one close for the run: {closes:?}");
+    assert!(
+        closes[0].contains("\"siteId\":\"other\""),
+        "the close is the second ask's write, not the first ask's: {closes:?}"
+    );
 }
