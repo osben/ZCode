@@ -35,6 +35,14 @@ pub trait TurnRunner: Send + Sync + 'static {
         turn: &TurnInput,
         cancel: &AtomicBool,
     ) -> std::result::Result<String, String>;
+
+    /// The session's message count as the turn left it (Node `journalAskMessageBoundary`'s count). It is captured when
+    /// the turn finishes, before the live entry is released, so this read never touches the store: a newer prompt on
+    /// the session cannot change it. None means the count is not known, and no boundary is written. A panic here counts
+    /// as None, and the turn's end is still reported.
+    fn message_boundary(&self, _session: &str) -> Option<u64> {
+        None
+    }
 }
 
 /// One turn's input: the text the model reads, the boundary in UTF-16 units where its epilogue begins (Node `runTurn`'s
@@ -82,6 +90,7 @@ impl ActorTurns for MailboxTurns {
         let session = session.to_owned();
         let first = input.clone();
         let interaction = interaction.to_owned();
+        let turn_instance = instance.clone();
         thread::Builder::new()
             .name(format!("actor-turn-{}", instance.key()))
             .spawn(move || {
@@ -89,6 +98,7 @@ impl ActorTurns for MailboxTurns {
                     runner.as_ref(),
                     &handle,
                     &session,
+                    &turn_instance,
                     &interaction,
                     first,
                     &cancel,
@@ -130,6 +140,7 @@ fn run_ask(
     runner: &dyn TurnRunner,
     handle: &ActorHandle,
     session: &str,
+    instance: &Ref,
     interaction: &str,
     first: TurnInput,
     cancel: &AtomicBool,
@@ -157,6 +168,10 @@ fn run_ask(
         if cancel.load(Ordering::SeqCst) {
             return;
         }
+        // The count the turn captured when it finished (see `TurnRunner::message_boundary`). A panic in the read is an
+        // unknown count, so the turn's end below is reported either way.
+        let boundary = panic::catch_unwind(AssertUnwindSafe(|| runner.message_boundary(session)))
+            .unwrap_or(None);
         match handle.turn_ended(session, &text) {
             Ok(TurnEndReply::Verdict(SubmitVerdict::Nudge)) => {
                 // Node `runTurn(NUDGE_PROMPT, 0)`: the nudge has no instructions, so its epilogue starts at 0. It is the
@@ -164,7 +179,15 @@ fn run_ask(
                 turn.text = NUDGE_PROMPT.to_owned();
                 turn.epilogue_start = 0;
             }
-            Ok(_) => return,
+            Ok(_) => {
+                // The ask settled. Its message boundary goes on its node row, named by the instance this turn ran for.
+                if let Some(boundary) = boundary
+                    && let Err(report) = handle.message_boundary(instance, boundary)
+                {
+                    tracing::warn!(%session, error = %report, "an actor's message boundary could not be reported");
+                }
+                return;
+            }
             Err(report) => {
                 tracing::warn!(%session, error = %report, "an actor's turn end could not be reported");
                 return;

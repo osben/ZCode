@@ -38,7 +38,7 @@ use crate::model::{Ref, StoredEvent};
 use crate::persona::persona_name;
 use anyhow::{Result, anyhow};
 use serde_json::Value;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// Node `cancelAsk`'s rejection of a pending submit: the text the submit's caller reads.
 pub const CANCELLED_BY_ENGINE_MESSAGE: &str = "The ask was cancelled by the engine.";
@@ -135,6 +135,8 @@ pub struct ActorPort<S: ActorSessions> {
     interaction_of_session: HashMap<String, String>,
     /// Session of each ask whose turn has started and not ended, keyed by instance. Removed when the ask ends.
     session_of_instance: HashMap<String, String>,
+    /// Instances the engine cancelled while they ran. A cancelled ask takes no message boundary.
+    cancelled: HashSet<String>,
     queued_starts: Vec<QueuedStart>,
     queued_failures: Vec<(Ref, WorkflowError)>,
     /// Errors the engine cannot receive (its trait methods return nothing); the owner returns them.
@@ -248,6 +250,11 @@ impl<S: ActorSessions> WorkflowDriver for ActorPort<S> {
         self.verdicts.insert(instance.key(), verdict.clone());
     }
 
+    fn abort_ask(&mut self, instance: &Ref) {
+        self.cancelled.insert(instance.key());
+        self.cancel_ask(instance);
+    }
+
     fn cancel_ask(&mut self, instance: &Ref) {
         self.verdicts.remove(&instance.key());
         let Some(session) = self.session_of_instance.remove(&instance.key()) else {
@@ -304,6 +311,7 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
             identity_of_session: HashMap::new(),
             interaction_of_session: HashMap::new(),
             session_of_instance: HashMap::new(),
+            cancelled: HashSet::new(),
             queued_starts: Vec::new(),
             queued_failures: Vec::new(),
             deferred_errors: Vec::new(),
@@ -344,9 +352,9 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
         });
     }
 
-    /// The journal behind the engine, for tests that read what the owner wrote.
-    #[cfg(test)]
-    pub(crate) fn journal(&self) -> &J {
+    /// The journal behind the engine, read-only: the node rows an ask leaves (its message boundary, for one), for tests and
+    /// for callers that inspect what the owner wrote.
+    pub fn journal(&self) -> &J {
         &self.engine.journal
     }
 
@@ -491,14 +499,15 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
         self.after_engine(result)
     }
 
-    /// Node `workflow-driver-transcript.ts`: the ask's message boundary, written on its node row. A session with no
-    /// ask in flight writes nothing.
-    pub fn set_message_boundary(&mut self, session: &str, boundary: u64) -> Result<()> {
+    /// Node `workflow-driver-transcript.ts`: the ask's message boundary, written on its node row. The turn thread names
+    /// the instance it ran, so the boundary lands on that ask even if a newer ask has started since it settled. A
+    /// cancelled ask takes none (Node returns early on `state.cancelled`).
+    pub fn set_message_boundary(&mut self, instance: &Ref, boundary: u64) -> Result<()> {
         self.pump()?;
-        let Some(ask) = self.active.get(session).cloned() else {
+        if self.engine.driver.cancelled.contains(&instance.key()) {
             return Ok(());
-        };
-        let result = self.engine.set_message_boundary(&ask.instance, boundary);
+        }
+        let result = self.engine.set_message_boundary(instance, boundary);
         self.after_engine(result)
     }
 

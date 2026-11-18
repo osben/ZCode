@@ -464,6 +464,27 @@ async fn a_nudged_turns_prompt_is_stored_with_the_boundary_zero() {
 }
 
 #[tokio::test]
+async fn the_child_message_count_is_its_stored_message_count() {
+    // The count the ask's boundary is written with (Node `journalAskMessageBoundary`): the child's messages, as stored.
+    let h = harness(None);
+    let parent = SessionId::new("ses_parent");
+    let child = SessionId::new("sess_message_count");
+    create_child(h.store.as_ref(), &child, &parent).await;
+    h.agents
+        .run_actor_turn(run_for(&child, &parent), "do it", CancellationToken::new())
+        .await;
+    let stored = h.store.load(&child).await.expect("the child is stored");
+    assert_eq!(
+        h.agents.child_message_count(&child).await,
+        Some(stored.messages.len() as u64)
+    );
+    assert!(
+        stored.messages.len() >= 2,
+        "the prompt and the reply are both counted"
+    );
+}
+
+#[tokio::test]
 async fn a_turn_cancelled_before_it_runs_is_stopped_and_leaves_only_its_prompt() {
     // A gated runner waits for the abort, so the cancel is what ends the turn.
     let gate = Arc::new(Notify::new());

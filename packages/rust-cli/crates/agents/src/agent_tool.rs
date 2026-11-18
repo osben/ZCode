@@ -281,6 +281,7 @@ impl Tool for AgentTool {
                 .map(crate::child::Asks),
             result: None,
             actor_port: None,
+            last_turn_messages: None,
             state: AgentState::Finished(Ending::Completed),
             shown: crate::live::Shown {
                 execution_id: self.core.ports.ids.execution(),
