@@ -205,6 +205,14 @@ impl<S: ActorSessions> WorkflowDriver for ActorPort<S> {
                 // The repair (Node `ensureSubmitProfileFits` sets the session's profile to the generic one): the
                 // session keeps the generic declaration from here on, and this ask's input is composed for it.
                 ProfileFit::FallBackToGeneric => {
+                    // Node logs this warning and journals nothing: the session's profile is in memory only, so a
+                    // restarted run finds the same mismatch from the static analysis and falls back again.
+                    tracing::warn!(
+                        event = "dynamic_workflow.submit_profile.mismatch",
+                        %session,
+                        instance = %instance.key(),
+                        "Dynamic workflow submit profile mismatch: falling back to the generic submit_result"
+                    );
                     self.profiles.insert(actor_key, SubmitProfile::Generic);
                     profile = SubmitProfile::Generic;
                 }

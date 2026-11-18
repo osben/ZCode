@@ -530,6 +530,39 @@ async fn a_mono_session_hands_its_submit_schema_to_every_turn_of_its_ask() {
     }));
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_mono_session_that_misses_its_ask_falls_back_to_the_generic_declaration_on_every_turn() {
+    // Node `ensureSubmitProfileFits`: the session's schema differs from the typed ask, so the session falls back to the
+    // generic submit_result. Its turns, the nudged one included, declare no schema, and the ask is composed for generic.
+    let agents = ScriptedAgents::new(Vec::new(), false);
+    let (mut owner, mailbox) = owner_over(agents.clone());
+    let actor = owner.create_actor("site", None, None).expect("actor");
+    owner.set_actor_profile(
+        &actor,
+        rust_cli_workflow::driver_rules::SubmitProfile::Mono {
+            schema: json!({"type": "string"}),
+        },
+    );
+    owner.ask("site", &actor, "do it").expect("ask");
+    owner.drain().expect("drain");
+    mailbox.serve_next(&mut owner).expect("the turn end");
+    mailbox.serve_next(&mut owner).expect("the nudged turn end");
+    assert_eq!(
+        *agents.prompts.lock().expect("prompts"),
+        vec![composed_do_it(), NUDGE_PROMPT.to_owned()],
+        "the fallen-back ask is composed for the generic declaration"
+    );
+    let runs = agents.runs.lock().expect("runs");
+    assert_eq!(runs.len(), 2);
+    assert!(
+        runs.iter().all(|run| run
+            .port
+            .as_ref()
+            .is_some_and(|port| port.submit_schema.is_none())),
+        "no turn declares the missed schema"
+    );
+}
+
 #[test]
 fn every_recordable_mode_names_a_permission_mode_through_the_shared_table() {
     use rust_cli_workflow::driver_rules::SubagentPermissionMode;

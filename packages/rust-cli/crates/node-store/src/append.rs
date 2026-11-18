@@ -63,17 +63,22 @@ pub(crate) fn block_kind(block: &ContentBlock) -> &'static str {
 }
 
 /// Node's message `metadata` (`message-persistence.ts`): the input intent's keys, and `epilogueStart` when the turn has an
-/// epilogue boundary, 0 included (Node tests `!== undefined`). None when neither is present.
-fn user_metadata(intent: Option<Value>, epilogue_start: Option<usize>) -> Option<Value> {
-    let Some(start) = epilogue_start else {
-        return intent;
-    };
-    let mut object = match intent {
-        Some(Value::Object(map)) => map,
-        _ => serde_json::Map::new(),
-    };
-    object.insert("epilogueStart".to_owned(), Value::from(start));
-    Some(Value::Object(object))
+/// epilogue boundary, 0 included (Node tests `!== undefined`). None when neither is present. The intent is a `Map`, so
+/// the object contract is in the type: an intent is never dropped for not being an object.
+fn user_metadata(
+    intent: Option<serde_json::Map<String, Value>>,
+    epilogue_start: Option<usize>,
+) -> Option<Value> {
+    match (intent, epilogue_start) {
+        (None, None) => None,
+        (intent, epilogue_start) => {
+            let mut object = intent.unwrap_or_default();
+            if let Some(start) = epilogue_start {
+                object.insert("epilogueStart".to_owned(), Value::from(start));
+            }
+            Some(Value::Object(object))
+        }
+    }
 }
 
 /// Node `persistUserPrompt`：user 消息与每个文本块一个 text part。会话还没有标题时按 Node
