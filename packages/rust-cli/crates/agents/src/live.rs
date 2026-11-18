@@ -460,6 +460,9 @@ impl Live {
         &self,
         agent: &AgentId,
         fresh: impl FnOnce() -> LiveAgent,
+        // Applied to an existing entry that starts a run, so the entry carries the turn's own origin and asks (they
+        // are the parent's per run, and a later turn may bring different ones). Not applied to a refused start.
+        refresh: impl FnOnce(&mut LiveAgent),
         execution_id: String,
     ) -> BeginActorRun {
         self.change(|agents| {
@@ -467,6 +470,7 @@ impl Live {
                 if matches!(entry.state, AgentState::Running { .. }) {
                     return BeginActorRun::AlreadyRunning;
                 }
+                refresh(entry);
                 entry.stopped_by_user = false;
                 entry.begin_run(Abort::new(), Vec::new(), execution_id);
                 return BeginActorRun::Started;

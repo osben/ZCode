@@ -27,7 +27,8 @@ fn run_for(child: &SessionId, parent: &SessionId) -> ActorRun {
     ActorRun {
         child: child.clone(),
         parent: parent.clone(),
-        description: "workflow subagent site@1".to_owned(),
+        interaction_description: "Ada (site@1)".to_owned(),
+        interactions: None,
         persona_prompt: PERSONA.to_owned(),
         workspace: workspace(),
         selection: selection(),

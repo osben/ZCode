@@ -23,7 +23,8 @@
 //!   that case too.
 use crate::driver_rules::{
     NO_ACTIVE_ASK_MESSAGE, ProfileFit, SubmitProfile, SubmitRoute, UNTYPED_ASK_MESSAGE,
-    actor_session_title, actor_task_link_path, profile_fit, submit_route,
+    actor_interaction_description, actor_session_title, actor_task_link_path, profile_fit,
+    submit_route,
 };
 use crate::engine::{
     AskMessage, AskOutcome, EngineConfig, SubmitVerdict, WorkflowDriver, WorkflowEngine,
@@ -33,6 +34,7 @@ use crate::escalation::{AnswerOutcome, EscalateOutcome, EscalationBook, Escalati
 use crate::event::RunEvent;
 use crate::journal::JournalPort;
 use crate::model::{Ref, StoredEvent};
+use crate::persona::persona_name;
 use anyhow::{Result, anyhow};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
@@ -59,7 +61,14 @@ pub trait ActorSessions {
     /// Create the actor's session and its `workflow_actor` task link, and return the session id.
     fn create_session(&mut self, request: &ActorSessionRequest) -> Result<String>;
     /// Run one ask's first turn on the session. An error fails the ask.
-    fn start_turn(&mut self, session: &str, instance: &Ref, message: &AskMessage) -> Result<()>;
+    /// `interaction` is the description the actor's asks are named by (Node `workflowActorInteractionDescription`).
+    fn start_turn(
+        &mut self,
+        session: &str,
+        instance: &Ref,
+        message: &AskMessage,
+        interaction: &str,
+    ) -> Result<()>;
     /// Stop the session's turn for an ask the engine cancelled.
     fn cancel_turn(&mut self, session: &str, instance: &Ref) -> Result<()>;
     /// Reject the deferred of a parked question that was withdrawn with its ask.
@@ -115,6 +124,8 @@ pub struct ActorPort<S: ActorSessions> {
     profiles: HashMap<String, SubmitProfile>,
     session_of_actor: HashMap<String, String>,
     actor_of_session: HashMap<String, String>,
+    /// The interaction description of each session's actor (`<persona name ?? "subagent"> (<site>@<ordinal>)`).
+    interaction_of_session: HashMap<String, String>,
     /// Session of each ask whose turn has started and not ended, keyed by instance. Removed when the ask ends.
     session_of_instance: HashMap<String, String>,
     queued_starts: Vec<QueuedStart>,
@@ -141,6 +152,10 @@ impl<S: ActorSessions> WorkflowDriver for ActorPort<S> {
             persona: persona.clone(),
         };
         let session = self.sessions.create_session(&request)?;
+        let interaction =
+            actor_interaction_description(&actor.site_id, actor.ordinal, persona_name(persona));
+        self.interaction_of_session
+            .insert(session.clone(), interaction);
         self.session_of_actor.insert(actor.key(), session.clone());
         self.actor_of_session.insert(session.clone(), actor.key());
         Ok(session)
@@ -241,6 +256,7 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
             profiles: HashMap::new(),
             session_of_actor: HashMap::new(),
             actor_of_session: HashMap::new(),
+            interaction_of_session: HashMap::new(),
             session_of_instance: HashMap::new(),
             queued_starts: Vec::new(),
             queued_failures: Vec::new(),
@@ -543,6 +559,22 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
             );
             return;
         }
+        // Every session an ask starts on was made by `create_actor_session`, which records its interaction description.
+        // A session without one is a broken pairing: the ask fails loudly, and no turn starts with an empty origin.
+        let Some(interaction) = self
+            .engine
+            .driver
+            .interaction_of_session
+            .get(&start.session)
+            .cloned()
+        else {
+            let error = anyhow!(
+                "no interaction description is recorded for session {}",
+                start.session
+            );
+            self.refuse_start(start, error, first);
+            return;
+        };
         let withdrawn = self.book.start_ask(&start.session);
         for qid in withdrawn {
             if let Err(error) = self
@@ -558,6 +590,7 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
             &start.session,
             &start.instance,
             &start.message,
+            &interaction,
         ) {
             Ok(()) => {
                 self.active.insert(
@@ -572,23 +605,32 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
                     .session_of_instance
                     .insert(start.instance.key(), start.session.clone());
             }
-            Err(error) => {
-                for qid in self.book.end_ask(&start.session) {
-                    if let Err(reject) = self
-                        .engine
-                        .driver
-                        .sessions
-                        .reject_parked(&start.session, &qid)
-                    {
-                        first.get_or_insert(reject);
-                    }
-                }
-                self.engine.driver.queued_failures.push((
-                    start.instance,
-                    WorkflowError::new(ErrorCode::DriverError, format!("{error:#}")),
-                ));
+            Err(error) => self.refuse_start(start, error, first),
+        }
+    }
+
+    /// A start that could not be made: the ask's parked questions are withdrawn, and the ask fails with the error at
+    /// the next drain. Shared by a refused turn and a session with no interaction description.
+    fn refuse_start(
+        &mut self,
+        start: QueuedStart,
+        error: anyhow::Error,
+        first: &mut Option<anyhow::Error>,
+    ) {
+        for qid in self.book.end_ask(&start.session) {
+            if let Err(reject) = self
+                .engine
+                .driver
+                .sessions
+                .reject_parked(&start.session, &qid)
+            {
+                first.get_or_insert(reject);
             }
         }
+        self.engine.driver.queued_failures.push((
+            start.instance,
+            WorkflowError::new(ErrorCode::DriverError, format!("{error:#}")),
+        ));
     }
 
     /// End every active ask the engine no longer has live: the book withdraws its parked questions and the turn side

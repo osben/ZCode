@@ -20,7 +20,8 @@ fn run(child: &str) -> ActorRun {
     ActorRun {
         child: SessionId::new(child),
         parent: SessionId::new("ses_parent"),
-        description: "workflow subagent site@1".to_owned(),
+        interaction_description: "Ada (site@1)".to_owned(),
+        interactions: None,
         persona_prompt: "You are a workflow actor.".to_owned(),
         workspace: workspace(),
         selection: ModelSelection::new("account:bigmodel-team-coding-plan", GLM_5_3_ACCOUNT),
@@ -33,8 +34,49 @@ fn begin(live: &Live, id: &AgentId, child: &str) -> BeginActorRun {
     live.begin_actor_run(
         id,
         || LiveAgent::for_actor(run(child), id.clone(), SessionId::new("ses_parent")),
+        |_| {},
         "execution-1".to_owned(),
     )
+}
+
+#[test]
+fn a_later_turn_refreshes_the_origin_and_the_asks_of_the_existing_entry() {
+    let live = live_at(42);
+    let id = AgentId::new("actor-sess_a");
+    begin(&live, &id, "sess_a");
+    live.finish(&id, Ending::Completed);
+    // The second turn brings a different origin (as a changed persona name would) and no asks channel.
+    let started = live.begin_actor_run(
+        &id,
+        || unreachable!("the entry exists"),
+        |entry| {
+            entry.description = "Bea (site@1)".to_owned();
+            entry.asks = None;
+        },
+        "execution-2".to_owned(),
+    );
+    assert_eq!(started, BeginActorRun::Started);
+    let entry = live.get(&id).expect("the entry exists");
+    assert_eq!(entry.description, "Bea (site@1)");
+    assert!(entry.asks.is_none());
+}
+
+#[test]
+fn a_refused_start_does_not_refresh_the_running_entry() {
+    let live = live_at(42);
+    let id = AgentId::new("actor-sess_a");
+    begin(&live, &id, "sess_a");
+    let refused = live.begin_actor_run(
+        &id,
+        || unreachable!("the entry exists"),
+        |entry| entry.description = "changed while running".to_owned(),
+        "execution-2".to_owned(),
+    );
+    assert_eq!(refused, BeginActorRun::AlreadyRunning);
+    assert_eq!(
+        live.get(&id).expect("the entry exists").description,
+        "Ada (site@1)"
+    );
 }
 
 #[test]
@@ -118,6 +160,19 @@ fn a_fresh_entry_keyed_by_another_id_is_a_programming_error() {
                 SessionId::new("ses_parent"),
             )
         },
+        |_| {},
         "execution-1".to_owned(),
     );
+}
+
+#[test]
+fn the_actor_entry_carries_the_interaction_description_as_its_origin_description() {
+    // `ChildSink::with_origin` reads the entry's description, so the entry must hold the interaction description, not the
+    // session title. Node names the asking actor by its persona and instance: `<persona> (<site>@<ordinal>)`.
+    let entry = LiveAgent::for_actor(
+        run("sess_a"),
+        AgentId::new("actor-sess_a"),
+        SessionId::new("ses_parent"),
+    );
+    assert_eq!(entry.description, "Ada (site@1)");
 }

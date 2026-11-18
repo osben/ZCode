@@ -12,8 +12,8 @@
 //! - A cancelled turn ends as an error here (`Stopped`); the workflow loop reads its cancel flag and reports nothing.
 //!
 //! Deviations, recorded in the spec: the persona prompt and the parent are one value for the whole runner (`ActorRunBase`).
-//! The workflow does not pass a persona per turn, so a runner serves one persona. Each actor gets its own child session,
-//! and the child's description is named after it.
+//! The workflow does not pass a persona per turn, so a runner serves one persona. Each actor gets its own child session.
+//! The interaction description (the origin of its asks) comes with each turn, as the workflow passes it.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -24,8 +24,11 @@ use rust_cli_agents::actor_turn::{ActorRun, ActorTurnEnd};
 use rust_cli_kernel_api::env::WorkspaceRef;
 use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::model::ModelSelection;
+use rust_cli_kernel_api::orchestration::Interactions;
 use rust_cli_kernel_api::permission::PermissionMode;
 use rust_cli_workflow::actor_turns::TurnRunner;
+use rust_cli_workflow::driver_rules::{actor_permission_policy, parse_subagent_permission_mode};
+use serde_json::Value;
 use tokio::runtime::Handle;
 use tokio_util::sync::CancellationToken;
 
@@ -56,15 +59,44 @@ impl ActorAgents for rust_cli_agents::Agents {
     }
 }
 
+/// The permission mode of an actor run, from the mode the workflow run recorded for its subagents.
+///
+/// Node's rules, in order: only a recordable value survives the read (`parse_subagent_permission_mode`), and an absent
+/// value is YOLO (`actor_permission_policy`). The policy's name then goes through the shared collaboration-mode
+/// conversion (`PermissionMode::from_node_name`), so there is one table for the names. A name that table does not know
+/// fails closed to `Default`, which asks for each permission, never to a mode that skips them.
+pub fn actor_permission_mode(recorded: Option<&Value>) -> PermissionMode {
+    let policy = actor_permission_policy(parse_subagent_permission_mode(recorded));
+    PermissionMode::from_node_name(policy.as_str()).unwrap_or(PermissionMode::Default)
+}
+
 /// What every actor run of one runner shares: the parent session, the workspace, the model selection, the permission
-/// mode, and the persona's system prompt.
-#[derive(Debug, Clone)]
+/// mode, the persona's system prompt, and the parent's interactions channel (its broker to the user), when it has one.
+#[derive(Clone)]
 pub struct ActorRunBase {
     pub parent: SessionId,
     pub workspace: WorkspaceRef,
     pub selection: ModelSelection,
     pub mode: PermissionMode,
     pub persona_prompt: String,
+    pub interactions: Option<Arc<dyn Interactions>>,
+}
+
+/// Renders the interactions by presence: the channel is a trait object with no `Debug`.
+impl std::fmt::Debug for ActorRunBase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ActorRunBase")
+            .field("parent", &self.parent)
+            .field("workspace", &self.workspace)
+            .field("selection", &self.selection)
+            .field("mode", &self.mode)
+            .field("persona_prompt", &self.persona_prompt)
+            .field(
+                "interactions",
+                &self.interactions.as_ref().map(|_| "present"),
+            )
+            .finish()
+    }
 }
 
 /// The workflow's turn runner over the agents crate.
@@ -86,7 +118,13 @@ impl<A: ActorAgents> AgentTurnRunner<A> {
 }
 
 impl<A: ActorAgents> TurnRunner for AgentTurnRunner<A> {
-    fn run_turn(&self, session: &str, prompt: &str, cancel: &AtomicBool) -> Result<String, String> {
+    fn run_turn(
+        &self,
+        session: &str,
+        interaction: &str,
+        prompt: &str,
+        cancel: &AtomicBool,
+    ) -> Result<String, String> {
         debug_assert!(
             Handle::try_current().is_err(),
             "the ask thread must not be inside a runtime: block_on would panic there"
@@ -95,7 +133,8 @@ impl<A: ActorAgents> TurnRunner for AgentTurnRunner<A> {
         let run = ActorRun {
             child: SessionId::new(session),
             parent: self.base.parent.clone(),
-            description: format!("workflow subagent {session}"),
+            interaction_description: interaction.to_owned(),
+            interactions: self.base.interactions.clone(),
             persona_prompt: self.base.persona_prompt.clone(),
             workspace: self.base.workspace.clone(),
             selection: self.base.selection.clone(),
