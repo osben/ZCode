@@ -6,6 +6,7 @@
 
 pub mod actor_mailbox;
 pub mod actor_sessions;
+pub mod actor_turns;
 pub mod artifact_spec;
 pub mod canon;
 pub mod driver_owner;
@@ -34,6 +35,8 @@ pub mod scheduler_submit;
 mod actor_mailbox_tests;
 #[cfg(test)]
 mod actor_sessions_tests;
+#[cfg(test)]
+mod actor_turns_tests;
 #[cfg(test)]
 mod driver_golden_tests;
 #[cfg(test)]

@@ -987,6 +987,39 @@ Review of 2c-1 (ocr on bb65c05f9), verdicts:
 
 Box, after the fixes: workflow lib 106 pass; fmt --check and clippy --workspace -D warnings exit 0.
 
+### 9.8d W6a part 2c-2: the turn loop over the agents crate (split)
+
+Status: started on `feat/rust-workflow-actor-turns`, stacked on fork (61a044f6d = #538 merged). Gate off.
+
+Why it is split. The agents-side turn needs a `LiveAgent` for an actor child (agent type, definition, selection, workspace, the parent `RunInfo`), a tool registry, and the permission origin. The nudge and failure loop does not need any of that. So 2c-2 is split:
+
+- **2c-2a (this part): the turn loop over an injected `TurnRunner`.** `TurnRunner` runs one model turn on a child session and returns its final text (or an error). `MailboxTurns` implements `ActorTurns` on top of it. `start_turn` runs the ask on its own thread: a turn, then `turn_ended` through the mailbox. A `Nudge` verdict starts a fresh turn with `NUDGE_PROMPT`. A settled ask (`AskEnded`, `NoAsk`) or an owner that is gone ends the loop. A turn error is sent to the owner as `turn_failed`, so the ask fails with `DriverError` (Node's `askFailed(toWorkflowError(error))`). A cancelled ask runs no `turn_ended` (Node: `onTurnRejected` returns early on `state.cancelled`). The mailbox gains `TurnFailed`, and the owner gains `turn_failed`, which the engine's `ask_failed` writes. `reject_parked` and `deliver_answer` return an error until the escalate tool exists (2c-3), because no question can be parked before then.
+- **2c-2b: the `TurnRunner` over `crates/agents`.** A turn runs `resume` (a new user message on the child) and `drive` on the child session (`spawn.rs`), with a `LiveAgent` built for the actor, and the turn's final text taken from the transcript. It needs the `LiveAgent` constructor for actor children, the workspace and selection, and the permission origin (`ChildSink::with_origin`). It is the first PR that touches `crates/agents`, and its tests need the agents test support.
+- **2c-3: the tools and the prompt.** `submit_result` and `escalate` as tools (modelled on `respond.rs`, `escalate` blocking on a reply), the typed epilogue and the mono profile in the instructions (`driver_rules`), `reject_parked` and `deliver_answer` wired to the blocked escalate.
+- **2c-4: the callers and the ports.** As in 9.8c: `ask_mutating` and `set_message_boundary` from tool activity and the transcript, the grants, `countSource` and stats, and the Node driver tests that need a session.
+
+Owners and event order for 2c-2a (each turn runs on its own thread; the owner is served by the mailbox):
+
+```
+owner thread                        ask thread (MailboxTurns, one per ask)         TurnRunner
+  ask → start_ask → start_turn ─────► spawn ─────────────────────────────────────►  run_turn(prompt)
+  serve_next ◄──── TurnEnded ◄──────── turn_ended(text) (blocks)  ◄─── text ───────────┘
+  reply Nudge ───────────────────────► prompt = NUDGE_PROMPT → run_turn again
+  ...
+  reply AskEnded ─────────────────────► return (thread ends)
+  TurnFailed ◄─────────────────────── turn_failed(msg) (on a turn error, not cancelled)
+  cancel_turn(instance) ───────────── sets the ask's flag; run_turn returns; no turn_ended
+```
+
+Deviations recorded for 2c-2a:
+
+- The cancel flag is observed between turns and after the runner returns. A runner that never returns cannot be stopped by the flag; the agents side (2c-2b) must abort the model call.
+- One thread per ask. The owner never waits on a thread; the thread waits on the owner's reply through the mailbox.
+
+Tests for 2c-2a (written first; red recorded in the commit message and the report): a nudge followed by `AskEnded` runs two turns, the second with `NUDGE_PROMPT`, and fails the ask with `ResultNotSubmitted`; a refused turn fails the ask with the runner's text; a cancelled turn sends no `turn_ended` (the join completes, which proves no request was sent and waited on).
+
+As built (2c-2a): `crates/workflow/src/actor_turns.rs`: `TurnRunner` (one model turn; `Send + Sync`), `MailboxTurns` (the `ActorTurns` implementation: one thread per ask, a per-instance cancel flag), and `run_ask` (the turn, then `turn_ended`; `Nudge` starts a turn with `NUDGE_PROMPT`; any other verdict ends the thread; a turn error is reported with `turn_failed` unless the ask was cancelled; a cancelled turn reports nothing). `ActorRequest::TurnFailed` and `ActorHandle::turn_failed` carry the failure; `ActorDriverOwner::turn_failed` calls the engine's `ask_failed` with `DriverError`. `reject_parked` and `deliver_answer` return an error until 2c-3. Tests: `actor_turns_tests.rs`, three cases (nudge then settlement with the nudge prompt; a refused turn fails the ask with its text; a cancelled turn sends no turn end). Red: the module was missing, so the first run failed to compile; the first real run hung in the cancel case because the test had not drained the owner, so the turn never started (a test error, fixed by adding `drain`). Box: workflow lib 109 pass; fmt and clippy clean. `crates/agents` is not touched by this part.
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.
