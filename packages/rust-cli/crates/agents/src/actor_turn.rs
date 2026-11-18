@@ -108,14 +108,14 @@ pub(crate) fn actor_asks(
 /// approve it in a headless child. The questions to the user go through `escalate`, so only the main session answers
 /// them. The meta tools would let an actor submit or amend another workflow, and the topic resource belongs to the
 /// main session's inbound input. The deny list is enforced by the child's toolset (`toolset.rs`).
-pub const WORKFLOW_ACTOR_DISALLOWED_TOOLS: [&str; 7] = [
-    "AskUserQuestion",
-    "EnterPlanMode",
-    "ExitPlanMode",
-    "CreateWorkflow",
-    "AmendWorkflow",
-    "ReadTopicResource",
-    "ResolveWorkflowQuestion",
+pub(crate) const WORKFLOW_ACTOR_DISALLOWED_TOOLS: [&str; 7] = [
+    rust_cli_kernel_api::tool_names::ASK_USER_QUESTION,
+    rust_cli_kernel_api::tool_names::ENTER_PLAN_MODE,
+    rust_cli_kernel_api::tool_names::EXIT_PLAN_MODE,
+    rust_cli_kernel_api::tool_names::CREATE_WORKFLOW,
+    rust_cli_kernel_api::tool_names::AMEND_WORKFLOW,
+    rust_cli_kernel_api::tool_names::READ_TOPIC_RESOURCE,
+    rust_cli_kernel_api::tool_names::RESOLVE_WORKFLOW_QUESTION,
 ];
 
 /// The live-map key of an actor: one per child session.
