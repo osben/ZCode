@@ -1082,8 +1082,12 @@ impl Projection {
                 // Node settles a denied prompt as `cancelled` (onPermissionResolved): a refused call never runs.
                 if let Some(tool) = tool {
                     // The denial goes into the same set `deny()` fills, so the ToolDone that follows settles
-                    // from one source, whether or not the live command path called `deny()`.
-                    if *denied {
+                    // from one source, whether or not the live command path called `deny()`. Only an open card
+                    // can still settle from it: a settled row keeps no entry, which `rebuilt()` would carry over.
+                    let open = self.index.get(&tool_key(&tool)).is_some_and(|&at| {
+                        ToolStatus::of(&self.rows[at]).is_some_and(ToolStatus::is_open)
+                    });
+                    if *denied && open {
                         self.denied.insert(tool.clone());
                     }
                     let status = if *denied {

@@ -452,6 +452,88 @@ fn a_denied_permission_does_not_turn_the_card_running() {
     assert_eq!(done[0]["row"]["status"], "cancelled");
 }
 
+/// A scheduled event rewrites only a card that has not started: once the call runs, a late scheduled event changes
+/// nothing (no row event, the running name and input stay).
+#[test]
+fn a_scheduled_event_does_not_rewrite_a_running_card() {
+    let mut feed = Feed::new();
+    feed.apply(KernelEvent::TurnStarted {
+        turn: TurnId::new("turn_1"),
+        command: None,
+    });
+    let tool = ToolUseId::new("toolu_1");
+    feed.apply(KernelEvent::ToolScheduled {
+        tool_use: tool.clone(),
+        name: "Bash".into(),
+        input: json!({"command": "ls"}),
+    });
+    feed.apply(KernelEvent::ToolStarted {
+        tool_use: tool.clone(),
+        name: "Bash".into(),
+        input: json!({"command": "ls"}),
+    });
+    let late = feed.apply(KernelEvent::ToolScheduled {
+        tool_use: tool,
+        name: "Other".into(),
+        input: json!({"command": "rm -rf x"}),
+    });
+    assert!(
+        late.iter().all(|event| event["op"] != "row.upserted"),
+        "a running card is not rewritten: {late:?}"
+    );
+}
+
+/// A denial settles only an open card: a card that already finished leaves no entry in the denied set, which
+/// `rebuilt()` would carry over.
+#[test]
+fn a_denial_on_a_settled_card_leaves_no_entry() {
+    let mut feed = Feed::new();
+    feed.apply(KernelEvent::TurnStarted {
+        turn: TurnId::new("turn_1"),
+        command: None,
+    });
+    let tool = ToolUseId::new("toolu_1");
+    feed.apply(KernelEvent::ToolScheduled {
+        tool_use: tool.clone(),
+        name: "Bash".into(),
+        input: json!({"command": "ls"}),
+    });
+    feed.apply(KernelEvent::InteractionAsked {
+        interaction: InteractionId::new("int_1"),
+        request: InteractionRequest::Permission {
+            origin: None,
+            tool_use: tool.clone(),
+            tool: "Bash".into(),
+            input: json!({"command": "ls"}),
+            message: "run?".into(),
+            suggestions: Vec::new(),
+            rule_seed: None,
+            asked_by: None,
+            machine: Default::default(),
+            once: false,
+            independent: false,
+            session_allow: false,
+        },
+    });
+    feed.apply(KernelEvent::ToolDone {
+        tool_use: tool,
+        output: rust_cli_kernel_api::tool::ToolOutput {
+            content: vec![ToolResultContent::Text { text: "ok".into() }],
+            is_error: false,
+            display: Value::Null,
+        },
+    });
+    feed.apply(KernelEvent::InteractionResolved {
+        interaction: InteractionId::new("int_1"),
+        denied: true,
+    });
+    assert!(
+        !feed.projection.denied.contains("toolu_1"),
+        "a settled card keeps no denial: {:?}",
+        feed.projection.denied
+    );
+}
+
 /// A guarded dangerous command asks once (Node `approvalMode: "user-once"`): only allow once and
 /// deny, no full access option.
 #[test]

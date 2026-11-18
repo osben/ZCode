@@ -5,7 +5,7 @@ use rust_cli_kernel_api::message::{ContentBlock, Message, UserOrigin};
 use rust_cli_kernel_api::model::BlockDelta;
 use rust_cli_kernel_api::orchestration::InteractionRequest;
 use rust_cli_kernel_api::user_input::INTERRUPT_TEXTS;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 use super::{Projection, RowKind, ToolStatus, block_key, state, text_of, tool_key};
 
@@ -384,12 +384,15 @@ impl Projection {
             .turn
             .as_ref()
             .map_or_else(|| self.session.clone(), |turn| turn.id.clone());
-        let mut row = self.base(&turn, tool_use, RowKind::ToolCall, now, seq);
-        row.insert("toolCallId".into(), json!(tool_use));
-        row.insert("toolName".into(), json!(name));
-        row.insert("status".into(), json!(ToolStatus::Running.as_str()));
-        row.insert("inputText".into(), json!(input.to_string()));
-        row.insert("input".into(), input.clone());
+        let row = self.tool_card(
+            &turn,
+            tool_use,
+            name,
+            ToolStatus::Running,
+            Some(input),
+            now,
+            seq,
+        );
         self.append(tool_key(tool_use), row, out);
     }
 
@@ -406,29 +409,68 @@ impl Projection {
         out: &mut Vec<Value>,
     ) {
         let key = tool_key(tool_use);
-        if self.index.contains_key(&key) {
-            self.upsert(
-                &key,
-                |row| {
-                    row.insert("toolName".into(), json!(name));
-                    row.insert("inputText".into(), json!(input.to_string()));
-                    row.insert("input".into(), input.clone());
-                },
-                out,
-            );
+        if let Some(&at) = self.index.get(&key) {
+            // Only a card that has not started takes the scheduled name and input: a running or settled card keeps
+            // what it has.
+            if matches!(
+                ToolStatus::of(&self.rows[at]),
+                Some(ToolStatus::InputStreaming | ToolStatus::PendingApproval)
+            ) {
+                self.upsert(
+                    &key,
+                    |row| {
+                        row.insert("toolName".into(), json!(name));
+                        row.insert("inputText".into(), json!(input.to_string()));
+                        row.insert("input".into(), input.clone());
+                    },
+                    out,
+                );
+            }
             return;
         }
         let turn = self
             .turn
             .as_ref()
             .map_or_else(|| self.session.clone(), |turn| turn.id.clone());
-        let mut row = self.base(&turn, tool_use, RowKind::ToolCall, now, seq);
+        let row = self.tool_card(
+            &turn,
+            tool_use,
+            name,
+            ToolStatus::InputStreaming,
+            Some(input),
+            now,
+            seq,
+        );
+        self.append(key, row, out);
+    }
+
+    /// The base card of a tool call, at `initial`: the one builder every path uses (a scheduled call, a streamed
+    /// input, a started call). `input` is the call's whole input once it is known; a streamed card has none yet.
+    #[allow(clippy::too_many_arguments)]
+    fn tool_card(
+        &self,
+        turn: &str,
+        tool_use: &str,
+        name: &str,
+        initial: ToolStatus,
+        input: Option<&Value>,
+        now: u64,
+        seq: u64,
+    ) -> Map<String, Value> {
+        let mut row = self.base(turn, tool_use, RowKind::ToolCall, now, seq);
         row.insert("toolCallId".into(), json!(tool_use));
         row.insert("toolName".into(), json!(name));
-        row.insert("status".into(), json!(ToolStatus::InputStreaming.as_str()));
-        row.insert("inputText".into(), json!(input.to_string()));
-        row.insert("input".into(), input.clone());
-        self.append(key, row, out);
+        row.insert("status".into(), json!(initial.as_str()));
+        match input {
+            Some(input) => {
+                row.insert("inputText".into(), json!(input.to_string()));
+                row.insert("input".into(), input.clone());
+            }
+            None => {
+                row.insert("inputText".into(), json!(""));
+            }
+        }
+        row
     }
 
     /// Fork: Node `openToolRow` (`tool_input_start`): the model started a tool call; the row shows it while the input
@@ -464,11 +506,15 @@ impl Projection {
                 pending: String::new(),
             },
         );
-        let mut row = self.base(turn, tool_use, RowKind::ToolCall, now, seq);
-        row.insert("toolCallId".into(), json!(tool_use));
-        row.insert("toolName".into(), json!(name));
-        row.insert("status".into(), json!(ToolStatus::InputStreaming.as_str()));
-        row.insert("inputText".into(), json!(""));
+        let row = self.tool_card(
+            turn,
+            tool_use,
+            name,
+            ToolStatus::InputStreaming,
+            None,
+            now,
+            seq,
+        );
         self.append(key, row, out);
     }
 
