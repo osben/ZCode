@@ -1081,6 +1081,15 @@ fn a_settled_asks_stats_are_not_written_to_the_next_ask() {
         .expect("stats");
     for node in owner.journal().list_nodes("run_1").expect("nodes") {
         let is_settled = node.site_id == settled.site_id && node.ordinal == settled.ordinal;
-        assert_eq!(node.stats.is_some(), is_settled, "{node:?}");
+        if is_settled {
+            let stats = node
+                .stats
+                .as_ref()
+                .expect("the settled node carries the stats");
+            assert_eq!(stats["tokens"].as_f64(), Some(42.0));
+            assert_eq!(stats["toolCalls"].as_f64(), Some(3.0));
+        } else {
+            assert_eq!(node.stats, None, "{node:?}");
+        }
     }
 }
