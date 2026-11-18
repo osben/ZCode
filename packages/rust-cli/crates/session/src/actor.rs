@@ -7,7 +7,9 @@ use std::sync::Arc;
 use rust_cli_base::Task;
 use rust_cli_kernel_api::abort::{Abort, AbortReason};
 use rust_cli_kernel_api::agents::AgentSignal;
-use rust_cli_kernel_api::ids::{CommandId, InteractionId, MessageId, RunId, ToolUseId, TurnId};
+use rust_cli_kernel_api::ids::{
+    CommandId, InteractionId, MessageId, RunId, SessionId, ToolUseId, TurnId,
+};
 use rust_cli_kernel_api::message::Message;
 use rust_cli_kernel_api::model::ModelSelection;
 use rust_cli_kernel_api::orchestration::{
@@ -22,6 +24,14 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use crate::SessionDeps;
+
+/// The scope a session grant applies to: this session's own asks, or one subagent's (its origin's child session).
+/// An enum, not a sentinel string, so no session id can collide with the own scope.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum GrantScope {
+    Own,
+    Child(SessionId),
+}
 use crate::agent_signals::AgentStream;
 use crate::cron::CronStream;
 use crate::log::EventLog;
@@ -235,7 +245,7 @@ pub(crate) struct Actor {
     /// `PermissionService.sessionRules`). Lives in the actor: restart, cold resume and `/new` start empty. Each grant is
     /// keyed by its scope: the subagent that asked (its child session), or "" for this session's own asks. A subagent's
     /// grant answers that subagent only, as Node gives each subagent its own service.
-    pub(crate) session_grants: std::collections::BTreeSet<(String, String)>,
+    pub(crate) session_grants: std::collections::BTreeSet<(GrantScope, String)>,
     pub(crate) running: Option<Running>,
     /// Fork (D2 follow-up): the end-of-turn capture's cancel token while `finish_turn` awaits it. The actor keeps
     /// serving requests meanwhile, and an interrupt or shutdown cancels the capture through this token.

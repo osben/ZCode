@@ -100,15 +100,7 @@ async fn asked(
         rust_cli_kernel_api::session_api::SequencedEvent,
     >,
 ) -> rust_cli_kernel_api::ids::InteractionId {
-    loop {
-        let event = tokio::time::timeout(Duration::from_secs(5), events.next())
-            .await
-            .expect("asked in time")
-            .unwrap();
-        if let KernelEvent::InteractionAsked { interaction, .. } = event.event {
-            return interaction;
-        }
-    }
+    asked_request(events).await.0
 }
 
 async fn answer(

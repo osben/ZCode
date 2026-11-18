@@ -20,8 +20,10 @@ impl Actor {
         let (kind, tool) = describe(&request);
         // Fork (F3b a): a tool the user allowed for this session is answered without a prompt, after the
         // pipeline's deny rules and hooks, as Node's session rule is checked before its ask.
-        if let Some(grant) = grant_key(&request)
-            && self.session_grants.contains(&grant)
+        if let InteractionRequest::Permission { tool, origin, .. } = &request
+            && self
+                .session_grants
+                .contains(&grant_key(tool, origin.as_deref()))
         {
             tracing::info!(event = "permission.session_allowed", session = %self.meta.id, tool, "allowed for this session");
             let _ = reply.send(Ok(InteractionAnswer {
@@ -64,19 +66,18 @@ impl Actor {
         };
         // Fork (F3b a): "Always allow in this session" grants the tool to this actor only, and the waiter gets a plain
         // allow. An ask that did not offer it is a deny (Node: the option is not in the list, so the answer is refused).
-        let grant = grant_key(&self.pending[position].request);
         let answer = match (&self.pending[position].request, answer) {
             (
                 InteractionRequest::Permission {
+                    tool,
+                    origin,
                     session_allow: true,
                     ..
                 },
                 Answer::Permission(PermissionAnswer::AllowSession),
             ) => {
-                if let Some(grant) = &grant {
-                    self.session_grants.insert(grant.clone());
-                }
-
+                self.session_grants
+                    .insert(grant_key(tool, origin.as_deref()));
                 Answer::Permission(PermissionAnswer::Allow {
                     remember: Vec::new(),
                 })
@@ -177,15 +178,14 @@ fn describe(request: &InteractionRequest) -> (&'static str, &str) {
     }
 }
 
-/// The scope and tool a session grant is keyed by. A subagent's ask is scoped to that subagent (its origin's child
-/// session); this session's own asks use the empty scope. None for a request that is not a permission ask.
-fn grant_key(request: &InteractionRequest) -> Option<(String, String)> {
-    let InteractionRequest::Permission { tool, origin, .. } = request else {
-        return None;
-    };
-    let scope = origin
-        .as_ref()
-        .map(|origin| origin.child_session.as_str().to_owned())
-        .unwrap_or_default();
-    Some((scope, tool.clone()))
+/// The key a session grant is stored under: the tool, scoped to the subagent that asked (its origin's child session),
+/// or to this session's own asks. A subagent's grant answers that subagent only.
+fn grant_key(
+    tool: &str,
+    origin: Option<&rust_cli_kernel_api::orchestration::AskOrigin>,
+) -> (crate::actor::GrantScope, String) {
+    let scope = origin.map_or(crate::actor::GrantScope::Own, |origin| {
+        crate::actor::GrantScope::Child(origin.child_session.clone())
+    });
+    (scope, tool.to_owned())
 }
