@@ -1,8 +1,7 @@
 //! The mailbox between the actor turns and the owner (W6a part 2c-1). Turns run on their own threads and block on their
 //! reply; the owner thread serves the mailbox. These tests serve it from the test thread.
 use crate::actor_mailbox::{ActorMailbox, MailboxError};
-use crate::driver_owner::ActorDriverOwner;
-use crate::driver_owner::{SubmitReply, TurnEndReply};
+use crate::driver_owner::{ActorDriverOwner, SubmitReply, TurnEndReply};
 use crate::driver_owner_tests::{Recording, config, owner, request, running_ask};
 use crate::engine::SubmitVerdict;
 use crate::escalation::EscalateOutcome;

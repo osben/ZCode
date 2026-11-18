@@ -73,13 +73,12 @@ impl ActorSessions for Recording {
     }
 
     fn deliver_answer(&mut self, session: &str, qid: &str, answer: &str) -> Result<()> {
-        if self.0.borrow().fail_next_deliver {
-            self.0.borrow_mut().fail_next_deliver = false;
+        let mut log = self.0.borrow_mut();
+        if log.fail_next_deliver {
+            log.fail_next_deliver = false;
             bail!("deliver refused");
         }
-        self.0
-            .borrow_mut()
-            .answered
+        log.answered
             .push((session.to_owned(), qid.to_owned(), answer.to_owned()));
         Ok(())
     }

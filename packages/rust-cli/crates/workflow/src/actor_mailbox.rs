@@ -50,6 +50,10 @@ impl fmt::Display for MailboxError {
     }
 }
 
+/// `Display` already prints the owner error's whole chain, so `source` stays `None` to keep reporters from printing it
+/// twice.
+impl std::error::Error for MailboxError {}
+
 /// One request from a turn to the owner. Crate-internal: only the handle builds these.
 pub(crate) enum ActorRequest {
     Submit {
