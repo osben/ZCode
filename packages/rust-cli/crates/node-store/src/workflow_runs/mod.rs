@@ -280,9 +280,10 @@ pub fn reduce(prior: Option<&State>, envelope: &Envelope, limits: &Limits) -> Op
     if runs.len() > PRODUCTION.max_runs {
         runs.drain(..runs.len() - PRODUCTION.max_runs);
     }
-    // Entry budget after the run-count cut, as in Node. Both cross-run caps are fixed constants:
-    // Node's `evictForEntryBudget` reads WORKFLOW_RUNS_LIMITS, and the injected set only shrinks a run.
-    let runs = eviction::evict_for_entry_budget(runs, &run_id);
+    // Entry budget after the run-count cut, as in Node. The budget comes from `limits` (production:
+    // `PRODUCTION.max_total_entries`, the value Node's `evictForEntryBudget` reads). The run-count cut
+    // stays fixed.
+    let runs = eviction::evict_for_entry_budget(runs, &run_id, limits.max_total_entries);
     Some(State {
         revision: prior.revision + 1,
         runs,

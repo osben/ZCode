@@ -517,11 +517,17 @@ fn payload_bounds_cut_strings_arrays_and_depth_as_the_contracts_do() {
 }
 
 /// Entry budget and the run cut, which the Node goldens do not record (the fixture would be too large).
-/// Nine runs of 400 actors and 400 nodes: 8 x 800 = 6400 entries > 6144, so the oldest terminal run
-/// is evicted, and the run cut drops the first run. Checked by the delta property at sampled steps
-/// and at the end; the eviction itself is asserted.
+/// The reducer cost grows with the size of the run it rebuilds on every event, so the full-size fixture
+/// (400 actors and 400 nodes per run, about 118 s in debug) runs at 1/16 scale here: nine runs of 50
+/// actors and 50 nodes, against a budget of 6144 / 16 = 384. 8 x 100 = 800 > 384, so the oldest terminal
+/// run is evicted by the budget, and the run cut drops the first run. The real constant is pinned at
+/// full scale by `production_entry_budget_evicts_at_full_scale`.
 #[test]
 fn wide_fan_out_hits_the_entry_budget_and_the_run_cut() {
+    let limits = Limits {
+        max_total_entries: PRODUCTION.max_total_entries / 16,
+        ..PRODUCTION
+    };
     let mut prior: Option<State> = None;
     let mut sequence = 0.0;
     let mut removed_runs = 0usize;
@@ -544,7 +550,7 @@ fn wide_fan_out_hits_the_entry_budget_and_the_run_cut() {
                 sequence
             },
         )];
-        for ordinal in 1..=400u64 {
+        for ordinal in 1..=50u64 {
             let actor = json!({"siteId": "agent#1", "ordinal": ordinal});
             let instance = json!({"siteId": "ask#1", "ordinal": ordinal});
             events.push(envelope(
@@ -580,7 +586,7 @@ fn wide_fan_out_hits_the_entry_budget_and_the_run_cut() {
                 event.sequence = Some(sequence);
             }
             step += 1;
-            let Some(next) = reduce(prior.as_ref(), &event, &PRODUCTION) else {
+            let Some(next) = reduce(prior.as_ref(), &event, &limits) else {
                 continue;
             };
             if step.is_multiple_of(97) {
@@ -611,7 +617,7 @@ fn wide_fan_out_hits_the_entry_budget_and_the_run_cut() {
         })
         .sum();
     assert!(
-        total <= PRODUCTION.max_total_entries,
+        total <= limits.max_total_entries,
         "entries {total} within the budget"
     );
     let last = state.runs.last().unwrap();
@@ -621,6 +627,46 @@ fn wide_fan_out_hits_the_entry_budget_and_the_run_cut() {
         serialize(&apply_all(None, &diff(None, &state)).unwrap()),
         serialize(&state)
     );
+}
+
+/// The production budget at full scale, checked on the eviction function directly with the run lists
+/// built in bulk (no reducer events, so it is fast): nine completed runs of 400 actors and 400 nodes,
+/// 9 x 800 = 7200 > 6144. The oldest terminal runs leave until the total fits (dwfrun-1 and dwfrun-2,
+/// leaving 5600); the event run (dwfrun-9) is never evicted.
+#[test]
+fn production_entry_budget_evicts_at_full_scale() {
+    assert_eq!(PRODUCTION.max_total_entries, 6144);
+    let run = |n: u64| -> super::js::Obj {
+        let actors: Vec<Value> = (1..=400u64)
+            .map(|o| json!({"siteId": "agent#1", "ordinal": o}))
+            .collect();
+        let nodes: Vec<Value> = (1..=400u64)
+            .map(|o| json!({"siteId": "ask#1", "ordinal": o}))
+            .collect();
+        json!({"runId": format!("dwfrun-{n}"), "status": "completed", "actors": actors, "nodes": nodes})
+            .as_object()
+            .unwrap()
+            .clone()
+    };
+    let runs: Vec<super::js::Obj> = (1..=9u64).map(run).collect();
+    let kept =
+        super::eviction::evict_for_entry_budget(runs, "dwfrun-9", PRODUCTION.max_total_entries);
+    let ids: Vec<String> = kept
+        .iter()
+        .map(|r| r["runId"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(
+        ids,
+        (3..=9u64)
+            .map(|n| format!("dwfrun-{n}"))
+            .collect::<Vec<_>>()
+    );
+    let total: usize = kept
+        .iter()
+        .map(|r| r["actors"].as_array().unwrap().len() + r["nodes"].as_array().unwrap().len())
+        .sum();
+    assert_eq!(total, 5600);
+    assert!(total <= PRODUCTION.max_total_entries);
 }
 
 /// Node `sanitizeIdSegment` maps each UTF-16 code unit, so an astral character (two units) becomes two

@@ -8,9 +8,9 @@
 
 use serde_json::Value;
 
+use super::Limits;
 use super::caps::{BucketDelta, add_to_bucket, read_buckets, with_buckets};
 use super::js::{InstanceRef, Obj, entry_ref};
-use super::{Limits, PRODUCTION};
 
 /// `admitsNewEntry`: below the overflow point every event admits; an overflowed run admits new keys
 /// only from live birth events.
@@ -611,14 +611,14 @@ pub fn absorb_refused_settled_node(run: Obj, node: &Obj, limits: &Limits) -> Obj
 
 /// Applied to the run list when the entry budget is exceeded: evict the oldest terminal run until
 /// within budget. Active runs and the run receiving the event are never evicted.
-pub fn evict_for_entry_budget(runs: Vec<Obj>, event_run_id: &str) -> Vec<Obj> {
+pub fn evict_for_entry_budget(runs: Vec<Obj>, event_run_id: &str, max_total: usize) -> Vec<Obj> {
     let size = |run: &Obj| nodes_of(run).len() + actors_of(run).len();
     let mut total: usize = runs.iter().map(size).sum();
-    if total <= PRODUCTION.max_total_entries {
+    if total <= max_total {
         return runs;
     }
     let mut remaining = runs;
-    while total > PRODUCTION.max_total_entries {
+    while total > max_total {
         let index = remaining.iter().position(|run| {
             let id = run.get("runId").and_then(Value::as_str);
             let status = run.get("status").and_then(Value::as_str);

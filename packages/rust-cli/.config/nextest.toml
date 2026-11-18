@@ -15,9 +15,3 @@ path = "junit.xml"
 filter = "binary(/^ssh_(docker|macos)/)"
 slow-timeout = { period = "60s", terminate-after = 5 }
 retries = 0
-
-# workflow_runs wide fan-out: 9 runs and about 10k reducer steps, each copying the state (up to the
-# 6144-entry budget). It takes about 117 s in the debug test profile, so it gets a longer limit than the default.
-[[profile.default.overrides]]
-filter = "test(wide_fan_out_hits_the_entry_budget_and_the_run_cut)"
-slow-timeout = { period = "120s", terminate-after = 2 }
