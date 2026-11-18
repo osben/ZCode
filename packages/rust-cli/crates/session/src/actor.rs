@@ -25,13 +25,6 @@ use tokio_util::sync::CancellationToken;
 
 use crate::SessionDeps;
 
-/// The scope a session grant applies to: this session's own asks, or one subagent's (its origin's child session).
-/// An enum, not a sentinel string, so no session id can collide with the own scope.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum GrantScope {
-    Own,
-    Child(SessionId),
-}
 use crate::agent_signals::AgentStream;
 use crate::cron::CronStream;
 use crate::log::EventLog;
@@ -39,6 +32,14 @@ use crate::notices::{Notices, next_notice};
 use crate::sink::SinkRequest;
 use crate::title::{TitleState, title_done};
 use crate::turn::TurnInput;
+
+/// The scope a session grant applies to: this session's own asks, or one subagent's (its origin's child session).
+/// An enum, not a sentinel string, so no session id can collide with the own scope.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum GrantScope {
+    Own,
+    Child(SessionId),
+}
 
 pub(crate) enum Request {
     Command {
@@ -243,7 +244,7 @@ pub(crate) struct Actor {
     pub(crate) pending: Vec<Pending>,
     /// Fork (F3b a): tools the user allowed for this session ("Always allow in this session", Node
     /// `PermissionService.sessionRules`). Lives in the actor: restart, cold resume and `/new` start empty. Each grant is
-    /// keyed by its scope: the subagent that asked (its child session), or "" for this session's own asks. A subagent's
+    /// keyed by its scope: the subagent that asked (`GrantScope::Child`, its child session), or `GrantScope::Own` for this session's own asks. A subagent's
     /// grant answers that subagent only, as Node gives each subagent its own service.
     pub(crate) session_grants: std::collections::BTreeSet<(GrantScope, String)>,
     pub(crate) running: Option<Running>,
