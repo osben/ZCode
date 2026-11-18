@@ -134,11 +134,14 @@ impl ToolRule {
     }
 
     pub(crate) fn allows(&self, name: &str) -> bool {
-        // Node gives every child the coordinator port (`includeRespondToCoordinator`), and a workflow actor's submit
-        // tool is a child-only tool offered only to an actor that has a port (`submit::tools_for`). Neither is removed
-        // by the child's `tools` allowlist (a background actor's allowlist would otherwise drop submit_result); only
-        // `disallowedTools` removes them.
-        if name == crate::respond::NAME || name == crate::submit::NAME {
+        // Node gives every child the coordinator port (`includeRespondToCoordinator`), and a workflow actor's submit and
+        // escalate tools are child-only tools offered only to an actor that has a port (`submit::tools_for`). None of
+        // them is removed by the child's `tools` allowlist (a background actor's allowlist would otherwise drop them);
+        // only `disallowedTools` removes them.
+        if name == crate::respond::NAME
+            || name == crate::submit::NAME
+            || name == crate::escalate::NAME
+        {
             return !self.deny.iter().any(|tool| tool == name);
         }
         let mcp = rust_cli_kernel_api::mcp_name::is_mcp(name);

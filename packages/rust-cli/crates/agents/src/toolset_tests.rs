@@ -230,6 +230,25 @@ fn every_child_gets_respond_to_coordinator_whatever_its_allowlist_says() {
     assert!(!names(GENERAL_PURPOSE, false).contains(&"RespondToCoordinator".to_owned()));
 }
 
+/// A workflow actor's port tools (`submit_result`, `escalate`) come from its port, not from its `tools` allowlist: a
+/// background actor whose allowlist names only `Read` still gets both.
+#[test]
+fn a_background_allowlist_keeps_the_port_tools() {
+    let mut definition = builtins().remove(0);
+    definition.tools = Some(vec!["Read".to_owned()]);
+    let filtered = FilteredTools {
+        inner: registry(),
+        rule: ToolRule::new(&definition, true, 1),
+        child_tools: vec![
+            Arc::new(FakeTool::new("submit_result", true, "")) as Arc<dyn Tool>,
+            Arc::new(FakeTool::new("escalate", true, "")) as Arc<dyn Tool>,
+        ],
+    };
+    let names = listed(&filtered);
+    assert!(names.contains(&"submit_result".to_owned()), "{names:?}");
+    assert!(names.contains(&"escalate".to_owned()), "{names:?}");
+}
+
 #[test]
 fn a_disallowed_respond_to_coordinator_is_removed() {
     let mut filtered = custom(&["Read"], &["RespondToCoordinator"]);

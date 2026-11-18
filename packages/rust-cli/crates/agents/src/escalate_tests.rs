@@ -123,3 +123,57 @@ async fn a_failed_port_fails_the_call_with_its_text() {
         .expect_err("a failed port fails the call");
     assert!(error.to_string().contains("the turn is gone"), "{error}");
 }
+
+#[tokio::test]
+async fn a_call_with_an_unknown_key_is_refused_before_the_port_as_node_strict_schema_refuses_it() {
+    // Node's EscalateInputSchema is `.strict()`: an unknown key is refused, and the port is not asked.
+    let port = ScriptedPort::replying(Ok(ActorEscalation::Refused {
+        reason: "budget".to_owned(),
+        message: String::new(),
+    }));
+    let error = call(&port, json!({"question": "q", "extra": 1}))
+        .await
+        .expect_err("an unknown key is refused");
+    assert!(error.to_string().contains("extra"), "{error}");
+    assert!(port.asked.lock().expect("asked").is_empty());
+}
+
+#[tokio::test]
+async fn an_empty_question_is_refused_as_node_min_one_refuses_it() {
+    let port = ScriptedPort::replying(Ok(ActorEscalation::Refused {
+        reason: "budget".to_owned(),
+        message: String::new(),
+    }));
+    let error = call(&port, json!({"question": ""}))
+        .await
+        .expect_err("Node's question has min(1)");
+    assert!(error.to_string().contains("question"), "{error}");
+    assert!(port.asked.lock().expect("asked").is_empty());
+}
+
+#[test]
+fn the_declaration_refuses_unknown_keys_as_node_strict_schema_does() {
+    let port: Arc<dyn ActorPort> = ScriptedPort::replying(Ok(ActorEscalation::Refused {
+        reason: "budget".to_owned(),
+        message: String::new(),
+    }));
+    assert_eq!(
+        escalate::tool(port).input_schema()["additionalProperties"],
+        json!(false)
+    );
+}
+
+#[test]
+fn a_cancelled_escalate_reports_nodes_text() {
+    let port: Arc<dyn ActorPort> = ScriptedPort::replying(Ok(ActorEscalation::Refused {
+        reason: "budget".to_owned(),
+        message: String::new(),
+    }));
+    assert_eq!(
+        escalate::tool(port)
+            .cancel_message()
+            .as_deref()
+            .map(str::to_owned),
+        Some("escalate was cancelled before the main agent answered".to_owned())
+    );
+}

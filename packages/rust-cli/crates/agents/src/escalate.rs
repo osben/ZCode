@@ -17,6 +17,9 @@ use crate::actor_turn::{ActorEscalation, ActorPort, ActorQuestion};
 
 pub(crate) const NAME: &str = "escalate";
 
+/// Node's text when the call is cancelled before the main agent answers (`cancellation.userVisibleMessage`).
+const CANCELLED: &str = "escalate was cancelled before the main agent answered";
+
 /// Node `ESCALATE_DESCRIPTION`: the usage discipline. The mechanism only lets an actor ask; this says when to.
 const DESCRIPTION: &str = "Escalates a question that is BLOCKING you to the main agent that created this workflow, and waits here for the answer.\n\nThis is a LAST RESORT, for when you are genuinely stuck on something outside your reach:\n- a gate that is broken or impossible to pass (a check capped at 95 when the threshold is 96);\n- instructions that contradict each other, so no output can satisfy both;\n- a fact you cannot obtain (a tradeoff, an external convention, what 'good' means here) that only whoever started this run knows.\n\nDo NOT use it for curiosity, progress reports, asking permission, confirming a conclusion you could verify yourself, or thinking out loud. None of those are blocked — keep working.\n\nAsk ONE focused question that can be answered in a sentence, and put your evidence in `context`: what you already tried, and exactly where you are stuck. The quality of the answer depends on it.\n\nThe cost: this call BLOCKS until the main agent answers, which may take a long time. You get at most 3 escalations per ask; the 4th tells you the budget is spent and to proceed on your own best judgement. Do not spend them on questions not worth waiting for.";
 
@@ -36,18 +39,24 @@ impl Tool for Escalate {
     }
 
     fn input_schema(&self) -> Value {
+        // Node's EscalateInputSchema is `.strict()` and `question` is `min(1)`.
         json!({
             "type": "object",
             "properties": {
-                "question": {"type": "string", "description": "One focused question that can be answered in a sentence."},
+                "question": {"type": "string", "minLength": 1, "description": "One focused question that can be answered in a sentence."},
                 "context": {"type": "string", "description": "What you already tried, and exactly where you are stuck."},
             },
             "required": ["question"],
+            "additionalProperties": false,
         })
     }
 
     fn description(&self, _context: &PromptContext) -> String {
         DESCRIPTION.to_owned()
+    }
+
+    fn cancel_message(&self) -> Option<std::borrow::Cow<'_, str>> {
+        Some(std::borrow::Cow::Borrowed(CANCELLED))
     }
 
     fn is_read_only(&self, _input: &Value) -> bool {
@@ -85,9 +94,25 @@ impl Tool for Escalate {
         _context: ToolUseContext,
         _progress: mpsc::Sender<ToolProgress>,
     ) -> Result<ToolCallOutput, ToolError> {
-        let Some(question) = value.get("question").and_then(Value::as_str) else {
+        // Node's input schema is `.strict()`: a key other than `question` or `context` is refused before the port.
+        if let Some(extra) = value.as_object().and_then(|object| {
+            object
+                .keys()
+                .find(|key| !matches!(key.as_str(), "question" | "context"))
+        }) {
             return Err(ToolError::InvalidInput {
-                message: "the question is required".to_owned(),
+                message: format!(
+                    "unrecognized key \"{extra}\": escalate takes only \"question\" and \"context\""
+                ),
+            });
+        }
+        let Some(question) = value
+            .get("question")
+            .and_then(Value::as_str)
+            .filter(|question| !question.is_empty())
+        else {
+            return Err(ToolError::InvalidInput {
+                message: "the question is required and must not be empty".to_owned(),
             });
         };
         let context = value
