@@ -410,8 +410,11 @@ async fn the_renewals_of_one_request_are_bounded() {
         matches!(error.peel(), ModelError::Authentication { .. }),
         "{error:?}"
     );
-    assert_eq!(tickets.renewed.lock().unwrap().len(), 3);
-    assert_eq!(server.requests().len(), 4);
+    assert_eq!(
+        tickets.renewed.lock().unwrap().len(),
+        MAX_TICKET_RENEWALS as usize
+    );
+    assert_eq!(server.requests().len(), MAX_TICKET_RENEWALS as usize + 1);
 }
 
 /// Fork (slice 3 layer B): a refusal of an attempt that names no ticket (no ticket header) has no ticket to renew. It

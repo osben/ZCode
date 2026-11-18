@@ -1325,3 +1325,209 @@ fn a_session_ask_offers_the_session_allow_in_place_of_the_project_option() {
         PermissionAnswer::Deny { .. }
     ));
 }
+
+/// Fork (off-peak admission follow-ups): a kernel whose session `s1` answers every command with one ACK (`handle`), and
+/// which records the sessions it creates.
+struct OffPeakKernel {
+    handle: std::sync::Arc<GrantHandle>,
+    creates: std::sync::Mutex<Vec<String>>,
+}
+
+#[async_trait::async_trait]
+impl rust_cli_kernel_api::session_api::Kernel for OffPeakKernel {
+    fn queries(&self) -> std::sync::Arc<dyn rust_cli_kernel_api::store::StoreQueries> {
+        std::sync::Arc::new(DeletedRow(
+            rust_cli_kernel_api::testing::MemoryStore::default(),
+        ))
+    }
+
+    async fn create_session(
+        &self,
+        request: rust_cli_kernel_api::session_api::CreateSession,
+    ) -> Result<rust_cli_kernel_api::ids::SessionId, rust_cli_kernel_api::session_api::KernelError>
+    {
+        let id = request
+            .id
+            .unwrap_or_else(|| rust_cli_kernel_api::ids::SessionId::new("generated"));
+        self.creates.lock().unwrap().push(id.as_str().to_owned());
+        Ok(id)
+    }
+
+    async fn open_session(
+        &self,
+        session: &rust_cli_kernel_api::ids::SessionId,
+    ) -> Result<
+        std::sync::Arc<dyn rust_cli_kernel_api::session_api::SessionHandle>,
+        rust_cli_kernel_api::session_api::KernelError,
+    > {
+        if session.as_str() != "s1" {
+            return Err(rust_cli_kernel_api::session_api::KernelError::NotFound {
+                session: session.clone(),
+            });
+        }
+        let handle: std::sync::Arc<dyn rust_cli_kernel_api::session_api::SessionHandle> =
+            self.handle.clone();
+        Ok(handle)
+    }
+
+    async fn session_snapshot(
+        &self,
+        session: &rust_cli_kernel_api::ids::SessionId,
+    ) -> Result<
+        rust_cli_kernel_api::session_api::SessionView,
+        rust_cli_kernel_api::session_api::KernelError,
+    > {
+        Err(rust_cli_kernel_api::session_api::KernelError::NotFound {
+            session: session.clone(),
+        })
+    }
+
+    async fn list_sessions(
+        &self,
+        _filter: rust_cli_kernel_api::store::SessionFilter,
+    ) -> Result<
+        Vec<rust_cli_kernel_api::store::SessionSummary>,
+        rust_cli_kernel_api::session_api::KernelError,
+    > {
+        Ok(Vec::new())
+    }
+}
+
+/// A server over [`OffPeakKernel`] whose session `s1` answers its submits with `ack`.
+fn off_peak_server(
+    ack: rust_cli_kernel_api::session_api::Ack,
+) -> (
+    rust_cli_base::TaskScope,
+    Server,
+    std::sync::Arc<OffPeakKernel>,
+) {
+    let scope = rust_cli_base::TaskScope::root("test", |_| {});
+    let (out, _reader) = tokio::io::duplex(1 << 16);
+    let (peer, _writer) = rust_cli_protocol_core::connection::start(
+        out,
+        &scope.spawner(),
+        rust_cli_protocol_core::connection::Options::default(),
+    );
+    let context = std::sync::Arc::new(crate::context::Context::new(
+        peer,
+        std::sync::Arc::new(rust_cli_kernel_api::testing::FixedClock(5)),
+    ));
+    let kernel = std::sync::Arc::new(OffPeakKernel {
+        handle: std::sync::Arc::new(GrantHandle {
+            id: rust_cli_kernel_api::ids::SessionId::new("s1"),
+            ack,
+            sent: Default::default(),
+            pending: Vec::new(),
+        }),
+        creates: Default::default(),
+    });
+    let server = Server::new(
+        context,
+        kernel.clone(),
+        scope.spawner(),
+        crate::server::Defaults {
+            selection: rust_cli_kernel_api::testing::selection().into(),
+            mode: rust_cli_kernel_api::permission::PermissionMode::Default,
+            environment: rust_cli_kernel_api::ids::EnvironmentId::new("local"),
+        },
+    );
+    (scope, server, kernel)
+}
+
+fn command_envelope(id: &str, kind: &str, session: Option<&str>, payload: Value) -> Envelope {
+    serde_json::from_value(json!({
+        "commandId": id, "clientId": "client", "sessionId": session, "type": kind, "payload": payload,
+    }))
+    .unwrap()
+}
+
+/// A `sendText` input carrying `modelExecution.offPeak` with the given execution id.
+fn off_peak_text(execution: &str) -> Value {
+    json!({
+        "text": "run", "offPeakTaskId": "oft_1",
+        "modelSelection": {"providerId": "zai", "modelId": "glm-idle"},
+        "modelExecution": {"offPeak": {"executionId": execution, "ticketId": "tkt_1", "providerErrorCode": "3105"}},
+    })
+}
+
+/// Fork (off-peak admission follow-ups): a createSession whose `firstInput` carries `modelExecution.offPeak` is refused
+/// before anything is created (the spec refuses an off-peak firstInput before admission).
+#[tokio::test]
+async fn a_create_session_whose_first_input_carries_off_peak_is_refused() {
+    let accepted = rust_cli_kernel_api::session_api::Ack::Accepted {
+        result: rust_cli_kernel_api::session_api::CommandResult::Done,
+    };
+    let (_scope, server, kernel) = off_peak_server(accepted);
+    let ack = create_session(
+        &server,
+        &command_envelope(
+            "c1",
+            "createSession",
+            None,
+            json!({"workspaceId": "/w", "sessionId": "s3", "firstInput": off_peak_text("exe_1")}),
+        ),
+    )
+    .await;
+    assert_eq!(ack.status, Status::Rejected);
+    assert_eq!(
+        ack.reason_code.as_deref(),
+        Some("off_peak_first_input_unsupported")
+    );
+    assert!(kernel.creates.lock().unwrap().is_empty(), "nothing created");
+}
+
+/// Fork (off-peak admission follow-ups): an admitted off-peak input whose submit the kernel rejects leaves no pending run
+/// behind. Only its turn opens a run, and a refused input has no turn.
+#[tokio::test]
+async fn a_refused_off_peak_input_leaves_no_pending_run() {
+    let rejected = rust_cli_kernel_api::session_api::Ack::Rejected {
+        reason: "busy".to_owned(),
+    };
+    let (_scope, server, _kernel) = off_peak_server(rejected);
+    let ack = decide(
+        &server,
+        &command_envelope("cmd_1", "sendText", Some("s1"), off_peak_text("exe_1")),
+    )
+    .await;
+    assert_eq!(ack.status, Status::Rejected);
+    assert_eq!(ack.reason_code.as_deref(), Some("guard.inputRejected"));
+    server
+        .context
+        .off_peak
+        .turn_started("s1", "turn_1", Some("cmd_1"));
+    assert_eq!(server.context.off_peak.open_session("exe_1"), None);
+}
+
+/// Fork (off-peak admission follow-ups): the run's execution id is trimmed like the turn's limits
+/// (`TurnLimits::with_off_peak_run`), and a blank one is missing identity, refused before admission.
+#[tokio::test]
+async fn an_off_peak_execution_id_is_trimmed_and_a_blank_one_is_refused() {
+    let accepted = rust_cli_kernel_api::session_api::Ack::Accepted {
+        result: rust_cli_kernel_api::session_api::CommandResult::Done,
+    };
+    let (_scope, server, _kernel) = off_peak_server(accepted);
+    let blank = decide(
+        &server,
+        &command_envelope("cmd_1", "sendText", Some("s1"), off_peak_text("  ")),
+    )
+    .await;
+    assert_eq!(blank.status, Status::Failed);
+    assert_eq!(
+        blank.reason_code.as_deref(),
+        Some("off_peak_execution_identity_missing")
+    );
+    let padded = decide(
+        &server,
+        &command_envelope("cmd_2", "sendText", Some("s1"), off_peak_text(" exe_1 ")),
+    )
+    .await;
+    assert_eq!(padded.status, Status::Accepted);
+    server
+        .context
+        .off_peak
+        .turn_started("s1", "turn_1", Some("cmd_2"));
+    assert_eq!(
+        server.context.off_peak.open_session("exe_1").as_deref(),
+        Some("s1")
+    );
+}

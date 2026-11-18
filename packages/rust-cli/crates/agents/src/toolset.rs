@@ -43,8 +43,9 @@ const NODE_CHILD_SUBAGENT_TOOLS: &[&str] = &[
     tool_names::LIST_AGENTS,
 ];
 
-/// Fork (node_desktop): the tools no subagent child of Node's desktop agent has, fork or not: the Cron tools, which
-/// Node registers for the main session only, and the subagent tools (a desktop subagent launches no subagents).
+/// Fork (node_desktop): the tools no subagent child of Node's desktop agent has, fork or not: the Cron and off-peak tools
+/// (`main_session_only`, the `OFF_PEAK_TOOLS` among them), which Node registers for the main session only, and the
+/// subagent tools (a desktop subagent launches no subagents).
 fn node_child_lacks(name: &str) -> bool {
     main_session_only(name) || NODE_CHILD_SUBAGENT_TOOLS.contains(&name)
 }
