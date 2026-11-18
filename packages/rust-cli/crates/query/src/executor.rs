@@ -21,6 +21,7 @@ use rust_cli_kernel_api::message::{
 };
 use rust_cli_kernel_api::metering::{CallStatus, ToolCall};
 use rust_cli_kernel_api::orchestration::{QueryEvent, ToolExecution, ToolStart};
+use rust_cli_kernel_api::side_effect::is_workspace_mutating_call;
 use rust_cli_kernel_api::tool::{InterruptBehavior, Tool, ToolOutput, ToolUseContext};
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
@@ -577,11 +578,14 @@ async fn execute(
         })
         .await;
     // It starts only once admitted (Node `ToolCallStarted`, after the permission check): the pipeline calls this.
+    // Node `onMutating` fires for an admitted call the predicate classifies as a workspace write.
+    let mutating = is_workspace_mutating_call(tool.as_ref(), &input);
     let started = Arc::new(StartSignal {
         sink: scope.sink.clone(),
         tool_use: id.clone(),
         name,
         input: input.clone(),
+        mutating,
     });
     // 会话现在的模式与工作目录：一次读取（工作线 F134：以前分两次问会话 actor）。
     let view = scope.view().await;
@@ -626,6 +630,8 @@ struct StartSignal {
     tool_use: ToolUseId,
     name: String,
     input: Value,
+    /// Whether the admitted call writes the workspace (`is_workspace_mutating_call`).
+    mutating: bool,
 }
 
 #[async_trait]
@@ -639,6 +645,9 @@ impl ToolStart for StartSignal {
                 input: self.input.clone(),
             })
             .await;
+        if self.mutating {
+            self.sink.tool_mutating().await;
+        }
     }
 }
 

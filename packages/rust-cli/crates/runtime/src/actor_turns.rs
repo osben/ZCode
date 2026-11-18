@@ -24,7 +24,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use rust_cli_agents::actor_turn::{
     ActorEscalation, ActorPort, ActorQuestion, ActorRun, ActorSubmit, ActorTurnEnd, ActorViolation,
-    SubmitPort,
+    FirstMutating, MutatingNotify, SubmitPort,
 };
 use rust_cli_kernel_api::clock::Clock;
 use rust_cli_kernel_api::env::WorkspaceRef;
@@ -139,6 +139,9 @@ pub struct AgentTurnRunner<A: ActorAgents> {
     handle: Handle,
     base: ActorRunBase,
     mailbox: ActorHandle,
+    /// The ask's first-write gate, made by its first turn. The runner serves every turn of one ask, so the gate fires
+    /// once per ask.
+    mutating: std::sync::Mutex<Option<Arc<FirstMutating>>>,
 }
 
 impl<A: ActorAgents> AgentTurnRunner<A> {
@@ -150,6 +153,31 @@ impl<A: ActorAgents> AgentTurnRunner<A> {
             handle,
             base,
             mailbox,
+            mutating: std::sync::Mutex::new(None),
+        }
+    }
+}
+
+/// The owner's `askMutating` over the mailbox. The gate forwards only the first call of its ask.
+struct MailboxGate {
+    mailbox: ActorHandle,
+    session: String,
+}
+
+#[async_trait]
+impl MutatingNotify for MailboxGate {
+    async fn ask_mutating(&self) {
+        let mailbox = self.mailbox.clone();
+        let session = self.session.clone();
+        // The owner answers on its own thread: the call waits on the blocking pool, not on a runtime worker.
+        match tokio::task::spawn_blocking(move || mailbox.mutating(&session)).await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                tracing::warn!(session = %self.session, error = %error, "an actor's mutating call could not be reported");
+            }
+            Err(error) => {
+                tracing::warn!(session = %self.session, error = %error, "an actor's mutating call could not be reported");
+            }
         }
     }
 }
@@ -246,6 +274,19 @@ impl<A: ActorAgents> TurnRunner for AgentTurnRunner<A> {
             "the ask thread must not be inside a runtime: block_on would panic there"
         );
         let token = CancellationToken::new();
+        let gate = {
+            let mut slot = self
+                .mutating
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            slot.get_or_insert_with(|| {
+                Arc::new(FirstMutating::new(Arc::new(MailboxGate {
+                    mailbox: self.mailbox.clone(),
+                    session: session.to_owned(),
+                })))
+            })
+            .clone()
+        };
         let run = ActorRun {
             child: SessionId::new(session),
             parent: self.base.parent.clone(),
@@ -266,6 +307,7 @@ impl<A: ActorAgents> TurnRunner for AgentTurnRunner<A> {
             }),
             // Every turn of the bridge has a boundary, so it is stored, a nudged turn's 0 included.
             epilogue_start: Some(turn.epilogue_start),
+            on_mutating: Some(gate),
         };
         let end = self.handle.block_on(async {
             let work = self.agents.run_actor_turn(run, &turn.text, token.clone());

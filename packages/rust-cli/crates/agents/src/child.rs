@@ -141,6 +141,9 @@ pub(crate) struct ChildSink {
     core: Option<Arc<crate::Core>>,
     /// 这次运行的 execution（`Shown::execution`）：活动只记在它还是 agent 当前运行时。
     execution: u64,
+    /// Fork: the workflow ask's first-write gate (Node `onMutating`), set for a workflow actor only. An admitted
+    /// workspace-mutating call reaches it through `RunSink::tool_mutating`.
+    mutating: Option<Arc<crate::actor_turn::FirstMutating>>,
 }
 
 impl ChildSink {
@@ -167,7 +170,17 @@ impl ChildSink {
             record: Mutex::default(),
             core: None,
             execution: 0,
+            mutating: None,
         }
+    }
+
+    /// The ask's first-write gate of a workflow actor (None for every other agent).
+    pub(crate) fn with_mutating(
+        mut self,
+        gate: Option<Arc<crate::actor_turn::FirstMutating>>,
+    ) -> Self {
+        self.mutating = gate;
+        self
     }
 
     /// The run this sink belongs to (`Shown::execution` when it started). Its events update the clock only while it is
@@ -467,6 +480,12 @@ impl ChildSink {
 
 #[async_trait]
 impl RunSink for ChildSink {
+    async fn tool_mutating(&self) {
+        if let Some(gate) = &self.mutating {
+            gate.mutating().await;
+        }
+    }
+
     async fn commit_message(&self, message: Message) -> Result<(), StoreError> {
         self.commit_with(message, Vec::new(), None).await
     }

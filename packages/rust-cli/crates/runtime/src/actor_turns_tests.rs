@@ -46,6 +46,8 @@ struct ScriptedAgents {
     escalated: Mutex<Vec<Result<ActorEscalation, String>>>,
     /// The counts each turn reports, when a test asks for them (None: the child reports no stats).
     stats: Option<rust_cli_agents::actor_turn::ActorTurnStats>,
+    /// Whether each turn runs a workspace-mutating call (the child calls the ask's gate before it).
+    mutating: bool,
 }
 
 impl ScriptedAgents {
@@ -60,6 +62,7 @@ impl ScriptedAgents {
             escalate: Mutex::new(None),
             escalated: Mutex::new(Vec::new()),
             stats: None,
+            mutating: false,
         })
     }
 
@@ -78,6 +81,7 @@ impl ScriptedAgents {
             escalate: Mutex::new(None),
             escalated: Mutex::new(Vec::new()),
             stats: Some(stats),
+            mutating: false,
         })
     }
 
@@ -93,6 +97,7 @@ impl ScriptedAgents {
             escalate: Mutex::new(Some(question.to_owned())),
             escalated: Mutex::new(Vec::new()),
             stats: None,
+            mutating: false,
         })
     }
 
@@ -108,6 +113,7 @@ impl ScriptedAgents {
             escalate: Mutex::new(None),
             escalated: Mutex::new(Vec::new()),
             stats: None,
+            mutating: false,
         })
     }
 }
@@ -121,6 +127,11 @@ impl ActorAgents for ScriptedAgents {
         cancel: CancellationToken,
     ) -> ActorTurnEnd {
         let port = run.port.clone();
+        if self.mutating
+            && let Some(gate) = run.on_mutating.clone()
+        {
+            gate.mutating().await;
+        }
         self.runs.lock().expect("runs").push(run);
         if let Some(port) = port.as_ref().map(|port| &port.port) {
             if let Some(result) = self.submit.clone() {
@@ -727,4 +738,47 @@ fn every_recordable_mode_names_a_permission_mode_through_the_shared_table() {
             mode.as_str()
         );
     }
+}
+
+/// Node `askMutating`: a child's first workspace-mutating call reaches the owner, which closes the run's import cache
+/// (the observable record is `import-cache-closed`). Before the bridge carried the gate, nothing wrote it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_mutating_call_of_an_ask_reaches_the_owner_through_the_bridge() {
+    let agents = Arc::new(ScriptedAgents {
+        mutating: true,
+        ..Arc::try_unwrap(ScriptedAgents::new(
+            vec![ActorTurnEnd::Text("done".into())],
+            false,
+        ))
+        .unwrap_or_else(|_| panic!("unshared"))
+    });
+    let (mailbox, handle) = ActorMailbox::new();
+    let runner = Arc::new(AgentTurnRunner::new(
+        agents,
+        tokio::runtime::Handle::current(),
+        base(),
+        handle.clone(),
+    ));
+    let sessions = Sessions {
+        turns: MailboxTurns::new(runner, handle),
+    };
+    let mut cfg = config();
+    cfg.imported_cache = Some(Default::default());
+    let mut owner = ActorDriverOwner::new(cfg, MemoryJournal::new(), sessions).expect("owner");
+    let actor = owner.create_actor("site", None, None).expect("actor");
+    owner.ask("site", &actor, "do it").expect("ask");
+    owner.drain().expect("drain");
+    // The turn's gate request comes first, then the turn end.
+    mailbox.serve_next(&mut owner).expect("the mutating call");
+    mailbox.serve_next(&mut owner).expect("the turn end");
+    let closed = owner
+        .events()
+        .expect("events")
+        .iter()
+        .filter(|stored| stored.payload_json.contains("import-cache-closed"))
+        .count();
+    assert_eq!(
+        closed, 1,
+        "the first mutating call of the ask closes the cache"
+    );
 }
