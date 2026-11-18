@@ -565,6 +565,15 @@ async fn execute(
         },
     );
     tracing::debug!(event = "tool.start", session = %scope.session, tool_use = %id, tool = %name, "tool started");
+    // The call is scheduled before hooks and the permission check (Node `ToolCallScheduled`): its card exists from here.
+    let _ = scope
+        .sink
+        .emit(QueryEvent::ToolScheduled {
+            tool_use: id.clone(),
+            name: name.clone(),
+            input: input.clone(),
+        })
+        .await;
     let _ = scope
         .sink
         .emit(QueryEvent::ToolStarted {

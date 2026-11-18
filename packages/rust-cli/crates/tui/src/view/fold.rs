@@ -157,6 +157,11 @@ impl Transcript {
                     self.push(Body::Returned { title }, now_ms);
                 }
             }
+            KernelEvent::ToolScheduled {
+                tool_use,
+                name,
+                input,
+            } => self.tool_scheduled(tool_use, name, input, now_ms),
             KernelEvent::ToolStarted {
                 tool_use,
                 name,
@@ -448,6 +453,25 @@ impl Transcript {
                 }
             }
         }
+    }
+
+    /// Node `onToolCallScheduled`: the card exists from scheduling, as pending. A card that exists keeps its state and
+    /// takes the call's input.
+    fn tool_scheduled(&mut self, id: ToolUseId, name: String, input: Value, now_ms: u64) {
+        if self.find_tool(&id).is_some() {
+            self.update_tool(&id, |tool| tool.input = input);
+            return;
+        }
+        let start = self.rows.len();
+        let segment = self.segment.get_or_insert_with(|| Segment {
+            key: String::new(),
+            response: None,
+            start,
+            blocks: Vec::new(),
+        });
+        let mut tool = ToolRow::new(id, name, input, ToolStatus::Pending);
+        tool.response = segment.key.clone();
+        self.push(Body::Tool(Box::new(tool)), now_ms);
     }
 
     fn tool_started(&mut self, id: ToolUseId, name: String, input: Value, now_ms: u64) {

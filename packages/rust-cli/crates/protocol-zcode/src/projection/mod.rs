@@ -913,6 +913,11 @@ impl Projection {
                 seq,
                 &mut out,
             ),
+            KernelEvent::ToolScheduled {
+                tool_use,
+                name,
+                input,
+            } => self.scheduled_tool_row(tool_use.as_str(), name, input, now, seq, &mut out),
             KernelEvent::ToolStarted {
                 tool_use,
                 name,

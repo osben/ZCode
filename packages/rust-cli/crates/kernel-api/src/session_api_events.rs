@@ -212,6 +212,12 @@ pub enum KernelEvent {
         tool_use: ToolUseId,
         name: String,
     },
+    /// The call is scheduled, before hooks and the permission check (Node `ToolCallScheduled`).
+    ToolScheduled {
+        tool_use: ToolUseId,
+        name: String,
+        input: Value,
+    },
     ToolStarted {
         tool_use: ToolUseId,
         name: String,

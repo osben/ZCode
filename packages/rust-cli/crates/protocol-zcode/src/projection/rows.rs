@@ -393,6 +393,44 @@ impl Projection {
         self.append(tool_key(tool_use), row, out);
     }
 
+    /// Node `onToolCallScheduled`: the call's card exists from scheduling, before hooks and the permission check, with
+    /// status `inputStreaming` (the wire has no pending state for it). A card that already exists keeps its status and
+    /// takes the call's name and input.
+    pub(super) fn scheduled_tool_row(
+        &mut self,
+        tool_use: &str,
+        name: &str,
+        input: &Value,
+        now: u64,
+        seq: u64,
+        out: &mut Vec<Value>,
+    ) {
+        let key = tool_key(tool_use);
+        if self.index.contains_key(&key) {
+            self.upsert(
+                &key,
+                |row| {
+                    row.insert("toolName".into(), json!(name));
+                    row.insert("inputText".into(), json!(input.to_string()));
+                    row.insert("input".into(), input.clone());
+                },
+                out,
+            );
+            return;
+        }
+        let turn = self
+            .turn
+            .as_ref()
+            .map_or_else(|| self.session.clone(), |turn| turn.id.clone());
+        let mut row = self.base(&turn, tool_use, RowKind::ToolCall, now, seq);
+        row.insert("toolCallId".into(), json!(tool_use));
+        row.insert("toolName".into(), json!(name));
+        row.insert("status".into(), json!(ToolStatus::InputStreaming.as_str()));
+        row.insert("inputText".into(), json!(input.to_string()));
+        row.insert("input".into(), input.clone());
+        self.append(key, row, out);
+    }
+
     /// Fork: Node `openToolRow` (`tool_input_start`): the model started a tool call; the row shows it while the input
     /// streams (status `inputStreaming`, empty `inputText`). A call that already has a row keeps it.
     #[allow(clippy::too_many_arguments)]

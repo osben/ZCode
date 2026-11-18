@@ -115,6 +115,12 @@ pub enum QueryEvent {
         tool_use: ToolUseId,
         name: String,
     },
+    /// The call is scheduled: its card exists, before hooks and the permission check (Node `ToolCallScheduled`).
+    ToolScheduled {
+        tool_use: ToolUseId,
+        name: String,
+        input: Value,
+    },
     ToolStarted {
         tool_use: ToolUseId,
         name: String,
@@ -201,6 +207,15 @@ impl QueryEvent {
                 index,
                 tool_use,
                 name,
+            },
+            Self::ToolScheduled {
+                tool_use,
+                name,
+                input,
+            } => KernelEvent::ToolScheduled {
+                tool_use,
+                name,
+                input,
             },
             Self::ToolStarted {
                 tool_use,
