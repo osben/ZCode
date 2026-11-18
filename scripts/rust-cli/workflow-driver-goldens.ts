@@ -176,9 +176,27 @@ const askInputCases: Array<{
   mono: boolean;
 }> = [
   { name: "untyped", instructions: "do it", typed: false, schema: undefined, mono: false },
-  { name: "typed generic", instructions: "do it", typed: true, schema: { type: "object" }, mono: false },
-  { name: "typed mono", instructions: "do it", typed: true, schema: { type: "object" }, mono: true },
-  { name: "non-ASCII boundary", instructions: "é🙂 go", typed: false, schema: undefined, mono: false },
+  {
+    name: "typed generic",
+    instructions: "do it",
+    typed: true,
+    schema: { type: "object" },
+    mono: false,
+  },
+  {
+    name: "typed mono",
+    instructions: "do it",
+    typed: true,
+    schema: { type: "object" },
+    mono: true,
+  },
+  {
+    name: "non-ASCII boundary",
+    instructions: "é🙂 go",
+    typed: false,
+    schema: undefined,
+    mono: false,
+  },
 ];
 
 function askInputOf(c: (typeof askInputCases)[number]): string {
