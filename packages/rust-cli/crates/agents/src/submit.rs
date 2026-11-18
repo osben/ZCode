@@ -25,6 +25,9 @@ pub(crate) const NAME: &str = "submit_result";
 /// Node's accepted text (`formatSubmitResultModelContent`).
 const ACCEPTED: &str = "The result was accepted.";
 
+/// Node's text when the turn is cancelled before a verdict (`cancellation.userVisibleMessage`).
+const CANCELLED: &str = "submit_result was cancelled before the engine returned a verdict";
+
 /// Node's header of a rejection (`formatSubmitViolations`).
 const HEADER: &str = "The submitted result does not match the required schema:";
 
@@ -67,11 +70,17 @@ impl Tool for SubmitResult {
     }
 
     fn input_schema(&self) -> Value {
+        // Node's submit input is strict: a key other than `result` is refused (see `call_with_messages`).
         json!({
             "type": "object",
             "properties": {"result": {"description": "The result, as JSON, matching the ask's schema."}},
             "required": ["result"],
+            "additionalProperties": false,
         })
+    }
+
+    fn cancel_message(&self) -> Option<std::borrow::Cow<'_, str>> {
+        Some(std::borrow::Cow::Borrowed(CANCELLED))
     }
 
     fn description(&self, _context: &PromptContext) -> String {
@@ -114,6 +123,18 @@ impl Tool for SubmitResult {
         _context: ToolUseContext,
         _progress: mpsc::Sender<ToolProgress>,
     ) -> Result<ToolCallOutput, ToolError> {
+        // Node's input schema is `.strict()`: the model's call is refused before it reaches the port if it carries any
+        // key other than `result`, so a stray field never reaches the engine's verdict.
+        if let Some(extra) = value
+            .as_object()
+            .and_then(|object| object.keys().find(|key| key.as_str() != "result"))
+        {
+            return Err(ToolError::InvalidInput {
+                message: format!(
+                    "unrecognized key \"{extra}\": submit_result takes only \"result\""
+                ),
+            });
+        }
         let Some(result) = value.get("result").cloned() else {
             return Err(ToolError::InvalidInput {
                 message: "the result is required".to_owned(),

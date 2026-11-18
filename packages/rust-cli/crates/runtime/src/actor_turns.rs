@@ -153,9 +153,12 @@ impl ActorPort for MailboxPort {
                         .collect(),
                 ))
             }
-            SubmitReply::Verdict(SubmitVerdict::Nudge) => {
-                Err("the engine nudged a submitted result".to_owned())
-            }
+            // The scheduler answers only Accept or Reject today (`scheduler_submit`), so a nudge cannot reach this port.
+            // If the engine ever sends one, the call fails with text the model can act on: the turn goes on, and the
+            // model is told to submit again rather than being shown an internal word.
+            SubmitReply::Verdict(SubmitVerdict::Nudge) => Err(
+                "the result was not accepted yet: call submit_result again with the complete result".to_owned(),
+            ),
             SubmitReply::Refused(text) | SubmitReply::Cancelled(text) => Err(text),
         }
     }

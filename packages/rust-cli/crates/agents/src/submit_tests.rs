@@ -90,6 +90,37 @@ async fn a_rejected_result_is_a_repairable_error_naming_each_violation() {
 }
 
 #[tokio::test]
+async fn a_call_with_an_unknown_key_is_refused_before_the_port_as_node_strict_schema_refuses_it() {
+    let port = ScriptedPort::replying(Ok(ActorSubmit::Accepted));
+    let error = call(&port, json!({"result": {"ok": true}, "extra": 1}))
+        .await
+        .expect_err("Node's SubmitResultInputSchema is strict: an unknown key is refused");
+    assert!(error.to_string().contains("extra"), "{error}");
+    assert!(port.seen.lock().expect("seen").is_empty());
+}
+
+#[test]
+fn the_declaration_refuses_unknown_keys_as_node_strict_schema_does() {
+    let port: Arc<dyn ActorPort> = ScriptedPort::replying(Ok(ActorSubmit::Accepted));
+    assert_eq!(
+        submit::tool(port).input_schema()["additionalProperties"],
+        json!(false)
+    );
+}
+
+#[test]
+fn a_cancelled_submit_reports_nodes_text() {
+    let port: Arc<dyn ActorPort> = ScriptedPort::replying(Ok(ActorSubmit::Accepted));
+    assert_eq!(
+        submit::tool(port)
+            .cancel_message()
+            .as_deref()
+            .map(str::to_owned),
+        Some("submit_result was cancelled before the engine returned a verdict".to_owned())
+    );
+}
+
+#[tokio::test]
 async fn a_call_without_a_result_is_invalid_input_and_reaches_no_port() {
     let port = ScriptedPort::replying(Ok(ActorSubmit::Accepted));
     let error = call(&port, json!({}))

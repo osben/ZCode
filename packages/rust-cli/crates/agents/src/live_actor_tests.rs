@@ -176,6 +176,86 @@ fn an_actor_is_denied_the_tools_node_denies_its_subagents() {
     );
 }
 
+/// A submit port that is never asked to submit: these tests look at which port an entry holds.
+struct NoSubmit;
+
+#[async_trait::async_trait]
+impl crate::actor_turn::ActorPort for NoSubmit {
+    async fn submit(
+        &self,
+        _result: serde_json::Value,
+    ) -> Result<crate::actor_turn::ActorSubmit, String> {
+        Err("not under test".to_owned())
+    }
+}
+
+/// An entry begun for a turn that holds `port`.
+fn begun_with_port(live: &Live, id: &AgentId, port: &Arc<dyn crate::actor_turn::ActorPort>) {
+    live.begin_actor_run(
+        id,
+        || {
+            let mut entry =
+                LiveAgent::for_actor(run("sess_a"), id.clone(), SessionId::new("ses_parent"));
+            entry.actor_port = Some(crate::actor_turn::SubmitPort(port.clone()));
+            entry
+        },
+        |_| {},
+        "execution-1".to_owned(),
+    );
+}
+
+#[test]
+fn the_next_turns_port_survives_the_previous_turns_end() {
+    // A turn's end clears its own port in the same lock section as its finish. A later turn that begins after that end
+    // installs its port, and nothing from the earlier turn can clear it afterwards.
+    let live = live_at(42);
+    let id = AgentId::new("actor-sess_a");
+    let first: Arc<dyn crate::actor_turn::ActorPort> = Arc::new(NoSubmit);
+    let second: Arc<dyn crate::actor_turn::ActorPort> = Arc::new(NoSubmit);
+    begun_with_port(&live, &id, &first);
+    live.finish_actor_turn(&id, Ending::Completed);
+    assert!(
+        live.get(&id).expect("the entry").actor_port.is_none(),
+        "the turn's end clears its port"
+    );
+    live.begin_actor_run(
+        &id,
+        || unreachable!("the entry exists"),
+        |entry| entry.actor_port = Some(crate::actor_turn::SubmitPort(second.clone())),
+        "execution-2".to_owned(),
+    );
+    let entry = live.get(&id).expect("the entry");
+    assert!(
+        Arc::ptr_eq(
+            &entry.actor_port.as_ref().expect("the second turn's port").0,
+            &second
+        ),
+        "the second turn keeps the port it installed"
+    );
+}
+
+#[test]
+fn a_restart_offers_no_submit_port() {
+    // A resume (SendMessage) is never a workflow turn, so it must not keep or offer a turn's submit port.
+    let live = live_at(42);
+    let id = AgentId::new("actor-sess_a");
+    let port: Arc<dyn crate::actor_turn::ActorPort> = Arc::new(NoSubmit);
+    begun_with_port(&live, &id, &port);
+    live.finish_actor_turn(&id, Ending::Completed);
+    let restarted = live.restart(
+        &id,
+        rust_cli_kernel_api::abort::Abort::new(),
+        None,
+        "execution-2".to_owned(),
+        None,
+    );
+    assert!(restarted.is_some(), "the finished actor restarts");
+    assert!(
+        live.get(&id).expect("the entry").actor_port.is_none(),
+        "a restarted entry holds no submit port"
+    );
+}
+
 // The invariant is a debug_assert, so the test exists only where debug assertions are compiled in.
 #[cfg(debug_assertions)]
 #[test]

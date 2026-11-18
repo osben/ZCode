@@ -261,14 +261,12 @@ impl crate::Agents {
         let opening = match spawn::resume(core, &entry, prompt, UserOrigin::Human).await {
             Ok(opening) => opening,
             Err(error) => {
-                core.live.finish(&agent_id, Ending::Failed);
-                core.live.clear_actor_port(&agent_id);
+                core.live.finish_actor_turn(&agent_id, Ending::Failed);
                 return ActorTurnEnd::Failed(error.to_string());
             }
         };
         let finished = spawn::drive(core, &entry, opening, None, Some(cancel)).await;
-        core.live.finish(&agent_id, finished.ending);
-        core.live.clear_actor_port(&agent_id);
+        core.live.finish_actor_turn(&agent_id, finished.ending);
         actor_turn_end(
             finished.ending.status() == BackgroundStatus::Killed,
             finished.failure(core.node_desktop).as_deref(),
