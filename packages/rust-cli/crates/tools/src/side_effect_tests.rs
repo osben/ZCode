@@ -1,56 +1,32 @@
-//! Node `isWorkspaceMutatingToolCall` (contracts/src/tools/contract.ts): a read-only call is never a workspace write;
-//! otherwise the scope decides, and a missing scope counts as mutating.
+//! Node `isWorkspaceMutatingToolCall` (contracts/src/tools/contract.ts) over Rust's real tools: a read-only call is never a
+//! workspace write, and every known Rust tool name has an entry in the side-effect table.
+
+use std::sync::Arc;
 
 use rust_cli_kernel_api::orchestration::ToolRegistry;
+use rust_cli_kernel_api::side_effect::{is_workspace_mutating_call, lookup};
 use rust_cli_kernel_api::tool_names as names;
+use serde_json::json;
 
-use super::{is_workspace_mutating, lookup};
-
-#[test]
-fn a_read_only_call_is_never_mutating() {
-    assert!(!is_workspace_mutating(names::BASH, true));
-    assert!(!is_workspace_mutating(names::WRITE, true));
-    assert!(!is_workspace_mutating("mcp__x__y", true));
-}
+use crate::BashTool;
 
 #[test]
-fn the_scope_decides_for_a_call_that_is_not_read_only() {
-    assert!(is_workspace_mutating(names::WRITE, false));
-    assert!(is_workspace_mutating(names::EDIT, false));
-    assert!(is_workspace_mutating(names::BASH, false));
-    assert!(is_workspace_mutating(names::CRON_CREATE, false));
-    assert!(is_workspace_mutating(names::SAVE_WORKFLOW, false));
-    assert!(
-        !is_workspace_mutating(names::WEB_FETCH, false),
-        "network does not write the workspace"
-    );
-    assert!(
-        !is_workspace_mutating(names::AGENT, false),
-        "session scope is protocol-only"
-    );
-    assert!(
-        !is_workspace_mutating(names::ASK_USER_QUESTION, false),
-        "userInteraction asks the user"
-    );
-    assert!(!is_workspace_mutating(names::GLOB, false));
-    assert!(!is_workspace_mutating(names::READ, false));
-}
-
-#[test]
-fn a_name_without_a_declared_scope_or_outside_the_table_is_mutating() {
-    assert!(is_workspace_mutating("mcp__plugin_demo_api__lookup", false));
-    assert!(is_workspace_mutating("SomeUnknownTool", false));
-    // Declared in Rust but with no Node scope in the sources: conservative, as a missing scope is in Node.
-    assert!(is_workspace_mutating(names::MONITOR, false));
-    assert!(
-        lookup(names::MONITOR).is_some(),
-        "the table names it, as undeclared"
-    );
+fn a_read_only_bash_call_does_not_fire() {
+    // Bash classifies by its command: `ls` is read-only, `rm` writes.
+    let tool = BashTool::new(Default::default());
+    assert!(!is_workspace_mutating_call(
+        &tool,
+        &json!({"command": "ls"})
+    ));
+    assert!(is_workspace_mutating_call(
+        &tool,
+        &json!({"command": "rm -rf target"})
+    ));
 }
 
 #[test]
 fn every_builtin_tool_is_named_in_the_table() {
-    let gate = std::sync::Arc::new(rust_cli_kernel_api::testing::FixedGate::allow());
+    let gate = Arc::new(rust_cli_kernel_api::testing::FixedGate::allow());
     let missing: Vec<String> = crate::builtin(gate)
         .tools()
         .iter()
@@ -59,6 +35,82 @@ fn every_builtin_tool_is_named_in_the_table() {
         .collect();
     assert!(
         missing.is_empty(),
-        "a builtin tool with no entry in the side-effect table: {missing:?}"
+        "a builtin tool with no table entry: {missing:?}"
+    );
+}
+
+/// Every known Rust tool name, web, LSP, workflow and plan tools included, plus the protocol tools the agents crate
+/// declares by literal name. Only MCP and plugin tools are outside the table, and they take the runtime default.
+#[test]
+fn every_known_tool_name_is_named_in_the_table() {
+    let known: &[&str] = &[
+        names::AGENT,
+        names::ASK_USER_QUESTION,
+        names::BASH,
+        names::CRON_CREATE,
+        names::CRON_DELETE,
+        names::CRON_LIST,
+        names::CRON_PAUSE_SELF,
+        names::CRON_UPDATE,
+        names::EDIT,
+        names::ENTER_PLAN_MODE,
+        names::ENTER_WORKTREE,
+        names::EXIT_PLAN_MODE,
+        names::EXIT_WORKTREE,
+        names::GLOB,
+        names::GREP,
+        names::LIST_AGENTS,
+        names::LIST_MCP_RESOURCES,
+        names::LSP,
+        names::MONITOR,
+        names::MULTI_EDIT,
+        names::NOTEBOOK_EDIT,
+        names::OFF_PEAK_CREATE,
+        names::OFF_PEAK_LIST,
+        names::AMEND_WORKFLOW,
+        names::CREATE_WORKFLOW,
+        names::EVAL_WORKFLOW_SNIPPET,
+        names::FILL_WORKFLOW_HOLE,
+        names::GET_WORKFLOW_RUN,
+        names::LIST_SAVED_WORKFLOWS,
+        names::LIST_WORKFLOW_RUNS,
+        names::RESOLVE_WORKFLOW_QUESTION,
+        names::RESUME_WORKFLOW_RUN,
+        names::SAVE_WORKFLOW,
+        names::POWER_SHELL,
+        names::READ,
+        names::READ_MCP_RESOURCE,
+        names::READ_MCP_RESOURCE_DIR,
+        names::READ_TOPIC_RESOURCE,
+        names::REPORT_FINDINGS,
+        names::SCHEDULE_WAKEUP,
+        names::SEND_MESSAGE,
+        names::SEND_USER_MESSAGE,
+        names::SKILL,
+        names::TASK_CREATE,
+        names::TASK_GET,
+        names::TASK_LIST,
+        names::TASK_OUTPUT,
+        names::TASK_STOP,
+        names::TASK_UPDATE,
+        names::TODO_WRITE,
+        names::TOOL_SEARCH,
+        names::WAIT_FOR_MCP_SERVERS,
+        names::WEB_FETCH,
+        names::WEB_SEARCH,
+        names::WRITE,
+        "submit_result",
+        "escalate",
+        "RespondToCoordinator",
+        "ReadSessionContext",
+    ];
+    let missing: Vec<&str> = known
+        .iter()
+        .copied()
+        .filter(|name| lookup(name).is_none())
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "known tool names with no table entry: {missing:?}"
     );
 }

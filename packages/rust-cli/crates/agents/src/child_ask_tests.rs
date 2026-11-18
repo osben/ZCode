@@ -103,6 +103,7 @@ async fn the_origin_is_fixed_at_run_start_even_when_the_agent_left_live() {
     use crate::live::{AgentState, LiveAgent};
     let agent = LiveAgent {
         last_turn_messages: None,
+        on_mutating: None,
         off_peak_execution: None,
         machine: Default::default(),
         agent: AgentId::new("agent_1"),

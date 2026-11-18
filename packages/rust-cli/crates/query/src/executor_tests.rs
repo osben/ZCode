@@ -21,6 +21,7 @@ async fn the_start_signal_fires_once() {
         rust_cli_kernel_api::ids::ToolUseId::new("toolu_1"),
         "Bash".into(),
         json!({"command": "ls"}),
+        false,
     );
     rust_cli_kernel_api::orchestration::ToolStart::started(&signal).await;
     rust_cli_kernel_api::orchestration::ToolStart::started(&signal).await;
