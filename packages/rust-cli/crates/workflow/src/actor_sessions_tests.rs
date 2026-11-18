@@ -37,16 +37,24 @@ struct Turns {
 }
 
 impl ActorTurns for Turns {
-    fn start_turn(&mut self, session: &str, _instance: &Ref, _message: &AskMessage) {
+    fn start_turn(
+        &mut self,
+        session: &str,
+        _instance: &Ref,
+        _message: &AskMessage,
+    ) -> anyhow::Result<()> {
         self.started.push(session.to_owned());
+        Ok(())
     }
 
-    fn cancel_turn(&mut self, session: &str, _instance: &Ref) {
+    fn cancel_turn(&mut self, session: &str, _instance: &Ref) -> anyhow::Result<()> {
         self.cancelled.push(session.to_owned());
+        Ok(())
     }
 
-    fn reject_parked(&mut self, session: &str, qid: &str) {
+    fn reject_parked(&mut self, session: &str, qid: &str) -> anyhow::Result<()> {
         self.rejected.push((session.to_owned(), qid.to_owned()));
+        Ok(())
     }
 }
 
@@ -136,9 +144,15 @@ fn turn_calls_are_delegated_to_the_turn_side_unchanged() {
         typed: false,
         schema: None,
     };
-    sessions.start_turn("sess_x", &Ref::new("ask", 1), &message);
-    sessions.cancel_turn("sess_x", &Ref::new("ask", 1));
-    sessions.reject_parked("sess_x", "dwfq-run-0");
+    sessions
+        .start_turn("sess_x", &Ref::new("ask", 1), &message)
+        .expect("start");
+    sessions
+        .cancel_turn("sess_x", &Ref::new("ask", 1))
+        .expect("cancel");
+    sessions
+        .reject_parked("sess_x", "dwfq-run-0")
+        .expect("reject");
     let turns = sessions.into_turns();
     assert_eq!(turns.started, vec!["sess_x".to_owned()]);
     assert_eq!(turns.cancelled, vec!["sess_x".to_owned()]);

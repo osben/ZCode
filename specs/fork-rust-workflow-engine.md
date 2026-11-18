@@ -835,6 +835,17 @@ Deviations (part 2a):
 - World reads fail the ask with `DriverError` as a fault (W6b).
 - The owner is synchronous and single-threaded by construction; the async turn side must send messages to it, not call it from inside a turn.
 
+Review fixes to part 2a (verdicts against the code and Node):
+
+- Queue drain (fixed): `pump` applies every queued start and failure and returns the first error after the rest. Before, the first `ask_failed` error dropped the remaining failures and those instances hung. Test: `two_asks_that_fail_in_one_drain_both_get_their_outcome` (the error branch itself needs a failing journal; not covered).
+- Turn-side errors (fixed): `ActorSessions::start_turn`, `cancel_turn` and `reject_parked` return `Result`. A refused start fails the ask as `DriverError` with the send error's text, the withdrawn questions are released, and nothing is left active (Node `askFailed(toWorkflowError(error))`, `workflow-driver.ts` `onTurnRejected`). A cancel or reject error the engine cannot receive is kept and returned by the next owner call. Test: `a_turn_that_cannot_start_fails_the_ask_with_the_send_error_and_starts_nothing`.
+- Exhausted repair budget (fixed): the submit is answered `SubmitReply::Cancelled("The ask was cancelled by the engine.")`, Node's text for a pending submit rejected by `cancelAsk` (`workflow-driver.ts` `cancelAsk`). Before, it was `NO_ACTIVE_ASK_MESSAGE`. Test: `an_exhausted_repair_budget_answers_the_submit_as_the_engine_cancelled_it_and_fails_the_ask`.
+- Port state (fixed): `emitted` is removed (the journal is the record; the Host fan-out is W7, so `emit` keeps nothing and says why). `session_of_instance` is removed when the ask ends, fails or is cancelled. Verdicts are removed on the error path, on cancel and on end. The actor maps grow per actor in the run and are not pruned (bounded by the run's actors).
+- Turn end (fixed, tests added): `turn_ended` returns `TurnEndReply::{Verdict, AskEnded, NoAsk}` in place of an `Option`. Tests: nudge then `ResultNotSubmitted` with cancel (`a_turn_that_ends_without_a_submit_is_nudged_once_then_fails_with_result_not_submitted`), a rejected submit followed by a nudge, an untyped turn end that settles, and no ask in flight.
+- Unknown session (fixed, not testable through the owner): `start_ask` for a session the port does not know fails the ask with `Unknown subagent session: <id>`, Node's text (`workflow-driver.ts` `startAsk`). The engine only starts sessions it created, so no public call reaches it.
+- Import cache (fixed): the mutating-tool test runs with an imported cache, so the observable is one `import-cache-closed` event for an active ask, none for a repeat or an idle session. Before, a fresh run wrote nothing whatever the routing.
+- Test hygiene (fixed): the instance comes from the recorder, the recorded turn and message are asserted, the cancelled instance is asserted, the vacuous assertion is now `actor == "site@1"`, and the idle-session call is last in the mutating test.
+
 Remaining (W6a part 2b, the turn side; not in this part):
 
 1. An `ActorSessions` implementation over the agents crate: a child session of kind `Subagent` with the parent, the title, and the `workflow_actor` link row (`insert_workflow_actor_link` in node-store), created at dispatch. Decide the task type first (Deviations above).

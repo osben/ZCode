@@ -16,9 +16,9 @@ use rust_cli_node_store::mint_actor_session_id;
 
 /// The turn side of an actor's session: runs the turns of asks, and releases what an ask leaves behind.
 pub trait ActorTurns {
-    fn start_turn(&mut self, session: &str, instance: &Ref, message: &AskMessage);
-    fn cancel_turn(&mut self, session: &str, instance: &Ref);
-    fn reject_parked(&mut self, session: &str, qid: &str);
+    fn start_turn(&mut self, session: &str, instance: &Ref, message: &AskMessage) -> Result<()>;
+    fn cancel_turn(&mut self, session: &str, instance: &Ref) -> Result<()>;
+    fn reject_parked(&mut self, session: &str, qid: &str) -> Result<()>;
 }
 
 /// Session creation on the shared session database, with the turn side injected.
@@ -94,15 +94,15 @@ impl<T: ActorTurns> ActorSessions for NodeActorSessions<'_, T> {
         Ok(id)
     }
 
-    fn start_turn(&mut self, session: &str, instance: &Ref, message: &AskMessage) {
-        self.turns.start_turn(session, instance, message);
+    fn start_turn(&mut self, session: &str, instance: &Ref, message: &AskMessage) -> Result<()> {
+        self.turns.start_turn(session, instance, message)
     }
 
-    fn cancel_turn(&mut self, session: &str, instance: &Ref) {
-        self.turns.cancel_turn(session, instance);
+    fn cancel_turn(&mut self, session: &str, instance: &Ref) -> Result<()> {
+        self.turns.cancel_turn(session, instance)
     }
 
-    fn reject_parked(&mut self, session: &str, qid: &str) {
-        self.turns.reject_parked(session, qid);
+    fn reject_parked(&mut self, session: &str, qid: &str) -> Result<()> {
+        self.turns.reject_parked(session, qid)
     }
 }

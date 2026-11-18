@@ -1,18 +1,21 @@
 //! The driver owner (W6a part 2): the engine's port, the submit and turn-end routes, the escalation book, and the
 //! session creation, pinned against the Node driver's port rules. The turn side is a recorder, so these tests run
 //! without a child session; the turn loop itself is tested in the agents crate.
-use crate::driver_owner::{ActorDriverOwner, ActorSessionRequest, ActorSessions, SubmitReply};
-use crate::driver_rules::SubmitProfile;
-use crate::driver_rules::{
-    ESCALATION_BUDGET_EXHAUSTED, NO_ACTIVE_ASK_MESSAGE, UNTYPED_ASK_MESSAGE, actor_session_title,
+use crate::driver_owner::{
+    ActorDriverOwner, ActorSessionRequest, ActorSessions, CANCELLED_BY_ENGINE_MESSAGE, SubmitReply,
+    TurnEndReply,
 };
-use crate::engine::AskMessage;
-use crate::engine::{AskSpec, EngineConfig, SubmitVerdict};
+use crate::driver_rules::{
+    ESCALATION_BUDGET_EXHAUSTED, NO_ACTIVE_ASK_MESSAGE, SubmitProfile, UNTYPED_ASK_MESSAGE,
+    actor_session_title,
+};
+use crate::engine::{AskMessage, AskSpec, EngineConfig, SubmitVerdict};
 use crate::error::ErrorCode;
 use crate::escalation::{EscalateOutcome, EscalationRequest, RefusalReason};
+use crate::imported_cache::ImportedRunCache;
 use crate::journal::{JournalPort, MemoryJournal};
 use crate::model::{Ref, Violation};
-use anyhow::Result;
+use anyhow::{Result, bail};
 use serde_json::{Value, json};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -24,6 +27,8 @@ struct Log {
     turns: Vec<(String, Ref, AskMessage)>,
     cancelled: Vec<(String, Ref)>,
     rejected: Vec<(String, String)>,
+    /// When set, the next `start_turn` fails, as a refused send does.
+    fail_next_start: bool,
     next: u64,
 }
 
@@ -38,25 +43,31 @@ impl ActorSessions for Recording {
         Ok(format!("sess_{}", log.next))
     }
 
-    fn start_turn(&mut self, session: &str, instance: &Ref, message: &AskMessage) {
-        self.0
-            .borrow_mut()
-            .turns
+    fn start_turn(&mut self, session: &str, instance: &Ref, message: &AskMessage) -> Result<()> {
+        let mut log = self.0.borrow_mut();
+        if log.fail_next_start {
+            log.fail_next_start = false;
+            bail!("send refused");
+        }
+        log.turns
             .push((session.to_owned(), instance.clone(), message.clone()));
+        Ok(())
     }
 
-    fn cancel_turn(&mut self, session: &str, instance: &Ref) {
+    fn cancel_turn(&mut self, session: &str, instance: &Ref) -> Result<()> {
         self.0
             .borrow_mut()
             .cancelled
             .push((session.to_owned(), instance.clone()));
+        Ok(())
     }
 
-    fn reject_parked(&mut self, session: &str, qid: &str) {
+    fn reject_parked(&mut self, session: &str, qid: &str) -> Result<()> {
         self.0
             .borrow_mut()
             .rejected
             .push((session.to_owned(), qid.to_owned()));
+        Ok(())
     }
 }
 
@@ -98,11 +109,15 @@ fn config() -> EngineConfig {
     config
 }
 
-fn owner() -> (ActorDriverOwner<MemoryJournal, Recording>, Recording) {
+fn owner_with(config: EngineConfig) -> (ActorDriverOwner<MemoryJournal, Recording>, Recording) {
     let sessions = Recording::default();
     let owner =
-        ActorDriverOwner::new(config(), MemoryJournal::new(), sessions.clone()).expect("owner");
+        ActorDriverOwner::new(config, MemoryJournal::new(), sessions.clone()).expect("owner");
     (owner, sessions)
+}
+
+fn owner() -> (ActorDriverOwner<MemoryJournal, Recording>, Recording) {
+    owner_with(config())
 }
 
 fn request(question: &str) -> EscalationRequest {
@@ -130,6 +145,11 @@ fn running_ask() -> (
     (owner, sessions, actor, session)
 }
 
+/// The instance of the first turn the recorder saw, so the tests do not assume ordinals.
+fn first_turn_instance(sessions: &Recording) -> Ref {
+    sessions.0.borrow().turns[0].1.clone()
+}
+
 #[test]
 fn an_actor_session_carries_the_node_title_parent_and_link_path() {
     let (mut owner, sessions) = owner();
@@ -138,12 +158,12 @@ fn an_actor_session_carries_the_node_title_parent_and_link_path() {
         .expect("actor");
     owner.ask("site", &actor, "do it").expect("ask");
     owner.drain().expect("drain");
+    assert_eq!(actor, "site@1");
     let log = sessions.0.borrow();
     let created = &log.created[0];
     assert_eq!(created.run_id, "run_1");
     assert_eq!(created.parent_session_id.as_deref(), Some("ses_parent"));
     assert_eq!(created.actor, Ref::new("site", 1));
-    assert_eq!(actor, "site@1");
     assert_eq!(created.title, actor_session_title("site", 1));
     assert_eq!(created.link_path, "dwf/run_1/site@1");
 }
@@ -180,7 +200,11 @@ fn a_submit_on_an_untyped_ask_is_refused_at_the_port() {
 
 #[test]
 fn a_valid_submit_settles_the_ask_and_the_session_has_no_ask_afterwards() {
-    let (mut owner, _sessions, actor, session) = running_ask();
+    let (mut owner, sessions, _actor, session) = running_ask();
+    let turn = sessions.0.borrow().turns[0].clone();
+    assert_eq!(turn.0, session);
+    assert_eq!(turn.2.instructions, "do it");
+    assert!(turn.2.typed);
     let reply = owner
         .submit_result(&session, json!({"ok": true}))
         .expect("submit");
@@ -195,7 +219,6 @@ fn a_valid_submit_settles_the_ask_and_the_session_has_no_ask_afterwards() {
         again,
         SubmitReply::Refused(NO_ACTIVE_ASK_MESSAGE.to_owned())
     );
-    assert!(!actor.is_empty());
 }
 
 #[test]
@@ -218,11 +241,88 @@ fn an_invalid_submit_is_rejected_with_its_violations_and_the_ask_stays_live() {
 }
 
 #[test]
-fn a_turn_that_ends_without_a_submit_is_nudged_once_by_the_engine() {
-    let (mut owner, _sessions, _actor, _session) = running_ask();
-    let verdict = owner.turn_ended(&_session, "I am done.").expect("turn end");
-    assert_eq!(verdict, Some(SubmitVerdict::Nudge));
+fn an_exhausted_repair_budget_answers_the_submit_as_the_engine_cancelled_it_and_fails_the_ask() {
+    let (mut owner, _sessions, _actor, session) = running_ask();
+    for _ in 0..3 {
+        let reply = owner
+            .submit_result(&session, json!({"nope": 1}))
+            .expect("submit");
+        assert!(matches!(
+            reply,
+            SubmitReply::Verdict(SubmitVerdict::Reject { .. })
+        ));
+    }
+    // The fourth rejected submit exhausts the repair budget. Node rejects its pending submit with `Cancelled`.
+    let reply = owner
+        .submit_result(&session, json!({"nope": 1}))
+        .expect("submit");
+    assert_eq!(
+        reply,
+        SubmitReply::Cancelled(CANCELLED_BY_ENGINE_MESSAGE.to_owned())
+    );
+    let outcomes = owner.take_outcomes();
+    let error = outcomes[0].result.as_ref().expect_err("the ask fails");
+    assert_eq!(error.code, ErrorCode::ValidationFailed);
+    let again = owner
+        .submit_result(&session, json!({"ok": true}))
+        .expect("submit");
+    assert_eq!(
+        again,
+        SubmitReply::Refused(NO_ACTIVE_ASK_MESSAGE.to_owned())
+    );
+}
+
+#[test]
+fn a_turn_that_ends_without_a_submit_is_nudged_once_then_fails_with_result_not_submitted() {
+    let (mut owner, sessions, _actor, session) = running_ask();
+    let first = owner.turn_ended(&session, "I am done.").expect("turn end");
+    assert_eq!(first, TurnEndReply::Verdict(SubmitVerdict::Nudge));
     assert!(owner.take_outcomes().is_empty());
+
+    let second = owner.turn_ended(&session, "Still done.").expect("turn end");
+    assert_eq!(second, TurnEndReply::AskEnded);
+    let outcomes = owner.take_outcomes();
+    let error = outcomes[0].result.as_ref().expect_err("the ask fails");
+    assert_eq!(error.code, ErrorCode::ResultNotSubmitted);
+    assert_eq!(error.final_text.as_deref(), Some("Still done."));
+    let instance = first_turn_instance(&sessions);
+    assert_eq!(
+        sessions.0.borrow().cancelled,
+        vec![(session.clone(), instance)]
+    );
+}
+
+#[test]
+fn a_rejected_submit_keeps_the_ask_live_so_a_turn_end_is_nudged() {
+    let (mut owner, _sessions, _actor, session) = running_ask();
+    owner
+        .submit_result(&session, json!({"nope": 1}))
+        .expect("submit");
+    let verdict = owner
+        .turn_ended(&session, "I repaired it.")
+        .expect("turn end");
+    assert_eq!(verdict, TurnEndReply::Verdict(SubmitVerdict::Nudge));
+    assert!(owner.take_outcomes().is_empty());
+}
+
+#[test]
+fn a_turn_end_on_an_untyped_ask_settles_it_with_its_text() {
+    let (mut owner, _sessions) = owner();
+    let actor = owner.create_actor("plain", None, None).expect("actor");
+    owner.ask("plain", &actor, "say hi").expect("ask");
+    owner.drain().expect("drain");
+    let session = owner.session_of(&actor).expect("session");
+    let reply = owner.turn_ended(&session, "hi").expect("turn end");
+    assert_eq!(reply, TurnEndReply::AskEnded);
+    let outcomes = owner.take_outcomes();
+    assert_eq!(outcomes[0].result, Ok(json!("hi")));
+}
+
+#[test]
+fn a_turn_end_with_no_ask_in_flight_is_reported_as_no_ask() {
+    let (mut owner, _sessions) = owner();
+    let reply = owner.turn_ended("sess_unasked", "hi").expect("turn end");
+    assert_eq!(reply, TurnEndReply::NoAsk);
 }
 
 #[test]
@@ -265,6 +365,47 @@ fn an_untyped_profile_on_a_typed_ask_fails_the_ask_with_the_driver_error() {
     let error = outcomes[0].result.as_ref().expect_err("the ask fails");
     assert_eq!(error.code, ErrorCode::DriverError);
     assert!(error.message.contains("untyped"), "{}", error.message);
+}
+
+#[test]
+fn two_asks_that_fail_in_one_drain_both_get_their_outcome() {
+    let (mut owner, _sessions) = owner();
+    let first = owner.create_actor("site", None, None).expect("actor");
+    let second = owner.create_actor("site", None, None).expect("actor");
+    owner.set_actor_profile(&first, SubmitProfile::Untyped);
+    owner.set_actor_profile(&second, SubmitProfile::Untyped);
+    owner.ask("site", &first, "one").expect("ask");
+    owner.ask("site", &second, "two").expect("ask");
+    owner.drain().expect("drain");
+    let outcomes = owner.take_outcomes();
+    assert_eq!(
+        outcomes.len(),
+        2,
+        "every failed ask is settled: {outcomes:?}"
+    );
+    assert!(outcomes.iter().all(|outcome| outcome.result.is_err()));
+}
+
+#[test]
+fn a_turn_that_cannot_start_fails_the_ask_with_the_send_error_and_starts_nothing() {
+    let (mut owner, sessions) = owner();
+    let actor = owner.create_actor("site", None, None).expect("actor");
+    sessions.0.borrow_mut().fail_next_start = true;
+    owner.ask("site", &actor, "do it").expect("ask");
+    owner.drain().expect("drain");
+    let session = owner.session_of(&actor).expect("session");
+    assert!(sessions.0.borrow().turns.is_empty());
+    let outcomes = owner.take_outcomes();
+    let error = outcomes[0].result.as_ref().expect_err("the ask fails");
+    assert_eq!(error.code, ErrorCode::DriverError);
+    assert!(error.message.contains("send refused"), "{}", error.message);
+    let reply = owner
+        .submit_result(&session, json!({"ok": true}))
+        .expect("submit");
+    assert_eq!(
+        reply,
+        SubmitReply::Refused(NO_ACTIVE_ASK_MESSAGE.to_owned())
+    );
 }
 
 #[test]
@@ -373,20 +514,20 @@ fn completing_the_run_cancels_the_in_flight_turn_and_withdraws_its_questions() {
         other => panic!("expected a park, got {other:?}"),
     };
     owner.complete(json!("done")).expect("complete");
+    let instance = first_turn_instance(&sessions);
     let log = sessions.0.borrow();
-    assert_eq!(log.cancelled.len(), 1);
-    assert_eq!(log.cancelled[0].0, session);
+    assert_eq!(log.cancelled, vec![(session.clone(), instance)]);
     assert_eq!(log.rejected, vec![(session.clone(), qid)]);
 }
 
 #[test]
 fn the_message_boundary_is_written_to_the_active_ask_node_and_nothing_else() {
-    let (mut owner, _sessions, _actor, session) = running_ask();
+    let (mut owner, sessions, _actor, session) = running_ask();
+    let instance = first_turn_instance(&sessions);
     owner
         .set_message_boundary("sess_unasked", 9)
         .expect("boundary");
     owner.set_message_boundary(&session, 5).expect("boundary");
-    let instance = Ref::new("site", 2);
     let node = owner
         .journal()
         .get_node("run_1", &instance)
@@ -396,10 +537,27 @@ fn the_message_boundary_is_written_to_the_active_ask_node_and_nothing_else() {
 }
 
 #[test]
-fn a_mutating_tool_on_a_fresh_run_writes_no_event_and_an_idle_session_is_ignored() {
-    let (mut owner, _sessions, _actor, session) = running_ask();
-    let before = owner.events().expect("events").len();
+fn a_mutating_tool_closes_the_import_cache_once_and_an_idle_session_is_ignored() {
+    let mut config = config();
+    config.imported_cache = Some(ImportedRunCache::default());
+    let (mut owner, _sessions) = owner_with(config);
+    let actor = owner.create_actor("site", None, None).expect("actor");
+    owner.ask("site", &actor, "do it").expect("ask");
+    owner.drain().expect("drain");
+    let session = owner.session_of(&actor).expect("session");
+    let closed = |owner: &ActorDriverOwner<MemoryJournal, Recording>| {
+        owner
+            .events()
+            .expect("events")
+            .iter()
+            .filter(|stored| stored.payload_json.contains("import-cache-closed"))
+            .count()
+    };
+    assert_eq!(closed(&owner), 0);
     owner.ask_mutating(&session).expect("mutating");
-    owner.ask_mutating("sess_unasked").expect("idle");
-    assert_eq!(owner.events().expect("events").len(), before);
+    assert_eq!(closed(&owner), 1, "the active ask closes the cache");
+    owner.ask_mutating(&session).expect("mutating again");
+    assert_eq!(closed(&owner), 1, "the closure is written once");
+    owner.ask_mutating("sess_unasked").expect("idle session");
+    assert_eq!(closed(&owner), 1, "an idle session writes nothing");
 }
