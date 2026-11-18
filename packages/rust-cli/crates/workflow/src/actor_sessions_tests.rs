@@ -56,6 +56,10 @@ impl ActorTurns for Turns {
         self.rejected.push((session.to_owned(), qid.to_owned()));
         Ok(())
     }
+
+    fn deliver_answer(&mut self, _session: &str, _qid: &str, _answer: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
 fn request(parent: Option<&str>) -> ActorSessionRequest {

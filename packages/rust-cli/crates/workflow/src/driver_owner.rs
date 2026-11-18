@@ -64,6 +64,9 @@ pub trait ActorSessions {
     fn cancel_turn(&mut self, session: &str, instance: &Ref) -> Result<()>;
     /// Reject the deferred of a parked question that was withdrawn with its ask.
     fn reject_parked(&mut self, session: &str, qid: &str) -> Result<()>;
+    /// Resolve the deferred of a parked question with the main agent's answer (Node `deferred.resolve(answer)`): the
+    /// blocked escalate call returns it as its tool result.
+    fn deliver_answer(&mut self, session: &str, qid: &str, answer: &str) -> Result<()>;
 }
 
 /// The answer to a `submit_result` call, which is the tool result the model reads.
@@ -437,10 +440,25 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
     /// Node `answerEscalation`: the main agent's answer to a parked question.
     pub fn answer(&mut self, qid: &str, answer: &str) -> Result<Option<AnswerOutcome>> {
         self.settle_quietly();
+        let session = self.book.session_of_question(qid);
         let engine = &mut self.engine;
-        Ok(self
+        let outcome = self
             .book
-            .answer(qid, answer, |event| engine.record(event.clone())))
+            .answer(qid, answer, |event| engine.record(event.clone()));
+        // Node delivers the answer whether or not the resolved event was journaled, so delivery follows the book's
+        // acceptance and not the journal write. A refused delivery is logged: the question is already answered.
+        if let (Some(_), Some(session)) = (&outcome, session)
+            && let Err(error) = self
+                .engine
+                .driver
+                .sessions
+                .deliver_answer(&session, qid, answer)
+        {
+            tracing::warn!(
+                "an accepted escalation answer was not delivered to its session: {error:#}"
+            );
+        }
+        Ok(outcome)
     }
 
     /// Apply what the port queued, until nothing is queued, then reconcile. Every exit path reconciles. Every queued

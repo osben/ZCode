@@ -196,6 +196,11 @@ impl EscalationBook {
         })
     }
 
+    /// The session a parked question belongs to, while it is parked.
+    pub fn session_of_question(&self, qid: &str) -> Option<String> {
+        self.by_qid.get(qid).cloned()
+    }
+
     /// Withdraw every parked question of a session and retire its ids (Node `withdrawSessionEscalations`).
     fn withdraw(&mut self, session: &str) -> Vec<String> {
         let Some(state) = self.sessions.get_mut(session) else {
