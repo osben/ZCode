@@ -67,6 +67,20 @@ pub fn persona_model(persona: &Value) -> Option<String> {
     persona.get("model")?.as_str().map(str::to_owned)
 }
 
+/// Node `personaIdentity`: the persona without `model` and `budget`. Changing either is the user's choice for
+/// the next work (an amend may raise a budget), so it must not make finished work run again.
+pub fn persona_identity(persona: &Value) -> Value {
+    match persona {
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .filter(|(key, _)| key.as_str() != "model" && key.as_str() != "budget")
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -97,5 +111,23 @@ mod tests {
     fn bad_budgets_and_unknown_keys_are_dropped() {
         let persona = json!({"budget": {"webSearch": 2.5}, "extra": 1, "system": 3});
         assert_eq!(text(&normalize_persona(None, Some(&persona))), "{}");
+    }
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// `model` and `budget` are left out of the identity, so raising a budget does not re-run finished work
+    /// after an amend. Any other change to the persona does.
+    #[test]
+    fn model_and_budget_are_not_part_of_the_identity() {
+        let base = json!({"name": "a", "system": "s", "model": "x", "budget": {"webSearch": 1}});
+        let raised = json!({"name": "a", "system": "s", "model": "y", "budget": {"webSearch": 9}});
+        assert_eq!(persona_identity(&base), json!({"name": "a", "system": "s"}));
+        assert_eq!(persona_identity(&base), persona_identity(&raised));
+        let changed = json!({"name": "a", "system": "changed"});
+        assert_ne!(persona_identity(&base), persona_identity(&changed));
     }
 }

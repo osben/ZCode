@@ -66,6 +66,9 @@ impl Identity {
             }
             RunEvent::NodeQueued {
                 instance, phase, ..
+            }
+            | RunEvent::WorldQueued {
+                instance, phase, ..
             } => {
                 *phase = self.phase_of(&instance.key());
             }

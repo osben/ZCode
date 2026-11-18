@@ -296,6 +296,12 @@ pub struct NodeRow {
     pub result: Option<Value>,
     pub error: Option<Value>,
     pub stats: Option<Value>,
+    /// Node `input` (`WorldReadInput`, bounded): written at admission of a world node, carried through the
+    /// settlement upsert. Absent on asks.
+    pub input: Option<Value>,
+    /// Node `messageBoundary`: ask rows only, written by the driver after the exchange (see
+    /// `Engine::set_message_boundary`). A count, invariant under prefix copies.
+    pub message_boundary: Option<u64>,
 }
 
 impl NodeRow {
@@ -323,6 +329,12 @@ impl NodeRow {
         }
         if let Some(stats) = &self.stats {
             map.insert("stats".into(), stats.clone());
+        }
+        if let Some(input) = &self.input {
+            map.insert("input".into(), input.clone());
+        }
+        if let Some(boundary) = self.message_boundary {
+            map.insert("messageBoundary".into(), Value::from(boundary));
         }
         Value::Object(map)
     }

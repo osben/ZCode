@@ -1,0 +1,5786 @@
+{
+  "scenarios": [
+    {
+      "name": "resume-world-rows-settle-in-recorded-order",
+      "input": {
+        "name": "resume-world-rows-settle-in-recorded-order",
+        "runs": [
+          {
+            "runId": "run-world-order",
+            "lifetimes": [
+              {
+                "caps": 2,
+                "steps": [
+                  {
+                    "op": "worldRead",
+                    "tag": "w0",
+                    "site": "w#1",
+                    "worldOp": "git-log",
+                    "args": [
+                      "a"
+                    ]
+                  },
+                  {
+                    "op": "worldRead",
+                    "tag": "w1",
+                    "site": "w#2",
+                    "worldOp": "git-log",
+                    "args": [
+                      "b"
+                    ]
+                  },
+                  {
+                    "op": "worldDone",
+                    "tag": "w1",
+                    "ok": true,
+                    "value": "second"
+                  },
+                  {
+                    "op": "worldDone",
+                    "tag": "w0",
+                    "ok": true,
+                    "value": "first"
+                  }
+                ]
+              },
+              {
+                "caps": 2,
+                "steps": [
+                  {
+                    "op": "worldRead",
+                    "tag": "w0",
+                    "site": "w#1",
+                    "worldOp": "git-log",
+                    "args": [
+                      "a"
+                    ]
+                  },
+                  {
+                    "op": "worldRead",
+                    "tag": "w1",
+                    "site": "w#2",
+                    "worldOp": "git-log",
+                    "args": [
+                      "b"
+                    ]
+                  },
+                  {
+                    "op": "complete",
+                    "artifact": {
+                      "done": true
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "runs": [
+        {
+          "runId": "run-world-order",
+          "lifetimes": [
+            {
+              "build": null,
+              "results": [
+                null,
+                null,
+                null,
+                null
+              ],
+              "run": {
+                "runId": "run-world-order",
+                "caps": {
+                  "maxConcurrency": 2
+                },
+                "spentTokens": 0,
+                "status": "running"
+              },
+              "nodes": [
+                {
+                  "runId": "run-world-order",
+                  "siteId": "w#1",
+                  "ordinal": 1,
+                  "kind": "world-read",
+                  "inputHash": "75d1ccf7",
+                  "input": {
+                    "op": "git-log",
+                    "args": [
+                      "a"
+                    ]
+                  },
+                  "status": "completed",
+                  "result": "first"
+                },
+                {
+                  "runId": "run-world-order",
+                  "siteId": "w#2",
+                  "ordinal": 1,
+                  "kind": "world-read",
+                  "inputHash": "c0c6213a",
+                  "input": {
+                    "op": "git-log",
+                    "args": [
+                      "b"
+                    ]
+                  },
+                  "status": "completed",
+                  "result": "second"
+                }
+              ],
+              "actors": [],
+              "disposed": 0
+            },
+            {
+              "build": null,
+              "results": [
+                null,
+                null,
+                null
+              ],
+              "run": {
+                "runId": "run-world-order",
+                "caps": {
+                  "maxConcurrency": 2
+                },
+                "spentTokens": 0,
+                "status": "completed",
+                "result": {
+                  "done": true
+                }
+              },
+              "nodes": [
+                {
+                  "runId": "run-world-order",
+                  "siteId": "w#1",
+                  "ordinal": 1,
+                  "kind": "world-read",
+                  "inputHash": "75d1ccf7",
+                  "input": {
+                    "op": "git-log",
+                    "args": [
+                      "a"
+                    ]
+                  },
+                  "status": "completed",
+                  "result": "first"
+                },
+                {
+                  "runId": "run-world-order",
+                  "siteId": "w#2",
+                  "ordinal": 1,
+                  "kind": "world-read",
+                  "inputHash": "c0c6213a",
+                  "input": {
+                    "op": "git-log",
+                    "args": [
+                      "b"
+                    ]
+                  },
+                  "status": "completed",
+                  "result": "second"
+                }
+              ],
+              "actors": [],
+              "disposed": 1
+            }
+          ]
+        }
+      ],
+      "outcomes": [
+        {
+          "tag": "w1",
+          "ok": true,
+          "value": "second"
+        },
+        {
+          "tag": "w0",
+          "ok": true,
+          "value": "first"
+        },
+        {
+          "tag": "w1",
+          "ok": true,
+          "value": "second"
+        },
+        {
+          "tag": "w0",
+          "ok": true,
+          "value": "first"
+        }
+      ],
+      "driverCalls": [
+        {
+          "op": "executeWorldRead",
+          "worldOp": "git-log",
+          "args": [
+            "a"
+          ]
+        },
+        {
+          "op": "executeWorldRead",
+          "worldOp": "git-log",
+          "args": [
+            "b"
+          ]
+        }
+      ],
+      "events": [
+        {
+          "runId": "run-world-order",
+          "sequence": 0,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"run-world-order\",\"caps\":{\"maxConcurrency\":2}}"
+        },
+        {
+          "runId": "run-world-order",
+          "sequence": 1,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":1},\"kind\":\"world-read\"}"
+        },
+        {
+          "runId": "run-world-order",
+          "sequence": 2,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":1}}"
+        },
+        {
+          "runId": "run-world-order",
+          "sequence": 3,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"w#2\",\"ordinal\":1},\"kind\":\"world-read\"}"
+        },
+        {
+          "runId": "run-world-order",
+          "sequence": 4,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"w#2\",\"ordinal\":1}}"
+        },
+        {
+          "runId": "run-world-order",
+          "sequence": 5,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"w#2\",\"ordinal\":1},\"outcome\":\"ok\"}"
+        },
+        {
+          "runId": "run-world-order",
+          "sequence": 6,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":1},\"outcome\":\"ok\"}"
+        },
+        {
+          "runId": "run-world-order",
+          "sequence": 7,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"run-world-order\",\"caps\":{\"maxConcurrency\":2}}"
+        },
+        {
+          "runId": "run-world-order",
+          "sequence": 8,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"w#2\",\"ordinal\":1},\"outcome\":\"ok\",\"cached\":true}"
+        },
+        {
+          "runId": "run-world-order",
+          "sequence": 9,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":1},\"outcome\":\"ok\",\"cached\":true}"
+        },
+        {
+          "runId": "run-world-order",
+          "sequence": 10,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"completed\"}"
+        }
+      ]
+    },
+    {
+      "name": "world-read-failure-replays-as-failed",
+      "input": {
+        "name": "world-read-failure-replays-as-failed",
+        "runs": [
+          {
+            "runId": "run-world-failed",
+            "lifetimes": [
+              {
+                "caps": 1,
+                "steps": [
+                  {
+                    "op": "worldRead",
+                    "tag": "w0",
+                    "site": "w#1",
+                    "worldOp": "git-log",
+                    "args": [
+                      "x"
+                    ]
+                  },
+                  {
+                    "op": "worldDone",
+                    "tag": "w0",
+                    "ok": false,
+                    "message": "disk gone"
+                  },
+                  {
+                    "op": "stop",
+                    "reason": "interrupted"
+                  }
+                ]
+              },
+              {
+                "caps": 1,
+                "steps": [
+                  {
+                    "op": "worldRead",
+                    "tag": "w0",
+                    "site": "w#1",
+                    "worldOp": "git-log",
+                    "args": [
+                      "x"
+                    ]
+                  },
+                  {
+                    "op": "complete",
+                    "artifact": null
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "runs": [
+        {
+          "runId": "run-world-failed",
+          "lifetimes": [
+            {
+              "build": null,
+              "results": [
+                null,
+                null,
+                null
+              ],
+              "run": {
+                "runId": "run-world-failed",
+                "caps": {
+                  "maxConcurrency": 1
+                },
+                "spentTokens": 0,
+                "status": "stopped",
+                "stopReason": "interrupted"
+              },
+              "nodes": [
+                {
+                  "runId": "run-world-failed",
+                  "siteId": "w#1",
+                  "ordinal": 1,
+                  "kind": "world-read",
+                  "inputHash": "08e9d7bc",
+                  "input": {
+                    "op": "git-log",
+                    "args": [
+                      "x"
+                    ]
+                  },
+                  "status": "failed",
+                  "error": {
+                    "code": "DriverError",
+                    "message": "World read failed: git-log [\"x\"]."
+                  }
+                }
+              ],
+              "actors": [],
+              "disposed": 1
+            },
+            {
+              "build": null,
+              "results": [
+                null,
+                null
+              ],
+              "run": {
+                "runId": "run-world-failed",
+                "caps": {
+                  "maxConcurrency": 1
+                },
+                "spentTokens": 0,
+                "status": "completed",
+                "result": null
+              },
+              "nodes": [
+                {
+                  "runId": "run-world-failed",
+                  "siteId": "w#1",
+                  "ordinal": 1,
+                  "kind": "world-read",
+                  "inputHash": "08e9d7bc",
+                  "input": {
+                    "op": "git-log",
+                    "args": [
+                      "x"
+                    ]
+                  },
+                  "status": "failed",
+                  "error": {
+                    "code": "DriverError",
+                    "message": "World read failed: git-log [\"x\"]."
+                  }
+                }
+              ],
+              "actors": [],
+              "disposed": 1
+            }
+          ]
+        }
+      ],
+      "outcomes": [
+        {
+          "tag": "w0",
+          "ok": false,
+          "error": {
+            "code": "DriverError",
+            "message": "World read failed: git-log [\"x\"]."
+          }
+        },
+        {
+          "tag": "w0",
+          "ok": false,
+          "error": {
+            "code": "DriverError",
+            "message": "World read failed: git-log [\"x\"]."
+          }
+        }
+      ],
+      "driverCalls": [
+        {
+          "op": "executeWorldRead",
+          "worldOp": "git-log",
+          "args": [
+            "x"
+          ]
+        }
+      ],
+      "events": [
+        {
+          "runId": "run-world-failed",
+          "sequence": 0,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"run-world-failed\",\"caps\":{\"maxConcurrency\":1}}"
+        },
+        {
+          "runId": "run-world-failed",
+          "sequence": 1,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":1},\"kind\":\"world-read\"}"
+        },
+        {
+          "runId": "run-world-failed",
+          "sequence": 2,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":1}}"
+        },
+        {
+          "runId": "run-world-failed",
+          "sequence": 3,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":1},\"outcome\":\"failed\",\"error\":{\"code\":\"DriverError\",\"message\":\"World read failed: git-log [\\\"x\\\"].\"}}"
+        },
+        {
+          "runId": "run-world-failed",
+          "sequence": 4,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"stopped\",\"stopReason\":\"interrupted\"}"
+        },
+        {
+          "runId": "run-world-failed",
+          "sequence": 5,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"run-world-failed\",\"caps\":{\"maxConcurrency\":1}}"
+        },
+        {
+          "runId": "run-world-failed",
+          "sequence": 6,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":1},\"outcome\":\"failed\",\"cached\":true,\"error\":{\"code\":\"DriverError\",\"message\":\"World read failed: git-log [\\\"x\\\"].\"}}"
+        },
+        {
+          "runId": "run-world-failed",
+          "sequence": 7,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"completed\"}"
+        }
+      ]
+    },
+    {
+      "name": "world-row-hash-mismatch-on-resume",
+      "input": {
+        "name": "world-row-hash-mismatch-on-resume",
+        "runs": [
+          {
+            "runId": "run-world-mismatch",
+            "lifetimes": [
+              {
+                "caps": 1,
+                "steps": [
+                  {
+                    "op": "worldRead",
+                    "tag": "w0",
+                    "site": "w#1",
+                    "worldOp": "git-log",
+                    "args": [
+                      "x"
+                    ]
+                  },
+                  {
+                    "op": "worldDone",
+                    "tag": "w0",
+                    "ok": true,
+                    "value": 1
+                  },
+                  {
+                    "op": "stop",
+                    "reason": "user"
+                  }
+                ]
+              },
+              {
+                "caps": 1,
+                "steps": [
+                  {
+                    "op": "worldRead",
+                    "tag": "w0",
+                    "site": "w#1",
+                    "worldOp": "git-log",
+                    "args": [
+                      "y"
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "runs": [
+        {
+          "runId": "run-world-mismatch",
+          "lifetimes": [
+            {
+              "build": null,
+              "results": [
+                null,
+                null,
+                null
+              ],
+              "run": {
+                "runId": "run-world-mismatch",
+                "caps": {
+                  "maxConcurrency": 1
+                },
+                "spentTokens": 0,
+                "status": "stopped",
+                "stopReason": "user"
+              },
+              "nodes": [
+                {
+                  "runId": "run-world-mismatch",
+                  "siteId": "w#1",
+                  "ordinal": 1,
+                  "kind": "world-read",
+                  "inputHash": "08e9d7bc",
+                  "input": {
+                    "op": "git-log",
+                    "args": [
+                      "x"
+                    ]
+                  },
+                  "status": "completed",
+                  "result": 1
+                }
+              ],
+              "actors": [],
+              "disposed": 1
+            },
+            {
+              "build": null,
+              "results": [
+                null
+              ],
+              "run": {
+                "runId": "run-world-mismatch",
+                "caps": {
+                  "maxConcurrency": 1
+                },
+                "spentTokens": 0,
+                "status": "errored",
+                "failure": {
+                  "code": "InputHashMismatch",
+                  "message": "Replay hit at w#1@1 but inputHash differs (expected 08e9d7bc, got cf93592f): the script is not deterministic, so the journal cannot be replayed.",
+                  "mismatch": {
+                    "expected": "08e9d7bc",
+                    "got": "cf93592f"
+                  }
+                }
+              },
+              "nodes": [
+                {
+                  "runId": "run-world-mismatch",
+                  "siteId": "w#1",
+                  "ordinal": 1,
+                  "kind": "world-read",
+                  "inputHash": "08e9d7bc",
+                  "input": {
+                    "op": "git-log",
+                    "args": [
+                      "x"
+                    ]
+                  },
+                  "status": "completed",
+                  "result": 1
+                }
+              ],
+              "actors": [],
+              "disposed": 1
+            }
+          ]
+        }
+      ],
+      "outcomes": [
+        {
+          "tag": "w0",
+          "ok": true,
+          "value": 1
+        },
+        {
+          "tag": "w0",
+          "ok": false,
+          "error": {
+            "code": "InputHashMismatch",
+            "message": "Replay hit at w#1@1 but inputHash differs (expected 08e9d7bc, got cf93592f): the script is not deterministic, so the journal cannot be replayed.",
+            "mismatch": {
+              "expected": "08e9d7bc",
+              "got": "cf93592f"
+            }
+          }
+        }
+      ],
+      "driverCalls": [
+        {
+          "op": "executeWorldRead",
+          "worldOp": "git-log",
+          "args": [
+            "x"
+          ]
+        }
+      ],
+      "events": [
+        {
+          "runId": "run-world-mismatch",
+          "sequence": 0,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"run-world-mismatch\",\"caps\":{\"maxConcurrency\":1}}"
+        },
+        {
+          "runId": "run-world-mismatch",
+          "sequence": 1,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":1},\"kind\":\"world-read\"}"
+        },
+        {
+          "runId": "run-world-mismatch",
+          "sequence": 2,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":1}}"
+        },
+        {
+          "runId": "run-world-mismatch",
+          "sequence": 3,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":1},\"outcome\":\"ok\"}"
+        },
+        {
+          "runId": "run-world-mismatch",
+          "sequence": 4,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"stopped\",\"stopReason\":\"user\"}"
+        },
+        {
+          "runId": "run-world-mismatch",
+          "sequence": 5,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"run-world-mismatch\",\"caps\":{\"maxConcurrency\":1}}"
+        },
+        {
+          "runId": "run-world-mismatch",
+          "sequence": 6,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"errored\",\"error\":{\"code\":\"InputHashMismatch\",\"message\":\"Replay hit at w#1@1 but inputHash differs (expected 08e9d7bc, got cf93592f): the script is not deterministic, so the journal cannot be replayed.\",\"mismatch\":{\"expected\":\"08e9d7bc\",\"got\":\"cf93592f\"}}}"
+        }
+      ]
+    },
+    {
+      "name": "world-run-without-cache-emits-no-closure",
+      "input": {
+        "name": "world-run-without-cache-emits-no-closure",
+        "runs": [
+          {
+            "runId": "run-world-plain",
+            "lifetimes": [
+              {
+                "caps": 1,
+                "steps": [
+                  {
+                    "op": "worldRead",
+                    "tag": "r",
+                    "site": "w#1",
+                    "worldOp": "run",
+                    "args": [
+                      "deploy"
+                    ]
+                  },
+                  {
+                    "op": "worldDone",
+                    "tag": "r",
+                    "ok": true,
+                    "value": "ok"
+                  },
+                  {
+                    "op": "complete",
+                    "artifact": "done"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "runs": [
+        {
+          "runId": "run-world-plain",
+          "lifetimes": [
+            {
+              "build": null,
+              "results": [
+                null,
+                null,
+                null
+              ],
+              "run": {
+                "runId": "run-world-plain",
+                "caps": {
+                  "maxConcurrency": 1
+                },
+                "spentTokens": 0,
+                "status": "completed",
+                "result": "done"
+              },
+              "nodes": [
+                {
+                  "runId": "run-world-plain",
+                  "siteId": "w#1",
+                  "ordinal": 1,
+                  "kind": "world-run",
+                  "inputHash": "b05d54a1",
+                  "input": {
+                    "op": "run",
+                    "args": [
+                      "deploy"
+                    ]
+                  },
+                  "status": "completed",
+                  "result": "ok"
+                }
+              ],
+              "actors": [],
+              "disposed": 1
+            }
+          ]
+        }
+      ],
+      "outcomes": [
+        {
+          "tag": "r",
+          "ok": true,
+          "value": "ok"
+        }
+      ],
+      "driverCalls": [
+        {
+          "op": "executeWorldRead",
+          "worldOp": "run",
+          "args": [
+            "deploy"
+          ]
+        }
+      ],
+      "events": [
+        {
+          "runId": "run-world-plain",
+          "sequence": 0,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"run-world-plain\",\"caps\":{\"maxConcurrency\":1}}"
+        },
+        {
+          "runId": "run-world-plain",
+          "sequence": 1,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":1},\"kind\":\"world-run\"}"
+        },
+        {
+          "runId": "run-world-plain",
+          "sequence": 2,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":1}}"
+        },
+        {
+          "runId": "run-world-plain",
+          "sequence": 3,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":1},\"outcome\":\"ok\"}"
+        },
+        {
+          "runId": "run-world-plain",
+          "sequence": 4,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"completed\"}"
+        }
+      ]
+    },
+    {
+      "name": "amend-prefix-hit-then-miss-seeds-the-divergence",
+      "input": {
+        "name": "amend-prefix-hit-then-miss-seeds-the-divergence",
+        "transcriptCounts": {
+          "sess:pred-prefix/actor#1@1": 4
+        },
+        "runs": [
+          {
+            "runId": "pred-prefix",
+            "lifetimes": [
+              {
+                "caps": 2,
+                "steps": [
+                  {
+                    "op": "createActor",
+                    "site": "actor#1",
+                    "name": "alpha",
+                    "persona": "You review code."
+                  },
+                  {
+                    "op": "ask",
+                    "tag": "p0",
+                    "site": "ask#1",
+                    "actor": "actor#1@1",
+                    "instructions": "list files"
+                  },
+                  {
+                    "op": "submit",
+                    "at": {
+                      "site": "ask#1",
+                      "ordinal": 1
+                    },
+                    "payload": "a"
+                  },
+                  {
+                    "op": "setBoundary",
+                    "at": {
+                      "site": "ask#1",
+                      "ordinal": 1
+                    },
+                    "boundary": 2
+                  },
+                  {
+                    "op": "ask",
+                    "tag": "p1",
+                    "site": "ask#1",
+                    "actor": "actor#1@1",
+                    "instructions": "read main"
+                  },
+                  {
+                    "op": "submit",
+                    "at": {
+                      "site": "ask#1",
+                      "ordinal": 2
+                    },
+                    "payload": "b"
+                  },
+                  {
+                    "op": "setBoundary",
+                    "at": {
+                      "site": "ask#1",
+                      "ordinal": 2
+                    },
+                    "boundary": 4
+                  },
+                  {
+                    "op": "stop",
+                    "reason": "user"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "runId": "succ-prefix",
+            "importFrom": "pred-prefix",
+            "lifetimes": [
+              {
+                "caps": 1,
+                "steps": [
+                  {
+                    "op": "createActor",
+                    "site": "actor#1",
+                    "name": "alpha",
+                    "persona": "You review code."
+                  },
+                  {
+                    "op": "ask",
+                    "tag": "s0",
+                    "site": "ask#1",
+                    "actor": "actor#1@1",
+                    "instructions": "list files"
+                  },
+                  {
+                    "op": "ask",
+                    "tag": "s1",
+                    "site": "ask#1",
+                    "actor": "actor#1@1",
+                    "instructions": "read main"
+                  },
+                  {
+                    "op": "ask",
+                    "tag": "s2",
+                    "site": "ask#1",
+                    "actor": "actor#1@1",
+                    "instructions": "changed"
+                  },
+                  {
+                    "op": "submit",
+                    "at": {
+                      "site": "ask#1",
+                      "ordinal": 3
+                    },
+                    "payload": "c"
+                  },
+                  {
+                    "op": "complete",
+                    "artifact": "ok"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "runs": [
+        {
+          "runId": "pred-prefix",
+          "lifetimes": [
+            {
+              "build": null,
+              "results": [
+                {
+                  "actorId": "actor#1@1"
+                },
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
+              ],
+              "run": {
+                "runId": "pred-prefix",
+                "caps": {
+                  "maxConcurrency": 2
+                },
+                "spentTokens": 0,
+                "status": "stopped",
+                "stopReason": "user"
+              },
+              "nodes": [
+                {
+                  "runId": "pred-prefix",
+                  "siteId": "ask#1",
+                  "ordinal": 1,
+                  "kind": "ask",
+                  "actorSiteId": "actor#1",
+                  "actorOrdinal": 1,
+                  "actorSeq": 0,
+                  "inputHash": "83686f68",
+                  "status": "completed",
+                  "result": "a",
+                  "messageBoundary": 2
+                },
+                {
+                  "runId": "pred-prefix",
+                  "siteId": "ask#1",
+                  "ordinal": 2,
+                  "kind": "ask",
+                  "actorSiteId": "actor#1",
+                  "actorOrdinal": 1,
+                  "actorSeq": 1,
+                  "inputHash": "af9ec144",
+                  "status": "completed",
+                  "result": "b",
+                  "messageBoundary": 4
+                }
+              ],
+              "actors": [
+                {
+                  "runId": "pred-prefix",
+                  "siteId": "actor#1",
+                  "ordinal": 1,
+                  "name": "alpha",
+                  "persona": {
+                    "system": "You review code.",
+                    "name": "alpha"
+                  },
+                  "sessionId": "sess:pred-prefix/actor#1@1"
+                }
+              ],
+              "disposed": 1
+            }
+          ]
+        },
+        {
+          "runId": "succ-prefix",
+          "lifetimes": [
+            {
+              "build": {
+                "preflight": {
+                  "ok": true,
+                  "run": {
+                    "runId": "pred-prefix",
+                    "caps": {
+                      "maxConcurrency": 2
+                    },
+                    "spentTokens": 0,
+                    "status": "stopped",
+                    "stopReason": "user"
+                  }
+                },
+                "built": {
+                  "ok": true,
+                  "cache": {
+                    "actors": {
+                      "alpha": {
+                        "persona": {
+                          "system": "You review code.",
+                          "name": "alpha"
+                        },
+                        "entries": [
+                          {
+                            "inputHash": "83686f68",
+                            "result": "a",
+                            "messageBoundary": 2
+                          },
+                          {
+                            "inputHash": "af9ec144",
+                            "result": "b",
+                            "messageBoundary": 4
+                          }
+                        ],
+                        "transcriptSourceSessionId": "sess:pred-prefix/actor#1@1"
+                      }
+                    },
+                    "world": {}
+                  },
+                  "resumedFrom": "pred-prefix"
+                }
+              },
+              "results": [
+                {
+                  "actorId": "actor#1@1"
+                },
+                null,
+                null,
+                null,
+                null,
+                null
+              ],
+              "run": {
+                "runId": "succ-prefix",
+                "caps": {
+                  "maxConcurrency": 1
+                },
+                "spentTokens": 0,
+                "status": "completed",
+                "resumedFrom": "pred-prefix",
+                "result": "ok"
+              },
+              "nodes": [
+                {
+                  "runId": "succ-prefix",
+                  "siteId": "ask#1",
+                  "ordinal": 1,
+                  "kind": "ask",
+                  "actorSiteId": "actor#1",
+                  "actorOrdinal": 1,
+                  "actorSeq": 0,
+                  "inputHash": "83686f68",
+                  "status": "completed",
+                  "result": "a",
+                  "messageBoundary": 2
+                },
+                {
+                  "runId": "succ-prefix",
+                  "siteId": "ask#1",
+                  "ordinal": 2,
+                  "kind": "ask",
+                  "actorSiteId": "actor#1",
+                  "actorOrdinal": 1,
+                  "actorSeq": 1,
+                  "inputHash": "af9ec144",
+                  "status": "completed",
+                  "result": "b",
+                  "messageBoundary": 4
+                },
+                {
+                  "runId": "succ-prefix",
+                  "siteId": "ask#1",
+                  "ordinal": 3,
+                  "kind": "ask",
+                  "actorSiteId": "actor#1",
+                  "actorOrdinal": 1,
+                  "actorSeq": 2,
+                  "inputHash": "114d839b",
+                  "status": "completed",
+                  "result": "c"
+                }
+              ],
+              "actors": [
+                {
+                  "runId": "succ-prefix",
+                  "siteId": "actor#1",
+                  "ordinal": 1,
+                  "name": "alpha",
+                  "persona": {
+                    "system": "You review code.",
+                    "name": "alpha"
+                  },
+                  "sessionId": "sess:succ-prefix/actor#1@1"
+                }
+              ],
+              "disposed": 1
+            }
+          ]
+        }
+      ],
+      "outcomes": [
+        {
+          "tag": "p0",
+          "ok": true,
+          "value": "a"
+        },
+        {
+          "tag": "p1",
+          "ok": true,
+          "value": "b"
+        },
+        {
+          "tag": "s0",
+          "ok": true,
+          "value": "a"
+        },
+        {
+          "tag": "s1",
+          "ok": true,
+          "value": "b"
+        },
+        {
+          "tag": "s2",
+          "ok": true,
+          "value": "c"
+        }
+      ],
+      "driverCalls": [
+        {
+          "op": "createActorSession",
+          "actor": "actor#1@1",
+          "seed": null
+        },
+        {
+          "op": "startAsk",
+          "session": "sess:pred-prefix/actor#1@1",
+          "instance": "ask#1@1",
+          "instructions": "list files",
+          "typed": true
+        },
+        {
+          "op": "respondToSubmit",
+          "instance": "ask#1@1",
+          "verdict": {
+            "kind": "accept"
+          }
+        },
+        {
+          "op": "startAsk",
+          "session": "sess:pred-prefix/actor#1@1",
+          "instance": "ask#1@2",
+          "instructions": "read main",
+          "typed": true
+        },
+        {
+          "op": "respondToSubmit",
+          "instance": "ask#1@2",
+          "verdict": {
+            "kind": "accept"
+          }
+        },
+        {
+          "op": "createActorSession",
+          "actor": "actor#1@1",
+          "seed": {
+            "sourceSessionId": "sess:pred-prefix/actor#1@1",
+            "messageCount": 4
+          }
+        },
+        {
+          "op": "startAsk",
+          "session": "sess:succ-prefix/actor#1@1",
+          "instance": "ask#1@3",
+          "instructions": "changed",
+          "typed": true
+        },
+        {
+          "op": "respondToSubmit",
+          "instance": "ask#1@3",
+          "verdict": {
+            "kind": "accept"
+          }
+        }
+      ],
+      "events": [
+        {
+          "runId": "pred-prefix",
+          "sequence": 0,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"pred-prefix\",\"caps\":{\"maxConcurrency\":2}}"
+        },
+        {
+          "runId": "pred-prefix",
+          "sequence": 1,
+          "payloadJson": "{\"type\":\"actor-created\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"name\":\"alpha\",\"persona\":{\"system\":\"You review code.\",\"name\":\"alpha\"}}"
+        },
+        {
+          "runId": "pred-prefix",
+          "sequence": 2,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorSeq\":0,\"instructionsHead\":\"list files\"}"
+        },
+        {
+          "runId": "pred-prefix",
+          "sequence": 3,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorName\":\"alpha\",\"instructionsHead\":\"list files\"}"
+        },
+        {
+          "runId": "pred-prefix",
+          "sequence": 4,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"outcome\":\"ok\"}"
+        },
+        {
+          "runId": "pred-prefix",
+          "sequence": 5,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":2},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorSeq\":1,\"instructionsHead\":\"read main\"}"
+        },
+        {
+          "runId": "pred-prefix",
+          "sequence": 6,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":2},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorName\":\"alpha\",\"instructionsHead\":\"read main\"}"
+        },
+        {
+          "runId": "pred-prefix",
+          "sequence": 7,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":2},\"outcome\":\"ok\"}"
+        },
+        {
+          "runId": "pred-prefix",
+          "sequence": 8,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"stopped\",\"stopReason\":\"user\"}"
+        },
+        {
+          "runId": "succ-prefix",
+          "sequence": 0,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"succ-prefix\",\"caps\":{\"maxConcurrency\":1}}"
+        },
+        {
+          "runId": "succ-prefix",
+          "sequence": 1,
+          "payloadJson": "{\"type\":\"actor-created\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"name\":\"alpha\",\"persona\":{\"system\":\"You review code.\",\"name\":\"alpha\"}}"
+        },
+        {
+          "runId": "succ-prefix",
+          "sequence": 2,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"outcome\":\"ok\",\"cached\":true,\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorSeq\":0,\"instructionsHead\":\"list files\",\"sourceSessionId\":\"sess:pred-prefix/actor#1@1\"}"
+        },
+        {
+          "runId": "succ-prefix",
+          "sequence": 3,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":2},\"outcome\":\"ok\",\"cached\":true,\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorSeq\":1,\"instructionsHead\":\"read main\",\"sourceSessionId\":\"sess:pred-prefix/actor#1@1\"}"
+        },
+        {
+          "runId": "succ-prefix",
+          "sequence": 4,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":3},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorSeq\":2,\"instructionsHead\":\"changed\"}"
+        },
+        {
+          "runId": "succ-prefix",
+          "sequence": 5,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":3},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorName\":\"alpha\",\"instructionsHead\":\"changed\"}"
+        },
+        {
+          "runId": "succ-prefix",
+          "sequence": 6,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":3},\"outcome\":\"ok\"}"
+        },
+        {
+          "runId": "succ-prefix",
+          "sequence": 7,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"completed\"}"
+        }
+      ]
+    },
+    {
+      "name": "amend-in-flight-ask-is-continued",
+      "input": {
+        "name": "amend-in-flight-ask-is-continued",
+        "transcriptCounts": {
+          "sess:pred-inflight/actor#1@1": 5
+        },
+        "runs": [
+          {
+            "runId": "pred-inflight",
+            "lifetimes": [
+              {
+                "caps": 1,
+                "steps": [
+                  {
+                    "op": "createActor",
+                    "site": "actor#1",
+                    "name": "beta",
+                    "persona": "You write tests."
+                  },
+                  {
+                    "op": "ask",
+                    "tag": "p0",
+                    "site": "ask#1",
+                    "actor": "actor#1@1",
+                    "instructions": "plan"
+                  },
+                  {
+                    "op": "submit",
+                    "at": {
+                      "site": "ask#1",
+                      "ordinal": 1
+                    },
+                    "payload": "plan"
+                  },
+                  {
+                    "op": "setBoundary",
+                    "at": {
+                      "site": "ask#1",
+                      "ordinal": 1
+                    },
+                    "boundary": 2
+                  },
+                  {
+                    "op": "ask",
+                    "tag": "p1",
+                    "site": "ask#1",
+                    "actor": "actor#1@1",
+                    "instructions": "do step"
+                  },
+                  {
+                    "op": "stop",
+                    "reason": "user"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "runId": "succ-inflight",
+            "importFrom": "pred-inflight",
+            "lifetimes": [
+              {
+                "caps": 1,
+                "steps": [
+                  {
+                    "op": "createActor",
+                    "site": "actor#1",
+                    "name": "beta",
+                    "persona": "You write tests."
+                  },
+                  {
+                    "op": "ask",
+                    "tag": "s0",
+                    "site": "ask#1",
+                    "actor": "actor#1@1",
+                    "instructions": "plan"
+                  },
+                  {
+                    "op": "ask",
+                    "tag": "s1",
+                    "site": "ask#1",
+                    "actor": "actor#1@1",
+                    "instructions": "do step"
+                  },
+                  {
+                    "op": "submit",
+                    "at": {
+                      "site": "ask#1",
+                      "ordinal": 2
+                    },
+                    "payload": "done"
+                  },
+                  {
+                    "op": "complete",
+                    "artifact": "ok"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "runs": [
+        {
+          "runId": "pred-inflight",
+          "lifetimes": [
+            {
+              "build": null,
+              "results": [
+                {
+                  "actorId": "actor#1@1"
+                },
+                null,
+                null,
+                null,
+                null,
+                null
+              ],
+              "run": {
+                "runId": "pred-inflight",
+                "caps": {
+                  "maxConcurrency": 1
+                },
+                "spentTokens": 0,
+                "status": "stopped",
+                "stopReason": "user"
+              },
+              "nodes": [
+                {
+                  "runId": "pred-inflight",
+                  "siteId": "ask#1",
+                  "ordinal": 1,
+                  "kind": "ask",
+                  "actorSiteId": "actor#1",
+                  "actorOrdinal": 1,
+                  "actorSeq": 0,
+                  "inputHash": "234e8b70",
+                  "status": "completed",
+                  "result": "plan",
+                  "messageBoundary": 2
+                },
+                {
+                  "runId": "pred-inflight",
+                  "siteId": "ask#1",
+                  "ordinal": 2,
+                  "kind": "ask",
+                  "actorSiteId": "actor#1",
+                  "actorOrdinal": 1,
+                  "actorSeq": 1,
+                  "inputHash": "73e6c864",
+                  "status": "running"
+                }
+              ],
+              "actors": [
+                {
+                  "runId": "pred-inflight",
+                  "siteId": "actor#1",
+                  "ordinal": 1,
+                  "name": "beta",
+                  "persona": {
+                    "system": "You write tests.",
+                    "name": "beta"
+                  },
+                  "sessionId": "sess:pred-inflight/actor#1@1"
+                }
+              ],
+              "disposed": 1
+            }
+          ]
+        },
+        {
+          "runId": "succ-inflight",
+          "lifetimes": [
+            {
+              "build": {
+                "preflight": {
+                  "ok": true,
+                  "run": {
+                    "runId": "pred-inflight",
+                    "caps": {
+                      "maxConcurrency": 1
+                    },
+                    "spentTokens": 0,
+                    "status": "stopped",
+                    "stopReason": "user"
+                  }
+                },
+                "built": {
+                  "ok": true,
+                  "cache": {
+                    "actors": {
+                      "beta": {
+                        "persona": {
+                          "system": "You write tests.",
+                          "name": "beta"
+                        },
+                        "entries": [
+                          {
+                            "inputHash": "234e8b70",
+                            "result": "plan",
+                            "messageBoundary": 2
+                          }
+                        ],
+                        "inFlight": {
+                          "inputHash": "73e6c864",
+                          "messageBoundary": 5
+                        },
+                        "transcriptSourceSessionId": "sess:pred-inflight/actor#1@1"
+                      }
+                    },
+                    "world": {}
+                  },
+                  "resumedFrom": "pred-inflight"
+                }
+              },
+              "results": [
+                {
+                  "actorId": "actor#1@1"
+                },
+                null,
+                null,
+                null,
+                null
+              ],
+              "run": {
+                "runId": "succ-inflight",
+                "caps": {
+                  "maxConcurrency": 1
+                },
+                "spentTokens": 0,
+                "status": "completed",
+                "resumedFrom": "pred-inflight",
+                "result": "ok"
+              },
+              "nodes": [
+                {
+                  "runId": "succ-inflight",
+                  "siteId": "ask#1",
+                  "ordinal": 1,
+                  "kind": "ask",
+                  "actorSiteId": "actor#1",
+                  "actorOrdinal": 1,
+                  "actorSeq": 0,
+                  "inputHash": "234e8b70",
+                  "status": "completed",
+                  "result": "plan",
+                  "messageBoundary": 2
+                },
+                {
+                  "runId": "succ-inflight",
+                  "siteId": "ask#1",
+                  "ordinal": 2,
+                  "kind": "ask",
+                  "actorSiteId": "actor#1",
+                  "actorOrdinal": 1,
+                  "actorSeq": 1,
+                  "inputHash": "73e6c864",
+                  "status": "completed",
+                  "result": "done"
+                }
+              ],
+              "actors": [
+                {
+                  "runId": "succ-inflight",
+                  "siteId": "actor#1",
+                  "ordinal": 1,
+                  "name": "beta",
+                  "persona": {
+                    "system": "You write tests.",
+                    "name": "beta"
+                  },
+                  "sessionId": "sess:succ-inflight/actor#1@1"
+                }
+              ],
+              "disposed": 1
+            }
+          ]
+        }
+      ],
+      "outcomes": [
+        {
+          "tag": "p0",
+          "ok": true,
+          "value": "plan"
+        },
+        {
+          "tag": "p1",
+          "ok": false,
+          "error": {
+            "code": "Cancelled",
+            "message": "Run stopped."
+          }
+        },
+        {
+          "tag": "s0",
+          "ok": true,
+          "value": "plan"
+        },
+        {
+          "tag": "s1",
+          "ok": true,
+          "value": "done"
+        }
+      ],
+      "driverCalls": [
+        {
+          "op": "createActorSession",
+          "actor": "actor#1@1",
+          "seed": null
+        },
+        {
+          "op": "startAsk",
+          "session": "sess:pred-inflight/actor#1@1",
+          "instance": "ask#1@1",
+          "instructions": "plan",
+          "typed": true
+        },
+        {
+          "op": "respondToSubmit",
+          "instance": "ask#1@1",
+          "verdict": {
+            "kind": "accept"
+          }
+        },
+        {
+          "op": "startAsk",
+          "session": "sess:pred-inflight/actor#1@1",
+          "instance": "ask#1@2",
+          "instructions": "do step",
+          "typed": true
+        },
+        {
+          "op": "cancelAsk",
+          "instance": "ask#1@2"
+        },
+        {
+          "op": "createActorSession",
+          "actor": "actor#1@1",
+          "seed": {
+            "sourceSessionId": "sess:pred-inflight/actor#1@1",
+            "messageCount": 5
+          }
+        },
+        {
+          "op": "startAsk",
+          "session": "sess:succ-inflight/actor#1@1",
+          "instance": "ask#1@2",
+          "instructions": "do step",
+          "typed": true
+        },
+        {
+          "op": "respondToSubmit",
+          "instance": "ask#1@2",
+          "verdict": {
+            "kind": "accept"
+          }
+        }
+      ],
+      "events": [
+        {
+          "runId": "pred-inflight",
+          "sequence": 0,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"pred-inflight\",\"caps\":{\"maxConcurrency\":1}}"
+        },
+        {
+          "runId": "pred-inflight",
+          "sequence": 1,
+          "payloadJson": "{\"type\":\"actor-created\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"name\":\"beta\",\"persona\":{\"system\":\"You write tests.\",\"name\":\"beta\"}}"
+        },
+        {
+          "runId": "pred-inflight",
+          "sequence": 2,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorSeq\":0,\"instructionsHead\":\"plan\"}"
+        },
+        {
+          "runId": "pred-inflight",
+          "sequence": 3,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorName\":\"beta\",\"instructionsHead\":\"plan\"}"
+        },
+        {
+          "runId": "pred-inflight",
+          "sequence": 4,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"outcome\":\"ok\"}"
+        },
+        {
+          "runId": "pred-inflight",
+          "sequence": 5,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":2},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorSeq\":1,\"instructionsHead\":\"do step\"}"
+        },
+        {
+          "runId": "pred-inflight",
+          "sequence": 6,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":2},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorName\":\"beta\",\"instructionsHead\":\"do step\"}"
+        },
+        {
+          "runId": "pred-inflight",
+          "sequence": 7,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":2},\"outcome\":\"cancelled\"}"
+        },
+        {
+          "runId": "pred-inflight",
+          "sequence": 8,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"stopped\",\"stopReason\":\"user\"}"
+        },
+        {
+          "runId": "succ-inflight",
+          "sequence": 0,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"succ-inflight\",\"caps\":{\"maxConcurrency\":1}}"
+        },
+        {
+          "runId": "succ-inflight",
+          "sequence": 1,
+          "payloadJson": "{\"type\":\"actor-created\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"name\":\"beta\",\"persona\":{\"system\":\"You write tests.\",\"name\":\"beta\"}}"
+        },
+        {
+          "runId": "succ-inflight",
+          "sequence": 2,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"outcome\":\"ok\",\"cached\":true,\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorSeq\":0,\"instructionsHead\":\"plan\",\"sourceSessionId\":\"sess:pred-inflight/actor#1@1\"}"
+        },
+        {
+          "runId": "succ-inflight",
+          "sequence": 3,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":2},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorSeq\":1,\"instructionsHead\":\"do step\"}"
+        },
+        {
+          "runId": "succ-inflight",
+          "sequence": 4,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":2},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorName\":\"beta\",\"instructionsHead\":\"do step\"}"
+        },
+        {
+          "runId": "succ-inflight",
+          "sequence": 5,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":2},\"outcome\":\"ok\"}"
+        },
+        {
+          "runId": "succ-inflight",
+          "sequence": 6,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"completed\"}"
+        }
+      ]
+    },
+    {
+      "name": "amend-persona-and-anonymous-actors-run-live",
+      "input": {
+        "name": "amend-persona-and-anonymous-actors-run-live",
+        "transcriptCounts": {
+          "sess:pred-persona/actor#1@1": 2
+        },
+        "runs": [
+          {
+            "runId": "pred-persona",
+            "lifetimes": [
+              {
+                "caps": 1,
+                "steps": [
+                  {
+                    "op": "createActor",
+                    "site": "actor#1",
+                    "name": "alpha",
+                    "persona": "You review code."
+                  },
+                  {
+                    "op": "ask",
+                    "tag": "p0",
+                    "site": "ask#1",
+                    "actor": "actor#1@1",
+                    "instructions": "list files"
+                  },
+                  {
+                    "op": "submit",
+                    "at": {
+                      "site": "ask#1",
+                      "ordinal": 1
+                    },
+                    "payload": "a"
+                  },
+                  {
+                    "op": "setBoundary",
+                    "at": {
+                      "site": "ask#1",
+                      "ordinal": 1
+                    },
+                    "boundary": 2
+                  },
+                  {
+                    "op": "stop",
+                    "reason": "user"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "runId": "succ-persona",
+            "importFrom": "pred-persona",
+            "lifetimes": [
+              {
+                "caps": 1,
+                "steps": [
+                  {
+                    "op": "createActor",
+                    "site": "actor#1",
+                    "name": "alpha",
+                    "persona": "You review code, strictly."
+                  },
+                  {
+                    "op": "createActor",
+                    "site": "actor#1"
+                  },
+                  {
+                    "op": "ask",
+                    "tag": "s0",
+                    "site": "ask#1",
+                    "actor": "actor#1@1",
+                    "instructions": "list files"
+                  },
+                  {
+                    "op": "ask",
+                    "tag": "s1",
+                    "site": "ask#1",
+                    "actor": "actor#1@2",
+                    "instructions": "list files"
+                  },
+                  {
+                    "op": "submit",
+                    "at": {
+                      "site": "ask#1",
+                      "ordinal": 1
+                    },
+                    "payload": "x"
+                  },
+                  {
+                    "op": "submit",
+                    "at": {
+                      "site": "ask#1",
+                      "ordinal": 2
+                    },
+                    "payload": "y"
+                  },
+                  {
+                    "op": "complete",
+                    "artifact": null
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "runs": [
+        {
+          "runId": "pred-persona",
+          "lifetimes": [
+            {
+              "build": null,
+              "results": [
+                {
+                  "actorId": "actor#1@1"
+                },
+                null,
+                null,
+                null,
+                null
+              ],
+              "run": {
+                "runId": "pred-persona",
+                "caps": {
+                  "maxConcurrency": 1
+                },
+                "spentTokens": 0,
+                "status": "stopped",
+                "stopReason": "user"
+              },
+              "nodes": [
+                {
+                  "runId": "pred-persona",
+                  "siteId": "ask#1",
+                  "ordinal": 1,
+                  "kind": "ask",
+                  "actorSiteId": "actor#1",
+                  "actorOrdinal": 1,
+                  "actorSeq": 0,
+                  "inputHash": "83686f68",
+                  "status": "completed",
+                  "result": "a",
+                  "messageBoundary": 2
+                }
+              ],
+              "actors": [
+                {
+                  "runId": "pred-persona",
+                  "siteId": "actor#1",
+                  "ordinal": 1,
+                  "name": "alpha",
+                  "persona": {
+                    "system": "You review code.",
+                    "name": "alpha"
+                  },
+                  "sessionId": "sess:pred-persona/actor#1@1"
+                }
+              ],
+              "disposed": 1
+            }
+          ]
+        },
+        {
+          "runId": "succ-persona",
+          "lifetimes": [
+            {
+              "build": {
+                "preflight": {
+                  "ok": true,
+                  "run": {
+                    "runId": "pred-persona",
+                    "caps": {
+                      "maxConcurrency": 1
+                    },
+                    "spentTokens": 0,
+                    "status": "stopped",
+                    "stopReason": "user"
+                  }
+                },
+                "built": {
+                  "ok": true,
+                  "cache": {
+                    "actors": {
+                      "alpha": {
+                        "persona": {
+                          "system": "You review code.",
+                          "name": "alpha"
+                        },
+                        "entries": [
+                          {
+                            "inputHash": "83686f68",
+                            "result": "a",
+                            "messageBoundary": 2
+                          }
+                        ],
+                        "transcriptSourceSessionId": "sess:pred-persona/actor#1@1"
+                      }
+                    },
+                    "world": {}
+                  },
+                  "resumedFrom": "pred-persona"
+                }
+              },
+              "results": [
+                {
+                  "actorId": "actor#1@1"
+                },
+                {
+                  "actorId": "actor#1@2"
+                },
+                null,
+                null,
+                null,
+                null,
+                null
+              ],
+              "run": {
+                "runId": "succ-persona",
+                "caps": {
+                  "maxConcurrency": 1
+                },
+                "spentTokens": 0,
+                "status": "completed",
+                "resumedFrom": "pred-persona",
+                "result": null
+              },
+              "nodes": [
+                {
+                  "runId": "succ-persona",
+                  "siteId": "ask#1",
+                  "ordinal": 1,
+                  "kind": "ask",
+                  "actorSiteId": "actor#1",
+                  "actorOrdinal": 1,
+                  "actorSeq": 0,
+                  "inputHash": "83686f68",
+                  "status": "completed",
+                  "result": "x"
+                },
+                {
+                  "runId": "succ-persona",
+                  "siteId": "ask#1",
+                  "ordinal": 2,
+                  "kind": "ask",
+                  "actorSiteId": "actor#1",
+                  "actorOrdinal": 2,
+                  "actorSeq": 0,
+                  "inputHash": "83686f68",
+                  "status": "completed",
+                  "result": "y"
+                }
+              ],
+              "actors": [
+                {
+                  "runId": "succ-persona",
+                  "siteId": "actor#1",
+                  "ordinal": 1,
+                  "name": "alpha",
+                  "persona": {
+                    "system": "You review code, strictly.",
+                    "name": "alpha"
+                  },
+                  "sessionId": "sess:succ-persona/actor#1@1"
+                },
+                {
+                  "runId": "succ-persona",
+                  "siteId": "actor#1",
+                  "ordinal": 2,
+                  "persona": {},
+                  "sessionId": "sess:succ-persona/actor#1@2"
+                }
+              ],
+              "disposed": 1
+            }
+          ]
+        }
+      ],
+      "outcomes": [
+        {
+          "tag": "p0",
+          "ok": true,
+          "value": "a"
+        },
+        {
+          "tag": "s0",
+          "ok": true,
+          "value": "x"
+        },
+        {
+          "tag": "s1",
+          "ok": true,
+          "value": "y"
+        }
+      ],
+      "driverCalls": [
+        {
+          "op": "createActorSession",
+          "actor": "actor#1@1",
+          "seed": null
+        },
+        {
+          "op": "startAsk",
+          "session": "sess:pred-persona/actor#1@1",
+          "instance": "ask#1@1",
+          "instructions": "list files",
+          "typed": true
+        },
+        {
+          "op": "respondToSubmit",
+          "instance": "ask#1@1",
+          "verdict": {
+            "kind": "accept"
+          }
+        },
+        {
+          "op": "createActorSession",
+          "actor": "actor#1@1",
+          "seed": null
+        },
+        {
+          "op": "startAsk",
+          "session": "sess:succ-persona/actor#1@1",
+          "instance": "ask#1@1",
+          "instructions": "list files",
+          "typed": true
+        },
+        {
+          "op": "respondToSubmit",
+          "instance": "ask#1@1",
+          "verdict": {
+            "kind": "accept"
+          }
+        },
+        {
+          "op": "createActorSession",
+          "actor": "actor#1@2",
+          "seed": null
+        },
+        {
+          "op": "startAsk",
+          "session": "sess:succ-persona/actor#1@2",
+          "instance": "ask#1@2",
+          "instructions": "list files",
+          "typed": true
+        },
+        {
+          "op": "respondToSubmit",
+          "instance": "ask#1@2",
+          "verdict": {
+            "kind": "accept"
+          }
+        }
+      ],
+      "events": [
+        {
+          "runId": "pred-persona",
+          "sequence": 0,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"pred-persona\",\"caps\":{\"maxConcurrency\":1}}"
+        },
+        {
+          "runId": "pred-persona",
+          "sequence": 1,
+          "payloadJson": "{\"type\":\"actor-created\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"name\":\"alpha\",\"persona\":{\"system\":\"You review code.\",\"name\":\"alpha\"}}"
+        },
+        {
+          "runId": "pred-persona",
+          "sequence": 2,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorSeq\":0,\"instructionsHead\":\"list files\"}"
+        },
+        {
+          "runId": "pred-persona",
+          "sequence": 3,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorName\":\"alpha\",\"instructionsHead\":\"list files\"}"
+        },
+        {
+          "runId": "pred-persona",
+          "sequence": 4,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"outcome\":\"ok\"}"
+        },
+        {
+          "runId": "pred-persona",
+          "sequence": 5,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"stopped\",\"stopReason\":\"user\"}"
+        },
+        {
+          "runId": "succ-persona",
+          "sequence": 0,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"succ-persona\",\"caps\":{\"maxConcurrency\":1}}"
+        },
+        {
+          "runId": "succ-persona",
+          "sequence": 1,
+          "payloadJson": "{\"type\":\"actor-created\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"name\":\"alpha\",\"persona\":{\"system\":\"You review code, strictly.\",\"name\":\"alpha\"}}"
+        },
+        {
+          "runId": "succ-persona",
+          "sequence": 2,
+          "payloadJson": "{\"type\":\"actor-created\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":2},\"persona\":{}}"
+        },
+        {
+          "runId": "succ-persona",
+          "sequence": 3,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorSeq\":0,\"instructionsHead\":\"list files\"}"
+        },
+        {
+          "runId": "succ-persona",
+          "sequence": 4,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorName\":\"alpha\",\"instructionsHead\":\"list files\"}"
+        },
+        {
+          "runId": "succ-persona",
+          "sequence": 5,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":2},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":2},\"actorSeq\":0,\"instructionsHead\":\"list files\"}"
+        },
+        {
+          "runId": "succ-persona",
+          "sequence": 6,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"outcome\":\"ok\"}"
+        },
+        {
+          "runId": "succ-persona",
+          "sequence": 7,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":2},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":2},\"instructionsHead\":\"list files\"}"
+        },
+        {
+          "runId": "succ-persona",
+          "sequence": 8,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":2},\"outcome\":\"ok\"}"
+        },
+        {
+          "runId": "succ-persona",
+          "sequence": 9,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"completed\"}"
+        }
+      ]
+    },
+    {
+      "name": "amend-world-reads-consume-the-queue-then-run-live",
+      "input": {
+        "name": "amend-world-reads-consume-the-queue-then-run-live",
+        "runs": [
+          {
+            "runId": "pred-world",
+            "lifetimes": [
+              {
+                "caps": 1,
+                "steps": [
+                  {
+                    "op": "worldRead",
+                    "tag": "p0",
+                    "site": "w#1",
+                    "worldOp": "git-log",
+                    "args": [
+                      "x"
+                    ]
+                  },
+                  {
+                    "op": "worldDone",
+                    "tag": "p0",
+                    "ok": true,
+                    "value": 1
+                  },
+                  {
+                    "op": "worldRead",
+                    "tag": "p1",
+                    "site": "w#1",
+                    "worldOp": "git-log",
+                    "args": [
+                      "x"
+                    ]
+                  },
+                  {
+                    "op": "worldDone",
+                    "tag": "p1",
+                    "ok": true,
+                    "value": 2
+                  },
+                  {
+                    "op": "stop",
+                    "reason": "user"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "runId": "succ-world",
+            "importFrom": "pred-world",
+            "lifetimes": [
+              {
+                "caps": 1,
+                "steps": [
+                  {
+                    "op": "worldRead",
+                    "tag": "s0",
+                    "site": "w#1",
+                    "worldOp": "git-log",
+                    "args": [
+                      "x"
+                    ]
+                  },
+                  {
+                    "op": "worldRead",
+                    "tag": "s1",
+                    "site": "w#1",
+                    "worldOp": "git-log",
+                    "args": [
+                      "x"
+                    ]
+                  },
+                  {
+                    "op": "worldRead",
+                    "tag": "s2",
+                    "site": "w#1",
+                    "worldOp": "git-log",
+                    "args": [
+                      "x"
+                    ]
+                  },
+                  {
+                    "op": "worldDone",
+                    "tag": "s2",
+                    "ok": true,
+                    "value": 3
+                  },
+                  {
+                    "op": "complete",
+                    "artifact": 3
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "runs": [
+        {
+          "runId": "pred-world",
+          "lifetimes": [
+            {
+              "build": null,
+              "results": [
+                null,
+                null,
+                null,
+                null,
+                null
+              ],
+              "run": {
+                "runId": "pred-world",
+                "caps": {
+                  "maxConcurrency": 1
+                },
+                "spentTokens": 0,
+                "status": "stopped",
+                "stopReason": "user"
+              },
+              "nodes": [
+                {
+                  "runId": "pred-world",
+                  "siteId": "w#1",
+                  "ordinal": 1,
+                  "kind": "world-read",
+                  "inputHash": "08e9d7bc",
+                  "input": {
+                    "op": "git-log",
+                    "args": [
+                      "x"
+                    ]
+                  },
+                  "status": "completed",
+                  "result": 1
+                },
+                {
+                  "runId": "pred-world",
+                  "siteId": "w#1",
+                  "ordinal": 2,
+                  "kind": "world-read",
+                  "inputHash": "08e9d7bc",
+                  "input": {
+                    "op": "git-log",
+                    "args": [
+                      "x"
+                    ]
+                  },
+                  "status": "completed",
+                  "result": 2
+                }
+              ],
+              "actors": [],
+              "disposed": 1
+            }
+          ]
+        },
+        {
+          "runId": "succ-world",
+          "lifetimes": [
+            {
+              "build": {
+                "preflight": {
+                  "ok": true,
+                  "run": {
+                    "runId": "pred-world",
+                    "caps": {
+                      "maxConcurrency": 1
+                    },
+                    "spentTokens": 0,
+                    "status": "stopped",
+                    "stopReason": "user"
+                  }
+                },
+                "built": {
+                  "ok": true,
+                  "cache": {
+                    "actors": {},
+                    "world": {
+                      "08e9d7bc": [
+                        {
+                          "inputHash": "08e9d7bc",
+                          "kind": "world-read",
+                          "result": 1
+                        },
+                        {
+                          "inputHash": "08e9d7bc",
+                          "kind": "world-read",
+                          "result": 2
+                        }
+                      ]
+                    }
+                  },
+                  "resumedFrom": "pred-world"
+                }
+              },
+              "results": [
+                null,
+                null,
+                null,
+                null,
+                null
+              ],
+              "run": {
+                "runId": "succ-world",
+                "caps": {
+                  "maxConcurrency": 1
+                },
+                "spentTokens": 0,
+                "status": "completed",
+                "resumedFrom": "pred-world",
+                "result": 3
+              },
+              "nodes": [
+                {
+                  "runId": "succ-world",
+                  "siteId": "w#1",
+                  "ordinal": 1,
+                  "kind": "world-read",
+                  "inputHash": "08e9d7bc",
+                  "input": {
+                    "op": "git-log",
+                    "args": [
+                      "x"
+                    ]
+                  },
+                  "status": "completed",
+                  "result": 1
+                },
+                {
+                  "runId": "succ-world",
+                  "siteId": "w#1",
+                  "ordinal": 2,
+                  "kind": "world-read",
+                  "inputHash": "08e9d7bc",
+                  "input": {
+                    "op": "git-log",
+                    "args": [
+                      "x"
+                    ]
+                  },
+                  "status": "completed",
+                  "result": 2
+                },
+                {
+                  "runId": "succ-world",
+                  "siteId": "w#1",
+                  "ordinal": 3,
+                  "kind": "world-read",
+                  "inputHash": "08e9d7bc",
+                  "input": {
+                    "op": "git-log",
+                    "args": [
+                      "x"
+                    ]
+                  },
+                  "status": "completed",
+                  "result": 3
+                }
+              ],
+              "actors": [],
+              "disposed": 1
+            }
+          ]
+        }
+      ],
+      "outcomes": [
+        {
+          "tag": "p0",
+          "ok": true,
+          "value": 1
+        },
+        {
+          "tag": "p1",
+          "ok": true,
+          "value": 2
+        },
+        {
+          "tag": "s0",
+          "ok": true,
+          "value": 1
+        },
+        {
+          "tag": "s1",
+          "ok": true,
+          "value": 2
+        },
+        {
+          "tag": "s2",
+          "ok": true,
+          "value": 3
+        }
+      ],
+      "driverCalls": [
+        {
+          "op": "executeWorldRead",
+          "worldOp": "git-log",
+          "args": [
+            "x"
+          ]
+        },
+        {
+          "op": "executeWorldRead",
+          "worldOp": "git-log",
+          "args": [
+            "x"
+          ]
+        },
+        {
+          "op": "executeWorldRead",
+          "worldOp": "git-log",
+          "args": [
+            "x"
+          ]
+        }
+      ],
+      "events": [
+        {
+          "runId": "pred-world",
+          "sequence": 0,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"pred-world\",\"caps\":{\"maxConcurrency\":1}}"
+        },
+        {
+          "runId": "pred-world",
+          "sequence": 1,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":1},\"kind\":\"world-read\"}"
+        },
+        {
+          "runId": "pred-world",
+          "sequence": 2,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":1}}"
+        },
+        {
+          "runId": "pred-world",
+          "sequence": 3,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":1},\"outcome\":\"ok\"}"
+        },
+        {
+          "runId": "pred-world",
+          "sequence": 4,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":2},\"kind\":\"world-read\"}"
+        },
+        {
+          "runId": "pred-world",
+          "sequence": 5,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":2}}"
+        },
+        {
+          "runId": "pred-world",
+          "sequence": 6,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":2},\"outcome\":\"ok\"}"
+        },
+        {
+          "runId": "pred-world",
+          "sequence": 7,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"stopped\",\"stopReason\":\"user\"}"
+        },
+        {
+          "runId": "succ-world",
+          "sequence": 0,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"succ-world\",\"caps\":{\"maxConcurrency\":1}}"
+        },
+        {
+          "runId": "succ-world",
+          "sequence": 1,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":1},\"outcome\":\"ok\",\"cached\":true}"
+        },
+        {
+          "runId": "succ-world",
+          "sequence": 2,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":2},\"outcome\":\"ok\",\"cached\":true}"
+        },
+        {
+          "runId": "succ-world",
+          "sequence": 3,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":3},\"kind\":\"world-read\"}"
+        },
+        {
+          "runId": "succ-world",
+          "sequence": 4,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":3}}"
+        },
+        {
+          "runId": "succ-world",
+          "sequence": 5,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":3},\"outcome\":\"ok\"}"
+        },
+        {
+          "runId": "succ-world",
+          "sequence": 6,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"completed\"}"
+        }
+      ]
+    },
+    {
+      "name": "amend-world-run-closes-the-cache-before-the-effect",
+      "input": {
+        "name": "amend-world-run-closes-the-cache-before-the-effect",
+        "transcriptCounts": {
+          "sess:pred-close/actor#1@1": 6
+        },
+        "runs": [
+          {
+            "runId": "pred-close",
+            "lifetimes": [
+              {
+                "caps": 1,
+                "steps": [
+                  {
+                    "op": "createActor",
+                    "site": "actor#1",
+                    "name": "alpha",
+                    "persona": "You review code."
+                  },
+                  {
+                    "op": "ask",
+                    "tag": "p0",
+                    "site": "ask#1",
+                    "actor": "actor#1@1",
+                    "instructions": "list"
+                  },
+                  {
+                    "op": "stats",
+                    "at": {
+                      "site": "ask#1",
+                      "ordinal": 1
+                    },
+                    "stats": {
+                      "tokens": 1,
+                      "toolCalls": 0,
+                      "turns": 1,
+                      "worldToolCalls": 0
+                    }
+                  },
+                  {
+                    "op": "submit",
+                    "at": {
+                      "site": "ask#1",
+                      "ordinal": 1
+                    },
+                    "payload": "a"
+                  },
+                  {
+                    "op": "setBoundary",
+                    "at": {
+                      "site": "ask#1",
+                      "ordinal": 1
+                    },
+                    "boundary": 2
+                  },
+                  {
+                    "op": "ask",
+                    "tag": "p1",
+                    "site": "ask#1",
+                    "actor": "actor#1@1",
+                    "instructions": "edit"
+                  },
+                  {
+                    "op": "stats",
+                    "at": {
+                      "site": "ask#1",
+                      "ordinal": 2
+                    },
+                    "stats": {
+                      "tokens": 1,
+                      "toolCalls": 1,
+                      "turns": 1,
+                      "worldToolCalls": 1
+                    }
+                  },
+                  {
+                    "op": "submit",
+                    "at": {
+                      "site": "ask#1",
+                      "ordinal": 2
+                    },
+                    "payload": "b"
+                  },
+                  {
+                    "op": "setBoundary",
+                    "at": {
+                      "site": "ask#1",
+                      "ordinal": 2
+                    },
+                    "boundary": 4
+                  },
+                  {
+                    "op": "stop",
+                    "reason": "user"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "runId": "succ-close",
+            "importFrom": "pred-close",
+            "lifetimes": [
+              {
+                "caps": 1,
+                "steps": [
+                  {
+                    "op": "createActor",
+                    "site": "actor#1",
+                    "name": "alpha",
+                    "persona": "You review code."
+                  },
+                  {
+                    "op": "ask",
+                    "tag": "s0",
+                    "site": "ask#1",
+                    "actor": "actor#1@1",
+                    "instructions": "list"
+                  },
+                  {
+                    "op": "worldRead",
+                    "tag": "r",
+                    "site": "w#1",
+                    "worldOp": "run",
+                    "args": [
+                      "deploy"
+                    ]
+                  },
+                  {
+                    "op": "worldDone",
+                    "tag": "r",
+                    "ok": true,
+                    "value": "deployed"
+                  },
+                  {
+                    "op": "ask",
+                    "tag": "s1",
+                    "site": "ask#1",
+                    "actor": "actor#1@1",
+                    "instructions": "edit"
+                  },
+                  {
+                    "op": "submit",
+                    "at": {
+                      "site": "ask#1",
+                      "ordinal": 2
+                    },
+                    "payload": "b"
+                  },
+                  {
+                    "op": "complete",
+                    "artifact": "ok"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "runs": [
+        {
+          "runId": "pred-close",
+          "lifetimes": [
+            {
+              "build": null,
+              "results": [
+                {
+                  "actorId": "actor#1@1"
+                },
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
+              ],
+              "run": {
+                "runId": "pred-close",
+                "caps": {
+                  "maxConcurrency": 1
+                },
+                "spentTokens": 2,
+                "status": "stopped",
+                "stopReason": "user"
+              },
+              "nodes": [
+                {
+                  "runId": "pred-close",
+                  "siteId": "ask#1",
+                  "ordinal": 1,
+                  "kind": "ask",
+                  "actorSiteId": "actor#1",
+                  "actorOrdinal": 1,
+                  "actorSeq": 0,
+                  "inputHash": "866bdb79",
+                  "status": "completed",
+                  "result": "a",
+                  "stats": {
+                    "tokens": 1,
+                    "toolCalls": 0,
+                    "turns": 1,
+                    "worldToolCalls": 0
+                  },
+                  "messageBoundary": 2
+                },
+                {
+                  "runId": "pred-close",
+                  "siteId": "ask#1",
+                  "ordinal": 2,
+                  "kind": "ask",
+                  "actorSiteId": "actor#1",
+                  "actorOrdinal": 1,
+                  "actorSeq": 1,
+                  "inputHash": "00f3cca9",
+                  "status": "completed",
+                  "result": "b",
+                  "stats": {
+                    "tokens": 1,
+                    "toolCalls": 1,
+                    "turns": 1,
+                    "worldToolCalls": 1
+                  },
+                  "messageBoundary": 4
+                }
+              ],
+              "actors": [
+                {
+                  "runId": "pred-close",
+                  "siteId": "actor#1",
+                  "ordinal": 1,
+                  "name": "alpha",
+                  "persona": {
+                    "system": "You review code.",
+                    "name": "alpha"
+                  },
+                  "sessionId": "sess:pred-close/actor#1@1"
+                }
+              ],
+              "disposed": 1
+            }
+          ]
+        },
+        {
+          "runId": "succ-close",
+          "lifetimes": [
+            {
+              "build": {
+                "preflight": {
+                  "ok": true,
+                  "run": {
+                    "runId": "pred-close",
+                    "caps": {
+                      "maxConcurrency": 1
+                    },
+                    "spentTokens": 2,
+                    "status": "stopped",
+                    "stopReason": "user"
+                  }
+                },
+                "built": {
+                  "ok": true,
+                  "cache": {
+                    "actors": {
+                      "alpha": {
+                        "persona": {
+                          "system": "You review code.",
+                          "name": "alpha"
+                        },
+                        "entries": [
+                          {
+                            "inputHash": "866bdb79",
+                            "result": "a",
+                            "messageBoundary": 2,
+                            "stats": {
+                              "tokens": 1,
+                              "toolCalls": 0,
+                              "turns": 1,
+                              "worldToolCalls": 0
+                            }
+                          },
+                          {
+                            "inputHash": "00f3cca9",
+                            "result": "b",
+                            "messageBoundary": 4,
+                            "stats": {
+                              "tokens": 1,
+                              "toolCalls": 1,
+                              "turns": 1,
+                              "worldToolCalls": 1
+                            }
+                          }
+                        ],
+                        "transcriptSourceSessionId": "sess:pred-close/actor#1@1"
+                      }
+                    },
+                    "world": {}
+                  },
+                  "resumedFrom": "pred-close"
+                }
+              },
+              "results": [
+                {
+                  "actorId": "actor#1@1"
+                },
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
+              ],
+              "run": {
+                "runId": "succ-close",
+                "caps": {
+                  "maxConcurrency": 1
+                },
+                "spentTokens": 0,
+                "status": "completed",
+                "resumedFrom": "pred-close",
+                "result": "ok"
+              },
+              "nodes": [
+                {
+                  "runId": "succ-close",
+                  "siteId": "ask#1",
+                  "ordinal": 1,
+                  "kind": "ask",
+                  "actorSiteId": "actor#1",
+                  "actorOrdinal": 1,
+                  "actorSeq": 0,
+                  "inputHash": "866bdb79",
+                  "status": "completed",
+                  "result": "a",
+                  "messageBoundary": 2,
+                  "stats": {
+                    "tokens": 1,
+                    "toolCalls": 0,
+                    "turns": 1,
+                    "worldToolCalls": 0
+                  }
+                },
+                {
+                  "runId": "succ-close",
+                  "siteId": "w#1",
+                  "ordinal": 1,
+                  "kind": "world-run",
+                  "inputHash": "b05d54a1",
+                  "input": {
+                    "op": "run",
+                    "args": [
+                      "deploy"
+                    ]
+                  },
+                  "status": "completed",
+                  "result": "deployed"
+                },
+                {
+                  "runId": "succ-close",
+                  "siteId": "ask#1",
+                  "ordinal": 2,
+                  "kind": "ask",
+                  "actorSiteId": "actor#1",
+                  "actorOrdinal": 1,
+                  "actorSeq": 1,
+                  "inputHash": "00f3cca9",
+                  "status": "completed",
+                  "result": "b"
+                }
+              ],
+              "actors": [
+                {
+                  "runId": "succ-close",
+                  "siteId": "actor#1",
+                  "ordinal": 1,
+                  "name": "alpha",
+                  "persona": {
+                    "system": "You review code.",
+                    "name": "alpha"
+                  },
+                  "sessionId": "sess:succ-close/actor#1@1"
+                }
+              ],
+              "disposed": 1
+            }
+          ]
+        }
+      ],
+      "outcomes": [
+        {
+          "tag": "p0",
+          "ok": true,
+          "value": "a"
+        },
+        {
+          "tag": "p1",
+          "ok": true,
+          "value": "b"
+        },
+        {
+          "tag": "s0",
+          "ok": true,
+          "value": "a"
+        },
+        {
+          "tag": "r",
+          "ok": true,
+          "value": "deployed"
+        },
+        {
+          "tag": "s1",
+          "ok": true,
+          "value": "b"
+        }
+      ],
+      "driverCalls": [
+        {
+          "op": "createActorSession",
+          "actor": "actor#1@1",
+          "seed": null
+        },
+        {
+          "op": "startAsk",
+          "session": "sess:pred-close/actor#1@1",
+          "instance": "ask#1@1",
+          "instructions": "list",
+          "typed": true
+        },
+        {
+          "op": "respondToSubmit",
+          "instance": "ask#1@1",
+          "verdict": {
+            "kind": "accept"
+          }
+        },
+        {
+          "op": "startAsk",
+          "session": "sess:pred-close/actor#1@1",
+          "instance": "ask#1@2",
+          "instructions": "edit",
+          "typed": true
+        },
+        {
+          "op": "respondToSubmit",
+          "instance": "ask#1@2",
+          "verdict": {
+            "kind": "accept"
+          }
+        },
+        {
+          "op": "executeWorldRead",
+          "worldOp": "run",
+          "args": [
+            "deploy"
+          ]
+        },
+        {
+          "op": "createActorSession",
+          "actor": "actor#1@1",
+          "seed": {
+            "sourceSessionId": "sess:pred-close/actor#1@1",
+            "messageCount": 2
+          }
+        },
+        {
+          "op": "startAsk",
+          "session": "sess:succ-close/actor#1@1",
+          "instance": "ask#1@2",
+          "instructions": "edit",
+          "typed": true
+        },
+        {
+          "op": "respondToSubmit",
+          "instance": "ask#1@2",
+          "verdict": {
+            "kind": "accept"
+          }
+        }
+      ],
+      "events": [
+        {
+          "runId": "pred-close",
+          "sequence": 0,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"pred-close\",\"caps\":{\"maxConcurrency\":1}}"
+        },
+        {
+          "runId": "pred-close",
+          "sequence": 1,
+          "payloadJson": "{\"type\":\"actor-created\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"name\":\"alpha\",\"persona\":{\"system\":\"You review code.\",\"name\":\"alpha\"}}"
+        },
+        {
+          "runId": "pred-close",
+          "sequence": 2,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorSeq\":0,\"instructionsHead\":\"list\"}"
+        },
+        {
+          "runId": "pred-close",
+          "sequence": 3,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorName\":\"alpha\",\"instructionsHead\":\"list\"}"
+        },
+        {
+          "runId": "pred-close",
+          "sequence": 4,
+          "payloadJson": "{\"type\":\"usage-updated\",\"spentTokens\":1}"
+        },
+        {
+          "runId": "pred-close",
+          "sequence": 5,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"outcome\":\"ok\"}"
+        },
+        {
+          "runId": "pred-close",
+          "sequence": 6,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":2},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorSeq\":1,\"instructionsHead\":\"edit\"}"
+        },
+        {
+          "runId": "pred-close",
+          "sequence": 7,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":2},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorName\":\"alpha\",\"instructionsHead\":\"edit\"}"
+        },
+        {
+          "runId": "pred-close",
+          "sequence": 8,
+          "payloadJson": "{\"type\":\"usage-updated\",\"spentTokens\":2}"
+        },
+        {
+          "runId": "pred-close",
+          "sequence": 9,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":2},\"outcome\":\"ok\"}"
+        },
+        {
+          "runId": "pred-close",
+          "sequence": 10,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"stopped\",\"stopReason\":\"user\"}"
+        },
+        {
+          "runId": "succ-close",
+          "sequence": 0,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"succ-close\",\"caps\":{\"maxConcurrency\":1}}"
+        },
+        {
+          "runId": "succ-close",
+          "sequence": 1,
+          "payloadJson": "{\"type\":\"actor-created\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"name\":\"alpha\",\"persona\":{\"system\":\"You review code.\",\"name\":\"alpha\"}}"
+        },
+        {
+          "runId": "succ-close",
+          "sequence": 2,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"outcome\":\"ok\",\"cached\":true,\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorSeq\":0,\"instructionsHead\":\"list\",\"sourceSessionId\":\"sess:pred-close/actor#1@1\"}"
+        },
+        {
+          "runId": "succ-close",
+          "sequence": 3,
+          "payloadJson": "{\"type\":\"import-cache-closed\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":1},\"cause\":\"world-run\"}"
+        },
+        {
+          "runId": "succ-close",
+          "sequence": 4,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":1},\"kind\":\"world-run\"}"
+        },
+        {
+          "runId": "succ-close",
+          "sequence": 5,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":1}}"
+        },
+        {
+          "runId": "succ-close",
+          "sequence": 6,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":1},\"outcome\":\"ok\"}"
+        },
+        {
+          "runId": "succ-close",
+          "sequence": 7,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":2},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorSeq\":1,\"instructionsHead\":\"edit\"}"
+        },
+        {
+          "runId": "succ-close",
+          "sequence": 8,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":2},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorName\":\"alpha\",\"instructionsHead\":\"edit\"}"
+        },
+        {
+          "runId": "succ-close",
+          "sequence": 9,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":2},\"outcome\":\"ok\"}"
+        },
+        {
+          "runId": "succ-close",
+          "sequence": 10,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"completed\"}"
+        }
+      ]
+    },
+    {
+      "name": "amend-mutating-observation-closes-the-cache-for-a-pure-entry",
+      "input": {
+        "name": "amend-mutating-observation-closes-the-cache-for-a-pure-entry",
+        "transcriptCounts": {
+          "sess:pred-mut/actor#1@1": 6
+        },
+        "runs": [
+          {
+            "runId": "pred-mut",
+            "lifetimes": [
+              {
+                "caps": 1,
+                "steps": [
+                  {
+                    "op": "createActor",
+                    "site": "actor#1",
+                    "name": "alpha",
+                    "persona": "You review code."
+                  },
+                  {
+                    "op": "createActor",
+                    "site": "actor#1",
+                    "name": "beta",
+                    "persona": "You write tests."
+                  },
+                  {
+                    "op": "ask",
+                    "tag": "p0",
+                    "site": "ask#1",
+                    "actor": "actor#1@1",
+                    "instructions": "list"
+                  },
+                  {
+                    "op": "stats",
+                    "at": {
+                      "site": "ask#1",
+                      "ordinal": 1
+                    },
+                    "stats": {
+                      "tokens": 1,
+                      "toolCalls": 0,
+                      "turns": 1,
+                      "worldToolCalls": 0
+                    }
+                  },
+                  {
+                    "op": "submit",
+                    "at": {
+                      "site": "ask#1",
+                      "ordinal": 1
+                    },
+                    "payload": "a"
+                  },
+                  {
+                    "op": "setBoundary",
+                    "at": {
+                      "site": "ask#1",
+                      "ordinal": 1
+                    },
+                    "boundary": 2
+                  },
+                  {
+                    "op": "ask",
+                    "tag": "p1",
+                    "site": "ask#1",
+                    "actor": "actor#1@1",
+                    "instructions": "edit"
+                  },
+                  {
+                    "op": "stats",
+                    "at": {
+                      "site": "ask#1",
+                      "ordinal": 2
+                    },
+                    "stats": {
+                      "tokens": 1,
+                      "toolCalls": 0,
+                      "turns": 1,
+                      "worldToolCalls": 0
+                    }
+                  },
+                  {
+                    "op": "submit",
+                    "at": {
+                      "site": "ask#1",
+                      "ordinal": 2
+                    },
+                    "payload": "b"
+                  },
+                  {
+                    "op": "setBoundary",
+                    "at": {
+                      "site": "ask#1",
+                      "ordinal": 2
+                    },
+                    "boundary": 4
+                  },
+                  {
+                    "op": "ask",
+                    "tag": "p2",
+                    "site": "ask#1",
+                    "actor": "actor#1@2",
+                    "instructions": "b-old"
+                  },
+                  {
+                    "op": "submit",
+                    "at": {
+                      "site": "ask#1",
+                      "ordinal": 3
+                    },
+                    "payload": "c"
+                  },
+                  {
+                    "op": "setBoundary",
+                    "at": {
+                      "site": "ask#1",
+                      "ordinal": 3
+                    },
+                    "boundary": 6
+                  },
+                  {
+                    "op": "stop",
+                    "reason": "user"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "runId": "succ-mut",
+            "importFrom": "pred-mut",
+            "lifetimes": [
+              {
+                "caps": 2,
+                "steps": [
+                  {
+                    "op": "createActor",
+                    "site": "actor#1",
+                    "name": "alpha",
+                    "persona": "You review code."
+                  },
+                  {
+                    "op": "createActor",
+                    "site": "actor#1",
+                    "name": "beta",
+                    "persona": "You write tests."
+                  },
+                  {
+                    "op": "ask",
+                    "tag": "s0",
+                    "site": "ask#1",
+                    "actor": "actor#1@1",
+                    "instructions": "list"
+                  },
+                  {
+                    "op": "ask",
+                    "tag": "live",
+                    "site": "ask#1",
+                    "actor": "actor#1@2",
+                    "instructions": "b-new"
+                  },
+                  {
+                    "op": "askMutating",
+                    "at": {
+                      "site": "ask#1",
+                      "ordinal": 2
+                    }
+                  },
+                  {
+                    "op": "ask",
+                    "tag": "s1",
+                    "site": "ask#1",
+                    "actor": "actor#1@1",
+                    "instructions": "edit"
+                  },
+                  {
+                    "op": "ask",
+                    "tag": "s2",
+                    "site": "ask#1",
+                    "actor": "actor#1@1",
+                    "instructions": "other"
+                  },
+                  {
+                    "op": "submit",
+                    "at": {
+                      "site": "ask#1",
+                      "ordinal": 2
+                    },
+                    "payload": "x"
+                  },
+                  {
+                    "op": "submit",
+                    "at": {
+                      "site": "ask#1",
+                      "ordinal": 4
+                    },
+                    "payload": "z"
+                  },
+                  {
+                    "op": "complete",
+                    "artifact": null
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "runs": [
+        {
+          "runId": "pred-mut",
+          "lifetimes": [
+            {
+              "build": null,
+              "results": [
+                {
+                  "actorId": "actor#1@1"
+                },
+                {
+                  "actorId": "actor#1@2"
+                },
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
+              ],
+              "run": {
+                "runId": "pred-mut",
+                "caps": {
+                  "maxConcurrency": 1
+                },
+                "spentTokens": 2,
+                "status": "stopped",
+                "stopReason": "user"
+              },
+              "nodes": [
+                {
+                  "runId": "pred-mut",
+                  "siteId": "ask#1",
+                  "ordinal": 1,
+                  "kind": "ask",
+                  "actorSiteId": "actor#1",
+                  "actorOrdinal": 1,
+                  "actorSeq": 0,
+                  "inputHash": "866bdb79",
+                  "status": "completed",
+                  "result": "a",
+                  "stats": {
+                    "tokens": 1,
+                    "toolCalls": 0,
+                    "turns": 1,
+                    "worldToolCalls": 0
+                  },
+                  "messageBoundary": 2
+                },
+                {
+                  "runId": "pred-mut",
+                  "siteId": "ask#1",
+                  "ordinal": 2,
+                  "kind": "ask",
+                  "actorSiteId": "actor#1",
+                  "actorOrdinal": 1,
+                  "actorSeq": 1,
+                  "inputHash": "00f3cca9",
+                  "status": "completed",
+                  "result": "b",
+                  "stats": {
+                    "tokens": 1,
+                    "toolCalls": 0,
+                    "turns": 1,
+                    "worldToolCalls": 0
+                  },
+                  "messageBoundary": 4
+                },
+                {
+                  "runId": "pred-mut",
+                  "siteId": "ask#1",
+                  "ordinal": 3,
+                  "kind": "ask",
+                  "actorSiteId": "actor#1",
+                  "actorOrdinal": 2,
+                  "actorSeq": 0,
+                  "inputHash": "39f8359d",
+                  "status": "completed",
+                  "result": "c",
+                  "messageBoundary": 6
+                }
+              ],
+              "actors": [
+                {
+                  "runId": "pred-mut",
+                  "siteId": "actor#1",
+                  "ordinal": 1,
+                  "name": "alpha",
+                  "persona": {
+                    "system": "You review code.",
+                    "name": "alpha"
+                  },
+                  "sessionId": "sess:pred-mut/actor#1@1"
+                },
+                {
+                  "runId": "pred-mut",
+                  "siteId": "actor#1",
+                  "ordinal": 2,
+                  "name": "beta",
+                  "persona": {
+                    "system": "You write tests.",
+                    "name": "beta"
+                  },
+                  "sessionId": "sess:pred-mut/actor#1@2"
+                }
+              ],
+              "disposed": 1
+            }
+          ]
+        },
+        {
+          "runId": "succ-mut",
+          "lifetimes": [
+            {
+              "build": {
+                "preflight": {
+                  "ok": true,
+                  "run": {
+                    "runId": "pred-mut",
+                    "caps": {
+                      "maxConcurrency": 1
+                    },
+                    "spentTokens": 2,
+                    "status": "stopped",
+                    "stopReason": "user"
+                  }
+                },
+                "built": {
+                  "ok": true,
+                  "cache": {
+                    "actors": {
+                      "alpha": {
+                        "persona": {
+                          "system": "You review code.",
+                          "name": "alpha"
+                        },
+                        "entries": [
+                          {
+                            "inputHash": "866bdb79",
+                            "result": "a",
+                            "messageBoundary": 2,
+                            "stats": {
+                              "tokens": 1,
+                              "toolCalls": 0,
+                              "turns": 1,
+                              "worldToolCalls": 0
+                            }
+                          },
+                          {
+                            "inputHash": "00f3cca9",
+                            "result": "b",
+                            "messageBoundary": 4,
+                            "stats": {
+                              "tokens": 1,
+                              "toolCalls": 0,
+                              "turns": 1,
+                              "worldToolCalls": 0
+                            }
+                          }
+                        ],
+                        "transcriptSourceSessionId": "sess:pred-mut/actor#1@1"
+                      }
+                    },
+                    "world": {}
+                  },
+                  "resumedFrom": "pred-mut"
+                }
+              },
+              "results": [
+                {
+                  "actorId": "actor#1@1"
+                },
+                {
+                  "actorId": "actor#1@2"
+                },
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
+              ],
+              "run": {
+                "runId": "succ-mut",
+                "caps": {
+                  "maxConcurrency": 2
+                },
+                "spentTokens": 0,
+                "status": "completed",
+                "resumedFrom": "pred-mut",
+                "result": null
+              },
+              "nodes": [
+                {
+                  "runId": "succ-mut",
+                  "siteId": "ask#1",
+                  "ordinal": 1,
+                  "kind": "ask",
+                  "actorSiteId": "actor#1",
+                  "actorOrdinal": 1,
+                  "actorSeq": 0,
+                  "inputHash": "866bdb79",
+                  "status": "completed",
+                  "result": "a",
+                  "messageBoundary": 2,
+                  "stats": {
+                    "tokens": 1,
+                    "toolCalls": 0,
+                    "turns": 1,
+                    "worldToolCalls": 0
+                  }
+                },
+                {
+                  "runId": "succ-mut",
+                  "siteId": "ask#1",
+                  "ordinal": 2,
+                  "kind": "ask",
+                  "actorSiteId": "actor#1",
+                  "actorOrdinal": 2,
+                  "actorSeq": 0,
+                  "inputHash": "7c0625bc",
+                  "status": "completed",
+                  "result": "x"
+                },
+                {
+                  "runId": "succ-mut",
+                  "siteId": "ask#1",
+                  "ordinal": 3,
+                  "kind": "ask",
+                  "actorSiteId": "actor#1",
+                  "actorOrdinal": 1,
+                  "actorSeq": 1,
+                  "inputHash": "00f3cca9",
+                  "status": "completed",
+                  "result": "b",
+                  "messageBoundary": 4,
+                  "stats": {
+                    "tokens": 1,
+                    "toolCalls": 0,
+                    "turns": 1,
+                    "worldToolCalls": 0
+                  }
+                },
+                {
+                  "runId": "succ-mut",
+                  "siteId": "ask#1",
+                  "ordinal": 4,
+                  "kind": "ask",
+                  "actorSiteId": "actor#1",
+                  "actorOrdinal": 1,
+                  "actorSeq": 2,
+                  "inputHash": "e5600e55",
+                  "status": "completed",
+                  "result": "z"
+                }
+              ],
+              "actors": [
+                {
+                  "runId": "succ-mut",
+                  "siteId": "actor#1",
+                  "ordinal": 1,
+                  "name": "alpha",
+                  "persona": {
+                    "system": "You review code.",
+                    "name": "alpha"
+                  },
+                  "sessionId": "sess:succ-mut/actor#1@1"
+                },
+                {
+                  "runId": "succ-mut",
+                  "siteId": "actor#1",
+                  "ordinal": 2,
+                  "name": "beta",
+                  "persona": {
+                    "system": "You write tests.",
+                    "name": "beta"
+                  },
+                  "sessionId": "sess:succ-mut/actor#1@2"
+                }
+              ],
+              "disposed": 1
+            }
+          ]
+        }
+      ],
+      "outcomes": [
+        {
+          "tag": "p0",
+          "ok": true,
+          "value": "a"
+        },
+        {
+          "tag": "p1",
+          "ok": true,
+          "value": "b"
+        },
+        {
+          "tag": "p2",
+          "ok": true,
+          "value": "c"
+        },
+        {
+          "tag": "s0",
+          "ok": true,
+          "value": "a"
+        },
+        {
+          "tag": "s1",
+          "ok": true,
+          "value": "b"
+        },
+        {
+          "tag": "live",
+          "ok": true,
+          "value": "x"
+        },
+        {
+          "tag": "s2",
+          "ok": true,
+          "value": "z"
+        }
+      ],
+      "driverCalls": [
+        {
+          "op": "createActorSession",
+          "actor": "actor#1@1",
+          "seed": null
+        },
+        {
+          "op": "startAsk",
+          "session": "sess:pred-mut/actor#1@1",
+          "instance": "ask#1@1",
+          "instructions": "list",
+          "typed": true
+        },
+        {
+          "op": "respondToSubmit",
+          "instance": "ask#1@1",
+          "verdict": {
+            "kind": "accept"
+          }
+        },
+        {
+          "op": "startAsk",
+          "session": "sess:pred-mut/actor#1@1",
+          "instance": "ask#1@2",
+          "instructions": "edit",
+          "typed": true
+        },
+        {
+          "op": "respondToSubmit",
+          "instance": "ask#1@2",
+          "verdict": {
+            "kind": "accept"
+          }
+        },
+        {
+          "op": "createActorSession",
+          "actor": "actor#1@2",
+          "seed": null
+        },
+        {
+          "op": "startAsk",
+          "session": "sess:pred-mut/actor#1@2",
+          "instance": "ask#1@3",
+          "instructions": "b-old",
+          "typed": true
+        },
+        {
+          "op": "respondToSubmit",
+          "instance": "ask#1@3",
+          "verdict": {
+            "kind": "accept"
+          }
+        },
+        {
+          "op": "createActorSession",
+          "actor": "actor#1@2",
+          "seed": null
+        },
+        {
+          "op": "startAsk",
+          "session": "sess:succ-mut/actor#1@2",
+          "instance": "ask#1@2",
+          "instructions": "b-new",
+          "typed": true
+        },
+        {
+          "op": "createActorSession",
+          "actor": "actor#1@1",
+          "seed": {
+            "sourceSessionId": "sess:pred-mut/actor#1@1",
+            "messageCount": 4
+          }
+        },
+        {
+          "op": "startAsk",
+          "session": "sess:succ-mut/actor#1@1",
+          "instance": "ask#1@4",
+          "instructions": "other",
+          "typed": true
+        },
+        {
+          "op": "respondToSubmit",
+          "instance": "ask#1@2",
+          "verdict": {
+            "kind": "accept"
+          }
+        },
+        {
+          "op": "respondToSubmit",
+          "instance": "ask#1@4",
+          "verdict": {
+            "kind": "accept"
+          }
+        }
+      ],
+      "events": [
+        {
+          "runId": "pred-mut",
+          "sequence": 0,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"pred-mut\",\"caps\":{\"maxConcurrency\":1}}"
+        },
+        {
+          "runId": "pred-mut",
+          "sequence": 1,
+          "payloadJson": "{\"type\":\"actor-created\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"name\":\"alpha\",\"persona\":{\"system\":\"You review code.\",\"name\":\"alpha\"}}"
+        },
+        {
+          "runId": "pred-mut",
+          "sequence": 2,
+          "payloadJson": "{\"type\":\"actor-created\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":2},\"name\":\"beta\",\"persona\":{\"system\":\"You write tests.\",\"name\":\"beta\"}}"
+        },
+        {
+          "runId": "pred-mut",
+          "sequence": 3,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorSeq\":0,\"instructionsHead\":\"list\"}"
+        },
+        {
+          "runId": "pred-mut",
+          "sequence": 4,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorName\":\"alpha\",\"instructionsHead\":\"list\"}"
+        },
+        {
+          "runId": "pred-mut",
+          "sequence": 5,
+          "payloadJson": "{\"type\":\"usage-updated\",\"spentTokens\":1}"
+        },
+        {
+          "runId": "pred-mut",
+          "sequence": 6,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"outcome\":\"ok\"}"
+        },
+        {
+          "runId": "pred-mut",
+          "sequence": 7,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":2},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorSeq\":1,\"instructionsHead\":\"edit\"}"
+        },
+        {
+          "runId": "pred-mut",
+          "sequence": 8,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":2},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorName\":\"alpha\",\"instructionsHead\":\"edit\"}"
+        },
+        {
+          "runId": "pred-mut",
+          "sequence": 9,
+          "payloadJson": "{\"type\":\"usage-updated\",\"spentTokens\":2}"
+        },
+        {
+          "runId": "pred-mut",
+          "sequence": 10,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":2},\"outcome\":\"ok\"}"
+        },
+        {
+          "runId": "pred-mut",
+          "sequence": 11,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":3},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":2},\"actorSeq\":0,\"instructionsHead\":\"b-old\"}"
+        },
+        {
+          "runId": "pred-mut",
+          "sequence": 12,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":3},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":2},\"actorName\":\"beta\",\"instructionsHead\":\"b-old\"}"
+        },
+        {
+          "runId": "pred-mut",
+          "sequence": 13,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":3},\"outcome\":\"ok\"}"
+        },
+        {
+          "runId": "pred-mut",
+          "sequence": 14,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"stopped\",\"stopReason\":\"user\"}"
+        },
+        {
+          "runId": "succ-mut",
+          "sequence": 0,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"succ-mut\",\"caps\":{\"maxConcurrency\":2}}"
+        },
+        {
+          "runId": "succ-mut",
+          "sequence": 1,
+          "payloadJson": "{\"type\":\"actor-created\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"name\":\"alpha\",\"persona\":{\"system\":\"You review code.\",\"name\":\"alpha\"}}"
+        },
+        {
+          "runId": "succ-mut",
+          "sequence": 2,
+          "payloadJson": "{\"type\":\"actor-created\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":2},\"name\":\"beta\",\"persona\":{\"system\":\"You write tests.\",\"name\":\"beta\"}}"
+        },
+        {
+          "runId": "succ-mut",
+          "sequence": 3,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"outcome\":\"ok\",\"cached\":true,\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorSeq\":0,\"instructionsHead\":\"list\",\"sourceSessionId\":\"sess:pred-mut/actor#1@1\"}"
+        },
+        {
+          "runId": "succ-mut",
+          "sequence": 4,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":2},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":2},\"actorSeq\":0,\"instructionsHead\":\"b-new\"}"
+        },
+        {
+          "runId": "succ-mut",
+          "sequence": 5,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":2},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":2},\"actorName\":\"beta\",\"instructionsHead\":\"b-new\"}"
+        },
+        {
+          "runId": "succ-mut",
+          "sequence": 6,
+          "payloadJson": "{\"type\":\"import-cache-closed\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":2},\"cause\":\"mutating-tool\",\"actorName\":\"beta\"}"
+        },
+        {
+          "runId": "succ-mut",
+          "sequence": 7,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":3},\"outcome\":\"ok\",\"cached\":true,\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorSeq\":1,\"instructionsHead\":\"edit\",\"sourceSessionId\":\"sess:pred-mut/actor#1@1\"}"
+        },
+        {
+          "runId": "succ-mut",
+          "sequence": 8,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":4},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorSeq\":2,\"instructionsHead\":\"other\"}"
+        },
+        {
+          "runId": "succ-mut",
+          "sequence": 9,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":4},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorName\":\"alpha\",\"instructionsHead\":\"other\"}"
+        },
+        {
+          "runId": "succ-mut",
+          "sequence": 10,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":2},\"outcome\":\"ok\"}"
+        },
+        {
+          "runId": "succ-mut",
+          "sequence": 11,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":4},\"outcome\":\"ok\"}"
+        },
+        {
+          "runId": "succ-mut",
+          "sequence": 12,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"completed\"}"
+        }
+      ]
+    },
+    {
+      "name": "amend-resume-replays-the-recorded-in-flight-ask",
+      "input": {
+        "name": "amend-resume-replays-the-recorded-in-flight-ask",
+        "transcriptCounts": {
+          "sess:pred-resume/actor#1@1": 5
+        },
+        "runs": [
+          {
+            "runId": "pred-resume",
+            "lifetimes": [
+              {
+                "caps": 1,
+                "steps": [
+                  {
+                    "op": "createActor",
+                    "site": "actor#1",
+                    "name": "alpha",
+                    "persona": "You review code."
+                  },
+                  {
+                    "op": "ask",
+                    "tag": "p0",
+                    "site": "ask#1",
+                    "actor": "actor#1@1",
+                    "instructions": "list"
+                  },
+                  {
+                    "op": "submit",
+                    "at": {
+                      "site": "ask#1",
+                      "ordinal": 1
+                    },
+                    "payload": "a"
+                  },
+                  {
+                    "op": "setBoundary",
+                    "at": {
+                      "site": "ask#1",
+                      "ordinal": 1
+                    },
+                    "boundary": 2
+                  },
+                  {
+                    "op": "ask",
+                    "tag": "p1",
+                    "site": "ask#1",
+                    "actor": "actor#1@1",
+                    "instructions": "edit"
+                  },
+                  {
+                    "op": "stop",
+                    "reason": "user"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "runId": "succ-resume",
+            "importFrom": "pred-resume",
+            "lifetimes": [
+              {
+                "caps": 1,
+                "steps": [
+                  {
+                    "op": "createActor",
+                    "site": "actor#1",
+                    "name": "alpha",
+                    "persona": "You review code."
+                  },
+                  {
+                    "op": "ask",
+                    "tag": "s0",
+                    "site": "ask#1",
+                    "actor": "actor#1@1",
+                    "instructions": "list"
+                  },
+                  {
+                    "op": "ask",
+                    "tag": "s1",
+                    "site": "ask#1",
+                    "actor": "actor#1@1",
+                    "instructions": "edit"
+                  },
+                  {
+                    "op": "stop",
+                    "reason": "interrupted"
+                  }
+                ]
+              },
+              {
+                "caps": 1,
+                "steps": [
+                  {
+                    "op": "createActor",
+                    "site": "actor#1",
+                    "name": "alpha",
+                    "persona": "You review code."
+                  },
+                  {
+                    "op": "ask",
+                    "tag": "s0",
+                    "site": "ask#1",
+                    "actor": "actor#1@1",
+                    "instructions": "list"
+                  },
+                  {
+                    "op": "ask",
+                    "tag": "s1",
+                    "site": "ask#1",
+                    "actor": "actor#1@1",
+                    "instructions": "edit"
+                  },
+                  {
+                    "op": "submit",
+                    "at": {
+                      "site": "ask#1",
+                      "ordinal": 2
+                    },
+                    "payload": "b"
+                  },
+                  {
+                    "op": "complete",
+                    "artifact": "ok"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "runs": [
+        {
+          "runId": "pred-resume",
+          "lifetimes": [
+            {
+              "build": null,
+              "results": [
+                {
+                  "actorId": "actor#1@1"
+                },
+                null,
+                null,
+                null,
+                null,
+                null
+              ],
+              "run": {
+                "runId": "pred-resume",
+                "caps": {
+                  "maxConcurrency": 1
+                },
+                "spentTokens": 0,
+                "status": "stopped",
+                "stopReason": "user"
+              },
+              "nodes": [
+                {
+                  "runId": "pred-resume",
+                  "siteId": "ask#1",
+                  "ordinal": 1,
+                  "kind": "ask",
+                  "actorSiteId": "actor#1",
+                  "actorOrdinal": 1,
+                  "actorSeq": 0,
+                  "inputHash": "866bdb79",
+                  "status": "completed",
+                  "result": "a",
+                  "messageBoundary": 2
+                },
+                {
+                  "runId": "pred-resume",
+                  "siteId": "ask#1",
+                  "ordinal": 2,
+                  "kind": "ask",
+                  "actorSiteId": "actor#1",
+                  "actorOrdinal": 1,
+                  "actorSeq": 1,
+                  "inputHash": "00f3cca9",
+                  "status": "running"
+                }
+              ],
+              "actors": [
+                {
+                  "runId": "pred-resume",
+                  "siteId": "actor#1",
+                  "ordinal": 1,
+                  "name": "alpha",
+                  "persona": {
+                    "system": "You review code.",
+                    "name": "alpha"
+                  },
+                  "sessionId": "sess:pred-resume/actor#1@1"
+                }
+              ],
+              "disposed": 1
+            }
+          ]
+        },
+        {
+          "runId": "succ-resume",
+          "lifetimes": [
+            {
+              "build": {
+                "preflight": {
+                  "ok": true,
+                  "run": {
+                    "runId": "pred-resume",
+                    "caps": {
+                      "maxConcurrency": 1
+                    },
+                    "spentTokens": 0,
+                    "status": "stopped",
+                    "stopReason": "user"
+                  }
+                },
+                "built": {
+                  "ok": true,
+                  "cache": {
+                    "actors": {
+                      "alpha": {
+                        "persona": {
+                          "system": "You review code.",
+                          "name": "alpha"
+                        },
+                        "entries": [
+                          {
+                            "inputHash": "866bdb79",
+                            "result": "a",
+                            "messageBoundary": 2
+                          }
+                        ],
+                        "inFlight": {
+                          "inputHash": "00f3cca9",
+                          "messageBoundary": 5
+                        },
+                        "transcriptSourceSessionId": "sess:pred-resume/actor#1@1"
+                      }
+                    },
+                    "world": {}
+                  },
+                  "resumedFrom": "pred-resume"
+                }
+              },
+              "results": [
+                {
+                  "actorId": "actor#1@1"
+                },
+                null,
+                null,
+                null
+              ],
+              "run": {
+                "runId": "succ-resume",
+                "caps": {
+                  "maxConcurrency": 1
+                },
+                "spentTokens": 0,
+                "status": "stopped",
+                "resumedFrom": "pred-resume",
+                "stopReason": "interrupted"
+              },
+              "nodes": [
+                {
+                  "runId": "succ-resume",
+                  "siteId": "ask#1",
+                  "ordinal": 1,
+                  "kind": "ask",
+                  "actorSiteId": "actor#1",
+                  "actorOrdinal": 1,
+                  "actorSeq": 0,
+                  "inputHash": "866bdb79",
+                  "status": "completed",
+                  "result": "a",
+                  "messageBoundary": 2
+                },
+                {
+                  "runId": "succ-resume",
+                  "siteId": "ask#1",
+                  "ordinal": 2,
+                  "kind": "ask",
+                  "actorSiteId": "actor#1",
+                  "actorOrdinal": 1,
+                  "actorSeq": 1,
+                  "inputHash": "00f3cca9",
+                  "status": "running"
+                }
+              ],
+              "actors": [
+                {
+                  "runId": "succ-resume",
+                  "siteId": "actor#1",
+                  "ordinal": 1,
+                  "name": "alpha",
+                  "persona": {
+                    "system": "You review code.",
+                    "name": "alpha"
+                  },
+                  "sessionId": "sess:succ-resume/actor#1@1"
+                }
+              ],
+              "disposed": 1
+            },
+            {
+              "build": {
+                "preflight": {
+                  "ok": true,
+                  "run": {
+                    "runId": "pred-resume",
+                    "caps": {
+                      "maxConcurrency": 1
+                    },
+                    "spentTokens": 0,
+                    "status": "stopped",
+                    "stopReason": "user"
+                  }
+                },
+                "built": {
+                  "ok": true,
+                  "cache": {
+                    "actors": {
+                      "alpha": {
+                        "persona": {
+                          "system": "You review code.",
+                          "name": "alpha"
+                        },
+                        "entries": [
+                          {
+                            "inputHash": "866bdb79",
+                            "result": "a",
+                            "messageBoundary": 2
+                          }
+                        ],
+                        "inFlight": {
+                          "inputHash": "00f3cca9",
+                          "messageBoundary": 5
+                        },
+                        "transcriptSourceSessionId": "sess:pred-resume/actor#1@1"
+                      }
+                    },
+                    "world": {}
+                  },
+                  "resumedFrom": "pred-resume"
+                }
+              },
+              "results": [
+                {
+                  "actorId": "actor#1@1"
+                },
+                null,
+                null,
+                null,
+                null
+              ],
+              "run": {
+                "runId": "succ-resume",
+                "caps": {
+                  "maxConcurrency": 1
+                },
+                "spentTokens": 0,
+                "status": "completed",
+                "resumedFrom": "pred-resume",
+                "result": "ok"
+              },
+              "nodes": [
+                {
+                  "runId": "succ-resume",
+                  "siteId": "ask#1",
+                  "ordinal": 1,
+                  "kind": "ask",
+                  "actorSiteId": "actor#1",
+                  "actorOrdinal": 1,
+                  "actorSeq": 0,
+                  "inputHash": "866bdb79",
+                  "status": "completed",
+                  "result": "a",
+                  "messageBoundary": 2
+                },
+                {
+                  "runId": "succ-resume",
+                  "siteId": "ask#1",
+                  "ordinal": 2,
+                  "kind": "ask",
+                  "actorSiteId": "actor#1",
+                  "actorOrdinal": 1,
+                  "actorSeq": 1,
+                  "inputHash": "00f3cca9",
+                  "status": "completed",
+                  "result": "b"
+                }
+              ],
+              "actors": [
+                {
+                  "runId": "succ-resume",
+                  "siteId": "actor#1",
+                  "ordinal": 1,
+                  "name": "alpha",
+                  "persona": {
+                    "system": "You review code.",
+                    "name": "alpha"
+                  },
+                  "sessionId": "sess:succ-resume/actor#1@1"
+                }
+              ],
+              "disposed": 1
+            }
+          ]
+        }
+      ],
+      "outcomes": [
+        {
+          "tag": "p0",
+          "ok": true,
+          "value": "a"
+        },
+        {
+          "tag": "p1",
+          "ok": false,
+          "error": {
+            "code": "Cancelled",
+            "message": "Run stopped."
+          }
+        },
+        {
+          "tag": "s0",
+          "ok": true,
+          "value": "a"
+        },
+        {
+          "tag": "s1",
+          "ok": false,
+          "error": {
+            "code": "Cancelled",
+            "message": "Run stopped."
+          }
+        },
+        {
+          "tag": "s0",
+          "ok": true,
+          "value": "a"
+        },
+        {
+          "tag": "s1",
+          "ok": true,
+          "value": "b"
+        }
+      ],
+      "driverCalls": [
+        {
+          "op": "createActorSession",
+          "actor": "actor#1@1",
+          "seed": null
+        },
+        {
+          "op": "startAsk",
+          "session": "sess:pred-resume/actor#1@1",
+          "instance": "ask#1@1",
+          "instructions": "list",
+          "typed": true
+        },
+        {
+          "op": "respondToSubmit",
+          "instance": "ask#1@1",
+          "verdict": {
+            "kind": "accept"
+          }
+        },
+        {
+          "op": "startAsk",
+          "session": "sess:pred-resume/actor#1@1",
+          "instance": "ask#1@2",
+          "instructions": "edit",
+          "typed": true
+        },
+        {
+          "op": "cancelAsk",
+          "instance": "ask#1@2"
+        },
+        {
+          "op": "createActorSession",
+          "actor": "actor#1@1",
+          "seed": {
+            "sourceSessionId": "sess:pred-resume/actor#1@1",
+            "messageCount": 5
+          }
+        },
+        {
+          "op": "startAsk",
+          "session": "sess:succ-resume/actor#1@1",
+          "instance": "ask#1@2",
+          "instructions": "edit",
+          "typed": true
+        },
+        {
+          "op": "cancelAsk",
+          "instance": "ask#1@2"
+        },
+        {
+          "op": "createActorSession",
+          "actor": "actor#1@1",
+          "seed": {
+            "sourceSessionId": "sess:pred-resume/actor#1@1",
+            "messageCount": 5
+          }
+        },
+        {
+          "op": "startAsk",
+          "session": "sess:succ-resume/actor#1@1",
+          "instance": "ask#1@2",
+          "instructions": "edit",
+          "typed": true
+        },
+        {
+          "op": "respondToSubmit",
+          "instance": "ask#1@2",
+          "verdict": {
+            "kind": "accept"
+          }
+        }
+      ],
+      "events": [
+        {
+          "runId": "pred-resume",
+          "sequence": 0,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"pred-resume\",\"caps\":{\"maxConcurrency\":1}}"
+        },
+        {
+          "runId": "pred-resume",
+          "sequence": 1,
+          "payloadJson": "{\"type\":\"actor-created\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"name\":\"alpha\",\"persona\":{\"system\":\"You review code.\",\"name\":\"alpha\"}}"
+        },
+        {
+          "runId": "pred-resume",
+          "sequence": 2,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorSeq\":0,\"instructionsHead\":\"list\"}"
+        },
+        {
+          "runId": "pred-resume",
+          "sequence": 3,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorName\":\"alpha\",\"instructionsHead\":\"list\"}"
+        },
+        {
+          "runId": "pred-resume",
+          "sequence": 4,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"outcome\":\"ok\"}"
+        },
+        {
+          "runId": "pred-resume",
+          "sequence": 5,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":2},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorSeq\":1,\"instructionsHead\":\"edit\"}"
+        },
+        {
+          "runId": "pred-resume",
+          "sequence": 6,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":2},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorName\":\"alpha\",\"instructionsHead\":\"edit\"}"
+        },
+        {
+          "runId": "pred-resume",
+          "sequence": 7,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":2},\"outcome\":\"cancelled\"}"
+        },
+        {
+          "runId": "pred-resume",
+          "sequence": 8,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"stopped\",\"stopReason\":\"user\"}"
+        },
+        {
+          "runId": "succ-resume",
+          "sequence": 0,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"succ-resume\",\"caps\":{\"maxConcurrency\":1}}"
+        },
+        {
+          "runId": "succ-resume",
+          "sequence": 1,
+          "payloadJson": "{\"type\":\"actor-created\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"name\":\"alpha\",\"persona\":{\"system\":\"You review code.\",\"name\":\"alpha\"}}"
+        },
+        {
+          "runId": "succ-resume",
+          "sequence": 2,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"outcome\":\"ok\",\"cached\":true,\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorSeq\":0,\"instructionsHead\":\"list\",\"sourceSessionId\":\"sess:pred-resume/actor#1@1\"}"
+        },
+        {
+          "runId": "succ-resume",
+          "sequence": 3,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":2},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorSeq\":1,\"instructionsHead\":\"edit\"}"
+        },
+        {
+          "runId": "succ-resume",
+          "sequence": 4,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":2},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorName\":\"alpha\",\"instructionsHead\":\"edit\"}"
+        },
+        {
+          "runId": "succ-resume",
+          "sequence": 5,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":2},\"outcome\":\"cancelled\"}"
+        },
+        {
+          "runId": "succ-resume",
+          "sequence": 6,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"stopped\",\"stopReason\":\"interrupted\"}"
+        },
+        {
+          "runId": "succ-resume",
+          "sequence": 7,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"succ-resume\",\"caps\":{\"maxConcurrency\":1}}"
+        },
+        {
+          "runId": "succ-resume",
+          "sequence": 8,
+          "payloadJson": "{\"type\":\"actor-created\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"name\":\"alpha\",\"persona\":{\"system\":\"You review code.\",\"name\":\"alpha\"}}"
+        },
+        {
+          "runId": "succ-resume",
+          "sequence": 9,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"outcome\":\"ok\",\"cached\":true,\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorSeq\":0,\"instructionsHead\":\"list\",\"sourceSessionId\":\"sess:pred-resume/actor#1@1\"}"
+        },
+        {
+          "runId": "succ-resume",
+          "sequence": 10,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":2},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorSeq\":1,\"instructionsHead\":\"edit\"}"
+        },
+        {
+          "runId": "succ-resume",
+          "sequence": 11,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":2},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorName\":\"alpha\",\"instructionsHead\":\"edit\"}"
+        },
+        {
+          "runId": "succ-resume",
+          "sequence": 12,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":2},\"outcome\":\"ok\"}"
+        },
+        {
+          "runId": "succ-resume",
+          "sequence": 13,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"completed\"}"
+        }
+      ]
+    },
+    {
+      "name": "amend-refusals-leave-the-successor-without-a-cache",
+      "input": {
+        "name": "amend-refusals-leave-the-successor-without-a-cache",
+        "runs": [
+          {
+            "runId": "pred-running",
+            "lifetimes": [
+              {
+                "caps": 1,
+                "steps": [
+                  {
+                    "op": "createActor",
+                    "site": "actor#1",
+                    "name": "alpha",
+                    "persona": "You review code."
+                  },
+                  {
+                    "op": "ask",
+                    "tag": "p0",
+                    "site": "ask#1",
+                    "actor": "actor#1@1",
+                    "instructions": "list"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "runId": "pred-no-boundary",
+            "lifetimes": [
+              {
+                "caps": 1,
+                "steps": [
+                  {
+                    "op": "createActor",
+                    "site": "actor#1",
+                    "name": "alpha",
+                    "persona": "You review code."
+                  },
+                  {
+                    "op": "ask",
+                    "tag": "p0",
+                    "site": "ask#1",
+                    "actor": "actor#1@1",
+                    "instructions": "list"
+                  },
+                  {
+                    "op": "submit",
+                    "at": {
+                      "site": "ask#1",
+                      "ordinal": 1
+                    },
+                    "payload": "a"
+                  },
+                  {
+                    "op": "stop",
+                    "reason": "user"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "runId": "succ-running",
+            "importFrom": "pred-running",
+            "lifetimes": [
+              {
+                "caps": 1,
+                "steps": [
+                  {
+                    "op": "createActor",
+                    "site": "actor#1",
+                    "name": "alpha",
+                    "persona": "You review code."
+                  },
+                  {
+                    "op": "ask",
+                    "tag": "s0",
+                    "site": "ask#1",
+                    "actor": "actor#1@1",
+                    "instructions": "list"
+                  },
+                  {
+                    "op": "submit",
+                    "at": {
+                      "site": "ask#1",
+                      "ordinal": 1
+                    },
+                    "payload": "a"
+                  },
+                  {
+                    "op": "complete",
+                    "artifact": null
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "runId": "succ-no-boundary",
+            "importFrom": "pred-no-boundary",
+            "lifetimes": [
+              {
+                "caps": 1,
+                "steps": [
+                  {
+                    "op": "createActor",
+                    "site": "actor#1",
+                    "name": "alpha",
+                    "persona": "You review code."
+                  },
+                  {
+                    "op": "ask",
+                    "tag": "s0",
+                    "site": "ask#1",
+                    "actor": "actor#1@1",
+                    "instructions": "list"
+                  },
+                  {
+                    "op": "submit",
+                    "at": {
+                      "site": "ask#1",
+                      "ordinal": 1
+                    },
+                    "payload": "a"
+                  },
+                  {
+                    "op": "complete",
+                    "artifact": null
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "runId": "succ-missing",
+            "importFrom": "pred-absent",
+            "lifetimes": [
+              {
+                "caps": 1,
+                "steps": [
+                  {
+                    "op": "complete",
+                    "artifact": null
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "runs": [
+        {
+          "runId": "pred-running",
+          "lifetimes": [
+            {
+              "build": null,
+              "results": [
+                {
+                  "actorId": "actor#1@1"
+                },
+                null
+              ],
+              "run": {
+                "runId": "pred-running",
+                "caps": {
+                  "maxConcurrency": 1
+                },
+                "spentTokens": 0,
+                "status": "running"
+              },
+              "nodes": [
+                {
+                  "runId": "pred-running",
+                  "siteId": "ask#1",
+                  "ordinal": 1,
+                  "kind": "ask",
+                  "actorSiteId": "actor#1",
+                  "actorOrdinal": 1,
+                  "actorSeq": 0,
+                  "inputHash": "866bdb79",
+                  "status": "running"
+                }
+              ],
+              "actors": [
+                {
+                  "runId": "pred-running",
+                  "siteId": "actor#1",
+                  "ordinal": 1,
+                  "name": "alpha",
+                  "persona": {
+                    "system": "You review code.",
+                    "name": "alpha"
+                  },
+                  "sessionId": "sess:pred-running/actor#1@1"
+                }
+              ],
+              "disposed": 0
+            }
+          ]
+        },
+        {
+          "runId": "pred-no-boundary",
+          "lifetimes": [
+            {
+              "build": null,
+              "results": [
+                {
+                  "actorId": "actor#1@1"
+                },
+                null,
+                null,
+                null
+              ],
+              "run": {
+                "runId": "pred-no-boundary",
+                "caps": {
+                  "maxConcurrency": 1
+                },
+                "spentTokens": 0,
+                "status": "stopped",
+                "stopReason": "user"
+              },
+              "nodes": [
+                {
+                  "runId": "pred-no-boundary",
+                  "siteId": "ask#1",
+                  "ordinal": 1,
+                  "kind": "ask",
+                  "actorSiteId": "actor#1",
+                  "actorOrdinal": 1,
+                  "actorSeq": 0,
+                  "inputHash": "866bdb79",
+                  "status": "completed",
+                  "result": "a"
+                }
+              ],
+              "actors": [
+                {
+                  "runId": "pred-no-boundary",
+                  "siteId": "actor#1",
+                  "ordinal": 1,
+                  "name": "alpha",
+                  "persona": {
+                    "system": "You review code.",
+                    "name": "alpha"
+                  },
+                  "sessionId": "sess:pred-no-boundary/actor#1@1"
+                }
+              ],
+              "disposed": 1
+            }
+          ]
+        },
+        {
+          "runId": "succ-running",
+          "lifetimes": [
+            {
+              "build": {
+                "preflight": {
+                  "ok": true,
+                  "run": {
+                    "runId": "pred-running",
+                    "caps": {
+                      "maxConcurrency": 1
+                    },
+                    "spentTokens": 0,
+                    "status": "running"
+                  }
+                },
+                "built": {
+                  "ok": false,
+                  "reason": "not_amendable"
+                }
+              },
+              "results": [
+                {
+                  "actorId": "actor#1@1"
+                },
+                null,
+                null,
+                null
+              ],
+              "run": {
+                "runId": "succ-running",
+                "caps": {
+                  "maxConcurrency": 1
+                },
+                "spentTokens": 0,
+                "status": "completed",
+                "resumedFrom": "pred-running",
+                "result": null
+              },
+              "nodes": [
+                {
+                  "runId": "succ-running",
+                  "siteId": "ask#1",
+                  "ordinal": 1,
+                  "kind": "ask",
+                  "actorSiteId": "actor#1",
+                  "actorOrdinal": 1,
+                  "actorSeq": 0,
+                  "inputHash": "866bdb79",
+                  "status": "completed",
+                  "result": "a"
+                }
+              ],
+              "actors": [
+                {
+                  "runId": "succ-running",
+                  "siteId": "actor#1",
+                  "ordinal": 1,
+                  "name": "alpha",
+                  "persona": {
+                    "system": "You review code.",
+                    "name": "alpha"
+                  },
+                  "sessionId": "sess:succ-running/actor#1@1"
+                }
+              ],
+              "disposed": 1
+            }
+          ]
+        },
+        {
+          "runId": "succ-no-boundary",
+          "lifetimes": [
+            {
+              "build": {
+                "preflight": {
+                  "ok": false,
+                  "reason": "missing_boundaries"
+                },
+                "built": {
+                  "ok": false,
+                  "reason": "missing_boundaries"
+                }
+              },
+              "results": [
+                {
+                  "actorId": "actor#1@1"
+                },
+                null,
+                null,
+                null
+              ],
+              "run": {
+                "runId": "succ-no-boundary",
+                "caps": {
+                  "maxConcurrency": 1
+                },
+                "spentTokens": 0,
+                "status": "completed",
+                "resumedFrom": "pred-no-boundary",
+                "result": null
+              },
+              "nodes": [
+                {
+                  "runId": "succ-no-boundary",
+                  "siteId": "ask#1",
+                  "ordinal": 1,
+                  "kind": "ask",
+                  "actorSiteId": "actor#1",
+                  "actorOrdinal": 1,
+                  "actorSeq": 0,
+                  "inputHash": "866bdb79",
+                  "status": "completed",
+                  "result": "a"
+                }
+              ],
+              "actors": [
+                {
+                  "runId": "succ-no-boundary",
+                  "siteId": "actor#1",
+                  "ordinal": 1,
+                  "name": "alpha",
+                  "persona": {
+                    "system": "You review code.",
+                    "name": "alpha"
+                  },
+                  "sessionId": "sess:succ-no-boundary/actor#1@1"
+                }
+              ],
+              "disposed": 1
+            }
+          ]
+        },
+        {
+          "runId": "succ-missing",
+          "lifetimes": [
+            {
+              "build": {
+                "preflight": {
+                  "ok": false,
+                  "reason": "run_not_found"
+                },
+                "built": {
+                  "ok": false,
+                  "reason": "run_not_found"
+                }
+              },
+              "results": [
+                null
+              ],
+              "run": {
+                "runId": "succ-missing",
+                "caps": {
+                  "maxConcurrency": 1
+                },
+                "spentTokens": 0,
+                "status": "completed",
+                "resumedFrom": "pred-absent",
+                "result": null
+              },
+              "nodes": [],
+              "actors": [],
+              "disposed": 1
+            }
+          ]
+        }
+      ],
+      "outcomes": [
+        {
+          "tag": "p0",
+          "ok": true,
+          "value": "a"
+        },
+        {
+          "tag": "s0",
+          "ok": true,
+          "value": "a"
+        },
+        {
+          "tag": "s0",
+          "ok": true,
+          "value": "a"
+        }
+      ],
+      "driverCalls": [
+        {
+          "op": "createActorSession",
+          "actor": "actor#1@1",
+          "seed": null
+        },
+        {
+          "op": "startAsk",
+          "session": "sess:pred-running/actor#1@1",
+          "instance": "ask#1@1",
+          "instructions": "list",
+          "typed": true
+        },
+        {
+          "op": "createActorSession",
+          "actor": "actor#1@1",
+          "seed": null
+        },
+        {
+          "op": "startAsk",
+          "session": "sess:pred-no-boundary/actor#1@1",
+          "instance": "ask#1@1",
+          "instructions": "list",
+          "typed": true
+        },
+        {
+          "op": "respondToSubmit",
+          "instance": "ask#1@1",
+          "verdict": {
+            "kind": "accept"
+          }
+        },
+        {
+          "op": "createActorSession",
+          "actor": "actor#1@1",
+          "seed": null
+        },
+        {
+          "op": "startAsk",
+          "session": "sess:succ-running/actor#1@1",
+          "instance": "ask#1@1",
+          "instructions": "list",
+          "typed": true
+        },
+        {
+          "op": "respondToSubmit",
+          "instance": "ask#1@1",
+          "verdict": {
+            "kind": "accept"
+          }
+        },
+        {
+          "op": "createActorSession",
+          "actor": "actor#1@1",
+          "seed": null
+        },
+        {
+          "op": "startAsk",
+          "session": "sess:succ-no-boundary/actor#1@1",
+          "instance": "ask#1@1",
+          "instructions": "list",
+          "typed": true
+        },
+        {
+          "op": "respondToSubmit",
+          "instance": "ask#1@1",
+          "verdict": {
+            "kind": "accept"
+          }
+        }
+      ],
+      "events": [
+        {
+          "runId": "pred-running",
+          "sequence": 0,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"pred-running\",\"caps\":{\"maxConcurrency\":1}}"
+        },
+        {
+          "runId": "pred-running",
+          "sequence": 1,
+          "payloadJson": "{\"type\":\"actor-created\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"name\":\"alpha\",\"persona\":{\"system\":\"You review code.\",\"name\":\"alpha\"}}"
+        },
+        {
+          "runId": "pred-running",
+          "sequence": 2,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorSeq\":0,\"instructionsHead\":\"list\"}"
+        },
+        {
+          "runId": "pred-running",
+          "sequence": 3,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorName\":\"alpha\",\"instructionsHead\":\"list\"}"
+        },
+        {
+          "runId": "pred-no-boundary",
+          "sequence": 0,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"pred-no-boundary\",\"caps\":{\"maxConcurrency\":1}}"
+        },
+        {
+          "runId": "pred-no-boundary",
+          "sequence": 1,
+          "payloadJson": "{\"type\":\"actor-created\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"name\":\"alpha\",\"persona\":{\"system\":\"You review code.\",\"name\":\"alpha\"}}"
+        },
+        {
+          "runId": "pred-no-boundary",
+          "sequence": 2,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorSeq\":0,\"instructionsHead\":\"list\"}"
+        },
+        {
+          "runId": "pred-no-boundary",
+          "sequence": 3,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorName\":\"alpha\",\"instructionsHead\":\"list\"}"
+        },
+        {
+          "runId": "pred-no-boundary",
+          "sequence": 4,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"outcome\":\"ok\"}"
+        },
+        {
+          "runId": "pred-no-boundary",
+          "sequence": 5,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"stopped\",\"stopReason\":\"user\"}"
+        },
+        {
+          "runId": "succ-running",
+          "sequence": 0,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"succ-running\",\"caps\":{\"maxConcurrency\":1}}"
+        },
+        {
+          "runId": "succ-running",
+          "sequence": 1,
+          "payloadJson": "{\"type\":\"actor-created\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"name\":\"alpha\",\"persona\":{\"system\":\"You review code.\",\"name\":\"alpha\"}}"
+        },
+        {
+          "runId": "succ-running",
+          "sequence": 2,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorSeq\":0,\"instructionsHead\":\"list\"}"
+        },
+        {
+          "runId": "succ-running",
+          "sequence": 3,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorName\":\"alpha\",\"instructionsHead\":\"list\"}"
+        },
+        {
+          "runId": "succ-running",
+          "sequence": 4,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"outcome\":\"ok\"}"
+        },
+        {
+          "runId": "succ-running",
+          "sequence": 5,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"completed\"}"
+        },
+        {
+          "runId": "succ-no-boundary",
+          "sequence": 0,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"succ-no-boundary\",\"caps\":{\"maxConcurrency\":1}}"
+        },
+        {
+          "runId": "succ-no-boundary",
+          "sequence": 1,
+          "payloadJson": "{\"type\":\"actor-created\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"name\":\"alpha\",\"persona\":{\"system\":\"You review code.\",\"name\":\"alpha\"}}"
+        },
+        {
+          "runId": "succ-no-boundary",
+          "sequence": 2,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorSeq\":0,\"instructionsHead\":\"list\"}"
+        },
+        {
+          "runId": "succ-no-boundary",
+          "sequence": 3,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"kind\":\"ask\",\"actor\":{\"siteId\":\"actor#1\",\"ordinal\":1},\"actorName\":\"alpha\",\"instructionsHead\":\"list\"}"
+        },
+        {
+          "runId": "succ-no-boundary",
+          "sequence": 4,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"ask#1\",\"ordinal\":1},\"outcome\":\"ok\"}"
+        },
+        {
+          "runId": "succ-no-boundary",
+          "sequence": 5,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"completed\"}"
+        },
+        {
+          "runId": "succ-missing",
+          "sequence": 0,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"succ-missing\",\"caps\":{\"maxConcurrency\":1}}"
+        },
+        {
+          "runId": "succ-missing",
+          "sequence": 1,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"completed\"}"
+        }
+      ]
+    },
+    {
+      "name": "amend-world-running-row-versus-the-import-queue",
+      "input": {
+        "name": "amend-world-running-row-versus-the-import-queue",
+        "runs": [
+          {
+            "runId": "pred-world-run",
+            "lifetimes": [
+              {
+                "caps": 1,
+                "steps": [
+                  {
+                    "op": "worldRead",
+                    "tag": "p0",
+                    "site": "w#1",
+                    "worldOp": "git-log",
+                    "args": [
+                      "x"
+                    ]
+                  },
+                  {
+                    "op": "worldDone",
+                    "tag": "p0",
+                    "ok": true,
+                    "value": 1
+                  },
+                  {
+                    "op": "worldRead",
+                    "tag": "p1",
+                    "site": "w#1",
+                    "worldOp": "git-log",
+                    "args": [
+                      "x"
+                    ]
+                  },
+                  {
+                    "op": "worldDone",
+                    "tag": "p1",
+                    "ok": true,
+                    "value": 2
+                  },
+                  {
+                    "op": "stop",
+                    "reason": "user"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "runId": "succ-world-run",
+            "importFrom": "pred-world-run",
+            "lifetimes": [
+              {
+                "caps": 1,
+                "steps": [
+                  {
+                    "op": "worldRead",
+                    "tag": "s0",
+                    "site": "w#1",
+                    "worldOp": "git-log",
+                    "args": [
+                      "x"
+                    ]
+                  },
+                  {
+                    "op": "worldRead",
+                    "tag": "s1",
+                    "site": "w#1",
+                    "worldOp": "git-log",
+                    "args": [
+                      "x"
+                    ]
+                  },
+                  {
+                    "op": "worldRead",
+                    "tag": "s2",
+                    "site": "w#1",
+                    "worldOp": "git-log",
+                    "args": [
+                      "x"
+                    ]
+                  },
+                  {
+                    "op": "stop",
+                    "reason": "interrupted"
+                  }
+                ]
+              },
+              {
+                "caps": 1,
+                "steps": [
+                  {
+                    "op": "worldRead",
+                    "tag": "s0",
+                    "site": "w#1",
+                    "worldOp": "git-log",
+                    "args": [
+                      "x"
+                    ]
+                  },
+                  {
+                    "op": "worldRead",
+                    "tag": "s1",
+                    "site": "w#1",
+                    "worldOp": "git-log",
+                    "args": [
+                      "x"
+                    ]
+                  },
+                  {
+                    "op": "worldRead",
+                    "tag": "s2",
+                    "site": "w#1",
+                    "worldOp": "git-log",
+                    "args": [
+                      "x"
+                    ]
+                  },
+                  {
+                    "op": "complete",
+                    "artifact": null
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "runs": [
+        {
+          "runId": "pred-world-run",
+          "lifetimes": [
+            {
+              "build": null,
+              "results": [
+                null,
+                null,
+                null,
+                null,
+                null
+              ],
+              "run": {
+                "runId": "pred-world-run",
+                "caps": {
+                  "maxConcurrency": 1
+                },
+                "spentTokens": 0,
+                "status": "stopped",
+                "stopReason": "user"
+              },
+              "nodes": [
+                {
+                  "runId": "pred-world-run",
+                  "siteId": "w#1",
+                  "ordinal": 1,
+                  "kind": "world-read",
+                  "inputHash": "08e9d7bc",
+                  "input": {
+                    "op": "git-log",
+                    "args": [
+                      "x"
+                    ]
+                  },
+                  "status": "completed",
+                  "result": 1
+                },
+                {
+                  "runId": "pred-world-run",
+                  "siteId": "w#1",
+                  "ordinal": 2,
+                  "kind": "world-read",
+                  "inputHash": "08e9d7bc",
+                  "input": {
+                    "op": "git-log",
+                    "args": [
+                      "x"
+                    ]
+                  },
+                  "status": "completed",
+                  "result": 2
+                }
+              ],
+              "actors": [],
+              "disposed": 1
+            }
+          ]
+        },
+        {
+          "runId": "succ-world-run",
+          "lifetimes": [
+            {
+              "build": {
+                "preflight": {
+                  "ok": true,
+                  "run": {
+                    "runId": "pred-world-run",
+                    "caps": {
+                      "maxConcurrency": 1
+                    },
+                    "spentTokens": 0,
+                    "status": "stopped",
+                    "stopReason": "user"
+                  }
+                },
+                "built": {
+                  "ok": true,
+                  "cache": {
+                    "actors": {},
+                    "world": {
+                      "08e9d7bc": [
+                        {
+                          "inputHash": "08e9d7bc",
+                          "kind": "world-read",
+                          "result": 1
+                        },
+                        {
+                          "inputHash": "08e9d7bc",
+                          "kind": "world-read",
+                          "result": 2
+                        }
+                      ]
+                    }
+                  },
+                  "resumedFrom": "pred-world-run"
+                }
+              },
+              "results": [
+                null,
+                null,
+                null,
+                null
+              ],
+              "run": {
+                "runId": "succ-world-run",
+                "caps": {
+                  "maxConcurrency": 1
+                },
+                "spentTokens": 0,
+                "status": "stopped",
+                "resumedFrom": "pred-world-run",
+                "stopReason": "interrupted"
+              },
+              "nodes": [
+                {
+                  "runId": "succ-world-run",
+                  "siteId": "w#1",
+                  "ordinal": 1,
+                  "kind": "world-read",
+                  "inputHash": "08e9d7bc",
+                  "input": {
+                    "op": "git-log",
+                    "args": [
+                      "x"
+                    ]
+                  },
+                  "status": "completed",
+                  "result": 1
+                },
+                {
+                  "runId": "succ-world-run",
+                  "siteId": "w#1",
+                  "ordinal": 2,
+                  "kind": "world-read",
+                  "inputHash": "08e9d7bc",
+                  "input": {
+                    "op": "git-log",
+                    "args": [
+                      "x"
+                    ]
+                  },
+                  "status": "completed",
+                  "result": 2
+                },
+                {
+                  "runId": "succ-world-run",
+                  "siteId": "w#1",
+                  "ordinal": 3,
+                  "kind": "world-read",
+                  "inputHash": "08e9d7bc",
+                  "input": {
+                    "op": "git-log",
+                    "args": [
+                      "x"
+                    ]
+                  },
+                  "status": "running"
+                }
+              ],
+              "actors": [],
+              "disposed": 1
+            },
+            {
+              "build": {
+                "preflight": {
+                  "ok": true,
+                  "run": {
+                    "runId": "pred-world-run",
+                    "caps": {
+                      "maxConcurrency": 1
+                    },
+                    "spentTokens": 0,
+                    "status": "stopped",
+                    "stopReason": "user"
+                  }
+                },
+                "built": {
+                  "ok": true,
+                  "cache": {
+                    "actors": {},
+                    "world": {
+                      "08e9d7bc": [
+                        {
+                          "inputHash": "08e9d7bc",
+                          "kind": "world-read",
+                          "result": 1
+                        },
+                        {
+                          "inputHash": "08e9d7bc",
+                          "kind": "world-read",
+                          "result": 2
+                        }
+                      ]
+                    }
+                  },
+                  "resumedFrom": "pred-world-run"
+                }
+              },
+              "results": [
+                null,
+                null,
+                null,
+                null
+              ],
+              "run": {
+                "runId": "succ-world-run",
+                "caps": {
+                  "maxConcurrency": 1
+                },
+                "spentTokens": 0,
+                "status": "completed",
+                "resumedFrom": "pred-world-run",
+                "result": null
+              },
+              "nodes": [
+                {
+                  "runId": "succ-world-run",
+                  "siteId": "w#1",
+                  "ordinal": 1,
+                  "kind": "world-read",
+                  "inputHash": "08e9d7bc",
+                  "input": {
+                    "op": "git-log",
+                    "args": [
+                      "x"
+                    ]
+                  },
+                  "status": "completed",
+                  "result": 1
+                },
+                {
+                  "runId": "succ-world-run",
+                  "siteId": "w#1",
+                  "ordinal": 2,
+                  "kind": "world-read",
+                  "inputHash": "08e9d7bc",
+                  "input": {
+                    "op": "git-log",
+                    "args": [
+                      "x"
+                    ]
+                  },
+                  "status": "completed",
+                  "result": 2
+                },
+                {
+                  "runId": "succ-world-run",
+                  "siteId": "w#1",
+                  "ordinal": 3,
+                  "kind": "world-read",
+                  "inputHash": "08e9d7bc",
+                  "input": {
+                    "op": "git-log",
+                    "args": [
+                      "x"
+                    ]
+                  },
+                  "status": "completed",
+                  "result": 1
+                }
+              ],
+              "actors": [],
+              "disposed": 1
+            }
+          ]
+        }
+      ],
+      "outcomes": [
+        {
+          "tag": "p0",
+          "ok": true,
+          "value": 1
+        },
+        {
+          "tag": "p1",
+          "ok": true,
+          "value": 2
+        },
+        {
+          "tag": "s0",
+          "ok": true,
+          "value": 1
+        },
+        {
+          "tag": "s1",
+          "ok": true,
+          "value": 2
+        },
+        {
+          "tag": "s0",
+          "ok": true,
+          "value": 1
+        },
+        {
+          "tag": "s1",
+          "ok": true,
+          "value": 2
+        },
+        {
+          "tag": "s2",
+          "ok": true,
+          "value": 1
+        }
+      ],
+      "driverCalls": [
+        {
+          "op": "executeWorldRead",
+          "worldOp": "git-log",
+          "args": [
+            "x"
+          ]
+        },
+        {
+          "op": "executeWorldRead",
+          "worldOp": "git-log",
+          "args": [
+            "x"
+          ]
+        },
+        {
+          "op": "executeWorldRead",
+          "worldOp": "git-log",
+          "args": [
+            "x"
+          ]
+        }
+      ],
+      "events": [
+        {
+          "runId": "pred-world-run",
+          "sequence": 0,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"pred-world-run\",\"caps\":{\"maxConcurrency\":1}}"
+        },
+        {
+          "runId": "pred-world-run",
+          "sequence": 1,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":1},\"kind\":\"world-read\"}"
+        },
+        {
+          "runId": "pred-world-run",
+          "sequence": 2,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":1}}"
+        },
+        {
+          "runId": "pred-world-run",
+          "sequence": 3,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":1},\"outcome\":\"ok\"}"
+        },
+        {
+          "runId": "pred-world-run",
+          "sequence": 4,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":2},\"kind\":\"world-read\"}"
+        },
+        {
+          "runId": "pred-world-run",
+          "sequence": 5,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":2}}"
+        },
+        {
+          "runId": "pred-world-run",
+          "sequence": 6,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":2},\"outcome\":\"ok\"}"
+        },
+        {
+          "runId": "pred-world-run",
+          "sequence": 7,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"stopped\",\"stopReason\":\"user\"}"
+        },
+        {
+          "runId": "succ-world-run",
+          "sequence": 0,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"succ-world-run\",\"caps\":{\"maxConcurrency\":1}}"
+        },
+        {
+          "runId": "succ-world-run",
+          "sequence": 1,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":1},\"outcome\":\"ok\",\"cached\":true}"
+        },
+        {
+          "runId": "succ-world-run",
+          "sequence": 2,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":2},\"outcome\":\"ok\",\"cached\":true}"
+        },
+        {
+          "runId": "succ-world-run",
+          "sequence": 3,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":3},\"kind\":\"world-read\"}"
+        },
+        {
+          "runId": "succ-world-run",
+          "sequence": 4,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":3}}"
+        },
+        {
+          "runId": "succ-world-run",
+          "sequence": 5,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"stopped\",\"stopReason\":\"interrupted\"}"
+        },
+        {
+          "runId": "succ-world-run",
+          "sequence": 6,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"succ-world-run\",\"caps\":{\"maxConcurrency\":1}}"
+        },
+        {
+          "runId": "succ-world-run",
+          "sequence": 7,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":1},\"outcome\":\"ok\",\"cached\":true}"
+        },
+        {
+          "runId": "succ-world-run",
+          "sequence": 8,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":2},\"outcome\":\"ok\",\"cached\":true}"
+        },
+        {
+          "runId": "succ-world-run",
+          "sequence": 9,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":3},\"outcome\":\"ok\",\"cached\":true}"
+        },
+        {
+          "runId": "succ-world-run",
+          "sequence": 10,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"completed\"}"
+        }
+      ]
+    }
+  ]
+}

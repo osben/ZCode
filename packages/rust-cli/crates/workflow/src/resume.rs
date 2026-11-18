@@ -5,6 +5,7 @@
 //!   each completed or failed instance, in event order. Replay releases cached settlements in that order.
 //! - The number of ask rows per actor is counted once, so a new admission waits for every recorded row.
 use crate::engine::{WorkflowDriver, WorkflowEngine};
+use crate::engine_world::recover_import_closure;
 use crate::journal::JournalPort;
 use crate::model::{NodeKind, NodeRow, NodeStatus, Ref, StoredEvent};
 use crate::replay::ReplayGate;
@@ -69,22 +70,19 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
             .into_iter()
             .filter(|row| row.kind != NodeKind::Report && row.kind != NodeKind::Artifact)
             .collect();
-        // World reads and runs settle through the replay gate in Node (`heldResolution`), so their rows
-        // claim order slots. This port has no world path yet (W5b); refusing here is better than a gate
-        // that waits forever for a settlement nothing will make.
-        if let Some(row) = rows
-            .iter()
-            .find(|row| matches!(row.kind, NodeKind::WorldRead | NodeKind::WorldRun))
-        {
-            return Err(anyhow::anyhow!(
-                "run {}: cannot resume a run with {} rows before the world path is ported (W5b)",
-                self.run_id,
-                row.kind.as_str()
-            ));
-        }
+        // World rows settle through the replay gate too (Node `heldResolution`), so they claim order slots like
+        // asks do. `recover_settle_order` takes them from the same `node-settled` events.
         let events = self.journal.list_events(&self.run_id)?;
         let order = recover_settle_order(&self.run_id, &rows, &events)?;
         self.gate = ReplayGate::new(&order);
+        // Node `recoverImportClosure`: the closure state and the asks that ran live, from this run's events.
+        // Only an amended run has a cache to recover.
+        if self.imported_cache.is_some() {
+            let recovered = recover_import_closure(&events)?;
+            self.live_before_resume = recovered.live;
+            self.queued_before_close = recovered.queued_before_close;
+            self.import_closed = recovered.closed;
+        }
         for row in &rows {
             if row.kind != NodeKind::Ask {
                 continue;

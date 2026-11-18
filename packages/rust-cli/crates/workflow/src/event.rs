@@ -5,7 +5,7 @@
 //! (`JSON.stringify` of the event) is byte-identical. Optional keys are omitted when absent, as Node's
 //! conditional spreads do. The birth-phase fields (`phase`, `actor_phase`) are set by the engine's
 //! stamping step, which Node appends after the literal keys, so they are written last.
-use crate::model::{Caps, Ref, RunStatus, StopReason, Violation, js_number};
+use crate::model::{Caps, NodeKind, Ref, RunStatus, StopReason, Violation, js_number};
 use rust_cli_base::js::json::stringify;
 use serde_json::{Map, Value};
 
@@ -44,11 +44,31 @@ impl NodeOutcome {
 }
 
 /// The birth facts a cached ask settlement repeats (Node `CachedAskFacts`): `kind` is always `ask`.
+/// `source_session_id` is set when the answer was read from a predecessor transcript (Node `sourceSessionId`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AskFacts {
     pub actor: Ref,
     pub actor_seq: u64,
     pub instructions_head: Option<String>,
+    pub source_session_id: Option<String>,
+}
+
+/// Why the amend import cache closed (Node `ImportCloseCause`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImportCloseCause {
+    /// A subagent in an active ask is about to run a mutating tool.
+    MutatingTool,
+    /// A `world.run` is about to execute live.
+    WorldRun,
+}
+
+impl ImportCloseCause {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::MutatingTool => "mutating-tool",
+            Self::WorldRun => "world-run",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -90,6 +110,23 @@ pub enum RunEvent {
         actor_seq: u64,
         instructions_head: Option<String>,
         phase: Option<String>,
+    },
+    /// Node `node-queued` for a world node (`world-read` or `world-run`): no actor, so the birth phase is
+    /// the only extra fact.
+    WorldQueued {
+        instance: Ref,
+        kind: NodeKind,
+        phase: Option<String>,
+    },
+    /// Node `node-dispatched` for a world node.
+    WorldDispatched {
+        instance: Ref,
+    },
+    /// Node `import-cache-closed`: the first write of an amended run. Only an amended run emits it.
+    ImportCacheClosed {
+        instance: Ref,
+        cause: ImportCloseCause,
+        actor_name: Option<String>,
     },
     /// Node `node-dispatched` for an ask: repeats the birth facts (see types.ts).
     NodeDispatched {
@@ -231,6 +268,33 @@ impl RunEvent {
                 put_text(&mut map, "phaseName", phase);
                 put_text(&mut map, "actorPhaseName", actor_phase);
             }
+            Self::WorldQueued {
+                instance,
+                kind,
+                phase,
+            } => {
+                put_type(&mut map, "node-queued");
+                map.insert("instance".into(), instance.to_json());
+                map.insert("kind".into(), Value::String(kind.as_str().into()));
+                put_text(&mut map, "phaseName", phase);
+            }
+            Self::WorldDispatched { instance } => {
+                put_type(&mut map, "node-dispatched");
+                map.insert("instance".into(), instance.to_json());
+            }
+            Self::ImportCacheClosed {
+                instance,
+                cause,
+                actor_name,
+            } => {
+                put_type(&mut map, "import-cache-closed");
+                map.insert("instance".into(), instance.to_json());
+                map.insert("cause".into(), Value::String(cause.as_str().into()));
+                // Node writes the key only for a nonempty name.
+                if let Some(name) = actor_name.as_deref().filter(|name| !name.is_empty()) {
+                    map.insert("actorName".into(), Value::String(name.into()));
+                }
+            }
             Self::NodeRepairing {
                 instance,
                 attempt,
@@ -268,6 +332,7 @@ impl RunEvent {
                     map.insert("actor".into(), facts.actor.to_json());
                     map.insert("actorSeq".into(), Value::from(facts.actor_seq));
                     put_text(&mut map, "instructionsHead", &facts.instructions_head);
+                    put_text(&mut map, "sourceSessionId", &facts.source_session_id);
                 }
                 put_text(&mut map, "phaseName", phase);
             }
@@ -346,6 +411,7 @@ mod tests {
                 actor: Ref::new("actor#1", 1),
                 actor_seq: 3,
                 instructions_head: Some("go".into()),
+                source_session_id: None,
             }),
             phase: Some("plan".into()),
         };
@@ -368,6 +434,26 @@ mod tests {
         assert_eq!(
             event.payload_json(),
             r#"{"type":"node-settled","instance":{"siteId":"ask#1","ordinal":1},"outcome":"ok"}"#
+        );
+    }
+}
+
+#[cfg(test)]
+mod close_tests {
+    use super::*;
+
+    /// Node omits `actorName` when it is undefined or the empty string.
+    #[test]
+    fn an_empty_actor_name_is_not_written() {
+        let event = RunEvent::ImportCacheClosed {
+            instance: Ref::new("ask#1", 2),
+            cause: ImportCloseCause::MutatingTool,
+            actor_name: Some(String::new()),
+        };
+        assert!(
+            event.to_json().get("actorName").is_none(),
+            "{}",
+            event.to_json()
         );
     }
 }
