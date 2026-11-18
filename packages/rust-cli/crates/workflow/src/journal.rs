@@ -363,6 +363,7 @@ mod tests {
             stats: None,
             input,
             message_boundary: boundary,
+            artifact_id: None,
         }
     }
 
