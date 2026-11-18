@@ -26,6 +26,7 @@ fn selection() -> ModelSelection {
 
 fn run_for(child: &SessionId, parent: &SessionId) -> ActorRun {
     ActorRun {
+        on_mutating: None,
         child: child.clone(),
         parent: parent.clone(),
         interaction_description: "Ada (site@1)".to_owned(),
