@@ -652,6 +652,7 @@ Deviations and facts found while porting:
 - `set_message_boundary` is the write point the driver uses (Node writes `messageBoundary` from `workflow-driver-transcript.ts`). The engine never computes it.
 - Row order: Node's and Rust's `listNodes` / `listActors` order is not compared (rows are sorted canonically on both sides). Events are compared byte for byte in journal order.
 - The W5a refusal test (`resume_refuses_settled_world_rows_instead_of_holding_the_gate`) is removed. Its behaviour is now golden-covered by `resume-world-rows-settle-in-recorded-order` and `world-read-failure-replays-as-failed`.
+- Node takes the import queue for a `running` world row too (engine-world.ts reads the queue after the recorded-row block, although its comment says the journal takes precedence). After an interrupted lifetime, a resumed read at a running ordinal can settle from the queue's first entry with a stale result, and overwrite the running row. Golden `amend-world-running-row-versus-the-import-queue` records it. The port matches Node. Whether to diverge is an owner decision (review round of PR 534).
 - The goldens were generated before the Rust side was written. The first Rust run failed on row order only, which the harness then normalised. Red was not observed per Rust test; the golden mismatch was the first failing signal.
 
 Not in this row, with the owner:

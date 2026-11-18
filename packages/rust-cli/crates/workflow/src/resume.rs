@@ -78,7 +78,7 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
         // Node `recoverImportClosure`: the closure state and the asks that ran live, from this run's events.
         // Only an amended run has a cache to recover.
         if self.imported_cache.is_some() {
-            let recovered = recover_import_closure(&events);
+            let recovered = recover_import_closure(&events)?;
             self.live_before_resume = recovered.live;
             self.queued_before_close = recovered.queued_before_close;
             self.import_closed = recovered.closed;

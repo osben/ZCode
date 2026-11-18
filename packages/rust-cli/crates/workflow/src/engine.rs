@@ -351,7 +351,7 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
                     .map(|cache| cache.world.clone())
                     .unwrap_or_default(),
             ),
-            imported_cache: config.imported_cache.clone(),
+            imported_cache: config.imported_cache,
             import_closed: false,
             queued_before_close: HashSet::new(),
             live_before_resume: HashSet::new(),

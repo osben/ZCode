@@ -113,3 +113,21 @@ mod tests {
         assert_eq!(text(&normalize_persona(None, Some(&persona))), "{}");
     }
 }
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// `model` and `budget` are left out of the identity, so raising a budget does not re-run finished work
+    /// after an amend. Any other change to the persona does.
+    #[test]
+    fn model_and_budget_are_not_part_of_the_identity() {
+        let base = json!({"name": "a", "system": "s", "model": "x", "budget": {"webSearch": 1}});
+        let raised = json!({"name": "a", "system": "s", "model": "y", "budget": {"webSearch": 9}});
+        assert_eq!(persona_identity(&base), json!({"name": "a", "system": "s"}));
+        assert_eq!(persona_identity(&base), persona_identity(&raised));
+        let changed = json!({"name": "a", "system": "changed"});
+        assert_ne!(persona_identity(&base), persona_identity(&changed));
+    }
+}

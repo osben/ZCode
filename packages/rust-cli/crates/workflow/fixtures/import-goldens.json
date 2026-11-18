@@ -15,7 +15,7 @@
                     "op": "worldRead",
                     "tag": "w0",
                     "site": "w#1",
-                    "worldOp": "git.log",
+                    "worldOp": "git-log",
                     "args": [
                       "a"
                     ]
@@ -24,7 +24,7 @@
                     "op": "worldRead",
                     "tag": "w1",
                     "site": "w#2",
-                    "worldOp": "git.log",
+                    "worldOp": "git-log",
                     "args": [
                       "b"
                     ]
@@ -50,7 +50,7 @@
                     "op": "worldRead",
                     "tag": "w0",
                     "site": "w#1",
-                    "worldOp": "git.log",
+                    "worldOp": "git-log",
                     "args": [
                       "a"
                     ]
@@ -59,7 +59,7 @@
                     "op": "worldRead",
                     "tag": "w1",
                     "site": "w#2",
-                    "worldOp": "git.log",
+                    "worldOp": "git-log",
                     "args": [
                       "b"
                     ]
@@ -102,9 +102,9 @@
                   "siteId": "w#1",
                   "ordinal": 1,
                   "kind": "world-read",
-                  "inputHash": "c26aa378",
+                  "inputHash": "75d1ccf7",
                   "input": {
-                    "op": "git.log",
+                    "op": "git-log",
                     "args": [
                       "a"
                     ]
@@ -117,9 +117,9 @@
                   "siteId": "w#2",
                   "ordinal": 1,
                   "kind": "world-read",
-                  "inputHash": "c6df34d5",
+                  "inputHash": "c0c6213a",
                   "input": {
-                    "op": "git.log",
+                    "op": "git-log",
                     "args": [
                       "b"
                     ]
@@ -155,9 +155,9 @@
                   "siteId": "w#1",
                   "ordinal": 1,
                   "kind": "world-read",
-                  "inputHash": "c26aa378",
+                  "inputHash": "75d1ccf7",
                   "input": {
-                    "op": "git.log",
+                    "op": "git-log",
                     "args": [
                       "a"
                     ]
@@ -170,9 +170,9 @@
                   "siteId": "w#2",
                   "ordinal": 1,
                   "kind": "world-read",
-                  "inputHash": "c6df34d5",
+                  "inputHash": "c0c6213a",
                   "input": {
-                    "op": "git.log",
+                    "op": "git-log",
                     "args": [
                       "b"
                     ]
@@ -212,14 +212,14 @@
       "driverCalls": [
         {
           "op": "executeWorldRead",
-          "worldOp": "git.log",
+          "worldOp": "git-log",
           "args": [
             "a"
           ]
         },
         {
           "op": "executeWorldRead",
-          "worldOp": "git.log",
+          "worldOp": "git-log",
           "args": [
             "b"
           ]
@@ -298,7 +298,7 @@
                     "op": "worldRead",
                     "tag": "w0",
                     "site": "w#1",
-                    "worldOp": "git.log",
+                    "worldOp": "git-log",
                     "args": [
                       "x"
                     ]
@@ -322,7 +322,7 @@
                     "op": "worldRead",
                     "tag": "w0",
                     "site": "w#1",
-                    "worldOp": "git.log",
+                    "worldOp": "git-log",
                     "args": [
                       "x"
                     ]
@@ -363,9 +363,9 @@
                   "siteId": "w#1",
                   "ordinal": 1,
                   "kind": "world-read",
-                  "inputHash": "9cf7439b",
+                  "inputHash": "08e9d7bc",
                   "input": {
-                    "op": "git.log",
+                    "op": "git-log",
                     "args": [
                       "x"
                     ]
@@ -373,7 +373,7 @@
                   "status": "failed",
                   "error": {
                     "code": "DriverError",
-                    "message": "World read failed: git.log [\"x\"]."
+                    "message": "World read failed: git-log [\"x\"]."
                   }
                 }
               ],
@@ -401,9 +401,9 @@
                   "siteId": "w#1",
                   "ordinal": 1,
                   "kind": "world-read",
-                  "inputHash": "9cf7439b",
+                  "inputHash": "08e9d7bc",
                   "input": {
-                    "op": "git.log",
+                    "op": "git-log",
                     "args": [
                       "x"
                     ]
@@ -411,7 +411,7 @@
                   "status": "failed",
                   "error": {
                     "code": "DriverError",
-                    "message": "World read failed: git.log [\"x\"]."
+                    "message": "World read failed: git-log [\"x\"]."
                   }
                 }
               ],
@@ -427,7 +427,7 @@
           "ok": false,
           "error": {
             "code": "DriverError",
-            "message": "World read failed: git.log [\"x\"]."
+            "message": "World read failed: git-log [\"x\"]."
           }
         },
         {
@@ -435,14 +435,14 @@
           "ok": false,
           "error": {
             "code": "DriverError",
-            "message": "World read failed: git.log [\"x\"]."
+            "message": "World read failed: git-log [\"x\"]."
           }
         }
       ],
       "driverCalls": [
         {
           "op": "executeWorldRead",
-          "worldOp": "git.log",
+          "worldOp": "git-log",
           "args": [
             "x"
           ]
@@ -467,7 +467,7 @@
         {
           "runId": "run-world-failed",
           "sequence": 3,
-          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":1},\"outcome\":\"failed\",\"error\":{\"code\":\"DriverError\",\"message\":\"World read failed: git.log [\\\"x\\\"].\"}}"
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":1},\"outcome\":\"failed\",\"error\":{\"code\":\"DriverError\",\"message\":\"World read failed: git-log [\\\"x\\\"].\"}}"
         },
         {
           "runId": "run-world-failed",
@@ -482,7 +482,7 @@
         {
           "runId": "run-world-failed",
           "sequence": 6,
-          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":1},\"outcome\":\"failed\",\"cached\":true,\"error\":{\"code\":\"DriverError\",\"message\":\"World read failed: git.log [\\\"x\\\"].\"}}"
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":1},\"outcome\":\"failed\",\"cached\":true,\"error\":{\"code\":\"DriverError\",\"message\":\"World read failed: git-log [\\\"x\\\"].\"}}"
         },
         {
           "runId": "run-world-failed",
@@ -506,7 +506,7 @@
                     "op": "worldRead",
                     "tag": "w0",
                     "site": "w#1",
-                    "worldOp": "git.log",
+                    "worldOp": "git-log",
                     "args": [
                       "x"
                     ]
@@ -530,7 +530,7 @@
                     "op": "worldRead",
                     "tag": "w0",
                     "site": "w#1",
-                    "worldOp": "git.log",
+                    "worldOp": "git-log",
                     "args": [
                       "y"
                     ]
@@ -567,9 +567,9 @@
                   "siteId": "w#1",
                   "ordinal": 1,
                   "kind": "world-read",
-                  "inputHash": "9cf7439b",
+                  "inputHash": "08e9d7bc",
                   "input": {
-                    "op": "git.log",
+                    "op": "git-log",
                     "args": [
                       "x"
                     ]
@@ -595,10 +595,10 @@
                 "status": "errored",
                 "failure": {
                   "code": "InputHashMismatch",
-                  "message": "Replay hit at w#1@1 but inputHash differs (expected 9cf7439b, got d4a4c330): the script is not deterministic, so the journal cannot be replayed.",
+                  "message": "Replay hit at w#1@1 but inputHash differs (expected 08e9d7bc, got cf93592f): the script is not deterministic, so the journal cannot be replayed.",
                   "mismatch": {
-                    "expected": "9cf7439b",
-                    "got": "d4a4c330"
+                    "expected": "08e9d7bc",
+                    "got": "cf93592f"
                   }
                 }
               },
@@ -608,9 +608,9 @@
                   "siteId": "w#1",
                   "ordinal": 1,
                   "kind": "world-read",
-                  "inputHash": "9cf7439b",
+                  "inputHash": "08e9d7bc",
                   "input": {
-                    "op": "git.log",
+                    "op": "git-log",
                     "args": [
                       "x"
                     ]
@@ -636,10 +636,10 @@
           "ok": false,
           "error": {
             "code": "InputHashMismatch",
-            "message": "Replay hit at w#1@1 but inputHash differs (expected 9cf7439b, got d4a4c330): the script is not deterministic, so the journal cannot be replayed.",
+            "message": "Replay hit at w#1@1 but inputHash differs (expected 08e9d7bc, got cf93592f): the script is not deterministic, so the journal cannot be replayed.",
             "mismatch": {
-              "expected": "9cf7439b",
-              "got": "d4a4c330"
+              "expected": "08e9d7bc",
+              "got": "cf93592f"
             }
           }
         }
@@ -647,7 +647,7 @@
       "driverCalls": [
         {
           "op": "executeWorldRead",
-          "worldOp": "git.log",
+          "worldOp": "git-log",
           "args": [
             "x"
           ]
@@ -687,7 +687,7 @@
         {
           "runId": "run-world-mismatch",
           "sequence": 6,
-          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"errored\",\"error\":{\"code\":\"InputHashMismatch\",\"message\":\"Replay hit at w#1@1 but inputHash differs (expected 9cf7439b, got d4a4c330): the script is not deterministic, so the journal cannot be replayed.\",\"mismatch\":{\"expected\":\"9cf7439b\",\"got\":\"d4a4c330\"}}}"
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"errored\",\"error\":{\"code\":\"InputHashMismatch\",\"message\":\"Replay hit at w#1@1 but inputHash differs (expected 08e9d7bc, got cf93592f): the script is not deterministic, so the journal cannot be replayed.\",\"mismatch\":{\"expected\":\"08e9d7bc\",\"got\":\"cf93592f\"}}}"
         }
       ]
     },
@@ -2203,7 +2203,7 @@
                     "op": "worldRead",
                     "tag": "p0",
                     "site": "w#1",
-                    "worldOp": "git.log",
+                    "worldOp": "git-log",
                     "args": [
                       "x"
                     ]
@@ -2218,7 +2218,7 @@
                     "op": "worldRead",
                     "tag": "p1",
                     "site": "w#1",
-                    "worldOp": "git.log",
+                    "worldOp": "git-log",
                     "args": [
                       "x"
                     ]
@@ -2248,7 +2248,7 @@
                     "op": "worldRead",
                     "tag": "s0",
                     "site": "w#1",
-                    "worldOp": "git.log",
+                    "worldOp": "git-log",
                     "args": [
                       "x"
                     ]
@@ -2257,7 +2257,7 @@
                     "op": "worldRead",
                     "tag": "s1",
                     "site": "w#1",
-                    "worldOp": "git.log",
+                    "worldOp": "git-log",
                     "args": [
                       "x"
                     ]
@@ -2266,7 +2266,7 @@
                     "op": "worldRead",
                     "tag": "s2",
                     "site": "w#1",
-                    "worldOp": "git.log",
+                    "worldOp": "git-log",
                     "args": [
                       "x"
                     ]
@@ -2315,9 +2315,9 @@
                   "siteId": "w#1",
                   "ordinal": 1,
                   "kind": "world-read",
-                  "inputHash": "9cf7439b",
+                  "inputHash": "08e9d7bc",
                   "input": {
-                    "op": "git.log",
+                    "op": "git-log",
                     "args": [
                       "x"
                     ]
@@ -2330,9 +2330,9 @@
                   "siteId": "w#1",
                   "ordinal": 2,
                   "kind": "world-read",
-                  "inputHash": "9cf7439b",
+                  "inputHash": "08e9d7bc",
                   "input": {
-                    "op": "git.log",
+                    "op": "git-log",
                     "args": [
                       "x"
                     ]
@@ -2368,14 +2368,14 @@
                   "cache": {
                     "actors": {},
                     "world": {
-                      "9cf7439b": [
+                      "08e9d7bc": [
                         {
-                          "inputHash": "9cf7439b",
+                          "inputHash": "08e9d7bc",
                           "kind": "world-read",
                           "result": 1
                         },
                         {
-                          "inputHash": "9cf7439b",
+                          "inputHash": "08e9d7bc",
                           "kind": "world-read",
                           "result": 2
                         }
@@ -2408,9 +2408,9 @@
                   "siteId": "w#1",
                   "ordinal": 1,
                   "kind": "world-read",
-                  "inputHash": "9cf7439b",
+                  "inputHash": "08e9d7bc",
                   "input": {
-                    "op": "git.log",
+                    "op": "git-log",
                     "args": [
                       "x"
                     ]
@@ -2423,9 +2423,9 @@
                   "siteId": "w#1",
                   "ordinal": 2,
                   "kind": "world-read",
-                  "inputHash": "9cf7439b",
+                  "inputHash": "08e9d7bc",
                   "input": {
-                    "op": "git.log",
+                    "op": "git-log",
                     "args": [
                       "x"
                     ]
@@ -2438,9 +2438,9 @@
                   "siteId": "w#1",
                   "ordinal": 3,
                   "kind": "world-read",
-                  "inputHash": "9cf7439b",
+                  "inputHash": "08e9d7bc",
                   "input": {
-                    "op": "git.log",
+                    "op": "git-log",
                     "args": [
                       "x"
                     ]
@@ -2485,21 +2485,21 @@
       "driverCalls": [
         {
           "op": "executeWorldRead",
-          "worldOp": "git.log",
+          "worldOp": "git-log",
           "args": [
             "x"
           ]
         },
         {
           "op": "executeWorldRead",
-          "worldOp": "git.log",
+          "worldOp": "git-log",
           "args": [
             "x"
           ]
         },
         {
           "op": "executeWorldRead",
-          "worldOp": "git.log",
+          "worldOp": "git-log",
           "args": [
             "x"
           ]
@@ -4048,7 +4048,6 @@
               },
               {
                 "caps": 1,
-                "importFrom": "pred-resume",
                 "steps": [
                   {
                     "op": "createActor",
@@ -5224,6 +5223,561 @@
         {
           "runId": "succ-missing",
           "sequence": 1,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"completed\"}"
+        }
+      ]
+    },
+    {
+      "name": "amend-world-running-row-versus-the-import-queue",
+      "input": {
+        "name": "amend-world-running-row-versus-the-import-queue",
+        "runs": [
+          {
+            "runId": "pred-world-run",
+            "lifetimes": [
+              {
+                "caps": 1,
+                "steps": [
+                  {
+                    "op": "worldRead",
+                    "tag": "p0",
+                    "site": "w#1",
+                    "worldOp": "git-log",
+                    "args": [
+                      "x"
+                    ]
+                  },
+                  {
+                    "op": "worldDone",
+                    "tag": "p0",
+                    "ok": true,
+                    "value": 1
+                  },
+                  {
+                    "op": "worldRead",
+                    "tag": "p1",
+                    "site": "w#1",
+                    "worldOp": "git-log",
+                    "args": [
+                      "x"
+                    ]
+                  },
+                  {
+                    "op": "worldDone",
+                    "tag": "p1",
+                    "ok": true,
+                    "value": 2
+                  },
+                  {
+                    "op": "stop",
+                    "reason": "user"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "runId": "succ-world-run",
+            "importFrom": "pred-world-run",
+            "lifetimes": [
+              {
+                "caps": 1,
+                "steps": [
+                  {
+                    "op": "worldRead",
+                    "tag": "s0",
+                    "site": "w#1",
+                    "worldOp": "git-log",
+                    "args": [
+                      "x"
+                    ]
+                  },
+                  {
+                    "op": "worldRead",
+                    "tag": "s1",
+                    "site": "w#1",
+                    "worldOp": "git-log",
+                    "args": [
+                      "x"
+                    ]
+                  },
+                  {
+                    "op": "worldRead",
+                    "tag": "s2",
+                    "site": "w#1",
+                    "worldOp": "git-log",
+                    "args": [
+                      "x"
+                    ]
+                  },
+                  {
+                    "op": "stop",
+                    "reason": "interrupted"
+                  }
+                ]
+              },
+              {
+                "caps": 1,
+                "steps": [
+                  {
+                    "op": "worldRead",
+                    "tag": "s0",
+                    "site": "w#1",
+                    "worldOp": "git-log",
+                    "args": [
+                      "x"
+                    ]
+                  },
+                  {
+                    "op": "worldRead",
+                    "tag": "s1",
+                    "site": "w#1",
+                    "worldOp": "git-log",
+                    "args": [
+                      "x"
+                    ]
+                  },
+                  {
+                    "op": "worldRead",
+                    "tag": "s2",
+                    "site": "w#1",
+                    "worldOp": "git-log",
+                    "args": [
+                      "x"
+                    ]
+                  },
+                  {
+                    "op": "complete",
+                    "artifact": null
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "runs": [
+        {
+          "runId": "pred-world-run",
+          "lifetimes": [
+            {
+              "build": null,
+              "results": [
+                null,
+                null,
+                null,
+                null,
+                null
+              ],
+              "run": {
+                "runId": "pred-world-run",
+                "caps": {
+                  "maxConcurrency": 1
+                },
+                "spentTokens": 0,
+                "status": "stopped",
+                "stopReason": "user"
+              },
+              "nodes": [
+                {
+                  "runId": "pred-world-run",
+                  "siteId": "w#1",
+                  "ordinal": 1,
+                  "kind": "world-read",
+                  "inputHash": "08e9d7bc",
+                  "input": {
+                    "op": "git-log",
+                    "args": [
+                      "x"
+                    ]
+                  },
+                  "status": "completed",
+                  "result": 1
+                },
+                {
+                  "runId": "pred-world-run",
+                  "siteId": "w#1",
+                  "ordinal": 2,
+                  "kind": "world-read",
+                  "inputHash": "08e9d7bc",
+                  "input": {
+                    "op": "git-log",
+                    "args": [
+                      "x"
+                    ]
+                  },
+                  "status": "completed",
+                  "result": 2
+                }
+              ],
+              "actors": [],
+              "disposed": 1
+            }
+          ]
+        },
+        {
+          "runId": "succ-world-run",
+          "lifetimes": [
+            {
+              "build": {
+                "preflight": {
+                  "ok": true,
+                  "run": {
+                    "runId": "pred-world-run",
+                    "caps": {
+                      "maxConcurrency": 1
+                    },
+                    "spentTokens": 0,
+                    "status": "stopped",
+                    "stopReason": "user"
+                  }
+                },
+                "built": {
+                  "ok": true,
+                  "cache": {
+                    "actors": {},
+                    "world": {
+                      "08e9d7bc": [
+                        {
+                          "inputHash": "08e9d7bc",
+                          "kind": "world-read",
+                          "result": 1
+                        },
+                        {
+                          "inputHash": "08e9d7bc",
+                          "kind": "world-read",
+                          "result": 2
+                        }
+                      ]
+                    }
+                  },
+                  "resumedFrom": "pred-world-run"
+                }
+              },
+              "results": [
+                null,
+                null,
+                null,
+                null
+              ],
+              "run": {
+                "runId": "succ-world-run",
+                "caps": {
+                  "maxConcurrency": 1
+                },
+                "spentTokens": 0,
+                "status": "stopped",
+                "resumedFrom": "pred-world-run",
+                "stopReason": "interrupted"
+              },
+              "nodes": [
+                {
+                  "runId": "succ-world-run",
+                  "siteId": "w#1",
+                  "ordinal": 1,
+                  "kind": "world-read",
+                  "inputHash": "08e9d7bc",
+                  "input": {
+                    "op": "git-log",
+                    "args": [
+                      "x"
+                    ]
+                  },
+                  "status": "completed",
+                  "result": 1
+                },
+                {
+                  "runId": "succ-world-run",
+                  "siteId": "w#1",
+                  "ordinal": 2,
+                  "kind": "world-read",
+                  "inputHash": "08e9d7bc",
+                  "input": {
+                    "op": "git-log",
+                    "args": [
+                      "x"
+                    ]
+                  },
+                  "status": "completed",
+                  "result": 2
+                },
+                {
+                  "runId": "succ-world-run",
+                  "siteId": "w#1",
+                  "ordinal": 3,
+                  "kind": "world-read",
+                  "inputHash": "08e9d7bc",
+                  "input": {
+                    "op": "git-log",
+                    "args": [
+                      "x"
+                    ]
+                  },
+                  "status": "running"
+                }
+              ],
+              "actors": [],
+              "disposed": 1
+            },
+            {
+              "build": {
+                "preflight": {
+                  "ok": true,
+                  "run": {
+                    "runId": "pred-world-run",
+                    "caps": {
+                      "maxConcurrency": 1
+                    },
+                    "spentTokens": 0,
+                    "status": "stopped",
+                    "stopReason": "user"
+                  }
+                },
+                "built": {
+                  "ok": true,
+                  "cache": {
+                    "actors": {},
+                    "world": {
+                      "08e9d7bc": [
+                        {
+                          "inputHash": "08e9d7bc",
+                          "kind": "world-read",
+                          "result": 1
+                        },
+                        {
+                          "inputHash": "08e9d7bc",
+                          "kind": "world-read",
+                          "result": 2
+                        }
+                      ]
+                    }
+                  },
+                  "resumedFrom": "pred-world-run"
+                }
+              },
+              "results": [
+                null,
+                null,
+                null,
+                null
+              ],
+              "run": {
+                "runId": "succ-world-run",
+                "caps": {
+                  "maxConcurrency": 1
+                },
+                "spentTokens": 0,
+                "status": "completed",
+                "resumedFrom": "pred-world-run",
+                "result": null
+              },
+              "nodes": [
+                {
+                  "runId": "succ-world-run",
+                  "siteId": "w#1",
+                  "ordinal": 1,
+                  "kind": "world-read",
+                  "inputHash": "08e9d7bc",
+                  "input": {
+                    "op": "git-log",
+                    "args": [
+                      "x"
+                    ]
+                  },
+                  "status": "completed",
+                  "result": 1
+                },
+                {
+                  "runId": "succ-world-run",
+                  "siteId": "w#1",
+                  "ordinal": 2,
+                  "kind": "world-read",
+                  "inputHash": "08e9d7bc",
+                  "input": {
+                    "op": "git-log",
+                    "args": [
+                      "x"
+                    ]
+                  },
+                  "status": "completed",
+                  "result": 2
+                },
+                {
+                  "runId": "succ-world-run",
+                  "siteId": "w#1",
+                  "ordinal": 3,
+                  "kind": "world-read",
+                  "inputHash": "08e9d7bc",
+                  "input": {
+                    "op": "git-log",
+                    "args": [
+                      "x"
+                    ]
+                  },
+                  "status": "completed",
+                  "result": 1
+                }
+              ],
+              "actors": [],
+              "disposed": 1
+            }
+          ]
+        }
+      ],
+      "outcomes": [
+        {
+          "tag": "p0",
+          "ok": true,
+          "value": 1
+        },
+        {
+          "tag": "p1",
+          "ok": true,
+          "value": 2
+        },
+        {
+          "tag": "s0",
+          "ok": true,
+          "value": 1
+        },
+        {
+          "tag": "s1",
+          "ok": true,
+          "value": 2
+        },
+        {
+          "tag": "s0",
+          "ok": true,
+          "value": 1
+        },
+        {
+          "tag": "s1",
+          "ok": true,
+          "value": 2
+        },
+        {
+          "tag": "s2",
+          "ok": true,
+          "value": 1
+        }
+      ],
+      "driverCalls": [
+        {
+          "op": "executeWorldRead",
+          "worldOp": "git-log",
+          "args": [
+            "x"
+          ]
+        },
+        {
+          "op": "executeWorldRead",
+          "worldOp": "git-log",
+          "args": [
+            "x"
+          ]
+        },
+        {
+          "op": "executeWorldRead",
+          "worldOp": "git-log",
+          "args": [
+            "x"
+          ]
+        }
+      ],
+      "events": [
+        {
+          "runId": "pred-world-run",
+          "sequence": 0,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"pred-world-run\",\"caps\":{\"maxConcurrency\":1}}"
+        },
+        {
+          "runId": "pred-world-run",
+          "sequence": 1,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":1},\"kind\":\"world-read\"}"
+        },
+        {
+          "runId": "pred-world-run",
+          "sequence": 2,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":1}}"
+        },
+        {
+          "runId": "pred-world-run",
+          "sequence": 3,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":1},\"outcome\":\"ok\"}"
+        },
+        {
+          "runId": "pred-world-run",
+          "sequence": 4,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":2},\"kind\":\"world-read\"}"
+        },
+        {
+          "runId": "pred-world-run",
+          "sequence": 5,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":2}}"
+        },
+        {
+          "runId": "pred-world-run",
+          "sequence": 6,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":2},\"outcome\":\"ok\"}"
+        },
+        {
+          "runId": "pred-world-run",
+          "sequence": 7,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"stopped\",\"stopReason\":\"user\"}"
+        },
+        {
+          "runId": "succ-world-run",
+          "sequence": 0,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"succ-world-run\",\"caps\":{\"maxConcurrency\":1}}"
+        },
+        {
+          "runId": "succ-world-run",
+          "sequence": 1,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":1},\"outcome\":\"ok\",\"cached\":true}"
+        },
+        {
+          "runId": "succ-world-run",
+          "sequence": 2,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":2},\"outcome\":\"ok\",\"cached\":true}"
+        },
+        {
+          "runId": "succ-world-run",
+          "sequence": 3,
+          "payloadJson": "{\"type\":\"node-queued\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":3},\"kind\":\"world-read\"}"
+        },
+        {
+          "runId": "succ-world-run",
+          "sequence": 4,
+          "payloadJson": "{\"type\":\"node-dispatched\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":3}}"
+        },
+        {
+          "runId": "succ-world-run",
+          "sequence": 5,
+          "payloadJson": "{\"type\":\"run-settled\",\"status\":\"stopped\",\"stopReason\":\"interrupted\"}"
+        },
+        {
+          "runId": "succ-world-run",
+          "sequence": 6,
+          "payloadJson": "{\"type\":\"run-started\",\"runId\":\"succ-world-run\",\"caps\":{\"maxConcurrency\":1}}"
+        },
+        {
+          "runId": "succ-world-run",
+          "sequence": 7,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":1},\"outcome\":\"ok\",\"cached\":true}"
+        },
+        {
+          "runId": "succ-world-run",
+          "sequence": 8,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":2},\"outcome\":\"ok\",\"cached\":true}"
+        },
+        {
+          "runId": "succ-world-run",
+          "sequence": 9,
+          "payloadJson": "{\"type\":\"node-settled\",\"instance\":{\"siteId\":\"w#1\",\"ordinal\":3},\"outcome\":\"ok\",\"cached\":true}"
+        },
+        {
+          "runId": "succ-world-run",
+          "sequence": 10,
           "payloadJson": "{\"type\":\"run-settled\",\"status\":\"completed\"}"
         }
       ]

@@ -27,12 +27,25 @@ import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { registerHooks } from "node:module";
+import type { ActorTranscriptStore } from "../../apps/zcode-cli/packages/bootstrap/src/app/workflow-actor-transcript.ts";
+import type {
+  ActorSessionSeed,
+  ImportedRunCache,
+} from "../../apps/zcode-cli/packages/dynamic-workflow/src/engine/imported-cache-types.ts";
 import { WorkflowEngine } from "../../apps/zcode-cli/packages/dynamic-workflow/src/engine/engine.ts";
 import { InMemoryJournalStore } from "../../apps/zcode-cli/packages/dynamic-workflow/src/engine/journal-memory.ts";
 import {
   WorkflowError,
   refToString,
+  type ActorRef,
+  type AskMessage,
   type AskSpec,
+  type InstanceRef,
+  type PersonaSpec,
+  type SessionRef,
+  type SubmitVerdict,
+  type WorkflowDriver,
+  type WorldReadOp,
 } from "../../apps/zcode-cli/packages/dynamic-workflow/src/engine/types.ts";
 
 // Answers only the module that drags in the bootstrap graph. The set is the one in dynamic-workflow-run-observation.ts.
@@ -110,15 +123,11 @@ async function runScenario(scenario: Scenario): Promise<unknown> {
   let currentTag = "";
   let currentRunId = "";
   let disposed = 0;
-  const driver = {
+  const driver: WorkflowDriver = {
     journal: store,
     emit: () => {},
-    createActorSession: (
-      actor: { siteId: string; ordinal: number },
-      _persona: unknown,
-      seed?: unknown,
-    ) => {
-      const key = refToString(actor as never);
+    createActorSession: (actor: ActorRef, _persona: PersonaSpec, seed?: ActorSessionSeed) => {
+      const key = refToString(actor);
       driverCalls.push({
         op: "createActorSession",
         actor: key,
@@ -126,30 +135,26 @@ async function runScenario(scenario: Scenario): Promise<unknown> {
       });
       return Promise.resolve({ id: `sess:${currentRunId}/${key}` });
     },
-    startAsk: (
-      session: { id: string },
-      instance: unknown,
-      message: { instructions: string; typed?: boolean },
-    ) => {
+    startAsk: (session: SessionRef, instance: InstanceRef, message: AskMessage) => {
       driverCalls.push({
         op: "startAsk",
         session: session.id,
-        instance: refToString(instance as never),
+        instance: refToString(instance),
         instructions: message.instructions,
-        typed: message.typed ?? false,
+        typed: message.typed,
       });
     },
-    respondToSubmit: (instance: unknown, verdict: unknown) => {
+    respondToSubmit: (instance: InstanceRef, verdict: SubmitVerdict) => {
       driverCalls.push({
         op: "respondToSubmit",
-        instance: refToString(instance as never),
+        instance: refToString(instance),
         verdict,
       });
     },
-    cancelAsk: (instance: unknown) => {
-      driverCalls.push({ op: "cancelAsk", instance: refToString(instance as never) });
+    cancelAsk: (instance: InstanceRef) => {
+      driverCalls.push({ op: "cancelAsk", instance: refToString(instance) });
     },
-    executeWorldRead: (op: string, args: unknown[]) => {
+    executeWorldRead: (op: WorldReadOp, args: unknown[]) => {
       driverCalls.push({ op: "executeWorldRead", worldOp: op, args });
       return new Promise((resolve, reject) => {
         worldPending.set(currentTag, { resolve, reject });
@@ -171,20 +176,28 @@ async function runScenario(scenario: Scenario): Promise<unknown> {
     const lifetimes: unknown[] = [];
     for (const lifetime of run.lifetimes) {
       let build: unknown = null;
-      let importedCache: unknown;
+      let importedCache: ImportedRunCache | undefined;
       if (run.importFrom !== undefined) {
         const preflight = preflightAmendImport(store, run.importFrom);
         const built = await buildImportedCache(
           {
             journal: store,
+            // The builder reads only the length of the result, so each fake entry is a placeholder.
             actorTranscriptStore: {
-              messages: ({ sessionID }: { sessionID: string }) => {
+              messages: ({ sessionID }) => {
                 const count = counts[sessionID];
                 if (count === undefined) return Promise.reject(new Error("no transcript"));
-                return Promise.resolve(Array.from({ length: count }, () => ({})));
+                return Promise.resolve(
+                  Array.from(
+                    { length: count },
+                    () => ({}) as Awaited<ReturnType<ActorTranscriptStore["messages"]>>[number],
+                  ),
+                );
               },
-            },
-          } as never,
+              saveMessage: () => Promise.reject(new Error("not used by the builder")),
+              savePart: () => Promise.reject(new Error("not used by the builder")),
+            } satisfies ActorTranscriptStore,
+          } satisfies Parameters<typeof buildImportedCache>[0],
           run.importFrom,
         );
         build = jsonOf({ preflight, built });
@@ -202,7 +215,7 @@ async function runScenario(scenario: Scenario): Promise<unknown> {
           sitePhases: new Map(),
           ...(importedCache === undefined ? {} : { importedCache }),
           ...(run.importFrom === undefined ? {} : { resumedFrom: run.importFrom }),
-        } as never);
+        });
       } catch (error) {
         constructError = errorJson(error);
       }
