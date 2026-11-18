@@ -15,7 +15,7 @@ use rust_cli_kernel_api::orchestration::Interactions;
 use rust_cli_kernel_api::permission::PermissionMode;
 use rust_cli_workflow::actor_mailbox::ActorMailbox;
 use rust_cli_workflow::actor_sessions::ActorTurns;
-use rust_cli_workflow::actor_turns::MailboxTurns;
+use rust_cli_workflow::actor_turns::{MailboxTurns, TurnInput};
 use rust_cli_workflow::driver_owner::{ActorDriverOwner, ActorSessionRequest, ActorSessions};
 use rust_cli_workflow::driver_rules::NUDGE_PROMPT;
 use rust_cli_workflow::engine::{AskMessage, AskSpec, EngineConfig};
@@ -99,7 +99,7 @@ impl ActorAgents for ScriptedAgents {
     ) -> ActorTurnEnd {
         let port = run.port.clone();
         self.runs.lock().expect("runs").push(run);
-        if let Some(port) = port.as_ref() {
+        if let Some(port) = port.as_ref().map(|port| &port.port) {
             if let Some(result) = self.submit.clone() {
                 let answer = port.submit(result).await;
                 self.submitted.lock().expect("submitted").push(answer);
@@ -149,12 +149,10 @@ impl ActorSessions for Sessions {
         session: &str,
         instance: &Ref,
         _message: &AskMessage,
-        input: &str,
-        epilogue_start: usize,
+        input: &TurnInput,
         interaction: &str,
     ) -> anyhow::Result<()> {
-        self.turns
-            .start_turn(session, instance, input, epilogue_start, interaction)
+        self.turns.start_turn(session, instance, input, interaction)
     }
 
     fn cancel_turn(&mut self, session: &str, instance: &Ref) -> anyhow::Result<()> {
@@ -279,6 +277,14 @@ async fn a_scripted_actor_turn_runs_through_the_workflow_and_settles_after_the_n
     assert_eq!(runs[0].parent, SessionId::new("ses_parent"));
     assert_eq!(runs[0].persona_prompt, PERSONA);
     assert_eq!(runs[0].mode, PermissionMode::Default);
+    // A generic session: every recorded turn carries its submit port with no schema, the nudged one included.
+    assert!(
+        runs.iter().all(|run| run
+            .port
+            .as_ref()
+            .is_some_and(|port| port.submit_schema.is_none())),
+        "a generic session's turns carry no submit schema"
+    );
     drop(runs);
     let outcomes = owner.take_outcomes();
     assert_eq!(outcomes.len(), 1);
@@ -340,7 +346,16 @@ async fn the_bridge_refuses_to_block_from_inside_a_runtime() {
     // Called from a task of the runtime itself, the bridge's block_on would panic; the debug assertion says why first.
     let cancel = AtomicBool::new(false);
     use rust_cli_workflow::actor_turns::TurnRunner;
-    let _ = runner.run_turn("sess_site", "Ada (site@1)", 5, "do it", &cancel);
+    let _ = runner.run_turn(
+        "sess_site",
+        "Ada (site@1)",
+        &TurnInput {
+            text: "do it".into(),
+            epilogue_start: 5,
+            submit_schema: None,
+        },
+        &cancel,
+    );
 }
 
 #[test]
@@ -477,6 +492,34 @@ async fn a_blocked_escalation_is_answered_through_the_mailbox_and_returns_the_an
             answer: "the second one".to_owned(),
         })]
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_mono_session_hands_its_submit_schema_to_every_turn_of_its_ask() {
+    let agents = ScriptedAgents::new(Vec::new(), false);
+    let (mut owner, mailbox) = owner_over(agents.clone());
+    let actor = owner.create_actor("site", None, None).expect("actor");
+    // The schema matches the site's ask, so the session stays mono and its turns declare the schema.
+    let schema = json!({"type": "object"});
+    owner.set_actor_profile(
+        &actor,
+        rust_cli_workflow::driver_rules::SubmitProfile::Mono {
+            schema: schema.clone(),
+        },
+    );
+    owner.ask("site", &actor, "do it").expect("ask");
+    owner.drain().expect("drain");
+    // The turn ends and is nudged; the nudged turn ends too.
+    mailbox.serve_next(&mut owner).expect("the turn end");
+    mailbox.serve_next(&mut owner).expect("the nudged turn end");
+    let runs = agents.runs.lock().expect("runs");
+    assert_eq!(runs.len(), 2);
+    assert!(runs.iter().all(|run| {
+        run.port
+            .as_ref()
+            .and_then(|port| port.submit_schema.as_ref())
+            == Some(&schema)
+    }));
 }
 
 #[test]

@@ -1,6 +1,7 @@
 //! The driver owner (W6a part 2): the engine's port, the submit and turn-end routes, the escalation book, and the
 //! session creation, pinned against the Node driver's port rules. The turn side is a recorder, so these tests run
 //! without a child session; the turn loop itself is tested in the agents crate.
+use crate::actor_turns::TurnInput;
 use crate::driver_owner::{
     ActorDriverOwner, ActorSessionRequest, ActorSessions, CANCELLED_BY_ENGINE_MESSAGE, SubmitReply,
     TurnEndReply,
@@ -27,6 +28,8 @@ pub(crate) struct Log {
     pub(crate) turns: Vec<(String, Ref, AskMessage)>,
     /// The composed input and its boundary of each turn, in order.
     pub(crate) inputs: Vec<(String, usize)>,
+    /// The submit schema each turn started with (Some for a mono session).
+    pub(crate) submit_schemas: Vec<Option<serde_json::Value>>,
     pub(crate) cancelled: Vec<(String, Ref)>,
     pub(crate) rejected: Vec<(String, String)>,
     /// The interaction description each turn started with, in order.
@@ -60,8 +63,7 @@ impl ActorSessions for Recording {
         session: &str,
         instance: &Ref,
         message: &AskMessage,
-        input: &str,
-        epilogue_start: usize,
+        input: &TurnInput,
         interaction: &str,
     ) -> Result<()> {
         let mut log = self.0.borrow_mut();
@@ -70,7 +72,8 @@ impl ActorSessions for Recording {
             bail!("send refused");
         }
         log.interactions.push(interaction.to_owned());
-        log.inputs.push((input.to_owned(), epilogue_start));
+        log.inputs.push((input.text.clone(), input.epilogue_start));
+        log.submit_schemas.push(input.submit_schema.clone());
         log.turns
             .push((session.to_owned(), instance.clone(), message.clone()));
         Ok(())
@@ -539,6 +542,29 @@ fn an_escalation_without_an_ask_is_refused_and_writes_nothing() {
         }
     );
     assert_eq!(owner.events().expect("events").len(), before);
+}
+
+#[test]
+fn a_mono_turn_carries_its_submit_schema_and_a_generic_turn_carries_none() {
+    let (mut owner, sessions) = owner();
+    let first = owner.create_actor("site", None, None).expect("actor");
+    owner.ask("site", &first, "first").expect("ask");
+    owner.drain().expect("drain");
+    let schema = sessions.0.borrow().turns[0]
+        .2
+        .schema
+        .clone()
+        .expect("the site's ask is typed");
+    let second = owner.create_actor("site", None, None).expect("actor");
+    owner.set_actor_profile(
+        &second,
+        SubmitProfile::Mono {
+            schema: schema.clone(),
+        },
+    );
+    owner.ask("site", &second, "second").expect("ask");
+    owner.drain().expect("drain");
+    assert_eq!(sessions.0.borrow().submit_schemas, vec![None, Some(schema)]);
 }
 
 #[test]

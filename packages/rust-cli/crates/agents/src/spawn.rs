@@ -384,9 +384,7 @@ pub(crate) fn child_tools(
     agent: &LiveAgent,
 ) -> Vec<Arc<dyn rust_cli_kernel_api::tool::Tool>> {
     let mut tools = vec![crate::respond::tool(core.clone())];
-    tools.extend(crate::submit::tools_for(
-        agent.actor_port.as_ref().map(|port| &port.0),
-    ));
+    tools.extend(crate::submit::tools_for(agent.actor_port.as_ref()));
     tools
 }
 

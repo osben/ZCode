@@ -48,7 +48,7 @@ async fn call(
     input: Value,
 ) -> Result<rust_cli_kernel_api::tool::ToolCallOutput, rust_cli_kernel_api::tool::ToolError> {
     let port: Arc<dyn ActorPort> = port.clone();
-    let tool = submit::tool(port);
+    let tool = submit::tool(port, None);
     let (progress, _) = mpsc::channel(4);
     tool.call_with_messages(input, context(), progress).await
 }
@@ -56,7 +56,47 @@ async fn call(
 #[test]
 fn the_submit_tool_is_named_submit_result() {
     let port: Arc<dyn ActorPort> = ScriptedPort::replying(Ok(ActorSubmit::Accepted));
-    assert_eq!(submit::tool(port).name(), "submit_result");
+    assert_eq!(submit::tool(port, None).name(), "submit_result");
+}
+
+#[test]
+fn a_mono_session_declares_its_schema_under_result_and_a_generic_one_does_not() {
+    let port: Arc<dyn ActorPort> = ScriptedPort::replying(Ok(ActorSubmit::Accepted));
+    let schema = json!({"type": "array", "items": {"type": "string"}});
+    let mono = submit::tool(port.clone(), Some(schema)).input_schema();
+    // Node `typedSubmitResultInputSchema`: the schema is the `result` property, the call requires it, and nothing else.
+    assert_eq!(mono["properties"]["result"]["type"], "array");
+    assert_eq!(
+        mono["properties"]["result"]["items"],
+        json!({"type": "string"})
+    );
+    assert_eq!(mono["required"], json!(["result"]));
+    assert_eq!(mono["additionalProperties"], json!(false));
+    let generic = submit::tool(port, None).input_schema();
+    assert!(
+        generic["properties"]["result"].get("type").is_none(),
+        "the generic declaration takes any JSON"
+    );
+}
+
+#[test]
+fn a_schema_description_wins_over_the_default_as_node_spread_does() {
+    // Node `{description: "The structured result for this ask.", ...resultSchema}`: the schema's own description comes last.
+    let port: Arc<dyn ActorPort> = ScriptedPort::replying(Ok(ActorSubmit::Accepted));
+    let schema = json!({"type": "string", "description": "a name"});
+    let declared = submit::tool(port, Some(schema)).input_schema();
+    assert_eq!(declared["properties"]["result"]["description"], "a name");
+}
+
+#[test]
+fn a_non_object_schema_adds_nothing_and_keeps_the_default_description() {
+    // Node spreads a non-object into nothing; the declaration keeps only its default description.
+    let port: Arc<dyn ActorPort> = ScriptedPort::replying(Ok(ActorSubmit::Accepted));
+    let declared = submit::tool(port, Some(json!(true))).input_schema();
+    assert_eq!(
+        declared["properties"]["result"],
+        json!({"description": "The structured result for this ask."})
+    );
 }
 
 #[tokio::test]
@@ -107,7 +147,7 @@ async fn a_call_with_an_unknown_key_is_refused_before_the_port_as_node_strict_sc
 fn the_declaration_refuses_unknown_keys_as_node_strict_schema_does() {
     let port: Arc<dyn ActorPort> = ScriptedPort::replying(Ok(ActorSubmit::Accepted));
     assert_eq!(
-        submit::tool(port).input_schema()["additionalProperties"],
+        submit::tool(port, None).input_schema()["additionalProperties"],
         json!(false)
     );
 }
@@ -116,7 +156,7 @@ fn the_declaration_refuses_unknown_keys_as_node_strict_schema_does() {
 fn a_cancelled_submit_reports_nodes_text() {
     let port: Arc<dyn ActorPort> = ScriptedPort::replying(Ok(ActorSubmit::Accepted));
     assert_eq!(
-        submit::tool(port)
+        submit::tool(port, None)
             .cancel_message()
             .as_deref()
             .map(str::to_owned),
@@ -147,7 +187,11 @@ async fn a_refused_port_fails_the_call_with_its_text() {
 fn only_an_actor_with_a_port_gets_the_actor_tools() {
     assert!(submit::tools_for(None).is_empty());
     let port: Arc<dyn ActorPort> = ScriptedPort::replying(Ok(ActorSubmit::Accepted));
-    let tools = submit::tools_for(Some(&port));
+    let submit_port = crate::actor_turn::SubmitPort {
+        port,
+        submit_schema: None,
+    };
+    let tools = submit::tools_for(Some(&submit_port));
     let names: Vec<&str> = tools.iter().map(|tool| tool.name()).collect();
     assert_eq!(names, vec!["submit_result", "escalate"]);
 }

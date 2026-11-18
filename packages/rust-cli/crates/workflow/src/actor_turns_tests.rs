@@ -2,7 +2,7 @@
 //! here, on the test thread, through the mailbox.
 use crate::actor_mailbox::ActorMailbox;
 use crate::actor_sessions::ActorTurns;
-use crate::actor_turns::{MailboxTurns, TurnRunner};
+use crate::actor_turns::{MailboxTurns, TurnInput, TurnRunner};
 use crate::driver_owner::{ActorDriverOwner, ActorSessionRequest, ActorSessions};
 use crate::driver_owner_tests::config;
 use crate::driver_rules::NUDGE_PROMPT;
@@ -30,11 +30,12 @@ fn composed_do_it() -> String {
     )
 }
 
-/// Replies in order; records every prompt and every interaction description it was given.
+/// Replies in order; records every prompt, interaction description, epilogue boundary and submit schema it was given.
 struct ScriptedRunner {
     prompts: Mutex<Vec<String>>,
     interactions: Mutex<Vec<String>>,
     epilogue_starts: Mutex<Vec<usize>>,
+    submit_schemas: Mutex<Vec<Option<serde_json::Value>>>,
     replies: Mutex<VecDeque<std::result::Result<String, String>>>,
 }
 
@@ -44,6 +45,7 @@ impl ScriptedRunner {
             prompts: Mutex::new(Vec::new()),
             interactions: Mutex::new(Vec::new()),
             epilogue_starts: Mutex::new(Vec::new()),
+            submit_schemas: Mutex::new(Vec::new()),
             replies: Mutex::new(replies.into()),
         })
     }
@@ -54,8 +56,7 @@ impl TurnRunner for ScriptedRunner {
         &self,
         _session: &str,
         interaction: &str,
-        epilogue_start: usize,
-        prompt: &str,
+        turn: &TurnInput,
         _cancel: &AtomicBool,
     ) -> std::result::Result<String, String> {
         self.interactions
@@ -65,11 +66,15 @@ impl TurnRunner for ScriptedRunner {
         self.epilogue_starts
             .lock()
             .expect("epilogue starts")
-            .push(epilogue_start);
+            .push(turn.epilogue_start);
+        self.submit_schemas
+            .lock()
+            .expect("submit schemas")
+            .push(turn.submit_schema.clone());
         self.prompts
             .lock()
             .expect("prompts")
-            .push(prompt.to_owned());
+            .push(turn.text.clone());
         self.replies
             .lock()
             .expect("replies")
@@ -89,8 +94,7 @@ impl TurnRunner for UntilCancelled {
         &self,
         _session: &str,
         _interaction: &str,
-        _epilogue_start: usize,
-        _prompt: &str,
+        _turn: &TurnInput,
         cancel: &AtomicBool,
     ) -> std::result::Result<String, String> {
         let _ = self.started.send(());
@@ -117,12 +121,10 @@ impl ActorSessions for TestSessions {
         session: &str,
         instance: &Ref,
         _message: &AskMessage,
-        input: &str,
-        epilogue_start: usize,
+        input: &TurnInput,
         interaction: &str,
     ) -> Result<()> {
-        self.turns
-            .start_turn(session, instance, input, epilogue_start, interaction)
+        self.turns.start_turn(session, instance, input, interaction)
     }
 
     fn cancel_turn(&mut self, session: &str, instance: &Ref) -> Result<()> {
@@ -213,6 +215,11 @@ fn a_turn_without_a_submit_is_nudged_and_the_nudged_turn_runs_with_the_nudge_pro
         *runner.epilogue_starts.lock().expect("epilogue starts"),
         vec![5, 0]
     );
+    // A generic session declares no schema, on the first turn and on the nudge.
+    assert_eq!(
+        *runner.submit_schemas.lock().expect("submit schemas"),
+        vec![None, None]
+    );
     // The nudged turn is the same actor, so it is named by the same interaction description.
     assert_eq!(
         *runner.interactions.lock().expect("interactions"),
@@ -225,6 +232,39 @@ fn a_turn_without_a_submit_is_nudged_and_the_nudged_turn_runs_with_the_nudge_pro
     assert_eq!(outcomes.len(), 1);
     let error = outcomes[0].result.as_ref().expect_err("the ask fails");
     assert_eq!(error.code, ErrorCode::ResultNotSubmitted);
+}
+
+#[test]
+fn a_nudge_keeps_the_mono_submit_schema() {
+    // The actor's session is mono with the ask's schema, so both turns, the nudged one included, declare that schema.
+    let runner = ScriptedRunner::new(vec![Ok("first".into()), Ok("second".into())]);
+    let (mut owner, mailbox, actor) = owner_over(runner.clone());
+    let schema = json!({"type": "object"});
+    owner.set_actor_profile(
+        &actor,
+        crate::driver_rules::SubmitProfile::Mono {
+            schema: schema.clone(),
+        },
+    );
+    owner.ask("site", &actor, "do it").expect("ask");
+    owner.drain().expect("drain");
+    mailbox.serve_next(&mut owner).expect("the first turn end");
+    mailbox.serve_next(&mut owner).expect("the second turn end");
+    assert_eq!(
+        *runner
+            .prompts
+            .lock()
+            .expect("prompts")
+            .last()
+            .expect("a turn"),
+        NUDGE_PROMPT.to_owned(),
+        "the second turn is the nudge"
+    );
+    assert_eq!(
+        *runner.submit_schemas.lock().expect("submit schemas"),
+        vec![Some(schema.clone()), Some(schema)],
+        "the nudge keeps the mono schema"
+    );
 }
 
 #[test]
@@ -283,8 +323,7 @@ impl TurnRunner for PanickingRunner {
         &self,
         _session: &str,
         _interaction: &str,
-        _epilogue_start: usize,
-        _prompt: &str,
+        _turn: &TurnInput,
         _cancel: &AtomicBool,
     ) -> std::result::Result<String, String> {
         panic!("runner exploded mid-turn");

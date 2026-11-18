@@ -1,6 +1,6 @@
 //! The turn-by-turn entry for a workflow actor (W6a part 2c-2b-2): `Agents::run_actor_turn` runs one turn of an ask on a
 //! child session, and the session persists between calls, so the next turn resumes it.
-use crate::actor_turn::{ActorPort, ActorRun, ActorSubmit, ActorTurnEnd};
+use crate::actor_turn::{ActorPort, ActorRun, ActorSubmit, ActorTurnEnd, SubmitPort};
 use crate::live::LiveAgent;
 use crate::test_support::{harness, workspace};
 use rust_cli_base::models::GLM_5_3_ACCOUNT;
@@ -246,6 +246,63 @@ fn actor_entry_id(child: &SessionId) -> AgentId {
     AgentId::new(format!("actor-{}", child.as_str()))
 }
 
+/// The submit port a turn carries: the refusing stub, with the mono session's schema (None for a generic one).
+fn port_with(submit_schema: Option<serde_json::Value>) -> SubmitPort {
+    SubmitPort {
+        port: Arc::new(PortStub),
+        submit_schema,
+    }
+}
+
+/// A run whose turn carries a submit port with the given schema.
+fn run_with_port(
+    child: &SessionId,
+    parent: &SessionId,
+    submit_schema: Option<serde_json::Value>,
+) -> ActorRun {
+    let mut run = run_for(child, parent);
+    run.port = Some(port_with(submit_schema));
+    run
+}
+
+#[test]
+fn a_turns_submit_schema_reaches_its_entry_port_and_its_declaration() {
+    let parent = SessionId::new("ses_parent");
+    let child = SessionId::new("sess_schema");
+    let schema = serde_json::json!({"type": "object", "required": ["ok"]});
+    let entry = LiveAgent::for_actor(
+        run_with_port(&child, &parent, Some(schema.clone())),
+        actor_entry_id(&child),
+        parent.clone(),
+    );
+    let port = entry.actor_port.as_ref().expect("the entry holds the port");
+    assert_eq!(port.submit_schema, Some(schema));
+    let submit = crate::submit::tools_for(entry.actor_port.as_ref())
+        .into_iter()
+        .find(|tool| tool.name() == "submit_result")
+        .expect("the port offers submit_result");
+    assert_eq!(
+        submit.input_schema()["properties"]["result"]["required"],
+        serde_json::json!(["ok"]),
+        "the declaration is the mono session's schema"
+    );
+}
+
+#[test]
+fn a_generic_turns_port_carries_no_schema_and_its_declaration_takes_any_json() {
+    let parent = SessionId::new("ses_parent");
+    let child = SessionId::new("sess_generic_schema");
+    let entry = LiveAgent::for_actor(
+        run_with_port(&child, &parent, None),
+        actor_entry_id(&child),
+        parent.clone(),
+    );
+    assert_eq!(
+        entry.actor_port.as_ref().expect("the port").submit_schema,
+        None
+    );
+}
+
 #[tokio::test]
 async fn a_turn_with_a_port_offers_submit_result_and_its_end_clears_the_port() {
     let h = harness(None);
@@ -253,7 +310,7 @@ async fn a_turn_with_a_port_offers_submit_result_and_its_end_clears_the_port() {
     let child = SessionId::new("sess_port_clear");
     create_child(h.store.as_ref(), &child, &parent).await;
     let mut run = run_for(&child, &parent);
-    run.port = Some(Arc::new(PortStub) as Arc<dyn ActorPort>);
+    run.port = Some(port_with(None));
     h.agents
         .run_actor_turn(run, "do it", CancellationToken::new())
         .await;
@@ -302,7 +359,7 @@ async fn the_child_tools_carry_submit_result_only_for_an_entry_with_a_port() {
             .collect()
     };
     let mut with = run_for(&child, &parent);
-    with.port = Some(Arc::new(PortStub) as Arc<dyn ActorPort>);
+    with.port = Some(port_with(None));
     let with_port = LiveAgent::for_actor(with, actor_entry_id(&child), parent.clone());
     assert!(names(&with_port).iter().any(|name| name == "submit_result"));
     let without = LiveAgent::for_actor(
@@ -322,7 +379,7 @@ async fn a_second_turn_offers_submit_result_again_with_its_own_port() {
     // The first turn's end clears its port. The second turn offers submit_result only if its refresh set its own port.
     for prompt in ["first", "second"] {
         let mut run = run_for(&child, &parent);
-        run.port = Some(Arc::new(PortStub) as Arc<dyn ActorPort>);
+        run.port = Some(port_with(None));
         h.agents
             .run_actor_turn(run, prompt, CancellationToken::new())
             .await;

@@ -203,7 +203,10 @@ fn begun_with_port(live: &Live, id: &AgentId, port: &Arc<dyn crate::actor_turn::
         || {
             let mut entry =
                 LiveAgent::for_actor(run("sess_a"), id.clone(), SessionId::new("ses_parent"));
-            entry.actor_port = Some(crate::actor_turn::SubmitPort(port.clone()));
+            entry.actor_port = Some(crate::actor_turn::SubmitPort {
+                port: port.clone(),
+                submit_schema: None,
+            });
             entry
         },
         |_| {},
@@ -228,13 +231,22 @@ fn the_next_turns_port_survives_the_previous_turns_end() {
     live.begin_actor_run(
         &id,
         || unreachable!("the entry exists"),
-        |entry| entry.actor_port = Some(crate::actor_turn::SubmitPort(second.clone())),
+        |entry| {
+            entry.actor_port = Some(crate::actor_turn::SubmitPort {
+                port: second.clone(),
+                submit_schema: None,
+            })
+        },
         "execution-2".to_owned(),
     );
     let entry = live.get(&id).expect("the entry");
     assert!(
         Arc::ptr_eq(
-            &entry.actor_port.as_ref().expect("the second turn's port").0,
+            &entry
+                .actor_port
+                .as_ref()
+                .expect("the second turn's port")
+                .port,
             &second
         ),
         "the second turn keeps the port it installed"
@@ -260,6 +272,54 @@ fn a_restart_offers_no_submit_port() {
     assert!(
         live.get(&id).expect("the entry").actor_port.is_none(),
         "a restarted entry holds no submit port"
+    );
+}
+
+#[test]
+fn a_later_turns_port_refresh_replaces_the_submit_schema() {
+    // Each turn's begin refreshes the entry's port, schema included: a mono turn's schema is not carried into a later one.
+    let live = live_at(42);
+    let id = AgentId::new("actor-sess_a");
+    let first: Arc<dyn crate::actor_turn::ActorPort> = Arc::new(NoSubmit);
+    let first_schema = serde_json::json!({"type": "object", "required": ["first"]});
+    live.begin_actor_run(
+        &id,
+        || {
+            let mut entry =
+                LiveAgent::for_actor(run("sess_a"), id.clone(), SessionId::new("ses_parent"));
+            entry.actor_port = Some(crate::actor_turn::SubmitPort {
+                port: first.clone(),
+                submit_schema: Some(first_schema.clone()),
+            });
+            entry
+        },
+        |_| {},
+        "execution-1".to_owned(),
+    );
+    live.finish_actor_turn(&id, Ending::Completed);
+    let second: Arc<dyn crate::actor_turn::ActorPort> = Arc::new(NoSubmit);
+    live.begin_actor_run(
+        &id,
+        || unreachable!("the entry exists"),
+        |entry| {
+            entry.actor_port = Some(crate::actor_turn::SubmitPort {
+                port: second.clone(),
+                submit_schema: None,
+            });
+        },
+        "execution-2".to_owned(),
+    );
+    let schema = live
+        .get(&id)
+        .expect("the entry")
+        .actor_port
+        .as_ref()
+        .expect("the second turn's port")
+        .submit_schema
+        .clone();
+    assert_eq!(
+        schema, None,
+        "the second turn's refresh replaces the first's schema"
     );
 }
 

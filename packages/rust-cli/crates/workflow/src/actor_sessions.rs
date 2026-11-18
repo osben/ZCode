@@ -4,6 +4,7 @@
 //! `workflow_child` row under the run's parent, and the `workflow_actor` task link, through node-store's writers. The
 //! session id is `mint_actor_session_id`, the same function the replay envelope uses. Turn calls are delegated to
 //! `ActorTurns`, the turn side, which is not part of this module.
+use crate::actor_turns::TurnInput;
 use crate::driver_owner::{ActorSessionRequest, ActorSessions};
 use crate::engine::AskMessage;
 use crate::model::Ref;
@@ -16,16 +17,19 @@ use rust_cli_node_store::mint_actor_session_id;
 
 /// The turn side of an actor's session: runs the turns of asks, and releases what an ask leaves behind.
 pub trait ActorTurns {
-    /// Starts one ask's turn on `session`. `input` is the turn's text with its epilogue, composed by the owner.
-    /// `epilogue_start` is where that epilogue begins, in UTF-16 code units (Node's `epilogueStart`): an offset in
-    /// UTF-16 units, not a byte offset, so it must not be used to slice a Rust string. `interaction` is the description
-    /// the actor's asks are named by. The prompt is `input`; the ask's instructions are not read again.
+    /// Starts one ask's turn on `session`, with the input the owner composed (a `TurnInput`):
+    /// - `text`: the turn's prompt, the instructions with their epilogue. The ask's instructions are not read again.
+    /// - `epilogue_start`: where that epilogue begins, in UTF-16 code units (Node's `epilogueStart`). It is an offset in
+    ///   UTF-16 units, not a byte offset, so it must not be used to slice a Rust string.
+    /// - `submit_schema`: the mono session's schema, which the turn's `submit_result` declares. None for a generic
+    ///   session, and for an untyped ask on a mono session.
+    ///
+    /// `interaction` is the description the actor's asks are named by.
     fn start_turn(
         &mut self,
         session: &str,
         instance: &Ref,
-        input: &str,
-        epilogue_start: usize,
+        input: &TurnInput,
         interaction: &str,
     ) -> Result<()>;
     fn cancel_turn(&mut self, session: &str, instance: &Ref) -> Result<()>;
@@ -111,12 +115,10 @@ impl<T: ActorTurns> ActorSessions for NodeActorSessions<'_, T> {
         session: &str,
         instance: &Ref,
         _message: &AskMessage,
-        input: &str,
-        epilogue_start: usize,
+        input: &TurnInput,
         interaction: &str,
     ) -> Result<()> {
-        self.turns
-            .start_turn(session, instance, input, epilogue_start, interaction)
+        self.turns.start_turn(session, instance, input, interaction)
     }
 
     fn cancel_turn(&mut self, session: &str, instance: &Ref) -> Result<()> {

@@ -99,9 +99,15 @@ pub trait ActorPort: Send + Sync + 'static {
     async fn escalate(&self, question: ActorQuestion) -> Result<ActorEscalation, String>;
 }
 
-/// A turn's submit port as the live entry holds it. Its `Debug` says only that there is one, as `child::Asks` does.
+/// A turn's submit port, as the workflow hands it in and the live entry holds it: the port, and the mono session's submit
+/// schema (None for a generic session, and for an untyped ask on a mono session), which the submit tool declares. The
+/// schema lives inside the port, so a turn cannot carry a schema without a port. Its `Debug` says only that there is one,
+/// as `child::Asks` does.
 #[derive(Clone)]
-pub(crate) struct SubmitPort(pub(crate) Arc<dyn ActorPort>);
+pub struct SubmitPort {
+    pub port: Arc<dyn ActorPort>,
+    pub submit_schema: Option<Value>,
+}
 
 impl std::fmt::Debug for SubmitPort {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -125,8 +131,9 @@ pub struct ActorRun {
     pub workspace: WorkspaceRef,
     pub selection: ModelSelection,
     pub mode: PermissionMode,
-    /// The submit port of this turn. None means the child has no `submit_result` tool.
-    pub port: Option<Arc<dyn ActorPort>>,
+    /// The submit port of this turn, with the mono session's submit schema it declares. None means the child has no
+    /// `submit_result` or `escalate` tool.
+    pub port: Option<SubmitPort>,
 }
 
 /// Renders the interactions by presence, as `child::Asks` does: the channel is a trait object with no `Debug`.
@@ -145,6 +152,13 @@ impl std::fmt::Debug for ActorRun {
             .field("selection", &self.selection)
             .field("mode", &self.mode)
             .field("port", &self.port.as_ref().map(|_| "present"))
+            .field(
+                "submit_schema",
+                &self
+                    .port
+                    .as_ref()
+                    .and_then(|port| port.submit_schema.as_ref()),
+            )
             .finish()
     }
 }
@@ -227,7 +241,7 @@ impl LiveAgent {
             mode: run.mode,
             background: true,
             asks: None,
-            actor_port: run.port.map(SubmitPort),
+            actor_port: run.port,
             state: AgentState::Finished(Ending::Completed),
             result: None,
             shown: Shown::default(),
@@ -257,7 +271,7 @@ impl crate::Agents {
         let asks = actor_asks(core.background_prompts, run.interactions.clone());
         let description = run.interaction_description.clone();
         let fresh_asks = asks.clone();
-        let port = run.port.clone();
+        let submit = run.port.clone();
         // The first-use check, the insert, the refresh and the run start share one lock section (`Live::begin_actor_run`).
         let started = core.live.begin_actor_run(
             &agent_id,
@@ -269,7 +283,7 @@ impl crate::Agents {
             |entry| {
                 entry.description = description;
                 entry.asks = asks;
-                entry.actor_port = port.map(SubmitPort);
+                entry.actor_port = submit;
             },
             execution_id,
         );

@@ -1,6 +1,7 @@
 //! `NodeActorSessions`: the session row and the `workflow_actor` link of an actor, written through node-store, and the
 //! turn calls delegated to the turn side. Runs on the Node-format database the shared user data uses.
 use crate::actor_sessions::{ActorTurns, NodeActorSessions};
+use crate::actor_turns::TurnInput;
 use crate::driver_owner::{ActorSessionRequest, ActorSessions};
 use crate::driver_rules::WORKFLOW_ACTOR_LINK_ROLE;
 use crate::engine::AskMessage;
@@ -44,13 +45,12 @@ impl ActorTurns for Turns {
         &mut self,
         session: &str,
         _instance: &Ref,
-        input: &str,
-        epilogue_start: usize,
+        input: &TurnInput,
         interaction: &str,
     ) -> anyhow::Result<()> {
         self.started.push(session.to_owned());
         self.interactions.push(interaction.to_owned());
-        self.inputs.push((input.to_owned(), epilogue_start));
+        self.inputs.push((input.text.clone(), input.epilogue_start));
         Ok(())
     }
 
@@ -162,8 +162,11 @@ fn turn_calls_are_delegated_to_the_turn_side_unchanged() {
             "sess_x",
             &Ref::new("ask", 1),
             &message,
-            "composed",
-            5,
+            &TurnInput {
+                text: "composed".into(),
+                epilogue_start: 5,
+                submit_schema: None,
+            },
             "Ada (site@1)",
         )
         .expect("start");

@@ -28,16 +28,24 @@ use std::thread;
 /// `interaction` is the actor's interaction description (`<persona name ?? "subagent"> (<site>@<ordinal>)`), the origin
 /// its permission and interaction asks are named by. It is the same for every turn of the actor, nudged turns included.
 pub trait TurnRunner: Send + Sync + 'static {
-    /// `epilogue_start` is the boundary in UTF-16 units where the epilogue of `prompt` begins (Node `runTurn`'s
-    /// `epilogueStart`): the first turn of an ask has the instructions' length, a nudged turn has 0.
     fn run_turn(
         &self,
         session: &str,
         interaction: &str,
-        epilogue_start: usize,
-        prompt: &str,
+        turn: &TurnInput,
         cancel: &AtomicBool,
     ) -> std::result::Result<String, String>;
+}
+
+/// One turn's input: the text the model reads, the boundary in UTF-16 units where its epilogue begins (Node `runTurn`'s
+/// `epilogueStart`: the instructions' length for the first turn of an ask, 0 for a nudge), and the submit schema the
+/// turn's `submit_result` declares. The schema is None in two cases: a generic session, and an untyped ask on a mono
+/// session (the owner sends no schema for an ask that has none). A nudge keeps the schema of the turn it follows.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TurnInput {
+    pub text: String,
+    pub epilogue_start: usize,
+    pub submit_schema: Option<serde_json::Value>,
 }
 
 /// The turn side of an actor: one thread per ask, reporting through the mailbox.
@@ -64,8 +72,7 @@ impl ActorTurns for MailboxTurns {
         &mut self,
         session: &str,
         instance: &Ref,
-        input: &str,
-        epilogue_start: usize,
+        input: &TurnInput,
         interaction: &str,
     ) -> Result<()> {
         let cancel = Arc::new(AtomicBool::new(false));
@@ -73,7 +80,7 @@ impl ActorTurns for MailboxTurns {
         let runner = self.runner.clone();
         let handle = self.handle.clone();
         let session = session.to_owned();
-        let first = input.to_owned();
+        let first = input.clone();
         let interaction = interaction.to_owned();
         thread::Builder::new()
             .name(format!("actor-turn-{}", instance.key()))
@@ -83,7 +90,6 @@ impl ActorTurns for MailboxTurns {
                     &handle,
                     &session,
                     &interaction,
-                    epilogue_start,
                     first,
                     &cancel,
                 )
@@ -125,16 +131,15 @@ fn run_ask(
     handle: &ActorHandle,
     session: &str,
     interaction: &str,
-    mut epilogue_start: usize,
-    first: String,
+    first: TurnInput,
     cancel: &AtomicBool,
 ) {
-    let mut prompt = first;
+    let mut turn = first;
     loop {
         // Node catches every throw from a turn and reports it as the ask's failure. A panic is the Rust equivalent,
         // and it must not leave the ask waiting on a thread that is gone.
         let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
-            runner.run_turn(session, interaction, epilogue_start, &prompt, cancel)
+            runner.run_turn(session, interaction, &turn, cancel)
         }))
         .unwrap_or_else(|payload| Err(panic_text(payload.as_ref())));
         let text = match outcome {
@@ -154,9 +159,10 @@ fn run_ask(
         }
         match handle.turn_ended(session, &text) {
             Ok(TurnEndReply::Verdict(SubmitVerdict::Nudge)) => {
-                prompt = NUDGE_PROMPT.to_owned();
-                // Node `runTurn(NUDGE_PROMPT, 0)`: the nudge has no instructions, so its epilogue starts at 0.
-                epilogue_start = 0;
+                // Node `runTurn(NUDGE_PROMPT, 0)`: the nudge has no instructions, so its epilogue starts at 0. It is the
+                // same session, so it keeps the submit schema: only the text and the boundary change.
+                turn.text = NUDGE_PROMPT.to_owned();
+                turn.epilogue_start = 0;
             }
             Ok(_) => return,
             Err(report) => {
