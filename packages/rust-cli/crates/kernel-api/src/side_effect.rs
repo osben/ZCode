@@ -4,7 +4,10 @@
 //! from Node's tool handlers (`core/src/tool/handlers/*.ts`); a Rust name the table lists as `None` has no scope in those
 //! sources and is mutating. A name the table does not list at all (MCP, plugin tools) is mutating too.
 
-use rust_cli_kernel_api::tool_names as names;
+use serde_json::Value;
+
+use crate::tool::Tool;
+use crate::tool_names as names;
 
 /// Node `ToolSideEffectScope`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,6 +78,11 @@ const TABLE: &[(&str, Option<Scope>)] = &[
     (names::WEB_FETCH, Some(Scope::Network)),
     (names::WEB_SEARCH, Some(Scope::Network)),
     (names::WRITE, Some(Scope::Workspace)),
+    // Protocol tools the agents crate declares by literal name (Node: session scope).
+    ("submit_result", Some(Scope::Session)),
+    ("escalate", Some(Scope::Session)),
+    ("RespondToCoordinator", Some(Scope::Session)),
+    ("ReadSessionContext", Some(Scope::Session)),
 ];
 
 /// The table's entry for `name`: the outer `Option` is "listed", the inner one is the declared scope.
@@ -97,6 +105,8 @@ pub fn is_workspace_mutating(name: &str, read_only: bool) -> bool {
     }
 }
 
-#[cfg(test)]
-#[path = "side_effect_tests.rs"]
-mod tests;
+/// The predicate for a call of `tool` with `input`: its own read-only classification (Bash reads the command), then
+/// [`is_workspace_mutating`]. The query executor calls it when a call is admitted.
+pub fn is_workspace_mutating_call(tool: &dyn Tool, input: &Value) -> bool {
+    is_workspace_mutating(tool.name(), tool.is_read_only(input))
+}

@@ -20,6 +20,7 @@ use crate::test_support::{harness, text};
 fn running(agent: &str, root: &str) -> crate::live::LiveAgent {
     crate::live::LiveAgent {
         last_turn_messages: None,
+        on_mutating: None,
         off_peak_execution: None,
         machine: Default::default(),
         agent: AgentId::new(agent),

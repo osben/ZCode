@@ -85,6 +85,11 @@ pub(crate) enum ActorRequest {
         message: String,
         reply: Sender<Result<()>>,
     },
+    /// A workspace-mutating call of the session's ask is about to run (Node `askMutating`).
+    Mutating {
+        session: String,
+        reply: Sender<Result<()>>,
+    },
     /// The message boundary of a settled ask (Node `journalAskMessageBoundary`), sent after its settlement.
     MessageBoundary {
         instance: Ref,
@@ -192,6 +197,9 @@ fn dispatch<J: JournalPort, S: ActorSessions>(
         } => {
             let _ = reply.send(owner.ask_stats(&instance, stats));
         }
+        ActorRequest::Mutating { session, reply } => {
+            let _ = reply.send(owner.ask_mutating(&session));
+        }
     }
 }
 
@@ -265,6 +273,14 @@ impl ActorHandle {
         self.call(|reply| ActorRequest::MessageBoundary {
             instance: instance.clone(),
             boundary,
+            reply,
+        })
+    }
+
+    /// The session's ask is about to run a workspace-mutating call. The owner forwards the first one of the ask.
+    pub fn mutating(&self, session: &str) -> Result<(), MailboxError> {
+        self.call(|reply| ActorRequest::Mutating {
+            session: session.to_owned(),
             reply,
         })
     }
