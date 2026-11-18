@@ -255,9 +255,9 @@ mod interactions {
         assert!(
             seen.iter().any(|event| matches!(
                 event,
-                KernelEvent::InteractionResolved { interaction: resolved, .. } if *resolved == interaction
+                KernelEvent::InteractionResolved { interaction: resolved, denied: true } if *resolved == interaction
             )),
-            "the prompt must close before the cancelled tool ends: {seen:?}"
+            "the prompt must close as denied before the cancelled tool ends: {seen:?}"
         );
         assert!(session.view().await.unwrap().pending.is_empty());
         // 迟到的“总是允许”：被拒绝，不写规则。
