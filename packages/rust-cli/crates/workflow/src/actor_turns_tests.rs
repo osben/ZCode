@@ -116,19 +116,13 @@ impl ActorSessions for TestSessions {
         &mut self,
         session: &str,
         instance: &Ref,
-        message: &AskMessage,
+        _message: &AskMessage,
         input: &str,
         epilogue_start: usize,
         interaction: &str,
     ) -> Result<()> {
-        self.turns.start_turn(
-            session,
-            instance,
-            message,
-            input,
-            epilogue_start,
-            interaction,
-        )
+        self.turns
+            .start_turn(session, instance, input, epilogue_start, interaction)
     }
 
     fn cancel_turn(&mut self, session: &str, instance: &Ref) -> Result<()> {

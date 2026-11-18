@@ -44,7 +44,6 @@ impl ActorTurns for Turns {
         &mut self,
         session: &str,
         _instance: &Ref,
-        _message: &AskMessage,
         input: &str,
         epilogue_start: usize,
         interaction: &str,

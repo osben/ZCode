@@ -190,97 +190,59 @@ fn permission_mode_rules_match_node() {
     }
 }
 
-// Node `qualityEpilogue` (workflow-ask-epilogue.ts) and the typed ask's input (workflow-driver.ts, the input composition).
-const STANDARD_LINES: [&str; 6] = [
-    "- Every finding cites what you read or ran: path and line for code; the exact command and its output for a check; the part of the ask for material the ask itself gave you.",
-    "- A check counts as passed only if you ran it during this ask. Otherwise report it as not run.",
-    "- Run the check the ask names, at the scale it names. A narrower or faster substitute — one test file for the suite, a build for the tests — is reported as what it is, never as the ask's check; say the exact command you ran.",
-    "- Anything you could not do, verify, or find is stated as such — never filled with a plausible guess.",
-    "- Put each finding's citation in its `evidence` field.",
-    "- If you are blocked by something outside your reach, call `escalate` instead of inventing a value.",
-];
+// Node `qualityEpilogue` (workflow-ask-epilogue.ts) and the ask's input composition (workflow-driver.ts): the cases come from
+// Node's own functions, written by scripts/rust-cli/workflow-driver-goldens.ts. Nothing here is copied from Node by hand.
 
-#[test]
-fn quality_epilogue_is_node_text_without_optional_fields() {
-    let expected = [
-        "",
-        "",
-        "---",
-        "Standard for this result:",
-        STANDARD_LINES[0],
-        STANDARD_LINES[1],
-        STANDARD_LINES[2],
-        STANDARD_LINES[3],
-        STANDARD_LINES[5],
-    ]
-    .join("\n");
-    assert_eq!(rules::quality_epilogue(None), expected);
+fn schema_case(case: &Value) -> Option<&Value> {
+    if case["absent"].as_bool().unwrap() {
+        None
+    } else {
+        Some(&case["schema"])
+    }
 }
 
 #[test]
-fn quality_epilogue_names_evidence_and_confidence_when_the_schema_has_them() {
-    let schema = json!({"properties": {"evidence": {}, "confidence": {}}});
-    let text = rules::quality_epilogue(Some(&schema));
-    let confidence =
-        "- Rate `confidence` honestly; a low value with a reason beats a confident guess.";
-    let positions: Vec<usize> = [
-        STANDARD_LINES[3],
-        STANDARD_LINES[4],
-        confidence,
-        STANDARD_LINES[5],
-    ]
-    .iter()
-    .map(|line| text.find(line).unwrap_or_else(|| panic!("missing {line}")))
-    .collect();
-    assert!(
-        positions.windows(2).all(|pair| pair[0] < pair[1]),
-        "Node's order: unverified, evidence, confidence, escalate"
-    );
+fn quality_epilogue_is_node_text_for_every_schema_shape() {
+    for case in cases("qualityEpilogue") {
+        let name = text(&case["name"]).unwrap();
+        assert_eq!(
+            rules::quality_epilogue(schema_case(&case)),
+            text(&case["text"]).unwrap(),
+            "schema case {name}"
+        );
+    }
+}
+
+#[test]
+fn ask_input_is_node_text_for_every_ask_shape() {
+    for case in cases("askInput") {
+        let name = text(&case["name"]).unwrap();
+        let profile = if case["mono"].as_bool().unwrap() {
+            SubmitProfile::Mono {
+                schema: case["schema"].clone(),
+            }
+        } else {
+            SubmitProfile::Generic
+        };
+        let (input, boundary) = rules::ask_input(
+            text(&case["instructions"]).unwrap(),
+            case["typed"].as_bool().unwrap(),
+            schema_case(&case),
+            &profile,
+        );
+        assert_eq!(input, text(&case["input"]).unwrap(), "ask case {name}");
+        assert_eq!(
+            boundary as u64,
+            case["boundary"].as_u64().unwrap(),
+            "ask case {name}"
+        );
+    }
 }
 
 #[test]
 fn quality_epilogue_reads_only_top_level_properties() {
     let schema = json!({"properties": {"x": {"properties": {"evidence": {}}}}});
     assert!(!rules::quality_epilogue(Some(&schema)).contains("`evidence`"));
-}
-
-#[test]
-fn an_untyped_ask_input_is_the_instructions_then_the_quality_epilogue() {
-    let (input, boundary) = rules::ask_input("do it", false, None, &SubmitProfile::Generic);
-    assert_eq!(input, format!("do it{}", rules::quality_epilogue(None)));
-    assert_eq!(boundary, 5);
-}
-
-#[test]
-fn a_typed_generic_ask_input_appends_the_schema_epilogue_after_the_quality_one() {
-    let schema = json!({"type": "object"});
-    let (input, boundary) = rules::ask_input("do it", true, Some(&schema), &SubmitProfile::Generic);
-    assert_eq!(
-        input,
-        format!(
-            "do it{}{}",
-            rules::quality_epilogue(Some(&schema)),
-            rules::schema_epilogue(Some(&schema))
-        )
-    );
-    assert_eq!(boundary, 5);
-}
-
-#[test]
-fn a_typed_mono_ask_input_appends_the_tool_epilogue() {
-    let schema = json!({"type": "object"});
-    let profile = SubmitProfile::Mono {
-        schema: schema.clone(),
-    };
-    let (input, _) = rules::ask_input("do it", true, Some(&schema), &profile);
-    assert_eq!(
-        input,
-        format!(
-            "do it{}{}",
-            rules::quality_epilogue(Some(&schema)),
-            TYPED_TOOL_EPILOGUE
-        )
-    );
 }
 
 #[test]

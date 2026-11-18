@@ -16,11 +16,14 @@ use rust_cli_node_store::mint_actor_session_id;
 
 /// The turn side of an actor's session: runs the turns of asks, and releases what an ask leaves behind.
 pub trait ActorTurns {
+    /// Starts one ask's turn on `session`. `input` is the turn's text with its epilogue, composed by the owner.
+    /// `epilogue_start` is where that epilogue begins, in UTF-16 code units (Node's `epilogueStart`): an offset in
+    /// UTF-16 units, not a byte offset, so it must not be used to slice a Rust string. `interaction` is the description
+    /// the actor's asks are named by. The prompt is `input`; the ask's instructions are not read again.
     fn start_turn(
         &mut self,
         session: &str,
         instance: &Ref,
-        message: &AskMessage,
         input: &str,
         epilogue_start: usize,
         interaction: &str,
@@ -107,19 +110,13 @@ impl<T: ActorTurns> ActorSessions for NodeActorSessions<'_, T> {
         &mut self,
         session: &str,
         instance: &Ref,
-        message: &AskMessage,
+        _message: &AskMessage,
         input: &str,
         epilogue_start: usize,
         interaction: &str,
     ) -> Result<()> {
-        self.turns.start_turn(
-            session,
-            instance,
-            message,
-            input,
-            epilogue_start,
-            interaction,
-        )
+        self.turns
+            .start_turn(session, instance, input, epilogue_start, interaction)
     }
 
     fn cancel_turn(&mut self, session: &str, instance: &Ref) -> Result<()> {

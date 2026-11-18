@@ -59,6 +59,12 @@ pub fn schema_epilogue(schema: Option<&Value>) -> String {
 
 /// `JSON.stringify(value, null, 2)`: two-space indentation, `[]` and `{}` for empty containers, keys in
 /// insertion order, numbers in the JavaScript number form (a JSON number is read as a double, as JS does).
+pub fn json_pretty(value: &Value) -> String {
+    let mut out = String::new();
+    write_pretty(&mut out, value, 0);
+    out
+}
+
 /// Node `qualityEpilogue` (workflow-ask-epilogue.ts): the standard every ask's result is held to. The `evidence` and
 /// `confidence` lines appear only when the schema's top-level properties name those fields.
 pub fn quality_epilogue(schema: Option<&Value>) -> String {
@@ -117,12 +123,6 @@ pub fn ask_input(
         }
     }
     (input, instructions.encode_utf16().count())
-}
-
-pub fn json_pretty(value: &Value) -> String {
-    let mut out = String::new();
-    write_pretty(&mut out, value, 0);
-    out
 }
 
 fn write_pretty(out: &mut String, value: &Value, depth: usize) {

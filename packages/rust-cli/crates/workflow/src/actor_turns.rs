@@ -12,7 +12,7 @@ use crate::actor_mailbox::ActorHandle;
 use crate::actor_sessions::ActorTurns;
 use crate::driver_owner::TurnEndReply;
 use crate::driver_rules::NUDGE_PROMPT;
-use crate::engine::{AskMessage, SubmitVerdict};
+use crate::engine::SubmitVerdict;
 use crate::model::Ref;
 use anyhow::{Result, anyhow, bail};
 use std::any::Any;
@@ -64,7 +64,6 @@ impl ActorTurns for MailboxTurns {
         &mut self,
         session: &str,
         instance: &Ref,
-        _message: &AskMessage,
         input: &str,
         epilogue_start: usize,
         interaction: &str,
