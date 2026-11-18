@@ -1151,6 +1151,16 @@ No finished event panics or underflows without a start: the stall list uses `ret
 
 **Next.** 2c-4e (the `ask_mutating` caller) is written up as 9.8h when it lands. It rebases onto this part.
 
+### 9.8h W6a part 2c-4e: the workspace-mutating predicate (part A built; part B open)
+
+The owner's `ask_mutating` (`workflow/src/driver_owner.rs`) and the engine's close of the amend import cache on the first write already exist, and their tests use it, but nothing in production calls it. Node calls `askMutating` when a child in an active ask is about to run a mutating tool, once per ask.
+
+**Part A (built, branch `feat/rust-workflow-actor-mutating-2c-4e`): the predicate.** `tools/src/side_effect.rs` ports Node `isWorkspaceMutatingToolCall` (`contracts/src/tools/contract.ts`): a read-only call (`Tool::is_read_only(input)`) is never mutating; otherwise the scope decides, and workspace, git and system scopes are mutating. A name the table lists with no declared scope, and a name the table does not list (MCP, plugin tools), are mutating (Node: undeclared means untrusted). The table gives Node's scope per Rust tool name, taken from Node's tool handlers in `core/src/tool/handlers/*.ts`. Tests (`side_effect_tests.rs`): the read-only rule; the scope rule for each scope family (write, edit, bash, cron, save-workflow mutating; web fetch, agent, ask-user, glob, read not); undeclared and unknown names mutating; and a completeness test that every builtin tool (`builtin(...).tools()`) has a table entry. The predicate was written together with its tests and run once (all four pass); no red run was recorded before the predicate existed.
+
+**Part B (open, not started in this part): the trigger and the owner call.** Planned as the approved design: the admitted `ToolStarted` (the start callback, after admission) is the trigger, computed with `Tool::is_read_only` on the admitted input. The child sends it through the bridge's mailbox to the owner, which calls `ask_mutating`. A per-run `AtomicBool` in `AgentTurnRunner` (one runner per ask) makes it fire at most once per ask, so a nudged second turn does not refire and a new ask does. A refused call does not fire (it never starts). The trigger needs a new internal `QueryEvent` variant, a mailbox request, and a callback threaded from the bridge into `ChildSink`, so it is a separate part with its own red tests (owner: nudged turn does not refire; new ask refires; refused call does not fire).
+
+**Follow-ups (not in scope of 2c-4e).** (1) The unknown-tool error card (Node `emitToolCallError` on a registry miss). (2) Wiring `ChildSink::tool_scheduled`, which has no caller. (3) Checking the table against the non-builtin registries: web, LSP, workflow and protocol tools are not covered by the completeness test yet.
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.
