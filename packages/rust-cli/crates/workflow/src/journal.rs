@@ -262,9 +262,23 @@ impl JournalPort for MemoryJournal {
             .unwrap_or_default())
     }
 
-    fn put_node(&mut self, row: NodeRow) -> Result<()> {
+    fn put_node(&mut self, mut row: NodeRow) -> Result<()> {
         let key = Ref::new(row.site_id.clone(), row.ordinal).key();
         let run = self.run_mut(&row.run_id)?;
+        // Same rule as DwfJournal::put_node: a row that leaves out the input or the boundary keeps the
+        // stored value, so a settlement never resets what the driver or the admission wrote.
+        if let Some((input, boundary)) = run
+            .nodes
+            .get(&key)
+            .map(|stored| (stored.input.clone(), stored.message_boundary))
+        {
+            if row.input.is_none() {
+                row.input = input;
+            }
+            if row.message_boundary.is_none() {
+                row.message_boundary = boundary;
+            }
+        }
         run.nodes.upsert(key, row);
         Ok(())
     }
@@ -303,5 +317,75 @@ impl JournalPort for MemoryJournal {
             .get(run_id)
             .map(|run| run.events.clone())
             .unwrap_or_default())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{NodeKind, NodeStatus};
+    use serde_json::{Value, json};
+
+    fn run_row(run_id: &str) -> RunRow {
+        RunRow {
+            run_id: run_id.to_owned(),
+            parent_session_id: None,
+            cwd: None,
+            name: None,
+            tool_call_id: None,
+            script_text: None,
+            script_hash: None,
+            args: None,
+            resumed_from: None,
+            caps: Caps::default(),
+            spent_tokens: 0.0,
+            status: RunStatus::Running,
+            stop_reason: None,
+            superseded_by: None,
+            failure: None,
+            result: None,
+        }
+    }
+
+    fn ask_row(status: NodeStatus, input: Option<Value>, boundary: Option<u64>) -> NodeRow {
+        NodeRow {
+            run_id: "run".to_owned(),
+            site_id: "ask#1".to_owned(),
+            ordinal: 1,
+            kind: NodeKind::Ask,
+            actor_site_id: Some("actor#1".to_owned()),
+            actor_ordinal: Some(1),
+            actor_seq: Some(0),
+            input_hash: "h".to_owned(),
+            status,
+            result: None,
+            error: None,
+            stats: None,
+            input,
+            message_boundary: boundary,
+        }
+    }
+
+    /// Node writes the whole row, but a driver boundary and a world input are columns the settlement does not
+    /// rewrite. The memory journal must keep them as the DWF journal does.
+    #[test]
+    fn a_row_without_boundary_or_input_keeps_the_stored_ones() {
+        let mut journal = MemoryJournal::new();
+        journal.create_run(run_row("run")).expect("run");
+        journal
+            .put_node(ask_row(NodeStatus::Running, Some(json!({"op": "x"})), None))
+            .expect("admission");
+        journal
+            .put_node(ask_row(NodeStatus::Completed, None, Some(3)))
+            .expect("boundary");
+        journal
+            .put_node(ask_row(NodeStatus::Completed, None, None))
+            .expect("settlement");
+        let stored = journal
+            .get_node("run", &Ref::new("ask#1", 1))
+            .expect("get")
+            .expect("row");
+        assert_eq!(stored.message_boundary, Some(3));
+        assert_eq!(stored.input, Some(json!({"op": "x"})));
     }
 }

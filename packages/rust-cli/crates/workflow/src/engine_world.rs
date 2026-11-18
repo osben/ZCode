@@ -43,14 +43,18 @@ pub fn bound_world_read_input(op: &str, args: &[Value]) -> Value {
 
 /// Node `previewArg`: a string as is, anything else as its JSON text, cut to 400 UTF-16 units with an ellipsis.
 fn preview_arg(value: &Value) -> String {
-    let text = match value {
-        Value::String(text) => text.clone(),
-        other => stringify(other),
+    let rendered;
+    let text: &str = match value {
+        Value::String(text) => text,
+        other => {
+            rendered = stringify(other);
+            &rendered
+        }
     };
-    if utf16_len(&text) > TRUNCATED_ARG_MAX_UNITS {
-        format!("{}…", utf16_prefix(&text, TRUNCATED_ARG_MAX_UNITS))
+    if utf16_len(text) > TRUNCATED_ARG_MAX_UNITS {
+        format!("{}…", utf16_prefix(text, TRUNCATED_ARG_MAX_UNITS))
     } else {
-        text
+        text.to_owned()
     }
 }
 
@@ -130,8 +134,10 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
         } else {
             NodeKind::WorldRead
         };
-        // Consult the import queue only when the run has no row (replay takes precedence) and the cache is
-        // still open. A hit writes a completed row and settles without the driver.
+        // Node consults the import queue for every node that is not completed or failed, a running row
+        // included (engine-world.ts takes the queue after the recorded-row block). The golden
+        // `amend-world-running-row-versus-the-import-queue` records that behaviour, so this port keeps it.
+        // A hit writes a completed row and settles without the driver.
         let imported = if self.import_closed {
             None
         } else {
@@ -343,12 +349,12 @@ pub(crate) struct RecoveredClosure {
     pub(crate) closed: bool,
 }
 
-pub(crate) fn recover_import_closure(events: &[StoredEvent]) -> RecoveredClosure {
+pub(crate) fn recover_import_closure(events: &[StoredEvent]) -> Result<RecoveredClosure> {
     let mut recovered = RecoveredClosure::default();
     for event in events {
-        let Ok(value) = serde_json::from_str::<Value>(&event.payload_json) else {
-            continue;
-        };
+        let value: Value = serde_json::from_str(&event.payload_json).map_err(|error| {
+            anyhow::anyhow!("event at sequence {} is not JSON: {error}", event.sequence)
+        })?;
         match value.get("type").and_then(Value::as_str) {
             Some("import-cache-closed") => recovered.closed = true,
             Some("node-queued") if value.get("kind").and_then(Value::as_str) == Some("ask") => {
@@ -363,7 +369,7 @@ pub(crate) fn recover_import_closure(events: &[StoredEvent]) -> RecoveredClosure
             _ => {}
         }
     }
-    recovered
+    Ok(recovered)
 }
 
 fn instance_key(event: &Value) -> Option<String> {
