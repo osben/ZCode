@@ -436,7 +436,8 @@ async fn a_cancelled_request_with_usage_counts_its_request_and_tokens() {
 
 /// Node's `isWorldTouchingToolCall` excludes exactly the tools whose side-effect scope is `session` or `userInteraction`
 /// (Node's handlers: Agent, AskUserQuestion, escalate, EnterPlanMode, ExitPlanMode, ReadSessionContext,
-/// RespondToCoordinator, SendMessage, Skill, submit_result, TaskStop, TodoWrite). Pinned by name, so a rename shows here.
+/// RespondToCoordinator, SendMessage, Skill, submit_result, TaskStop, TodoWrite). ReadTopicResource is the topic-attachment
+/// path of ReadSessionContext, which Node declares session-scoped, so it is in the set too: 13 names, pinned by name.
 #[test]
 fn the_protocol_only_set_is_exactly_nodes_session_and_user_interaction_tools() {
     use rust_cli_kernel_api::tool_names as names;
@@ -447,6 +448,7 @@ fn the_protocol_only_set_is_exactly_nodes_session_and_user_interaction_tools() {
         names::ENTER_PLAN_MODE,
         names::EXIT_PLAN_MODE,
         names::READ_SESSION_CONTEXT,
+        names::READ_TOPIC_RESOURCE,
         crate::respond::NAME,
         names::SEND_MESSAGE,
         names::SKILL,
@@ -463,9 +465,5 @@ fn the_protocol_only_set_is_exactly_nodes_session_and_user_interaction_tools() {
     assert!(
         crate::child::is_world_touching(names::READ),
         "Read touches the world"
-    );
-    assert!(
-        crate::child::is_world_touching(names::READ_TOPIC_RESOURCE),
-        "ReadTopicResource touches the world"
     );
 }

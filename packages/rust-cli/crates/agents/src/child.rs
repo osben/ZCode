@@ -98,6 +98,7 @@ pub(crate) fn is_world_touching(name: &str) -> bool {
             | names::ENTER_PLAN_MODE
             | names::EXIT_PLAN_MODE
             | names::READ_SESSION_CONTEXT
+            | names::READ_TOPIC_RESOURCE
             | crate::respond::NAME
             | names::SEND_MESSAGE
             | names::SKILL
