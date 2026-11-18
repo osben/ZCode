@@ -1046,6 +1046,8 @@ Rules for the agents side (decided with the coordinator): add `pub` entry points
 
 **What is not done here.** Nothing is compiled or tested in this part. The Node result path and the permission origin are not read yet; both are listed as open in the sub-split.
 
+As built (2c-2b-1): `crates/agents/src/actor_turn.rs` (`pub mod`): `ActorTurnEnd::{Text, Failed, Stopped}` and `actor_turn_end(killed, failure, text)`, the mapping from a finished run's parts (killed is stopped whatever else it carries; a failure takes precedence over the text). Tests: four cases in the same module, red first (the first run failed to compile on the missing names). Box: fmt and clippy --workspace clean; agents lib 262 pass. The entry point that runs a turn and returns `ActorTurnEnd` (2c-2b-2 with `LiveAgent::for_actor`) is not in this part, so this function has no caller in the workspace yet; it is `pub` and tested, and it is the function the entry point will call.
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.
