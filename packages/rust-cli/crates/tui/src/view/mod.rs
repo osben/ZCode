@@ -263,6 +263,8 @@ pub struct Transcript {
     rows: Vec<Row>,
     next_id: u64,
     pending: Vec<(InteractionId, InteractionRequest)>,
+    /// 权限被拒绝的工具：卡片已取消，拒绝的结果 `ToolDone` 不能再改它（回合结束时清空）。
+    denied_tools: Vec<ToolUseId>,
     /// 扣住、等批准的同伴消息（快照的 `peer_held` 与 `PeerHeldChanged`，cross-session.md §2.6）。
     peer_held: Vec<rust_cli_kernel_api::peers::HeldPeerMessage>,
     queue: Vec<QueuedInput>,
@@ -334,6 +336,7 @@ impl Transcript {
             rows: Vec::new(),
             next_id: 1,
             pending: Vec::new(),
+            denied_tools: Vec::new(),
             peer_held: Vec::new(),
             queue: Vec::new(),
             selection,

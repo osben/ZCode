@@ -49,7 +49,7 @@ impl Transcript {
         transcript.extras.turns.0 = u32::try_from(users).unwrap_or(u32::MAX);
         transcript.pending = view.pending;
         for (_, request) in &transcript.pending.clone() {
-            transcript.mark_approval(request, true);
+            transcript.mark_approval(request, true, false);
         }
         transcript.queue = view.queue;
         transcript.peer_held = view.peer_held;
@@ -181,7 +181,10 @@ impl Transcript {
                 }
             }
             KernelEvent::ToolDone { tool_use, output } => {
-                let status = if output.is_error {
+                // 被拒绝的卡片已取消（见 `mark_approval`）：拒绝的结果不能把它改成失败。
+                let status = if self.denied_tools.contains(&tool_use) {
+                    ToolStatus::Cancelled
+                } else if output.is_error {
                     ToolStatus::Error
                 } else {
                     ToolStatus::Success
@@ -214,13 +217,16 @@ impl Transcript {
                 interaction,
                 request,
             } => {
-                self.mark_approval(&request, true);
+                self.mark_approval(&request, true, false);
                 self.pending.push((interaction, request));
             }
-            KernelEvent::InteractionResolved { interaction, .. } => {
+            KernelEvent::InteractionResolved {
+                interaction,
+                denied,
+            } => {
                 if let Some(at) = self.pending.iter().position(|(id, _)| *id == interaction) {
                     let (_, request) = self.pending.remove(at);
-                    self.mark_approval(&request, false);
+                    self.mark_approval(&request, false, denied);
                 }
             }
             KernelEvent::QueueChanged { items } => self.queue = items,
@@ -372,13 +378,19 @@ impl Transcript {
     }
 
     /// 权限询问对应的工具行显示为等待审批；回答后回到运行中。
-    fn mark_approval(&mut self, request: &InteractionRequest, asked: bool) {
+    /// 权限询问开始（`asked`）或结束。被拒绝的（`denied`）卡片结束时取消，并记下 id，随后的拒绝结果 `ToolDone`
+    /// 不再把它改成失败（回合结束时清空）。
+    fn mark_approval(&mut self, request: &InteractionRequest, asked: bool, denied: bool) {
         let InteractionRequest::Permission { tool_use, .. } = request else {
             return;
         };
+        if denied && !asked {
+            self.denied_tools.push(tool_use.clone());
+        }
         self.update_tool(tool_use, |tool| {
             tool.status = match (asked, tool.status) {
                 (true, status) if status.is_live() => ToolStatus::Approval,
+                (false, ToolStatus::Approval) if denied => ToolStatus::Cancelled,
                 (false, ToolStatus::Approval) => ToolStatus::Running,
                 (_, status) => status,
             };
@@ -537,6 +549,7 @@ impl Transcript {
 
     fn finish(&mut self, outcome: TurnOutcome, now_ms: u64) {
         self.settle(Some((ToolStatus::Cancelled, now_ms)));
+        self.denied_tools.clear();
         // 回合结束时还在跑的压缩定稿（Puffin `settle_all`）：做完了的成功，停下的取消，失败的回合失败。
         if let Some((id, done)) = self.compact.take() {
             let status = match &outcome {
