@@ -1179,6 +1179,7 @@ Node decides a write with `isWorkspaceMutatingToolCall` (`contracts/src/tools/co
 3. Wiring `ChildSink::tool_scheduled`, which has no caller, so a subagent's live activity lists no queued calls.
 4. Production construction of `AgentTurnRunner` (one runner per ask) is not wired; the gate's per-ask rule relies on it.
 5. The completeness test covers the builtin registry and the known constants. A tool outside them takes the default (mutating), by design.
+6. Rust-only tools with no Node counterpart default to mutating, and that closes the import cache needlessly. They are ListAgents, the Task\* tools (TaskCreate, TaskGet, TaskList, TaskUpdate), Monitor and ScheduleWakeup. origin/fork declares no tool with these names, so the table lists them as undeclared. They need their own classification: a read-only one should be read-only, and a write should say which scope it writes.
 
 ## 10. Open questions
 
