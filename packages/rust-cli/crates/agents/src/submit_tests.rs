@@ -1,6 +1,6 @@
 //! `submit_result` for a workflow actor (Node `tool/handlers/submit-result.ts`): an accepted result ends the turn with
 //! Node's text, a rejected one is a repairable error that names each violation, and only an actor that has a port gets
-//! the tool.
+//! the actor tools, `submit_result` and `escalate`.
 use crate::actor_turn::{ActorEscalation, ActorPort, ActorQuestion, ActorSubmit, ActorViolation};
 use crate::submit;
 use async_trait::async_trait;
@@ -144,7 +144,7 @@ async fn a_refused_port_fails_the_call_with_its_text() {
 }
 
 #[test]
-fn only_an_actor_with_a_port_gets_the_submit_tool() {
+fn only_an_actor_with_a_port_gets_the_actor_tools() {
     assert!(submit::tools_for(None).is_empty());
     let port: Arc<dyn ActorPort> = ScriptedPort::replying(Ok(ActorSubmit::Accepted));
     let tools = submit::tools_for(Some(&port));

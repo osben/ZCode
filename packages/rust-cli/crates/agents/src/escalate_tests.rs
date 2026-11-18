@@ -177,3 +177,15 @@ fn a_cancelled_escalate_reports_nodes_text() {
         Some("escalate was cancelled before the main agent answered".to_owned())
     );
 }
+
+#[test]
+fn the_entry_carries_nodes_result_budget_and_deferral() {
+    // Node `escalateToolEntry`: the model reads at most MAX_ESCALATE_MODEL_BYTES (16,000), and `shouldDefer: true`.
+    let port: Arc<dyn ActorPort> = ScriptedPort::replying(Ok(ActorEscalation::Refused {
+        reason: "budget".to_owned(),
+        message: String::new(),
+    }));
+    let tool = escalate::tool(port);
+    assert_eq!(tool.result_budget_truncate_bytes(), Some(16_000));
+    assert!(tool.should_defer());
+}

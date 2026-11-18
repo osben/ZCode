@@ -71,8 +71,6 @@ pub enum ActorSubmit {
     Rejected(Vec<ActorViolation>),
 }
 
-/// The submit port of one actor turn (Node `workflowSubmitPort`): the `submit_result` tool hands the result here and
-/// waits for the engine's verdict. The port is bound to the actor's session, so the model cannot pick another one.
 /// A question an actor escalates to the main agent (Node `escalate`'s input).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActorQuestion {
@@ -90,6 +88,9 @@ pub enum ActorEscalation {
     Refused { reason: String, message: String },
 }
 
+/// The submit port of one actor turn (Node `workflowSubmitPort`): the `submit_result` tool hands the result here and
+/// waits for the engine's verdict, and the `escalate` tool asks the main agent through the same port. The port is bound to
+/// the actor's session, so the model cannot pick another one.
 #[async_trait]
 pub trait ActorPort: Send + Sync + 'static {
     async fn submit(&self, result: Value) -> Result<ActorSubmit, String>;

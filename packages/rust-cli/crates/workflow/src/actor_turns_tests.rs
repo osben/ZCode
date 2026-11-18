@@ -163,12 +163,12 @@ fn a_parked_question_is_answered_or_withdrawn_through_the_turn_side() {
     // A blocked escalate waits on its question; the owner's answer wakes it with the text.
     let answered = {
         let parked = parked.clone();
-        std::thread::spawn(move || parked.wait("q1"))
+        std::thread::spawn(move || parked.wait("sess", "q1"))
     };
     turns.deliver_answer("sess", "q1", "yes").expect("deliver");
     assert_eq!(answered.join().expect("join"), Ok("yes".to_owned()));
     // A withdrawn question wakes its waiter with an error, so the tool fails instead of hanging.
-    let withdrawn = std::thread::spawn(move || parked.wait("q2"));
+    let withdrawn = std::thread::spawn(move || parked.wait("sess", "q2"));
     turns.reject_parked("sess", "q2").expect("reject");
     assert!(withdrawn.join().expect("join").is_err());
 }

@@ -17,6 +17,9 @@ use crate::actor_turn::{ActorEscalation, ActorPort, ActorQuestion};
 
 pub(crate) const NAME: &str = "escalate";
 
+/// Node `MAX_ESCALATE_MODEL_BYTES`.
+const MAX_MODEL_BYTES: usize = 16_000;
+
 /// Node's text when the call is cancelled before the main agent answers (`cancellation.userVisibleMessage`).
 const CANCELLED: &str = "escalate was cancelled before the main agent answered";
 
@@ -64,6 +67,16 @@ impl Tool for Escalate {
     }
 
     fn is_concurrency_safe(&self, _input: &Value) -> bool {
+        true
+    }
+
+    /// Node `MAX_ESCALATE_MODEL_BYTES`: the model reads at most this many bytes of the escalate result.
+    fn result_budget_truncate_bytes(&self) -> Option<usize> {
+        Some(MAX_MODEL_BYTES)
+    }
+
+    /// Node `escalateToolEntry` `shouldDefer: true`.
+    fn should_defer(&self) -> bool {
         true
     }
 

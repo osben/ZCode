@@ -1,7 +1,7 @@
 //! `submit_result` for a workflow actor (Node `tool/handlers/submit-result.ts`). The actor's terminal result goes to the
 //! submit port and waits for the engine's verdict: an accepted result ends the turn (`stop_turn`), a rejected one is an
 //! error that names each violation, so the model repairs it in the same session. Only an actor that has a port gets the
-//! tool (`tools_for`); every other child keeps its tool set.
+//! actor tools, `submit_result` and `escalate` (`tools_for`); every other child keeps its tool set.
 //!
 //! Deviation, recorded in the spec: the declaration is always the generic one (`result` takes any JSON). Node's typed
 //! declaration for a mono session, with that session's schema, is not built yet, so a mono turn's epilogue names a schema

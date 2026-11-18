@@ -136,6 +136,8 @@ struct MailboxPort {
     mailbox: ActorHandle,
     session: String,
     clock: Arc<dyn Clock>,
+    /// The turn's cancel token. A blocked escalate checks it as a backstop for a cancel that comes before its wait.
+    cancel: CancellationToken,
 }
 
 #[async_trait]
@@ -184,13 +186,16 @@ impl ActorPort for MailboxPort {
         };
         // The blocked call waits for the owner's answer on the blocking pool. The owner answers from the main agent's
         // thread, so the answer may come before this wait starts; the store keeps it.
+        let cancel = self.cancel.clone();
         tokio::task::spawn_blocking(move || {
             match mailbox
                 .escalate(&session, request)
                 .map_err(|error| error.to_string())?
             {
                 EscalateOutcome::Parked { qid } => {
-                    let answer = mailbox.parked().wait(&qid)?;
+                    let answer = mailbox
+                        .parked()
+                        .wait_until(&session, &qid, &|| cancel.is_cancelled())?;
                     Ok(ActorEscalation::Answered { qid, answer })
                 }
                 EscalateOutcome::Refused { reason, message } => Ok(ActorEscalation::Refused {
@@ -232,6 +237,7 @@ impl<A: ActorAgents> TurnRunner for AgentTurnRunner<A> {
                 mailbox: self.mailbox.clone(),
                 session: session.to_owned(),
                 clock: self.base.clock.clone(),
+                cancel: token.clone(),
             })),
         };
         let end = self.handle.block_on(async {
