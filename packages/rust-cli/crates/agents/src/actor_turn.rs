@@ -155,6 +155,7 @@ impl std::fmt::Debug for ActorRun {
             .field("selection", &self.selection)
             .field("mode", &self.mode)
             .field("port", &self.port.as_ref().map(|_| "present"))
+            .field("epilogue_start", &self.epilogue_start)
             .field(
                 "submit_schema",
                 &self
