@@ -83,6 +83,49 @@ impl TurnRunner for ScriptedRunner {
     }
 }
 
+/// A scripted runner that also reports a message count, as the runtime's bridge does after a turn.
+struct CountingRunner {
+    inner: Arc<ScriptedRunner>,
+    count: u64,
+}
+
+impl TurnRunner for CountingRunner {
+    fn run_turn(
+        &self,
+        session: &str,
+        interaction: &str,
+        turn: &TurnInput,
+        cancel: &AtomicBool,
+    ) -> std::result::Result<String, String> {
+        self.inner.run_turn(session, interaction, turn, cancel)
+    }
+
+    fn message_boundary(&self, _session: &str) -> Option<u64> {
+        Some(self.count)
+    }
+}
+
+#[test]
+fn a_settled_ask_gets_its_message_boundary_on_its_node_after_settlement() {
+    use crate::journal::JournalPort;
+    let runner: Arc<dyn TurnRunner> = Arc::new(CountingRunner {
+        inner: ScriptedRunner::new(vec![Ok("first".into()), Ok("second".into())]),
+        count: 4,
+    });
+    let (mut owner, mailbox, actor) = owner_over(runner);
+    owner.ask("site", &actor, "do it").expect("ask");
+    owner.drain().expect("drain");
+    // The first turn is nudged, the nudged turn ends the ask, and the boundary follows the settlement.
+    mailbox.serve_next(&mut owner).expect("the first turn end");
+    mailbox.serve_next(&mut owner).expect("the nudged turn end");
+    mailbox
+        .serve_next(&mut owner)
+        .expect("the message boundary");
+    let nodes = owner.journal().list_nodes("run_1").expect("nodes");
+    assert_eq!(nodes.len(), 1);
+    assert_eq!(nodes[0].message_boundary, Some(4));
+}
+
 /// Reports that it started, then runs until the owner cancels its ask, then returns. It never submits.
 struct UntilCancelled {
     started: Sender<()>,

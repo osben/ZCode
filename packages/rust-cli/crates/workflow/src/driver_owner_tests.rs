@@ -714,6 +714,25 @@ fn the_message_boundary_is_written_to_the_active_ask_node_and_nothing_else() {
 }
 
 #[test]
+fn a_boundary_written_after_the_ask_settles_reaches_the_settled_ask_node() {
+    // Node `journalAskMessageBoundary` runs after settlement, because the settled record replaces the node row. The
+    // boundary must therefore land on the ask that just settled, while no newer ask has started.
+    let (mut owner, sessions, _actor, session) = running_ask();
+    let instance = first_turn_instance(&sessions);
+    let first = owner.turn_ended(&session, "I am done.").expect("turn end");
+    assert_eq!(first, TurnEndReply::Verdict(SubmitVerdict::Nudge));
+    let second = owner.turn_ended(&session, "Still done.").expect("turn end");
+    assert_eq!(second, TurnEndReply::AskEnded);
+    owner.set_message_boundary(&session, 7).expect("boundary");
+    let node = owner
+        .journal()
+        .get_node("run_1", &instance)
+        .expect("node")
+        .expect("the ask node exists");
+    assert_eq!(node.message_boundary, Some(7));
+}
+
+#[test]
 fn a_mutating_tool_closes_the_import_cache_once_and_an_idle_session_is_ignored() {
     let mut config = config();
     config.imported_cache = Some(ImportedRunCache::default());

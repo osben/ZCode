@@ -35,6 +35,12 @@ pub trait TurnRunner: Send + Sync + 'static {
         turn: &TurnInput,
         cancel: &AtomicBool,
     ) -> std::result::Result<String, String>;
+
+    /// The session's message count, read after its ask settles (Node `journalAskMessageBoundary`'s count). None means
+    /// the count is not known, and no boundary is written.
+    fn message_boundary(&self, _session: &str) -> Option<u64> {
+        None
+    }
 }
 
 /// One turn's input: the text the model reads, the boundary in UTF-16 units where its epilogue begins (Node `runTurn`'s
@@ -164,7 +170,16 @@ fn run_ask(
                 turn.text = NUDGE_PROMPT.to_owned();
                 turn.epilogue_start = 0;
             }
-            Ok(_) => return,
+            Ok(_) => {
+                // The ask settled. Its message boundary goes on its node row now, after settlement, because the settled
+                // record replaces the row (Node writes it after settlement too).
+                if let Some(boundary) = runner.message_boundary(session)
+                    && let Err(report) = handle.message_boundary(session, boundary)
+                {
+                    tracing::warn!(%session, error = %report, "an actor's message boundary could not be reported");
+                }
+                return;
+            }
             Err(report) => {
                 tracing::warn!(%session, error = %report, "an actor's turn end could not be reported");
                 return;

@@ -167,6 +167,15 @@ impl std::fmt::Debug for ActorRun {
     }
 }
 
+impl crate::Agents {
+    /// The message count of a child session, read when its ask settles (Node `journalAskMessageBoundary`'s count). None
+    /// when the session cannot be read, and then no boundary is written.
+    pub async fn child_message_count(&self, child: &SessionId) -> Option<u64> {
+        let loaded = self.core.ports.store.load(child).await.ok()?;
+        u64::try_from(loaded.messages.len()).ok()
+    }
+}
+
 /// The asks channel of an actor. It exists only when the parent offers background prompts and its interactions have a
 /// lasting channel, as the Agent tool's entry does (`core.background_prompts.then(|| context.interactions.lasting())`).
 /// The channel is taken from `lasting()` here, so a caller passes the parent's interactions, not a lasting one.
