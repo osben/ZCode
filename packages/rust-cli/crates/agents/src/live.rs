@@ -97,6 +97,8 @@ pub(crate) struct LiveAgent {
     pub(crate) background: bool,
     /// 父会话的会话级询问入口（交互界面里才有，agents.md §4.1.1）：后台运行（含续跑、停放后的唤醒）经它询问。
     pub(crate) asks: Option<crate::child::Asks>,
+    /// A workflow actor's submit port for its current turn (None for every other agent).
+    pub(crate) actor_port: Option<crate::actor_turn::SubmitPort>,
     pub(crate) state: AgentState,
     /// The final report of the last run that finished (Node's completed task result, read by TaskOutput). A parked agent
     /// reads its parked report instead; a run that was stopped keeps none.
@@ -452,6 +454,17 @@ impl Live {
         self.change(|agents| agents.insert(agent.agent.clone(), agent));
     }
 
+    /// A workflow actor's turn ends: the entry is finished with `ending`, and its submit port is cleared, in one lock
+    /// section. A later turn's begin (which installs its own port) cannot be overtaken by this end's clear.
+    pub(crate) fn finish_actor_turn(&self, agent: &AgentId, ending: Ending) {
+        self.change(|agents| {
+            if let Some(entry) = agents.get_mut(agent) {
+                entry.state = AgentState::Finished(ending);
+                entry.actor_port = None;
+            }
+        });
+    }
+
     /// Start a workflow actor's run: the first-use check, the insert of `fresh` when the entry is new, and the run start,
     /// in one lock section. A running entry is refused, and is not touched (Node's restart is refused the same way, and
     /// `Live::restart` returns None for a running entry). A run begun on an existing entry clears `stopped_by_user`, as
@@ -623,6 +636,8 @@ impl Live {
             entry.background = true;
             entry.tool_use = tool_use;
             entry.stopped_by_user = false;
+            // A resume is never a workflow turn, so a restarted entry holds no submit port.
+            entry.actor_port = None;
             entry.begin_run(abort, Vec::new(), execution_id);
             Some(routes.claim(&entry.child, &entry.root))
         })

@@ -46,6 +46,10 @@ mod stall;
 #[cfg(test)]
 #[path = "stop_subagent_tests.rs"]
 mod stop_subagent_tests;
+mod submit;
+#[cfg(test)]
+#[path = "submit_tests.rs"]
+mod submit_tests;
 mod task_output;
 mod task_stop;
 mod tasks;

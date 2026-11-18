@@ -1,9 +1,10 @@
 //! The turn-by-turn entry for a workflow actor (W6a part 2c-2b-2): `Agents::run_actor_turn` runs one turn of an ask on a
 //! child session, and the session persists between calls, so the next turn resumes it.
-use crate::actor_turn::{ActorRun, ActorTurnEnd};
+use crate::actor_turn::{ActorPort, ActorRun, ActorSubmit, ActorTurnEnd};
+use crate::live::LiveAgent;
 use crate::test_support::{harness, workspace};
 use rust_cli_base::models::GLM_5_3_ACCOUNT;
-use rust_cli_kernel_api::ids::{SessionId, TraceId};
+use rust_cli_kernel_api::ids::{AgentId, SessionId, TraceId};
 use rust_cli_kernel_api::message::Message;
 use rust_cli_kernel_api::model::{ModelSelection, QuerySource};
 use rust_cli_kernel_api::permission::PermissionMode;
@@ -29,6 +30,7 @@ fn run_for(child: &SessionId, parent: &SessionId) -> ActorRun {
         parent: parent.clone(),
         interaction_description: "Ada (site@1)".to_owned(),
         interactions: None,
+        port: None,
         persona_prompt: PERSONA.to_owned(),
         workspace: workspace(),
         selection: selection(),
@@ -220,6 +222,110 @@ async fn the_model_request_carries_the_persona_selection_mode_and_source() {
             .iter()
             .any(|block| block.text.contains(PERSONA)),
         "the persona prompt is in the system blocks"
+    );
+}
+
+/// A port that refuses every submit: these tests look at the tool list and the entry, not at a submit.
+struct PortStub;
+
+#[async_trait::async_trait]
+impl ActorPort for PortStub {
+    async fn submit(&self, _result: serde_json::Value) -> Result<ActorSubmit, String> {
+        Err("not under test".to_owned())
+    }
+}
+
+fn actor_entry_id(child: &SessionId) -> AgentId {
+    AgentId::new(format!("actor-{}", child.as_str()))
+}
+
+#[tokio::test]
+async fn a_turn_with_a_port_offers_submit_result_and_its_end_clears_the_port() {
+    let h = harness(None);
+    let parent = SessionId::new("ses_parent");
+    let child = SessionId::new("sess_port_clear");
+    create_child(h.store.as_ref(), &child, &parent).await;
+    let mut run = run_for(&child, &parent);
+    run.port = Some(Arc::new(PortStub) as Arc<dyn ActorPort>);
+    h.agents
+        .run_actor_turn(run, "do it", CancellationToken::new())
+        .await;
+    let offered = h.seen.lock().expect("seen")[0].tools.clone();
+    assert!(
+        offered.iter().any(|tool| tool == "submit_result"),
+        "the turn offers submit_result: {offered:?}"
+    );
+    let entry = h
+        .agents
+        .core
+        .live
+        .get(&actor_entry_id(&child))
+        .expect("the actor's entry");
+    assert!(
+        entry.actor_port.is_none(),
+        "the turn's end clears its port, so a restart of the finished child offers no submit_result"
+    );
+}
+
+#[tokio::test]
+async fn a_turn_without_a_port_offers_no_submit_result() {
+    let h = harness(None);
+    let parent = SessionId::new("ses_parent");
+    let child = SessionId::new("sess_no_port");
+    create_child(h.store.as_ref(), &child, &parent).await;
+    h.agents
+        .run_actor_turn(run_for(&child, &parent), "do it", CancellationToken::new())
+        .await;
+    let offered = h.seen.lock().expect("seen")[0].tools.clone();
+    assert!(
+        !offered.iter().any(|tool| tool == "submit_result"),
+        "without a port there is no submit_result: {offered:?}"
+    );
+}
+
+#[tokio::test]
+async fn the_child_tools_carry_submit_result_only_for_an_entry_with_a_port() {
+    let h = harness(None);
+    let parent = SessionId::new("ses_parent");
+    let child = SessionId::new("sess_tools");
+    let names = |entry: &LiveAgent| -> Vec<String> {
+        crate::spawn::child_tools(&h.agents.core, entry)
+            .iter()
+            .map(|tool| tool.name().to_owned())
+            .collect()
+    };
+    let mut with = run_for(&child, &parent);
+    with.port = Some(Arc::new(PortStub) as Arc<dyn ActorPort>);
+    let with_port = LiveAgent::for_actor(with, actor_entry_id(&child), parent.clone());
+    assert!(names(&with_port).iter().any(|name| name == "submit_result"));
+    let without = LiveAgent::for_actor(
+        run_for(&child, &parent),
+        actor_entry_id(&child),
+        parent.clone(),
+    );
+    assert!(!names(&without).iter().any(|name| name == "submit_result"));
+}
+
+#[tokio::test]
+async fn a_second_turn_offers_submit_result_again_with_its_own_port() {
+    let h = harness(None);
+    let parent = SessionId::new("ses_parent");
+    let child = SessionId::new("sess_port_swap");
+    create_child(h.store.as_ref(), &child, &parent).await;
+    // The first turn's end clears its port. The second turn offers submit_result only if its refresh set its own port.
+    for prompt in ["first", "second"] {
+        let mut run = run_for(&child, &parent);
+        run.port = Some(Arc::new(PortStub) as Arc<dyn ActorPort>);
+        h.agents
+            .run_actor_turn(run, prompt, CancellationToken::new())
+            .await;
+    }
+    let seen = h.seen.lock().expect("seen");
+    assert_eq!(seen.len(), 2, "one model turn per run");
+    assert!(
+        seen[1].tools.iter().any(|tool| tool == "submit_result"),
+        "the second turn offers submit_result: {:?}",
+        seen[1].tools
     );
 }
 

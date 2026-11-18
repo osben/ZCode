@@ -3,7 +3,7 @@
 //! the agents crate's own tests (`actor_turn_entry_tests`).
 use crate::actor_turns::{ActorAgents, ActorRunBase, AgentTurnRunner};
 use async_trait::async_trait;
-use rust_cli_agents::actor_turn::{ActorRun, ActorTurnEnd};
+use rust_cli_agents::actor_turn::{ActorRun, ActorSubmit, ActorTurnEnd, ActorViolation};
 use rust_cli_base::models::GLM_5_3_ACCOUNT;
 use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
 use rust_cli_kernel_api::ids::EnvironmentId;
@@ -36,6 +36,9 @@ struct ScriptedAgents {
     prompts: Mutex<Vec<String>>,
     replies: Mutex<VecDeque<ActorTurnEnd>>,
     block: bool,
+    /// A result the turn submits through its port before it ends, and the port's answer to it.
+    submit: Option<Value>,
+    submitted: Mutex<Vec<Result<ActorSubmit, String>>>,
 }
 
 impl ScriptedAgents {
@@ -45,6 +48,20 @@ impl ScriptedAgents {
             prompts: Mutex::new(Vec::new()),
             replies: Mutex::new(replies.into()),
             block,
+            submit: None,
+            submitted: Mutex::new(Vec::new()),
+        })
+    }
+
+    /// A turn that submits `result` through its port, then ends with the default text.
+    fn submitting(result: Value) -> Arc<Self> {
+        Arc::new(Self {
+            runs: Mutex::new(Vec::new()),
+            prompts: Mutex::new(Vec::new()),
+            replies: Mutex::new(VecDeque::new()),
+            block: false,
+            submit: Some(result),
+            submitted: Mutex::new(Vec::new()),
         })
     }
 }
@@ -57,7 +74,12 @@ impl ActorAgents for ScriptedAgents {
         prompt: &str,
         cancel: CancellationToken,
     ) -> ActorTurnEnd {
+        let port = run.port.clone();
         self.runs.lock().expect("runs").push(run);
+        if let (Some(result), Some(port)) = (self.submit.clone(), port) {
+            let answer = port.submit(result).await;
+            self.submitted.lock().expect("submitted").push(answer);
+        }
         self.prompts
             .lock()
             .expect("prompts")
@@ -187,6 +209,7 @@ fn owner_over_with(
             interactions,
             ..base()
         },
+        handle.clone(),
     ));
     let sessions = Sessions {
         turns: MailboxTurns::new(runner, handle),
@@ -275,6 +298,7 @@ async fn the_bridge_refuses_to_block_from_inside_a_runtime() {
         ScriptedAgents::new(Vec::new(), false),
         tokio::runtime::Handle::current(),
         base(),
+        ActorMailbox::new().1,
     );
     // Called from a task of the runtime itself, the bridge's block_on would panic; the debug assertion says why first.
     let cancel = AtomicBool::new(false);
@@ -333,6 +357,63 @@ async fn the_actor_run_is_named_by_its_interaction_description_and_carries_the_p
     assert!(
         runs[0].interactions.is_some(),
         "the parent's interactions reach the actor run"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_submitted_result_is_accepted_through_the_mailbox_and_settles_the_ask() {
+    let agents = ScriptedAgents::submitting(json!({"ok": true}));
+    let (mut owner, mailbox) = owner_over(agents.clone());
+    let actor = owner.create_actor("site", None, None).expect("actor");
+    owner.ask("site", &actor, "do it").expect("ask");
+    owner.drain().expect("drain");
+    // The submit, then the turn's end. The engine accepts the result, so the ask settles with it.
+    mailbox.serve_next(&mut owner).expect("the submit");
+    mailbox.serve_next(&mut owner).expect("the turn end");
+    assert_eq!(
+        *agents.submitted.lock().expect("submitted"),
+        vec![Ok(ActorSubmit::Accepted)]
+    );
+    let outcomes = owner.take_outcomes();
+    assert_eq!(outcomes.len(), 1);
+    assert_eq!(
+        outcomes[0]
+            .result
+            .as_ref()
+            .expect("the ask settles with the result"),
+        &json!({"ok": true})
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_rejected_submit_keeps_the_ask_live_and_names_each_violation() {
+    let agents = ScriptedAgents::submitting(json!({}));
+    let (mut owner, mailbox) = owner_over(agents.clone());
+    let actor = owner.create_actor("site", None, None).expect("actor");
+    owner.ask("site", &actor, "do it").expect("ask");
+    owner.drain().expect("drain");
+    // The first submit is rejected; the turn ends and is nudged; the nudged turn submits again and ends.
+    for _ in 0..4 {
+        mailbox.serve_next(&mut owner).expect("the next request");
+    }
+    let rejected = Ok(ActorSubmit::Rejected(vec![ActorViolation {
+        path: "$.ok".to_owned(),
+        expected: "ok".to_owned(),
+        got: "missing".to_owned(),
+    }]));
+    assert_eq!(
+        *agents.submitted.lock().expect("submitted"),
+        vec![rejected.clone(), rejected]
+    );
+    let outcomes = owner.take_outcomes();
+    assert_eq!(outcomes.len(), 1);
+    assert_eq!(
+        outcomes[0]
+            .result
+            .as_ref()
+            .expect_err("no result was accepted")
+            .code,
+        ErrorCode::ResultNotSubmitted
     );
 }
 

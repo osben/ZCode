@@ -377,6 +377,19 @@ pub(crate) async fn drive(
     }
 }
 
+/// The tools a child gets beyond its definition's: RespondToCoordinator for every child, and the submit tool for a
+/// workflow actor that has a port (`submit::tools_for`).
+pub(crate) fn child_tools(
+    core: &Arc<Core>,
+    agent: &LiveAgent,
+) -> Vec<Arc<dyn rust_cli_kernel_api::tool::Tool>> {
+    let mut tools = vec![crate::respond::tool(core.clone())];
+    tools.extend(crate::submit::tools_for(
+        agent.actor_port.as_ref().map(|port| &port.0),
+    ));
+    tools
+}
+
 /// 组装子循环并跑到结束。前台时 `cancel` 是父工具调用的取消信号，收到后中止子循环并等它收尾。
 async fn run_loop(
     core: &Arc<Core>,
@@ -422,7 +435,7 @@ async fn run_loop(
         let registry: Arc<dyn ToolRegistry> = Arc::new(crate::toolset::ForkChildTools {
             inner: registry,
             node_child: core.node_desktop,
-            child_tools: vec![crate::respond::tool(core.clone())],
+            child_tools: child_tools(core, agent),
         });
         (
             registry,
@@ -437,7 +450,7 @@ async fn run_loop(
                 rule: ToolRule::new(&definition, agent.background, agent.depth)
                     .with_questions(core.node_desktop)
                     .node_child(core.node_desktop),
-                child_tools: vec![crate::respond::tool(core.clone())],
+                child_tools: child_tools(core, agent),
             }),
             Arc::new(SubagentContext {
                 inner: core.ports.context.clone(),

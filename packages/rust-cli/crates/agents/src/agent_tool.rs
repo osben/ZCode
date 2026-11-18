@@ -280,6 +280,7 @@ impl Tool for AgentTool {
                 .flatten()
                 .map(crate::child::Asks),
             result: None,
+            actor_port: None,
             state: AgentState::Finished(Ending::Completed),
             shown: crate::live::Shown {
                 execution_id: self.core.ports.ids.execution(),
