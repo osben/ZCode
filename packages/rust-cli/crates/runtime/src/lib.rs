@@ -7,8 +7,11 @@
 //! 每个会话一个 actor，运行在自己的子任务作用域里；内核释放时根作用域中止全部会话任务。
 
 mod acp;
+pub mod actor_turns;
 mod agents;
 // Fork: specs/fork-rust-node-helper.md F3.
+#[cfg(test)]
+mod actor_turns_tests;
 mod app_tool;
 mod assemble;
 mod catalog;

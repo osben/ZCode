@@ -2468,6 +2468,7 @@ dependencies = [
 name = "rust-cli-runtime"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "futures-util",
  "rusqlite",
@@ -2488,6 +2489,7 @@ dependencies = [
  "rust-cli-query",
  "rust-cli-session",
  "rust-cli-tools",
+ "rust-cli-workflow",
  "serde",
  "serde_json",
  "tempfile",

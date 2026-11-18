@@ -230,6 +230,7 @@ rust-cli-context = { path = "crates/context" }
 rust-cli-tools = { path = "crates/tools" }
 rust-cli-compact = { path = "crates/compact" }
 rust-cli-agents = { path = "crates/agents" }
+rust-cli-workflow = { path = "crates/workflow" }
 rust-cli-ext = { path = "crates/ext" }
 rust-cli-memory = { path = "crates/memory" }
 rust-cli-query = { path = "crates/query" }

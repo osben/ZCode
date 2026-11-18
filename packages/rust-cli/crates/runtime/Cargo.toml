@@ -18,6 +18,7 @@ doctest = false
 parity = []
 
 [dependencies]
+anyhow.workspace = true
 async-trait.workspace = true
 # /context 的计数并发发出（`join!`）、按请求内容缓存（docs/specs/rust-cli/context-usage.md §3）。
 futures-util = { workspace = true, features = ["async-await", "async-await-macro"] }
@@ -40,8 +41,9 @@ rust-cli-prompts.workspace = true
 rust-cli-query.workspace = true
 rust-cli-session.workspace = true
 rust-cli-tools.workspace = true
+rust-cli-workflow.workspace = true
 tracing.workspace = true
-tokio = { workspace = true, features = ["macros", "sync"] }
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
 tokio-util.workspace = true
 
 [dev-dependencies]
