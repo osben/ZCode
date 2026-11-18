@@ -222,6 +222,8 @@ fn with_prefix(agent: &LiveAgent, own: Vec<Message>) -> Vec<Message> {
 pub(crate) struct Finished {
     pub(crate) ending: Ending,
     pub(crate) report: Report,
+    /// What the run counted (see `RunStats`). The workflow's actor turns read it; other callers ignore it.
+    pub(crate) stats: crate::child::RunStats,
     /// 子循环本身出错（不是模型的 API 错误）。
     pub(crate) error: Option<QueryError>,
 }
@@ -331,6 +333,7 @@ pub(crate) async fn drive(
     }
     mirrored.finish(crate::mirror::outcome(&result));
     let (last, run_tool_uses) = sink.outcome();
+    let run_stats = sink.run_stats();
     let tool_uses = earlier + run_tool_uses;
     let mut text = report::final_text(last.as_ref());
     let (ending, error) = match result {
@@ -367,13 +370,20 @@ pub(crate) async fn drive(
         error = failure.as_deref(),
         "subagent finished"
     );
+    // The run's own counts (started tool calls, committed responses), and the last response's tokens: None when that
+    // response has no usage record, which the workflow reports as a failed usage read.
+    let last_usage = last.as_ref().and_then(|last| last.usage);
     Finished {
         ending,
         report: Report {
             text,
-            tokens: report::tokens(last.and_then(|last| last.usage)),
+            tokens: report::tokens(last_usage),
             tool_uses,
             duration_ms,
+        },
+        stats: crate::child::RunStats {
+            last_tokens: last_usage.map(|usage| report::tokens(Some(usage))),
+            ..run_stats
         },
         error,
     }

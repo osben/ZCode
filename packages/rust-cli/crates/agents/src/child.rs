@@ -52,10 +52,56 @@ pub(crate) fn tool_use_blocks(content: &[ContentBlock]) -> usize {
         .count()
 }
 
+/// What one run of a child counted (Node's ask counts, per run here; the workflow sums them over an ask's turns).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct RunStats {
+    /// Tool calls that started, protocol tools included (Node `ToolCallStarted`).
+    pub(crate) tool_calls: u64,
+    /// The started calls that touch the world: every tool but the protocol ones (Node `isWorldTouchingToolCall`).
+    pub(crate) world_tool_calls: u64,
+    /// Model requests: one per committed assistant message.
+    pub(crate) requests: u64,
+    /// The tokens of the run's last response, or None when that response has no usage record.
+    pub(crate) last_tokens: Option<u64>,
+}
+
+impl RunStats {
+    /// A tool call started. Counted from the started event, as Node counts `ToolCallStarted`: a call that a permission
+    /// check or a schema check rejects never starts, so it is not counted.
+    pub(crate) fn tool_started(&mut self, name: &str) {
+        self.tool_calls += 1;
+        if is_world_touching(name) {
+            self.world_tool_calls += 1;
+        }
+    }
+}
+
+/// Node `isWorldTouchingToolCall`: a tool with a `session` or `userInteraction` side-effect scope is protocol-only; any
+/// other tool, and a tool whose scope is undefined, touches the world. These are the protocol-only tools in Node's
+/// handlers (`sideEffectScope: "session" | "userInteraction"`).
+pub(crate) fn is_world_touching(name: &str) -> bool {
+    !matches!(
+        name,
+        "Agent"
+            | "AskUserQuestion"
+            | "escalate"
+            | "EnterPlanMode"
+            | "ExitPlanMode"
+            | "ReadSessionContext"
+            | "RespondToCoordinator"
+            | "SendMessage"
+            | "Skill"
+            | "submit_result"
+            | "TodoWrite"
+            | "TaskStop"
+    )
+}
+
 #[derive(Default)]
 struct Record {
     last: Option<AssistantMessage>,
     tool_uses: usize,
+    stats: RunStats,
     /// 提交核心（kernel-api `RunLedger`，与会话 actor 同一份，工作线 F130）：子会话的当前轮（随每个批次交给存储，
     /// node-store.md §4，修复线 F6）、已结束而结果还没提交的工具带出的 checkpoint 与子代理关联。锁不跨 await。
     ledger: RunLedger,
@@ -169,6 +215,11 @@ impl ChildSink {
     }
 
     /// 本次运行最后一条 assistant 消息与 tool_use 块数。
+    /// What this run counted, from the started tool calls and the committed responses.
+    pub(crate) fn run_stats(&self) -> RunStats {
+        self.record().stats
+    }
+
     pub(crate) fn outcome(&self) -> (Option<AssistantMessage>, usize) {
         let record = self.record();
         (record.last.clone(), record.tool_uses)
@@ -397,6 +448,7 @@ impl ChildSink {
         if let Message::Assistant(assistant) = message {
             let mut record = self.record();
             record.tool_uses += tool_use_blocks(&assistant.content);
+            record.stats.requests += 1;
             record.last = Some(assistant);
         }
         Ok(())
@@ -476,9 +528,11 @@ impl RunSink for ChildSink {
                 tool_use,
                 name,
                 input,
-            } => self
-                .live
-                .tool_started(&self.agent, self.execution, tool_use, name, input),
+            } => {
+                self.record().stats.tool_started(name);
+                self.live
+                    .tool_started(&self.agent, self.execution, tool_use, name, input);
+            }
             QueryEvent::ToolFinished { tool_use, .. } => {
                 self.live
                     .tool_finished(&self.agent, self.execution, tool_use)

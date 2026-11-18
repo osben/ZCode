@@ -245,3 +245,50 @@ async fn a_nested_agent_call_links_the_grandchild_session_in_the_same_batch() {
         }
     );
 }
+
+/// Node `ToolCallStarted` counts: every started call counts, protocol tools included, and only the world-touching ones
+/// count as world. A run with started calls and no committed assistant message (so a count of the transcript's tool
+/// uses would read 0) still reports the started calls: the count comes from the started stream.
+#[test]
+fn started_calls_count_from_the_stream_and_only_world_tools_count_as_world() {
+    use crate::child::RunStats;
+    let mut stats = RunStats::default();
+    stats.tool_started("Read");
+    stats.tool_started("Bash");
+    stats.tool_started("submit_result");
+    stats.tool_started("escalate");
+    assert_eq!(stats.tool_calls, 4, "every started call counts");
+    assert_eq!(
+        stats.world_tool_calls, 2,
+        "Read and Bash touch the world; the protocol tools do not"
+    );
+    assert_eq!(
+        stats.requests, 0,
+        "no response was committed, so no request is counted"
+    );
+}
+
+/// Node `isWorldTouchingToolCall`: the protocol tools are the ones with a session or userInteraction scope, and an
+/// unknown tool is world-touching (its scope is undefined in Node).
+#[test]
+fn the_protocol_tools_are_not_world_touching_and_an_unknown_tool_is() {
+    use crate::child::is_world_touching;
+    for name in [
+        "Agent",
+        "AskUserQuestion",
+        "escalate",
+        "EnterPlanMode",
+        "ExitPlanMode",
+        "ReadSessionContext",
+        "RespondToCoordinator",
+        "SendMessage",
+        "Skill",
+        "submit_result",
+        "TodoWrite",
+        "TaskStop",
+    ] {
+        assert!(!is_world_touching(name), "{name} is protocol-only");
+    }
+    assert!(is_world_touching("Write"));
+    assert!(is_world_touching("some_mcp_tool"));
+}

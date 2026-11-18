@@ -44,6 +44,7 @@ fn running(agent: &str, root: &str) -> crate::live::LiveAgent {
         asks: None,
         result: None,
         actor_port: None,
+        last_turn_stats: None,
         state: AgentState::Running {
             abort: Abort::new(),
             mailbox: Vec::new(),

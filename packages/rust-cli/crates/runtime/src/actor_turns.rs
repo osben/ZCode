@@ -33,7 +33,7 @@ use rust_cli_kernel_api::model::ModelSelection;
 use rust_cli_kernel_api::orchestration::Interactions;
 use rust_cli_kernel_api::permission::PermissionMode;
 use rust_cli_workflow::actor_mailbox::ActorHandle;
-use rust_cli_workflow::actor_turns::{TurnInput, TurnRunner};
+use rust_cli_workflow::actor_turns::{TurnInput, TurnRunner, TurnStats, TurnUsage};
 use rust_cli_workflow::driver_owner::SubmitReply;
 use rust_cli_workflow::driver_rules::{actor_permission_policy, parse_subagent_permission_mode};
 use rust_cli_workflow::engine::SubmitVerdict;
@@ -60,6 +60,12 @@ pub trait ActorAgents: Send + Sync + 'static {
     /// The message count the child's last turn captured when it finished. Read from the live entry, so it is safe on
     /// the ask thread. None when it is not known.
     fn turn_messages(&self, child: &SessionId) -> Option<u64>;
+
+    /// The counts of the child's last finished turn. None when no turn has finished.
+    fn actor_turn_stats(
+        &self,
+        child: &SessionId,
+    ) -> Option<rust_cli_agents::actor_turn::ActorTurnStats>;
 }
 
 #[async_trait]
@@ -75,6 +81,13 @@ impl ActorAgents for rust_cli_agents::Agents {
 
     fn turn_messages(&self, child: &SessionId) -> Option<u64> {
         rust_cli_agents::Agents::turn_messages(self, child)
+    }
+
+    fn actor_turn_stats(
+        &self,
+        child: &SessionId,
+    ) -> Option<rust_cli_agents::actor_turn::ActorTurnStats> {
+        rust_cli_agents::Agents::actor_turn_stats(self, child)
     }
 }
 
@@ -277,5 +290,19 @@ impl<A: ActorAgents> TurnRunner for AgentTurnRunner<A> {
 
     fn message_boundary(&self, session: &str) -> Option<u64> {
         self.agents.turn_messages(&SessionId::new(session))
+    }
+
+    fn turn_stats(&self, session: &str) -> Option<TurnStats> {
+        // Node `statsFromTurn`: a failed usage read (no tokens) keeps the counts and takes the usage defaults.
+        self.agents
+            .actor_turn_stats(&SessionId::new(session))
+            .map(|stats| TurnStats {
+                tool_calls: stats.tool_calls,
+                world_tool_calls: stats.world_tool_calls,
+                usage: stats.tokens.map(|tokens| TurnUsage {
+                    tokens,
+                    requests: stats.requests,
+                }),
+            })
     }
 }

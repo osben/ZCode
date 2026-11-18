@@ -297,6 +297,9 @@ pub struct ActorDriverOwner<J: JournalPort, S: ActorSessions> {
     engine: WorkflowEngine<J, ActorPort<S>>,
     book: EscalationBook,
     active: BTreeMap<String, ActiveAsk>,
+    /// The instance of each session's last settled ask, until its next ask starts (Node `currentInstance` after the
+    /// settlement). Ask stats are written here; the message boundary names its instance and does not need it.
+    settled: BTreeMap<String, Ref>,
 }
 
 impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
@@ -323,6 +326,7 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
             engine,
             book,
             active: BTreeMap::new(),
+            settled: BTreeMap::new(),
         })
     }
 
@@ -511,6 +515,25 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
         self.after_engine(result)
     }
 
+    /// One turn's ask stats (Node `reportTurnObservations`): the active ask's, or the one that just settled.
+    pub fn ask_stats(&mut self, session: &str, stats: crate::engine::AskStats) -> Result<()> {
+        self.pump()?;
+        let Some(instance) = self.ask_instance(session) else {
+            return Ok(());
+        };
+        let result = self.engine.ask_stats(&instance, stats);
+        self.after_engine(result)
+    }
+
+    /// The ask a turn-side write belongs to: the active ask, or else the ask that just settled. Node writes these after
+    /// the turn, while no newer ask has started (a newer one clears `settled`).
+    fn ask_instance(&self, session: &str) -> Option<Ref> {
+        self.active
+            .get(session)
+            .map(|ask| ask.instance.clone())
+            .or_else(|| self.settled.get(session).cloned())
+    }
+
     /// Node `askMutating`: the session's active ask is about to run a mutating tool. Ignored when no ask is in
     /// flight, as the engine ignores observations after an ask settles.
     pub fn ask_mutating(&mut self, session: &str) -> Result<()> {
@@ -670,6 +693,8 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
             &interaction,
         ) {
             Ok(()) => {
+                // A newer ask has started, so the session's last settled ask no longer takes stats.
+                self.settled.remove(&start.session);
                 self.active.insert(
                     start.session.clone(),
                     ActiveAsk {
@@ -722,6 +747,7 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
         let mut first: Option<anyhow::Error> = None;
         for session in ended {
             if let Some(ask) = self.active.remove(&session) {
+                self.settled.insert(session.clone(), ask.instance.clone());
                 let key = ask.instance.key();
                 self.engine.driver.session_of_instance.remove(&key);
                 self.engine.driver.verdicts.remove(&key);

@@ -102,6 +102,8 @@ pub(crate) struct LiveAgent {
     /// A workflow actor's last finished turn: the child's message count it captured before its entry was released
     /// (None until a turn ends, and for every other agent).
     pub(crate) last_turn_messages: Option<u64>,
+    /// A workflow actor's last finished turn: what it counted (None until a turn ends, and for every other agent).
+    pub(crate) last_turn_stats: Option<crate::child::RunStats>,
     pub(crate) state: AgentState,
     /// The final report of the last run that finished (Node's completed task result, read by TaskOutput). A parked agent
     /// reads its parked report instead; a run that was stopped keeps none.
@@ -457,13 +459,21 @@ impl Live {
         self.change(|agents| agents.insert(agent.agent.clone(), agent));
     }
 
-    /// A workflow actor's turn ends: the entry is finished with `ending`, and its submit port is cleared, in one lock
-    /// section. A later turn's begin (which installs its own port) cannot be overtaken by this end's clear.
-    pub(crate) fn finish_actor_turn(&self, agent: &AgentId, ending: Ending, messages: Option<u64>) {
+    /// A workflow actor's turn ends: the entry is finished with `ending`, its submit port is cleared, the turn's
+    /// counts are kept, and the message count it captured is kept, in one lock section. A later turn's begin (which
+    /// installs its own port) cannot be overtaken by this end's clear.
+    pub(crate) fn finish_actor_turn(
+        &self,
+        agent: &AgentId,
+        ending: Ending,
+        stats: Option<crate::child::RunStats>,
+        messages: Option<u64>,
+    ) {
         self.change(|agents| {
             if let Some(entry) = agents.get_mut(agent) {
                 entry.state = AgentState::Finished(ending);
                 entry.actor_port = None;
+                entry.last_turn_stats = stats;
                 entry.last_turn_messages = messages;
             }
         });

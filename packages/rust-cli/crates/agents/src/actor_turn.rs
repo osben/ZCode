@@ -167,6 +167,16 @@ impl std::fmt::Debug for ActorRun {
     }
 }
 
+/// What a workflow actor's last turn counted, as the bridge reads it (Node `statsFromTurn`'s inputs). `tokens` is None when
+/// the turn's last response has no usage record: the failed usage read, which the workflow reports with Node's defaults.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ActorTurnStats {
+    pub tool_calls: u64,
+    pub world_tool_calls: u64,
+    pub requests: u64,
+    pub tokens: Option<u64>,
+}
+
 impl crate::Agents {
     /// The message count a workflow actor's last turn captured (see `child_message_count`). Read from the live entry, so
     /// it is safe on the ask thread: no store read and no runtime.
@@ -185,6 +195,17 @@ impl crate::Agents {
             }
         };
         u64::try_from(loaded.messages.len()).ok()
+    }
+
+    /// The counts of a workflow actor's last finished turn. None when no turn has finished for the child.
+    pub fn actor_turn_stats(&self, child: &SessionId) -> Option<ActorTurnStats> {
+        let entry = self.core.live.get(&actor_agent_id(child))?;
+        entry.last_turn_stats.map(|stats| ActorTurnStats {
+            tool_calls: stats.tool_calls,
+            world_tool_calls: stats.world_tool_calls,
+            requests: stats.requests,
+            tokens: stats.last_tokens,
+        })
     }
 }
 
@@ -268,6 +289,7 @@ impl LiveAgent {
             asks: None,
             actor_port: run.port,
             last_turn_messages: None,
+            last_turn_stats: None,
             state: AgentState::Finished(Ending::Completed),
             result: None,
             shown: Shown::default(),
@@ -325,7 +347,7 @@ impl crate::Agents {
             match spawn::resume(core, &entry, prompt, UserOrigin::Human, epilogue_start).await {
                 Ok(opening) => opening,
                 Err(error) => {
-                    core.live.finish_actor_turn(&agent_id, Ending::Failed, None);
+                    core.live.finish_actor_turn(&agent_id, Ending::Failed, None, None);
                     return ActorTurnEnd::Failed(error.to_string());
                 }
             };
@@ -333,7 +355,7 @@ impl crate::Agents {
         // Read while the entry still runs: no turn can begin before it is released, so this is the turn's own count.
         let messages = self.child_message_count(&child).await;
         core.live
-            .finish_actor_turn(&agent_id, finished.ending, messages);
+            .finish_actor_turn(&agent_id, finished.ending, Some(finished.stats), messages);
         actor_turn_end(
             finished.ending.status() == BackgroundStatus::Killed,
             finished.failure(core.node_desktop).as_deref(),
