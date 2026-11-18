@@ -223,6 +223,7 @@ impl ToolExecutor for FailingExecutor {
         _input: Value,
         _context: ToolUseContext,
         _progress: mpsc::Sender<ToolProgress>,
+        _started: Arc<dyn crate::orchestration::ToolStart>,
     ) -> ToolExecution {
         ToolExecution::output(ToolOutput {
             content: vec![ToolResultContent::Text {

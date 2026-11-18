@@ -284,7 +284,10 @@ impl ToolExecutor for DirectExecutor {
         input: Value,
         context: ToolUseContext,
         progress: mpsc::Sender<ToolProgress>,
+        started: Arc<dyn crate::orchestration::ToolStart>,
     ) -> ToolExecution {
+        // Direct execution models an admitted call: it starts before it runs.
+        started.started().await;
         ToolExecution::output(match tool.call(input, context, progress).await {
             Ok(output) => output,
             Err(error) => ToolOutput {

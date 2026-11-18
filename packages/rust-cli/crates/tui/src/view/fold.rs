@@ -217,7 +217,7 @@ impl Transcript {
                 self.mark_approval(&request, true);
                 self.pending.push((interaction, request));
             }
-            KernelEvent::InteractionResolved { interaction } => {
+            KernelEvent::InteractionResolved { interaction, .. } => {
                 if let Some(at) = self.pending.iter().position(|(id, _)| *id == interaction) {
                     let (_, request) = self.pending.remove(at);
                     self.mark_approval(&request, false);

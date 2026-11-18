@@ -9,6 +9,7 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 
+use async_trait::async_trait;
 use futures_util::future::{BoxFuture, FutureExt, join};
 use futures_util::stream::{FuturesUnordered, StreamExt};
 use rust_cli_kernel_api::abort::AbortReason;
@@ -19,13 +20,14 @@ use rust_cli_kernel_api::message::{
     ContentBlock, Message, READ_TRUNCATION_NOTICE, ToolResultContent, UserMessage, UserOrigin,
 };
 use rust_cli_kernel_api::metering::{CallStatus, ToolCall};
-use rust_cli_kernel_api::orchestration::{QueryEvent, ToolExecution};
+use rust_cli_kernel_api::orchestration::{QueryEvent, ToolExecution, ToolStart};
 use rust_cli_kernel_api::tool::{InterruptBehavior, Tool, ToolOutput, ToolUseContext};
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::RunScope;
+use crate::RunSink;
 use crate::ToolHookContexts;
 use crate::mcp_wait;
 use crate::texts;
@@ -574,14 +576,13 @@ async fn execute(
             input: input.clone(),
         })
         .await;
-    let _ = scope
-        .sink
-        .emit(QueryEvent::ToolStarted {
-            tool_use: id.clone(),
-            name,
-            input: input.clone(),
-        })
-        .await;
+    // It starts only once admitted (Node `ToolCallStarted`, after the permission check): the pipeline calls this.
+    let started = Arc::new(StartSignal {
+        sink: scope.sink.clone(),
+        tool_use: id.clone(),
+        name,
+        input: input.clone(),
+    });
     // 会话现在的模式与工作目录：一次读取（工作线 F134：以前分两次问会话 actor）。
     let view = scope.view().await;
     let context = ToolUseContext {
@@ -602,7 +603,10 @@ async fn execute(
         operation,
     };
     let (progress, mut updates) = mpsc::channel(PROGRESS);
-    let run = scope.parts.executor.execute(tool, input, context, progress);
+    let run = scope
+        .parts
+        .executor
+        .execute(tool, input, context, progress, started);
     let forward = async {
         while let Some(progress) = updates.recv().await {
             let event = QueryEvent::ToolProgress {
@@ -614,6 +618,28 @@ async fn execute(
     };
     let (output, ()) = join(run, forward).await;
     output
+}
+
+/// 调用通过准入后发出 `ToolStarted`（Node `ToolCallStarted` 在权限之后）；被拒绝的调用从不调用它。
+struct StartSignal {
+    sink: Arc<dyn RunSink>,
+    tool_use: ToolUseId,
+    name: String,
+    input: Value,
+}
+
+#[async_trait]
+impl ToolStart for StartSignal {
+    async fn started(&self) {
+        let _ = self
+            .sink
+            .emit(QueryEvent::ToolStarted {
+                tool_use: self.tool_use.clone(),
+                name: self.name.clone(),
+                input: self.input.clone(),
+            })
+            .await;
+    }
 }
 
 #[cfg(test)]

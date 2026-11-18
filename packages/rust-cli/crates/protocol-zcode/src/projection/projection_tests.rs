@@ -340,6 +340,7 @@ fn a_permission_ask_marks_the_tool_and_lists_the_interaction() {
     assert_eq!(feed.projection.pending_permissions(), 1);
     let resolved = feed.apply(KernelEvent::InteractionResolved {
         interaction: InteractionId::new("int_1"),
+        denied: false,
     });
     assert_eq!(resolved[0]["row"]["status"], "running");
     assert_eq!(resolved[1]["patch"]["pendingInteractions"], json!([]));
@@ -353,6 +354,88 @@ fn a_permission_ask_marks_the_tool_and_lists_the_interaction() {
     });
     assert_eq!(done[0]["row"]["status"], "success");
     assert_eq!(done[0]["row"]["output"]["text"], "ok");
+}
+
+/// Node's card order: the call's card exists from scheduling, before its permission prompt, as a pending card.
+#[test]
+fn a_scheduled_call_has_its_card_before_the_prompt() {
+    let mut feed = Feed::new();
+    feed.apply(KernelEvent::TurnStarted {
+        turn: TurnId::new("turn_1"),
+        command: None,
+    });
+    let tool = ToolUseId::new("toolu_1");
+    let scheduled = feed.apply(KernelEvent::ToolScheduled {
+        tool_use: tool.clone(),
+        name: "Write".into(),
+        input: json!({"file_path": "/w/a.txt"}),
+    });
+    assert_eq!(scheduled[0]["row"]["status"], "inputStreaming");
+    let asked = feed.apply(KernelEvent::InteractionAsked {
+        interaction: InteractionId::new("int_1"),
+        request: InteractionRequest::Permission {
+            origin: None,
+            tool_use: tool,
+            tool: "Write".into(),
+            input: json!({"file_path": "/w/a.txt"}),
+            message: "Write a.txt?".into(),
+            suggestions: Vec::new(),
+            rule_seed: None,
+            asked_by: None,
+            machine: Default::default(),
+            once: false,
+            independent: false,
+            session_allow: false,
+        },
+    });
+    assert_eq!(asked[0]["row"]["status"], "pendingApproval");
+    assert_eq!(asked[0]["row"]["rowId"], scheduled[0]["row"]["rowId"]);
+    assert_eq!(asked[0]["row"]["approvalInteractionId"], "int_1");
+}
+
+/// A refused call never runs: resolving its prompt as a denial must not turn the card running (Node settles a
+/// denied prompt as `cancelled`). The card leaves the approval state when the call ends.
+#[test]
+fn a_denied_permission_does_not_turn_the_card_running() {
+    let mut feed = Feed::new();
+    feed.apply(KernelEvent::TurnStarted {
+        turn: TurnId::new("turn_1"),
+        command: None,
+    });
+    let tool = ToolUseId::new("toolu_1");
+    feed.apply(KernelEvent::ToolScheduled {
+        tool_use: tool.clone(),
+        name: "Write".into(),
+        input: json!({"file_path": "/w/a.txt"}),
+    });
+    feed.apply(KernelEvent::InteractionAsked {
+        interaction: InteractionId::new("int_1"),
+        request: InteractionRequest::Permission {
+            origin: None,
+            tool_use: tool,
+            tool: "Write".into(),
+            input: json!({"file_path": "/w/a.txt"}),
+            message: "Write a.txt?".into(),
+            suggestions: Vec::new(),
+            rule_seed: None,
+            asked_by: None,
+            machine: Default::default(),
+            once: false,
+            independent: false,
+            session_allow: false,
+        },
+    });
+    let resolved = feed.apply(KernelEvent::InteractionResolved {
+        interaction: InteractionId::new("int_1"),
+        denied: true,
+    });
+    assert!(
+        resolved
+            .iter()
+            .all(|event| event["row"]["status"] != "running"),
+        "a denied call must not run: {resolved:?}"
+    );
+    assert_eq!(resolved[0]["patch"]["pendingInteractions"], json!([]));
 }
 
 /// A guarded dangerous command asks once (Node `approvalMode: "user-once"`): only allow once and

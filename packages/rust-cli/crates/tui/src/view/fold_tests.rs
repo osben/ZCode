@@ -363,6 +363,7 @@ fn permission_asks_mark_the_tool_and_resolve() {
     );
     feed.push(KernelEvent::InteractionResolved {
         interaction: InteractionId::new("i1"),
+        denied: false,
     });
     assert!(feed.view.pending().is_none());
     assert_eq!(

@@ -186,10 +186,11 @@ impl rust_cli_kernel_api::orchestration::ToolExecutor for ContextExecutor {
         input: Value,
         context: rust_cli_kernel_api::tool::ToolUseContext,
         progress: tokio::sync::mpsc::Sender<rust_cli_kernel_api::tool::ToolProgress>,
+        started: Arc<dyn rust_cli_kernel_api::orchestration::ToolStart>,
     ) -> rust_cli_kernel_api::orchestration::ToolExecution {
         let name = tool.name().to_owned();
         let mut execution = rust_cli_kernel_api::testing::DirectExecutor
-            .execute(tool, input, context, progress)
+            .execute(tool, input, context, progress, started)
             .await;
         execution.after = vec![
             Message::Attachment(rust_cli_kernel_api::message::AttachmentMessage {
@@ -386,6 +387,7 @@ async fn under_the_node_batch_order_a_read_notice_follows_the_held_contexts() {
             input: Value,
             context: rust_cli_kernel_api::tool::ToolUseContext,
             progress: tokio::sync::mpsc::Sender<rust_cli_kernel_api::tool::ToolProgress>,
+            started: Arc<dyn rust_cli_kernel_api::orchestration::ToolStart>,
         ) -> rust_cli_kernel_api::orchestration::ToolExecution {
             let name = tool.name().to_owned();
             let attachment = |source: &str, text: String| {
@@ -397,7 +399,7 @@ async fn under_the_node_batch_order_a_read_notice_follows_the_held_contexts() {
                 })
             };
             let mut execution = rust_cli_kernel_api::testing::DirectExecutor
-                .execute(tool, input, context, progress)
+                .execute(tool, input, context, progress, started)
                 .await;
             execution.after = vec![
                 attachment("hook_additional_context", format!("ctx {name}")),
@@ -494,9 +496,10 @@ impl rust_cli_kernel_api::orchestration::ToolExecutor for DispatchesExecutor {
         input: Value,
         context: rust_cli_kernel_api::tool::ToolUseContext,
         progress: tokio::sync::mpsc::Sender<rust_cli_kernel_api::tool::ToolProgress>,
+        started: Arc<dyn rust_cli_kernel_api::orchestration::ToolStart>,
     ) -> rust_cli_kernel_api::orchestration::ToolExecution {
         let mut execution = rust_cli_kernel_api::testing::DirectExecutor
-            .execute(tool, input, context, progress)
+            .execute(tool, input, context, progress, started)
             .await;
         execution.hook_invocations = vec![
             dispatch(

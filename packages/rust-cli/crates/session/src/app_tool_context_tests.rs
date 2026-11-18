@@ -143,7 +143,7 @@ async fn an_app_prompt_outlives_the_turn_that_was_running_when_it_was_asked() {
     assert!(
         !seen.iter().any(|event| matches!(
             event,
-            KernelEvent::InteractionResolved { interaction: resolved } if *resolved == interaction
+            KernelEvent::InteractionResolved { interaction: resolved, .. } if *resolved == interaction
         )),
         "{seen:?}"
     );

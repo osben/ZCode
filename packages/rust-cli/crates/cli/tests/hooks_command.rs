@@ -173,6 +173,7 @@ async fn bash(
             json!({"command": command}),
             context(harness, index),
             progress,
+            rust_cli_kernel_api::orchestration::no_tool_start(),
         )
         .await
 }

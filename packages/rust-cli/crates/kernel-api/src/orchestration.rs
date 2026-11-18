@@ -680,14 +680,35 @@ impl ToolExecution {
 /// 工具执行管线（validate → PreToolUse → 权限 → call → PostToolUse），主循环逐个调用。
 #[async_trait]
 pub trait ToolExecutor: Send + Sync {
-    /// 执行一个工具调用：结果，加上 hook 的消息与停止请求。
+    /// 执行一个工具调用：结果，加上 hook 的消息与停止请求。`started` 只在准入（hook、权限）通过、真正开始执行
+    /// 时调用一次；被拒绝、被 hook 拦下或找不到的调用不调用它。
     async fn execute(
         &self,
         tool: Arc<dyn Tool>,
         input: Value,
         context: ToolUseContext,
         progress: mpsc::Sender<ToolProgress>,
+        started: Arc<dyn ToolStart>,
     ) -> ToolExecution;
+}
+
+/// 工具真正开始执行的通知（Node `ToolCallStarted`，call-runner 在权限之后发出）。
+#[async_trait]
+pub trait ToolStart: Send + Sync {
+    async fn started(&self);
+}
+
+/// 不需要开始通知的调用方（测试替身与旁路执行）。
+pub struct NoToolStart;
+
+#[async_trait]
+impl ToolStart for NoToolStart {
+    async fn started(&self) {}
+}
+
+/// 不需要开始通知时传入的 `started`。
+pub fn no_tool_start() -> Arc<dyn ToolStart> {
+    Arc::new(NoToolStart)
 }
 
 /// 通用权限判决链（deny 规则 → 工具自身检查 → 模式 → allow 规则 → 询问）。

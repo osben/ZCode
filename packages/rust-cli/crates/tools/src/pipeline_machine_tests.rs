@@ -165,6 +165,7 @@ async fn run(
             input,
             context(asked.clone(), on),
             progress,
+            rust_cli_kernel_api::orchestration::no_tool_start(),
         )
         .await
         .output;

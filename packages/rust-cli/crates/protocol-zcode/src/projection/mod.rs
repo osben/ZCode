@@ -1062,7 +1062,10 @@ impl Projection {
                     patch.insert("pendingInteractions".into(), json!(self.pending));
                 }
             }
-            KernelEvent::InteractionResolved { interaction } => {
+            KernelEvent::InteractionResolved {
+                interaction,
+                denied,
+            } => {
                 let before = self.pending.len();
                 let tool = self
                     .pending
@@ -1076,7 +1079,9 @@ impl Projection {
                 if self.pending.len() != before {
                     patch.insert("pendingInteractions".into(), json!(self.pending));
                 }
-                if let Some(tool) = tool {
+                // A refused call never runs: its card leaves the approval state when the call ends (Node settles a
+                // denied prompt as `cancelled`), not as running.
+                if let Some(tool) = tool.filter(|_| !denied) {
                     self.upsert(
                         &tool_key(&tool),
                         |row| {

@@ -109,12 +109,15 @@ impl Actor {
             waiting = !pending.reply.is_closed(),
             "interaction resolved"
         );
+        let denied = matches!(answer, Answer::Permission(PermissionAnswer::Deny { .. }));
         let _ = pending.reply.send(Ok(InteractionAnswer {
             interaction: interaction.clone(),
             answer,
         }));
-        self.log
-            .append(KernelEvent::InteractionResolved { interaction });
+        self.log.append(KernelEvent::InteractionResolved {
+            interaction,
+            denied,
+        });
         accepted()
     }
 
@@ -164,6 +167,7 @@ impl Actor {
         tracing::info!(event = "interaction.cancelled", session = %self.meta.id, interaction = %pending.id, "interaction cancelled");
         self.log.append(KernelEvent::InteractionResolved {
             interaction: pending.id,
+            denied: true,
         });
     }
 }
