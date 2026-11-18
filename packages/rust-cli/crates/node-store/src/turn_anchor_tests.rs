@@ -36,6 +36,7 @@ fn meta(id: &str, text: &str) -> Fact {
     Fact::MessageAppended {
         message: Message::User(UserMessage {
             stall_execution: None,
+            epilogue_start: None,
             intent: None,
             id: MessageId::new(id),
             content: vec![ContentBlock::Text { text: text.into() }],
@@ -86,6 +87,7 @@ fn result(id: &str, call: &str, assistant: &str) -> Fact {
     Fact::MessageAppended {
         message: Message::User(UserMessage {
             stall_execution: None,
+            epilogue_start: None,
             intent: None,
             id: MessageId::new(id),
             content: vec![ContentBlock::ToolResult {

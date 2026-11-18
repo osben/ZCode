@@ -54,6 +54,7 @@ fn skills_already_in_the_kept_tail_are_skipped() {
     );
     let body = Message::User(UserMessage {
         stall_execution: None,
+        epilogue_start: None,
         intent: None,
         id: MessageId::new("b"),
         content: vec![ContentBlock::Text {

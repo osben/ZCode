@@ -92,6 +92,7 @@ fn user(id: MessageId, text: String) -> Fact {
     Fact::MessageAppended {
         message: Message::User(UserMessage {
             stall_execution: None,
+            epilogue_start: None,
             intent: None,
             id,
             content: vec![ContentBlock::Text { text }],

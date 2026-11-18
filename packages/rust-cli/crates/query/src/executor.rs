@@ -472,6 +472,7 @@ impl ToolBatch {
     fn result(&self, id: &ToolUseId, assistant: &MessageId, output: ToolOutput) -> Message {
         Message::User(UserMessage {
             stall_execution: None,
+            epilogue_start: None,
             intent: None,
             id: self.scope.parts.ids.message(),
             content: vec![ContentBlock::ToolResult {

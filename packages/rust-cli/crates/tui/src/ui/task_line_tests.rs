@@ -106,6 +106,7 @@ fn report(app: &mut App, agent: &str) {
             event: KernelEvent::MessageDone {
                 message: Message::User(UserMessage {
                     stall_execution: None,
+                    epilogue_start: None,
                     intent: None,
                     id: MessageId::new("m1"),
                     content: vec![ContentBlock::Text { text }],
@@ -556,6 +557,7 @@ fn with_body(app: &mut App) {
             event: KernelEvent::MessageDone {
                 message: Message::User(UserMessage {
                     stall_execution: None,
+                    epilogue_start: None,
                     intent: None,
                     id: MessageId::new("m1"),
                     content: vec![ContentBlock::Text {

@@ -14,6 +14,7 @@ use super::*;
 fn human(id: &str, value: &str) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        epilogue_start: None,
         intent: None,
         id: MessageId::new(id),
         content: vec![ContentBlock::Text {
@@ -260,6 +261,7 @@ fn a_skill_listing_is_skills_and_an_invoked_skill_body_is_a_message() {
 fn meta_origin_user_messages_use_their_source() {
     let meta = Message::User(UserMessage {
         stall_execution: None,
+        epilogue_start: None,
         intent: None,
         id: MessageId::new("m1"),
         content: vec![ContentBlock::Text {

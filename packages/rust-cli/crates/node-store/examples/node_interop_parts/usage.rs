@@ -89,6 +89,7 @@ pub(super) async fn write(dir: &str) -> Result<()> {
     let result = Fact::MessageAppended {
         message: Message::User(UserMessage {
             stall_execution: None,
+            epilogue_start: None,
             intent: None,
             id: r1,
             content: vec![ContentBlock::ToolResult {

@@ -19,6 +19,7 @@ use crate::run::tests::{parts, request, scope};
 fn note(text: &str) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        epilogue_start: None,
         intent: None,
         id: MessageId::new(text),
         content: vec![ContentBlock::Text {

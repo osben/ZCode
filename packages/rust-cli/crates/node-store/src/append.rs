@@ -62,6 +62,20 @@ pub(crate) fn block_kind(block: &ContentBlock) -> &'static str {
     }
 }
 
+/// Node's message `metadata` (`message-persistence.ts`): the input intent's keys, and `epilogueStart` when the turn has an
+/// epilogue boundary, 0 included (Node tests `!== undefined`). None when neither is present.
+fn user_metadata(intent: Option<Value>, epilogue_start: Option<usize>) -> Option<Value> {
+    let Some(start) = epilogue_start else {
+        return intent;
+    };
+    let mut object = match intent {
+        Some(Value::Object(map)) => map,
+        _ => serde_json::Map::new(),
+    };
+    object.insert("epilogueStart".to_owned(), Value::from(start));
+    Some(Value::Object(object))
+}
+
 /// Node `persistUserPrompt`：user 消息与每个文本块一个 text part。会话还没有标题时按 Node
 /// `titleFromInput` 取首条输入作标题（Node 在首条输入时建会话行）。
 fn append_user(ctx: &Commit<'_>, user: &UserMessage) -> Result<(), StoreError> {
@@ -94,13 +108,16 @@ fn append_user(ctx: &Commit<'_>, user: &UserMessage) -> Result<(), StoreError> {
         selection: state::selection(ctx.conn, ctx.session).storage()?,
         turn: &turn,
         command: ctx.command,
-        metadata: intent.map(|intent| {
-            let shown = texts.first().map(|text| display_input(&typed(text)));
-            rust_cli_node_records::input_intent::message_metadata(
-                intent,
-                shown.as_deref().unwrap_or_default(),
-            )
-        }),
+        metadata: user_metadata(
+            intent.map(|intent| {
+                let shown = texts.first().map(|text| display_input(&typed(text)));
+                rust_cli_node_records::input_intent::message_metadata(
+                    intent,
+                    shown.as_deref().unwrap_or_default(),
+                )
+            }),
+            user.epilogue_start,
+        ),
     });
     messages::save_message(ctx.conn, &info, ctx.now as i64).storage()?;
     ctx.opened(id, &turn);

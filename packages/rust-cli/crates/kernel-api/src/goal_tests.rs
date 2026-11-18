@@ -91,6 +91,7 @@ fn stop_conditions_and_verdicts_round_trip() {
     });
     let feedback = Message::User(UserMessage {
         stall_execution: None,
+        epilogue_start: None,
         intent: None,
         id: MessageId::new("msg_2"),
         content: vec![ContentBlock::Text {

@@ -157,6 +157,7 @@ impl Actor {
             .unwrap_or_default();
         messages.push(Message::User(UserMessage {
             stall_execution: None,
+            epilogue_start: None,
             intent: None,
             id: self.deps.ids.message(),
             content: vec![ContentBlock::Text { text: note }],

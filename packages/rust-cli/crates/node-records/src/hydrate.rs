@@ -128,6 +128,7 @@ fn user(record: &WithParts) -> Option<Message> {
     }
     Some(Message::User(UserMessage {
         stall_execution: None,
+        epilogue_start: None,
         // Fork: an App input's typed text and quotes (Node `inputIntentOfMessage`).
         intent: (!summary)
             .then(|| crate::input_intent::of_message(info))

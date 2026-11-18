@@ -69,9 +69,10 @@ pub(crate) fn mode(parent: PermissionMode, declared: Option<PermissionMode>) -> 
     }
 }
 
-fn user(core: &Core, text: &str, origin: UserOrigin) -> Message {
+fn user(core: &Core, text: &str, origin: UserOrigin, epilogue_start: Option<usize>) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        epilogue_start,
         intent: None,
         id: core.ports.ids.message(),
         content: vec![ContentBlock::Text {
@@ -128,7 +129,7 @@ pub(crate) async fn create(
         .sessions
         .record(&agent.child, agent.workspace.clone());
     inherit_directory(core, &agent).await;
-    let first = user(core, prompt, UserOrigin::Human);
+    let first = user(core, prompt, UserOrigin::Human, None);
     let mut facts = vec![
         Fact::ModelSelected {
             selection: agent.selection.clone(),
@@ -184,6 +185,7 @@ pub(crate) async fn resume(
     agent: &LiveAgent,
     message: &str,
     origin: UserOrigin,
+    epilogue_start: Option<usize>,
 ) -> Result<Opening, StoreError> {
     let loaded = core.ports.store.load(&agent.child).await?;
     // Fork: the run's model and mode are stored when they changed (a desktop resume from the current profile, rule
@@ -198,7 +200,7 @@ pub(crate) async fn resume(
         facts.push(Fact::ModeChanged { mode: agent.mode });
     }
     let mut messages = with_prefix(agent, loaded.messages);
-    let next = user(core, message, origin);
+    let next = user(core, message, origin, epilogue_start);
     let mut ledger = RunLedger::new(loaded.turn);
     facts.push(Fact::MessageAppended {
         message: next.clone(),

@@ -23,6 +23,7 @@ fn run(child: &str) -> ActorRun {
         interaction_description: "Ada (site@1)".to_owned(),
         interactions: None,
         port: None,
+        epilogue_start: None,
         persona_prompt: "You are a workflow actor.".to_owned(),
         workspace: workspace(),
         selection: ModelSelection::new("account:bigmodel-team-coding-plan", GLM_5_3_ACCOUNT),

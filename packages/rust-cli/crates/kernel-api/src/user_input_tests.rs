@@ -50,6 +50,7 @@ fn escape_xml_only_touches_three_characters() {
 fn human(text: &str) -> UserMessage {
     UserMessage {
         stall_execution: None,
+        epilogue_start: None,
         intent: None,
         id: crate::ids::MessageId::new("msg_1"),
         content: vec![ContentBlock::Text {

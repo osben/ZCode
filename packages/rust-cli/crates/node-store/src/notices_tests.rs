@@ -28,6 +28,7 @@ fn user_with(id: &str, content: Vec<ContentBlock>, origin: UserOrigin) -> Fact {
     Fact::MessageAppended {
         message: Message::User(UserMessage {
             stall_execution: None,
+            epilogue_start: None,
             intent: None,
             id: MessageId::new(id),
             content,
@@ -274,6 +275,7 @@ async fn a_stall_reminder_stores_its_execution_and_other_messages_do_not() {
     let stall = Fact::MessageAppended {
         message: Message::User(UserMessage {
             stall_execution: Some("3".to_owned()),
+            epilogue_start: None,
             intent: None,
             id: MessageId::new("msg_stall_1"),
             content: vec![text(stall_text)],

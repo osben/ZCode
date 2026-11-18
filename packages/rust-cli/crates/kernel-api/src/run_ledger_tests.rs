@@ -31,6 +31,7 @@ fn artifact() -> Value {
 fn result(tool_uses: &[&str], is_error: bool) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        epilogue_start: None,
         intent: None,
         id: MessageId::new("r1"),
         content: tool_uses
@@ -50,6 +51,7 @@ fn result(tool_uses: &[&str], is_error: bool) -> Message {
 fn human(id: &str) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        epilogue_start: None,
         intent: None,
         id: MessageId::new(id),
         content: vec![ContentBlock::Text {

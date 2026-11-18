@@ -576,6 +576,7 @@ fn compact_latest(sandbox: &Sandbox) {
         })),
         Message::User(UserMessage {
             stall_execution: None,
+            epilogue_start: None,
             intent: None,
             id: summary,
             content: vec![ContentBlock::Text {

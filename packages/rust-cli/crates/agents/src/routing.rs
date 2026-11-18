@@ -508,7 +508,7 @@ pub(crate) async fn wake(core: &Arc<Core>, wakes: Vec<Wake>) {
                 UserOrigin::Human,
             ),
         };
-        match spawn::resume(core, &agent, &prompt, origin).await {
+        match spawn::resume(core, &agent, &prompt, origin, None).await {
             Ok(opening) => spawn::background(core, agent, opening),
             Err(error) => {
                 tracing::warn!(agent = %agent.agent, %error, "the parked agent could not resume");

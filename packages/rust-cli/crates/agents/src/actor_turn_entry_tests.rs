@@ -31,6 +31,7 @@ fn run_for(child: &SessionId, parent: &SessionId) -> ActorRun {
         interaction_description: "Ada (site@1)".to_owned(),
         interactions: None,
         port: None,
+        epilogue_start: None,
         persona_prompt: PERSONA.to_owned(),
         workspace: workspace(),
         selection: selection(),
@@ -390,6 +391,42 @@ async fn a_second_turn_offers_submit_result_again_with_its_own_port() {
         seen[1].tools.iter().any(|tool| tool == "submit_result"),
         "the second turn offers submit_result: {:?}",
         seen[1].tools
+    );
+}
+
+#[tokio::test]
+async fn a_turns_epilogue_boundary_is_on_its_user_message() {
+    let h = harness(None);
+    let parent = SessionId::new("ses_parent");
+    let child = SessionId::new("sess_actor_boundary");
+    create_child(h.store.as_ref(), &child, &parent).await;
+    let mut run = run_for(&child, &parent);
+    run.epilogue_start = Some(5);
+    let end = h
+        .agents
+        .run_actor_turn(run, "do it", CancellationToken::new())
+        .await;
+    assert_eq!(
+        end,
+        ActorTurnEnd::Text("Hello from the subagent.".to_owned())
+    );
+    let stored = h
+        .store
+        .load(&child)
+        .await
+        .expect("the child session is stored");
+    let boundaries: Vec<Option<usize>> = stored
+        .messages
+        .iter()
+        .filter_map(|message| match message {
+            Message::User(user) => Some(user.epilogue_start),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        boundaries,
+        vec![Some(5)],
+        "the turn's prompt carries its boundary"
     );
 }
 

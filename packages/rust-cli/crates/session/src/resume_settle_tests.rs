@@ -26,6 +26,7 @@ fn text(value: &str) -> ContentBlock {
 fn human(id: &str, value: &str) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        epilogue_start: None,
         intent: None,
         id: MessageId::new(id),
         content: vec![text(value)],
@@ -54,6 +55,7 @@ fn assistant(id: &str, content: Vec<ContentBlock>) -> Message {
 fn result(id: &str, owner: &str, call: &str) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        epilogue_start: None,
         intent: None,
         id: MessageId::new(id),
         content: vec![ContentBlock::ToolResult {
@@ -325,6 +327,7 @@ async fn a_result_the_store_supplied_in_memory_is_never_stored() {
     ];
     let supplied = Message::User(UserMessage {
         stall_execution: None,
+        epilogue_start: None,
         intent: None,
         id: MessageId::new("part_t2"),
         content: vec![ContentBlock::ToolResult {

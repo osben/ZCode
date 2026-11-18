@@ -143,6 +143,7 @@ pub(crate) fn success(ids: &dyn Ids, hook_name: &str, event: &str, content: &str
 pub(crate) fn meta(ids: &dyn Ids, source: &str, text: String) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        epilogue_start: None,
         intent: None,
         id: ids.message(),
         content: vec![ContentBlock::Text { text }],

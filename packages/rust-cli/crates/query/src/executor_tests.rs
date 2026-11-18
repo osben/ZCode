@@ -200,6 +200,7 @@ impl rust_cli_kernel_api::orchestration::ToolExecutor for ContextExecutor {
             }),
             Message::User(rust_cli_kernel_api::message::UserMessage {
                 stall_execution: None,
+                epilogue_start: None,
                 intent: None,
                 id: rust_cli_kernel_api::ids::MessageId::new(format!("note_{name}")),
                 content: vec![ContentBlock::Text {

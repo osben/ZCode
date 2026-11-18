@@ -87,6 +87,7 @@ fn result(trigger: CompactTrigger) -> CompactResult {
         },
         summary: UserMessage {
             stall_execution: None,
+            epilogue_start: None,
             intent: None,
             id: MessageId::new("msg_summary"),
             content: vec![ContentBlock::Text {

@@ -23,6 +23,7 @@ fn history(steer: AttachmentMessage) -> Vec<Message> {
         ),
         Message::User(UserMessage {
             stall_execution: None,
+            epilogue_start: None,
             intent: None,
             id: MessageId::new("msg_r1"),
             content: vec![ContentBlock::ToolResult {

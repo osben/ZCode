@@ -60,6 +60,7 @@ fn usage(n: usize) -> Option<Usage> {
 fn user(n: usize) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        epilogue_start: None,
         intent: None,
         id: id("u", n),
         content: vec![ContentBlock::Text {
@@ -91,6 +92,7 @@ fn call(n: usize) -> Message {
 fn result(n: usize) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        epilogue_start: None,
         intent: None,
         id: id("r", n),
         content: vec![ContentBlock::ToolResult {
@@ -148,6 +150,7 @@ fn compaction(k: usize, preserved: Option<(MessageId, MessageId)>) -> Vec<Messag
         })),
         Message::User(UserMessage {
             stall_execution: None,
+            epilogue_start: None,
             intent: None,
             id: summary,
             content: vec![ContentBlock::Text {

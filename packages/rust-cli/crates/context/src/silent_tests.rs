@@ -6,6 +6,7 @@ use super::*;
 fn human() -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        epilogue_start: None,
         intent: None,
         id: MessageId::new("u"),
         content: vec![ContentBlock::Text {
@@ -37,6 +38,7 @@ fn call(name: &str, text: Option<&str>) -> Vec<Message> {
         }),
         Message::User(UserMessage {
             stall_execution: None,
+            epilogue_start: None,
             intent: None,
             id: MessageId::new("r"),
             content: vec![ContentBlock::ToolResult {

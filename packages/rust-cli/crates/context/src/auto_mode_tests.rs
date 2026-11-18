@@ -34,6 +34,7 @@ fn names(list: &[&str]) -> Vec<String> {
 fn human() -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        epilogue_start: None,
         intent: None,
         id: MessageId::new("u"),
         content: vec![ContentBlock::Text {
@@ -68,6 +69,7 @@ fn tool_round() -> Vec<Message> {
         }),
         Message::User(UserMessage {
             stall_execution: None,
+            epilogue_start: None,
             intent: None,
             id: MessageId::new("r"),
             content: vec![ContentBlock::ToolResult {
