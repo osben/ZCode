@@ -110,6 +110,7 @@ fn a_waiter_is_withdrawn_when_its_session_is_discarded_while_it_is_blocked() {
     );
     waiter.join().expect("join");
     assert!(parked.is_empty());
+    assert_eq!(parked.waiters(), 0, "the woken wait is deregistered");
 }
 
 #[test]
@@ -128,6 +129,7 @@ fn an_answer_put_before_a_discard_still_reaches_its_waiter() {
     );
     waiter.join().expect("join");
     assert!(parked.is_empty());
+    assert_eq!(parked.waiters(), 0, "the woken wait is deregistered");
 }
 
 #[test]
@@ -140,6 +142,7 @@ fn a_turn_cancelled_before_its_wait_registers_is_withdrawn_by_the_cancel_check()
         Err(CANCELLED.to_owned())
     );
     assert!(parked.is_empty());
+    assert_eq!(parked.waiters(), 0, "the cancelled wait is deregistered");
 }
 
 #[test]

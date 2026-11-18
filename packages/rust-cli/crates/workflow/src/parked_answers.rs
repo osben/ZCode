@@ -63,7 +63,8 @@ impl ParkedAnswers {
     }
 
     /// As `wait`, and also gives up with the cancel reason when `cancelled` reports true while nothing has arrived for the
-    /// question. An answer that is already there is taken first.
+    /// question. An answer that is already there is taken first. `cancelled` runs under this store's lock, on every check:
+    /// it must be cheap and non-blocking and must not call back into this store, or every waiter of the run stalls.
     pub fn wait_until(
         &self,
         session: &str,
