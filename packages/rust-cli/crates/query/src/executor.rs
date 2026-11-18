@@ -584,7 +584,6 @@ async fn execute(
         tool.clone(),
         id.clone(),
         name,
-        input.clone(),
     ));
     // 会话现在的模式与工作目录：一次读取（工作线 F134：以前分两次问会话 actor）。
     let view = scope.view().await;
@@ -632,29 +631,19 @@ struct StartSignal {
     pending: std::sync::Mutex<Option<StartedCall>>,
 }
 
-/// What `ToolStarted` carries, held until the call is admitted.
+/// What `ToolStarted` carries, held until the call is admitted. The input is not held: `ToolStarted` carries the
+/// admitted input, which `started` receives.
 struct StartedCall {
     tool_use: ToolUseId,
     name: String,
-    input: Value,
 }
 
 impl StartSignal {
-    fn new(
-        sink: Arc<dyn RunSink>,
-        tool: Arc<dyn Tool>,
-        tool_use: ToolUseId,
-        name: String,
-        input: Value,
-    ) -> Self {
+    fn new(sink: Arc<dyn RunSink>, tool: Arc<dyn Tool>, tool_use: ToolUseId, name: String) -> Self {
         Self {
             sink,
             tool,
-            pending: std::sync::Mutex::new(Some(StartedCall {
-                tool_use,
-                name,
-                input,
-            })),
+            pending: std::sync::Mutex::new(Some(StartedCall { tool_use, name })),
         }
     }
 }
@@ -671,12 +660,13 @@ impl ToolStart for StartSignal {
         let Some(call) = call else {
             return;
         };
+        // The input the call runs with, as Node's execution input (`call-runner.ts`): the card shows what runs.
         let _ = self
             .sink
             .emit(QueryEvent::ToolStarted {
                 tool_use: call.tool_use,
                 name: call.name,
-                input: call.input,
+                input: admitted.clone(),
             })
             .await;
         // Node `onMutating`: an admitted call the predicate classifies as a workspace write, on the input it runs with.

@@ -60,7 +60,6 @@ async fn the_start_signal_fires_once() {
         Arc::new(BashLike),
         rust_cli_kernel_api::ids::ToolUseId::new("toolu_1"),
         "Bash".into(),
-        json!({"command": "ls"}),
     );
     let write = json!({"command": "rm -rf x"});
     rust_cli_kernel_api::orchestration::ToolStart::started(&signal, &write).await;
@@ -79,7 +78,6 @@ async fn a_rewritten_write_reports_a_write_even_though_it_was_scheduled_read_onl
         Arc::new(BashLike),
         rust_cli_kernel_api::ids::ToolUseId::new("toolu_1"),
         "Bash".into(),
-        json!({"command": "ls"}),
     );
     rust_cli_kernel_api::orchestration::ToolStart::started(
         &signal,
@@ -87,6 +85,34 @@ async fn a_rewritten_write_reports_a_write_even_though_it_was_scheduled_read_onl
     )
     .await;
     assert_eq!(sink.mutating_calls(), 1);
+}
+
+/// The reverse rewrite: a write was scheduled, and the hooks admitted it as the read-only `ls`. It reports no write, and
+/// its start carries the admitted input.
+#[tokio::test]
+async fn a_scheduled_write_admitted_as_read_only_reports_no_write() {
+    let sink = Arc::new(rust_cli_kernel_api::testing::RecordingSink::default());
+    let signal = super::StartSignal::new(
+        sink.clone(),
+        Arc::new(BashLike),
+        rust_cli_kernel_api::ids::ToolUseId::new("toolu_1"),
+        "Bash".into(),
+    );
+    rust_cli_kernel_api::orchestration::ToolStart::started(&signal, &json!({"command": "ls"}))
+        .await;
+    assert_eq!(sink.mutating_calls(), 0);
+    assert_eq!(started_count(&sink), 1);
+    let admitted: Vec<Value> = sink
+        .events()
+        .iter()
+        .filter_map(|event| match event {
+            rust_cli_kernel_api::orchestration::QueryEvent::ToolStarted { input, .. } => {
+                Some(input.clone())
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(admitted, vec![json!({"command": "ls"})]);
 }
 
 /// A call admitted read-only never reports a write, and its start is still signalled.
@@ -98,7 +124,6 @@ async fn an_admitted_read_only_call_never_reports_a_write() {
         Arc::new(BashLike),
         rust_cli_kernel_api::ids::ToolUseId::new("toolu_1"),
         "Bash".into(),
-        json!({"command": "ls"}),
     );
     rust_cli_kernel_api::orchestration::ToolStart::started(&signal, &json!({"command": "ls"}))
         .await;
