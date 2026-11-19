@@ -249,10 +249,25 @@ async fn a_panel_of_a_rust_run_server_opens_calls_and_is_revoked_by_a_reconnect(
         "tool_not_app_visible"
     );
 
-    // The server reconnects: the lease is revoked and the page is told so, on its session.
-    assert!(answers.deltas.lock().unwrap().is_empty());
+    // The server reconnects: the lease is revoked and the page is told so, on its session. The call's activity
+    // deltas (its pin, F7 PR 3) are not closed notices.
+    assert!(
+        answers
+            .deltas
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|(_, delta)| delta.get("activity").is_some())
+    );
     host.reconnect();
-    let deltas = answers.deltas.lock().unwrap().clone();
+    let deltas: Vec<(String, Value)> = answers
+        .deltas
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(_, delta)| delta.get("activity").is_none())
+        .cloned()
+        .collect();
     assert_eq!(deltas.len(), 1, "one closed notice: {deltas:?}");
     assert_eq!(deltas[0].0, "run_s1");
     assert_eq!(deltas[0].1["op"], "pluginUi.instanceClosed");
@@ -852,6 +867,94 @@ async fn a_closed_lease_is_refused_and_an_unregister_of_a_session_that_is_gone_r
     .await
     .expect("the unregister answers");
     assert_eq!(gone, json!({"removed": 0}));
+}
+
+/// The `pluginUi.appToolCall` activity deltas of a session, in order (Node `onActivity`).
+fn activity_of(answers: &RecordingAnswers) -> Vec<Value> {
+    answers
+        .deltas
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(_, delta)| {
+            delta["op"] == "pluginUi.appToolCall" && delta.get("activity").is_some()
+        })
+        .map(|(_, delta)| delta.clone())
+        .collect()
+}
+
+#[tokio::test]
+async fn a_ui_call_publishes_its_pin_as_activity_for_as_long_as_it_runs() {
+    let (_scope, server, _kernel) = server();
+    call(&server, "session/create", automation_create("run_s1"))
+        .await
+        .expect("the session exists");
+    server.context.set_mcp_app_host(Arc::new(FakeHost::new()));
+    let answers = Arc::new(RecordingAnswers::default());
+    let weak: Weak<dyn HelperRequests> = Arc::downgrade(&answers) as _;
+    server.context.set_mcp_ui(RustMcpUi::new(weak));
+    let lease = dispatch(&server, "mcp/uiOpenInstance", open_params())
+        .await
+        .expect("the panel opens");
+    dispatch(
+        &server,
+        "mcp/uiCallTool",
+        scoped(
+            &lease,
+            json!({"callId": "c1", "toolName": "read", "arguments": {}}),
+        ),
+    )
+    .await
+    .expect("the visible tool is called");
+
+    // Node: the call's pin starts as `ui-call:<id>` and ends with the call; both carry the lease as the instance.
+    let activity = activity_of(&answers);
+    assert_eq!(activity.len(), 2, "start and end: {activity:?}");
+    assert_eq!(activity[0]["activity"], json!(true));
+    assert_eq!(activity[1]["activity"], json!(false));
+    let pin = activity[0]["callId"].as_str().expect("a pin").to_owned();
+    assert!(pin.starts_with("ui-call:"), "the pin names the call: {pin}");
+    assert_eq!(activity[1]["callId"], json!(pin));
+    assert_eq!(activity[0]["toolName"], json!(""));
+    assert_eq!(activity[0]["arguments"], json!({}));
+    assert_eq!(activity[0]["subscribers"][0]["scopeId"], lease["token"]);
+    assert_eq!(activity[0]["subscribers"][0]["instance"], lease);
+}
+
+#[tokio::test]
+async fn a_panel_sample_publishes_its_operation_as_activity_while_the_model_runs() {
+    let (_scope, server, kernel) = server();
+    call(&server, "session/create", automation_create("run_s1"))
+        .await
+        .expect("the session exists");
+    kernel.set_sampling(TestSampling::Reply("the model answer".to_owned()));
+    server.context.set_mcp_app_host(Arc::new(FakeHost::new()));
+    let answers = Arc::new(RecordingAnswers::default());
+    let weak: Weak<dyn HelperRequests> = Arc::downgrade(&answers) as _;
+    server.context.set_mcp_ui(RustMcpUi::new(weak));
+    let lease = dispatch(&server, "mcp/uiOpenInstance", open_params())
+        .await
+        .expect("the panel opens");
+    dispatch(
+        &server,
+        "mcp/uiSampling",
+        scoped(&lease, sampling("op-act")),
+    )
+    .await
+    .expect("the model answers");
+
+    // Node: retain(token, operationId) pins `op-act:<id>` while the sample runs, and releases it when it ends.
+    let activity = activity_of(&answers);
+    assert_eq!(activity.len(), 2, "start and end: {activity:?}");
+    assert_eq!(activity[0]["activity"], json!(true));
+    assert_eq!(activity[1]["activity"], json!(false));
+    let pin = activity[0]["callId"].as_str().expect("a pin").to_owned();
+    assert!(
+        pin.starts_with("op-act:"),
+        "the pin names the operation: {pin}"
+    );
+    assert_eq!(activity[1]["callId"], json!(pin));
+    assert_eq!(activity[0]["subscribers"][0]["instance"], lease);
 }
 
 fn sampling(operation: &str) -> Value {

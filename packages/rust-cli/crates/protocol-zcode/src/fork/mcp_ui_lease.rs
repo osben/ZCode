@@ -256,10 +256,13 @@ impl Instances {
         Ok(pin)
     }
 
-    pub(crate) fn release(&self, token: &str, pin: &str) {
-        if let Some(record) = self.state.lock_unpoisoned().records.get_mut(token) {
-            record.pins.remove(pin);
-        }
+    /// Node `release`: `true` when the pin was held (Node emits the activity end only then).
+    pub(crate) fn release(&self, token: &str, pin: &str) -> bool {
+        self.state
+            .lock_unpoisoned()
+            .records
+            .get_mut(token)
+            .is_some_and(|record| record.pins.remove(pin))
     }
 
     pub(crate) fn is_busy(&self, lease: &Lease) -> bool {

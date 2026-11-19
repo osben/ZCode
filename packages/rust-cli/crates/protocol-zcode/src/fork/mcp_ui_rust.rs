@@ -574,7 +574,7 @@ impl RustMcpUi {
         let request = call.request;
         admission
             .run(move |cancel| async move {
-                let _pin = Pinned::retain(&self.instances, &lease.token, operation)?;
+                let _pin = Pinned::retain(self, &guard.session, &guard, &lease, operation)?;
                 self.validate(host, session, &guard, params)?;
                 server.live(session).await.map_err(kernel_error)?;
                 let result = server
@@ -667,10 +667,7 @@ impl RustMcpUi {
             .lock_unpoisoned()
             .active
             .insert(key.to_owned(), cancel.clone());
-        let pin = self
-            .instances
-            .retain(&lease.token, "ui-call")
-            .map_err(RpcError::internal)?;
+        let pinned = Pinned::retain(self, session.as_str(), guard, lease, "ui-call")?;
         let arguments = params
             .get("arguments")
             .cloned()
@@ -685,7 +682,7 @@ impl RustMcpUi {
                 &cancel,
             )
             .await;
-        self.instances.release(&lease.token, &pin);
+        drop(pinned);
         result.map_err(app_error)
     }
 
@@ -924,29 +921,71 @@ fn operation_id(params: &Value) -> Result<&str, RpcError> {
     Ok(id)
 }
 
-/// A pin of one in-flight sampling in its lease (Node `retain`): released when the operation ends, however it ends.
+/// A pin of one in-flight call in its lease (Node `retain`): released when the call ends, however it ends. Node's
+/// `onActivity` fires on the retain (`activity: true`) and on the release that removes the pin (`activity: false`).
 struct Pinned<'a> {
-    instances: &'a Instances,
-    token: String,
+    ui: &'a RustMcpUi,
+    session: String,
+    plugin: String,
+    server: String,
+    lease: Lease,
     pin: String,
 }
 
 impl<'a> Pinned<'a> {
-    fn retain(instances: &'a Instances, token: &str, call_id: &str) -> Result<Self, RpcError> {
-        let pin = instances
-            .retain(token, call_id)
+    fn retain(
+        ui: &'a RustMcpUi,
+        session: &str,
+        guard: &Guard,
+        lease: &Lease,
+        call_id: &str,
+    ) -> Result<Self, RpcError> {
+        let pin = ui
+            .instances
+            .retain(&lease.token, call_id)
             .map_err(RpcError::internal)?;
-        Ok(Self {
-            instances,
-            token: token.to_owned(),
+        let pinned = Self {
+            ui,
+            session: session.to_owned(),
+            plugin: guard.plugin.clone(),
+            server: guard.server.clone(),
+            lease: lease.clone(),
             pin,
-        })
+        };
+        ui.pin_activity(&pinned, true);
+        Ok(pinned)
     }
 }
 
 impl Drop for Pinned<'_> {
     fn drop(&mut self) {
-        self.instances.release(&self.token, &self.pin);
+        if self.ui.instances.release(&self.lease.token, &self.pin) {
+            self.ui.pin_activity(self, false);
+        }
+    }
+}
+
+impl RustMcpUi {
+    /// Node `onActivity`: the pin's activity, to the panel's session, as `pluginUi.appToolCall` with the lease as the
+    /// instance and no tool.
+    fn pin_activity(&self, pinned: &Pinned<'_>, active: bool) {
+        self.deliver(
+            &pinned.session,
+            json!({
+                "op": "pluginUi.appToolCall",
+                "pluginId": pinned.plugin,
+                "serverName": pinned.server,
+                "subscribers": [{
+                    "scopeId": pinned.lease.token,
+                    "generation": pinned.lease.generation,
+                    "instance": lease_json(&pinned.lease),
+                }],
+                "callId": pinned.pin,
+                "toolName": "",
+                "arguments": {},
+                "activity": active,
+            }),
+        );
     }
 }
 
