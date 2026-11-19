@@ -17,7 +17,7 @@
 use crate::driver_owner::{ActorDriverOwner, ActorSessions, SubmitReply, TurnEndReply};
 use crate::escalation::{AnswerOutcome, EscalateOutcome, EscalationRequest};
 use crate::journal::JournalPort;
-use crate::model::Ref;
+use crate::model::{ConcurrencyChange, Ref};
 use crate::parked_answers::ParkedAnswers;
 use anyhow::Result;
 use serde_json::Value;
@@ -112,6 +112,9 @@ pub(crate) enum ActorRequest {
         instance: Ref,
         result: Result<Value, crate::error::WorkflowError>,
     },
+    /// The governor changed a cap this run is engaged on (Node's `concurrencyChanged`, from the run's subscription).
+    /// No answer goes back.
+    ConcurrencyChanged { change: ConcurrencyChange },
 }
 
 impl ActorHandle {
@@ -222,6 +225,11 @@ fn dispatch<J: JournalPort, S: ActorSessions>(
         ActorRequest::ArtifactSettled { instance, result } => {
             if let Err(error) = owner.artifact_settled(&instance, result) {
                 tracing::warn!("the owner failed to settle an artifact publish: {error:#}");
+            }
+        }
+        ActorRequest::ConcurrencyChanged { change } => {
+            if let Err(error) = owner.concurrency_changed(&change) {
+                tracing::warn!("the owner failed to journal a concurrency change: {error:#}");
             }
         }
         ActorRequest::Mutating { session, reply } => {

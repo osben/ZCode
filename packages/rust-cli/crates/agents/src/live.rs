@@ -13,7 +13,7 @@ use rust_cli_kernel_api::abort::{Abort, AbortReason};
 use rust_cli_kernel_api::clock::Clock;
 use rust_cli_kernel_api::env::WorkspaceRef;
 use rust_cli_kernel_api::env_shell::BackgroundStatus;
-use rust_cli_kernel_api::ids::{AgentId, MachineName, SessionId, ToolUseId};
+use rust_cli_kernel_api::ids::{AgentId, MachineName, SessionId, ToolUseId, WorkflowRunId};
 use rust_cli_kernel_api::model::ModelSelection;
 use rust_cli_kernel_api::permission::PermissionMode;
 
@@ -94,6 +94,9 @@ pub(crate) struct LiveAgent {
     pub(crate) mode: PermissionMode,
     /// Fork (slice 3 layer B): the off-peak execution the parent run belongs to; the child's requests inherit its ticket.
     pub(crate) off_peak_execution: Option<String>,
+    /// W6b part 2b: the workflow run a workflow actor belongs to (its requests are admitted under it). Only an actor
+    /// has one; a subagent the actor starts does not inherit it.
+    pub(crate) admission_run: Option<WorkflowRunId>,
     pub(crate) background: bool,
     /// 父会话的会话级询问入口（交互界面里才有，agents.md §4.1.1）：后台运行（含续跑、停放后的唤醒）经它询问。
     pub(crate) asks: Option<crate::child::Asks>,
@@ -477,6 +480,7 @@ impl Live {
                 entry.state = AgentState::Finished(ending);
                 entry.actor_port = None;
                 entry.on_mutating = None;
+                entry.admission_run = None;
                 entry.last_turn_stats = stats;
                 entry.last_turn_messages = messages;
             }
@@ -664,6 +668,7 @@ impl Live {
             // A resume is never a workflow turn, so a restarted entry holds no submit port.
             entry.actor_port = None;
             entry.on_mutating = None;
+            entry.admission_run = None;
             entry.begin_run(abort, Vec::new(), execution_id);
             Some(routes.claim(&entry.child, &entry.root))
         })

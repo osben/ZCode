@@ -1316,7 +1316,7 @@ This is Node's mapping of its status events to the same four results, except tha
 **Node divergences.**
 
 1. Subagents share one queue. Node has one queue per parent session. The Rust request carries no parent session ID, so `SessionSubagents` takes an empty parent for every subagent. Fairness across parents differs until the driver or the subagent runtime passes the parent.
-2. Workflow actors are not scoped. Their requests are `QuerySource::Subagent("workflow_actor")`, so they use the subagent pool, not a run queue. This is harmless while the gate is off (W9), but part 2 must scope them as `Run` before any run traffic.
+2. Workflow actors are not scoped. Their requests are `QuerySource::Subagent("workflow_actor")`, so they use the subagent pool, not a run queue. This is harmless while the gate is off (W9), but part 2 must scope them as `Run` before any run traffic. Done in part 2b (9.12): a request that names its run is admitted under `Run`.
 3. The stop set comes from the Rust classifier (`QuotaExhausted`, `Authentication`, and so on), not from `resolveWorkflowModelFailurePolicy`. Part 3 ports the table. Where the two disagree, the table wins.
 4. A cooldown wake is armed only when the cooldown is still in the future. Node arms a zero-delay wake when the cooldown has passed. Rust does not: a waiter leaving the queue (cancel or drop) runs `drain` at once, so a passed deadline is served without any timer (Codex review of #560, P1). Both give the same result.
 5. The wake timer is a tokio task when a runtime is current, and otherwise one shared timer thread with a deadline heap (`scheduler()`), so a ticket dropped off the runtime still wakes its waiters and a wake costs a heap entry, not a thread (ocr #560). Node's is an unref'd `setTimeout`. The scheduler is called after the state lock is released, so a synchronous scheduler cannot deadlock.
@@ -1362,12 +1362,7 @@ The zero-delay wake cases are covered by the existing test `a_cancel_after_the_c
 16. `cooldown_ms` on a change is the value after the 60 s cap of divergence 9 (9.9). Node reports the raw Retry-After.
 17. For one operation, the fan-out loops over changes outside and runs inside. Node loops over runs outside and changes inside. Each run sees its changes in the same order.
 
-**Not done in this part (part 2b).** Each item is open, and none of them is wired in production yet:
-
-- The workflow actor scope (divergence 2 of 9.9). Actor requests still go to the subagent pool (`SessionSubagents`), because the transport decides the scope from `QuerySource` only, and no path produces `AdmissionScope::Run` outside the tests.
-- The run events `node-waiting`, `node-executing` and `concurrency-changed`: the `RunEvent` variants, their journal rows, and the engine's `askWaiting`, `askExecuting` and `concurrencyChanged`. Nothing emits `concurrency-changed` yet.
-- The run service's `setRunBound` and `clearRunBound` calls at launch and at retune. Only tests call them.
-- The driver's per-attempt `tryAdmit` and `admit`. They happen in the transport (part 1), not in the workflow crate, and the driver does not observe them.
+**Not done in this part (part 2b).** Part 2b is built in 9.12. What it leaves open is listed there.
 
 Follow-up 12 of 9.9 is done: `AdmissionScope::Run(RunId)` and `AdmissionScope::SessionSubagents(ParentSessionId)`. The `\0` key prefixes still keep the namespaces apart by convention, as before.
 
@@ -1517,6 +1512,38 @@ What is left (W6b part 4 follow-ups):
 - The production host port: a `WorldReadPorts` and `ArtifactStorePort` over the machine ports, with the argv gap decided (an argv mode on `StartCommand`, or a local-only host with a stated limit). Owner: W7/W8.
 - The typed-ask half of row 11 (a script's world result feeding an ask) through the scheduler, when a caller exists.
 - Node test bodies for the three files in item 8, read and transcribed where a case differs from its title.
+
+### 9.12 W6b part 2b: run admission wiring, events and the owner's governor link (as built)
+
+Scope: the parts of 9.10's part-2b list that have a production home without the run service. What is in this part is listed first; what is not is at the end.
+
+**Built.**
+
+1. **Actor scope (divergence 2 of 9.9).** A workflow actor's requests are admitted under `AdmissionScope::Run(run)`, not the session pool. The run id travels as a plain string: `ActorRunBase.admission_run` (runtime) → `ActorRun.admission_run` (agents) → `LiveAgent.admission_run` → `QueryRequest.admission_run` (kernel-api, typed `WorkflowRunId`, serialized only when set) → `RunScope` (query) → `RequestOptions.admission_run` (kernel-api, `serde(skip)`, the workflow's name; `options.run` is the kernel query run and is not reused) → `Connect` in the transport, which maps `Some(run)` to `Run` before the source rule. A request with no run keeps the 9.9 mapping. A subagent the actor starts does not inherit the field (its `LiveAgent` is built by the Agent tool with `None`). The field reaches the turn's requests and the requests built from the same run scope; compaction is built from that scope too, and is not tested separately.
+2. **The events (9.10's list, item 2).** `RunEvent::NodeWaiting { instance, wait }` (`node-waiting`, with `cause`, and `reason`, `attempt`, `delayMs`, `retryAfterMs` only when set), `NodeExecuting` (`node-executing`) and `ConcurrencyChanged` (`concurrency-changed`, the change's fields in Node's order). They are journaled as `dwf_event` rows through the existing `to_json` path and write no `dwf_node` row. The node-store reducer already reduces all three (W3). The engine methods `ask_waiting`, `ask_executing` and `concurrency_changed` are Node's `askWaiting`, `askExecuting` and `concurrencyChanged` (`engine.ts:656-678`): the first two are ignored after settlement and for an ask that is not live; the last is ignored only after settlement. `Identity::stamp` gives the three no phase, as Node's `record` does.
+3. **The owner's governor link (item 3).** The workflow crate defines the port `run_concurrency::RunConcurrency` (`set_run_bound`, `clear_run_bound`, `subscribe`), so the crate still does not depend on the model crate. `ActorDriverOwner::attach_concurrency` is Node's launch registration: it sets the bound to the run's cap, then subscribes. The listener runs on the governor's thread and only posts `ActorRequest::ConcurrencyChanged` to the mailbox; the owner journals it through `concurrency_changed`. `ActorDriverOwner::set_max_concurrency` is the retune: the engine's cap changes, and the bound is re-registered with the new cap (Node's `runBoundTarget` does the same on every `setLimit`). The link is released by its `Drop`: the subscription ends, then the bound is cleared. `pump` drops it when the engine has settled, so the release happens once. The owner dropped without settling, and a second `attach_concurrency`, release the first link the same way. The bound is floored and never below 1; a non-finite cap (only possible from the config) binds 1.
+
+The run an actor belongs to is cleared when its turn ends and when it is resumed (`finish_actor_turn`, `restart`), so a resumed actor is never admitted under a run that is gone. Each turn sets it again from its own `ActorRun`.
+
+**Tests.** Node's `engine-concurrency-observations.test.ts` (the three events, the live and the late cases) and the owner's bound, retune, journal and release order are in `engine_tests.rs` and `run_concurrency_tests.rs`. The event key order is in `event.rs`. The actor scope is checked at three levels: the transport and the scope mapping (`model/tests/suite/governor.rs`, `a_workflow_actors_request_is_admitted_under_its_run`, a recording admission over the governor), the runtime (`every_actor_turn_carries_the_workflow_run_it_is_admitted_under`) and the agents request (`an_actor_turns_model_request_carries_its_workflow_run`).
+
+**Red.** The actor-scope integration test was recorded red first, as a compile error (`no field admission_run on RequestOptions`). The engine, event and owner tests were written before their code, but the first compile came after the code was written, so no separate red run is recorded for them.
+
+**Checks.** `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings` clean. `cargo test` green for `rust-cli-workflow` (276), `rust-cli-model` (241 lib, 83 integration), `rust-cli-runtime`, `rust-cli-agents`, `rust-cli-query` and `rust-cli-kernel-api`.
+
+**Node divergences (new in this part).**
+
+18. The `concurrency-changed` key order follows the Rust change struct (`key, previous, next, reason, lastGood, lastBad, cooldownMs`), which matches the `ConcurrencyChange` interface. Node's order comes from the governor's own object. The Node tests compare with `toEqual`, so the order is not pinned on the Node side.
+19. A nested subagent of an actor does not inherit the run's admission (divergence 1 of 9.9 applies to it: it uses the session pool). Node's sub-runtime admission was not checked for this case.
+20. On release, the subscription ends before the bound is cleared. Node clears the bound in the launch's `finally` and ends the subscription at the driver's dispose. The order of the two is not observable to the journal.
+21. The governor's change reasons reach the workflow as the open strings of Node's `ConcurrencyChangeReason`. The mapping from the model's `ChangeReason` is the adapter's job, and no adapter exists yet (see below).
+
+**Not done (left for later parts).**
+
+- **The source of `node-waiting` and `node-executing` (9.10 item 2's driver half).** Nothing calls `ask_waiting` or `ask_executing` in production. The signal path from the transport is missing: a queued admission (`slot`), the backoff of a retry (the `Retrying` notice's delay, Node's `backoff` with `reason`, `attempt`, `delayMs` and `retryAfterMs`), and the request's start after a wait (Node's `model_request_started`). It needs a notice from the transport to the owner through the mailbox. Left for the part that wires the actor turn to the transport (W7, with the run service).
+- **The production `RunConcurrency` adapter** over the model crate's `Governor`, with the reason mapping. Nothing constructs it, and nothing calls `attach_concurrency` or `set_max_concurrency` outside the tests. The owner runs ungoverned, as Node does without a governor.
+- **The run service.** Rust has no run service yet (W7/W8). Node's launch and retune call sites (`dynamic-workflow-run-launch.ts`, `workflow-run-control.ts`'s `runBoundTarget`) are the place where `attach_concurrency` and `set_max_concurrency` are called. The W7 run service must call them.
+- **The production `ActorRunBase`.** Nothing builds an `ActorRunBase` with an `admission_run` outside the tests, so the actor scope is dormant until the run service builds the runner for a run.
 
 ## 10. Open questions
 

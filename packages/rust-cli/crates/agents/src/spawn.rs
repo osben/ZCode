@@ -503,6 +503,8 @@ async fn run_loop(
         inject_agents_md: agent.definition.inject_agents_md,
         // Fork (slice 3 layer B): a subagent inside an off-peak turn is sent on that run's ticket, nested ones too.
         off_peak_execution: agent.off_peak_execution.clone(),
+        // W6b part 2b: a workflow actor's runs are admitted under its run. Nothing else sets it.
+        admission_run: agent.admission_run.clone(),
         ..QueryRequest::new(
             agent.child.clone(),
             core.ports.ids.run(),

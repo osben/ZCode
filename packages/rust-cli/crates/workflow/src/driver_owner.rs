@@ -21,6 +21,7 @@
 //!   engine has already settled the ask, so a returned error would make the caller retry a settled call. A reply call
 //!   returns an error only when the engine call itself failed, since then no reply exists; the pump error is logged in
 //!   that case too.
+use crate::actor_mailbox::{ActorHandle, ActorRequest};
 use crate::actor_turns::TurnInput;
 use crate::driver_rules::{
     NO_ACTIVE_ASK_MESSAGE, ProfileFit, SubmitProfile, SubmitRoute, UNTYPED_ASK_MESSAGE,
@@ -35,12 +36,14 @@ use crate::error::{ErrorCode, WorkflowError};
 use crate::escalation::{AnswerOutcome, EscalateOutcome, EscalationBook, EscalationRequest};
 use crate::event::RunEvent;
 use crate::journal::JournalPort;
-use crate::model::{Ref, StoredEvent};
+use crate::model::{ConcurrencyChange, Ref, StoredEvent};
 use crate::persona::persona_name;
+use crate::run_concurrency::RunConcurrency;
 use crate::world_host::{WORLD_JOB_LIMIT, WorldJob, WorldWiring, spawn_world_job};
 use anyhow::{Result, anyhow};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::sync::Arc;
 
 /// Node `cancelAsk`'s rejection of a pending submit: the text the submit's caller reads.
 pub const CANCELLED_BY_ENGINE_MESSAGE: &str = "The ask was cancelled by the engine.";
@@ -336,6 +339,37 @@ pub struct ActorDriverOwner<J: JournalPort, S: ActorSessions> {
     engine: WorkflowEngine<J, ActorPort<S>>,
     book: EscalationBook,
     active: BTreeMap<String, ActiveAsk>,
+    /// The run's link to the process governor, when one is attached (W6b part 2b). Released at settlement.
+    concurrency: Option<ConcurrencyLink>,
+}
+
+/// What the owner holds of the governor for its run: the port, and the subscription's end.
+///
+/// Dropping the link is the release: the subscription ends, then the bound is cleared. So a link that ends without the
+/// run settling (the owner dropped, or a re-attach) still gives the governor its bound back, and the release happens once.
+struct ConcurrencyLink {
+    port: Arc<dyn RunConcurrency>,
+    run_id: String,
+    unsubscribe: Option<Box<dyn FnOnce() + Send>>,
+}
+
+impl Drop for ConcurrencyLink {
+    fn drop(&mut self) {
+        if let Some(unsubscribe) = self.unsubscribe.take() {
+            unsubscribe();
+        }
+        self.port.clear_run_bound(&self.run_id);
+    }
+}
+
+/// The bound a run registers: the cap floored, and never less than 1 (the engine floors and raises its cap the same way).
+fn bound_of(max_concurrency: f64) -> u64 {
+    // `set_max_concurrency` ignores a non-finite cap, so one only reaches here from the config. It binds the minimum,
+    // rather than NaN (which `max` would hide) or infinity (which `as u64` would saturate to `u64::MAX`).
+    if !max_concurrency.is_finite() {
+        return 1;
+    }
+    max_concurrency.floor().max(1.0) as u64
 }
 
 impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
@@ -366,7 +400,59 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
             engine,
             book,
             active: BTreeMap::new(),
+            concurrency: None,
         })
+    }
+
+    /// Node's launch registration (`setRunBound` with the run's cap, then `subscribe`): binds the run on the governor
+    /// and hears its cap changes through the mailbox, as `concurrency-changed` events. A run that has already settled
+    /// attaches nothing. The listener only posts to `handle`, since the governor calls it on its own thread.
+    pub fn attach_concurrency(&mut self, port: Arc<dyn RunConcurrency>, handle: ActorHandle) {
+        // An earlier link is released first: its clear must not run after the new bound is set.
+        self.release_concurrency();
+        if self.engine.is_settled() {
+            return;
+        }
+        let run_id = self.engine.run_id().to_owned();
+        port.set_run_bound(&run_id, bound_of(self.engine.caps().max_concurrency));
+        let unsubscribe = port.subscribe(
+            &run_id,
+            Box::new(move |change: &ConcurrencyChange| {
+                handle.post(ActorRequest::ConcurrencyChanged {
+                    change: change.clone(),
+                });
+            }),
+        );
+        self.concurrency = Some(ConcurrencyLink {
+            port,
+            run_id,
+            unsubscribe: Some(unsubscribe),
+        });
+    }
+
+    /// Node's settings retune: the run's cap changes, and the bound follows it (Node `runBoundTarget`'s `setLimit`
+    /// re-registers the bound on every retune). Returns what the engine says: whether the cap changed.
+    pub fn set_max_concurrency(&mut self, max_concurrency: f64) -> Result<bool> {
+        let result = self.engine.set_max_concurrency(max_concurrency);
+        if let Some(link) = &self.concurrency
+            && !self.engine.is_settled()
+        {
+            link.port
+                .set_run_bound(&link.run_id, bound_of(self.engine.caps().max_concurrency));
+        }
+        self.after_engine(result)
+    }
+
+    /// Node `concurrencyChanged`: a cap change the governor fanned out to this run. Reached through the mailbox.
+    pub fn concurrency_changed(&mut self, change: &ConcurrencyChange) -> Result<()> {
+        let result = self.engine.concurrency_changed(change);
+        self.after_engine(result)
+    }
+
+    /// Node's release at settlement. Taking the link drops it, and the drop ends the subscription and clears the bound.
+    /// Taking it means this happens once per link.
+    fn release_concurrency(&mut self) {
+        self.concurrency.take();
     }
 
     /// Queue a start as the engine's dispatch would, for a test of the liveness check at apply time.
@@ -742,6 +828,10 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
             && self.engine.driver.world_queue.is_empty()
         {
             self.engine.driver.world = None;
+        }
+        // Settlement releases the run from the governor (once: `release_concurrency` takes the link).
+        if self.engine.is_settled() {
+            self.release_concurrency();
         }
         match first {
             Some(error) => Err(error),

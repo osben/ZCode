@@ -19,7 +19,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use rust_cli_kernel_api::env::WorkspaceRef;
 use rust_cli_kernel_api::env_shell::BackgroundStatus;
-use rust_cli_kernel_api::ids::{AgentId, MachineName, SessionId};
+use rust_cli_kernel_api::ids::{AgentId, MachineName, SessionId, WorkflowRunId};
 use rust_cli_kernel_api::message::UserOrigin;
 use rust_cli_kernel_api::model::ModelSelection;
 use rust_cli_kernel_api::orchestration::Interactions;
@@ -139,6 +139,9 @@ pub struct ActorRun {
     pub epilogue_start: Option<usize>,
     /// The turn's first-write gate (Node `onMutating`). None when the caller does not track writes.
     pub on_mutating: Option<Arc<FirstMutating>>,
+    /// The workflow run the actor belongs to: its model requests are admitted under that run (W6b part 2b). None
+    /// outside a run.
+    pub admission_run: Option<WorkflowRunId>,
 }
 
 /// Forwards an ask's first workspace write to its owner (Node `sink.askMutating`).
@@ -202,6 +205,7 @@ impl std::fmt::Debug for ActorRun {
             .field("selection", &self.selection)
             .field("mode", &self.mode)
             .field("on_mutating", &self.on_mutating)
+            .field("admission_run", &self.admission_run)
             .field("port", &self.port.as_ref().map(|_| "present"))
             .field("epilogue_start", &self.epilogue_start)
             .field(
@@ -296,6 +300,7 @@ impl LiveAgent {
     pub(crate) fn for_actor(run: ActorRun, agent: AgentId, root: SessionId) -> Self {
         Self {
             off_peak_execution: None,
+            admission_run: run.admission_run,
             agent,
             child: run.child,
             parent: run.parent,
@@ -372,6 +377,7 @@ impl crate::Agents {
         let epilogue_start = run.epilogue_start;
         let submit = run.port.clone();
         let gate = run.on_mutating.clone();
+        let admission_run = run.admission_run.clone();
         // The first-use check, the insert, the refresh and the run start share one lock section (`Live::begin_actor_run`).
         let started = core.live.begin_actor_run(
             &agent_id,
@@ -385,6 +391,7 @@ impl crate::Agents {
                 entry.asks = asks;
                 entry.actor_port = submit;
                 entry.on_mutating = gate;
+                entry.admission_run = admission_run;
             },
             execution_id,
         );

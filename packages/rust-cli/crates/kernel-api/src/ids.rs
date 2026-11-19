@@ -74,6 +74,11 @@ string_id!(
     RunId
 );
 string_id!(
+    /// 一个工作流 run（Node `runId`）。它是工作流 actor 的准入 run：actor 的模型请求在这个 run 的范围里准入，不在子代理池里。
+    /// 不同于 [`RunId`]（一轮对话里的一次运行）。
+    WorkflowRunId
+);
+string_id!(
     /// 一次等待用户回答的交互（权限、提问、计划审批）。
     InteractionId
 );
