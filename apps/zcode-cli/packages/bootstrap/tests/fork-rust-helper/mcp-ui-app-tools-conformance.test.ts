@@ -7,6 +7,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { McpAppProvidedToolDefinition } from "@zcode/core";
+import { zcodeMcpUiRegisterAppToolsParamsSchema } from "@zcode/shared";
 import { McpUiAppToolRegistry, McpUiInstances } from "../../src/zcode-protocol/mcp-ui/contract.js";
 
 const fixturePath = fileURLToPath(
@@ -24,6 +25,9 @@ interface Step {
   server?: string;
   scope?: string;
   tools?: string[];
+  descriptors?: Array<Record<string, unknown>>;
+  instanceFields?: Record<string, unknown>;
+  padOutputSchemaBytes?: number;
   tool?: string;
   arguments?: Record<string, unknown>;
   call?: string;
@@ -86,7 +90,7 @@ async function runSequence(fixture: Fixture): Promise<string[]> {
     sessionId: step.session ?? "",
     pluginId: "p",
     serverName,
-    workspace: { workspacePath: "/w" },
+    workspace: { workspacePath: "/w", workspaceKey: "/w" },
     instance: lease,
     scopeId: lease.token,
     generation: lease.generation,
@@ -136,12 +140,21 @@ async function runSequence(fixture: Fixture): Promise<string[]> {
       }
       case "register": {
         const lease = leaseOf(step);
-        const tools = (step.tools ?? []).map((name) => ({ name, inputSchema: { type: "object" as const } }));
-        const answer = registry.register({
+        const descriptors = step.descriptors ??
+          (step.tools ?? []).map((name) => ({ name, inputSchema: { type: "object" } }));
+        if (step.padOutputSchemaBytes !== undefined) {
+          const first = descriptors[0] as { outputSchema: Record<string, unknown> };
+          first.outputSchema.description = "x".repeat(step.padOutputSchemaBytes);
+        }
+        // The protocol parses the params with the wire schema before the registry sees them (Node `parseParams`).
+        const parsed = zcodeMcpUiRegisterAppToolsParamsSchema.safeParse({
           ...scopeOf(step, lease),
+          instance: { ...lease, ...step.instanceFields },
           serverName,
-          tools,
-        } as never);
+          tools: descriptors,
+        });
+        if (!parsed.success) return "refused";
+        const answer = registry.register(parsed.data as never);
         return `registered:${answer.tools.map((t) => t.modelName).join(",")}`;
       }
       case "exposed": {

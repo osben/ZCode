@@ -1,27 +1,343 @@
 {
-  "description": "F7 PR 3 app-provided tools conformance (the mailbox of a panel). The same sequence runs against the Rust owner (src/fork/mcp_ui_app_tools_conformance_tests.rs: RustMcpUi's registry over its own lease table) and against Node McpUiAppToolRegistry with McpUiInstances (apps/zcode-cli/packages/bootstrap/tests/fork-rust-helper/mcp-ui-app-tools-conformance.test.ts). Every step names its expected outcome. Leases: openPanel | closePanel (closed) | unauthorized (validate refused the lease). register: registered:<model names in exposed order>. exposed: exposed:<model names>. unregister: removed:<n>. call: started (published to the panel) | not-running (the tool is not exposed). claim and resolve: accepted | rejected (the mailbox refused it) | unauthorized (the lease is not valid). cancelCall: ok. collectCall: the call's final outcome: done | cancelled | timedOut | notRunning | closed | error. The runner uses the default deadlines of the owner and never waits on one: every call is claimed and resolved, cancelled, or refused at once.",
-  "server": { "name": "s1", "identity": "id-A", "generation": 1 },
+  "description": "F7 PR 3 app-provided tools conformance (the mailbox of a panel). The same sequence runs against the Rust owner (src/fork/mcp_ui_app_tools_conformance_tests.rs: RustMcpUi's registry over its own lease table) and against Node McpUiAppToolRegistry with McpUiInstances (apps/zcode-cli/packages/bootstrap/tests/fork-rust-helper/mcp-ui-app-tools-conformance.test.ts). Every step names its expected outcome. Leases: openPanel | closePanel (closed) | unauthorized (validate refused the lease). register: registered:<model names in exposed order>, or refused when the registration is not Node's schema (mcpAppsAppToolDescriptorSchema, mcpAppInstanceSchema, both strict). A register step names its tools by name (tools) or gives full descriptors (descriptors); instanceFields are merged into the lease's instance, and padOutputSchemaBytes pads the first tool's outputSchema. exposed: exposed:<model names>. unregister: removed:<n>. call: started (published to the panel) | not-running (the tool is not exposed). claim and resolve: accepted | rejected (the mailbox refused it) | unauthorized (the lease is not valid). cancelCall: ok. collectCall: the call's final outcome: done | cancelled | timedOut | notRunning | closed | error. The runner uses the default deadlines of the owner and never waits on one: every call is claimed and resolved, cancelled, or refused at once.",
+  "server": {
+    "name": "s1",
+    "identity": "id-A",
+    "generation": 1
+  },
   "steps": [
-    { "op": "openPanel", "as": "A1", "session": "app", "server": "s1", "scope": "pa", "source": "current", "expect": "opened" },
-    { "op": "register", "lease": "A1", "session": "app", "server": "s1", "tools": ["read", "write"], "expect": "registered:app__s1__read,app__s1__write" },
-    { "op": "exposed", "session": "app", "expect": "exposed:app__s1__read,app__s1__write" },
-    { "op": "call", "as": "K1", "session": "app", "server": "s1", "tool": "app__s1__read", "arguments": {"x": 1}, "expect": "started" },
-    { "op": "claim", "call": "K1", "lease": "A1", "session": "app", "server": "s1", "expect": "accepted" },
-    { "op": "claim", "call": "K1", "lease": "A1", "session": "app", "server": "s1", "expect": "accepted" },
-    { "op": "resolve", "call": "K1", "lease": "A1", "session": "app", "server": "s1", "result": {"content": [{"type": "text", "text": "one"}]}, "expect": "accepted" },
-    { "op": "collectCall", "call": "K1", "expect": "done" },
-    { "op": "resolve", "call": "K1", "lease": "A1", "session": "app", "server": "s1", "result": {"content": []}, "expect": "rejected" },
-    { "op": "call", "as": "K2", "session": "app", "server": "s1", "tool": "app__s1__write", "arguments": {}, "expect": "started" },
-    { "op": "openPanel", "as": "A2", "session": "app", "server": "s1", "scope": "pb", "source": "current", "expect": "opened" },
-    { "op": "claim", "call": "K2", "lease": "A2", "session": "app", "server": "s1", "expect": "rejected" },
-    { "op": "claim", "call": "K2", "lease": "A1", "session": "app", "server": "s1", "expect": "accepted" },
-    { "op": "cancelCall", "call": "K2", "expect": "ok" },
-    { "op": "collectCall", "call": "K2", "expect": "cancelled" },
-    { "op": "claim", "call": "K2", "lease": "A1", "session": "app", "server": "s1", "expect": "rejected" },
-    { "op": "call", "as": "K3", "session": "app", "server": "s1", "tool": "app__s1__nope", "arguments": {}, "expect": "not-running" },
-    { "op": "closePanel", "lease": "A1", "session": "app", "expect": "closed" },
-    { "op": "exposed", "session": "app", "expect": "exposed:" },
-    { "op": "unregister", "lease": "A1", "session": "app", "expect": "removed:0" },
-    { "op": "claim", "call": "K1", "lease": "A1", "session": "app", "server": "s1", "expect": "unauthorized" }
+    {
+      "op": "openPanel",
+      "as": "A1",
+      "session": "app",
+      "server": "s1",
+      "scope": "pa",
+      "source": "current",
+      "expect": "opened"
+    },
+    {
+      "op": "register",
+      "lease": "A1",
+      "session": "app",
+      "server": "s1",
+      "tools": [
+        "read",
+        "write"
+      ],
+      "expect": "registered:app__s1__read,app__s1__write"
+    },
+    {
+      "op": "exposed",
+      "session": "app",
+      "expect": "exposed:app__s1__read,app__s1__write"
+    },
+    {
+      "op": "register",
+      "lease": "A1",
+      "session": "app",
+      "server": "s1",
+      "descriptors": [
+        {
+          "name": "bad",
+          "inputSchema": {
+            "type": "object"
+          },
+          "unknownKey": true
+        }
+      ],
+      "expect": "refused"
+    },
+    {
+      "op": "register",
+      "lease": "A1",
+      "session": "app",
+      "server": "s1",
+      "descriptors": [
+        {
+          "name": "bad",
+          "inputSchema": {
+            "type": "object"
+          },
+          "annotations": {
+            "readOnlyHint": true,
+            "unknownKey": 1
+          }
+        }
+      ],
+      "expect": "refused"
+    },
+    {
+      "op": "register",
+      "lease": "A1",
+      "session": "app",
+      "server": "s1",
+      "descriptors": [
+        {
+          "name": "bad",
+          "inputSchema": {
+            "type": "object"
+          },
+          "outputSchema": {
+            "type": "array"
+          }
+        }
+      ],
+      "expect": "refused"
+    },
+    {
+      "op": "register",
+      "lease": "A1",
+      "session": "app",
+      "server": "s1",
+      "descriptors": [
+        {
+          "name": "bad",
+          "inputSchema": {
+            "type": "object"
+          },
+          "outputSchema": {
+            "type": "object"
+          }
+        }
+      ],
+      "padOutputSchemaBytes": 70000,
+      "expect": "refused"
+    },
+    {
+      "op": "register",
+      "lease": "A1",
+      "session": "app",
+      "server": "s1",
+      "descriptors": [
+        {
+          "name": "bad",
+          "inputSchema": {
+            "type": "object"
+          }
+        }
+      ],
+      "instanceFields": {
+        "extraKey": 1
+      },
+      "expect": "refused"
+    },
+    {
+      "op": "register",
+      "lease": "A1",
+      "session": "app",
+      "server": "s1",
+      "descriptors": [
+        {
+          "name": "bad",
+          "inputSchema": {
+            "type": "object"
+          }
+        }
+      ],
+      "instanceFields": {
+        "appIdentity": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+      },
+      "expect": "refused"
+    },
+    {
+      "op": "register",
+      "lease": "A1",
+      "session": "app",
+      "server": "s1",
+      "descriptors": [
+        {
+          "name": "bad",
+          "inputSchema": {
+            "type": "object"
+          }
+        }
+      ],
+      "instanceFields": {
+        "appIdentity": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": "refused"
+    },
+    {
+      "op": "call",
+      "as": "K1",
+      "session": "app",
+      "server": "s1",
+      "tool": "app__s1__read",
+      "arguments": {
+        "x": 1
+      },
+      "expect": "started"
+    },
+    {
+      "op": "claim",
+      "call": "K1",
+      "lease": "A1",
+      "session": "app",
+      "server": "s1",
+      "expect": "accepted"
+    },
+    {
+      "op": "claim",
+      "call": "K1",
+      "lease": "A1",
+      "session": "app",
+      "server": "s1",
+      "expect": "accepted"
+    },
+    {
+      "op": "resolve",
+      "call": "K1",
+      "lease": "A1",
+      "session": "app",
+      "server": "s1",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "one"
+          }
+        ]
+      },
+      "expect": "accepted"
+    },
+    {
+      "op": "collectCall",
+      "call": "K1",
+      "expect": "done"
+    },
+    {
+      "op": "resolve",
+      "call": "K1",
+      "lease": "A1",
+      "session": "app",
+      "server": "s1",
+      "result": {
+        "content": []
+      },
+      "expect": "rejected"
+    },
+    {
+      "op": "call",
+      "as": "K2",
+      "session": "app",
+      "server": "s1",
+      "tool": "app__s1__write",
+      "arguments": {},
+      "expect": "started"
+    },
+    {
+      "op": "openPanel",
+      "as": "A2",
+      "session": "app",
+      "server": "s1",
+      "scope": "pb",
+      "source": "current",
+      "expect": "opened"
+    },
+    {
+      "op": "claim",
+      "call": "K2",
+      "lease": "A2",
+      "session": "app",
+      "server": "s1",
+      "expect": "rejected"
+    },
+    {
+      "op": "claim",
+      "call": "K2",
+      "lease": "A1",
+      "session": "app",
+      "server": "s1",
+      "expect": "accepted"
+    },
+    {
+      "op": "cancelCall",
+      "call": "K2",
+      "expect": "ok"
+    },
+    {
+      "op": "collectCall",
+      "call": "K2",
+      "expect": "cancelled"
+    },
+    {
+      "op": "claim",
+      "call": "K2",
+      "lease": "A1",
+      "session": "app",
+      "server": "s1",
+      "expect": "rejected"
+    },
+    {
+      "op": "call",
+      "as": "K3",
+      "session": "app",
+      "server": "s1",
+      "tool": "app__s1__nope",
+      "arguments": {},
+      "expect": "not-running"
+    },
+    {
+      "op": "closePanel",
+      "lease": "A1",
+      "session": "app",
+      "expect": "closed"
+    },
+    {
+      "op": "exposed",
+      "session": "app",
+      "expect": "exposed:"
+    },
+    {
+      "op": "unregister",
+      "lease": "A1",
+      "session": "app",
+      "expect": "removed:0"
+    },
+    {
+      "op": "claim",
+      "call": "K1",
+      "lease": "A1",
+      "session": "app",
+      "server": "s1",
+      "expect": "unauthorized"
+    },
+    {
+      "op": "openPanel",
+      "as": "A3",
+      "session": "app",
+      "server": "s1",
+      "scope": "pc",
+      "source": "current",
+      "expect": "opened"
+    },
+    {
+      "op": "register",
+      "lease": "A3",
+      "session": "app",
+      "server": "s1",
+      "descriptors": [
+        {
+          "name": "ok",
+          "title": "Ok",
+          "inputSchema": {
+            "type": "object"
+          },
+          "outputSchema": {
+            "type": "object"
+          },
+          "annotations": {
+            "readOnlyHint": true,
+            "openWorldHint": true
+          }
+        }
+      ],
+      "expect": "registered:app__s1__ok"
+    },
+    {
+      "op": "exposed",
+      "session": "app",
+      "expect": "exposed:app__s1__ok"
+    }
   ]
 }

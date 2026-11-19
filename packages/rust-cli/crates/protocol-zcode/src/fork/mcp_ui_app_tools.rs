@@ -22,7 +22,7 @@ use rust_cli_kernel_api::app_tool::{AppToolHost, AppToolSpec};
 use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::mcp_app::McpAppHost;
 use rust_cli_protocol_core::rpc::RpcError;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use tokio::sync::{oneshot, watch};
 
 use super::mcp_ui_rust::{Guard, RustMcpUi, random_hex, text};
@@ -38,7 +38,7 @@ const ARGUMENTS_MAX_BYTES: usize = 1024 * 1024;
 const TOOLS_MAX: usize = 50;
 const NAME_MAX_UNITS: usize = 128;
 const TITLE_MAX_UNITS: usize = 256;
-const DESCRIPTION_MAX_UNITS: usize = 4096;
+const DESCRIPTOR_MAX_UNITS: usize = 4096;
 const SCHEMA_MAX_BYTES: usize = 64 * 1024;
 const CALL_ID_MAX_UNITS: usize = 128;
 const SCOPE_MAX_UNITS: usize = 256;
@@ -224,11 +224,43 @@ fn delta(target: &Target, call_id: &str, tool: &str, arguments: Value, cancelled
     value
 }
 
-/// Node `onActivity`: a pin of a lease's execution started or ended.
+/// Node `onActivity`: a pin of a lease started or ended, as `pluginUi.appToolCall` to the lease (the instance) with no
+/// tool. The mailbox's calls and the owner's pins (`mcp_ui_rust`) share this builder.
+pub(super) fn activity_delta(
+    plugin_id: &str,
+    server: &str,
+    scope: &str,
+    generation: u64,
+    instance: &Value,
+    pin: &str,
+    active: bool,
+) -> Value {
+    json!({
+        "op": "pluginUi.appToolCall",
+        "pluginId": plugin_id,
+        "serverName": server,
+        "subscribers": [{
+            "scopeId": scope,
+            "generation": generation,
+            "instance": instance,
+        }],
+        "callId": pin,
+        "toolName": "",
+        "arguments": {},
+        "activity": active,
+    })
+}
+
 fn activity(target: &Target, pin: &str, active: bool) -> Value {
-    let mut value = delta(target, pin, "", json!({}), false);
-    value["activity"] = json!(active);
-    value
+    activity_delta(
+        &target.plugin_id,
+        &target.server,
+        &target.scope,
+        target.generation,
+        &target.credential,
+        pin,
+        active,
+    )
 }
 
 /// Ends a pending call with `outcome` (Node `settle`): a result is delivered, anything else publishes a `cancelled`
@@ -296,59 +328,161 @@ fn parse_descriptors(params: &Value) -> Result<Vec<Descriptor>, RpcError> {
     tools.iter().map(parse_descriptor).collect()
 }
 
+/// The keys of a descriptor and of its annotations: Node's `mcpAppsAppToolDescriptorSchema` and
+/// `mcpAppsAppToolAnnotationsSchema` are `z.strictObject`s, so any other key refuses the registration.
+const DESCRIPTOR_KEYS: &[&str] = &[
+    "name",
+    "title",
+    "description",
+    "inputSchema",
+    "outputSchema",
+    "annotations",
+];
+const ANNOTATION_KEYS: &[&str] = &[
+    "title",
+    "readOnlyHint",
+    "destructiveHint",
+    "idempotentHint",
+    "openWorldHint",
+];
+
+/// `value` as an object whose keys are all in `allowed`.
+fn strict_object<'a>(
+    value: &'a Value,
+    allowed: &[&str],
+    what: &str,
+) -> Result<&'a Map<String, Value>, RpcError> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| RpcError::invalid_params(format!("{what} is not an object")))?;
+    if let Some(key) = object.keys().find(|key| !allowed.contains(&key.as_str())) {
+        return Err(RpcError::invalid_params(format!(
+            "{what} has an unknown key {key}"
+        )));
+    }
+    Ok(object)
+}
+
+/// Node's `objectSchemaSchema`: an object schema of type `object`, at most 64 KiB serialized. It checks the input and
+/// the output schema alike.
+fn object_schema(value: &Value, what: &str) -> Result<Value, RpcError> {
+    let valid = value.get("type").and_then(Value::as_str) == Some("object")
+        && serde_json::to_vec(value).map_or(usize::MAX, |bytes| bytes.len()) <= SCHEMA_MAX_BYTES;
+    if !valid {
+        return Err(RpcError::invalid_params(format!(
+            "{what} must be an object schema of at most 64 KiB"
+        )));
+    }
+    Ok(value.clone())
+}
+
+/// A string field of at most `max` UTF-16 units, absent or present (`null` is not a string, as zod refuses it).
+fn text_field(
+    object: &Map<String, Value>,
+    key: &str,
+    max: usize,
+) -> Result<Option<String>, RpcError> {
+    match object.get(key) {
+        None => Ok(None),
+        Some(Value::String(text)) if utf16_len(text) <= max => Ok(Some(text.clone())),
+        Some(_) => Err(RpcError::invalid_params(format!(
+            "tool {key} is not a string of at most {max} characters"
+        ))),
+    }
+}
+
 fn parse_descriptor(tool: &Value) -> Result<Descriptor, RpcError> {
-    let name = tool
+    let object = strict_object(tool, DESCRIPTOR_KEYS, "tool")?;
+    let name = object
         .get("name")
         .and_then(Value::as_str)
         .filter(|name| !name.is_empty() && utf16_len(name) <= NAME_MAX_UNITS)
         .ok_or_else(|| {
             RpcError::invalid_params("tool name is required (at most 128 characters)")
         })?;
-    let limited = |key: &str, max: usize| -> Result<Option<String>, RpcError> {
-        match tool.get(key) {
-            None | Some(Value::Null) => Ok(None),
-            Some(Value::String(text)) if utf16_len(text) <= max => Ok(Some(text.clone())),
-            Some(_) => Err(RpcError::invalid_params(format!(
-                "tool {key} is not a string of at most {max} characters"
-            ))),
-        }
+    let title = text_field(object, "title", TITLE_MAX_UNITS)?;
+    let description = text_field(object, "description", DESCRIPTOR_MAX_UNITS)?;
+    let input_schema = object_schema(
+        object
+            .get("inputSchema")
+            .ok_or_else(|| RpcError::invalid_params("tool inputSchema is required"))?,
+        "tool inputSchema",
+    )?;
+    if let Some(output) = object.get("outputSchema") {
+        object_schema(output, "tool outputSchema")?;
+    }
+    let annotations = match object.get("annotations") {
+        None => None,
+        Some(value) => Some(strict_object(value, ANNOTATION_KEYS, "tool annotations")?),
     };
-    let title = limited("title", TITLE_MAX_UNITS)?;
-    let description = limited("description", DESCRIPTION_MAX_UNITS)?;
-    let input_schema = tool
-        .get("inputSchema")
-        .filter(|schema| {
-            schema.get("type").and_then(Value::as_str) == Some("object")
-                && serde_json::to_vec(schema).map_or(usize::MAX, |bytes| bytes.len())
-                    <= SCHEMA_MAX_BYTES
-        })
-        .cloned()
-        .ok_or_else(|| {
-            RpcError::invalid_params("tool inputSchema must be an object schema of at most 64 KiB")
-        })?;
-    let hint = |key: &str| -> Result<Option<bool>, RpcError> {
-        let annotations = tool.get("annotations");
-        match annotations.and_then(|value| value.get(key)) {
-            None | Some(Value::Null) => Ok(None),
-            Some(Value::Bool(flag)) => Ok(Some(*flag)),
+    let hint = |key: &str| -> Result<bool, RpcError> {
+        match annotations.and_then(|map| map.get(key)) {
+            None => Ok(false),
+            Some(Value::Bool(flag)) => Ok(*flag),
             Some(_) => Err(RpcError::invalid_params(format!(
                 "tool annotations.{key} is not a boolean"
             ))),
         }
     };
+    if let Some(annotations) = annotations {
+        text_field(annotations, "title", TITLE_MAX_UNITS)?;
+    }
     Ok(Descriptor {
         name: name.to_owned(),
         title,
         description,
         input_schema,
-        read_only: hint("readOnlyHint")?.unwrap_or(false),
-        destructive: hint("destructiveHint")?.unwrap_or(false),
-        idempotent: hint("idempotentHint")?.unwrap_or(false),
+        read_only: hint("readOnlyHint")?,
+        destructive: hint("destructiveHint")?,
+        idempotent: hint("idempotentHint")?,
     })
 }
 
-/// The binding of a request: `scopeId` and `generation` must name the `instance` it carries (Node's binding check).
-fn binding(params: &Value, message: &str) -> Result<(String, u64), RpcError> {
+/// Node's `mcpAppInstanceSchema` (a `z.strictObject`): exactly `runtimeId`, `generation` (a positive integer),
+/// `appIdentity` (64 lower-case hex characters) and `token`, the last two non-empty. Returns the normalized credential.
+fn strict_instance(params: &Value) -> Result<Value, RpcError> {
+    let instance = strict_object(
+        params
+            .get("instance")
+            .ok_or_else(|| RpcError::invalid_params("instance is required"))?,
+        &["runtimeId", "generation", "appIdentity", "token"],
+        "instance",
+    )?;
+    let text = |key: &str| {
+        instance
+            .get(key)
+            .and_then(Value::as_str)
+            .filter(|text| !text.is_empty())
+            .ok_or_else(|| RpcError::invalid_params(format!("instance.{key} is required")))
+    };
+    let runtime_id = text("runtimeId")?;
+    let token = text("token")?;
+    let app_identity = text("appIdentity")?;
+    if app_identity.len() != 64
+        || !app_identity
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(RpcError::invalid_params(
+            "instance.appIdentity is 64 lower-case hex characters",
+        ));
+    }
+    let generation = instance
+        .get("generation")
+        .and_then(Value::as_u64)
+        .filter(|generation| *generation > 0)
+        .ok_or_else(|| RpcError::invalid_params("instance.generation is a positive integer"))?;
+    Ok(json!({
+        "runtimeId": runtime_id,
+        "generation": generation,
+        "appIdentity": app_identity,
+        "token": token,
+    }))
+}
+
+/// The binding of a request (Node's `scopeId`/`generation` against `instance`): the request's scope and generation, the
+/// strict credential, and the scope must be the credential's token.
+fn binding(params: &Value, message: &str) -> Result<(String, u64, Value), RpcError> {
     let scope = text(params, "scopeId")?;
     if utf16_len(scope) > SCOPE_MAX_UNITS {
         return Err(RpcError::invalid_params(
@@ -359,15 +493,13 @@ fn binding(params: &Value, message: &str) -> Result<(String, u64), RpcError> {
         .get("generation")
         .and_then(Value::as_u64)
         .ok_or_else(|| RpcError::invalid_params("generation is required"))?;
-    let instance = params
-        .get("instance")
-        .ok_or_else(|| RpcError::invalid_params("instance is required"))?;
-    if instance.get("token").and_then(Value::as_str) != Some(scope)
-        || instance.get("generation").and_then(Value::as_u64) != Some(generation)
+    let instance = strict_instance(params)?;
+    if instance["token"].as_str() != Some(scope)
+        || instance["generation"].as_u64() != Some(generation)
     {
         return Err(RpcError::internal(message));
     }
-    Ok((scope.to_owned(), generation))
+    Ok((scope.to_owned(), generation, instance))
 }
 
 fn call_id_of(params: &Value) -> Result<&str, RpcError> {
@@ -438,8 +570,9 @@ impl Drop for Execution {
             return;
         };
         ui.end_call(&self.session, &self.call_id, "App tool call was cancelled");
-        ui.instances.release(&self.token, &self.pin);
-        ui.deliver(&self.session, activity(&self.target, &self.pin, false));
+        if ui.instances.release(&self.token, &self.pin) {
+            ui.deliver(&self.session, activity(&self.target, &self.pin, false));
+        }
     }
 }
 
@@ -465,14 +598,15 @@ impl RustMcpUi {
         params: &Value,
     ) -> Result<Value, RpcError> {
         let guard = Guard::new(params)?;
-        let (scope, generation) = binding(params, "Invalid MCP App registration binding")?;
+        let (scope, generation, instance) =
+            binding(params, "Invalid MCP App registration binding")?;
         let tools = parse_descriptors(params)?;
         let target = Target {
             plugin_id: guard.plugin.clone(),
             server: guard.server,
             scope: scope.clone(),
             generation,
-            credential: params["instance"].clone(),
+            credential: instance,
         };
         let key = instance_key(&scope, generation);
         let exposed = self.with_tools(|mailbox, out| {
@@ -515,7 +649,7 @@ impl RustMcpUi {
         session: &str,
         params: &Value,
     ) -> Result<Value, RpcError> {
-        let (scope, generation) = binding(params, "Invalid MCP App binding")?;
+        let (scope, generation, _) = binding(params, "Invalid MCP App binding")?;
         let key = instance_key(&scope, generation);
         let removed = self.with_tools(|mailbox, out| {
             let Some(session_tools) = mailbox.sessions.get_mut(session) else {
@@ -541,7 +675,7 @@ impl RustMcpUi {
     ) -> Result<Value, RpcError> {
         let guard = Guard::new(params)?;
         self.validate(host, session, &guard, params)?;
-        let (scope, generation) = binding(params, "Invalid MCP App binding")?;
+        let (scope, generation, _) = binding(params, "Invalid MCP App binding")?;
         let call_id = call_id_of(params)?;
         let key = instance_key(&scope, generation);
         let accepted = self.with_tools(|mailbox, _| {
@@ -569,7 +703,7 @@ impl RustMcpUi {
     ) -> Result<Value, RpcError> {
         let guard = Guard::new(params)?;
         self.validate(host, session, &guard, params)?;
-        let (scope, generation) = binding(params, "Invalid MCP App binding")?;
+        let (scope, generation, _) = binding(params, "Invalid MCP App binding")?;
         let call_id = call_id_of(params)?;
         let outcome = outcome_of(params)?;
         let key = instance_key(&scope, generation);
@@ -804,6 +938,20 @@ impl RustMcpUi {
         });
     }
 
+    /// Whether `session` exposes the app tool `name` (no copy of the set).
+    pub(crate) fn exposes(&self, session: &str, name: &str) -> bool {
+        self.tools
+            .lock_unpoisoned()
+            .sessions
+            .get(session)
+            .is_some_and(|session_tools| {
+                session_tools
+                    .exposed
+                    .iter()
+                    .any(|exposed| exposed.spec.model_name == name)
+            })
+    }
+
     /// The exposed tools of `session` (the overlay), for the kernel.
     pub(crate) fn exposed_tools(&self, session: &str) -> Vec<AppToolSpec> {
         self.tools
@@ -865,11 +1013,9 @@ impl AppToolRouter {
     }
 
     fn rust_owns_name(&self, session: &SessionId, name: &str) -> Option<&Arc<RustMcpUi>> {
-        self.rust.get().filter(|ui| {
-            ui.exposed_tools(session.as_str())
-                .iter()
-                .any(|spec| spec.model_name == name)
-        })
+        self.rust
+            .get()
+            .filter(|ui| ui.exposes(session.as_str(), name))
     }
 }
 

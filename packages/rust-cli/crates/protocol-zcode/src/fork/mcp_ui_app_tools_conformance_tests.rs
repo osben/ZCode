@@ -258,16 +258,26 @@ impl Runner {
             }
             "register" => {
                 let lease = self.lease(step, "lease");
-                let tools: Vec<Value> = step["tools"]
-                    .as_array()
-                    .expect("tools")
-                    .iter()
-                    .map(|name| json!({"name": name, "inputSchema": {"type": "object"}}))
-                    .collect();
-                match self
-                    .ui
-                    .register_app_tools("app", &request(&lease, json!({"tools": tools})))
-                {
+                let mut tools: Vec<Value> = match step.get("descriptors") {
+                    Some(descriptors) => descriptors.as_array().expect("descriptors").clone(),
+                    None => step["tools"]
+                        .as_array()
+                        .expect("tools")
+                        .iter()
+                        .map(|name| json!({"name": name, "inputSchema": {"type": "object"}}))
+                        .collect(),
+                };
+                if let Some(pad) = step["padOutputSchemaBytes"].as_u64() {
+                    tools[0]["outputSchema"]["description"] = json!("x".repeat(pad as usize));
+                }
+                let mut instance = lease_json(&lease);
+                if let Some(fields) = step["instanceFields"].as_object() {
+                    for (key, value) in fields {
+                        instance[key] = value.clone();
+                    }
+                }
+                let params = request(&lease, json!({"tools": tools, "instance": instance}));
+                match self.ui.register_app_tools("app", &params) {
                     Ok(answer) => {
                         let names: Vec<&str> = answer["tools"]
                             .as_array()
@@ -277,7 +287,8 @@ impl Runner {
                             .collect();
                         format!("registered:{}", names.join(","))
                     }
-                    Err(error) => format!("error:{}", error.message),
+                    // A registration Node's schema refuses (`mcpAppsAppToolDescriptorSchema`, `mcpAppInstanceSchema`).
+                    Err(_) => "refused".to_owned(),
                 }
             }
             "exposed" => {

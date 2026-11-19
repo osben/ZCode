@@ -125,18 +125,21 @@ impl Context {
     }
 
     pub(crate) fn set_mcp_ui(&self, ui: Arc<crate::fork::mcp_ui_rust::RustMcpUi>) {
-        let _ = self.mcp_ui.set(ui);
+        if self.mcp_ui.set(ui.clone()).is_ok()
+            && let Some(router) = self.app_tools.get()
+        {
+            router.bind_rust(ui);
+        }
     }
 
-    /// Fork (F7 PR 3): the app-provided tools router the entry point installs before assembling the kernel.
+    /// Fork (F7 PR 3): the app-provided tools router the entry point installs before assembling the kernel. When the
+    /// panel owner already exists, it is bound now; otherwise the owner binds it when it is installed.
     pub fn set_app_tools_router(&self, router: Arc<crate::fork::mcp_ui_app_tools::AppToolRouter>) {
-        let _ = self.app_tools.set(router);
-    }
-
-    pub(crate) fn app_tools_router(
-        &self,
-    ) -> Option<&Arc<crate::fork::mcp_ui_app_tools::AppToolRouter>> {
-        self.app_tools.get()
+        if self.app_tools.set(router.clone()).is_ok()
+            && let Some(ui) = self.mcp_ui.get()
+        {
+            router.bind_rust(ui.clone());
+        }
     }
 
     /// Fork: the Host promised an attach acknowledgement (`ZCODE_HOST_ATTACH_ACK`); reverse requests wait for it.

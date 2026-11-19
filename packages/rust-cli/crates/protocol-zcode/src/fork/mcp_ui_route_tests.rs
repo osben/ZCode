@@ -957,6 +957,97 @@ async fn a_panel_sample_publishes_its_operation_as_activity_while_the_model_runs
     assert_eq!(activity[0]["subscribers"][0]["instance"], lease);
 }
 
+#[tokio::test]
+async fn a_lease_closed_mid_call_sends_no_activity_end_after_the_closed_notice() {
+    // Node: the close removes the lease's pins, so the call's release ends nothing and the notice is the last word.
+    let (_scope, server, _kernel) = server();
+    let (answers, lease) = panel(&server, short_timing(5_000, 30_000)).await;
+    dispatch(&server, "mcp/uiRegisterAppTools", register_params(&lease))
+        .await
+        .expect("the tools register");
+    let ui = owner(&server);
+    let session = SessionId::new("run_s1");
+    let task = tokio::spawn(async move {
+        ui.call(
+            &session,
+            "turn1",
+            "tool-use-9",
+            "app__files__read",
+            json!({}),
+        )
+        .await
+    });
+    let _call_id = next_call_id(&answers).await;
+    let closed = dispatch(
+        &server,
+        "mcp/uiCloseInstance",
+        panel_call(&lease, json!({})),
+    )
+    .await
+    .expect("close answers");
+    assert_eq!(closed, json!({"closed": true}));
+    assert!(task.await.unwrap().is_err());
+
+    let deltas = answers.deltas.lock().unwrap().clone();
+    let notice = deltas
+        .iter()
+        .position(|(_, delta)| delta["op"] == "pluginUi.instanceClosed")
+        .expect("the closed notice is sent");
+    let after: Vec<&Value> = deltas[notice + 1..]
+        .iter()
+        .map(|(_, delta)| delta)
+        .filter(|delta| delta.get("activity").is_some())
+        .collect();
+    assert!(after.is_empty(), "no activity after the notice: {after:?}");
+}
+
+#[tokio::test]
+async fn a_mailbox_request_refuses_an_instance_that_is_not_node_s_strict_credential() {
+    // Node parses the instance with the strict `mcpAppInstanceSchema`: no extra keys, a 64-character lower-case hex
+    // identity, a positive generation and non-empty strings.
+    let (_scope, server, _kernel) = server();
+    let (_answers, lease) = panel(&server, short_timing(5_000, 30_000)).await;
+    let mut extra = lease.clone();
+    extra["extra"] = json!(1);
+    let mut upper = lease.clone();
+    upper["appIdentity"] = json!("A".repeat(64));
+    let mut long = lease.clone();
+    long["appIdentity"] = json!("a".repeat(65));
+    for bad in [extra, upper, long] {
+        let refused = dispatch(
+            &server,
+            "mcp/uiRegisterAppTools",
+            panel_call(&lease, json!({"instance": bad, "tools": []})),
+        )
+        .await;
+        assert!(
+            refused.is_err(),
+            "a non-conforming instance is refused: {bad}"
+        );
+    }
+    dispatch(&server, "mcp/uiRegisterAppTools", register_params(&lease))
+        .await
+        .expect("the conforming instance registers");
+}
+
+#[tokio::test]
+async fn an_app_tools_router_installed_after_the_panel_owner_still_exposes_the_rust_tools() {
+    let (_scope, server, _kernel) = server();
+    let (_answers, lease) = panel(&server, short_timing(5_000, 30_000)).await;
+    dispatch(&server, "mcp/uiRegisterAppTools", register_params(&lease))
+        .await
+        .expect("the tools register");
+    // The router is installed after the owner (as the app-server can do after the handler was built).
+    let router = crate::fork::mcp_ui_app_tools::AppToolRouter::new(None);
+    server.context.set_app_tools_router(router.clone());
+    let names: Vec<String> = router
+        .app_tools(&SessionId::new("run_s1"))
+        .into_iter()
+        .map(|spec| spec.model_name)
+        .collect();
+    assert_eq!(names, vec!["app__files__read", "app__files__write"]);
+}
+
 fn sampling(operation: &str) -> Value {
     json!({
         "operationId": operation,

@@ -24,7 +24,7 @@ use tokio_util::sync::CancellationToken;
 use super::helper_answers::kernel_error;
 use super::helper_sampling;
 use super::helper_session_admit::{not_hosted, owns};
-use super::mcp_ui_app_tools::{Mailbox, Timing};
+use super::mcp_ui_app_tools::{Mailbox, Timing, activity_delta};
 use super::mcp_ui_lease::{Binding, Connection, Instances, Lease, Refused, Scope};
 use super::mcp_ui_sampling::{self, Sampling};
 use super::node_helper::HelperRequests;
@@ -971,20 +971,15 @@ impl RustMcpUi {
     fn pin_activity(&self, pinned: &Pinned<'_>, active: bool) {
         self.deliver(
             &pinned.session,
-            json!({
-                "op": "pluginUi.appToolCall",
-                "pluginId": pinned.plugin,
-                "serverName": pinned.server,
-                "subscribers": [{
-                    "scopeId": pinned.lease.token,
-                    "generation": pinned.lease.generation,
-                    "instance": lease_json(&pinned.lease),
-                }],
-                "callId": pinned.pin,
-                "toolName": "",
-                "arguments": {},
-                "activity": active,
-            }),
+            activity_delta(
+                &pinned.plugin,
+                &pinned.server,
+                &pinned.lease.token,
+                pinned.lease.generation,
+                &lease_json(&pinned.lease),
+                &pinned.pin,
+                active,
+            ),
         );
     }
 }
