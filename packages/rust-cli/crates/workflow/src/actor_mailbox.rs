@@ -89,6 +89,8 @@ pub(crate) enum ActorRequest {
     },
     /// A scheduled redrive is due (W6b part 3). Sent by the redrive clock's job; no answer goes back.
     RedriveDue { session: String, instance: Ref },
+    /// The stall clock's timer for `generation` is due (W6b part 5). Sent by the clock's job; no answer goes back.
+    StallDue { generation: u64 },
     /// A workspace-mutating call of the session's ask is about to run (Node `askMutating`).
     Mutating {
         session: String,
@@ -210,6 +212,11 @@ fn dispatch<J: JournalPort, S: ActorSessions>(
         ActorRequest::RedriveDue { session, instance } => {
             if let Err(error) = owner.redrive_due(&session, &instance) {
                 tracing::warn!(%session, error = %error, "a workflow redrive could not start its turn");
+            }
+        }
+        ActorRequest::StallDue { generation } => {
+            if let Err(error) = owner.stall_due(generation) {
+                tracing::warn!("the owner failed to record a run stall: {error:#}");
             }
         }
         ActorRequest::MessageBoundary {

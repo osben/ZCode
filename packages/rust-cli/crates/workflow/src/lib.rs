@@ -32,11 +32,15 @@ pub mod parked_answers;
 #[path = "parked_answers_tests.rs"]
 mod parked_answers_tests;
 pub mod persona;
+pub mod quota_resume;
 pub mod replay;
 pub mod resume;
 pub mod run_concurrency;
 pub mod scheduler;
 pub mod scheduler_submit;
+pub mod stall_clock;
+#[cfg(test)]
+mod test_clock;
 pub mod world_git;
 pub mod world_host;
 pub mod world_read;
@@ -58,6 +62,8 @@ mod driver_node_parity_tests;
 #[cfg(test)]
 mod driver_owner_tests;
 #[cfg(test)]
+mod driver_stall_quota_tests;
+#[cfg(test)]
 mod engine_tests;
 #[cfg(test)]
 mod escalation_tests;
@@ -68,9 +74,13 @@ mod import_golden_tests;
 #[cfg(test)]
 mod lifecycle_golden_tests;
 #[cfg(test)]
+mod quota_resume_tests;
+#[cfg(test)]
 mod run_concurrency_tests;
 #[cfg(test)]
 mod scheduler_golden_tests;
+#[cfg(test)]
+mod stall_clock_tests;
 #[cfg(test)]
 mod world_read_review_tests;
 #[cfg(test)]

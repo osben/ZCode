@@ -29,8 +29,8 @@ use crate::driver_rules::{
     profile_fit, submit_route,
 };
 use crate::engine::{
-    AskMessage, AskOutcome, EngineConfig, RunSettlement, SubmitVerdict, WorkflowDriver,
-    WorkflowEngine,
+    AskMessage, AskOutcome, AskProgress, EngineConfig, RunSettlement, SubmitVerdict,
+    WorkflowDriver, WorkflowEngine,
 };
 use crate::engine_artifacts::ArtifactPublishRequest;
 use crate::error::{ErrorCode, WorkflowError};
@@ -45,6 +45,7 @@ use crate::model_failure::{
 use crate::model_failure::{provider_stop_error, quota_reset_at, retry_after_of};
 use crate::persona::persona_name;
 use crate::run_concurrency::RunConcurrency;
+use crate::stall_clock::RunStallClock;
 use crate::world_host::{WORLD_JOB_LIMIT, WorldJob, WorldWiring, spawn_world_job};
 use anyhow::{Result, anyhow};
 use rust_cli_kernel_api::model::ModelError;
@@ -55,6 +56,10 @@ use rust_cli_kernel_api::workflow_failure::{
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
+
+/// Node `NON_FAILURE_RETRY_REASONS` (`workflow-driver-concurrency.ts`): retries that are not failures and do not arm the
+/// stall clock.
+const NON_FAILURE_RETRY_REASONS: &[&str] = &["reasoning_signature_repair", "auth_refresh"];
 
 /// Node `cancelAsk`'s rejection of a pending submit: the text the submit's caller reads.
 pub const CANCELLED_BY_ENGINE_MESSAGE: &str = "The ask was cancelled by the engine.";
@@ -140,6 +145,8 @@ struct ActiveAsk {
     attempts: u32,
     /// Unrecognized business codes in a row, across this ask's failures (Node's streak, W6b part 3).
     unrecognized: u32,
+    /// Turns this ask has resolved, across its redrives (Node `turnsResolved`, W6b part 5).
+    turns: u64,
     /// The tool and world-tool counts the owner last reported, and the counts that earlier turns of this ask already
     /// contributed. A redriven turn counts from zero on its own thread, so its reports are added to `stats_base`
     /// (ocr review, finding 9).
@@ -374,6 +381,8 @@ pub struct ActorDriverOwner<J: JournalPort, S: ActorSessions> {
     concurrency: Option<ConcurrencyLink>,
     /// The redrive wiring (W6b part 3). Without it a transient failure cannot be redriven and fails the ask.
     redrive: Option<RedriveWiring>,
+    /// The run-level stall clock (W6b part 5). Attached with the redrive wiring; released at settlement.
+    stall: Option<RunStallClock>,
 }
 
 /// What the owner holds of the governor for its run: the port, and the subscription's end.
@@ -435,6 +444,7 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
             active: BTreeMap::new(),
             concurrency: None,
             redrive: None,
+            stall: None,
         })
     }
 
@@ -479,6 +489,9 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
 
     /// Node `concurrencyChanged`: a cap change the governor fanned out to this run. Reached through the mailbox.
     pub fn concurrency_changed(&mut self, change: &ConcurrencyChange) -> Result<()> {
+        if let Some(stall) = &self.stall {
+            stall.note_cap(change.next);
+        }
         let result = self.engine.concurrency_changed(change);
         self.after_engine(result)
     }
@@ -852,6 +865,9 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
 
     /// Release the redrive wiring at settlement: the slot is cleared, so a pending job posts nothing and holds no handle.
     fn release_redrive(&mut self) {
+        if let Some(stall) = self.stall.take() {
+            stall.dispose();
+        }
         if let Some(wiring) = self.redrive.take()
             && let Ok(mut slot) = wiring.slot.lock()
         {
@@ -915,10 +931,53 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
     /// Attach the redrive wiring (W6b part 3): the mailbox a redrive posts to, and the clock it waits on. Production
     /// attaches [`crate::model_failure::ThreadClock`]; tests attach a clock they run by hand.
     pub fn attach_redrive(&mut self, handle: ActorHandle, clock: Arc<dyn RedriveClock>) {
-        self.redrive = Some(RedriveWiring {
-            slot: Arc::new(Mutex::new(Some(handle))),
-            clock,
-        });
+        let slot = Arc::new(Mutex::new(Some(handle)));
+        // The stall clock's timers post to the same mailbox slot as the redrives, so a settled run posts nothing.
+        let due_slot = slot.clone();
+        let stall = RunStallClock::new(
+            clock.clone(),
+            Arc::new(move |generation| {
+                let handle = match due_slot.lock() {
+                    Ok(guard) => guard.clone(),
+                    Err(_) => None,
+                };
+                if let Some(handle) = handle {
+                    let _ = handle.post(ActorRequest::StallDue { generation });
+                }
+            }),
+        );
+        if let Some(previous) = self.stall.replace(stall) {
+            previous.dispose();
+        }
+        self.redrive = Some(RedriveWiring { slot, clock });
+    }
+
+    /// Node `createRunStallClock`'s `noteSuccess` (W6b part 5): a model request of one of the run's actors succeeded.
+    /// The turn side (W7) calls it for each completed request of an actor session.
+    pub fn model_request_completed(&mut self) {
+        if let Some(stall) = &self.stall {
+            stall.note_success();
+        }
+    }
+
+    /// Node's `model_retry_scheduled` observer (W6b part 5): a retry with this reason is scheduled for one of the run's
+    /// actors. The non-failure reasons (`reasoning_signature_repair`, `auth_refresh`) do not arm the clock.
+    pub fn model_retry_scheduled(&mut self, reason: &str) {
+        if NON_FAILURE_RETRY_REASONS.contains(&reason) {
+            return;
+        }
+        if let Some(stall) = &self.stall {
+            stall.note_retry_scheduled(reason);
+        }
+    }
+
+    /// The stall clock's timer fired for `generation` (W6b part 5): records a `run-stalled` notice when it is real.
+    pub fn stall_due(&mut self, generation: u64) -> Result<()> {
+        let Some(info) = self.stall.as_ref().and_then(|stall| stall.fire(generation)) else {
+            return Ok(());
+        };
+        let result = self.engine.run_stalled(info);
+        self.after_engine(result)
     }
 
     /// The run's settlement once it has settled (`None` while it runs).
@@ -956,12 +1015,16 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
         self.pump()?;
         // A redriven turn reports counts from zero, so the earlier turns' counts are added on top of its own (finding 9).
         let key = instance.key();
+        // The ask's resolved turns count across its redrives (Node's `turnsResolved` is per ask).
+        let mut turn = None;
         let stats = match self
             .active
             .values_mut()
             .find(|ask| ask.instance.key() == key)
         {
             Some(ask) => {
+                ask.turns += 1;
+                turn = Some(ask.turns);
                 let (base_tools, base_world) = ask.stats_base;
                 let report = crate::engine::AskStats {
                     tool_calls: base_tools + stats.tool_calls,
@@ -976,6 +1039,18 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
             }
             None => stats,
         };
+        // Node `reportTurnObservations`: the progress of the resolved turn goes first, then its usage.
+        if let Some(turn) = turn {
+            let progress = self.engine.ask_progress(
+                instance,
+                AskProgress {
+                    turn,
+                    tool_calls: stats.tool_calls,
+                    last_tool: None,
+                },
+            );
+            self.after_engine(progress)?;
+        }
         let result = self.engine.ask_stats(instance, stats);
         self.after_engine(result)
     }
@@ -1207,6 +1282,7 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
                         schema: start.turn.submit_schema.clone(),
                         attempts: 0,
                         unrecognized: 0,
+                        turns: 0,
                         stats_base: (0.0, 0.0),
                         stats_last: (0.0, 0.0),
                     },
