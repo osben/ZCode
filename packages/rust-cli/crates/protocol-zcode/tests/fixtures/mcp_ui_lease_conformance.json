@@ -1,0 +1,33 @@
+{
+  "description": "F7 PR 1 lease conformance. The same sequence runs against the Rust lease registry (src/fork/mcp_ui_lease_conformance_tests.rs) and against Node McpUiInstances (apps/zcode-cli/packages/bootstrap/tests/fork-rust-helper/mcp-ui-lease-conformance.test.ts). Each step names its expected outcome: opened | reused | ok | unauthorized | closed | not-closed | pinned | busy | idle | revoked:<aliases> | closedSession:<aliases>. The runner keeps one connection per server: `current` is that connection; `reconnect` bumps its generation and revokes the server's leases (Node: onAppConnectionInvalidated closes them).",
+  "server": { "name": "s1", "identity": "id-A", "generation": 1 },
+  "steps": [
+    { "op": "open", "as": "L1", "session": "sess", "server": "s1", "scope": "scope1", "source": "current", "expect": "opened" },
+    { "op": "open", "as": "L1again", "session": "sess", "server": "s1", "scope": "scope1", "source": "current", "expect": "reused" },
+    { "op": "validate", "lease": "L1", "session": "sess", "server": "s1", "source": "current", "expect": "ok" },
+    { "op": "validate", "lease": "L1", "session": "other", "server": "s1", "source": "current", "expect": "unauthorized" },
+    { "op": "validate", "lease": "L1", "session": "sess", "server": "s2", "source": "current", "expect": "unauthorized" },
+    { "op": "validate", "lease": "L1", "session": "sess", "server": "s1", "source": "current", "expect": "ok" },
+    { "op": "validate", "lease": "L1", "session": "sess", "server": "s1", "source": { "identity": "id-A", "generation": 0 }, "expect": "unauthorized" },
+    { "op": "validate", "lease": "L1", "session": "sess", "server": "s1", "source": "current", "expect": "unauthorized" },
+    { "op": "open", "as": "L2", "session": "sess", "server": "s1", "scope": "scope2", "source": "current", "expect": "opened" },
+    { "op": "retain", "lease": "L2", "call": "c1", "expect": "pinned" },
+    { "op": "busy", "lease": "L2", "expect": "busy" },
+    { "op": "close", "lease": "L2", "onlyIfIdle": true, "expect": "not-closed" },
+    { "op": "release", "lease": "L2", "call": "c1", "expect": "ok" },
+    { "op": "busy", "lease": "L2", "expect": "idle" },
+    { "op": "reconnect", "server": "s1", "expect": "revoked:L2" },
+    { "op": "validate", "lease": "L2", "session": "sess", "server": "s1", "source": "current", "expect": "unauthorized" },
+    { "op": "retain", "lease": "L2", "call": "c2", "expect": "unauthorized" },
+    { "op": "open", "as": "L3", "session": "sess", "server": "s1", "scope": "scope3", "source": "current", "expect": "opened" },
+    { "op": "validate", "lease": "L3", "session": "sess", "server": "s1", "source": { "identity": "id-A", "generation": 1 }, "expect": "unauthorized" },
+    { "op": "validate", "lease": "L3", "session": "sess", "server": "s1", "source": "current", "expect": "unauthorized" },
+    { "op": "close", "lease": "L3", "onlyIfIdle": false, "expect": "not-closed" },
+    { "op": "open", "as": "L4", "session": "sess", "server": "s1", "scope": "scope4", "source": "current", "expect": "opened" },
+    { "op": "open", "as": "L5", "session": "other", "server": "s1", "scope": "scope5", "source": "current", "expect": "opened" },
+    { "op": "closeSession", "session": "sess", "expect": "closedSession:L4" },
+    { "op": "validate", "lease": "L5", "session": "other", "server": "s1", "source": "current", "expect": "ok" },
+    { "op": "close", "lease": "L5", "onlyIfIdle": false, "expect": "closed" },
+    { "op": "close", "lease": "L5", "onlyIfIdle": false, "expect": "not-closed" }
+  ]
+}

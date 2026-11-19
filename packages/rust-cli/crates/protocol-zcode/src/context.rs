@@ -35,6 +35,10 @@ pub struct Context {
     storage_root: std::sync::OnceLock<std::path::PathBuf>,
     /// Fork: workspace trust from the App (`fork/workspace_trust.rs`); set once by the app-server.
     workspace_admin: std::sync::OnceLock<Arc<dyn crate::fork::WorkspaceAdmin>>,
+    /// Fork (specs/fork-rust-node-helper.md, F7 PR 1): the MCP App port of the Rust-run servers, set by the entry point.
+    mcp_app_host: std::sync::OnceLock<Arc<dyn rust_cli_kernel_api::mcp_app::McpAppHost>>,
+    /// Fork (F7 PR 1): the Rust owner of the panels of Rust-run servers, created with the protocol server.
+    mcp_ui: std::sync::OnceLock<Arc<crate::fork::mcp_ui_rust::RustMcpUi>>,
     /// Fork: whether reverse requests wait for the Host's attach acknowledgement (specs/fork-rust-credential-cipher.md F1).
     pub(crate) attach: crate::attach::HostAttach,
     /// Fork: the Node helper that answers the JS-only method families; set once by the app-server when the Host
@@ -99,6 +103,26 @@ impl Context {
 
     pub(crate) fn workspace_admin(&self) -> Option<Arc<dyn crate::fork::WorkspaceAdmin>> {
         self.workspace_admin.get().cloned()
+    }
+
+    /// Fork (F7 PR 1): the entry point's MCP App port (the extension layer's connections).
+    pub fn set_mcp_app_host(&self, host: Arc<dyn rust_cli_kernel_api::mcp_app::McpAppHost>) {
+        let _ = self.mcp_app_host.set(host);
+    }
+
+    pub(crate) fn mcp_app_host(
+        &self,
+    ) -> Option<&Arc<dyn rust_cli_kernel_api::mcp_app::McpAppHost>> {
+        self.mcp_app_host.get()
+    }
+
+    /// Fork (F7 PR 1): the panel owner, once the protocol server exists (`lib.rs`).
+    pub(crate) fn mcp_ui(&self) -> Option<&Arc<crate::fork::mcp_ui_rust::RustMcpUi>> {
+        self.mcp_ui.get()
+    }
+
+    pub(crate) fn set_mcp_ui(&self, ui: Arc<crate::fork::mcp_ui_rust::RustMcpUi>) {
+        let _ = self.mcp_ui.set(ui);
     }
 
     /// Fork: the Host promised an attach acknowledgement (`ZCODE_HOST_ATTACH_ACK`); reverse requests wait for it.
@@ -198,6 +222,8 @@ impl Context {
             models: std::sync::OnceLock::new(),
             storage_root: std::sync::OnceLock::new(),
             workspace_admin: std::sync::OnceLock::new(),
+            mcp_app_host: std::sync::OnceLock::new(),
+            mcp_ui: std::sync::OnceLock::new(),
             attach: crate::attach::HostAttach::new(),
             node_helper: std::sync::OnceLock::new(),
             workflow_child: std::sync::OnceLock::new(),

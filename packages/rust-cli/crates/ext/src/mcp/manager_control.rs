@@ -11,6 +11,7 @@ use rust_cli_kernel_api::env_registry::EnvironmentRegistry;
 use rust_cli_kernel_api::manage::{McpAction, McpServerInfo};
 use tokio_util::sync::CancellationToken;
 
+use super::app_connection;
 use super::{McpManager, McpServer, McpStatus, Server};
 
 impl McpManager {
@@ -31,12 +32,27 @@ impl McpManager {
     /// (a workspace layer that turned `Invalid`, or a replaced group). The cancelled tasks drop
     /// their sessions, which ends the stdio children; late status updates find no entry and no-op.
     pub fn shutdown(&self) {
-        {
+        // Fork (F7 PR 1): a published client that goes away is a new app connection, so its listeners run (after the
+        // lock), as `retire` does: a panel of the replaced group is revoked rather than left with a dead lease.
+        let listeners: Vec<_> = {
             let mut servers = self.0.servers();
+            let mut listeners = Vec::new();
             for (_, server) in servers.iter_mut() {
                 server.cancel.cancel();
+                if server.client.is_some() {
+                    listeners.extend(
+                        server
+                            .app_listeners
+                            .iter()
+                            .map(|(_, listener)| listener.clone()),
+                    );
+                }
             }
             servers.clear();
+            listeners
+        };
+        for listener in listeners {
+            listener();
         }
         self.0.changed.send_modify(|version| *version += 1);
     }
@@ -64,12 +80,28 @@ impl McpManager {
         server.instructions = None;
         server.resources = false;
         let client = server.client.take();
-        Some((
+        // Fork (F7 PR 1): dropping a published client is a new app connection, so its listeners run (after the lock).
+        let listeners: Vec<_> = if client.is_some() {
+            server.app_generation = app_connection::next_generation();
+            server
+                .app_listeners
+                .iter()
+                .map(|(_, listener)| listener.clone())
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let out = (
             server.config.clone(),
             client,
             server.generation,
             server.cancel.clone(),
-        ))
+        );
+        drop(servers);
+        for listener in listeners {
+            listener();
+        }
+        Some(out)
     }
 
     /// 重新连一个服务器（重连与启用共用）。

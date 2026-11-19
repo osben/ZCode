@@ -17,6 +17,10 @@ mod helper_session_admit;
 pub(crate) mod hook_review;
 pub(crate) mod legacy_session;
 mod lsp;
+// Fork: specs/fork-rust-node-helper.md, "MCP Apps on Rust-hosted servers (F7)", PR 1: the lease registry.
+mod mcp_ui_lease;
+// Fork (F7 PR 1): the Rust owner of the panels of Rust-run servers (routing, calls, resource reads).
+pub(crate) mod mcp_ui_rust;
 pub(crate) mod methods;
 pub mod node_helper;
 mod queue;

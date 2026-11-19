@@ -104,6 +104,8 @@ pub mod machine_notices;
 pub mod machine_param;
 pub mod manage;
 pub mod mcp;
+// Fork: specs/fork-rust-node-helper.md, "MCP Apps on Rust-hosted servers (F7)": the panel port of a Rust-run server.
+pub mod mcp_app;
 pub mod mcp_name;
 pub mod mcp_state;
 pub mod mcp_vars;

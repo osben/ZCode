@@ -69,6 +69,11 @@ impl LocalKernel {
         self.workspace_layer_host().reload(workspace).await;
     }
 
+    /// Fork (specs/fork-rust-node-helper.md, F7 PR 1): the MCP App port of the sessions' Rust-run servers.
+    pub fn mcp_app_host(&self) -> std::sync::Arc<dyn rust_cli_kernel_api::mcp_app::McpAppHost> {
+        self.ext.mcp_app_host()
+    }
+
     /// Fork: the layer host, for the App's admin (its trust paths reload a workspace's layer).
     pub fn workspace_layer_host(
         &self,

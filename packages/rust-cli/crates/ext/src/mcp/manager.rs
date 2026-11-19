@@ -20,6 +20,8 @@ use serde_json::Value;
 use tokio::sync::{Notify, watch};
 use tokio_util::sync::CancellationToken;
 
+// Fork (specs/fork-rust-node-helper.md, F7 PR 1): the MCP App view of a connection (identity, generation, listeners).
+pub(super) mod app_connection;
 use super::config::{McpServer, McpServerOptions, McpSettings};
 use super::connection::{self, Session, has_capability};
 use super::oauth_hooks::ChallengeRefresh;
@@ -99,6 +101,14 @@ struct Server {
     /// Fork (F3 "Lazy start"): a helper-hosted server registered at start whose connection task waits for the first
     /// tool snapshot or MCP status listing ([`Inner::wake_deferred`]).
     deferred: bool,
+    /// Fork (F7 PR 1): counts the published-client changes of this server (connect, reconnect, stop). A panel lease is
+    /// bound to the value it saw.
+    app_generation: u64,
+    /// Fork (F7 PR 1): the connection-change callbacks, by subscription id.
+    app_listeners: Vec<(u64, app_connection::Listener)>,
+    app_next_listener: u64,
+    /// Fork (F7 PR 1): every tool of the last listing, by its MCP name, with its `_meta.ui.visibility` (empty when none).
+    visibility: BTreeMap<String, Vec<String>>,
 }
 
 impl Server {
@@ -115,6 +125,10 @@ impl Server {
             generation: 0,
             cancel: CancellationToken::new(),
             deferred: false,
+            app_generation: 0,
+            app_listeners: Vec::new(),
+            app_next_listener: 0,
+            visibility: BTreeMap::new(),
         }
     }
 }
@@ -183,12 +197,34 @@ impl Inner {
 
     /// 只改仍是这个代号的服务器：重连或停用之后，旧连接任务的更新不覆盖新的状态。
     fn update(&self, name: &str, generation: u64, change: impl FnOnce(&mut Server)) {
-        if let Some(server) = self
-            .servers()
-            .get_mut(name)
-            .filter(|server| server.generation == generation)
-        {
-            change(server);
+        // Fork (F7 PR 1): a change of the published client is a new app connection; its listeners run after the lock.
+        let listeners = {
+            let mut servers = self.servers();
+            match servers
+                .get_mut(name)
+                .filter(|server| server.generation == generation)
+            {
+                Some(server) => {
+                    // The old client is kept alive by `before` while `change` runs: its address cannot be reused by
+                    // the new client, so comparing the Arcs by identity is exact.
+                    let before = server.client.clone();
+                    change(server);
+                    if app_connection::same_client(&before, &server.client) {
+                        Vec::new()
+                    } else {
+                        server.app_generation = app_connection::next_generation();
+                        server
+                            .app_listeners
+                            .iter()
+                            .map(|(_, listener)| listener.clone())
+                            .collect()
+                    }
+                }
+                None => Vec::new(),
+            }
+        };
+        for listener in listeners {
+            listener();
         }
         self.changed.send_modify(|version| *version += 1);
     }
@@ -286,11 +322,17 @@ impl Inner {
         }
     }
 
-    async fn tools_of(self: &Arc<Self>, server: &str, client: &Client) -> Vec<Arc<dyn Tool>> {
+    /// The tools of a listing, with each tool's `_meta.ui.visibility` (Fork, F7 PR 1).
+    async fn tools_of(
+        self: &Arc<Self>,
+        server: &str,
+        client: &Client,
+    ) -> (Vec<Arc<dyn Tool>>, BTreeMap<String, Vec<String>>) {
         let options = self.options(server);
         let timeout = Duration::from_millis(self.settings.connect_timeout_for(options));
         match connection::list(client, "tools/list", "tools", timeout).await {
             Ok(listed) => {
+                let visibility = app_connection::visibility_of(&listed);
                 let tools: Vec<Arc<dyn Tool>> = listed
                     .iter()
                     .filter_map(|item| {
@@ -304,11 +346,11 @@ impl Inner {
                     .map(|tool| Arc::new(tool) as Arc<dyn Tool>)
                     .collect();
                 note_long_names(server, &tools, &self.noted_names);
-                tools
+                (tools, visibility)
             }
             Err(error) => {
                 tracing::warn!(server, %error, "MCP tools/list failed");
-                Vec::new()
+                (Vec::new(), BTreeMap::new())
             }
         }
     }
@@ -337,10 +379,10 @@ impl Inner {
             capabilities,
             instructions,
         } = session;
-        let tools = if has_capability(&capabilities, "tools") {
+        let (tools, visibility) = if has_capability(&capabilities, "tools") {
             self.tools_of(name, &client).await
         } else {
-            Vec::new()
+            (Vec::new(), BTreeMap::new())
         };
         let prompts = if has_capability(&capabilities, "prompts") {
             self.prompts_of(name, &client).await
@@ -356,6 +398,7 @@ impl Inner {
             server.status = McpStatus::CONNECTED;
             server.client = Some(published);
             server.tools = tools;
+            server.visibility = visibility;
             server.prompts = prompts;
             server.instructions = instructions;
             server.resources = resources;
@@ -364,8 +407,11 @@ impl Inner {
         while let Some(notice) = notices.recv().await {
             match notice {
                 Notice::ListChanged(kind) if kind == "tools" => {
-                    let tools = self.tools_of(name, &client).await;
-                    self.update(name, generation, |server| server.tools = tools);
+                    let (tools, visibility) = self.tools_of(name, &client).await;
+                    self.update(name, generation, |server| {
+                        server.tools = tools;
+                        server.visibility = visibility;
+                    });
                 }
                 Notice::ListChanged(kind) if kind == "prompts" => {
                     let prompts = self.prompts_of(name, &client).await;
