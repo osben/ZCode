@@ -7,6 +7,8 @@ import {
   type Logger,
   type McpPort,
   type McpServerConfig,
+  type McpElicitationRequest,
+  type McpElicitationResult,
   type McpServerNotification,
   type McpToolCallResult,
   type PluginLoadOutcome,
@@ -44,6 +46,7 @@ import {
 } from "./f3-protocol.js";
 import type { ForkRustHelperClient } from "./rust-client.js";
 import { nodeReplConfigFor, type ForkRustBrowserControl } from "./browser-control.js";
+import { ElicitationRelay } from "./elicitation-relay.js";
 import { PluginOutcomes } from "./plugin-outcomes.js";
 import { SessionLanes } from "./session-lanes.js";
 import { createHelperSessionRecord, type HelperSession } from "./session-record.js";
@@ -103,9 +106,14 @@ export class ForkRustHelperMcpHost {
   private readonly connecting = new Map<string, boolean>();
   private readonly sessions = new Map<string, HelperSession>();
   private readonly lanes = new SessionLanes();
+  /** Questions of helper-hosted servers, attached to the in-flight pipe calls (spec F3b(c) PR 2). */
+  private readonly elicitations: ElicitationRelay;
 
   constructor(private readonly deps: ForkRustHelperMcpHostDeps) {
     this.plugins = new PluginOutcomes((workspace) => deps.resolvePlugins(workspace));
+    this.elicitations = new ElicitationRelay((params, signal) =>
+      deps.client.request(FORK_RUST_HELPER_F3.elicitation, params, signal),
+    );
   }
 
   /** True while a pipe connection or a session keeps resources open. */
@@ -117,7 +125,8 @@ export class ForkRustHelperMcpHost {
 
   private async serverConfig(server: string, workspace: HelperWorkspace): Promise<McpServerConfig> {
     const config = (await this.plugins.get(workspace)).mcpServers[server];
-    if (!config) throw new ProtocolRequestError(-32602, `MCP server is not a helper plugin server: ${server}`);
+    if (!config)
+      throw new ProtocolRequestError(-32602, `MCP server is not a helper plugin server: ${server}`);
     // The same config a session open gives node_repl, so the pool shares one process (F4b).
     return this.deps.browser ? nodeReplConfigFor(this.deps.browser, server, config) : config;
   }
@@ -148,7 +157,8 @@ export class ForkRustHelperMcpHost {
 
   /** Rust gave up on this connect and closed it: a late connect must not keep its lease and MCP child. */
   private assertStillWanted(connection: string): void {
-    if (this.connecting.get(connection)) throw new Error(`Connection closed while connecting: ${connection}`);
+    if (this.connecting.get(connection))
+      throw new Error(`Connection closed while connecting: ${connection}`);
   }
 
   private async connectPipe(
@@ -178,7 +188,10 @@ export class ForkRustHelperMcpHost {
     pipe.offInvalidated =
       port.onAppConnectionInvalidated?.(server, () => {
         if (this.pipes.get(connection) !== pipe) return;
-        this.deps.notify(FORK_RUST_HELPER_F3.mcpClosed, { connection, reason: "connection closed" });
+        this.deps.notify(FORK_RUST_HELPER_F3.mcpClosed, {
+          connection,
+          reason: "connection closed",
+        });
         void this.closePipe(connection);
       }) ?? (() => {});
     this.pipes.set(connection, pipe);
@@ -193,7 +206,8 @@ export class ForkRustHelperMcpHost {
     }
     this.pipes.delete(connection);
     pipe.offInvalidated();
-    for (const controller of pipe.inflight.values()) controller.abort(new Error("Connection closed"));
+    for (const controller of pipe.inflight.values())
+      controller.abort(new Error("Connection closed"));
     await pipe.port.close().catch((error: unknown) =>
       this.deps.logger?.warn("Rust pipe MCP lease close failed", {
         event: "fork_rust_helper.mcp_pipe.close_failed",
@@ -209,8 +223,10 @@ export class ForkRustHelperMcpHost {
     const pipe = this.pipes.get(connection);
     if (message.id === undefined) {
       if (message.method === "notifications/cancelled") {
-        const requestId = (message.params as { requestId?: string | number } | undefined)?.requestId;
-        if (requestId !== undefined) pipe?.inflight.get(requestId)?.abort(new Error("Request cancelled"));
+        const requestId = (message.params as { requestId?: string | number } | undefined)
+          ?.requestId;
+        if (requestId !== undefined)
+          pipe?.inflight.get(requestId)?.abort(new Error("Request cancelled"));
       }
       return;
     }
@@ -262,7 +278,10 @@ export class ForkRustHelperMcpHost {
   private async listModelTools(pipe: PipeConnection) {
     const tools = await pipe.port.listTools();
     return tools
-      .filter((tool) => tool.serverName === pipe.server && resolveMcpToolVisibility(tool).includes("model"))
+      .filter(
+        (tool) =>
+          tool.serverName === pipe.server && resolveMcpToolVisibility(tool).includes("model"),
+      )
       .map((tool) => ({
         name: tool.toolName,
         ...(tool.description !== undefined ? { description: tool.description } : {}),
@@ -296,26 +315,44 @@ export class ForkRustHelperMcpHost {
       );
     const workspace = session.workspace;
     const turnId = helperContext?.turnId;
-    return session.port.callTool(
-      {
-        serverName: pipe.server,
-        toolName: requireString(params, "name"),
-        arguments: (params.arguments ?? {}) as Record<string, unknown>,
-        trace: {
-          ...session.traceContext,
-          ...(turnId ? { turnId: turnId as never } : {}),
+    // F3b(c) PR 2: a question the server asks during this call attaches to it (elicitation-relay.ts).
+    const toolUseId = meta["zcode/toolUseId"];
+    const endCall = this.elicitations.enterCall(pipe.server, {
+      sessionId: String(sessionId),
+      ...(turnId ? { turnId } : {}),
+      ...(typeof toolUseId === "string" ? { toolUseId } : {}),
+    });
+    try {
+      return await session.port.callTool(
+        {
+          serverName: pipe.server,
+          toolName: requireString(params, "name"),
+          arguments: (params.arguments ?? {}) as Record<string, unknown>,
+          trace: {
+            ...session.traceContext,
+            ...(turnId ? { turnId: turnId as never } : {}),
+          },
+          runtimeScope: helperContext?.runtimeScope ?? "main",
+          // Node's MCP tool entry: the working directory, and the session's workspace key.
+          workspacePath: session.directory,
+          ...(workspace.workspaceIdentity
+            ? { workspaceIdentity: workspace.workspaceIdentity }
+            : {}),
+          workspaceKey: workspaceKeyOf(workspace),
+          ...(turnId ? { turnId } : {}),
+          clientMode: "desktop-continuous",
+          deliveryKind: "desktop-continuous",
         },
-        runtimeScope: helperContext?.runtimeScope ?? "main",
-        // Node's MCP tool entry: the working directory, and the session's workspace key.
-        workspacePath: session.directory,
-        ...(workspace.workspaceIdentity ? { workspaceIdentity: workspace.workspaceIdentity } : {}),
-        workspaceKey: workspaceKeyOf(workspace),
-        ...(turnId ? { turnId } : {}),
-        clientMode: "desktop-continuous",
-        deliveryKind: "desktop-continuous",
-      },
-      { signal },
-    );
+        { signal },
+      );
+    } finally {
+      endCall();
+    }
+  }
+
+  /** The pool's elicitation port for helper-hosted servers (spec F3b(c) PR 2): see ElicitationRelay. */
+  elicitation(request: McpElicitationRequest): Promise<McpElicitationResult> {
+    return this.elicitations.elicit(request);
   }
 
   /** Node's pool notifications take Node's route; a tool list change also reaches the server's pipes. */
@@ -372,7 +409,8 @@ export class ForkRustHelperMcpHost {
           mcpServerName: name,
         });
     }
-    const rootSessionId = typeof params.rootSessionId === "string" ? params.rootSessionId : undefined;
+    const rootSessionId =
+      typeof params.rootSessionId === "string" ? params.rootSessionId : undefined;
     // A subagent's calls carry its root session, as Node's child runtime does (adapter `root_session_id`).
     const traceContext: TraceContext = {
       ...createRootTraceContext({ sessionId: sessionId as SessionId }),
@@ -384,7 +422,10 @@ export class ForkRustHelperMcpHost {
     const browser = this.deps.browser;
     const withBroker = browser
       ? Object.fromEntries(
-          Object.entries(servers).map(([name, config]) => [name, nodeReplConfigFor(browser, name, config)]),
+          Object.entries(servers).map(([name, config]) => [
+            name,
+            nodeReplConfigFor(browser, name, config),
+          ]),
         )
       : servers;
     const port = this.deps.pool.acquireLease({ leaseId: sessionId, sessionId });
@@ -476,20 +517,24 @@ export class ForkRustHelperMcpHost {
     const name = requireString(params, "name");
     const session = this.sessions.get(sessionId);
     const tool = session?.appTools.get(name);
-    if (!session || !tool) throw new ProtocolRequestError(-32602, `App tool is not registered: ${name}`);
+    if (!session || !tool)
+      throw new ProtocolRequestError(-32602, `App tool is not registered: ${name}`);
     const controller = new AbortController();
     session.appToolCalls.set(toolCallId, controller);
     const retained = tool.definition.retainExecution?.(toolCallId);
-    const signal = retained ? AbortSignal.any([controller.signal, retained.signal]) : controller.signal;
+    const signal = retained
+      ? AbortSignal.any([controller.signal, retained.signal])
+      : controller.signal;
     try {
       const input = params?.input;
       return toWireResult(
         await tool.execute(
           {
             definition: tool.definition,
-            arguments: input && typeof input === "object" && !Array.isArray(input)
-              ? (input as Record<string, unknown>)
-              : {},
+            arguments:
+              input && typeof input === "object" && !Array.isArray(input)
+                ? (input as Record<string, unknown>)
+                : {},
             toolCallId,
           },
           { signal },
@@ -504,7 +549,10 @@ export class ForkRustHelperMcpHost {
   cancelAppTool(params: Record<string, unknown> | undefined): void {
     const sessionId = typeof params?.sessionId === "string" ? params.sessionId : "";
     const toolCallId = typeof params?.toolCallId === "string" ? params.toolCallId : "";
-    this.sessions.get(sessionId)?.appToolCalls.get(toolCallId)?.abort(new Error("Tool call cancelled"));
+    this.sessions
+      .get(sessionId)
+      ?.appToolCalls.get(toolCallId)
+      ?.abort(new Error("Tool call cancelled"));
   }
 
   /** The helper's stand-in for Node's v4 gateway: the four plugin UI events become live-only deltas. */
@@ -519,5 +567,4 @@ export class ForkRustHelperMcpHost {
     for (const sessionId of [...this.sessions.keys()])
       await this.lanes.run(sessionId, () => this.endSession(sessionId));
   }
-
 }

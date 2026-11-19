@@ -98,6 +98,13 @@ impl Kernel for LocalKernel {
         self.authorize_app(call).await
     }
 
+    async fn mcp_elicitation(
+        &self,
+        call: rust_cli_kernel_api::app_tool::ElicitationCall,
+    ) -> Result<serde_json::Value, KernelError> {
+        self.elicit_mcp(call).await
+    }
+
     async fn sample_model(
         &self,
         call: rust_cli_kernel_api::sampling::SamplingCall,
