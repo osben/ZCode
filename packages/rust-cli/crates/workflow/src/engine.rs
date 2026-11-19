@@ -166,6 +166,12 @@ pub trait WorkflowDriver {
     fn start_artifact_publish(&mut self, _instance: &Ref, _request: &ArtifactPublishRequest) {}
     fn emit(&mut self, event: &RunEvent);
     fn dispose(&mut self) {}
+    /// The session id this driver's minting rule gives an actor (Node `mintActorSessionId`). The engine checks the
+    /// journal's recorded id against it before it calls `create_actor_session` (Node `createActorSession`'s
+    /// reattachment check). `None` for a driver with no rule, so no check runs.
+    fn minted_session_id(&self, _run_id: &str, _actor: &Ref) -> Option<String> {
+        None
+    }
 }
 
 impl<T: WorkflowDriver + ?Sized> WorkflowDriver for &mut T {
@@ -176,6 +182,10 @@ impl<T: WorkflowDriver + ?Sized> WorkflowDriver for &mut T {
         seed: Option<&ActorSessionSeed>,
     ) -> anyhow::Result<String> {
         (**self).create_actor_session(actor, persona, seed)
+    }
+
+    fn minted_session_id(&self, run_id: &str, actor: &Ref) -> Option<String> {
+        (**self).minted_session_id(run_id, actor)
     }
 
     fn start_world_read(&mut self, instance: &Ref, op: &str, args: &Value) {
