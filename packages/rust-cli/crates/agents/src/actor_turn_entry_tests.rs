@@ -237,14 +237,18 @@ async fn an_actor_turns_model_request_carries_its_workflow_run() {
     let child = SessionId::new("sess_actor_child");
     create_child(h.store.as_ref(), &child, &parent).await;
     let mut run = run_for(&child, &parent);
-    run.admission_run = Some("wf_1".to_owned());
+    run.admission_run = Some(rust_cli_kernel_api::ids::WorkflowRunId::new("wf_1"));
     h.agents
         .run_actor_turn(run, "do it", CancellationToken::new())
         .await;
     {
         let seen = h.seen.lock().expect("seen");
         assert_eq!(
-            seen[0].request.admission_run.as_deref(),
+            seen[0]
+                .request
+                .admission_run
+                .as_ref()
+                .map(rust_cli_kernel_api::ids::WorkflowRunId::as_str),
             Some("wf_1"),
             "the turn's request is admitted under its run"
         );
@@ -260,7 +264,38 @@ async fn an_actor_turns_model_request_carries_its_workflow_run() {
         )
         .await;
     let seen = h.seen.lock().expect("seen");
+    assert_eq!(seen.len(), 2, "one model turn per run");
     assert_eq!(seen[1].request.admission_run, None);
+}
+
+/// A child's live entry is made by its first turn, and a later turn refreshes its run: a child first run with no run and
+/// then with one has its second turn's requests admitted under that run.
+#[tokio::test]
+async fn a_later_turn_of_a_child_takes_the_run_it_now_belongs_to() {
+    let h = harness(None);
+    let parent = SessionId::new("ses_parent");
+    let child = SessionId::new("sess_actor_rerun");
+    create_child(h.store.as_ref(), &child, &parent).await;
+    h.agents
+        .run_actor_turn(run_for(&child, &parent), "first", CancellationToken::new())
+        .await;
+    let mut run = run_for(&child, &parent);
+    run.admission_run = Some(rust_cli_kernel_api::ids::WorkflowRunId::new("wf_1"));
+    h.agents
+        .run_actor_turn(run, "second", CancellationToken::new())
+        .await;
+    let seen = h.seen.lock().expect("seen");
+    assert_eq!(seen.len(), 2, "one model turn per run");
+    assert_eq!(seen[0].request.admission_run, None);
+    assert_eq!(
+        seen[1]
+            .request
+            .admission_run
+            .as_ref()
+            .map(rust_cli_kernel_api::ids::WorkflowRunId::as_str),
+        Some("wf_1"),
+        "the second turn is admitted under the run it now belongs to"
+    );
 }
 
 /// A port that refuses every submit: these tests look at the tool list and the entry, not at a submit.

@@ -344,16 +344,27 @@ pub struct ActorDriverOwner<J: JournalPort, S: ActorSessions> {
 }
 
 /// What the owner holds of the governor for its run: the port, and the subscription's end.
+///
+/// Dropping the link is the release: the subscription ends, then the bound is cleared. So a link that ends without the
+/// run settling (the owner dropped, or a re-attach) still gives the governor its bound back, and the release happens once.
 struct ConcurrencyLink {
     port: Arc<dyn RunConcurrency>,
     run_id: String,
     unsubscribe: Option<Box<dyn FnOnce() + Send>>,
 }
 
-/// The bound a run registers: the whole number of its cap (Node passes `caps.maxConcurrency`).
+impl Drop for ConcurrencyLink {
+    fn drop(&mut self) {
+        if let Some(unsubscribe) = self.unsubscribe.take() {
+            unsubscribe();
+        }
+        self.port.clear_run_bound(&self.run_id);
+    }
+}
+
+/// The bound a run registers: the cap floored, and never less than 1 (the engine floors and raises its cap the same way).
 fn bound_of(max_concurrency: f64) -> u64 {
-    // A cap is floored and at least 1 in the engine; the cast is for the governor's count, not for rounding.
-    max_concurrency.max(0.0) as u64
+    max_concurrency.floor().max(1.0) as u64
 }
 
 impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
@@ -392,6 +403,8 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
     /// and hears its cap changes through the mailbox, as `concurrency-changed` events. A run that has already settled
     /// attaches nothing. The listener only posts to `handle`, since the governor calls it on its own thread.
     pub fn attach_concurrency(&mut self, port: Arc<dyn RunConcurrency>, handle: ActorHandle) {
+        // An earlier link is released first: its clear must not run after the new bound is set.
+        self.release_concurrency();
         if self.engine.is_settled() {
             return;
         }
@@ -431,14 +444,10 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
         self.after_engine(result)
     }
 
-    /// Node's release at settlement: the subscription ends, then the bound is cleared. Once per run.
+    /// Node's release at settlement. Taking the link drops it, and the drop ends the subscription and clears the bound.
+    /// Taking it means this happens once per link.
     fn release_concurrency(&mut self) {
-        if let Some(mut link) = self.concurrency.take() {
-            if let Some(unsubscribe) = link.unsubscribe.take() {
-                unsubscribe();
-            }
-            link.port.clear_run_bound(&link.run_id);
-        }
+        self.concurrency.take();
     }
 
     /// Queue a start as the engine's dispatch would, for a test of the liveness check at apply time.

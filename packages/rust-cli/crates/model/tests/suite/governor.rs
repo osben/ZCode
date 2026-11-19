@@ -396,7 +396,7 @@ impl RequestAdmission for Recording {
 /// subagent pool. A request that names its run takes the run scope; a subagent without one keeps the pool.
 #[tokio::test]
 async fn a_workflow_actors_request_is_admitted_under_its_run() {
-    let server = Fixture::start(vec![ok(), ok()]).await;
+    let server = Fixture::start(vec![ok(), ok(), ok()]).await;
     let recording = Arc::new(Recording {
         inner: governor(4),
         scopes: std::sync::Mutex::new(Vec::new()),
@@ -415,7 +415,7 @@ async fn a_workflow_actors_request_is_admitted_under_its_run() {
     );
 
     let mut actor = request("actor", QuerySource::Subagent("workflow_actor".into()));
-    actor.options.admission_run = Some("wf_1".into());
+    actor.options.admission_run = Some(rust_cli_kernel_api::ids::WorkflowRunId::new("wf_1"));
     let events = model
         .stream(actor, CancellationToken::new())
         .collect::<Vec<_>>()
@@ -429,12 +429,23 @@ async fn a_workflow_actors_request_is_admitted_under_its_run() {
         .await;
     assert!(all_completed(&events), "{events:?}");
 
+    // The run names the scope whatever the source: a main-thread request that carries a run is admitted under it.
+    let mut main = request("main", QuerySource::MainThread);
+    main.options.admission_run = Some(rust_cli_kernel_api::ids::WorkflowRunId::new("wf_2"));
+    let events = model
+        .stream(main, CancellationToken::new())
+        .collect::<Vec<_>>()
+        .await;
+    assert!(all_completed(&events), "{events:?}");
+
     let scopes = recording.scopes.lock().unwrap().clone();
     assert_eq!(
         scopes,
         vec![
             AdmissionScope::Run(RunId::new("wf_1")),
             AdmissionScope::SessionSubagents(ParentSessionId::default()),
-        ]
+            AdmissionScope::Run(RunId::new("wf_2")),
+        ],
+        "a run takes precedence over the source rule"
     );
 }

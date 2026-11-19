@@ -333,7 +333,7 @@ impl Start {
         // Rust 的请求没有父会话 ID，所有子代理共用一条队列（9.9 的偏差）。W6b 第二部分：工作流 actor 的请求带着它的
         // run，准入在 run 的范围里（Node 的每 run 队列），不进子代理池。
         let admission_scope = match (&request.options.admission_run, &request.source) {
-            (Some(run), _) => AdmissionScope::Run(crate::admission::RunId::new(run.clone())),
+            (Some(run), _) => AdmissionScope::Run(crate::admission::RunId::new(run.as_str())),
             (None, QuerySource::Subagent(_)) => {
                 AdmissionScope::SessionSubagents(crate::admission::ParentSessionId::default())
             }

@@ -917,7 +917,7 @@ async fn every_actor_turn_carries_the_workflow_run_it_is_admitted_under() {
         agents.clone(),
         tokio::runtime::Handle::current(),
         ActorRunBase {
-            admission_run: Some("wf_1".to_owned()),
+            admission_run: Some(rust_cli_kernel_api::ids::WorkflowRunId::new("wf_1")),
             ..base()
         },
         handle.clone(),
@@ -935,9 +935,50 @@ async fn every_actor_turn_carries_the_workflow_run_it_is_admitted_under() {
     let runs = agents.runs.lock().expect("runs");
     assert_eq!(runs.len(), 2, "both turns reached the bridge");
     assert!(
-        runs.iter()
-            .all(|run| run.admission_run.as_deref() == Some("wf_1")),
+        runs.iter().all(|run| run
+            .admission_run
+            .as_ref()
+            .map(rust_cli_kernel_api::ids::WorkflowRunId::as_str)
+            == Some("wf_1")),
         "every turn is admitted under the run: {:?}",
+        runs.iter()
+            .map(|run| run.admission_run.clone())
+            .collect::<Vec<_>>()
+    );
+}
+
+/// The other half of the contract: a runner whose base names no run passes None on every turn.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_runner_without_a_run_passes_none_on_every_turn() {
+    let agents = ScriptedAgents::new(
+        vec![
+            ActorTurnEnd::Text("first".into()),
+            ActorTurnEnd::Text("second".into()),
+        ],
+        false,
+    );
+    let (mailbox, handle) = ActorMailbox::new();
+    let runner = Arc::new(AgentTurnRunner::new(
+        agents.clone(),
+        tokio::runtime::Handle::current(),
+        base(),
+        handle.clone(),
+    ));
+    let sessions = Sessions {
+        turns: MailboxTurns::new(runner, handle),
+    };
+    let mut owner = ActorDriverOwner::new(config(), MemoryJournal::new(), sessions).expect("owner");
+    let actor = owner.create_actor("site", None, None).expect("actor");
+    owner.ask("site", &actor, "do it").expect("ask");
+    owner.drain().expect("drain");
+    mailbox.serve_next(&mut owner).expect("the first turn end");
+    mailbox.serve_next(&mut owner).expect("the second turn end");
+
+    let runs = agents.runs.lock().expect("runs");
+    assert_eq!(runs.len(), 2, "both turns reached the bridge");
+    assert!(
+        runs.iter().all(|run| run.admission_run.is_none()),
+        "no turn names a run: {:?}",
         runs.iter()
             .map(|run| run.admission_run.clone())
             .collect::<Vec<_>>()

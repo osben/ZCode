@@ -204,7 +204,7 @@ pub struct RequestOptions {
     /// The admission port takes the run scope for it, not the session-subagent pool. Never serialized; None for
     /// every other request.
     #[serde(skip)]
-    pub admission_run: Option<String>,
+    pub admission_run: Option<crate::ids::WorkflowRunId>,
 }
 
 /// 模型输出的格式约束（Anthropic `output_config.format`）。

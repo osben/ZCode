@@ -67,7 +67,7 @@ pub struct QueryRequest {
     /// run (see `RequestOptions::admission_run`). None for every other run, and a subagent the actor starts does not
     /// inherit it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub admission_run: Option<String>,
+    pub admission_run: Option<crate::ids::WorkflowRunId>,
 }
 
 impl QueryRequest {
