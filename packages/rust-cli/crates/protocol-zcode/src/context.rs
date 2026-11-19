@@ -39,6 +39,9 @@ pub struct Context {
     mcp_app_host: std::sync::OnceLock<Arc<dyn rust_cli_kernel_api::mcp_app::McpAppHost>>,
     /// Fork (F7 PR 1): the Rust owner of the panels of Rust-run servers, created with the protocol server.
     mcp_ui: std::sync::OnceLock<Arc<crate::fork::mcp_ui_rust::RustMcpUi>>,
+    /// Fork (F7 PR 3): the app-provided tools router, set by the entry point before assembly (the Node helper's set
+    /// and, once the protocol server exists, the Rust panels' set).
+    app_tools: std::sync::OnceLock<Arc<crate::fork::mcp_ui_app_tools::AppToolRouter>>,
     /// Fork: whether reverse requests wait for the Host's attach acknowledgement (specs/fork-rust-credential-cipher.md F1).
     pub(crate) attach: crate::attach::HostAttach,
     /// Fork: the Node helper that answers the JS-only method families; set once by the app-server when the Host
@@ -123,6 +126,17 @@ impl Context {
 
     pub(crate) fn set_mcp_ui(&self, ui: Arc<crate::fork::mcp_ui_rust::RustMcpUi>) {
         let _ = self.mcp_ui.set(ui);
+    }
+
+    /// Fork (F7 PR 3): the app-provided tools router the entry point installs before assembling the kernel.
+    pub fn set_app_tools_router(&self, router: Arc<crate::fork::mcp_ui_app_tools::AppToolRouter>) {
+        let _ = self.app_tools.set(router);
+    }
+
+    pub(crate) fn app_tools_router(
+        &self,
+    ) -> Option<&Arc<crate::fork::mcp_ui_app_tools::AppToolRouter>> {
+        self.app_tools.get()
     }
 
     /// Fork: the Host promised an attach acknowledgement (`ZCODE_HOST_ATTACH_ACK`); reverse requests wait for it.
@@ -224,6 +238,7 @@ impl Context {
             workspace_admin: std::sync::OnceLock::new(),
             mcp_app_host: std::sync::OnceLock::new(),
             mcp_ui: std::sync::OnceLock::new(),
+            app_tools: std::sync::OnceLock::new(),
             attach: crate::attach::HostAttach::new(),
             node_helper: std::sync::OnceLock::new(),
             workflow_child: std::sync::OnceLock::new(),

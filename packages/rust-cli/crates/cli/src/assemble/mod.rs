@@ -180,6 +180,9 @@ pub(crate) struct Controller {
     /// Fork: the Node helper the Host configured (app-server only, specs/fork-rust-node-helper.md F3): helper-hosted
     /// plugin MCP servers are selected and routed through it.
     pub(crate) node_helper: Option<Arc<rust_cli_protocol_zcode::NodeHelper>>,
+    /// Fork (F7 PR 3): the app-provided tools router (the Node helper's set and the Rust panels' set), installed by the
+    /// app-server before assembly.
+    pub(crate) app_tools: Option<Arc<rust_cli_protocol_zcode::AppToolRouter>>,
     pub(crate) cli: CliInputs,
 }
 
@@ -206,6 +209,7 @@ impl Controller {
             topic_resources: None,
             code_intelligence: None,
             node_helper: None,
+            app_tools: None,
             cli,
         }
     }
@@ -237,6 +241,7 @@ impl Controller {
             topic_resources: None,
             code_intelligence: None,
             node_helper: None,
+            app_tools: None,
             cli,
         }
     }
@@ -272,6 +277,7 @@ impl Controller {
             topic_resources: Some(topic_resources),
             code_intelligence: None,
             node_helper: None,
+            app_tools: None,
             cli: CliInputs::default(),
         }
     }
@@ -743,9 +749,9 @@ pub(crate) async fn kernel(
     extensions.topic_resources = spec.topic_resources.clone();
     // Fork (F3b(b), specs/fork-rust-node-helper.md): the Node helper holds the app-provided tools of its sessions.
     extensions.app_tools = spec
-        .node_helper
+        .app_tools
         .clone()
-        .map(|helper| helper as Arc<dyn rust_cli_kernel_api::app_tool::AppToolHost>);
+        .map(|router| router as Arc<dyn rust_cli_kernel_api::app_tool::AppToolHost>);
     // Fork: the desktop app-server runs ACP agents (specs/fork-rust-agent-parity.md "ACP external agents"): records
     // from the Host's sidecar next to `provider_config.json`, the raw process environment, the shared ledger.
     if spec.node_desktop {

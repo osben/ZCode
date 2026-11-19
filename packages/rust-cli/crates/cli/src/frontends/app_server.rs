@@ -158,6 +158,15 @@ async fn serve(
         Arc::new(HostSubagentConfig::new(context.clone())),
         desktop_context,
     );
+    // Fork (F7 PR 3, specs/fork-rust-node-helper.md): the app-provided tools of the panels of Rust-run servers and of the
+    // Node helper's servers, composed by name. The Rust side binds when the protocol server is built.
+    let app_tools = rust_cli_protocol_zcode::AppToolRouter::new(
+        node_helper
+            .clone()
+            .map(|helper| helper as Arc<dyn rust_cli_kernel_api::app_tool::AppToolHost>),
+    );
+    context.set_app_tools_router(app_tools.clone());
+    spec.app_tools = Some(app_tools);
     spec.node_helper = node_helper;
     // Fork: the Host's off-peak store (specs/fork-rust-automations.md, slice 3).
     spec.off_peak = Some(Arc::new(HostOffPeak::new(context.clone())));

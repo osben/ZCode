@@ -63,6 +63,7 @@ pub use fork::node_helper::{
     NodeHelperProcess, Timing as NodeHelperTiming,
 };
 // Fork: the workflow engine's helper client, sandbox child and NDJSON host (specs/fork-rust-workflow-engine.md, 4.1).
+pub use fork::mcp_ui_app_tools::AppToolRouter;
 pub use fork::workflow_child::{
     ChildCommand, ChildLauncher, ChildStreams, Invocation, LaunchedChild, MAX_OLD_SPACE_MB,
     invocation as child_invocation,
@@ -154,9 +155,12 @@ pub fn handler(
     // Fork (F7 PR 1): the panel owner of the Rust-run servers delivers its pluginUi deltas through this server.
     let answers: std::sync::Weak<dyn fork::node_helper::HelperRequests> =
         Arc::downgrade(&server) as _;
-    server
-        .context
-        .set_mcp_ui(fork::mcp_ui_rust::RustMcpUi::new(answers.clone()));
+    let ui = fork::mcp_ui_rust::RustMcpUi::new(answers.clone());
+    server.context.set_mcp_ui(ui.clone());
+    // Fork (F7 PR 3): the router's Rust side is the panel owner's registry.
+    if let Some(router) = server.context.app_tools_router() {
+        router.bind_rust(ui);
+    }
     // Fork: the Node helper's requests are answered by this server (specs/fork-rust-node-helper.md F3).
     if let Some(helper) = server.context.node_helper() {
         helper.set_requests(answers);
