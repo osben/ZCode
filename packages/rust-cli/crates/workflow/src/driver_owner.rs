@@ -30,15 +30,17 @@ use crate::driver_rules::{
 use crate::engine::{
     AskMessage, AskOutcome, EngineConfig, SubmitVerdict, WorkflowDriver, WorkflowEngine,
 };
+use crate::engine_artifacts::ArtifactPublishRequest;
 use crate::error::{ErrorCode, WorkflowError};
 use crate::escalation::{AnswerOutcome, EscalateOutcome, EscalationBook, EscalationRequest};
 use crate::event::RunEvent;
 use crate::journal::JournalPort;
 use crate::model::{Ref, StoredEvent};
 use crate::persona::persona_name;
+use crate::world_host::{WORLD_JOB_LIMIT, WorldJob, WorldWiring, spawn_world_job};
 use anyhow::{Result, anyhow};
 use serde_json::Value;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 /// Node `cancelAsk`'s rejection of a pending submit: the text the submit's caller reads.
 pub const CANCELLED_BY_ENGINE_MESSAGE: &str = "The ask was cancelled by the engine.";
@@ -141,6 +143,13 @@ pub struct ActorPort<S: ActorSessions> {
     queued_failures: Vec<(Ref, WorkflowError)>,
     /// Errors the engine cannot receive (its trait methods return nothing); the owner returns them.
     deferred_errors: Vec<anyhow::Error>,
+    /// The host's world wiring, set by [`ActorDriverOwner::with_world`]. Without it world reads fail as before.
+    world: Option<WorldWiring>,
+    /// Jobs the pump hands to workers (world reads and artifact publishes).
+    queued_world: Vec<WorldJob>,
+    /// Jobs waiting for a free worker slot, and how many are running (at most `WORLD_JOB_LIMIT`).
+    world_queue: VecDeque<WorldJob>,
+    world_running: usize,
     /// The engine's verdict for each instance, taken by the owner right after the engine call that made it.
     verdicts: HashMap<String, SubmitVerdict>,
 }
@@ -278,8 +287,17 @@ impl<S: ActorSessions> WorkflowDriver for ActorPort<S> {
         // then nothing reads events here, so the port keeps none.
     }
 
-    fn start_world_read(&mut self, instance: &Ref, _op: &str, _args: &Value) {
-        // World reads are W6b. Until then an ask that reaches one fails as a driver fault.
+    fn start_world_read(&mut self, instance: &Ref, op: &str, args: &Value) {
+        if self.world.is_some() {
+            // The owner's pump hands the job to a worker; the outcome comes back as a mailbox request.
+            self.queued_world.push(WorldJob::Read {
+                instance: instance.clone(),
+                op: op.to_owned(),
+                args: args.as_array().cloned().unwrap_or_default(),
+            });
+            return;
+        }
+        // No wiring (no host read port): an ask that reaches a world read fails as a driver fault.
         self.queued_failures.push((
             instance.clone(),
             WorkflowError::new(
@@ -287,6 +305,19 @@ impl<S: ActorSessions> WorkflowDriver for ActorPort<S> {
                 "world reads are not wired to the actor driver yet",
             ),
         ));
+    }
+    fn has_artifact_store(&self) -> bool {
+        self.world
+            .as_ref()
+            .is_some_and(|wiring| wiring.artifacts.as_ref().is_some_and(|a| a.store.is_some()))
+    }
+
+    fn start_artifact_publish(&mut self, instance: &Ref, request: &ArtifactPublishRequest) {
+        // The engine asks `has_artifact_store` first, so the job is queued only when a store is wired.
+        self.queued_world.push(WorldJob::Publish {
+            instance: instance.clone(),
+            request: request.clone(),
+        });
     }
 }
 
@@ -324,6 +355,10 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
             queued_failures: Vec::new(),
             deferred_errors: Vec::new(),
             verdicts: HashMap::new(),
+            world: None,
+            queued_world: Vec::new(),
+            world_queue: VecDeque::new(),
+            world_running: 0,
         };
         let book = EscalationBook::new(config.run_id.clone());
         let engine = WorkflowEngine::new(config, journal, port)?;
@@ -406,6 +441,53 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
 
     pub fn take_outcomes(&mut self) -> Vec<AskOutcome> {
         self.engine.take_outcomes()
+    }
+
+    /// Attach the host's world wiring. Until it is attached, world reads fail with a driver fault.
+    pub fn with_world(mut self, wiring: WorldWiring) -> Self {
+        self.engine.driver.world = Some(wiring);
+        self
+    }
+
+    /// Node `worldRead`: one world read or run at the next ordinal of `site_id`. The outcome comes back through
+    /// `take_outcomes` once the worker has posted its settlement.
+    pub fn world_read(&mut self, site_id: &str, op: &str, args: Vec<Value>) -> Result<u64> {
+        let result = self.engine.world_read(site_id, op, args);
+        self.after_engine(result)
+    }
+
+    /// Node `publish`: one content artifact version at the next ordinal of `site_id`.
+    pub fn publish_artifact(&mut self, site_id: &str, op: &str, args: &[Value]) -> Result<u64> {
+        let result = self.engine.publish_artifact(site_id, op, args);
+        self.after_engine(result)
+    }
+
+    /// The worker's answer to a world read (Node's `.then`). Called by the mailbox dispatch.
+    pub(crate) fn world_settled(
+        &mut self,
+        instance: &Ref,
+        result: std::result::Result<Value, WorkflowError>,
+    ) -> Result<()> {
+        self.engine.driver.world_running = self.engine.driver.world_running.saturating_sub(1);
+        // The engine has already removed the live entry, so a failed journal write cannot be retried here. It is kept
+        // as a deferred error and returned by the next owner call, not dropped.
+        if let Err(error) = self.engine.world_read_settled(instance, result) {
+            self.engine.driver.deferred_errors.push(error);
+        }
+        self.after_engine(Ok(()))
+    }
+
+    /// The worker's answer to an artifact publish. Called by the mailbox dispatch.
+    pub(crate) fn artifact_settled(
+        &mut self,
+        instance: &Ref,
+        result: std::result::Result<Value, WorkflowError>,
+    ) -> Result<()> {
+        self.engine.driver.world_running = self.engine.driver.world_running.saturating_sub(1);
+        if let Err(error) = self.engine.artifact_publish_settled(instance, result) {
+            self.engine.driver.deferred_errors.push(error);
+        }
+        self.after_engine(Ok(()))
     }
 
     pub fn events(&self) -> Result<Vec<StoredEvent>> {
@@ -605,6 +687,30 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
         loop {
             let starts = std::mem::take(&mut self.engine.driver.queued_starts);
             let failures = std::mem::take(&mut self.engine.driver.queued_failures);
+            let jobs = std::mem::take(&mut self.engine.driver.queued_world);
+            self.engine.driver.world_queue.extend(jobs);
+            for job in self.start_world_jobs() {
+                // No wiring: the node fails with a typed error rather than waiting for a worker that never starts.
+                let settled = match job {
+                    WorldJob::Read { instance, .. } => self.engine.world_read_settled(
+                        &instance,
+                        Err(WorkflowError::new(
+                            ErrorCode::DriverError,
+                            "world reads are not wired to the actor driver",
+                        )),
+                    ),
+                    WorldJob::Publish { instance, .. } => self.engine.artifact_publish_settled(
+                        &instance,
+                        Err(WorkflowError::new(
+                            ErrorCode::ArtifactStoreUnavailable,
+                            "this assembly has no artifact store",
+                        )),
+                    ),
+                };
+                if let Err(error) = settled {
+                    first.get_or_insert(error);
+                }
+            }
             if starts.is_empty() && failures.is_empty() {
                 break;
             }
@@ -629,10 +735,40 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
         for error in std::mem::take(&mut self.engine.driver.deferred_errors) {
             first.get_or_insert(error);
         }
+        // The run has settled and no world job is left: the owner stops holding the mailbox handle, so the owner loop
+        // can end once the turns and workers are gone. Nothing new can start after settlement.
+        if self.engine.is_settled()
+            && self.engine.driver.world_running == 0
+            && self.engine.driver.world_queue.is_empty()
+        {
+            self.engine.driver.world = None;
+        }
         match first {
             Some(error) => Err(error),
             None => Ok(()),
         }
+    }
+
+    /// Start queued world jobs while fewer than [`WORLD_JOB_LIMIT`] are running. Returns the jobs that have no wiring.
+    fn start_world_jobs(&mut self) -> Vec<WorldJob> {
+        let mut unwired = Vec::new();
+        loop {
+            let port = &mut self.engine.driver;
+            if port.world_running >= WORLD_JOB_LIMIT {
+                break;
+            }
+            let Some(job) = port.world_queue.pop_front() else {
+                break;
+            };
+            match &port.world {
+                Some(wiring) => {
+                    spawn_world_job(wiring, job);
+                    port.world_running += 1;
+                }
+                None => unwired.push(job),
+            }
+        }
+        unwired
     }
 
     /// One queued start: the book starts the ask (withdrawing the previous one's parked questions), then the turn is

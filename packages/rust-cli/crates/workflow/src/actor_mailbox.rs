@@ -102,6 +102,23 @@ pub(crate) enum ActorRequest {
         stats: crate::engine::AskStats,
         reply: Sender<Result<()>>,
     },
+    /// A worker finished a live world read (Node's `.then` on `executeWorldRead`). No answer goes back.
+    WorldSettled {
+        instance: Ref,
+        result: Result<Value, crate::error::WorkflowError>,
+    },
+    /// A worker finished an artifact publish (Node's `.then` on `executeArtifactPublish`). No answer goes back.
+    ArtifactSettled {
+        instance: Ref,
+        result: Result<Value, crate::error::WorkflowError>,
+    },
+}
+
+impl ActorHandle {
+    /// Post a request without waiting for an answer. False when the owner is gone.
+    pub(crate) fn post(&self, request: ActorRequest) -> bool {
+        self.tx.send(request).is_ok()
+    }
 }
 
 /// The owner's side of the channel. Only the owner thread receives from it.
@@ -196,6 +213,16 @@ fn dispatch<J: JournalPort, S: ActorSessions>(
             reply,
         } => {
             let _ = reply.send(owner.ask_stats(&instance, stats));
+        }
+        ActorRequest::WorldSettled { instance, result } => {
+            if let Err(error) = owner.world_settled(&instance, result) {
+                tracing::warn!("the owner failed to settle a world read: {error:#}");
+            }
+        }
+        ActorRequest::ArtifactSettled { instance, result } => {
+            if let Err(error) = owner.artifact_settled(&instance, result) {
+                tracing::warn!("the owner failed to settle an artifact publish: {error:#}");
+            }
         }
         ActorRequest::Mutating { session, reply } => {
             let _ = reply.send(owner.ask_mutating(&session));

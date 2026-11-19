@@ -32,6 +32,7 @@ pub enum ErrorCode {
     ArtifactRedeclared,
     ArtifactUndeclared,
     ArtifactPrimaryConflict,
+    WorldReadCapExceeded,
 }
 
 impl ErrorCode {
@@ -56,6 +57,7 @@ impl ErrorCode {
             Self::ArtifactVersionCapExceeded => "ArtifactVersionCapExceeded",
             Self::ArtifactKindMismatch => "ArtifactKindMismatch",
             Self::ArtifactCapExceeded => "ArtifactCapExceeded",
+            Self::WorldReadCapExceeded => "WorldReadCapExceeded",
             Self::ArtifactSpecInvalid => "ArtifactSpecInvalid",
             Self::ArtifactRedeclared => "ArtifactRedeclared",
             Self::ArtifactUndeclared => "ArtifactUndeclared",
@@ -84,6 +86,7 @@ impl ErrorCode {
             "ArtifactVersionCapExceeded" => Self::ArtifactVersionCapExceeded,
             "ArtifactKindMismatch" => Self::ArtifactKindMismatch,
             "ArtifactCapExceeded" => Self::ArtifactCapExceeded,
+            "WorldReadCapExceeded" => Self::WorldReadCapExceeded,
             "ArtifactSpecInvalid" => Self::ArtifactSpecInvalid,
             "ArtifactRedeclared" => Self::ArtifactRedeclared,
             "ArtifactUndeclared" => Self::ArtifactUndeclared,
@@ -306,6 +309,7 @@ mod code_round_trip_tests {
             ErrorCode::ArtifactRedeclared => 20,
             ErrorCode::ArtifactUndeclared => 21,
             ErrorCode::ArtifactPrimaryConflict => 22,
+            ErrorCode::WorldReadCapExceeded => 23,
         }
     }
 
@@ -335,6 +339,7 @@ mod code_round_trip_tests {
             ErrorCode::ArtifactRedeclared,
             ErrorCode::ArtifactUndeclared,
             ErrorCode::ArtifactPrimaryConflict,
+            ErrorCode::WorldReadCapExceeded,
         ];
         for (index, code) in all.iter().enumerate() {
             assert_eq!(
@@ -348,6 +353,6 @@ mod code_round_trip_tests {
                 "{code:?} parses back from as_str"
             );
         }
-        assert_eq!(all.len(), 23, "every variant is listed");
+        assert_eq!(all.len(), 24, "every variant is listed");
     }
 }

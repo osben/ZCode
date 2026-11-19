@@ -7,6 +7,7 @@
 pub mod actor_mailbox;
 pub mod actor_sessions;
 pub mod actor_turns;
+pub mod artifact_publish;
 pub mod artifact_spec;
 pub mod canon;
 pub mod driver_owner;
@@ -34,6 +35,9 @@ pub mod replay;
 pub mod resume;
 pub mod scheduler;
 pub mod scheduler_submit;
+pub mod world_git;
+pub mod world_host;
+pub mod world_read;
 
 #[cfg(test)]
 mod actor_mailbox_tests;
@@ -41,6 +45,8 @@ mod actor_mailbox_tests;
 mod actor_sessions_tests;
 #[cfg(test)]
 mod actor_turns_tests;
+#[cfg(test)]
+mod artifact_review_tests;
 #[cfg(test)]
 mod driver_golden_tests;
 #[cfg(test)]
@@ -59,3 +65,9 @@ mod import_golden_tests;
 mod lifecycle_golden_tests;
 #[cfg(test)]
 mod scheduler_golden_tests;
+#[cfg(test)]
+mod world_read_review_tests;
+#[cfg(test)]
+mod world_wiring_review_tests;
+#[cfg(test)]
+mod world_wiring_tests;
