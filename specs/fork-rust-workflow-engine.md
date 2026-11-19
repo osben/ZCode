@@ -1326,7 +1326,7 @@ This is Node's mapping of its status events to the same four results, except tha
 9. The cooldown is capped at 60 s (`MAX_COOLDOWN_MS`, the default `max_wait` of the Rust retry policy). Node has no cap on the governor's cooldown (`concurrency.ts` uses Retry-After as given), so a Retry-After longer than a minute freezes the bucket for a minute here, not for its full length. The deadline is saturating, so an absurd Retry-After cannot overflow (Codex #560 P2).
 10. Each operation reads the clock once and uses that `now` for admission and for scheduling the wake. A deadline that falls between two reads cannot lose a wake (Codex #560 P1).
 11. A truncated or malformed stream (`ModelError::Protocol`) settles as transient, like a stream idle. The transport retries it (provider-errors §3.2). Node has no truncation rule: a retried non-throttle failure settles as transient there, and a terminal one as ended. A terminal Protocol error here also clears the success streak, which is the conservative side (ocr #560).
-12. Follow-up (W6b part 2): `AdmissionScope::Run(String)` and `SessionSubagents(String)` are raw strings in one key namespace. Newtypes come with the first construction of `Run` in the driver. Until then the `\0` prefixes keep the two namespaces apart only by convention.
+12. Done in W6b part 2 (9.10): `AdmissionScope::Run(RunId)` and `SessionSubagents(ParentSessionId)` are newtypes. The `\0` prefixes still keep the namespaces apart by convention only.
 13. Follow-up (any crate): a shared panic-payload message helper in `rust-cli-base`. There are four copies today (governor timer, base, tui-kit, workflow); the cross-crate refactor is out of scope for W6b part 1 (ocr #560).
 
 **Not ported from the Node tests in this part.** The growth-limit and seeding cases, the run-bound cases, the fan-out and unsubscribe cases, and the zero-delay wake cases. They depend on part 2's run bounds and events. The Node parity of `tryAdmit` with a run that has a bound is not checked.
@@ -1338,6 +1338,38 @@ This is Node's mapping of its status events to the same four results, except tha
 - **W6b part 4: world reads and artifact publish.** `workflow-world-read.ts`, `workflow-git-world-read.ts` and `workflow-artifact-publish.ts`, with the fault cases.
 - **W6b part 5: stall clock and quota timer.** `askProgress`, `runStalled`, and `dynamic-workflow-quota-resume.ts` (resume after `resetAt + 1 min`, once), with the scripted-provider E2E that section 8 item 10 asks for.
 - **W6b part 6: `LiveRunGuard` and session residency.** The guard and the residency rules of the run service.
+
+### 9.10 W6b part 2: run admission, bounds and fan-out (as built, part 2a)
+
+Scope of this change: the governor side of run admission. Run bounds and growth (`setRunBound`, `clearRunBound`, the growth limit from the bounds, seeding, `limit_lowered`), and the `concurrencyChanged` fan-out to the runs engaged on a key. What is not in this change is listed at the end of this section (part 2b).
+
+**Where it lives.** `crates/model/src/governor/controller.rs`: `set_growth_limit` (Node `setGrowthLimit`), `seed` (Node `seed`), the reasons `LimitLowered` and `Seeded`, and `Change` now carries `last_good`, `last_bad` and `cooldown_ms` as Node's change event does. `crates/model/src/governor/mod.rs`: `Governor::set_run_bound` and `clear_run_bound`, `subscribe` (returns a `Subscription`, whose `unsubscribe` is Node's unsubscribe function), `CapChange { key, change }`, `refresh_growth_limit` (Node `refreshGrowthLimit`), `note_run_used` (Node `noteRunUsed`), and `publish` (Node `fanOut`). `crates/model/src/admission.rs`: the newtypes `RunId` and `ParentSessionId` (follow-up 12 of 9.9).
+
+**Rules (Node's, unchanged).** A bucket's growth limit is `max(2D, the largest bound among the runs in the bucket's runs)`. A run joins a bucket's runs on its first tracked admission (`AdmissionScope::Run`) on that key, and leaves them on `clear_run_bound`. A bound that raises the limit also seeds the cap to `min(bound, growth limit)`, unless a rejection happened within five minutes. A bound below the cap lowers the cap at once and emits `limit_lowered`. Fan-out reaches every subscribed run engaged on the key (in flight or queued). A bound-driven change also reaches every run in the bucket's runs, including an idle one.
+
+**Ordering.** A settlement's change is fanned out before the run's in-flight count drops, so the run that caused it is still engaged (Node's order). Listeners are called after the state and listener locks are released, in the order the changes were produced.
+
+**Tests.** Red first: `cargo test -p rust-cli-model --lib governor` failed to compile with 37 errors, all naming the missing API (`set_run_bound`, `clear_run_bound`, `subscribe`, `Controller::seed`, `Controller::set_growth_limit`, `ChangeReason::Seeded`, `ChangeReason::LimitLowered`, the `Change` fields, `CapChange`, `RunId`, `Subscription`). Green: the governor and controller suites are 56 tests; the full `rust-cli-model` run is 239 lib and 82 integration tests. `cargo fmt --all --check` and `cargo clippy --workspace --all-targets --locked -- -D warnings` are clean.
+
+Ported from Node: the growth-limit cases of `dynamic-workflow/tests/engine/concurrency.test.ts` (raising the limit changes no cap and the cap climbs one step at a time; lowering below the cap pulls it down at once with `limit_lowered` and clamped `lastGood`; lowering to a value not below the cap changes nothing; the limit never goes below initial), the seed cases (jump to the target within the limit, clamp to the limit, no-op at or below the cap, refused within five minutes of a rejection), and from `bootstrap/tests/workflow-concurrency-governor.test.ts`: auto-growth stops at 2D; a bound above 2D raises the keys the run has used and jump-starts them; a bound at or below 2D and the observer never raise the limit; `clear_run_bound` lowers the limit and reaches an engaged run with `limit_lowered`; retuning a bound overrides it in both directions; a run that used the key before its bound raises it when the bound is registered; a retune upward seeds the cap and reaches an idle run that has used the key; a 429 within five minutes stops the seed; fan-out reaches only engaged runs; a queued run hears changes and an unsubscribed run does not. New, with no Node counterpart: a listener may read the governor during fan-out without deadlocking.
+
+The zero-delay wake cases are covered by the existing test `a_cancel_after_the_cooldown_deadline_serves_the_next_waiter_without_the_timer`: Rust serves a passed deadline without arming a timer (divergence 4 of 9.9).
+
+**Node divergences (new in this part).**
+
+14. Listeners run after the locks are released. Node's `fanOut` runs inside the same synchronous call. The order of changes within one operation is kept.
+15. `Subscription` does not unsubscribe when dropped; `unsubscribe()` does. A kept Node closure behaves the same way.
+16. `cooldown_ms` on a change is the value after the 60 s cap of divergence 9 (9.9). Node reports the raw Retry-After.
+17. For one operation, the fan-out loops over changes outside and runs inside. Node loops over runs outside and changes inside. Each run sees its changes in the same order.
+
+**Not done in this part (part 2b).** Each item is open, and none of them is wired in production yet:
+
+- The workflow actor scope (divergence 2 of 9.9). Actor requests still go to the subagent pool (`SessionSubagents`), because the transport decides the scope from `QuerySource` only, and no path produces `AdmissionScope::Run` outside the tests.
+- The run events `node-waiting`, `node-executing` and `concurrency-changed`: the `RunEvent` variants, their journal rows, and the engine's `askWaiting`, `askExecuting` and `concurrencyChanged`. Nothing emits `concurrency-changed` yet.
+- The run service's `setRunBound` and `clearRunBound` calls at launch and at retune. Only tests call them.
+- The driver's per-attempt `tryAdmit` and `admit`. They happen in the transport (part 1), not in the workflow crate, and the driver does not observe them.
+
+Follow-up 12 of 9.9 is done: `AdmissionScope::Run(RunId)` and `AdmissionScope::SessionSubagents(ParentSessionId)`. The `\0` key prefixes still keep the namespaces apart by convention, as before.
 
 ## 10. Open questions
 
