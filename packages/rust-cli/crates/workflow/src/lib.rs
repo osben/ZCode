@@ -44,6 +44,8 @@ mod actor_turns_tests;
 #[cfg(test)]
 mod driver_golden_tests;
 #[cfg(test)]
+mod driver_node_parity_tests;
+#[cfg(test)]
 mod driver_owner_tests;
 #[cfg(test)]
 mod engine_tests;
