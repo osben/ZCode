@@ -23,6 +23,35 @@ fn the_model_name_is_app_server_tool_with_each_unit_outside_the_safe_set_replace
 }
 
 #[test]
+fn an_annotation_title_is_named_as_an_annotation_in_its_refusal() {
+    let error = parse_descriptor_for_test(&json!({
+        "name": "a",
+        "inputSchema": {"type": "object"},
+        "annotations": {"title": "t".repeat(257)},
+    }))
+    .expect_err("refused");
+    assert_eq!(
+        error.message,
+        "tool annotations title is not a string of at most 256 characters"
+    );
+}
+
+#[test]
+fn an_open_world_hint_is_a_boolean_and_nothing_else() {
+    for value in [json!("yes"), json!(1), json!(null)] {
+        assert!(
+            parse_descriptor_for_test(&json!({
+                "name": "a",
+                "inputSchema": {"type": "object"},
+                "annotations": {"openWorldHint": value},
+            }))
+            .is_err(),
+            "{value} is refused"
+        );
+    }
+}
+
+#[test]
 fn a_descriptor_keeps_its_hints_and_refuses_what_the_schema_refuses() {
     let ok = parse_descriptor_for_test(&json!({
         "name": "read",

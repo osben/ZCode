@@ -155,6 +155,26 @@ fn classify(message: &str) -> &'static str {
     }
 }
 
+/// The outcome word of a registration. Only a refusal of the wire schema (invalid params, as Node's `parseParams` gives)
+/// is `refused`; any other error keeps its message, as the other steps report theirs.
+fn register_outcome(result: Result<Value, RpcError>) -> String {
+    match result {
+        Ok(answer) => {
+            let names: Vec<&str> = answer["tools"]
+                .as_array()
+                .expect("tools")
+                .iter()
+                .map(|tool| tool["modelName"].as_str().expect("model name"))
+                .collect();
+            format!("registered:{}", names.join(","))
+        }
+        Err(error) if error.code == rust_cli_protocol_core::rpc::codes::INVALID_PARAMS => {
+            "refused".to_owned()
+        }
+        Err(error) => format!("error:{}", error.message),
+    }
+}
+
 fn lease_json(lease: &Lease) -> Value {
     json!({
         "runtimeId": lease.runtime_id,
@@ -277,19 +297,7 @@ impl Runner {
                     }
                 }
                 let params = request(&lease, json!({"tools": tools, "instance": instance}));
-                match self.ui.register_app_tools("app", &params) {
-                    Ok(answer) => {
-                        let names: Vec<&str> = answer["tools"]
-                            .as_array()
-                            .expect("tools")
-                            .iter()
-                            .map(|tool| tool["modelName"].as_str().expect("model name"))
-                            .collect();
-                        format!("registered:{}", names.join(","))
-                    }
-                    // A registration Node's schema refuses (`mcpAppsAppToolDescriptorSchema`, `mcpAppInstanceSchema`).
-                    Err(_) => "refused".to_owned(),
-                }
+                register_outcome(self.ui.register_app_tools("app", &params))
             }
             "exposed" => {
                 let names: Vec<String> = self
@@ -427,5 +435,19 @@ async fn the_rust_app_tool_mailbox_matches_the_shared_conformance_sequence() {
         mismatches.is_empty(),
         "conformance mismatches:\n{}",
         mismatches.join("\n")
+    );
+}
+
+#[test]
+fn a_schema_refusal_is_refused_and_any_other_registration_error_is_reported_as_such() {
+    assert_eq!(
+        register_outcome(Err(RpcError::invalid_params("tool title is not a string"))),
+        "refused"
+    );
+    assert_eq!(
+        register_outcome(Err(RpcError::internal(
+            "Invalid MCP App registration binding"
+        ))),
+        "error:Invalid MCP App registration binding"
     );
 }

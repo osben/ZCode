@@ -364,8 +364,8 @@ fn strict_object<'a>(
 }
 
 /// Node's `objectSchemaSchema`: an object schema of type `object`, at most 64 KiB serialized. It checks the input and
-/// the output schema alike.
-fn object_schema(value: &Value, what: &str) -> Result<Value, RpcError> {
+/// the output schema alike, and the value is only borrowed.
+fn check_object_schema(value: &Value, what: &str) -> Result<(), RpcError> {
     let valid = value.get("type").and_then(Value::as_str) == Some("object")
         && serde_json::to_vec(value).map_or(usize::MAX, |bytes| bytes.len()) <= SCHEMA_MAX_BYTES;
     if !valid {
@@ -373,20 +373,37 @@ fn object_schema(value: &Value, what: &str) -> Result<Value, RpcError> {
             "{what} must be an object schema of at most 64 KiB"
         )));
     }
-    Ok(value.clone())
+    Ok(())
 }
 
-/// A string field of at most `max` UTF-16 units, absent or present (`null` is not a string, as zod refuses it).
+/// A string field of at most `max` UTF-16 units, absent or present (`null` is not a string, as zod refuses it). `what`
+/// names the object the field is in, so the refusal says which field it is.
 fn text_field(
     object: &Map<String, Value>,
     key: &str,
     max: usize,
+    what: &str,
 ) -> Result<Option<String>, RpcError> {
     match object.get(key) {
         None => Ok(None),
         Some(Value::String(text)) if utf16_len(text) <= max => Ok(Some(text.clone())),
         Some(_) => Err(RpcError::invalid_params(format!(
-            "tool {key} is not a string of at most {max} characters"
+            "{what} {key} is not a string of at most {max} characters"
+        ))),
+    }
+}
+
+/// A boolean field, absent or present (`z.boolean().optional()`: `null` is refused too).
+fn flag_field(
+    object: &Map<String, Value>,
+    key: &str,
+    what: &str,
+) -> Result<Option<bool>, RpcError> {
+    match object.get(key) {
+        None => Ok(None),
+        Some(Value::Bool(flag)) => Ok(Some(*flag)),
+        Some(_) => Err(RpcError::invalid_params(format!(
+            "{what} {key} is not a boolean"
         ))),
     }
 }
@@ -400,41 +417,40 @@ fn parse_descriptor(tool: &Value) -> Result<Descriptor, RpcError> {
         .ok_or_else(|| {
             RpcError::invalid_params("tool name is required (at most 128 characters)")
         })?;
-    let title = text_field(object, "title", TITLE_MAX_UNITS)?;
-    let description = text_field(object, "description", DESCRIPTOR_MAX_UNITS)?;
-    let input_schema = object_schema(
-        object
-            .get("inputSchema")
-            .ok_or_else(|| RpcError::invalid_params("tool inputSchema is required"))?,
-        "tool inputSchema",
-    )?;
+    let title = text_field(object, "title", TITLE_MAX_UNITS, "tool")?;
+    let description = text_field(object, "description", DESCRIPTOR_MAX_UNITS, "tool")?;
+    let input = object
+        .get("inputSchema")
+        .ok_or_else(|| RpcError::invalid_params("tool inputSchema is required"))?;
+    check_object_schema(input, "tool inputSchema")?;
     if let Some(output) = object.get("outputSchema") {
-        object_schema(output, "tool outputSchema")?;
+        check_object_schema(output, "tool outputSchema")?;
     }
     let annotations = match object.get("annotations") {
         None => None,
         Some(value) => Some(strict_object(value, ANNOTATION_KEYS, "tool annotations")?),
     };
-    let hint = |key: &str| -> Result<bool, RpcError> {
-        match annotations.and_then(|map| map.get(key)) {
-            None => Ok(false),
-            Some(Value::Bool(flag)) => Ok(*flag),
-            Some(_) => Err(RpcError::invalid_params(format!(
-                "tool annotations.{key} is not a boolean"
-            ))),
+    let (read_only, destructive, idempotent) = match annotations {
+        None => (false, false, false),
+        Some(annotations) => {
+            text_field(annotations, "title", TITLE_MAX_UNITS, "tool annotations")?;
+            // `openWorldHint` is not used, but it must be a boolean (the schema refuses anything else).
+            flag_field(annotations, "openWorldHint", "tool annotations")?;
+            (
+                flag_field(annotations, "readOnlyHint", "tool annotations")?.unwrap_or(false),
+                flag_field(annotations, "destructiveHint", "tool annotations")?.unwrap_or(false),
+                flag_field(annotations, "idempotentHint", "tool annotations")?.unwrap_or(false),
+            )
         }
     };
-    if let Some(annotations) = annotations {
-        text_field(annotations, "title", TITLE_MAX_UNITS)?;
-    }
     Ok(Descriptor {
         name: name.to_owned(),
         title,
         description,
-        input_schema,
-        read_only: hint("readOnlyHint")?,
-        destructive: hint("destructiveHint")?,
-        idempotent: hint("idempotentHint")?,
+        input_schema: input.clone(),
+        read_only,
+        destructive,
+        idempotent,
     })
 }
 

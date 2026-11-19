@@ -95,6 +95,60 @@
           "inputSchema": {
             "type": "object"
           },
+          "annotations": {
+            "openWorldHint": "yes"
+          }
+        }
+      ],
+      "expect": "refused"
+    },
+    {
+      "op": "register",
+      "lease": "A1",
+      "session": "app",
+      "server": "s1",
+      "descriptors": [
+        {
+          "name": "bad",
+          "inputSchema": {
+            "type": "object"
+          },
+          "annotations": {
+            "openWorldHint": 1
+          }
+        }
+      ],
+      "expect": "refused"
+    },
+    {
+      "op": "register",
+      "lease": "A1",
+      "session": "app",
+      "server": "s1",
+      "descriptors": [
+        {
+          "name": "bad",
+          "inputSchema": {
+            "type": "object"
+          },
+          "annotations": {
+            "openWorldHint": null
+          }
+        }
+      ],
+      "expect": "refused"
+    },
+    {
+      "op": "register",
+      "lease": "A1",
+      "session": "app",
+      "server": "s1",
+      "descriptors": [
+        {
+          "name": "bad",
+          "inputSchema": {
+            "type": "object"
+          },
           "outputSchema": {
             "type": "object"
           }
