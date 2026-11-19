@@ -242,3 +242,148 @@ fn a_journal_session_id_that_is_not_the_minted_one_fails_before_a_session_is_cre
         rust_cli_node_store::mint_actor_session_id("run_1", "site", 1.0)
     );
 }
+
+/// A journal whose actor reads fail once `fail` is set. Every other call delegates to a memory journal.
+struct ActorReadsFail {
+    inner: MemoryJournal,
+    fail: std::rc::Rc<std::cell::Cell<bool>>,
+}
+
+impl JournalPort for ActorReadsFail {
+    fn create_run(&mut self, row: crate::model::RunRow) -> anyhow::Result<()> {
+        self.inner.create_run(row)
+    }
+    fn get_run(&self, run_id: &str) -> anyhow::Result<Option<crate::model::RunRow>> {
+        self.inner.get_run(run_id)
+    }
+    fn update_run_status(
+        &mut self,
+        run_id: &str,
+        status: crate::model::RunStatus,
+        settlement: &crate::model::Settlement,
+    ) -> anyhow::Result<()> {
+        self.inner.update_run_status(run_id, status, settlement)
+    }
+    fn update_run_usage(&mut self, run_id: &str, spent_tokens: f64) -> anyhow::Result<()> {
+        self.inner.update_run_usage(run_id, spent_tokens)
+    }
+    fn update_run_caps(&mut self, run_id: &str, caps: crate::model::Caps) -> anyhow::Result<()> {
+        self.inner.update_run_caps(run_id, caps)
+    }
+    fn update_run_script(
+        &mut self,
+        run_id: &str,
+        script_text: &str,
+        script_hash: &str,
+    ) -> anyhow::Result<()> {
+        self.inner
+            .update_run_script(run_id, script_text, script_hash)
+    }
+    fn put_actor(&mut self, row: crate::model::ActorRow) -> anyhow::Result<()> {
+        self.inner.put_actor(row)
+    }
+    fn get_actor(
+        &self,
+        run_id: &str,
+        actor: &Ref,
+    ) -> anyhow::Result<Option<crate::model::ActorRow>> {
+        if self.fail.get() {
+            anyhow::bail!("injected actor read failure");
+        }
+        self.inner.get_actor(run_id, actor)
+    }
+    fn list_actors(&self, run_id: &str) -> anyhow::Result<Vec<crate::model::ActorRow>> {
+        self.inner.list_actors(run_id)
+    }
+    fn put_node(&mut self, row: crate::model::NodeRow) -> anyhow::Result<()> {
+        self.inner.put_node(row)
+    }
+    fn get_node(
+        &self,
+        run_id: &str,
+        instance: &Ref,
+    ) -> anyhow::Result<Option<crate::model::NodeRow>> {
+        self.inner.get_node(run_id, instance)
+    }
+    fn list_nodes(&self, run_id: &str) -> anyhow::Result<Vec<crate::model::NodeRow>> {
+        self.inner.list_nodes(run_id)
+    }
+    fn append_event(
+        &mut self,
+        run_id: &str,
+        event: &crate::event::RunEvent,
+    ) -> anyhow::Result<crate::model::StoredEvent> {
+        self.inner.append_event(run_id, event)
+    }
+    fn list_events(&self, run_id: &str) -> anyhow::Result<Vec<crate::model::StoredEvent>> {
+        self.inner.list_events(run_id)
+    }
+}
+
+/// A driver with no minting rule: the engine has nothing to check a journal row against.
+struct NoRuleDriver {
+    created: std::rc::Rc<std::cell::Cell<u64>>,
+}
+
+impl crate::engine::WorkflowDriver for NoRuleDriver {
+    fn create_actor_session(
+        &mut self,
+        _actor: &Ref,
+        _persona: &Value,
+        _seed: Option<&crate::imported_cache::ActorSessionSeed>,
+    ) -> anyhow::Result<String> {
+        self.created.set(self.created.get() + 1);
+        Ok("session-no-rule".to_owned())
+    }
+    fn start_world_read(&mut self, _instance: &Ref, _op: &str, _args: &Value) {
+        unreachable!("world reads are not used here");
+    }
+    fn start_ask(&mut self, _session: &str, _instance: &Ref, _message: &crate::engine::AskMessage) {
+    }
+    fn respond_to_submit(&mut self, _instance: &Ref, _verdict: &crate::engine::SubmitVerdict) {}
+    fn cancel_ask(&mut self, _instance: &Ref) {}
+    fn emit(&mut self, _event: &crate::event::RunEvent) {}
+}
+
+/// A driver with no minting rule creates its session even when a journal read of the actor would fail: the
+/// engine reads the row only to check it against a rule, so a no-rule driver touches no row at dispatch.
+#[test]
+fn a_driver_with_no_minting_rule_creates_its_session_even_when_the_journal_read_fails() {
+    use crate::engine::{AskSpec, EngineConfig, WorkflowEngine};
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    let fail = Rc::new(Cell::new(false));
+    let created = Rc::new(Cell::new(0));
+    let mut journal = ActorReadsFail {
+        inner: MemoryJournal::new(),
+        fail: fail.clone(),
+    };
+    let mut driver = NoRuleDriver {
+        created: created.clone(),
+    };
+    let mut config = EngineConfig {
+        run_id: "run_norule".into(),
+        ..Default::default()
+    };
+    config.caps.max_concurrency = 4.0;
+    config.ask_specs.insert(
+        "site".into(),
+        AskSpec {
+            typed: false,
+            schema: None,
+        },
+    );
+    let mut engine = WorkflowEngine::new(config, &mut journal, &mut driver).expect("engine");
+    let actor = engine.create_actor("site", None, None).expect("actor");
+    fail.set(true);
+    let _ = engine.ask("site", &actor, "say hi");
+    // The session-ready step reads the row for its resolved model, which is outside this check and may fail after
+    // the session exists. The assertion is about the dispatch read only.
+    let _ = engine.drain();
+    assert_eq!(
+        created.get(),
+        1,
+        "the session is created although every actor read fails"
+    );
+}

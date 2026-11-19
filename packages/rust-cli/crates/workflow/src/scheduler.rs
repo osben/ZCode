@@ -521,10 +521,14 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
         // A recorded id that differs means the rule drifted, so the session is not created. A driver with no rule
         // (`minted_session_id` is None) is not checked.
         let minted = self.driver.minted_session_id(&self.run_id, &actor_ref);
-        let recorded = self
-            .journal
-            .get_actor(&self.run_id, &actor_ref)?
-            .and_then(|row| row.session_id);
+        // The journal is read only when there is a rule to check it against; a driver with no rule touches no row here.
+        let recorded = match minted {
+            Some(_) => self
+                .journal
+                .get_actor(&self.run_id, &actor_ref)?
+                .and_then(|row| row.session_id),
+            None => None,
+        };
         let session = match (recorded, minted) {
             (Some(expected), Some(got)) if expected != got => {
                 SessionState::Mismatched { expected, got }
