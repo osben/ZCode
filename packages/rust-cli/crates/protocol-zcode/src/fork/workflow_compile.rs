@@ -70,14 +70,26 @@ pub async fn analysis(helper: &NodeHelper, script_text: &str) -> Result<Value, R
 }
 
 /// The CreateWorkflow confirmation window of `script_text`, as Node builds it (`null` when Node opens no window).
-pub async fn display(helper: &NodeHelper, script_text: &str) -> Result<Option<Value>, RpcError> {
-    let reply = forward(
-        helper,
-        FORMAT,
-        &json!({"kind": "display", "scriptText": script_text}),
-    )
-    .await?;
+/// `model_bindings` is the script's model table as `resolveInput` writes it; a script that names a model opens its window
+/// only with the bindings.
+pub async fn display(
+    helper: &NodeHelper,
+    script_text: &str,
+    model_bindings: Option<&Map<String, Value>>,
+) -> Result<Option<Value>, RpcError> {
+    let reply = forward(helper, FORMAT, &display_params(script_text, model_bindings)).await?;
     parse_display(&reply)
+}
+
+pub(crate) fn display_params(
+    script_text: &str,
+    model_bindings: Option<&Map<String, Value>>,
+) -> Value {
+    let mut params = json!({"kind": "display", "scriptText": script_text});
+    if let Some(bindings) = model_bindings {
+        params["modelBindings"] = Value::Object(bindings.clone());
+    }
+    params
 }
 
 /// The ListWorkflowRuns text for `input`, from the run port's `listed` result for that query. `working_directory` is the
@@ -97,11 +109,12 @@ pub async fn run_list_text(
     parse_text(&reply)
 }
 
-/// The GetWorkflowRun text for `run_id`, from the run port's `detail`. The summary is built by Node's handler.
+/// The GetWorkflowRun text for `run_id`, from the run port's `detail`. `None` is an unknown run, which Node answers with
+/// its not-found text. The summary is built by Node's handler.
 pub async fn run_detail_text(
     helper: &NodeHelper,
     run_id: &str,
-    detail: &Value,
+    detail: Option<&Value>,
     working_directory: &str,
 ) -> Result<String, RpcError> {
     let reply = forward(
@@ -126,11 +139,15 @@ pub(crate) fn run_list_params(
     })
 }
 
-pub(crate) fn run_detail_params(run_id: &str, detail: &Value, working_directory: &str) -> Value {
+pub(crate) fn run_detail_params(
+    run_id: &str,
+    detail: Option<&Value>,
+    working_directory: &str,
+) -> Value {
     json!({
         "kind": "runDetail",
         "runId": run_id,
-        "detail": detail,
+        "detail": detail.cloned().unwrap_or(Value::Null),
         "workingDirectory": working_directory,
     })
 }

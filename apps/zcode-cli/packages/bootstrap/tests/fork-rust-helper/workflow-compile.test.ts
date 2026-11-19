@@ -344,4 +344,86 @@ describe("fork: helper/workflow/format run list, run detail and window display (
     helper.close();
     await helper.done;
   });
+
+  // ocr finding (HIGH): Node's resolveInput writes model_bindings before prepareApproval, so a script that names a model
+  // opens its window only with its bindings. The helper must thread them through.
+  it("opens the window for a script that names a model only when its bindings are given", async () => {
+    const MODEL_SCRIPT = [
+      'const MODELS = { light: model("gpt-5") };',
+      'const answer = await agent("answerer", { model: MODELS.light }).ask("go");',
+      "return answer;",
+    ].join("\n");
+    const BINDINGS = { "gpt-5": "zhipu/gpt-5" };
+    const withBindings = nodeEntry(CREATE_WORKFLOW_TOOL_NAME).prepareApproval!({
+      script: MODEL_SCRIPT,
+      model_bindings: BINDINGS,
+    });
+    expect(withBindings.gate).toBe("ask");
+    expect(withBindings.display).toBeDefined();
+    expect(
+      nodeEntry(CREATE_WORKFLOW_TOOL_NAME).prepareApproval!({ script: MODEL_SCRIPT }).gate,
+    ).toBe("proceed");
+    const helper = await startHelper();
+    const bound = await helper.request("helper/workflow/format", {
+      kind: "display",
+      scriptText: MODEL_SCRIPT,
+      modelBindings: BINDINGS,
+    });
+    expect(bound.error).toBeUndefined();
+    expect(bound.result).toEqual({ display: JSON.parse(JSON.stringify(withBindings.display)) });
+    const unbound = await helper.request("helper/workflow/format", {
+      kind: "display",
+      scriptText: MODEL_SCRIPT,
+    });
+    expect(unbound.result).toEqual({ display: null });
+    helper.close();
+    await helper.done;
+  });
+
+  // ocr finding (MEDIUM): an unknown run must reach Node's own not-found failure. The helper answers its message as text.
+  it("answers an unknown run with Node's not-found text", async () => {
+    const entry = nodeEntry(GET_WORKFLOW_RUN_TOOL_NAME);
+    const expected = (await entry.handler(
+      { run_id: "dwfrun-gone" },
+      {
+        workingDirectory: FORMAT_WORKDIR,
+        dynamicWorkflowRunPort: { getRunDetail: async () => undefined },
+      },
+    )) as { result: boolean; message: string };
+    expect(expected.result).toBe(false);
+    const helper = await startHelper();
+    const reply = await helper.request("helper/workflow/format", {
+      kind: "runDetail",
+      runId: "dwfrun-gone",
+      detail: null,
+      workingDirectory: FORMAT_WORKDIR,
+    });
+    expect(reply.error).toBeUndefined();
+    expect(reply.result).toEqual({ text: expected.message });
+    helper.close();
+    await helper.done;
+  });
+
+  // ocr finding (LOW): members Node dereferences unconditionally are pinned, so drift is -32602, not a TypeError.
+  it("refuses a run list whose runs are not an array, and a run detail without usage, as -32602", async () => {
+    const helper = await startHelper();
+    const badList = await helper.request("helper/workflow/format", {
+      kind: "runList",
+      input: {},
+      listed: { runs: "none" },
+      workingDirectory: FORMAT_WORKDIR,
+    });
+    expect(badList.error?.code).toBe(-32602);
+    const { usage: _usage, ...withoutUsage } = RUN_DETAIL;
+    void _usage;
+    const badDetail = await helper.request("helper/workflow/format", {
+      kind: "runDetail",
+      runId: "dwfrun-running",
+      detail: withoutUsage,
+      workingDirectory: FORMAT_WORKDIR,
+    });
+    expect(badDetail.error?.code).toBe(-32602);
+    helper.close();
+    await helper.done;
+  });
 });

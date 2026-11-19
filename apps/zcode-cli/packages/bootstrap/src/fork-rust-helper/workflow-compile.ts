@@ -2,6 +2,7 @@ import {
   CREATE_WORKFLOW_TOOL_NAME,
   GET_WORKFLOW_RUN_TOOL_NAME,
   LIST_WORKFLOW_RUNS_TOOL_NAME,
+  ListWorkflowRunsInputSchema,
 } from "@zcode/contracts";
 import { builtInTools } from "@zcode/core";
 import { analyzeWorkflowScript } from "@zcode/dynamic-workflow";
@@ -62,6 +63,17 @@ function nodeTool(name: string): NodeToolEntry {
   return entry;
 }
 
+/** A handler's failure (`result: false` with an error code and message), as opposed to its output. */
+function isFailure(output: unknown): output is { message: string } {
+  return (
+    typeof output === "object" &&
+    output !== null &&
+    (output as { result?: unknown }).result === false &&
+    typeof (output as { message?: unknown }).message === "string" &&
+    "errorCode" in output
+  );
+}
+
 /** The text Node's formatter gives for a handler output. */
 function formatted(entry: NodeToolEntry, output: unknown): string {
   const text = entry.formatModelContent?.(output);
@@ -80,8 +92,10 @@ export async function formatWorkflowForRust(raw: unknown) {
     case "analysis":
       return { analysis: analyzeWorkflowScript(params.scriptText) };
     case "display": {
+      // Node's prepareApproval reads the input resolveInput produces, where `model_bindings` sits.
       const decision = nodeTool(CREATE_WORKFLOW_TOOL_NAME).prepareApproval?.({
         script: params.scriptText,
+        ...(params.modelBindings === undefined ? {} : { model_bindings: params.modelBindings }),
       });
       return {
         display:
@@ -89,9 +103,11 @@ export async function formatWorkflowForRust(raw: unknown) {
       };
     }
     case "runList": {
+      // Node's own input schema, parsed here so a bad query is -32602 instead of a ZodError from inside the handler.
+      const input = parseParams(ListWorkflowRunsInputSchema, params.input);
       const entry = nodeTool(LIST_WORKFLOW_RUNS_TOOL_NAME);
       const port = { listRuns: async () => params.listed };
-      const output = await entry.handler(params.input, {
+      const output = await entry.handler(input, {
         workingDirectory: params.workingDirectory,
         dynamicWorkflowRunPort: port,
       });
@@ -99,11 +115,14 @@ export async function formatWorkflowForRust(raw: unknown) {
     }
     case "runDetail": {
       const entry = nodeTool(GET_WORKFLOW_RUN_TOOL_NAME);
-      const port = { getRunDetail: async () => params.detail };
+      const detail = params.detail ?? undefined;
+      const port = { getRunDetail: async () => detail };
       const output = await entry.handler(
         { run_id: params.runId },
         { workingDirectory: params.workingDirectory, dynamicWorkflowRunPort: port },
       );
+      // An unknown run is Node's failure (not an output): its message is the model's text.
+      if (isFailure(output)) return { text: output.message };
       return { text: formatted(entry, output) };
     }
   }

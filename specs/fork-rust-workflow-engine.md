@@ -1677,9 +1677,9 @@ Status: built on branch `feat/rust-workflow-helper-format-w7-2`, cut from `origi
 **Helper wire** (`helper/workflow/format`, `workflow-protocol.ts`, a discriminated union on `kind`; any other kind is -32602):
 
 - `analysis` (W4, unchanged): `{scriptText}` returns `{analysis}`.
-- `display` (W7-2): `{scriptText}` returns `{display}`, the CreateWorkflow window, or `{display: null}` when Node opens no window (the script does not analyze, or a model is unbound).
-- `runList` (W7-2): `{input, listed, workingDirectory}` returns `{text}`. `input` is the ListWorkflowRuns input, `listed` the run port's list result, and `workingDirectory` the session cwd.
-- `runDetail` (W7-2): `{runId, detail, workingDirectory}` returns `{text}`. `detail` is the run port's `DynamicWorkflowRunDetail`.
+- `display` (W7-2): `{scriptText, modelBindings?}` returns `{display}`, the CreateWorkflow window, or `{display: null}` when Node opens no window (the script does not analyze, or a script that names a model has no binding for it). `modelBindings` is the script's model table as `resolveInput` writes it (`model_bindings`); Node opens the window for a model-naming script only with it.
+- `runList` (W7-2): `{input, listed, workingDirectory}` returns `{text}`. `input` is parsed by Node's ListWorkflowRuns input schema (a bad query is -32602). `listed` must have a `runs` array; `truncated` is optional.
+- `runDetail` (W7-2): `{runId, detail, workingDirectory}` returns `{text}`. `detail` is the run port's `DynamicWorkflowRunDetail`, or `null` for an unknown run; the text is then Node's not-found failure message. The members Node dereferences without a guard are pinned (`runId`, `label`, `labelSource`, `status`, `ownedByThisSession`, `createdAt`, `updatedAt`, `usage`, `actors`, `logTail`, `subagents`, `health`), so drift is -32602.
 
 The helper is stateless: it reads no storage, session or journal.
 
@@ -1694,7 +1694,9 @@ The helper is stateless: it reads no storage, session or journal.
 
 **Gap.** The client is not round-tripped through `NodeHelper::forward` with the fake helper. The fake helper rig is private to `node_helper_tests.rs`, which is outside W7-2's file list. The round trip belongs with the run service (W7 proper) or in a follow-up that may touch that file.
 
-**Errors.** A `runList` or `runDetail` input that Node's handler cannot parse is an internal error from the handler, not -32602, because the handler parses its own input. Only the helper's params schema answers -32602.
+**Errors.** The `runList` input is parsed with Node's own schema before the handler runs, so a bad query is -32602. Drift in `listed` or `detail` is -32602 from the params schema, so the formatter never sees it.
+
+**ocr review round 1 on PR #571 (fixed).** HIGH: `display` dropped the model bindings, so every script that names a model got no window; now `modelBindings` is threaded through. MEDIUM: an unknown run was refused by the schema, so Node's not-found text was unreachable; `detail` is now nullable. LOW: unguarded members are pinned, so drift is -32602 and not a TypeError.
 
 **Left for the run service (W7 proper).** The Rust run service must build `listed` from its list port and `detail` from its detail port, and call these methods on the GetWorkflowRun and ListWorkflowRuns paths. Until it does, the window and the text have no caller.
 

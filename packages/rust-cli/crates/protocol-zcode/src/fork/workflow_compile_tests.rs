@@ -139,11 +139,43 @@ fn the_run_list_request_carries_the_query_the_listed_rows_and_the_cwd() {
     );
 }
 
+// ocr findings on PR #571: the window needs the script's model bindings, and an unknown run sends `detail: null`.
+
+#[test]
+fn the_display_request_carries_the_model_bindings_only_when_given() {
+    assert_eq!(
+        display_params("return 1;", None),
+        json!({"kind": "display", "scriptText": "return 1;"})
+    );
+    let bindings = serde_json::Map::from_iter([("gpt-5".to_owned(), json!("zhipu/gpt-5"))]);
+    assert_eq!(
+        display_params("return 1;", Some(&bindings)),
+        json!({
+            "kind": "display",
+            "scriptText": "return 1;",
+            "modelBindings": {"gpt-5": "zhipu/gpt-5"},
+        })
+    );
+}
+
+#[test]
+fn an_unknown_run_is_sent_as_a_null_detail() {
+    assert_eq!(
+        run_detail_params("dwfrun-gone", None, "/work/project"),
+        json!({
+            "kind": "runDetail",
+            "runId": "dwfrun-gone",
+            "detail": null,
+            "workingDirectory": "/work/project",
+        })
+    );
+}
+
 #[test]
 fn the_run_detail_request_carries_the_run_id_the_detail_and_the_cwd() {
     let detail = json!({"runId": "dwfrun-1", "status": "running"});
     assert_eq!(
-        run_detail_params("dwfrun-1", &detail, "/work/project"),
+        run_detail_params("dwfrun-1", Some(&detail), "/work/project"),
         json!({
             "kind": "runDetail",
             "runId": "dwfrun-1",

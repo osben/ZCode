@@ -28,14 +28,51 @@ export const workflowCompileParamsSchema = z
  * - `runDetail` (W7-2): the GetWorkflowRun text. `detail` is the run port's detail; the summary is built by Node's handler.
  * Any other kind is refused with -32602.
  */
+/**
+ * The run port's list result, as Node's ListWorkflowRuns handler reads it: `runs` is mapped unconditionally, so it must be
+ * an array. Other members pass through to Node unchanged (loose), so Node sees the same data Rust sent.
+ */
+const listedSchema = z.looseObject({
+  runs: z.array(z.record(z.string(), z.unknown())),
+  truncated: z.boolean().optional(),
+});
+
+/**
+ * The run port's detail, as Node's GetWorkflowRun handler reads it. Each member listed here is dereferenced without a guard
+ * (`usage.*`, `.map` over `actors` and `logTail`, `subagents`, `health`), so drift is refused as -32602 rather than
+ * surfacing as a TypeError. Other members pass through unchanged (loose).
+ */
+const detailSchema = z.looseObject({
+  runId: z.string(),
+  label: z.string(),
+  labelSource: z.string(),
+  status: z.string(),
+  ownedByThisSession: z.boolean(),
+  createdAt: z.number(),
+  updatedAt: z.number(),
+  usage: z.record(z.string(), z.unknown()),
+  actors: z.array(z.record(z.string(), z.unknown())),
+  logTail: z.array(z.record(z.string(), z.unknown())),
+  subagents: z.array(z.record(z.string(), z.unknown())),
+  health: z.record(z.string(), z.unknown()),
+});
+
 export const workflowFormatParamsSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("analysis"), scriptText: z.string() }).strict(),
-  z.object({ kind: z.literal("display"), scriptText: z.string() }).strict(),
+  z
+    .object({
+      kind: z.literal("display"),
+      scriptText: z.string(),
+      // Node's resolveInput writes `model_bindings` before the window is decided; a script that names a model opens its
+      // window only when the bindings are given.
+      modelBindings: z.record(z.string(), z.string()).optional(),
+    })
+    .strict(),
   z
     .object({
       kind: z.literal("runList"),
       input: z.record(z.string(), z.unknown()),
-      listed: z.record(z.string(), z.unknown()),
+      listed: listedSchema,
       workingDirectory: z.string().min(1),
     })
     .strict(),
@@ -43,7 +80,8 @@ export const workflowFormatParamsSchema = z.discriminatedUnion("kind", [
     .object({
       kind: z.literal("runDetail"),
       runId: z.string().trim().min(1),
-      detail: z.record(z.string(), z.unknown()),
+      // `null` is an unknown run: Node's not-found failure is then the answer.
+      detail: detailSchema.nullable(),
       workingDirectory: z.string().min(1),
     })
     .strict(),
