@@ -409,18 +409,15 @@ fn content_size_and_unsupported_failures_stop_as_invalid_requests() {
 // Node retries an overload, so this retries too.
 #[test]
 fn a_fallback_trigger_retries_as_a_transient_overload() {
+    let text = |s: &str| s.to_owned();
     let error = ModelError::FallbackTriggered {
-        original_model: m_str("a"),
-        fallback_model: m_str("b"),
+        original_model: text("a"),
+        fallback_model: text("b"),
     };
     assert_eq!(
         model_failure_policy(&error, 1),
         WorkflowModelFailurePolicy::Retry
     );
-}
-
-fn m_str(text: &str) -> String {
-    text.to_owned()
 }
 
 // ocr review, finding 8: a provider reason outside the known vocabulary counts as unknown, so an unrecognized code with
@@ -444,4 +441,65 @@ fn an_unknown_provider_reason_is_read_as_unknown_for_the_streak() {
         model_failure_policy(&error, UNRECOGNIZED_CODE_MAX_CONSECUTIVE),
         stop(ProviderStopKind::Other)
     );
+}
+
+// ocr delta (762d1c4f0), finding 1: a provider that names a content or size rejection with its own reason stops as
+// the invalid_request row, as the typed variants do. Before the fix these reasons were known but had no row, so they
+// retried forever and never counted toward the streak.
+#[test]
+fn a_provider_reason_of_content_blocked_or_request_too_large_stops_as_invalid_request() {
+    for reason in ["content_blocked", "request_too_large"] {
+        let error = ModelError::Provider {
+            provider: Box::new(ProviderFailure::new("1301", None, false, reason, "zhipu")),
+            error: Box::new(ModelError::Protocol {
+                message: "x".into(),
+            }),
+        };
+        assert_eq!(
+            model_failure_policy(&error, 1),
+            stop(ProviderStopKind::InvalidRequest),
+            "{reason}"
+        );
+    }
+}
+
+// ocr delta, finding 2 (guard): every reason a variant can produce is a known provider reason, so the provider path
+// reads each one the same way the variant does. A variant added without a known reason fails here.
+#[test]
+fn every_variant_reason_is_a_known_provider_reason() {
+    let text = |s: &str| s.to_owned();
+    let variants = [
+        ModelError::Cancelled,
+        ModelError::RateLimited {
+            message: text("x"),
+            retry_after_ms: None,
+        },
+        ModelError::Overloaded { message: text("x") },
+        ModelError::PromptTooLong { message: text("x") },
+        ModelError::Authentication { message: text("x") },
+        ModelError::InvalidRequest { message: text("x") },
+        ModelError::Network { message: text("x") },
+        ModelError::Server {
+            status: 500,
+            message: text("x"),
+        },
+        ModelError::Protocol { message: text("x") },
+        ModelError::FallbackTriggered {
+            original_model: text("a"),
+            fallback_model: text("b"),
+        },
+        ModelError::Unsupported { what: text("x") },
+        ModelError::StreamIdle { idle_ms: 1 },
+        ModelError::QuotaExhausted { message: text("x") },
+        ModelError::ContentBlocked { message: text("x") },
+        ModelError::RequestTooLarge { message: text("x") },
+        ModelError::CurrentAttachmentsTooLarge,
+    ];
+    for error in variants {
+        let reason = facts_of(&error).reason;
+        assert!(
+            KNOWN_PROVIDER_REASONS.contains(&reason),
+            "{error:?} reads as {reason}, which is not a known provider reason"
+        );
+    }
 }

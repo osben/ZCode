@@ -141,6 +141,13 @@ const REASON_PROVIDER_NOT_CONFIGURED: &str = "provider_not_configured";
 const REASON_CONTEXT_EXCEEDED: &str = "context_exceeded";
 const REASON_INVALID_REQUEST: &str = "invalid_request";
 const REASON_UNKNOWN: &str = "unknown";
+const REASON_RATE_LIMITED: &str = "rate_limited";
+const REASON_PROVIDER_OVERLOADED: &str = "provider_overloaded";
+const REASON_NETWORK_ERROR: &str = "network_error";
+const REASON_SERVER_ERROR: &str = "server_error";
+const REASON_STREAM_IDLE_TIMEOUT: &str = "stream_idle_timeout";
+const REASON_CONTENT_BLOCKED: &str = "content_blocked";
+const REASON_REQUEST_TOO_LARGE: &str = "request_too_large";
 /// Rust-only: `ModelError::QuotaExhausted` with no provider business code. Node always names a quota code.
 const REASON_QUOTA_EXHAUSTED: &str = "quota_exhausted";
 const CODE_MODEL_NOT_FOUND: &str = "model_not_found";
@@ -161,8 +168,14 @@ pub fn facts_of(error: &ModelError) -> FailureFacts<'_> {
     if let Some(provider) = error.provider()
         && !provider.reason.is_empty()
     {
-        let reason = if KNOWN_PROVIDER_REASONS.contains(&provider.reason.as_str()) {
-            provider.reason.as_str()
+        let claimed = provider.reason.as_str();
+        let reason = if PROVIDER_REASONS_AS_INVALID_REQUEST.contains(&claimed) {
+            REASON_INVALID_REQUEST
+        } else if let Some(known) = KNOWN_PROVIDER_REASONS
+            .iter()
+            .find(|known| **known == claimed)
+        {
+            *known
         } else {
             REASON_UNKNOWN
         };
@@ -183,14 +196,14 @@ pub fn facts_of(error: &ModelError) -> FailureFacts<'_> {
 fn variant_reason(error: &ModelError) -> &'static str {
     match error {
         ModelError::Cancelled => REASON_CANCELLED,
-        ModelError::RateLimited { .. } => "rate_limited",
-        ModelError::Overloaded { .. } => "provider_overloaded",
+        ModelError::RateLimited { .. } => REASON_RATE_LIMITED,
+        ModelError::Overloaded { .. } => REASON_PROVIDER_OVERLOADED,
         ModelError::PromptTooLong { .. } => REASON_CONTEXT_EXCEEDED,
         ModelError::Authentication { .. } => REASON_AUTH_FAILED,
         ModelError::InvalidRequest { .. } => REASON_INVALID_REQUEST,
-        ModelError::Network { .. } => "network_error",
-        ModelError::Server { .. } => "server_error",
-        ModelError::StreamIdle { .. } => "stream_idle_timeout",
+        ModelError::Network { .. } => REASON_NETWORK_ERROR,
+        ModelError::Server { .. } => REASON_SERVER_ERROR,
+        ModelError::StreamIdle { .. } => REASON_STREAM_IDLE_TIMEOUT,
         ModelError::QuotaExhausted { .. } => REASON_QUOTA_EXHAUSTED,
         // Deterministic rejections of the request. Node's equivalent wire failures are a 400 or 422, which its classifier
         // maps to `invalid_request` (a stop row). Node has no content-filter error: `sensitive` is a finish reason.
@@ -208,6 +221,9 @@ fn variant_reason(error: &ModelError) -> &'static str {
 
 /// The provider reasons the table knows. Any other reason from a provider is read as `unknown`, so an unrecognized code
 /// with such a reason still counts toward the streak (ocr review, finding 8).
+/// Every reason a variant can produce (see `variant_reason`) is in this list, so the provider path and the variant path
+/// read the same reason the same way. `content_blocked` and `request_too_large` are not here: a provider that reports
+/// them is read as `invalid_request`, the row the typed variants stop on (see `facts_of`).
 const KNOWN_PROVIDER_REASONS: &[&str] = &[
     REASON_CANCELLED,
     REASON_AUTH_FAILED,
@@ -216,17 +232,19 @@ const KNOWN_PROVIDER_REASONS: &[&str] = &[
     REASON_INVALID_REQUEST,
     REASON_UNKNOWN,
     REASON_QUOTA_EXHAUSTED,
-    "rate_limited",
-    "provider_overloaded",
-    "server_error",
-    "network_error",
+    REASON_RATE_LIMITED,
+    REASON_PROVIDER_OVERLOADED,
+    REASON_SERVER_ERROR,
+    REASON_NETWORK_ERROR,
+    REASON_STREAM_IDLE_TIMEOUT,
     "timeout",
-    "stream_idle_timeout",
     "tls_error",
     "proxy_error",
-    "content_blocked",
-    "request_too_large",
 ];
+
+/// Provider reasons that are deterministic rejections of the request, read as `invalid_request` (ocr delta, finding 1).
+const PROVIDER_REASONS_AS_INVALID_REQUEST: &[&str] =
+    &[REASON_CONTENT_BLOCKED, REASON_REQUEST_TOO_LARGE];
 
 /// The policy for a model error, with `streak` as in [`resolve_failure_policy`].
 pub fn model_failure_policy(error: &ModelError, streak: u32) -> WorkflowModelFailurePolicy {

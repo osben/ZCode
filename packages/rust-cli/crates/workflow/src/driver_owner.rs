@@ -827,7 +827,10 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
                 &ask.instance,
                 WorkflowError::new(
                     ErrorCode::DriverError,
-                    "the transient model failure could not be redriven: the redrive clock refused the job",
+                    format!(
+                        "the transient model failure ({}) could not be redriven: the redrive clock refused the job",
+                        facts_of(model).reason
+                    ),
                 ),
             );
             return self.after_engine(result);
@@ -924,14 +927,12 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
     }
 
     /// Test hook (ocr review): the tool and world-tool counts the owner last reported for the session's ask.
-    /// RED STAGE: not recorded yet.
     #[cfg(test)]
     pub(crate) fn reported_stats(&self, session: &str) -> Option<(f64, f64)> {
         self.active.get(session).map(|ask| ask.stats_last)
     }
 
     /// Test hook (ocr review): removes the session's interaction description, as a session that lost it would.
-    /// RED STAGE: a no-op.
     #[cfg(test)]
     pub(crate) fn forget_interaction_for_test(&mut self, session: &str) {
         self.engine.driver.interaction_of_session.remove(session);

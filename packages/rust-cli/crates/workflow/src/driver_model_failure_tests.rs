@@ -348,6 +348,33 @@ fn a_redrive_the_clock_cannot_schedule_fails_the_ask_with_driver_error() {
     );
     let error = outcomes[0].result.as_ref().expect_err("the ask fails");
     assert_eq!(error.code, ErrorCode::DriverError);
+    // ocr delta, finding 5: the message names the underlying model failure's reason.
+    assert!(error.message.contains("network_error"), "{}", error.message);
+}
+
+// ocr delta, finding 1: a provider that reports a content or size rejection under its own reason stops the run as
+// invalid_request, the same as the typed variants (no retry loop).
+#[test]
+fn a_provider_reason_of_content_blocked_or_request_too_large_stops_the_run_as_invalid_request() {
+    for reason in ["content_blocked", "request_too_large"] {
+        let (mut owner, _sessions, _actor, session) = running_ask();
+        let (_mailbox, _clock) = attach(&mut owner, 0.5);
+        let error = ModelError::Provider {
+            provider: Box::new(ProviderFailure::new("1301", None, false, reason, "zhipu")),
+            error: Box::new(ModelError::Protocol {
+                message: "x".into(),
+            }),
+        };
+        owner
+            .turn_failed(&session, &TurnFailure::model("content rejected", error))
+            .expect("the failure is handled");
+        let (stop_reason, details) = settled_stop(&owner);
+        assert_eq!(stop_reason, StopReason::Provider, "{reason}");
+        assert_eq!(
+            details["providerStop"]["kind"], "invalid_request",
+            "{reason}"
+        );
+    }
 }
 
 // ocr review, finding 3: a successful turn ends the consecutive run of unrecognized codes (Node's streak is per

@@ -124,7 +124,7 @@ pub fn provider_stop_error(
 
 /// Node `parseQuotaResetAt` (`workflow-model-failure-policy.ts`): the reset time in a quota failure's provider text
 /// ("您的限额将在 2026-10-15 18:50:42 重置"), read as Beijing time. None when the text has no reset word, no time, or a
-/// time outside the plausible window. RED STAGE (ocr review): not implemented.
+/// time outside the plausible window.
 pub fn parse_quota_reset_at(message: &str, now_ms: u64) -> Option<u64> {
     let mentions_reset = message.contains("重置") || message.to_ascii_lowercase().contains("reset");
     if !mentions_reset {
