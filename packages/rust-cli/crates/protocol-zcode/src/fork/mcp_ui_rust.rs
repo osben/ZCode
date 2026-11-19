@@ -16,6 +16,7 @@ use rust_cli_base::sync::LockUnpoisoned;
 use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::mcp_app::{
     McpAppConnection, McpAppError, McpAppHost, McpAppOwner, McpAppSubscription,
+    McpResourceCallback, McpResourceNotice,
 };
 use rust_cli_protocol_core::rpc::RpcError;
 use serde_json::{Map, Value, json};
@@ -50,6 +51,8 @@ pub(crate) const METHODS: &[&str] = &[
     "mcp/readResource",
     "mcp/uiSampling",
     "mcp/uiCancelSampling",
+    "mcp/uiSubscribeResource",
+    "mcp/uiUnsubscribeResource",
 ];
 
 /// Node `MCP_APPS_UI_READ_RESOURCE_MIME_ALLOWLIST`: an entry ending in `/` matches by prefix, otherwise exactly.
@@ -257,6 +260,8 @@ struct Panel {
     logical: String,
     /// Drops the connection-change subscription when the lease ends.
     subscription: McpAppSubscription,
+    /// The workspace the lease is bound to (the scope its notices are validated in, F7 PR 4).
+    workspace: String,
 }
 
 /// The Rust owner of the panels of Rust-run servers.
@@ -271,6 +276,10 @@ pub(crate) struct RustMcpUi {
     /// The app-provided tools of the panels (F7 PR 3): the registry and the mailbox of model calls.
     pub(super) tools: Mutex<Mailbox>,
     pub(super) timing: Timing,
+    /// The host the panels are served by, bound by each route (F7 PR 4): a lease close unsubscribes through it.
+    host: Mutex<Option<Weak<dyn McpAppHost>>>,
+    /// The resource-notice tap of each (session, server) that has subscriptions, by [`tap_key`] (F7 PR 4).
+    taps: Mutex<BTreeMap<String, McpAppSubscription>>,
 }
 
 pub(super) fn random_hex() -> String {
@@ -293,7 +302,61 @@ impl RustMcpUi {
             sampling: Sampling::new(),
             tools: Mutex::new(Mailbox::default()),
             timing,
+            host: Mutex::new(None),
+            taps: Mutex::new(BTreeMap::new()),
         })
+    }
+
+    /// Binds the host the panels are served by (the route does so on each request, so a close reaches the same host).
+    pub(crate) fn bind_host(&self, host: &Arc<dyn McpAppHost>) {
+        *self.host.lock_unpoisoned() = Some(Arc::downgrade(host));
+    }
+
+    fn host(&self) -> Option<Arc<dyn McpAppHost>> {
+        self.host.lock_unpoisoned().as_ref()?.upgrade()
+    }
+
+    /// Node `unsubscribeMcpResourcesForUi(prefix)` through the bound host. The host's server requests run in the background.
+    fn unsubscribe_prefix(&self, session: &str, prefix: &str) {
+        if let Some(host) = self.host() {
+            host.unsubscribe_prefix(&SessionId::new(session), prefix);
+        }
+    }
+
+    /// Drops the notice tap of (session, server) once no panel of that session and server is left. The tap is returned
+    /// so the caller drops it after its own locks are released.
+    fn prune_tap(&self, session: &str, server: &str) -> Option<McpAppSubscription> {
+        let still_open = self
+            .panels
+            .lock_unpoisoned()
+            .values()
+            .any(|panel| panel.session == session && panel.server_name == server);
+        if still_open {
+            return None;
+        }
+        self.taps
+            .lock_unpoisoned()
+            .remove(&tap_key(session, server))
+    }
+
+    /// Installs the notice tap of (session, server), once. Its callback is this owner's, so a notice goes to the
+    /// session's panels only.
+    fn ensure_tap(&self, host: &dyn McpAppHost, session: &SessionId, server: &str) {
+        let key = tap_key(session.as_str(), server);
+        if self.taps.lock_unpoisoned().contains_key(&key) {
+            return;
+        }
+        let me = self.me.clone();
+        let session_key = session.as_str().to_owned();
+        let server_key = server.to_owned();
+        let callback: McpResourceCallback = Arc::new(move |notice| {
+            if let Some(ui) = me.upgrade() {
+                ui.resource_notice(&session_key, &server_key, notice);
+            }
+        });
+        if let Some(subscription) = host.on_resource_notice(session, server, callback) {
+            self.taps.lock_unpoisoned().insert(key, subscription);
+        }
     }
 
     /// `pluginUi.*` deltas go to the session stream, in the protocol server's pump order (Node's live-only events).
@@ -312,6 +375,13 @@ impl RustMcpUi {
             let panel = self.panels.lock_unpoisoned().remove(&lease.token);
             if let Some(panel) = panel {
                 drop(panel.subscription);
+                // Node's abort listener: the lease's resource subscriptions go (F7 PR 4).
+                self.unsubscribe_prefix(
+                    &panel.session,
+                    &format!("{}|{}|", panel.session, lease.token),
+                );
+                let tap = self.prune_tap(&panel.session, &panel.server_name);
+                drop(tap);
                 let delta = json!({
                     "op": "pluginUi.instanceClosed",
                     "pluginId": panel.plugin_id,
@@ -338,6 +408,154 @@ impl RustMcpUi {
         let leases = self.instances.close_session(session);
         self.finish_closed(leases);
         self.clear_session_tools(session);
+        // Node `session-residency.ts`: the session's subscriptions go with it, and so do its notice taps.
+        self.unsubscribe_prefix(session, &format!("{session}|"));
+        let prefix = format!("{session}\u{0}");
+        let taps: Vec<McpAppSubscription> = {
+            let mut taps = self.taps.lock_unpoisoned();
+            let keys: Vec<String> = taps
+                .keys()
+                .filter(|key| key.starts_with(&prefix))
+                .cloned()
+                .collect();
+            keys.iter().filter_map(|key| taps.remove(key)).collect()
+        };
+        drop(taps);
+    }
+
+    /// A resource notice of `server` for the subscribers of `session` (Node `notifications.ts`): each key must name a
+    /// panel of this session and generation, whose lease still validates against the server's connection. A lease that
+    /// does not validate is closed (Node's validate closes it) and gets no delta. The delta names the uri (an update)
+    /// or nothing (a list change); its plugin is the panel's.
+    fn resource_notice(&self, session: &str, server: &str, notice: McpResourceNotice) {
+        let Some(host) = self.host() else {
+            return;
+        };
+        let session_id = SessionId::new(session);
+        let (uri, keys) = match notice {
+            McpResourceNotice::Updated { uri, subscribers } => (Some(uri), subscribers),
+            McpResourceNotice::ListChanged { subscribers } => (None, subscribers),
+        };
+        let source = host
+            .connection(&session_id, server)
+            .as_ref()
+            .map(to_connection);
+        let mut subscribers = Vec::new();
+        let mut closed = Vec::new();
+        let mut plugin_id: Option<String> = None;
+        for key in keys {
+            let Some((key_session, scope, generation)) = parse_subscriber_key(&key) else {
+                continue;
+            };
+            if key_session != session {
+                continue;
+            }
+            let panel = {
+                let panels = self.panels.lock_unpoisoned();
+                panels
+                    .get(scope)
+                    .filter(|panel| {
+                        panel.session == session
+                            && panel.server_name == server
+                            && panel.lease.generation == generation
+                    })
+                    .map(|panel| {
+                        (
+                            panel.lease.clone(),
+                            panel.workspace.clone(),
+                            panel.plugin_id.clone(),
+                        )
+                    })
+            };
+            let Some((lease, workspace, plugin)) = panel else {
+                continue;
+            };
+            let scope_of = Scope {
+                workspace: &workspace,
+                session_id: session,
+                plugin_id: &plugin,
+                server_name: server,
+            };
+            match self
+                .instances
+                .validate_closing(&lease, scope_of, source.as_ref())
+            {
+                Ok(_) => {
+                    plugin_id.get_or_insert_with(|| plugin.clone());
+                    subscribers.push(json!({
+                        "scopeId": lease.token,
+                        "generation": lease.generation,
+                        "instance": lease_json(&lease),
+                    }));
+                }
+                Err(refused) => closed.extend(refused.closed),
+            }
+        }
+        self.finish_closed(closed);
+        if subscribers.is_empty() {
+            return;
+        }
+        let plugin_id = plugin_id.unwrap_or_default();
+        let delta = match uri {
+            Some(uri) => json!({
+                "op": "pluginUi.resourceUpdated",
+                "pluginId": plugin_id,
+                "serverName": server,
+                "uri": uri,
+                "subscribers": subscribers,
+            }),
+            None => json!({
+                "op": "pluginUi.resourceListChanged",
+                "pluginId": plugin_id,
+                "serverName": server,
+                "subscribers": subscribers,
+            }),
+        };
+        self.deliver(session, delta);
+    }
+
+    /// Node `subscribeMcpUiResource`: the request's own binding (scope and generation name its instance), then the
+    /// server's registry through the host. The session's notice tap is installed with the first subscription.
+    async fn subscribe(
+        &self,
+        host: &dyn McpAppHost,
+        session: &SessionId,
+        params: &Value,
+    ) -> Result<Value, RpcError> {
+        let guard = Guard::new(params)?;
+        let uri = text(params, "uri")?;
+        let subscriber = subscriber_key(session, params)?;
+        let expected = host
+            .wait_connection(session, &guard.server, &CancellationToken::new())
+            .await
+            .ok_or_else(|| RpcError::new(-32001, "MCP App connection is unavailable"))?;
+        host.subscribe(
+            session,
+            &guard.server,
+            &expected,
+            uri,
+            &subscriber,
+            &CancellationToken::new(),
+        )
+        .await
+        .map_err(app_error)?;
+        self.ensure_tap(host, session, &guard.server);
+        Ok(json!({}))
+    }
+
+    /// Node `unsubscribeMcpUiResource`: the same binding, then the host drops the subscriber (its errors are not reported).
+    async fn unsubscribe(
+        &self,
+        host: &dyn McpAppHost,
+        session: &SessionId,
+        params: &Value,
+    ) -> Result<Value, RpcError> {
+        let guard = Guard::new(params)?;
+        let uri = text(params, "uri")?;
+        let subscriber = subscriber_key(session, params)?;
+        host.unsubscribe(session, &guard.server, uri, &subscriber)
+            .await;
+        Ok(json!({}))
     }
 
     /// Routes one of [`METHODS`] for a session and a Rust-run server.
@@ -389,6 +607,8 @@ impl RustMcpUi {
                 .await
             }
             "mcp/readResource" => self.read_resource(host, session, params).await,
+            "mcp/uiSubscribeResource" => self.subscribe(host, session, params).await,
+            "mcp/uiUnsubscribeResource" => self.unsubscribe(host, session, params).await,
             other => Err(RpcError::internal(format!(
                 "unhandled MCP App method {other}"
             ))),
@@ -471,6 +691,7 @@ impl RustMcpUi {
                         server_name: server.clone(),
                         logical,
                         subscription,
+                        workspace: guard.workspace.clone(),
                     },
                 );
             }
@@ -881,6 +1102,7 @@ pub(crate) async fn route(
     if host.owner(&session_id, name)? != McpAppOwner::Rust {
         return None;
     }
+    ui.bind_host(host);
     if !owns(server, &session_id).await {
         // Node: an unregister of a session that is gone removes nothing (`appToolsProtocol.ts`).
         if method == "mcp/uiUnregisterAppTools" {
@@ -903,7 +1125,43 @@ fn app_error(error: McpAppError) -> RpcError {
             Some(code) => RpcError::new(code, message),
             None => RpcError::internal(message),
         },
+        // Node `McpUiNotSupportedError`: -32001 with the reason, the server and the operation as data.
+        McpAppError::NotSupported { server, operation } => RpcError::new(
+            -32001,
+            format!("MCP server \"{server}\" does not support {operation}"),
+        )
+        .with_data(
+            json!({"reason": "not_supported", "serverName": server, "operation": operation}),
+        ),
     }
+}
+
+/// The subscriber key of a request: session, scope and generation (Node `buildMcpUiSubscriberKey`). The request names its
+/// instance, and its scope and generation must be that instance's (Node's binding check, which reads no lease state).
+fn subscriber_key(session: &SessionId, params: &Value) -> Result<String, RpcError> {
+    let lease = lease_of(params)?;
+    let scope = text(params, "scopeId")?;
+    let generation = params.get("generation").and_then(Value::as_u64);
+    if scope != lease.token || generation != Some(lease.generation) {
+        return Err(RpcError::internal("Invalid MCP App subscription binding"));
+    }
+    Ok(format!("{}|{scope}|{}", session.as_str(), lease.generation))
+}
+
+/// Node `parseMcpUiSubscriberKey`: the session, the scope and the generation of a key; `None` when it is not one.
+fn parse_subscriber_key(key: &str) -> Option<(&str, &str, u64)> {
+    let first = key.find('|')?;
+    let last = key.rfind('|')?;
+    if first == 0 || last <= first {
+        return None;
+    }
+    let generation = key[last + 1..].parse::<u64>().ok()?;
+    Some((&key[..first], &key[first + 1..last], generation))
+}
+
+/// The key of a session's notice tap for one server.
+fn tap_key(session: &str, server: &str) -> String {
+    format!("{session}\u{0}{server}")
 }
 
 fn call_key(session: &str, token: &str, call_id: &str) -> String {
@@ -1046,3 +1304,8 @@ mod tests;
 #[cfg(test)]
 #[path = "mcp_ui_route_tests.rs"]
 mod route_tests;
+
+/// Fork (F7 PR 4): the shared resource-subscription fixture against this owner.
+#[cfg(test)]
+#[path = "mcp_ui_rust/resource_conformance_tests.rs"]
+mod resource_conformance_tests;

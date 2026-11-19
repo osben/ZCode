@@ -15,10 +15,16 @@ use tokio::sync::watch;
 
 use super::rpc::Notice;
 
+/// Fork (F7 PR 4): the most resource notices that wait at once. A notice of a uri that already waits is merged, so the
+/// cap only bounds how many distinct uris a server can name before the connection task takes them.
+const RESOURCE_NOTICE_CAP: usize = 1024;
+
 #[derive(Default)]
 struct Pending {
     /// 还没取走的 `list_changed` 种类，按第一次到达的顺序。
     changed: Vec<String>,
+    /// Fork (F7 PR 4): the resource notices that wait, in the order they first arrived.
+    resources: Vec<Notice>,
     closed: Option<Notice>,
 }
 
@@ -60,6 +66,13 @@ impl NoticeSender {
                     }
                 }
                 closed @ Notice::Closed { .. } => pending.closed = Some(closed),
+                resource @ (Notice::ResourceUpdated(_) | Notice::ResourceListChanged) => {
+                    if !pending.resources.contains(&resource)
+                        && pending.resources.len() < RESOURCE_NOTICE_CAP
+                    {
+                        pending.resources.push(resource);
+                    }
+                }
             }
         }
         self.wake.send_replace(());
@@ -69,10 +82,12 @@ impl NoticeSender {
 impl NoticeReceiver {
     fn take(&self) -> Option<Notice> {
         let mut pending = self.pending.lock_unpoisoned();
-        if pending.changed.is_empty() {
-            pending.closed.take()
-        } else {
+        if !pending.changed.is_empty() {
             Some(Notice::ListChanged(pending.changed.remove(0)))
+        } else if !pending.resources.is_empty() {
+            Some(pending.resources.remove(0))
+        } else {
+            pending.closed.take()
         }
     }
 

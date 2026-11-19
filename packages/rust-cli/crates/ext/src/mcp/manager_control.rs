@@ -79,6 +79,9 @@ impl McpManager {
         server.prompts.clear();
         server.instructions = None;
         server.resources = false;
+        // Fork (F7 PR 4): the subscriptions of the retired connection go with it.
+        server.resource_subs.clear();
+        server.resources_subscribe = false;
         let client = server.client.take();
         // Fork (F7 PR 1): dropping a published client is a new app connection, so its listeners run (after the lock).
         let listeners: Vec<_> = if client.is_some() {

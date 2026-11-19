@@ -30,6 +30,41 @@ struct Host {
 
 #[async_trait]
 impl McpAppHost for Host {
+    async fn subscribe(
+        &self,
+        _session: &SessionId,
+        _server: &str,
+        _expected: &McpAppConnection,
+        _uri: &str,
+        _subscriber: &str,
+        _cancel: &CancellationToken,
+    ) -> Result<(), McpAppError> {
+        // Not used by the app-tools fixture.
+        Err(McpAppError::Changed)
+    }
+
+    async fn unsubscribe(
+        &self,
+        _session: &SessionId,
+        _server: &str,
+        _uri: &str,
+        _subscriber: &str,
+    ) {
+    }
+
+    fn unsubscribe_prefix(&self, _session: &SessionId, _prefix: &str) -> usize {
+        0
+    }
+
+    fn on_resource_notice(
+        &self,
+        _session: &SessionId,
+        _server: &str,
+        _callback: rust_cli_kernel_api::mcp_app::McpResourceCallback,
+    ) -> Option<McpAppSubscription> {
+        Some(Box::new(()))
+    }
+
     fn owner(&self, _session: &SessionId, server: &str) -> Option<McpAppOwner> {
         (server == "s1").then_some(McpAppOwner::Rust)
     }

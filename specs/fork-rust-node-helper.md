@@ -470,7 +470,7 @@ Status: design only, no code. Facts checked against the Node source (`apps/zcode
 
 **F5 workflow execution.** Needs the session-only allow above. Owner decision (2026-11-17, D1): Rust ports the workflow engine and runs each actor as its own Rust child session, so rule 2 holds and the helper never runs an actor. The design, the storage rules (Node-format `dwf_*` rows) and the PR plan are in `specs/fork-rust-workflow-engine.md`.
 
-**F7 MCP Apps on Rust-run servers.** Needs the lease and sampling ledger in Rust, as described in "MCP Apps on Rust-hosted servers" below. It is the largest family and is not started.
+**F7 MCP Apps on Rust-run servers.** Needs the lease and sampling ledger in Rust, as described in "MCP Apps on Rust-hosted servers" below. Status: PRs 1–3 merged; PR 4 (resource subscriptions) is in its own PR, see "As built (F7 PR 4)". Nothing of F7 is left after PR 4 except the desktop E2E, which runs in the box.
 
 ### F4 node_repl and browser (design, built in three PRs)
 
@@ -809,6 +809,35 @@ Base `fork`. Four PRs, in this order. Each PR keeps the refusal of every method 
   - The call's pin uses the tool-use id as its call id (Node `retainExecution(toolCallId)`), and the call is one pin for its whole execution, as Node's call-runner does.
   - The deadlines are Node's (5 s claim, 30 s call). Tests inject shorter ones through `Timing`.
 - **Not done in PR 3.** Resource subscriptions (`mcp/uiSubscribeResource`, `mcp/uiUnsubscribeResource`, `pluginUi.resourceUpdated`) stay refused for Rust-run servers (PR 4). The desktop E2E (`mcp-apps-host-fixture`) runs in the box, not on this Mac.
+
+#### As built (F7 PR 4)
+
+- **Built.** Resource subscriptions of the panels of Rust-run servers.
+  - The registry is per server, on the connection entry in the extension layer: `ext/src/mcp/manager/app_resources.rs` (Node `resource-subscriptions.ts` and the subscribe, unsubscribe and notification paths of `adapters/src/mcp/index.ts`). A new published client clears it.
+  - The owner `protocol-zcode/src/fork/mcp_ui_rust.rs` answers `mcp/uiSubscribeResource` and `mcp/uiUnsubscribeResource` (Node `handlers.ts` and `protocol.ts`). It keeps one notice tap per (session, server). The tap turns `notifications/resources/updated` and `notifications/resources/list_changed` into `pluginUi.resourceUpdated` and `pluginUi.resourceListChanged` for the session's panels (Node `notifications.ts`).
+  - The port is `McpAppHost::subscribe`, `unsubscribe`, `unsubscribe_prefix` and `on_resource_notice` (`kernel-api/src/mcp_app.rs`, with `McpResourceNotice`). The client side is `ext/src/mcp/rpc.rs` (`Notice::ResourceUpdated`, `Notice::ResourceListChanged`), queued in `ext/src/mcp/notices.rs`.
+  - The refusal of the PR 3 methods is removed. Every panel method of a Rust-run server is answered by the owner now.
+- **Rules (as Node).**
+  - The request's `scopeId` and `generation` must name its `instance` (the binding), else `Invalid MCP App subscription binding`. A subscribe reads no lease state, as Node's does not (the subscriber stays until its lease closes or the connection changes).
+  - A server that does not declare `resources.subscribe`: -32001 `MCP server "<name>" does not support resources/subscribe`, with the data `reason: not_supported`, `serverName`, `operation`.
+  - Subscribers are deduplicated by key. The server is asked only for a uri's first subscriber. When that request fails, the subscriber it added is removed.
+  - The last unsubscriber of a uri sends `resources/unsubscribe` on the current connection. Its errors are logged, not returned.
+  - Drops: a lease close, a lease revoke (connection change), and a session close (key prefixes `session|token|` and `session|`). The server side of a lease close runs in the background.
+  - A notice reaches a key only when the key names a panel of this session and generation, and the panel's lease still validates against the server's connection (a mismatch closes the lease, as Node's validate does). The delta's `pluginId` is the panel's.
+- **Tests (red then green).**
+  - Red runs, before the implementation. Stubs first, so each test failed on behaviour:
+    - `cargo test -p rust-cli-ext --lib -- app_resources notices rpc`: 13 of the `manager::app_resources` tests failed (`ResourceSubscriptions` and the manager methods), 1 notices test (`resource_notices_merge_per_uri_and_come_before_the_close`) and 2 rpc tests (`resource_notifications_are_noticed_with_their_uri`, `an_update_without_a_uri_is_not_noticed`) failed.
+    - `cargo test -p rust-cli-protocol-zcode --lib -- route_tests`: 9 failed of the new subscription route tests (the methods were refused, then `Method not found`), 20 passed.
+    - `cargo test -p rust-cli-protocol-zcode --lib -- resource_conformance`: the Rust runner failed on every subscribe step (`error:Method not found: mcp/uiSubscribeResource`), as the owner did not route the methods yet.
+    - The Node runner (`apps/zcode-cli/packages/bootstrap/tests/fork-rust-helper/mcp-ui-resource-conformance.test.ts`) passed on its first run: it runs Node's own code, which this PR does not change. It records the reference behaviour the fixture follows.
+  - Green after the implementation: `cargo test -p rust-cli-ext --locked` 327 passed; `cargo test -p rust-cli-kernel-api --locked` 405 passed; `cargo test -p rust-cli-protocol-zcode --locked` 901 passed (including the 9 route tests and the Rust conformance runner); the Node runner 1 passed.
+  - Fixture: `packages/rust-cli/crates/protocol-zcode/tests/fixtures/mcp_ui_resource_subscriptions_conformance.json` (18 steps: two panels of two sessions, dedup, binding refusal, delivery to each session, unsubscribe and close with the server requests, a reconnect). The server's request counts are checked only before the reconnect (see the divergences).
+- **Divergences from Node.**
+  - `pluginId` of a notice is the panel's `pluginId`. Node reads it from the session's frozen catalog (the plugin that declares the server), which is `""` for a server no plugin declares.
+  - Reconnect: the registry is cleared, with no replay. Node replays the registry on the new connection, then the lease close unsubscribes what it released there. The server ends in the same state. Node makes two more requests on the new connection (a subscribe and an unsubscribe per released uri), and Rust makes none.
+  - The notice queue waits at most 1024 distinct notices (a repeat of a waiting uri or list change merges). Node has no cap.
+  - The subscriptions of a server are shared by every session of its group, as Node shares them by connection (the registry is on the group's server entry, not per session).
+- **Not done in PR 4.** The desktop E2E (`mcp-apps-host-fixture`) runs in the box, not on this Mac. No live MCP App was run against a real server.
 
 ## Lifecycle and failure modes
 
