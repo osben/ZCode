@@ -23,6 +23,9 @@ mod mcp_ui_lease;
 pub(crate) mod mcp_ui_rust;
 // Fork (F7 PR 2): the sampling ledger of the panels of Rust-run servers (Node `samplingCalls.ts`).
 pub(crate) mod mcp_ui_sampling;
+// Fork (F7 PR 3): the app-provided tools of the panels of Rust-run servers, and the router that composes them with the
+// Node helper's set (Node `appTools.ts`, `appToolsProtocol.ts`).
+pub(crate) mod mcp_ui_app_tools;
 pub(crate) mod methods;
 pub mod node_helper;
 mod queue;

@@ -24,7 +24,8 @@ use tokio_util::sync::CancellationToken;
 use super::helper_answers::kernel_error;
 use super::helper_sampling;
 use super::helper_session_admit::{not_hosted, owns};
-use super::mcp_ui_lease::{Binding, Connection, Instances, Lease, Scope};
+use super::mcp_ui_app_tools::{Mailbox, Timing, activity_delta};
+use super::mcp_ui_lease::{Binding, Connection, Instances, Lease, Refused, Scope};
 use super::mcp_ui_sampling::{self, Sampling};
 use super::node_helper::HelperRequests;
 use crate::server::Server;
@@ -34,6 +35,10 @@ const UI_READ_MAX_BYTES: usize = 8 * 1024 * 1024;
 
 /// The methods this owner answers (Node `protocol.ts`). Everything else on a Rust-run server stays refused.
 pub(crate) const METHODS: &[&str] = &[
+    "mcp/uiRegisterAppTools",
+    "mcp/uiUnregisterAppTools",
+    "mcp/uiClaimAppToolCall",
+    "mcp/uiResolveAppToolCall",
     "mcp/uiOpenInstance",
     "mcp/uiValidateInstance",
     "mcp/uiCloseInstance",
@@ -256,21 +261,29 @@ struct Panel {
 
 /// The Rust owner of the panels of Rust-run servers.
 pub(crate) struct RustMcpUi {
-    me: Weak<Self>,
+    pub(super) me: Weak<Self>,
     answers: Weak<dyn HelperRequests>,
-    instances: Instances,
+    pub(super) instances: Instances,
     panels: Mutex<BTreeMap<String, Panel>>,
     calls: Mutex<CallTable>,
     /// The sampling ledger of the panels (F7 PR 2): its operations end with their lease.
     sampling: Sampling,
+    /// The app-provided tools of the panels (F7 PR 3): the registry and the mailbox of model calls.
+    pub(super) tools: Mutex<Mailbox>,
+    pub(super) timing: Timing,
 }
 
-fn random_hex() -> String {
+pub(super) fn random_hex() -> String {
     format!("{:016x}{:016x}", random::u64(), random::u64())
 }
 
 impl RustMcpUi {
     pub(crate) fn new(answers: Weak<dyn HelperRequests>) -> Arc<Self> {
+        Self::with_timing(answers, Timing::default())
+    }
+
+    /// The owner with the mailbox's deadlines given (tests shorten them).
+    pub(crate) fn with_timing(answers: Weak<dyn HelperRequests>, timing: Timing) -> Arc<Self> {
         Arc::new_cyclic(|me| Self {
             me: me.clone(),
             answers,
@@ -278,11 +291,13 @@ impl RustMcpUi {
             panels: Mutex::new(BTreeMap::new()),
             calls: Mutex::new(CallTable::default()),
             sampling: Sampling::new(),
+            tools: Mutex::new(Mailbox::default()),
+            timing,
         })
     }
 
     /// `pluginUi.*` deltas go to the session stream, in the protocol server's pump order (Node's live-only events).
-    fn deliver(&self, session: &str, delta: Value) {
+    pub(super) fn deliver(&self, session: &str, delta: Value) {
         if let Some(answers) = self.answers.upgrade() {
             answers.session_delta(session, delta);
         }
@@ -292,6 +307,8 @@ impl RustMcpUi {
     fn finish_closed(&self, leases: Vec<Lease>) {
         for lease in leases {
             self.sampling.forget(&lease.token);
+            // Node's abort listener: the instance's app tools are unregistered before the notice.
+            self.drop_lease_tools(&lease.token, lease.generation, "App page was closed");
             let panel = self.panels.lock_unpoisoned().remove(&lease.token);
             if let Some(panel) = panel {
                 drop(panel.subscription);
@@ -320,6 +337,7 @@ impl RustMcpUi {
     pub(crate) fn session_closed(&self, session: &str) {
         let leases = self.instances.close_session(session);
         self.finish_closed(leases);
+        self.clear_session_tools(session);
     }
 
     /// Routes one of [`METHODS`] for a session and a Rust-run server.
@@ -335,6 +353,10 @@ impl RustMcpUi {
             "mcp/uiOpenInstance" => self.open(host, session, params).await,
             "mcp/uiSampling" => self.sample(host, server, session, params).await,
             "mcp/uiCancelSampling" => self.cancel_sampling(host, session, params),
+            "mcp/uiRegisterAppTools" => self.register_app_tools(session.as_str(), params),
+            "mcp/uiUnregisterAppTools" => self.unregister_app_tools(session.as_str(), params),
+            "mcp/uiClaimAppToolCall" => self.claim_app_tool_call(host, session, params),
+            "mcp/uiResolveAppToolCall" => self.resolve_app_tool_call(host, session, params),
             "mcp/uiValidateInstance" => {
                 let scope = Guard::new(params)?;
                 self.validate(host, session, &scope, params)?;
@@ -457,6 +479,11 @@ impl RustMcpUi {
         for (_, panel) in closed {
             self.instances.close(&panel.lease);
             self.sampling.forget(&panel.lease.token);
+            self.drop_lease_tools(
+                &panel.lease.token,
+                panel.lease.generation,
+                "App page was closed",
+            );
             drop(panel.subscription);
             self.deliver(
                 &panel.session,
@@ -476,7 +503,7 @@ impl RustMcpUi {
     }
 
     /// Node `validate` through the guard: the lease and the scope, against the server's current connection.
-    fn validate(
+    pub(super) fn validate(
         &self,
         host: &dyn McpAppHost,
         session: &SessionId,
@@ -489,8 +516,16 @@ impl RustMcpUi {
             .as_ref()
             .map(to_connection);
         self.instances
-            .validate(&lease, guard.scope(), current.as_ref())
-            .map_err(RpcError::internal)
+            .validate_closing(&lease, guard.scope(), current.as_ref())
+            .map_err(|refused| self.refuse(refused))
+    }
+
+    /// A refused validate. A source mismatch closed the lease, so its closed notice goes out (Node's abort listener).
+    fn refuse(&self, refused: Refused) -> RpcError {
+        if let Some(lease) = refused.closed {
+            self.finish_closed(vec![lease]);
+        }
+        RpcError::internal(refused.message)
     }
 
     /// Node `closeMcpUiInstance`: validated against the connection the lease was opened on.
@@ -499,8 +534,8 @@ impl RustMcpUi {
         let lease = lease_of(params)?;
         if let Some(source) = self.instances.source_of(&lease.token) {
             self.instances
-                .validate(&lease, guard.scope(), Some(&source))
-                .map_err(RpcError::internal)?;
+                .validate_closing(&lease, guard.scope(), Some(&source))
+                .map_err(|refused| self.refuse(refused))?;
         }
         if params.get("onlyIfIdle").and_then(Value::as_bool) == Some(true)
             && self.instances.is_busy(&lease)
@@ -539,7 +574,7 @@ impl RustMcpUi {
         let request = call.request;
         admission
             .run(move |cancel| async move {
-                let _pin = Pinned::retain(&self.instances, &lease.token, operation)?;
+                let _pin = Pinned::retain(self, &guard.session, &guard, &lease, operation)?;
                 self.validate(host, session, &guard, params)?;
                 server.live(session).await.map_err(kernel_error)?;
                 let result = server
@@ -632,10 +667,7 @@ impl RustMcpUi {
             .lock_unpoisoned()
             .active
             .insert(key.to_owned(), cancel.clone());
-        let pin = self
-            .instances
-            .retain(&lease.token, "ui-call")
-            .map_err(RpcError::internal)?;
+        let pinned = Pinned::retain(self, session.as_str(), guard, lease, "ui-call")?;
         let arguments = params
             .get("arguments")
             .cloned()
@@ -650,7 +682,7 @@ impl RustMcpUi {
                 &cancel,
             )
             .await;
-        self.instances.release(&lease.token, &pin);
+        drop(pinned);
         result.map_err(app_error)
     }
 
@@ -800,15 +832,15 @@ fn current_connection(
 }
 
 /// Node `callMcpUiTool` etc.: the request's shared fields, validated before any work.
-struct Guard {
+pub(super) struct Guard {
     workspace: String,
     session: String,
-    plugin: String,
-    server: String,
+    pub(super) plugin: String,
+    pub(super) server: String,
 }
 
 impl Guard {
-    fn new(params: &Value) -> Result<Self, RpcError> {
+    pub(super) fn new(params: &Value) -> Result<Self, RpcError> {
         Ok(Self {
             workspace: workspace_key(params),
             session: text(params, "sessionId")?.to_owned(),
@@ -850,6 +882,10 @@ pub(crate) async fn route(
         return None;
     }
     if !owns(server, &session_id).await {
+        // Node: an unregister of a session that is gone removes nothing (`appToolsProtocol.ts`).
+        if method == "mcp/uiUnregisterAppTools" {
+            return Some(Ok(json!({"removed": 0})));
+        }
         return Some(Err(not_hosted("the session is not one of this agent's")));
     }
     Some(
@@ -885,29 +921,66 @@ fn operation_id(params: &Value) -> Result<&str, RpcError> {
     Ok(id)
 }
 
-/// A pin of one in-flight sampling in its lease (Node `retain`): released when the operation ends, however it ends.
+/// A pin of one in-flight call in its lease (Node `retain`): released when the call ends, however it ends. Node's
+/// `onActivity` fires on the retain (`activity: true`) and on the release that removes the pin (`activity: false`).
 struct Pinned<'a> {
-    instances: &'a Instances,
-    token: String,
+    ui: &'a RustMcpUi,
+    session: String,
+    plugin: String,
+    server: String,
+    lease: Lease,
     pin: String,
 }
 
 impl<'a> Pinned<'a> {
-    fn retain(instances: &'a Instances, token: &str, call_id: &str) -> Result<Self, RpcError> {
-        let pin = instances
-            .retain(token, call_id)
+    fn retain(
+        ui: &'a RustMcpUi,
+        session: &str,
+        guard: &Guard,
+        lease: &Lease,
+        call_id: &str,
+    ) -> Result<Self, RpcError> {
+        let pin = ui
+            .instances
+            .retain(&lease.token, call_id)
             .map_err(RpcError::internal)?;
-        Ok(Self {
-            instances,
-            token: token.to_owned(),
+        let pinned = Self {
+            ui,
+            session: session.to_owned(),
+            plugin: guard.plugin.clone(),
+            server: guard.server.clone(),
+            lease: lease.clone(),
             pin,
-        })
+        };
+        ui.pin_activity(&pinned, true);
+        Ok(pinned)
     }
 }
 
 impl Drop for Pinned<'_> {
     fn drop(&mut self) {
-        self.instances.release(&self.token, &self.pin);
+        if self.ui.instances.release(&self.lease.token, &self.pin) {
+            self.ui.pin_activity(self, false);
+        }
+    }
+}
+
+impl RustMcpUi {
+    /// Node `onActivity`: the pin's activity, to the panel's session, as `pluginUi.appToolCall` with the lease as the
+    /// instance and no tool.
+    fn pin_activity(&self, pinned: &Pinned<'_>, active: bool) {
+        self.deliver(
+            &pinned.session,
+            activity_delta(
+                &pinned.plugin,
+                &pinned.server,
+                &pinned.lease.token,
+                pinned.lease.generation,
+                &lease_json(&pinned.lease),
+                &pinned.pin,
+                active,
+            ),
+        );
     }
 }
 
@@ -918,7 +991,7 @@ fn to_connection(connection: &McpAppConnection) -> Connection {
     }
 }
 
-fn text<'a>(params: &'a Value, key: &str) -> Result<&'a str, RpcError> {
+pub(super) fn text<'a>(params: &'a Value, key: &str) -> Result<&'a str, RpcError> {
     params
         .get(key)
         .and_then(Value::as_str)
