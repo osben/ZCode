@@ -522,7 +522,7 @@ export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = 
   },
   {
     // ZCode Sites (technical plan 4): a Skill-guided Agent converts the project into an artifact
-    // package the runner can execute directly, then uploads it via scripts/zcode-site.mjs (CLI);
+    // package the runner can execute directly, then uploads it via skills/site-deploy/scripts/zcode-site.mjs (CLI);
     // commands/ holds the /site-* slash commands.
     // Since 0.4.0 it ships a Sites panel (UI plugin): the MCP server and panel pages are built
     // into dist/ for the panel only — invisible to the model (docs/site/sites-panel.md). Enabled

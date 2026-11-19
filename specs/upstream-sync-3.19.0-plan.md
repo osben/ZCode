@@ -247,6 +247,11 @@ taken from the 3.19.0 CLI bundle, not inferred from the patch:
   directory cleanup failures only warn, so they no longer replace a successful result or re-run a completed operation
   through system LibreOffice; a cancel while the managed process fails to start stays a cancel instead of starting the
   system fallback. Re-apply both on the source merge if upstream has not fixed them.
+- Review round 2 (PR #577): the android MCP server version follows the 0.1.2 bump (upstream's dist did the same);
+  bootstrap plugin tests derive browser-use/android cache versions from the definitions instead of pinning them, and
+  the simulated Android security update is always one patch above the shipped version; the zcode-site HTTP(S)
+  endpoint transport no longer follows redirects (a redirect would drop the package PUT body or `Authorization`) and
+  has its own test.
 - When the source arrives: take upstream's versions of these files; port design 0.8.0 with its tests.
 
 ## Merge checklist (when upstream pushes the 3.19.0 source)

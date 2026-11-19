@@ -772,3 +772,40 @@ test("help documents every command and option, and needs no endpoint", async () 
   for (const exit of ["0", "1", "2", "3", "4"])
     assert.match(stdout, new RegExp(`^  ${exit}  `, "m"));
 });
+
+test("createEndpointFetch joins paths onto an http base and does not follow redirects", async () => {
+  const seen = [];
+  const server = createServer((req, res) => {
+    const chunks = [];
+    req.on("data", (c) => chunks.push(c));
+    req.on("end", () => {
+      seen.push({ method: req.method, url: req.url, headers: req.headers, body: Buffer.concat(chunks) });
+      // A redirect would turn the PUT into a GET without a body, or drop Authorization across origins.
+      if (req.url.startsWith("/gw/moved")) return res.writeHead(302, { location: "/gw/elsewhere" }).end();
+      res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ code: 0 }));
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const { port } = server.address();
+    const fetchImpl = createEndpointFetch(`http://127.0.0.1:${port}/gw/`);
+    const res = await fetchImpl("http://zcode-official-endpoint/api/v1/sites/1/package?x=1", {
+      method: "PUT",
+      headers: { Authorization: "Bearer t", "Content-Type": "application/gzip" },
+      body: Buffer.from("tarball"),
+    });
+    assert.equal(res.status, 200);
+    assert.equal(seen[0].url, "/gw/api/v1/sites/1/package?x=1");
+    assert.equal(seen[0].method, "PUT");
+    assert.equal(seen[0].headers["content-length"], "7");
+    assert.equal(seen[0].headers["transfer-encoding"], undefined);
+    assert.equal(seen[0].body.toString(), "tarball");
+
+    await assert.rejects(
+      fetchImpl("http://zcode-official-endpoint/moved", { method: "PUT", body: Buffer.from("x") }),
+    );
+    assert.equal(seen.filter((r) => r.url === "/gw/elsewhere").length, 0);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});

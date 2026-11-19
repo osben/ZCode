@@ -63,7 +63,9 @@ export function createEndpointFetch(address) {
     const base = address.replace(/\/+$/, "");
     return (url, init = {}) => {
       const { pathname, search } = new URL(url);
-      return fetch(base + pathname + search, init);
+      // Never follow redirects: they would turn the package PUT into a bodiless GET or drop
+      // Authorization across origins; the socket transport does not follow them either.
+      return fetch(base + pathname + search, { ...init, redirect: "error" });
     };
   }
   return (url, init = {}) =>
