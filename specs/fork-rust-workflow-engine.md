@@ -1725,6 +1725,65 @@ Scope: the guard and the residency rules, the session close port, and the dispos
 6. Shutdown closes every resident parent session through `SessionResidency::close` and waits (Node's `App.close` drain). An owner dropped before its run settles never runs `dispose`, so its runtimes stay open. Shutdown must stop and settle every live run first.
 7. Settlement is the only dispose point (the engine's `finish_run`). The run service does not call `dispose` itself.
 
+### 9.16 W7-0: incremental reducer (as built)
+
+Status: built on `feat/rust-workflow-incremental-reducer-w7-0`, from `origin/fork` (ddee7f6fc). The gate stays off. Nothing outside `node-store` calls the new holder yet; W7-5 (the run service) feeds it.
+
+**Where it lives** (`packages/rust-cli/crates/node-store/src/workflow_runs/`):
+
+- `mod.rs`: `reduce(state: &mut State, envelope, limits) -> Option<Vec<Value>>`. It mutates the state in place and returns the delta ops that `delta::diff(prior, state)` would return. On `None` (a no-op) the state is untouched.
+- `delta.rs`: `diff` (now the test oracle; the production path no longer calls it), and `RunDiff`, `diff_run`, `removed_op` and `whole_key`. The reducer and `diff` share the last three, so key order cannot drift between them.
+- `js.rs`: `obj_equal`, the no-op check on two run objects without wrapping them in a `Value`.
+- `projection.rs`: `LiveProjection` (`new`, `from_state`, `state`, `snapshot`, `apply`), the per-session holder. `on_progress` is removed; its only caller was the test.
+- `replay.rs`: `replay_state` folds in place and still returns `None` when no envelope changed anything.
+- `publish.rs` (new): `clamp_for_legacy`, `encode_for_legacy`, `growth_upper_bound`, `LEGACY_MAX_ENTRIES` (256), `ENVELOPE_SLACK_BYTES` (64). Pure ports of Node's `workflow-runs-legacy.ts` and the two rules in `conversation-workflow-run-deltas.ts`.
+
+**Rules.**
+
+1. A no-op (an invalid envelope, or a replay with identical content) returns `None`, leaves the state byte-identical, and bumps no revision.
+2. Only the run the event touches is cloned and diffed. Eviction (the entry budget and the run-count cut) removes whole runs and never edits a survivor, so the other runs need no diff. The ops are, in order: one `workflowRun.removed` per run whose id vanished, in prior order, carrying the new revision; then the event run's op (birth, or `diff_run` against the run as it was). If that op is `WholeKey`, the result is the whole key alone. If the op list is empty after a real change, the result is the whole key. This is exactly `diff`'s ordering and fallbacks.
+3. The run-count cut stays at `PRODUCTION.max_runs` (8). The entry budget comes from `limits`.
+4. `LiveProjection` takes its deltas from `reduce`. It never calls `diff`.
+5. Legacy encoding (`encode_for_legacy`): a batch with no run delta is returned as the same slice (`Cow::Borrowed`). Otherwise every run delta is dropped and one whole-key `state.updated{workflowRuns}` goes at the position of the last dropped op, carrying the clamped current state. With no state, the deltas are dropped and nothing is inserted.
+6. Growth bound (`growth_upper_bound`): the byte length of the batch plus 64, when every op is `workflowRun.updated` or `workflowRun.removed`. Otherwise `None`. A whole-key patch is never on the fast path.
+
+**Tests.** Red first, then green. The red change is the new API in the tests: `reduce` takes `&mut State` and returns the ops, the goldens and the property test compare the returned ops with the Node ops string and with `diff`, the no-op byte-identity checks, a pointer-identity test that another run's buffer survives an event, `LiveProjection`, and the ported Node cases.
+
+- Red: `cargo test -p rust-cli-node-store --lib --no-run` failed to compile with 28 errors: 25 `E0308` (the old `reduce(Option<&State>) -> Option<State>` signature), `E0432` for `projection::LiveProjection`, `E0432` for `publish`, and one `E0277` (`for op in &ops` over an `Option`).
+- Green: `cargo test -p rust-cli-node-store --lib workflow_runs`: 29 passed, 0 failed. The count was 16 `#[test]` functions at `origin/fork`; 13 are new. The full `rust-cli-node-store` run: 348 passed, 0 failed, 1 ignored. `cargo fmt --all --check` is clean, and `cargo clippy --workspace --all-targets --locked -- -D warnings` is clean.
+- Goldens: `fixtures/workflow-runs/goldens.json` is unchanged. The golden test now compares the ops that `reduce` returns, which are checked byte for byte against Node's, and the property test reproduces the next state from the returned ops.
+
+**Node tests ported.** `apps/zcode-cli/packages/bootstrap/tests/conversation-workflow-run-deltas.test.ts`, all nine cases:
+
+| Node case                                                                                 | Rust test                                                                           |
+| ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| legacy: a batch with no key-level delta comes back as the same array                      | `a_batch_without_run_deltas_comes_back_as_the_same_slice`                           |
+| legacy: a batch of run deltas folds into one whole-key patch at the last dropped position | `a_batch_of_run_deltas_folds_into_one_whole_key_patch_at_the_last_dropped_position` |
+| legacy: a table over 256 is cut to 256 and marked `truncated`                             | `an_over_legacy_table_is_cut_to_256_and_marked_truncated`                           |
+| legacy: no `workflowRuns` key means the deltas are dropped and nothing is inserted        | `without_a_workflow_runs_key_the_run_deltas_are_dropped_and_nothing_is_inserted`    |
+| growth: an all-key-level batch has a bound above its own bytes                            | `an_all_key_level_batch_has_a_growth_bound_above_its_own_bytes`                     |
+| growth: any other op forces an exact measurement                                          | `any_other_op_in_the_batch_forces_an_exact_measurement`                             |
+| growth: an empty batch takes the fast path with room for a wider `seq`                    | `an_empty_batch_takes_the_fast_path_with_room_for_a_wider_seq`                      |
+| growth: a whole-key `workflowRuns` patch is never on the fast path                        | `a_whole_key_workflow_runs_patch_is_never_on_the_fast_path`                         |
+| growth: the eviction stream is key-level at every step and within the bound               | `node_eviction_stream_every_step_is_key_level_and_within_the_growth_bound`          |
+
+Also added, with no Node counterpart: `a_state_within_the_legacy_bound_is_returned_as_it_is` (the Node "same object" rule), `an_event_for_one_run_does_not_rebuild_the_other_runs`, `live_projection_deltas_keep_a_consumer_equal_to_the_holder` (the entry budget, and ten runs for the run-count cut), and `a_live_projection_seeded_from_replay_continues_the_fold`.
+
+Not ported here. Four other Node tests use `reduceWorkflowRunsState` only as a fold inside larger scenarios: `dynamic-workflow-run-service.test.ts`, `dynamic-workflow-run-roster.test.ts`, `dynamic-workflow-report-reads.test.ts`, and `dynamic-workflow-run-replay.test.ts`. Their assertions are about the run service, the roster, report reads and the cold replay as a whole. The run service, roster and reads are W7 and W9 surfaces; the cold replay is section 9.4. Their reducer calls are not separately ported.
+
+Also not ported, with owner W7-5 (the Host publisher). `conversation-topic-publisher-workflow-runs.test.ts` drives `ConversationTopicPublisher`, the subscription registry, the retained log and `ProductProjection`, so it needs the publisher shell first. Coalescing is not ported: `mergeWorkflowRunUpdates` and `workflowRunUpdateWithinWireBounds` (`workflow-runs-delta.ts`) stay with the publisher. `publish.rs` ports only the two per-batch rules (`encodeConversationDeltasForLegacy` and `workflowRunDeltaGrowthUpperBound`). Section 9.8i rows 58 (the escalation payload clip at 2048 characters) and 65 (raised and resolved on the live track and in event paging) stay open with owner W7-5. `LiveProjection` adds neither the clip nor the event paging.
+
+**Divergences.**
+
+1. The signature changed. Node's reducer returns a new state. The Rust reducer returns the ops and mutates the state. A caller that needs the prior value clones it first.
+2. Cost per event is one clone of the affected run, which the reducer rebuilds, plus a comparison against the stored run without a clone. The other runs are untouched; the pointer test pins that. A reducer that edits the affected run in place would need the table functions to take `&mut Obj`, which this part does not do.
+3. `LEGACY_MAX_ENTRIES` is a local constant equal to Node's `WORKFLOW_RUNS_LEGACY_LIMITS.maxActors` and `maxNodes` (256). There is no shared port of that constant yet. W7-5 should read this one.
+4. Byte lengths are the compact `serde_json` text. That matches `JSON.stringify` for these ops, which hold integers and strings only. Non-integer floats are not checked.
+5. Node's `workflowRuns` being `undefined` is `None` in Rust. A `LiveProjection` always holds a state, so the Host passes `None` only when no holder exists.
+6. The growth bound and the legacy encoder are pure functions. The Host wiring and the 16 MiB gate are W7-5, not this part.
+7. The count in section 9.4 said 14 `workflow_runs` tests. `origin/fork` had 16 `#[test]` functions in `tests.rs`. The count is now 31.
+8. The seed is normalised in `LiveProjection::from_state`: at most `max_runs` runs, each with a unique string `runId` (the first occurrence wins; the most recent runs are kept, as the run-count cut keeps them). `reduce` now documents this precondition. Red first: `a_seed_over_the_run_limit_is_brought_within_it_before_the_first_event` and `a_seed_run_without_a_string_run_id_is_dropped_before_the_first_event` failed against the un-normalised holder (an over-limit seed kept 10 runs; an id-less run survived). Both compare the next event's ops with `diff`. Green after the fix. The full `rust-cli-node-store` run is then 350 passed, 1 ignored.
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.
