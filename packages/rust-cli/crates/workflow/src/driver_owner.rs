@@ -146,6 +146,14 @@ pub struct ActorPort<S: ActorSessions> {
 }
 
 impl<S: ActorSessions> WorkflowDriver for ActorPort<S> {
+    fn minted_session_id(&self, run_id: &str, actor: &Ref) -> Option<String> {
+        Some(rust_cli_node_store::mint_actor_session_id(
+            run_id,
+            &actor.site_id,
+            actor.ordinal as f64,
+        ))
+    }
+
     fn create_actor_session(
         &mut self,
         actor: &Ref,

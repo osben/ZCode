@@ -69,6 +69,12 @@ pub enum SessionState {
     Ready(String),
     /// The driver could not create the session; the message is the bounded cause.
     Failed(String),
+    /// The journal's recorded session id is not the minted one (Node `createActorSession`'s reattachment check).
+    /// The driver is not called, so no session is created.
+    Mismatched {
+        expected: String,
+        got: String,
+    },
 }
 
 /// An ask whose recorded row decides its settlement (Node `pendingRecorded`).
@@ -511,12 +517,25 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
             .imported
             .as_ref()
             .and_then(ImportedActorState::seed);
-        let session = match self
-            .driver
-            .create_actor_session(&actor_ref, &persona, seed.as_ref())
-        {
-            Ok(id) => SessionState::Ready(id),
-            Err(error) => SessionState::Failed(describe_cause(&format!("{error}"))),
+        // Node `createActorSession`: the journal's session id is a record; the driver's minting rule is authoritative.
+        // A recorded id that differs means the rule drifted, so the session is not created. A driver with no rule
+        // (`minted_session_id` is None) is not checked.
+        let minted = self.driver.minted_session_id(&self.run_id, &actor_ref);
+        let recorded = self
+            .journal
+            .get_actor(&self.run_id, &actor_ref)?
+            .and_then(|row| row.session_id);
+        let session = match (recorded, minted) {
+            (Some(expected), Some(got)) if expected != got => {
+                SessionState::Mismatched { expected, got }
+            }
+            _ => match self
+                .driver
+                .create_actor_session(&actor_ref, &persona, seed.as_ref())
+            {
+                Ok(id) => SessionState::Ready(id),
+                Err(error) => SessionState::Failed(describe_cause(&format!("{error}"))),
+            },
         };
         self.actor_mut(actor_id)?.session = session;
         self.jobs.push_back(Job::SessionReady {
@@ -574,6 +593,17 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
                     ErrorCode::DriverError,
                     format!("Failed to create the subagent session: {message}"),
                 );
+                return self.settle_failed(node_id, error);
+            }
+            SessionState::Mismatched { expected, got } => {
+                let error = WorkflowError::new(
+                    ErrorCode::DriverError,
+                    format!(
+                        "Subagent session identity mismatch for {}: the journaled session id and the minted one differ.",
+                        actor.actor_ref.key()
+                    ),
+                )
+                .with_mismatch(expected.clone(), got.clone());
                 return self.settle_failed(node_id, error);
             }
             SessionState::None => {

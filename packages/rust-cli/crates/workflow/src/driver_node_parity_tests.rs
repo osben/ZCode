@@ -183,10 +183,9 @@ fn an_escalation_raise_and_its_answer_are_journaled_in_that_order() {
 }
 
 /// Node `workflow-driver.test.ts` "resume 会话身份互证": a journal row whose session id is not the minted one
-/// fails the actor before any session is created. Not built: the owner's session side never reads the journal's
-/// recorded session id, so the driver creates the session and the mismatch is silently replaced (spec 9.8i).
+/// fails the actor with a structured mismatch before any session is created. The scheduler checks the recorded id
+/// before it calls the driver, as Node checks it before the factory.
 #[test]
-#[ignore = "resume identity cross-check not built: the driver never reads the journal's recorded session id before creating a session (spec 9.8i follow-up)"]
 fn a_journal_session_id_that_is_not_the_minted_one_fails_before_a_session_is_created() {
     use crate::driver_owner::ActorDriverOwner;
     use crate::driver_owner_tests::{Recording, config};
@@ -236,4 +235,10 @@ fn a_journal_session_id_that_is_not_the_minted_one_fails_before_a_session_is_cre
     let outcomes = owner.take_outcomes();
     let error = outcomes[0].result.as_ref().expect_err("the ask fails");
     assert_eq!(error.code, crate::error::ErrorCode::DriverError);
+    let mismatch = error.mismatch.as_ref().expect("a structured mismatch");
+    assert_eq!(mismatch.expected, "sess_drifted-scheme");
+    assert_eq!(
+        mismatch.got,
+        rust_cli_node_store::mint_actor_session_id("run_1", "site", 1.0)
+    );
 }
