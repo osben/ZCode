@@ -107,6 +107,12 @@ impl Read {
         (connect, tape)
     }
 
+    /// 流正常读完：结算这次尝试为成功（Node `model_request_completed`）。
+    pub(crate) fn finish(&mut self) {
+        self.connect
+            .settle_attempt(crate::admission::AttemptSignal::Completed);
+    }
+
     /// 下一项；流正常结束时为 `None`。流结束或交给调用方的出错时结束这次发送的录音（交出边界之前的失败由 transport
     /// 按重发与否记）。
     pub(crate) async fn next(&mut self) -> Option<Next> {

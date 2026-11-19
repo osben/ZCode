@@ -35,6 +35,7 @@ use tokio_util::sync::CancellationToken;
 pub(crate) mod idle;
 pub(crate) mod read;
 
+use crate::admission::{AdmissionScope, AdmissionTicket, AttemptSignal, RequestAdmission};
 use crate::attribution::Origin;
 use crate::errors::dispose::Phase;
 use crate::errors::{self, Vendor};
@@ -94,6 +95,9 @@ pub struct RouteOptions {
     pub headers: Option<Arc<crate::request_headers::RequestHeaders>>,
     /// 模型轨迹的记录方（工作线 F91，model-io.md §6）：每次 HTTP 发送交一条记录；None 时不记（测试、测试环境）。
     pub model_io: Option<Arc<dyn ModelIoSink>>,
+    /// 模型请求的准入（F5 W6b 第一部分，spec 9.9）：每次尝试进网络之前取一张票，结束时交回结果。None 时不准入
+    /// （测试）；入口给进程级的治理器。
+    pub admission: Option<Arc<dyn RequestAdmission>>,
 }
 
 /// 网络出口、端点来源、时钟（Retry-After 的日期，F7）与入口级选项。
@@ -218,8 +222,13 @@ async fn step(mut state: State) -> Option<(Result<ModelStreamItem, ModelError>, 
                     None => return Some((Err(ModelError::Cancelled), State::Done)),
                 }
             }
-            State::Read(mut read) => match read.next().await? {
-                Next::Item(item) => {
+            State::Read(mut read) => match read.next().await {
+                // 流正常读完：这次尝试成功（Node `model_request_completed`）。
+                None => {
+                    read.finish();
+                    return None;
+                }
+                Some(Next::Item(item)) => {
                     let next = if item.is_err() {
                         State::Done
                     } else {
@@ -228,7 +237,7 @@ async fn step(mut state: State) -> Option<(Result<ModelStreamItem, ModelError>, 
                     return Some((item, next));
                 }
                 // 交出边界之前失败（P1，provider-errors.md §3.2）：扣住的事件随响应丢掉，按处置表重发或交给调用方。
-                Next::Early(verdict) => {
+                Some(Next::Early(verdict)) => {
                     let (connect, tape) = read.into_parts();
                     return Some(match connect.fail(verdict, Phase::Stream, tape).await {
                         Ok((notice, connect, delay)) => (
@@ -238,7 +247,7 @@ async fn step(mut state: State) -> Option<(Result<ModelStreamItem, ModelError>, 
                         Err(error) => (Err(error), State::Done),
                     });
                 }
-                Next::Idle(limit) => {
+                Some(Next::Idle(limit)) => {
                     // 丢掉这次响应（关闭连接），按进度决定静默重发、G 还是报错（stall-visibility.md §2.3）。
                     let progress = read.progress();
                     let (connect, tape) = read.into_parts();
@@ -316,6 +325,16 @@ impl Start {
             request.options.user_id = Some(crate::metadata::user_id(&device_id, session));
         }
         let protocol = protocol::for_wire(endpoint.protocol);
+        // 准入的范围与桶（W6b 第一部分）：主代理与旁路请求是 observer；子代理进子代理池。池按父会话分队列（Node），
+        // Rust 的请求没有父会话 ID，所有子代理共用一条队列（9.9 的偏差）。
+        let admission_scope = match &request.source {
+            QuerySource::Subagent(_) => AdmissionScope::SessionSubagents(String::new()),
+            QuerySource::MainThread | QuerySource::Compact | QuerySource::Side(_) => {
+                AdmissionScope::Observer
+            }
+        };
+        let admission_key =
+            crate::governor::model_key(&request.selection.provider, &request.selection.model);
         // 每请求头要的会话、回合与来源在编码前取出（请求体只编码一次，重试复用；F64）。
         let origin = Origin::of(&request);
         let selection = request.selection.clone();
@@ -365,6 +384,9 @@ impl Start {
             cancel,
             trail,
             ticket,
+            admission: None,
+            admission_scope,
+            admission_key,
         })
     }
 }
@@ -442,6 +464,10 @@ pub(crate) struct Connect {
     cancel: CancellationToken,
     /// 模型轨迹：每次发送开一个录音（model-io.md §6）。
     trail: Option<Trail>,
+    /// 这次尝试的准入票（W6b 第一部分）：`attempt` 取，失败与读完的流结算；没有结算就丢弃时按结束计。
+    admission: Option<Box<dyn AdmissionTicket>>,
+    admission_scope: AdmissionScope,
+    admission_key: String,
 }
 
 enum Outcome {
@@ -453,6 +479,22 @@ enum Outcome {
 impl Connect {
     /// 发一次请求。失败时决定结束、换 fallback 模型，还是等待后重发。每次发送记一条模型轨迹（model-io.md §6）。
     async fn attempt(mut self: Box<Self>) -> Outcome {
+        // 每次尝试先取票（退避睡眠不占名额）；排队时可以被取消，取消即这次请求结束。
+        if self.admission.is_none()
+            && let Some(port) = self.route.options.admission.clone()
+        {
+            match port
+                .acquire(
+                    self.admission_scope.clone(),
+                    self.admission_key.clone(),
+                    self.cancel.clone(),
+                )
+                .await
+            {
+                Ok(ticket) => self.admission = Some(ticket),
+                Err(error) => return Outcome::Failed(error),
+            }
+        }
         // 每次发送都按当前端点合并各层的头：凭据续期之后换新，`x-request-id` 每次换新（F64）。
         let mut http = crate::request_headers::outbound(
             self.protocol,
@@ -529,6 +571,13 @@ impl Connect {
         &self.cancel
     }
 
+    /// 结算这次尝试的票（没有票时不做事）。票结算一次，之后的重试重新取票。
+    pub(crate) fn settle_attempt(&mut self, signal: AttemptSignal) {
+        if let Some(ticket) = self.admission.take() {
+            ticket.settle(signal);
+        }
+    }
+
     /// 看门狗中止了这次流（stall-visibility.md §2.3）。`progress` 是（解码出过事件，越过了交出边界）。越过了边界：报
     /// `StreamIdle`，由主循环按进度收尾。没有越过时：一个事件都没收到、也还没静默重发过时回到发送（计入重试次数，不等待）；
     /// 否则走 G（修复线 F113，provider-errors.md D3 暂定 (b)：以前直接报 `StreamIdle`），G 用过之后才报错。
@@ -566,6 +615,7 @@ impl Connect {
         };
         self.attempt += 1;
         self.notified = true;
+        self.settle_attempt(AttemptSignal::FailedTransient);
         Ok((notice, self))
     }
 }

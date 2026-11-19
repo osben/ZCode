@@ -1181,6 +1181,57 @@ Node decides a write with `isWorkspaceMutatingToolCall` (`contracts/src/tools/co
 5. The completeness test covers the builtin registry and the known constants. A tool outside them takes the default (mutating), by design.
 6. Rust-only tools with no Node counterpart default to mutating, and that closes the import cache needlessly. They are ListAgents, the Task\* tools (TaskCreate, TaskGet, TaskList, TaskUpdate), Monitor and ScheduleWakeup. origin/fork declares no tool with these names, so the table lists them as undeclared. They need their own classification: a read-only one should be read-only, and a write should say which scope it writes.
 
+### 9.9 W6b part 1: the governor (as built)
+
+This part is the process-level governor and the admission hook in the model request path, as Q7 decided. The rest of the W6b row is split below into parts 2 to 6.
+
+**Where it lives.** `crates/model/src/admission.rs` is the port: `RequestAdmission`, `AdmissionTicket`, `AdmissionScope` and `AttemptSignal`. `crates/model/src/governor/controller.rs` is the AIMD state machine, a port of `dynamic-workflow/src/engine/concurrency.ts`. `crates/model/src/governor/mod.rs` is the process governor, a port of `workflow-concurrency-governor.ts`, with `process()` as the singleton and `default_concurrency` (Node's `resolveWorkflowDefaultConcurrency`). The hook is in `transport/` (`Connect.admission`). The entry wires it in `cli/src/assemble/models.rs` (`Assembled::port`): every provider model made by the entry gets the process governor unless the caller passes its own `RouteOptions.admission`.
+
+**Constants (Node's, unchanged).** Decrease to `floor(cap × 3/4)` with floor 1. `+1` after K = 4 successes of the current epoch, and only with a waiter. Idle reset after 300 s with nothing in flight. `D = max(4, min(16, cores − 2))`. Automatic growth limit 2D. Buckets are per `provider/model` (`model_key`).
+
+**Admission per attempt.** `Connect::attempt` acquires a ticket before each HTTP send, so a backoff sleep holds no slot. The outcome settles the ticket:
+
+- `Connect::fail` settles with `AttemptSignal::of_error` before any renewal or backoff, so a waiting retry holds no slot either.
+- The silent resend of an idle stream settles as transient.
+- A stream read to the end settles as completed (`Read::finish`).
+- A ticket dropped without settling (a cancel, a dropped stream, a terminal read error) counts as ended, as Node's `release()` does.
+
+A cancel while queued returns `ModelError::Cancelled`, takes the request out of the queue, and takes no slot. A grant that raced the cancel is handed back and ended in the same lock section.
+
+**Signals.** `AttemptSignal::of_error` maps the error the attempt ends with (a retry or a terminal error, the same rule for both):
+
+- `RateLimited` is throttled (`rate_limited`) with its Retry-After as the cooldown.
+- `Overloaded` is throttled (`provider_overloaded`) with no cooldown.
+- `Network`, `Server` and `StreamIdle` are transient.
+- Everything else is ended: quota, authentication, content, request size, and the rest. A provider-wrapped error classifies as its inner error (`peel`).
+
+This is Node's mapping of its status events to the same four results, except that the stop set is read from the Rust error classes, not from Node's failure-policy table (see the divergences).
+
+**Scopes.** `Observer` serves main-thread, compaction and side requests. It never queues, is counted in flight, and feeds the bucket, as Node's `observer()` does. `SessionSubagents` serves `QuerySource::Subagent` requests and queues. `Run` is in the port and the governor (a queue per run, rotation, cancel), but no request path produces it yet: the driver sets it in part 2.
+
+**Tests.** The unit tests were written first and recorded red: 30 governor and controller tests failed on the `todo!()` stubs, and the admission mapping tests failed the same way. The green run: `rust-cli-model` 206 lib tests and 79 integration tests pass. The unit tests cover: the AIMD rules (the 3/4 decrease, the lastGood revert, the epoch damping, the streak and waiter rule, idle reset), the gate and the fast path's fairness, the observer, per-key buckets, run rotation, cancel while waiting, the Retry-After cooldown and its timer, the stop-set failure, the dropped-ticket rule, the batch of 429s counted once, the subagent queue, and the default concurrency. The integration tests in `tests/suite/governor.rs` run the transport against a fixture: a 429 takes the bucket from 8 to 6 and the retry completes on the same bucket; a 529 does the same; a success is counted once; the main thread is admitted while the one slot is held; a subagent waits, and a cancel leaves the queue and no slot; a subagent is admitted when the slot frees. The integration tests were written after the transport wiring, so their red run was not recorded separately. `cargo clippy --workspace --all-targets --locked -- -D warnings` is clean. The `rust-cli` crate's tests pass.
+
+**Node divergences.**
+
+1. Subagents share one queue. Node has one queue per parent session. The Rust request carries no parent session ID, so `SessionSubagents` takes an empty parent for every subagent. Fairness across parents differs until the driver or the subagent runtime passes the parent.
+2. Workflow actors are not scoped. Their requests are `QuerySource::Subagent("workflow_actor")`, so they use the subagent pool, not a run queue. This is harmless while the gate is off (W9), but part 2 must scope them as `Run` before any run traffic.
+3. The stop set comes from the Rust classifier (`QuotaExhausted`, `Authentication`, and so on), not from `resolveWorkflowModelFailurePolicy`. Part 3 ports the table. Where the two disagree, the table wins.
+4. A cooldown wake is armed only when the cooldown is still in the future. Node also arms a zero-delay wake when the cooldown has passed and the cap is full, which only repeats the same no-op.
+5. The wake timer is a tokio task on the runtime. Node's is an unref'd `setTimeout`. With no runtime, no wake is scheduled, and the waiters are served by the next signal.
+6. The controller computes the cap changes, but they are not emitted. The `concurrencyChanged` event and its fan-out to engaged runs are part 2.
+7. The growth limit is fixed at 2D. Node's run bounds (`setRunBound`, `clearRunBound`, the growth limit from a run's bound, seeding and `limit_lowered`) are part 2.
+8. `NEVER_ABORTED` and the observer's own signal path are not needed: the Rust `acquire` takes a cancel token, and the observer never waits.
+
+**Not ported from the Node tests in this part.** The growth-limit and seeding cases, the run-bound cases, the fan-out and unsubscribe cases, and the zero-delay wake cases. They depend on part 2's run bounds and events. The Node parity of `tryAdmit` with a run that has a bound is not checked.
+
+**Split of the rest of the W6b row.**
+
+- **W6b part 2: run admission and events.** The driver calls `tryAdmit` and then `admit` per attempt (`askWaiting` with `backoff` while it sleeps, `askWaiting` with `slot`, and `askExecuting`). Run bounds and growth: `setRunBound`, `clearRunBound`, the seed rule, `limit_lowered`. The `concurrencyChanged` event with fan-out to runs engaged on the key. The workflow actor scope (divergence 2). The Node tests for these.
+- **W6b part 3: model failure policy.** `resolveWorkflowModelFailurePolicy` and the driver's reading of its Stop set, shared with the governor, so divergence 3 closes.
+- **W6b part 4: world reads and artifact publish.** `workflow-world-read.ts`, `workflow-git-world-read.ts` and `workflow-artifact-publish.ts`, with the fault cases.
+- **W6b part 5: stall clock and quota timer.** `askProgress`, `runStalled`, and `dynamic-workflow-quota-resume.ts` (resume after `resetAt + 1 min`, once), with the scripted-provider E2E that section 8 item 10 asks for.
+- **W6b part 6: `LiveRunGuard` and session residency.** The guard and the residency rules of the run service.
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.
