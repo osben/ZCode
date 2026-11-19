@@ -55,10 +55,16 @@ pub fn is_complete_header(header: &Value) -> bool {
 }
 
 /// Result of diffing one run: a delta, nothing to send, or an unrepresentable change.
-enum RunDiff {
+pub(super) enum RunDiff {
     Op(Value),
     NoChange,
     WholeKey,
+}
+
+/// The `workflowRun.removed` op for one run (shared by `diff` and the in-place reducer, so the key
+/// order is the same in both).
+pub(super) fn removed_op(run_id: &str, revision: u64) -> Value {
+    json!({"op": "workflowRun.removed", "runId": run_id, "revision": revision})
 }
 
 fn birth_op(run: &Obj, revision: u64) -> Value {
@@ -193,8 +199,8 @@ fn diff_entries_by_key(before: &[Obj], after: &[Obj]) -> Result<Option<EntryDiff
     Ok(Some(EntryDiff { removed, changed }))
 }
 
-/// `diffWorkflowRun`.
-fn diff_run(before: Option<&Obj>, run: &Obj, revision: u64) -> RunDiff {
+/// `diffWorkflowRun`: the change of one run. `before` is `None` for a run that is being born.
+pub(super) fn diff_run(before: Option<&Obj>, run: &Obj, revision: u64) -> RunDiff {
     let Some(before) = before else {
         return RunDiff::Op(birth_op(run, revision));
     };
@@ -268,7 +274,8 @@ fn refs_value(refs: &[InstanceRef]) -> Value {
     )
 }
 
-fn whole_key(next: &State) -> Vec<Value> {
+/// The whole-key fallback: one `state.updated{workflowRuns}` that replaces the key.
+pub(super) fn whole_key(next: &State) -> Vec<Value> {
     vec![json!({"op": "state.updated", "patch": {"workflowRuns": next.to_value()}})]
 }
 
@@ -287,7 +294,7 @@ pub fn diff(prior: Option<&State>, next: &State) -> Vec<Value> {
         if next_ids.contains(id) {
             continue;
         }
-        ops.push(json!({"op": "workflowRun.removed", "runId": id, "revision": next.revision}));
+        ops.push(removed_op(id, next.revision));
     }
     for run in &next.runs {
         let id = run.get("runId").and_then(Value::as_str).unwrap_or_default();
