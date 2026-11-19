@@ -33,6 +33,9 @@ pub enum ErrorCode {
     ArtifactUndeclared,
     ArtifactPrimaryConflict,
     WorldReadCapExceeded,
+    /// Node `ContextLimit`: a model request exceeded the context window even after compaction. It fails only the ask,
+    /// so the script can catch it (W6b part 3).
+    ContextLimit,
 }
 
 impl ErrorCode {
@@ -58,6 +61,7 @@ impl ErrorCode {
             Self::ArtifactKindMismatch => "ArtifactKindMismatch",
             Self::ArtifactCapExceeded => "ArtifactCapExceeded",
             Self::WorldReadCapExceeded => "WorldReadCapExceeded",
+            Self::ContextLimit => "ContextLimit",
             Self::ArtifactSpecInvalid => "ArtifactSpecInvalid",
             Self::ArtifactRedeclared => "ArtifactRedeclared",
             Self::ArtifactUndeclared => "ArtifactUndeclared",
@@ -87,6 +91,7 @@ impl ErrorCode {
             "ArtifactKindMismatch" => Self::ArtifactKindMismatch,
             "ArtifactCapExceeded" => Self::ArtifactCapExceeded,
             "WorldReadCapExceeded" => Self::WorldReadCapExceeded,
+            "ContextLimit" => Self::ContextLimit,
             "ArtifactSpecInvalid" => Self::ArtifactSpecInvalid,
             "ArtifactRedeclared" => Self::ArtifactRedeclared,
             "ArtifactUndeclared" => Self::ArtifactUndeclared,
@@ -310,6 +315,7 @@ mod code_round_trip_tests {
             ErrorCode::ArtifactUndeclared => 21,
             ErrorCode::ArtifactPrimaryConflict => 22,
             ErrorCode::WorldReadCapExceeded => 23,
+            ErrorCode::ContextLimit => 24,
         }
     }
 
@@ -340,6 +346,7 @@ mod code_round_trip_tests {
             ErrorCode::ArtifactUndeclared,
             ErrorCode::ArtifactPrimaryConflict,
             ErrorCode::WorldReadCapExceeded,
+            ErrorCode::ContextLimit,
         ];
         for (index, code) in all.iter().enumerate() {
             assert_eq!(
@@ -353,6 +360,6 @@ mod code_round_trip_tests {
                 "{code:?} parses back from as_str"
             );
         }
-        assert_eq!(all.len(), 24, "every variant is listed");
+        assert_eq!(all.len(), 25, "every variant is listed");
     }
 }
