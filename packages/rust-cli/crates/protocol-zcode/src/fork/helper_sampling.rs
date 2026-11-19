@@ -38,8 +38,7 @@ pub(crate) fn parse(params: &Value, cancel: CancellationToken) -> Result<Samplin
     };
     let max_tokens = request
         .get("maxTokens")
-        .and_then(Value::as_u64)
-        .filter(|max| *max > 0)
+        .and_then(super::mcp_ui_sampling::max_tokens)
         .ok_or_else(|| RpcError::invalid_params("request.maxTokens must be a positive integer"))?;
     Ok(SamplingCall {
         session,

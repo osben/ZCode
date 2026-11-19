@@ -551,7 +551,13 @@ impl RustMcpUi {
                     })
                     .await;
                 self.validate(host, session, &guard, params)?;
-                helper_sampling::answer(result)
+                match result {
+                    Ok(reply) => {
+                        mcp_ui_sampling::check_reply(&reply)?;
+                        helper_sampling::answer(Ok(reply))
+                    }
+                    Err(error) => helper_sampling::answer(Err(error)),
+                }
             })
             .await
     }
@@ -871,7 +877,7 @@ fn call_key(session: &str, token: &str, call_id: &str) -> String {
 /// Node `nonEmptyString.max(128)` on an operation id.
 fn operation_id(params: &Value) -> Result<&str, RpcError> {
     let id = text(params, "operationId")?;
-    if id.chars().count() > 128 {
+    if super::mcp_ui_sampling::utf16_len(id) > 128 {
         return Err(RpcError::invalid_params(
             "operationId is at most 128 characters",
         ));

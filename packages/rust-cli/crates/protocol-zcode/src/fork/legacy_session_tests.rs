@@ -218,6 +218,8 @@ pub(crate) struct TestKernel {
 #[derive(Clone)]
 pub(crate) enum TestSampling {
     Reply(String),
+    /// Fork (F7 PR 2): a reply as given, to check the kernel reply's shape.
+    Raw(SamplingReply),
     /// Waits until the call is cancelled, as a model that never answers.
     Hold,
 }
@@ -292,6 +294,7 @@ impl Kernel for TestKernel {
                 text,
                 stop_reason: "endTurn".to_owned(),
             }),
+            Some(TestSampling::Raw(reply)) => Ok(reply),
             Some(TestSampling::Hold) => {
                 self.sampling_started.notify_one();
                 call.cancel.cancelled().await;

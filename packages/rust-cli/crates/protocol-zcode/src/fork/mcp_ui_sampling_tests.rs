@@ -8,7 +8,8 @@ use rust_cli_protocol_core::rpc::RpcError;
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
-use super::{MAX_OPERATIONS, Sampling, Scope, check_request};
+use super::{MAX_BYTES, MAX_OPERATIONS, Sampling, Scope, check_reply, check_request};
+use rust_cli_kernel_api::sampling::SamplingReply;
 
 /// A lease the test owns: its token, session and cancel signal.
 struct Owned {
@@ -331,4 +332,35 @@ fn include_context_other_than_none_is_refused() {
     let mut none = request();
     none["includeContext"] = json!("none");
     check_request(&none).expect("none is allowed");
+}
+
+#[test]
+fn max_tokens_must_be_a_safe_integer() {
+    let mut beyond = request();
+    beyond["maxTokens"] = json!(9_007_199_254_740_992u64);
+    refused(&beyond);
+    let mut largest = request();
+    largest["maxTokens"] = json!(9_007_199_254_740_991u64);
+    check_request(&largest).expect("the largest safe integer is allowed");
+    // JavaScript reads 16.0 as the integer 16, so the schema accepts it.
+    let mut whole = request();
+    whole["maxTokens"] = json!(16.0);
+    check_request(&whole).expect("a whole number written with a point");
+}
+
+#[test]
+fn a_reply_must_name_its_model_and_stop_reason_and_fit_the_text_limit() {
+    let reply = |model: &str, stop: &str, text: String| SamplingReply {
+        model: model.to_owned(),
+        text,
+        stop_reason: stop.to_owned(),
+    };
+    check_reply(&reply("m", "endTurn", "ok".to_owned())).expect("a valid reply");
+    assert!(check_reply(&reply("", "endTurn", "ok".to_owned())).is_err());
+    assert!(check_reply(&reply("m", "", "ok".to_owned())).is_err());
+    // The limit counts UTF-16 units: an astral character is two of them.
+    let at_limit = "\u{1F600}".repeat(MAX_BYTES / 2);
+    check_reply(&reply("m", "endTurn", at_limit.clone())).expect("exactly the limit");
+    let over = format!("{at_limit}a");
+    assert!(check_reply(&reply("m", "endTurn", over)).is_err());
 }

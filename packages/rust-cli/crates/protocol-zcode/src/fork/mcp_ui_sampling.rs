@@ -30,6 +30,8 @@ pub(crate) const MAX_OPERATIONS: usize = 4096;
 /// Node `MCP_APPS_SAMPLING_MAX_BYTES` and `MCP_APPS_SAMPLING_MAX_BLOCKS`.
 const MAX_BYTES: usize = 8 * 1024 * 1024;
 const MAX_BLOCKS: usize = 64;
+/// JavaScript's `Number.MAX_SAFE_INTEGER`.
+const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 /// Node `MCP_APPS_IMAGE_MAX_BYTES` and `MCP_APPS_IMAGE_MIME_TYPES`.
 const IMAGE_MAX_BYTES: usize = 4 * 1024 * 1024;
 const IMAGE_MIME_TYPES: &[&str] = &["image/png", "image/jpeg", "image/webp"];
@@ -243,6 +245,31 @@ impl Admission {
     }
 }
 
+/// Node `mcpAppsSamplingResultSchema`: the kernel's reply names a model and a stop reason, and its text fits the
+/// result limit (`z.string().max`, which counts UTF-16 units). A reply that fails it is refused as Node's parse
+/// failure is: an internal error.
+pub(crate) fn check_reply(
+    reply: &rust_cli_kernel_api::sampling::SamplingReply,
+) -> Result<(), RpcError> {
+    if reply.model.is_empty() || reply.stop_reason.is_empty() || utf16_len(&reply.text) > MAX_BYTES
+    {
+        return Err(RpcError::internal("Sampling result is invalid"));
+    }
+    Ok(())
+}
+
+/// Node `z.number().int().positive().safe()` for `maxTokens`: a whole, positive number no larger than
+/// `Number.MAX_SAFE_INTEGER`. A whole number written with a point counts, as it does in JavaScript.
+pub(crate) fn max_tokens(value: &Value) -> Option<u64> {
+    let whole = value.as_u64().or_else(|| {
+        value
+            .as_f64()
+            .filter(|n| n.fract() == 0.0 && *n >= 1.0 && *n <= MAX_SAFE_INTEGER as f64)
+            .map(|n| n as u64)
+    })?;
+    (1..=MAX_SAFE_INTEGER).contains(&whole).then_some(whole)
+}
+
 /// Node `mcpAppsSamplingParamsSchema` (and its `superRefine` budget) for the `request` of `mcp/uiSampling`, checked
 /// before the operation is admitted. The message texts are Rust's own; zod's issue texts are not reproduced.
 pub(crate) fn check_request(request: &Value) -> Result<(), RpcError> {
@@ -257,11 +284,7 @@ pub(crate) fn check_request(request: &Value) -> Result<(), RpcError> {
             "request.includeContext must be \"none\"",
         ));
     }
-    if object
-        .get("maxTokens")
-        .and_then(Value::as_u64)
-        .is_none_or(|max| max == 0)
-    {
+    if object.get("maxTokens").and_then(max_tokens).is_none() {
         return Err(RpcError::invalid_params(
             "request.maxTokens must be a positive integer",
         ));
@@ -381,7 +404,7 @@ fn check_text(text: &str) -> Result<(), RpcError> {
 }
 
 /// Node `z.string().max()` counts UTF-16 code units.
-fn utf16_len(text: &str) -> usize {
+pub(crate) fn utf16_len(text: &str) -> usize {
     text.encode_utf16().count()
 }
 

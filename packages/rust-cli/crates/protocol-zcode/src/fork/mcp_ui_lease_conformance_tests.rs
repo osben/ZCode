@@ -285,8 +285,9 @@ impl Runner {
             "closeSession" => {
                 let session = step["session"].as_str().expect("session");
                 let closed = self.instances.close_session(session);
-                let aliases: Vec<String> =
+                let mut aliases: Vec<String> =
                     closed.iter().map(|lease| self.alias_of(lease)).collect();
+                aliases.sort();
                 format!("closedSession:{}", aliases.join(","))
             }
             other => panic!("unknown op {other}"),
