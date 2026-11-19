@@ -2014,6 +2014,7 @@ dependencies = [
  "rust-cli-kernel-api",
  "rust-cli-net",
  "rust-cli-proc",
+ "rust-cli-workflow",
  "serde_json",
  "tempfile",
  "tokio",
