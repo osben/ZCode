@@ -88,8 +88,11 @@ pub trait SessionCloser: Send + Sync + 'static {
 pub struct NoCloser;
 
 impl SessionCloser for NoCloser {
-    fn close(&self, _session: &str) -> Result<()> {
-        Ok(())
+    /// A turn side with no closer must not report a close it did not make, so the close is an error.
+    fn close(&self, session: &str) -> Result<()> {
+        Err(anyhow!(
+            "no runtime closer is wired for session {session}: this turn side was built with MailboxTurns::new"
+        ))
     }
 }
 
@@ -113,8 +116,24 @@ struct TurnLedger {
     running: HashMap<String, usize>,
     /// Sessions asked to close while a turn runs: each closes when its last turn lands.
     closing: HashSet<String>,
-    /// Sessions whose close was requested. A second request is a no-op, so a session closes once.
+    /// Sessions whose close was requested. A second request is a no-op, so a session closes once. A refused close
+    /// leaves the set, so the session can be asked again.
     requested: HashSet<String>,
+    /// Deferred closes that were refused after their turn landed, as (session, message), until the owner drains them.
+    failures: Vec<(String, String)>,
+}
+
+/// Runs the runtime close of `session`. A refused close leaves the session's request, so a later request tries again.
+fn run_close(ledger: &Mutex<TurnLedger>, closer: &dyn SessionCloser, session: &str) -> Result<()> {
+    let result = closer.close(session);
+    if result.is_err() {
+        ledger
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .requested
+            .remove(session);
+    }
+    result
 }
 
 /// One running turn of a session. Dropping it (when the ask's thread ends) is the turn landing; if the session was asked
@@ -141,8 +160,14 @@ impl Drop for TurnGuard {
             }
             finished && ledger.closing.remove(&self.session)
         };
-        if close && let Err(error) = self.closer.close(&self.session) {
-            tracing::warn!(session = %self.session, error = %error, "an actor's session did not close after its turn");
+        if close && let Err(error) = run_close(&self.ledger, self.closer.as_ref(), &self.session) {
+            let message = format!("{error:#}");
+            tracing::warn!(session = %self.session, error = %message, "an actor's session did not close after its turn");
+            self.ledger
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .failures
+                .push((self.session.clone(), message));
         }
     }
 }
@@ -169,6 +194,9 @@ impl MailboxTurns {
 }
 
 impl ActorTurns for MailboxTurns {
+    /// Invariant: no turn starts on a session whose close was requested and not refused. A close waits for the
+    /// session's running turns, so a turn begun after the request would outlive the close. Such a start is an error,
+    /// and the owner fails the ask with it.
     fn start_turn(
         &mut self,
         session: &str,
@@ -176,6 +204,17 @@ impl ActorTurns for MailboxTurns {
         input: &TurnInput,
         interaction: &str,
     ) -> Result<()> {
+        // The turn is running from here until its thread ends (W6b part 6). It is counted before the thread starts, so a
+        // close asked right after this call waits for it.
+        {
+            let mut ledger = self.ledger.lock().unwrap_or_else(PoisonError::into_inner);
+            if ledger.requested.contains(session) {
+                return Err(anyhow!(
+                    "session {session} is closing, so no turn can start on it"
+                ));
+            }
+            *ledger.running.entry(session.to_owned()).or_default() += 1;
+        }
         let cancel = Arc::new(AtomicBool::new(false));
         self.cancels.insert(instance.key(), cancel.clone());
         let runner = self.runner.clone();
@@ -184,12 +223,6 @@ impl ActorTurns for MailboxTurns {
         let first = input.clone();
         let interaction = interaction.to_owned();
         let turn_instance = instance.clone();
-        // The turn is running from here until its thread ends (W6b part 6). It is counted before the thread starts, so a
-        // close asked right after this call waits for it.
-        {
-            let mut ledger = self.ledger.lock().unwrap_or_else(PoisonError::into_inner);
-            *ledger.running.entry(session.clone()).or_default() += 1;
-        }
         let turn = TurnGuard {
             ledger: self.ledger.clone(),
             closer: self.closer.clone(),
@@ -255,10 +288,21 @@ impl ActorTurns for MailboxTurns {
             }
         };
         if idle {
-            self.closer.close(session)
+            run_close(&self.ledger, self.closer.as_ref(), session)
         } else {
             Ok(())
         }
+    }
+
+    /// Drains the deferred closes that were refused after their turn landed.
+    fn take_close_failures(&mut self) -> Vec<(String, String)> {
+        std::mem::take(
+            &mut self
+                .ledger
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .failures,
+        )
     }
 }
 

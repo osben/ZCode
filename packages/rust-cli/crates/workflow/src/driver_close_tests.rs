@@ -110,7 +110,7 @@ fn row_34_disposing_twice_closes_each_session_once() {
 fn row_35_a_failed_close_is_recorded_and_the_settlement_does_not_throw() {
     let sessions = Recording::default();
     let mut owner = owner_with(&sessions);
-    start_actor(&mut owner, &sessions, "worker", true);
+    let session = start_actor(&mut owner, &sessions, "worker", true);
     sessions.0.borrow_mut().fail_next_close = true;
     owner
         .complete(json!("done"))
@@ -119,9 +119,18 @@ fn row_35_a_failed_close_is_recorded_and_the_settlement_does_not_throw() {
         owner.settlement(),
         Some(RunSettlement::Completed { .. })
     ));
-    let failures = owner.driver_for_test().close_failures.clone();
+    let failures = owner.take_close_failures();
     assert_eq!(failures.len(), 1, "{failures:?}");
-    assert!(failures[0].1.contains("close refused"));
+    assert_eq!(failures[0].0, session);
+    assert!(
+        failures[0].1.contains("close refused"),
+        "the cause is kept: {}",
+        failures[0].1
+    );
+    assert!(
+        owner.take_close_failures().is_empty(),
+        "taking the failures drains them"
+    );
 }
 
 /// Row 36: in the pipeline each actor's runtime is closed exactly once after settlement. (The GC half has no Rust

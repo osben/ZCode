@@ -38,6 +38,10 @@ pub trait ActorTurns {
     /// The session's close (Node `releaseActorSessions` for one session). Closes now when no turn runs; otherwise when
     /// the running turn lands. Once per session: a second request for the same session is a no-op.
     fn close_session(&mut self, session: &str) -> Result<()>;
+    /// Drains the deferred closes that the turn side refused after their turn landed, as (session, message).
+    fn take_close_failures(&mut self) -> Vec<(String, String)> {
+        Vec::new()
+    }
 }
 
 /// Session creation on the shared session database, with the turn side injected.
@@ -138,5 +142,9 @@ impl<T: ActorTurns> ActorSessions for NodeActorSessions<'_, T> {
 
     fn close_session(&mut self, session: &str) -> Result<()> {
         self.turns.close_session(session)
+    }
+
+    fn take_close_failures(&mut self) -> Vec<(String, String)> {
+        self.turns.take_close_failures()
     }
 }

@@ -108,7 +108,8 @@ impl ActorSessions for Recording {
         let mut log = self.0.borrow_mut();
         if log.fail_next_close {
             log.fail_next_close = false;
-            bail!("close refused");
+            // A chained error, as a runtime's close reports it: the cause is only visible with the `{:#}` form.
+            return Err(anyhow::anyhow!("close refused").context("runtime close failed"));
         }
         log.closed.push(session.to_owned());
         Ok(())
