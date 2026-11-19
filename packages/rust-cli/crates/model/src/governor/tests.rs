@@ -913,6 +913,21 @@ async fn a_429_within_five_minutes_stops_the_seed_and_the_cap_climbs_by_probing(
     h.governor.set_run_bound(&rid("r"), 32);
     let snapshot = h.snapshot(KEY_A);
     assert_eq!((snapshot.cap, snapshot.growth_limit), (6, 32));
+    // The cap still climbs by probing: fill the gate at 6, keep four waiters queued, and complete four
+    // current-epoch attempts. The fourth success sees demand, so the cap goes from 6 to 7.
+    let mut full: Vec<_> = (0..6)
+        .map(|_| fast(&h.governor, &run("r"), KEY_A))
+        .collect();
+    let _waiting: Vec<_> = (0..4)
+        .map(|_| queue(&h.governor, run("r"), KEY_A))
+        .collect();
+    settle_tasks().await;
+    assert_eq!(h.snapshot(KEY_A).waiters, 4);
+    for _ in 0..4 {
+        full.remove(0).settle(AttemptSignal::Completed);
+        settle_tasks().await;
+    }
+    assert_eq!(h.snapshot(KEY_A).cap, 7);
 }
 
 #[tokio::test]

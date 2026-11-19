@@ -340,4 +340,12 @@ fn a_rejection_within_five_minutes_refuses_the_seed_and_the_cap_climbs_as_usual(
     controller.throttled(0, epoch, ThrottleReason::RateLimited, None); // cap 6
     assert!(controller.seed(IDLE_RESET_MS - 1, 32).is_empty());
     assert_eq!(controller.snapshot().cap, 6);
+    // The cap still climbs by probing: a waiter, then K current-epoch successes, lift it by one.
+    controller.waiters(IDLE_RESET_MS - 1, 1);
+    let changes = round_trips(&mut controller, 4);
+    assert_eq!(controller.snapshot().cap, 7);
+    assert_eq!(
+        changes.iter().map(|c| c.next).collect::<Vec<u32>>(),
+        vec![7]
+    );
 }

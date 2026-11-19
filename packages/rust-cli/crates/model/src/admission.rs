@@ -12,8 +12,15 @@ use tokio_util::sync::CancellationToken;
 pub struct RunId(String);
 
 impl RunId {
+    /// 一个 run 的 ID 不能以 `\0` 开头：那是治理器内部的 key 空间（观察者、子代理池）。
+    /// 调试构建里违反即 panic（调用方的 bug，要尽早暴露）；发布构建不检查，避免在热路径上失败。
     pub fn new(id: impl Into<String>) -> Self {
-        Self(id.into())
+        let id = id.into();
+        debug_assert!(
+            !id.starts_with('\0'),
+            "a run id must not start with NUL: it collides with the governor's reserved key space"
+        );
+        Self(id)
     }
 
     pub fn as_str(&self) -> &str {
