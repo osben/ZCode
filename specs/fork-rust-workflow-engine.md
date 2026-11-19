@@ -1712,6 +1712,8 @@ Also added, with no Node counterpart: `a_state_within_the_legacy_bound_is_return
 
 Not ported here. Four other Node tests use `reduceWorkflowRunsState` only as a fold inside larger scenarios: `dynamic-workflow-run-service.test.ts`, `dynamic-workflow-run-roster.test.ts`, `dynamic-workflow-report-reads.test.ts`, and `dynamic-workflow-run-replay.test.ts`. Their assertions are about the run service, the roster, report reads and the cold replay as a whole. The run service, roster and reads are W7 and W9 surfaces; the cold replay is section 9.4. Their reducer calls are not separately ported.
 
+Also not ported, with owner W7-5 (the Host publisher). `conversation-topic-publisher-workflow-runs.test.ts` drives `ConversationTopicPublisher`, the subscription registry, the retained log and `ProductProjection`, so it needs the publisher shell first. Coalescing is not ported: `mergeWorkflowRunUpdates` and `workflowRunUpdateWithinWireBounds` (`workflow-runs-delta.ts`) stay with the publisher. `publish.rs` ports only the two per-batch rules (`encodeConversationDeltasForLegacy` and `workflowRunDeltaGrowthUpperBound`). Section 9.8i rows 58 (the escalation payload clip at 2048 characters) and 65 (raised and resolved on the live track and in event paging) stay open with owner W7-5. `LiveProjection` adds neither the clip nor the event paging.
+
 **Divergences.**
 
 1. The signature changed. Node's reducer returns a new state. The Rust reducer returns the ops and mutates the state. A caller that needs the prior value clones it first.
