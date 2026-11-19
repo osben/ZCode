@@ -161,8 +161,13 @@ pub fn facts_of(error: &ModelError) -> FailureFacts<'_> {
     if let Some(provider) = error.provider()
         && !provider.reason.is_empty()
     {
+        let reason = if KNOWN_PROVIDER_REASONS.contains(&provider.reason.as_str()) {
+            provider.reason.as_str()
+        } else {
+            REASON_UNKNOWN
+        };
         return FailureFacts {
-            reason: provider.reason.as_str(),
+            reason,
             code: None,
             provider_code,
         };
@@ -187,18 +192,41 @@ fn variant_reason(error: &ModelError) -> &'static str {
         ModelError::Server { .. } => "server_error",
         ModelError::StreamIdle { .. } => "stream_idle_timeout",
         ModelError::QuotaExhausted { .. } => REASON_QUOTA_EXHAUSTED,
-        ModelError::ContentBlocked { .. } => "content_blocked",
-        ModelError::RequestTooLarge { .. } | ModelError::CurrentAttachmentsTooLarge => {
-            "request_too_large"
-        }
-        // A truncated or malformed stream is retried (Node's invalid_model_response is not in the Stop set).
-        ModelError::Protocol { .. }
-        | ModelError::FallbackTriggered { .. }
-        | ModelError::Unsupported { .. }
+        // Deterministic rejections of the request. Node's equivalent wire failures are a 400 or 422, which its classifier
+        // maps to `invalid_request` (a stop row). Node has no content-filter error: `sensitive` is a finish reason.
+        ModelError::ContentBlocked { .. }
+        | ModelError::RequestTooLarge { .. }
+        | ModelError::CurrentAttachmentsTooLarge
+        | ModelError::Unsupported { .. } => REASON_INVALID_REQUEST,
+        // A truncated or malformed stream is retried (Node's invalid_model_response is not in the Stop set). A fallback
+        // switch is an overload that already moved to another model: it is retried as an overload is (Node retries it).
+        ModelError::Protocol { .. } | ModelError::FallbackTriggered { .. } => REASON_UNKNOWN,
         // `peel` removed the provider wrapper; this arm keeps the match exhaustive.
-        | ModelError::Provider { .. } => REASON_UNKNOWN,
+        ModelError::Provider { .. } => REASON_UNKNOWN,
     }
 }
+
+/// The provider reasons the table knows. Any other reason from a provider is read as `unknown`, so an unrecognized code
+/// with such a reason still counts toward the streak (ocr review, finding 8).
+const KNOWN_PROVIDER_REASONS: &[&str] = &[
+    REASON_CANCELLED,
+    REASON_AUTH_FAILED,
+    REASON_PROVIDER_NOT_CONFIGURED,
+    REASON_CONTEXT_EXCEEDED,
+    REASON_INVALID_REQUEST,
+    REASON_UNKNOWN,
+    REASON_QUOTA_EXHAUSTED,
+    "rate_limited",
+    "provider_overloaded",
+    "server_error",
+    "network_error",
+    "timeout",
+    "stream_idle_timeout",
+    "tls_error",
+    "proxy_error",
+    "content_blocked",
+    "request_too_large",
+];
 
 /// The policy for a model error, with `streak` as in [`resolve_failure_policy`].
 pub fn model_failure_policy(error: &ModelError, streak: u32) -> WorkflowModelFailurePolicy {

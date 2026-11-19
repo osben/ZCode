@@ -424,12 +424,9 @@ impl crate::Agents {
             &finished.report.text,
         );
         // A failure on a model request keeps its typed error (W6b part 3): a killed turn stays `Stopped`.
-        match (end, &finished.error) {
+        match (end, finished.error) {
             (ActorTurnEnd::Failed(message), Some(QueryError::Model(model))) => {
-                ActorTurnEnd::ModelFailed {
-                    message,
-                    model: model.clone(),
-                }
+                ActorTurnEnd::ModelFailed { message, model }
             }
             (end, _) => end,
         }

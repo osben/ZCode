@@ -113,8 +113,6 @@ pub mod message;
 pub mod metering;
 pub mod model;
 pub mod model_name;
-// Fork: the workflow model-failure policy table (Node `workflow-model-failure-policy.ts`), shared by the model
-// governor and the workflow driver.
 pub mod monitor;
 pub mod monitor_watch;
 pub mod off_peak;
@@ -128,6 +126,8 @@ pub mod plan;
 pub mod prompt_attachment;
 pub mod provider;
 pub mod reminder_fold;
+// Fork: the workflow model-failure policy table (Node `workflow-model-failure-policy.ts`), shared by the model
+// governor and the workflow driver.
 pub mod workflow_failure;
 // Fork: remote workspace identities (Node packages/shared remote-workspace-identity.ts).
 pub mod remote_identity;

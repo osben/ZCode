@@ -4,7 +4,7 @@
 
 use crate::actor_mailbox::ActorMailbox;
 use crate::driver_owner::ActorDriverOwner;
-use crate::driver_owner_tests::{Recording, running_ask};
+use crate::driver_owner_tests::{Recording, first_turn_instance, running_ask};
 use crate::engine::RunSettlement;
 use crate::error::ErrorCode;
 use crate::journal::MemoryJournal;
@@ -20,14 +20,29 @@ type Owner = ActorDriverOwner<MemoryJournal, Recording>;
 /// fixed, so the delays are exact.
 struct ManualClock {
     random: f64,
+    /// False makes the clock refuse every job, as a failed thread spawn would.
+    accept: bool,
     delays: Mutex<Vec<u64>>,
     pending: Mutex<Vec<Box<dyn FnOnce() + Send>>>,
 }
+
+/// The wall time a `ManualClock` reports: 2026-10-15T08:00:00Z.
+const FIXED_NOW_MS: u64 = 1_792_051_200_000;
 
 impl ManualClock {
     fn new(random: f64) -> Arc<Self> {
         Arc::new(Self {
             random,
+            accept: true,
+            delays: Mutex::new(Vec::new()),
+            pending: Mutex::new(Vec::new()),
+        })
+    }
+
+    fn refusing(random: f64) -> Arc<Self> {
+        Arc::new(Self {
+            random,
+            accept: false,
             delays: Mutex::new(Vec::new()),
             pending: Mutex::new(Vec::new()),
         })
@@ -39,13 +54,21 @@ impl ManualClock {
 }
 
 impl RedriveClock for ManualClock {
-    fn after(&self, delay_ms: u64, job: Box<dyn FnOnce() + Send>) {
+    fn after(&self, delay_ms: u64, job: Box<dyn FnOnce() + Send>) -> bool {
         self.delays.lock().expect("delays").push(delay_ms);
+        if !self.accept {
+            return false;
+        }
         self.pending.lock().expect("pending").push(job);
+        true
     }
 
     fn random(&self) -> f64 {
         self.random
+    }
+
+    fn now_ms(&self) -> u64 {
+        FIXED_NOW_MS
     }
 }
 
@@ -269,7 +292,11 @@ fn a_redrive_due_after_the_run_settled_starts_no_turn() {
         .expect("the failure is handled");
     let turns = sessions.0.borrow().turns.len();
     owner.complete(Value::Null).expect("the run completes");
-    fire_redrive(&mut owner, &mailbox, &clock);
+    // The settled run released the mailbox: the job finds no handle, so nothing is served and the channel is closed.
+    let job = clock.pending.lock().expect("pending").remove(0);
+    job();
+    assert!(mailbox.try_take().is_none());
+    owner.drain().expect("drain");
     assert_eq!(
         sessions.0.borrow().turns.len(),
         turns,
@@ -301,4 +328,148 @@ fn a_retry_without_a_redrive_clock_fails_the_ask_as_a_driver_fault() {
     let error = outcomes[0].result.as_ref().expect_err("the ask fails");
     assert_eq!(error.code, ErrorCode::DriverError);
     assert!(error.message.contains("redrive"), "{}", error.message);
+}
+
+// ocr review (aa81ed0fb), finding 1: a redrive the clock could not schedule must not leave the ask waiting forever.
+#[test]
+fn a_redrive_the_clock_cannot_schedule_fails_the_ask_with_driver_error() {
+    let (mut owner, _sessions, _actor, session) = running_ask();
+    let (_mailbox, handle) = ActorMailbox::new();
+    let clock = ManualClock::refusing(0.5);
+    owner.attach_redrive(handle, clock);
+    owner
+        .turn_failed(&session, &TurnFailure::model("reset", network_error()))
+        .expect("the failure is handled");
+    let outcomes = owner.take_outcomes();
+    assert_eq!(
+        outcomes.len(),
+        1,
+        "the ask must not wait on a redrive that will never run"
+    );
+    let error = outcomes[0].result.as_ref().expect_err("the ask fails");
+    assert_eq!(error.code, ErrorCode::DriverError);
+}
+
+// ocr review, finding 3: a successful turn ends the consecutive run of unrecognized codes (Node's streak is per
+// request, so a request that succeeded starts a new count).
+#[test]
+fn unrecognized_failures_interleaved_with_successes_never_stop_the_run() {
+    let (mut owner, _sessions, _actor, session) = running_ask();
+    let (mailbox, clock) = attach(&mut owner, 1.0);
+    for _round in 0..2 {
+        for _ in 0..9 {
+            owner
+                .turn_failed(
+                    &session,
+                    &TurnFailure::model("[1113] account", unrecognized_code_error()),
+                )
+                .expect("the failure is handled");
+            fire_redrive(&mut owner, &mailbox, &clock);
+        }
+        // A submit that fails validation is still a turn that reached the owner, and it keeps the ask live.
+        owner
+            .submit_result(&session, Value::Object(serde_json::Map::new()))
+            .expect("the submit is answered");
+        assert!(
+            owner.take_outcomes().is_empty(),
+            "a rejected submit keeps the ask live"
+        );
+        assert!(
+            owner.settlement().is_none(),
+            "nine in a row never stops the run"
+        );
+    }
+}
+
+// ocr review, finding 4: a redrive whose interaction is gone fails the ask instead of leaving it live.
+#[test]
+fn a_redrive_whose_interaction_is_gone_fails_the_ask_with_driver_error() {
+    let (mut owner, _sessions, _actor, session) = running_ask();
+    let (mailbox, clock) = attach(&mut owner, 0.5);
+    owner
+        .turn_failed(&session, &TurnFailure::model("reset", network_error()))
+        .expect("the failure is handled");
+    owner.forget_interaction_for_test(&session);
+    fire_redrive(&mut owner, &mailbox, &clock);
+    let outcomes = owner.take_outcomes();
+    assert_eq!(outcomes.len(), 1, "the ask must not stay live");
+    let error = outcomes[0].result.as_ref().expect_err("the ask fails");
+    assert_eq!(error.code, ErrorCode::DriverError);
+}
+
+// ocr review, finding 5: settlement releases the redrive wiring, so a job that fires afterwards posts nothing.
+#[test]
+fn a_redrive_job_that_fires_after_settlement_posts_nothing() {
+    let (mut owner, _sessions, _actor, session) = running_ask();
+    let (mailbox, clock) = attach(&mut owner, 0.5);
+    owner
+        .turn_failed(&session, &TurnFailure::model("reset", network_error()))
+        .expect("the failure is handled");
+    owner.complete(Value::Null).expect("the run completes");
+    let job = clock.pending.lock().expect("pending").remove(0);
+    job();
+    assert!(
+        mailbox.try_take().is_none(),
+        "no request is posted after settlement"
+    );
+}
+
+// ocr review, finding 9: the tool counts of an ask sum over its redrives, as Node's do over the whole ask.
+#[test]
+fn the_stats_of_an_ask_carry_across_its_redrives() {
+    use crate::engine::AskStats;
+    let (mut owner, sessions, _actor, session) = running_ask();
+    let (mailbox, clock) = attach(&mut owner, 0.5);
+    let instance = first_turn_instance(&sessions);
+    owner
+        .ask_stats(
+            &instance,
+            AskStats {
+                tokens: 10.0,
+                tool_calls: 2.0,
+                turns: 1.0,
+                world_tool_calls: Some(1.0),
+            },
+        )
+        .expect("the stats are reported");
+    owner
+        .turn_failed(&session, &TurnFailure::model("reset", network_error()))
+        .expect("the failure is handled");
+    fire_redrive(&mut owner, &mailbox, &clock);
+    // The redriven turn counts from zero on its own thread.
+    owner
+        .ask_stats(
+            &instance,
+            AskStats {
+                tokens: 5.0,
+                tool_calls: 3.0,
+                turns: 1.0,
+                world_tool_calls: Some(0.0),
+            },
+        )
+        .expect("the stats are reported");
+    assert_eq!(owner.reported_stats(&session), Some((5.0, 1.0)));
+}
+
+// ocr review, finding 10: a quota stop carries the reset time from Retry-After (Node's `resetAt`).
+#[test]
+fn a_quota_stop_with_retry_after_carries_its_reset_time() {
+    let (mut owner, _sessions, _actor, session) = running_ask();
+    let (_mailbox, _clock) = attach(&mut owner, 0.5);
+    let quota = provider(
+        "1308",
+        "rate_limited",
+        ModelError::RateLimited {
+            message: "[1308] usage limit".into(),
+            retry_after_ms: Some(3_600_000),
+        },
+    );
+    owner
+        .turn_failed(&session, &TurnFailure::model("[1308] usage limit", quota))
+        .expect("the failure is handled");
+    let (_, error) = settled_stop(&owner);
+    let reset_at = error["providerStop"]["resetAt"]
+        .as_u64()
+        .expect("resetAt is written");
+    assert_eq!(reset_at, FIXED_NOW_MS + 3_600_000);
 }

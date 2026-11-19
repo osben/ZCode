@@ -42,18 +42,19 @@ use crate::model::{ConcurrencyChange, Ref, StoredEvent};
 use crate::model_failure::{
     RedriveClock, TRANSIENT_CONTINUE_PROMPT, TurnFailure, transient_backoff_ms,
 };
-use crate::model_failure::{provider_stop_error, retry_after_of};
+use crate::model_failure::{provider_stop_error, quota_reset_at, retry_after_of};
 use crate::persona::persona_name;
 use crate::run_concurrency::RunConcurrency;
 use crate::world_host::{WORLD_JOB_LIMIT, WorldJob, WorldWiring, spawn_world_job};
 use anyhow::{Result, anyhow};
 use rust_cli_kernel_api::model::ModelError;
+use rust_cli_kernel_api::workflow_failure::ProviderStopKind;
 use rust_cli_kernel_api::workflow_failure::{
     WorkflowModelFailurePolicy, facts_of, model_failure_policy, next_unrecognized_streak,
 };
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 /// Node `cancelAsk`'s rejection of a pending submit: the text the submit's caller reads.
 pub const CANCELLED_BY_ENGINE_MESSAGE: &str = "The ask was cancelled by the engine.";
@@ -139,11 +140,17 @@ struct ActiveAsk {
     attempts: u32,
     /// Unrecognized business codes in a row, across this ask's failures (Node's streak, W6b part 3).
     unrecognized: u32,
+    /// The tool and world-tool counts the owner last reported, and the counts that earlier turns of this ask already
+    /// contributed. A redriven turn counts from zero on its own thread, so its reports are added to `stats_base`
+    /// (ocr review, finding 9).
+    stats_base: (f64, f64),
+    stats_last: (f64, f64),
 }
 
-/// The owner's redrive wiring: the mailbox the redrive job posts to, and the clock it waits on.
+/// The owner's redrive wiring. A redrive job reads the mailbox out of `slot` when it fires, so a settled run can clear
+/// the slot and release the mailbox handle at once, even while a job still waits on its clock (ocr review, finding 5).
 struct RedriveWiring {
-    handle: ActorHandle,
+    slot: Arc<Mutex<Option<ActorHandle>>>,
     clock: Arc<dyn RedriveClock>,
 }
 
@@ -637,6 +644,7 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
     /// Node `makeSessionSubmitPort`: a `submit_result` call from a session's turn.
     pub fn submit_result(&mut self, session: &str, payload: Value) -> Result<SubmitReply> {
         self.settle_quietly();
+        self.reset_unrecognized_streak(session);
         let ask = self.active.get(session).cloned();
         let typed = ask.as_ref().map(|ask| ask.typed).unwrap_or(false);
         match submit_route(ask.is_some(), typed) {
@@ -669,6 +677,7 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
     /// Node `turnEnded`: a turn finished without a submit. The engine answers Nudge, or settles the ask.
     pub fn turn_ended(&mut self, session: &str, final_text: &str) -> Result<TurnEndReply> {
         self.settle_quietly();
+        self.reset_unrecognized_streak(session);
         let Some(ask) = self.active.get(session).cloned() else {
             return Ok(TurnEndReply::NoAsk);
         };
@@ -712,8 +721,22 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
         match model_failure_policy(model, streak) {
             WorkflowModelFailurePolicy::Stop(kind) => {
                 let (subagent, name) = self.subagent_of(session, &ask);
-                let error =
-                    provider_stop_error(kind, model, &failure.message, &subagent, name.as_deref());
+                // Node sets `resetAt` for a quota stop only, and reads the time from the injected clock. Without a clock
+                // there is no time to measure from, so no reset time is written.
+                let reset_at = match (kind == ProviderStopKind::Quota, self.redrive.as_ref()) {
+                    (true, Some(wiring)) => {
+                        quota_reset_at(model, &failure.message, wiring.clock.now_ms())
+                    }
+                    _ => None,
+                };
+                let error = provider_stop_error(
+                    kind,
+                    model,
+                    &failure.message,
+                    &subagent,
+                    name.as_deref(),
+                    reset_at,
+                );
                 let result = self.engine.stop(StopReason::Provider, Some(error), None);
                 self.after_engine(result)
             }
@@ -753,8 +776,8 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
         ask: &ActiveAsk,
         model: &ModelError,
     ) -> Result<()> {
-        let (handle, clock) = match self.redrive.as_ref() {
-            Some(wiring) => (wiring.handle.clone(), wiring.clock.clone()),
+        let (slot, clock) = match self.redrive.as_ref() {
+            Some(wiring) => (wiring.slot.clone(), wiring.clock.clone()),
             None => {
                 let result = self.engine.ask_failed(
                     &ask.instance,
@@ -780,20 +803,57 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
             delay_ms: Some(delay_ms),
             retry_after_ms,
         };
-        let waiting = self.engine.ask_waiting(&ask.instance, wait);
         let instance = ask.instance.clone();
         let session_owned = session.to_owned();
-        clock.after(
+        // The job reads the mailbox when it fires. A settled run has cleared the slot, so nothing is posted then.
+        let scheduled = clock.after(
             delay_ms,
             Box::new(move || {
-                // The owner may be gone by now; the request then has no one to serve it.
-                let _ = handle.post(ActorRequest::RedriveDue {
-                    session: session_owned,
-                    instance,
-                });
+                let handle = match slot.lock() {
+                    Ok(guard) => guard.clone(),
+                    Err(_) => None,
+                };
+                if let Some(handle) = handle {
+                    let _ = handle.post(ActorRequest::RedriveDue {
+                        session: session_owned,
+                        instance,
+                    });
+                }
             }),
         );
+        // A job the clock refused never runs, so the ask must not wait for it (ocr review, finding 1).
+        if !scheduled {
+            let result = self.engine.ask_failed(
+                &ask.instance,
+                WorkflowError::new(
+                    ErrorCode::DriverError,
+                    "the transient model failure could not be redriven: the redrive clock refused the job",
+                ),
+            );
+            return self.after_engine(result);
+        }
+        if let Some(active) = self.active.get_mut(session) {
+            active.stats_base = active.stats_last;
+        }
+        let waiting = self.engine.ask_waiting(&ask.instance, wait);
         self.after_engine(waiting)
+    }
+
+    /// Node's `turnEnded` and `submitResult` both count a turn that reached the owner as complete: its model requests
+    /// finished. The unrecognized streak is a run of failures with no such turn between them (ocr review, finding 3).
+    fn reset_unrecognized_streak(&mut self, session: &str) {
+        if let Some(active) = self.active.get_mut(session) {
+            active.unrecognized = 0;
+        }
+    }
+
+    /// Release the redrive wiring at settlement: the slot is cleared, so a pending job posts nothing and holds no handle.
+    fn release_redrive(&mut self) {
+        if let Some(wiring) = self.redrive.take()
+            && let Ok(mut slot) = wiring.slot.lock()
+        {
+            *slot = None;
+        }
     }
 
     /// Node's redrive, fired (W6b part 3): the ask's next turn starts with the continue prompt, on the same session and
@@ -809,15 +869,23 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
         {
             return Ok(());
         }
-        let interaction = self
+        let Some(interaction) = self
             .engine
             .driver
             .interaction_of_session
             .get(session)
             .cloned()
-            .ok_or_else(|| {
-                anyhow!("no interaction description is recorded for session {session}")
-            })?;
+        else {
+            // Without its description the turn cannot be named, so the ask fails here rather than waiting (finding 4).
+            let result = self.engine.ask_failed(
+                instance,
+                WorkflowError::new(
+                    ErrorCode::DriverError,
+                    format!("no interaction description is recorded for session {session}"),
+                ),
+            );
+            return self.after_engine(result);
+        };
         let input = TurnInput {
             text: TRANSIENT_CONTINUE_PROMPT.to_owned(),
             epilogue_start: 0,
@@ -844,12 +912,29 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
     /// Attach the redrive wiring (W6b part 3): the mailbox a redrive posts to, and the clock it waits on. Production
     /// attaches [`crate::model_failure::ThreadClock`]; tests attach a clock they run by hand.
     pub fn attach_redrive(&mut self, handle: ActorHandle, clock: Arc<dyn RedriveClock>) {
-        self.redrive = Some(RedriveWiring { handle, clock });
+        self.redrive = Some(RedriveWiring {
+            slot: Arc::new(Mutex::new(Some(handle))),
+            clock,
+        });
     }
 
     /// The run's settlement once it has settled (`None` while it runs).
     pub fn settlement(&self) -> Option<&RunSettlement> {
         self.engine.settlement()
+    }
+
+    /// Test hook (ocr review): the tool and world-tool counts the owner last reported for the session's ask.
+    /// RED STAGE: not recorded yet.
+    #[cfg(test)]
+    pub(crate) fn reported_stats(&self, session: &str) -> Option<(f64, f64)> {
+        self.active.get(session).map(|ask| ask.stats_last)
+    }
+
+    /// Test hook (ocr review): removes the session's interaction description, as a session that lost it would.
+    /// RED STAGE: a no-op.
+    #[cfg(test)]
+    pub(crate) fn forget_interaction_for_test(&mut self, session: &str) {
+        self.engine.driver.interaction_of_session.remove(session);
     }
 
     /// Node `workflow-driver-transcript.ts`: the ask's message boundary, written on its node row. The turn thread names
@@ -868,6 +953,28 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
     /// that instance, so it cannot land on a newer ask of the session.
     pub fn ask_stats(&mut self, instance: &Ref, stats: crate::engine::AskStats) -> Result<()> {
         self.pump()?;
+        // A redriven turn reports counts from zero, so the earlier turns' counts are added on top of its own (finding 9).
+        let key = instance.key();
+        let stats = match self
+            .active
+            .values_mut()
+            .find(|ask| ask.instance.key() == key)
+        {
+            Some(ask) => {
+                let (base_tools, base_world) = ask.stats_base;
+                let report = crate::engine::AskStats {
+                    tool_calls: base_tools + stats.tool_calls,
+                    world_tool_calls: stats.world_tool_calls.map(|world| base_world + world),
+                    ..stats
+                };
+                ask.stats_last = (
+                    report.tool_calls,
+                    report.world_tool_calls.unwrap_or(base_world),
+                );
+                report
+            }
+            None => stats,
+        };
         let result = self.engine.ask_stats(instance, stats);
         self.after_engine(result)
     }
@@ -1009,6 +1116,7 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
         // Settlement releases the run from the governor (once: `release_concurrency` takes the link).
         if self.engine.is_settled() {
             self.release_concurrency();
+            self.release_redrive();
         }
         match first {
             Some(error) => Err(error),
@@ -1098,6 +1206,8 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
                         schema: start.turn.submit_schema.clone(),
                         attempts: 0,
                         unrecognized: 0,
+                        stats_base: (0.0, 0.0),
+                        stats_last: (0.0, 0.0),
                     },
                 );
                 self.engine

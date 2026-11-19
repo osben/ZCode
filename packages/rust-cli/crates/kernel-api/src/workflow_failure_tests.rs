@@ -385,3 +385,63 @@ fn model_error_variants_map_to_the_table_reasons() {
         assert_eq!(model_failure_policy(&error, 1), expected, "{error:?}");
     }
 }
+
+// ocr review (aa81ed0fb), finding 2: the Rust-only deterministic variants stop, as Node's 400/422 wire failures do
+// (Node's classifier maps a 400 or 422 to invalid_request, which is a stop row).
+#[test]
+fn content_size_and_unsupported_failures_stop_as_invalid_requests() {
+    let m = |text: &str| text.to_owned();
+    for error in [
+        ModelError::ContentBlocked { message: m("x") },
+        ModelError::RequestTooLarge { message: m("x") },
+        ModelError::CurrentAttachmentsTooLarge,
+        ModelError::Unsupported { what: m("x") },
+    ] {
+        assert_eq!(
+            model_failure_policy(&error, 1),
+            stop(ProviderStopKind::InvalidRequest),
+            "{error:?}"
+        );
+    }
+}
+
+// ocr review, finding 2: a fallback switch is a transient overload that already exhausted its retries on one model;
+// Node retries an overload, so this retries too.
+#[test]
+fn a_fallback_trigger_retries_as_a_transient_overload() {
+    let error = ModelError::FallbackTriggered {
+        original_model: m_str("a"),
+        fallback_model: m_str("b"),
+    };
+    assert_eq!(
+        model_failure_policy(&error, 1),
+        WorkflowModelFailurePolicy::Retry
+    );
+}
+
+fn m_str(text: &str) -> String {
+    text.to_owned()
+}
+
+// ocr review, finding 8: a provider reason outside the known vocabulary counts as unknown, so an unrecognized code with
+// such a reason still counts toward the streak.
+#[test]
+fn an_unknown_provider_reason_is_read_as_unknown_for_the_streak() {
+    let error = ModelError::Provider {
+        provider: Box::new(ProviderFailure::new(
+            "1113",
+            None,
+            false,
+            "something_new",
+            "zhipu",
+        )),
+        error: Box::new(ModelError::Protocol {
+            message: "x".into(),
+        }),
+    };
+    assert_eq!(next_unrecognized_streak(0, &error), 1);
+    assert_eq!(
+        model_failure_policy(&error, UNRECOGNIZED_CODE_MAX_CONSECUTIVE),
+        stop(ProviderStopKind::Other)
+    );
+}
