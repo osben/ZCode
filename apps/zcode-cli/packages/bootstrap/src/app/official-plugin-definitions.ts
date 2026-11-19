@@ -215,7 +215,7 @@ export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = 
       "../../android-emulator-plugin",
       "../../../android-emulator-plugin",
     ],
-    version: "0.1.1",
+    version: "0.1.2",
   },
   {
     // The manifest declares only the browser-use skill; the host node_repl MCP is injected
@@ -243,16 +243,16 @@ export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = 
     ],
     // If the official seed version is missed when the package/manifest bumps, the old cache directory keeps loading.
     // package, manifest, and definition versions should stay in sync so shipped content and installed version do not fork again.
-    version: "0.5.1",
+    version: "0.5.2",
   },
   ...(
     [
       // 版本按插件各自升，换新缓存目录：pdf 0.2.1 起面板带中日韩字体回退；0.2.1（pdf 0.2.2）起
       // server 由工作区内各 session 共享，旧缓存的 server 不区分 session，不能沿用。
-      ["documents", "docx", "Documents", "Word文档", "0.2.2"],
-      ["pdf", "pdf", "PDF", "PDF", "0.2.3"],
-      ["presentations", "pptx", "Presentations", "演示文档", "0.2.2"],
-      ["spreadsheets", "xlsx", "Spreadsheets", "电子表格", "0.2.2"],
+      ["documents", "docx", "Documents", "Word文档", "0.2.9"],
+      ["pdf", "pdf", "PDF", "PDF", "0.2.10"],
+      ["presentations", "pptx", "Presentations", "演示文档", "0.2.9"],
+      ["spreadsheets", "xlsx", "Spreadsheets", "电子表格", "0.2.9"],
     ] as const
   ).map(
     ([name, skill, displayName, chineseName, version]): OfficialPluginDefinition => ({
@@ -518,7 +518,7 @@ export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = 
     // This version tracks the upstream zcode-cua runtime version so the plugin UI display,
     // cache path, and marketplace entry stay aligned; the actual bump is maintained by the
     // atomic producer bump workflow.
-    version: "0.6.5",
+    version: "0.6.6",
   },
   {
     // ZCode Sites (technical plan 4): a Skill-guided Agent converts the project into an artifact
@@ -550,9 +550,9 @@ export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = 
     ],
     requiredSeedPaths: [
       "commands/site-deploy.md",
-      "scripts/zcode-site.mjs",
-      "scripts/stage.mjs",
-      "scripts/errors.mjs",
+      "skills/site-deploy/scripts/zcode-site.mjs",
+      "skills/site-deploy/scripts/stage.mjs",
+      "skills/site-deploy/scripts/errors.mjs",
       "skills/site-deploy/SKILL.md",
       "skills/site-deploy/templates/static.sh",
       "skills/site-deploy/templates/static-server.mjs",
@@ -562,7 +562,7 @@ export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = 
       "dist/server.mjs",
       "dist/ui/panel.html",
     ],
-    version: "0.5.0",
+    version: "0.5.1",
   },
 ];
 

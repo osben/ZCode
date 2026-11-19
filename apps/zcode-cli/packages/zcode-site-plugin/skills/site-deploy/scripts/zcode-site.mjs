@@ -9,7 +9,8 @@
 // 鉴权（技术方案 5.8）：CLI 不持有任何登录凭证。请求发给 ZCode agent 侧的官方命令端点，端点按
 // session token 认出会话，补上 ZCode 身份头和 X-ZCode-App-Version 后转发给 zcode-server。
 // 端点地址和 token 由 ZCode 注入当前会话的 Bash，在普通终端里运行会按未登录退出：
-//   ZCODE_OFFICIAL_ENDPOINT        端点地址（macOS / Linux 是 UDS 路径，Windows 是命名管道）
+//   ZCODE_OFFICIAL_ENDPOINT        端点地址（macOS / Linux 是 UDS 路径，Windows 是命名管道；
+//                                  以 http:// 或 https:// 开头时是 HTTP(S) 基地址，直接用 fetch 请求，供 Z.ai 沙箱等环境使用）
 //   ZCODE_OFFICIAL_ENDPOINT_TOKEN  本会话的 token
 
 import { realpathSync } from "node:fs";
@@ -46,8 +47,8 @@ function loadEndpoint(env) {
   if (!address || !token) {
     throw new CliError(
       "UNAUTHENTICATED",
-      "ZCode credentials are not available",
-      "Run zcode-site from a ZCode session (the Sites plugin must be enabled), then retry.",
+      "Sites credentials are not available",
+      "Run zcode-site from a session that provides Sites credentials (in ZCode, the Sites plugin must be enabled); ask the user to sign in again or start a new session, then retry.",
       2,
     );
   }
@@ -55,7 +56,16 @@ function loadEndpoint(env) {
 }
 
 // 经 UDS / 命名管道发 HTTP 请求，返回标准 Response，和 fetch 同形状（测试注入 fetchImpl 替换它）。
+// 端点是 http(s) 地址时改用全局 fetch，把 url 里的路径和 query 接到端点基地址后面；
+// Buffer 请求体由 fetch 按长度带 Content-Length，不会变成 chunked（服务端要求它等于 artifactSize）。
 export function createEndpointFetch(address) {
+  if (/^https?:\/\//i.test(address)) {
+    const base = address.replace(/\/+$/, "");
+    return (url, init = {}) => {
+      const { pathname, search } = new URL(url);
+      return fetch(base + pathname + search, init);
+    };
+  }
   return (url, init = {}) =>
     new Promise((resolve, reject) => {
       const { pathname, search } = new URL(url);
@@ -583,7 +593,7 @@ Output
 Exit codes
   0  success
   1  bad arguments, a local file or stage problem, or SITE_NOT_SELECTED
-  2  not signed in to ZCode, sign-in expired, or not run inside a ZCode session
+  2  Sites credentials missing or rejected (not signed in, sign-in expired, or no credentials in this session)
   3  quota, rate or size limit, or another deployment in progress
   4  the deployment failed, or a server error
 
