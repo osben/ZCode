@@ -284,6 +284,13 @@ async fn serve(
         }
         () = stop.token.cancelled() => {}
     }
+    // Fork (W7-6): shutdown drains the sessions that still hold a live workflow run, with one bound. A session that does
+    // not close is logged; the process exits either way.
+    for message in
+        rust_cli_kernel_api::session_api::Kernel::drain_live_runs(built.kernel.as_ref()).await
+    {
+        tracing::error!(event = "app.shutdown.drain_failed", error = %message, "a session with a live run did not close at shutdown");
+    }
     Ok(())
 }
 

@@ -1079,6 +1079,18 @@ pub trait Kernel: Send + Sync {
     /// notices (`close_session` with `forget`), as Node's runtime close cancels them.
     async fn sessions_erased(&self, _sessions: Vec<SessionId>) {}
 
+    /// Fork (W7-6): the sessions among `sessions` that hold a live workflow run (a residency guard). Deletion and erase
+    /// treat them as busy, as Node's residency `busy` does (see `session_deletion::live_run_busy_ids`).
+    fn live_run_sessions(&self, _sessions: &[SessionId]) -> Vec<SessionId> {
+        Vec::new()
+    }
+
+    /// Fork (W7-6): the shutdown drain. Closes every session that holds a live run, bounded as a whole, and returns one
+    /// message per session that did not close.
+    async fn drain_live_runs(&self) -> Vec<String> {
+        Vec::new()
+    }
+
     /// Fork: the sessions among `sessions` that a running subagent runs in (`AgentSignals::running_agent_sessions`).
     /// `session/eraseTree` counts them as running and refuses the erase.
     fn running_agent_sessions(&self, _sessions: &[SessionId]) -> Vec<SessionId> {

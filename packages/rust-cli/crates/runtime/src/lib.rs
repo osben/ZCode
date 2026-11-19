@@ -156,6 +156,9 @@ pub struct LocalKernel {
     scope: TaskScope,
     /// 会话表（session-lifecycle.md §3.3.1）：每个会话归谁的唯一来源。
     sessions: OpenSessions,
+    /// Fork (W7-6): the process's residency ledger of live workflow runs. A close drains a session's runs through it, and
+    /// deletion treats a session with a live run as busy. One per process, shared with the run service.
+    residency: Arc<rust_cli_workflow::residency::SessionResidency>,
     /// 关闭时标成关闭中、释放按会话的表（[`Closer`]）。
     closer: Arc<Closer>,
     /// Fork: incognito profiles by session (specs/fork-rust-agent-parity.md, "Incognito sessions"): filled at create
@@ -337,6 +340,8 @@ impl LocalKernel {
             extensions.code_intelligence.clone(),
         );
         let sessions = OpenSessions::default();
+        // W7-6: the process's one residency ledger, owned with the session table; the close and the deletion read it.
+        let residency = Arc::new(rust_cli_workflow::residency::SessionResidency::new());
         let pipeline = assemble::pipeline(&ports, &ext, &gate, &hooks, extensions.node_desktop);
         let parts = assemble::query_parts(
             &ports,
@@ -375,6 +380,7 @@ impl LocalKernel {
         // Fork: built after the agents so a release also reaches them (their notice forwarders).
         let closer = Arc::new(Closer {
             sessions: Arc::downgrade(&sessions),
+            residency: residency.clone(),
             scoped: table::SessionScoped {
                 compositions: compositions.clone(),
                 context: assembler.clone(),
@@ -465,6 +471,7 @@ impl LocalKernel {
             operations,
             scope,
             sessions,
+            residency,
             closer,
             incognito,
             workspaces,

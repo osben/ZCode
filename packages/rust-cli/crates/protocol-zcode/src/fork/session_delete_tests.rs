@@ -74,6 +74,8 @@ impl HandleOverride for TestHandle {
 struct DeleteKernel {
     handle: Arc<TestHandle>,
     fail: bool,
+    /// Every session this kernel is asked about holds a live workflow run (a residency guard).
+    live_run: bool,
     deleted: StdMutex<Vec<String>>,
 }
 
@@ -101,6 +103,14 @@ impl rust_cli_kernel_api::session_api::Kernel for DeleteKernel {
         _filter: SessionFilter,
     ) -> Result<Vec<SessionSummary>, KernelError> {
         Ok(Vec::new())
+    }
+
+    fn live_run_sessions(&self, sessions: &[SessionId]) -> Vec<SessionId> {
+        if self.live_run {
+            sessions.to_vec()
+        } else {
+            Vec::new()
+        }
     }
 
     async fn delete_session(&self, session: &SessionId) -> Result<(), KernelError> {
@@ -154,6 +164,14 @@ fn meta() -> SessionMeta {
 /// Builds the server. The scope is returned too: it must outlive the test, because the session
 /// pump and the topics writer are its tasks (a dropped scope aborts them).
 fn server(handle: Arc<TestHandle>, fail: bool) -> (TaskScope, Arc<Server>, Arc<DeleteKernel>) {
+    server_with(handle, fail, false)
+}
+
+fn server_with(
+    handle: Arc<TestHandle>,
+    fail: bool,
+    live_run: bool,
+) -> (TaskScope, Arc<Server>, Arc<DeleteKernel>) {
     let scope = TaskScope::root("test", |_| {});
     let (out, _reader) = tokio::io::duplex(1 << 16);
     let (peer, _writer) = connection::start(out, &scope.spawner(), Options::default());
@@ -161,6 +179,7 @@ fn server(handle: Arc<TestHandle>, fail: bool) -> (TaskScope, Arc<Server>, Arc<D
     let kernel = Arc::new(DeleteKernel {
         handle,
         fail,
+        live_run,
         deleted: StdMutex::new(Vec::new()),
     });
     let server = Arc::new(Server::new(
@@ -276,6 +295,29 @@ async fn a_running_turn_refuses_without_side_effects() {
         background: Vec::new(),
     });
     let (_scope, server, kernel) = server(handle.clone(), false);
+    let live = server.live(&SessionId::new("s1")).await.unwrap();
+    let ack = delete(&server, &live, &envelope(), 3).await;
+    assert_eq!(ack.status, Status::Failed);
+    assert_eq!(
+        ack.reason_code.as_deref(),
+        Some("fault.command.executionFailed")
+    );
+    assert!(kernel.deleted.lock().unwrap().is_empty());
+    assert!(handle.closes.lock().unwrap().is_empty());
+    assert!(server.bridge.get(&SessionId::new("s1")).is_some());
+}
+
+/// W7-6: a session with a live workflow run is busy, so the delete refuses before any side effect, as a
+/// running turn does: no close, no delete, the bridge keeps the session open.
+#[tokio::test]
+async fn a_live_workflow_run_refuses_without_side_effects() {
+    let handle = Arc::new(TestHandle {
+        id: SessionId::new("s1"),
+        view: view(false, true),
+        closes: StdMutex::new(Vec::new()),
+        background: Vec::new(),
+    });
+    let (_scope, server, kernel) = server_with(handle.clone(), false, true);
     let live = server.live(&SessionId::new("s1")).await.unwrap();
     let ack = delete(&server, &live, &envelope(), 3).await;
     assert_eq!(ack.status, Status::Failed);

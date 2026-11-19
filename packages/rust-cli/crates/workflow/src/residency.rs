@@ -191,14 +191,46 @@ impl SessionResidency {
         true
     }
 
+    /// Refuse new guards on `session` at once, without waiting. The close path calls this on the async thread, so a
+    /// launch that races a close is refused before the blocking close starts.
+    pub fn retire(&self, session: &str) {
+        self.shared.lock().retired.insert(session.to_owned());
+    }
+
+    /// The sessions that hold at least one live guard, in id order.
+    pub fn sessions_with_live_runs(&self) -> Vec<String> {
+        let state = self.shared.lock();
+        let mut sessions: Vec<String> = state
+            .live
+            .iter()
+            .filter(|(_, runs)| !runs.is_empty())
+            .map(|(session, _)| session.clone())
+            .collect();
+        sessions.sort();
+        sessions
+    }
+
+    /// The shutdown drain: close every session that holds a live run, with one bound for the whole drain (not one per
+    /// session). Returns one error per session that did not close, each naming its stuck runs.
+    pub fn drain(&self) -> Vec<anyhow::Error> {
+        let deadline = Instant::now() + self.close_wait;
+        self.sessions_with_live_runs()
+            .iter()
+            .filter_map(|session| self.close_until(session, deadline).err())
+            .collect()
+    }
+
     /// Close the session: refuse new runs, stop each live run that has not been stopped yet, then wait until every
     /// guard is dropped. Errors when the runs are still live after the wait bound, naming them; the session stays
     /// refused, and a later close waits again without stopping a run twice.
     pub fn close(&self, session: &str) -> Result<()> {
+        self.close_until(session, Instant::now() + self.close_wait)
+    }
+
+    fn close_until(&self, session: &str, deadline: Instant) -> Result<()> {
         if STOPPING.with(Cell::get) {
             bail!("session {session} cannot be closed from inside a run's stop");
         }
-        let deadline = Instant::now() + self.close_wait;
         let to_stop: Vec<Arc<dyn LiveRun>> = {
             let mut state = self.shared.lock();
             state.retired.insert(session.to_owned());

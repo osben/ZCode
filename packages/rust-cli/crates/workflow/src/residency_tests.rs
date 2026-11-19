@@ -248,3 +248,82 @@ fn a_stop_cannot_close_its_own_session() {
         .expect("the stop ran");
     assert!(outcome.contains("stop"), "{outcome}");
 }
+
+/// W7-6: a retire refuses a new guard at once, before any close has started to wait.
+#[test]
+fn retiring_a_session_refuses_a_new_guard_without_waiting() {
+    let residency = SessionResidency::new();
+    residency.retire("ses_retiring");
+    let (run, _stops) = fake_run();
+    assert!(residency.acquire("ses_retiring", "run_late", run).is_err());
+}
+
+/// W7-6: the sessions that hold a live run are listed in id order; a settled one is not.
+#[test]
+fn live_sessions_are_listed_in_id_order_and_settled_ones_are_not() {
+    let residency = SessionResidency::new();
+    let (b_run, _b) = fake_run();
+    let (a_run, _a) = fake_run();
+    let (settled, _s) = fake_run();
+    let _b_guard = residency.acquire("ses_b", "run_b", b_run).expect("b");
+    let _a_guard = residency.acquire("ses_a", "run_a", a_run).expect("a");
+    let settled_guard = residency.acquire("ses_c", "run_c", settled).expect("c");
+    drop(settled_guard);
+    assert_eq!(residency.sessions_with_live_runs(), vec!["ses_a", "ses_b"]);
+}
+
+/// W7-6: the shutdown drain closes every session that holds a live run. The runs settle a little after their stop.
+#[test]
+fn drain_closes_every_session_with_a_live_run() {
+    let residency = SessionResidency::with_close_wait(Duration::from_secs(5));
+    let (first, first_stops) = fake_run();
+    let (second, second_stops) = fake_run();
+    let a = residency
+        .acquire("ses_one", "run_1", first.clone())
+        .expect("a");
+    let b = residency
+        .acquire("ses_two", "run_2", second.clone())
+        .expect("b");
+    // The drain closes one session at a time, so the second run is stopped only after the first has settled.
+    let settler = thread::spawn(move || {
+        first_stops.recv().expect("first stop");
+        drop(a);
+        second_stops.recv().expect("second stop");
+        drop(b);
+    });
+    let errors = residency.drain();
+    settler.join().expect("settler");
+    assert!(errors.is_empty(), "{errors:?}");
+    assert!(residency.sessions_with_live_runs().is_empty());
+    assert_eq!(first.stops.load(Ordering::SeqCst), 1);
+    assert_eq!(second.stops.load(Ordering::SeqCst), 1);
+}
+
+/// W7-6: the drain has one bound for the whole shutdown. A run that never settles is reported by name, and a session
+/// after it in the drain does not get a second full wait.
+#[test]
+fn drain_is_bounded_as_a_whole_and_names_the_stuck_runs() {
+    let residency = SessionResidency::with_close_wait(Duration::from_millis(100));
+    let (stuck, _s1) = fake_run();
+    let (also_stuck, _s2) = fake_run();
+    let _held = residency
+        .acquire("ses_stuck", "run_stuck", stuck)
+        .expect("a");
+    let _held_too = residency
+        .acquire("ses_later", "run_later", also_stuck)
+        .expect("b");
+    let started = Instant::now();
+    let errors = residency.drain();
+    assert!(
+        started.elapsed() < Duration::from_millis(400),
+        "the drain waited more than its bound: {:?}",
+        started.elapsed()
+    );
+    let text = errors
+        .iter()
+        .map(|error| format!("{error:#}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(text.contains("run_stuck"), "{text}");
+    assert!(text.contains("run_later"), "{text}");
+}

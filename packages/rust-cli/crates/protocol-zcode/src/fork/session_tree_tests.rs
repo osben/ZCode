@@ -104,6 +104,8 @@ impl StoreQueries for TreeStore {
 struct TreeKernel {
     store: Arc<TreeStore>,
     running: Vec<SessionId>,
+    /// Sessions holding a live workflow run (a residency guard), not a running agent.
+    live_runs: Vec<SessionId>,
     erased: StdMutex<Vec<Vec<SessionId>>>,
 }
 
@@ -146,10 +148,25 @@ impl rust_cli_kernel_api::session_api::Kernel for TreeKernel {
             .cloned()
             .collect()
     }
+
+    fn live_run_sessions(&self, sessions: &[SessionId]) -> Vec<SessionId> {
+        sessions
+            .iter()
+            .filter(|session| self.live_runs.contains(session))
+            .cloned()
+            .collect()
+    }
 }
 
 /// The scope is returned too: it must outlive the test (the server's tasks run in it).
 fn server(running: Vec<SessionId>) -> (TaskScope, Arc<Server>, Arc<TreeKernel>) {
+    server_with_live_runs(running, Vec::new())
+}
+
+fn server_with_live_runs(
+    running: Vec<SessionId>,
+    live_runs: Vec<SessionId>,
+) -> (TaskScope, Arc<Server>, Arc<TreeKernel>) {
     let scope = TaskScope::root("test", |_| {});
     let (out, _reader) = tokio::io::duplex(1 << 16);
     let (peer, _writer) = connection::start(out, &scope.spawner(), Options::default());
@@ -157,6 +174,7 @@ fn server(running: Vec<SessionId>) -> (TaskScope, Arc<Server>, Arc<TreeKernel>) 
     let kernel = Arc::new(TreeKernel {
         store: Arc::new(TreeStore::default()),
         running,
+        live_runs,
         erased: StdMutex::new(Vec::new()),
     });
     let server = Arc::new(Server::new(
@@ -192,6 +210,19 @@ async fn a_running_subagent_blocks_the_erase_of_its_tree() {
     );
     assert!(kernel.store.erased.lock().unwrap().is_empty());
     assert!(kernel.erased.lock().unwrap().is_empty());
+}
+
+/// W7-6: a session with a live workflow run is busy (Node residency `busy`): the erase is refused and
+/// the tree counts it as running, as it counts a running subagent.
+#[tokio::test]
+async fn a_live_workflow_run_blocks_the_erase_of_its_tree() {
+    let (_scope, server, kernel) = server_with_live_runs(Vec::new(), vec![SessionId::new(CHILD)]);
+    let params = json!({"sessionIds": [ROOT]});
+    assert_eq!(tree_counts(&server, &params).await.unwrap()["running"], 1);
+    let result = erase_tree(&server, &params).await.unwrap();
+    assert_eq!(result["erasedSessionIds"], json!([]));
+    assert_eq!(result["blockedRunningSessionIds"], json!([CHILD]));
+    assert!(kernel.store.erased.lock().unwrap().is_empty());
 }
 
 /// Without a running subagent (a parked one is not running) the same tree is erased and the
