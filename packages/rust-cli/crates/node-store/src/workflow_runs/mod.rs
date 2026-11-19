@@ -1,7 +1,8 @@
 //! Port of Node's `workflowRuns` reducer (`packages/shared/src/zcode-protocol-v4/workflow-runs-*.ts`).
 //!
-//! One dwf progress event goes in; the next `workflowRuns` state (or `None` for a semantic no-op)
-//! comes out. The module is pure: no clock, no randomness, no I/O. Its output is compared byte for
+//! One dwf progress event goes in; the `workflowRuns` state is updated in place and the delta ops that
+//! take the prior state to it come out (or `None` for a semantic no-op, which leaves the state as it
+//! was). The module is pure: no clock, no randomness, no I/O. Its output is compared byte for
 //! byte with Node's by the goldens in `fixtures/workflow-runs/goldens.json` (see the spec, section
 //! 9.4). Nothing calls it yet: the gate stays off (W3).
 
@@ -10,6 +11,7 @@ pub mod delta;
 pub mod eviction;
 pub mod js;
 pub mod projection;
+pub mod publish;
 pub mod replay;
 pub mod tables;
 
@@ -206,9 +208,15 @@ pub(crate) struct Derived<'a> {
     pub limits: &'a Limits,
 }
 
-/// Reduce one progress event. `None` means no semantic change (an invalid event, or a replay whose
-/// content is identical). Otherwise the result is the next state with `revision + 1`.
-pub fn reduce(prior: Option<&State>, envelope: &Envelope, limits: &Limits) -> Option<State> {
+/// Reduce one progress event into `state`, in place (W7-0). Returns the delta ops that take the prior
+/// state to the new one, exactly as `delta::diff(prior, state)` would build them, or `None` for a
+/// semantic no-op (an invalid event, or a replay whose content is identical). On `None` the state is
+/// untouched. Otherwise the revision is `revision + 1`.
+///
+/// Only the run the event touches is cloned and diffed. Eviction removes whole runs and never edits a
+/// survivor (`eviction::evict_for_entry_budget`, the run-count cut), so the other runs need no diff:
+/// their ids alone say whether they were removed.
+pub fn reduce(state: &mut State, envelope: &Envelope, limits: &Limits) -> Option<Vec<Value>> {
     let run_id = non_empty(
         envelope
             .run_id
@@ -220,13 +228,12 @@ pub fn reduce(prior: Option<&State>, envelope: &Envelope, limits: &Limits) -> Op
     let sequence = envelope.sequence.unwrap_or(0.0);
     let payload = envelope.payload.clone().unwrap_or_default();
 
-    let prior = prior.cloned().unwrap_or_default();
-    let existing_index = prior
+    let existing_index = state
         .runs
         .iter()
         .position(|run| run_id_of(run) == Some(run_id.as_str()));
     let base: Obj = match existing_index {
-        Some(index) => prior.runs[index].clone(),
+        Some(index) => state.runs[index].clone(),
         None => {
             let mut fresh = Obj::new();
             fresh.insert("runId".into(), Value::String(run_id.clone()));
@@ -263,31 +270,58 @@ pub fn reduce(prior: Option<&State>, envelope: &Envelope, limits: &Limits) -> Op
     let next = canonical(applied);
 
     if let Some(index) = existing_index
-        && js::json_equal(
-            &Value::Object(prior.runs[index].clone()),
-            &Value::Object(next.clone()),
-        )
+        && js::obj_equal(&state.runs[index], &next)
     {
         return None;
     }
 
-    let mut runs = prior.runs.clone();
+    let revision = state.revision + 1;
+    // The event run's own change, diffed against the run as it was before the write.
+    let run_change = delta::diff_run(
+        existing_index.map(|index| &state.runs[index]),
+        &next,
+        revision,
+    );
+    let prior_ids: Vec<String> = state
+        .runs
+        .iter()
+        .filter_map(|run| run_id_of(run).map(str::to_string))
+        .collect();
+
     match existing_index {
-        Some(index) => runs[index] = next,
-        None => runs.push(next),
+        Some(index) => state.runs[index] = next,
+        None => state.runs.push(next),
     }
     // Keep the most recent runs (the run-count cut is fixed, not injected).
-    if runs.len() > PRODUCTION.max_runs {
-        runs.drain(..runs.len() - PRODUCTION.max_runs);
+    if state.runs.len() > PRODUCTION.max_runs {
+        let excess = state.runs.len() - PRODUCTION.max_runs;
+        state.runs.drain(..excess);
     }
     // Entry budget after the run-count cut, as in Node. The budget comes from `limits` (production:
     // `PRODUCTION.max_total_entries`, the value Node's `evictForEntryBudget` reads). The run-count cut
     // stays fixed.
-    let runs = eviction::evict_for_entry_budget(runs, &run_id, limits.max_total_entries);
-    Some(State {
-        revision: prior.revision + 1,
-        runs,
-    })
+    let runs = std::mem::take(&mut state.runs);
+    state.runs = eviction::evict_for_entry_budget(runs, &run_id, limits.max_total_entries);
+    state.revision = revision;
+
+    // Removed runs first, in prior order, as `diff` emits them; then the event run's own op.
+    let survivors: std::collections::HashSet<&str> =
+        state.runs.iter().filter_map(run_id_of).collect();
+    let mut ops: Vec<Value> = prior_ids
+        .iter()
+        .filter(|id| !survivors.contains(id.as_str()))
+        .map(|id| delta::removed_op(id, revision))
+        .collect();
+    match run_change {
+        delta::RunDiff::WholeKey => return Some(delta::whole_key(state)),
+        delta::RunDiff::Op(op) => ops.push(op),
+        delta::RunDiff::NoChange => {}
+    }
+    // As `diff`: a real change that yields no op falls back to the whole key.
+    if ops.is_empty() {
+        return Some(delta::whole_key(state));
+    }
+    Some(ops)
 }
 
 fn run_id_of(run: &Obj) -> Option<&str> {

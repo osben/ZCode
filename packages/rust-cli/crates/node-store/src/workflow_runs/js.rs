@@ -119,6 +119,15 @@ pub fn json_equal(left: &Value, right: &Value) -> bool {
     }
 }
 
+/// `json_equal` on two objects, without wrapping them in a `Value` (the reducer's no-op check, which
+/// runs on every event over the event's run). Same rule as `json_equal`'s object arm.
+pub fn obj_equal(left: &Obj, right: &Obj) -> bool {
+    left.len() == right.len()
+        && left
+            .iter()
+            .all(|(key, value)| right.get(key).is_some_and(|other| json_equal(value, other)))
+}
+
 /// Byte length of the compact JSON text, the measure the reducer's size tests use.
 pub fn utf8_json_len(value: &Value) -> usize {
     serde_json::to_string(value).map_or(0, |text| text.len())

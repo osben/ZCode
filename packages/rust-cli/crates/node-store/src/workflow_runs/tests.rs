@@ -6,9 +6,12 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
+use std::borrow::Cow;
+
 use super::delta::{apply_all, diff};
-use super::js::{ellipsized, json_equal, utf16_len, utf16_prefix};
-use super::projection;
+use super::js::{ellipsized, json_equal, utf8_json_len, utf16_len, utf16_prefix};
+use super::projection::{self, LiveProjection};
+use super::publish::{LEGACY_MAX_ENTRIES, clamp_for_legacy, encode_for_legacy, growth_upper_bound};
 use super::replay::{mint_actor_session_id, replay_envelopes, replay_state};
 use super::{Envelope, Limits, PRODUCTION, State, reduce};
 use crate::repo::dwf::{self, RunRecord, RunStatus, StoredEvent};
@@ -47,36 +50,47 @@ fn node_goldens_reproduce_state_and_deltas_byte_for_byte() {
             "golden scenario {name}: {} steps",
             scenario["steps"].as_array().unwrap().len()
         );
-        let mut prior: Option<State> = None;
+        let mut state = State::default();
         for (index, step) in scenario["steps"].as_array().unwrap().iter().enumerate() {
             let envelope = Envelope::from_value(&step["envelope"]);
-            let next = reduce(prior.as_ref(), &envelope, &limits);
+            let before = state.clone();
+            // The ops come from the reducer itself (W7-0: reduce mutates `state` in place).
+            let ops = reduce(&mut state, &envelope, &limits);
             let changed = step["changed"].as_bool().unwrap();
-            assert_eq!(next.is_some(), changed, "{name} step {index}: change flag");
-            let Some(next) = next else {
+            assert_eq!(ops.is_some(), changed, "{name} step {index}: change flag");
+            let Some(ops) = ops else {
                 assert_eq!(step["ops"].as_str().unwrap(), "[]", "{name} step {index}");
+                assert_eq!(
+                    serialize(&state),
+                    serialize(&before),
+                    "{name} step {index}: a no-op leaves the state byte-identical"
+                );
                 continue;
             };
-            let ops = diff(prior.as_ref(), &next);
             let ops_text = serde_json::to_string(&Value::Array(ops.clone())).unwrap();
             assert_eq!(
                 step["ops"].as_str().unwrap(),
                 ops_text,
                 "{name} step {index}: ops"
             );
+            // The returned ops are the same as the diff of the two states (the oracle).
+            assert_eq!(
+                ops,
+                diff(Some(&before), &state),
+                "{name} step {index}: oracle"
+            );
             checked_ops += 1;
             if let Some(expected) = step["state"].as_str() {
-                assert_eq!(expected, serialize(&next), "{name} step {index}: state");
+                assert_eq!(expected, serialize(&state), "{name} step {index}: state");
                 checked_states += 1;
             }
             // The property: applying the delta to the prior state reproduces the next state, byte for byte.
-            let applied = apply_all(prior.as_ref(), &ops).expect("ops apply to a state");
+            let applied = apply_all(Some(&before), &ops).expect("ops apply to a state");
             assert_eq!(
                 serialize(&applied),
-                serialize(&next),
-                "{name} step {index}: applyAll(prior, diff) == next"
+                serialize(&state),
+                "{name} step {index}: applyAll(prior, ops) == next"
             );
-            prior = Some(next);
         }
     }
     assert!(checked_states > 100, "states compared: {checked_states}");
@@ -140,20 +154,21 @@ fn property_apply_of_diff_reproduces_next_for_random_streams() {
         (4, PRODUCTION.with_entry_limits(5, 6, 4)),
     ] {
         let mut rng = Xorshift(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
-        let mut prior: Option<State> = None;
+        let mut state = State::default();
         let mut sequence = 0.0;
         let mut changed_steps = 0;
         for _ in 0..600 {
             sequence += 1.0;
             let envelope = random_envelope(&mut rng, sequence);
-            let Some(next) = reduce(prior.as_ref(), &envelope, &limits) else {
+            let before = state.clone();
+            let Some(ops) = reduce(&mut state, &envelope, &limits) else {
+                assert_eq!(serialize(&state), serialize(&before), "seed {seed}: no-op");
                 continue;
             };
-            let ops = diff(prior.as_ref(), &next);
-            let applied = apply_all(prior.as_ref(), &ops).expect("ops apply");
-            assert_eq!(serialize(&applied), serialize(&next), "seed {seed}");
+            assert_eq!(ops, diff(Some(&before), &state), "seed {seed}: oracle");
+            let applied = apply_all(Some(&before), &ops).expect("ops apply");
+            assert_eq!(serialize(&applied), serialize(&state), "seed {seed}");
             changed_steps += 1;
-            prior = Some(next);
         }
         assert!(
             changed_steps > 100,
@@ -275,8 +290,9 @@ fn run_keys_are_canonical_after_reduction() {
         payload: payload.as_object().cloned(),
         actor_session_id: None,
     };
-    let mut state = reduce(
-        None,
+    let mut state = State::default();
+    reduce(
+        &mut state,
         &envelope(
             "run-started",
             json!({"caps": {"maxConcurrency": 2}, "concurrencyCeiling": 4}),
@@ -285,8 +301,8 @@ fn run_keys_are_canonical_after_reduction() {
         &PRODUCTION,
     )
     .unwrap();
-    state = reduce(
-        Some(&state),
+    reduce(
+        &mut state,
         &envelope("usage-updated", json!({"spentTokens": 9}), 2.0),
         &PRODUCTION,
     )
@@ -313,8 +329,15 @@ fn replayed_events_are_idempotent() {
             .cloned(),
         actor_session_id: Some("s".into()),
     };
-    let first = reduce(None, &event, &PRODUCTION).unwrap();
-    assert!(reduce(Some(&first), &event, &PRODUCTION).is_none());
+    let mut state = State::default();
+    assert!(reduce(&mut state, &event, &PRODUCTION).is_some());
+    let first = serialize(&state);
+    assert!(reduce(&mut state, &event, &PRODUCTION).is_none());
+    assert_eq!(
+        serialize(&state),
+        first,
+        "the replay left the state as it was"
+    );
 }
 
 /// Invalid envelopes change nothing: no runId, no eventType.
@@ -325,12 +348,14 @@ fn invalid_envelopes_are_no_ops() {
         event_type: Some("run-started".into()),
         ..Envelope::default()
     };
-    assert!(reduce(None, &missing_run, &PRODUCTION).is_none());
+    let mut state = State::default();
+    assert!(reduce(&mut state, &missing_run, &PRODUCTION).is_none());
     let missing_type = Envelope {
         run_id: Some("r".into()),
         ..Envelope::default()
     };
-    assert!(reduce(None, &missing_type, &PRODUCTION).is_none());
+    assert!(reduce(&mut state, &missing_type, &PRODUCTION).is_none());
+    assert_eq!(state, State::default());
 }
 
 /// Empty snapshot stays what Rust answers today when no run exists.
@@ -347,13 +372,10 @@ fn projection_snapshot_is_the_empty_answer_without_a_run() {
         payload: json!({}).as_object().cloned(),
         ..Envelope::default()
     };
-    let (state, ops) =
-        projection::on_progress(None, &envelope, &PRODUCTION).expect("a run is born");
+    let mut live = LiveProjection::new(PRODUCTION);
+    let ops = live.apply(&envelope).expect("a run is born");
     assert_eq!(ops.len(), 1);
-    assert_eq!(
-        projection::snapshot(Some(&state))["runs"][0]["runId"],
-        json!("r1")
-    );
+    assert_eq!(live.snapshot()["runs"][0]["runId"], json!("r1"));
 }
 
 // ---- Cold replay from dwf_event through the W2 repository ----
@@ -485,18 +507,18 @@ fn replay_state_is_the_fold_of_the_replayed_envelopes() {
     assert_eq!(record["actors"][0]["model"], json!("claude-haiku"));
     assert_eq!(record["nodes"][0]["phase"], json!("settled"));
     // Every envelope replayed, the state and its delta agree (the same property as live).
-    let mut prior: Option<State> = None;
+    let mut folded = State::default();
     for envelope in replay_envelopes(&run, &stored, 8.0) {
-        if let Some(next) = reduce(prior.as_ref(), &envelope, &PRODUCTION) {
-            let ops = diff(prior.as_ref(), &next);
+        let before = folded.clone();
+        if let Some(ops) = reduce(&mut folded, &envelope, &PRODUCTION) {
+            assert_eq!(ops, diff(Some(&before), &folded));
             assert_eq!(
-                serialize(&apply_all(prior.as_ref(), &ops).unwrap()),
-                serialize(&next)
+                serialize(&apply_all(Some(&before), &ops).unwrap()),
+                serialize(&folded)
             );
-            prior = Some(next);
         }
     }
-    assert_eq!(serialize(&prior.unwrap()), serialize(&state));
+    assert_eq!(serialize(&folded), serialize(&state));
 }
 
 #[test]
@@ -528,7 +550,7 @@ fn wide_fan_out_hits_the_entry_budget_and_the_run_cut() {
         max_total_entries: PRODUCTION.max_total_entries / 16,
         ..PRODUCTION
     };
-    let mut prior: Option<State> = None;
+    let mut state = State::default();
     let mut sequence = 0.0;
     let mut removed_runs = 0usize;
     let mut step = 0usize;
@@ -586,21 +608,19 @@ fn wide_fan_out_hits_the_entry_budget_and_the_run_cut() {
                 event.sequence = Some(sequence);
             }
             step += 1;
-            let Some(next) = reduce(prior.as_ref(), &event, &limits) else {
+            let runs_before = state.runs.len();
+            let before = (step.is_multiple_of(97)).then(|| state.clone());
+            let Some(ops) = reduce(&mut state, &event, &limits) else {
                 continue;
             };
-            if step.is_multiple_of(97) {
-                let ops = diff(prior.as_ref(), &next);
-                let applied = apply_all(prior.as_ref(), &ops).expect("ops apply");
-                assert_eq!(serialize(&applied), serialize(&next), "step {step}");
+            if let Some(before) = before {
+                assert_eq!(ops, diff(Some(&before), &state), "step {step}: oracle");
+                let applied = apply_all(Some(&before), &ops).expect("ops apply");
+                assert_eq!(serialize(&applied), serialize(&state), "step {step}");
             }
-            if let Some(prev) = &prior {
-                removed_runs += prev.runs.len().saturating_sub(next.runs.len());
-            }
-            prior = Some(next);
+            removed_runs += runs_before.saturating_sub(state.runs.len());
         }
     }
-    let state = prior.expect("state");
     assert!(
         removed_runs > 0,
         "a terminal run was evicted by the entry budget or the run cut"
@@ -677,4 +697,429 @@ fn an_astral_character_in_a_run_id_maps_to_two_underscores_as_node_does() {
         mint_actor_session_id("dwfrun-😀x", "x.y-z", 10.0),
         "sess_dwf-dwfrun-__x-x.y-z_10"
     );
+}
+
+// ---- W7-0: in-place reduction, the LiveProjection holder, and the publisher rules ----
+
+fn event_for(run: &str, event: &str, payload: Value, sequence: f64) -> Envelope {
+    Envelope {
+        run_id: Some(run.into()),
+        tool_call_id: Some(format!("tc-{run}")),
+        sequence: Some(sequence),
+        event_type: Some(event.into()),
+        payload: payload.as_object().cloned(),
+        actor_session_id: None,
+    }
+}
+
+/// An event for one run leaves the other runs alone: the reducer rebuilds only the run it touches.
+/// The heap buffer of another run's `nodes` array is the same before and after (a clone would move it).
+#[test]
+fn an_event_for_one_run_does_not_rebuild_the_other_runs() {
+    let mut state = State::default();
+    reduce(
+        &mut state,
+        &event_for("r1", "run-started", json!({}), 1.0),
+        &PRODUCTION,
+    )
+    .unwrap();
+    let queued = json!({"instance": {"siteId": "ask#1", "ordinal": 1}, "kind": "ask", "phaseName": "Survey"});
+    reduce(
+        &mut state,
+        &event_for("r1", "node-queued", queued, 2.0),
+        &PRODUCTION,
+    )
+    .unwrap();
+    let nodes = state.runs[0]["nodes"].as_array().unwrap();
+    assert!(!nodes.is_empty(), "the buffer under test is not empty");
+    let buffer = nodes.as_ptr();
+
+    reduce(
+        &mut state,
+        &event_for("r2", "run-started", json!({}), 3.0),
+        &PRODUCTION,
+    )
+    .unwrap();
+    assert_eq!(state.runs.len(), 2);
+    assert_eq!(state.runs[0]["runId"], json!("r1"));
+    assert_eq!(
+        state.runs[0]["nodes"].as_array().unwrap().as_ptr(),
+        buffer,
+        "r1 was not rebuilt"
+    );
+}
+
+/// Node `countLongerUpserts`: nodes that a longer entry replaced in place during this step.
+fn count_longer_upserts(prior: Option<&State>, next: &State) -> usize {
+    let (Some(before), Some(after)) = (prior.and_then(|s| s.runs.first()), next.runs.first())
+    else {
+        return 0;
+    };
+    let nodes_of = |run: &super::js::Obj| -> Vec<Value> {
+        run.get("nodes")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+    };
+    let before_nodes = nodes_of(before);
+    nodes_of(after)
+        .iter()
+        .filter(|node| {
+            before_nodes
+                .iter()
+                .find(|old| old["siteId"] == node["siteId"] && old["ordinal"] == node["ordinal"])
+                .is_some_and(|old| utf8_json_len(node) > utf8_json_len(old))
+        })
+        .count()
+}
+
+/// Node `evictionEnvelopes()` (conversation-workflow-run-deltas.test.ts): one run that keeps hitting
+/// the entry budget. Named ask groups (eviction victims), unowned world reads (free nodes), a
+/// `lastTool.target` that grows (longer upserts), and a cached-settlement tail (orphans).
+fn node_eviction_envelopes() -> Vec<Envelope> {
+    let mut out: Vec<Envelope> = Vec::new();
+    let mut push = |event_type: &str, payload: Value| {
+        let sequence = out.len() as f64;
+        out.push(Envelope {
+            run_id: Some("dwfrun-1".into()),
+            tool_call_id: Some("tc-1".into()),
+            sequence: Some(sequence),
+            event_type: Some(event_type.into()),
+            payload: payload.as_object().cloned(),
+            actor_session_id: None,
+        });
+    };
+    push("run-started", json!({"runId": "dwfrun-1"}));
+    for ordinal in 1..=40u64 {
+        let actor = json!({"siteId": "agent#1", "ordinal": ordinal});
+        let instance = json!({"siteId": "ask#1", "ordinal": ordinal});
+        let phase_name = format!("phase-{}", ordinal % 5);
+        push(
+            "actor-created",
+            json!({"actor": actor, "name": format!("agent-{ordinal}"), "phaseName": phase_name}),
+        );
+        push(
+            "node-queued",
+            json!({"instance": instance, "actor": actor, "kind": "ask", "phaseName": phase_name}),
+        );
+        push("node-dispatched", json!({"instance": instance}));
+        push("node-executing", json!({"instance": instance}));
+        let target = "t".repeat(((ordinal * 5) % 64) as usize);
+        push(
+            "node-progress",
+            json!({"instance": instance, "turn": ordinal, "toolCalls": ordinal * 3, "lastTool": {"name": "Bash", "target": target}}),
+        );
+        if ordinal % 4 == 0 {
+            let world = json!({"siteId": "world#1", "ordinal": ordinal});
+            push(
+                "node-queued",
+                json!({"instance": world, "kind": "world-read"}),
+            );
+            push("node-settled", json!({"instance": world, "outcome": "ok"}));
+        }
+        let outcome = if ordinal % 9 == 0 { "failed" } else { "ok" };
+        push(
+            "node-settled",
+            json!({"instance": instance, "outcome": outcome}),
+        );
+    }
+    push("run-started", json!({"runId": "dwfrun-1"}));
+    for ordinal in 1..=10u64 {
+        push(
+            "node-settled",
+            json!({
+                "instance": {"siteId": "ask#1", "ordinal": ordinal},
+                "actor": {"siteId": "agent#1", "ordinal": ordinal},
+                "cached": true,
+                "outcome": "ok",
+                "phaseName": format!("phase-{}", ordinal % 5),
+            }),
+        );
+    }
+    out
+}
+
+/// Node: `eviction stream` growth and key-level checks (conversation-workflow-run-deltas.test.ts,
+/// 腾位事件流). Every step is a key-level delta, the growth bound covers the growth, and each of the
+/// three shapes (removals, a header key born, a longer upsert) actually occurs.
+#[test]
+fn node_eviction_stream_every_step_is_key_level_and_within_the_growth_bound() {
+    let limits = PRODUCTION.with_entry_limits(4, 4, 3);
+    let mut state = State::default();
+    let (mut removals, mut header_born, mut longer_upserts, mut fallbacks) =
+        (0usize, 0usize, 0usize, 0usize);
+    for envelope in node_eviction_envelopes() {
+        let prior = (state.revision > 0).then(|| state.clone());
+        let Some(ops) = reduce(&mut state, &envelope, &limits) else {
+            continue;
+        };
+        assert_eq!(
+            ops,
+            diff(prior.as_ref(), &state),
+            "the reducer's ops are the diff"
+        );
+        let prior_len = prior.as_ref().map_or(0, |p| utf8_json_len(&p.to_value()));
+        let growth = utf8_json_len(&state.to_value()) as isize - prior_len as isize;
+        match growth_upper_bound(&ops) {
+            None => fallbacks += 1,
+            Some(bound) => {
+                assert!(
+                    bound as isize >= growth,
+                    "bound {bound} covers growth {growth}"
+                );
+                let ops_len = utf8_json_len(&Value::Array(ops.clone()));
+                assert!(
+                    ops_len as isize >= growth,
+                    "ops {ops_len} cover growth {growth}"
+                );
+            }
+        }
+        longer_upserts += count_longer_upserts(prior.as_ref(), &state);
+        for op in &ops {
+            if op["op"] != json!("workflowRun.updated") {
+                continue;
+            }
+            if op.get("removedActors").is_some() || op.get("removedNodes").is_some() {
+                removals += 1;
+            }
+            if op["run"].get("unlistedByPhase").is_some() || op["run"].get("truncated").is_some() {
+                header_born += 1;
+            }
+        }
+    }
+    assert!(removals > 0, "a removal happened");
+    assert!(header_born > 0, "a header key was born");
+    assert!(longer_upserts > 0, "a longer entry replaced a shorter one");
+    assert_eq!(fallbacks, 0, "no step fell back to a whole-key patch");
+    assert_eq!(state.runs[0]["truncated"], json!(true));
+    assert!(
+        state.runs[0]["unlistedByPhase"]
+            .as_array()
+            .is_some_and(|grid| !grid.is_empty())
+    );
+}
+
+/// Consumer check: the holder's deltas, applied to a consumer copy, keep the copy equal to the holder
+/// after every step, including the snapshot a client reads. Covers the entry budget (tiny limits) and
+/// the run cut (ten runs at production limits, so the oldest runs leave).
+#[test]
+fn live_projection_deltas_keep_a_consumer_equal_to_the_holder() {
+    let mut evicting = LiveProjection::new(PRODUCTION.with_entry_limits(4, 4, 3));
+    let mut consumer: Option<State> = None;
+    assert!(
+        State::from_value(&evicting.snapshot()).is_none(),
+        "an empty snapshot is not a state"
+    );
+    let mut removed_ops = 0usize;
+    for envelope in node_eviction_envelopes() {
+        let Some(ops) = evicting.apply(&envelope) else {
+            continue;
+        };
+        removed_ops += ops
+            .iter()
+            .filter(|op| {
+                op["op"] == json!("workflowRun.removed")
+                    || op.get("removedActors").is_some()
+                    || op.get("removedNodes").is_some()
+            })
+            .count();
+        consumer = apply_all(consumer.as_ref(), &ops);
+        assert_eq!(projection::snapshot(consumer.as_ref()), evicting.snapshot());
+    }
+    assert!(removed_ops > 0, "the budget evicted entries");
+
+    let mut cut = LiveProjection::new(PRODUCTION);
+    let mut consumer: Option<State> = None;
+    let mut run_removals = 0usize;
+    for run in 1..=10usize {
+        for envelope in [
+            event_for(
+                &format!("dwfrun-{run}"),
+                "run-started",
+                json!({}),
+                run as f64 * 2.0 - 1.0,
+            ),
+            event_for(
+                &format!("dwfrun-{run}"),
+                "run-settled",
+                json!({"status": "completed"}),
+                run as f64 * 2.0,
+            ),
+        ] {
+            let Some(ops) = cut.apply(&envelope) else {
+                continue;
+            };
+            run_removals += ops
+                .iter()
+                .filter(|op| op["op"] == json!("workflowRun.removed"))
+                .count();
+            consumer = apply_all(consumer.as_ref(), &ops);
+            assert_eq!(projection::snapshot(consumer.as_ref()), cut.snapshot());
+        }
+    }
+    assert_eq!(cut.state().runs.len(), PRODUCTION.max_runs);
+    assert_eq!(
+        run_removals,
+        10 - PRODUCTION.max_runs,
+        "the oldest runs were cut"
+    );
+}
+
+/// A holder seeded from a cold replay continues the fold: the next event's deltas take the seeded
+/// consumer to the holder's state.
+#[test]
+fn a_live_projection_seeded_from_replay_continues_the_fold() {
+    let conn = database();
+    let stored = stored_events(&conn, &journal());
+    let run = run_row(RunStatus::Running);
+    let seed = replay_state(&run, &stored, 8.0, &PRODUCTION).expect("replay yields a run");
+    let mut live = LiveProjection::from_state(seed.clone(), PRODUCTION);
+    let next = event_for(
+        "dwfrun-1",
+        "usage-updated",
+        json!({"spentTokens": 42}),
+        100.0,
+    );
+    let ops = live.apply(&next).expect("a new event changes the run");
+    let consumer = apply_all(Some(&seed), &ops).expect("ops apply to the seed");
+    assert_eq!(serialize(&consumer), serialize(live.state()));
+    assert_eq!(live.state().runs[0]["usage"]["spentTokens"], json!(42));
+}
+
+/// Encoding for old consumers, Node `encodeConversationDeltasForLegacy`: a batch with no run deltas
+/// comes back as the same slice.
+#[test]
+fn a_batch_without_run_deltas_comes_back_as_the_same_slice() {
+    let deltas = vec![
+        row_op(),
+        json!({"op": "state.updated", "patch": {"revision": 3}}),
+    ];
+    let encoded = encode_for_legacy(&deltas, Some(&run_state(2, 0)));
+    assert!(matches!(encoded, Cow::Borrowed(_)));
+    assert!(std::ptr::eq(encoded.as_ptr(), deltas.as_ptr()));
+}
+
+/// Node: a batch of run deltas becomes one whole-key patch, placed at the last dropped op's position,
+/// carrying the current projection rather than an intermediate state.
+#[test]
+fn a_batch_of_run_deltas_folds_into_one_whole_key_patch_at_the_last_dropped_position() {
+    let tail = json!({"op": "state.updated", "patch": {"revision": 9}});
+    let deltas = vec![
+        updated_op("dwfrun-1", 5),
+        row_op(),
+        updated_op("dwfrun-1", 6),
+        json!({"op": "workflowRun.removed", "runId": "dwfrun-2", "revision": 7}),
+        tail.clone(),
+    ];
+    let encoded = encode_for_legacy(&deltas, Some(&run_state(2, 0)));
+    let ops: Vec<&str> = encoded
+        .iter()
+        .map(|op| op["op"].as_str().unwrap())
+        .collect();
+    assert_eq!(ops, vec!["row.appended", "state.updated", "state.updated"]);
+    assert_eq!(encoded[0], deltas[1]);
+    assert_eq!(encoded[2], tail);
+    let whole = &encoded[1]["patch"]["workflowRuns"];
+    assert_eq!(whole["revision"], json!(7));
+    assert_eq!(whole["runs"][0]["nodes"].as_array().unwrap().len(), 2);
+}
+
+/// Node: a table over the legacy bound (256) is cut to 256, keeping the live entries first and the
+/// earliest rest in table order, and the run is marked `truncated`.
+#[test]
+fn an_over_legacy_table_is_cut_to_256_and_marked_truncated() {
+    let state = run_state(LEGACY_MAX_ENTRIES + 40, 300);
+    let batch = [updated_op("dwfrun-1", 8)];
+    let encoded = encode_for_legacy(&batch, Some(&state));
+    let run = &encoded[0]["patch"]["workflowRuns"]["runs"][0];
+    assert_eq!(run["nodes"].as_array().unwrap().len(), LEGACY_MAX_ENTRIES);
+    assert_eq!(run["actors"].as_array().unwrap().len(), LEGACY_MAX_ENTRIES);
+    assert_eq!(run["truncated"], json!(true));
+    assert_eq!(run["nodes"][0]["ordinal"], json!(1));
+    assert_eq!(
+        run["nodes"][LEGACY_MAX_ENTRIES - 1]["ordinal"],
+        json!(LEGACY_MAX_ENTRIES)
+    );
+}
+
+/// Node: a state within the legacy bound is returned as it is (no copy, no `truncated`).
+#[test]
+fn a_state_within_the_legacy_bound_is_returned_as_it_is() {
+    let state = run_state(3, 3);
+    assert!(matches!(clamp_for_legacy(&state), Cow::Borrowed(_)));
+}
+
+/// Node: with no `workflowRuns` key to replace, the run deltas are dropped and nothing is inserted.
+#[test]
+fn without_a_workflow_runs_key_the_run_deltas_are_dropped_and_nothing_is_inserted() {
+    let batch = [row_op(), updated_op("dwfrun-1", 1)];
+    let encoded = encode_for_legacy(&batch, None);
+    assert_eq!(encoded.to_vec(), vec![row_op()]);
+}
+
+/// Node: a key-level batch's growth bound is above the batch's own bytes.
+#[test]
+fn an_all_key_level_batch_has_a_growth_bound_above_its_own_bytes() {
+    let deltas = vec![updated_op("dwfrun-1", 5), updated_op("dwfrun-2", 6)];
+    let bound = growth_upper_bound(&deltas).expect("every op is key-level");
+    assert!(bound > serde_json::to_string(&deltas).unwrap().len());
+}
+
+/// Node: any other op in the batch forces an exact measurement.
+#[test]
+fn any_other_op_in_the_batch_forces_an_exact_measurement() {
+    assert_eq!(
+        growth_upper_bound(&[updated_op("dwfrun-1", 5), row_op()]),
+        None
+    );
+}
+
+/// Node: an empty batch takes the fast path, with room for a wider `seq` (16 digits).
+#[test]
+fn an_empty_batch_takes_the_fast_path_with_room_for_a_wider_seq() {
+    let bound = growth_upper_bound(&[]).expect("an empty batch is key-level");
+    assert!(bound > String::from("9007199254740991").len());
+}
+
+/// Node: a whole-key `workflowRuns` patch never takes the fast path, because its bytes are not a bound
+/// on growth.
+#[test]
+fn a_whole_key_workflow_runs_patch_is_never_on_the_fast_path() {
+    let whole =
+        json!({"op": "state.updated", "patch": {"workflowRuns": run_state(300, 0).to_value()}});
+    assert_eq!(growth_upper_bound(std::slice::from_ref(&whole)), None);
+    assert_eq!(
+        growth_upper_bound(&[updated_op("dwfrun-1", 5), whole]),
+        None
+    );
+}
+
+fn updated_op(run_id: &str, revision: u64) -> Value {
+    json!({"op": "workflowRun.updated", "runId": run_id, "revision": revision, "run": {"lastEventSequence": revision}})
+}
+
+fn row_op() -> Value {
+    json!({"op": "row.appended", "row": {"rowId": 1, "kind": "assistantText", "turnId": "turn-1", "text": "hi", "streaming": false, "createdAt": 0}})
+}
+
+/// A state with one run of `node_count` live nodes and `actor_count` idle actors (Node `runState`).
+fn run_state(node_count: usize, actor_count: usize) -> State {
+    let actors: Vec<Value> = (1..=actor_count)
+        .map(|ordinal| json!({"siteId": "actor#1", "ordinal": ordinal, "status": "idle"}))
+        .collect();
+    let nodes: Vec<Value> = (1..=node_count)
+        .map(|ordinal| json!({"siteId": "ask#1", "ordinal": ordinal, "phase": "dispatched"}))
+        .collect();
+    let run = json!({
+        "runId": "dwfrun-1",
+        "status": "running",
+        "usage": {"spentTokens": 0, "nodesUsed": node_count},
+        "actors": actors,
+        "nodes": nodes,
+        "lastEventSequence": node_count,
+    });
+    State {
+        revision: 7,
+        runs: vec![run.as_object().unwrap().clone()],
+    }
 }
