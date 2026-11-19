@@ -107,6 +107,32 @@ async fn waiting_uris_are_bounded_by_their_bytes_too() {
     );
 }
 
+/// F7 PR 4 (review): only the list kinds the connection task refreshes are queued (tools and prompts). A kind a server
+/// makes up is dropped, so the queue is bounded by the kinds the manager knows.
+#[tokio::test]
+async fn only_the_list_kinds_the_connection_refreshes_wait() {
+    let (sender, mut receiver) = channel();
+    sender.send(Notice::ListChanged("tools".to_owned()));
+    for index in 0..1000 {
+        sender.send(Notice::ListChanged(format!("made-up-{index}")));
+    }
+    sender.send(Notice::ListChanged("prompts".to_owned()));
+    sender.send(closed());
+    drop(sender);
+    let mut seen = Vec::new();
+    while let Some(notice) = receiver.recv().await {
+        seen.push(notice);
+    }
+    assert_eq!(
+        seen,
+        [
+            Notice::ListChanged("tools".to_owned()),
+            Notice::ListChanged("prompts".to_owned()),
+            closed(),
+        ]
+    );
+}
+
 /// F7 PR 4 (review): resource notices go before a waiting tools list change, so a busy list cannot starve them.
 #[tokio::test]
 async fn resource_notices_go_before_a_waiting_list_change() {

@@ -378,7 +378,7 @@ impl RustMcpUi {
                 // Node's abort listener: the lease's resource subscriptions go (F7 PR 4).
                 self.unsubscribe_prefix(
                     &panel.session,
-                    &format!("{}|{}|", panel.session, lease.token),
+                    &subscriber_prefix(&panel.session, Some(&lease.token)),
                 );
                 let tap = self.prune_tap(&panel.session, &panel.server_name);
                 drop(tap);
@@ -409,7 +409,7 @@ impl RustMcpUi {
         self.finish_closed(leases);
         self.clear_session_tools(session);
         // Node `session-residency.ts`: the session's subscriptions go with it, and so do its notice taps.
-        self.unsubscribe_prefix(session, &format!("{session}|"));
+        self.unsubscribe_prefix(session, &subscriber_prefix(session, None));
         let prefix = format!("{session}\u{0}");
         let taps: Vec<McpAppSubscription> = {
             let mut taps = self.taps.lock_unpoisoned();
@@ -714,7 +714,7 @@ impl RustMcpUi {
             // too once nothing else of that session and server is open.
             self.unsubscribe_prefix(
                 &panel.session,
-                &format!("{}|{}|", panel.session, panel.lease.token),
+                &subscriber_prefix(&panel.session, Some(&panel.lease.token)),
             );
             drop(self.prune_tap(&panel.session, &panel.server_name));
             self.deliver(
@@ -1149,6 +1149,14 @@ fn app_error(error: McpAppError) -> RpcError {
 
 /// The subscriber key of a request: session, scope and generation (Node `buildMcpUiSubscriberKey`). The request names its
 /// instance, and its scope and generation must be that instance's (Node's binding check, which reads no lease state).
+/// The prefix of a session's subscriber keys, or of one lease's (Node `${sessionId}|` and `${sessionId}|${token}|`).
+fn subscriber_prefix(session: &str, token: Option<&str>) -> String {
+    match token {
+        Some(token) => format!("{session}|{token}|"),
+        None => format!("{session}|"),
+    }
+}
+
 fn subscriber_key(session: &SessionId, params: &Value) -> Result<String, RpcError> {
     let lease = lease_of(params)?;
     let scope = text(params, "scopeId")?;

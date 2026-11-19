@@ -210,22 +210,22 @@ fn the_server_lists_each_subscriber_once() {
     assert!(subs.all_subscribers().is_empty());
 }
 
+/// F7 PR 4 (review): a uri whose request is in flight keeps its entry when its last subscriber leaves, so the next
+/// subscriber joins that request instead of starting a second one (no stale ticket can then land).
 #[test]
-fn a_settle_of_an_earlier_request_changes_nothing_of_a_newer_one() {
+fn a_removed_in_flight_uri_keeps_its_request_for_the_next_joiner() {
     let mut subs = ResourceSubscriptions::default();
-    let first = ask(subs.join("ui://a", "k1"));
-    subs.remove("ui://a", "k1");
-    let second = ask(subs.join("ui://a", "k2"));
+    let ticket = ask(subs.join("ui://a", "k1"));
+    assert_eq!(subs.remove("ui://a", "k1"), Some(false));
     assert!(
-        !subs.settle("ui://a", first, Ok(())),
-        "the earlier ticket is not the uri's"
+        matches!(subs.join("ui://a", "k2"), Join::Wait(_)),
+        "the request in flight is still the uri's"
     );
     assert!(
-        matches!(subs.join("ui://a", "k3"), Join::Wait(_)),
-        "the newer request is still in flight"
+        !subs.settle("ui://a", ticket, Ok(())),
+        "k2 keeps the subscription"
     );
-    subs.settle("ui://a", second, Ok(()));
-    assert!(matches!(subs.join("ui://a", "k4"), Join::Done));
+    assert!(matches!(subs.join("ui://a", "k3"), Join::Done));
 }
 
 #[tokio::test]
@@ -438,6 +438,90 @@ fn the_subscribe_capability_is_read_as_node_reads_it() {
         &json!({"resources": {"subscribe": null}})
     ));
     assert!(!resource_subscribes(&json!({"resources": {}})));
+}
+
+/// F7 PR 4 (review, round 4): an asker dropped while its request is in flight settles its uri, so a joiner gets an error
+/// and the uri is not left pending. The server never answers here.
+#[tokio::test]
+async fn a_dropped_asker_settles_its_uri_and_its_joiner_gets_an_error() {
+    let handler = server(
+        json!({"resources": {"subscribe": true}}),
+        None,
+        |_method, _| None,
+    );
+    let (manager, _fake, _scope) = connected(handler).await;
+    let connection = connection(&manager);
+    let never = CancellationToken::new();
+    let asker = tokio::time::timeout(
+        Duration::from_millis(100),
+        manager.app_subscribe("files", &connection, "ui://a", "s1|scope1|1", &never),
+    );
+    let joiner = async {
+        // Joins while the asker's request is in flight.
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        manager
+            .app_subscribe("files", &connection, "ui://a", "s2|scope2|1", &never)
+            .await
+    };
+    let both = tokio::time::timeout(Duration::from_secs(3), async {
+        tokio::join!(asker, joiner)
+    })
+    .await;
+    let (asked, joined) = both.expect("the joiner must not wait for ever on a dropped asker");
+    assert!(asked.is_err(), "the asker timed out");
+    assert!(joined.is_err(), "the joiner gets an error: {joined:?}");
+    assert_eq!(
+        manager.app_unsubscribe_prefix("s2|"),
+        0,
+        "the joiner keeps nothing"
+    );
+}
+
+/// F7 PR 4 (review, round 4): a joiner that is cancelled stops waiting for the first request at its own cancel.
+#[tokio::test]
+async fn a_cancelled_joiner_stops_waiting_for_the_first_request() {
+    let handler = server(
+        json!({"resources": {"subscribe": true}}),
+        None,
+        |_method, _| None,
+    );
+    let (manager, _fake, _scope) = connected(handler).await;
+    let connection = connection(&manager);
+    let joiner_cancel = CancellationToken::new();
+    let start = std::time::Instant::now();
+    let never = CancellationToken::new();
+    let asker = tokio::time::timeout(
+        Duration::from_millis(400),
+        manager.app_subscribe("files", &connection, "ui://a", "s1|scope1|1", &never),
+    );
+    let joiner = async {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        let cancel_later = async {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            joiner_cancel.cancel();
+        };
+        let (result, ()) = tokio::join!(
+            manager.app_subscribe(
+                "files",
+                &connection,
+                "ui://a",
+                "s2|scope2|1",
+                &joiner_cancel
+            ),
+            cancel_later,
+        );
+        (result, start.elapsed())
+    };
+    let both = tokio::time::timeout(Duration::from_secs(3), async {
+        tokio::join!(asker, joiner)
+    })
+    .await;
+    let (_asked, (joined, joined_after)) = both.expect("the cancelled joiner must return");
+    assert_eq!(joined, Err(McpAppError::Cancelled));
+    assert!(
+        joined_after < Duration::from_millis(300),
+        "the joiner stopped at its cancel, not at the asker's timeout: {joined_after:?}"
+    );
 }
 
 /// Regression (review): a subscription guarded by a connection that has since changed is refused before it is added.

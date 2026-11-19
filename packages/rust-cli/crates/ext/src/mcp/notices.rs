@@ -30,34 +30,57 @@ const RESOURCE_NOTICE_CAP: usize = 1024;
 /// [`RESOURCE_NOTICE_CAP`]. The server chooses the uris, so their size is bounded too.
 const RESOURCE_URI_BYTE_CAP: usize = 1024 * 1024;
 
+/// The list kinds the connection task refreshes (review, round 4): any other kind a server names is dropped, since the
+/// manager has no work for it.
+const QUEUED_LIST_KINDS: [&str; 2] = ["tools", "prompts"];
+
+/// One waiting resource notice. A uri is stored once: the queue and the set share one allocation.
+enum Waiting {
+    Updated(Arc<str>),
+    ListChanged,
+}
+
 #[derive(Default)]
 struct Pending {
-    /// 还没取走的 `list_changed` 种类，按第一次到达的顺序。
+    /// 还没取走的 `list_changed` 种类，按第一次到达的顺序（只有 [`QUEUED_LIST_KINDS`]）。
     changed: VecDeque<String>,
     /// Fork (F7 PR 4): the resource notices that wait, in the order they first arrived.
-    resources: VecDeque<Notice>,
-    /// The notices of `resources`, for the merge of a repeat.
-    waiting: HashSet<Notice>,
+    resources: VecDeque<Waiting>,
+    /// The uris of `resources`, for the merge of a repeat.
+    waiting_uris: HashSet<Arc<str>>,
+    /// A resource list change waits (one entry, whatever the count).
+    list_waits: bool,
     /// The bytes of the uris of `resources`.
     uri_bytes: usize,
     closed: Option<Notice>,
 }
 
-/// Fork (F7 PR 4): admits a resource notice unless it waits already, or it is an update that does not fit the caps.
+/// Fork (F7 PR 4): admits a resource notice unless it waits already, or it is an update that does not fit the caps (it is
+/// then dropped, and logged at debug, so the overflow is visible).
 fn admit(pending: &mut Pending, notice: Notice) {
-    if pending.waiting.contains(&notice) {
-        return;
-    }
-    if let Notice::ResourceUpdated(uri) = &notice {
-        let fits = pending.resources.len() < RESOURCE_NOTICE_CAP
-            && pending.uri_bytes + uri.len() <= RESOURCE_URI_BYTE_CAP;
-        if !fits {
-            return;
+    match notice {
+        Notice::ResourceUpdated(uri) => {
+            if pending.waiting_uris.contains(uri.as_str()) {
+                return;
+            }
+            let fits = pending.resources.len() < RESOURCE_NOTICE_CAP
+                && pending.uri_bytes + uri.len() <= RESOURCE_URI_BYTE_CAP;
+            if !fits {
+                tracing::debug!(%uri, "MCP resource update dropped: the waiting queue is full");
+                return;
+            }
+            pending.uri_bytes += uri.len();
+            let uri: Arc<str> = Arc::from(uri);
+            pending.waiting_uris.insert(uri.clone());
+            pending.resources.push_back(Waiting::Updated(uri));
         }
-        pending.uri_bytes += uri.len();
+        // One entry whatever the count: a list change is admitted past the cap.
+        Notice::ResourceListChanged if !pending.list_waits => {
+            pending.list_waits = true;
+            pending.resources.push_back(Waiting::ListChanged);
+        }
+        _ => {}
     }
-    pending.waiting.insert(notice.clone());
-    pending.resources.push_back(notice);
 }
 
 /// 读者一侧。释放时接收方读完剩下的就结束。
@@ -93,7 +116,9 @@ impl NoticeSender {
             let mut pending = self.pending.lock_unpoisoned();
             match notice {
                 Notice::ListChanged(kind) => {
-                    if !pending.changed.contains(&kind) {
+                    if QUEUED_LIST_KINDS.contains(&kind.as_str())
+                        && !pending.changed.contains(&kind)
+                    {
                         pending.changed.push_back(kind);
                     }
                 }
@@ -111,12 +136,18 @@ impl NoticeReceiver {
     /// Resource notices first (so a busy list cannot starve them), then the list changes, then the close.
     fn take(&self) -> Option<Notice> {
         let mut pending = self.pending.lock_unpoisoned();
-        if let Some(notice) = pending.resources.pop_front() {
-            pending.waiting.remove(&notice);
-            if let Notice::ResourceUpdated(uri) = &notice {
-                pending.uri_bytes -= uri.len();
-            }
-            return Some(notice);
+        if let Some(waiting) = pending.resources.pop_front() {
+            return Some(match waiting {
+                Waiting::Updated(uri) => {
+                    pending.waiting_uris.remove(&*uri);
+                    pending.uri_bytes -= uri.len();
+                    Notice::ResourceUpdated(uri.to_string())
+                }
+                Waiting::ListChanged => {
+                    pending.list_waits = false;
+                    Notice::ResourceListChanged
+                }
+            });
         }
         if let Some(kind) = pending.changed.pop_front() {
             return Some(Notice::ListChanged(kind));

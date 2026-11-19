@@ -132,6 +132,11 @@ impl ResourceSubscriptions {
         }
         match result {
             Ok(()) => {
+                if entry.keys.is_empty() {
+                    // Everybody left while the request was in flight: the server holds a subscription nobody keeps.
+                    self.by_uri.remove(uri);
+                    return true;
+                }
                 if let State::Pending { sender, .. } =
                     std::mem::replace(&mut entry.state, State::Subscribed)
                 {
@@ -161,9 +166,13 @@ impl ResourceSubscriptions {
         if !entry.keys.is_empty() {
             return Some(false);
         }
-        let subscribed = matches!(entry.state, State::Subscribed);
+        // A request in flight keeps its entry (review, round 4): its settle decides, and no second request can start
+        // while the first one may still land.
+        if !matches!(entry.state, State::Subscribed) {
+            return Some(false);
+        }
         self.by_uri.remove(uri);
-        Some(subscribed)
+        Some(true)
     }
 
     /// Removes every key that starts with `prefix`; returns the uris the server holds that lost their last subscriber.
@@ -171,7 +180,7 @@ impl ResourceSubscriptions {
         let mut released = Vec::new();
         self.by_uri.retain(|uri, entry| {
             entry.keys.retain(|key| !key.starts_with(prefix));
-            if !entry.keys.is_empty() {
+            if !entry.keys.is_empty() || !matches!(entry.state, State::Subscribed) {
                 return true;
             }
             if matches!(entry.state, State::Subscribed) {
@@ -264,7 +273,11 @@ fn connection_is(server: &Server, expected: &McpAppConnection) -> bool {
 }
 
 /// Waits for a uri's first request to settle: the subscribers that joined it share its outcome.
-async fn wait_outcome(receiver: &mut watch::Receiver<Outcome>) -> Result<(), McpAppError> {
+/// The joiner's own cancel ends its wait (review, round 4): it does not wait for the first request's end.
+async fn wait_outcome(
+    receiver: &mut watch::Receiver<Outcome>,
+    cancel: &CancellationToken,
+) -> Result<(), McpAppError> {
     loop {
         let current = receiver.borrow_and_update().clone();
         match current {
@@ -272,11 +285,74 @@ async fn wait_outcome(receiver: &mut watch::Receiver<Outcome>) -> Result<(), Mcp
             Outcome::Subscribed => return Ok(()),
             Outcome::Failed(error) => return Err(error),
         }
-        // The sender is gone when the registry was cleared (a reconnect): the connection changed under the wait.
-        if receiver.changed().await.is_err() {
-            return Err(McpAppError::Changed);
+        tokio::select! {
+            () = cancel.cancelled() => return Err(McpAppError::Cancelled),
+            // The sender is gone when the registry was cleared (a reconnect): the connection changed under the wait.
+            changed = receiver.changed() => {
+                if changed.is_err() {
+                    return Err(McpAppError::Changed);
+                }
+            }
         }
     }
+}
+
+/// The first subscriber of a uri, while its request is in flight. Dropped before the request answers (the caller went
+/// away), it settles the uri as cancelled, so the joiners get an error and the uri is not left pending. The server may
+/// have taken the request, so an unsubscribe follows.
+struct Asker {
+    inner: Arc<Inner>,
+    name: String,
+    uri: String,
+    ticket: u64,
+    expected: McpAppConnection,
+    armed: bool,
+}
+
+impl Drop for Asker {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        settle_asked(
+            &self.inner,
+            &self.name,
+            &self.uri,
+            self.ticket,
+            &self.expected,
+            Err(McpAppError::Cancelled),
+        );
+        release_on_server(&self.inner, &self.name, &self.uri);
+    }
+}
+
+/// Settles a uri's first request on the connection it was asked on. Returns `true` when the server holds a subscription
+/// nobody keeps (see [`ResourceSubscriptions::settle`]).
+fn settle_asked(
+    inner: &Inner,
+    name: &str,
+    uri: &str,
+    ticket: u64,
+    expected: &McpAppConnection,
+    result: Result<(), McpAppError>,
+) -> bool {
+    let mut servers = inner.servers();
+    match servers.get_mut(name) {
+        // A changed connection cleared the registry: its waiters already see the change.
+        Some(server) if connection_is(server, expected) => {
+            server.resource_subs.settle(uri, ticket, result)
+        }
+        _ => false,
+    }
+}
+
+/// Sends the server's unsubscribe of `uri` in the background: nothing waits for the server's reply.
+fn release_on_server(inner: &Arc<Inner>, name: &str, uri: &str) {
+    // Detached: the task ends by its own request.
+    drop(inner.spawner.spawn(
+        "mcp-resource-unsubscribe",
+        send_unsubscribe(inner.clone(), name.to_owned(), uri.to_owned()),
+    ));
 }
 
 impl Inner {
@@ -341,8 +417,16 @@ impl McpManager {
         };
         match join {
             Join::Done => Ok(()),
-            Join::Wait(mut receiver) => wait_outcome(&mut receiver).await,
+            Join::Wait(mut receiver) => wait_outcome(&mut receiver, cancel).await,
             Join::Ask(ticket) => {
+                let mut asker = Asker {
+                    inner: self.0.clone(),
+                    name: name.to_owned(),
+                    uri: uri.to_owned(),
+                    ticket,
+                    expected: expected.clone(),
+                    armed: true,
+                };
                 let result = self
                     .app_request(
                         name,
@@ -353,18 +437,10 @@ impl McpManager {
                     )
                     .await
                     .map(|_| ());
-                let release = {
-                    let mut servers = self.0.servers();
-                    match servers.get_mut(name) {
-                        // A changed connection cleared the registry: its waiters already see the change.
-                        Some(server) if connection_is(server, expected) => {
-                            server.resource_subs.settle(uri, ticket, result.clone())
-                        }
-                        _ => false,
-                    }
-                };
-                if release {
-                    self.release_on_server(name, uri);
+                // The request answered: the asker settles the uri itself (nothing to undo on drop).
+                asker.armed = false;
+                if settle_asked(&self.0, name, uri, ticket, expected, result.clone()) {
+                    release_on_server(&self.0, name, uri);
                 }
                 result
             }
@@ -422,11 +498,7 @@ impl McpManager {
 
     /// Sends the server's unsubscribe of `uri` in the background: nothing waits for the server's reply.
     fn release_on_server(&self, name: &str, uri: &str) {
-        // Detached: the task ends by its own request.
-        drop(self.0.spawner.spawn(
-            "mcp-resource-unsubscribe",
-            send_unsubscribe(self.0.clone(), name.to_owned(), uri.to_owned()),
-        ));
+        release_on_server(&self.0, name, uri);
     }
 
     /// Removes `subscriber` for `uri` from server `name`'s registry (see [`ResourceSubscriptions::remove`]).

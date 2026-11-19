@@ -34,7 +34,9 @@ struct FakeHost {
     /// F7 PR 4: each prefix the owner removed by (a lease's or a session's keys).
     prefixes: Mutex<Vec<String>>,
     /// F7 PR 4: the resource notice callbacks the owner installed.
-    resource_listeners: Mutex<Vec<McpResourceCallback>>,
+    resource_listeners: Arc<Mutex<Vec<(usize, McpResourceCallback)>>>,
+    /// The id of the next resource notice callback (a subscription removes its own).
+    resource_listener_ids: Mutex<usize>,
 }
 
 impl FakeHost {
@@ -48,13 +50,20 @@ impl FakeHost {
             reconnect_on_subscribe: Mutex::new(false),
             notify_on_subscribe: Mutex::new(None),
             prefixes: Mutex::new(Vec::new()),
-            resource_listeners: Mutex::new(Vec::new()),
+            resource_listeners: Arc::new(Mutex::new(Vec::new())),
+            resource_listener_ids: Mutex::new(0),
         }
     }
 
     /// A resource notice of the server, as the extension layer delivers it to the owner's callbacks.
     fn notify(&self, notice: McpResourceNotice) {
-        let listeners = self.resource_listeners.lock().unwrap().clone();
+        let listeners: Vec<McpResourceCallback> = self
+            .resource_listeners
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(_, callback)| callback.clone())
+            .collect();
         for listener in listeners {
             listener(notice.clone());
         }
@@ -206,8 +215,32 @@ impl McpAppHost for FakeHost {
         _server: &str,
         callback: McpResourceCallback,
     ) -> Option<McpAppSubscription> {
-        self.resource_listeners.lock().unwrap().push(callback);
-        Some(Box::new(()))
+        let id = {
+            let mut next = self.resource_listener_ids.lock().unwrap();
+            *next += 1;
+            *next
+        };
+        self.resource_listeners.lock().unwrap().push((id, callback));
+        // The subscription removes its callback when dropped, as the extension layer's does.
+        Some(Box::new(TapGuard {
+            listeners: self.resource_listeners.clone(),
+            id,
+        }))
+    }
+}
+
+/// The fake host's resource-notice subscription: dropping it removes its callback.
+struct TapGuard {
+    listeners: Arc<Mutex<Vec<(usize, McpResourceCallback)>>>,
+    id: usize,
+}
+
+impl Drop for TapGuard {
+    fn drop(&mut self) {
+        self.listeners
+            .lock()
+            .unwrap()
+            .retain(|(id, _)| *id != self.id);
     }
 }
 
@@ -800,17 +833,37 @@ async fn panels_of_two_plugins_get_one_delta_each() {
     });
     let deltas = plugin_deltas(&answers);
     assert_eq!(deltas.len(), 2, "one delta per plugin: {deltas:?}");
-    let mut per_plugin: Vec<(String, usize)> = deltas
+    // Each delta names one plugin and carries only that plugin's panel: the (pluginId, scopeId) pairs are pinned.
+    let mut pairs: Vec<(String, String)> = deltas
         .iter()
-        .map(|(_, delta)| {
-            (
-                delta["pluginId"].as_str().expect("a plugin").to_owned(),
-                delta["subscribers"].as_array().expect("subscribers").len(),
-            )
+        .flat_map(|(_, delta)| {
+            let plugin = delta["pluginId"].as_str().expect("a plugin").to_owned();
+            delta["subscribers"]
+                .as_array()
+                .expect("subscribers")
+                .iter()
+                .map(|subscriber| {
+                    (
+                        plugin.clone(),
+                        subscriber["scopeId"].as_str().expect("a scope").to_owned(),
+                    )
+                })
+                .collect::<Vec<_>>()
         })
         .collect();
-    per_plugin.sort();
-    assert_eq!(per_plugin, [("p".to_owned(), 1), ("q".to_owned(), 1)]);
+    pairs.sort();
+    let mut expected = vec![
+        (
+            "p".to_owned(),
+            lease_p["token"].as_str().expect("a token").to_owned(),
+        ),
+        (
+            "q".to_owned(),
+            lease_q["token"].as_str().expect("a token").to_owned(),
+        ),
+    ];
+    expected.sort();
+    assert_eq!(pairs, expected);
 }
 
 /// F7 PR 4 (review): the notice tap is installed before the subscription is made, so an update the server pushes while
@@ -863,6 +916,77 @@ async fn reopening_a_panel_ends_the_replaced_leases_subscriptions() {
         "the replaced lease's keys are removed: {:?}",
         host.prefixes.lock().unwrap()
     );
+}
+
+/// The resource-notice taps the fake host holds (the owner's, one per session and server with subscriptions).
+fn tap_count(host: &FakeHost) -> usize {
+    host.resource_listeners.lock().unwrap().len()
+}
+
+/// F7 PR 4 (review, round 4): after a refused subscribe, a later notice delivers no delta, and the tap goes when the
+/// panel closes.
+#[tokio::test]
+async fn a_refused_subscription_delivers_nothing_later_and_its_tap_goes_with_the_panel() {
+    let (_scope, server, _kernel) = server();
+    let (host, answers, lease) = open_subscribed_panel(&server).await;
+    *host.subscribe_supported.lock().unwrap() = false;
+    dispatch(
+        &server,
+        "mcp/uiSubscribeResource",
+        subscription(&lease, "ui://a"),
+    )
+    .await
+    .expect_err("the server does not support the subscription");
+    assert_eq!(
+        tap_count(&host),
+        1,
+        "the tap was installed before the request"
+    );
+
+    // The refused subscription left no key in the server's registry, so the host's notice names no subscriber (the
+    // owner routes the keys it is given, as Node's routing does).
+    host.notify(McpResourceNotice::Updated {
+        uri: "ui://a".to_owned(),
+        subscribers: Vec::new(),
+    });
+    assert!(
+        plugin_deltas(&answers).is_empty(),
+        "no subscriber, no delta"
+    );
+
+    dispatch(&server, "mcp/uiCloseInstance", scoped(&lease, json!({})))
+        .await
+        .expect("the panel closes");
+    assert_eq!(
+        tap_count(&host),
+        0,
+        "the tap goes with the last panel of its session and server"
+    );
+}
+
+/// F7 PR 4 (review, round 4): a reopen that replaces the panel keeps the tap (the new panel is open), and the tap goes
+/// when that last panel closes.
+#[tokio::test]
+async fn the_tap_outlives_a_replacement_and_goes_with_the_last_panel() {
+    let (_scope, server, _kernel) = server();
+    let (host, _answers, lease) = open_subscribed_panel(&server).await;
+    dispatch(
+        &server,
+        "mcp/uiSubscribeResource",
+        subscription(&lease, "ui://a"),
+    )
+    .await
+    .expect("the subscription is made");
+    host.silent_change();
+    let reopened = dispatch(&server, "mcp/uiOpenInstance", open_params())
+        .await
+        .expect("the panel reopens");
+    assert_eq!(tap_count(&host), 1, "the new panel still needs the tap");
+
+    dispatch(&server, "mcp/uiCloseInstance", scoped(&reopened, json!({})))
+        .await
+        .expect("the panel closes");
+    assert_eq!(tap_count(&host), 0);
 }
 
 // ---- F7 PR 3: the app-provided tools of a panel (the mailbox) ----
