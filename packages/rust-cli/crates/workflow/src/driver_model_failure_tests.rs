@@ -366,7 +366,10 @@ fn unrecognized_failures_interleaved_with_successes_never_stop_the_run() {
                 .expect("the failure is handled");
             fire_redrive(&mut owner, &mailbox, &clock);
         }
-        // A submit that fails validation is still a turn that reached the owner, and it keeps the ask live.
+        // Success is a submit, not a turn end. A typed ask has one nudge (NUDGE_ATTEMPTS, per ask, as Node's
+        // `nudgesRemaining`), and only a turn end spends it. Two turn ends in one ask therefore settle it with
+        // ResultNotSubmitted, which is correct, so the second round must not end a turn. A submit that fails
+        // validation is still a turn that reached the owner, and it keeps the ask live.
         owner
             .submit_result(&session, Value::Object(serde_json::Map::new()))
             .expect("the submit is answered");
@@ -379,6 +382,22 @@ fn unrecognized_failures_interleaved_with_successes_never_stop_the_run() {
             "nine in a row never stops the run"
         );
     }
+}
+
+// Characterisation (nudge anomaly, not a red test): a redrive does not spend the ask's one nudge. Only a turn end does.
+#[test]
+fn a_redrive_does_not_spend_the_nudge_of_its_ask() {
+    let (mut owner, _sessions, _actor, session) = running_ask();
+    let (mailbox, clock) = attach(&mut owner, 0.5);
+    owner
+        .turn_failed(&session, &TurnFailure::model("reset", network_error()))
+        .expect("the failure is handled");
+    fire_redrive(&mut owner, &mailbox, &clock);
+    let reply = owner.turn_ended(&session, "done").expect("the turn ended");
+    assert_eq!(
+        reply,
+        crate::driver_owner::TurnEndReply::Verdict(crate::engine::SubmitVerdict::Nudge)
+    );
 }
 
 // ocr review, finding 4: a redrive whose interaction is gone fails the ask instead of leaving it live.
