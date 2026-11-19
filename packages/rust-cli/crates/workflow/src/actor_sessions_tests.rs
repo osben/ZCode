@@ -38,6 +38,7 @@ struct Turns {
     cancelled: Vec<String>,
     rejected: Vec<(String, String)>,
     answered: Vec<(String, String, String)>,
+    closed: Vec<String>,
 }
 
 impl ActorTurns for Turns {
@@ -67,6 +68,11 @@ impl ActorTurns for Turns {
     fn deliver_answer(&mut self, session: &str, qid: &str, answer: &str) -> anyhow::Result<()> {
         self.answered
             .push((session.to_owned(), qid.to_owned(), answer.to_owned()));
+        Ok(())
+    }
+
+    fn close_session(&mut self, session: &str) -> anyhow::Result<()> {
+        self.closed.push(session.to_owned());
         Ok(())
     }
 }

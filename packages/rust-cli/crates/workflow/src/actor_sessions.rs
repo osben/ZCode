@@ -35,6 +35,9 @@ pub trait ActorTurns {
     fn cancel_turn(&mut self, session: &str, instance: &Ref) -> Result<()>;
     fn reject_parked(&mut self, session: &str, qid: &str) -> Result<()>;
     fn deliver_answer(&mut self, session: &str, qid: &str, answer: &str) -> Result<()>;
+    /// The session's close (Node `releaseActorSessions` for one session). Closes now when no turn runs; otherwise when
+    /// the running turn lands. Once per session: a second request for the same session is a no-op.
+    fn close_session(&mut self, session: &str) -> Result<()>;
 }
 
 /// Session creation on the shared session database, with the turn side injected.
@@ -131,5 +134,9 @@ impl<T: ActorTurns> ActorSessions for NodeActorSessions<'_, T> {
 
     fn deliver_answer(&mut self, session: &str, qid: &str, answer: &str) -> Result<()> {
         self.turns.deliver_answer(session, qid, answer)
+    }
+
+    fn close_session(&mut self, session: &str) -> Result<()> {
+        self.turns.close_session(session)
     }
 }
