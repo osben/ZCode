@@ -15,7 +15,10 @@ static NEXT_ARGV_TASK: AtomicU64 = AtomicU64::new(1);
 type CommandEvents = futures_util::stream::BoxStream<'static, Result<CommandEvent, EnvError>>;
 
 fn argv_request(file: &str, args: &[&str], root: &std::path::Path) -> StartCommand {
-    let task = ShellTaskId::new(format!("a{}", NEXT_ARGV_TASK.fetch_add(1, Ordering::Relaxed)));
+    let task = ShellTaskId::new(format!(
+        "a{}",
+        NEXT_ARGV_TASK.fetch_add(1, Ordering::Relaxed)
+    ));
     StartCommand::argv(
         file,
         args.iter().map(|arg| (*arg).to_owned()).collect(),
@@ -58,7 +61,10 @@ async fn arguments_are_passed_through_without_a_shell() {
         .await
         .unwrap();
     let (out, err, finished) = collect_streams(events).await;
-    assert_eq!(String::from_utf8(out).unwrap(), "a b $HOME ;echo x * `id`\n");
+    assert_eq!(
+        String::from_utf8(out).unwrap(),
+        "a b $HOME ;echo x * `id`\n"
+    );
     assert!(err.is_empty());
     assert!(matches!(
         finished,

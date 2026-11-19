@@ -34,6 +34,10 @@ mod builders;
 #[path = "lib_helpers.rs"]
 mod helpers;
 mod worktree;
+/// 世界读写（git、glob、read、grep、run）与产物发布的生产端口（W7-4）：本机文件、本机命令、产物存储。
+pub mod world_ports;
+#[cfg(test)]
+mod world_ports_tests;
 
 use std::path::PathBuf;
 

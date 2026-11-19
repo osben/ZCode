@@ -414,10 +414,7 @@ impl Shells {
         }
         // argv 模式（W7-4）只做前台、目录固定、没有 sandbox 的命令：别的组合没有对应的进程形状，直接拒绝。
         if request.argv.is_some() {
-            let foreground = matches!(
-                &request.kind,
-                CommandKind::Foreground { on_timeout: None }
-            );
+            let foreground = matches!(&request.kind, CommandKind::Foreground { on_timeout: None });
             if !foreground
                 || request.sandbox.is_some()
                 || !matches!(request.cwd_scope, CwdScope::Pinned)
