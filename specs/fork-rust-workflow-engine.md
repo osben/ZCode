@@ -1203,7 +1203,7 @@ Translation of Node's model-level assertions. Node counts model requests and rea
 | 8   | workflow-driver        | lenient: a stringified object is accepted, the journal holds the object                            | ported          | `a_stringified_submit_is_accepted_and_journaled_as_the_parsed_object` (passes; `scheduler_submit::normalize_submit` already does this)                                                                                                                                           |
 | 9   | workflow-driver        | actor tool surface keeps the working set, drops question, plan and meta tools                      | covered         | agents `live_actor_tests::an_actor_is_denied_the_tools_node_denies_its_subagents` (the deny list; the model's tool names are not seen at the owner)                                                                                                                              |
 | 10  | workflow-driver        | resume by replay: journaled nodes short-circuit, zero dispatches                                   | covered         | `scheduler_golden_tests` replays Node-generated `scheduler-goldens.json`, which has `cached` settles                                                                                                                                                                             |
-| 11  | workflow-driver        | world reads: glob and read through the fs port feed a typed ask                                    | W6b part 4      | World reads: `workflow-world-read.ts` and the git reads, moved to W6b by review (section 9.9 part 4 of PR #560). `ActorPort::start_world_read` fails with `DriverError` until then.                                                                                              |
+| 11  | workflow-driver        | world reads: glob and read through the fs port feed a typed ask                                    | W6b part 4      | Ported in W6b part 4 (section 9.11): the read, fault and panic cases through the owner (`world_wiring_tests.rs`), and the pure and execution halves with fakes. The result feeding a typed ask is not re-tested here.                                                            |
 | 12  | workflow-driver        | session id contains the run id and no `# @ /`                                                      | ported          | `a_session_id_carries_the_run_id_and_no_separator`                                                                                                                                                                                                                               |
 | 13  | workflow-driver        | `a_b` and `a#b` do not collapse (underscore escape)                                                | ported          | `an_underscore_in_a_run_id_does_not_collide_with_a_hash`                                                                                                                                                                                                                         |
 | 14  | workflow-driver        | adversarial pairs (`actor#1` / `actor_1`, ...) do not collide                                      | ported          | `adversarial_name_pairs_mint_distinct_charset_safe_ids`                                                                                                                                                                                                                          |
@@ -1272,7 +1272,7 @@ Divergences recorded (not fixed here).
 - Node counts model requests; the owner tests count turn starts and replies (see the translation above).
 - The structured refusal codes for escalation (`run_not_in_flight`, `already_resolved`) are service-level; the Rust book returns `None`.
 - The escalation payload clip (2048 characters) is a protocol projection (W7).
-- World reads are unwired in the actor driver (`start_world_read` fails). Owner W6b part 4 (section 9.9 of PR #560).
+- World reads and artifact publish are wired in the owner, with a worker per job (W6b part 4, section 9.11). No production host port exists yet: the machine-backed `WorldReadPorts`, `ArtifactFsPort` and `ArtifactStorePort` are W7/W8 wiring.
 - No session close port: Node's close chain is owned by W6b part 6.
 - The seed is dropped at the driver (`_seed`). Owner W5b (the amend import; countSource blocked).
 
@@ -1335,9 +1335,56 @@ This is Node's mapping of its status events to the same four results, except tha
 
 - **W6b part 2: run admission and events.** The driver calls `tryAdmit` and then `admit` per attempt (`askWaiting` with `backoff` while it sleeps, `askWaiting` with `slot`, and `askExecuting`). Run bounds and growth: `setRunBound`, `clearRunBound`, the seed rule, `limit_lowered`. The `concurrencyChanged` event with fan-out to runs engaged on the key. The workflow actor scope (divergence 2). The Node tests for these.
 - **W6b part 3: model failure policy.** `resolveWorkflowModelFailurePolicy` and the driver's reading of its Stop set, shared with the governor, so divergence 3 closes.
-- **W6b part 4: world reads and artifact publish.** `workflow-world-read.ts`, `workflow-git-world-read.ts` and `workflow-artifact-publish.ts`, with the fault cases.
+- **W6b part 4: world reads and artifact publish (done, section 9.11).** `workflow-world-read.ts`, `workflow-git-world-read.ts` and `workflow-artifact-publish.ts`, with the fault cases.
 - **W6b part 5: stall clock and quota timer.** `askProgress`, `runStalled`, and `dynamic-workflow-quota-resume.ts` (resume after `resetAt + 1 min`, once), with the scripted-provider E2E that section 8 item 10 asks for.
 - **W6b part 6: `LiveRunGuard` and session residency.** The guard and the residency rules of the run service.
+
+### 9.11 W6b part 4: world reads and artifact publish (as built)
+
+Status: built on `feat/rust-workflow-world-reads-w6b-4`, from `origin/fork`. Gate off; no production caller. The host read port over the machine ports is not built (see divergences).
+
+Node source: `workflow-world-read.ts` (773 lines), `workflow-git-world-read.ts` (458, pure), `workflow-artifact-publish.ts` (571), with the caps of `dynamic-workflow/src/facade/world-read-caps.ts` and `artifact-caps.ts`.
+
+What is built (crate `rust-cli-workflow`):
+
+- `world_git.rs`: the pure git half. Ref and path validation (Node's messages), the fixed argv of `git-changed-files`, `git-diff`, `git-status` and `git-log`, and the parsers (porcelain v2 with the rename and unmerged cases, the log's four NUL fields, path lists). `js_cmp` is JavaScript string order (UTF-16 units).
+- `world_read.rs`: `execute_world_read(cwd, ports, op, args)` for `glob`, `read`, `grep`, the four git ops and `run`. Argument validation by position (the arity messages, `describe_arg`, the optional and count rules, `worldRunArgs` and the output modes). The caps (`caps` module) are checked with cap+1 probes and reject over the cap; nothing is truncated. The port is `WorldReadPorts` (blocking: glob, read, grep, run). `resolve_within_workspace` and `to_workspace_relative` are the shared lexical helpers.
+- `artifact_publish.rs`: `execute_artifact_publish(PublishDeps, request)`: id, opts, store and session checks (in that order, as Node), the file path with the lexical check and a real-path check, the cap+1 read, the extension table (no sniffing), the markdown UTF-8 cap, and the store write with `CreateWorkflow`, `project` retention and the tool-call id `<run>:<site>@<ordinal>`. Ports: `ArtifactFsPort`, `ArtifactStorePort`.
+- `world_host.rs`: the worker side. `WorldWiring` (read port, workspace, optional artifact half, the owner's mailbox handle). `spawn_world_job` runs a job on a std thread, catches a panic as a `DriverError`, and posts `ActorRequest::WorldSettled` or `ActorRequest::ArtifactSettled`.
+- `driver_owner.rs`: `ActorPort::start_world_read` and `start_artifact_publish` queue a job when wired (without wiring a world read still fails with the W6a `DriverError`). `pump` hands queued jobs to `spawn_world_job`. `ActorDriverOwner::with_world`, `world_read`, `publish_artifact`, and the settle methods `world_settled` and `artifact_settled` (the mailbox dispatch). `has_artifact_store` is true only with a store.
+- `error.rs`: `ErrorCode::WorldReadCapExceeded` (Node's code, appended as 23).
+
+Node parity, by behaviour:
+
+- Every Node message copied for the cases above. The cap values and the 300,000 ms run timeout are the Node values.
+- Ticket outcomes match Node: a read settles with its value; a fault or a bad argument is a `DriverError`; an over-cap result is `WorldReadCapExceeded`; a publish settles with `{id, version}` and the full record is not returned to the script (the engine journals it).
+- `publishedAt` is injected by the host (`now_ms`), since the engine has no clock.
+
+Tests (all green on the Linux box, the workflow and runtime lib suites; `cargo clippy --workspace --all-targets --locked -- -D warnings` clean; `cargo fmt --all --check` clean):
+
+- `world_git_tests.rs`: 17 cases (validation, argv, prefix, status, rename, unmerged, log, path lists, UTF-16 order).
+- `world_read_tests.rs`: 28 cases with a fake port (arity and types, the optional rule, the count rule, glob cap and order, read containment, grep skip and both caps, the four git ops and their failure message, the git-diff cap, `run` argument shapes, output modes, timeout, spawn error, the stream cap, discard, tail).
+- `world_read_real_tests.rs`: 6 cases with real git in a temporary repository run from a subdirectory (prefix stripping, the untracked file with a space and a non-ASCII name, changed files with and without a base, a relative diff, the log, and a non-repository failure).
+- `artifact_publish_tests.rs`: 20 cases with fakes (the record key order and store arguments, file types, the symlink and containment cases, caps by UTF-8 bytes and by UTF-16 units, the store checks, the write failure, the extension table).
+- `world_wiring_tests.rs`: 6 cases through the real mailbox: a glob and a read settle their ticket, a port fault fails the node, a panicking port fails the node, a markdown publish settles `{id, version}`, and no store refuses a publish. The first is Node's row 11 ("glob and read through the fs port"). The typed-ask half of that row is not re-tested here.
+
+Divergences (recorded, not fixed here):
+
+1. No production host port. The execution port in Rust is `StartCommand`, which takes a shell string, not argv, so the fixed git argv cannot be sent through it without quoting. The Files port has no real path call. `GlobFiles` and `GrepSearch` return different shapes (mtime order, a `total` count, no head limit). `ToolArtifactStore::put` has no tool-call id or retention. The adapter over the machine ports is W7/W8 wiring. The real-git test runs git through a test-only `std::process` host, so the argv path is checked against git without a production adapter.
+2. Workers. Node runs a read as a promise on the event loop; Rust runs it on a std thread and posts the settlement to the owner. The engine's settle order follows the posting order, and replay uses the recorded events, so the journal is unaffected.
+3. Null and undefined. JSON has no `undefined`, so a `null` in an optional position is treated as absent (Node's explicit `undefined`). The error text says `null` where Node says `undefined`.
+4. Paths outside the workspace. Node's `toWorkspaceRelative` writes `../` for a path outside the root. Here such a path is returned absolute. A glob under the workspace cannot produce one.
+5. `world.run` has no permission gating, as in Node (authorization is at compile time).
+6. Clippy: `result_large_err` is allowed in the new modules (`WorkflowError` is 248 bytes). Boxing it would split the engine's error type.
+7. Ports: `ArtifactFsPort` reports a missing path, a directory and a non-file as separate faults, and the `too large` report is mapped to `ArtifactTooLarge` as Node does.
+8. Tests are ported by behaviour from the Node titles and source, not transcribed line by line. Node's bodies for `workflow-driver-artifacts.test.ts` (28 cases), `workflow-driver-world-run.test.ts` (17) and `workflow-driver-world-read-args.test.ts` (5) were not read in full. The coverage claim is the titles and the source's behaviour.
+9. Red runs were not recorded. The pure modules and the executors were written in one pass before the tests, and the suite was then run to green. The first run after wiring showed one red (a wrong expectation in the test: the ticket settles with `{id, version}`), fixed in the test.
+
+What is left (W6b part 4 follow-ups):
+
+- The production host port: a `WorldReadPorts` and `ArtifactStorePort` over the machine ports, with the argv gap decided (an argv mode on `StartCommand`, or a local-only host with a stated limit). Owner: W7/W8.
+- The typed-ask half of row 11 (a script's world result feeding an ask) through the scheduler, when a caller exists.
+- Node test bodies for the three files in item 8, read and transcribed where a case differs from its title.
 
 ## 10. Open questions
 
