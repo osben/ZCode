@@ -10,6 +10,7 @@ use crate::engine::AskMessage;
 use crate::error::ErrorCode;
 use crate::journal::MemoryJournal;
 use crate::model::Ref;
+use crate::model_failure::TurnFailure;
 use anyhow::Result;
 use serde_json::json;
 use std::collections::VecDeque;
@@ -36,11 +37,11 @@ struct ScriptedRunner {
     interactions: Mutex<Vec<String>>,
     epilogue_starts: Mutex<Vec<usize>>,
     submit_schemas: Mutex<Vec<Option<serde_json::Value>>>,
-    replies: Mutex<VecDeque<std::result::Result<String, String>>>,
+    replies: Mutex<VecDeque<std::result::Result<String, TurnFailure>>>,
 }
 
 impl ScriptedRunner {
-    fn new(replies: Vec<std::result::Result<String, String>>) -> Arc<Self> {
+    fn new(replies: Vec<std::result::Result<String, TurnFailure>>) -> Arc<Self> {
         Arc::new(Self {
             prompts: Mutex::new(Vec::new()),
             interactions: Mutex::new(Vec::new()),
@@ -58,7 +59,7 @@ impl TurnRunner for ScriptedRunner {
         interaction: &str,
         turn: &TurnInput,
         _cancel: &AtomicBool,
-    ) -> std::result::Result<String, String> {
+    ) -> std::result::Result<String, TurnFailure> {
         self.interactions
             .lock()
             .expect("interactions")
@@ -96,7 +97,7 @@ impl TurnRunner for CountingRunner {
         interaction: &str,
         turn: &TurnInput,
         cancel: &AtomicBool,
-    ) -> std::result::Result<String, String> {
+    ) -> std::result::Result<String, TurnFailure> {
         self.inner.run_turn(session, interaction, turn, cancel)
     }
 
@@ -139,7 +140,7 @@ impl TurnRunner for StatsRunner {
         interaction: &str,
         turn: &TurnInput,
         cancel: &AtomicBool,
-    ) -> std::result::Result<String, String> {
+    ) -> std::result::Result<String, TurnFailure> {
         self.inner.run_turn(session, interaction, turn, cancel)
     }
 
@@ -215,7 +216,7 @@ impl TurnRunner for UntilCancelled {
         _interaction: &str,
         _turn: &TurnInput,
         cancel: &AtomicBool,
-    ) -> std::result::Result<String, String> {
+    ) -> std::result::Result<String, TurnFailure> {
         let _ = self.started.send(());
         while !cancel.load(Ordering::SeqCst) {
             thread::sleep(Duration::from_millis(1));
@@ -388,7 +389,7 @@ fn a_nudge_keeps_the_mono_submit_schema() {
 
 #[test]
 fn a_refused_turn_fails_the_ask_with_the_runners_text() {
-    let runner = ScriptedRunner::new(vec![Err("model refused the request".into())]);
+    let runner = ScriptedRunner::new(vec![Err(TurnFailure::plain("model refused the request"))]);
     let (mut owner, mailbox, actor) = owner_over(runner);
     owner.ask("site", &actor, "do it").expect("ask");
     // The engine dispatches the ask during its drain; the turn starts there.
@@ -444,7 +445,7 @@ impl TurnRunner for PanickingRunner {
         _interaction: &str,
         _turn: &TurnInput,
         _cancel: &AtomicBool,
-    ) -> std::result::Result<String, String> {
+    ) -> std::result::Result<String, TurnFailure> {
         panic!("runner exploded mid-turn");
     }
 }
@@ -480,7 +481,7 @@ impl TurnRunner for PanickingCount {
         _interaction: &str,
         _turn: &TurnInput,
         _cancel: &AtomicBool,
-    ) -> std::result::Result<String, String> {
+    ) -> std::result::Result<String, TurnFailure> {
         Ok("done".to_owned())
     }
 

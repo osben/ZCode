@@ -79,6 +79,35 @@ fn a_truncated_or_malformed_stream_is_transient_like_the_other_stream_failures()
     );
 }
 
+// W6b part 3 (divergence 3 of 9.9): the stop set is the workflow table's. A quota code is a stop even when the
+// provider wraps a 429: the attempt ends, and the bucket is not cooled down (Node's `isWorkflowStopFailure`).
+#[test]
+fn a_quota_code_on_a_429_ends_the_attempt_and_does_not_cool_the_bucket() {
+    let quota_429 = provider(
+        ModelError::RateLimited {
+            message: "[1308] usage limit".into(),
+            retry_after_ms: Some(60_000),
+        },
+        "1308",
+    );
+    assert_eq!(AttemptSignal::of_error(&quota_429), AttemptSignal::Ended);
+    // A concurrency limit on the same wrapper is still a throttle (retry, not stop).
+    let capacity_429 = provider(
+        ModelError::RateLimited {
+            message: "[3008] capacity".into(),
+            retry_after_ms: None,
+        },
+        "3008",
+    );
+    assert_eq!(
+        AttemptSignal::of_error(&capacity_429),
+        AttemptSignal::Throttled {
+            reason: ThrottleReason::RateLimited,
+            retry_after_ms: None,
+        }
+    );
+}
+
 fn provider(inner: ModelError, code: &str) -> ModelError {
     ModelError::Provider {
         provider: Box::new(ProviderFailure {

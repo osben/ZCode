@@ -186,7 +186,7 @@ pub(crate) fn running_ask() -> (
 }
 
 /// The instance of the first turn the recorder saw, so the tests do not assume ordinals.
-fn first_turn_instance(sessions: &Recording) -> Ref {
+pub(crate) fn first_turn_instance(sessions: &Recording) -> Ref {
     sessions.0.borrow().turns[0].1.clone()
 }
 

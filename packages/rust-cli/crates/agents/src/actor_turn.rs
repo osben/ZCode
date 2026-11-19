@@ -21,8 +21,8 @@ use rust_cli_kernel_api::env::WorkspaceRef;
 use rust_cli_kernel_api::env_shell::BackgroundStatus;
 use rust_cli_kernel_api::ids::{AgentId, MachineName, SessionId, WorkflowRunId};
 use rust_cli_kernel_api::message::UserOrigin;
-use rust_cli_kernel_api::model::ModelSelection;
-use rust_cli_kernel_api::orchestration::Interactions;
+use rust_cli_kernel_api::model::{ModelError, ModelSelection};
+use rust_cli_kernel_api::orchestration::{Interactions, QueryError};
 use rust_cli_kernel_api::permission::PermissionMode;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
@@ -40,6 +40,9 @@ pub enum ActorTurnEnd {
     Text(String),
     /// The turn failed; the text is the failure (Node's `askFailed(toWorkflowError(error))`).
     Failed(String),
+    /// The turn failed on a model request. The typed error travels with the text, so the workflow's model-failure
+    /// policy can classify it (W6b part 3). The text is the same as `Failed` would carry.
+    ModelFailed { message: String, model: ModelError },
     /// The turn was stopped (cancelled or killed). Node reports nothing for a cancelled turn.
     Stopped,
 }
@@ -415,11 +418,18 @@ impl crate::Agents {
         let messages = self.child_message_count(&child).await;
         core.live
             .finish_actor_turn(&agent_id, finished.ending, Some(finished.stats), messages);
-        actor_turn_end(
+        let end = actor_turn_end(
             finished.ending.status() == BackgroundStatus::Killed,
             finished.failure(core.node_desktop).as_deref(),
             &finished.report.text,
-        )
+        );
+        // A failure on a model request keeps its typed error (W6b part 3): a killed turn stays `Stopped`.
+        match (end, finished.error) {
+            (ActorTurnEnd::Failed(message), Some(QueryError::Model(model))) => {
+                ActorTurnEnd::ModelFailed { message, model }
+            }
+            (end, _) => end,
+        }
     }
 }
 

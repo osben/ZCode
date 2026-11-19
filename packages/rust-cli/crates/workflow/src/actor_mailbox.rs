@@ -18,6 +18,7 @@ use crate::driver_owner::{ActorDriverOwner, ActorSessions, SubmitReply, TurnEndR
 use crate::escalation::{AnswerOutcome, EscalateOutcome, EscalationRequest};
 use crate::journal::JournalPort;
 use crate::model::{ConcurrencyChange, Ref};
+use crate::model_failure::TurnFailure;
 use crate::parked_answers::ParkedAnswers;
 use anyhow::Result;
 use serde_json::Value;
@@ -79,12 +80,15 @@ pub(crate) enum ActorRequest {
         answer: String,
         reply: Sender<Result<Option<AnswerOutcome>>>,
     },
-    /// A turn threw (not cancelled): the owner fails the ask (Node `askFailed`).
+    /// A turn threw (not cancelled): the owner applies the model-failure policy (Node `handleModelTurnFailure`), which
+    /// stops the run, fails the ask, or schedules a redrive.
     TurnFailed {
         session: String,
-        message: String,
+        failure: TurnFailure,
         reply: Sender<Result<()>>,
     },
+    /// A scheduled redrive is due (W6b part 3). Sent by the redrive clock's job; no answer goes back.
+    RedriveDue { session: String, instance: Ref },
     /// A workspace-mutating call of the session's ask is about to run (Node `askMutating`).
     Mutating {
         session: String,
@@ -198,10 +202,15 @@ fn dispatch<J: JournalPort, S: ActorSessions>(
         }
         ActorRequest::TurnFailed {
             session,
-            message,
+            failure,
             reply,
         } => {
-            let _ = reply.send(owner.turn_failed(&session, &message));
+            let _ = reply.send(owner.turn_failed(&session, &failure));
+        }
+        ActorRequest::RedriveDue { session, instance } => {
+            if let Err(error) = owner.redrive_due(&session, &instance) {
+                tracing::warn!(%session, error = %error, "a workflow redrive could not start its turn");
+            }
         }
         ActorRequest::MessageBoundary {
             instance,
@@ -295,10 +304,10 @@ impl ActorHandle {
         })
     }
 
-    pub fn turn_failed(&self, session: &str, message: &str) -> Result<(), MailboxError> {
+    pub fn turn_failed(&self, session: &str, failure: &TurnFailure) -> Result<(), MailboxError> {
         self.call(|reply| ActorRequest::TurnFailed {
             session: session.to_owned(),
-            message: message.to_owned(),
+            failure: failure.clone(),
             reply,
         })
     }

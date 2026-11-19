@@ -39,6 +39,7 @@ use rust_cli_workflow::driver_rules::{actor_permission_policy, parse_subagent_pe
 use rust_cli_workflow::engine::SubmitVerdict;
 use rust_cli_workflow::escalation::{EscalateOutcome, EscalationRequest};
 use rust_cli_workflow::model::Ref;
+use rust_cli_workflow::model_failure::TurnFailure;
 use serde_json::Value;
 use tokio::runtime::Handle;
 use tokio_util::sync::CancellationToken;
@@ -265,7 +266,7 @@ impl<A: ActorAgents> TurnRunner for AgentTurnRunner<A> {
         interaction: &str,
         turn: &TurnInput,
         cancel: &AtomicBool,
-    ) -> Result<String, String> {
+    ) -> Result<String, TurnFailure> {
         debug_assert!(
             Handle::try_current().is_err(),
             "the ask thread must not be inside a runtime: block_on would panic there"
@@ -316,8 +317,9 @@ impl<A: ActorAgents> TurnRunner for AgentTurnRunner<A> {
         });
         match end {
             ActorTurnEnd::Text(text) => Ok(text),
-            ActorTurnEnd::Failed(error) => Err(error),
-            ActorTurnEnd::Stopped => Err("the actor turn was stopped".to_owned()),
+            ActorTurnEnd::Failed(error) => Err(TurnFailure::plain(error)),
+            ActorTurnEnd::ModelFailed { message, model } => Err(TurnFailure::model(message, model)),
+            ActorTurnEnd::Stopped => Err(TurnFailure::plain("the actor turn was stopped")),
         }
     }
 
