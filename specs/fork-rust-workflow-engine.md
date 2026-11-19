@@ -1336,7 +1336,7 @@ This is Node's mapping of its status events to the same four results, except tha
 - **W6b part 2: run admission and events.** The driver calls `tryAdmit` and then `admit` per attempt (`askWaiting` with `backoff` while it sleeps, `askWaiting` with `slot`, and `askExecuting`). Run bounds and growth: `setRunBound`, `clearRunBound`, the seed rule, `limit_lowered`. The `concurrencyChanged` event with fan-out to runs engaged on the key. The workflow actor scope (divergence 2). The Node tests for these.
 - **W6b part 3: model failure policy (done, section 9.13).** `resolveWorkflowModelFailurePolicy` and the driver's reading of its Stop set, shared with the governor, so divergence 3 closes.
 - **W6b part 4: world reads and artifact publish (done, section 9.11).** `workflow-world-read.ts`, `workflow-git-world-read.ts` and `workflow-artifact-publish.ts`, with the fault cases.
-- **W6b part 5: stall clock and quota timer.** `askProgress`, `runStalled`, and `dynamic-workflow-quota-resume.ts` (resume after `resetAt + 1 min`, once), with the scripted-provider E2E that section 8 item 10 asks for.
+- **W6b part 5: stall clock and quota timer (done, section 9.14).** `askProgress`, `runStalled`, and `dynamic-workflow-quota-resume.ts` (resume after `resetAt + 1 min`, once). The scripted-provider test through the owner is in; the desktop E2E waits for W7 and W9.
 - **W6b part 6: `LiveRunGuard` and session residency.** The guard and the residency rules of the run service.
 
 ### 9.10 W6b part 2: run admission, bounds and fan-out (as built, part 2a)
@@ -1588,16 +1588,78 @@ The interleaved-streak test ends its success with a rejected `submit_result`, no
 24. `Unsupported` reads `invalid_request` and stops, as in 23: it is a deterministic rejection of the request. `FallbackTriggered` reads `unknown` and retries. It is raised only after consecutive overloads have already moved the request to a fallback model, and Node retries an overload, so the same retry applies.
 25. The table's rows for `model_not_found`, the not-configured codes and `invalid_model_response` have no Rust input: no `ModelError` carries those codes. Provider `3006` therefore becomes `Stop(invalid_request)` where Node's adapter gives `model_unavailable`. The rows are covered by the table tests only.
 26. The unrecognized streak is counted by the owner, per ask. It resets when a turn reaches the owner (`turn_ended` or `submit_result`), since such a turn has finished its model requests (review finding 3). Node counts it inside the runner's attempt loop for one request and carries it to the driver on the error. A request that succeeds ends that loop, so the reset is the same rule at the owner's granularity.
-27. `resetAt` is ported (review finding 10): Retry-After when it is plausible, else the provider's text read as Beijing time, both inside Node's window (one day back, 35 days ahead). It is read from the injected clock. A quota stop on an owner with no clock writes no `resetAt`. W6b part 5 reads it; it does not compute it.
+27. `resetAt` is ported (review finding 10): Retry-After when it is plausible, else the provider's text read as Beijing time, both inside Node's window (one day back, 35 days ahead). It is read from the injected clock. A quota stop on an owner with no clock writes no `resetAt`. Part 5 reads it (9.14, where the quota timer arms at `resetAt + 1 min`); part 5 does not compute it.
 28. The `Cancelled` policy redrives, as Node's switch default does. The runner's cancel path reports nothing first, so this is reached only for an attempt cancelled while the ask was not.
 29. The governor's `AttemptSignal` still maps `Protocol` as transient (9.9, divergence 11). The table gives `Protocol` the reason `unknown`, which retries, so the two agree on the outcome.
-30. The production clock is `ThreadClock`: one thread per redrive, which sleeps and then posts. Review finding 5 asked for one timer thread as optional; it is not done. The job reads the mailbox out of a slot when it fires, and settlement clears the slot. So a pending job holds no mailbox handle and posts nothing, and the owner's shutdown is not held for up to 60 s. No production owner attaches the clock yet: the run service (W7) does. Until then a transient failure in a real run fails the ask with `DriverError`, the same gap as 9.12's unwired governor link.
+30. The production clock is `ThreadClock`: one thread per redrive, which sleeps and then posts. Review finding 5 asked for one timer thread as optional; it is not done. The job reads the mailbox out of a slot when it fires, and settlement clears the slot. So a pending job holds no mailbox handle and posts nothing, and the owner's shutdown is not held for up to 60 s. No production owner attaches the clock yet: the run service (W7) does, and part 5 attaches the stall clock with it (9.14). Until then a transient failure in a real run fails the ask with `DriverError`, the same gap as 9.12's unwired governor link.
 31. A clock that refuses a job (`RedriveClock::after` returns false, as a failed thread spawn does) fails the ask with `DriverError` at once, before `askWaiting` is written. Node's `setTimeout` cannot refuse. This is a Rust-only failure mode, kept so that a retry never waits for a job that will never run (review finding 1).
 32. The attempt counter is per ask (`ActiveAsk.attempts`). Node's `transientAttempts` lives on the session state. A new ask on the same session starts again at 1 in both, so the delays agree in practice.
 33. `rawMessage` is the turn's failure text (the error's `Display`, as the agents turn carries it). Node uses the adapter error's message. For a quota error the Rust text keeps its `API Error:` prefix.
 34. The subagent label is `Ref::key()` (`site@1`), which is Node's `refToString` format. The persona name, when there is one, replaces it in the message, as Node's `subagentLabel` does.
 
-**Not done here.** The production clock is not attached (divergence 30). The stall clock that bounds an unbounded redrive is W6b part 5. The quota `resetAt` is part 5 (divergence 27). No end-to-end test runs a scripted provider through a real run: the scripted-provider E2E that section 8 item 10 asks for is part 5 as well.
+**Not done here.** The production clock is not attached (divergence 30). The stall clock observes a redrive that goes on and notifies; it does not bound it (9.14, divergence 42). The quota `resetAt` is read by part 5 (divergence 27). The scripted-provider test through the owner is in part 5 (9.14); the desktop E2E is W7 and W9.
+
+### 9.14 W6b part 5: stall clock and quota timer (as built)
+
+This part ports Node's run-level stall clock (`createRunStallClock` in `workflow-driver-concurrency.ts`, its observer in the driver), the `node-progress` and `run-stalled` events with the engine's `askProgress` and `runStalled` passthroughs, and the quota auto-resume (`bootstrap/src/app/dynamic-workflow-quota-resume.ts`). The rest of the W6b row is parts 6 (the guard and residency) and W7 (the run service that attaches these).
+
+**Where it lives.**
+
+- `crates/workflow/src/stall_clock.rs`: `RunStallClock`, `RunStallInfo` and `WORKFLOW_STALL_NOTIFY_AFTER_MS` (twenty minutes). Time and timers come from `RedriveClock` (part 3): `now_ms` and `after` are reused, and no second clock abstraction is added. The clock cannot cancel a job, so each arming takes a generation, and a job whose generation is no longer the armed one does nothing.
+- `crates/workflow/src/driver_owner.rs`: `attach_redrive` also attaches the stall clock. Its job posts `ActorRequest::StallDue` to the same mailbox slot as the redrives (`actor_mailbox.rs`), so a settled run posts nothing. `release_redrive` disposes it at settlement. The owner exposes `model_request_completed()`, `model_retry_scheduled(reason)` (which drops the two non-failure reasons, as Node's `NON_FAILURE_RETRY_REASONS` does) and `stall_due(generation)`. `concurrency_changed` notes the cap. `ask_stats` records `node-progress` before `usage-updated`, as Node's `reportTurnObservations` does.
+- `crates/workflow/src/engine.rs` and `event.rs`: `ask_progress` (a passthrough, dropped after settlement) and `run_stalled` (dropped after settlement); the `AskProgress` argument; the `NodeProgress` and `RunStalled` variants in Node's key order; `LastTool`.
+- `crates/workflow/src/quota_resume.rs`: `QuotaAutoResume` (`on_run_settled`, `scan`, `dispose`), the port `QuotaResumePort` (`get_run`, `list_session_runs`, `resume`) and the pure rule `quota_resume_at`. The Node constants are kept: margin one minute, spacing ten minutes doubling to one hour, two transient retries, the transient refusal `already_running`, and a scan of 64 runs.
+- `crates/workflow/src/test_clock.rs` (test only): `AdvancingClock`, a `RedriveClock` the test moves by hand. Jobs run when the test advances past their delay, and a refusing mode stands in for a failed spawn.
+
+**The rules.**
+
+Stall clock:
+
+- A success (`model_request_completed`) resets the clock, clears the counted reasons and the notified flag, and cancels the armed timer.
+- A retry (`model_retry_scheduled`) counts its reason and arms the timer for "last success plus twenty minutes" when none is armed. A retry inside a period that has already notified is not counted.
+- At the window, with no success since and at least one counted retry, the notice fires once for the period: `run-stalled {sinceMs, reason, cap}`. The reason is the most frequent one, the first seen on a tie. `cap` is the last cap the run saw, when it has seen one. With no counted retry nothing fires.
+- A timer that wakes early re-arms for the rest of the window.
+- The notice never stops the run. Settlement disposes the clock, so nothing is recorded after `run-settled`.
+
+Quota timer:
+
+- A row arms the timer only when it is `stopped(provider)`, `providerStop.kind` is `quota` and `resetAt` is set. The timer is due at `resetAt + 1 min`, or later when the spacing rule below applies.
+- When the timer fires it reads the row again. It resumes only if the row is still that quota stop at that reset time. A row with another reset time re-arms at that time. Any other row (resumed by hand, superseded, stopped elsewhere) does nothing.
+- No loop: once a run has auto-resumed for a reset time in this process, a later row with the same or an earlier reset time arms nothing (`not_advancing`).
+- Spacing: the next auto-resume of a run starts no earlier than ten minutes after its previous start, doubling with each resume, at most one hour.
+- A transient refusal (`already_running`) or a thrown resume is retried one margin later, at most twice, and each retry reads the row again. Any other refusal is logged and not retried. After the last retry the module logs `gave_up`, and the row is still a quota stop for a later scan.
+- A failed journal read ends that attempt without resuming. Nothing escapes a timer job.
+- `dispose` cancels every timer. A job that fires after it does nothing.
+- The session scan at open resumes the due stops at once and arms the rest.
+
+**Tests (red, then green).**
+
+- Red: the new modules were added as `todo!()` stubs and the tests written against them. `cargo test -p rust-cli-workflow --lib -- stall_clock_tests quota_resume_tests driver_stall_quota_tests`: 31 tests, 29 failed, 2 passed. The two that passed check values the stubs already gave (the twenty-minute constant, and "no retry armed, no timer"), so they are not evidence of behaviour.
+- Green, after the implementation: the same filter passes 31 of 31 (`stall_clock_tests` 10, `quota_resume_tests` 14, `driver_stall_quota_tests` 7). The crate's lib tests pass 334 of 334 (the 303 existing plus the 31). `cargo fmt --all --check` and `cargo clippy --workspace --all-targets --locked -- -D warnings` are clean.
+- Three test-side corrections came after the first green run, with no change to the behaviour under test: the scan test must put its rows in the port's journal map as well as its listing; the disposed-clock test asserts the pending count the clock really has; the settled-run test expects that no handle is left to post (`MailboxError::Closed`), not a served request.
+- Section 8 item 10: `driver_stall_quota_tests::a_scripted_quota_failure_is_resumed_once_by_the_timer_at_its_reset_plus_one_minute` runs a quota failure through the real owner. The provider text names the reset in Beijing time. The run stops, the test reads the run's journal row, and the timer resumes it exactly once at reset plus one minute. This is the part of item 10 that runs without W7. The desktop E2E (the gate, the run service, a fake provider process) needs W7 and W9, so it is listed below, not faked here.
+
+**Node divergences (continued from 9.13).**
+
+35. The stall clock is attached with the redrive wiring, as the redrive clock is (divergence 30). With no clock attached it is inert and records no notice. W7 attaches it.
+36. Node's observer feeds `noteSuccess` and `noteRetryScheduled` from each actor session's network status events. Rust has no such observer yet, so `model_request_completed` and `model_retry_scheduled` are owner methods that W7 calls from the child session's events. The driver's own transient redrive does not count as a retry, as in Node: Node counts only the runner's model retries.
+37. A cancelled timer is a generation, not a removed timer. A job armed before a success still wakes at its window and posts a stale generation, which the owner ignores. The thread that sleeps for it (`ThreadClock`) lives until then. Node's `clearTimeout` releases it at once.
+38. A refused job (the clock returns false) leaves nothing armed, and a later retry arms again. Node's `setTimeout` cannot refuse (as in divergence 31).
+39. `lastTool` is not reported. `AskProgress.last_tool` exists and the owner passes `None`. Node takes the last tool the subagent started from its session's tool events, which W7 must supply. Until then `node-progress` has no `lastTool`. `turn` is the owner's count of `ask_stats` reports, one per resolved turn, so W7 must report once per resolved turn, as `reportTurnObservations` does.
+40. `turn` counts across an ask's redrives, since Node's `turnsResolved` is per ask. `toolCalls` is the cumulative count with the redrive base (9.13, finding 9).
+41. The non-failure reasons are dropped in the owner, where Node drops them in its observer. The outcome is the same.
+42. The stall notice does not bound a redrive, in Node or in Rust. 9.13 said that part 5 "bounds an unbounded redrive". That was wrong: the notice exists so the user can cancel. A transient redrive is bounded only by the user's cancel, and by the unrecognized streak for the codes it covers. Divergences 23 and 24 stand: a stop never arms the clock, and the non-failure retries are excluded (divergence 41).
+43. The resume is a blocking port call on the timer's thread. Node's resume is a promise the timer does not await. The port is called from that thread, so it must be `Send + Sync` and must not block the owner; W7 runs the resume on the run service's execution boundary.
+44. A refused job for the quota timer leaves no timer for that run. A later settlement or a session scan arms it again. Node cannot refuse a timer.
+45. Node's typed refusal reasons are carried as text. The transient set has one value, `already_running`. Every other refusal is logged and not retried, as in Node.
+46. The `setTimeout` ceiling (about 24.8 days) is kept, so a reset a month away wakes, re-reads the row and re-arms, as Node does. `ThreadClock` has no ceiling, so the cap is for parity only.
+
+**What W7 must wire (and W9 for the E2E).**
+
+- Attach the production clock for every actor run: `attach_redrive(handle, Arc::new(ThreadClock))`. Without it the stall clock is inert, and a transient failure fails its ask with `DriverError` (divergence 30).
+- Feed the owner from the actor sessions: `model_request_completed()` for each completed request (the child session's `ModelRequestCompleted`), `model_retry_scheduled(reason)` for each retry status, and `AskProgress.last_tool` from the actor's tool-started events. Report `ask_stats` once per resolved turn.
+- Implement `QuotaResumePort` over the run journal and the session's run list (limit 64). `resume` goes through the session's execution boundary, as the app's Resume does, and then re-arms tracking; refusals map to `ResumeAnswer::Refused` with Node's reason text. The port must be `Send + Sync`. Call `QuotaAutoResume::on_run_settled` when a run settles, `scan` when the parent session opens, and `dispose` before the run service closes.
+- The scripted-provider desktop E2E of section 8 item 10 (gate on, run service, fake provider process) is W9, after the gate flips. The driver-level test in this part covers the rule without it.
 
 ## 10. Open questions
 

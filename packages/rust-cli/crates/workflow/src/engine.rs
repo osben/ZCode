@@ -17,7 +17,7 @@ use crate::engine_holes::HoleRegistry;
 use crate::engine_report::ReportTally;
 use crate::engine_world::WorldLive;
 use crate::error::{ErrorCode, WorkflowError};
-use crate::event::{LaunchFields, RunEvent};
+use crate::event::{LastTool, LaunchFields, RunEvent};
 use crate::identity::Identity;
 use crate::imported_cache::{
     ActorSessionSeed, ImportedRunCache, ImportedWorldQueue, match_imported_actor,
@@ -30,6 +30,7 @@ use crate::model::{
 use crate::persona::normalize_persona;
 use crate::replay::{Job, Release, ReplayGate};
 use crate::scheduler::{Actor, AskNode};
+use crate::stall_clock::RunStallInfo;
 use anyhow::Result;
 use rust_cli_base::js::string::{trim as js_trim, utf16_len, utf16_prefix};
 use serde_json::Value;
@@ -43,6 +44,14 @@ pub type ValidateFn = fn(&Value, &Value) -> Vec<Violation>;
 pub struct AskSpec {
     pub typed: bool,
     pub schema: Option<Value>,
+}
+
+/// Node `askProgress`'s argument: the turn an ask reached, its cumulative tool calls, and its last tool (W6b part 5).
+#[derive(Debug, Clone, PartialEq)]
+pub struct AskProgress {
+    pub turn: u64,
+    pub tool_calls: f64,
+    pub last_tool: Option<LastTool>,
 }
 
 /// Node `AskStats`: usage the driver reports for one ask. `world_tool_calls` is absent for old rows.
@@ -676,6 +685,33 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
         }
         self.record(RunEvent::ConcurrencyChanged {
             change: change.clone(),
+        })
+    }
+
+    /// Node `askProgress` (W6b part 5): the in-ask progress of a resolved turn, passed through as `node-progress`. It
+    /// changes no scheduling decision; a report after the run settled is dropped.
+    pub fn ask_progress(&mut self, instance: &Ref, progress: AskProgress) -> Result<()> {
+        if self.settled {
+            return Ok(());
+        }
+        self.record(RunEvent::NodeProgress {
+            instance: instance.clone(),
+            turn: progress.turn,
+            tool_calls: progress.tool_calls,
+            last_tool: progress.last_tool,
+        })
+    }
+
+    /// Node `runStalled` (W6b part 5): the stall clock's observation, recorded as `run-stalled`. Dropped after the run
+    /// settled, as Node drops it.
+    pub fn run_stalled(&mut self, info: RunStallInfo) -> Result<()> {
+        if self.settled {
+            return Ok(());
+        }
+        self.record(RunEvent::RunStalled {
+            since_ms: info.since_ms,
+            reason: info.reason,
+            cap: info.cap,
         })
     }
 

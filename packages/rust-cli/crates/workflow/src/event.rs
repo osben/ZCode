@@ -46,6 +46,14 @@ impl NodeOutcome {
     }
 }
 
+/// Node `AskLastTool`: the most recent tool call an ask's subagent started. `target` is a short hint (a file path, the
+/// head of a command), never the tool's arguments.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LastTool {
+    pub name: String,
+    pub target: Option<String>,
+}
+
 /// The birth facts a cached ask settlement repeats (Node `CachedAskFacts`): `kind` is always `ask`.
 /// `source_session_id` is set when the answer was read from a predecessor transcript (Node `sourceSessionId`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -179,6 +187,20 @@ pub enum RunEvent {
     ConcurrencyChanged {
         change: ConcurrencyChange,
     },
+    /// Node `node-progress` (W6b part 5): after each resolved turn of an ask, which turn it was, the ask's cumulative
+    /// tool calls, and the last tool it started when one is known. Recorded by `ask_progress`.
+    NodeProgress {
+        instance: Ref,
+        turn: u64,
+        tool_calls: f64,
+        last_tool: Option<LastTool>,
+    },
+    /// Node `run-stalled` (W6b part 5): the run-level stall clock fired. Recorded by `run_stalled`.
+    RunStalled {
+        since_ms: u64,
+        reason: Option<String>,
+        cap: Option<u64>,
+    },
     /// Node `node-settled`. A cached settlement sets `cached` and repeats the facts; a live one does not.
     NodeSettled {
         instance: Ref,
@@ -281,6 +303,33 @@ impl RunEvent {
             Self::NodeExecuting { instance } => {
                 put_type(&mut map, "node-executing");
                 map.insert("instance".into(), instance.to_json());
+            }
+            Self::NodeProgress {
+                instance,
+                turn,
+                tool_calls,
+                last_tool,
+            } => {
+                put_type(&mut map, "node-progress");
+                map.insert("instance".into(), instance.to_json());
+                map.insert("turn".into(), Value::from(*turn));
+                map.insert("toolCalls".into(), js_number(*tool_calls));
+                if let Some(tool) = last_tool {
+                    let mut last = Map::new();
+                    last.insert("name".into(), Value::String(tool.name.clone()));
+                    put_text(&mut last, "target", &tool.target);
+                    map.insert("lastTool".into(), Value::Object(last));
+                }
+            }
+            Self::RunStalled {
+                since_ms,
+                reason,
+                cap,
+            } => {
+                put_type(&mut map, "run-stalled");
+                map.insert("sinceMs".into(), Value::from(*since_ms));
+                put_text(&mut map, "reason", reason);
+                put_number(&mut map, "cap", *cap);
             }
             Self::ConcurrencyChanged { change } => {
                 put_type(&mut map, "concurrency-changed");
