@@ -523,6 +523,7 @@ impl Connect {
             .await
         else {
             end(tape, End::Cancelled);
+            self.settle_attempt(AttemptSignal::Ended);
             return Outcome::Failed(ModelError::Cancelled);
         };
         let verdict = match sent {
@@ -546,6 +547,7 @@ impl Connect {
                 {
                     None => {
                         end(tape, End::Cancelled);
+                        self.settle_attempt(AttemptSignal::Ended);
                         return Outcome::Failed(ModelError::Cancelled);
                     }
                     Some(Ok(body)) => {
@@ -593,13 +595,16 @@ impl Connect {
         let error = ModelError::StreamIdle {
             idle_ms: millis(limit),
         };
+        // 终态的停顿也要结算（与重试路径一样是瞬时失败），否则票在丢弃时按“结束”计，连续成功数不清零。
         if crossed {
+            self.settle_attempt(AttemptSignal::of_error(&error));
             return Err(error);
         }
         let max_retries = self.route.options.retry.max_retries;
         if !received && self.stalls == 0 && self.attempt <= max_retries {
             self.stalls += 1;
         } else if self.resend().is_none() {
+            self.settle_attempt(AttemptSignal::of_error(&error));
             return Err(error);
         }
         tracing::debug!(

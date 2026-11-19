@@ -14,7 +14,8 @@ use rust_cli_base::models;
 use rust_cli_kernel_api::model::{ModelError, ModelEvent, ModelPort, QuerySource};
 use rust_cli_model::admission::{AdmissionScope, RequestAdmission};
 use rust_cli_model::governor::{Governor, model_key};
-use rust_cli_model::{ProviderModel, RouteOptions};
+use rust_cli_model::{ByteIdle, ProviderModel, RouteOptions, StreamIdle};
+use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
 use super::common::{
@@ -304,4 +305,69 @@ async fn an_overload_with_retry_after_puts_that_cooldown_on_the_bucket() {
         until >= now + 30_000,
         "the cooldown is at least Retry-After from now: {until} vs {now}"
     );
+}
+
+/// 越过交出边界之后的终态流空闲，尝试按瞬时失败结算：清掉连续成功数（与可重试的停顿一致；ocr #560 P1）。
+#[tokio::test]
+async fn a_terminal_stall_settles_the_attempt_as_transient_and_clears_the_streak() {
+    let partial = format!(
+        "{}{}{}",
+        message_start(),
+        block_start(0, json!({"type": "text", "text": ""})),
+        delta(0, json!({"type": "text_delta", "text": "par"}))
+    );
+    let server = Fixture::start(vec![
+        ok(),
+        Reply::new(200)
+            .header("content-type", "text/event-stream")
+            .send(partial)
+            .hang(),
+    ])
+    .await;
+    let governor = governor(8);
+    let admission: Arc<dyn RequestAdmission> = governor.clone();
+    let model = Arc::new(
+        model_with(
+            server.url(),
+            RouteOptions {
+                retry: fast_retry(2),
+                idle: StreamIdle {
+                    events: Some(Duration::from_secs(10)),
+                    bytes: Some(ByteIdle::Fixed(Duration::from_millis(150))),
+                    stall_notice: Duration::from_millis(50),
+                },
+                admission: Some(admission),
+                ..RouteOptions::default()
+            },
+        )
+        .await,
+    );
+
+    let first: Vec<_> = model
+        .stream(
+            request("hi", QuerySource::MainThread),
+            CancellationToken::new(),
+        )
+        .collect()
+        .await;
+    assert!(all_completed(&first));
+    assert_eq!(governor.snapshot(&key()).unwrap().success_streak, 1);
+
+    let second: Vec<_> = model
+        .stream(
+            request("hi", QuerySource::MainThread),
+            CancellationToken::new(),
+        )
+        .collect()
+        .await;
+    assert!(
+        matches!(second.last(), Some(Err(ModelError::StreamIdle { .. }))),
+        "the stall after output is terminal: {second:?}"
+    );
+    let snapshot = governor.snapshot(&key()).unwrap();
+    assert_eq!(
+        snapshot.success_streak, 0,
+        "a terminal stall is a transient failure"
+    );
+    assert_eq!(snapshot.in_flight, 0);
 }
