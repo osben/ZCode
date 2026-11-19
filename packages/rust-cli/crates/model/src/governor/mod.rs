@@ -531,8 +531,16 @@ struct Wake {
 /// 生产用的定时器：有 tokio 运行时就用它；没有（票在普通线程上丢弃）就用一个线程睡到截止时间。
 /// 两条路都不会丢唤醒（Codex #560 P2）。
 pub fn scheduler() -> Scheduler {
+    timer_scheduler(&TIMER_SENDER, start_timer_thread)
+}
+
+/// 调度器的实现：`slot` 是定时线程的发送端，`start` 负责启动一条（测试可以注入会失败的启动）。
+fn timer_scheduler(
+    slot: &'static Mutex<Option<mpsc::Sender<Timer>>>,
+    start: fn() -> Option<mpsc::Sender<Timer>>,
+) -> Scheduler {
     Arc::new(
-        |delay, callback| match tokio::runtime::Handle::try_current() {
+        move |delay, callback| match tokio::runtime::Handle::try_current() {
             Ok(handle) => {
                 handle.spawn(async move {
                     tokio::time::sleep(delay).await;
@@ -541,7 +549,7 @@ pub fn scheduler() -> Scheduler {
             }
             // 没有运行时（票在普通线程上丢弃）：交给进程里唯一的定时线程。
             Err(_) => {
-                if let Some(sender) = timer_sender() {
+                if let Some(sender) = timer_sender_in(slot, start) {
                     let seq = TIMER_SEQ.fetch_add(1, Ordering::Relaxed);
                     let at = Instant::now() + delay;
                     // 接收端只在进程结束时消失；发送失败就是进程在收尾，丢掉唤醒无妨。
@@ -584,28 +592,55 @@ impl Ord for Timer {
 static TIMER_SEQ: AtomicU64 = AtomicU64::new(0);
 /// 启动过的定时线程数（测试用：整个进程只应有一条）。
 pub(crate) static TIMER_THREADS: AtomicUsize = AtomicUsize::new(0);
-/// 定时线程的发送端，第一次需要时启动线程；启动失败时是 None（只记一次日志）。
-static TIMER_SENDER: OnceLock<Option<mpsc::Sender<Timer>>> = OnceLock::new();
+/// 定时线程的发送端。第一次需要时启动线程；启动失败时保持 None，下一次需要时再试（失败不缓存）。
+static TIMER_SENDER: Mutex<Option<mpsc::Sender<Timer>>> = Mutex::new(None);
 
-fn timer_sender() -> Option<mpsc::Sender<Timer>> {
-    TIMER_SENDER
-        .get_or_init(|| {
-            let (tx, rx) = mpsc::channel::<Timer>();
-            match std::thread::Builder::new()
-                .name("governor-timer".to_owned())
-                .spawn(move || run_timers(rx))
-            {
-                Ok(_) => {
-                    TIMER_THREADS.fetch_add(1, Ordering::SeqCst);
-                    Some(tx)
-                }
-                Err(error) => {
-                    tracing::warn!(%error, "governor timer thread did not start; off-runtime wakes are dropped");
-                    None
-                }
-            }
-        })
-        .clone()
+/// 取发送端；没有就用 `start` 启动一条并存下来。`start` 失败时什么都不缓存。
+fn timer_sender_in(
+    slot: &Mutex<Option<mpsc::Sender<Timer>>>,
+    start: fn() -> Option<mpsc::Sender<Timer>>,
+) -> Option<mpsc::Sender<Timer>> {
+    let mut guard = slot
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(sender) = guard.as_ref() {
+        return Some(sender.clone());
+    }
+    let sender = start()?;
+    *guard = Some(sender.clone());
+    Some(sender)
+}
+
+/// 启动定时线程并计数（进程里应只有一条）。
+fn start_timer_thread() -> Option<mpsc::Sender<Timer>> {
+    let started = spawn_timer_thread();
+    if started.is_some() {
+        TIMER_THREADS.fetch_add(1, Ordering::SeqCst);
+    }
+    started
+}
+
+fn spawn_timer_thread() -> Option<mpsc::Sender<Timer>> {
+    let (tx, rx) = mpsc::channel::<Timer>();
+    match std::thread::Builder::new()
+        .name("governor-timer".to_owned())
+        .spawn(move || run_timers(rx))
+    {
+        Ok(_) => Some(tx),
+        Err(error) => {
+            tracing::warn!(%error, "governor timer thread did not start; this wake is dropped and the next one tries again");
+            None
+        }
+    }
+}
+
+/// panic 的文字（`&str` 或 `String` 的载荷；其他类型给占位文字）。
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+    payload
+        .downcast_ref::<&str>()
+        .map(|text| (*text).to_owned())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "non-string panic payload".to_owned())
 }
 
 /// 定时线程：堆里按截止时间排队，到期就调用。回调在这里（不持有任何治理器的锁）运行。
@@ -618,7 +653,14 @@ fn run_timers(rx: mpsc::Receiver<Timer>) {
             let Some(due) = heap.pop() else {
                 break;
             };
-            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(due.callback));
+            if let Err(payload) =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(due.callback))
+            {
+                tracing::error!(
+                    message = %panic_message(payload.as_ref()),
+                    "governor timer callback panicked; that wake is dropped"
+                );
+            }
         }
         let incoming = match heap.peek() {
             None => rx.recv().map_err(|_| RecvTimeoutError::Disconnected),

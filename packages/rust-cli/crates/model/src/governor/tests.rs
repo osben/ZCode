@@ -693,3 +693,61 @@ fn many_off_runtime_wakes_share_one_timer_thread() {
         "one timer thread serves all of them"
     );
 }
+
+static FLAKY_SLOT: Mutex<Option<std::sync::mpsc::Sender<super::Timer>>> = Mutex::new(None);
+static FLAKY_CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+fn flaky_start() -> Option<std::sync::mpsc::Sender<super::Timer>> {
+    if FLAKY_CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+        None
+    } else {
+        super::spawn_timer_thread()
+    }
+}
+
+/// 定时线程第一次启动失败：这次唤醒丢掉（只能记日志），但失败不缓存，下一次唤醒会再启动并且照常触发（Codex delta #560 P1）。
+#[test]
+fn a_failed_timer_start_is_retried_on_the_next_wake() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let schedule = super::timer_scheduler(&FLAKY_SLOT, flaky_start);
+    let first = Arc::new(AtomicUsize::new(0));
+    let second = Arc::new(AtomicUsize::new(0));
+    {
+        let first = first.clone();
+        schedule(
+            Duration::from_millis(1),
+            Box::new(move || {
+                first.fetch_add(1, Ordering::SeqCst);
+            }),
+        );
+    }
+    {
+        let second = second.clone();
+        schedule(
+            Duration::from_millis(1),
+            Box::new(move || {
+                second.fetch_add(1, Ordering::SeqCst);
+            }),
+        );
+    }
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while second.load(Ordering::SeqCst) < 1 && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(
+        second.load(Ordering::SeqCst),
+        1,
+        "the retried start fires the next wake"
+    );
+    assert_eq!(
+        first.load(Ordering::SeqCst),
+        0,
+        "the wake whose start failed was dropped"
+    );
+    assert_eq!(
+        FLAKY_CALLS.load(Ordering::SeqCst),
+        2,
+        "the start was retried, not cached"
+    );
+}
