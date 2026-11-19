@@ -158,3 +158,4 @@ export interface McpUiHandlers extends McpUiResourceHandlers<McpUiSessionAccess>
 }
 export { McpUiInstances, mcpUiInstances } from "./instances.js";
 export { McpUiSamplingCalls } from "./samplingCalls.js";
+export { McpUiAppToolRegistry } from "./appTools.js";

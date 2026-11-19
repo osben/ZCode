@@ -64,6 +64,22 @@ pub(crate) struct Active {
 /// Node's `new Error("MCP App instance is no longer authorized")`.
 pub(crate) const UNAUTHORIZED: &str = "MCP App instance is no longer authorized";
 
+/// A refused [`Instances::validate_closing`]: the message, and the lease the refusal closed (a source mismatch).
+#[derive(Debug)]
+pub(crate) struct Refused {
+    pub message: String,
+    pub closed: Option<Lease>,
+}
+
+impl Refused {
+    fn unauthorized(closed: Option<Lease>) -> Self {
+        Self {
+            message: UNAUTHORIZED.to_owned(),
+            closed,
+        }
+    }
+}
+
 /// One live lease: its binding, the connection it is bound to, its in-flight calls (`pins`) and the cancel signal.
 struct Record {
     lease: Lease,
@@ -191,6 +207,18 @@ impl Instances {
         scope: Scope<'_>,
         source: Option<&Connection>,
     ) -> Result<Active, String> {
+        self.validate_closing(lease, scope, source)
+            .map_err(|refused| refused.message)
+    }
+
+    /// [`Instances::validate`] with the lease a refusal closed. The owner sends the closed notice of that lease (Node's
+    /// abort listener runs on every close, the one of a source mismatch included).
+    pub(crate) fn validate_closing(
+        &self,
+        lease: &Lease,
+        scope: Scope<'_>,
+        source: Option<&Connection>,
+    ) -> Result<Active, Refused> {
         let mut state = self.state.lock_unpoisoned();
         let in_scope = state.records.get(&lease.token).is_some_and(|record| {
             record.lease.runtime_id == lease.runtime_id
@@ -202,12 +230,12 @@ impl Instances {
                 && record.binding.server_name == scope.server_name
         });
         if !in_scope {
-            return Err(UNAUTHORIZED.to_owned());
+            return Err(Refused::unauthorized(None));
         }
         let record = &state.records[&lease.token];
         if source != Some(&record.source) {
-            cancel_and_remove(&mut state, &lease.token);
-            return Err(UNAUTHORIZED.to_owned());
+            let closed = cancel_and_remove(&mut state, &lease.token);
+            return Err(Refused::unauthorized(closed));
         }
         let record = &state.records[&lease.token];
         Ok(Active {
@@ -228,10 +256,13 @@ impl Instances {
         Ok(pin)
     }
 
-    pub(crate) fn release(&self, token: &str, pin: &str) {
-        if let Some(record) = self.state.lock_unpoisoned().records.get_mut(token) {
-            record.pins.remove(pin);
-        }
+    /// Node `release`: `true` when the pin was held (Node emits the activity end only then).
+    pub(crate) fn release(&self, token: &str, pin: &str) -> bool {
+        self.state
+            .lock_unpoisoned()
+            .records
+            .get_mut(token)
+            .is_some_and(|record| record.pins.remove(pin))
     }
 
     pub(crate) fn is_busy(&self, lease: &Lease) -> bool {

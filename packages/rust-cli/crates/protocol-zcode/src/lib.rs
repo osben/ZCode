@@ -58,6 +58,8 @@ pub use automation_port::HostAutomations;
 pub use cipher::HostCredentialCipher;
 pub use context::Context;
 pub use fork::hook_review::codes as hook_review_codes;
+// Fork (F7 PR 3): the app-provided tools router of the panels of Rust-run servers (specs/fork-rust-node-helper.md).
+pub use fork::mcp_ui_app_tools::AppToolRouter;
 pub use fork::node_helper::{
     HelperCatalog, HelperRoutedMcp, NODE_HELPER_UNAVAILABLE, NodeHelper, NodeHelperLauncher,
     NodeHelperProcess, Timing as NodeHelperTiming,
@@ -154,9 +156,9 @@ pub fn handler(
     // Fork (F7 PR 1): the panel owner of the Rust-run servers delivers its pluginUi deltas through this server.
     let answers: std::sync::Weak<dyn fork::node_helper::HelperRequests> =
         Arc::downgrade(&server) as _;
-    server
-        .context
-        .set_mcp_ui(fork::mcp_ui_rust::RustMcpUi::new(answers.clone()));
+    let ui = fork::mcp_ui_rust::RustMcpUi::new(answers.clone());
+    // Fork (F7 PR 3): the router's Rust side is bound by the context, whichever of the two is installed last.
+    server.context.set_mcp_ui(ui);
     // Fork: the Node helper's requests are answered by this server (specs/fork-rust-node-helper.md F3).
     if let Some(helper) = server.context.node_helper() {
         helper.set_requests(answers);
