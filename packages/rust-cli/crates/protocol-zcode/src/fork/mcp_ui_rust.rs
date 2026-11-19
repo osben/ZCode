@@ -1147,8 +1147,6 @@ fn app_error(error: McpAppError) -> RpcError {
     }
 }
 
-/// The subscriber key of a request: session, scope and generation (Node `buildMcpUiSubscriberKey`). The request names its
-/// instance, and its scope and generation must be that instance's (Node's binding check, which reads no lease state).
 /// The prefix of a session's subscriber keys, or of one lease's (Node `${sessionId}|` and `${sessionId}|${token}|`).
 fn subscriber_prefix(session: &str, token: Option<&str>) -> String {
     match token {
@@ -1157,6 +1155,8 @@ fn subscriber_prefix(session: &str, token: Option<&str>) -> String {
     }
 }
 
+/// The subscriber key of a request: session, scope and generation (Node `buildMcpUiSubscriberKey`). The request names its
+/// instance, and its scope and generation must be that instance's (Node's binding check, which reads no lease state).
 fn subscriber_key(session: &SessionId, params: &Value) -> Result<String, RpcError> {
     let lease = lease_of(params)?;
     let scope = text(params, "scopeId")?;

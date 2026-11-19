@@ -32,7 +32,11 @@ const RESOURCE_URI_BYTE_CAP: usize = 1024 * 1024;
 
 /// The list kinds the connection task refreshes (review, round 4): any other kind a server names is dropped, since the
 /// manager has no work for it.
-const QUEUED_LIST_KINDS: [&str; 2] = ["tools", "prompts"];
+/// The kind of a `tools` list change (the manager re-reads the tools, and matches this same constant).
+pub(crate) const TOOLS_LIST_KIND: &str = "tools";
+/// The kind of a `prompts` list change (the manager re-reads the prompts, and matches this same constant).
+pub(crate) const PROMPTS_LIST_KIND: &str = "prompts";
+const QUEUED_LIST_KINDS: [&str; 2] = [TOOLS_LIST_KIND, PROMPTS_LIST_KIND];
 
 /// One waiting resource notice. A uri is stored once: the queue and the set share one allocation.
 enum Waiting {
@@ -63,10 +67,12 @@ fn admit(pending: &mut Pending, notice: Notice) {
             if pending.waiting_uris.contains(uri.as_str()) {
                 return;
             }
-            let fits = pending.resources.len() < RESOURCE_NOTICE_CAP
-                && pending.uri_bytes + uri.len() <= RESOURCE_URI_BYTE_CAP;
-            if !fits {
-                tracing::debug!(%uri, "MCP resource update dropped: the waiting queue is full");
+            if pending.resources.len() >= RESOURCE_NOTICE_CAP {
+                tracing::debug!(%uri, cap = RESOURCE_NOTICE_CAP, "MCP resource update dropped: the count cap is full");
+                return;
+            }
+            if pending.uri_bytes + uri.len() > RESOURCE_URI_BYTE_CAP {
+                tracing::debug!(%uri, cap_bytes = RESOURCE_URI_BYTE_CAP, "MCP resource update dropped: the byte cap is full");
                 return;
             }
             pending.uri_bytes += uri.len();
@@ -116,9 +122,9 @@ impl NoticeSender {
             let mut pending = self.pending.lock_unpoisoned();
             match notice {
                 Notice::ListChanged(kind) => {
-                    if QUEUED_LIST_KINDS.contains(&kind.as_str())
-                        && !pending.changed.contains(&kind)
-                    {
+                    if !QUEUED_LIST_KINDS.contains(&kind.as_str()) {
+                        tracing::debug!(%kind, "MCP list change of a kind the connection does not refresh: dropped");
+                    } else if !pending.changed.contains(&kind) {
                         pending.changed.push_back(kind);
                     }
                 }

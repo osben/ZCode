@@ -1,6 +1,7 @@
 //! Fork (F7 PR 4): resource subscriptions of a Rust-run server, through the fake transport: the registry, the server
 //! requests, the notifications routed to the owner's listener, and the drops (reconnect, prefix).
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -103,6 +104,26 @@ fn ask(join: Join) -> u64 {
     ticket
 }
 
+/// F7 PR 4 (review, round 5): after a clear (a reconnect), a fresh ask owns the uri, and the old ticket's settle changes
+/// nothing (the ticket guard). Regression check: the guard existed before; this pins it.
+#[test]
+fn a_clear_leaves_the_old_ticket_nothing_to_settle() {
+    let mut subs = ResourceSubscriptions::default();
+    let old = ask(subs.join("ui://a", "k1"));
+    subs.clear();
+    let fresh = ask(subs.join("ui://a", "k2"));
+    assert!(
+        !subs.settle("ui://a", old, Ok(()), true).release,
+        "the old ticket is not the uri's"
+    );
+    assert!(
+        matches!(subs.join("ui://a", "k3"), Join::Wait(_)),
+        "the fresh request is still in flight"
+    );
+    assert!(!subs.settle("ui://a", fresh, Ok(()), false).release);
+    assert!(matches!(subs.join("ui://a", "k4"), Join::Done));
+}
+
 #[test]
 fn the_first_subscriber_asks_and_the_others_wait_for_its_outcome() {
     let mut subs = ResourceSubscriptions::default();
@@ -113,14 +134,14 @@ fn the_first_subscriber_asks_and_the_others_wait_for_its_outcome() {
         "the same key again waits too"
     );
     assert_eq!(subs.subscribers("ui://a"), ["s1|a|1", "s2|b|1"]);
-    assert!(!subs.settle("ui://a", ticket, Ok(())));
+    assert!(!subs.settle("ui://a", ticket, Ok(()), false).release);
 }
 
 #[test]
 fn a_settled_uri_joins_without_a_request() {
     let mut subs = ResourceSubscriptions::default();
     let ticket = ask(subs.join("ui://a", "s1|a|1"));
-    subs.settle("ui://a", ticket, Ok(()));
+    drop(subs.settle("ui://a", ticket, Ok(()), false));
     assert!(matches!(subs.join("ui://a", "s3|c|1"), Join::Done));
     assert_eq!(subs.subscribers("ui://a"), ["s1|a|1", "s3|c|1"]);
 }
@@ -136,7 +157,11 @@ fn a_failed_first_request_removes_every_subscriber_and_tells_the_waiters() {
         code: Some(-32602),
         message: "no such resource".to_owned(),
     };
-    assert!(!subs.settle("ui://a", ticket, Err(error.clone())));
+    assert!(
+        !subs
+            .settle("ui://a", ticket, Err(error.clone()), false)
+            .release
+    );
     assert!(
         subs.subscribers("ui://a").is_empty(),
         "the joiner keeps nothing either"
@@ -148,7 +173,7 @@ fn a_failed_first_request_removes_every_subscriber_and_tells_the_waiters() {
 fn removing_the_last_subscriber_of_a_subscribed_uri_reports_last() {
     let mut subs = ResourceSubscriptions::default();
     let ticket = ask(subs.join("ui://a", "k1"));
-    subs.settle("ui://a", ticket, Ok(()));
+    drop(subs.settle("ui://a", ticket, Ok(()), false));
     assert!(matches!(subs.join("ui://a", "k2"), Join::Done));
     assert_eq!(subs.remove("ui://a", "k1"), Some(false));
     assert_eq!(subs.remove("ui://a", "k2"), Some(true));
@@ -170,7 +195,7 @@ fn removing_the_last_subscriber_of_a_uri_in_flight_asks_for_a_release_only_if_it
         "the server holds nothing yet"
     );
     assert!(
-        subs.settle("ui://a", ticket, Ok(())),
+        subs.settle("ui://a", ticket, Ok(()), false).release,
         "the request landed for nobody: the caller unsubscribes"
     );
 }
@@ -179,10 +204,10 @@ fn removing_the_last_subscriber_of_a_uri_in_flight_asks_for_a_release_only_if_it
 fn a_prefix_release_reports_only_the_uris_the_server_holds_that_it_emptied() {
     let mut subs = ResourceSubscriptions::default();
     let a = ask(subs.join("ui://a", "s1|x|1"));
-    subs.settle("ui://a", a, Ok(()));
+    drop(subs.settle("ui://a", a, Ok(()), false));
     subs.join("ui://a", "s2|y|1");
     let b = ask(subs.join("ui://b", "s1|x|1"));
-    subs.settle("ui://b", b, Ok(()));
+    drop(subs.settle("ui://b", b, Ok(()), false));
     let c = ask(subs.join("ui://c", "s1|x|1"));
     assert_eq!(
         subs.remove_prefix("s1|"),
@@ -192,7 +217,7 @@ fn a_prefix_release_reports_only_the_uris_the_server_holds_that_it_emptied() {
     assert_eq!(subs.subscribers("ui://a"), ["s2|y|1"]);
     assert!(subs.remove_prefix("s1|").is_empty());
     assert!(
-        subs.settle("ui://c", c, Ok(())),
+        subs.settle("ui://c", c, Ok(()), false).release,
         "c's request lands for nobody"
     );
 }
@@ -201,9 +226,9 @@ fn a_prefix_release_reports_only_the_uris_the_server_holds_that_it_emptied() {
 fn the_server_lists_each_subscriber_once() {
     let mut subs = ResourceSubscriptions::default();
     let a = ask(subs.join("ui://a", "k1"));
-    subs.settle("ui://a", a, Ok(()));
+    drop(subs.settle("ui://a", a, Ok(()), false));
     let b = ask(subs.join("ui://b", "k1"));
-    subs.settle("ui://b", b, Ok(()));
+    drop(subs.settle("ui://b", b, Ok(()), false));
     assert!(matches!(subs.join("ui://b", "k2"), Join::Done));
     assert_eq!(subs.all_subscribers(), ["k1", "k2"]);
     subs.clear();
@@ -222,7 +247,7 @@ fn a_removed_in_flight_uri_keeps_its_request_for_the_next_joiner() {
         "the request in flight is still the uri's"
     );
     assert!(
-        !subs.settle("ui://a", ticket, Ok(())),
+        !subs.settle("ui://a", ticket, Ok(()), false).release,
         "k2 keeps the subscription"
     );
     assert!(matches!(subs.join("ui://a", "k3"), Join::Done));
@@ -449,21 +474,21 @@ async fn a_dropped_asker_settles_its_uri_and_its_joiner_gets_an_error() {
         None,
         |_method, _| None,
     );
-    let (manager, _fake, _scope) = connected(handler).await;
+    let (manager, fake, _scope) = connected(handler).await;
     let connection = connection(&manager);
     let never = CancellationToken::new();
     let asker = tokio::time::timeout(
-        Duration::from_millis(100),
+        Duration::from_secs(3),
         manager.app_subscribe("files", &connection, "ui://a", "s1|scope1|1", &never),
     );
     let joiner = async {
-        // Joins while the asker's request is in flight.
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        // Joins once the asker's request is on the wire (review, round 5: no sleep-based ordering).
+        wait_for_request(&fake, "resources/subscribe", 1).await;
         manager
             .app_subscribe("files", &connection, "ui://a", "s2|scope2|1", &never)
             .await
     };
-    let both = tokio::time::timeout(Duration::from_secs(3), async {
+    let both = tokio::time::timeout(Duration::from_secs(8), async {
         tokio::join!(asker, joiner)
     })
     .await;
@@ -475,6 +500,13 @@ async fn a_dropped_asker_settles_its_uri_and_its_joiner_gets_an_error() {
         0,
         "the joiner keeps nothing"
     );
+    // The dropped asker's request may have reached the server, so the server is released (review, round 5).
+    wait_for_request(&fake, "resources/unsubscribe", 1).await;
+    assert_eq!(
+        sent(&fake, "resources/unsubscribe").len(),
+        1,
+        "the unsubscribe reaches the server"
+    );
 }
 
 /// F7 PR 4 (review, round 4): a joiner that is cancelled stops waiting for the first request at its own cancel.
@@ -485,17 +517,17 @@ async fn a_cancelled_joiner_stops_waiting_for_the_first_request() {
         None,
         |_method, _| None,
     );
-    let (manager, _fake, _scope) = connected(handler).await;
+    let (manager, fake, _scope) = connected(handler).await;
     let connection = connection(&manager);
     let joiner_cancel = CancellationToken::new();
     let start = std::time::Instant::now();
     let never = CancellationToken::new();
     let asker = tokio::time::timeout(
-        Duration::from_millis(400),
+        Duration::from_secs(5),
         manager.app_subscribe("files", &connection, "ui://a", "s1|scope1|1", &never),
     );
     let joiner = async {
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        wait_for_request(&fake, "resources/subscribe", 1).await;
         let cancel_later = async {
             tokio::time::sleep(Duration::from_millis(50)).await;
             joiner_cancel.cancel();
@@ -512,16 +544,175 @@ async fn a_cancelled_joiner_stops_waiting_for_the_first_request() {
         );
         (result, start.elapsed())
     };
-    let both = tokio::time::timeout(Duration::from_secs(3), async {
+    let both = tokio::time::timeout(Duration::from_secs(10), async {
         tokio::join!(asker, joiner)
     })
     .await;
     let (_asked, (joined, joined_after)) = both.expect("the cancelled joiner must return");
     assert_eq!(joined, Err(McpAppError::Cancelled));
     assert!(
-        joined_after < Duration::from_millis(300),
+        joined_after < Duration::from_secs(2),
         "the joiner stopped at its cancel, not at the asker's timeout: {joined_after:?}"
     );
+}
+
+/// F7 PR 4 (review, round 5): an asker cancelled while its request is in flight returns, and the server may have taken the
+/// request, so the unsubscribe reaches the server (as a dropped asker's does).
+#[tokio::test]
+async fn a_cancelled_asker_releases_the_server_it_may_have_reached() {
+    let handler = server(
+        json!({"resources": {"subscribe": true}}),
+        None,
+        |method, _| match method {
+            "resources/unsubscribe" => Some(Ok(json!({}))),
+            // The subscribe is never answered.
+            _ => None,
+        },
+    );
+    let (manager, fake, _scope) = connected(handler).await;
+    let connection = connection(&manager);
+    let cancel = CancellationToken::new();
+    let asker = manager.app_subscribe("files", &connection, "ui://a", "s1|scope1|1", &cancel);
+    let stopper = async {
+        wait_for_request(&fake, "resources/subscribe", 1).await;
+        cancel.cancel();
+    };
+    let (result, ()) = tokio::join!(asker, stopper);
+    assert_eq!(result, Err(McpAppError::Cancelled));
+    wait_for_request(&fake, "resources/unsubscribe", 1).await;
+    assert_eq!(
+        sent(&fake, "resources/unsubscribe").len(),
+        1,
+        "the cancelled request is released on the server"
+    );
+}
+
+/// F7 PR 4 (review, round 5): an asker dropped on an old connection never unsubscribes a uri that a newer connection holds.
+#[tokio::test]
+async fn an_asker_dropped_on_an_old_connection_never_unsubscribes_a_newer_one() {
+    let asks = Arc::new(AtomicUsize::new(0));
+    let counter = asks.clone();
+    let handler = server(
+        json!({"resources": {"subscribe": true}}),
+        None,
+        move |method, _| match method {
+            // The first subscribe hangs (its asker is dropped); the later ones answer.
+            "resources/subscribe" => {
+                if counter.fetch_add(1, Ordering::SeqCst) == 0 {
+                    None
+                } else {
+                    Some(Ok(json!({})))
+                }
+            }
+            "resources/unsubscribe" => Some(Ok(json!({}))),
+            _ => None,
+        },
+    );
+    let (manager, fake, _scope) = connected(handler).await;
+    let old = connection(&manager);
+    let dropped = tokio::time::timeout(
+        Duration::from_millis(100),
+        manager.app_subscribe(
+            "files",
+            &old,
+            "ui://a",
+            "s1|scope1|1",
+            &CancellationToken::new(),
+        ),
+    )
+    .await;
+    assert!(
+        dropped.is_err(),
+        "the first request hangs and its asker is dropped"
+    );
+    manager
+        .control(McpAction::Reconnect, &["files".to_owned()])
+        .await;
+    let new = connection(&manager);
+    // The dropped asker's release (if any) runs once the new connection is up; it must not reach that connection.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    manager
+        .app_subscribe(
+            "files",
+            &new,
+            "ui://a",
+            "s2|scope2|1",
+            &CancellationToken::new(),
+        )
+        .await
+        .expect("subscribed on the new connection");
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(
+        sent(&fake, "resources/unsubscribe").is_empty(),
+        "no unsubscribe reached the new connection: {:?}",
+        sent(&fake, "resources/unsubscribe")
+    );
+}
+
+/// F7 PR 4 (review, round 5): a joiner cancelled while it waits leaves no key behind: when the first request later
+/// succeeds, the uri's subscribers are the first subscriber only.
+#[tokio::test]
+async fn a_cancelled_joiner_leaves_no_key_behind() {
+    let handler = server(
+        json!({"resources": {"subscribe": true}}),
+        None,
+        |_method, _| None,
+    );
+    let (manager, fake, _scope) = connected(handler).await;
+    let connection = connection(&manager);
+    let joiner_cancel = CancellationToken::new();
+    let never = CancellationToken::new();
+    let asker = manager.app_subscribe("files", &connection, "ui://a", "s1|scope1|1", &never);
+    let joiner = async {
+        wait_for_request(&fake, "resources/subscribe", 1).await;
+        let cancel_later = async {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            joiner_cancel.cancel();
+        };
+        let (result, ()) = tokio::join!(
+            manager.app_subscribe(
+                "files",
+                &connection,
+                "ui://a",
+                "s2|scope2|1",
+                &joiner_cancel
+            ),
+            cancel_later,
+        );
+        result
+    };
+    // The first request is answered after the joiner has left.
+    let answer = async {
+        wait_for_request(&fake, "resources/subscribe", 1).await;
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let id = sent(&fake, "resources/subscribe")[0]["id"].clone();
+        fake.push("files", json!({"jsonrpc": "2.0", "id": id, "result": {}}));
+    };
+    let (asked, joined, ()) = tokio::join!(asker, joiner, answer);
+    assert!(asked.is_ok(), "{asked:?}");
+    assert_eq!(joined, Err(McpAppError::Cancelled));
+
+    let (notices, callback) = listener();
+    let _subscription = manager
+        .on_app_resource_notice("files", callback)
+        .expect("known server");
+    fake.push(
+        "files",
+        notification("notifications/resources/updated", json!({"uri": "ui://a"})),
+    );
+    wait_until(|| !notices.lock().unwrap().is_empty()).await;
+    assert_eq!(
+        *notices.lock().unwrap(),
+        [McpResourceNotice::Updated {
+            uri: "ui://a".to_owned(),
+            subscribers: vec!["s1|scope1|1".to_owned()],
+        }]
+    );
+}
+
+/// Waits until the fake server has received `count` requests of `method`.
+async fn wait_for_request(fake: &FakeMcp, method: &str, count: usize) {
+    wait_until(|| sent(fake, method).len() >= count).await;
 }
 
 /// Regression (review): a subscription guarded by a connection that has since changed is refused before it is added.

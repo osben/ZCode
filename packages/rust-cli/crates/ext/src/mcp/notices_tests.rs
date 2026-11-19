@@ -155,6 +155,41 @@ async fn resource_notices_go_before_a_waiting_list_change() {
     );
 }
 
+/// F7 PR 4 (review, round 5): a uri taken away waits again, and its bytes come back with it (the queue and its set reset
+/// together). Regression check of the take path.
+#[tokio::test]
+async fn a_uri_taken_away_waits_again_and_frees_its_bytes() {
+    let (sender, mut receiver) = channel();
+    let big = "a".repeat(600 * 1024);
+    sender.send(Notice::ResourceUpdated(big.clone()));
+    assert_eq!(
+        receiver.recv().await,
+        Some(Notice::ResourceUpdated(big.clone()))
+    );
+    sender.send(Notice::ResourceUpdated(big.clone()));
+    assert_eq!(
+        receiver.recv().await,
+        Some(Notice::ResourceUpdated(big.clone())),
+        "the same uri waits again once taken away"
+    );
+    // The bytes of the taken uri are free: a second uri of the same size fits the 1 MiB allowance.
+    sender.send(Notice::ResourceUpdated("b".repeat(600 * 1024)));
+    assert_eq!(
+        receiver.recv().await,
+        Some(Notice::ResourceUpdated("b".repeat(600 * 1024)))
+    );
+}
+
+/// F7 PR 4 (review, round 5): a resource list change taken away waits again.
+#[tokio::test]
+async fn a_resource_list_change_taken_away_waits_again() {
+    let (sender, mut receiver) = channel();
+    sender.send(Notice::ResourceListChanged);
+    assert_eq!(receiver.recv().await, Some(Notice::ResourceListChanged));
+    sender.send(Notice::ResourceListChanged);
+    assert_eq!(receiver.recv().await, Some(Notice::ResourceListChanged));
+}
+
 /// 取走之后再来的同一种照常送达。
 #[tokio::test]
 async fn a_kind_taken_away_can_arrive_again() {

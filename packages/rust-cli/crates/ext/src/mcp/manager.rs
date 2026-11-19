@@ -26,6 +26,7 @@ pub(super) mod app_connection;
 pub(super) mod app_resources;
 use super::config::{McpServer, McpServerOptions, McpSettings};
 use super::connection::{self, Session, has_capability};
+use super::notices::{PROMPTS_LIST_KIND, TOOLS_LIST_KIND};
 use super::oauth_hooks::ChallengeRefresh;
 use super::resources;
 use super::rpc::{Client, Notice};
@@ -423,14 +424,14 @@ impl Inner {
         tracing::info!(server = name, "MCP server connected");
         while let Some(notice) = notices.recv().await {
             match notice {
-                Notice::ListChanged(kind) if kind == "tools" => {
+                Notice::ListChanged(kind) if kind == TOOLS_LIST_KIND => {
                     let (tools, visibility) = self.tools_of(name, &client).await;
                     self.update(name, generation, |server| {
                         server.tools = tools;
                         server.visibility = visibility;
                     });
                 }
-                Notice::ListChanged(kind) if kind == "prompts" => {
+                Notice::ListChanged(kind) if kind == PROMPTS_LIST_KIND => {
                     let prompts = self.prompts_of(name, &client).await;
                     self.update(name, generation, |server| server.prompts = prompts);
                 }
