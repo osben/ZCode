@@ -1,0 +1,28 @@
+{
+  "description": "F7 PR 4: resource subscriptions of a panel, run by the Rust owner (mcp_ui_resource_conformance_tests.rs) and by Node's handlers, registry and notification routing (mcp-ui-resource-conformance.test.ts). Every step's outcome must match in both runners. The server's request counts are checked only before the reconnect: Node replays and then unsubscribes on the new connection, Rust does not replay, and the server state is the same.",
+  "server": {"name": "files", "identity": "id-files", "generation": 1},
+  "steps": [
+    {"op": "openPanel", "as": "p1", "session": "run_s1", "scope": "scope1", "expect": "opened"},
+    {"op": "subscribe", "lease": "p1", "uri": "ui://a", "expect": "subscribed"},
+    {"op": "subscribe", "lease": "p1", "uri": "ui://a", "expect": "subscribed"},
+    {"op": "serverRequests", "expect": "server:subscribe=1,unsubscribe=0"},
+    {"op": "openPanel", "as": "p2", "session": "run_s2", "scope": "scope2", "expect": "opened"},
+    {"op": "subscribe", "lease": "p2", "uri": "ui://a", "expect": "subscribed"},
+    {"op": "serverRequests", "expect": "server:subscribe=1,unsubscribe=0"},
+    {"op": "subscribe", "lease": "p2", "uri": "ui://b", "scopeOverride": "other", "expect": "refused:binding"},
+    {"op": "notifyUpdated", "uri": "ui://a", "expect": "delivered:run_s1,run_s2"},
+    {"op": "notifyUpdated", "uri": "ui://b", "expect": "delivered:none"},
+    {"op": "notifyListChanged", "expect": "delivered:run_s1,run_s2"},
+    {"op": "unsubscribe", "lease": "p1", "uri": "ui://a", "expect": "unsubscribed"},
+    {"op": "notifyUpdated", "uri": "ui://a", "expect": "delivered:run_s2"},
+    {"op": "closePanel", "lease": "p2", "expect": "closed"},
+    {"op": "serverRequests", "expect": "server:subscribe=1,unsubscribe=1"},
+    {"op": "subscribe", "lease": "p2", "uri": "ui://a", "expect": "unauthorized"},
+    {"op": "unsubscribe", "lease": "p2", "uri": "ui://a", "expect": "unauthorized"},
+    {"op": "serverRequests", "expect": "server:subscribe=1,unsubscribe=1"},
+    {"op": "notifyUpdated", "uri": "ui://a", "expect": "delivered:none"},
+    {"op": "subscribe", "lease": "p1", "uri": "ui://b", "expect": "subscribed"},
+    {"op": "reconnect", "expect": "revoked:run_s1"},
+    {"op": "notifyUpdated", "uri": "ui://b", "expect": "delivered:none"}
+  ]
+}

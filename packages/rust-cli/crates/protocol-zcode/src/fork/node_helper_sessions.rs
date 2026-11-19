@@ -593,6 +593,10 @@ pub(crate) fn close_listener(
     Arc::new(move |session| {
         // Fork (F7 PR 1): the session's panels of Rust-run servers end with it (Node `clearMcpUiAppToolsForSession`).
         if let Some(ui) = context.mcp_ui() {
+            // Fork (F7 PR 4): the session's subscriptions are removed through the host the panels are served by.
+            if let Some(host) = context.mcp_app_host() {
+                ui.bind_host(host);
+            }
             ui.session_closed(session.as_str());
         }
         if let Some(helper) = context.node_helper() {

@@ -39,7 +39,29 @@ pub enum McpAppError {
         code: Option<i64>,
         message: String,
     },
+    /// The server does not declare the capability the request needs (Node `McpResourceSubscribeUnsupportedError`).
+    NotSupported {
+        server: String,
+        operation: String,
+    },
 }
+
+/// A resource notification of a server, for the owner of the subscriptions it names (Node `notifications.ts`). The
+/// subscriber keys are the subscriptions the notice reaches: every key of a uri for `Updated`, every key of the
+/// server for `ListChanged`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum McpResourceNotice {
+    Updated {
+        uri: String,
+        subscribers: Vec<String>,
+    },
+    ListChanged {
+        subscribers: Vec<String>,
+    },
+}
+
+/// A resource notification's callback. It runs on the connection task, after the manager's lock is released.
+pub type McpResourceCallback = Arc<dyn Fn(McpResourceNotice) + Send + Sync>;
 
 /// The guard of an invalidation subscription: dropping it unsubscribes.
 pub type McpAppSubscription = Box<dyn Send + Sync>;
@@ -75,6 +97,35 @@ pub trait McpAppHost: Send + Sync {
     /// The tool's `_meta.ui.visibility` list (empty when it has none). `None` when the server has no such tool.
     fn tool_visibility(&self, session: &SessionId, server: &str, tool: &str)
     -> Option<Vec<String>>;
+
+    /// Node `subscribeResourceForUi`: registers `subscriber` for `uri` on the server, and subscribes on the server when it
+    /// is the first subscriber of that uri. Guarded by `expected`. `NotSupported` when the server does not declare
+    /// `resources.subscribe`; a failed server subscription leaves no subscriber behind.
+    async fn subscribe(
+        &self,
+        session: &SessionId,
+        server: &str,
+        expected: &McpAppConnection,
+        uri: &str,
+        subscriber: &str,
+        cancel: &CancellationToken,
+    ) -> Result<(), McpAppError>;
+
+    /// Node `unsubscribeResourceForUi`: removes `subscriber` for `uri`; the server is unsubscribed when it was the last
+    /// subscriber. Errors are not reported (Node logs them).
+    async fn unsubscribe(&self, session: &SessionId, server: &str, uri: &str, subscriber: &str);
+
+    /// Node `unsubscribeMcpResourcesForUi`: removes every subscriber key that starts with `prefix` (one lease's, or one
+    /// session's). Returns the number of (server, uri) pairs it emptied; their server unsubscribes run in the background.
+    fn unsubscribe_prefix(&self, session: &SessionId, prefix: &str) -> usize;
+
+    /// Calls `callback` on the server's resource notifications. `None` when the server is not in the session's table.
+    fn on_resource_notice(
+        &self,
+        session: &SessionId,
+        server: &str,
+        callback: McpResourceCallback,
+    ) -> Option<McpAppSubscription>;
 
     /// One request on the server's client, guarded by `expected`: it fails with [`McpAppError::Changed`] when the
     /// connection is no longer `expected` before or after the call. A server that is absent from the session's table
