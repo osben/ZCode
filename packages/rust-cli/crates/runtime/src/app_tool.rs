@@ -2,7 +2,7 @@
 //! opens the session first; the kernel builds the transient MCP tool from the helper's descriptor and runs the main
 //! loop's own pipeline on it in the caller's task, with the session's tool context.
 
-use rust_cli_kernel_api::app_tool::{AppToolCall, AppToolError};
+use rust_cli_kernel_api::app_tool::{AppToolCall, AppToolError, ElicitationCall};
 use rust_cli_kernel_api::session_api::KernelError;
 use serde_json::Value;
 
@@ -22,6 +22,29 @@ impl LocalKernel {
             .authorize(tool.as_ref(), call.input, context)
             .await
             .map_err(AppToolError::Refused)
+    }
+}
+
+impl LocalKernel {
+    /// Fork F3b(c) PR 2: asks the session's user the helper-relayed question. It is asked in the session's context
+    /// (`app_tool_context`), so it is withdrawn by the call's `withdrawn` token. A session that is not open is `NotFound`.
+    pub(crate) async fn elicit_mcp(&self, call: ElicitationCall) -> Result<Value, KernelError> {
+        let Some(session) = self.settled(&call.session).await else {
+            return Err(KernelError::NotFound {
+                session: call.session,
+            });
+        };
+        let context = session
+            .app_tool_context(call.tool_use.clone(), call.withdrawn.clone())
+            .await?;
+        Ok(rust_cli_ext::mcp::helper_elicitation_answer(
+            context.interactions,
+            call.tool_use,
+            call.server,
+            &call.params,
+            call.withdrawn,
+        )
+        .await)
     }
 }
 

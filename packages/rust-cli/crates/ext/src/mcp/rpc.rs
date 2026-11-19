@@ -475,6 +475,28 @@ async fn elicitation_answer(call: Option<Registered>, params: &Value) -> Value {
     }
 }
 
+/// Fork (F3b(c) PR 2): the answer to a helper-hosted server's question, relayed by the helper (`helper/elicitation`).
+/// The question belongs to `tool_use`'s call on `server` and is asked of `interactions`, the session the call runs in.
+/// `withdrawn` is the helper's abandon of the request (its call ended, or the turn was cancelled): it withdraws a
+/// question still open, which is answered `cancel`. The same answers and failures as the connection's own question.
+pub async fn helper_elicitation_answer(
+    interactions: Arc<dyn Interactions>,
+    tool_use: ToolUseId,
+    server: String,
+    params: &Value,
+    withdrawn: CancellationToken,
+) -> Value {
+    let call = Registered {
+        id: 0,
+        tool_use,
+        server,
+        interactions,
+        cancel: withdrawn.clone(),
+        ended: withdrawn,
+    };
+    elicitation_answer(Some(call), params).await
+}
+
 /// Node's `isSupportedElicitationMode`: an absent mode is form; the form names are the form mode, others decline.
 fn supported_mode(mode: Option<&Value>) -> bool {
     match mode {

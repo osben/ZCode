@@ -109,6 +109,24 @@ async fn a_session_that_is_not_open_is_not_found() {
     ));
 }
 
+/// F3b(c) PR 2: a helper-relayed question of a session that is not open is `NotFound`, which the helper declines.
+#[tokio::test]
+async fn an_elicitation_of_a_session_that_is_not_open_is_not_found() {
+    use rust_cli_kernel_api::app_tool::ElicitationCall;
+
+    let kernel = kernel();
+    let asked = kernel
+        .elicit_mcp(ElicitationCall {
+            session: SessionId::new("missing"),
+            tool_use: ToolUseId::new("helper_req_1"),
+            server: "plugin:viewer:view".to_owned(),
+            params: json!({"message": "Name?"}),
+            withdrawn: CancellationToken::new(),
+        })
+        .await;
+    assert!(matches!(asked, Err(KernelError::NotFound { .. })));
+}
+
 async fn asked(
     events: &mut futures_util::stream::BoxStream<
         'static,

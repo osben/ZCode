@@ -1,0 +1,34 @@
+{
+  "_comment": "Shared contract of helper/elicitation (specs/fork-rust-node-helper.md F3b(c) PR 2). Read by the TS relay test (apps/zcode-cli/packages/bootstrap/tests/fork-rust-helper/elicitation-relay.test.ts) and by the Rust test helper_elicitation_tests.rs. Change it only with both sides.",
+  "call": {
+    "sessionId": "sess_1",
+    "turnId": "run_1",
+    "toolUseId": "toolu_1"
+  },
+  "question": {
+    "serverName": "plugin:calc:app",
+    "message": "Name?",
+    "requestedSchema": {
+      "type": "object",
+      "properties": { "name": { "type": "string" } },
+      "required": ["name"]
+    }
+  },
+  "request": {
+    "sessionId": "sess_1",
+    "turnId": "run_1",
+    "toolUseId": "toolu_1",
+    "serverName": "plugin:calc:app",
+    "message": "Name?",
+    "requestedSchema": {
+      "type": "object",
+      "properties": { "name": { "type": "string" } },
+      "required": ["name"]
+    }
+  },
+  "answers": {
+    "accept": { "action": "accept", "content": { "name": "Ada" } },
+    "decline": { "action": "decline" },
+    "cancel": { "action": "cancel" }
+  }
+}

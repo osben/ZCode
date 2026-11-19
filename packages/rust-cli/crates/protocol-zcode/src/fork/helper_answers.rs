@@ -156,6 +156,20 @@ impl HelperRequests for Server {
         super::helper_sampling::answer(self.kernel.sample_model(call).await)
     }
 
+    /// F3b(c) PR 2: a helper-hosted server's question, asked of the session the in-flight call runs in (helper_elicitation.rs).
+    /// A question without a call is declined without asking; a refused one is an error the helper declines.
+    async fn elicitation(
+        &self,
+        params: Value,
+        cancel: CancellationToken,
+    ) -> Result<Value, RpcError> {
+        let Some(call) = super::helper_elicitation::parse(&params, cancel)? else {
+            return Ok(super::helper_elicitation::declined());
+        };
+        self.live(&call.session).await.map_err(kernel_error)?;
+        super::helper_elicitation::answer(self.kernel.mcp_elicitation(call).await)
+    }
+
     /// Appended in the session's pump order. A session without a live projection has no stream to show it on, so the
     /// delta is dropped, as Node drops a live-only event nobody subscribes to.
     fn session_delta(&self, session: &str, delta: Value) {

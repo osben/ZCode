@@ -88,7 +88,9 @@ export async function runForkRustHelper(options: RunForkRustHelperOptions): Prom
   const configResult = createConfig({ env });
   const storageRoot = resolvePath(configResult.config.storage.dir);
   const loggerFactory = createNodeLoggerFactory({ env });
-  const logger = loggerFactory.createLogger("zcode").child({ module: "bootstrap.fork_rust_helper" });
+  const logger = loggerFactory
+    .createLogger("zcode")
+    .child({ module: "bootstrap.fork_rust_helper" });
   const pluginPreparation = createOfficialPluginPreparation();
   const pluginDiscovery = createNodePluginAdapter({
     storageRoot: getPluginStorageRoot(getCliStorageRoot(storageRoot)),
@@ -101,8 +103,12 @@ export async function runForkRustHelper(options: RunForkRustHelperOptions): Prom
   let mcpHost: ForkRustHelperMcpHost | undefined;
   let browser: ForkRustBrowserControl | undefined;
   const pool = createMcpAdapterConnectionPool({
-    // Elicitation from a helper-hosted server is declined: the helper has no Host client (spec F3).
-    elicitation: { requestElicitation: () => Promise.resolve({ action: "decline" as const }) },
+    // A helper-hosted server's question goes to Rust's prompt through the relay (spec F3b(c) PR 2); before the MCP host
+    // exists, or without a call in flight, it is declined.
+    elicitation: {
+      requestElicitation: (request) =>
+        mcpHost ? mcpHost.elicitation(request) : Promise.resolve({ action: "decline" as const }),
+    },
     notifications: { onNotification: (notification) => mcpHost?.handleNotification(notification) },
     clientVersion: env.ZCODE_APP_VERSION?.trim() || "0.0.0",
     env,
@@ -139,13 +145,16 @@ export async function runForkRustHelper(options: RunForkRustHelperOptions): Prom
     },
     notify: (notification) => connection?.send(notification),
     // F4b: the broker's only Host requests are browser list and execute. They go to Rust, which relays them to Main.
-    requestClient: <T,>(
+    requestClient: <T>(
       method: string,
       params: unknown,
       resultSchema: { parse(input: unknown): T },
       options?: { signal?: AbortSignal },
     ) => {
-      if (method !== zcodeProtocolMethods.interactionBrowserList && method !== zcodeProtocolMethods.interactionBrowserExecute)
+      if (
+        method !== zcodeProtocolMethods.interactionBrowserList &&
+        method !== zcodeProtocolMethods.interactionBrowserExecute
+      )
         return Promise.reject(new Error("The Rust agent's Node helper has no Host client"));
       return client
         .request<unknown>(method, params as Record<string, unknown>, options?.signal)
@@ -178,7 +187,9 @@ export async function runForkRustHelper(options: RunForkRustHelperOptions): Prom
           pluginDiscovery,
           logger,
           workingDirectory: workspace.workspacePath,
-          ...(workspace.workspaceIdentity ? { workspaceIdentity: workspace.workspaceIdentity } : {}),
+          ...(workspace.workspaceIdentity
+            ? { workspaceIdentity: workspace.workspaceIdentity }
+            : {}),
           env,
         }),
         workspace.workspacePath,
@@ -188,7 +199,9 @@ export async function runForkRustHelper(options: RunForkRustHelperOptions): Prom
   });
 
   const openSessionStore = () => {
-    sessionStore ??= createSqliteSessionStore({ dbPath: getSessionDbPath(configResult, options.cwd) }).then(
+    sessionStore ??= createSqliteSessionStore({
+      dbPath: getSessionDbPath(configResult, options.cwd),
+    }).then(
       (store) => {
         context.deps.sessionStore = store;
         return store;
