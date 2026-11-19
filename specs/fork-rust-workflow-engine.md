@@ -1225,7 +1225,7 @@ Translation of Node's model-level assertions. Node counts model requests and rea
 | 30  | workflow-driver        | the epilogue start is marked on the persisted user message                                         | covered         | runtime `a_scripted_actor_turn_runs_through_the_workflow_and_settles_after_the_nudge` (the run's `epilogue_start`); the persisted metadata is not asserted in Rust                                                                                                               |
 | 31  | workflow-driver        | dispose: an idle session is closed at once                                                         | ported          | Ported (9.15). `driver_close_tests::row_31_an_idle_session_is_closed_at_once_when_the_run_settles`; turn side `actor_turns_close_tests::row_31_turn_side_an_idle_session_is_closed_at_once`.                                                                                     |
 | 32  | workflow-driver        | dispose: a session with an in-flight turn waits for it to land                                     | ported          | Ported (9.15). Owner `driver_close_tests::row_32_a_session_with_a_turn_in_flight_is_handed_to_the_close_port_after_its_cancel`; the wait is on the turn side, `actor_turns_close_tests::row_32_turn_side_a_session_closed_mid_turn_is_closed_when_the_turn_lands`.               |
-| 33  | workflow-driver        | dispose during creation: a late instance is closed and nothing new is accepted                     | ported          | Ported as a refusal (9.15, divergence 44). `driver_close_tests::row_33_a_disposed_driver_refuses_a_session_and_creates_nothing`. A late instance cannot exist in Rust.                                                                                                           |
+| 33  | workflow-driver        | dispose during creation: a late instance is closed and nothing new is accepted                     | ported          | Ported as a refusal (9.15, divergence 77). `driver_close_tests::row_33_a_disposed_driver_refuses_a_session_and_creates_nothing`. A late instance cannot exist in Rust.                                                                                                           |
 | 34  | workflow-driver        | dispose twice closes each runtime once                                                             | ported          | Ported (9.15). `driver_close_tests::row_34_disposing_twice_closes_each_session_once`; turn side `actor_turns_close_tests::row_34_turn_side_two_close_requests_close_the_session_once`.                                                                                           |
 | 35  | workflow-driver        | a failed close only warns; settlement does not throw                                               | ported          | Ported (9.15). `driver_close_tests::row_35_a_failed_close_is_recorded_and_the_settlement_does_not_throw`; turn side `actor_turns_close_tests::row_35_turn_side_a_refused_idle_close_is_returned_to_the_caller`.                                                                  |
 | 36  | workflow-driver        | real pipeline: each runtime closed exactly once; GC collectable                                    | ported          | Ported, GC half not carried (9.15, divergence 47). `driver_close_tests::row_36_the_pipeline_closes_each_actor_session_exactly_once`.                                                                                                                                             |
@@ -1540,7 +1540,7 @@ The run an actor belongs to is cleared when its turn ends and when it is resumed
 
 **Not done (left for later parts).**
 
-- **Status (W7-3, 9.16):** the owner's feed and routing are built, and the turn side's source is `AskObserver`. The slot-queue wait has no source yet (divergence 52).
+- **Status (W7-3, 9.16):** the owner's feed and routing are built, and the turn side's source is `AskObserver`. The slot-queue wait has no source yet (divergence 68).
 - **The source of `node-waiting` and `node-executing` (9.10 item 2's driver half).** Nothing calls `ask_waiting` or `ask_executing` in production. The signal path from the transport is missing: a queued admission (`slot`), the backoff of a retry (the `Retrying` notice's delay, Node's `backoff` with `reason`, `attempt`, `delayMs` and `retryAfterMs`), and the request's start after a wait (Node's `model_request_started`). It needs a notice from the transport to the owner through the mailbox. Left for the part that wires the actor turn to the transport (W7, with the run service).
 - **Built in W7-3 (9.16):** `GovernorRunConcurrency` in `cli/src/frontends/workflow_governor.rs`. The original gap follows. **The production `RunConcurrency` adapter** over the model crate's `Governor`, with the reason mapping. Nothing constructs it, and nothing calls `attach_concurrency` or `set_max_concurrency` outside the tests. The owner runs ungoverned, as Node does without a governor.
 - **The run service (still open after W7-3; W7-5).** Rust has no run service yet (W7/W8). Node's launch and retune call sites (`dynamic-workflow-run-launch.ts`, `workflow-run-control.ts`'s `runBoundTarget`) are the place where `attach_concurrency` and `set_max_concurrency` are called. The W7 run service must call them.
@@ -1706,21 +1706,21 @@ Scope: the guard and the residency rules, the session close port, and the dispos
 
 **Node divergences (continued from 9.14).**
 
-43. Row 32 is split. The owner hands the session over at once after the settlement cancels its turn, the way Node's `dispose` returns synchronously. The wait is on the turn side: the runtime close is held until the ask's thread ends. A Rust "turn" is the life of an ask's thread, so the nudged turns of one ask count as one.
-44. Row 33 is a refusal only. Rust's `create_actor_session` runs on the owner's thread, and `dispose` runs on the same thread, so no late instance can exist. Node's release of a late instance (its `catch` in `createActorSession`) has no counterpart.
-45. Row 34's once-rule: the owner's `disposed` flag runs the dispose loop once per driver, and the turn side's `requested` set makes a second close request a no-op. The owner keeps no set of its own (the review round dropped it as dead state).
-46. Row 35: an idle close's error is returned by the turn side and recorded by the owner. A deferred close's error is only logged, on the ask thread, since there is no caller left. Node logs both cases.
-47. Row 36: the GC half is not carried. Rust has no GC-collectable runtime check; a runtime is released when its last owner drops it.
-48. Sessions are closed in session-id order. Node closes them in map order.
-49. The quiescence ledger (Node `workflow-driver-quiescence.ts`: `noteDisposed`, `quietSessions`, the bounded wait that amend uses) is not ported. Node's dispose records each session's in-flight turn into it. Amend's continuation is not ported yet (W5b), so nothing reads it.
-50. The residency ledger is a counted record of live runs per session, not a callback into a residency pool. Node's `hasResidencyBlockingWork` poll does not exist here. `SessionResidency::close` blocks on a condition variable, so an async caller must run it on the blocking pool (W7).
-51. The guard is the only residency fact. Node's pool also counts a session's own in-flight requests (`residencyFinalizationCount`). Rust has no idle eviction, so there is no caller that needs that count yet.
+76. Row 32 is split. The owner hands the session over at once after the settlement cancels its turn, the way Node's `dispose` returns synchronously. The wait is on the turn side: the runtime close is held until the ask's thread ends. A Rust "turn" is the life of an ask's thread, so the nudged turns of one ask count as one.
+77. Row 33 is a refusal only. Rust's `create_actor_session` runs on the owner's thread, and `dispose` runs on the same thread, so no late instance can exist. Node's release of a late instance (its `catch` in `createActorSession`) has no counterpart.
+78. Row 34's once-rule: the owner's `disposed` flag runs the dispose loop once per driver, and the turn side's `requested` set makes a second close request a no-op. The owner keeps no set of its own (the review round dropped it as dead state).
+79. Row 35: an idle close's error is returned by the turn side and recorded by the owner. A deferred close's error is only logged, on the ask thread, since there is no caller left. Node logs both cases.
+80. Row 36: the GC half is not carried. Rust has no GC-collectable runtime check; a runtime is released when its last owner drops it.
+81. Sessions are closed in session-id order. Node closes them in map order.
+82. The quiescence ledger (Node `workflow-driver-quiescence.ts`: `noteDisposed`, `quietSessions`, the bounded wait that amend uses) is not ported. Node's dispose records each session's in-flight turn into it. Amend's continuation is not ported yet (W5b), so nothing reads it.
+83. The residency ledger is a counted record of live runs per session, not a callback into a residency pool. Node's `hasResidencyBlockingWork` poll does not exist here. `SessionResidency::close` blocks on a condition variable, so an async caller must run it on the blocking pool (W7).
+84. The guard is the only residency fact. Node's pool also counts a session's own in-flight requests (`residencyFinalizationCount`). Rust has no idle eviction, so there is no caller that needs that count yet.
 
 **What W7 must wire.**
 
 1. [Done in W7-3, 9.16: `actor_mailbox::MailboxRun`.] A `LiveRun` for each run. `stop_interrupted` posts a stop to the owner's mailbox, and the owner's thread calls `engine.stop(Interrupted)`. Without it, `SessionResidency::close` waits on a live run that nothing stops.
 2. [Done in W7-3, 9.16: `workflow_assembly::attach_run`; the launch itself is W7-5.] The launch calls `ActorDriverOwner::attach_residency(&residency, run)` in the same synchronous step as the launch (Node's invariant 6), with one process-wide `SessionResidency` shared with the session table. A failed attach fails the launch before any run starts.
-3. [Done in W7-3, 9.16: `AgentSessionCloser` and `workflow_assembly::actor_turns`; the agents release is the live entry only, divergence 55.] A production `SessionCloser` over the agents' child session (Node `closeBrowserSession`: `beginShutdown`, release of the node_repl session, then the browser session close), passed to `MailboxTurns::with_closer`. There is no production `ActorSessions` yet (`NodeActorSessions` is built only in tests), so W7 also builds the production assembly.
+3. [Done in W7-3, 9.16: `AgentSessionCloser` and `workflow_assembly::actor_turns`; the agents release is the live entry only, divergence 71.] A production `SessionCloser` over the agents' child session (Node `closeBrowserSession`: `beginShutdown`, release of the node_repl session, then the browser session close), passed to `MailboxTurns::with_closer`. There is no production `ActorSessions` yet (`NodeActorSessions` is built only in tests), so W7 also builds the production assembly.
 4. [Open after W7-3: `table.rs` is outside W7-3.] The session close path (`runtime/src/table.rs` `Closer::closing`, the close entry of `crates/session`): call `SessionResidency::close(session)` on the blocking pool before the session's state is released, and keep the session retired while it closes. Deletion (`session_deletion.rs`) treats a session with a live guard as busy, in `residency_busy` or next to it.
 5. Any future idle eviction calls `try_evict` first and skips a session it refuses.
 6. [Open after W7-3.] Shutdown closes every resident parent session through `SessionResidency::close` and waits (Node's `App.close` drain). An owner dropped before its run settles never runs `dispose`, so its runtimes stay open. Shutdown must stop and settle every live run first.
@@ -1777,32 +1777,32 @@ fixed after their first compile and run. Both fixes were test setup, not behavio
 unset (the bound read 1), and `SystemClock` needed `utc()`. The first compile also found `anyhow` missing from the
 runtime's production dependencies, which is the one production change of that kind.
 
-**Node divergences (continued from 9.15).**
+**Node divergences (68 to 75; numbered after the numbers in use on open PRs).**
 
-52. The observer reads the runtime's model notices, not Node's network status events. Rust has no queued, admitted,
+68. The observer reads the runtime's model notices, not Node's network status events. Rust has no queued, admitted,
     started or completed event. So a slot-queue wait is not fed: `AskObserver::waiting_for_slot` is the hook, and the
     admission wrapper that calls it is W7-5. `model_request_completed` is fed by the caller, once per completed request.
-53. The chain set is one state, not Node's per-chain aggregation. A Rust ask has one model request at a time. A completed
+69. The chain set is one state, not Node's per-chain aggregation. A Rust ask has one model request at a time. A completed
     request therefore ends the period with no re-report of a wait, where Node's `endChain` could re-report one.
-54. `lastTool` is kept on the owner's ask, so it resets with each ask, as Node's per-ask tool activity does. Its target is
+70. `lastTool` is kept on the owner's ask, so it resets with each ask, as Node's per-ask tool activity does. Its target is
     the string the turn side passes, and Node's `AskLastTool` shape is not checked field by field.
-55. The agents release removes the child's live entry. It does not close the session's table entry or its node-repl and
+71. The agents release removes the child's live entry. It does not close the session's table entry or its node-repl and
     browser cleanup, which Node's `closeBrowserSession` does. That path needs `table.rs`, which W7-3 does not touch, so
     the session close (9.15 item 4) is open for W7-5.
-56. A stop posted to an owner that is gone is dropped, since the run it would stop no longer exists.
-57. `governor_bound` floors at 1 and saturates to `u32`. The owner has already floored the cap, so the saturation is
+72. A stop posted to an owner that is gone is dropped, since the run it would stop no longer exists.
+73. `governor_bound` floors at 1 and saturates to `u32`. The owner has already floored the cap, so the saturation is
     the only case the adapter adds.
-58. `offpeak_queued` has no controller reason, so the adapter never produces it. The controller does not model an
+74. `offpeak_queued` has no controller reason, so the adapter never produces it. The controller does not model an
     off-peak queue.
-59. `cli` gains a dependency on `rust-cli-workflow`, and `runtime` makes `anyhow` a production dependency. Both are
+75. `cli` gains a dependency on `rust-cli-workflow`, and `runtime` makes `anyhow` a production dependency. Both are
     needed by the port signatures and nothing else changes in either crate's graph.
 
 **Not done (left for W7-5).**
 
 - The run service: the launch, the retune call sites, and the composition of `NodeActorSessions` over `actor_turns`.
 - The subscription from an actor's child session to `AskObserver` (its model notices and tool starts).
-- The admission wrapper that reports a slot wait (divergence 52).
-- `QuotaAutoResume` construction, the session close path in `table.rs` (divergence 55), and shutdown (9.15 items 4 and 6).
+- The admission wrapper that reports a slot wait (divergence 68).
+- `QuotaAutoResume` construction, the session close path in `table.rs` (divergence 71), and shutdown (9.15 items 4 and 6).
 
 ## 10. Open questions
 
