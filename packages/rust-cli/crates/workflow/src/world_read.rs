@@ -424,12 +424,22 @@ fn world_grep(
 
 // ——————————————————————————————— git.* ———————————————————————————————
 
+/// What a git read does when the port's output reached the inline limit.
+#[derive(Clone, Copy)]
+enum Truncation {
+    /// A text read: the output is partial, so the read is refused. The hint names the knob that fixes it for this op.
+    Refuse { hint: &'static str },
+    /// The caller judges the size itself (git.diff, with its own cap).
+    CallerChecks,
+}
+
 /// Run `git` with a fixed argv and return its stdout. A non-zero exit or a failed run is a catchable `DriverError`.
 fn run_git(
     cwd: &Path,
     ports: &dyn WorldReadPorts,
     argv: &[String],
     max_inline_bytes: usize,
+    truncation: Truncation,
 ) -> Result<RunStream, WorkflowError> {
     let outcome = ports
         .run(&RunRequest {
@@ -456,14 +466,16 @@ fn run_git(
         )));
     }
     // A text read that hit the inline limit is partial. Parsing it would drop entries silently, so it is refused.
-    // Only the text reads (the git inline limit). git.diff passes its own cap+1 and judges its size itself.
-    if max_inline_bytes == caps::GIT_TEXT_OUTPUT_BYTES
-        && (outcome.stdout.truncated || outcome.stdout.bytes > max_inline_bytes)
-    {
-        return Err(cap_exceeded(format!(
-            "git {} output is over the {max_inline_bytes}-byte inline limit; the read is refused rather than parsed as a partial result. Narrow the workspace or the base.",
-            argv.join(" ")
-        )));
+    match truncation {
+        Truncation::Refuse { hint }
+            if outcome.stdout.truncated || outcome.stdout.bytes > max_inline_bytes =>
+        {
+            return Err(cap_exceeded(format!(
+                "git {} output is over the {max_inline_bytes}-byte inline limit; the read is refused rather than parsed as a partial result. {hint}",
+                argv.join(" ")
+            )));
+        }
+        Truncation::Refuse { .. } | Truncation::CallerChecks => {}
     }
     Ok(outcome.stdout)
 }
@@ -493,6 +505,9 @@ fn git_prefix(cwd: &Path, ports: &dyn WorldReadPorts) -> Result<String, Workflow
             .map(|s| (*s).to_owned())
             .collect::<Vec<_>>(),
         caps::GIT_TEXT_OUTPUT_BYTES,
+        Truncation::Refuse {
+            hint: "Narrow the workspace.",
+        },
     )?;
     Ok(parse_git_show_prefix(&out.text))
 }
@@ -507,7 +522,15 @@ fn git_changed_files(
     let prefix = git_prefix(cwd, ports)?;
     let mut paths = Vec::new();
     for plan in plans {
-        let out = run_git(cwd, ports, &plan, caps::GIT_TEXT_OUTPUT_BYTES)?;
+        let out = run_git(
+            cwd,
+            ports,
+            &plan,
+            caps::GIT_TEXT_OUTPUT_BYTES,
+            Truncation::Refuse {
+                hint: "Pass a base ref to list only tracked changes, or narrow the workspace.",
+            },
+        )?;
         paths.extend(parse_git_path_list(&out.text, &prefix)?);
     }
     // The union is deduplicated and sorted, so the journaled value depends only on content.
@@ -525,7 +548,7 @@ fn git_diff(
     let cap = caps::GIT_DIFF_MAX_BYTES;
     let argv = git_diff_argv(base, path)?;
     // cap + 1, as for grep: one byte over proves the output is over the cap.
-    let out = run_git(cwd, ports, &argv, cap + 1)?;
+    let out = run_git(cwd, ports, &argv, cap + 1, Truncation::CallerChecks)?;
     if out.bytes > cap || out.truncated {
         return Err(cap_exceeded(format!(
             "git.diff: output is {} bytes, over the {cap}-byte cap. Pass a path to narrow.",
@@ -538,7 +561,15 @@ fn git_diff(
 fn git_status(cwd: &Path, ports: &dyn WorldReadPorts) -> Result<Value, WorkflowError> {
     let prefix = git_prefix(cwd, ports)?;
     let argv: Vec<String> = GIT_STATUS_ARGV.iter().map(|s| (*s).to_owned()).collect();
-    let out = run_git(cwd, ports, &argv, caps::GIT_TEXT_OUTPUT_BYTES)?;
+    let out = run_git(
+        cwd,
+        ports,
+        &argv,
+        caps::GIT_TEXT_OUTPUT_BYTES,
+        Truncation::Refuse {
+            hint: "Narrow the workspace.",
+        },
+    )?;
     Ok(parse_git_status_porcelain_v2(&out.text, &prefix)?.to_json())
 }
 
@@ -548,6 +579,9 @@ fn git_log(cwd: &Path, ports: &dyn WorldReadPorts, count: u64) -> Result<Value, 
         ports,
         &git_log_argv(count),
         caps::GIT_TEXT_OUTPUT_BYTES,
+        Truncation::Refuse {
+            hint: "Lower the count.",
+        },
     )?;
     let commits = parse_git_log(&out.text)?;
     Ok(Value::Array(

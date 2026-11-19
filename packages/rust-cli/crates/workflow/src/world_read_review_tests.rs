@@ -120,3 +120,68 @@ fn a_git_path_that_starts_with_a_colon_is_refused_before_git_runs() {
     }
     assert!(host.calls.lock().unwrap().is_empty());
 }
+
+/// Delta finding 2: the refusal hint matches the op. A log is capped by its count, not by the workspace or base.
+#[test]
+fn a_truncated_log_says_to_lower_the_count_and_not_to_narrow_the_workspace() {
+    // git log makes one call, with no prefix call first.
+    let host = Host::default();
+    host.git
+        .lock()
+        .unwrap()
+        .push(ok("h\0s\0a\0d\n", caps::GIT_TEXT_OUTPUT_BYTES + 1, true));
+    let error = execute_world_read(&cwd(), &host, "git-log", &[json!(5)]).expect_err("truncated");
+    assert_eq!(error.code, ErrorCode::WorldReadCapExceeded);
+    assert!(
+        error.message.contains("Lower the count"),
+        "{}",
+        error.message
+    );
+    assert!(
+        !error.message.contains("Narrow the workspace"),
+        "{}",
+        error.message
+    );
+}
+
+#[test]
+fn a_truncated_status_says_to_narrow_the_workspace() {
+    let host = Host::default();
+    host.git.lock().unwrap().push(ok("\n", 1, false));
+    host.git
+        .lock()
+        .unwrap()
+        .push(ok("? a\0", caps::GIT_TEXT_OUTPUT_BYTES + 1, true));
+    let error = execute_world_read(&cwd(), &host, "git-status", &[]).expect_err("truncated");
+    assert!(
+        error.message.contains("Narrow the workspace"),
+        "{}",
+        error.message
+    );
+}
+
+/// Delta finding 1: `git.diff` judges its own cap. Output of exactly the text-read limit (4 MiB, not truncated) is
+/// over the 512 KiB diff cap, so the diff's own message is the one reported, not the inline-limit refusal.
+#[test]
+fn git_diff_reports_its_own_cap_even_at_the_text_read_limit_size() {
+    let host = Host::default();
+    host.git.lock().unwrap().push(RunOutcome {
+        status: RunStatus::Completed,
+        exit_code: Some(0),
+        error: None,
+        stdout: RunStream {
+            text: String::new(),
+            bytes: caps::GIT_TEXT_OUTPUT_BYTES,
+            truncated: false,
+            tail: None,
+        },
+        stderr: RunStream::default(),
+    });
+    let error = execute_world_read(&cwd(), &host, "git-diff", &[]).expect_err("over the diff cap");
+    assert_eq!(error.code, ErrorCode::WorldReadCapExceeded);
+    assert!(
+        error.message.starts_with("git.diff: output is"),
+        "{}",
+        error.message
+    );
+}

@@ -1478,6 +1478,8 @@ Review round (ocr on 492c73682, PR #563). Verdicts per finding:
 12. Valid. The output-shape message is built from `RUN_TAIL_MAX_BYTES`, not the literal.
 13. None beyond the above.
 
+Delta on cf40f1576: (a) the truncation refusal no longer keys on the sentinel value `GIT_TEXT_OUTPUT_BYTES`. `run_git` takes an explicit `Truncation`: `Refuse { hint }` for the text reads, `CallerChecks` for `git.diff`, which keeps its own cap. Test `git_diff_reports_its_own_cap_even_at_the_text_read_limit_size`. (b) The refusal hint is per op: log says "Lower the count.", status and the prefix say "Narrow the workspace.", changed files says to pass a base or narrow the workspace. Red on the log hint (`a_truncated_log_says_to_lower_the_count...`), then green.
+
 What is left (W6b part 4 follow-ups):
 
 - The production host port: a `WorldReadPorts` and `ArtifactStorePort` over the machine ports, with the argv gap decided (an argv mode on `StartCommand`, or a local-only host with a stated limit). Owner: W7/W8.
