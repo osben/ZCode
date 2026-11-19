@@ -1784,6 +1784,40 @@ Also not ported, with owner W7-5 (the Host publisher). `conversation-topic-publi
 7. The count in section 9.4 said 14 `workflow_runs` tests. `origin/fork` had 16 `#[test]` functions in `tests.rs`. The count is now 31.
 8. The seed is normalised in `LiveProjection::from_state`: at most `max_runs` runs, each with a unique string `runId` (the first occurrence wins; the most recent runs are kept, as the run-count cut keeps them). `reduce` now documents this precondition. Red first: `a_seed_over_the_run_limit_is_brought_within_it_before_the_first_event` and `a_seed_run_without_a_string_run_id_is_dropped_before_the_first_event` failed against the un-normalised holder (an over-limit seed kept 10 runs; an id-less run survived). Both compare the next event's ops with `diff`. Green after the fix. The full `rust-cli-node-store` run is then 350 passed, 1 ignored.
 
+### 9.17 W7-2: helper format and window display (as built)
+
+Status: built on branch `feat/rust-workflow-helper-format-w7-2`, cut from `origin/fork` (ddee7f6fc). Gate off: nothing calls these from a turn. Decision Q6 = (b): the text and the window come from the helper.
+
+**How the text is reused.** The formatters and the window display live in `core/src/tool/handlers/`, and only `builtInTools` is exported from the core index. Nothing re-implements them: the helper finds Node's own tool entries in `builtInTools` by name and calls them. `listWorkflowRunsToolEntry` and `getWorkflowRunToolEntry` run their handler on a stub run port that returns the port data Rust sent, then their `formatModelContent`. The window display is `createWorkflowToolEntry.prepareApproval({script})`, the same `displayOfAnalysis` path the confirmation dialog uses. Exporting the formatters from core would have been the other route; it touches core, which W7-2 does not, so it is not done here.
+
+**Correction to the brief's wording.** The GetWorkflowRun text does not carry graph bounds or fold. Its `<summary>` is built by Node's handler (`buildWorkflowRunSummary`), which `runDetail` reaches through the entry. The causal graph bounds (`boundCausalityGraph`) and the phase fold (`foldPhaseEdges`) are part of the window display, through `displayOfAnalysis`.
+
+**Helper wire** (`helper/workflow/format`, `workflow-protocol.ts`, a discriminated union on `kind`; any other kind is -32602):
+
+- `analysis` (W4, unchanged): `{scriptText}` returns `{analysis}`.
+- `display` (W7-2): `{scriptText, modelBindings?}` returns `{display}`, the CreateWorkflow window, or `{display: null}` when Node opens no window (the script does not analyze, or a script that names a model has no binding for it). `modelBindings` is the script's model table as `resolveInput` writes it (`model_bindings`); Node opens the window for a model-naming script only with it.
+- `runList` (W7-2): `{input, listed, workingDirectory}` returns `{text}`. `input` is parsed by Node's ListWorkflowRuns input schema (a bad query is -32602). `listed` must have a `runs` array; `truncated` is optional.
+- `runDetail` (W7-2): `{runId, detail, workingDirectory}` returns `{text}`. `detail` is the run port's `DynamicWorkflowRunDetail`, or `null` for an unknown run; the text is then Node's not-found failure message. The members Node dereferences without a guard are pinned (`runId`, `label`, `labelSource`, `status`, `ownedByThisSession`, `createdAt`, `updatedAt`, `usage`, `actors`, `logTail`, `subagents`, `health`), so drift is -32602.
+
+The helper is stateless: it reads no storage, session or journal.
+
+**Not done: `helper/workflow/evalSnippet`.** Whether a snippet may do workspace I/O is an open user decision (section 10). No method is added, and the text is not invented.
+
+**Rust client** (`protocol-zcode/src/fork/workflow_compile.rs`): `display`, `run_list_text` and `run_detail_text` send the requests above over the existing `FORMAT` method and parse the replies strictly (`display` must be an object or null; `text` must be a string). The request builders are `run_list_params` and `run_detail_params`.
+
+**Tests.**
+
+- Helper (`bootstrap/tests/fork-rust-helper/workflow-compile.test.ts`, already in `scripts/fork-test-files.json`). Five new cases: the run list and run detail equal Node's handler and formatter on the same input (run under fake timers, so the ages are fixed); the window equals `prepareApproval`; a non-analysing script answers `display: null`; a `runList` without `listed` is -32602. The red run before the implementation: four failing (the list, detail, display and null cases, all -32602), and the detail case first failed in the fixture until `health` was added. Green after: the file is 12 of 12, and the whole `tests/fork-rust-helper` set is 16 files and 133 tests.
+- Rust (`workflow_compile_tests.rs`): five new cases for the reply parsers and the request builders. Protocol-zcode is 913 of 913 green, and clippy `-D warnings` is clean. The Rust tests were written with the functions, not before them, so no Rust red run was recorded.
+
+**Gap.** The client is not round-tripped through `NodeHelper::forward` with the fake helper. The fake helper rig is private to `node_helper_tests.rs`, which is outside W7-2's file list. The round trip belongs with the run service (W7 proper) or in a follow-up that may touch that file.
+
+**Errors.** The `runList` input is parsed with Node's own schema before the handler runs, so a bad query is -32602. Drift in `listed` or `detail` is -32602 from the params schema, so the formatter never sees it.
+
+**ocr review round 1 on PR #571 (fixed).** HIGH: `display` dropped the model bindings, so every script that names a model got no window; now `modelBindings` is threaded through. MEDIUM: an unknown run was refused by the schema, so Node's not-found text was unreachable; `detail` is now nullable. LOW: unguarded members are pinned, so drift is -32602 and not a TypeError.
+
+**Left for the run service (W7 proper).** The Rust run service must build `listed` from its list port and `detail` from its detail port, and call these methods on the GetWorkflowRun and ListWorkflowRuns paths. Until it does, the window and the text have no caller.
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.
