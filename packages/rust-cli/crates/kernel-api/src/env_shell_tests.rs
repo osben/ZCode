@@ -51,6 +51,7 @@ fn start_command_round_trips_with_every_kind() {
                 deadline_ms: Some(600_000),
             }),
         },
+        argv: None,
     };
     round_trip(&start);
     for kind in [

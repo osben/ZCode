@@ -412,10 +412,30 @@ impl Shells {
                 what: "PowerShell commands in the local environment".to_owned(),
             });
         }
-        // ws 来源的 monitor 不起进程（工作线 F83），不需要 shell。
+        // argv 模式（W7-4）只做前台、目录固定、没有 sandbox 的命令：别的组合没有对应的进程形状，直接拒绝。
+        if request.argv.is_some() {
+            let foreground = matches!(
+                &request.kind,
+                CommandKind::Foreground { on_timeout: None }
+            );
+            if !foreground
+                || request.sandbox.is_some()
+                || !matches!(request.cwd_scope, CwdScope::Pinned)
+            {
+                return Err(EnvError::Unsupported {
+                    what: "argv commands are foreground, pinned and unsandboxed".to_owned(),
+                });
+            }
+        }
+        // ws 来源的 monitor 不起进程（工作线 F83），不需要 shell。argv 模式不经 shell，也不需要它存在。
         let bash = match &request.kind {
             CommandKind::Socket { .. } => PathBuf::new(),
             CommandKind::Hook { .. } => hook_shell(&self.config)?,
+            CommandKind::Foreground { .. } | CommandKind::Background { .. }
+                if request.argv.is_some() =>
+            {
+                self.config.bash.clone().unwrap_or_default()
+            }
             CommandKind::Foreground { .. } | CommandKind::Background { .. } => {
                 self.config.bash.clone().ok_or_else(no_shell)?
             }
@@ -497,10 +517,12 @@ impl Shells {
         let plan = supervise::Plan {
             output,
             // hook 命令的 stderr 单独写；ws 来源的 monitor 把生命周期写在这里（tools-more.md §19.7）。
-            errors: matches!(
-                request.kind,
-                CommandKind::Hook { .. } | CommandKind::Socket { .. }
-            )
+            // argv 模式的 stderr 也单独写（W7-4：git 的错误与输出分开解析）。
+            errors: (request.argv.is_some()
+                || matches!(
+                    request.kind,
+                    CommandKind::Hook { .. } | CommandKind::Socket { .. }
+                ))
             .then(|| dir.join(format!("{}.stderr", request.task))),
             // 命令来源的 monitor：只有 stdout 是事件流，另写一份；输出文件里 stdout 与 stderr 都在（tools-more.md §19.5）。
             events: command_monitor(&request).then(|| dir.join(format!("{}.events", request.task))),
@@ -752,3 +774,7 @@ mod moved_tests;
 #[cfg(test)]
 #[path = "shell_registry_tests.rs"]
 mod registry_tests;
+
+#[cfg(test)]
+#[path = "shell_argv_tests.rs"]
+mod argv_tests;

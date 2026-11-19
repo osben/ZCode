@@ -202,6 +202,8 @@ pub(crate) fn start_command(request: StartCommand, body: &mut BodyBuilder) -> wc
         cwd_scope,
         sandbox: policy,
         kind,
+        // Refused by `RemoteEnvironment::start_command` before this point: the wire has no argv mode.
+        argv: _,
     } = request;
     // 线上仍是四个可选字段（F128 之前的形状，wire 不随内部 API 变）；服务端的 `convert_in` 拼回种类。
     let (background, hook, on_timeout, socket) = match kind {

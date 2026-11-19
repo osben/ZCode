@@ -212,6 +212,8 @@ pub(crate) fn start_command(
         },
         sandbox: request.sandbox.map(sandbox),
         kind,
+        // The wire has no argv mode: a remote request is always shell text (env-remote refuses argv before it sends).
+        argv: None,
     })
 }
 
