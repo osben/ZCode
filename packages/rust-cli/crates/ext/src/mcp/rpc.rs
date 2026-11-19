@@ -64,10 +64,14 @@ fn send_failure(error: McpError) -> RpcError {
 }
 
 /// 交给连接任务的事件。
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) enum Notice {
-    /// `notifications/<kind>/list_changed`：`tools`、`resources`、`prompts`。
+    /// `notifications/<kind>/list_changed`：`tools`、`prompts`。
     ListChanged(String),
+    /// Fork (F7 PR 4): `notifications/resources/updated` for `uri`.
+    ResourceUpdated(String),
+    /// Fork (F7 PR 4): `notifications/resources/list_changed`.
+    ResourceListChanged,
     Closed {
         reason: Option<String>,
         session_expired: bool,
@@ -357,7 +361,7 @@ impl Reader {
                 self.elicit(id, params);
             }
             (Some(method), Some(id)) => self.server_request(method, id).await,
-            (Some(method), None) => self.notification(method),
+            (Some(method), None) => self.notification(method, message.get("params")),
             (None, None) => tracing::debug!("ignored an MCP message without method or id"),
         }
     }
@@ -412,7 +416,22 @@ impl Reader {
         }));
     }
 
-    fn notification(&self, method: &str) {
+    fn notification(&self, method: &str, params: Option<&Value>) {
+        // Fork (F7 PR 4): a resource update names its uri (Node `notifications.ts` drops one without it).
+        if method == "notifications/resources/updated" {
+            match params
+                .and_then(|params| params.get("uri"))
+                .and_then(Value::as_str)
+            {
+                Some(uri) => self.notices.send(Notice::ResourceUpdated(uri.to_owned())),
+                None => tracing::debug!(method, "MCP resource update without a uri"),
+            }
+            return;
+        }
+        if method == "notifications/resources/list_changed" {
+            self.notices.send(Notice::ResourceListChanged);
+            return;
+        }
         let kind = method
             .strip_prefix("notifications/")
             .and_then(|rest| rest.strip_suffix("/list_changed"));

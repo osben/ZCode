@@ -22,8 +22,11 @@ use tokio_util::sync::CancellationToken;
 
 // Fork (specs/fork-rust-node-helper.md, F7 PR 1): the MCP App view of a connection (identity, generation, listeners).
 pub(super) mod app_connection;
+/// Fork (F7 PR 4): the resource subscriptions of a server's connection.
+pub(super) mod app_resources;
 use super::config::{McpServer, McpServerOptions, McpSettings};
 use super::connection::{self, Session, has_capability};
+use super::notices::{PROMPTS_LIST_KIND, TOOLS_LIST_KIND};
 use super::oauth_hooks::ChallengeRefresh;
 use super::resources;
 use super::rpc::{Client, Notice};
@@ -109,6 +112,13 @@ struct Server {
     app_next_listener: u64,
     /// Fork (F7 PR 1): every tool of the last listing, by its MCP name, with its `_meta.ui.visibility` (empty when none).
     visibility: BTreeMap<String, Vec<String>>,
+    /// Fork (F7 PR 4): the resource subscriptions made on the current connection (a new published client clears them).
+    resource_subs: app_resources::ResourceSubscriptions,
+    /// Fork (F7 PR 4): the current connection declares `resources.subscribe`.
+    resources_subscribe: bool,
+    /// Fork (F7 PR 4): the resource notification callbacks, by subscription id.
+    resource_listeners: Vec<(u64, app_resources::ResourceListener)>,
+    resource_next_listener: u64,
 }
 
 impl Server {
@@ -129,6 +139,10 @@ impl Server {
             app_listeners: Vec::new(),
             app_next_listener: 0,
             visibility: BTreeMap::new(),
+            resource_subs: app_resources::ResourceSubscriptions::default(),
+            resources_subscribe: false,
+            resource_listeners: Vec::new(),
+            resource_next_listener: 0,
         }
     }
 }
@@ -212,6 +226,8 @@ impl Inner {
                     if app_connection::same_client(&before, &server.client) {
                         Vec::new()
                     } else {
+                        // Fork (F7 PR 4): the subscriptions were made on the old connection; a reconnect drops them.
+                        server.resource_subs.clear();
                         server.app_generation = app_connection::next_generation();
                         server
                             .app_listeners
@@ -394,6 +410,7 @@ impl Inner {
             self.resources_seen.store(true, Ordering::Relaxed);
         }
         let published = client.clone();
+        let subscribes = app_resources::resource_subscribes(&capabilities);
         self.update(name, generation, move |server| {
             server.status = McpStatus::CONNECTED;
             server.client = Some(published);
@@ -402,23 +419,27 @@ impl Inner {
             server.prompts = prompts;
             server.instructions = instructions;
             server.resources = resources;
+            server.resources_subscribe = subscribes;
         });
         tracing::info!(server = name, "MCP server connected");
         while let Some(notice) = notices.recv().await {
             match notice {
-                Notice::ListChanged(kind) if kind == "tools" => {
+                Notice::ListChanged(kind) if kind == TOOLS_LIST_KIND => {
                     let (tools, visibility) = self.tools_of(name, &client).await;
                     self.update(name, generation, |server| {
                         server.tools = tools;
                         server.visibility = visibility;
                     });
                 }
-                Notice::ListChanged(kind) if kind == "prompts" => {
+                Notice::ListChanged(kind) if kind == PROMPTS_LIST_KIND => {
                     let prompts = self.prompts_of(name, &client).await;
                     self.update(name, generation, |server| server.prompts = prompts);
                 }
                 // resources 不缓存清单：ListMcpResourcesTool 每次实时拉取。
                 Notice::ListChanged(_) => {}
+                // Fork (F7 PR 4): the subscribers of the notice get it on their owner's listener.
+                Notice::ResourceUpdated(uri) => self.deliver_resource_notice(name, Some(uri)),
+                Notice::ResourceListChanged => self.deliver_resource_notice(name, None),
                 Notice::Closed {
                     reason,
                     session_expired,

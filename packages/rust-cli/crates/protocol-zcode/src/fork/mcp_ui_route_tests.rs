@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::mcp_app::{
     McpAppConnection, McpAppError, McpAppHost, McpAppOwner, McpAppSubscription,
+    McpResourceCallback, McpResourceNotice,
 };
 use rust_cli_protocol_core::rpc::RpcError;
 use serde_json::{Value, json};
@@ -21,6 +22,21 @@ use crate::server::Server;
 struct FakeHost {
     current: Mutex<Option<McpAppConnection>>,
     listeners: Mutex<Vec<Arc<dyn Fn() + Send + Sync>>>,
+    /// F7 PR 4: the server declares `resources.subscribe`.
+    subscribe_supported: Mutex<bool>,
+    /// F7 PR 4: (uri, subscriber key) of each subscribe and unsubscribe the owner made.
+    subscribed: Mutex<Vec<(String, String)>>,
+    unsubscribed: Mutex<Vec<(String, String)>>,
+    /// The next subscribe reconnects the server once it has recorded the subscriber (a lease that closes mid-request).
+    reconnect_on_subscribe: Mutex<bool>,
+    /// The next subscribe pushes this notice while the subscription is in flight (an update the server sends at once).
+    notify_on_subscribe: Mutex<Option<McpResourceNotice>>,
+    /// F7 PR 4: each prefix the owner removed by (a lease's or a session's keys).
+    prefixes: Mutex<Vec<String>>,
+    /// F7 PR 4: the resource notice callbacks the owner installed.
+    resource_listeners: Arc<Mutex<Vec<(usize, McpResourceCallback)>>>,
+    /// The id of the next resource notice callback (a subscription removes its own).
+    resource_listener_ids: Mutex<usize>,
 }
 
 impl FakeHost {
@@ -28,6 +44,28 @@ impl FakeHost {
         Self {
             current: Mutex::new(Some(connection(1))),
             listeners: Mutex::new(Vec::new()),
+            subscribe_supported: Mutex::new(true),
+            subscribed: Mutex::new(Vec::new()),
+            unsubscribed: Mutex::new(Vec::new()),
+            reconnect_on_subscribe: Mutex::new(false),
+            notify_on_subscribe: Mutex::new(None),
+            prefixes: Mutex::new(Vec::new()),
+            resource_listeners: Arc::new(Mutex::new(Vec::new())),
+            resource_listener_ids: Mutex::new(0),
+        }
+    }
+
+    /// A resource notice of the server, as the extension layer delivers it to the owner's callbacks.
+    fn notify(&self, notice: McpResourceNotice) {
+        let listeners: Vec<McpResourceCallback> = self
+            .resource_listeners
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(_, callback)| callback.clone())
+            .collect();
+        for listener in listeners {
+            listener(notice.clone());
         }
     }
 
@@ -124,6 +162,85 @@ impl McpAppHost for FakeHost {
             }
             _ => json!({"content": []}),
         })
+    }
+
+    async fn subscribe(
+        &self,
+        _session: &SessionId,
+        server: &str,
+        expected: &McpAppConnection,
+        uri: &str,
+        subscriber: &str,
+        _cancel: &CancellationToken,
+    ) -> Result<(), McpAppError> {
+        if !*self.subscribe_supported.lock().unwrap() {
+            return Err(McpAppError::NotSupported {
+                server: server.to_owned(),
+                operation: "resources/subscribe".to_owned(),
+            });
+        }
+        if self.current.lock().unwrap().as_ref() != Some(expected) {
+            return Err(McpAppError::Changed);
+        }
+        self.subscribed
+            .lock()
+            .unwrap()
+            .push((uri.to_owned(), subscriber.to_owned()));
+        let pushed = self.notify_on_subscribe.lock().unwrap().take();
+        if let Some(notice) = pushed {
+            self.notify(notice);
+        }
+        let reconnect = std::mem::take(&mut *self.reconnect_on_subscribe.lock().unwrap());
+        if reconnect {
+            self.reconnect();
+        }
+        Ok(())
+    }
+
+    async fn unsubscribe(&self, _session: &SessionId, _server: &str, uri: &str, subscriber: &str) {
+        self.unsubscribed
+            .lock()
+            .unwrap()
+            .push((uri.to_owned(), subscriber.to_owned()));
+    }
+
+    fn unsubscribe_prefix(&self, _session: &SessionId, prefix: &str) -> usize {
+        self.prefixes.lock().unwrap().push(prefix.to_owned());
+        0
+    }
+
+    fn on_resource_notice(
+        &self,
+        _session: &SessionId,
+        _server: &str,
+        callback: McpResourceCallback,
+    ) -> Option<McpAppSubscription> {
+        let id = {
+            let mut next = self.resource_listener_ids.lock().unwrap();
+            *next += 1;
+            *next
+        };
+        self.resource_listeners.lock().unwrap().push((id, callback));
+        // The subscription removes its callback when dropped, as the extension layer's does.
+        Some(Box::new(TapGuard {
+            listeners: self.resource_listeners.clone(),
+            id,
+        }))
+    }
+}
+
+/// The fake host's resource-notice subscription: dropping it removes its callback.
+struct TapGuard {
+    listeners: Arc<Mutex<Vec<(usize, McpResourceCallback)>>>,
+    id: usize,
+}
+
+impl Drop for TapGuard {
+    fn drop(&mut self) {
+        self.listeners
+            .lock()
+            .unwrap()
+            .retain(|(id, _)| *id != self.id);
     }
 }
 
@@ -327,27 +444,549 @@ async fn a_validate_that_finds_another_connection_closes_the_panel_and_sends_the
     assert_eq!(deltas[0].1["subscribers"][0]["scopeId"], token);
 }
 
-#[tokio::test]
-async fn panel_methods_outside_the_owned_set_stay_refused_for_a_rust_run_server() {
-    let (_scope, server, _kernel) = server();
-    call(&server, "session/create", automation_create("run_s1"))
+// ---- F7 PR 4: resource subscriptions of a panel (the refusal of PR 3 is gone: every panel method is owned now) ----
+
+/// A subscribe or unsubscribe of `uri` by the open panel `lease` (its scope and generation).
+fn subscription(lease: &Value, uri: &str) -> Value {
+    scoped(
+        lease,
+        json!({"scopeId": lease["token"], "generation": lease["generation"], "uri": uri}),
+    )
+}
+
+/// The `pluginUi.*` deltas of the session stream, without the activity ones.
+fn plugin_deltas(answers: &RecordingAnswers) -> Vec<(String, Value)> {
+    answers
+        .deltas
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(_, delta)| delta.get("activity").is_none())
+        .cloned()
+        .collect()
+}
+
+/// The subscriber key of a panel: session, scope and generation (Node `buildMcpUiSubscriberKey`).
+fn subscriber_key(lease: &Value) -> String {
+    format!(
+        "run_s1|{}|{}",
+        lease["token"].as_str().expect("a token"),
+        lease["generation"]
+    )
+}
+
+async fn open_subscribed_panel(
+    server: &Arc<Server>,
+) -> (Arc<FakeHost>, Arc<RecordingAnswers>, Value) {
+    call(server, "session/create", automation_create("run_s1"))
         .await
         .expect("the session exists");
     let host = Arc::new(FakeHost::new());
-    server.context.set_mcp_app_host(host);
+    server.context.set_mcp_app_host(host.clone());
     let answers = Arc::new(RecordingAnswers::default());
     let weak: Weak<dyn HelperRequests> = Arc::downgrade(&answers) as _;
     server.context.set_mcp_ui(RustMcpUi::new(weak));
-    // Resource subscriptions are PR 4: they stay refused, and no helper answers them for a Rust-run server either.
-    for method in ["mcp/uiSubscribeResource", "mcp/uiUnsubscribeResource"] {
-        let refused = dispatch(
-            &server,
-            method,
-            json!({"sessionId": "run_s1", "serverName": "files", "pluginId": "p", "workspace": {"workspacePath": "/w"}}),
-        )
-        .await;
-        assert!(refused.is_err(), "{method} stays refused");
-    }
+    let lease = dispatch(server, "mcp/uiOpenInstance", open_params())
+        .await
+        .expect("the panel opens");
+    (host, answers, lease)
+}
+
+#[tokio::test]
+async fn a_panel_subscribes_and_unsubscribes_a_resource_of_its_rust_run_server() {
+    let (_scope, server, _kernel) = server();
+    let (host, _answers, lease) = open_subscribed_panel(&server).await;
+    let key = subscriber_key(&lease);
+
+    dispatch(
+        &server,
+        "mcp/uiSubscribeResource",
+        subscription(&lease, "ui://a"),
+    )
+    .await
+    .expect("the subscription is made");
+    assert_eq!(
+        *host.subscribed.lock().unwrap(),
+        [("ui://a".to_owned(), key.clone())]
+    );
+
+    dispatch(
+        &server,
+        "mcp/uiUnsubscribeResource",
+        subscription(&lease, "ui://a"),
+    )
+    .await
+    .expect("the subscription is dropped");
+    assert_eq!(
+        *host.unsubscribed.lock().unwrap(),
+        [("ui://a".to_owned(), key)]
+    );
+}
+
+#[tokio::test]
+async fn a_subscription_the_server_does_not_support_is_refused_with_the_node_error() {
+    let (_scope, server, _kernel) = server();
+    let (host, _answers, lease) = open_subscribed_panel(&server).await;
+    *host.subscribe_supported.lock().unwrap() = false;
+
+    let refused = dispatch(
+        &server,
+        "mcp/uiSubscribeResource",
+        subscription(&lease, "ui://a"),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(refused.code, -32001);
+    assert_eq!(
+        refused.message,
+        "MCP server \"files\" does not support resources/subscribe"
+    );
+    let data = refused.data.as_ref().expect("the data of the refusal");
+    assert_eq!(data["reason"], "not_supported");
+    assert_eq!(data["serverName"], "files");
+    assert_eq!(data["operation"], "resources/subscribe");
+    assert!(host.subscribed.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_subscription_whose_scope_does_not_name_the_instance_is_refused() {
+    let (_scope, server, _kernel) = server();
+    let (host, _answers, lease) = open_subscribed_panel(&server).await;
+    let mut params = subscription(&lease, "ui://a");
+    params["scopeId"] = json!("another-scope");
+
+    let refused = dispatch(&server, "mcp/uiSubscribeResource", params)
+        .await
+        .unwrap_err();
+    assert_eq!(refused.message, "Invalid MCP App subscription binding");
+    assert!(host.subscribed.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_resource_update_reaches_the_subscribed_panel_as_a_resource_updated_delta() {
+    let (_scope, server, _kernel) = server();
+    let (host, answers, lease) = open_subscribed_panel(&server).await;
+    dispatch(
+        &server,
+        "mcp/uiSubscribeResource",
+        subscription(&lease, "ui://a"),
+    )
+    .await
+    .expect("the subscription is made");
+
+    host.notify(McpResourceNotice::Updated {
+        uri: "ui://a".to_owned(),
+        subscribers: vec![subscriber_key(&lease)],
+    });
+    let deltas = plugin_deltas(&answers);
+    assert_eq!(deltas.len(), 1, "one update delta: {deltas:?}");
+    assert_eq!(deltas[0].0, "run_s1");
+    let delta = &deltas[0].1;
+    assert_eq!(delta["op"], "pluginUi.resourceUpdated");
+    assert_eq!(delta["pluginId"], "p");
+    assert_eq!(delta["serverName"], "files");
+    assert_eq!(delta["uri"], "ui://a");
+    assert_eq!(delta["subscribers"][0]["scopeId"], lease["token"]);
+    assert_eq!(delta["subscribers"][0]["generation"], lease["generation"]);
+    assert_eq!(delta["subscribers"][0]["instance"]["token"], lease["token"]);
+}
+
+#[tokio::test]
+async fn a_list_change_reaches_the_subscribed_panel_as_a_resource_list_changed_delta() {
+    let (_scope, server, _kernel) = server();
+    let (host, answers, lease) = open_subscribed_panel(&server).await;
+    dispatch(
+        &server,
+        "mcp/uiSubscribeResource",
+        subscription(&lease, "ui://a"),
+    )
+    .await
+    .expect("the subscription is made");
+
+    host.notify(McpResourceNotice::ListChanged {
+        subscribers: vec![subscriber_key(&lease)],
+    });
+    let deltas = plugin_deltas(&answers);
+    assert_eq!(deltas.len(), 1, "one list delta: {deltas:?}");
+    assert_eq!(deltas[0].1["op"], "pluginUi.resourceListChanged");
+    assert_eq!(deltas[0].1["serverName"], "files");
+    assert!(
+        deltas[0].1.get("uri").is_none(),
+        "a list change names no uri"
+    );
+    assert_eq!(deltas[0].1["subscribers"][0]["scopeId"], lease["token"]);
+}
+
+#[tokio::test]
+async fn a_notice_names_only_keys_of_this_session_and_generation() {
+    let (_scope, server, _kernel) = server();
+    let (host, answers, lease) = open_subscribed_panel(&server).await;
+    dispatch(
+        &server,
+        "mcp/uiSubscribeResource",
+        subscription(&lease, "ui://a"),
+    )
+    .await
+    .expect("the subscription is made");
+    let token = lease["token"].as_str().expect("a token");
+    let generation = lease["generation"].as_u64().expect("a generation");
+
+    // Another session's key, and this panel's key of an older generation: neither reaches this session.
+    host.notify(McpResourceNotice::Updated {
+        uri: "ui://a".to_owned(),
+        subscribers: vec![
+            format!("other_session|{token}|{generation}"),
+            format!("run_s1|{token}|{}", generation + 1),
+        ],
+    });
+    assert!(
+        plugin_deltas(&answers).is_empty(),
+        "no delta for foreign keys"
+    );
+}
+
+#[tokio::test]
+async fn closing_the_panel_drops_its_subscriptions_before_the_closed_notice() {
+    let (_scope, server, _kernel) = server();
+    let (host, answers, lease) = open_subscribed_panel(&server).await;
+    dispatch(
+        &server,
+        "mcp/uiSubscribeResource",
+        subscription(&lease, "ui://a"),
+    )
+    .await
+    .expect("the subscription is made");
+
+    dispatch(&server, "mcp/uiCloseInstance", scoped(&lease, json!({})))
+        .await
+        .expect("the panel closes");
+    let token = lease["token"].as_str().expect("a token");
+    assert_eq!(
+        *host.prefixes.lock().unwrap(),
+        [format!("run_s1|{token}|")],
+        "the lease's keys are removed"
+    );
+    let deltas = plugin_deltas(&answers);
+    assert_eq!(deltas.len(), 1, "{deltas:?}");
+    assert_eq!(deltas[0].1["op"], "pluginUi.instanceClosed");
+
+    // A notice for the closed panel is delivered to nobody.
+    host.notify(McpResourceNotice::Updated {
+        uri: "ui://a".to_owned(),
+        subscribers: vec![subscriber_key(&lease)],
+    });
+    assert_eq!(
+        plugin_deltas(&answers).len(),
+        1,
+        "no update after the close"
+    );
+}
+
+#[tokio::test]
+async fn a_reconnect_drops_the_panels_subscriptions_and_sends_the_closed_notice() {
+    let (_scope, server, _kernel) = server();
+    let (host, answers, lease) = open_subscribed_panel(&server).await;
+    dispatch(
+        &server,
+        "mcp/uiSubscribeResource",
+        subscription(&lease, "ui://a"),
+    )
+    .await
+    .expect("the subscription is made");
+
+    host.reconnect();
+    let token = lease["token"].as_str().expect("a token");
+    assert_eq!(*host.prefixes.lock().unwrap(), [format!("run_s1|{token}|")]);
+    let deltas = plugin_deltas(&answers);
+    assert_eq!(deltas.len(), 1, "{deltas:?}");
+    assert_eq!(deltas[0].1["op"], "pluginUi.instanceClosed");
+}
+
+#[tokio::test]
+async fn ending_the_session_drops_all_its_subscriptions() {
+    let (_scope, server, _kernel) = server();
+    let (host, _answers, lease) = open_subscribed_panel(&server).await;
+    dispatch(
+        &server,
+        "mcp/uiSubscribeResource",
+        subscription(&lease, "ui://a"),
+    )
+    .await
+    .expect("the subscription is made");
+
+    server
+        .context
+        .mcp_ui()
+        .expect("the owner is set")
+        .session_closed("run_s1");
+    assert!(
+        host.prefixes
+            .lock()
+            .unwrap()
+            .contains(&"run_s1|".to_owned()),
+        "the session's prefix is removed: {:?}",
+        host.prefixes.lock().unwrap()
+    );
+}
+
+/// Node's `guard` validates the lease before and after a subscription call: a closed lease is refused, and nothing is added.
+#[tokio::test]
+async fn a_subscription_on_a_closed_panel_is_refused_and_adds_nothing() {
+    let (_scope, server, _kernel) = server();
+    let (host, _answers, lease) = open_subscribed_panel(&server).await;
+    dispatch(&server, "mcp/uiCloseInstance", scoped(&lease, json!({})))
+        .await
+        .expect("the panel closes");
+
+    let refused = dispatch(
+        &server,
+        "mcp/uiSubscribeResource",
+        subscription(&lease, "ui://a"),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(refused.message, "MCP App instance is no longer authorized");
+    assert!(
+        host.subscribed.lock().unwrap().is_empty(),
+        "nothing is subscribed"
+    );
+}
+
+/// The same guard for an unsubscription: a closed lease is refused before the host is asked.
+#[tokio::test]
+async fn an_unsubscription_on_a_closed_panel_is_refused() {
+    let (_scope, server, _kernel) = server();
+    let (host, _answers, lease) = open_subscribed_panel(&server).await;
+    dispatch(&server, "mcp/uiCloseInstance", scoped(&lease, json!({})))
+        .await
+        .expect("the panel closes");
+
+    let refused = dispatch(
+        &server,
+        "mcp/uiUnsubscribeResource",
+        subscription(&lease, "ui://a"),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(refused.message, "MCP App instance is no longer authorized");
+    assert!(
+        host.unsubscribed.lock().unwrap().is_empty(),
+        "the host is not asked"
+    );
+}
+
+/// A panel that closes while its subscription is made: the post-call validate refuses, and the key the call added is
+/// removed again, so nothing of a closed panel stays on the server's registry.
+#[tokio::test]
+async fn a_panel_closed_during_its_subscription_leaves_no_subscriber_behind() {
+    let (_scope, server, _kernel) = server();
+    let (host, _answers, lease) = open_subscribed_panel(&server).await;
+    *host.reconnect_on_subscribe.lock().unwrap() = true;
+
+    let refused = dispatch(
+        &server,
+        "mcp/uiSubscribeResource",
+        subscription(&lease, "ui://a"),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(refused.message, "MCP App instance is no longer authorized");
+    let key = subscriber_key(&lease);
+    assert_eq!(
+        *host.subscribed.lock().unwrap(),
+        [("ui://a".to_owned(), key.clone())]
+    );
+    assert_eq!(
+        *host.unsubscribed.lock().unwrap(),
+        [("ui://a".to_owned(), key)]
+    );
+}
+
+/// F7 PR 4 (review): a notice names the panels of each plugin in its own delta. Two plugins' panels of one server get two
+/// deltas, each with its own plugin and subscribers.
+#[tokio::test]
+async fn panels_of_two_plugins_get_one_delta_each() {
+    let (_scope, server, _kernel) = server();
+    let (host, answers, lease_p) = open_subscribed_panel(&server).await;
+    let mut second = open_params();
+    second["pluginId"] = json!("q");
+    second["scopeId"] = json!("scope2");
+    let lease_q = dispatch(&server, "mcp/uiOpenInstance", second)
+        .await
+        .expect("the second panel opens");
+    dispatch(
+        &server,
+        "mcp/uiSubscribeResource",
+        subscription(&lease_p, "ui://a"),
+    )
+    .await
+    .expect("the first subscription is made");
+    let mut params_q = subscription(&lease_q, "ui://a");
+    params_q["pluginId"] = json!("q");
+    dispatch(&server, "mcp/uiSubscribeResource", params_q)
+        .await
+        .expect("the second subscription is made");
+
+    host.notify(McpResourceNotice::Updated {
+        uri: "ui://a".to_owned(),
+        subscribers: vec![subscriber_key(&lease_p), subscriber_key(&lease_q)],
+    });
+    let deltas = plugin_deltas(&answers);
+    assert_eq!(deltas.len(), 2, "one delta per plugin: {deltas:?}");
+    // Each delta names one plugin and carries only that plugin's panel: the (pluginId, scopeId) pairs are pinned.
+    let mut pairs: Vec<(String, String)> = deltas
+        .iter()
+        .flat_map(|(_, delta)| {
+            let plugin = delta["pluginId"].as_str().expect("a plugin").to_owned();
+            delta["subscribers"]
+                .as_array()
+                .expect("subscribers")
+                .iter()
+                .map(|subscriber| {
+                    (
+                        plugin.clone(),
+                        subscriber["scopeId"].as_str().expect("a scope").to_owned(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    pairs.sort();
+    let mut expected = vec![
+        (
+            "p".to_owned(),
+            lease_p["token"].as_str().expect("a token").to_owned(),
+        ),
+        (
+            "q".to_owned(),
+            lease_q["token"].as_str().expect("a token").to_owned(),
+        ),
+    ];
+    expected.sort();
+    assert_eq!(pairs, expected);
+}
+
+/// F7 PR 4 (review): the notice tap is installed before the subscription is made, so an update the server pushes while
+/// the subscribe is in flight reaches the panel.
+#[tokio::test]
+async fn an_update_pushed_during_the_subscription_reaches_the_panel() {
+    let (_scope, server, _kernel) = server();
+    let (host, answers, lease) = open_subscribed_panel(&server).await;
+    *host.notify_on_subscribe.lock().unwrap() = Some(McpResourceNotice::Updated {
+        uri: "ui://a".to_owned(),
+        subscribers: vec![subscriber_key(&lease)],
+    });
+    dispatch(
+        &server,
+        "mcp/uiSubscribeResource",
+        subscription(&lease, "ui://a"),
+    )
+    .await
+    .expect("the subscription is made");
+    let deltas = plugin_deltas(&answers);
+    assert_eq!(deltas.len(), 1, "the update reaches the panel: {deltas:?}");
+    assert_eq!(deltas[0].1["op"], "pluginUi.resourceUpdated");
+}
+
+/// F7 PR 4 (review): a reopen that replaces a panel ends the replaced lease's subscriptions, as its close does.
+#[tokio::test]
+async fn reopening_a_panel_ends_the_replaced_leases_subscriptions() {
+    let (_scope, server, _kernel) = server();
+    let (host, _answers, lease) = open_subscribed_panel(&server).await;
+    dispatch(
+        &server,
+        "mcp/uiSubscribeResource",
+        subscription(&lease, "ui://a"),
+    )
+    .await
+    .expect("the subscription is made");
+    // The connection moves without its listeners running, so the old lease is still open when the panel reopens: the
+    // reopen replaces it (a reopen on an unchanged connection reuses the lease).
+    host.silent_change();
+    let reopened = dispatch(&server, "mcp/uiOpenInstance", open_params())
+        .await
+        .expect("the panel reopens");
+    assert_ne!(reopened["token"], lease["token"]);
+    let token = lease["token"].as_str().expect("a token");
+    assert!(
+        host.prefixes
+            .lock()
+            .unwrap()
+            .contains(&format!("run_s1|{token}|")),
+        "the replaced lease's keys are removed: {:?}",
+        host.prefixes.lock().unwrap()
+    );
+}
+
+/// The resource-notice taps the fake host holds (the owner's, one per session and server with subscriptions).
+fn tap_count(host: &FakeHost) -> usize {
+    host.resource_listeners.lock().unwrap().len()
+}
+
+/// F7 PR 4 (review, round 4): after a refused subscribe, a later notice delivers no delta, and the tap goes when the
+/// panel closes.
+#[tokio::test]
+async fn a_refused_subscription_delivers_nothing_later_and_its_tap_goes_with_the_panel() {
+    let (_scope, server, _kernel) = server();
+    let (host, answers, lease) = open_subscribed_panel(&server).await;
+    *host.subscribe_supported.lock().unwrap() = false;
+    dispatch(
+        &server,
+        "mcp/uiSubscribeResource",
+        subscription(&lease, "ui://a"),
+    )
+    .await
+    .expect_err("the server does not support the subscription");
+    assert_eq!(
+        tap_count(&host),
+        1,
+        "the tap was installed before the request"
+    );
+
+    // The refused subscription left no key in the server's registry, so the host's notice names no subscriber (the
+    // owner routes the keys it is given, as Node's routing does).
+    host.notify(McpResourceNotice::Updated {
+        uri: "ui://a".to_owned(),
+        subscribers: Vec::new(),
+    });
+    assert!(
+        plugin_deltas(&answers).is_empty(),
+        "no subscriber, no delta"
+    );
+
+    dispatch(&server, "mcp/uiCloseInstance", scoped(&lease, json!({})))
+        .await
+        .expect("the panel closes");
+    assert_eq!(
+        tap_count(&host),
+        0,
+        "the tap goes with the last panel of its session and server"
+    );
+}
+
+/// F7 PR 4 (review, round 4): a reopen that replaces the panel keeps the tap (the new panel is open), and the tap goes
+/// when that last panel closes.
+#[tokio::test]
+async fn the_tap_outlives_a_replacement_and_goes_with_the_last_panel() {
+    let (_scope, server, _kernel) = server();
+    let (host, _answers, lease) = open_subscribed_panel(&server).await;
+    dispatch(
+        &server,
+        "mcp/uiSubscribeResource",
+        subscription(&lease, "ui://a"),
+    )
+    .await
+    .expect("the subscription is made");
+    host.silent_change();
+    let reopened = dispatch(&server, "mcp/uiOpenInstance", open_params())
+        .await
+        .expect("the panel reopens");
+    assert_eq!(tap_count(&host), 1, "the new panel still needs the tap");
+
+    dispatch(&server, "mcp/uiCloseInstance", scoped(&reopened, json!({})))
+        .await
+        .expect("the panel closes");
+    assert_eq!(tap_count(&host), 0);
 }
 
 // ---- F7 PR 3: the app-provided tools of a panel (the mailbox) ----

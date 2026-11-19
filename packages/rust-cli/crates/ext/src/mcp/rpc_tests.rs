@@ -122,6 +122,46 @@ async fn server_requests_notifications_and_close() {
     assert!(client.is_closed());
 }
 
+/// F7 PR 4: a server's resource notifications reach the connection task as their own notices, the update with its uri.
+#[tokio::test]
+async fn resource_notifications_are_noticed_with_their_uri() {
+    let fake = Arc::new(FakeMcp::default().with("s", server(json!({}), None, |_, _| None)));
+    let scope = TaskScope::root("test", |_| {});
+    let (_client, mut notices) = connected(&fake, &scope).await;
+    fake.push(
+        "s",
+        json!({"jsonrpc": "2.0", "method": "notifications/resources/updated", "params": {"uri": "ui://a"}}),
+    );
+    fake.push(
+        "s",
+        json!({"jsonrpc": "2.0", "method": "notifications/resources/list_changed"}),
+    );
+    assert_eq!(
+        notices.recv().await,
+        Some(Notice::ResourceUpdated("ui://a".to_owned()))
+    );
+    assert_eq!(notices.recv().await, Some(Notice::ResourceListChanged));
+}
+
+/// F7 PR 4: an update without a uri is not a notice (Node `if (typeof uri !== "string") return`).
+#[tokio::test]
+async fn an_update_without_a_uri_is_not_noticed() {
+    let fake = Arc::new(FakeMcp::default().with("s", server(json!({}), None, |_, _| None)));
+    let scope = TaskScope::root("test", |_| {});
+    let (client, mut notices) = connected(&fake, &scope).await;
+    fake.push(
+        "s",
+        json!({"jsonrpc": "2.0", "method": "notifications/resources/updated", "params": {}}),
+    );
+    fake.push(
+        "s",
+        json!({"jsonrpc": "2.0", "method": "notifications/resources/list_changed"}),
+    );
+    // The list change arrives after the malformed update, so the first notice is the list change.
+    assert_eq!(notices.recv().await, Some(Notice::ResourceListChanged));
+    drop(client);
+}
+
 /// 工作线 F57：`roots/list` 的 URI 同 `url.pathToFileURL(root).href`。POSIX 的期望值是用 Bun 1.3.11
 /// 与 Node 24 实测的，两者逐字相同；Windows 的是 Node 24 的 `pathToFileURL(p, {windows: true})`（`C:\`
 /// 取 Windows 上的结果 `file:///C:/`）。以前不编码、UNC 写成 `file:////server/share`。

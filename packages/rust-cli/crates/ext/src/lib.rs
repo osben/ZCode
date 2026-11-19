@@ -545,6 +545,41 @@ impl rust_cli_kernel_api::mcp_app::McpAppHost for ExtRegistry {
             .app_request(server, expected, method, params, cancel)
             .await
     }
+
+    async fn subscribe(
+        &self,
+        session: &SessionId,
+        server: &str,
+        expected: &rust_cli_kernel_api::mcp_app::McpAppConnection,
+        uri: &str,
+        subscriber: &str,
+        cancel: &tokio_util::sync::CancellationToken,
+    ) -> Result<(), rust_cli_kernel_api::mcp_app::McpAppError> {
+        self.session_mcp(session)
+            .app_subscribe(server, expected, uri, subscriber, cancel)
+            .await
+    }
+
+    async fn unsubscribe(&self, session: &SessionId, server: &str, uri: &str, subscriber: &str) {
+        self.session_mcp(session)
+            .app_unsubscribe(server, uri, subscriber)
+            .await;
+    }
+
+    fn unsubscribe_prefix(&self, session: &SessionId, prefix: &str) -> usize {
+        self.session_mcp(session).app_unsubscribe_prefix(prefix)
+    }
+
+    fn on_resource_notice(
+        &self,
+        session: &SessionId,
+        server: &str,
+        callback: rust_cli_kernel_api::mcp_app::McpResourceCallback,
+    ) -> Option<rust_cli_kernel_api::mcp_app::McpAppSubscription> {
+        self.session_mcp(session)
+            .on_app_resource_notice(server, callback)
+            .map(|subscription| Box::new(subscription) as _)
+    }
 }
 
 struct ExtListings {
