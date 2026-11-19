@@ -37,6 +37,8 @@ pub mod caps {
 /// A `world.run` request for the port. `max_inline_bytes` and `tail_bytes` are the output limit of the port.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunRequest {
+    /// The workspace root the command runs in (Node `cwd: deps.cwd`).
+    pub cwd: PathBuf,
     pub file: String,
     pub args: Vec<String>,
     pub timeout_ms: Option<u64>,
@@ -155,7 +157,7 @@ pub fn execute_world_read(
             let count = optional_count(op, args, "count")?;
             git_log(cwd, ports, count)
         }
-        "run" => world_run(ports, args),
+        "run" => world_run(cwd, ports, args),
         other => Err(driver_error(format!(
             "Unsupported world-read op \"{other}\"."
         ))),
@@ -422,12 +424,14 @@ fn world_grep(
 
 /// Run `git` with a fixed argv and return its stdout. A non-zero exit or a failed run is a catchable `DriverError`.
 fn run_git(
+    cwd: &Path,
     ports: &dyn WorldReadPorts,
     argv: &[String],
     max_inline_bytes: usize,
 ) -> Result<RunStream, WorkflowError> {
     let outcome = ports
         .run(&RunRequest {
+            cwd: cwd.to_path_buf(),
             file: "git".to_owned(),
             args: argv.to_vec(),
             timeout_ms: None,
@@ -468,8 +472,9 @@ fn first_line(text: &str) -> Option<String> {
     (!line.is_empty()).then(|| line.to_owned())
 }
 
-fn git_prefix(ports: &dyn WorldReadPorts) -> Result<String, WorkflowError> {
+fn git_prefix(cwd: &Path, ports: &dyn WorldReadPorts) -> Result<String, WorkflowError> {
     let out = run_git(
+        cwd,
         ports,
         &GIT_SHOW_PREFIX_ARGV
             .iter()
@@ -481,16 +486,16 @@ fn git_prefix(ports: &dyn WorldReadPorts) -> Result<String, WorkflowError> {
 }
 
 fn git_changed_files(
-    _cwd: &Path,
+    cwd: &Path,
     ports: &dyn WorldReadPorts,
     base: Option<&str>,
 ) -> Result<Value, WorkflowError> {
     // Validate the base before any git command runs.
     let plans = git_changed_files_plans(base)?;
-    let prefix = git_prefix(ports)?;
+    let prefix = git_prefix(cwd, ports)?;
     let mut paths = Vec::new();
     for plan in plans {
-        let out = run_git(ports, &plan, caps::GIT_TEXT_OUTPUT_BYTES)?;
+        let out = run_git(cwd, ports, &plan, caps::GIT_TEXT_OUTPUT_BYTES)?;
         paths.extend(parse_git_path_list(&out.text, &prefix)?);
     }
     // The union is deduplicated and sorted, so the journaled value depends only on content.
@@ -500,7 +505,7 @@ fn git_changed_files(
 }
 
 fn git_diff(
-    _cwd: &Path,
+    cwd: &Path,
     ports: &dyn WorldReadPorts,
     base: Option<&str>,
     path: Option<&str>,
@@ -508,7 +513,7 @@ fn git_diff(
     let cap = caps::GIT_DIFF_MAX_BYTES;
     let argv = git_diff_argv(base, path)?;
     // cap + 1, as for grep: one byte over proves the output is over the cap.
-    let out = run_git(ports, &argv, cap + 1)?;
+    let out = run_git(cwd, ports, &argv, cap + 1)?;
     if out.bytes > cap || out.truncated {
         return Err(cap_exceeded(format!(
             "git.diff: output is {} bytes, over the {cap}-byte cap. Pass a path to narrow.",
@@ -520,14 +525,19 @@ fn git_diff(
 
 fn git_status(cwd: &Path, ports: &dyn WorldReadPorts) -> Result<Value, WorkflowError> {
     let _ = cwd;
-    let prefix = git_prefix(ports)?;
+    let prefix = git_prefix(cwd, ports)?;
     let argv: Vec<String> = GIT_STATUS_ARGV.iter().map(|s| (*s).to_owned()).collect();
-    let out = run_git(ports, &argv, caps::GIT_TEXT_OUTPUT_BYTES)?;
+    let out = run_git(cwd, ports, &argv, caps::GIT_TEXT_OUTPUT_BYTES)?;
     Ok(parse_git_status_porcelain_v2(&out.text, &prefix)?.to_json())
 }
 
-fn git_log(_cwd: &Path, ports: &dyn WorldReadPorts, count: u64) -> Result<Value, WorkflowError> {
-    let out = run_git(ports, &git_log_argv(count), caps::GIT_TEXT_OUTPUT_BYTES)?;
+fn git_log(cwd: &Path, ports: &dyn WorldReadPorts, count: u64) -> Result<Value, WorkflowError> {
+    let out = run_git(
+        cwd,
+        ports,
+        &git_log_argv(count),
+        caps::GIT_TEXT_OUTPUT_BYTES,
+    )?;
     let commits = parse_git_log(&out.text)?;
     Ok(Value::Array(
         commits
@@ -670,7 +680,11 @@ pub fn run_args(args: &[Value]) -> Result<RunArgs, WorkflowError> {
 }
 
 /// Node `worldRun`: a nonzero exit is a value; a timeout, a spawn error or an output over the cap is not.
-fn world_run(ports: &dyn WorldReadPorts, args: &[Value]) -> Result<Value, WorkflowError> {
+fn world_run(
+    cwd: &Path,
+    ports: &dyn WorldReadPorts,
+    args: &[Value],
+) -> Result<Value, WorkflowError> {
     let RunArgs {
         cmd,
         argv,
@@ -686,6 +700,7 @@ fn world_run(ports: &dyn WorldReadPorts, args: &[Value]) -> Result<Value, Workfl
     };
     let outcome = ports
         .run(&RunRequest {
+            cwd: cwd.to_path_buf(),
             file: cmd.clone(),
             args: argv,
             timeout_ms: Some(timeout_ms),
@@ -763,3 +778,7 @@ mod tests;
 #[cfg(test)]
 #[path = "world_read_real_tests.rs"]
 mod real_tests;
+
+#[cfg(test)]
+#[path = "world_read_node_cases_tests.rs"]
+mod node_cases;

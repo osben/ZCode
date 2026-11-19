@@ -1377,8 +1377,90 @@ Divergences (recorded, not fixed here):
 5. `world.run` has no permission gating, as in Node (authorization is at compile time).
 6. Clippy: `result_large_err` is allowed in the new modules (`WorkflowError` is 248 bytes). Boxing it would split the engine's error type.
 7. Ports: `ArtifactFsPort` reports a missing path, a directory and a non-file as separate faults, and the `too large` report is mapped to `ArtifactTooLarge` as Node does.
-8. Tests are ported by behaviour from the Node titles and source, not transcribed line by line. Node's bodies for `workflow-driver-artifacts.test.ts` (28 cases), `workflow-driver-world-run.test.ts` (17) and `workflow-driver-world-read-args.test.ts` (5) were not read in full. The coverage claim is the titles and the source's behaviour.
+8. Tests. The bodies of the three Node files are read in full and mapped case by case below. Their `it.each` rows (17 artifact content types, 3 artifact opts shapes) are counted as cases, so the artifacts file has 48 cases, not 28. The real-filesystem containment cases (symlinks, real directories) are ported against a fake file port; the real-filesystem behaviour belongs to the production adapter (W7/W8).
 9. Red runs were not recorded. The pure modules and the executors were written in one pass before the tests, and the suite was then run to green. The first run after wiring showed one red (a wrong expectation in the test: the ticket settles with `{id, version}`), fixed in the test.
+
+Case-by-case mapping (parity gap closed on PR #563). Each Node case maps to a Rust test or to a divergence. Rust test names are in `crates/workflow/src/`. `node_cases` is `world_read_node_cases_tests.rs` or `artifact_node_cases_tests.rs`, the new tests written for this gap.
+
+`workflow-driver-world-read-args.test.ts` (5 cases):
+
+| Node case                                                     | Rust                                                                                                                                                                                | Status                    |
+| ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
+| passes well-formed args through to the fs port                | `world_read_tests::glob_is_workspace_relative...`, `read_returns_the_text...`; `node_cases::args_case_well_formed...`                                                               | mapped, new               |
+| rejects a missing argument (DriverError, names op and `path`) | `world_read_tests::a_string_op_refuses_extra_and_missing...`                                                                                                                        | mapped                    |
+| rejects a wrong-typed argument (42, undefined, array)         | `world_read_tests::a_non_string_argument...`; `node_cases::args_case_wrong_typed...` (array)                                                                                        | mapped, new for the array |
+| rejects extra arguments                                       | `world_read_tests::a_string_op_refuses_extra_and_missing...` (glob with two)                                                                                                        | mapped                    |
+| rejects rather than throwing synchronously                    | divergence: the Rust function returns `Result` and does not throw on argument shape. A port panic becomes a failed node in `world_wiring_tests::a_panicking_port_fails_the_node...` | divergence (structural)   |
+
+`workflow-driver-world-run.test.ts` (17 cases):
+
+| Node case                                             | Rust                                                                                                                                         | Status                    |
+| ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
+| passes argv, cwd, 300 s default and cap+1 to the port | `node_cases::run_case_the_request_carries_the_workspace_cwd` (red: `RunRequest` had no `cwd`; fixed); `world_read_tests::a_completed_run...` | mapped, red then fixed    |
+| honours `timeoutMs` with no clamp                     | `node_cases::run_case_a_timeout_is_not_clamped`                                                                                              | mapped, new               |
+| nonzero exit is a value                               | `world_read_tests::a_nonzero_exit_is_a_value_not_an_error`                                                                                   | mapped                    |
+| timeout is a DriverError naming 300000 ms             | `world_read_tests::a_timeout_and_a_spawn_error...`; `node_cases::run_case_default_timeout_message...`                                        | mapped, new               |
+| spawn error is a DriverError                          | `world_read_tests::a_timeout_and_a_spawn_error...`                                                                                           | mapped                    |
+| no runtime allowlist                                  | `node_cases::run_case_a_command_that_was_never_declared_runs`                                                                                | mapped, new               |
+| exactly cap bytes in full mode                        | `node_cases::run_case_exactly_cap_bytes_of_stdout_is_allowed`                                                                                | mapped, new               |
+| stdout over cap, message points to `opts.output`      | `world_read_tests::full_output_over_the_stream_cap...`; `node_cases::run_case_over_cap_stdout_message...`                                    | mapped, new message check |
+| stderr over cap                                       | `node_cases::run_case_stderr_over_cap...`                                                                                                    | mapped, new               |
+| argument shapes refused, nothing run                  | `world_read_tests::run_argument_shapes...`; `node_cases::run_case_bad_argument_shapes...`                                                    | mapped, new cases         |
+| output `full` equals default                          | `node_cases::run_output_case_explicit_full...`                                                                                               | mapped, new               |
+| discard: no inline bytes, empty streams               | `world_read_tests::discard_sends_no_inline_bytes...`                                                                                         | mapped                    |
+| discard keeps a nonzero exit as a value               | `node_cases::run_output_case_discard_returns_a_nonzero_exit...`                                                                              | mapped, new               |
+| tail returns the last n per stream                    | `world_read_tests::tail_returns_the_port_tail...`                                                                                            | mapped                    |
+| tail accepts 1 and the cap                            | `node_cases::run_output_case_tail_accepts_one_and_the_cap`                                                                                   | mapped, new               |
+| tail with no port tail is a DriverError               | `world_read_tests::tail_returns_the_port_tail...` (second half)                                                                              | mapped                    |
+| bad output shapes refused before running              | `world_read_tests::run_output_arg...` (unit); `node_cases::run_output_case_bad_output_shapes...`                                             | mapped, new cases         |
+
+`workflow-driver-artifacts.test.ts` (28 `it` cases, plus 17 `it.each` content-type rows and 3 `it.each` opts-shape rows, 48 in all):
+
+| Node case                                                      | Rust                                                                                                                                                                | Status                             |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
+| writes bytes and returns a full record                         | `artifact_publish_tests::a_file_publish_reads...`; `world_wiring_tests::a_markdown_publish...` (outcome `{id, version}`)                                            | mapped                             |
+| four store args (retention, toolName, toolCallId, sessionId)   | `artifact_publish_tests::a_markdown_publish_writes_text...` (session, tool call id, CreateWorkflow, project); file extension in `a_file_publish_reads...`           | mapped                             |
+| dot segments keep subdirectory source                          | `artifact_publish_tests::a_file_publish_reads...` (`./sub/../sub`); `node_cases::file_case_dot_segments...`                                                         | mapped, new                        |
+| path outside workspace is refused                              | `artifact_publish_tests::a_path_that_leaves_the_workspace...`                                                                                                       | mapped                             |
+| absolute path outside is refused                               | same test (absolute half)                                                                                                                                           | mapped                             |
+| symlink inside pointing outside, judged by real path           | `artifact_publish_tests::a_symlink_inside_the_workspace_that_points_outside...` (fake fs)                                                                           | mapped; real-fs behaviour is W7/W8 |
+| symlink inside pointing inside is published                    | `artifact_publish_tests::a_symlink_inside_the_workspace_to_another_file...` (fake fs)                                                                               | mapped; real-fs behaviour is W7/W8 |
+| missing path and directory are source-missing                  | `artifact_publish_tests::a_missing_path_and_a_directory...`                                                                                                         | mapped                             |
+| over 20 MiB is refused, not truncated                          | `artifact_publish_tests::a_file_over_the_cap...`                                                                                                                    | mapped                             |
+| port probed with cap+1; exactly cap allowed                    | `node_cases::probe_case_the_port_is_asked_for_cap_plus_one...` (red: port asked for cap, fixed to cap+1); `node_cases::probe_case_one_byte_over...`                 | mapped, red then fixed             |
+| port's own too_large is ArtifactTooLarge                       | `artifact_publish_tests::a_port_too_large_report...`                                                                                                                | mapped                             |
+| extension table (17 rows)                                      | `node_cases::type_case_every_extension_of_the_table...`                                                                                                             | mapped, new                        |
+| unknown and missing extension is octet-stream                  | `artifact_publish_tests::an_unknown_or_missing_extension...`                                                                                                        | mapped                             |
+| `opts.contentType` overrides the table                         | `artifact_publish_tests::opts_content_type_overrides...`                                                                                                            | mapped                             |
+| `contentType` with parameters is refused                       | `artifact_publish_tests::opts_content_type_overrides...` (second half)                                                                                              | mapped                             |
+| markdown writes text, sourcePath absent                        | `artifact_publish_tests::a_markdown_publish_writes_text...`; `node_cases::markdown_case_the_record_has_no_source_path...`                                           | mapped                             |
+| 256 KB exact allowed, one byte over refused                    | `artifact_publish_tests::markdown_is_measured_in_utf8_bytes...`                                                                                                     | mapped                             |
+| multi-byte counted in UTF-8                                    | same test                                                                                                                                                           | mapped                             |
+| markdown ignores `opts.contentType`                            | `node_cases::markdown_case_the_content_type_option_is_ignored`                                                                                                      | mapped, new                        |
+| opts string, array or null refused (3 `it.each` rows)          | `artifact_publish_tests::unknown_opts_keys...` (array); `node_cases::opts_case_a_string_an_array_or_null...`                                                        | mapped, new cases                  |
+| title and description must be strings                          | `artifact_publish_tests::title_and_description_must_be_strings...`; `node_cases::opts_case_a_non_string_description...`                                             | mapped, new                        |
+| title and description over the cap refused; at the cap allowed | `artifact_publish_tests::an_over_long_title...`; `node_cases::opts_case_description_over_the_cap...`                                                                | mapped, new                        |
+| unknown opts keys ignored                                      | `artifact_publish_tests::unknown_opts_keys...`                                                                                                                      | mapped                             |
+| invalid id is a DriverError                                    | `artifact_publish_tests::an_invalid_id...`; `node_cases::id_case_an_over_long_or_slashed_id...`                                                                     | mapped, new                        |
+| missing payload fails loudly                                   | `node_cases::payload_case_a_missing_path_or_content...`                                                                                                             | mapped, new                        |
+| no store: both members unavailable                             | `artifact_publish_tests::no_store_is_refused_before_any_file_is_read`; `node_cases::store_case_markdown_with_no_store...`; `world_wiring_tests::without_a_store...` | mapped                             |
+| text-only store: file refused, markdown published              | `artifact_publish_tests::a_text_only_store_publishes_markdown...`                                                                                                   | mapped                             |
+| store present, no parent session: fails                        | `artifact_publish_tests::a_store_without_a_parent_session...`                                                                                                       | mapped                             |
+| no store: file not read                                        | `artifact_publish_tests::no_store_is_refused_before_any_file_is_read` (reads empty)                                                                                 | mapped                             |
+| store write failure is DriverError with the reason             | `artifact_publish_tests::a_store_write_failure...`                                                                                                                  | mapped                             |
+
+Divergences from the Node cases (none is a behaviour gap in the port itself):
+
+- The real-filesystem cases (symlinks, real directories, `realpath` of the workspace) run against fake ports here. The production `ArtifactFsPort` over the machine adapter is W7/W8.
+- `publishedAt` is checked against the injected clock, not a window around `Date.now()`.
+- Node's `describeArg` says `undefined` where Rust's JSON says `null` (divergence 3 above).
+- The Rust `WorldReadPorts::run` receives `cwd` in the request, as Node's `deps.cwd`. The production host port that honours it is W7/W8.
+
+Reds found while closing the gap:
+
+1. `RunRequest` had no `cwd`, so the world-run cwd case did not compile (red). Fixed: `cwd` is in the request, and git and `run` pass the workspace root.
+2. The artifact file probe asked the port for `cap` bytes; Node asks for `cap + 1` (red, behaviour). Fixed in `read_capped`.
+3. Two fixture mistakes in the new tests (the glob fake used another workspace root; the tail fake returned no tail). Corrected in the tests. Not behaviour reds.
 
 What is left (W6b part 4 follow-ups):
 

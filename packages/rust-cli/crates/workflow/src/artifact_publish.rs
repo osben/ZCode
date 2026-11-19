@@ -349,7 +349,8 @@ fn resolve_workspace_file(
 /// Node `readCappedBytes`: the port reports a file over the cap as `TooLarge`; the caller never gets a truncated read.
 fn read_capped(deps: &PublishDeps<'_>, given: &str, path: &Path) -> Result<Vec<u8>, WorkflowError> {
     let cap = caps::MAX_FILE_BYTES;
-    match deps.fs.read_file(path, cap) {
+    // Node probes with cap + 1 bytes: a file of exactly cap bytes is allowed, one byte more is too large.
+    match deps.fs.read_file(path, cap + 1) {
         Ok(bytes) if bytes.len() <= cap => Ok(bytes),
         Ok(_) | Err(FsFault::TooLarge) => Err(too_large(given, cap)),
         Err(FsFault::NotFound | FsFault::IsDirectory | FsFault::NotFile) => {
@@ -544,3 +545,7 @@ fn fault_text(fault: &FsFault) -> String {
 #[cfg(test)]
 #[path = "artifact_publish_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "artifact_node_cases_tests.rs"]
+mod node_cases;
