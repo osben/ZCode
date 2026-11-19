@@ -46,6 +46,8 @@ mod actor_sessions_tests;
 #[cfg(test)]
 mod actor_turns_tests;
 #[cfg(test)]
+mod artifact_review_tests;
+#[cfg(test)]
 mod driver_golden_tests;
 #[cfg(test)]
 mod driver_node_parity_tests;
@@ -63,5 +65,9 @@ mod import_golden_tests;
 mod lifecycle_golden_tests;
 #[cfg(test)]
 mod scheduler_golden_tests;
+#[cfg(test)]
+mod world_read_review_tests;
+#[cfg(test)]
+mod world_wiring_review_tests;
 #[cfg(test)]
 mod world_wiring_tests;

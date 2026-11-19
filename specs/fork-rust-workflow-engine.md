@@ -1462,6 +1462,22 @@ Reds found while closing the gap:
 2. The artifact file probe asked the port for `cap` bytes; Node asks for `cap + 1` (red, behaviour). Fixed in `read_capped`.
 3. Two fixture mistakes in the new tests (the glob fake used another workspace root; the tail fake returned no tail). Corrected in the tests. Not behaviour reds.
 
+Review round (ocr on 492c73682, PR #563). Verdicts per finding:
+
+1. Valid. Git text reads (prefix, changed files, status, log) now refuse output that hit the 4 MiB inline limit, with `WorldReadCapExceeded`. `git.diff` keeps its own cap check. Node has no such check (its git text reads take the truncated text silently); the Rust refusal is a divergence, and the Node gap is a follow-up. Red test `git_output_that_hit_the_inline_limit...`, now green.
+2. Valid, in both ports. A path that starts with `:` is refused (pathspec magic: `:/x`, `:(top)x`, `:!x`, `:`), in Rust (`validate_git_path`) and Node (`validateGitPath`). Red: Rust `a_git_path_that_starts_with_a_colon...`; Node `workflow-git-world-read-pathspec.test.ts` 4 of 5 red, then green. Parity: the same message in both. `workflow-git-world-read.ts` was already 21,831 bytes, over the staged-file size guard, so its four longest doc comments were shortened to bring it to 19,425 bytes. No code changed. A sibling module was not used, because a new source file must sit in a managed architecture module.
+3. Valid. Git runs pass `caps::RUN_DEFAULT_TIMEOUT_MS`. `RunRequest.timeout_ms` documents that `None` means the port's own default. Red `git_runs_carry_the_default_timeout`, now green.
+4. Valid. Worker threads are created with `thread::Builder`. A failed spawn posts a `DriverError` for that node only. Divergence: no test forces a spawn failure (no injection point), so this path is reviewed, not tested.
+5. Valid. Node does not bound world jobs (spec 9.5: outside the actor cap). Rust bounds them: `WORLD_JOB_LIMIT` = 8 running, the rest queued in the owner, a settled job starts the next. Divergence recorded. Red `world_jobs_are_bounded_and_the_rest_wait` (peak 24), now green.
+6. Valid. A failed engine settlement (journal write) is kept in `deferred_errors` and returned by the next owner call, not only logged. No test: a journal write failure cannot be injected through the owner here.
+7. Valid. Once the run has settled and no world job is running or queued, the owner drops its copy of the mailbox handle, so the owner loop can end. Red `the_mailbox_closes_after_the_run_settles_with_wiring_attached` (timed out), now green.
+8. Valid, but unreachable through the public API: the engine checks `has_artifact_store` before it calls `start_artifact_publish`. Fixed anyway: a publish job with no wiring settles its node with `ArtifactStoreUnavailable` in the pump, not silently. No test (unreachable).
+9. Valid. `got null.` in the markdown content message, as the other shape errors. Red `an_absent_markdown_content...`, now green.
+10. Valid. The panic message is kept in the node error (`panicked: <message>`), as `actor_turns` does. Red `a_panic_message_from_the_port...`, now green.
+11. Valid. `let _ = cwd;` removed.
+12. Valid. The output-shape message is built from `RUN_TAIL_MAX_BYTES`, not the literal.
+13. None beyond the above.
+
 What is left (W6b part 4 follow-ups):
 
 - The production host port: a `WorldReadPorts` and `ArtifactStorePort` over the machine ports, with the argv gap decided (an argv mode on `StartCommand`, or a local-only host with a stated limit). Owner: W7/W8.

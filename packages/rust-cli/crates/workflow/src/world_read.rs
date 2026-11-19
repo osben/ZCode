@@ -41,6 +41,8 @@ pub struct RunRequest {
     pub cwd: PathBuf,
     pub file: String,
     pub args: Vec<String>,
+    /// The timeout in milliseconds. `None` means the port applies its own default; the git reads always pass
+    /// `caps::RUN_DEFAULT_TIMEOUT_MS`, and `world.run` passes the timeout the script asked for.
     pub timeout_ms: Option<u64>,
     pub max_inline_bytes: usize,
     pub tail_bytes: Option<usize>,
@@ -434,7 +436,7 @@ fn run_git(
             cwd: cwd.to_path_buf(),
             file: "git".to_owned(),
             args: argv.to_vec(),
-            timeout_ms: None,
+            timeout_ms: Some(caps::RUN_DEFAULT_TIMEOUT_MS),
             max_inline_bytes,
             tail_bytes: None,
         })
@@ -451,6 +453,16 @@ fn run_git(
             "git {} failed ({}, exit={exit_text}): {detail}",
             argv.join(" "),
             status_name(&outcome.status)
+        )));
+    }
+    // A text read that hit the inline limit is partial. Parsing it would drop entries silently, so it is refused.
+    // Only the text reads (the git inline limit). git.diff passes its own cap+1 and judges its size itself.
+    if max_inline_bytes == caps::GIT_TEXT_OUTPUT_BYTES
+        && (outcome.stdout.truncated || outcome.stdout.bytes > max_inline_bytes)
+    {
+        return Err(cap_exceeded(format!(
+            "git {} output is over the {max_inline_bytes}-byte inline limit; the read is refused rather than parsed as a partial result. Narrow the workspace or the base.",
+            argv.join(" ")
         )));
     }
     Ok(outcome.stdout)
@@ -524,7 +536,6 @@ fn git_diff(
 }
 
 fn git_status(cwd: &Path, ports: &dyn WorldReadPorts) -> Result<Value, WorkflowError> {
-    let _ = cwd;
     let prefix = git_prefix(cwd, ports)?;
     let argv: Vec<String> = GIT_STATUS_ARGV.iter().map(|s| (*s).to_owned()).collect();
     let out = run_git(cwd, ports, &argv, caps::GIT_TEXT_OUTPUT_BYTES)?;
@@ -560,8 +571,12 @@ pub enum RunOutput {
 /// The largest tail: the same budget as a full stream.
 pub const RUN_TAIL_MAX_BYTES: usize = caps::RUN_STREAM_MAX_BYTES;
 
-const RUN_OUTPUT_SHAPES: &str =
-    "\"full\", \"discard\", or { tail: n } with n an integer from 1 to 16777216";
+fn run_output_shapes() -> String {
+    format!(
+        "\"full\", \"discard\", or {{ tail: n }} with n an integer from 1 to {RUN_TAIL_MAX_BYTES}"
+    )
+}
+
 const RUN_OVER_CAP_HINT: &str = "Pass opts.output: { tail: n } to keep the last n bytes, or \"discard\" if only the \
 exit code matters.";
 const OUTPUT_PREVIEW_CHARS: usize = 80;
@@ -591,7 +606,8 @@ fn run_output_arg(raw: Option<&Value>) -> Result<RunOutput, WorkflowError> {
     }
     let invalid = || {
         driver_error(format!(
-            "world.run: opts.output must be {RUN_OUTPUT_SHAPES}; got {}.",
+            "world.run: opts.output must be {}; got {}.",
+            run_output_shapes(),
             describe_output_arg(raw)
         ))
     };

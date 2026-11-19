@@ -367,7 +367,7 @@ fn read_capped(deps: &PublishDeps<'_>, given: &str, path: &Path) -> Result<Vec<u
 fn markdown_payload(request: &ArtifactPublishRequest) -> Result<Payload, WorkflowError> {
     let Some(content) = &request.content else {
         return Err(driver_error(
-            "artifact.markdown: content must be a string, got undefined.",
+            "artifact.markdown: content must be a string, got null.",
         ));
     };
     let bytes = content.len();

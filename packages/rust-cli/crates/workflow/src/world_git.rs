@@ -162,6 +162,13 @@ pub fn validate_git_path(op: &str, value: &str) -> Result<String, WorkflowError>
              Pass a path that does not start with '-'."
         )));
     }
+    // `:` starts git pathspec magic (`:/x`, `:(top)x`, `:!x`), which reads outside the workspace even after `--`.
+    if value.starts_with(':') {
+        return Err(driver_error(format!(
+            "world-read {op}: path '{value}' starts with ':', which git reads as pathspec magic. Pass \
+             a plain workspace-relative path."
+        )));
+    }
     if looks_absolute(value) {
         return Err(driver_error(format!(
             "world-read {op}: path '{value}' is absolute; only workspace-relative paths are \

@@ -75,18 +75,8 @@ export interface GitCommitResult {
 }
 
 /**
- * Strict character set for a base ref: the first character must be a letter/digit; subsequent
- * characters may be `[A-Za-z0-9._/@^~-]`.
- *
- * Disallowing a leading `-` is the only **security-relevant** part of this rule: git would treat
- * `-foo` as an option rather than a ref, and we do not control which options exist. Also disallow
- * a leading `.`, which conveniently rejects `.` / `..` inputs that are not valid refs and look
- * like ranges.
- *
- * Intentionally excluded: whitespace (there is no valid reason for whitespace in a ref), `{`/`}`
- * (reflog syntax such as `@{u}`, unsupported in v1), `:` (`ref:path` syntax), and any `..`
- * (ranges; v1 accepts only a **single** ref). These are not dangerous; they are simply outside
- * the semantics promised by v1. Accepting them would make scripts depend on an undocumented contract.
+ * Base-ref character set: a letter or digit first, then `[A-Za-z0-9._/@^~-]`. A leading `-` (an option to git) and any
+ * `..` range are refused by validateGitRef. `:`, `{`, `}` and whitespace are outside the v1 contract.
  */
 const GIT_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/@^~-]*$/;
 
@@ -177,15 +167,9 @@ function validateGitRef(op: string, value: string): string {
 }
 
 /**
- * Validate a workspace-relative path and return its normalized string (separators are unified as `/`).
- *
- * Three **lexical constraints** (symlinks are not followed; see the v1 notes): no absolute
- * paths, no leading `-`, and no `..` segment. The third is the containment check here: in the
- * normalized `relative` result, `..` can appear only at the beginning, so "no `..` segment and
- * not absolute" is equivalent to "still within the workspace after resolution."
- *
- * Reject paths beginning with `-` even though they are safe after `--`: this is defense in depth.
- * If `--` is accidentally omitted one day, a `-foo` path would be interpreted as an option.
+ * Validate a workspace-relative path and return it with `\` as `/`. Refused: an empty path, a leading `-` (git would
+ * read it as an option), a leading `:` (pathspec magic), an absolute path, and any `..` segment. Symlinks are not
+ * followed here.
  */
 function validateGitPath(op: string, value: string): string {
   if (value.length === 0) {
@@ -199,6 +183,14 @@ function validateGitPath(op: string, value: string): string {
       "DriverError",
       `world-read ${op}: path '${value}' starts with '-', which git could read as an option. ` +
         `Pass a path that does not start with '-'.`,
+    );
+  }
+  // `:` starts git pathspec magic (`:/x`, `:(top)x`, `:!x`), which reads outside the workspace even after `--`.
+  if (value.startsWith(":")) {
+    throw new WorkflowError(
+      "DriverError",
+      `world-read ${op}: path '${value}' starts with ':', which git reads as pathspec magic. Pass ` +
+        `a plain workspace-relative path.`,
     );
   }
   if (looksAbsolute(value)) {
@@ -252,19 +244,8 @@ export function gitChangedFilesPlan(base: string | undefined): GitCommandPlan[] 
 }
 
 /**
- * argv for `git.diff(base?, path?)`. base defaults to `HEAD`; path defaults to the workspace
- * pathspec `.` and **always** appears after `--` so a path with the same name as a branch is not
- * interpreted by git as a ref (or vice versa).
- *
- * `--relative` is required here for a different reason than elsewhere: git writes the `a/… b/…`
- * headers in patch text, which we do not parse and cannot adjust afterward. Ask git to use cwd
- * (= workspace) as the base. Without this, `changedFiles()` could say "only a.md changed" while
- * `diff()` returns a repository-level patch containing `../x`; the two primitives would disagree
- * about what counts as a change.
- *
- * `--relative` also excludes changes outside cwd, so `-- .` is redundant when no path is given.
- * **The redundancy is intentional**: workspace scoping should not silently depend on the side
- * effect of another flag; writing it explicitly lets argv tests pin it down.
+ * argv for `git.diff(base?, path?)`. The path always follows `--`. `--relative` makes the patch headers
+ * workspace-relative, so the patch agrees with changedFiles(). `-- .` stays explicit rather than relying on `--relative`.
  */
 export function gitDiffArgv(base: string | undefined, path: string | undefined): string[] {
   const ref = base === undefined ? "HEAD" : validateGitRef("git-diff", base);
@@ -319,25 +300,8 @@ function stripWorkspacePrefix(prefix: string, path: string): string {
 }
 
 /**
- * Parse `git status --porcelain=v2 -z --branch -- .`.
- *
- * The first character of each segment is the record type: `#` header, `1` ordinary change, `2`
- * rename/copy, `u` unmerged, `?` untracked, `!` ignored (only appears with `--ignored`, which
- * is not used here). The two `XY` characters for `1`/`2` are **index** and **worktree** status;
- * `.` means unchanged. A file can therefore be both staged and unstaged (modified, staged, then
- * modified again).
- *
- * Two `-z`-specific shapes (both verified in practice):
- *   - Header records are NUL-terminated too, not newline-terminated.
- *   - **Rename/copy records use two segments**: `2 … R100 <new path>\0<old path>` (without `-z`,
- *     the two paths are TAB-separated). The parser must explicitly consume the extra segment or
- *     the old path is treated as the next record and silently discarded because it does not
- *     start with a type character. Do not return the old path; the facade reports which paths
- *     changed now.
- *
- * The path is the record's **trailing remainder**, not a fixed-width field: it can contain
- * spaces (or even newlines, preserved by `-z`). Split by skipping the first N space-separated
- * fields and taking the remainder; never split the whole record.
+ * Parse `git status --porcelain=v2 -z --branch -- .`. A rename record (`2`) is followed by a second NUL segment holding
+ * the old path; it is consumed and not reported. The path is the record's trailing remainder, so spaces in names are kept.
  */
 export function parseGitStatusPorcelainV2(stdout: string, prefix = ""): GitStatusResult {
   const staged: string[] = [];
