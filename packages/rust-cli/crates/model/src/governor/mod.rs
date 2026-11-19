@@ -13,7 +13,7 @@
 pub mod controller;
 
 use std::collections::{BinaryHeap, HashMap, VecDeque};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::RecvTimeoutError;
 use std::sync::{Arc, Mutex, OnceLock, Weak, mpsc};
 use std::time::{Duration, Instant};
@@ -620,6 +620,9 @@ fn start_timer_thread() -> Option<mpsc::Sender<Timer>> {
     started
 }
 
+/// 定时线程启动失败的日志是否已经记过（只记第一次）。
+static SPAWN_WARNED: AtomicBool = AtomicBool::new(false);
+
 fn spawn_timer_thread() -> Option<mpsc::Sender<Timer>> {
     let (tx, rx) = mpsc::channel::<Timer>();
     match std::thread::Builder::new()
@@ -628,7 +631,10 @@ fn spawn_timer_thread() -> Option<mpsc::Sender<Timer>> {
     {
         Ok(_) => Some(tx),
         Err(error) => {
-            tracing::warn!(%error, "governor timer thread did not start; this wake is dropped and the next one tries again");
+            // 只在第一次失败时记日志：之后每次需要定时线程都会再试，失败会重复，不能每次都刷日志。
+            if !SPAWN_WARNED.swap(true, Ordering::Relaxed) {
+                tracing::warn!(%error, "governor timer thread did not start; off-runtime wakes are dropped until one starts");
+            }
             None
         }
     }

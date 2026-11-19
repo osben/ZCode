@@ -697,6 +697,9 @@ fn many_off_runtime_wakes_share_one_timer_thread() {
 static FLAKY_SLOT: Mutex<Option<std::sync::mpsc::Sender<super::Timer>>> = Mutex::new(None);
 static FLAKY_CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
+/// 第一次返回失败；之后调用 `spawn_timer_thread()` 直接起线程，不经过 `start_timer_thread()`。
+/// 这样 `TIMER_THREADS` 只统计生产路径启动的线程：测试并行运行时，计数对 `many_off_runtime_wakes_share_one_timer_thread`
+/// 仍然精确，所以计数不会统计测试里其他被 `spawn_timer_thread()` 起的线程。
 fn flaky_start() -> Option<std::sync::mpsc::Sender<super::Timer>> {
     if FLAKY_CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
         None
