@@ -12,8 +12,8 @@ use crate::error::{ErrorCode, WorkflowError};
 use crate::event::RunEvent;
 use crate::journal::{JournalPort, MemoryJournal};
 use crate::model::{
-    ActorRow, Caps, NodeKind, NodeRow, NodeStatus, Ref, RunRow, RunStatus, Settlement, StopReason,
-    StoredEvent,
+    ActorRow, AskWait, Caps, ConcurrencyChange, NodeKind, NodeRow, NodeStatus, Ref, RunRow,
+    RunStatus, Settlement, StopReason, StoredEvent, WaitCause,
 };
 use crate::resume::recover_settle_order;
 use crate::scheduler::instructions_head;
@@ -535,4 +535,144 @@ fn a_corrupt_settle_event_names_the_run_and_sequence() {
         message.contains("sequence 7"),
         "names the sequence: {message}"
     );
+}
+
+/// Node `askWaiting` / `askExecuting` / `concurrencyChanged` (engine-concurrency-observations.test.ts): each
+/// observation of a live ask journals one event; the node row stays `running` (no `dwf_node` write).
+#[test]
+fn concurrency_observations_journal_one_event_each_for_a_live_ask() {
+    let next = Rc::new(Cell::new(None));
+    let mut journal = FlakyJournal::new(next);
+    let mut driver = AskDriver::default();
+    let mut config = config("run_observe", 16.0);
+    config.ask_specs.insert(
+        "site".to_owned(),
+        AskSpec {
+            typed: false,
+            schema: None,
+        },
+    );
+    let instance = Ref::new("site", 2);
+    {
+        let mut engine = WorkflowEngine::new(config, &mut journal, &mut driver).expect("new");
+        let actor = engine.create_actor("site", None, None).expect("actor");
+        let _ask = engine.ask("site", &actor, "A").expect("ask");
+        engine.drain().expect("drain");
+
+        engine
+            .ask_waiting(&instance, AskWait::slot())
+            .expect("waiting");
+        engine.ask_executing(&instance).expect("executing");
+        engine
+            .ask_waiting(
+                &instance,
+                AskWait {
+                    cause: WaitCause::Backoff,
+                    reason: Some("rate_limited".into()),
+                    attempt: Some(2),
+                    delay_ms: Some(20_000),
+                    retry_after_ms: Some(20_000),
+                },
+            )
+            .expect("backoff");
+        engine
+            .concurrency_changed(&ConcurrencyChange {
+                key: "p/m".into(),
+                previous: 8,
+                next: 4,
+                reason: "rate_limited".into(),
+                last_good: Some(4),
+                last_bad: None,
+                cooldown_ms: Some(20_000),
+            })
+            .expect("changed");
+        engine.ask_executing(&instance).expect("executing again");
+    }
+
+    let texts = payloads(&journal, "run_observe");
+    let count = |prefix: &str| texts.iter().filter(|t| t.starts_with(prefix)).count();
+    assert_eq!(
+        texts
+            .iter()
+            .filter(|t| t.starts_with(r#"{"type":"node-waiting""#))
+            .cloned()
+            .collect::<Vec<_>>(),
+        vec![
+            r#"{"type":"node-waiting","instance":{"siteId":"site","ordinal":2},"cause":"slot"}"#
+                .to_owned(),
+            r#"{"type":"node-waiting","instance":{"siteId":"site","ordinal":2},"cause":"backoff","reason":"rate_limited","attempt":2,"delayMs":20000,"retryAfterMs":20000}"#
+                .to_owned(),
+        ]
+    );
+    assert_eq!(count(r#"{"type":"node-executing""#), 2, "{texts:?}");
+    assert_eq!(
+        texts
+            .iter()
+            .filter(|t| t.starts_with(r#"{"type":"concurrency-changed""#))
+            .cloned()
+            .collect::<Vec<_>>(),
+        vec![
+            r#"{"type":"concurrency-changed","key":"p/m","previous":8,"next":4,"reason":"rate_limited","lastGood":4,"cooldownMs":20000}"#
+                .to_owned(),
+        ]
+    );
+    let node = journal
+        .get_node("run_observe", &instance)
+        .expect("node read")
+        .expect("node row");
+    assert_eq!(node.status, NodeStatus::Running);
+}
+
+/// Node: a late observation (unknown or settled instance, settled run) is ignored; `concurrency-changed` only
+/// waits for the run to settle, and a run with no live ask still records it.
+#[test]
+fn concurrency_observations_are_ignored_after_their_ask_or_run_settles() {
+    let next = Rc::new(Cell::new(None));
+    let mut journal = FlakyJournal::new(next);
+    let mut driver = AskDriver::default();
+    let mut config = config("run_late", 16.0);
+    config.ask_specs.insert(
+        "site".to_owned(),
+        AskSpec {
+            typed: false,
+            schema: None,
+        },
+    );
+    let instance = Ref::new("site", 2);
+    {
+        let mut engine = WorkflowEngine::new(config, &mut journal, &mut driver).expect("new");
+        let change = ConcurrencyChange {
+            key: "p/m".into(),
+            previous: 4,
+            next: 5,
+            reason: "recovered".into(),
+            last_good: None,
+            last_bad: None,
+            cooldown_ms: None,
+        };
+        engine.concurrency_changed(&change).expect("no ask yet");
+        engine
+            .ask_waiting(&Ref::new("nope", 1), AskWait::slot())
+            .expect("unknown");
+        engine.ask_executing(&Ref::new("nope", 1)).expect("unknown");
+        let actor = engine.create_actor("site", None, None).expect("actor");
+        let _ask = engine.ask("site", &actor, "A").expect("ask");
+        engine.drain().expect("drain");
+        // The live ask records its waiting; the same ask after it settles does not.
+        engine
+            .ask_waiting(&instance, AskWait::slot())
+            .expect("live ask");
+        engine.complete(json!("done")).expect("complete");
+        engine
+            .ask_waiting(&instance, AskWait::slot())
+            .expect("settled ask");
+        engine.ask_executing(&instance).expect("settled ask");
+        engine.concurrency_changed(&change).expect("settled run");
+    }
+
+    let texts = payloads(&journal, "run_late");
+    let count = |prefix: &str| texts.iter().filter(|t| t.starts_with(prefix)).count();
+    assert_eq!(count(r#"{"type":"concurrency-changed""#), 1, "{texts:?}");
+    assert_eq!(count(r#"{"type":"node-waiting""#), 1, "{texts:?}");
+    assert_eq!(count(r#"{"type":"node-executing""#), 0, "{texts:?}");
 }

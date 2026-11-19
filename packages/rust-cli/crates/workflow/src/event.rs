@@ -6,7 +6,9 @@
 //! (`JSON.stringify` of the event) is byte-identical. Optional keys are omitted when absent, as Node's
 //! conditional spreads do. The birth-phase fields (`phase`, `actor_phase`) are set by the engine's
 //! stamping step, which Node appends after the literal keys, so they are written last.
-use crate::model::{Caps, NodeKind, Ref, RunStatus, StopReason, Violation, js_number};
+use crate::model::{
+    AskWait, Caps, ConcurrencyChange, NodeKind, Ref, RunStatus, StopReason, Violation, js_number,
+};
 use rust_cli_base::js::json::stringify;
 use serde_json::{Map, Value};
 
@@ -162,6 +164,21 @@ pub enum RunEvent {
         qid: String,
         answer: String,
     },
+    /// Node `node-waiting`: the ask's next model request waits for a process-level slot or in backoff. Recorded by
+    /// `ask_waiting`; it writes no `dwf_node` row.
+    NodeWaiting {
+        instance: Ref,
+        wait: AskWait,
+    },
+    /// Node `node-executing`: the ask's model request was sent. Recorded by `ask_executing`.
+    NodeExecuting {
+        instance: Ref,
+    },
+    /// Node `concurrency-changed`: the governor changed the cap of a provider key this run is engaged on.
+    /// Recorded by `concurrency_changed`.
+    ConcurrencyChanged {
+        change: ConcurrencyChange,
+    },
     /// Node `node-settled`. A cached settlement sets `cached` and repeats the facts; a live one does not.
     NodeSettled {
         instance: Ref,
@@ -251,6 +268,29 @@ impl RunEvent {
                 map.insert("runId".into(), Value::String(run_id.clone()));
                 map.insert("caps".into(), caps.to_json());
                 map.insert("previous".into(), previous.to_json());
+            }
+            Self::NodeWaiting { instance, wait } => {
+                put_type(&mut map, "node-waiting");
+                map.insert("instance".into(), instance.to_json());
+                map.insert("cause".into(), Value::String(wait.cause.as_str().into()));
+                put_text(&mut map, "reason", &wait.reason);
+                put_number(&mut map, "attempt", wait.attempt);
+                put_number(&mut map, "delayMs", wait.delay_ms);
+                put_number(&mut map, "retryAfterMs", wait.retry_after_ms);
+            }
+            Self::NodeExecuting { instance } => {
+                put_type(&mut map, "node-executing");
+                map.insert("instance".into(), instance.to_json());
+            }
+            Self::ConcurrencyChanged { change } => {
+                put_type(&mut map, "concurrency-changed");
+                map.insert("key".into(), Value::String(change.key.clone()));
+                map.insert("previous".into(), Value::from(change.previous));
+                map.insert("next".into(), Value::from(change.next));
+                map.insert("reason".into(), Value::String(change.reason.clone()));
+                put_number(&mut map, "lastGood", change.last_good);
+                put_number(&mut map, "lastBad", change.last_bad);
+                put_number(&mut map, "cooldownMs", change.cooldown_ms);
             }
             Self::UsageUpdated { spent_tokens } => {
                 put_type(&mut map, "usage-updated");
@@ -497,6 +537,12 @@ fn put_text(map: &mut Map<String, Value>, key: &str, value: &Option<String>) {
     }
 }
 
+fn put_number(map: &mut Map<String, Value>, key: &str, value: Option<u64>) {
+    if let Some(number) = value {
+        map.insert(key.into(), Value::from(number));
+    }
+}
+
 fn put_value(map: &mut Map<String, Value>, key: &str, value: &Option<Value>) {
     if let Some(json) = value {
         map.insert(key.into(), json.clone());
@@ -506,6 +552,7 @@ fn put_value(map: &mut Map<String, Value>, key: &str, value: &Option<Value>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::WaitCause;
     use serde_json::json;
 
     #[test]
@@ -519,6 +566,72 @@ mod tests {
         assert_eq!(
             event.payload_json(),
             r#"{"type":"run-started","runId":"r1","caps":{"maxConcurrency":4}}"#
+        );
+    }
+
+    #[test]
+    fn node_waiting_for_a_slot_is_just_the_cause() {
+        let event = RunEvent::NodeWaiting {
+            instance: Ref::new("ask", 1),
+            wait: AskWait {
+                cause: WaitCause::Slot,
+                reason: None,
+                attempt: None,
+                delay_ms: None,
+                retry_after_ms: None,
+            },
+        };
+        assert_eq!(
+            event.payload_json(),
+            r#"{"type":"node-waiting","instance":{"siteId":"ask","ordinal":1},"cause":"slot"}"#
+        );
+    }
+
+    #[test]
+    fn node_waiting_for_a_backoff_keeps_the_wait_fields_in_node_order() {
+        let event = RunEvent::NodeWaiting {
+            instance: Ref::new("ask", 2),
+            wait: AskWait {
+                cause: WaitCause::Backoff,
+                reason: Some("rate_limited".into()),
+                attempt: Some(2),
+                delay_ms: Some(20_000),
+                retry_after_ms: Some(20_000),
+            },
+        };
+        assert_eq!(
+            event.payload_json(),
+            r#"{"type":"node-waiting","instance":{"siteId":"ask","ordinal":2},"cause":"backoff","reason":"rate_limited","attempt":2,"delayMs":20000,"retryAfterMs":20000}"#
+        );
+    }
+
+    #[test]
+    fn node_executing_names_only_the_instance() {
+        let event = RunEvent::NodeExecuting {
+            instance: Ref::new("ask", 1),
+        };
+        assert_eq!(
+            event.payload_json(),
+            r#"{"type":"node-executing","instance":{"siteId":"ask","ordinal":1}}"#
+        );
+    }
+
+    #[test]
+    fn concurrency_changed_is_the_change_spread_in_node_order() {
+        let event = RunEvent::ConcurrencyChanged {
+            change: ConcurrencyChange {
+                key: "p/m".into(),
+                previous: 8,
+                next: 4,
+                reason: "rate_limited".into(),
+                last_good: Some(4),
+                last_bad: None,
+                cooldown_ms: Some(20_000),
+            },
+        };
+        assert_eq!(
+            event.payload_json(),
+            r#"{"type":"concurrency-changed","key":"p/m","previous":8,"next":4,"reason":"rate_limited","lastGood":4,"cooldownMs":20000}"#
         );
     }
 

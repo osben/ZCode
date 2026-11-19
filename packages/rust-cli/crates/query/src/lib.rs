@@ -122,6 +122,8 @@ pub(crate) struct RunScope {
     pub(crate) exhausted: mcp_wait::Exhausted,
     /// Fork (slice 3 layer B): the ticket of the off-peak run this run belongs to; None for every other run.
     pub(crate) off_peak_ticket: Option<rust_cli_kernel_api::off_peak_ticket::TicketSource>,
+    /// Workflow: the workflow run this run's model requests are admitted under (a workflow actor's); None otherwise.
+    pub(crate) admission_run: Option<String>,
 }
 
 impl RunScope {
@@ -145,6 +147,7 @@ impl RunScope {
             parts,
             exhausted: Default::default(),
             off_peak_ticket: None,
+            admission_run: request.admission_run.clone(),
         }
     }
 

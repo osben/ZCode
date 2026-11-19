@@ -114,6 +114,9 @@ pub struct ActorRunBase {
     pub interactions: Option<Arc<dyn Interactions>>,
     /// The runtime's clock: an escalation is stamped with the time it was asked.
     pub clock: Arc<dyn Clock>,
+    /// The workflow run these actors belong to: their model requests are admitted under it (W6b part 2b). None when
+    /// the runner is not part of a run.
+    pub admission_run: Option<String>,
 }
 
 /// Renders the interactions by presence: the channel is a trait object with no `Debug`.
@@ -294,6 +297,7 @@ impl<A: ActorAgents> TurnRunner for AgentTurnRunner<A> {
             // Every turn of the bridge has a boundary, so it is stored, a nudged turn's 0 included.
             epilogue_start: Some(turn.epilogue_start),
             on_mutating: Some(gate),
+            admission_run: self.base.admission_run.clone(),
         };
         let end = self.handle.block_on(async {
             let work = self.agents.run_actor_turn(run, &turn.text, token.clone());

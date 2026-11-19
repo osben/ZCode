@@ -63,6 +63,11 @@ pub struct QueryRequest {
     /// requests are sent on that run's ticket. None for every other run.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub off_peak_execution: Option<String>,
+    /// Workflow: the workflow run a workflow actor's runs belong to. The run's model requests are admitted under that
+    /// run (see `RequestOptions::admission_run`). None for every other run, and a subagent the actor starts does not
+    /// inherit it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admission_run: Option<String>,
 }
 
 impl QueryRequest {
@@ -91,6 +96,7 @@ impl QueryRequest {
             prompt_hook_messages: Vec::new(),
             inject_agents_md: true,
             off_peak_execution: None,
+            admission_run: None,
         }
     }
 }

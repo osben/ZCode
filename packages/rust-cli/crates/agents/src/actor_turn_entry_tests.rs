@@ -27,6 +27,7 @@ fn selection() -> ModelSelection {
 fn run_for(child: &SessionId, parent: &SessionId) -> ActorRun {
     ActorRun {
         on_mutating: None,
+        admission_run: None,
         child: child.clone(),
         parent: parent.clone(),
         interaction_description: "Ada (site@1)".to_owned(),
@@ -225,6 +226,41 @@ async fn the_model_request_carries_the_persona_selection_mode_and_source() {
             .any(|block| block.text.contains(PERSONA)),
         "the persona prompt is in the system blocks"
     );
+}
+
+/// W6b part 2b: the run an actor belongs to reaches the model request as its admission run, on every request of the
+/// actor's turn. A turn with no run carries none.
+#[tokio::test]
+async fn an_actor_turns_model_request_carries_its_workflow_run() {
+    let h = harness(None);
+    let parent = SessionId::new("ses_parent");
+    let child = SessionId::new("sess_actor_child");
+    create_child(h.store.as_ref(), &child, &parent).await;
+    let mut run = run_for(&child, &parent);
+    run.admission_run = Some("wf_1".to_owned());
+    h.agents
+        .run_actor_turn(run, "do it", CancellationToken::new())
+        .await;
+    {
+        let seen = h.seen.lock().expect("seen");
+        assert_eq!(
+            seen[0].request.admission_run.as_deref(),
+            Some("wf_1"),
+            "the turn's request is admitted under its run"
+        );
+    }
+
+    let plain_child = SessionId::new("sess_actor_plain");
+    create_child(h.store.as_ref(), &plain_child, &parent).await;
+    h.agents
+        .run_actor_turn(
+            run_for(&plain_child, &parent),
+            "do it",
+            CancellationToken::new(),
+        )
+        .await;
+    let seen = h.seen.lock().expect("seen");
+    assert_eq!(seen[1].request.admission_run, None);
 }
 
 /// A port that refuses every submit: these tests look at the tool list and the entry, not at a submit.

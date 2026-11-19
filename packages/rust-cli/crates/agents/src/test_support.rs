@@ -871,6 +871,7 @@ impl Harness {
         let request = QueryRequest {
             agent,
             off_peak_execution: off_peak.map(str::to_owned),
+            admission_run: None,
             ..QueryRequest::new(
                 session,
                 RunId::new(run),

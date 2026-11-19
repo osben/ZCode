@@ -209,6 +209,8 @@ async fn assemble(
             provider_max_output_tokens,
             // Fork (slice 3 layer B): the run's ticket; None for an ordinary run.
             off_peak_ticket: scope.off_peak_ticket.clone(),
+            // Workflow: a workflow actor's requests are admitted under its run (none otherwise).
+            admission_run: scope.admission_run.clone(),
             ..shape.options
         },
     };

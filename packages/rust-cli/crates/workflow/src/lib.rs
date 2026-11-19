@@ -33,6 +33,7 @@ mod parked_answers_tests;
 pub mod persona;
 pub mod replay;
 pub mod resume;
+pub mod run_concurrency;
 pub mod scheduler;
 pub mod scheduler_submit;
 pub mod world_git;
@@ -63,6 +64,8 @@ mod holes_golden_tests;
 mod import_golden_tests;
 #[cfg(test)]
 mod lifecycle_golden_tests;
+#[cfg(test)]
+mod run_concurrency_tests;
 #[cfg(test)]
 mod scheduler_golden_tests;
 #[cfg(test)]

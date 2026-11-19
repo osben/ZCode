@@ -12,7 +12,9 @@ use std::time::Duration;
 use futures_util::StreamExt;
 use rust_cli_base::models;
 use rust_cli_kernel_api::model::{ModelError, ModelEvent, ModelPort, QuerySource};
-use rust_cli_model::admission::{AdmissionScope, RequestAdmission};
+use rust_cli_model::admission::{
+    AdmissionScope, AdmissionTicket, ParentSessionId, RequestAdmission, RunId,
+};
 use rust_cli_model::governor::{Governor, model_key};
 use rust_cli_model::{ByteIdle, ProviderModel, RouteOptions, StreamIdle};
 use serde_json::json;
@@ -370,4 +372,69 @@ async fn a_terminal_stall_settles_the_attempt_as_transient_and_clears_the_streak
         "a terminal stall is a transient failure"
     );
     assert_eq!(snapshot.in_flight, 0);
+}
+
+/// Records the scope of each acquire, then admits through the governor.
+struct Recording {
+    inner: Arc<Governor>,
+    scopes: std::sync::Mutex<Vec<AdmissionScope>>,
+}
+
+impl RequestAdmission for Recording {
+    fn acquire<'a>(
+        &'a self,
+        scope: AdmissionScope,
+        key: String,
+        cancel: CancellationToken,
+    ) -> futures_util::future::BoxFuture<'a, Result<Box<dyn AdmissionTicket>, ModelError>> {
+        self.scopes.lock().unwrap().push(scope.clone());
+        self.inner.acquire(scope, key, cancel)
+    }
+}
+
+/// Node: a workflow actor's requests are admitted under their run (the run queue and bound), not the session
+/// subagent pool. A request that names its run takes the run scope; a subagent without one keeps the pool.
+#[tokio::test]
+async fn a_workflow_actors_request_is_admitted_under_its_run() {
+    let server = Fixture::start(vec![ok(), ok()]).await;
+    let recording = Arc::new(Recording {
+        inner: governor(4),
+        scopes: std::sync::Mutex::new(Vec::new()),
+    });
+    let admission: Arc<dyn RequestAdmission> = recording.clone();
+    let model = Arc::new(
+        model_with(
+            server.url(),
+            RouteOptions {
+                retry: fast_retry(2),
+                admission: Some(admission),
+                ..RouteOptions::default()
+            },
+        )
+        .await,
+    );
+
+    let mut actor = request("actor", QuerySource::Subagent("workflow_actor".into()));
+    actor.options.admission_run = Some("wf_1".into());
+    let events = model
+        .stream(actor, CancellationToken::new())
+        .collect::<Vec<_>>()
+        .await;
+    assert!(all_completed(&events), "{events:?}");
+
+    let plain = request("plain", QuerySource::Subagent("explore".into()));
+    let events = model
+        .stream(plain, CancellationToken::new())
+        .collect::<Vec<_>>()
+        .await;
+    assert!(all_completed(&events), "{events:?}");
+
+    let scopes = recording.scopes.lock().unwrap().clone();
+    assert_eq!(
+        scopes,
+        vec![
+            AdmissionScope::Run(RunId::new("wf_1")),
+            AdmissionScope::SessionSubagents(ParentSessionId::default()),
+        ]
+    );
 }

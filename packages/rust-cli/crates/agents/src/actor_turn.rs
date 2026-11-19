@@ -139,6 +139,9 @@ pub struct ActorRun {
     pub epilogue_start: Option<usize>,
     /// The turn's first-write gate (Node `onMutating`). None when the caller does not track writes.
     pub on_mutating: Option<Arc<FirstMutating>>,
+    /// The workflow run the actor belongs to: its model requests are admitted under that run (W6b part 2b). None
+    /// outside a run.
+    pub admission_run: Option<String>,
 }
 
 /// Forwards an ask's first workspace write to its owner (Node `sink.askMutating`).
@@ -296,6 +299,7 @@ impl LiveAgent {
     pub(crate) fn for_actor(run: ActorRun, agent: AgentId, root: SessionId) -> Self {
         Self {
             off_peak_execution: None,
+            admission_run: run.admission_run,
             agent,
             child: run.child,
             parent: run.parent,

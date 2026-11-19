@@ -94,6 +94,9 @@ pub(crate) struct LiveAgent {
     pub(crate) mode: PermissionMode,
     /// Fork (slice 3 layer B): the off-peak execution the parent run belongs to; the child's requests inherit its ticket.
     pub(crate) off_peak_execution: Option<String>,
+    /// W6b part 2b: the workflow run a workflow actor belongs to (its requests are admitted under it). Only an actor
+    /// has one; a subagent the actor starts does not inherit it.
+    pub(crate) admission_run: Option<String>,
     pub(crate) background: bool,
     /// 父会话的会话级询问入口（交互界面里才有，agents.md §4.1.1）：后台运行（含续跑、停放后的唤醒）经它询问。
     pub(crate) asks: Option<crate::child::Asks>,

@@ -78,6 +78,62 @@ impl Caps {
     }
 }
 
+/// Why an ask's next model request waits (Node `AskWaitInfo.cause`): for a process-level slot, or in backoff.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WaitCause {
+    Slot,
+    Backoff,
+}
+
+impl WaitCause {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Slot => "slot",
+            Self::Backoff => "backoff",
+        }
+    }
+}
+
+/// Node `AskWaitInfo`: the wait observation of one ask. Absent optional fields are omitted from the event, not
+/// written as `null`, as `JSON.stringify` drops them. `reason` is an open string (Node's `ModelRetryReason`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AskWait {
+    pub cause: WaitCause,
+    pub reason: Option<String>,
+    pub attempt: Option<u64>,
+    /// Relative milliseconds until the retry (Node `delayMs`).
+    pub delay_ms: Option<u64>,
+    pub retry_after_ms: Option<u64>,
+}
+
+impl AskWait {
+    /// A wait for a process-level slot: no reason and no timing.
+    pub fn slot() -> Self {
+        Self {
+            cause: WaitCause::Slot,
+            reason: None,
+            attempt: None,
+            delay_ms: None,
+            retry_after_ms: None,
+        }
+    }
+}
+
+/// Node `ConcurrencyChange`: a governor adjustment to a provider key's cap, fanned out to the runs engaged on it.
+/// `reason` is an open string (Node's `ConcurrencyChangeReason`). Absent optional fields are omitted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConcurrencyChange {
+    /// The provider key: providerId, a slash, then modelId.
+    pub key: String,
+    pub previous: u64,
+    pub next: u64,
+    pub reason: String,
+    pub last_good: Option<u64>,
+    pub last_bad: Option<u64>,
+    /// Relative milliseconds the new dispatches stay frozen (Retry-After).
+    pub cooldown_ms: Option<u64>,
+}
+
 /// A JavaScript number as a JSON value. Non-finite numbers become `null`, as `JSON.stringify` does.
 pub fn js_number(value: f64) -> Value {
     serde_json::Number::from_f64(value).map_or(Value::Null, Value::Number)

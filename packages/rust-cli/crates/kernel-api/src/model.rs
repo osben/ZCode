@@ -200,6 +200,11 @@ pub struct RequestOptions {
     /// serialized, so traces and queued inputs do not carry it; `None` for every ordinary request.
     #[serde(skip)]
     pub off_peak_ticket: Option<crate::off_peak_ticket::TicketSource>,
+    /// Workflow: the workflow run this request belongs to, when it is a workflow actor's (Node's per-run admission).
+    /// The admission port takes the run scope for it, not the session-subagent pool. Never serialized; None for
+    /// every other request.
+    #[serde(skip)]
+    pub admission_run: Option<String>,
 }
 
 /// 模型输出的格式约束（Anthropic `output_config.format`）。

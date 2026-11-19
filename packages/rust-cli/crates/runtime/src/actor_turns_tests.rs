@@ -309,6 +309,7 @@ fn base() -> ActorRunBase {
         persona_prompt: PERSONA.to_owned(),
         interactions: None,
         clock: Arc::new(rust_cli_kernel_api::testing::FixedClock(1_700_000_000_000)),
+        admission_run: None,
     }
 }
 
@@ -897,5 +898,48 @@ async fn a_write_on_a_second_actor_reaches_the_owner_after_a_read_only_ask() {
     assert!(
         closes[0].contains("\"siteId\":\"other\""),
         "the close is the second ask's write, not the first ask's: {closes:?}"
+    );
+}
+
+/// The run's admission run reaches every turn of its actors (Node: the actor's runtime admission is the run's). A
+/// base without one leaves the turns without it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn every_actor_turn_carries_the_workflow_run_it_is_admitted_under() {
+    let agents = ScriptedAgents::new(
+        vec![
+            ActorTurnEnd::Text("first".into()),
+            ActorTurnEnd::Text("second".into()),
+        ],
+        false,
+    );
+    let (mailbox, handle) = ActorMailbox::new();
+    let runner = Arc::new(AgentTurnRunner::new(
+        agents.clone(),
+        tokio::runtime::Handle::current(),
+        ActorRunBase {
+            admission_run: Some("wf_1".to_owned()),
+            ..base()
+        },
+        handle.clone(),
+    ));
+    let sessions = Sessions {
+        turns: MailboxTurns::new(runner, handle),
+    };
+    let mut owner = ActorDriverOwner::new(config(), MemoryJournal::new(), sessions).expect("owner");
+    let actor = owner.create_actor("site", None, None).expect("actor");
+    owner.ask("site", &actor, "do it").expect("ask");
+    owner.drain().expect("drain");
+    mailbox.serve_next(&mut owner).expect("the first turn end");
+    mailbox.serve_next(&mut owner).expect("the second turn end");
+
+    let runs = agents.runs.lock().expect("runs");
+    assert_eq!(runs.len(), 2, "both turns reached the bridge");
+    assert!(
+        runs.iter()
+            .all(|run| run.admission_run.as_deref() == Some("wf_1")),
+        "every turn is admitted under the run: {:?}",
+        runs.iter()
+            .map(|run| run.admission_run.clone())
+            .collect::<Vec<_>>()
     );
 }

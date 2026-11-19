@@ -24,7 +24,8 @@ use crate::imported_cache::{
 };
 use crate::journal::JournalPort;
 use crate::model::{
-    ActorRow, Caps, Ref, RunRow, RunStatus, Settlement, StopReason, StoredEvent, Violation,
+    ActorRow, AskWait, Caps, ConcurrencyChange, Ref, RunRow, RunStatus, Settlement, StopReason,
+    StoredEvent, Violation,
 };
 use crate::persona::normalize_persona;
 use crate::replay::{Job, Release, ReplayGate};
@@ -641,6 +642,41 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
             self.pump_all()?;
         }
         Ok(true)
+    }
+
+    /// Node `askWaiting`: the ask's next model request waits, for a slot or in backoff. A pure observation: the
+    /// engine records `node-waiting` and makes no decision on it. Ignored after the run settles and for an ask that
+    /// is not live (a late observation would give a completed run a tail, as Node's guard says).
+    pub fn ask_waiting(&mut self, instance: &Ref, wait: AskWait) -> Result<()> {
+        if self.settled || !self.is_live_ask(instance) {
+            return Ok(());
+        }
+        self.record(RunEvent::NodeWaiting {
+            instance: instance.clone(),
+            wait,
+        })
+    }
+
+    /// Node `askExecuting`: the ask's model request was sent. Same guards as `ask_waiting`.
+    pub fn ask_executing(&mut self, instance: &Ref) -> Result<()> {
+        if self.settled || !self.is_live_ask(instance) {
+            return Ok(());
+        }
+        self.record(RunEvent::NodeExecuting {
+            instance: instance.clone(),
+        })
+    }
+
+    /// Node `concurrencyChanged`: the governor changed a cap this run is engaged on. Recorded only while the run is
+    /// live. It does not depend on any ask, since a run can be engaged with a queued ask on a key it has no live
+    /// node for, and Node's guard is the run's settlement alone.
+    pub fn concurrency_changed(&mut self, change: &ConcurrencyChange) -> Result<()> {
+        if self.settled {
+            return Ok(());
+        }
+        self.record(RunEvent::ConcurrencyChanged {
+            change: change.clone(),
+        })
     }
 
     /// Node `submitAttempted`, `turnEnded`: the driver's reports on a live ask.

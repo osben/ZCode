@@ -22,6 +22,7 @@ fn running(agent: &str, root: &str) -> crate::live::LiveAgent {
         last_turn_messages: None,
         on_mutating: None,
         off_peak_execution: None,
+        admission_run: None,
         machine: Default::default(),
         agent: AgentId::new(agent),
         child: SessionId::new(format!("sess_subagent_{agent}")),
