@@ -64,7 +64,7 @@ fn send_failure(error: McpError) -> RpcError {
 }
 
 /// 交给连接任务的事件。
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) enum Notice {
     /// `notifications/<kind>/list_changed`：`tools`、`prompts`。
     ListChanged(String),

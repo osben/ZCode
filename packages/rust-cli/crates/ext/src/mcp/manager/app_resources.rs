@@ -6,6 +6,11 @@
 //! subscription (Node replays them, then the panels that made them are revoked by the same reconnect; the net effect on
 //! the server is the same, and no replay is made here). Subscriber keys are `sessionId|scopeId|generation`; a session or
 //! a lease ends by its key prefix.
+//!
+//! Review (F7 PR 4): the guard (the connection), the capability and the registry add are one critical section. The first
+//! subscriber of a uri asks the server, and the others wait for its outcome: a joiner gets the same success or failure,
+//! and a failed first request removes every subscriber it gathered. A settle that finds the uri gone or of another
+//! request does not touch it.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Weak};
@@ -15,59 +20,164 @@ use rust_cli_kernel_api::mcp_app::{
     McpAppConnection, McpAppError, McpResourceCallback, McpResourceNotice,
 };
 use serde_json::{Value, json};
+use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
-use super::{Inner, McpManager};
+use super::{Inner, McpManager, Server};
 
 /// A resource notification callback of one server (the owner of the subscriptions it names).
 pub(crate) type ResourceListener = McpResourceCallback;
 
-/// Whether the server's capabilities declare `resources.subscribe` (Node `getServerCapabilities()?.resources?.subscribe`).
+/// Whether the server's capabilities declare `resources.subscribe`, read as Node reads it: a JavaScript truthy value
+/// (`{}`, `"yes"` and `true` count; `false`, `0`, `""` and `null` do not).
 pub(super) fn resource_subscribes(capabilities: &Value) -> bool {
     capabilities
         .pointer("/resources/subscribe")
-        .is_some_and(|value| !value.is_null() && value.as_bool() != Some(false))
+        .is_some_and(js_truthy)
+}
+
+/// JavaScript truthiness of a JSON value.
+fn js_truthy(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::Bool(flag) => *flag,
+        Value::Number(number) => number.as_f64().is_some_and(|number| number != 0.0),
+        Value::String(text) => !text.is_empty(),
+        Value::Array(_) | Value::Object(_) => true,
+    }
+}
+
+/// The outcome of a uri's first request, as the subscribers waiting on it see it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Outcome {
+    Pending,
+    Subscribed,
+    Failed(McpAppError),
+}
+
+/// What a subscriber does after [`ResourceSubscriptions::join`].
+pub(crate) enum Join {
+    /// The uri's first subscriber: it asks the server, then settles the outcome with this ticket.
+    Ask(u64),
+    /// The server's subscription of the uri is in flight: wait for its outcome.
+    Wait(watch::Receiver<Outcome>),
+    /// The server has the subscription already.
+    Done,
+}
+
+enum State {
+    /// The first request is in flight (`ticket` names it), and its outcome goes to the waiters on `sender`.
+    Pending {
+        ticket: u64,
+        sender: watch::Sender<Outcome>,
+    },
+    /// The server holds the subscription.
+    Subscribed,
+}
+
+struct Entry {
+    keys: BTreeSet<String>,
+    state: State,
 }
 
 /// The subscribers of each uri of one server (Node `McpResourceSubscriptionRegistry`, one server's part).
-#[derive(Default, Debug)]
+#[derive(Default)]
 pub(crate) struct ResourceSubscriptions {
-    by_uri: BTreeMap<String, BTreeSet<String>>,
+    by_uri: BTreeMap<String, Entry>,
+    tickets: u64,
 }
 
 impl ResourceSubscriptions {
-    /// Registers `key` for `uri`; `true` when it is the uri's first subscriber (the server must be asked).
-    pub(crate) fn add(&mut self, uri: &str, key: &str) -> bool {
-        let keys = self.by_uri.entry(uri.to_owned()).or_default();
-        let first = keys.is_empty();
-        keys.insert(key.to_owned());
-        first
+    /// Registers `key` for `uri`. The first subscriber asks the server ([`Join::Ask`]); a subscriber while the request is
+    /// in flight waits for its outcome; a later one finds the subscription in place.
+    pub(crate) fn join(&mut self, uri: &str, key: &str) -> Join {
+        if let Some(entry) = self.by_uri.get_mut(uri) {
+            entry.keys.insert(key.to_owned());
+            return match &entry.state {
+                State::Pending { sender, .. } => Join::Wait(sender.subscribe()),
+                State::Subscribed => Join::Done,
+            };
+        }
+        self.tickets += 1;
+        let ticket = self.tickets;
+        let (sender, _) = watch::channel(Outcome::Pending);
+        self.by_uri.insert(
+            uri.to_owned(),
+            Entry {
+                keys: BTreeSet::from([key.to_owned()]),
+                state: State::Pending { ticket, sender },
+            },
+        );
+        Join::Ask(ticket)
     }
 
-    /// Removes `key` from `uri`: `None` when it was not registered, else whether it was the last subscriber.
+    /// The outcome of the first request of `uri` (`ticket` from [`Join::Ask`]). Ok keeps the subscription. Err removes the
+    /// uri with every subscriber it gathered, and the waiters get the error. Returns `true` when the server holds a
+    /// subscription that nobody keeps (the uri was removed while the request was in flight), so the caller unsubscribes.
+    pub(crate) fn settle(
+        &mut self,
+        uri: &str,
+        ticket: u64,
+        result: Result<(), McpAppError>,
+    ) -> bool {
+        let Some(entry) = self.by_uri.get_mut(uri) else {
+            return result.is_ok();
+        };
+        match &entry.state {
+            State::Pending {
+                ticket: pending, ..
+            } if *pending == ticket => {}
+            // Another request settled this uri, or its subscribers are a newer request's: nothing here is ours.
+            _ => return false,
+        }
+        match result {
+            Ok(()) => {
+                if let State::Pending { sender, .. } =
+                    std::mem::replace(&mut entry.state, State::Subscribed)
+                {
+                    sender.send_replace(Outcome::Subscribed);
+                }
+            }
+            Err(error) => {
+                if let Some(Entry {
+                    state: State::Pending { sender, .. },
+                    ..
+                }) = self.by_uri.remove(uri)
+                {
+                    sender.send_replace(Outcome::Failed(error));
+                }
+            }
+        }
+        false
+    }
+
+    /// Removes `key` from `uri`: `None` when it was not registered. `Some(true)` only when it was the last subscriber of
+    /// a uri the server holds (the server must be unsubscribed); a uri still in flight is settled by its request.
     pub(crate) fn remove(&mut self, uri: &str, key: &str) -> Option<bool> {
-        let keys = self.by_uri.get_mut(uri)?;
-        if !keys.remove(key) {
+        let entry = self.by_uri.get_mut(uri)?;
+        if !entry.keys.remove(key) {
             return None;
         }
-        if keys.is_empty() {
-            self.by_uri.remove(uri);
-            return Some(true);
+        if !entry.keys.is_empty() {
+            return Some(false);
         }
-        Some(false)
+        let subscribed = matches!(entry.state, State::Subscribed);
+        self.by_uri.remove(uri);
+        Some(subscribed)
     }
 
-    /// Removes every key that starts with `prefix`; returns the uris that lost their last subscriber.
+    /// Removes every key that starts with `prefix`; returns the uris the server holds that lost their last subscriber.
     pub(crate) fn remove_prefix(&mut self, prefix: &str) -> Vec<String> {
         let mut released = Vec::new();
-        self.by_uri.retain(|uri, keys| {
-            keys.retain(|key| !key.starts_with(prefix));
-            if keys.is_empty() {
-                released.push(uri.clone());
-                false
-            } else {
-                true
+        self.by_uri.retain(|uri, entry| {
+            entry.keys.retain(|key| !key.starts_with(prefix));
+            if !entry.keys.is_empty() {
+                return true;
             }
+            if matches!(entry.state, State::Subscribed) {
+                released.push(uri.clone());
+            }
+            false
         });
         released
     }
@@ -76,20 +186,20 @@ impl ResourceSubscriptions {
     pub(crate) fn subscribers(&self, uri: &str) -> Vec<String> {
         self.by_uri
             .get(uri)
-            .map(|keys| keys.iter().cloned().collect())
+            .map(|entry| entry.keys.iter().cloned().collect())
             .unwrap_or_default()
     }
 
     /// Every subscriber of the server, each once, in key order.
     pub(crate) fn all_subscribers(&self) -> Vec<String> {
         let mut all: BTreeSet<String> = BTreeSet::new();
-        for keys in self.by_uri.values() {
-            all.extend(keys.iter().cloned());
+        for entry in self.by_uri.values() {
+            all.extend(entry.keys.iter().cloned());
         }
         all.into_iter().collect()
     }
 
-    /// Forgets every subscription (a new published client).
+    /// Forgets every subscription (a new published client). Waiters of a request in flight see the sender go.
     pub(crate) fn clear(&mut self) {
         self.by_uri.clear();
     }
@@ -146,6 +256,29 @@ async fn send_unsubscribe(inner: Arc<Inner>, name: String, uri: String) {
     }
 }
 
+/// Whether `server` is still the connection `expected` names (the generation is unique per published client).
+fn connection_is(server: &Server, expected: &McpAppConnection) -> bool {
+    server.app_generation == expected.generation
+        && server.client.is_some()
+        && server.status.connected()
+}
+
+/// Waits for a uri's first request to settle: the subscribers that joined it share its outcome.
+async fn wait_outcome(receiver: &mut watch::Receiver<Outcome>) -> Result<(), McpAppError> {
+    loop {
+        let current = receiver.borrow_and_update().clone();
+        match current {
+            Outcome::Pending => {}
+            Outcome::Subscribed => return Ok(()),
+            Outcome::Failed(error) => return Err(error),
+        }
+        // The sender is gone when the registry was cleared (a reconnect): the connection changed under the wait.
+        if receiver.changed().await.is_err() {
+            return Err(McpAppError::Changed);
+        }
+    }
+}
+
 impl Inner {
     /// Node `notifications.ts`'s input: a resource notice of server `name`, to the listeners of that server. Nothing is
     /// delivered when no subscriber is left (Node drops it at the same place). Runs after the servers lock is released.
@@ -180,9 +313,10 @@ impl Inner {
 }
 
 impl McpManager {
-    /// Node `subscribeResource`: registers `subscriber` for `uri` on server `name`'s connection, which must still be
-    /// `expected`. The server is asked only for the uri's first subscriber. `NotSupported` when the server does not
-    /// declare `resources.subscribe`; a refused server subscription leaves no subscriber behind.
+    /// Node `subscribeResource`, one critical section for the guard, the capability and the registry: `expected` must
+    /// still be the server's connection, and the server must declare `resources.subscribe` (else `NotSupported`). The
+    /// uri's first subscriber asks the server; the others wait for that outcome and share it. A refused request removes
+    /// the subscribers it gathered.
     pub(crate) async fn app_subscribe(
         &self,
         name: &str,
@@ -191,53 +325,57 @@ impl McpManager {
         subscriber: &str,
         cancel: &CancellationToken,
     ) -> Result<(), McpAppError> {
-        if self.app_connection(name).as_ref() != Some(expected) {
-            return Err(McpAppError::Changed);
-        }
-        let supported = self
-            .0
-            .servers()
-            .get(name)
-            .ok_or(McpAppError::Changed)?
-            .resources_subscribe;
-        if !supported {
-            return Err(McpAppError::NotSupported {
-                server: name.to_owned(),
-                operation: "resources/subscribe".to_owned(),
-            });
-        }
-        let first = self
-            .0
-            .servers()
-            .get_mut(name)
-            .ok_or(McpAppError::Changed)?
-            .resource_subs
-            .add(uri, subscriber);
-        if !first {
-            return Ok(());
-        }
-        match self
-            .app_request(
-                name,
-                expected,
-                "resources/subscribe",
-                json!({"uri": uri}),
-                cancel,
-            )
-            .await
-        {
-            Ok(_) => Ok(()),
-            Err(error) => {
-                self.remove_subscriber(name, uri, subscriber);
-                Err(error)
+        let join = {
+            let mut servers = self.0.servers();
+            let server = servers.get_mut(name).ok_or(McpAppError::Changed)?;
+            if !connection_is(server, expected) {
+                return Err(McpAppError::Changed);
+            }
+            if !server.resources_subscribe {
+                return Err(McpAppError::NotSupported {
+                    server: name.to_owned(),
+                    operation: "resources/subscribe".to_owned(),
+                });
+            }
+            server.resource_subs.join(uri, subscriber)
+        };
+        match join {
+            Join::Done => Ok(()),
+            Join::Wait(mut receiver) => wait_outcome(&mut receiver).await,
+            Join::Ask(ticket) => {
+                let result = self
+                    .app_request(
+                        name,
+                        expected,
+                        "resources/subscribe",
+                        json!({"uri": uri}),
+                        cancel,
+                    )
+                    .await
+                    .map(|_| ());
+                let release = {
+                    let mut servers = self.0.servers();
+                    match servers.get_mut(name) {
+                        // A changed connection cleared the registry: its waiters already see the change.
+                        Some(server) if connection_is(server, expected) => {
+                            server.resource_subs.settle(uri, ticket, result.clone())
+                        }
+                        _ => false,
+                    }
+                };
+                if release {
+                    self.release_on_server(name, uri);
+                }
+                result
             }
         }
     }
 
-    /// Node `unsubscribeResource`: removes `subscriber` for `uri`; the server is unsubscribed when it was the last.
+    /// Node `unsubscribeResource`: removes `subscriber` for `uri`. When it was the last subscriber of a uri the server
+    /// holds, the server is unsubscribed in the background (the caller does not wait for the server's reply).
     pub(crate) async fn app_unsubscribe(&self, name: &str, uri: &str, subscriber: &str) {
         if self.remove_subscriber(name, uri, subscriber) == Some(true) {
-            send_unsubscribe(self.0.clone(), name.to_owned(), uri.to_owned()).await;
+            self.release_on_server(name, uri);
         }
     }
 
@@ -259,11 +397,7 @@ impl McpManager {
         };
         let count = released.len();
         for (name, uri) in released {
-            // Detached: the task ends by its own request (the caller does not wait for the server).
-            drop(self.0.spawner.spawn(
-                "mcp-resource-unsubscribe",
-                send_unsubscribe(self.0.clone(), name, uri),
-            ));
+            self.release_on_server(&name, &uri);
         }
         count
     }
@@ -284,6 +418,15 @@ impl McpManager {
             name: name.to_owned(),
             id,
         })
+    }
+
+    /// Sends the server's unsubscribe of `uri` in the background: nothing waits for the server's reply.
+    fn release_on_server(&self, name: &str, uri: &str) {
+        // Detached: the task ends by its own request.
+        drop(self.0.spawner.spawn(
+            "mcp-resource-unsubscribe",
+            send_unsubscribe(self.0.clone(), name.to_owned(), uri.to_owned()),
+        ));
     }
 
     /// Removes `subscriber` for `uri` from server `name`'s registry (see [`ResourceSubscriptions::remove`]).

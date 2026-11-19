@@ -29,6 +29,8 @@ struct FakeHost {
     unsubscribed: Mutex<Vec<(String, String)>>,
     /// The next subscribe reconnects the server once it has recorded the subscriber (a lease that closes mid-request).
     reconnect_on_subscribe: Mutex<bool>,
+    /// The next subscribe pushes this notice while the subscription is in flight (an update the server sends at once).
+    notify_on_subscribe: Mutex<Option<McpResourceNotice>>,
     /// F7 PR 4: each prefix the owner removed by (a lease's or a session's keys).
     prefixes: Mutex<Vec<String>>,
     /// F7 PR 4: the resource notice callbacks the owner installed.
@@ -44,6 +46,7 @@ impl FakeHost {
             subscribed: Mutex::new(Vec::new()),
             unsubscribed: Mutex::new(Vec::new()),
             reconnect_on_subscribe: Mutex::new(false),
+            notify_on_subscribe: Mutex::new(None),
             prefixes: Mutex::new(Vec::new()),
             resource_listeners: Mutex::new(Vec::new()),
         }
@@ -174,6 +177,10 @@ impl McpAppHost for FakeHost {
             .lock()
             .unwrap()
             .push((uri.to_owned(), subscriber.to_owned()));
+        let pushed = self.notify_on_subscribe.lock().unwrap().take();
+        if let Some(notice) = pushed {
+            self.notify(notice);
+        }
         let reconnect = std::mem::take(&mut *self.reconnect_on_subscribe.lock().unwrap());
         if reconnect {
             self.reconnect();
@@ -759,6 +766,102 @@ async fn a_panel_closed_during_its_subscription_leaves_no_subscriber_behind() {
     assert_eq!(
         *host.unsubscribed.lock().unwrap(),
         [("ui://a".to_owned(), key)]
+    );
+}
+
+/// F7 PR 4 (review): a notice names the panels of each plugin in its own delta. Two plugins' panels of one server get two
+/// deltas, each with its own plugin and subscribers.
+#[tokio::test]
+async fn panels_of_two_plugins_get_one_delta_each() {
+    let (_scope, server, _kernel) = server();
+    let (host, answers, lease_p) = open_subscribed_panel(&server).await;
+    let mut second = open_params();
+    second["pluginId"] = json!("q");
+    second["scopeId"] = json!("scope2");
+    let lease_q = dispatch(&server, "mcp/uiOpenInstance", second)
+        .await
+        .expect("the second panel opens");
+    dispatch(
+        &server,
+        "mcp/uiSubscribeResource",
+        subscription(&lease_p, "ui://a"),
+    )
+    .await
+    .expect("the first subscription is made");
+    let mut params_q = subscription(&lease_q, "ui://a");
+    params_q["pluginId"] = json!("q");
+    dispatch(&server, "mcp/uiSubscribeResource", params_q)
+        .await
+        .expect("the second subscription is made");
+
+    host.notify(McpResourceNotice::Updated {
+        uri: "ui://a".to_owned(),
+        subscribers: vec![subscriber_key(&lease_p), subscriber_key(&lease_q)],
+    });
+    let deltas = plugin_deltas(&answers);
+    assert_eq!(deltas.len(), 2, "one delta per plugin: {deltas:?}");
+    let mut per_plugin: Vec<(String, usize)> = deltas
+        .iter()
+        .map(|(_, delta)| {
+            (
+                delta["pluginId"].as_str().expect("a plugin").to_owned(),
+                delta["subscribers"].as_array().expect("subscribers").len(),
+            )
+        })
+        .collect();
+    per_plugin.sort();
+    assert_eq!(per_plugin, [("p".to_owned(), 1), ("q".to_owned(), 1)]);
+}
+
+/// F7 PR 4 (review): the notice tap is installed before the subscription is made, so an update the server pushes while
+/// the subscribe is in flight reaches the panel.
+#[tokio::test]
+async fn an_update_pushed_during_the_subscription_reaches_the_panel() {
+    let (_scope, server, _kernel) = server();
+    let (host, answers, lease) = open_subscribed_panel(&server).await;
+    *host.notify_on_subscribe.lock().unwrap() = Some(McpResourceNotice::Updated {
+        uri: "ui://a".to_owned(),
+        subscribers: vec![subscriber_key(&lease)],
+    });
+    dispatch(
+        &server,
+        "mcp/uiSubscribeResource",
+        subscription(&lease, "ui://a"),
+    )
+    .await
+    .expect("the subscription is made");
+    let deltas = plugin_deltas(&answers);
+    assert_eq!(deltas.len(), 1, "the update reaches the panel: {deltas:?}");
+    assert_eq!(deltas[0].1["op"], "pluginUi.resourceUpdated");
+}
+
+/// F7 PR 4 (review): a reopen that replaces a panel ends the replaced lease's subscriptions, as its close does.
+#[tokio::test]
+async fn reopening_a_panel_ends_the_replaced_leases_subscriptions() {
+    let (_scope, server, _kernel) = server();
+    let (host, _answers, lease) = open_subscribed_panel(&server).await;
+    dispatch(
+        &server,
+        "mcp/uiSubscribeResource",
+        subscription(&lease, "ui://a"),
+    )
+    .await
+    .expect("the subscription is made");
+    // The connection moves without its listeners running, so the old lease is still open when the panel reopens: the
+    // reopen replaces it (a reopen on an unchanged connection reuses the lease).
+    host.silent_change();
+    let reopened = dispatch(&server, "mcp/uiOpenInstance", open_params())
+        .await
+        .expect("the panel reopens");
+    assert_ne!(reopened["token"], lease["token"]);
+    let token = lease["token"].as_str().expect("a token");
+    assert!(
+        host.prefixes
+            .lock()
+            .unwrap()
+            .contains(&format!("run_s1|{token}|")),
+        "the replaced lease's keys are removed: {:?}",
+        host.prefixes.lock().unwrap()
     );
 }
 

@@ -440,9 +440,9 @@ impl RustMcpUi {
             .connection(&session_id, server)
             .as_ref()
             .map(to_connection);
-        let mut subscribers = Vec::new();
+        // One delta per plugin (review): the panels of each plugin hear the notice in their own delta, in plugin order.
+        let mut by_plugin: BTreeMap<String, Vec<Value>> = BTreeMap::new();
         let mut closed = Vec::new();
-        let mut plugin_id: Option<String> = None;
         for key in keys {
             let Some((key_session, scope, generation)) = parse_subscriber_key(&key) else {
                 continue;
@@ -480,38 +480,33 @@ impl RustMcpUi {
                 .instances
                 .validate_closing(&lease, scope_of, source.as_ref())
             {
-                Ok(_) => {
-                    plugin_id.get_or_insert_with(|| plugin.clone());
-                    subscribers.push(json!({
-                        "scopeId": lease.token,
-                        "generation": lease.generation,
-                        "instance": lease_json(&lease),
-                    }));
-                }
+                Ok(_) => by_plugin.entry(plugin).or_default().push(json!({
+                    "scopeId": lease.token,
+                    "generation": lease.generation,
+                    "instance": lease_json(&lease),
+                })),
                 Err(refused) => closed.extend(refused.closed),
             }
         }
         self.finish_closed(closed);
-        if subscribers.is_empty() {
-            return;
+        for (plugin_id, subscribers) in by_plugin {
+            let delta = match &uri {
+                Some(uri) => json!({
+                    "op": "pluginUi.resourceUpdated",
+                    "pluginId": plugin_id,
+                    "serverName": server,
+                    "uri": uri,
+                    "subscribers": subscribers,
+                }),
+                None => json!({
+                    "op": "pluginUi.resourceListChanged",
+                    "pluginId": plugin_id,
+                    "serverName": server,
+                    "subscribers": subscribers,
+                }),
+            };
+            self.deliver(session, delta);
         }
-        let plugin_id = plugin_id.unwrap_or_default();
-        let delta = match uri {
-            Some(uri) => json!({
-                "op": "pluginUi.resourceUpdated",
-                "pluginId": plugin_id,
-                "serverName": server,
-                "uri": uri,
-                "subscribers": subscribers,
-            }),
-            None => json!({
-                "op": "pluginUi.resourceListChanged",
-                "pluginId": plugin_id,
-                "serverName": server,
-                "subscribers": subscribers,
-            }),
-        };
-        self.deliver(session, delta);
     }
 
     /// Node `subscribeMcpUiResource`: the request's own binding (scope and generation name its instance), then the
@@ -534,6 +529,9 @@ impl RustMcpUi {
             .ok_or_else(|| RpcError::new(-32001, "MCP App connection is unavailable"))?;
         // A lease that closed while the connection settled adds nothing.
         self.validate(host, session, &guard, params)?;
+        // The tap is in place before the request: an update the server pushes while it is in flight reaches the panel.
+        // A tap nobody uses is a no-op.
+        self.ensure_tap(host, session, &guard.server);
         host.subscribe(session, &guard.server, &expected, uri, &subscriber, &cancel)
             .await
             .map_err(app_error)?;
@@ -543,7 +541,6 @@ impl RustMcpUi {
                 .await;
             return Err(refused);
         }
-        self.ensure_tap(host, session, &guard.server);
         Ok(json!({}))
     }
 
@@ -713,6 +710,13 @@ impl RustMcpUi {
                 "App page was closed",
             );
             drop(panel.subscription);
+            // Node's abort listener of the replaced lease (review): its resource subscriptions go, and its notice tap
+            // too once nothing else of that session and server is open.
+            self.unsubscribe_prefix(
+                &panel.session,
+                &format!("{}|{}|", panel.session, panel.lease.token),
+            );
+            drop(self.prune_tap(&panel.session, &panel.server_name));
             self.deliver(
                 &panel.session,
                 json!({

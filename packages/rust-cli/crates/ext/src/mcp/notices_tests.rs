@@ -58,6 +58,77 @@ async fn resource_notices_merge_per_uri_and_come_before_the_close() {
     );
 }
 
+/// F7 PR 4 (review): at the cap a list change still waits (it is one entry, and it would otherwise be lost), while an
+/// update past the cap is dropped. The overflow keeps the first `RESOURCE_NOTICE_CAP` uris in arrival order.
+#[tokio::test]
+async fn at_the_cap_a_list_change_still_waits_and_an_update_past_it_is_dropped() {
+    let cap = 1024;
+    let (sender, mut receiver) = channel();
+    for index in 0..=cap {
+        sender.send(Notice::ResourceUpdated(format!("ui://{index}")));
+    }
+    sender.send(Notice::ResourceListChanged);
+    sender.send(closed());
+    drop(sender);
+    let mut seen = Vec::new();
+    while let Some(notice) = receiver.recv().await {
+        seen.push(notice);
+    }
+    let mut expected: Vec<Notice> = (0..cap)
+        .map(|index| Notice::ResourceUpdated(format!("ui://{index}")))
+        .collect();
+    expected.push(Notice::ResourceListChanged);
+    expected.push(closed());
+    assert_eq!(seen, expected);
+}
+
+/// F7 PR 4 (review): the waiting uris are bounded by their bytes too (a server names them). The second uri does not fit
+/// the 1 MiB allowance and is dropped; a list change still waits.
+#[tokio::test]
+async fn waiting_uris_are_bounded_by_their_bytes_too() {
+    let allowance = 1024 * 1024;
+    let (sender, mut receiver) = channel();
+    sender.send(Notice::ResourceUpdated("a".repeat(allowance * 3 / 4)));
+    sender.send(Notice::ResourceUpdated("b".repeat(allowance * 3 / 4)));
+    sender.send(Notice::ResourceListChanged);
+    sender.send(closed());
+    drop(sender);
+    let mut seen = Vec::new();
+    while let Some(notice) = receiver.recv().await {
+        seen.push(notice);
+    }
+    assert_eq!(
+        seen,
+        [
+            Notice::ResourceUpdated("a".repeat(allowance * 3 / 4)),
+            Notice::ResourceListChanged,
+            closed(),
+        ]
+    );
+}
+
+/// F7 PR 4 (review): resource notices go before a waiting tools list change, so a busy list cannot starve them.
+#[tokio::test]
+async fn resource_notices_go_before_a_waiting_list_change() {
+    let (sender, mut receiver) = channel();
+    sender.send(Notice::ListChanged("tools".to_owned()));
+    sender.send(Notice::ResourceUpdated("ui://a".to_owned()));
+    sender.send(closed());
+    drop(sender);
+    let mut seen = Vec::new();
+    while let Some(notice) = receiver.recv().await {
+        seen.push(notice);
+    }
+    assert_eq!(
+        seen,
+        [
+            Notice::ResourceUpdated("ui://a".to_owned()),
+            Notice::ListChanged("tools".to_owned()),
+            closed(),
+        ]
+    );
+}
+
 /// 取走之后再来的同一种照常送达。
 #[tokio::test]
 async fn a_kind_taken_away_can_arrive_again() {

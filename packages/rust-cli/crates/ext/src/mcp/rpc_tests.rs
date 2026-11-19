@@ -122,9 +122,6 @@ async fn server_requests_notifications_and_close() {
     assert!(client.is_closed());
 }
 
-/// 工作线 F57：`roots/list` 的 URI 同 `url.pathToFileURL(root).href`。POSIX 的期望值是用 Bun 1.3.11
-/// 与 Node 24 实测的，两者逐字相同；Windows 的是 Node 24 的 `pathToFileURL(p, {windows: true})`（`C:\`
-/// 取 Windows 上的结果 `file:///C:/`）。以前不编码、UNC 写成 `file:////server/share`。
 /// F7 PR 4: a server's resource notifications reach the connection task as their own notices, the update with its uri.
 #[tokio::test]
 async fn resource_notifications_are_noticed_with_their_uri() {
@@ -165,6 +162,9 @@ async fn an_update_without_a_uri_is_not_noticed() {
     drop(client);
 }
 
+/// 工作线 F57：`roots/list` 的 URI 同 `url.pathToFileURL(root).href`。POSIX 的期望值是用 Bun 1.3.11
+/// 与 Node 24 实测的，两者逐字相同；Windows 的是 Node 24 的 `pathToFileURL(p, {windows: true})`（`C:\`
+/// 取 Windows 上的结果 `file:///C:/`）。以前不编码、UNC 写成 `file:////server/share`。
 #[test]
 fn root_uris_are_node_file_urls() {
     for (path, expected) in [
