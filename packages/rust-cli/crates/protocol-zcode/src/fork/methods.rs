@@ -13,6 +13,11 @@ pub(crate) async fn dispatch(
     method: &str,
     params: Value,
 ) -> Option<Result<Reply, RpcError>> {
+    // Fork (specs/fork-rust-node-helper.md, F7 PR 1): a panel method of a server Rust runs is answered by the Rust
+    // owner; a helper-hosted or unknown server falls through to the existing path.
+    if let Some(result) = super::mcp_ui_rust::route(server, method, &params).await {
+        return Some(result.map(Reply::new));
+    }
     // Fork: the Node helper answers the forwarded families when the Host configured one. `None` falls through, so
     // an unadvertised method keeps its answer (`-32601`, or `{"runs": []}` for the run list).
     if let Some(helper) = server.context.node_helper() {

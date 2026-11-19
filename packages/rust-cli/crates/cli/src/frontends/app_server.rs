@@ -219,6 +219,9 @@ async fn serve(
     // Fork: workspace model calls (Git commit message, connectivity probe) go through the entry's model port.
     context.set_model_port(ported.ports.model.clone());
     let built = assemble::kernel(&spec, facts, ported, clock).await?;
+    // Fork (specs/fork-rust-node-helper.md, F7 PR 1): the panels of the servers Rust runs read their connections
+    // through the kernel's extension layer, the one that owns the connections the model calls use.
+    context.set_mcp_app_host(built.kernel.mcp_app_host());
     // Fork: workspace trust from the App (specs/fork-rust-agent-parity.md, "Workspace MCP trust"): set before the
     // handler is installed, so the first request already sees it.
     let opened = &built.opened;

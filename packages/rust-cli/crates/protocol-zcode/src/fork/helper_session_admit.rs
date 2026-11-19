@@ -33,7 +33,7 @@ pub(crate) async fn admit(
 }
 
 /// Open in this process, or a session of this process's store (resumable).
-async fn owns(server: &Server, session: &SessionId) -> bool {
+pub(crate) async fn owns(server: &Server, session: &SessionId) -> bool {
     server.bridge.get(session).is_some()
         || matches!(
             server.kernel.queries().session_workspace_key(session).await,

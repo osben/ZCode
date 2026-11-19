@@ -194,6 +194,11 @@ impl Ext {
         &self.layer
     }
 
+    /// Fork (F7 PR 1): the MCP App port of the sessions' Rust-run servers.
+    pub fn mcp_app_host(&self) -> Arc<dyn rust_cli_kernel_api::mcp_app::McpAppHost> {
+        self.registry.clone()
+    }
+
     /// Fork: the MCP group a session reads (its workspace's, else the process one).
     pub fn mcp_for_session(
         &self,
@@ -468,6 +473,76 @@ impl ToolRegistry for ExtRegistry {
 
     fn mcp_for(&self, session: &SessionId) -> Option<Arc<dyn McpConnections>> {
         Some(self.session_mcp(session))
+    }
+}
+
+/// Fork (F7 PR 1): the session's MCP group answers the panel port, so a panel reads the same connection the model uses.
+#[async_trait]
+impl rust_cli_kernel_api::mcp_app::McpAppHost for ExtRegistry {
+    fn owner(
+        &self,
+        session: &SessionId,
+        server: &str,
+    ) -> Option<rust_cli_kernel_api::mcp_app::McpAppOwner> {
+        use rust_cli_kernel_api::mcp_app::McpAppOwner;
+        let helper = self.session_mcp(session).is_helper_transport(server)?;
+        Some(if helper {
+            McpAppOwner::Helper
+        } else {
+            McpAppOwner::Rust
+        })
+    }
+
+    fn connection(
+        &self,
+        session: &SessionId,
+        server: &str,
+    ) -> Option<rust_cli_kernel_api::mcp_app::McpAppConnection> {
+        self.session_mcp(session).app_connection(server)
+    }
+
+    async fn wait_connection(
+        &self,
+        session: &SessionId,
+        server: &str,
+    ) -> Option<rust_cli_kernel_api::mcp_app::McpAppConnection> {
+        let manager = self.session_mcp(session);
+        manager.wait_ready().await;
+        manager.app_connection(server)
+    }
+
+    fn on_connection_changed(
+        &self,
+        session: &SessionId,
+        server: &str,
+        callback: Arc<dyn Fn() + Send + Sync>,
+    ) -> Option<rust_cli_kernel_api::mcp_app::McpAppSubscription> {
+        self.session_mcp(session)
+            .on_app_connection_changed(server, callback)
+            .map(|subscription| Box::new(subscription) as _)
+    }
+
+    fn tool_visibility(
+        &self,
+        session: &SessionId,
+        server: &str,
+        tool: &str,
+    ) -> Option<Vec<String>> {
+        self.session_mcp(session).tool_visibility(server, tool)
+    }
+
+    async fn request(
+        &self,
+        session: &SessionId,
+        server: &str,
+        expected: &rust_cli_kernel_api::mcp_app::McpAppConnection,
+        method: &str,
+        params: serde_json::Value,
+        cancel: &tokio_util::sync::CancellationToken,
+    ) -> Result<serde_json::Value, rust_cli_kernel_api::mcp_app::McpAppError> {
+        self.session_mcp(session)
+            .app_request(server, expected, method, params, cancel)
+            .await
     }
 }
 

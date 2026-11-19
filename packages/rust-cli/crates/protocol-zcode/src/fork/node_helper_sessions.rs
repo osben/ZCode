@@ -591,6 +591,10 @@ pub(crate) fn close_listener(
     context: Arc<crate::context::Context>,
 ) -> rust_cli_protocol_core::sessions::CloseListener {
     Arc::new(move |session| {
+        // Fork (F7 PR 1): the session's panels of Rust-run servers end with it (Node `clearMcpUiAppToolsForSession`).
+        if let Some(ui) = context.mcp_ui() {
+            ui.session_closed(session.as_str());
+        }
         if let Some(helper) = context.node_helper() {
             helper.session_closed(session.as_str());
         }
