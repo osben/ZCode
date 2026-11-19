@@ -34,6 +34,7 @@ mod parked_answers_tests;
 pub mod persona;
 pub mod quota_resume;
 pub mod replay;
+pub mod residency;
 pub mod resume;
 pub mod run_concurrency;
 pub mod scheduler;
@@ -50,9 +51,13 @@ mod actor_mailbox_tests;
 #[cfg(test)]
 mod actor_sessions_tests;
 #[cfg(test)]
+mod actor_turns_close_tests;
+#[cfg(test)]
 mod actor_turns_tests;
 #[cfg(test)]
 mod artifact_review_tests;
+#[cfg(test)]
+mod driver_close_tests;
 #[cfg(test)]
 mod driver_golden_tests;
 #[cfg(test)]
@@ -75,6 +80,8 @@ mod import_golden_tests;
 mod lifecycle_golden_tests;
 #[cfg(test)]
 mod quota_resume_tests;
+#[cfg(test)]
+mod residency_tests;
 #[cfg(test)]
 mod run_concurrency_tests;
 #[cfg(test)]

@@ -38,6 +38,7 @@ struct Turns {
     cancelled: Vec<String>,
     rejected: Vec<(String, String)>,
     answered: Vec<(String, String, String)>,
+    closed: Vec<String>,
 }
 
 impl ActorTurns for Turns {
@@ -67,6 +68,11 @@ impl ActorTurns for Turns {
     fn deliver_answer(&mut self, session: &str, qid: &str, answer: &str) -> anyhow::Result<()> {
         self.answered
             .push((session.to_owned(), qid.to_owned(), answer.to_owned()));
+        Ok(())
+    }
+
+    fn close_session(&mut self, session: &str) -> anyhow::Result<()> {
+        self.closed.push(session.to_owned());
         Ok(())
     }
 }
@@ -179,11 +185,17 @@ fn turn_calls_are_delegated_to_the_turn_side_unchanged() {
     sessions
         .deliver_answer("sess_x", "dwfq-run-0", "yes")
         .expect("deliver");
+    sessions.close_session("sess_x").expect("close");
     let turns = sessions.into_turns();
     assert_eq!(turns.started, vec!["sess_x".to_owned()]);
     assert_eq!(turns.interactions, vec!["Ada (site@1)".to_owned()]);
     assert_eq!(turns.inputs, vec![("composed".to_owned(), 5)]);
     assert_eq!(turns.cancelled, vec!["sess_x".to_owned()]);
+    assert_eq!(
+        turns.closed,
+        vec!["sess_x".to_owned()],
+        "close is delegated to the turn side"
+    );
     assert_eq!(
         turns.rejected,
         vec![("sess_x".to_owned(), "dwfq-run-0".to_owned())]
