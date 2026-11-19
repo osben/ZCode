@@ -313,6 +313,9 @@ impl LocalKernel {
         presence: RuntimePresence,
     ) -> Arc<Session> {
         let id = state.meta.id.clone();
+        // W7-6 (divergence 63): a session opened again in this process accepts runs again. While its previous close is
+        // still in flight the reopen is pending, and takes effect when that close ends; it never waits here.
+        let _ = self.residency.reopen(id.as_str());
         let mut sessions = self.sessions();
         if let Some(Slot::Open(open)) = sessions.get(&id) {
             return open.session.clone();

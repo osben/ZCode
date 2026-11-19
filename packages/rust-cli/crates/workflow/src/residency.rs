@@ -78,6 +78,45 @@ struct State {
     stopped: HashSet<u64>,
     /// Sessions that were closed or evicted: a new guard on them is refused.
     retired: HashSet<String>,
+    /// Closes in progress per session (a count: a drain and a close can overlap on one session).
+    closing: HashMap<String, usize>,
+    /// Sessions reopened while a close of them was in progress. The reopen takes effect when the last such close ends.
+    reopen_pending: HashSet<String>,
+}
+
+/// Holds a session's close count for the duration of one close. When the last close of a session ends, a reopen that was
+/// pending on it takes effect. The close itself never clears the retired mark.
+struct CloseScope {
+    shared: Arc<Shared>,
+    session: String,
+}
+
+impl CloseScope {
+    fn enter(shared: &Arc<Shared>, session: &str) -> Self {
+        *shared.lock().closing.entry(session.to_owned()).or_insert(0) += 1;
+        Self {
+            shared: shared.clone(),
+            session: session.to_owned(),
+        }
+    }
+}
+
+impl Drop for CloseScope {
+    fn drop(&mut self) {
+        let mut state = self.shared.lock();
+        let remaining = state.closing.get_mut(&self.session).map_or(0, |count| {
+            *count -= 1;
+            *count
+        });
+        if remaining == 0 {
+            state.closing.remove(&self.session);
+            if state.reopen_pending.remove(&self.session) {
+                state.retired.remove(&self.session);
+            }
+        }
+        drop(state);
+        self.shared.settled.notify_all();
+    }
 }
 
 struct Shared {
@@ -191,6 +230,20 @@ impl SessionResidency {
         true
     }
 
+    /// Resume a session in this process: it accepts guards again (divergence 63). Returns `true` when it took effect now.
+    /// When a close of the session is still in flight, the reopen does not wait for it: it is pending, and takes effect
+    /// when the last such close ends (the close never clears the mark itself). Returns `false` then. A close started
+    /// after the reopen supersedes it.
+    pub fn reopen(&self, session: &str) -> bool {
+        let mut state = self.shared.lock();
+        if state.closing.contains_key(session) {
+            state.reopen_pending.insert(session.to_owned());
+            return false;
+        }
+        state.retired.remove(session);
+        true
+    }
+
     /// Refuse new guards on `session` at once, without waiting. The close path calls this on the async thread, so a
     /// launch that races a close is refused before the blocking close starts.
     pub fn retire(&self, session: &str) {
@@ -231,9 +284,12 @@ impl SessionResidency {
         if STOPPING.with(Cell::get) {
             bail!("session {session} cannot be closed from inside a run's stop");
         }
+        let _scope = CloseScope::enter(&self.shared, session);
         let to_stop: Vec<Arc<dyn LiveRun>> = {
             let mut state = self.shared.lock();
             state.retired.insert(session.to_owned());
+            // A close started after a reopen supersedes it: the session is closed again, so nothing is lifted at the end.
+            state.reopen_pending.remove(session);
             let State { live, stopped, .. } = &mut *state;
             let mut picked = Vec::new();
             if let Some(runs) = live.get(session) {

@@ -299,6 +299,53 @@ fn drain_closes_every_session_with_a_live_run() {
     assert_eq!(second.stops.load(Ordering::SeqCst), 1);
 }
 
+/// W7-6 (divergence 63): a closed session that is resumed in the same process accepts guards again.
+#[test]
+fn a_closed_session_accepts_guards_again_once_reopened() {
+    let residency = SessionResidency::new();
+    residency.close("ses_resumed").expect("close");
+    assert!(residency.reopen("ses_resumed"), "no close is in flight");
+    let (run, _stops) = fake_run();
+    residency
+        .acquire("ses_resumed", "run_resumed", run)
+        .expect("a run attaches after the reopen");
+    residency
+        .close("ses_resumed")
+        .expect("a later close retires it again");
+    let (late, _late_stops) = fake_run();
+    assert!(residency.acquire("ses_resumed", "run_late", late).is_err());
+}
+
+/// W7-6 (divergence 63): a reopen that arrives while a close is still waiting does not block and does not resurrect
+/// the session early: it takes effect when that close ends. Until then the session refuses guards.
+#[test]
+fn a_reopen_during_an_in_flight_close_takes_effect_when_the_close_ends() {
+    let residency = Arc::new(SessionResidency::with_close_wait(Duration::from_secs(5)));
+    let (run, stops) = fake_run();
+    let guard = residency.acquire("ses_busy", "run_1", run).expect("guard");
+    let closer = residency.clone();
+    let closing = thread::spawn(move || closer.close("ses_busy"));
+    stops.recv().expect("the close stops the run");
+    assert!(
+        !residency.reopen("ses_busy"),
+        "a reopen during a close is pending, not immediate"
+    );
+    let (early, _early_stops) = fake_run();
+    assert!(
+        residency.acquire("ses_busy", "run_early", early).is_err(),
+        "the session still refuses guards while its close is in flight"
+    );
+    drop(guard);
+    closing
+        .join()
+        .expect("close thread")
+        .expect("the close finishes once the run settles");
+    let (after, _after_stops) = fake_run();
+    residency
+        .acquire("ses_busy", "run_after", after)
+        .expect("the pending reopen took effect when the close ended");
+}
+
 /// W7-6: the drain has one bound for the whole shutdown. A run that never settles is reported by name, and a session
 /// after it in the drain does not get a second full wait.
 #[test]
