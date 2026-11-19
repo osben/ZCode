@@ -100,6 +100,9 @@ struct Inner {
     port: Arc<dyn QuotaResumePort>,
     clock: Arc<dyn RedriveClock>,
     state: Mutex<State>,
+    /// Test seam: runs once, after a timer has taken its slot and before it records and resumes.
+    #[cfg(test)]
+    between_take_and_record: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 #[derive(Default)]
@@ -129,8 +132,20 @@ impl QuotaAutoResume {
                 port,
                 clock,
                 state: Mutex::new(State::default()),
+                #[cfg(test)]
+                between_take_and_record: Mutex::new(None),
             }),
         }
+    }
+
+    /// Test seam: the hook runs once, after the next timer takes its slot and before it records and resumes.
+    #[cfg(test)]
+    pub(crate) fn set_hook_between_take_and_record(&self, hook: Box<dyn FnOnce() + Send>) {
+        *self
+            .inner
+            .between_take_and_record
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(hook);
     }
 
     /// Node's run-settled subscription: a run of this session settled in this process.
@@ -239,19 +254,13 @@ fn arm(inner: &Arc<Inner>, run_id: &str, resume_at: u64) {
         },
     );
     // Logged only when the timer is really armed; a spaced start is named as Node names it.
-    if armed && start_at > resume_at {
+    if armed {
+        let spaced_until = (start_at > resume_at).then_some(start_at);
         tracing::info!(
             event = "dynamic_workflow.quota_resume.scheduled",
             run_id,
             resume_at,
-            spaced_until = start_at,
-            "Dynamic workflow quota auto-resume scheduled"
-        );
-    } else if armed {
-        tracing::info!(
-            event = "dynamic_workflow.quota_resume.scheduled",
-            run_id,
-            resume_at,
+            spaced_until,
             "Dynamic workflow quota auto-resume scheduled"
         );
     }
@@ -314,19 +323,36 @@ fn fire_job(inner: &Arc<Inner>, run_id: &str, generation: u64, fire: Fire) {
     if !take_timer(inner, run_id, generation) {
         return;
     }
+    #[cfg(test)]
+    {
+        let hook = inner
+            .between_take_and_record
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        if let Some(hook) = hook {
+            hook();
+        }
+    }
     let Some(resume_at) = row.as_ref().and_then(quota_resume_at) else {
         // The row is no longer a quota stop: resumed by hand, superseded, or stopped elsewhere.
         return;
     };
     let now = inner.clock.now_ms();
     if resume_at != expected_at || resume_at > now {
-        // The row names another reset time, or the wake came at the timer ceiling: arm by the row.
+        // The row names another reset time, or the wake came at the timer ceiling: arm by the row, unless a newer
+        // timer has been armed since this one took its slot.
+        if !slot_is_free(inner, run_id) {
+            return;
+        }
         arm(inner, run_id, resume_at);
         return;
     }
     {
+        // Checked and recorded in one critical section: a newer timer armed since the slot was taken, or a dispose,
+        // means this stale job resumes nothing.
         let mut state = inner.lock();
-        if state.disposed {
+        if state.disposed || state.timers.contains_key(run_id) {
             return;
         }
         state.last_resumed_at.insert(run_id.to_owned(), resume_at);
@@ -373,6 +399,12 @@ fn fire_job(inner: &Arc<Inner>, run_id: &str, generation: u64, fire: Fire) {
 fn is_armed(inner: &Arc<Inner>, run_id: &str, generation: u64) -> bool {
     let state = inner.lock();
     !state.disposed && state.timers.get(run_id) == Some(&generation)
+}
+
+/// Whether the module is live and no timer is armed for the run: the job that took the slot still owns the run.
+fn slot_is_free(inner: &Arc<Inner>, run_id: &str) -> bool {
+    let state = inner.lock();
+    !state.disposed && !state.timers.contains_key(run_id)
 }
 
 /// Takes the run's timer for `generation` out of the table, if it is still armed and the module is live. False when a

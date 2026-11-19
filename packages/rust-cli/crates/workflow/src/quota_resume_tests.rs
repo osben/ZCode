@@ -176,6 +176,32 @@ fn a_settle_between_the_row_read_and_the_resume_defers_to_the_newer_timer() {
 }
 
 #[test]
+fn a_settle_after_the_timer_took_its_slot_leaves_one_resume_from_the_newer_timer() {
+    let r = rig();
+    r.port.put(quota_row("run_a", RESET));
+    r.quota.on_run_settled("run_a");
+    let moved = RESET + HOUR;
+    let module = r.quota.clone();
+    let port = r.port.clone();
+    r.quota.set_hook_between_take_and_record(Box::new(move || {
+        // The run stops again on a later reset time after the stale timer took its slot.
+        port.put(quota_row("run_a", moved));
+        module.on_run_settled("run_a");
+    }));
+    r.clock.advance_to(RESET + WORKFLOW_QUOTA_RESUME_MARGIN_MS);
+    assert!(
+        r.port.resumes().is_empty(),
+        "the stale timer must not record or resume once a newer timer is armed"
+    );
+    r.clock.advance_to(moved + WORKFLOW_QUOTA_RESUME_MARGIN_MS);
+    assert_eq!(
+        r.port.resumes(),
+        vec!["run_a".to_owned()],
+        "one resume, from the newer timer"
+    );
+}
+
+#[test]
 fn a_retry_that_finds_the_run_started_meanwhile_leaves_it_alone() {
     let r = rig();
     r.port
