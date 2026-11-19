@@ -364,3 +364,44 @@ fn a_reply_must_name_its_model_and_stop_reason_and_fit_the_text_limit() {
     let over = format!("{at_limit}a");
     assert!(check_reply(&reply("m", "endTurn", over)).is_err());
 }
+
+#[test]
+fn a_fractional_or_non_positive_float_max_tokens_is_refused() {
+    // The f64 branch accepts only whole, positive numbers: each of these is refused by the schema too.
+    for bad in [16.5, 0.0, -3.0] {
+        let mut req = request();
+        req["maxTokens"] = json!(bad);
+        refused(&req);
+    }
+}
+
+#[test]
+fn the_helper_parse_applies_the_same_max_tokens_rule() {
+    use rust_cli_kernel_api::ids::SessionId;
+    use tokio_util::sync::CancellationToken;
+
+    let with_max = |max: Value| {
+        json!({
+            "sessionId": "s1",
+            "request": {
+                "messages": [{"role": "user", "content": {"type": "text", "text": "hi"}}],
+                "maxTokens": max,
+            },
+        })
+    };
+    for bad in [
+        json!(16.5),
+        json!(0.0),
+        json!(-3.0),
+        json!(9_007_199_254_740_992u64),
+    ] {
+        let parsed =
+            crate::fork::helper_sampling::parse(&with_max(bad.clone()), CancellationToken::new());
+        assert!(parsed.is_err(), "refused: {bad}");
+    }
+    let whole =
+        crate::fork::helper_sampling::parse(&with_max(json!(16.0)), CancellationToken::new())
+            .expect("a whole number written with a point");
+    assert_eq!(whole.request.max_tokens, 16);
+    assert_eq!(whole.session, SessionId::new("s1"));
+}
