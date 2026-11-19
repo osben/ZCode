@@ -239,3 +239,36 @@ fn a_fractional_cap_binds_its_floor_and_never_less_than_one() {
     owner.attach_concurrency(Arc::new(Recording(calls.clone())), handle);
     assert_eq!(log(&calls), vec!["bound run_1 1", "subscribe run_1"]);
 }
+
+/// The floor itself, not only the clamp: a cap of 4.9 binds 4, as the engine floors its cap.
+#[test]
+fn a_cap_of_4_point_9_binds_4() {
+    let mut cfg = config();
+    cfg.caps.max_concurrency = 4.9;
+    let mut owner =
+        ActorDriverOwner::new(cfg, MemoryJournal::new(), Sessions::default()).expect("owner");
+    let calls = Arc::new(Calls::default());
+    let (_mailbox, handle) = ActorMailbox::new();
+    owner.attach_concurrency(Arc::new(Recording(calls.clone())), handle);
+    assert_eq!(log(&calls), vec!["bound run_1 4", "subscribe run_1"]);
+}
+
+/// A cap that is not a finite number is not a cap the engine can hold (`set_max_concurrency` ignores it). The bound
+/// falls back to the minimum rather than becoming the governor's `u64::MAX` (infinity) or a silent 1 for NaN.
+#[test]
+fn a_non_finite_cap_binds_the_minimum_and_does_not_saturate() {
+    for value in [f64::INFINITY, f64::NEG_INFINITY, f64::NAN] {
+        let mut cfg = config();
+        cfg.caps.max_concurrency = value;
+        let mut owner =
+            ActorDriverOwner::new(cfg, MemoryJournal::new(), Sessions::default()).expect("owner");
+        let calls = Arc::new(Calls::default());
+        let (_mailbox, handle) = ActorMailbox::new();
+        owner.attach_concurrency(Arc::new(Recording(calls.clone())), handle);
+        assert_eq!(
+            log(&calls),
+            vec!["bound run_1 1", "subscribe run_1"],
+            "cap {value}"
+        );
+    }
+}

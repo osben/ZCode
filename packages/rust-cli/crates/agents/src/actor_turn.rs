@@ -19,7 +19,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use rust_cli_kernel_api::env::WorkspaceRef;
 use rust_cli_kernel_api::env_shell::BackgroundStatus;
-use rust_cli_kernel_api::ids::{AgentId, MachineName, SessionId};
+use rust_cli_kernel_api::ids::{AgentId, MachineName, SessionId, WorkflowRunId};
 use rust_cli_kernel_api::message::UserOrigin;
 use rust_cli_kernel_api::model::ModelSelection;
 use rust_cli_kernel_api::orchestration::Interactions;
@@ -141,7 +141,7 @@ pub struct ActorRun {
     pub on_mutating: Option<Arc<FirstMutating>>,
     /// The workflow run the actor belongs to: its model requests are admitted under that run (W6b part 2b). None
     /// outside a run.
-    pub admission_run: Option<rust_cli_kernel_api::ids::WorkflowRunId>,
+    pub admission_run: Option<WorkflowRunId>,
 }
 
 /// Forwards an ask's first workspace write to its owner (Node `sink.askMutating`).

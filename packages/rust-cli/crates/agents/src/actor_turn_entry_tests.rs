@@ -4,7 +4,7 @@ use crate::actor_turn::{ActorPort, ActorRun, ActorSubmit, ActorTurnEnd, SubmitPo
 use crate::live::LiveAgent;
 use crate::test_support::{harness, workspace};
 use rust_cli_base::models::GLM_5_3_ACCOUNT;
-use rust_cli_kernel_api::ids::{AgentId, SessionId, TraceId};
+use rust_cli_kernel_api::ids::{AgentId, SessionId, TraceId, WorkflowRunId};
 use rust_cli_kernel_api::message::Message;
 use rust_cli_kernel_api::model::{ModelSelection, QuerySource};
 use rust_cli_kernel_api::permission::PermissionMode;
@@ -237,7 +237,7 @@ async fn an_actor_turns_model_request_carries_its_workflow_run() {
     let child = SessionId::new("sess_actor_child");
     create_child(h.store.as_ref(), &child, &parent).await;
     let mut run = run_for(&child, &parent);
-    run.admission_run = Some(rust_cli_kernel_api::ids::WorkflowRunId::new("wf_1"));
+    run.admission_run = Some(WorkflowRunId::new("wf_1"));
     h.agents
         .run_actor_turn(run, "do it", CancellationToken::new())
         .await;
@@ -248,7 +248,7 @@ async fn an_actor_turns_model_request_carries_its_workflow_run() {
                 .request
                 .admission_run
                 .as_ref()
-                .map(rust_cli_kernel_api::ids::WorkflowRunId::as_str),
+                .map(WorkflowRunId::as_str),
             Some("wf_1"),
             "the turn's request is admitted under its run"
         );
@@ -280,21 +280,36 @@ async fn a_later_turn_of_a_child_takes_the_run_it_now_belongs_to() {
         .run_actor_turn(run_for(&child, &parent), "first", CancellationToken::new())
         .await;
     let mut run = run_for(&child, &parent);
-    run.admission_run = Some(rust_cli_kernel_api::ids::WorkflowRunId::new("wf_1"));
+    run.admission_run = Some(WorkflowRunId::new("wf_1"));
     h.agents
         .run_actor_turn(run, "second", CancellationToken::new())
         .await;
+    // A third turn under a different run follows the run it now belongs to, not the first one's.
+    let mut run = run_for(&child, &parent);
+    run.admission_run = Some(WorkflowRunId::new("wf_2"));
+    h.agents
+        .run_actor_turn(run, "third", CancellationToken::new())
+        .await;
     let seen = h.seen.lock().expect("seen");
-    assert_eq!(seen.len(), 2, "one model turn per run");
+    assert_eq!(seen.len(), 3, "one model turn per run");
     assert_eq!(seen[0].request.admission_run, None);
     assert_eq!(
         seen[1]
             .request
             .admission_run
             .as_ref()
-            .map(rust_cli_kernel_api::ids::WorkflowRunId::as_str),
+            .map(WorkflowRunId::as_str),
         Some("wf_1"),
         "the second turn is admitted under the run it now belongs to"
+    );
+    assert_eq!(
+        seen[2]
+            .request
+            .admission_run
+            .as_ref()
+            .map(WorkflowRunId::as_str),
+        Some("wf_2"),
+        "the third turn is admitted under the next run"
     );
 }
 

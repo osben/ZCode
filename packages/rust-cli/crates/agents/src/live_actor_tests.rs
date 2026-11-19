@@ -5,7 +5,7 @@ use crate::live::{BeginActorRun, Live, LiveAgent};
 use crate::report::Ending;
 use crate::test_support::workspace;
 use rust_cli_base::models::GLM_5_3_ACCOUNT;
-use rust_cli_kernel_api::ids::{AgentId, SessionId};
+use rust_cli_kernel_api::ids::{AgentId, SessionId, WorkflowRunId};
 use rust_cli_kernel_api::model::ModelSelection;
 use rust_cli_kernel_api::panels::SubagentStatus;
 use rust_cli_kernel_api::permission::PermissionMode;
@@ -367,4 +367,46 @@ fn a_finished_turn_keeps_the_message_count_it_captured_after_its_entry_is_releas
     begin(&live, &id, "sess_count");
     live.finish_actor_turn(&id, Ending::Completed, None, Some(3));
     assert_eq!(live.last_turn_messages(&id), Some(3));
+}
+
+/// A finished turn and a resume (SendMessage) hold no workflow run: the run belongs to the turn that carries it, and a
+/// resumed actor's requests must not be admitted under a run that may already be gone.
+#[test]
+fn a_turn_end_and_a_restart_leave_no_workflow_run() {
+    let live = live_at(42);
+    let id = AgentId::new("actor-sess_a");
+    let mut first = run("sess_a");
+    first.admission_run = Some(WorkflowRunId::new("wf_1"));
+    live.begin_actor_run(
+        &id,
+        || LiveAgent::for_actor(first, id.clone(), SessionId::new("ses_parent")),
+        |_| {},
+        "execution-1".to_owned(),
+    );
+    assert_eq!(
+        live.get(&id)
+            .expect("the entry")
+            .admission_run
+            .as_ref()
+            .map(WorkflowRunId::as_str),
+        Some("wf_1"),
+        "the turn runs under its run"
+    );
+    live.finish_actor_turn(&id, Ending::Completed, None, None);
+    assert!(
+        live.get(&id).expect("the entry").admission_run.is_none(),
+        "a finished turn holds no run"
+    );
+    let restarted = live.restart(
+        &id,
+        rust_cli_kernel_api::abort::Abort::new(),
+        None,
+        "execution-2".to_owned(),
+        None,
+    );
+    assert!(restarted.is_some(), "the finished actor restarts");
+    assert!(
+        live.get(&id).expect("the entry").admission_run.is_none(),
+        "a resume holds no run"
+    );
 }

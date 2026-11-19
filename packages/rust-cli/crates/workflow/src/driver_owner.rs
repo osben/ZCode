@@ -364,6 +364,11 @@ impl Drop for ConcurrencyLink {
 
 /// The bound a run registers: the cap floored, and never less than 1 (the engine floors and raises its cap the same way).
 fn bound_of(max_concurrency: f64) -> u64 {
+    // `set_max_concurrency` ignores a non-finite cap, so one only reaches here from the config. It binds the minimum,
+    // rather than NaN (which `max` would hide) or infinity (which `as u64` would saturate to `u64::MAX`).
+    if !max_concurrency.is_finite() {
+        return 1;
+    }
     max_concurrency.floor().max(1.0) as u64
 }
 
