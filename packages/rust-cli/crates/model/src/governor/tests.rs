@@ -581,3 +581,88 @@ async fn a_deadline_crossed_between_two_clock_reads_still_leaves_a_wake() {
         "the wake serves A once the deadline has come"
     );
 }
+
+/// 定时器同步回调（测试替身：先把时钟拨到截止时间，再直接回调）。在锁里安排唤醒的旧实现会在这里死锁。
+#[test]
+fn a_scheduler_that_fires_synchronously_does_not_deadlock() {
+    use std::future::Future;
+    use std::task::{Context, Waker};
+
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let clock = Arc::new(ManualClock::new(1_000_000));
+        let schedule: Scheduler = {
+            let clock = clock.clone();
+            Arc::new(move |delay: Duration, callback: Box<dyn FnOnce() + Send>| {
+                clock.advance(u64::try_from(delay.as_millis()).unwrap_or(u64::MAX));
+                callback();
+            })
+        };
+        let governor = Governor::new(clock, 1, schedule);
+        let holder = governor
+            .try_admit(&run("holder"), KEY_A)
+            .expect("the slot is free");
+        holder.settle(AttemptSignal::Throttled {
+            reason: ThrottleReason::RateLimited,
+            retry_after_ms: Some(20_000),
+        });
+        let token = CancellationToken::new();
+        let scope = run("A");
+        let mut waiter = Box::pin(governor.admit(&scope, KEY_A, &token));
+        let mut cx = Context::from_waker(Waker::noop());
+        // The wake fires inside the admission; the waiter is served by the time the poll returns.
+        let ready = waiter.as_mut().poll(&mut cx).is_ready();
+        let _ = done_tx.send(ready);
+    });
+    let ready = done_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("the admission finished: a synchronous wake must not deadlock");
+    assert!(ready, "the waiter is served by the synchronous wake");
+}
+
+/// 票在没有 tokio 运行时的普通线程上丢弃（冷却还没到期，有人在等）：唤醒不能被丢掉（Codex #560 P2）。
+/// 用的是生产调度器（scheduler）：修复前它在没有运行时时什么也不做，所以这个测试会失败。
+#[tokio::test]
+async fn a_ticket_dropped_off_the_runtime_still_wakes_a_queued_waiter() {
+    use rust_cli_base::clock::SystemClock;
+
+    let governor = Governor::new(Arc::new(SystemClock::utc()), 1, super::scheduler());
+    let holder = governor
+        .try_admit(&run("holder"), KEY_A)
+        .expect("the slot is free");
+    let waiter = {
+        let governor = governor.clone();
+        tokio::spawn(async move {
+            governor
+                .admit(&run("A"), KEY_A, &CancellationToken::new())
+                .await
+                .map(drop)
+        })
+    };
+    settle_tasks().await;
+    std::thread::spawn(move || {
+        holder.settle(AttemptSignal::Throttled {
+            reason: ThrottleReason::RateLimited,
+            retry_after_ms: Some(50),
+        });
+    })
+    .join()
+    .expect("the holder thread settles");
+    let served = tokio::time::timeout(Duration::from_secs(5), waiter).await;
+    assert!(
+        matches!(served, Ok(Ok(Ok(())))),
+        "the waiter is served after the cooldown, not lost: {served:?}"
+    );
+}
+
+/// 默认并发极大时自动增长上限不能溢出（Codex #560 P3）。
+#[test]
+fn an_absurd_default_concurrency_cannot_overflow_the_growth_limit() {
+    let clock = Arc::new(ManualClock::new(1_000_000));
+    let governor = Governor::new(clock, u32::MAX, Arc::new(|_, _| {}));
+    assert!(
+        governor.try_admit(&run("A"), KEY_A).is_some(),
+        "a request is admitted at the default"
+    );
+    assert_eq!(governor.snapshot(KEY_A).unwrap().growth_limit, u32::MAX);
+}

@@ -15,6 +15,7 @@ use std::collections::VecDeque;
 use std::future::Future;
 use std::time::Duration;
 
+use crate::admission::AttemptSignal;
 use rust_cli_kernel_api::model::{
     BlockDelta, ModelError, ModelEvent, ModelNotice, ModelStreamItem,
 };
@@ -108,15 +109,13 @@ impl Read {
     }
 
     /// 越过边界之后的终态错误：按错误结算这次尝试（限流计入桶，其他结束尝试）。
-    pub(crate) fn settle_error(&mut self, error: &rust_cli_kernel_api::model::ModelError) {
-        self.connect
-            .settle_attempt(crate::admission::AttemptSignal::of_error(error));
+    pub(crate) fn settle_error(&mut self, error: &ModelError) {
+        self.connect.settle_attempt(AttemptSignal::of_error(error));
     }
 
     /// 流正常读完：结算这次尝试为成功（Node `model_request_completed`）。
     pub(crate) fn finish(&mut self) {
-        self.connect
-            .settle_attempt(crate::admission::AttemptSignal::Completed);
+        self.connect.settle_attempt(AttemptSignal::Completed);
     }
 
     /// 下一项；流正常结束时为 `None`。流结束或交给调用方的出错时结束这次发送的录音（交出边界之前的失败由 transport

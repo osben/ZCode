@@ -87,7 +87,8 @@ pub trait AdmissionTicket: Send {
     fn settle(self: Box<Self>, signal: AttemptSignal);
 }
 
-/// 准入端口。`acquire` 在排队时可以被 `cancel` 中断，中断后不占名额。
+/// 准入端口。`acquire` 在排队时可以被 `cancel` 中断，中断后不占名额。取消（或治理器已经不在）时返回
+/// [`ModelError::Cancelled`]，从不返回限流类的错误：限流只来自尝试自己的结局（[`AttemptSignal`]）。
 pub trait RequestAdmission: Send + Sync {
     fn acquire<'a>(
         &'a self,

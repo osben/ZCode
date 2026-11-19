@@ -190,3 +190,16 @@ fn a_huge_retry_after_cannot_overflow_the_deadline_and_is_capped() {
         "the cooldown is the cap, measured from now"
     );
 }
+
+/// 极大的 cap 上的限流：乘 3/4 不能溢出（Codex #560 P3）。
+#[test]
+fn a_throttle_at_a_huge_cap_does_not_overflow() {
+    let mut controller = Controller::new(u32::MAX, u32::MAX);
+    let epoch = admit(&mut controller, 0);
+    controller.throttled(0, epoch, ThrottleReason::RateLimited, None);
+    assert_eq!(
+        controller.snapshot().cap,
+        3_221_225_471,
+        "floor(u32::MAX x 3 / 4)"
+    );
+}

@@ -87,31 +87,36 @@ struct Grant {
 
 /// 排队中的一个等待者。丢弃时（取消、或在拿到名额之前就被丢弃）：还在队列里就移走；名额已经发出但没有被取走的，
 /// 把它收回来并以结束结算，否则 in_flight 会永远多一个（Codex P1）。取到名额后 `rx` 置空，丢弃什么也不做。
+///
+/// 不变量：`defused` 只在取到名额（`admit` 的成功分支）时置位；此时名额已经属于票，丢弃什么也不做。
 struct Queued {
     governor: Arc<Governor>,
     key: String,
     run: String,
     id: u64,
-    rx: Option<oneshot::Receiver<Grant>>,
+    rx: oneshot::Receiver<Grant>,
+    defused: bool,
 }
 
 impl Drop for Queued {
     fn drop(&mut self) {
-        let Some(mut rx) = self.rx.take() else {
+        if self.defused {
             return;
-        };
-        let granted = {
+        }
+        let (granted, wake) = {
             let mut state = self.governor.lock();
-            if self
+            let (removed, wake) = self
                 .governor
-                .remove_waiter(&mut state, &self.key, &self.run, self.id)
-            {
-                None
+                .remove_waiter(&mut state, &self.key, &self.run, self.id);
+            if removed {
+                (None, wake)
             } else {
-                rx.close();
-                rx.try_recv().ok()
+                // 已经发出了名额但没有被取走：收回来，以结束结算。
+                self.rx.close();
+                (self.rx.try_recv().ok(), wake)
             }
         };
+        self.governor.fire(wake);
         if let Some(grant) = granted {
             drop(
                 self.governor
@@ -132,7 +137,10 @@ fn run_id(scope: &AdmissionScope) -> String {
 impl Bucket {
     fn new(default_concurrency: u32) -> Self {
         Self {
-            controller: Controller::new(default_concurrency, default_concurrency * GROWTH_FACTOR),
+            controller: Controller::new(
+                default_concurrency,
+                default_concurrency.saturating_mul(GROWTH_FACTOR),
+            ),
             in_flight_by_run: HashMap::new(),
             queues: Vec::new(),
             last_granted_run: None,
@@ -227,7 +235,8 @@ impl Governor {
         if *scope == AdmissionScope::Observer {
             return Ok(self.grant_now(key, &run));
         }
-        let mut queued = {
+        // 入队与准入在同一个锁段里；唤醒在锁外安排（调度器可能同步回调，回调要再拿锁）。
+        let (mut queued, wake) = {
             let mut state = self.lock();
             let id = state.next_waiter;
             state.next_waiter += 1;
@@ -240,29 +249,28 @@ impl Governor {
                     .push((run.clone(), VecDeque::from([Waiter { id, tx }]))),
             }
             let now = self.clock.now_ms();
-            self.drain(&mut state, key, now);
-            Queued {
+            let wake = self.drain(&mut state, key, now);
+            let queued = Queued {
                 governor: self.clone(),
                 key: key.to_owned(),
                 run,
                 id,
-                rx: Some(rx),
-            }
+                rx,
+                defused: false,
+            };
+            (queued, wake)
         };
-        let received = match queued.rx.as_mut() {
-            None => None,
-            Some(rx) => tokio::select! {
-                biased;
-                received = rx => Some(received),
-                () = cancel.cancelled() => None,
-            },
+        self.fire(wake);
+        let received = tokio::select! {
+            biased;
+            received = &mut queued.rx => Some(received),
+            () = cancel.cancelled() => None,
         };
         match received {
             Some(Ok(grant)) => {
-                // 名额已经拿到：不再需要收回，交给票。
-                let run = queued.run.clone();
-                queued.rx = None;
-                Ok(self.ticket(key, run, grant.epoch))
+                // 名额已经拿到：交给票，`Queued` 的丢弃路径不再做事。
+                queued.defused = true;
+                Ok(self.ticket(key, queued.run.clone(), grant.epoch))
             }
             // 取消，或发送端被丢弃：`Queued` 的丢弃路径负责离开队列或还回名额。
             Some(Err(_)) | None => Err(ModelError::Cancelled),
@@ -284,11 +292,17 @@ impl Governor {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
+    /// 桶（没有时建一个）。快路径不分配：只有第一次见到这个 key 时才拷贝 key。
     fn bucket<'a>(&self, state: &'a mut State, key: &str) -> &'a mut Bucket {
-        state
-            .buckets
-            .entry(key.to_owned())
-            .or_insert_with(|| Bucket::new(self.default_concurrency))
+        if !state.buckets.contains_key(key) {
+            state
+                .buckets
+                .insert(key.to_owned(), Bucket::new(self.default_concurrency));
+        }
+        match state.buckets.get_mut(key) {
+            Some(bucket) => bucket,
+            None => unreachable!("the bucket was inserted above"),
+        }
     }
 
     /// 准入一个请求：先做空闲重置，再记入在飞数与 epoch（Node `grant`）。
@@ -323,32 +337,33 @@ impl Governor {
     /// 一次尝试结束：把结局交给控制器，减在飞数，然后尽量准入排队的人。
     fn finish(&self, key: &str, run: &str, epoch: u64, signal: AttemptSignal) {
         let now = self.clock.now_ms();
-        let mut state = self.lock();
-        let Some(bucket) = state.buckets.get_mut(key) else {
-            return;
+        let wake = {
+            let mut state = self.lock();
+            let Some(bucket) = state.buckets.get_mut(key) else {
+                return;
+            };
+            // 控制器返回的 cap 变化在 W6b 第二部分才扇出成事件（见 9.9）：这里只要它的状态效果。
+            let _changes = match signal {
+                AttemptSignal::Completed => bucket.controller.succeeded(now, epoch),
+                AttemptSignal::Throttled {
+                    reason,
+                    retry_after_ms,
+                } => bucket
+                    .controller
+                    .throttled(now, epoch, reason, retry_after_ms),
+                AttemptSignal::FailedTransient => bucket.controller.failed_transient(now),
+                AttemptSignal::Ended => bucket.controller.ended(now),
+            };
+            bucket.bump(run, -1);
+            self.drain(&mut state, key, now)
         };
-        // 控制器返回的 cap 变化在 W6b 第二部分才扇出成事件（见 9.9）：这里只要它的状态效果。
-        let _changes = match signal {
-            AttemptSignal::Completed => bucket.controller.succeeded(now, epoch),
-            AttemptSignal::Throttled {
-                reason,
-                retry_after_ms,
-            } => bucket
-                .controller
-                .throttled(now, epoch, reason, retry_after_ms),
-            AttemptSignal::FailedTransient => bucket.controller.failed_transient(now),
-            AttemptSignal::Ended => bucket.controller.ended(now),
-        };
-        bucket.bump(run, -1);
-        self.drain(&mut state, key, now);
+        self.fire(wake);
     }
 
     /// 尽量准入：门开着且有人等，就按轮转发名额；然后同步等待者数，并安排冷却到期的唤醒（Node `drain`）。
     /// 整个操作只读一次时钟（`now`），准入与安排唤醒都用它：两次读数之间越过截止时间会丢掉唤醒（Codex #560 P1）。
-    fn drain(&self, state: &mut State, key: &str, now: u64) {
-        let Some(bucket) = state.buckets.get_mut(key) else {
-            return;
-        };
+    fn drain(&self, state: &mut State, key: &str, now: u64) -> Option<Wake> {
+        let bucket = state.buckets.get_mut(key)?;
         bucket.controller.observe(now);
         bucket.controller.waiters(now, bucket.waiter_count());
         while bucket.controller.can_admit(now) {
@@ -371,21 +386,27 @@ impl Governor {
             }
         }
         bucket.controller.waiters(now, bucket.waiter_count());
-        self.arm(state, key, now);
+        self.arm(state, key, now)
     }
 
     /// 把队列里的一个等待者移走（取消）。返回是否真的在队列里。
-    fn remove_waiter(&self, state: &mut State, key: &str, run: &str, id: u64) -> bool {
+    fn remove_waiter(
+        &self,
+        state: &mut State,
+        key: &str,
+        run: &str,
+        id: u64,
+    ) -> (bool, Option<Wake>) {
         let now = self.clock.now_ms();
         let Some(bucket) = state.buckets.get_mut(key) else {
-            return false;
+            return (false, None);
         };
         let Some(index) = bucket.queues.iter().position(|(name, _)| name == run) else {
-            return false;
+            return (false, None);
         };
         let queue = &mut bucket.queues[index].1;
         let Some(position) = queue.iter().position(|waiter| waiter.id == id) else {
-            return false;
+            return (false, None);
         };
         queue.remove(position);
         if queue.is_empty() {
@@ -393,29 +414,39 @@ impl Governor {
         }
         bucket.controller.waiters(now, bucket.waiter_count());
         // 离开队列后马上看看剩下的等待者能不能拿到名额（冷却可能已经过了截止时间，只是定时器还没跑）。
-        self.drain(state, key, now);
-        true
+        (true, self.drain(state, key, now))
     }
 
     /// 冷却到期时唤醒这个桶的等待者（Node `armCooldownWake`）。只在冷却还没到期、且有人等时安排。
-    fn arm(&self, state: &mut State, key: &str, now: u64) {
-        let Some(bucket) = state.buckets.get_mut(key) else {
-            return;
-        };
+    /// 算出这次操作要留下的唤醒（不调用调度器：调用方在锁外调 `fire`）。
+    fn arm(&self, state: &mut State, key: &str, now: u64) -> Option<Wake> {
+        let bucket = state.buckets.get_mut(key)?;
         bucket.wake_generation += 1;
         if bucket.waiter_count() == 0 {
-            return;
+            return None;
         }
-        let Some(until) = bucket.controller.snapshot().cooldown_until else {
+        let until = bucket.controller.snapshot().cooldown_until?;
+        if until <= now {
+            return None;
+        }
+        Some(Wake {
+            delay: Duration::from_millis(until - now),
+            key: key.to_owned(),
+            generation: bucket.wake_generation,
+        })
+    }
+
+    /// 安排唤醒。必须在锁外调用：调度器可能同步回调 `wake`，回调要再拿锁。
+    fn fire(&self, wake: Option<Wake>) {
+        let Some(wake) = wake else {
             return;
         };
-        if until <= now {
-            return;
-        }
-        let delay = Duration::from_millis(until - now);
-        let generation = bucket.wake_generation;
         let me = self.me.clone();
-        let key = key.to_owned();
+        let Wake {
+            delay,
+            key,
+            generation,
+        } = wake;
         (self.schedule)(
             delay,
             Box::new(move || {
@@ -428,15 +459,20 @@ impl Governor {
 
     /// 定时器到期：代数还对得上才准入（过期的回调什么也不做）。
     fn wake(&self, key: &str, generation: u64) {
-        let mut state = self.lock();
-        let current = state
-            .buckets
-            .get(key)
-            .is_some_and(|bucket| bucket.wake_generation == generation);
-        if current {
-            let now = self.clock.now_ms();
-            self.drain(&mut state, key, now);
-        }
+        let wake = {
+            let mut state = self.lock();
+            let current = state
+                .buckets
+                .get(key)
+                .is_some_and(|bucket| bucket.wake_generation == generation);
+            if current {
+                let now = self.clock.now_ms();
+                self.drain(&mut state, key, now)
+            } else {
+                None
+            }
+        };
+        self.fire(wake);
     }
 }
 
@@ -480,6 +516,34 @@ impl Drop for Ticket {
     }
 }
 
+/// 待安排的唤醒：到期后按代数号回到治理器（过期的代数什么也不做）。
+struct Wake {
+    delay: Duration,
+    key: String,
+    generation: u64,
+}
+
+/// 生产用的定时器：有 tokio 运行时就用它；没有（票在普通线程上丢弃）就用一个线程睡到截止时间。
+/// 两条路都不会丢唤醒（Codex #560 P2）。
+pub fn scheduler() -> Scheduler {
+    Arc::new(
+        |delay, callback| match tokio::runtime::Handle::try_current() {
+            Ok(handle) => {
+                handle.spawn(async move {
+                    tokio::time::sleep(delay).await;
+                    callback();
+                });
+            }
+            Err(_) => {
+                std::thread::spawn(move || {
+                    std::thread::sleep(delay);
+                    callback();
+                });
+            }
+        },
+    )
+}
+
 /// 进程级的治理器（Node `getWorkflowConcurrencyGovernor`）：第一次取时按 CPU 算 D。
 pub fn process() -> Arc<Governor> {
     static PROCESS: OnceLock<Arc<Governor>> = OnceLock::new();
@@ -489,14 +553,7 @@ pub fn process() -> Arc<Governor> {
             Governor::new(
                 Arc::new(rust_cli_base::clock::SystemClock::utc()),
                 default_concurrency(cores),
-                Arc::new(|delay, callback| {
-                    if let Ok(handle) = tokio::runtime::Handle::try_current() {
-                        handle.spawn(async move {
-                            tokio::time::sleep(delay).await;
-                            callback();
-                        });
-                    }
-                }),
+                scheduler(),
             )
         })
         .clone()

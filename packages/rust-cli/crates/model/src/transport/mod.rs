@@ -483,7 +483,8 @@ enum Outcome {
 impl Connect {
     /// 发一次请求。失败时决定结束、换 fallback 模型，还是等待后重发。每次发送记一条模型轨迹（model-io.md §6）。
     async fn attempt(mut self: Box<Self>) -> Outcome {
-        // 每次尝试先取票（退避睡眠不占名额）；排队时可以被取消，取消即这次请求结束。
+        // 每次尝试（包括“马上重发”：静默重发、G 的流式重发、凭据续期后的重发）先取票：重发同样可能排队，与 Node 的
+        // 每次尝试准入一致。退避睡眠不占名额；排队时可以被取消，取消即这次请求结束。
         if self.admission.is_none()
             && let Some(port) = self.route.options.admission.clone()
         {

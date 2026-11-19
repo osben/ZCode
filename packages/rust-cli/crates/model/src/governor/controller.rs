@@ -127,7 +127,7 @@ impl Controller {
         if epoch != self.epoch {
             return changes;
         }
-        self.success_streak += 1;
+        self.success_streak = self.success_streak.saturating_add(1);
         if self.success_streak < INCREASE_AFTER_SUCCESSES {
             return changes;
         }
@@ -174,7 +174,10 @@ impl Controller {
                 self.cap = good;
             }
             _ => {
-                self.cap = (self.cap * DECREASE_NUM / DECREASE_DEN).max(FLOOR);
+                // u64 中间值：cap 为 u32 时 cap x 3 / 4 必然落在 u32 内，不会溢出（Codex #560 P3）。
+                let decreased =
+                    u64::from(self.cap) * u64::from(DECREASE_NUM) / u64::from(DECREASE_DEN);
+                self.cap = u32::try_from(decreased).unwrap_or(u32::MAX).max(FLOOR);
                 self.last_bad = Some(previous);
                 self.last_good = None;
             }
