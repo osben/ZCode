@@ -167,3 +167,14 @@ fn a_429_without_its_own_retry_after_takes_the_header_and_its_own_wins_when_both
         }
     );
 }
+
+#[test]
+fn a_run_id_keeps_its_text() {
+    assert_eq!(super::RunId::new("run-1").as_str(), "run-1");
+}
+
+#[test]
+#[should_panic(expected = "must not start with NUL")]
+fn a_run_id_in_the_reserved_key_space_fails_loudly() {
+    let _ = super::RunId::new("\0observer");
+}

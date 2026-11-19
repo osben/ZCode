@@ -1,7 +1,7 @@
 //! AIMD 控制器：一个 provider/模型桶的 cap 状态机（Node `dynamic-workflow/src/engine/concurrency.ts`）。
 //!
 //! 纯状态机：不读时钟，`now`（Unix 毫秒）由调用方给。信号返回这次 cap 变化（0 或 1 条，空闲重置后紧跟限流时 2 条）。
-//! Node 的 `setGrowthLimit` 与 `seed`（按 run 的上界抬高增长上限）不在这一部分：它们依赖 run 的上界登记，见 9.9。
+//! 增长上限（`set_growth_limit`）与起跳（`seed`）由治理器按 run 的上界调用（见 `governor::mod`，9.10）。
 
 use crate::admission::ThrottleReason;
 
@@ -26,14 +26,23 @@ pub enum ChangeReason {
     Overloaded,
     Recovered,
     IdleReset,
+    /// 增长上限被压低，cap 当场拉下来（Node `limit_lowered`）。
+    LimitLowered,
+    /// 抬高上界时直接起跳（Node `seeded`）。
+    Seeded,
 }
 
-/// 一次 cap 变化（Node `ConcurrencyChange`，去掉了事件要的 key：桶自己知道）。
+/// 一次 cap 变化（Node `ConcurrencyChange`，去掉了事件要的 key：桶自己知道，治理器发给监听者时补上）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Change {
     pub previous: u32,
     pub next: u32,
     pub reason: ChangeReason,
+    /// 变化之后的 lastGood / lastBad（Node 的 `change()` 同样带上）。
+    pub last_good: Option<u32>,
+    pub last_bad: Option<u32>,
+    /// 这次限流带来的冷却（毫秒，已截断到 `MAX_COOLDOWN_MS`）。
+    pub cooldown_ms: Option<u64>,
 }
 
 /// 只读快照（Node `ConcurrencyControllerSnapshot`）。
@@ -159,9 +168,12 @@ impl Controller {
         self.success_streak = 0;
         // 旧 epoch 的限流也记下（种子规则要看“刚刚撞过墙”），但不评价当前 cap。
         self.last_throttled_at = Some(now);
-        if let Some(ms) = retry_after_ms.filter(|ms| *ms > 0) {
+        let cooldown_ms = retry_after_ms
+            .filter(|ms| *ms > 0)
+            .map(|ms| ms.min(MAX_COOLDOWN_MS));
+        if let Some(ms) = cooldown_ms {
             // 饱和加法：Retry-After 可以是任意大的数（`u64::MAX` 表示“太大”），不能让截止时间回绕。
-            let until = now.saturating_add(ms.min(MAX_COOLDOWN_MS));
+            let until = now.saturating_add(ms);
             self.cooldown_until = Some(self.cooldown_until.unwrap_or(0).max(until));
         }
         if epoch != self.epoch {
@@ -192,7 +204,9 @@ impl Controller {
         };
         // cap 没变且没有 Retry-After 时不发事件；有 Retry-After 时总是发（冷却的结束时刻要告诉用户）。
         if previous != self.cap || retry_after_ms.is_some_and(|ms| ms > 0) {
-            changes.push(self.change(previous, reason));
+            let mut change = self.change(previous, reason);
+            change.cooldown_ms = cooldown_ms;
+            changes.push(change);
         }
         changes
     }
@@ -252,11 +266,57 @@ impl Controller {
         }
     }
 
+    /// 增长上限（Node `setGrowthLimit`）：抬高只记下，cap 一级一级爬；压低到 cap 之下时 cap 当场拉到新上限，
+    /// 夹住 lastGood，清连续数，翻 epoch，发 `limit_lowered`。
+    pub fn set_growth_limit(&mut self, now: u64, limit: u32) -> Vec<Change> {
+        let mut changes = self.idle_reset(now);
+        self.growth_limit = limit.max(self.initial);
+        if self.cap <= self.growth_limit {
+            return changes;
+        }
+        let previous = self.cap;
+        self.cap = self.growth_limit;
+        if self.last_good.is_some_and(|good| good > self.cap) {
+            self.last_good = Some(self.cap);
+        }
+        self.success_streak = 0;
+        self.epoch += 1;
+        changes.push(self.change(previous, ChangeReason::LimitLowered));
+        changes
+    }
+
+    /// 起跳（Node `seed`）：把 cap 当场拉到 `min(target, 增长上限)`，清 lastGood 与 lastBad（起跳点是新的起点，不是对已证明
+    /// 水平的探测），清连续数，翻 epoch。目标不高于 cap，或五分钟内有过限流，就什么也不做。
+    pub fn seed(&mut self, now: u64, target: u32) -> Vec<Change> {
+        let mut changes = self.idle_reset(now);
+        let next = target.min(self.growth_limit);
+        if next <= self.cap {
+            return changes;
+        }
+        if self
+            .last_throttled_at
+            .is_some_and(|at| now.saturating_sub(at) < IDLE_RESET_MS)
+        {
+            return changes;
+        }
+        let previous = self.cap;
+        self.cap = next;
+        self.last_good = None;
+        self.last_bad = None;
+        self.success_streak = 0;
+        self.epoch += 1;
+        changes.push(self.change(previous, ChangeReason::Seeded));
+        changes
+    }
+
     fn change(&self, previous: u32, reason: ChangeReason) -> Change {
         Change {
             previous,
             next: self.cap,
             reason,
+            last_good: self.last_good,
+            last_bad: self.last_bad,
+            cooldown_ms: None,
         }
     }
 }

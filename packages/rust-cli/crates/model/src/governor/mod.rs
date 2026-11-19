@@ -12,7 +12,7 @@
 
 pub mod controller;
 
-use std::collections::{BinaryHeap, HashMap, VecDeque};
+use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::RecvTimeoutError;
 use std::sync::{Arc, Mutex, OnceLock, Weak, mpsc};
@@ -24,8 +24,8 @@ use rust_cli_kernel_api::model::ModelError;
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
-use crate::admission::{AdmissionScope, AdmissionTicket, AttemptSignal, RequestAdmission};
-use controller::{Controller, Snapshot};
+use crate::admission::{AdmissionScope, AdmissionTicket, AttemptSignal, RequestAdmission, RunId};
+use controller::{Change, Controller, Snapshot};
 
 /// 定时器：`delay` 之后调用回调（生产用 tokio，测试用假的）。
 ///
@@ -61,12 +61,63 @@ pub struct Governor {
     default_concurrency: u32,
     schedule: Scheduler,
     state: Mutex<State>,
+    /// 监听者（Node `listeners`）。与 `state` 分开加锁：扇出时在 `state` 的锁里读它，回调在两把锁都放掉之后才调用。
+    listeners: Mutex<Listeners>,
+}
+
+/// 一次 cap 变化，连同它的桶的 key（Node `ConcurrencyChange`）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapChange {
+    pub key: String,
+    pub change: Change,
+}
+
+/// 一个 run 的监听者：每次它 engaged 的 key 上有 cap 变化就调用一次。
+pub type Listener = Arc<dyn Fn(&CapChange) + Send + Sync>;
+
+/// 监听者表：按 run 分组，每个监听者带一个订阅号（退订用）。
+#[derive(Default)]
+struct Listeners {
+    next: u64,
+    by_run: HashMap<String, Vec<(u64, Listener)>>,
+}
+
+/// 订阅的句柄（Node 的退订函数）。不调用 `unsubscribe` 时监听者一直有效，与 Node 忽略返回值的行为一致。
+pub struct Subscription {
+    governor: Weak<Governor>,
+    run: String,
+    id: u64,
+}
+
+impl Subscription {
+    /// 退订：之后这个 run 不再收到扇出（Node `subscribe` 返回的函数）。
+    pub fn unsubscribe(self) {
+        let Some(governor) = self.governor.upgrade() else {
+            return;
+        };
+        let mut listeners = governor.listeners();
+        if let Some(list) = listeners.by_run.get_mut(&self.run) {
+            list.retain(|(id, _)| *id != self.id);
+            if list.is_empty() {
+                listeners.by_run.remove(&self.run);
+            }
+        }
+    }
 }
 
 #[derive(Default)]
 struct State {
     buckets: HashMap<String, Bucket>,
     next_waiter: u64,
+    /// 各 run 登记的上界（Node `runBounds`）。
+    run_bounds: HashMap<String, u32>,
+}
+
+/// 锁外要做的事：给监听者的 cap 变化，以及冷却到期的唤醒。
+#[derive(Default)]
+struct Effects {
+    changes: Vec<(Listener, CapChange)>,
+    wake: Option<Wake>,
 }
 
 struct Bucket {
@@ -76,6 +127,8 @@ struct Bucket {
     /// 按 run 排队。插入顺序就是轮转顺序（Node `queues` 的 Map 顺序）。
     queues: Vec<(String, VecDeque<Waiter>)>,
     last_granted_run: Option<String>,
+    /// 用过这个 key 的 run（Node `runs`，不含观察者与子代理池）：它们登记的上界计入这个桶。
+    runs: HashSet<String>,
     /// 冷却唤醒的代数（见模块文档）。
     wake_generation: u64,
 }
@@ -108,20 +161,28 @@ impl Drop for Queued {
         if self.defused {
             return;
         }
-        let (granted, wake) = {
+        let now = self.governor.clock.now_ms();
+        let (granted, effects) = {
             let mut state = self.governor.lock();
-            let (removed, wake) = self
-                .governor
-                .remove_waiter(&mut state, &self.key, &self.run, self.id);
-            if removed {
-                (None, wake)
+            let mut effects = Effects::default();
+            let removed = self.governor.remove_waiter(
+                &mut state,
+                &self.key,
+                &self.run,
+                self.id,
+                now,
+                &mut effects,
+            );
+            let granted = if removed {
+                None
             } else {
                 // 已经发出了名额但没有被取走：收回来，以结束结算。
                 self.rx.close();
-                (self.rx.try_recv().ok(), wake)
-            }
+                self.rx.try_recv().ok()
+            };
+            (granted, effects)
         };
-        self.governor.fire(wake);
+        self.governor.fire(effects);
         if let Some(grant) = granted {
             drop(
                 self.governor
@@ -134,9 +195,56 @@ impl Drop for Queued {
 fn run_id(scope: &AdmissionScope) -> String {
     match scope {
         AdmissionScope::Observer => OBSERVER_RUN.to_owned(),
-        AdmissionScope::Run(id) => id.clone(),
-        AdmissionScope::SessionSubagents(parent) => format!("{SUBAGENTS_PREFIX}{parent}"),
+        AdmissionScope::Run(id) => id.as_str().to_owned(),
+        AdmissionScope::SessionSubagents(parent) => {
+            format!("{SUBAGENTS_PREFIX}{}", parent.as_str())
+        }
     }
+}
+
+/// 桶（没有时建一个，起点是默认并发 D）。快路径不分配：只有第一次见到这个 key 时才拷贝 key。
+fn bucket_in<'a>(
+    buckets: &'a mut HashMap<String, Bucket>,
+    default_concurrency: u32,
+    key: &str,
+) -> &'a mut Bucket {
+    if !buckets.contains_key(key) {
+        buckets.insert(key.to_owned(), Bucket::new(default_concurrency));
+    }
+    match buckets.get_mut(key) {
+        Some(bucket) => bucket,
+        None => unreachable!("the bucket was inserted above"),
+    }
+}
+
+/// 这个 run 在这个桶上是否 engaged（有在飞或排队的请求；或者登记过上界的 run，`also`）。Node `fanOut` 的判断。
+fn engaged(bucket: &Bucket, run: &str, also: Option<&HashSet<String>>) -> bool {
+    bucket
+        .in_flight_by_run
+        .get(run)
+        .is_some_and(|count| *count > 0)
+        || bucket
+            .queues
+            .iter()
+            .any(|(name, queue)| name == run && !queue.is_empty())
+        || also.is_some_and(|runs| runs.contains(run))
+}
+
+/// 冷却到期的唤醒要不要安排（Node `armCooldownWake`）：返回这次操作留下的唤醒，代数号已经推进。
+fn arm(bucket: &mut Bucket, key: &str, now: u64) -> Option<Wake> {
+    bucket.wake_generation += 1;
+    if bucket.waiter_count() == 0 {
+        return None;
+    }
+    let until = bucket.controller.snapshot().cooldown_until?;
+    if until <= now {
+        return None;
+    }
+    Some(Wake {
+        delay: Duration::from_millis(until - now),
+        key: key.to_owned(),
+        generation: bucket.wake_generation,
+    })
 }
 
 impl Bucket {
@@ -149,6 +257,7 @@ impl Bucket {
             in_flight_by_run: HashMap::new(),
             queues: Vec::new(),
             last_granted_run: None,
+            runs: HashSet::new(),
             wake_generation: 0,
         }
     }
@@ -200,6 +309,7 @@ impl Governor {
             default_concurrency,
             schedule,
             state: Mutex::new(State::default()),
+            listeners: Mutex::new(Listeners::default()),
         })
     }
 
@@ -214,15 +324,24 @@ impl Governor {
             return Some(self.grant_now(key, &run));
         }
         let now = self.clock.now_ms();
-        let mut state = self.lock();
-        let bucket = self.bucket(&mut state, key);
-        bucket.controller.observe(now);
-        if bucket.waiter_count() > 0 || !bucket.controller.can_admit(now) {
-            return None;
-        }
-        let epoch = Self::grant(bucket, now, &run);
-        drop(state);
-        Some(self.ticket(key, run, epoch))
+        let (epoch, effects) = {
+            let mut state = self.lock();
+            let mut effects = Effects::default();
+            if matches!(scope, AdmissionScope::Run(_)) {
+                self.note_run_used(&mut state, key, &run, now, &mut effects);
+            }
+            let bucket = bucket_in(&mut state.buckets, self.default_concurrency, key);
+            let observed = bucket.controller.observe(now);
+            self.publish(&mut effects, bucket, key, observed, None);
+            if bucket.waiter_count() > 0 || !bucket.controller.can_admit(now) {
+                (None, effects)
+            } else {
+                let epoch = self.grant(bucket, now, &run, key, &mut effects);
+                (Some(epoch), effects)
+            }
+        };
+        self.fire(effects);
+        epoch.map(|epoch| self.ticket(key, run, epoch))
     }
 
     /// 排队准入（Node `admit`）：等到门开着、冷却过期、轮到这个 run。`cancel` 中断时离开队列、不占名额。
@@ -240,21 +359,25 @@ impl Governor {
         if *scope == AdmissionScope::Observer {
             return Ok(self.grant_now(key, &run));
         }
-        // 入队与准入在同一个锁段里；唤醒在锁外安排（调度器可能同步回调，回调要再拿锁）。
-        let (mut queued, wake) = {
+        // 入队与准入在同一个锁段里；唤醒与扇出在锁外做（调度器可能同步回调，回调要再拿锁）。
+        let (mut queued, effects) = {
             let mut state = self.lock();
+            let mut effects = Effects::default();
+            let now = self.clock.now_ms();
+            if matches!(scope, AdmissionScope::Run(_)) {
+                self.note_run_used(&mut state, key, &run, now, &mut effects);
+            }
             let id = state.next_waiter;
             state.next_waiter += 1;
             let (tx, rx) = oneshot::channel();
-            let bucket = self.bucket(&mut state, key);
+            let bucket = bucket_in(&mut state.buckets, self.default_concurrency, key);
             match bucket.queues.iter_mut().find(|(name, _)| *name == run) {
                 Some((_, queue)) => queue.push_back(Waiter { id, tx }),
                 None => bucket
                     .queues
                     .push((run.clone(), VecDeque::from([Waiter { id, tx }]))),
             }
-            let now = self.clock.now_ms();
-            let wake = self.drain(&mut state, key, now);
+            self.drain(&mut state, key, now, &mut effects);
             let queued = Queued {
                 governor: self.clone(),
                 key: key.to_owned(),
@@ -263,9 +386,9 @@ impl Governor {
                 rx,
                 defused: false,
             };
-            (queued, wake)
+            (queued, effects)
         };
-        self.fire(wake);
+        self.fire(effects);
         let received = tokio::select! {
             biased;
             received = &mut queued.rx => Some(received),
@@ -290,6 +413,70 @@ impl Governor {
             .map(|bucket| bucket.controller.snapshot())
     }
 
+    /// 订阅一个 run 的 cap 变化（Node `subscribe`）。扇出只到该 key 上 engaged 的 run。
+    pub fn subscribe<F>(self: &Arc<Self>, run: &RunId, listener: F) -> Subscription
+    where
+        F: Fn(&CapChange) + Send + Sync + 'static,
+    {
+        let listener: Listener = Arc::new(listener);
+        let mut listeners = self.listeners();
+        let id = listeners.next;
+        listeners.next += 1;
+        listeners
+            .by_run
+            .entry(run.as_str().to_owned())
+            .or_default()
+            .push((id, listener));
+        Subscription {
+            governor: Arc::downgrade(self),
+            run: run.as_str().to_owned(),
+            id,
+        }
+    }
+
+    /// 登记一个 run 的上界（Node `setRunBound`）：它用过的 key 的增长上限抬到 `max(2D, 这些 run 的上界最大值)`，
+    /// 并起跳到上界（五分钟内有过限流则不起跳）。再次登记覆盖旧值。
+    pub fn set_run_bound(&self, run: &RunId, bound: u32) {
+        let now = self.clock.now_ms();
+        let mut effects = Effects::default();
+        {
+            let mut state = self.lock();
+            state.run_bounds.insert(run.as_str().to_owned(), bound);
+            let State {
+                buckets,
+                run_bounds,
+                ..
+            } = &mut *state;
+            for (key, bucket) in buckets.iter_mut() {
+                if bucket.runs.contains(run.as_str()) {
+                    self.refresh_growth_limit(bucket, run_bounds, key, now, &mut effects);
+                }
+            }
+        }
+        self.fire(effects);
+    }
+
+    /// 清掉一个 run 的上界（Node `clearRunBound`）：它不再计入任何桶，增长上限落回，高于它的 cap 被拉下来。
+    pub fn clear_run_bound(&self, run: &RunId) {
+        let now = self.clock.now_ms();
+        let mut effects = Effects::default();
+        {
+            let mut state = self.lock();
+            state.run_bounds.remove(run.as_str());
+            let State {
+                buckets,
+                run_bounds,
+                ..
+            } = &mut *state;
+            for (key, bucket) in buckets.iter_mut() {
+                if bucket.runs.remove(run.as_str()) {
+                    self.refresh_growth_limit(bucket, run_bounds, key, now, &mut effects);
+                }
+            }
+        }
+        self.fire(effects);
+    }
+
     fn lock(&self) -> std::sync::MutexGuard<'_, State> {
         // 锁中毒只可能来自 panic；治理器的状态仍可用，继续用它。
         self.state
@@ -297,35 +484,112 @@ impl Governor {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    /// 桶（没有时建一个）。快路径不分配：只有第一次见到这个 key 时才拷贝 key。
-    fn bucket<'a>(&self, state: &'a mut State, key: &str) -> &'a mut Bucket {
-        if !state.buckets.contains_key(key) {
-            state
-                .buckets
-                .insert(key.to_owned(), Bucket::new(self.default_concurrency));
+    fn listeners(&self) -> std::sync::MutexGuard<'_, Listeners> {
+        self.listeners
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// 自动增长的基数：2D（Node `baseGrowthLimit`）。
+    fn base_growth(&self) -> u32 {
+        self.default_concurrency.saturating_mul(GROWTH_FACTOR)
+    }
+
+    /// 一个 run 第一次在这个 key 上请求准入（Node `noteRunUsed`）：记入桶的 `runs`；它已经登记过上界的话，
+    /// 这个桶立刻按它的上界算增长上限（Node 的 run 先用 key、后登记上界，或反过来，结果一样）。
+    fn note_run_used(
+        &self,
+        state: &mut State,
+        key: &str,
+        run: &str,
+        now: u64,
+        effects: &mut Effects,
+    ) {
+        let State {
+            buckets,
+            run_bounds,
+            ..
+        } = state;
+        let bucket = bucket_in(buckets, self.default_concurrency, key);
+        if bucket.runs.contains(run) {
+            return;
         }
-        match state.buckets.get_mut(key) {
-            Some(bucket) => bucket,
-            None => unreachable!("the bucket was inserted above"),
+        bucket.runs.insert(run.to_owned());
+        if run_bounds.contains_key(run) {
+            self.refresh_growth_limit(bucket, run_bounds, key, now, effects);
         }
     }
 
-    /// 准入一个请求：先做空闲重置，再记入在飞数与 epoch（Node `grant`）。
-    fn grant(bucket: &mut Bucket, now: u64, run: &str) -> u64 {
-        bucket.controller.observe(now);
-        let epoch = bucket.controller.admitted(now);
-        bucket.bump(run, 1);
-        bucket.last_granted_run = Some(run.to_owned());
-        epoch
+    /// 按用过这个桶的 run 的上界重算增长上限，并起跳到最大的上界（Node `refreshGrowthLimit`）。
+    /// 这些变化来自 run 的上界，不来自请求，所以扇出到所有登记在这个 key 上的 run（`runs`），哪怕它此刻没有在飞请求。
+    fn refresh_growth_limit(
+        &self,
+        bucket: &mut Bucket,
+        run_bounds: &HashMap<String, u32>,
+        key: &str,
+        now: u64,
+        effects: &mut Effects,
+    ) {
+        let largest = bucket
+            .runs
+            .iter()
+            .filter_map(|run| run_bounds.get(run))
+            .copied()
+            .max();
+        let limit = self.base_growth().max(largest.unwrap_or(0));
+        let mut changes = Vec::new();
+        if limit != bucket.controller.snapshot().growth_limit {
+            changes.extend(bucket.controller.set_growth_limit(now, limit));
+        }
+        if let Some(target) = largest {
+            changes.extend(bucket.controller.seed(now, target));
+        }
+        self.publish(effects, bucket, key, changes, Some(&bucket.runs));
+    }
+
+    /// 把一个桶的 cap 变化排进待办（Node `fanOut`）：收件人是 engaged 的 run 的监听者；`also` 另加一组 run。
+    /// 必须在状态锁里调用（engaged 要看当时的状态）；回调在锁外由 `fire` 调用。
+    fn publish(
+        &self,
+        effects: &mut Effects,
+        bucket: &Bucket,
+        key: &str,
+        changes: Vec<Change>,
+        also: Option<&HashSet<String>>,
+    ) {
+        if changes.is_empty() {
+            return;
+        }
+        let recipients: Vec<Listener> = {
+            let listeners = self.listeners();
+            listeners
+                .by_run
+                .iter()
+                .filter(|(run, _)| engaged(bucket, run, also))
+                .flat_map(|(_, list)| list.iter().map(|(_, listener)| listener.clone()))
+                .collect()
+        };
+        for change in changes {
+            let cap_change = CapChange {
+                key: key.to_owned(),
+                change,
+            };
+            for listener in &recipients {
+                effects.changes.push((listener.clone(), cap_change.clone()));
+            }
+        }
     }
 
     fn grant_now(self: &Arc<Self>, key: &str, run: &str) -> Box<dyn AdmissionTicket> {
         let now = self.clock.now_ms();
-        let epoch = {
+        let (epoch, effects) = {
             let mut state = self.lock();
-            let bucket = self.bucket(&mut state, key);
-            Self::grant(bucket, now, run)
+            let mut effects = Effects::default();
+            let bucket = bucket_in(&mut state.buckets, self.default_concurrency, key);
+            let epoch = self.grant(bucket, now, run, key, &mut effects);
+            (epoch, effects)
         };
+        self.fire(effects);
         self.ticket(key, run.to_owned(), epoch)
     }
 
@@ -339,16 +603,34 @@ impl Governor {
         })
     }
 
-    /// 一次尝试结束：把结局交给控制器，减在飞数，然后尽量准入排队的人。
+    /// 准入一个请求：先做空闲重置（并扇出它的变化），再记入在飞数与 epoch（Node `grant`）。
+    fn grant(
+        &self,
+        bucket: &mut Bucket,
+        now: u64,
+        run: &str,
+        key: &str,
+        effects: &mut Effects,
+    ) -> u64 {
+        let observed = bucket.controller.observe(now);
+        self.publish(effects, bucket, key, observed, None);
+        let epoch = bucket.controller.admitted(now);
+        bucket.bump(run, 1);
+        bucket.last_granted_run = Some(run.to_owned());
+        epoch
+    }
+
+    /// 一次尝试结束：把结局交给控制器，扇出它的变化（发生在减在飞数之前：这个 run 此刻仍 engaged），
+    /// 减在飞数，然后尽量准入排队的人。
     fn finish(&self, key: &str, run: &str, epoch: u64, signal: AttemptSignal) {
         let now = self.clock.now_ms();
-        let wake = {
+        let effects = {
             let mut state = self.lock();
+            let mut effects = Effects::default();
             let Some(bucket) = state.buckets.get_mut(key) else {
                 return;
             };
-            // 控制器返回的 cap 变化在 W6b 第二部分才扇出成事件（见 9.9）：这里只要它的状态效果。
-            let _changes = match signal {
+            let changes = match signal {
                 AttemptSignal::Completed => bucket.controller.succeeded(now, epoch),
                 AttemptSignal::Throttled {
                     reason,
@@ -359,19 +641,28 @@ impl Governor {
                 AttemptSignal::FailedTransient => bucket.controller.failed_transient(now),
                 AttemptSignal::Ended => bucket.controller.ended(now),
             };
+            self.publish(&mut effects, bucket, key, changes, None);
             bucket.bump(run, -1);
-            self.drain(&mut state, key, now)
+            self.drain(&mut state, key, now, &mut effects);
+            effects
         };
-        self.fire(wake);
+        self.fire(effects);
     }
 
     /// 尽量准入：门开着且有人等，就按轮转发名额；然后同步等待者数，并安排冷却到期的唤醒（Node `drain`）。
     /// 整个操作只读一次时钟（`now`），准入与安排唤醒都用它：两次读数之间越过截止时间会丢掉唤醒（Codex #560 P1）。
-    fn drain(&self, state: &mut State, key: &str, now: u64) -> Option<Wake> {
-        let bucket = state.buckets.get_mut(key)?;
-        bucket.controller.observe(now);
-        bucket.controller.waiters(now, bucket.waiter_count());
-        while bucket.controller.can_admit(now) {
+    fn drain(&self, state: &mut State, key: &str, now: u64, effects: &mut Effects) {
+        let Some(bucket) = state.buckets.get_mut(key) else {
+            return;
+        };
+        let observed = bucket.controller.observe(now);
+        self.publish(effects, bucket, key, observed, None);
+        loop {
+            let waiters = bucket.controller.waiters(now, bucket.waiter_count());
+            self.publish(effects, bucket, key, waiters, None);
+            if !bucket.controller.can_admit(now) {
+                break;
+            }
             let Some(index) = bucket.next_run_with_waiters() else {
                 break;
             };
@@ -383,15 +674,17 @@ impl Governor {
             let Some(waiter) = waiter else {
                 continue;
             };
-            let epoch = Self::grant(bucket, now, &run);
+            let epoch = self.grant(bucket, now, &run, key, effects);
             if waiter.tx.send(Grant { epoch }).is_err() {
                 // 等待者已经不在了：把刚给的名额还回去（以取消结束）。
-                bucket.controller.ended(now);
+                let changes = bucket.controller.ended(now);
+                self.publish(effects, bucket, key, changes, None);
                 bucket.bump(&run, -1);
             }
         }
-        bucket.controller.waiters(now, bucket.waiter_count());
-        self.arm(state, key, now)
+        let waiters = bucket.controller.waiters(now, bucket.waiter_count());
+        self.publish(effects, bucket, key, waiters, None);
+        effects.wake = arm(bucket, key, now);
     }
 
     /// 把队列里的一个等待者移走（取消）。返回是否真的在队列里。
@@ -401,49 +694,37 @@ impl Governor {
         key: &str,
         run: &str,
         id: u64,
-    ) -> (bool, Option<Wake>) {
-        let now = self.clock.now_ms();
+        now: u64,
+        effects: &mut Effects,
+    ) -> bool {
         let Some(bucket) = state.buckets.get_mut(key) else {
-            return (false, None);
+            return false;
         };
         let Some(index) = bucket.queues.iter().position(|(name, _)| name == run) else {
-            return (false, None);
+            return false;
         };
         let queue = &mut bucket.queues[index].1;
         let Some(position) = queue.iter().position(|waiter| waiter.id == id) else {
-            return (false, None);
+            return false;
         };
         queue.remove(position);
         if queue.is_empty() {
             bucket.queues.remove(index);
         }
-        bucket.controller.waiters(now, bucket.waiter_count());
+        let waiters = bucket.controller.waiters(now, bucket.waiter_count());
+        self.publish(effects, bucket, key, waiters, None);
         // 离开队列后马上看看剩下的等待者能不能拿到名额（冷却可能已经过了截止时间，只是定时器还没跑）。
-        (true, self.drain(state, key, now))
+        self.drain(state, key, now, effects);
+        true
     }
 
-    /// 冷却到期时唤醒这个桶的等待者（Node `armCooldownWake`）。只在冷却还没到期、且有人等时安排。
-    /// 算出这次操作要留下的唤醒（不调用调度器：调用方在锁外调 `fire`）。
-    fn arm(&self, state: &mut State, key: &str, now: u64) -> Option<Wake> {
-        let bucket = state.buckets.get_mut(key)?;
-        bucket.wake_generation += 1;
-        if bucket.waiter_count() == 0 {
-            return None;
+    /// 执行待办：先调用监听者（不持有任何锁），再安排唤醒。唤醒必须在锁外安排：调度器可能同步回调 `wake`，
+    /// 回调要再拿锁（同步调度器的契约见 [`Scheduler`]）。
+    fn fire(&self, effects: Effects) {
+        for (listener, change) in &effects.changes {
+            listener(change);
         }
-        let until = bucket.controller.snapshot().cooldown_until?;
-        if until <= now {
-            return None;
-        }
-        Some(Wake {
-            delay: Duration::from_millis(until - now),
-            key: key.to_owned(),
-            generation: bucket.wake_generation,
-        })
-    }
-
-    /// 安排唤醒。必须在锁外调用：调度器可能同步回调 `wake`，回调要再拿锁（同步调度器的契约见 [`Scheduler`]）。
-    fn fire(&self, wake: Option<Wake>) {
-        let Some(wake) = wake else {
+        let Some(wake) = effects.wake else {
             return;
         };
         let me = self.me.clone();
@@ -464,20 +745,20 @@ impl Governor {
 
     /// 定时器到期：代数还对得上才准入（过期的回调什么也不做）。
     fn wake(&self, key: &str, generation: u64) {
-        let wake = {
+        let effects = {
             let mut state = self.lock();
+            let mut effects = Effects::default();
             let current = state
                 .buckets
                 .get(key)
                 .is_some_and(|bucket| bucket.wake_generation == generation);
             if current {
                 let now = self.clock.now_ms();
-                self.drain(&mut state, key, now)
-            } else {
-                None
+                self.drain(&mut state, key, now, &mut effects);
             }
+            effects
         };
-        self.fire(wake);
+        self.fire(effects);
     }
 }
 
