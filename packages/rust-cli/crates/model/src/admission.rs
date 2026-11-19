@@ -60,10 +60,24 @@ impl AttemptSignal {
                 reason: ThrottleReason::Overloaded,
                 retry_after_ms,
             },
+            // 瞬时失败：网络、5xx、流空闲，以及被传输层重发的截断或协议违例的流。
             ModelError::Network { .. }
             | ModelError::Server { .. }
-            | ModelError::StreamIdle { .. } => Self::FailedTransient,
-            _ => Self::Ended,
+            | ModelError::StreamIdle { .. }
+            | ModelError::Protocol { .. } => Self::FailedTransient,
+            // 不是并发信号，只结束这次尝试。这里逐个列出变体（不用 `_`），新增变体时编译器会要求给出分类。
+            ModelError::Cancelled
+            | ModelError::PromptTooLong { .. }
+            | ModelError::Authentication { .. }
+            | ModelError::InvalidRequest { .. }
+            | ModelError::FallbackTriggered { .. }
+            | ModelError::Unsupported { .. }
+            | ModelError::QuotaExhausted { .. }
+            | ModelError::ContentBlocked { .. }
+            | ModelError::RequestTooLarge { .. }
+            | ModelError::CurrentAttachmentsTooLarge
+            // `peel` 已经去掉了 `Provider` 包装，这一支只为让 match 保持穷举。
+            | ModelError::Provider { .. } => Self::Ended,
         }
     }
 }

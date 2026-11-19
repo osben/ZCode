@@ -1325,6 +1325,8 @@ This is Node's mapping of its status events to the same four results, except tha
 8. `NEVER_ABORTED` and the observer's own signal path are not needed: the Rust `acquire` takes a cancel token, and the observer never waits.
 9. The cooldown is capped at 60 s (`MAX_COOLDOWN_MS`, the default `max_wait` of the Rust retry policy). Node has no cap on the governor's cooldown (`concurrency.ts` uses Retry-After as given), so a Retry-After longer than a minute freezes the bucket for a minute here, not for its full length. The deadline is saturating, so an absurd Retry-After cannot overflow (Codex #560 P2).
 10. Each operation reads the clock once and uses that `now` for admission and for scheduling the wake. A deadline that falls between two reads cannot lose a wake (Codex #560 P1).
+11. A truncated or malformed stream (`ModelError::Protocol`) settles as transient, like a stream idle. The transport retries it (provider-errors §3.2). Node has no truncation rule: a retried non-throttle failure settles as transient there, and a terminal one as ended. A terminal Protocol error here also clears the success streak, which is the conservative side (ocr #560).
+12. Follow-up (W6b part 2): `AdmissionScope::Run(String)` and `SessionSubagents(String)` are raw strings in one key namespace. Newtypes come with the first construction of `Run` in the driver. Until then the `\0` prefixes keep the two namespaces apart only by convention.
 
 **Not ported from the Node tests in this part.** The growth-limit and seeding cases, the run-bound cases, the fan-out and unsubscribe cases, and the zero-delay wake cases. They depend on part 2's run bounds and events. The Node parity of `tryAdmit` with a run that has a bound is not checked.
 
