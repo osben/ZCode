@@ -12,7 +12,7 @@ use rust_cli_protocol_core::rpc::RpcError;
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
-use super::super::legacy_session::tests::{automation_create, call, server};
+use super::super::legacy_session::tests::{TestSampling, automation_create, call, server};
 use super::super::node_helper::HelperRequests;
 use super::RustMcpUi;
 use crate::server::Server;
@@ -287,12 +287,183 @@ async fn panel_methods_outside_the_owned_set_stay_refused_for_a_rust_run_server(
     let answers = Arc::new(RecordingAnswers::default());
     let weak: Weak<dyn HelperRequests> = Arc::downgrade(&answers) as _;
     server.context.set_mcp_ui(RustMcpUi::new(weak));
-    // Sampling is PR 2: it is not routed, so no helper answers it either.
-    let sampling = dispatch(
+    // App tools and resource subscriptions are PR 3 and PR 4: they are not routed, so no helper answers them either.
+    for method in ["mcp/uiRegisterAppTools", "mcp/uiSubscribeResource"] {
+        let refused = dispatch(
+            &server,
+            method,
+            json!({"sessionId": "run_s1", "serverName": "files", "pluginId": "p", "workspace": {"workspacePath": "/w"}}),
+        )
+        .await;
+        assert!(refused.is_err(), "{method} stays refused");
+    }
+}
+
+fn sampling(operation: &str) -> Value {
+    json!({
+        "operationId": operation,
+        "request": {
+            "messages": [{"role": "user", "content": {"type": "text", "text": "describe"}}],
+            "maxTokens": 64,
+        },
+    })
+}
+
+#[tokio::test]
+async fn a_panel_samples_on_the_session_model_and_an_operation_id_is_single_use() {
+    let (_scope, server, kernel) = server();
+    call(&server, "session/create", automation_create("run_s1"))
+        .await
+        .expect("the session exists");
+    kernel.set_sampling(TestSampling::Reply("the model answer".to_owned()));
+    let host = Arc::new(FakeHost::new());
+    server.context.set_mcp_app_host(host);
+    let answers = Arc::new(RecordingAnswers::default());
+    let weak: Weak<dyn HelperRequests> = Arc::downgrade(&answers) as _;
+    server.context.set_mcp_ui(RustMcpUi::new(weak));
+    let lease = dispatch(&server, "mcp/uiOpenInstance", open_params())
+        .await
+        .expect("the panel opens");
+
+    let reply = dispatch(&server, "mcp/uiSampling", scoped(&lease, sampling("op-1")))
+        .await
+        .expect("the model answers");
+    assert_eq!(reply["role"], "assistant");
+    assert_eq!(reply["content"]["text"], "the model answer");
+    assert_eq!(reply["stopReason"], "endTurn");
+
+    let again = dispatch(&server, "mcp/uiSampling", scoped(&lease, sampling("op-1")))
+        .await
+        .expect_err("a finished operation id is refused");
+    assert!(again.message.contains("Duplicate"));
+    // A cancel of an id that never ran records it as terminal, and reports that nothing was in flight.
+    let cancelled = dispatch(
+        &server,
+        "mcp/uiCancelSampling",
+        scoped(&lease, json!({"operationId": "op-2"})),
+    )
+    .await
+    .expect("the cancel is recorded");
+    assert_eq!(cancelled, json!({"cancelled": false}));
+}
+
+#[tokio::test]
+async fn a_reconnect_cancels_the_panels_sampling_in_flight() {
+    let (_scope, server, kernel) = server();
+    call(&server, "session/create", automation_create("run_s1"))
+        .await
+        .expect("the session exists");
+    kernel.set_sampling(TestSampling::Hold);
+    let host = Arc::new(FakeHost::new());
+    server.context.set_mcp_app_host(host.clone());
+    let answers = Arc::new(RecordingAnswers::default());
+    let weak: Weak<dyn HelperRequests> = Arc::downgrade(&answers) as _;
+    server.context.set_mcp_ui(RustMcpUi::new(weak));
+    let lease = dispatch(&server, "mcp/uiOpenInstance", open_params())
+        .await
+        .expect("the panel opens");
+
+    let in_flight = {
+        let server = Arc::clone(&server);
+        let lease = lease.clone();
+        tokio::spawn(async move {
+            dispatch(&server, "mcp/uiSampling", scoped(&lease, sampling("op-1"))).await
+        })
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(5), kernel.sampling_started())
+        .await
+        .expect("the model call starts");
+
+    // The generation moves on: the lease ends, and its operation is cancelled before the panel hears of the close.
+    host.reconnect();
+    let outcome = tokio::time::timeout(std::time::Duration::from_secs(5), in_flight)
+        .await
+        .expect("the call ends after the cancel")
+        .expect("the call joins");
+    let error = outcome.expect_err("the in-flight sampling is cancelled");
+    assert!(error.message.contains("cancelled"), "{}", error.message);
+    assert!(
+        answers
+            .deltas
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(_, delta)| delta["op"] == "pluginUi.instanceClosed")
+    );
+    // The lease is gone: a later sampling on it is refused.
+    let late = dispatch(&server, "mcp/uiSampling", scoped(&lease, sampling("op-2")))
+        .await
+        .expect_err("a revoked lease cannot sample");
+    assert!(late.message.contains("no longer authorized"));
+}
+
+#[tokio::test]
+async fn an_operation_id_counts_utf16_units_as_node_does() {
+    let (_scope, server, kernel) = server();
+    call(&server, "session/create", automation_create("run_s1"))
+        .await
+        .expect("the session exists");
+    kernel.set_sampling(TestSampling::Reply("ok".to_owned()));
+    let host = Arc::new(FakeHost::new());
+    server.context.set_mcp_app_host(host);
+    let answers = Arc::new(RecordingAnswers::default());
+    let weak: Weak<dyn HelperRequests> = Arc::downgrade(&answers) as _;
+    server.context.set_mcp_ui(RustMcpUi::new(weak));
+    let lease = dispatch(&server, "mcp/uiOpenInstance", open_params())
+        .await
+        .expect("the panel opens");
+
+    // 64 astral characters are 128 UTF-16 units: the longest id Node's `.max(128)` accepts.
+    let longest = "\u{1F600}".repeat(64);
+    dispatch(
         &server,
         "mcp/uiSampling",
-        json!({"sessionId": "run_s1", "serverName": "files", "pluginId": "p", "workspace": {"workspacePath": "/w"}}),
+        scoped(&lease, sampling(&longest)),
     )
-    .await;
-    assert!(sampling.is_err());
+    .await
+    .expect("128 units are accepted");
+    // 65 are 130 units (65 characters): refused before the operation is admitted.
+    let too_long = "\u{1F600}".repeat(65);
+    let error = dispatch(
+        &server,
+        "mcp/uiSampling",
+        scoped(&lease, sampling(&too_long)),
+    )
+    .await
+    .expect_err("130 units are refused");
+    assert_eq!(error.code, -32602);
+    assert!(error.message.contains("128"), "{}", error.message);
+}
+
+#[tokio::test]
+async fn a_kernel_reply_that_does_not_fit_the_result_schema_is_refused() {
+    let (_scope, server, kernel) = server();
+    call(&server, "session/create", automation_create("run_s1"))
+        .await
+        .expect("the session exists");
+    kernel.set_sampling(TestSampling::Raw(
+        rust_cli_kernel_api::sampling::SamplingReply {
+            model: String::new(),
+            text: "ok".to_owned(),
+            stop_reason: "endTurn".to_owned(),
+        },
+    ));
+    let host = Arc::new(FakeHost::new());
+    server.context.set_mcp_app_host(host);
+    let answers = Arc::new(RecordingAnswers::default());
+    let weak: Weak<dyn HelperRequests> = Arc::downgrade(&answers) as _;
+    server.context.set_mcp_ui(RustMcpUi::new(weak));
+    let lease = dispatch(&server, "mcp/uiOpenInstance", open_params())
+        .await
+        .expect("the panel opens");
+
+    let error = dispatch(&server, "mcp/uiSampling", scoped(&lease, sampling("op-1")))
+        .await
+        .expect_err("an empty model is refused");
+    assert_eq!(error.code, -32603);
+    assert!(
+        error.message.contains("Sampling result is invalid"),
+        "{}",
+        error.message
+    );
 }

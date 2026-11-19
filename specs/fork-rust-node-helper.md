@@ -772,6 +772,26 @@ Base `fork`. Four PRs, in this order. Each PR keeps the refusal of every method 
 - **Not done in PR 1.**
   - The desktop E2E (`plugins/extensions/plugin-extension-entries`) runs in the box, not on this Mac.
 
+#### As built (F7 PR 2)
+
+- **Built.** The sampling ledger (`protocol-zcode/src/fork/mcp_ui_sampling.rs`, Node `samplingCalls.ts`): `admit` (the synchronous admission: scope live, operation id new, lease capacity, session and agent caps), `cancel` (records a terminal state; cancels the operation when it is in flight), `forget` (drops a lease's ledger), and `Admission::run` (cancel, 60 s deadline and the model call; the first decides, and a late result is dropped). Also `check_request`, the limits of `mcpAppsSamplingParamsSchema`. The owner (`fork/mcp_ui_rust.rs`) answers `mcp/uiSampling` and `mcp/uiCancelSampling` for Rust-run servers: the request is checked, the lease validated, the operation admitted, the pin retained, the session opened (`Server::live`) and the call run through the kernel `sample_model` (F3b). The lease is validated again after the call. `finish_closed` drops the ledger of every lease that ends.
+- **Revocation.** The operation's cancel is a child of its lease's cancel, so a close, a revoke (connection generation bump) or a session close cancels the lease's in-flight operations through the token tree, before the lease's close notice. The sweep in `admit` and `cancel` also drops ledgers whose lease has ended.
+- **Tests (red then green).** Red runs came first:
+  - the ledger tests (`mcp_ui_sampling_tests.rs`, six ported from `samplingCalls.test.ts` plus eight request-limit tests) against stubs: 14 failed (`not implemented`);
+  - the route tests `a_panel_samples_on_the_session_model_and_an_operation_id_is_single_use` and `a_reconnect_cancels_the_panels_sampling_in_flight` (`mcp/uiSampling` was not routed: `Method not found`, and the held call never started, so the bounded wait timed out);
+  - the Rust conformance run (`unknown op sample`), and the Node conformance run (`unknown op sample`).
+  - Green after the implementation: the 14 ledger and limit tests, the 4 route tests (the refusal test now names `mcp/uiRegisterAppTools` and `mcp/uiSubscribeResource`, which stay refused), the Rust conformance run, the Node conformance run against `McpUiSamplingCalls`, and Node's `samplingCalls.test.ts` (six tests, run with an explicit config because the bootstrap vitest include does not cover `src`).
+  - The fixture gained the sampling steps after the lease steps: admission outcomes (started, duplicate, busy per lease, session cap of 4, agent cap of 8), cancel before admission, a terminal id, a finished run (`done`), `collect` for each sampling's final outcome, and a reconnect that cancels every in-flight operation (`cancelled`) and revokes the leases. The revoked aliases are sorted in both runners, so the output does not depend on the token order.
+- **Review round (ocr on bab0622e6, five LOW findings).** Fixed: the cancelled-call wait is bounded (5 s, route test); the `closeSession` aliases are sorted in the Rust runner; `operationId` counts UTF-16 units (zod `.max(128)`, `utf16_len`); `maxTokens` must be a safe integer (`max_tokens`, also in `helper_sampling::parse`); the kernel reply is checked as `mcpAppsSamplingResultSchema` checks it. Each behaviour change had a red test first.
+- **Divergences from Node.**
+  - **Deadline 60 s, not 65 s.** Node's ledger deadline is `MCP_APPS_SAMPLING_TIMEOUT_MS` (60 s); 65 s is `MCP_APPS_SAMPLING_TRANSPORT_TIMEOUT_MS`, the helper's forwarding timeout, which a Rust-run server does not have. The ledger keeps 60 s, as Node's unit test asserts.
+  - The limits are checked in Rust with Rust's messages (zod's issue texts are not reproduced). Text length is counted in UTF-16 units as zod does. The budget's metadata is serialised with serde_json: its bytes can differ from `JSON.stringify` by escape sequences near the 8 MiB boundary.
+  - `annotations`, `modelPreferences` and `_meta` values are not validated beyond their keys (zod checks their types). The top-level `mcp/uiSampling` params are not checked for unknown keys (zod is `.strict()`).
+  - The kernel's reply is checked as `mcpAppsSamplingResultSchema` checks it: a non-empty model and stop reason, and text of at most 8 MiB in UTF-16 units. A reply that fails answers the internal error `Sampling result is invalid`, as Node's parse failure does.
+  - The operation id is the pin's call id (Node's `retain(token, operationId)`), so an idle close waits for it as Node does.
+- **Not done in PR 2.** App tools (`mcp/uiRegisterAppTools`, `mcp/uiUnregisterAppTools`, `mcp/uiClaimAppToolCall`, `mcp/uiResolveAppToolCall`) and resource subscriptions stay refused with the Rust-run refusal (PR 3 and PR 4).
+- **Observed, not changed (PR 1 code).** `RustMcpUi::validate` closes a lease on a source mismatch through `Instances::validate`, which cancels and removes it without `finish_closed`. So that path sends no `pluginUi.instanceClosed` and keeps the panel's connection subscription until the next close. Check this against Node's `validate` (which also closes without a notice) before PR 3.
+
 ## Lifecycle and failure modes
 
 - **Spawn.**

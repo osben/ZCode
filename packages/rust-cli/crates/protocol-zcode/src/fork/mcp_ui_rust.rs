@@ -1,10 +1,11 @@
 //! Fork: the MCP App panels of the servers Rust runs itself (specs/fork-rust-node-helper.md, "MCP Apps on Rust-hosted
 //! servers (F7)", PR 1). Port of Node `zcode-protocol/mcp-ui/protocol.ts` and `handlers.ts` for the methods of PR 1:
 //! `mcp/uiOpenInstance`, `mcp/uiValidateInstance`, `mcp/uiCloseInstance`, `mcp/uiCallTool`, `mcp/uiCancelCall`,
-//! `mcp/uiReadResource`, `mcp/uiListResources`, `mcp/uiListResourceTemplates` and `mcp/readResource`.
+//! `mcp/uiReadResource`, `mcp/uiListResources`, `mcp/uiListResourceTemplates` and `mcp/readResource`; and PR 2's
+//! `mcp/uiSampling` and `mcp/uiCancelSampling` (the ledger is [`super::mcp_ui_sampling`]).
 //!
 //! Owner: [`RustMcpUi`] owns the leases ([`super::mcp_ui_lease::Instances`]), the invalidation subscription of each
-//! lease, and the table of in-flight UI calls. A plugin-host server is helper-hosted and never reaches this module:
+//! lease, the table of in-flight UI calls and the sampling ledger. A plugin-host server is helper-hosted and never reaches this module:
 //! [`route`] picks the owner by server, through the session's MCP table.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -20,10 +21,14 @@ use rust_cli_protocol_core::rpc::RpcError;
 use serde_json::{Map, Value, json};
 use tokio_util::sync::CancellationToken;
 
+use super::helper_answers::kernel_error;
+use super::helper_sampling;
 use super::helper_session_admit::{not_hosted, owns};
 use super::mcp_ui_lease::{Binding, Connection, Instances, Lease, Scope};
+use super::mcp_ui_sampling::{self, Sampling};
 use super::node_helper::HelperRequests;
 use crate::server::Server;
+use rust_cli_kernel_api::sampling::SamplingCall;
 
 const UI_READ_MAX_BYTES: usize = 8 * 1024 * 1024;
 
@@ -38,6 +43,8 @@ pub(crate) const METHODS: &[&str] = &[
     "mcp/uiListResources",
     "mcp/uiListResourceTemplates",
     "mcp/readResource",
+    "mcp/uiSampling",
+    "mcp/uiCancelSampling",
 ];
 
 /// Node `MCP_APPS_UI_READ_RESOURCE_MIME_ALLOWLIST`: an entry ending in `/` matches by prefix, otherwise exactly.
@@ -254,6 +261,8 @@ pub(crate) struct RustMcpUi {
     instances: Instances,
     panels: Mutex<BTreeMap<String, Panel>>,
     calls: Mutex<CallTable>,
+    /// The sampling ledger of the panels (F7 PR 2): its operations end with their lease.
+    sampling: Sampling,
 }
 
 fn random_hex() -> String {
@@ -268,6 +277,7 @@ impl RustMcpUi {
             instances: Instances::new(&random_hex()),
             panels: Mutex::new(BTreeMap::new()),
             calls: Mutex::new(CallTable::default()),
+            sampling: Sampling::new(),
         })
     }
 
@@ -281,6 +291,7 @@ impl RustMcpUi {
     /// Node `instanceClosed`: the panel's close notice. Called without locks, so a subscription drop cannot deadlock.
     fn finish_closed(&self, leases: Vec<Lease>) {
         for lease in leases {
+            self.sampling.forget(&lease.token);
             let panel = self.panels.lock_unpoisoned().remove(&lease.token);
             if let Some(panel) = panel {
                 drop(panel.subscription);
@@ -315,12 +326,15 @@ impl RustMcpUi {
     async fn dispatch(
         &self,
         host: &dyn McpAppHost,
+        server: &Server,
         session: &SessionId,
         method: &str,
         params: &Value,
     ) -> Result<Value, RpcError> {
         match method {
             "mcp/uiOpenInstance" => self.open(host, session, params).await,
+            "mcp/uiSampling" => self.sample(host, server, session, params).await,
+            "mcp/uiCancelSampling" => self.cancel_sampling(host, session, params),
             "mcp/uiValidateInstance" => {
                 let scope = Guard::new(params)?;
                 self.validate(host, session, &scope, params)?;
@@ -442,6 +456,7 @@ impl RustMcpUi {
         drop(panels);
         for (_, panel) in closed {
             self.instances.close(&panel.lease);
+            self.sampling.forget(&panel.lease.token);
             drop(panel.subscription);
             self.deliver(
                 &panel.session,
@@ -497,6 +512,74 @@ impl RustMcpUi {
             self.finish_closed(vec![lease]);
         }
         Ok(json!({"closed": closed}))
+    }
+
+    /// Node `sampleMcpUi`: the request's limits, then the lease, then one operation of the session's model. The
+    /// operation ends with the lease (its cancel is the lease's child), and a pin keeps an idle close from ending it.
+    async fn sample(
+        &self,
+        host: &dyn McpAppHost,
+        server: &Server,
+        session: &SessionId,
+        params: &Value,
+    ) -> Result<Value, RpcError> {
+        let guard = Guard::new(params)?;
+        let lease = lease_of(params)?;
+        let operation = operation_id(params)?;
+        mcp_ui_sampling::check_request(params.get("request").unwrap_or(&Value::Null))?;
+        let call = helper_sampling::parse(params, CancellationToken::new())?;
+        let active = self.validate(host, session, &guard, params)?;
+        let scope = mcp_ui_sampling::Scope {
+            lease: &lease.token,
+            session: &guard.session,
+            cancel: &active.cancel,
+        };
+        let admission = self.sampling.admit(&scope, operation)?;
+        let session_id = session.clone();
+        let request = call.request;
+        admission
+            .run(move |cancel| async move {
+                let _pin = Pinned::retain(&self.instances, &lease.token, operation)?;
+                self.validate(host, session, &guard, params)?;
+                server.live(session).await.map_err(kernel_error)?;
+                let result = server
+                    .kernel
+                    .sample_model(SamplingCall {
+                        session: session_id,
+                        request,
+                        cancel,
+                    })
+                    .await;
+                self.validate(host, session, &guard, params)?;
+                match result {
+                    Ok(reply) => {
+                        mcp_ui_sampling::check_reply(&reply)?;
+                        helper_sampling::answer(Ok(reply))
+                    }
+                    Err(error) => helper_sampling::answer(Err(error)),
+                }
+            })
+            .await
+    }
+
+    /// Node `cancelMcpUiSampling`: the lease is validated, then the operation id is recorded as terminal.
+    fn cancel_sampling(
+        &self,
+        host: &dyn McpAppHost,
+        session: &SessionId,
+        params: &Value,
+    ) -> Result<Value, RpcError> {
+        let guard = Guard::new(params)?;
+        let lease = lease_of(params)?;
+        let operation = operation_id(params)?;
+        let active = self.validate(host, session, &guard, params)?;
+        let scope = mcp_ui_sampling::Scope {
+            lease: &lease.token,
+            session: &guard.session,
+            cancel: &active.cancel,
+        };
+        let cancelled = self.sampling.cancel(&scope, operation)?;
+        Ok(json!({"cancelled": cancelled}))
     }
 
     /// Node `callTool`: the tool must be visible to the page; the call runs on the server's current connection and
@@ -770,7 +853,7 @@ pub(crate) async fn route(
         return Some(Err(not_hosted("the session is not one of this agent's")));
     }
     Some(
-        ui.dispatch(host.as_ref(), &session_id, method, params)
+        ui.dispatch(host.as_ref(), server, &session_id, method, params)
             .await,
     )
 }
@@ -789,6 +872,43 @@ fn app_error(error: McpAppError) -> RpcError {
 
 fn call_key(session: &str, token: &str, call_id: &str) -> String {
     format!("{session}\u{0}{token}:{call_id}")
+}
+
+/// Node `nonEmptyString.max(128)` on an operation id.
+fn operation_id(params: &Value) -> Result<&str, RpcError> {
+    let id = text(params, "operationId")?;
+    if super::mcp_ui_sampling::utf16_len(id) > 128 {
+        return Err(RpcError::invalid_params(
+            "operationId is at most 128 characters",
+        ));
+    }
+    Ok(id)
+}
+
+/// A pin of one in-flight sampling in its lease (Node `retain`): released when the operation ends, however it ends.
+struct Pinned<'a> {
+    instances: &'a Instances,
+    token: String,
+    pin: String,
+}
+
+impl<'a> Pinned<'a> {
+    fn retain(instances: &'a Instances, token: &str, call_id: &str) -> Result<Self, RpcError> {
+        let pin = instances
+            .retain(token, call_id)
+            .map_err(RpcError::internal)?;
+        Ok(Self {
+            instances,
+            token: token.to_owned(),
+            pin,
+        })
+    }
+}
+
+impl Drop for Pinned<'_> {
+    fn drop(&mut self) {
+        self.instances.release(&self.token, &self.pin);
+    }
 }
 
 fn to_connection(connection: &McpAppConnection) -> Connection {

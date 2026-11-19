@@ -157,3 +157,4 @@ export interface McpUiHandlers extends McpUiResourceHandlers<McpUiSessionAccess>
   ): Promise<McpUiReadResourceForUiResult>;
 }
 export { McpUiInstances, mcpUiInstances } from "./instances.js";
+export { McpUiSamplingCalls } from "./samplingCalls.js";
