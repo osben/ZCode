@@ -29,18 +29,28 @@ use crate::driver_rules::{
     profile_fit, submit_route,
 };
 use crate::engine::{
-    AskMessage, AskOutcome, EngineConfig, SubmitVerdict, WorkflowDriver, WorkflowEngine,
+    AskMessage, AskOutcome, EngineConfig, RunSettlement, SubmitVerdict, WorkflowDriver,
+    WorkflowEngine,
 };
 use crate::engine_artifacts::ArtifactPublishRequest;
 use crate::error::{ErrorCode, WorkflowError};
 use crate::escalation::{AnswerOutcome, EscalateOutcome, EscalationBook, EscalationRequest};
 use crate::event::RunEvent;
 use crate::journal::JournalPort;
+use crate::model::{AskWait, StopReason, WaitCause};
 use crate::model::{ConcurrencyChange, Ref, StoredEvent};
+use crate::model_failure::{
+    RedriveClock, TRANSIENT_CONTINUE_PROMPT, TurnFailure, transient_backoff_ms,
+};
+use crate::model_failure::{provider_stop_error, retry_after_of};
 use crate::persona::persona_name;
 use crate::run_concurrency::RunConcurrency;
 use crate::world_host::{WORLD_JOB_LIMIT, WorldJob, WorldWiring, spawn_world_job};
 use anyhow::{Result, anyhow};
+use rust_cli_kernel_api::model::ModelError;
+use rust_cli_kernel_api::workflow_failure::{
+    WorkflowModelFailurePolicy, facts_of, model_failure_policy, next_unrecognized_streak,
+};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
@@ -121,6 +131,20 @@ struct QueuedStart {
 struct ActiveAsk {
     instance: Ref,
     typed: bool,
+    /// The ask's message and the submit schema of its first turn. A redrive starts its turn with the same schema, as
+    /// Node's redrive keeps the runtime's turn shape (W6b part 3).
+    message: AskMessage,
+    schema: Option<Value>,
+    /// Redrives scheduled for this ask so far (Node `transientAttempts`).
+    attempts: u32,
+    /// Unrecognized business codes in a row, across this ask's failures (Node's streak, W6b part 3).
+    unrecognized: u32,
+}
+
+/// The owner's redrive wiring: the mailbox the redrive job posts to, and the clock it waits on.
+struct RedriveWiring {
+    handle: ActorHandle,
+    clock: Arc<dyn RedriveClock>,
 }
 
 /// The engine's driver for an actor run. It records what the engine asks for and answers verdicts; it does not
@@ -341,6 +365,8 @@ pub struct ActorDriverOwner<J: JournalPort, S: ActorSessions> {
     active: BTreeMap<String, ActiveAsk>,
     /// The run's link to the process governor, when one is attached (W6b part 2b). Released at settlement.
     concurrency: Option<ConcurrencyLink>,
+    /// The redrive wiring (W6b part 3). Without it a transient failure cannot be redriven and fails the ask.
+    redrive: Option<RedriveWiring>,
 }
 
 /// What the owner holds of the governor for its run: the port, and the subscription's end.
@@ -401,6 +427,7 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
             book,
             active: BTreeMap::new(),
             concurrency: None,
+            redrive: None,
         })
     }
 
@@ -660,19 +687,169 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
         })
     }
 
-    /// Node `askFailed` for a turn that threw and was not cancelled (`workflow-driver.ts` `onTurnRejected`): the
-    /// engine settles the session's active ask as failed with the turn's text. A session with no ask in flight
-    /// writes nothing.
-    pub fn turn_failed(&mut self, session: &str, message: &str) -> Result<()> {
+    /// Node `handleModelTurnFailure` (`workflow-driver-model-failure.ts`), for a turn that threw and was not cancelled.
+    /// A failure with no model error fails the session's ask with `DriverError`, as Node's `askFailed` does. A model
+    /// failure takes the workflow policy table: a permanent one stops the run as `stopped(provider)`, a context
+    /// overflow fails only that ask with `ContextLimit`, and anything else is redriven after a backoff. A session with
+    /// no ask in flight writes nothing.
+    pub fn turn_failed(&mut self, session: &str, failure: &TurnFailure) -> Result<()> {
         self.settle_quietly();
         let Some(ask) = self.active.get(session).cloned() else {
             return Ok(());
         };
-        let result = self.engine.ask_failed(
-            &ask.instance,
-            WorkflowError::new(ErrorCode::DriverError, message),
+        let Some(model) = failure.model.as_ref() else {
+            let result = self.engine.ask_failed(
+                &ask.instance,
+                WorkflowError::new(ErrorCode::DriverError, failure.message.clone()),
+            );
+            return self.after_engine(result);
+        };
+        // The streak counts this ask's unrecognized codes across its redrives: one more when this failure is again one.
+        let streak = next_unrecognized_streak(ask.unrecognized, model);
+        if let Some(active) = self.active.get_mut(session) {
+            active.unrecognized = streak;
+        }
+        match model_failure_policy(model, streak) {
+            WorkflowModelFailurePolicy::Stop(kind) => {
+                let (subagent, name) = self.subagent_of(session, &ask);
+                let error =
+                    provider_stop_error(kind, model, &failure.message, &subagent, name.as_deref());
+                let result = self.engine.stop(StopReason::Provider, Some(error), None);
+                self.after_engine(result)
+            }
+            WorkflowModelFailurePolicy::ContextExceeded => {
+                let (subagent, name) = self.subagent_of(session, &ask);
+                let label = name.unwrap_or(subagent);
+                let error = WorkflowError::new(
+                    ErrorCode::ContextLimit,
+                    format!(
+                        "Subagent {label} exceeded the model's context window even after compaction. \
+                         Give this ask a smaller input or split the work across subagents."
+                    ),
+                );
+                let result = self.engine.ask_failed(&ask.instance, error);
+                self.after_engine(result)
+            }
+            WorkflowModelFailurePolicy::Retry | WorkflowModelFailurePolicy::Cancelled => {
+                self.schedule_redrive(session, &ask, model)
+            }
+        }
+    }
+
+    /// The subagent a failure names: its ref and its persona name (Node `subagentLabel`'s inputs).
+    fn subagent_of(&self, session: &str, ask: &ActiveAsk) -> (String, Option<String>) {
+        match self.engine.driver.identity_of_session.get(session) {
+            Some((actor, name)) => (actor.key(), name.clone()),
+            None => (ask.instance.key(), None),
+        }
+    }
+
+    /// Node `scheduleTransientRedrive`: counts the attempt, reports `askWaiting(backoff)`, and schedules the redrive.
+    /// Retry-After wins over the backoff. Without a redrive clock the ask fails: a retry that cannot be scheduled
+    /// would hang the run silently.
+    fn schedule_redrive(
+        &mut self,
+        session: &str,
+        ask: &ActiveAsk,
+        model: &ModelError,
+    ) -> Result<()> {
+        let (handle, clock) = match self.redrive.as_ref() {
+            Some(wiring) => (wiring.handle.clone(), wiring.clock.clone()),
+            None => {
+                let result = self.engine.ask_failed(
+                    &ask.instance,
+                    WorkflowError::new(
+                        ErrorCode::DriverError,
+                        "a transient model failure has no redrive clock to retry on",
+                    ),
+                );
+                return self.after_engine(result);
+            }
+        };
+        let attempt = ask.attempts + 1;
+        if let Some(active) = self.active.get_mut(session) {
+            active.attempts = attempt;
+        }
+        let retry_after_ms = retry_after_of(model);
+        let delay_ms =
+            retry_after_ms.unwrap_or_else(|| transient_backoff_ms(attempt, clock.random()));
+        let wait = AskWait {
+            cause: WaitCause::Backoff,
+            reason: Some(facts_of(model).reason.to_owned()),
+            attempt: Some(u64::from(attempt)),
+            delay_ms: Some(delay_ms),
+            retry_after_ms,
+        };
+        let waiting = self.engine.ask_waiting(&ask.instance, wait);
+        let instance = ask.instance.clone();
+        let session_owned = session.to_owned();
+        clock.after(
+            delay_ms,
+            Box::new(move || {
+                // The owner may be gone by now; the request then has no one to serve it.
+                let _ = handle.post(ActorRequest::RedriveDue {
+                    session: session_owned,
+                    instance,
+                });
+            }),
         );
-        self.after_engine(result)
+        self.after_engine(waiting)
+    }
+
+    /// Node's redrive, fired (W6b part 3): the ask's next turn starts with the continue prompt, on the same session and
+    /// with the same schema. Nothing starts when the ask has settled, was cancelled, or is no longer the session's ask.
+    pub fn redrive_due(&mut self, session: &str, instance: &Ref) -> Result<()> {
+        self.settle_quietly();
+        let Some(ask) = self.active.get(session).cloned() else {
+            return Ok(());
+        };
+        if ask.instance.key() != instance.key()
+            || !self.engine.is_live_ask(instance)
+            || self.engine.driver.cancelled.contains(&instance.key())
+        {
+            return Ok(());
+        }
+        let interaction = self
+            .engine
+            .driver
+            .interaction_of_session
+            .get(session)
+            .cloned()
+            .ok_or_else(|| {
+                anyhow!("no interaction description is recorded for session {session}")
+            })?;
+        let input = TurnInput {
+            text: TRANSIENT_CONTINUE_PROMPT.to_owned(),
+            epilogue_start: 0,
+            submit_schema: ask.schema.clone(),
+        };
+        match self.engine.driver.sessions.start_turn(
+            session,
+            instance,
+            &ask.message,
+            &input,
+            &interaction,
+        ) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                let result = self.engine.ask_failed(
+                    instance,
+                    WorkflowError::new(ErrorCode::DriverError, error.to_string()),
+                );
+                self.after_engine(result)
+            }
+        }
+    }
+
+    /// Attach the redrive wiring (W6b part 3): the mailbox a redrive posts to, and the clock it waits on. Production
+    /// attaches [`crate::model_failure::ThreadClock`]; tests attach a clock they run by hand.
+    pub fn attach_redrive(&mut self, handle: ActorHandle, clock: Arc<dyn RedriveClock>) {
+        self.redrive = Some(RedriveWiring { handle, clock });
+    }
+
+    /// The run's settlement once it has settled (`None` while it runs).
+    pub fn settlement(&self) -> Option<&RunSettlement> {
+        self.engine.settlement()
     }
 
     /// Node `workflow-driver-transcript.ts`: the ask's message boundary, written on its node row. The turn thread names
@@ -917,6 +1094,10 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
                     ActiveAsk {
                         instance: start.instance.clone(),
                         typed: start.message.typed,
+                        message: start.message.clone(),
+                        schema: start.turn.submit_schema.clone(),
+                        attempts: 0,
+                        unrecognized: 0,
                     },
                 );
                 self.engine

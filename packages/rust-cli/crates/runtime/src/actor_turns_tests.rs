@@ -416,6 +416,44 @@ async fn a_refused_agents_turn_fails_the_ask_with_its_text() {
     assert!(error.message.contains("model refused"), "{}", error.message);
 }
 
+// W6b part 3: the typed model error travels from the agents turn through the bridge, so the owner's policy stops the
+// run on a quota failure instead of failing the ask with its text.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_quota_failure_on_the_agents_turn_stops_the_run_as_provider() {
+    use rust_cli_kernel_api::model::{ModelError, ProviderFailure};
+    use rust_cli_workflow::engine::RunSettlement;
+    let quota = ModelError::Provider {
+        provider: Box::new(ProviderFailure::new(
+            "1308",
+            Some(429),
+            false,
+            "rate_limited",
+            "zhipu",
+        )),
+        error: Box::new(ModelError::QuotaExhausted {
+            message: "5 hour limit".into(),
+        }),
+    };
+    let agents = ScriptedAgents::new(
+        vec![ActorTurnEnd::ModelFailed {
+            message: "[1308] 5 hour limit".into(),
+            model: quota,
+        }],
+        false,
+    );
+    let (mut owner, mailbox) = owner_over(agents);
+    let actor = owner.create_actor("site", None, None).expect("actor");
+    owner.ask("site", &actor, "do it").expect("ask");
+    owner.drain().expect("drain");
+    mailbox.serve_next(&mut owner).expect("the turn failure");
+    match owner.settlement() {
+        Some(RunSettlement::Stopped {
+            error: Some(error), ..
+        }) => assert_eq!(error["providerStop"]["kind"], "quota"),
+        other => panic!("the run should stop as provider, got {other:?}"),
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_cancelled_turn_is_stopped_through_the_bridge_and_reports_nothing() {
     let agents = ScriptedAgents::new(Vec::new(), true);

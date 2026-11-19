@@ -26,6 +26,7 @@ pub mod imported_cache;
 pub mod journal;
 pub mod journal_dwf;
 pub mod model;
+pub mod model_failure;
 pub mod parked_answers;
 #[cfg(test)]
 #[path = "parked_answers_tests.rs"]
@@ -50,6 +51,8 @@ mod actor_turns_tests;
 mod artifact_review_tests;
 #[cfg(test)]
 mod driver_golden_tests;
+#[cfg(test)]
+mod driver_model_failure_tests;
 #[cfg(test)]
 mod driver_node_parity_tests;
 #[cfg(test)]

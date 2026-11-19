@@ -95,6 +95,12 @@ impl AttemptSignal {
     /// 失败映射成信号。`retry_after_ms` 是响应头里的 Retry-After：错误自己没有时用它（529 过载的时长在响应头里，
     /// Node 把它作为 overload 的 `retryAfterMs` 带进桶的冷却）。
     pub fn of_failure(error: &ModelError, retry_after_ms: Option<u64>) -> Self {
+        // The stop set is the workflow policy table's (W6b part 3, divergence 3 of 9.9): a permanent failure ends the
+        // attempt whatever its variant, so a quota code on a 429 does not cool the bucket. Node's governor reads the
+        // table with no streak, as `is_workflow_stop` does.
+        if rust_cli_kernel_api::workflow_failure::is_workflow_stop(error) {
+            return Self::Ended;
+        }
         match error.peel() {
             ModelError::RateLimited {
                 retry_after_ms: own,

@@ -14,6 +14,7 @@ use crate::driver_owner::TurnEndReply;
 use crate::driver_rules::NUDGE_PROMPT;
 use crate::engine::SubmitVerdict;
 use crate::model::Ref;
+use crate::model_failure::TurnFailure;
 use anyhow::{Result, anyhow};
 use std::any::Any;
 use std::collections::HashMap;
@@ -34,7 +35,7 @@ pub trait TurnRunner: Send + Sync + 'static {
         interaction: &str,
         turn: &TurnInput,
         cancel: &AtomicBool,
-    ) -> std::result::Result<String, String>;
+    ) -> std::result::Result<String, TurnFailure>;
 
     /// The session's message count as the turn left it (Node `journalAskMessageBoundary`'s count). It is captured when
     /// the turn finishes, before the live entry is released, so this read never touches the store: a newer prompt on
@@ -176,7 +177,7 @@ fn run_ask(
         let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
             runner.run_turn(session, interaction, &turn, cancel)
         }))
-        .unwrap_or_else(|payload| Err(panic_text(payload.as_ref())));
+        .unwrap_or_else(|payload| Err(TurnFailure::plain(panic_text(payload.as_ref()))));
         let text = match outcome {
             Ok(text) => text,
             Err(error) => {

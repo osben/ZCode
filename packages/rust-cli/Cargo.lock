@@ -2649,6 +2649,7 @@ dependencies = [
  "anyhow",
  "rusqlite",
  "rust-cli-base",
+ "rust-cli-kernel-api",
  "rust-cli-node-store",
  "serde_json",
  "tempfile",

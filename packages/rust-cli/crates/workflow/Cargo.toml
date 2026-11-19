@@ -20,6 +20,8 @@ rust-cli-node-store.workspace = true
 rusqlite.workspace = true
 # JS 语义的 JSON 文本（JSON.stringify 的字符串转义与数字形式）。
 rust-cli-base.workspace = true
+# The model error and the workflow failure policy table (W6b part 3): the table is shared with the model governor.
+rust-cli-kernel-api.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
 
