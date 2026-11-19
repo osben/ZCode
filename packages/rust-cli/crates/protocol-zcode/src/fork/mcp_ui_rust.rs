@@ -525,20 +525,24 @@ impl RustMcpUi {
         let guard = Guard::new(params)?;
         let uri = text(params, "uri")?;
         let subscriber = subscriber_key(session, params)?;
+        // Node's `guard` (sessionAccess.ts): the lease is validated before the call and after it.
+        let active = self.validate(host, session, &guard, params)?;
+        let cancel = active.cancel.child_token();
         let expected = host
-            .wait_connection(session, &guard.server, &CancellationToken::new())
+            .wait_connection(session, &guard.server, &cancel)
             .await
             .ok_or_else(|| RpcError::new(-32001, "MCP App connection is unavailable"))?;
-        host.subscribe(
-            session,
-            &guard.server,
-            &expected,
-            uri,
-            &subscriber,
-            &CancellationToken::new(),
-        )
-        .await
-        .map_err(app_error)?;
+        // A lease that closed while the connection settled adds nothing.
+        self.validate(host, session, &guard, params)?;
+        host.subscribe(session, &guard.server, &expected, uri, &subscriber, &cancel)
+            .await
+            .map_err(app_error)?;
+        if let Err(refused) = self.validate(host, session, &guard, params) {
+            // Closed during the call: the key the call added goes too, so the server's registry keeps nothing of it.
+            host.unsubscribe(session, &guard.server, uri, &subscriber)
+                .await;
+            return Err(refused);
+        }
         self.ensure_tap(host, session, &guard.server);
         Ok(json!({}))
     }
@@ -553,8 +557,11 @@ impl RustMcpUi {
         let guard = Guard::new(params)?;
         let uri = text(params, "uri")?;
         let subscriber = subscriber_key(session, params)?;
+        // Node's `guard` again: validated before the call and after it.
+        self.validate(host, session, &guard, params)?;
         host.unsubscribe(session, &guard.server, uri, &subscriber)
             .await;
+        self.validate(host, session, &guard, params)?;
         Ok(json!({}))
     }
 

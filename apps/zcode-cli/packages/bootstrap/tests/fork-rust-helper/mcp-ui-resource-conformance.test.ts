@@ -1,9 +1,10 @@
 // Fork (specs/fork-rust-node-helper.md, "MCP Apps on Rust-hosted servers (F7)", PR 4): the Node half of the resource-
 // subscription conformance. The same request sequence runs in Rust (protocol-zcode `fork/mcp_ui_rust/resource_conformance_tests.rs`)
-// against the owner's methods. Here it runs against Node's own handlers (`createMcpUiHandlers`), the adapter's
-// subscription registry (`McpResourceSubscriptionRegistry`), the instances (`mcpUiInstances`) and the notification
-// routing (`routeMcpServerNotification`). The adapter's subscribe and unsubscribe glue is the runner's access object
-// (the same few lines as `McpPort.subscribeResource` / `unsubscribeResource`). Every step's outcome must match.
+// against the owner's methods. Here it runs against Node's own handlers (`createMcpUiHandlers`) over the protocol's
+// access view (`createMcpUiSessionAccess`, whose guard validates the lease before and after each call), the instances
+// (`mcpUiInstances`) and the notification routing (`routeMcpServerNotification`). The adapter's subscribe and
+// unsubscribe glue is the runner's record (the same few lines as `McpPort.subscribeResource` / `unsubscribeResource`),
+// over the adapter's own registry class (`McpResourceSubscriptionRegistry`). Every step's outcome must match.
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -11,6 +12,7 @@ import { SessionEventType } from "@zcode/contracts";
 import { McpResourceSubscriptionRegistry } from "../../../adapters/src/mcp/resource-subscriptions.js";
 import {
   createMcpUiHandlers,
+  createMcpUiSessionAccess,
   mcpUiInstances,
   routeMcpServerNotification,
 } from "../../src/zcode-protocol/mcp-ui/index.js";
@@ -70,16 +72,23 @@ async function runSequence(fixture: Fixture): Promise<string[]> {
     },
   } as never;
 
-  // The adapter's subscribe and unsubscribe glue, as `McpPort` runs it on the server's connection.
-  const access = {
-    hasMcpServer: async (name: string) => name === serverName,
-    subscribeResourceForUi: async (name: string, uri: string, key: string) => {
-      if (registry.add(name, uri, key).first) serverRequests.subscribe += 1;
+  // A session's record as the protocol sees it. Its subscribe and unsubscribe are the adapter's glue, as `McpPort` runs
+  // them on the server's connection (the registry is the adapter's own class).
+  const recordOf = (session: string) => ({
+    app: {
+      getMcpAppConnectionSnapshot: () => current,
+      getPluginReferenceCatalog: () => ({ plugins: [] }),
+      listMcpServers: async () => ({ [serverName]: {} }),
+      subscribeMcpResourceForUi: async (name: string, uri: string, key: string) => {
+        if (registry.add(name, uri, key).first) serverRequests.subscribe += 1;
+      },
+      unsubscribeMcpResourceForUi: async (name: string, uri: string, key: string) => {
+        if (registry.remove(name, uri, key)?.last) serverRequests.unsubscribe += 1;
+      },
     },
-    unsubscribeResourceForUi: async (name: string, uri: string, key: string) => {
-      if (registry.remove(name, uri, key)?.last) serverRequests.unsubscribe += 1;
-    },
-  } as never;
+    traceContext: { traceId: "trace" },
+    session,
+  });
   const handlers = createMcpUiHandlers();
   const dropPrefix = (prefix: string) => {
     const released = registry.removeByPrefix(prefix);
@@ -111,24 +120,25 @@ async function runSequence(fixture: Fixture): Promise<string[]> {
     if (!open) throw new Error(`unknown lease ${step.lease}`);
     return open;
   };
+  // The protocol's access view for one request: `createMcpUiSessionAccess`, whose guard validates the lease before and
+  // after the call, as the protocol does.
+  const accessFor = (step: Step, open: OpenLease) =>
+    createMcpUiSessionAccess(
+      recordOf(open.session) as never,
+      subscriberParams(step, open) as never,
+    );
   const classify = (error: unknown) => {
     const message = (error as Error).message;
-    return message.includes("Invalid MCP App subscription binding")
-      ? "refused:binding"
-      : `error:${message}`;
+    if (message.includes("Invalid MCP App subscription binding")) return "refused:binding";
+    if (message === "MCP App instance is no longer authorized") return "unauthorized";
+    return `error:${message}`;
   };
 
   const run = async (step: Step): Promise<string> => {
     switch (step.op) {
       case "openPanel": {
         const session = step.session ?? "";
-        sessions.set(session, {
-          app: {
-            getMcpAppConnectionSnapshot: () => current,
-            getPluginReferenceCatalog: () => ({ plugins: [] }),
-          },
-          traceContext: { traceId: "trace" },
-        });
+        sessions.set(session, recordOf(session));
         const lease = mcpUiInstances.open(
           {
             workspace: "/w",
@@ -147,7 +157,10 @@ async function runSequence(fixture: Fixture): Promise<string[]> {
       case "subscribe": {
         const open = openOf(step);
         try {
-          await handlers.subscribeResource(access, subscriberParams(step, open) as never);
+          await handlers.subscribeResource(
+            accessFor(step, open),
+            subscriberParams(step, open) as never,
+          );
           return "subscribed";
         } catch (error) {
           return classify(error);
@@ -155,8 +168,15 @@ async function runSequence(fixture: Fixture): Promise<string[]> {
       }
       case "unsubscribe": {
         const open = openOf(step);
-        await handlers.unsubscribeResource(access, subscriberParams(step, open) as never);
-        return "unsubscribed";
+        try {
+          await handlers.unsubscribeResource(
+            accessFor(step, open),
+            subscriberParams(step, open) as never,
+          );
+          return "unsubscribed";
+        } catch (error) {
+          return classify(error);
+        }
       }
       case "serverRequests":
         return `server:subscribe=${serverRequests.subscribe},unsubscribe=${serverRequests.unsubscribe}`;

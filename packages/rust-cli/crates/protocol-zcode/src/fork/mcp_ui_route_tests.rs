@@ -27,6 +27,8 @@ struct FakeHost {
     /// F7 PR 4: (uri, subscriber key) of each subscribe and unsubscribe the owner made.
     subscribed: Mutex<Vec<(String, String)>>,
     unsubscribed: Mutex<Vec<(String, String)>>,
+    /// The next subscribe reconnects the server once it has recorded the subscriber (a lease that closes mid-request).
+    reconnect_on_subscribe: Mutex<bool>,
     /// F7 PR 4: each prefix the owner removed by (a lease's or a session's keys).
     prefixes: Mutex<Vec<String>>,
     /// F7 PR 4: the resource notice callbacks the owner installed.
@@ -41,6 +43,7 @@ impl FakeHost {
             subscribe_supported: Mutex::new(true),
             subscribed: Mutex::new(Vec::new()),
             unsubscribed: Mutex::new(Vec::new()),
+            reconnect_on_subscribe: Mutex::new(false),
             prefixes: Mutex::new(Vec::new()),
             resource_listeners: Mutex::new(Vec::new()),
         }
@@ -171,6 +174,10 @@ impl McpAppHost for FakeHost {
             .lock()
             .unwrap()
             .push((uri.to_owned(), subscriber.to_owned()));
+        let reconnect = std::mem::take(&mut *self.reconnect_on_subscribe.lock().unwrap());
+        if reconnect {
+            self.reconnect();
+        }
         Ok(())
     }
 
@@ -679,6 +686,79 @@ async fn ending_the_session_drops_all_its_subscriptions() {
             .contains(&"run_s1|".to_owned()),
         "the session's prefix is removed: {:?}",
         host.prefixes.lock().unwrap()
+    );
+}
+
+/// Node's `guard` validates the lease before and after a subscription call: a closed lease is refused, and nothing is added.
+#[tokio::test]
+async fn a_subscription_on_a_closed_panel_is_refused_and_adds_nothing() {
+    let (_scope, server, _kernel) = server();
+    let (host, _answers, lease) = open_subscribed_panel(&server).await;
+    dispatch(&server, "mcp/uiCloseInstance", scoped(&lease, json!({})))
+        .await
+        .expect("the panel closes");
+
+    let refused = dispatch(
+        &server,
+        "mcp/uiSubscribeResource",
+        subscription(&lease, "ui://a"),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(refused.message, "MCP App instance is no longer authorized");
+    assert!(
+        host.subscribed.lock().unwrap().is_empty(),
+        "nothing is subscribed"
+    );
+}
+
+/// The same guard for an unsubscription: a closed lease is refused before the host is asked.
+#[tokio::test]
+async fn an_unsubscription_on_a_closed_panel_is_refused() {
+    let (_scope, server, _kernel) = server();
+    let (host, _answers, lease) = open_subscribed_panel(&server).await;
+    dispatch(&server, "mcp/uiCloseInstance", scoped(&lease, json!({})))
+        .await
+        .expect("the panel closes");
+
+    let refused = dispatch(
+        &server,
+        "mcp/uiUnsubscribeResource",
+        subscription(&lease, "ui://a"),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(refused.message, "MCP App instance is no longer authorized");
+    assert!(
+        host.unsubscribed.lock().unwrap().is_empty(),
+        "the host is not asked"
+    );
+}
+
+/// A panel that closes while its subscription is made: the post-call validate refuses, and the key the call added is
+/// removed again, so nothing of a closed panel stays on the server's registry.
+#[tokio::test]
+async fn a_panel_closed_during_its_subscription_leaves_no_subscriber_behind() {
+    let (_scope, server, _kernel) = server();
+    let (host, _answers, lease) = open_subscribed_panel(&server).await;
+    *host.reconnect_on_subscribe.lock().unwrap() = true;
+
+    let refused = dispatch(
+        &server,
+        "mcp/uiSubscribeResource",
+        subscription(&lease, "ui://a"),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(refused.message, "MCP App instance is no longer authorized");
+    let key = subscriber_key(&lease);
+    assert_eq!(
+        *host.subscribed.lock().unwrap(),
+        [("ui://a".to_owned(), key.clone())]
+    );
+    assert_eq!(
+        *host.unsubscribed.lock().unwrap(),
+        [("ui://a".to_owned(), key)]
     );
 }
 

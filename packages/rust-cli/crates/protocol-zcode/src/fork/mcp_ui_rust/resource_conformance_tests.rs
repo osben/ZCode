@@ -278,6 +278,8 @@ fn classify(error: &RpcError) -> String {
         .contains("Invalid MCP App subscription binding")
     {
         "refused:binding".to_owned()
+    } else if error.message == "MCP App instance is no longer authorized" {
+        "unauthorized".to_owned()
     } else {
         format!("error:{}", error.message)
     }
