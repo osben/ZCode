@@ -332,7 +332,9 @@ impl Start {
         // 准入的范围与桶（W6b 第一部分）：主代理与旁路请求是 observer；子代理进子代理池。池按父会话分队列（Node），
         // Rust 的请求没有父会话 ID，所有子代理共用一条队列（9.9 的偏差）。
         let admission_scope = match &request.source {
-            QuerySource::Subagent(_) => AdmissionScope::SessionSubagents(String::new()),
+            QuerySource::Subagent(_) => {
+                AdmissionScope::SessionSubagents(crate::admission::ParentSessionId::default())
+            }
             QuerySource::MainThread | QuerySource::Compact | QuerySource::Side(_) => {
                 AdmissionScope::Observer
             }

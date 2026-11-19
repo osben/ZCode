@@ -17,9 +17,9 @@ use rust_cli_kernel_api::testing::ManualClock;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-use super::controller::Snapshot;
-use super::{Governor, Scheduler, default_concurrency, model_key};
-use crate::admission::{AdmissionScope, AdmissionTicket, AttemptSignal, ThrottleReason};
+use super::controller::{ChangeReason, Snapshot};
+use super::{CapChange, Governor, Scheduler, Subscription, default_concurrency, model_key};
+use crate::admission::{AdmissionScope, AdmissionTicket, AttemptSignal, RunId, ThrottleReason};
 
 const KEY_A: &str = "prov/alpha";
 const KEY_B: &str = "prov/beta";
@@ -86,7 +86,7 @@ impl Harness {
 }
 
 fn run(id: &str) -> AdmissionScope {
-    AdmissionScope::Run(id.to_owned())
+    AdmissionScope::Run(RunId::new(id))
 }
 
 /// 等待者：在后台排队取票，结束时用 `is_finished` 观察。
@@ -753,4 +753,228 @@ fn a_failed_timer_start_is_retried_on_the_next_wake() {
         2,
         "the start was retried, not cached"
     );
+}
+
+// ——— 上界、增长上限、起跳与扇出（Node workflow-concurrency-governor.test.ts 的对应组，W6b 第二部分） ———
+
+fn rid(id: &str) -> RunId {
+    RunId::new(id)
+}
+
+/// 订阅一个 run 的 cap 变化，把它们记下来。
+fn recorder(governor: &Arc<Governor>, run_id: &str) -> (Subscription, Arc<Mutex<Vec<CapChange>>>) {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let sink = seen.clone();
+    let subscription = governor.subscribe(&rid(run_id), move |change: &CapChange| {
+        sink.lock().unwrap().push(change.clone());
+    });
+    (subscription, seen)
+}
+
+fn last_change(seen: &Arc<Mutex<Vec<CapChange>>>) -> CapChange {
+    seen.lock().unwrap().last().cloned().expect("a cap change")
+}
+
+#[tokio::test]
+async fn a_bucket_starts_at_d_and_auto_growth_stops_at_two_d() {
+    let h = harness(4);
+    let scope = run("A");
+    let mut live: Vec<Box<dyn AdmissionTicket>> =
+        (0..4).map(|_| fast(&h.governor, &scope, KEY_A)).collect();
+    let start = h.snapshot(KEY_A);
+    assert_eq!((start.initial, start.growth_limit, start.cap), (4, 8, 4));
+    let mut waiters: Vec<(&'static str, Admit)> = Vec::new();
+    for _ in 0..80 {
+        // Demand: one more waiter each round, so every current-epoch success counts.
+        waiters.push(("w", queue(&h.governor, scope.clone(), KEY_A)));
+        settle_tasks().await;
+        live.remove(0).settle(AttemptSignal::Completed);
+        settle_tasks().await;
+        while let Some((_, ticket)) = take_finished(&mut waiters) {
+            live.push(ticket);
+        }
+        // Backfill every admissible slot, as Node's climb does, so the next waiter queues behind a full gate.
+        while let Some(ticket) = h.governor.try_admit(&scope, KEY_A) {
+            live.push(ticket);
+        }
+    }
+    assert_eq!(h.snapshot(KEY_A).cap, 8, "growth stops at 2D");
+    for ticket in live {
+        ticket.settle(AttemptSignal::Completed);
+    }
+}
+
+#[tokio::test]
+async fn a_run_bound_above_two_d_raises_the_growth_limit_of_the_keys_the_run_has_used() {
+    let h = harness(4);
+    h.governor.set_run_bound(&rid("big"), 20);
+    h.governor.set_run_bound(&rid("elsewhere"), 50);
+    let elsewhere = fast(&h.governor, &run("elsewhere"), KEY_B);
+    let tickets: Vec<_> = (0..4)
+        .map(|_| fast(&h.governor, &run("big"), KEY_A))
+        .collect();
+    assert_eq!(h.snapshot(KEY_A).growth_limit, 20);
+    assert_eq!(h.snapshot(KEY_B).growth_limit, 50);
+    // The first admission pulls the cap straight to the registered bound.
+    assert_eq!(h.snapshot(KEY_A).cap, 20);
+    assert_eq!(h.snapshot(KEY_B).cap, 50);
+    for ticket in tickets {
+        ticket.settle(AttemptSignal::Completed);
+    }
+    elsewhere.settle(AttemptSignal::Completed);
+}
+
+#[tokio::test]
+async fn a_bound_not_above_two_d_and_an_observer_never_raise_the_growth_limit() {
+    let h = harness(4);
+    h.governor.set_run_bound(&rid("small"), 3);
+    let small = fast(&h.governor, &run("small"), KEY_A);
+    let observer = h
+        .governor
+        .try_admit(&AdmissionScope::Observer, KEY_B)
+        .expect("an observer is always admitted");
+    assert_eq!(h.snapshot(KEY_A).growth_limit, 8);
+    assert_eq!(h.snapshot(KEY_B).growth_limit, 8);
+    small.settle(AttemptSignal::Completed);
+    observer.settle(AttemptSignal::Completed);
+}
+
+#[tokio::test]
+async fn clearing_a_run_bound_pulls_the_cap_down_and_tells_the_engaged_runs_limit_lowered() {
+    let h = harness(4);
+    let (_other_sub, seen_other) = recorder(&h.governor, "other");
+    h.governor.set_run_bound(&rid("big"), 20);
+    let other = fast(&h.governor, &run("other"), KEY_A);
+    let live: Vec<_> = (0..3)
+        .map(|_| fast(&h.governor, &run("big"), KEY_A))
+        .collect();
+    let cap_before = h.snapshot(KEY_A).cap;
+    assert!(cap_before > 8, "the bound lifted the cap");
+    h.governor.clear_run_bound(&rid("big"));
+    assert_eq!(h.snapshot(KEY_A).growth_limit, 8);
+    assert_eq!(h.snapshot(KEY_A).cap, 8);
+    let change = last_change(&seen_other);
+    assert_eq!(change.key, KEY_A);
+    assert_eq!(
+        (change.change.previous, change.change.next),
+        (cap_before, 8)
+    );
+    assert_eq!(change.change.reason, ChangeReason::LimitLowered);
+    for ticket in live {
+        ticket.settle(AttemptSignal::Completed);
+    }
+    other.settle(AttemptSignal::Completed);
+}
+
+#[tokio::test]
+async fn retuning_a_bound_overrides_the_previous_one_in_both_directions() {
+    let h = harness(4);
+    h.governor.set_run_bound(&rid("r"), 30);
+    let ticket = fast(&h.governor, &run("r"), KEY_A);
+    assert_eq!(h.snapshot(KEY_A).growth_limit, 30);
+    h.governor.set_run_bound(&rid("r"), 5);
+    assert_eq!(h.snapshot(KEY_A).growth_limit, 8);
+    h.governor.set_run_bound(&rid("r"), 12);
+    assert_eq!(h.snapshot(KEY_A).growth_limit, 12);
+    ticket.settle(AttemptSignal::Completed);
+}
+
+#[tokio::test]
+async fn a_run_that_used_the_key_before_its_bound_raises_it_when_the_bound_is_registered() {
+    let h = harness(4);
+    let ticket = fast(&h.governor, &run("late"), KEY_A);
+    assert_eq!(h.snapshot(KEY_A).growth_limit, 8);
+    h.governor.set_run_bound(&rid("late"), 16);
+    assert_eq!(h.snapshot(KEY_A).growth_limit, 16);
+    ticket.settle(AttemptSignal::Completed);
+}
+
+#[tokio::test]
+async fn a_retune_upward_seeds_the_cap_and_tells_the_run_even_with_nothing_in_flight() {
+    let h = harness(8);
+    let (_sub, seen) = recorder(&h.governor, "r");
+    h.governor.set_run_bound(&rid("r"), 8);
+    fast(&h.governor, &run("r"), KEY_A).settle(AttemptSignal::Completed);
+    assert_eq!(h.snapshot(KEY_A).cap, 8);
+    h.governor.set_run_bound(&rid("r"), 32);
+    let snapshot = h.snapshot(KEY_A);
+    assert_eq!((snapshot.cap, snapshot.growth_limit), (32, 32));
+    let change = last_change(&seen);
+    assert_eq!((change.change.previous, change.change.next), (8, 32));
+    assert_eq!(change.change.reason, ChangeReason::Seeded);
+}
+
+#[tokio::test]
+async fn a_429_within_five_minutes_stops_the_seed_and_the_cap_climbs_by_probing() {
+    let h = harness(8);
+    h.governor.set_run_bound(&rid("r"), 8);
+    throttle(fast(&h.governor, &run("r"), KEY_A), None);
+    assert_eq!(h.snapshot(KEY_A).cap, 6);
+    h.governor.set_run_bound(&rid("r"), 32);
+    let snapshot = h.snapshot(KEY_A);
+    assert_eq!((snapshot.cap, snapshot.growth_limit), (6, 32));
+}
+
+#[tokio::test]
+async fn a_cap_change_fans_out_only_to_runs_engaged_on_that_key() {
+    let h = harness(D);
+    let (_a, seen_a) = recorder(&h.governor, "A");
+    let (_b, seen_b) = recorder(&h.governor, "B");
+    let (_c, seen_c) = recorder(&h.governor, "C");
+    let a = fast(&h.governor, &run("A"), KEY_A);
+    let c = fast(&h.governor, &run("C"), KEY_B);
+    throttle(a, Some(5_000));
+    let seen = seen_a.lock().unwrap().clone();
+    assert_eq!(seen.len(), 1);
+    assert_eq!(seen[0].key, KEY_A);
+    assert_eq!(
+        (
+            seen[0].change.previous,
+            seen[0].change.next,
+            seen[0].change.reason
+        ),
+        (D, 6, ChangeReason::RateLimited)
+    );
+    assert_eq!(seen[0].change.cooldown_ms, Some(5_000));
+    assert!(seen_b.lock().unwrap().is_empty());
+    assert!(seen_c.lock().unwrap().is_empty());
+    c.settle(AttemptSignal::Completed);
+}
+
+#[tokio::test]
+async fn a_queued_run_hears_the_change_and_an_unsubscribed_run_does_not() {
+    let h = harness(1);
+    let (sub, seen) = recorder(&h.governor, "A");
+    let busy = fast(&h.governor, &run("B"), KEY_A);
+    let waiting = queue(&h.governor, run("A"), KEY_A);
+    settle_tasks().await;
+    throttle(busy, Some(1_000));
+    assert_eq!(seen.lock().unwrap().len(), 1, "a queued run is engaged");
+    sub.unsubscribe();
+    h.advance(1_000);
+    settle_tasks().await;
+    let granted = finished(waiting).expect("A is granted once the cooldown ends");
+    throttle(granted, Some(1_000));
+    assert_eq!(
+        seen.lock().unwrap().len(),
+        1,
+        "an unsubscribed run hears nothing"
+    );
+}
+
+#[tokio::test]
+async fn a_listener_may_read_the_governor_without_deadlocking() {
+    let h = harness(D);
+    // A weak handle: a strong one held by the listener would keep the governor alive through its own table.
+    let weak = Arc::downgrade(&h.governor);
+    let observed = Arc::new(Mutex::new(None));
+    let sink = observed.clone();
+    let _sub = h.governor.subscribe(&rid("A"), move |change: &CapChange| {
+        // A re-entrant read: the fan-out runs after the state lock is released.
+        if let Some(governor) = weak.upgrade() {
+            *sink.lock().unwrap() = governor.snapshot(&change.key).map(|s| s.cap);
+        }
+    });
+    throttle(fast(&h.governor, &run("A"), KEY_A), None);
+    assert_eq!(*observed.lock().unwrap(), Some(6));
 }
