@@ -604,3 +604,55 @@ mod helper_relay {
         );
     }
 }
+
+/// F3b(c) PR 2: the answer shapes the shared contract (protocol-zcode's helper_elicitation_contract.json, which the TS
+/// relay test reads too) names, for the three kinds Rust returns to the helper.
+mod helper_contract {
+    use rust_cli_kernel_api::ids::ToolUseId;
+    use rust_cli_kernel_api::orchestration::{Answer, McpElicitationAnswer};
+    use rust_cli_kernel_api::testing::ScriptedInteractions;
+
+    use super::*;
+
+    const CONTRACT: &str =
+        include_str!("../../../protocol-zcode/src/fork/helper_elicitation_contract.json");
+
+    #[tokio::test]
+    async fn rust_answers_the_contracts_answer_shapes() {
+        let contract: Value = serde_json::from_str(CONTRACT).expect("the contract is JSON");
+        let accept_content = contract["answers"]["accept"]["content"]
+            .as_object()
+            .expect("an object")
+            .clone();
+        let answers = [
+            (
+                "accept",
+                Answer::McpElicitation(McpElicitationAnswer::Accept {
+                    content: accept_content,
+                }),
+            ),
+            (
+                "decline",
+                Answer::McpElicitation(McpElicitationAnswer::Decline),
+            ),
+            (
+                "cancel",
+                Answer::McpElicitation(McpElicitationAnswer::Cancel),
+            ),
+        ];
+        for (name, answer) in answers {
+            let got = helper_elicitation_answer(
+                Arc::new(ScriptedInteractions::always(answer)),
+                ToolUseId::new("toolu_1"),
+                contract["question"]["serverName"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned(),
+                &contract["request"],
+                CancellationToken::new(),
+            )
+            .await;
+            assert_eq!(got, contract["answers"][name], "the {name} answer");
+        }
+    }
+}

@@ -111,8 +111,9 @@ export class ForkRustHelperMcpHost {
 
   constructor(private readonly deps: ForkRustHelperMcpHostDeps) {
     this.plugins = new PluginOutcomes((workspace) => deps.resolvePlugins(workspace));
-    this.elicitations = new ElicitationRelay((params, signal) =>
-      deps.client.request(FORK_RUST_HELPER_F3.elicitation, params, signal),
+    this.elicitations = new ElicitationRelay(
+      (params, signal) => deps.client.request(FORK_RUST_HELPER_F3.elicitation, params, signal),
+      deps.logger,
     );
   }
 

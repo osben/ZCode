@@ -263,7 +263,7 @@ export {
 
 /** Elicitation mode allowlist (MCP form and compatibility aliases). */
 const SUPPORTED_ELICITATION_MODES = new Set(["form", "openai/form", "openaiForm"]);
-function isSupportedElicitationMode(mode: unknown): boolean {
+export function isSupportedElicitationMode(mode: unknown): boolean {
   return mode === undefined || (typeof mode === "string" && SUPPORTED_ELICITATION_MODES.has(mode));
 }
 

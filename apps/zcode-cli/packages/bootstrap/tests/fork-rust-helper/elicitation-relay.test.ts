@@ -1,12 +1,32 @@
 // Fork: the helper's relay of a helper-hosted server's elicitation/create to Rust (specs/fork-rust-node-helper.md,
 // "Elicitation from helper-hosted servers"; F3b(c) PR 2). The relay attaches a question to the newest pipe tool call
 // of its server, asks Rust through `helper/elicitation`, and answers the server with Rust's result.
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { ElicitationRelay } from "../../src/fork-rust-helper/elicitation-relay.js";
 
-const schema = { type: "object", properties: { name: { type: "string" } }, required: ["name"] };
-const SERVER = "plugin:calc:app";
-const CALL = { sessionId: "sess_1", turnId: "run_1", toolUseId: "toolu_1" };
+/**
+ * The contract both runtimes read (the same file the Rust test helper_elicitation_tests.rs parses): the call, the question,
+ * the params `helper/elicitation` must carry, and the answer shapes Rust returns.
+ */
+const contract = JSON.parse(
+  readFileSync(
+    new URL(
+      "../../../../../../packages/rust-cli/crates/protocol-zcode/src/fork/helper_elicitation_contract.json",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+) as {
+  call: { sessionId: string; turnId: string; toolUseId: string };
+  question: { serverName: string; message: string; requestedSchema: unknown };
+  request: Record<string, unknown>;
+  answers: { accept: unknown; decline: unknown; cancel: unknown };
+};
+
+const schema = contract.question.requestedSchema;
+const SERVER = contract.question.serverName;
+const CALL = contract.call;
 
 interface Ask {
   params: Record<string, unknown>;
@@ -54,14 +74,8 @@ describe("fork: helper elicitation relay", () => {
       action: "accept",
       content: { name: "Ada" },
     });
-    expect(asks[0]?.params).toEqual({
-      sessionId: "sess_1",
-      turnId: "run_1",
-      toolUseId: "toolu_1",
-      server: SERVER,
-      message: "Name?",
-      requestedSchema: schema,
-    });
+    // The wire params are the contract's: the keys Rust reads, nothing else.
+    expect(asks[0]?.params).toEqual(contract.request);
   });
 
   it("answers an accept without content with an empty content object", async () => {
@@ -153,5 +167,37 @@ describe("fork: helper elicitation relay", () => {
     relay.enterCall("plugin:other:app", CALL);
     await expect(relay.elicit(question)).resolves.toEqual({ action: "decline" });
     expect(asks).toHaveLength(0);
+  });
+
+  it("answers with the contract's answer shapes, which Rust returns", async () => {
+    const answers = [contract.answers.accept, contract.answers.decline, contract.answers.cancel];
+    for (const answer of answers) {
+      const { relay } = relayWith(async () => answer);
+      relay.enterCall(SERVER, CALL);
+      await expect(relay.elicit(question)).resolves.toEqual(answer);
+    }
+  });
+
+  it("logs a failed ask and declines, but a withdrawal is silent", async () => {
+    const warnings: unknown[] = [];
+    const logger = { warn: (...args: unknown[]) => warnings.push(args) };
+    const failing = new ElicitationRelay(async () => {
+      throw new Error("Rust refused");
+    }, logger);
+    failing.enterCall(SERVER, CALL);
+    await expect(failing.elicit(question)).resolves.toEqual({ action: "decline" });
+    expect(warnings).toHaveLength(1);
+
+    const asks: Ask[] = [];
+    const withdrawing = new ElicitationRelay((params, signal) => {
+      asks.push({ params, signal });
+      return hang({ params, signal });
+    }, logger);
+    const endCall = withdrawing.enterCall(SERVER, CALL);
+    const answered = withdrawing.elicit(question);
+    await waitFor(() => asks.length === 1);
+    endCall();
+    await expect(answered).resolves.toEqual({ action: "cancel" });
+    expect(warnings).toHaveLength(1);
   });
 });
