@@ -1666,6 +1666,38 @@ After the fix in the first review round: crate lib tests 342 of 342. The timer n
 - Implement `QuotaResumePort` over the run journal and the session's run list (limit 64). `resume` goes through the session's execution boundary, as the app's Resume does, and then re-arms tracking; refusals map to `ResumeAnswer::Refused` with Node's reason text. The port must be `Send + Sync`. Call `QuotaAutoResume::on_run_settled` when a run settles, `scan` when the parent session opens, and `dispose` before the run service closes.
 - The scripted-provider desktop E2E of section 8 item 10 (gate on, run service, fake provider process) is W9, after the gate flips. The driver-level test in this part covers the rule without it.
 
+### 9.17 W7-2: helper format and window display (as built)
+
+Status: built on branch `feat/rust-workflow-helper-format-w7-2`, cut from `origin/fork` (ddee7f6fc). Gate off: nothing calls these from a turn. Decision Q6 = (b): the text and the window come from the helper.
+
+**How the text is reused.** The formatters and the window display live in `core/src/tool/handlers/`, and only `builtInTools` is exported from the core index. Nothing re-implements them: the helper finds Node's own tool entries in `builtInTools` by name and calls them. `listWorkflowRunsToolEntry` and `getWorkflowRunToolEntry` run their handler on a stub run port that returns the port data Rust sent, then their `formatModelContent`. The window display is `createWorkflowToolEntry.prepareApproval({script})`, the same `displayOfAnalysis` path the confirmation dialog uses. Exporting the formatters from core would have been the other route; it touches core, which W7-2 does not, so it is not done here.
+
+**Correction to the brief's wording.** The GetWorkflowRun text does not carry graph bounds or fold. Its `<summary>` is built by Node's handler (`buildWorkflowRunSummary`), which `runDetail` reaches through the entry. The causal graph bounds (`boundCausalityGraph`) and the phase fold (`foldPhaseEdges`) are part of the window display, through `displayOfAnalysis`.
+
+**Helper wire** (`helper/workflow/format`, `workflow-protocol.ts`, a discriminated union on `kind`; any other kind is -32602):
+
+- `analysis` (W4, unchanged): `{scriptText}` returns `{analysis}`.
+- `display` (W7-2): `{scriptText}` returns `{display}`, the CreateWorkflow window, or `{display: null}` when Node opens no window (the script does not analyze, or a model is unbound).
+- `runList` (W7-2): `{input, listed, workingDirectory}` returns `{text}`. `input` is the ListWorkflowRuns input, `listed` the run port's list result, and `workingDirectory` the session cwd.
+- `runDetail` (W7-2): `{runId, detail, workingDirectory}` returns `{text}`. `detail` is the run port's `DynamicWorkflowRunDetail`.
+
+The helper is stateless: it reads no storage, session or journal.
+
+**Not done: `helper/workflow/evalSnippet`.** Whether a snippet may do workspace I/O is an open user decision (section 10). No method is added, and the text is not invented.
+
+**Rust client** (`protocol-zcode/src/fork/workflow_compile.rs`): `display`, `run_list_text` and `run_detail_text` send the requests above over the existing `FORMAT` method and parse the replies strictly (`display` must be an object or null; `text` must be a string). The request builders are `run_list_params` and `run_detail_params`.
+
+**Tests.**
+
+- Helper (`bootstrap/tests/fork-rust-helper/workflow-compile.test.ts`, already in `scripts/fork-test-files.json`). Five new cases: the run list and run detail equal Node's handler and formatter on the same input (run under fake timers, so the ages are fixed); the window equals `prepareApproval`; a non-analysing script answers `display: null`; a `runList` without `listed` is -32602. The red run before the implementation: four failing (the list, detail, display and null cases, all -32602), and the detail case first failed in the fixture until `health` was added. Green after: the file is 12 of 12, and the whole `tests/fork-rust-helper` set is 16 files and 133 tests.
+- Rust (`workflow_compile_tests.rs`): five new cases for the reply parsers and the request builders. Protocol-zcode is 913 of 913 green, and clippy `-D warnings` is clean. The Rust tests were written with the functions, not before them, so no Rust red run was recorded.
+
+**Gap.** The client is not round-tripped through `NodeHelper::forward` with the fake helper. The fake helper rig is private to `node_helper_tests.rs`, which is outside W7-2's file list. The round trip belongs with the run service (W7 proper) or in a follow-up that may touch that file.
+
+**Errors.** A `runList` or `runDetail` input that Node's handler cannot parse is an internal error from the handler, not -32602, because the handler parses its own input. Only the helper's params schema answers -32602.
+
+**Left for the run service (W7 proper).** The Rust run service must build `listed` from its list port and `detail` from its detail port, and call these methods on the GetWorkflowRun and ListWorkflowRuns paths. Until it does, the window and the text have no caller.
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.

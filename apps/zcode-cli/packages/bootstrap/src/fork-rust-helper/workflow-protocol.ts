@@ -19,10 +19,32 @@ export const workflowCompileParamsSchema = z
   })
   .strict();
 
-/** `helper/workflow/format`: only the analysis is served in W4. Other kinds are refused with -32602. */
-export const workflowFormatParamsSchema = z
-  .object({
-    kind: z.literal("analysis"),
-    scriptText: z.string(),
-  })
-  .strict();
+/**
+ * `helper/workflow/format` (specs/fork-rust-workflow-engine.md, 4.1 and 9.17). Each kind runs Node's own tool entry
+ * from `builtInTools`, so the text and the display are Node's, not a second implementation:
+ * - `analysis` (W4): the JSON of `analyzeWorkflowScript`.
+ * - `display` (W7-2): the CreateWorkflow confirmation window of the script, or `null` when Node opens no window.
+ * - `runList` (W7-2): the ListWorkflowRuns text. `listed` is the run port's list result for `input`'s query.
+ * - `runDetail` (W7-2): the GetWorkflowRun text. `detail` is the run port's detail; the summary is built by Node's handler.
+ * Any other kind is refused with -32602.
+ */
+export const workflowFormatParamsSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("analysis"), scriptText: z.string() }).strict(),
+  z.object({ kind: z.literal("display"), scriptText: z.string() }).strict(),
+  z
+    .object({
+      kind: z.literal("runList"),
+      input: z.record(z.string(), z.unknown()),
+      listed: z.record(z.string(), z.unknown()),
+      workingDirectory: z.string().min(1),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("runDetail"),
+      runId: z.string().trim().min(1),
+      detail: z.record(z.string(), z.unknown()),
+      workingDirectory: z.string().min(1),
+    })
+    .strict(),
+]);

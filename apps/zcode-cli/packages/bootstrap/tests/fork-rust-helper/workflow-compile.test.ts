@@ -4,7 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { createInterface } from "node:readline";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  CREATE_WORKFLOW_TOOL_NAME,
+  GET_WORKFLOW_RUN_TOOL_NAME,
+  LIST_WORKFLOW_RUNS_TOOL_NAME,
+} from "@zcode/contracts";
+import { builtInTools } from "@zcode/core";
 import { analyzeWorkflowScript } from "@zcode/dynamic-workflow";
 import {
   FORK_RUST_HELPER_METHODS,
@@ -98,7 +104,15 @@ describe("fork: helper/workflow/compile and helper/workflow/format (W4)", () => 
     // The lowered body travels inside entrySource only; the compile result carries the rest.
     expect(result.compiled).not.toHaveProperty("lowered");
     expect(Object.keys(result.compiled)).toEqual(
-      expect.arrayContaining(["askSpecs", "actorSubmitProfiles", "sitePhases", "phases", "holes", "holeBodies", "scriptHash"]),
+      expect.arrayContaining([
+        "askSpecs",
+        "actorSubmitProfiles",
+        "sitePhases",
+        "phases",
+        "holes",
+        "holeBodies",
+        "scriptHash",
+      ]),
     );
     expect(result.entrySource).toContain('"id":"run-w4-1"');
     expect(result.entrySource).toContain("export const payload");
@@ -135,7 +149,11 @@ describe("fork: helper/workflow/compile and helper/workflow/format (W4)", () => 
     expect(result.ok).toBe(false);
     expect(result.diagnostics.length).toBeGreaterThan(0);
     expect(result.diagnostics[0]).toEqual(
-      expect.objectContaining({ line: expect.any(Number), column: expect.any(Number), message: expect.any(String) }),
+      expect.objectContaining({
+        line: expect.any(Number),
+        column: expect.any(Number),
+        message: expect.any(String),
+      }),
     );
     expect(result.entrySource).toBeUndefined();
     helper.close();
@@ -152,7 +170,10 @@ describe("fork: helper/workflow/compile and helper/workflow/format (W4)", () => 
 
   it("formats the analysis of a script as the JSON of analyzeWorkflowScript", async () => {
     const helper = await startHelper();
-    const reply = await helper.request("helper/workflow/format", { kind: "analysis", scriptText: VALID_SCRIPT });
+    const reply = await helper.request("helper/workflow/format", {
+      kind: "analysis",
+      scriptText: VALID_SCRIPT,
+    });
     expect(reply.error).toBeUndefined();
     expect(reply.result).toEqual({
       analysis: JSON.parse(JSON.stringify(analyzeWorkflowScript(VALID_SCRIPT))),
@@ -163,7 +184,162 @@ describe("fork: helper/workflow/compile and helper/workflow/format (W4)", () => 
 
   it("refuses a format kind it does not serve as -32602", async () => {
     const helper = await startHelper();
-    const reply = await helper.request("helper/workflow/format", { kind: "runText", scriptText: VALID_SCRIPT });
+    const reply = await helper.request("helper/workflow/format", {
+      kind: "runText",
+      scriptText: VALID_SCRIPT,
+    });
+    expect(reply.error?.code).toBe(-32602);
+    helper.close();
+    await helper.done;
+  });
+});
+
+// W7-2 (specs/fork-rust-workflow-engine.md, 9.17): the run list, the run detail and the window display come from Node's own
+// tool entries, found in `builtInTools`. The helper runs Node's handler and formatter, so each expectation is computed by Node.
+
+type NodeToolEntry = {
+  metadata: { name: string };
+  handler: (input: unknown, context: unknown) => Promise<unknown>;
+  formatModelContent?: (output: unknown) => unknown;
+  prepareApproval?: (input: unknown) => { gate: string; display?: unknown };
+};
+
+function nodeEntry(name: string): NodeToolEntry {
+  const entry = (builtInTools as unknown as NodeToolEntry[]).find(
+    (tool) => tool.metadata.name === name,
+  );
+  if (entry === undefined) throw new Error(`Node has no tool ${name}`);
+  return entry;
+}
+
+const FORMAT_NOW = Date.UTC(2026, 7, 21, 9, 5, 40);
+const FORMAT_WORKDIR = "/work/project";
+
+const LIST_ROW = {
+  runId: "dwfrun-running",
+  label: "nightly triage",
+  labelSource: "name",
+  status: "running",
+  ownedByThisSession: true,
+  createdAt: Date.UTC(2026, 7, 21, 9, 0, 0),
+  updatedAt: Date.UTC(2026, 7, 21, 9, 5, 0),
+  spentTokens: 1204,
+};
+
+const RUN_DETAIL = {
+  runId: "dwfrun-running",
+  label: "nightly triage",
+  labelSource: "name",
+  status: "running",
+  ownedByThisSession: true,
+  createdAt: Date.UTC(2026, 7, 21, 9, 0, 0),
+  updatedAt: Date.UTC(2026, 7, 21, 9, 5, 0),
+  usage: {
+    spentTokens: 1204,
+    nodesObserved: 3,
+    nodesRunning: 1,
+    nodesCompleted: 2,
+    nodesFailed: 0,
+  },
+  actors: [{ siteId: "agent#1", ordinal: 1, name: "judge" }],
+  logTail: [
+    { sequence: 11, message: "collected the failing specs", at: Date.UTC(2026, 7, 21, 9, 0, 50) },
+  ],
+  subagents: [],
+  health: {
+    lastProgressAt: Date.UTC(2026, 7, 21, 9, 5, 0),
+    consecutiveFailures: 0,
+    cachedSteps: 0,
+    pendingQuestionsKnown: true,
+  },
+};
+
+describe("fork: helper/workflow/format run list, run detail and window display (W7-2)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(FORMAT_NOW);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("formats the run list exactly as Node's ListWorkflowRuns formatter", async () => {
+    const listed = { runs: [LIST_ROW], truncated: false };
+    const entry = nodeEntry(LIST_WORKFLOW_RUNS_TOOL_NAME);
+    const port = { listRuns: async () => listed };
+    const output = await entry.handler(
+      {},
+      { workingDirectory: FORMAT_WORKDIR, dynamicWorkflowRunPort: port },
+    );
+    const expected = entry.formatModelContent!(output);
+    const helper = await startHelper();
+    const reply = await helper.request("helper/workflow/format", {
+      kind: "runList",
+      input: {},
+      listed,
+      workingDirectory: FORMAT_WORKDIR,
+    });
+    expect(reply.error).toBeUndefined();
+    expect(reply.result).toEqual({ text: expected });
+    expect(String(expected)).toContain('<run id="dwfrun-running"');
+    helper.close();
+    await helper.done;
+  });
+
+  it("formats the run detail exactly as Node's GetWorkflowRun formatter, summary included", async () => {
+    const entry = nodeEntry(GET_WORKFLOW_RUN_TOOL_NAME);
+    const port = { getRunDetail: async () => RUN_DETAIL };
+    const output = await entry.handler(
+      { run_id: "dwfrun-running" },
+      { workingDirectory: FORMAT_WORKDIR, dynamicWorkflowRunPort: port },
+    );
+    const expected = entry.formatModelContent!(output);
+    const helper = await startHelper();
+    const reply = await helper.request("helper/workflow/format", {
+      kind: "runDetail",
+      runId: "dwfrun-running",
+      detail: RUN_DETAIL,
+      workingDirectory: FORMAT_WORKDIR,
+    });
+    expect(reply.error).toBeUndefined();
+    expect(reply.result).toEqual({ text: expected });
+    expect(String(expected)).toContain("<summary>");
+    helper.close();
+    await helper.done;
+  });
+
+  it("returns the CreateWorkflow window display as Node's confirmation display", async () => {
+    const expected = nodeEntry(CREATE_WORKFLOW_TOOL_NAME).prepareApproval!({
+      script: VALID_SCRIPT,
+    });
+    expect(expected.gate).toBe("ask");
+    expect(expected.display).toBeDefined();
+    const helper = await startHelper();
+    const reply = await helper.request("helper/workflow/format", {
+      kind: "display",
+      scriptText: VALID_SCRIPT,
+    });
+    expect(reply.error).toBeUndefined();
+    expect(reply.result).toEqual({ display: JSON.parse(JSON.stringify(expected.display)) });
+    helper.close();
+    await helper.done;
+  });
+
+  it("answers null when Node asks for no window (a script that does not analyze)", async () => {
+    const helper = await startHelper();
+    const reply = await helper.request("helper/workflow/format", {
+      kind: "display",
+      scriptText: BROKEN_SCRIPT,
+    });
+    expect(reply.error).toBeUndefined();
+    expect(reply.result).toEqual({ display: null });
+    helper.close();
+    await helper.done;
+  });
+
+  it("refuses a run list without its listed rows as -32602", async () => {
+    const helper = await startHelper();
+    const reply = await helper.request("helper/workflow/format", { kind: "runList", input: {} });
     expect(reply.error?.code).toBe(-32602);
     helper.close();
     await helper.done;

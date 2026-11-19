@@ -1,3 +1,9 @@
+import {
+  CREATE_WORKFLOW_TOOL_NAME,
+  GET_WORKFLOW_RUN_TOOL_NAME,
+  LIST_WORKFLOW_RUNS_TOOL_NAME,
+} from "@zcode/contracts";
+import { builtInTools } from "@zcode/core";
 import { analyzeWorkflowScript } from "@zcode/dynamic-workflow";
 import { renderChildEntry } from "@zcode/dynamic-workflow-runtime";
 import { compileOnce } from "../app/dynamic-workflow-run-compile.js";
@@ -37,8 +43,68 @@ export function compileWorkflowForRust(raw: unknown) {
   return { ok: true as const, scriptHash: rest.scriptHash, compiled: rest, entrySource };
 }
 
-/** `helper/workflow/format {kind: "analysis"}`: the analysis of `analyzeWorkflowScript`, for the window graph. */
-export function formatWorkflowForRust(raw: unknown) {
+/**
+ * A tool entry of Node's `builtInTools` as far as the format methods use it. The formatters and the window display are
+ * Node's own, reached through the entry, so nothing here re-implements them (specs/fork-rust-workflow-engine.md, 9.17).
+ */
+interface NodeToolEntry {
+  metadata: { name: string };
+  handler: (input: unknown, context: unknown) => Promise<unknown>;
+  formatModelContent?: (output: unknown) => unknown;
+  prepareApproval?: (input: unknown) => { gate: string; display?: unknown };
+}
+
+function nodeTool(name: string): NodeToolEntry {
+  const entry = (builtInTools as unknown as NodeToolEntry[]).find(
+    (tool) => tool.metadata.name === name,
+  );
+  if (entry === undefined) throw new Error(`Node has no tool ${name}`);
+  return entry;
+}
+
+/** The text Node's formatter gives for a handler output. */
+function formatted(entry: NodeToolEntry, output: unknown): string {
+  const text = entry.formatModelContent?.(output);
+  if (typeof text !== "string") throw new Error(`${entry.metadata.name} has no text formatter`);
+  return text;
+}
+
+/**
+ * `helper/workflow/format`: `analysis` is the analysis of `analyzeWorkflowScript`, for the window graph; `display` is the
+ * CreateWorkflow confirmation window (Node's `prepareApproval`, so the same `displayOfAnalysis` path as the dialog);
+ * `runList` and `runDetail` run Node's handler on the port data Rust sends and format the output with Node's formatter.
+ */
+export async function formatWorkflowForRust(raw: unknown) {
   const params = parseParams(workflowFormatParamsSchema, raw);
-  return { analysis: analyzeWorkflowScript(params.scriptText) };
+  switch (params.kind) {
+    case "analysis":
+      return { analysis: analyzeWorkflowScript(params.scriptText) };
+    case "display": {
+      const decision = nodeTool(CREATE_WORKFLOW_TOOL_NAME).prepareApproval?.({
+        script: params.scriptText,
+      });
+      return {
+        display:
+          decision?.gate === "ask" && decision.display !== undefined ? decision.display : null,
+      };
+    }
+    case "runList": {
+      const entry = nodeTool(LIST_WORKFLOW_RUNS_TOOL_NAME);
+      const port = { listRuns: async () => params.listed };
+      const output = await entry.handler(params.input, {
+        workingDirectory: params.workingDirectory,
+        dynamicWorkflowRunPort: port,
+      });
+      return { text: formatted(entry, output) };
+    }
+    case "runDetail": {
+      const entry = nodeTool(GET_WORKFLOW_RUN_TOOL_NAME);
+      const port = { getRunDetail: async () => params.detail };
+      const output = await entry.handler(
+        { run_id: params.runId },
+        { workingDirectory: params.workingDirectory, dynamicWorkflowRunPort: port },
+      );
+      return { text: formatted(entry, output) };
+    }
+  }
 }
