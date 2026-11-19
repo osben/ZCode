@@ -3,11 +3,49 @@
 
 use std::collections::BTreeMap;
 
-use serde_json::Value;
+use rust_cli_protocol_core::rpc::RpcError;
+use serde_json::{Value, json};
+use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 
+use super::super::mcp_ui_sampling::{self, Sampling};
 use super::{Binding, Connection, Instances, Lease, Scope, UNAUTHORIZED};
 
 const FIXTURE: &str = include_str!("../../tests/fixtures/mcp_ui_lease_conformance.json");
+
+/// A sampling operation of the fixture: still running, or settled with its outcome word.
+enum Sampled {
+    Running(JoinHandle<Result<Value, RpcError>>),
+    Settled(String),
+}
+
+/// The outcome word of a sampling error, by the texts Node's ledger uses.
+fn classify(error: &RpcError) -> String {
+    let message = error.message.as_str();
+    let word = if message.contains("Duplicate") {
+        "duplicate"
+    } else if message.contains("busy") {
+        "busy"
+    } else if message.contains("limit") {
+        "limit"
+    } else if message.contains("no longer authorized") {
+        "unauthorized"
+    } else if message.contains("timed out") {
+        "timedOut"
+    } else if message.contains("cancelled") {
+        "cancelled"
+    } else {
+        "error"
+    };
+    word.to_owned()
+}
+
+fn classify_result(result: Result<Value, RpcError>) -> String {
+    match result {
+        Ok(_) => "done".to_owned(),
+        Err(error) => classify(&error),
+    }
+}
 
 struct Runner {
     instances: Instances,
@@ -18,6 +56,9 @@ struct Runner {
     /// call id -> (lease token, pin key).
     pins: BTreeMap<String, (String, String)>,
     sessions: Vec<String>,
+    sampling: Sampling,
+    /// operation alias -> its sampling.
+    samples: BTreeMap<String, Sampled>,
 }
 
 impl Runner {
@@ -37,8 +78,25 @@ impl Runner {
             .clone()
     }
 
+    /// The lease of a sampling step, validated as Node's `validate` does: its session and its cancel signal.
+    fn validated(&self, step: &Value) -> Result<(Lease, String, CancellationToken), String> {
+        let lease = self.lease(step, "lease");
+        let (session, server) = Self::scope_of(step);
+        let source = self.source(step);
+        let scope = Scope {
+            workspace: "/w",
+            session_id: &session,
+            plugin_id: "p",
+            server_name: &server,
+        };
+        self.instances
+            .validate(&lease, scope, Some(&source))
+            .map(|active| (lease, session, active.cancel))
+    }
+
     fn source(&self, step: &Value) -> Connection {
         match &step["source"] {
+            Value::Null => self.current.clone(),
             Value::String(name) if name == "current" => self.current.clone(),
             other => Connection {
                 identity: other["identity"].as_str().expect("identity").to_owned(),
@@ -54,7 +112,7 @@ impl Runner {
         )
     }
 
-    fn run(&mut self, step: &Value) -> String {
+    async fn run(&mut self, step: &Value) -> String {
         match step["op"].as_str().expect("op") {
             "open" => {
                 let (session, server) = Self::scope_of(step);
@@ -144,9 +202,85 @@ impl Runner {
                 for session in self.sessions.clone() {
                     revoked.extend(self.instances.revoke_server(&session, &self.server));
                 }
-                let aliases: Vec<String> =
+                // The owner drops a revoked lease's ledger (RustMcpUi::finish_closed); its operations are cancelled.
+                for lease in &revoked {
+                    self.sampling.forget(&lease.token);
+                }
+                let mut aliases: Vec<String> =
                     revoked.iter().map(|lease| self.alias_of(lease)).collect();
+                aliases.sort();
                 format!("revoked:{}", aliases.join(","))
+            }
+            "sample" => {
+                let (lease, session, cancel) = match self.validated(step) {
+                    Ok(validated) => validated,
+                    Err(message) => {
+                        assert_eq!(message, UNAUTHORIZED);
+                        return "unauthorized".to_owned();
+                    }
+                };
+                let operation = step["operation"].as_str().expect("operation").to_owned();
+                let scope = mcp_ui_sampling::Scope {
+                    lease: &lease.token,
+                    session: &session,
+                    cancel: &cancel,
+                };
+                let admission = match self.sampling.admit(&scope, &operation) {
+                    Ok(admission) => admission,
+                    Err(error) => return classify(&error),
+                };
+                let hold = step["run"].as_str() == Some("hold");
+                let handle = tokio::spawn(admission.run(move |_| async move {
+                    if hold {
+                        std::future::pending::<Result<Value, RpcError>>().await
+                    } else {
+                        Ok(json!("reply"))
+                    }
+                }));
+                // A ready model settles within this turn of the runtime; a held one does not.
+                tokio::task::yield_now().await;
+                let alias = step["as"].as_str().expect("as").to_owned();
+                if handle.is_finished() {
+                    let outcome = classify_result(handle.await.expect("the run joins"));
+                    self.samples
+                        .insert(alias, Sampled::Settled(outcome.clone()));
+                    outcome
+                } else {
+                    self.samples.insert(alias, Sampled::Running(handle));
+                    "started".to_owned()
+                }
+            }
+            "cancelSample" => match self.validated(step) {
+                Err(message) => {
+                    assert_eq!(message, UNAUTHORIZED);
+                    "unauthorized".to_owned()
+                }
+                Ok((lease, session, cancel)) => {
+                    let operation = step["operation"].as_str().expect("operation");
+                    let scope = mcp_ui_sampling::Scope {
+                        lease: &lease.token,
+                        session: &session,
+                        cancel: &cancel,
+                    };
+                    match self.sampling.cancel(&scope, operation) {
+                        Ok(true) => "cancelled".to_owned(),
+                        Ok(false) => "not-cancelled".to_owned(),
+                        Err(error) => classify(&error),
+                    }
+                }
+            },
+            "collect" => {
+                let alias = step["sample"].as_str().expect("sample");
+                let sampled = self.samples.remove(alias).expect("a sample of that alias");
+                let outcome = match sampled {
+                    Sampled::Settled(outcome) => outcome,
+                    Sampled::Running(handle) => {
+                        classify_result(handle.await.expect("the run joins"))
+                    }
+                };
+                self.samples
+                    .insert(alias.to_owned(), Sampled::Settled(outcome.clone()));
+                outcome
             }
             "closeSession" => {
                 let session = step["session"].as_str().expect("session");
@@ -160,8 +294,8 @@ impl Runner {
     }
 }
 
-#[test]
-fn the_rust_lease_registry_matches_the_shared_conformance_sequence() {
+#[tokio::test]
+async fn the_rust_lease_registry_matches_the_shared_conformance_sequence() {
     let fixture: Value = serde_json::from_str(FIXTURE).expect("fixture parses");
     let server = &fixture["server"];
     let mut sessions: Vec<String> = Vec::new();
@@ -184,6 +318,8 @@ fn the_rust_lease_registry_matches_the_shared_conformance_sequence() {
         leases: BTreeMap::new(),
         pins: BTreeMap::new(),
         sessions,
+        sampling: Sampling::new(),
+        samples: BTreeMap::new(),
     };
     let mut mismatches = Vec::new();
     for (index, step) in fixture["steps"]
@@ -193,7 +329,7 @@ fn the_rust_lease_registry_matches_the_shared_conformance_sequence() {
         .enumerate()
     {
         let expected = step["expect"].as_str().expect("expect");
-        let actual = runner.run(step);
+        let actual = runner.run(step).await;
         if actual != expected {
             mismatches.push(format!(
                 "step {index} ({}): expected {expected}, got {actual}",

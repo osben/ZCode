@@ -21,6 +21,8 @@ mod lsp;
 mod mcp_ui_lease;
 // Fork (F7 PR 1): the Rust owner of the panels of Rust-run servers (routing, calls, resource reads).
 pub(crate) mod mcp_ui_rust;
+// Fork (F7 PR 2): the sampling ledger of the panels of Rust-run servers (Node `samplingCalls.ts`).
+pub(crate) mod mcp_ui_sampling;
 pub(crate) mod methods;
 pub mod node_helper;
 mod queue;

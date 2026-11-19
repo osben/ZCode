@@ -12,6 +12,7 @@ use rust_cli_kernel_api::dynamic_workflow::{DynamicWorkflowMode, DynamicWorkflow
 use rust_cli_kernel_api::ids::{EnvironmentId, SessionId, TraceId};
 use rust_cli_kernel_api::model::ModelSelection;
 use rust_cli_kernel_api::permission::PermissionMode;
+use rust_cli_kernel_api::sampling::{SamplingCall, SamplingError, SamplingReply};
 use rust_cli_kernel_api::session_api::{
     Ack as KernelAck, Command, CommandEnvelope, CommandResult, CreateSession, EndReason, Kernel,
     KernelError, SequencedEvent, SessionHandle, SessionView,
@@ -207,6 +208,28 @@ pub(crate) struct TestKernel {
     log: Log,
     ids: Log,
     fail_persist: std::sync::atomic::AtomicBool,
+    /// Fork (F7 PR 2): how `sample_model` answers; unset, it refuses as a kernel without sampling does.
+    sampling: StdMutex<Option<TestSampling>>,
+    /// Fork (F7 PR 2): notified when a held `sample_model` call starts waiting for its cancel.
+    sampling_started: tokio::sync::Notify,
+}
+
+/// Fork (F7 PR 2): the model answer of a test kernel.
+#[derive(Clone)]
+pub(crate) enum TestSampling {
+    Reply(String),
+    /// Waits until the call is cancelled, as a model that never answers.
+    Hold,
+}
+
+impl TestKernel {
+    pub(crate) fn set_sampling(&self, behavior: TestSampling) {
+        *self.sampling.lock().unwrap() = Some(behavior);
+    }
+
+    pub(crate) async fn sampling_started(&self) {
+        self.sampling_started.notified().await;
+    }
 }
 
 impl TestKernel {
@@ -261,6 +284,26 @@ impl TestKernel {
 
 #[async_trait]
 impl Kernel for TestKernel {
+    async fn sample_model(&self, call: SamplingCall) -> Result<SamplingReply, SamplingError> {
+        let behavior = self.sampling.lock().unwrap().clone();
+        match behavior {
+            Some(TestSampling::Reply(text)) => Ok(SamplingReply {
+                model: "test-model".to_owned(),
+                text,
+                stop_reason: "endTurn".to_owned(),
+            }),
+            Some(TestSampling::Hold) => {
+                self.sampling_started.notify_one();
+                call.cancel.cancelled().await;
+                Err(SamplingError::Cancelled)
+            }
+            None => Err(KernelError::Unsupported {
+                what: "MCP App sampling".to_owned(),
+            }
+            .into()),
+        }
+    }
+
     fn queries(&self) -> Arc<dyn StoreQueries> {
         Arc::new(Queries {
             store: self.store.clone(),
@@ -340,6 +383,8 @@ fn server_without_directory() -> (TaskScope, Arc<Server>, Arc<TestKernel>) {
         log: Arc::new(StdMutex::new(Vec::new())),
         ids: Arc::new(StdMutex::new(Vec::new())),
         fail_persist: std::sync::atomic::AtomicBool::new(false),
+        sampling: StdMutex::new(None),
+        sampling_started: tokio::sync::Notify::new(),
     });
     let server = Arc::new(Server::new(
         context,
