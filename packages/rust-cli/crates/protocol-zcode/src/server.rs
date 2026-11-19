@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use rust_cli_kernel_api::default_model::DefaultModel;
 use rust_cli_kernel_api::dynamic_workflow::{
-    DynamicWorkflowGate, DynamicWorkflowMode, DynamicWorkflowPreferences,
+    DynamicWorkflowGate, DynamicWorkflowGates, DynamicWorkflowMode, DynamicWorkflowPreferences,
 };
 use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
 use rust_cli_kernel_api::ids::{EnvironmentId, SessionId};
@@ -413,9 +413,8 @@ impl Server {
         self.preferences().dynamic_workflow
     }
 
-    /// Fork: the gate a session was created with, `None` for a session this process did not create through the
-    /// direct createSession route. W7 reads it to register the tools; until then only the tests do.
-    #[allow(dead_code)]
+    /// Fork: the gate a session was recorded with, `None` for a session with no record (fail closed). The tool
+    /// registry reads it through [`DynamicWorkflowGates`] (`runtime::workflow_gate`).
     pub(crate) fn dynamic_workflow_gate(&self, session: &SessionId) -> Option<DynamicWorkflowGate> {
         self.dynamic_workflow_gates
             .lock_unpoisoned()
@@ -613,6 +612,13 @@ impl Server {
 
 /// [`Server`] 放在连接上的形状（读循环要 `'static`）。
 pub struct Handler(pub Arc<Server>);
+
+/// Fork (W7-1): the gate source the tool registry reads per session (`runtime::workflow_gate`).
+impl DynamicWorkflowGates for Server {
+    fn gate(&self, session: &SessionId) -> Option<DynamicWorkflowGate> {
+        self.dynamic_workflow_gate(session)
+    }
+}
 
 #[async_trait]
 impl Service for Handler {

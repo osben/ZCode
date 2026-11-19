@@ -830,3 +830,58 @@ fn every_main_session_only_tool_is_withheld_from_a_subagent() {
         );
     }
 }
+
+// Fork (W7-1): the workflow denylists, ported from Node `runtime-tool-allowlist.test.ts` (resolveRuntimeDisallowedTools).
+mod workflow_denylists {
+    use rust_cli_kernel_api::tool_names;
+
+    use crate::actor_turn::WORKFLOW_ACTOR_DISALLOWED_TOOLS;
+    use crate::toolset::{WorkflowTaskType, structural_workflow_disallowed};
+
+    #[test]
+    fn a_workflow_child_loses_the_six_always_ask_tools_and_the_introspection_pair_in_node_s_order()
+    {
+        assert_eq!(
+            structural_workflow_disallowed(WorkflowTaskType::WorkflowChild),
+            [
+                tool_names::CREATE_WORKFLOW,
+                tool_names::AMEND_WORKFLOW,
+                tool_names::SAVE_WORKFLOW,
+                tool_names::RESUME_WORKFLOW_RUN,
+                tool_names::RESOLVE_WORKFLOW_QUESTION,
+                tool_names::FILL_WORKFLOW_HOLE,
+                tool_names::LIST_WORKFLOW_RUNS,
+                tool_names::GET_WORKFLOW_RUN,
+            ]
+        );
+    }
+
+    #[test]
+    fn a_run_portless_child_loses_only_the_introspection_pair() {
+        assert_eq!(
+            structural_workflow_disallowed(WorkflowTaskType::RunPortlessChild),
+            [tool_names::LIST_WORKFLOW_RUNS, tool_names::GET_WORKFLOW_RUN]
+        );
+    }
+
+    #[test]
+    fn the_main_runtime_withholds_nothing_structurally() {
+        assert!(structural_workflow_disallowed(WorkflowTaskType::Other).is_empty());
+    }
+
+    #[test]
+    fn the_actor_list_is_node_s_seven_actor_denials() {
+        assert_eq!(
+            WORKFLOW_ACTOR_DISALLOWED_TOOLS,
+            [
+                tool_names::ASK_USER_QUESTION,
+                tool_names::ENTER_PLAN_MODE,
+                tool_names::EXIT_PLAN_MODE,
+                tool_names::CREATE_WORKFLOW,
+                tool_names::AMEND_WORKFLOW,
+                tool_names::READ_TOPIC_RESOURCE,
+                tool_names::RESOLVE_WORKFLOW_QUESTION,
+            ]
+        );
+    }
+}

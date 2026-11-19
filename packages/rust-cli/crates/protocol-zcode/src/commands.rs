@@ -586,6 +586,15 @@ pub(crate) async fn create_session_with(
     if let Some(request) = &payload.worktree_preparation {
         return prepare_worktree(server, envelope, &payload, request).await;
     }
+    // Fork (W7-1, spec 9.2): the activation of a prepared session records its gate from the same parameters.
+    if let Some(prepared) = payload.prepared_session_id.as_deref() {
+        record_workflow_gate(
+            server,
+            &SessionId::new(prepared),
+            payload.dynamic_workflow_enabled,
+            payload.dynamic_workflow_mode,
+        );
+    }
     if let (Some(prepared), Some(expected)) = (
         payload.prepared_session_id.as_deref(),
         payload.expected_submission_id.as_deref(),
@@ -828,14 +837,13 @@ pub(crate) async fn create_session_with(
         Ok(id) => id,
         Err(error) => return refused(error.to_string()),
     };
-    // Fork (W1): the record takes its dynamic-workflow gate from the create parameters, then the Host's cached fact.
-    // Nothing reads it before W7, and the policy answer stays disabled until W9.
-    let workflow_gate = resolve_gate(
+    // Fork (W1, W7-1): the record takes its dynamic-workflow gate from the create parameters, then the Host's cached fact.
+    record_workflow_gate(
+        server,
+        &id,
         payload.dynamic_workflow_enabled,
         payload.dynamic_workflow_mode,
-        &server.dynamic_workflow_preferences(),
     );
-    server.record_dynamic_workflow_gate(&id, workflow_gate);
     // B1.1: the creation fact is durable before the session opens on it, so the open below seeds the projection
     // with the marker like a cold restore does. Node persists its `worktree_creation` timeline part after the
     // first turn's session persistence and before TurnStarted (`turn.ts`); here the row's creation is that first
@@ -866,6 +874,19 @@ pub(crate) async fn create_session_with(
 
 /// The content of a first input with attachments, resolved before any side effect of the command (the session's
 /// creation or activation): text material that cannot be written refuses the command. `None` without text or refs.
+/// Fork (W1, W7-1; specs/fork-rust-workflow-engine.md 9.2): records a session's dynamic-workflow gate from its create
+/// parameters, then the Host's cached fact (Node `resolveDynamicWorkflowRuntimeGate`). Every route that creates, activates,
+/// reserves or resumes a session calls it, so the record is rebuilt the way Node rebuilds it.
+pub(crate) fn record_workflow_gate(
+    server: &Server,
+    id: &SessionId,
+    enabled: Option<bool>,
+    mode: Option<DynamicWorkflowMode>,
+) {
+    let gate = resolve_gate(enabled, mode, &server.dynamic_workflow_preferences());
+    server.record_dynamic_workflow_gate(id, gate);
+}
+
 async fn first_content(
     server: &Server,
     envelope: &Envelope,
@@ -1109,6 +1130,13 @@ async fn reserve_submission(
             }
         }
     }
+    // Fork (W7-1, spec 9.2): the reservation creates the session, so its record takes the gate from the same parameters.
+    record_workflow_gate(
+        server,
+        &id,
+        payload.dynamic_workflow_enabled,
+        payload.dynamic_workflow_mode,
+    );
     let workspace = payload.workspace_id.as_deref().unwrap_or_default();
     let created = if existing.is_some() {
         Ok(id.clone())

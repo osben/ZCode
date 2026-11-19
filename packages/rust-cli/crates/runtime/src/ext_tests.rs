@@ -103,6 +103,7 @@ async fn plugin_agents_reach_the_agent_listing() {
         Arc::new(MemoryTaskLists::default()),
         Extensions {
             agent_memory_root: None,
+            dynamic_workflow: None,
             config: ExtConfig {
                 plugin_dirs: vec![EnvPath::new(KIT)],
                 workspace: Some(workspace()),
@@ -221,6 +222,7 @@ async fn the_session_catalog_follows_the_incognito_profile() {
         Arc::new(MemoryTaskLists::default()),
         Extensions {
             agent_memory_root: None,
+            dynamic_workflow: None,
             config: ExtConfig {
                 plugin_dirs: vec![EnvPath::new(KIT)],
                 workspace: Some(workspace()),

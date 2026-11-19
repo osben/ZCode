@@ -230,6 +230,16 @@ pub(crate) fn base_tools(
             .with_tools(topic)
             .with_tools(rust_cli_tools::worktree_tools(&worktrees)),
     );
+    // Fork (W7-1): the dynamic-workflow tools reach a session only through its recorded gate (`GatedRegistry`). With no
+    // gate source none are registered, so the gate stays off by default.
+    let registry: Arc<dyn ToolRegistry> = match &extensions.dynamic_workflow {
+        Some(gates) => Arc::new(crate::workflow_gate::GatedRegistry::new(
+            registry,
+            gates.clone(),
+            rust_cli_tools::workflow_tools(),
+        )),
+        None => registry,
+    };
     // 用户输入的提及与 bash 模式用基础注册表里的 Read 与 Bash（与模型的调用共用 readFileState 与 shell 状态）。
     let inputs: Arc<dyn UserInputs> = Arc::new(rust_cli_tools::UserInputTools::new(
         registry.as_ref(),

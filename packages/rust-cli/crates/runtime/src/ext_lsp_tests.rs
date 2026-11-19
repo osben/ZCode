@@ -92,6 +92,7 @@ async fn the_code_intelligence_sees_the_session_profiles() {
         Arc::new(MemoryTaskLists::default()),
         Extensions {
             agent_memory_root: None,
+            dynamic_workflow: None,
             config: ExtConfig::default(),
             cron_store: None,
             peers: rust_cli_session::PeerDeps::off(),
