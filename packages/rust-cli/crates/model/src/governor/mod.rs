@@ -12,9 +12,11 @@
 
 pub mod controller;
 
-use std::collections::{HashMap, VecDeque};
-use std::sync::{Arc, Mutex, OnceLock, Weak};
-use std::time::Duration;
+use std::collections::{BinaryHeap, HashMap, VecDeque};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::mpsc::RecvTimeoutError;
+use std::sync::{Arc, Mutex, OnceLock, Weak, mpsc};
+use std::time::{Duration, Instant};
 
 use futures_util::future::BoxFuture;
 use rust_cli_kernel_api::clock::Clock;
@@ -26,6 +28,9 @@ use crate::admission::{AdmissionScope, AdmissionTicket, AttemptSignal, RequestAd
 use controller::{Controller, Snapshot};
 
 /// 定时器：`delay` 之后调用回调（生产用 tokio，测试用假的）。
+///
+/// 契约：调度器可以同步回调。这时调用方必须先让时钟越过截止时间再回调；否则回调会 `wake` → `drain` → `arm` → 再次
+/// `fire`，在冷却期间无限递归。调用方（`fire`）在锁外调用调度器，所以同步回调不会死锁。
 pub type Scheduler = Arc<dyn Fn(Duration, Box<dyn FnOnce() + Send>) + Send + Sync>;
 
 /// 主代理的 run 标识（Node `OBSERVER_RUN_ID`，以 `\0` 开头，不会与 run 的 ID 冲突）。
@@ -436,7 +441,7 @@ impl Governor {
         })
     }
 
-    /// 安排唤醒。必须在锁外调用：调度器可能同步回调 `wake`，回调要再拿锁。
+    /// 安排唤醒。必须在锁外调用：调度器可能同步回调 `wake`，回调要再拿锁（同步调度器的契约见 [`Scheduler`]）。
     fn fire(&self, wake: Option<Wake>) {
         let Some(wake) = wake else {
             return;
@@ -534,14 +539,97 @@ pub fn scheduler() -> Scheduler {
                     callback();
                 });
             }
+            // 没有运行时（票在普通线程上丢弃）：交给进程里唯一的定时线程。
             Err(_) => {
-                std::thread::spawn(move || {
-                    std::thread::sleep(delay);
-                    callback();
-                });
+                if let Some(sender) = timer_sender() {
+                    let seq = TIMER_SEQ.fetch_add(1, Ordering::Relaxed);
+                    let at = Instant::now() + delay;
+                    // 接收端只在进程结束时消失；发送失败就是进程在收尾，丢掉唤醒无妨。
+                    let _ = sender.send(Timer { at, seq, callback });
+                }
             }
         },
     )
+}
+
+/// 一个待触发的回调：到了 `at` 就调用。堆里按 (at, seq) 取最早的。
+struct Timer {
+    at: Instant,
+    seq: u64,
+    callback: Box<dyn FnOnce() + Send>,
+}
+
+impl PartialEq for Timer {
+    fn eq(&self, other: &Self) -> bool {
+        (self.at, self.seq) == (other.at, other.seq)
+    }
+}
+
+impl Eq for Timer {}
+
+impl PartialOrd for Timer {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Timer {
+    /// 反过来比较：`BinaryHeap` 是大顶堆，这样堆顶是最早的那个。
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        (other.at, other.seq).cmp(&(self.at, self.seq))
+    }
+}
+
+/// 定时线程的序号（同一个截止时间按到达顺序触发）。
+static TIMER_SEQ: AtomicU64 = AtomicU64::new(0);
+/// 启动过的定时线程数（测试用：整个进程只应有一条）。
+pub(crate) static TIMER_THREADS: AtomicUsize = AtomicUsize::new(0);
+/// 定时线程的发送端，第一次需要时启动线程；启动失败时是 None（只记一次日志）。
+static TIMER_SENDER: OnceLock<Option<mpsc::Sender<Timer>>> = OnceLock::new();
+
+fn timer_sender() -> Option<mpsc::Sender<Timer>> {
+    TIMER_SENDER
+        .get_or_init(|| {
+            let (tx, rx) = mpsc::channel::<Timer>();
+            match std::thread::Builder::new()
+                .name("governor-timer".to_owned())
+                .spawn(move || run_timers(rx))
+            {
+                Ok(_) => {
+                    TIMER_THREADS.fetch_add(1, Ordering::SeqCst);
+                    Some(tx)
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "governor timer thread did not start; off-runtime wakes are dropped");
+                    None
+                }
+            }
+        })
+        .clone()
+}
+
+/// 定时线程：堆里按截止时间排队，到期就调用。回调在这里（不持有任何治理器的锁）运行。
+/// 单个回调的 panic 被截住，不能让整条定时线程死掉（否则之后的唤醒全部丢失）。
+fn run_timers(rx: mpsc::Receiver<Timer>) {
+    let mut heap: BinaryHeap<Timer> = BinaryHeap::new();
+    loop {
+        let now = Instant::now();
+        while heap.peek().is_some_and(|next| next.at <= now) {
+            let Some(due) = heap.pop() else {
+                break;
+            };
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(due.callback));
+        }
+        let incoming = match heap.peek() {
+            None => rx.recv().map_err(|_| RecvTimeoutError::Disconnected),
+            Some(next) => rx.recv_timeout(next.at.saturating_duration_since(Instant::now())),
+        };
+        match incoming {
+            Ok(timer) => heap.push(timer),
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => return,
+        }
+    }
 }
 
 /// 进程级的治理器（Node `getWorkflowConcurrencyGovernor`）：第一次取时按 CPU 算 D。

@@ -177,7 +177,10 @@ impl Controller {
                 // u64 中间值：cap 为 u32 时 cap x 3 / 4 必然落在 u32 内，不会溢出（Codex #560 P3）。
                 let decreased =
                     u64::from(self.cap) * u64::from(DECREASE_NUM) / u64::from(DECREASE_DEN);
-                self.cap = u32::try_from(decreased).unwrap_or(u32::MAX).max(FLOOR);
+                let Ok(decreased) = u32::try_from(decreased) else {
+                    unreachable!("a decrease factor below one cannot push the cap past u32");
+                };
+                self.cap = decreased.max(FLOOR);
                 self.last_bad = Some(previous);
                 self.last_good = None;
             }

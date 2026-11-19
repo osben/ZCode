@@ -666,3 +666,30 @@ fn an_absurd_default_concurrency_cannot_overflow_the_growth_limit() {
     );
     assert_eq!(governor.snapshot(KEY_A).unwrap().growth_limit, u32::MAX);
 }
+
+/// 很多次离开运行时的唤醒（冷却期间每次 drain 都会重新安排）只用一条定时线程，每个唤醒都会触发（Codex delta #560 P1）。
+#[test]
+fn many_off_runtime_wakes_share_one_timer_thread() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let fired = Arc::new(AtomicUsize::new(0));
+    let schedule = super::scheduler();
+    for _ in 0..200 {
+        let fired = fired.clone();
+        schedule(
+            Duration::from_millis(1),
+            Box::new(move || {
+                fired.fetch_add(1, Ordering::SeqCst);
+            }),
+        );
+    }
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while fired.load(Ordering::SeqCst) < 200 && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(fired.load(Ordering::SeqCst), 200, "every wake fires");
+    assert!(
+        super::TIMER_THREADS.load(Ordering::SeqCst) <= 1,
+        "one timer thread serves all of them"
+    );
+}
