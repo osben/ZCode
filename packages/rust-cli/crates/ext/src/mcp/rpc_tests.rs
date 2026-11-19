@@ -443,3 +443,216 @@ mod elicitation {
         );
     }
 }
+
+/// F3b(c) PR 2: a helper-hosted server's question, relayed by the helper (`helper/elicitation`). It is asked and answered
+/// as the connection's own question is, and the helper's abandon of the request (its call ended, or the turn was
+/// cancelled) withdraws it.
+mod helper_relay {
+    use std::sync::Mutex;
+    use std::time::Duration;
+
+    use async_trait::async_trait;
+    use rust_cli_base::sync::LockUnpoisoned;
+    use rust_cli_kernel_api::ids::ToolUseId;
+    use rust_cli_kernel_api::orchestration::{
+        Answer, InteractionAnswer, InteractionRequest, Interactions, McpElicitationAnswer,
+        OrchestrationError, QuestionAnswer,
+    };
+    use rust_cli_kernel_api::testing::ScriptedInteractions;
+    use serde_json::Map;
+
+    use super::*;
+
+    fn params() -> Value {
+        json!({"message": "Name?", "requestedSchema": {"type": "object"}})
+    }
+
+    fn content(value: Value) -> Map<String, Value> {
+        value.as_object().cloned().unwrap()
+    }
+
+    /// The helper's answer for `toolu_1` on server `s`, with the request's cancel as `withdrawn`.
+    async fn relayed(
+        interactions: Arc<dyn Interactions>,
+        params: Value,
+        withdrawn: CancellationToken,
+    ) -> Value {
+        helper_elicitation_answer(
+            interactions,
+            ToolUseId::new("toolu_1"),
+            "s".to_owned(),
+            &params,
+            withdrawn,
+        )
+        .await
+    }
+
+    /// An ask that never gets an answer; it records the asks and the withdrawn ones.
+    #[derive(Default)]
+    struct Hanging {
+        asked: Mutex<usize>,
+        withdrawn: Mutex<Vec<ToolUseId>>,
+    }
+
+    #[async_trait]
+    impl Interactions for Hanging {
+        async fn ask(
+            &self,
+            _request: InteractionRequest,
+        ) -> Result<InteractionAnswer, OrchestrationError> {
+            *self.asked.lock_unpoisoned() += 1;
+            std::future::pending().await
+        }
+
+        async fn cancel_ask(&self, tool_use: &ToolUseId) {
+            self.withdrawn.lock_unpoisoned().push(tool_use.clone());
+        }
+
+        fn lasting(&self) -> Option<Arc<dyn Interactions>> {
+            None
+        }
+    }
+
+    async fn wait_until(mut done: impl FnMut() -> bool) {
+        for _ in 0..400 {
+            if done() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        panic!("the condition never held");
+    }
+
+    #[tokio::test]
+    async fn an_accepted_answer_reaches_the_helper_with_its_content() {
+        let interactions = Arc::new(ScriptedInteractions::new([Answer::McpElicitation(
+            McpElicitationAnswer::Accept {
+                content: content(json!({"name": "Ada"})),
+            },
+        )]));
+        let result = relayed(interactions.clone(), params(), CancellationToken::new()).await;
+        assert_eq!(
+            result,
+            json!({"action": "accept", "content": {"name": "Ada"}})
+        );
+        assert_eq!(
+            interactions.asked(),
+            vec![InteractionRequest::McpElicitation {
+                tool_use: ToolUseId::new("toolu_1"),
+                server: "s".to_owned(),
+                message: "Name?".to_owned(),
+                requested_schema: json!({"type": "object"}),
+                origin: None,
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn decline_and_cancel_answers_reach_the_helper() {
+        for (answer, expected) in [
+            (McpElicitationAnswer::Decline, "decline"),
+            (McpElicitationAnswer::Cancel, "cancel"),
+        ] {
+            let interactions =
+                Arc::new(ScriptedInteractions::always(Answer::McpElicitation(answer)));
+            let result = relayed(interactions, params(), CancellationToken::new()).await;
+            assert_eq!(result, json!({"action": expected}));
+        }
+    }
+
+    #[tokio::test]
+    async fn a_failed_question_or_another_answer_kind_declines() {
+        let failed = Arc::new(ScriptedInteractions::new([]));
+        assert_eq!(
+            relayed(failed, params(), CancellationToken::new()).await,
+            json!({"action": "decline"})
+        );
+        let other = Arc::new(ScriptedInteractions::always(Answer::Question(
+            QuestionAnswer::Declined,
+        )));
+        assert_eq!(
+            relayed(other, params(), CancellationToken::new()).await,
+            json!({"action": "decline"})
+        );
+    }
+
+    #[tokio::test]
+    async fn a_mode_other_than_form_is_declined_without_asking() {
+        let interactions = Arc::new(ScriptedInteractions::allowing());
+        let url = json!({"mode": "url", "message": "Open?", "url": "https://example.com"});
+        assert_eq!(
+            relayed(interactions.clone(), url, CancellationToken::new()).await,
+            json!({"action": "decline"})
+        );
+        assert!(interactions.asked().is_empty());
+    }
+
+    /// The call ended while its question is open: the helper abandons the request, the question is withdrawn and the
+    /// server gets `cancel`.
+    #[tokio::test]
+    async fn an_abandoned_request_withdraws_the_open_question_and_answers_cancel() {
+        let hanging = Arc::new(Hanging::default());
+        let interactions: Arc<dyn Interactions> = hanging.clone();
+        let withdrawn = CancellationToken::new();
+        let asking = tokio::spawn(relayed(interactions, params(), withdrawn.clone()));
+        wait_until(|| *hanging.asked.lock_unpoisoned() == 1).await;
+        withdrawn.cancel();
+        assert_eq!(asking.await.unwrap(), json!({"action": "cancel"}));
+        assert_eq!(
+            *hanging.withdrawn.lock_unpoisoned(),
+            vec![ToolUseId::new("toolu_1")]
+        );
+    }
+}
+
+/// F3b(c) PR 2: the answer shapes the shared contract (protocol-zcode's helper_elicitation_contract.json, which the TS
+/// relay test reads too) names, for the three kinds Rust returns to the helper.
+mod helper_contract {
+    use rust_cli_kernel_api::ids::ToolUseId;
+    use rust_cli_kernel_api::orchestration::{Answer, McpElicitationAnswer};
+    use rust_cli_kernel_api::testing::ScriptedInteractions;
+
+    use super::*;
+
+    const CONTRACT: &str =
+        include_str!("../../../protocol-zcode/src/fork/helper_elicitation_contract.json");
+
+    #[tokio::test]
+    async fn rust_answers_the_contracts_answer_shapes() {
+        let contract: Value = serde_json::from_str(CONTRACT).expect("the contract is JSON");
+        let accept_content = contract["answers"]["accept"]["content"]
+            .as_object()
+            .expect("an object")
+            .clone();
+        let answers = [
+            (
+                "accept",
+                Answer::McpElicitation(McpElicitationAnswer::Accept {
+                    content: accept_content,
+                }),
+            ),
+            (
+                "decline",
+                Answer::McpElicitation(McpElicitationAnswer::Decline),
+            ),
+            (
+                "cancel",
+                Answer::McpElicitation(McpElicitationAnswer::Cancel),
+            ),
+        ];
+        for (name, answer) in answers {
+            let got = helper_elicitation_answer(
+                Arc::new(ScriptedInteractions::always(answer)),
+                ToolUseId::new("toolu_1"),
+                contract["question"]["serverName"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned(),
+                &contract["request"],
+                CancellationToken::new(),
+            )
+            .await;
+            assert_eq!(got, contract["answers"][name], "the {name} answer");
+        }
+    }
+}

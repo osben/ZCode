@@ -14,6 +14,8 @@ export const FORK_RUST_HELPER_F3 = {
   sessionDelta: "helper/session/delta",
   authorizeAppTool: "helper/authorizeAppTool",
   sampleModel: "helper/sampleModel",
+  /** A helper-hosted server's question, asked of the session of its in-flight pipe call (F3b(c) PR 2). */
+  elicitation: "helper/elicitation",
   appToolsReplace: "helper/appTools/replace",
   appToolsCall: "helper/appTools/call",
   appToolsCancel: "helper/appTools/cancel",
@@ -59,13 +61,16 @@ export function requireString(params: Record<string, unknown> | undefined, key: 
 export function toWireResult(result: McpToolCallResult): Record<string, unknown> {
   return {
     content: result.content,
-    ...(result.structuredContent !== undefined ? { structuredContent: result.structuredContent } : {}),
+    ...(result.structuredContent !== undefined
+      ? { structuredContent: result.structuredContent }
+      : {}),
     ...(result.isError !== undefined ? { isError: result.isError } : {}),
     ...(result._meta !== undefined ? { _meta: result._meta } : {}),
   };
 }
 
-export const errorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));
+export const errorMessage = (error: unknown) =>
+  error instanceof Error ? error.message : String(error);
 
 /** Node's projection of the four plugin UI events (product-projection.ts). */
 export function toPluginUiDelta(event: SessionEvent): Record<string, unknown> | undefined {

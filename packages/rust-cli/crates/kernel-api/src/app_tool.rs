@@ -71,6 +71,18 @@ pub struct AppToolSpec {
     pub idempotent: bool,
 }
 
+/// Fork F3b(c) PR 2: a helper-hosted server's question (`elicitation/create`) the helper relays (`helper/elicitation`).
+/// `params` is the server's request (`message`, `requestedSchema`, `mode`); the question belongs to `tool_use`'s call on
+/// `server` in `session`. `withdrawn` fires when the helper abandons the request, so the question is withdrawn.
+#[derive(Debug, Clone)]
+pub struct ElicitationCall {
+    pub session: SessionId,
+    pub tool_use: ToolUseId,
+    pub server: String,
+    pub params: Value,
+    pub withdrawn: CancellationToken,
+}
+
 /// Fork F3b(b): the reader and invoker of the app-provided tools a Node helper holds (specs/fork-rust-node-helper.md
 /// F3b(b)). The tool registry reads a session's set; a call runs in the helper, and a cancel of the call is sent to it.
 #[async_trait::async_trait]

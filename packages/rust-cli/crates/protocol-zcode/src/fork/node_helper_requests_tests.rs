@@ -7,7 +7,7 @@ use tokio_util::sync::CancellationToken;
 use super::*;
 use crate::fork::node_helper::HelperRequests;
 use crate::fork::node_helper::requests::{
-    AUTHORIZE_APP_TOOL, BROWSER_EXECUTE, BROWSER_LIST, SAMPLE_MODEL,
+    AUTHORIZE_APP_TOOL, BROWSER_EXECUTE, BROWSER_LIST, ELICITATION, SAMPLE_MODEL,
 };
 
 /// Answers with its params; a request whose input says `wait` waits for its cancel and then fails.
@@ -37,6 +37,19 @@ impl HelperRequests for Answers {
             return Err(RpcError::internal("sampling withdrawn"));
         }
         Ok(json!({"sampled": true, "cancelled": cancel.is_cancelled()}))
+    }
+
+    /// F3b(c) PR 2: a question whose message says `wait` waits for its cancel, and answers `cancel` once withdrawn.
+    async fn elicitation(
+        &self,
+        params: Value,
+        cancel: CancellationToken,
+    ) -> Result<Value, RpcError> {
+        if params["message"] == json!("wait") {
+            cancel.cancelled().await;
+            return Ok(json!({"action": "cancel"}));
+        }
+        Ok(json!({"action": "accept", "content": {"name": "Ada"}, "params": params}))
     }
 
     fn session_delta(&self, _session: &str, _delta: Value) {}
@@ -272,4 +285,64 @@ async fn a_sampling_request_is_keyed_cancelled_and_lost_like_an_authorization() 
     rig.helper.requests_lost(1);
     assert!(running.await.unwrap().is_err());
     assert!(rig.helper.requests.lock().unwrap().live.is_empty());
+}
+
+fn elicit(key: &str, message: &str) -> Value {
+    json!({
+        "requestKey": key,
+        "sessionId": "s1",
+        "serverName": "plugin:calc:app",
+        "toolUseId": "toolu_1",
+        "message": message,
+        "requestedSchema": {"type": "object"},
+    })
+}
+
+/// F3b(c) PR 2: a helper-hosted server's question reaches the answerer with its params, and is answered by it.
+#[tokio::test]
+async fn a_helper_elicitation_is_answered_by_the_answerer() {
+    let (rig, _answers) = helper().await;
+    let answer = rig
+        .helper
+        .helper_request(1, ELICITATION, elicit("e1", "Name?"))
+        .await
+        .unwrap();
+    assert_eq!(answer["action"], json!("accept"));
+    assert_eq!(answer["content"], json!({"name": "Ada"}));
+    assert_eq!(answer["params"]["toolUseId"], json!("toolu_1"));
+    assert!(rig.helper.requests.lock().unwrap().live.is_empty());
+}
+
+/// F3b(c) PR 2: the helper's abandon of a question (its call ended) fires the question's cancel, and the answerer
+/// answers `cancel`.
+#[tokio::test]
+async fn a_helper_abandon_withdraws_a_running_elicitation() {
+    let (rig, _answers) = helper().await;
+    let running = {
+        let helper = rig.helper.clone();
+        tokio::spawn(async move {
+            helper
+                .helper_request(1, ELICITATION, elicit("e2", "wait"))
+                .await
+        })
+    };
+    while rig.helper.requests.lock().unwrap().live.is_empty() {
+        tokio::task::yield_now().await;
+    }
+    rig.helper.cancel_request(&json!({"requestKey": "e2"}));
+    assert_eq!(running.await.unwrap().unwrap(), json!({"action": "cancel"}));
+}
+
+/// F3b(c) PR 2: a question without the request key is refused, as the other helper requests are.
+#[tokio::test]
+async fn a_helper_elicitation_without_a_key_is_refused() {
+    let (rig, _answers) = helper().await;
+    let mut params = elicit("unused", "Name?");
+    params.as_object_mut().unwrap().remove("requestKey");
+    let error = rig
+        .helper
+        .helper_request(1, ELICITATION, params)
+        .await
+        .unwrap_err();
+    assert_eq!(error.message, "requestKey is required");
 }

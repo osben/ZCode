@@ -817,6 +817,18 @@ pub trait Kernel: Send + Sync {
         .into())
     }
 
+    /// Fork F3b(c) PR 2: the answer to a helper-hosted server's question (specs/fork-rust-node-helper.md, `helper/elicitation`):
+    /// the question is asked of the session the call runs in, as an MCP elicitation, and answered in the server's terms
+    /// (`{action, content?}`). The session must be open. A kernel without it refuses, and the helper declines.
+    async fn mcp_elicitation(
+        &self,
+        _call: crate::app_tool::ElicitationCall,
+    ) -> Result<serde_json::Value, KernelError> {
+        Err(KernelError::Unsupported {
+            what: "MCP elicitation".to_owned(),
+        })
+    }
+
     /// Fork: one model call of an MCP App panel on the session's model, outside any turn
     /// (specs/fork-rust-node-helper.md F3, `helper/sampleModel`): stores the call's usage row and nothing else. The
     /// session must be open. A kernel without it refuses.

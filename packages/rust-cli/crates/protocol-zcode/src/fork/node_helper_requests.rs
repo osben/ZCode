@@ -18,6 +18,9 @@ use super::{NodeHelper, unavailable};
 
 pub(crate) const AUTHORIZE_APP_TOOL: &str = "helper/authorizeAppTool";
 pub(crate) const SAMPLE_MODEL: &str = "helper/sampleModel";
+/// F3b(c) PR 2: a helper-hosted server's `elicitation/create`, relayed to the session's user (`{requestKey, sessionId,
+/// turnId?, toolUseId, serverName, message, requestedSchema?}`).
+pub(crate) const ELICITATION: &str = "helper/elicitation";
 /// F4b: the browser broker's Host requests, relayed to Main after an owned-session check (F4-D5).
 pub(crate) const BROWSER_LIST: &str = "interaction/browserList";
 pub(crate) const BROWSER_EXECUTE: &str = "interaction/browserExecute";
@@ -42,6 +45,16 @@ pub(crate) trait HelperRequests: Send + Sync {
         params: Value,
         cancel: CancellationToken,
     ) -> Result<Value, RpcError>;
+
+    /// `helper/elicitation` (F3b(c) PR 2); `cancel` fires when the helper abandons the question (its call ended).
+    /// Unanswered by default, so an answerer without the relay refuses it.
+    async fn elicitation(
+        &self,
+        _params: Value,
+        _cancel: CancellationToken,
+    ) -> Result<Value, RpcError> {
+        Err(RpcError::method_not_found(ELICITATION))
+    }
 
     /// `interaction/browserList` or `interaction/browserExecute` (F4b): forwarded to the Host after the session is
     /// checked to be one of this agent's. `params` still carries `requestKey`; the implementation removes it before the
@@ -101,7 +114,8 @@ impl NodeHelper {
             return self.replace_app_tools(generation, &params);
         }
         let browser = method == BROWSER_LIST || method == BROWSER_EXECUTE;
-        if method != AUTHORIZE_APP_TOOL && method != SAMPLE_MODEL && !browser {
+        let elicitation = method == ELICITATION;
+        if method != AUTHORIZE_APP_TOOL && method != SAMPLE_MODEL && !browser && !elicitation {
             return Err(RpcError::method_not_found(method));
         }
         let Some(key) = params
@@ -128,6 +142,8 @@ impl NodeHelper {
         }
         let result = if method == SAMPLE_MODEL {
             answers.sample_model(params, cancel).await
+        } else if elicitation {
+            answers.elicitation(params, cancel).await
         } else {
             answers.authorize_app_tool(params, cancel).await
         };
