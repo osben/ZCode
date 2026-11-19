@@ -518,7 +518,7 @@ export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = 
     // This version tracks the upstream zcode-cua runtime version so the plugin UI display,
     // cache path, and marketplace entry stay aligned; the actual bump is maintained by the
     // atomic producer bump workflow.
-    version: "0.6.6",
+    version: "0.6.5",
   },
   {
     // ZCode Sites (technical plan 4): a Skill-guided Agent converts the project into an artifact

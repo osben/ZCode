@@ -70,6 +70,15 @@ def _copy_profile(env):
         raise
 
 
+def _remove_tree(path):
+    # A cleanup failure (Windows keeps files of an orphaned soffice.bin locked) must not replace the
+    # operation result or reach the managed-failure handler, which would re-run a completed operation.
+    try:
+        shutil.rmtree(path)
+    except OSError as error:
+        print(f'warning: could not remove {path}: {error}', file=sys.stderr)
+
+
 @asynccontextmanager
 async def _private_profile(env: Mapping[str, str]):
     creation = asyncio.create_task(asyncio.to_thread(_copy_profile, env))
@@ -79,7 +88,7 @@ async def _private_profile(env: Mapping[str, str]):
     finally:
         # 文件线程不能取消；先等创建结束再清理，避免取消后又冒出遗留目录。
         profile, cancelled_creation = await _settle(creation)
-        _unused, cancelled_cleanup = await _settle(asyncio.create_task(asyncio.to_thread(shutil.rmtree, profile.parent)))
+        _unused, cancelled_cleanup = await _settle(asyncio.create_task(asyncio.to_thread(_remove_tree, profile.parent)))
         if cancelled_creation or cancelled_cleanup:
             raise asyncio.CancelledError()
 
@@ -92,7 +101,7 @@ async def conversion_directory(parent: Path):
         yield Path(await asyncio.shield(creation))
     finally:
         directory, cancelled_creation = await _settle(creation)
-        _unused, cancelled_cleanup = await _settle(asyncio.create_task(asyncio.to_thread(shutil.rmtree, directory)))
+        _unused, cancelled_cleanup = await _settle(asyncio.create_task(asyncio.to_thread(_remove_tree, directory)))
         if cancelled_creation or cancelled_cleanup:
             raise asyncio.CancelledError()
 
@@ -188,7 +197,12 @@ async def _execute(
         stdout, stderr = await asyncio.wait_for(process.communicate(), timeout)
     except (asyncio.TimeoutError, asyncio.CancelledError) as error:
         if process is None:
-            process, _cancelled = await _settle(creation)
+            try:
+                process, _cancelled = await _settle(creation)
+            except OSError as spawn_error:
+                # Nothing was started; the cancellation must win over the spawn failure, or the
+                # managed-failure handler would start the system fallback after a user cancel.
+                raise error from spawn_error
         cleanup = asyncio.create_task(_stop_process(process))
         # 先收回本次真实进程组，再让外层释放配置。
         _unused, cancelled_cleanup = await _settle(cleanup)

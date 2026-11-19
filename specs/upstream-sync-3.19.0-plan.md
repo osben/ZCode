@@ -231,16 +231,22 @@ taken from the 3.19.0 CLI bundle, not inferred from the patch:
 - Taken: documents, pdf, presentations, spreadsheets (LibreOffice wrapper + profile; preinstalled-tools guidance only
   activates when `ZCODE_PREINSTALLED_TOOLS_AVAILABLE` is set, which fork builds never set, so the existing install
   guidance stays in effect), android-emulator (skill names only tools the fork's server already has), browser-use,
-  zcode-cua (client-side metadata projection; uses the existing host sink), zcode-site (scripts move to
-  `skills/site-deploy/scripts/`, error wording).
+  zcode-site (scripts move to `skills/site-deploy/scripts/`, error wording).
 - Held back: **design 0.8.0** (restructured references; the fork's design tests check the 0.7.2 layout and the
   rewritten upstream tests are not in the build), **ios-simulator README** (describes scheme resolution of a built
-  server we do not have and links to a missing doc), **zcode-cua `package.json` scripts** (reference dev-only files the
-  build does not ship; only the version bump is taken). All built `dist/` changes, including `node-repl-host`.
+  server we do not have and links to a missing doc), **zcode-cua 0.6.6** (the client now copies the compact
+  metadata into `content`; upstream paired it with a core change that adds `Structured content:` only when `content`
+  is empty, while fork core still adds it whenever it is non-empty, so the model would get the metadata twice; fork
+  tests rely on the structured error channel, so core cannot be changed alone). All built `dist/` changes, including
+  `node-repl-host`.
 - Fork-side follow-through: versions synced in `bootstrap/src/app/official-plugin-definitions.ts` and
   `cli/scripts/sea-official-plugin-assets.mjs` (an unbumped seed version keeps loading the old cache); zcode-site
   `requiredSeedPaths`, `build-sea.test.mjs` seeds and version assertion, site test imports and wording,
   `.staged-file-size-exemptions` path. `scripts/architecture/upstream-snapshot.json` stays as is (pins upstream).
+- Fork fixes in the four identical `scripts/zcode_libreoffice.py` copies (review of PR #577): profile/conversion
+  directory cleanup failures only warn, so they no longer replace a successful result or re-run a completed operation
+  through system LibreOffice; a cancel while the managed process fails to start stays a cancel instead of starting the
+  system fallback. Re-apply both on the source merge if upstream has not fixed them.
 - When the source arrives: take upstream's versions of these files; port design 0.8.0 with its tests.
 
 ## Merge checklist (when upstream pushes the 3.19.0 source)

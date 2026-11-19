@@ -476,4 +476,8 @@ apps/zcode-cli/packages/pdf-plugin/skills/pdf/scripts/pdf_qa.py
 apps/zcode-cli/packages/pdf-plugin/skills/pdf/scripts/poster_validate.py
 apps/zcode-cli/packages/pdf-plugin/skills/pdf/scripts/toc_validate.py
 apps/zcode-cli/packages/spreadsheets-plugin/skills/xlsx/xlsx.py
+apps/zcode-cli/packages/documents-plugin/scripts/zcode_libreoffice.py
+apps/zcode-cli/packages/pdf-plugin/scripts/zcode_libreoffice.py
+apps/zcode-cli/packages/presentations-plugin/scripts/zcode_libreoffice.py
+apps/zcode-cli/packages/spreadsheets-plugin/scripts/zcode_libreoffice.py
 apps/zcode-cli/packages/zcode-cua-plugin/scripts/computer-use-client.mjs
