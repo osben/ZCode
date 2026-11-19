@@ -34,15 +34,34 @@ pub const COLD_START_SCAN_LIMIT: usize = 64;
 /// Node's `setTimeout` ceiling (about 24.8 days). A later wake re-reads the row and re-arms.
 const MAX_TIMER_DELAY_MS: u64 = 2_147_483_647;
 
-/// The refusals that pass on their own (Node `TRANSIENT_RESUME_REFUSALS`).
-const TRANSIENT_REFUSALS: &[&str] = &["already_running"];
-
-/// What the resume port answers: resumed, or refused with the run's refusal reason (Node
-/// `DynamicWorkflowRunResumeErrorReason`, as text).
+/// What the resume port answers: resumed, or refused.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResumeAnswer {
     Resumed,
-    Refused { reason: String },
+    Refused(Refusal),
+}
+
+/// A refusal of the resume. Node's `DynamicWorkflowRunResumeErrorReason` union: only `already_running` passes on its
+/// own (Node `TRANSIENT_RESUME_REFUSALS`); every other reason says the run cannot be resumed as it is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Refusal {
+    /// The run is in flight in this process (the user pressed Resume at the same moment). Retried.
+    AlreadyRunning,
+    /// Any other reason, by Node's name for it. Logged, not retried.
+    Other(String),
+}
+
+impl Refusal {
+    fn is_transient(&self) -> bool {
+        matches!(self, Self::AlreadyRunning)
+    }
+
+    fn reason(&self) -> &str {
+        match self {
+            Self::AlreadyRunning => "already_running",
+            Self::Other(reason) => reason,
+        }
+    }
 }
 
 /// What the module needs from the world. Every method may fail with a message (a journal or execution error).
@@ -69,6 +88,10 @@ pub fn quota_resume_at(row: &RunRow) -> Option<u64> {
 }
 
 /// The module for one session. Call [`QuotaAutoResume::dispose`] at close: dropping it does not cancel the timers.
+///
+/// Staging: no production code constructs this yet. The run service (W7) builds it per session with its port and the
+/// production clock, and wires `on_run_settled`, `scan` and `dispose` (spec section 9.14). Until then only the tests
+/// exercise it.
 pub struct QuotaAutoResume {
     inner: Arc<Inner>,
 }
@@ -178,7 +201,7 @@ fn consider(inner: &Arc<Inner>, run_id: &str, row: Option<&RunRow>) {
 /// Node `arm`: the timer for a reset time, delayed by the spacing rule. Replaces the run's timer.
 fn arm(inner: &Arc<Inner>, run_id: &str, resume_at: u64) {
     let now = inner.clock.now_ms();
-    let (generation, delay_ms) = {
+    let (generation, delay_ms, start_at) = {
         let mut state = inner.lock();
         if state.disposed {
             return;
@@ -203,9 +226,9 @@ fn arm(inner: &Arc<Inner>, run_id: &str, resume_at: u64) {
         let delay = start_at.saturating_sub(now).min(MAX_TIMER_DELAY_MS);
         let generation = next_generation(&mut state);
         state.timers.insert(run_id.to_owned(), generation);
-        (generation, delay)
+        (generation, delay, start_at)
     };
-    schedule(
+    let armed = schedule(
         inner,
         run_id,
         generation,
@@ -215,12 +238,23 @@ fn arm(inner: &Arc<Inner>, run_id: &str, resume_at: u64) {
             retries_left: WORKFLOW_QUOTA_RESUME_RETRY_LIMIT,
         },
     );
-    tracing::info!(
-        event = "dynamic_workflow.quota_resume.scheduled",
-        run_id,
-        resume_at,
-        "Dynamic workflow quota auto-resume scheduled"
-    );
+    // Logged only when the timer is really armed; a spaced start is named as Node names it.
+    if armed && start_at > resume_at {
+        tracing::info!(
+            event = "dynamic_workflow.quota_resume.scheduled",
+            run_id,
+            resume_at,
+            spaced_until = start_at,
+            "Dynamic workflow quota auto-resume scheduled"
+        );
+    } else if armed {
+        tracing::info!(
+            event = "dynamic_workflow.quota_resume.scheduled",
+            run_id,
+            resume_at,
+            "Dynamic workflow quota auto-resume scheduled"
+        );
+    }
 }
 
 /// Node `earliestNextStart`: the first start allowed for a run's next auto-resume. Nothing before its first.
@@ -242,9 +276,9 @@ fn next_generation(state: &mut State) -> u64 {
     state.next_generation
 }
 
-/// Schedules a job on the clock. The lock is not held: a clock may run its job at once. A refused job leaves no timer
-/// armed for the run.
-fn schedule(inner: &Arc<Inner>, run_id: &str, generation: u64, delay_ms: u64, fire: Fire) {
+/// Schedules a job on the clock and returns whether it was armed. The lock is not held: a clock may run its job at once.
+/// A refused job leaves no timer armed for the run, and is logged as a schedule failure, apart from a port refusal.
+fn schedule(inner: &Arc<Inner>, run_id: &str, generation: u64, delay_ms: u64, fire: Fire) -> bool {
     let job_inner = inner.clone();
     let job_run = run_id.to_owned();
     let scheduled = inner.clock.after(
@@ -253,7 +287,7 @@ fn schedule(inner: &Arc<Inner>, run_id: &str, generation: u64, delay_ms: u64, fi
     );
     if !scheduled {
         tracing::warn!(
-            event = "dynamic_workflow.quota_resume.refused",
+            event = "dynamic_workflow.quota_resume.schedule_failed",
             run_id,
             "Dynamic workflow quota auto-resume could not schedule its timer"
         );
@@ -262,6 +296,7 @@ fn schedule(inner: &Arc<Inner>, run_id: &str, generation: u64, delay_ms: u64, fi
             state.timers.remove(run_id);
         }
     }
+    scheduled
 }
 
 /// Node `fire`: the timer wakes. A timer whose generation is no longer the run's does nothing.
@@ -270,17 +305,16 @@ fn fire_job(inner: &Arc<Inner>, run_id: &str, generation: u64, fire: Fire) {
         expected_at,
         retries_left,
     } = fire;
-    {
-        let mut state = inner.lock();
-        if state.timers.get(run_id) != Some(&generation) {
-            return;
-        }
-        state.timers.remove(run_id);
-        if state.disposed {
-            return;
-        }
+    if !is_armed(inner, run_id, generation) {
+        return;
     }
-    let Some(resume_at) = read_row(inner, run_id).as_ref().and_then(quota_resume_at) else {
+    // The row is read without the lock, so a settle or a dispose can land during the read. The generation is checked
+    // again under the lock once the read has returned: a timer that was replaced or cleared in the meantime stops here.
+    let row = read_row(inner, run_id);
+    if !take_timer(inner, run_id, generation) {
+        return;
+    }
+    let Some(resume_at) = row.as_ref().and_then(quota_resume_at) else {
         // The row is no longer a quota stop: resumed by hand, superseded, or stopped elsewhere.
         return;
     };
@@ -292,6 +326,9 @@ fn fire_job(inner: &Arc<Inner>, run_id: &str, generation: u64, fire: Fire) {
     }
     {
         let mut state = inner.lock();
+        if state.disposed {
+            return;
+        }
         state.last_resumed_at.insert(run_id.to_owned(), resume_at);
         let count = state
             .resume_starts
@@ -309,14 +346,14 @@ fn fire_job(inner: &Arc<Inner>, run_id: &str, generation: u64, fire: Fire) {
     );
     match inner.port.resume(run_id) {
         Ok(ResumeAnswer::Resumed) => {}
-        Ok(ResumeAnswer::Refused { reason }) => {
+        Ok(ResumeAnswer::Refused(refusal)) => {
             tracing::warn!(
                 event = "dynamic_workflow.quota_resume.refused",
                 run_id,
-                reason = %reason,
+                reason = refusal.reason(),
                 "Dynamic workflow quota auto-resume was refused"
             );
-            if TRANSIENT_REFUSALS.contains(&reason.as_str()) {
+            if refusal.is_transient() {
                 retry_later(inner, run_id, resume_at, retries_left);
             }
         }
@@ -330,6 +367,23 @@ fn fire_job(inner: &Arc<Inner>, run_id: &str, generation: u64, fire: Fire) {
             retry_later(inner, run_id, resume_at, retries_left);
         }
     }
+}
+
+/// Whether `generation` is the run's armed timer, and the module is live.
+fn is_armed(inner: &Arc<Inner>, run_id: &str, generation: u64) -> bool {
+    let state = inner.lock();
+    !state.disposed && state.timers.get(run_id) == Some(&generation)
+}
+
+/// Takes the run's timer for `generation` out of the table, if it is still armed and the module is live. False when a
+/// settle replaced it or a dispose cleared it, so the job must do nothing.
+fn take_timer(inner: &Arc<Inner>, run_id: &str, generation: u64) -> bool {
+    let mut state = inner.lock();
+    if state.disposed || state.timers.get(run_id) != Some(&generation) {
+        return false;
+    }
+    state.timers.remove(run_id);
+    true
 }
 
 /// Node `retryLater`: a transient refusal is retried one margin later, at most the retry limit; a timer already armed
@@ -353,7 +407,7 @@ fn retry_later(inner: &Arc<Inner>, run_id: &str, resume_at: u64, retries_left: u
         state.timers.insert(run_id.to_owned(), generation);
         generation
     };
-    schedule(
+    let armed = schedule(
         inner,
         run_id,
         generation,
@@ -363,13 +417,15 @@ fn retry_later(inner: &Arc<Inner>, run_id: &str, resume_at: u64, retries_left: u
             retries_left: retries_left - 1,
         },
     );
-    tracing::info!(
-        event = "dynamic_workflow.quota_resume.retry_scheduled",
-        run_id,
-        resume_at,
-        retries_left,
-        "Dynamic workflow quota auto-resume retry scheduled"
-    );
+    if armed {
+        tracing::info!(
+            event = "dynamic_workflow.quota_resume.retry_scheduled",
+            run_id,
+            resume_at,
+            retries_left,
+            "Dynamic workflow quota auto-resume retry scheduled"
+        );
+    }
 }
 
 /// Log text is bounded: a storage error may carry a whole statement or a path.

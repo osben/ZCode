@@ -86,7 +86,7 @@ impl RunStallClock {
 
     /// Node `noteRetryScheduled`: a retry with this reason is scheduled. Arms the timer when none is armed.
     pub fn note_retry_scheduled(&self, reason: &str) {
-        let delay = {
+        let (generation, delay_ms) = {
             let mut state = self.lock();
             if state.disposed || state.notified {
                 return;
@@ -100,12 +100,10 @@ impl RunStallClock {
             }
             state.generation += 1;
             state.armed = Some(state.generation);
-            let generation = state.generation;
-            let delay = self.delay_until_window(&state);
-            (generation, delay)
+            (state.generation, self.delay_until_window(&state))
         };
         // The clock is called without the lock: a clock that runs its job at once must not find the lock held.
-        self.arm(delay.0, delay.1);
+        self.arm(generation, delay_ms);
     }
 
     /// Node `noteCap`: the cap the run last fanned out. Carried in the notice when it has been seen.

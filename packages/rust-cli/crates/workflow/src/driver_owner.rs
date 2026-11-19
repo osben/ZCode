@@ -1016,20 +1016,15 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
         // A redriven turn reports counts from zero, so the earlier turns' counts are added on top of its own (finding 9).
         let key = instance.key();
         // The ask's resolved turns count across its redrives (Node's `turnsResolved` is per ask).
-        let turn = self
-            .active
-            .values_mut()
-            .find(|ask| ask.instance.key() == key)
-            .map(|ask| {
-                ask.turns += 1;
-                ask.turns
-            });
+        let mut turn = None;
         let stats = match self
             .active
             .values_mut()
             .find(|ask| ask.instance.key() == key)
         {
             Some(ask) => {
+                ask.turns += 1;
+                turn = Some(ask.turns);
                 let (base_tools, base_world) = ask.stats_base;
                 let report = crate::engine::AskStats {
                     tool_calls: base_tools + stats.tool_calls,

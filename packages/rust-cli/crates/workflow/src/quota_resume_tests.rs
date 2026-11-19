@@ -3,7 +3,7 @@
 
 use crate::model::{Caps, RunRow, RunStatus, StopReason};
 use crate::quota_resume::{
-    QuotaAutoResume, QuotaResumePort, ResumeAnswer, WORKFLOW_QUOTA_RESUME_MARGIN_MS,
+    QuotaAutoResume, QuotaResumePort, Refusal, ResumeAnswer, WORKFLOW_QUOTA_RESUME_MARGIN_MS,
     quota_resume_at,
 };
 use crate::test_clock::AdvancingClock;
@@ -61,6 +61,10 @@ struct FakePort {
     read_error: Mutex<bool>,
     answers: Mutex<VecDeque<Result<ResumeAnswer, String>>>,
     resumes: Mutex<Vec<String>>,
+    /// Runs once, after the next row read has returned: the window between a timer's read and its resume.
+    read_hook: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    /// Runs once, inside the next resume call, before it answers.
+    resume_hook: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 impl FakePort {
@@ -85,7 +89,12 @@ impl QuotaResumePort for FakePort {
         if *self.read_error.lock().expect("read_error") {
             return Err("the journal read failed".into());
         }
-        Ok(self.rows.lock().expect("rows").get(run_id).cloned())
+        let found = self.rows.lock().expect("rows").get(run_id).cloned();
+        let hook = self.read_hook.lock().expect("read_hook").take();
+        if let Some(hook) = hook {
+            hook();
+        }
+        Ok(found)
     }
 
     fn list_session_runs(&self, limit: usize) -> Result<Vec<RunRow>, String> {
@@ -104,6 +113,10 @@ impl QuotaResumePort for FakePort {
             .lock()
             .expect("resumes")
             .push(run_id.to_owned());
+        let hook = self.resume_hook.lock().expect("resume_hook").take();
+        if let Some(hook) = hook {
+            hook();
+        }
         self.answers
             .lock()
             .expect("answers")
@@ -115,14 +128,163 @@ impl QuotaResumePort for FakePort {
 struct Rig {
     clock: Arc<AdvancingClock>,
     port: Arc<FakePort>,
-    quota: QuotaAutoResume,
+    /// Shared, so a port hook can call back into the module under test.
+    quota: Arc<QuotaAutoResume>,
 }
 
 fn rig() -> Rig {
     let clock = AdvancingClock::new(START);
     let port = Arc::new(FakePort::default());
-    let quota = QuotaAutoResume::new(port.clone(), clock.clone());
+    let quota = Arc::new(QuotaAutoResume::new(port.clone(), clock.clone()));
     Rig { clock, port, quota }
+}
+
+#[test]
+fn a_dispose_between_the_row_read_and_the_resume_means_no_resume() {
+    let r = rig();
+    r.port.put(quota_row("run_a", RESET));
+    r.quota.on_run_settled("run_a");
+    let module = r.quota.clone();
+    *r.port.read_hook.lock().expect("read_hook") = Some(Box::new(move || module.dispose()));
+    r.clock.advance_to(RESET + WORKFLOW_QUOTA_RESUME_MARGIN_MS);
+    assert!(
+        r.port.resumes().is_empty(),
+        "a disposed module does not resume the run it had already read"
+    );
+}
+
+#[test]
+fn a_settle_between_the_row_read_and_the_resume_defers_to_the_newer_timer() {
+    let r = rig();
+    r.port.put(quota_row("run_a", RESET));
+    r.quota.on_run_settled("run_a");
+    let moved = RESET + HOUR;
+    let module = r.quota.clone();
+    let port = r.port.clone();
+    *r.port.read_hook.lock().expect("read_hook") = Some(Box::new(move || {
+        // The run stops again on a later reset time while the timer holds the old row.
+        port.put(quota_row("run_a", moved));
+        module.on_run_settled("run_a");
+    }));
+    r.clock.advance_to(RESET + WORKFLOW_QUOTA_RESUME_MARGIN_MS);
+    assert!(
+        r.port.resumes().is_empty(),
+        "the timer that read the old row is stale once the run settled again"
+    );
+    r.clock.advance_to(moved + WORKFLOW_QUOTA_RESUME_MARGIN_MS);
+    assert_eq!(r.port.resumes(), vec!["run_a".to_owned()]);
+}
+
+#[test]
+fn a_retry_that_finds_the_run_started_meanwhile_leaves_it_alone() {
+    let r = rig();
+    r.port
+        .answer(Ok(ResumeAnswer::Refused(Refusal::AlreadyRunning)));
+    r.port.put(quota_row("run_a", RESET));
+    r.quota.on_run_settled("run_a");
+    // The user resumed the run by hand at the same moment: it is running when the retry looks at it.
+    let port = r.port.clone();
+    *r.port.resume_hook.lock().expect("resume_hook") = Some(Box::new(move || {
+        port.put(row("run_a", RunStatus::Running, None, None));
+    }));
+    r.clock.advance_to(RESET + WORKFLOW_QUOTA_RESUME_MARGIN_MS);
+    assert_eq!(r.port.resumes().len(), 1);
+    r.clock.advance(10 * HOUR);
+    assert_eq!(
+        r.port.resumes().len(),
+        1,
+        "the retry re-read the row and left the run alone"
+    );
+}
+
+#[test]
+fn a_pending_retry_is_withdrawn_when_the_run_settles_again_on_the_same_reset_time() {
+    let r = rig();
+    r.port
+        .answer(Ok(ResumeAnswer::Refused(Refusal::AlreadyRunning)));
+    r.port.put(quota_row("run_a", RESET));
+    r.quota.on_run_settled("run_a");
+    r.clock.advance_to(RESET + WORKFLOW_QUOTA_RESUME_MARGIN_MS);
+    assert_eq!(r.port.resumes().len(), 1);
+    // A retry is pending. The run stops again on the same reset time, before the retry is due.
+    r.quota.on_run_settled("run_a");
+    r.clock.advance(10 * HOUR);
+    assert_eq!(
+        r.port.resumes().len(),
+        1,
+        "the pending retry is dropped: this reset time was already resumed"
+    );
+}
+
+#[test]
+fn a_journal_read_that_throws_when_the_timer_fires_is_survived() {
+    let r = rig();
+    r.port.put(quota_row("run_a", RESET));
+    r.quota.on_run_settled("run_a");
+    *r.port.read_error.lock().expect("read_error") = true;
+    r.clock.advance_to(RESET + WORKFLOW_QUOTA_RESUME_MARGIN_MS);
+    assert!(r.port.resumes().is_empty(), "a failed read does not resume");
+}
+
+#[test]
+fn a_dispose_while_a_resume_is_in_flight_schedules_no_retry() {
+    let r = rig();
+    r.port
+        .answer(Ok(ResumeAnswer::Refused(Refusal::AlreadyRunning)));
+    r.port.put(quota_row("run_a", RESET));
+    r.quota.on_run_settled("run_a");
+    let module = r.quota.clone();
+    *r.port.resume_hook.lock().expect("resume_hook") = Some(Box::new(move || module.dispose()));
+    r.clock.advance_to(RESET + WORKFLOW_QUOTA_RESUME_MARGIN_MS);
+    assert_eq!(r.port.resumes().len(), 1);
+    assert_eq!(r.clock.pending(), 0, "no retry is scheduled after dispose");
+    r.clock.advance(10 * HOUR);
+    assert_eq!(r.port.resumes().len(), 1);
+}
+
+#[test]
+fn a_reset_past_the_timer_ceiling_wakes_at_the_ceiling_then_resumes_once_at_the_true_time() {
+    const CEILING_MS: u64 = 2_147_483_647;
+    let r = rig();
+    let far = START + 30 * 24 * HOUR;
+    r.port.put(quota_row("run_a", far));
+    r.quota.on_run_settled("run_a");
+    assert_eq!(
+        r.clock.delays(),
+        vec![CEILING_MS],
+        "the first wait is capped"
+    );
+    r.clock.advance_to(START + CEILING_MS);
+    assert!(
+        r.port.resumes().is_empty(),
+        "the ceiling wake re-reads the row and re-arms, it does not resume"
+    );
+    r.clock
+        .advance_to(far + WORKFLOW_QUOTA_RESUME_MARGIN_MS - 1);
+    assert!(r.port.resumes().is_empty());
+    r.clock.advance_to(far + WORKFLOW_QUOTA_RESUME_MARGIN_MS);
+    assert_eq!(
+        r.port.resumes(),
+        vec!["run_a".to_owned()],
+        "once, at the true time"
+    );
+}
+
+#[test]
+fn a_row_changed_before_the_first_wake_resumes_once_at_the_new_time() {
+    let r = rig();
+    r.port.put(quota_row("run_a", RESET));
+    r.quota.on_run_settled("run_a");
+    // The row moves to a later reset time without a settlement: the timer armed for the old one wakes first.
+    let moved = RESET + 3 * HOUR;
+    r.port.put(quota_row("run_a", moved));
+    r.clock.advance_to(RESET + WORKFLOW_QUOTA_RESUME_MARGIN_MS);
+    assert!(r.port.resumes().is_empty(), "no resume at the old time");
+    r.clock
+        .advance_to(moved + WORKFLOW_QUOTA_RESUME_MARGIN_MS - 1);
+    assert!(r.port.resumes().is_empty());
+    r.clock.advance_to(moved + WORKFLOW_QUOTA_RESUME_MARGIN_MS);
+    assert_eq!(r.port.resumes().len(), 1, "one resume, at the new time");
 }
 
 #[test]
@@ -260,9 +422,8 @@ fn repeated_auto_resumes_are_spaced_ten_minutes_then_doubling_to_an_hour() {
 fn a_transient_refusal_is_retried_one_margin_later_at_most_twice() {
     let r = rig();
     for _ in 0..3 {
-        r.port.answer(Ok(ResumeAnswer::Refused {
-            reason: "already_running".into(),
-        }));
+        r.port
+            .answer(Ok(ResumeAnswer::Refused(Refusal::AlreadyRunning)));
     }
     r.port.put(quota_row("run_a", RESET));
     r.quota.on_run_settled("run_a");
@@ -280,9 +441,9 @@ fn a_transient_refusal_is_retried_one_margin_later_at_most_twice() {
 #[test]
 fn a_refusal_that_is_not_transient_is_not_retried() {
     let r = rig();
-    r.port.answer(Ok(ResumeAnswer::Refused {
-        reason: "not_resumable".into(),
-    }));
+    r.port.answer(Ok(ResumeAnswer::Refused(Refusal::Other(
+        "not_resumable".into(),
+    ))));
     r.port.put(quota_row("run_a", RESET));
     r.quota.on_run_settled("run_a");
     r.clock.advance_to(RESET + HOUR);
