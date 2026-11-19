@@ -72,6 +72,7 @@ rust-cli-proc.workspace = true
 # stream-json 输入的 MCP prewait 按模型卡片判断能不能用工具搜索（headless.md §6）。
 rust-cli-prompts.workspace = true
 rust-cli-runtime.workspace = true
+rust-cli-workflow.workspace = true
 rust-cli-ssh-connect.workspace = true
 # 终端界面（docs/specs/rust-cli/tui.md）：交互模式与启动前的两屏（tui-kit.md §2.3）。
 rust-cli-tui.workspace = true

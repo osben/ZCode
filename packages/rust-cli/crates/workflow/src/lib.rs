@@ -4,6 +4,7 @@
 //! settlement, and the amend-resume import cache. It reads no clock and draws no random numbers; its only I/O is
 //! the journal port and the driver port. Nothing here is wired into a session yet (the gate stays off until W9).
 
+pub mod actor_feed;
 pub mod actor_mailbox;
 pub mod actor_sessions;
 pub mod actor_turns;
@@ -47,6 +48,8 @@ pub mod world_host;
 pub mod world_read;
 
 #[cfg(test)]
+mod actor_feed_tests;
+#[cfg(test)]
 mod actor_mailbox_tests;
 #[cfg(test)]
 mod actor_sessions_tests;
@@ -58,6 +61,8 @@ mod actor_turns_tests;
 mod artifact_review_tests;
 #[cfg(test)]
 mod driver_close_tests;
+#[cfg(test)]
+mod driver_feed_tests;
 #[cfg(test)]
 mod driver_golden_tests;
 #[cfg(test)]
