@@ -1,7 +1,7 @@
 //! AIMD 控制器的单元测试（Node `dynamic-workflow/src/engine/concurrency.ts` 的行为，常数同 Node：
 //! 0.75、+1、K = 4、地板 1、空闲 5 分钟重置）。控制器是纯状态机，`now` 由调用方给。
 
-use super::{ChangeReason, Controller};
+use super::{Change, ChangeReason, Controller, IDLE_RESET_MS};
 use crate::admission::ThrottleReason;
 
 /// 一个在飞请求、它的 epoch，然后用 `ended` 之外的结局结束。
@@ -201,5 +201,151 @@ fn a_throttle_at_a_huge_cap_does_not_overflow() {
         controller.snapshot().cap,
         3_221_225_471,
         "floor(u32::MAX x 3 / 4)"
+    );
+}
+
+// ——— 增长上限与起跳（Node concurrency.test.ts 的「增长上限」「seed」两组，W6b 第二部分） ———
+
+/// `count` 次「准入再成功」，每次都是当前 epoch；返回这些成功带出的 cap 变化。
+fn round_trips(controller: &mut Controller, count: u32) -> Vec<Change> {
+    let mut changes = Vec::new();
+    for _ in 0..count {
+        let epoch = admit(controller, 0);
+        changes.extend(controller.succeeded(0, epoch));
+    }
+    changes
+}
+
+#[test]
+fn raising_the_growth_limit_changes_no_cap_and_the_cap_climbs_one_step_at_a_time() {
+    let mut controller = Controller::new(4, 8);
+    assert!(controller.set_growth_limit(0, 20).is_empty());
+    let snapshot = controller.snapshot();
+    assert_eq!((snapshot.growth_limit, snapshot.cap), (20, 4));
+    controller.waiters(0, 1);
+    let steps: Vec<u32> = round_trips(&mut controller, 4 * 20)
+        .iter()
+        .map(|change| change.next)
+        .collect();
+    assert_eq!(steps, (5..=20).collect::<Vec<u32>>());
+    assert_eq!(controller.snapshot().cap, 20);
+}
+
+#[test]
+fn lowering_the_growth_limit_below_the_cap_pulls_the_cap_down_at_once() {
+    let mut controller = Controller::new(4, 20);
+    controller.waiters(0, 1);
+    round_trips(&mut controller, 4 * 12); // cap 16, lastGood 15
+    assert_eq!(controller.snapshot().cap, 16);
+    round_trips(&mut controller, 2); // streak 2
+    let stale = admit(&mut controller, 0); // sent under the cap of 16
+    let epoch_before = controller.snapshot().epoch;
+    assert_eq!(
+        controller.set_growth_limit(0, 8),
+        vec![Change {
+            previous: 16,
+            next: 8,
+            reason: ChangeReason::LimitLowered,
+            last_good: Some(8),
+            last_bad: None,
+            cooldown_ms: None,
+        }]
+    );
+    let snapshot = controller.snapshot();
+    assert_eq!(
+        (snapshot.growth_limit, snapshot.cap, snapshot.last_good),
+        (8, 8, Some(8))
+    );
+    assert_eq!(
+        (snapshot.success_streak, snapshot.epoch),
+        (0, epoch_before + 1)
+    );
+    // The request sent under the old cap is not a verdict on the new one.
+    assert!(
+        controller
+            .throttled(0, stale, ThrottleReason::RateLimited, None)
+            .is_empty()
+    );
+    assert_eq!(controller.snapshot().cap, 8);
+}
+
+#[test]
+fn lowering_the_growth_limit_to_a_value_not_below_the_cap_changes_nothing() {
+    let mut controller = Controller::new(4, 20);
+    let epoch = controller.snapshot().epoch;
+    assert!(controller.set_growth_limit(0, 8).is_empty());
+    let snapshot = controller.snapshot();
+    assert_eq!(
+        (snapshot.growth_limit, snapshot.cap, snapshot.epoch),
+        (8, 4, epoch)
+    );
+}
+
+#[test]
+fn the_growth_limit_never_goes_below_initial() {
+    let mut controller = Controller::new(6, 12);
+    assert!(controller.set_growth_limit(0, 2).is_empty());
+    assert_eq!(controller.snapshot().growth_limit, 6);
+    assert_eq!(controller.snapshot().cap, 6);
+}
+
+#[test]
+fn seed_jumps_the_cap_to_the_target_and_clears_the_proof_of_the_old_level() {
+    let mut controller = Controller::new(8, 32);
+    controller.waiters(0, 1);
+    round_trips(&mut controller, 4 + 2); // cap 9, lastGood 8, streak 2
+    let epoch = controller.snapshot().epoch;
+    assert_eq!(
+        controller.seed(0, 32),
+        vec![Change {
+            previous: 9,
+            next: 32,
+            reason: ChangeReason::Seeded,
+            last_good: None,
+            last_bad: None,
+            cooldown_ms: None,
+        }]
+    );
+    let snapshot = controller.snapshot();
+    assert_eq!(
+        (snapshot.cap, snapshot.success_streak, snapshot.epoch),
+        (32, 0, epoch + 1)
+    );
+    assert_eq!((snapshot.last_good, snapshot.last_bad), (None, None));
+}
+
+#[test]
+fn a_seed_target_above_the_growth_limit_stops_at_the_growth_limit() {
+    let mut controller = Controller::new(8, 20);
+    let changes = controller.seed(0, 50);
+    assert_eq!(changes.len(), 1);
+    assert_eq!((changes[0].previous, changes[0].next), (8, 20));
+    assert_eq!(changes[0].reason, ChangeReason::Seeded);
+}
+
+#[test]
+fn a_seed_target_not_above_the_cap_does_nothing() {
+    let mut controller = Controller::new(8, 32);
+    let epoch = controller.snapshot().epoch;
+    assert!(controller.seed(0, 8).is_empty());
+    assert!(controller.seed(0, 3).is_empty());
+    assert_eq!(controller.snapshot().epoch, epoch);
+    assert_eq!(controller.snapshot().cap, 8);
+}
+
+#[test]
+fn a_rejection_within_five_minutes_refuses_the_seed_and_the_cap_climbs_as_usual() {
+    let mut controller = Controller::new(8, 32);
+    let epoch = admit(&mut controller, 0);
+    controller.throttled(0, epoch, ThrottleReason::RateLimited, None); // cap 6
+    assert!(controller.seed(IDLE_RESET_MS - 1, 32).is_empty());
+    assert_eq!(controller.snapshot().cap, 6);
+    // The cap still climbs by probing: a waiter, then K current-epoch successes, lift it by one.
+    controller.waiters(IDLE_RESET_MS - 1, 1);
+    let changes = round_trips(&mut controller, 4);
+    assert_eq!(controller.snapshot().cap, 7);
+    assert_eq!(
+        changes.iter().map(|c| c.next).collect::<Vec<u32>>(),
+        vec![7]
     );
 }

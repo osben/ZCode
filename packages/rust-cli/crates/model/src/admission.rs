@@ -7,13 +7,60 @@ use futures_util::future::BoxFuture;
 use rust_cli_kernel_api::model::ModelError;
 use tokio_util::sync::CancellationToken;
 
+/// 工作流 run 的 ID（准入的 key 空间里的一个成员；9.9 的后续 12：与父会话 ID 分开的类型，不能互相传错）。
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct RunId(String);
+
+impl RunId {
+    /// 一个 run 的 ID 不能以 `\0` 开头：那是治理器内部的 key 空间（观察者、子代理池）。
+    /// 调试构建里违反即 panic（调用方的 bug，要尽早暴露）；发布构建不检查，避免在热路径上失败。
+    pub fn new(id: impl Into<String>) -> Self {
+        let id = id.into();
+        debug_assert!(
+            !id.starts_with('\0'),
+            "a run id must not start with NUL: it collides with the governor's reserved key space"
+        );
+        Self(id)
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<&str> for RunId {
+    fn from(id: &str) -> Self {
+        Self::new(id)
+    }
+}
+
+/// 主代理的父会话 ID（子代理池的队列名）。空字符串表示“未知的父会话”（见 9.9 的偏差 1）。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+pub struct ParentSessionId(String);
+
+impl ParentSessionId {
+    pub fn new(id: impl Into<String>) -> Self {
+        Self(id.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<&str> for ParentSessionId {
+    fn from(id: &str) -> Self {
+        Self::new(id)
+    }
+}
+
 /// 谁在请求。`Observer` 不排队、不看冷却，但计入在飞数，并把结果喂给桶（主代理的请求，Node `observer()`）；
-/// `SessionSubagents` 是主代理的子代理，同一个父会话共用一条队列；`Run` 是一个工作流 run（W6b 第二部分接入）。
+/// `SessionSubagents` 是主代理的子代理，同一个父会话共用一条队列；`Run` 是一个工作流 run（登记上界、参与扇出）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AdmissionScope {
     Observer,
-    Run(String),
-    SessionSubagents(String),
+    Run(RunId),
+    SessionSubagents(ParentSessionId),
 }
 
 /// 一次限流的原因（Node 的 `ConcurrencyThrottleReason` 中模型请求会出现的两种）。
