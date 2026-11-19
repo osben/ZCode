@@ -14,6 +14,10 @@ const INCREASE_AFTER_SUCCESSES: u32 = 4;
 const FLOOR: u32 = 1;
 /// 空闲这么久且没有在飞请求，cap 回到起始值（Node `CONCURRENCY_IDLE_RESET_MS`）。
 pub const IDLE_RESET_MS: u64 = 300_000;
+/// 冷却的上限（毫秒）。Node 对 Retry-After 没有上限（`concurrency.ts` 原样使用）；这里取 Rust 的重试策略的最长等待
+/// （`rust_cli_net::retry` 的 `max_wait`，60 s）。一个超大的 Retry-After 会让桶冻住很久，所以在这里截断。
+/// 这是与 Node 的偏差，记在 spec 9.9。
+pub const MAX_COOLDOWN_MS: u64 = 60_000;
 
 /// cap 变化的原因。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -156,7 +160,9 @@ impl Controller {
         // 旧 epoch 的限流也记下（种子规则要看“刚刚撞过墙”），但不评价当前 cap。
         self.last_throttled_at = Some(now);
         if let Some(ms) = retry_after_ms.filter(|ms| *ms > 0) {
-            self.cooldown_until = Some(self.cooldown_until.unwrap_or(0).max(now + ms));
+            // 饱和加法：Retry-After 可以是任意大的数（`u64::MAX` 表示“太大”），不能让截止时间回绕。
+            let until = now.saturating_add(ms.min(MAX_COOLDOWN_MS));
+            self.cooldown_until = Some(self.cooldown_until.unwrap_or(0).max(until));
         }
         if epoch != self.epoch {
             return changes;

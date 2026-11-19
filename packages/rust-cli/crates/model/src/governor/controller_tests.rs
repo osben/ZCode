@@ -176,3 +176,17 @@ fn no_idle_reset_while_a_request_is_in_flight() {
         "the learned cap is kept while busy"
     );
 }
+
+/// 超大的 Retry-After（饱和到 `u64::MAX`）不能让截止时间溢出或回绕，冷却被截到上限（Codex #560 P2）。
+#[test]
+fn a_huge_retry_after_cannot_overflow_the_deadline_and_is_capped() {
+    let mut controller = Controller::new(8, 16);
+    let epoch = admit(&mut controller, 10);
+    controller.throttled(10, epoch, ThrottleReason::RateLimited, Some(u64::MAX));
+    // 60 s is the cap (MAX_COOLDOWN_MS); written as a literal so the test also compiles against the old code.
+    assert_eq!(
+        controller.snapshot().cooldown_until,
+        Some(10 + 60_000),
+        "the cooldown is the cap, measured from now"
+    );
+}

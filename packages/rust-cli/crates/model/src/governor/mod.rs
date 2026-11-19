@@ -239,7 +239,8 @@ impl Governor {
                     .queues
                     .push((run.clone(), VecDeque::from([Waiter { id, tx }]))),
             }
-            self.drain(&mut state, key);
+            let now = self.clock.now_ms();
+            self.drain(&mut state, key, now);
             Queued {
                 governor: self.clone(),
                 key: key.to_owned(),
@@ -339,12 +340,12 @@ impl Governor {
             AttemptSignal::Ended => bucket.controller.ended(now),
         };
         bucket.bump(run, -1);
-        self.drain(&mut state, key);
+        self.drain(&mut state, key, now);
     }
 
     /// 尽量准入：门开着且有人等，就按轮转发名额；然后同步等待者数，并安排冷却到期的唤醒（Node `drain`）。
-    fn drain(&self, state: &mut State, key: &str) {
-        let now = self.clock.now_ms();
+    /// 整个操作只读一次时钟（`now`），准入与安排唤醒都用它：两次读数之间越过截止时间会丢掉唤醒（Codex #560 P1）。
+    fn drain(&self, state: &mut State, key: &str, now: u64) {
         let Some(bucket) = state.buckets.get_mut(key) else {
             return;
         };
@@ -370,7 +371,7 @@ impl Governor {
             }
         }
         bucket.controller.waiters(now, bucket.waiter_count());
-        self.arm(state, key);
+        self.arm(state, key, now);
     }
 
     /// 把队列里的一个等待者移走（取消）。返回是否真的在队列里。
@@ -392,13 +393,12 @@ impl Governor {
         }
         bucket.controller.waiters(now, bucket.waiter_count());
         // 离开队列后马上看看剩下的等待者能不能拿到名额（冷却可能已经过了截止时间，只是定时器还没跑）。
-        self.drain(state, key);
+        self.drain(state, key, now);
         true
     }
 
     /// 冷却到期时唤醒这个桶的等待者（Node `armCooldownWake`）。只在冷却还没到期、且有人等时安排。
-    fn arm(&self, state: &mut State, key: &str) {
-        let now = self.clock.now_ms();
+    fn arm(&self, state: &mut State, key: &str, now: u64) {
         let Some(bucket) = state.buckets.get_mut(key) else {
             return;
         };
@@ -434,7 +434,8 @@ impl Governor {
             .get(key)
             .is_some_and(|bucket| bucket.wake_generation == generation);
         if current {
-            self.drain(&mut state, key);
+            let now = self.clock.now_ms();
+            self.drain(&mut state, key, now);
         }
     }
 }

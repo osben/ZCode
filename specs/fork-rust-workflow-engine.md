@@ -1221,6 +1221,8 @@ This is Node's mapping of its status events to the same four results, except tha
 6. The controller computes the cap changes, but they are not emitted. The `concurrencyChanged` event and its fan-out to engaged runs are part 2.
 7. The growth limit is fixed at 2D. Node's run bounds (`setRunBound`, `clearRunBound`, the growth limit from a run's bound, seeding and `limit_lowered`) are part 2.
 8. `NEVER_ABORTED` and the observer's own signal path are not needed: the Rust `acquire` takes a cancel token, and the observer never waits.
+9. The cooldown is capped at 60 s (`MAX_COOLDOWN_MS`, the default `max_wait` of the Rust retry policy). Node has no cap on the governor's cooldown (`concurrency.ts` uses Retry-After as given), so a Retry-After longer than a minute freezes the bucket for a minute here, not for its full length. The deadline is saturating, so an absurd Retry-After cannot overflow (Codex #560 P2).
+10. Each operation reads the clock once and uses that `now` for admission and for scheduling the wake. A deadline that falls between two reads cannot lose a wake (Codex #560 P1).
 
 **Not ported from the Node tests in this part.** The growth-limit and seeding cases, the run-bound cases, the fan-out and unsubscribe cases, and the zero-delay wake cases. They depend on part 2's run bounds and events. The Node parity of `tryAdmit` with a run that has a bound is not checked.
 

@@ -498,3 +498,86 @@ async fn a_cancel_after_the_cooldown_deadline_serves_the_next_waiter_without_the
         "B takes the free slot at once instead of waiting for a timer that was superseded"
     );
 }
+
+/// 注入的时钟：先按脚本给读数，脚本用完后一直给 `sticky`。用来让同一个操作的两次读数落在截止时间两侧（Codex #560 P1）。
+struct ScriptedClock {
+    script: Mutex<std::collections::VecDeque<u64>>,
+    sticky: std::sync::atomic::AtomicU64,
+}
+
+impl ScriptedClock {
+    fn new(now: u64) -> Self {
+        Self {
+            script: Mutex::new(std::collections::VecDeque::new()),
+            sticky: std::sync::atomic::AtomicU64::new(now),
+        }
+    }
+
+    fn script(&self, values: &[u64], sticky: u64) {
+        self.script.lock().unwrap().extend(values.iter().copied());
+        self.sticky
+            .store(sticky, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+impl Clock for ScriptedClock {
+    fn now_ms(&self) -> u64 {
+        self.script
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or_else(|| self.sticky.load(std::sync::atomic::Ordering::SeqCst))
+    }
+
+    fn time_zone(&self) -> String {
+        "UTC".to_owned()
+    }
+}
+
+/// 截止时间在一个操作的两次时钟读数之间越过：操作留下的唤醒必须仍然存在（或者已经把等待者服务掉）。
+#[tokio::test]
+async fn a_deadline_crossed_between_two_clock_reads_still_leaves_a_wake() {
+    use std::future::Future;
+    use std::task::{Context, Waker};
+
+    const NOW: u64 = 1_000_000;
+    let clock = Arc::new(ScriptedClock::new(NOW));
+    let armed: Arc<Mutex<Vec<(Duration, Callback)>>> = Arc::default();
+    let schedule: Scheduler = {
+        let armed = armed.clone();
+        Arc::new(move |delay, callback| armed.lock().unwrap().push((delay, callback)))
+    };
+    let governor = Governor::new(clock.clone(), 1, schedule);
+    let holder = governor
+        .try_admit(&run("holder"), KEY_A)
+        .expect("the slot is free");
+    holder.settle(AttemptSignal::Throttled {
+        reason: ThrottleReason::RateLimited,
+        retry_after_ms: Some(20_000),
+    });
+
+    // The first read is one millisecond before the deadline; every later read is at the deadline.
+    clock.script(&[NOW + 20_000 - 1], NOW + 20_000);
+    let scope = run("A");
+    let token = CancellationToken::new();
+    let mut waiter = Box::pin(governor.admit(&scope, KEY_A, &token));
+    let mut cx = Context::from_waker(Waker::noop());
+    assert!(
+        waiter.as_mut().poll(&mut cx).is_pending(),
+        "A waits out the cooldown"
+    );
+
+    let left: Vec<_> = armed.lock().unwrap().drain(..).collect();
+    assert_eq!(left.len(), 1, "the operation left exactly one wake behind");
+    let (delay, wake) = left.into_iter().next().unwrap();
+    assert_eq!(
+        delay,
+        Duration::from_millis(1),
+        "the wake is due at the deadline"
+    );
+    wake();
+    assert!(
+        waiter.as_mut().poll(&mut cx).is_ready(),
+        "the wake serves A once the deadline has come"
+    );
+}
