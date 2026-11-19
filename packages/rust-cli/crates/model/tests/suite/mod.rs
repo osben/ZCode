@@ -3,6 +3,7 @@ mod chatgpt;
 mod common;
 mod failover;
 mod fixture;
+mod governor;
 mod headers;
 mod limits;
 mod metadata;

@@ -8,10 +8,12 @@
 //! [`FixedEndpoint`]），再按端点的协议分派：anthropic-messages、openai-chat-completions、openai-responses。
 //! OpenAI 协议没有的能力在编码器里降级（model.md §10）。
 
+pub mod admission;
 mod anthropic;
 mod attribution;
 mod endpoint;
 mod errors;
+pub mod governor;
 mod media;
 mod metadata;
 mod openai;

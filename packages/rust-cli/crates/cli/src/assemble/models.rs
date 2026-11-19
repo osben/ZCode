@@ -26,6 +26,7 @@ use rust_cli_kernel_api::model_name::{self, LookupError};
 use rust_cli_kernel_api::provider::{
     ModelCatalog, ModelDirectory, ModelEndpoints, ModelLimits, TokenLimits, WireProtocol,
 };
+use rust_cli_model::admission::RequestAdmission;
 use rust_cli_model::{
     AnthropicEndpoint, CapabilityRules, FixedEndpoint, ProviderModel, RouteOptions,
     UnconfiguredModel,
@@ -248,6 +249,10 @@ impl Assembled {
                     clock,
                     RouteOptions {
                         assume_first_party: self.assume_first_party,
+                        // W6b 第一部分：每次模型请求尝试经进程级治理器准入（主代理 observer，子代理排队）。
+                        admission: options.admission.clone().or_else(|| {
+                            Some(rust_cli_model::governor::process() as Arc<dyn RequestAdmission>)
+                        }),
                         ..options
                     },
                 )

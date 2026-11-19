@@ -3,6 +3,7 @@
 
 use std::time::Duration;
 
+use crate::admission::AttemptSignal;
 use rust_cli_kernel_api::model::{ModelError, ModelNotice};
 use rust_cli_kernel_api::provider::EndpointQuery;
 use rust_cli_net::retry::jitter;
@@ -33,6 +34,9 @@ impl Connect {
         phase: Phase,
         tape: Option<Tape>,
     ) -> Result<(ModelNotice, Box<Self>, Duration), ModelError> {
+        // 失败的尝试在重试等待之前结算：退避不占名额（Node `retry_scheduled` 的映射）。
+        let retry_after_ms = verdict.retry_after.map(millis);
+        self.settle_attempt(AttemptSignal::of_failure(&verdict.error, retry_after_ms));
         // Fork (slice 3 layer B, Node `retryExpired`): a refusal of the run's expired ticket, before anything was handed
         // out. The attempt waits for the ticket's renewal and resends at once; the retry budget is not spent.
         // Only an attempt that names its ticket can renew it: without the header there is no ticket to ask for.
