@@ -986,6 +986,86 @@ fn a_live_projection_seeded_from_replay_continues_the_fold() {
     assert_eq!(live.state().runs[0]["usage"]["spentTokens"], json!(42));
 }
 
+/// A run object for a seed; `run_id` is `None` for a run with no `runId` key.
+fn seed_run(run_id: Option<Value>, ordinal: u64) -> super::js::Obj {
+    let mut run = json!({
+        "status": "running",
+        "usage": {"spentTokens": 0, "nodesUsed": 0},
+        "actors": [],
+        "nodes": [],
+        "lastEventSequence": ordinal,
+    })
+    .as_object()
+    .unwrap()
+    .clone();
+    if let Some(id) = run_id {
+        run.insert("runId".into(), id);
+    }
+    run
+}
+
+/// Whatever the seed, the holder's state meets the contract `reduce` relies on (at most `max_runs`
+/// runs, each with a string `runId`), and the next event's ops are exactly `diff` between the two
+/// states.
+fn assert_seed_meets_the_reducer_contract(seed: State, envelope: &Envelope) {
+    let mut live = LiveProjection::from_state(seed, PRODUCTION);
+    let before = live.state().clone();
+    assert!(
+        before.runs.len() <= PRODUCTION.max_runs,
+        "at most max_runs runs, found {}",
+        before.runs.len()
+    );
+    assert!(
+        before
+            .runs
+            .iter()
+            .all(|run| run.get("runId").and_then(Value::as_str).is_some()),
+        "every run has a string runId"
+    );
+    let ops = live.apply(envelope).expect("the event changes the run");
+    assert_eq!(
+        ops,
+        diff(Some(&before), live.state()),
+        "the ops are the diff of the two states"
+    );
+}
+
+/// Over the run limit: the event is for the oldest run, which the run-count cut drains in the same
+/// step. Without normalising the seed, the ops carry a `removed` and an `updated` for that run.
+#[test]
+fn a_seed_over_the_run_limit_is_brought_within_it_before_the_first_event() {
+    let runs: Vec<super::js::Obj> = (1..=10u64)
+        .map(|n| seed_run(Some(json!(format!("dwfrun-{n}"))), n))
+        .collect();
+    let seed = State { revision: 10, runs };
+    let event = event_for(
+        "dwfrun-1",
+        "usage-updated",
+        json!({"spentTokens": 5}),
+        100.0,
+    );
+    assert_seed_meets_the_reducer_contract(seed, &event);
+}
+
+/// A run with no `runId` (and one with a non-string id) cannot be addressed by `reduce`, but `diff`
+/// would still report it as `removed` with an empty id. The holder drops such runs at the seed.
+#[test]
+fn a_seed_run_without_a_string_run_id_is_dropped_before_the_first_event() {
+    let runs = vec![
+        seed_run(None, 1),
+        seed_run(Some(json!(7)), 2),
+        seed_run(Some(json!("dwfrun-2")), 3),
+    ];
+    let seed = State { revision: 3, runs };
+    let event = event_for(
+        "dwfrun-2",
+        "usage-updated",
+        json!({"spentTokens": 9}),
+        100.0,
+    );
+    assert_seed_meets_the_reducer_contract(seed, &event);
+}
+
 /// Encoding for old consumers, Node `encodeConversationDeltasForLegacy`: a batch with no run deltas
 /// comes back as the same slice.
 #[test]

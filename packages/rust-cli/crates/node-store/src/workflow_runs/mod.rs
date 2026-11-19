@@ -213,6 +213,11 @@ pub(crate) struct Derived<'a> {
 /// semantic no-op (an invalid event, or a replay whose content is identical). On `None` the state is
 /// untouched. Otherwise the revision is `revision + 1`.
 ///
+/// Precondition: `state` holds at most `PRODUCTION.max_runs` runs, each with a unique string `runId`.
+/// Every state `reduce` produces meets it, and `LiveProjection::from_state` normalises a seed to it.
+/// For any other state the returned ops are not guaranteed to equal `delta::diff`, because the
+/// reducer assumes a run's id addresses it and that the run-count cut only removes older runs.
+///
 /// Only the run the event touches is cloned and diffed. Eviction removes whole runs and never edits a
 /// survivor (`eviction::evict_for_entry_budget`, the run-count cut), so the other runs need no diff:
 /// their ids alone say whether they were removed.

@@ -1722,7 +1722,8 @@ Also not ported, with owner W7-5 (the Host publisher). `conversation-topic-publi
 4. Byte lengths are the compact `serde_json` text. That matches `JSON.stringify` for these ops, which hold integers and strings only. Non-integer floats are not checked.
 5. Node's `workflowRuns` being `undefined` is `None` in Rust. A `LiveProjection` always holds a state, so the Host passes `None` only when no holder exists.
 6. The growth bound and the legacy encoder are pure functions. The Host wiring and the 16 MiB gate are W7-5, not this part.
-7. The count in section 9.4 said 14 `workflow_runs` tests. `origin/fork` had 16 `#[test]` functions in `tests.rs`. The count is now 29.
+7. The count in section 9.4 said 14 `workflow_runs` tests. `origin/fork` had 16 `#[test]` functions in `tests.rs`. The count is now 31.
+8. The seed is normalised in `LiveProjection::from_state`: at most `max_runs` runs, each with a unique string `runId` (the first occurrence wins; the most recent runs are kept, as the run-count cut keeps them). `reduce` now documents this precondition. Red first: `a_seed_over_the_run_limit_is_brought_within_it_before_the_first_event` and `a_seed_run_without_a_string_run_id_is_dropped_before_the_first_event` failed against the un-normalised holder (an over-limit seed kept 10 runs; an id-less run survived). Both compare the next event's ops with `diff`. Green after the fix. The full `rust-cli-node-store` run is then 350 passed, 1 ignored.
 
 ## 10. Open questions
 
