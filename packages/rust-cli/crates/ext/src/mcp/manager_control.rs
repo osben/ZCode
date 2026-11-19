@@ -64,12 +64,28 @@ impl McpManager {
         server.instructions = None;
         server.resources = false;
         let client = server.client.take();
-        Some((
+        // Fork (F7 PR 1): dropping a published client is a new app connection, so its listeners run (after the lock).
+        let listeners: Vec<_> = if client.is_some() {
+            server.app_generation += 1;
+            server
+                .app_listeners
+                .iter()
+                .map(|(_, listener)| listener.clone())
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let out = (
             server.config.clone(),
             client,
             server.generation,
             server.cancel.clone(),
-        ))
+        );
+        drop(servers);
+        for listener in listeners {
+            listener();
+        }
+        Some(out)
     }
 
     /// 重新连一个服务器（重连与启用共用）。

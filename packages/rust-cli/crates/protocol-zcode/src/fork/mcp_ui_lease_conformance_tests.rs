@@ -1,5 +1,5 @@
 //! Runs `tests/fixtures/mcp_ui_lease_conformance.json` against the Rust lease registry. The same file runs against Node
-//! `McpUiInstances` (`instances.conformance.test.ts`); both must produce every expected outcome.
+//! `McpUiInstances` (`apps/zcode-cli/packages/bootstrap/tests/fork-rust-helper/mcp-ui-lease-conformance.test.ts`); both must produce every expected outcome.
 
 use std::collections::BTreeMap;
 

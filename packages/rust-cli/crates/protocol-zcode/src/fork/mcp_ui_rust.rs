@@ -848,3 +848,7 @@ fn lease_json(lease: &Lease) -> Value {
 #[cfg(test)]
 #[path = "mcp_ui_rust_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "mcp_ui_route_tests.rs"]
+mod route_tests;

@@ -17,6 +17,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
 
+use super::super::config::McpServer;
 use super::super::rpc::RpcError;
 use super::{Inner, McpManager};
 
@@ -63,6 +64,59 @@ pub(super) fn visibility_of(listed: &[Value]) -> BTreeMap<String, Vec<String>> {
         .collect()
 }
 
+/// JSON with every object's keys sorted, so the text of a value does not depend on the order its maps were built in
+/// (serde_json keeps insertion order here: `preserve_order` is on for the whole workspace).
+fn canonical_json(value: &Value) -> String {
+    match value {
+        Value::Object(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            let fields: Vec<String> = keys
+                .into_iter()
+                .map(|key| {
+                    format!(
+                        "{}:{}",
+                        serde_json::to_string(key).unwrap_or_default(),
+                        canonical_json(&map[key])
+                    )
+                })
+                .collect();
+            format!("{{{}}}", fields.join(","))
+        }
+        Value::Array(items) => {
+            let items: Vec<String> = items.iter().map(canonical_json).collect();
+            format!("[{}]", items.join(","))
+        }
+        other => other.to_string(),
+    }
+}
+
+/// The identity of a server's connection: a hash of the platform, the workspace, the server name and its
+/// configuration. The transport is hashed in canonical JSON, so equal configurations hash equal whatever order their
+/// maps were built in. The rest of the configuration is hashed by its Debug form, which holds no hash-based map.
+pub(crate) fn identity_of(workspace: &str, name: &str, config: &McpServer) -> String {
+    let transport = serde_json::to_value(&config.transport).unwrap_or(Value::Null);
+    let text = format!(
+        "{}|{}|{}|{}|{:?}|{:?}|{:?}|{:?}",
+        std::env::consts::OS,
+        workspace,
+        name,
+        canonical_json(&transport),
+        config.scope,
+        config.options,
+        config.machine,
+        config.oauth,
+    );
+    Sha256::digest(text.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+#[cfg(test)]
+#[path = "app_connection_tests.rs"]
+mod tests;
+
 fn map_rpc(error: RpcError) -> McpAppError {
     match error {
         RpcError::Cancelled => McpAppError::Cancelled,
@@ -96,18 +150,8 @@ impl McpManager {
         if !client_published {
             return None;
         }
-        let identity = Sha256::digest(
-            format!(
-                "{}|{}|{}|{:?}",
-                std::env::consts::OS,
-                workspace,
-                name,
-                server.config,
-            )
-            .as_bytes(),
-        );
         Some(McpAppConnection {
-            identity: identity.iter().map(|byte| format!("{byte:02x}")).collect(),
+            identity: identity_of(&workspace, name, &server.config),
             generation: server.app_generation,
         })
     }

@@ -370,4 +370,4 @@ pub(crate) async fn set_model(server: &Server, params: &Value) -> Result<Value, 
 
 #[cfg(test)]
 #[path = "legacy_session_tests.rs"]
-mod tests;
+pub(crate) mod tests;

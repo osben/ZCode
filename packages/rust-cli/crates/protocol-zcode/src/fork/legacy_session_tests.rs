@@ -200,7 +200,7 @@ impl StoreQueries for Queries {
     }
 }
 
-struct TestKernel {
+pub(crate) struct TestKernel {
     store: Arc<MemoryStore>,
     handles: StdMutex<HashMap<SessionId, Arc<TestHandle>>>,
     created: StdMutex<HashMap<SessionId, (ModelSelection, PermissionMode)>>,
@@ -321,7 +321,7 @@ impl Kernel for TestKernel {
 }
 
 /// The server with the [`Levels`] model directory (the Host always has one).
-fn server() -> (TaskScope, Arc<Server>, Arc<TestKernel>) {
+pub(crate) fn server() -> (TaskScope, Arc<Server>, Arc<TestKernel>) {
     let (scope, server, kernel) = server_without_directory();
     server.context.set_models(Arc::new(Levels));
     (scope, server, kernel)
@@ -357,7 +357,7 @@ fn server_without_directory() -> (TaskScope, Arc<Server>, Arc<TestKernel>) {
 const WORKSPACE: &str = "/w";
 
 /// The Host's create for an automation run (`zcodeTaskServiceAdapter.createTask` with an `automationId`).
-fn automation_create(id: &str) -> Value {
+pub(crate) fn automation_create(id: &str) -> Value {
     json!({
         "sessionId": id,
         "workspace": {"workspacePath": WORKSPACE, "workspaceKey": WORKSPACE},
@@ -371,7 +371,7 @@ fn automation_create(id: &str) -> Value {
 }
 
 /// The method as the connection runs it: the inbound schema first, then the dispatch.
-async fn call(server: &Server, method: &str, params: Value) -> Result<Value, RpcError> {
+pub(crate) async fn call(server: &Server, method: &str, params: Value) -> Result<Value, RpcError> {
     crate::inbound::Inbound::get().method(method, &params)?;
     server
         .dispatch(method, params)
