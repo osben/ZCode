@@ -21,7 +21,7 @@ use tokio::sync::{Notify, watch};
 use tokio_util::sync::CancellationToken;
 
 // Fork (specs/fork-rust-node-helper.md, F7 PR 1): the MCP App view of a connection (identity, generation, listeners).
-mod app_connection;
+pub(super) mod app_connection;
 use super::config::{McpServer, McpServerOptions, McpSettings};
 use super::connection::{self, Session, has_capability};
 use super::oauth_hooks::ChallengeRefresh;
@@ -205,13 +205,14 @@ impl Inner {
                 .filter(|server| server.generation == generation)
             {
                 Some(server) => {
-                    let before = server.client.as_ref().map(Arc::as_ptr);
+                    // The old client is kept alive by `before` while `change` runs: its address cannot be reused by
+                    // the new client, so comparing the Arcs by identity is exact.
+                    let before = server.client.clone();
                     change(server);
-                    let after = server.client.as_ref().map(Arc::as_ptr);
-                    if before == after {
+                    if app_connection::same_client(&before, &server.client) {
                         Vec::new()
                     } else {
-                        server.app_generation += 1;
+                        server.app_generation = app_connection::next_generation();
                         server
                             .app_listeners
                             .iter()

@@ -2,11 +2,13 @@
 //! connection. Port of Node `adapters/src/mcp/index.ts` `appConnectionSnapshot`, `nextConnectionGeneration` and the
 //! invalidation listeners, plus the guarded request of `callMcpToolForUi` (`appConnection`).
 //!
-//! The identity hashes the launch identity of the server (platform, executable, workspace, name and configuration).
-//! It is hashed, never returned, so credentials in the configuration do not leave the process. The generation counts
-//! the server's published-client changes, so a reconnect or a stop moves it on.
+//! The identity hashes the platform, the workspace, the server name and the configuration. It is hashed, never
+//! returned, so credentials in the configuration do not leave the process. The generation is drawn from a
+//! process-wide counter each time a server's published client changes, so a connection of one manager is never equal
+//! to a connection of another, even when both serve the same configuration.
 
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
@@ -18,11 +20,27 @@ use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
 
 use super::super::config::McpServer;
-use super::super::rpc::RpcError;
+use super::super::rpc::{Client, RpcError};
 use super::{Inner, McpManager};
 
-/// A connection-change callback. It runs after the servers lock is released.
+/// A connection-change callback. It runs after the servers lock is released, on the thread that changed the
+/// connection; it must neither block nor panic.
 pub(crate) type Listener = Arc<dyn Fn() + Send + Sync>;
+
+/// The next generation of a published client: unique for the whole process (`0` is never drawn).
+pub(crate) fn next_generation() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
+/// Whether two published clients are the same allocation (or both absent).
+pub(crate) fn same_client(before: &Option<Arc<Client>>, after: &Option<Arc<Client>>) -> bool {
+    match (before, after) {
+        (None, None) => true,
+        (Some(before), Some(after)) => Arc::ptr_eq(before, after),
+        _ => false,
+    }
+}
 
 /// The subscription of one listener: dropping it removes the listener.
 pub(crate) struct AppSubscription {
@@ -139,6 +157,40 @@ impl McpManager {
             .servers()
             .get(name)
             .map(|server| server.config.transport == McpTransportConfig::NodeHelper)
+    }
+
+    /// Waits until server `name` leaves its connection attempt (Node awaits the server's own `connecting` promise, not
+    /// the group's). Returns at the latest when `cancel` fires or the server's connect timeout has passed.
+    pub(crate) async fn wait_server_settled(&self, name: &str, cancel: &CancellationToken) {
+        let timeout = {
+            let servers = self.0.servers();
+            let Some(server) = servers.get(name) else {
+                return;
+            };
+            Duration::from_millis(self.0.settings.connect_timeout_for(server.config.options))
+        };
+        let deadline = tokio::time::sleep(timeout);
+        tokio::pin!(deadline);
+        let mut changes = self.0.changed.subscribe();
+        loop {
+            let pending = self
+                .0
+                .servers()
+                .get(name)
+                .is_some_and(|server| server.status.pending());
+            if !pending {
+                return;
+            }
+            tokio::select! {
+                () = cancel.cancelled() => return,
+                () = &mut deadline => return,
+                changed = changes.changed() => {
+                    if changed.is_err() {
+                        return;
+                    }
+                }
+            }
+        }
     }
 
     /// The connection of server `name`, when it is connected.

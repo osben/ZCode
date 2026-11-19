@@ -505,9 +505,10 @@ impl rust_cli_kernel_api::mcp_app::McpAppHost for ExtRegistry {
         &self,
         session: &SessionId,
         server: &str,
+        cancel: &tokio_util::sync::CancellationToken,
     ) -> Option<rust_cli_kernel_api::mcp_app::McpAppConnection> {
         let manager = self.session_mcp(session);
-        manager.wait_ready().await;
+        manager.wait_server_settled(server, cancel).await;
         manager.app_connection(server)
     }
 

@@ -52,11 +52,19 @@ pub trait McpAppHost: Send + Sync {
     /// The server's current connection, when it is connected.
     fn connection(&self, session: &SessionId, server: &str) -> Option<McpAppConnection>;
 
-    /// Waits for the server's connection attempts in flight to settle, then returns its connection.
-    async fn wait_connection(&self, session: &SessionId, server: &str) -> Option<McpAppConnection>;
+    /// Waits for the named server's connection attempt to settle (Node awaits that server's own `connecting`, not the
+    /// group's), then returns its connection. Implementations must bound the wait: it returns at the latest when
+    /// `cancel` fires or the server's connect timeout has passed, with `None` when the server is not connected.
+    async fn wait_connection(
+        &self,
+        session: &SessionId,
+        server: &str,
+        cancel: &CancellationToken,
+    ) -> Option<McpAppConnection>;
 
     /// Calls `callback` whenever the server's connection changes (a reconnect, a stop). `None` when the server is not
-    /// in the session's table.
+    /// in the session's table. The callback runs synchronously on the thread that changed the connection, after the
+    /// manager's lock is released: it must neither block nor panic.
     fn on_connection_changed(
         &self,
         session: &SessionId,
@@ -69,7 +77,8 @@ pub trait McpAppHost: Send + Sync {
     -> Option<Vec<String>>;
 
     /// One request on the server's client, guarded by `expected`: it fails with [`McpAppError::Changed`] when the
-    /// connection is no longer `expected` before or after the call.
+    /// connection is no longer `expected` before or after the call. A server that is absent from the session's table
+    /// or has no published client also maps to `Changed` (not `Failed`): the lease it serves is revoked.
     async fn request(
         &self,
         session: &SessionId,

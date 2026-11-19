@@ -369,8 +369,9 @@ impl RustMcpUi {
         let guard = Guard::new(params)?;
         let server = guard.server.clone();
         let unavailable = || RpcError::new(-32001, "MCP App connection is unavailable");
+        // No caller cancel exists for an open: the wait is bounded by the server's connect timeout.
         let source = host
-            .wait_connection(session, &server)
+            .wait_connection(session, &server, &CancellationToken::new())
             .await
             .ok_or_else(unavailable)?;
         if host.connection(session, &server).as_ref() != Some(&source) {

@@ -76,7 +76,9 @@ fn canonical_json_does_not_depend_on_the_order_of_keys() {
 }
 
 #[test]
-fn equal_configurations_hash_equal_whatever_order_their_maps_were_built_in() {
+fn equal_configurations_hash_equal() {
+    // Headers are a BTreeMap, so their order is fixed by the type; key order of the JSON form is covered by
+    // `canonical_json_does_not_depend_on_the_order_of_keys`.
     let headers_a = [("Authorization", "t"), ("X-Trace", "1")];
     let headers_b = [("X-Trace", "1"), ("Authorization", "t")];
     let build = |pairs: &[(&str, &str)]| {
@@ -138,7 +140,7 @@ async fn a_guarded_request_passes_while_the_connection_is_unchanged() {
         )
         .await;
     assert!(answer.is_ok(), "{answer:?}");
-    // The same request from a stale connection (an older generation) is refused before it is sent.
+    // The same request from a stale connection (one generation ahead of the server) is refused before it is sent.
     let stale = McpAppConnection {
         identity: connection.identity.clone(),
         generation: connection.generation + 1,
@@ -208,4 +210,58 @@ async fn a_reconnect_during_a_call_fails_the_call_and_runs_the_listeners() {
         before,
         "a dropped subscription is not called"
     );
+}
+
+/// Two managers of the same configuration (a replaced workspace group starts a fresh one): a lease of the first must
+/// not pass the second, whose connection has its own generation.
+#[tokio::test]
+async fn a_connection_of_another_manager_is_never_equal_to_this_one() {
+    let scope = TaskScope::root("test", |_| {});
+    let fake = Arc::new(FakeMcp::default().with("files", answering_server()));
+    let first = manager(fake.clone(), &scope);
+    first.start(workspace(), vec![config("files")]);
+    first.wait_ready().await;
+    let second = manager(fake, &scope);
+    second.start(workspace(), vec![config("files")]);
+    second.wait_ready().await;
+    let old = first.app_connection("files").expect("connected");
+    let new = second.app_connection("files").expect("connected");
+    assert_ne!(
+        old, new,
+        "two managers must not produce the same connection"
+    );
+    assert_eq!(
+        second
+            .app_request(
+                "files",
+                &old,
+                "tools/call",
+                json!({}),
+                &CancellationToken::new()
+            )
+            .await,
+        Err(McpAppError::Changed)
+    );
+}
+
+/// Shutdown ends the connections: a panel subscribed to a server of the replaced group hears about it.
+#[tokio::test]
+async fn shutdown_runs_the_connection_listeners_of_published_servers() {
+    let (manager, _scope) = connected(answering_server()).await;
+    let fired = Arc::new(AtomicUsize::new(0));
+    let counter = fired.clone();
+    let _subscription = manager
+        .on_app_connection_changed(
+            "files",
+            Arc::new(move || {
+                counter.fetch_add(1, Ordering::SeqCst);
+            }),
+        )
+        .expect("known server");
+    manager.shutdown();
+    assert!(
+        fired.load(Ordering::SeqCst) >= 1,
+        "shutdown must run the listener"
+    );
+    assert!(manager.app_connection("files").is_none());
 }

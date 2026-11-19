@@ -67,7 +67,12 @@ impl McpAppHost for FakeHost {
         self.current.lock().unwrap().clone()
     }
 
-    async fn wait_connection(&self, session: &SessionId, server: &str) -> Option<McpAppConnection> {
+    async fn wait_connection(
+        &self,
+        session: &SessionId,
+        server: &str,
+        _cancel: &CancellationToken,
+    ) -> Option<McpAppConnection> {
         self.connection(session, server)
     }
 
