@@ -229,6 +229,10 @@ async fn step(mut state: State) -> Option<(Result<ModelStreamItem, ModelError>, 
                     return None;
                 }
                 Some(Next::Item(item)) => {
+                    // 越过边界之后的终态错误（例如文本之后的 SSE 限流）：按它结算，和 Node 对终态限流一样计入桶。
+                    if let Err(error) = &item {
+                        read.settle_error(error);
+                    }
                     let next = if item.is_err() {
                         State::Done
                     } else {

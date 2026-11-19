@@ -107,6 +107,12 @@ impl Read {
         (connect, tape)
     }
 
+    /// 越过边界之后的终态错误：按错误结算这次尝试（限流计入桶，其他结束尝试）。
+    pub(crate) fn settle_error(&mut self, error: &rust_cli_kernel_api::model::ModelError) {
+        self.connect
+            .settle_attempt(crate::admission::AttemptSignal::of_error(error));
+    }
+
     /// 流正常读完：结算这次尝试为成功（Node `model_request_completed`）。
     pub(crate) fn finish(&mut self) {
         self.connect

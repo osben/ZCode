@@ -17,7 +17,9 @@ use rust_cli_model::governor::{Governor, model_key};
 use rust_cli_model::{ProviderModel, RouteOptions};
 use tokio_util::sync::CancellationToken;
 
-use super::common::{clock, fast_retry, model_with, request, text_response};
+use super::common::{
+    block_start, clock, delta, event, fast_retry, message_start, model_with, request, text_response,
+};
 use super::fixture::{Fixture, Reply};
 
 const PROVIDER: &str = "anthropic";
@@ -31,12 +33,20 @@ fn governor(default: u32) -> Arc<Governor> {
 }
 
 async fn governed(base_url: String, governor: &Arc<Governor>) -> Arc<ProviderModel> {
+    governed_with_retries(base_url, governor, 2).await
+}
+
+async fn governed_with_retries(
+    base_url: String,
+    governor: &Arc<Governor>,
+    retries: u32,
+) -> Arc<ProviderModel> {
     let admission: Arc<dyn RequestAdmission> = governor.clone();
     Arc::new(
         model_with(
             base_url,
             RouteOptions {
-                retry: fast_retry(2),
+                retry: fast_retry(retries),
                 admission: Some(admission),
                 ..RouteOptions::default()
             },
@@ -225,5 +235,73 @@ async fn a_subagent_request_is_admitted_once_the_slot_frees() {
     assert!(
         all_completed(&events),
         "the queued subagent is admitted: {events:?}"
+    );
+}
+
+/// 流中途出现的限流（Codex P2）：文本已经交出，之后的 SSE 限流错误也要计入桶（Node 对终态限流同样减 cap）。
+#[tokio::test]
+async fn a_rate_limit_after_output_has_started_still_halves_the_bucket() {
+    let mut body = message_start();
+    body.push_str(&block_start(
+        0,
+        serde_json::json!({"type": "text", "text": ""}),
+    ));
+    body.push_str(&delta(
+        0,
+        serde_json::json!({"type": "text_delta", "text": "partial"}),
+    ));
+    body.push_str(&event(serde_json::json!({
+        "type": "error",
+        "error": {"type": "rate_limit_error", "message": "slow down"}
+    })));
+    let server = Fixture::start(vec![
+        Reply::new(200)
+            .header("content-type", "text/event-stream")
+            .send(body),
+    ])
+    .await;
+    let governor = governor(8);
+    let model = governed(server.url(), &governor).await;
+
+    let events: Vec<_> = model
+        .stream(
+            request("hi", QuerySource::MainThread),
+            CancellationToken::new(),
+        )
+        .collect()
+        .await;
+    assert!(
+        matches!(events.last(), Some(Err(ModelError::RateLimited { .. }))),
+        "the rate limit reaches the caller: {events:?}"
+    );
+    assert_eq!(governor.snapshot(&key()).unwrap().cap, 6);
+}
+
+/// 529 带 Retry-After（Codex P2）：过载的冷却要用响应头里的时长（Node 把 overload 的 retryAfterMs 带进桶）。
+#[tokio::test]
+async fn an_overload_with_retry_after_puts_that_cooldown_on_the_bucket() {
+    let server =
+        Fixture::start(vec![Reply::new(529).header("retry-after", "30").send(
+            r#"{"type":"error","error":{"type":"overloaded_error","message":"busy"}}"#,
+        )])
+        .await;
+    let governor = governor(8);
+    let model = governed_with_retries(server.url(), &governor, 0).await;
+
+    let _: Vec<_> = model
+        .stream(
+            request("hi", QuerySource::MainThread),
+            CancellationToken::new(),
+        )
+        .collect()
+        .await;
+    let snapshot = governor.snapshot(&key()).unwrap();
+    let now = clock().now_ms();
+    let until = snapshot
+        .cooldown_until
+        .expect("the overload set a cooldown");
+    assert!(
+        until >= now + 30_000,
+        "the cooldown is at least Retry-After from now: {until} vs {now}"
     );
 }

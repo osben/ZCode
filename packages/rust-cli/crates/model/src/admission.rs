@@ -40,16 +40,25 @@ pub enum AttemptSignal {
 }
 
 impl AttemptSignal {
-    /// 失败的错误映射成信号（重试与终结共用，见 `transport::Connect::fail`）。
+    /// 失败的错误映射成信号（流中途的失败用它；没有响应头可看的时候）。
     pub fn of_error(error: &ModelError) -> Self {
+        Self::of_failure(error, None)
+    }
+
+    /// 失败映射成信号。`retry_after_ms` 是响应头里的 Retry-After：错误自己没有时用它（529 过载的时长在响应头里，
+    /// Node 把它作为 overload 的 `retryAfterMs` 带进桶的冷却）。
+    pub fn of_failure(error: &ModelError, retry_after_ms: Option<u64>) -> Self {
         match error.peel() {
-            ModelError::RateLimited { retry_after_ms, .. } => Self::Throttled {
+            ModelError::RateLimited {
+                retry_after_ms: own,
+                ..
+            } => Self::Throttled {
                 reason: ThrottleReason::RateLimited,
-                retry_after_ms: *retry_after_ms,
+                retry_after_ms: own.or(retry_after_ms),
             },
             ModelError::Overloaded { .. } => Self::Throttled {
                 reason: ThrottleReason::Overloaded,
-                retry_after_ms: None,
+                retry_after_ms,
             },
             ModelError::Network { .. }
             | ModelError::Server { .. }

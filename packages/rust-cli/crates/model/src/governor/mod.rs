@@ -85,6 +85,42 @@ struct Grant {
     epoch: u64,
 }
 
+/// 排队中的一个等待者。丢弃时（取消、或在拿到名额之前就被丢弃）：还在队列里就移走；名额已经发出但没有被取走的，
+/// 把它收回来并以结束结算，否则 in_flight 会永远多一个（Codex P1）。取到名额后 `rx` 置空，丢弃什么也不做。
+struct Queued {
+    governor: Arc<Governor>,
+    key: String,
+    run: String,
+    id: u64,
+    rx: Option<oneshot::Receiver<Grant>>,
+}
+
+impl Drop for Queued {
+    fn drop(&mut self) {
+        let Some(mut rx) = self.rx.take() else {
+            return;
+        };
+        let granted = {
+            let mut state = self.governor.lock();
+            if self
+                .governor
+                .remove_waiter(&mut state, &self.key, &self.run, self.id)
+            {
+                None
+            } else {
+                rx.close();
+                rx.try_recv().ok()
+            }
+        };
+        if let Some(grant) = granted {
+            drop(
+                self.governor
+                    .ticket(&self.key, self.run.clone(), grant.epoch),
+            );
+        }
+    }
+}
+
 fn run_id(scope: &AdmissionScope) -> String {
     match scope {
         AdmissionScope::Observer => OBSERVER_RUN.to_owned(),
@@ -191,7 +227,7 @@ impl Governor {
         if *scope == AdmissionScope::Observer {
             return Ok(self.grant_now(key, &run));
         }
-        let (waiter_id, mut rx) = {
+        let mut queued = {
             let mut state = self.lock();
             let id = state.next_waiter;
             state.next_waiter += 1;
@@ -204,30 +240,31 @@ impl Governor {
                     .push((run.clone(), VecDeque::from([Waiter { id, tx }]))),
             }
             self.drain(&mut state, key);
-            (id, rx)
-        };
-        tokio::select! {
-            biased;
-            received = &mut rx => match received {
-                Ok(grant) => Ok(self.ticket(key, run, grant.epoch)),
-                Err(_) => Err(ModelError::Cancelled),
-            },
-            () = cancel.cancelled() => {
-                let granted = {
-                    let mut state = self.lock();
-                    if self.remove_waiter(&mut state, key, &run, waiter_id) {
-                        None
-                    } else {
-                        // 已经发出了名额：收回来，结束它（不占名额）。
-                        rx.close();
-                        rx.try_recv().ok()
-                    }
-                };
-                if let Some(grant) = granted {
-                    drop(self.ticket(key, run, grant.epoch));
-                }
-                Err(ModelError::Cancelled)
+            Queued {
+                governor: self.clone(),
+                key: key.to_owned(),
+                run,
+                id,
+                rx: Some(rx),
             }
+        };
+        let received = match queued.rx.as_mut() {
+            None => None,
+            Some(rx) => tokio::select! {
+                biased;
+                received = rx => Some(received),
+                () = cancel.cancelled() => None,
+            },
+        };
+        match received {
+            Some(Ok(grant)) => {
+                // 名额已经拿到：不再需要收回，交给票。
+                let run = queued.run.clone();
+                queued.rx = None;
+                Ok(self.ticket(key, run, grant.epoch))
+            }
+            // 取消，或发送端被丢弃：`Queued` 的丢弃路径负责离开队列或还回名额。
+            Some(Err(_)) | None => Err(ModelError::Cancelled),
         }
     }
 
@@ -354,7 +391,8 @@ impl Governor {
             bucket.queues.remove(index);
         }
         bucket.controller.waiters(now, bucket.waiter_count());
-        self.arm(state, key);
+        // 离开队列后马上看看剩下的等待者能不能拿到名额（冷却可能已经过了截止时间，只是定时器还没跑）。
+        self.drain(state, key);
         true
     }
 

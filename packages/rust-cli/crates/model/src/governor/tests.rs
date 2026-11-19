@@ -425,3 +425,76 @@ async fn five_idle_minutes_with_nothing_in_flight_restore_the_default_cap() {
     assert!(hits.iter().all(Option::is_some));
     assert_eq!(h.snapshot(KEY_A).cap, D);
 }
+
+/// 等待者在拿到名额之后、被轮询之前就被丢弃（Codex P1）：名额必须还回去，后来的请求要能准入。
+#[tokio::test]
+async fn a_grant_sent_to_a_waiter_dropped_before_it_resumes_releases_its_slot() {
+    use std::future::Future;
+    use std::task::{Context, Waker};
+
+    let h = harness(1);
+    let holder = fast(&h.governor, &run("A"), KEY_A);
+    let scope = run("B");
+    let token = CancellationToken::new();
+    let mut waiter = Box::pin(h.governor.admit(&scope, KEY_A, &token));
+    let mut cx = Context::from_waker(Waker::noop());
+    assert!(
+        waiter.as_mut().poll(&mut cx).is_pending(),
+        "B queues behind the holder"
+    );
+
+    // drain sends B its grant into the channel; B is dropped without being polled again.
+    holder.settle(AttemptSignal::Completed);
+    drop(waiter);
+
+    assert_eq!(
+        h.snapshot(KEY_A).in_flight,
+        0,
+        "the grant B never took is released"
+    );
+    assert!(
+        h.governor.try_admit(&run("C"), KEY_A).is_some(),
+        "a later request is admitted at cap 1"
+    );
+}
+
+/// 冷却截止时间已过、但定时器回调还没跑时取消一个等待者（Codex P1）：剩下的等待者要马上拿到名额。
+/// 用暂停的 tokio 时钟：定时器不前进，只有注入的时钟越过了截止时间。
+#[tokio::test(start_paused = true)]
+async fn a_cancel_after_the_cooldown_deadline_serves_the_next_waiter_without_the_timer() {
+    let clock = Arc::new(ManualClock::new(1_000_000));
+    let schedule: Scheduler = Arc::new(|delay, callback| {
+        tokio::spawn(async move {
+            tokio::time::sleep(delay).await;
+            callback();
+        });
+    });
+    let governor = Governor::new(clock.clone(), 1, schedule);
+    let holder = governor
+        .try_admit(&run("holder"), KEY_A)
+        .expect("the slot is free");
+    holder.settle(AttemptSignal::Throttled {
+        reason: ThrottleReason::RateLimited,
+        retry_after_ms: Some(20_000),
+    });
+
+    let cancel_a = CancellationToken::new();
+    let a = {
+        let governor = governor.clone();
+        let token = cancel_a.clone();
+        tokio::spawn(async move { governor.admit(&run("A"), KEY_A, &token).await.map(drop) })
+    };
+    let b = queue(&governor, run("B"), KEY_A);
+    settle_tasks().await;
+
+    // The deadline passes on the injected clock; the tokio timer has not fired yet.
+    clock.advance(20_000);
+    cancel_a.cancel();
+    settle_tasks().await;
+    let _ = a.await;
+    settle_tasks().await;
+    assert!(
+        b.is_finished(),
+        "B takes the free slot at once instead of waiting for a timer that was superseded"
+    );
+}

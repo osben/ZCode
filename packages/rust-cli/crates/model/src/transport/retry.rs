@@ -35,7 +35,10 @@ impl Connect {
         tape: Option<Tape>,
     ) -> Result<(ModelNotice, Box<Self>, Duration), ModelError> {
         // 失败的尝试在重试等待之前结算：退避不占名额（Node `retry_scheduled` 的映射）。
-        self.settle_attempt(AttemptSignal::of_error(&verdict.error));
+        let retry_after_ms = verdict
+            .retry_after
+            .map(|delay| u64::try_from(delay.as_millis()).unwrap_or(u64::MAX));
+        self.settle_attempt(AttemptSignal::of_failure(&verdict.error, retry_after_ms));
         // Fork (slice 3 layer B, Node `retryExpired`): a refusal of the run's expired ticket, before anything was handed
         // out. The attempt waits for the ticket's renewal and resends at once; the retry budget is not spent.
         // Only an attempt that names its ticket can renew it: without the header there is no ticket to ask for.
