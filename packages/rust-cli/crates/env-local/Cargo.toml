@@ -32,6 +32,8 @@ rust-cli-proc.workspace = true
 # 世界读写与产物发布的端口实现（W7-4，world_ports.rs）：端口的 trait 与检查在 workflow。
 rust-cli-workflow.workspace = true
 serde_json.workspace = true
+# 世界读写的 glob 匹配：Node 的 `createGlobMatcher` 转成正则（W7-4，world_ports.rs）。
+regex.workspace = true
 tokio = { workspace = true, features = ["fs", "io-util", "macros", "rt", "sync", "time"] }
 tokio-util.workspace = true
 tracing.workspace = true

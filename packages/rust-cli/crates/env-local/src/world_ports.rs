@@ -17,7 +17,7 @@ use rust_cli_kernel_api::env::{
     StartCommand, WorkspaceRef,
 };
 use rust_cli_kernel_api::env_files::{
-    GlobFiles, GrepFileLines, GrepLineKind, GrepMode, GrepOutcome, GrepSearch,
+    GlobFiles, GrepFileLines, GrepLineKind, GrepMode, GrepOutcome, GrepSearch, VCS_DIRS,
 };
 use rust_cli_kernel_api::env_shell::CwdScope;
 use rust_cli_kernel_api::ids::{EnvironmentId, Generation, OperationId, ShellTaskId};
@@ -30,6 +30,8 @@ use rust_cli_workflow::world_read::{
     GlobHits, GrepEntry, GrepHits, RunOutcome, RunRequest, RunStatus, RunStream, WorldReadPorts,
     caps,
 };
+
+use regex::Regex;
 
 use crate::LocalEnvironment;
 
@@ -80,26 +82,38 @@ fn env_text(error: &EnvError) -> String {
 
 impl WorldReadPorts for WorldPorts {
     fn glob(&self, pattern: &str, limit: usize) -> Result<GlobHits, String> {
-        // The same options as the Glob tool: the port is the UI's file search, so it sees hidden files and ignores
-        // nothing. The workflow sorts the result and checks the cap.
+        // Node `searchFiles`: trim, refuse an empty pattern, then walk every regular file (hidden files in, ignore files
+        // not read, version-control directories skipped) and keep the names the matcher accepts. The walk is the
+        // environment's own; the matching and the VCS skip are Node's, applied here so the total is Node's total.
+        let pattern = pattern.trim();
+        if pattern.is_empty() {
+            return Err("Glob pattern must not be empty".to_owned());
+        }
+        let matcher = GlobMatcher::new(pattern)?;
         let request = GlobFiles {
             root: EnvPath::new(self.root.to_string_lossy()),
-            pattern: pattern.to_owned(),
-            limit,
+            pattern: "**/*".to_owned(),
+            limit: usize::MAX,
             hidden: true,
             respect_ignore: false,
         };
-        let matches = self
+        let all = self
             .handle
             .block_on(self.env.glob(&self.workspace(&self.root), request))
             .map_err(|error| env_text(&error))?;
+        let mut hits = Vec::new();
+        for path in all.files.iter().map(EnvPath::as_str) {
+            let Some(relative) = relative_to(&self.root, path) else {
+                continue;
+            };
+            if under_vcs_directory(&relative) || !matcher.matches(&relative) {
+                continue;
+            }
+            hits.push(path.to_owned());
+        }
         Ok(GlobHits {
-            files: matches
-                .files
-                .iter()
-                .map(|path| path.as_str().to_owned())
-                .collect(),
-            total: matches.total,
+            total: hits.len(),
+            files: hits.into_iter().take(limit).collect(),
         })
     }
 
@@ -113,7 +127,7 @@ impl WorldReadPorts for WorldPorts {
                 },
             ))
             .map_err(|error| env_text(&error))?;
-        Ok(String::from_utf8_lossy(&content.bytes).into_owned())
+        decode_node_text(&content.bytes, path)
     }
 
     fn grep(
@@ -122,14 +136,19 @@ impl WorldReadPorts for WorldPorts {
         glob: Option<&str>,
         head_limit: usize,
     ) -> Result<GrepHits, String> {
-        // Matches with the Grep tool's options (hidden files in, no ignore files changed). The port has no head limit,
-        // so every match is read and the head is cut here: `truncated` says more matches followed.
+        // Node `searchText` through ripgrep: trim, refuse an empty pattern, split the glob as Node does, search hidden
+        // files and skip version-control directories. Like Node's adapter, every match is read and the head is cut after
+        // (`applyHeadLimit`), and `truncated` says more matches followed.
+        let pattern = pattern.trim();
+        if pattern.is_empty() {
+            return Err("Grep pattern must not be empty".to_owned());
+        }
         let request = GrepSearch {
             root: EnvPath::new(self.root.to_string_lossy()),
             pattern: pattern.to_owned(),
             case_insensitive: false,
             multiline: false,
-            globs: glob.map(|glob| vec![glob.to_owned()]).unwrap_or_default(),
+            globs: glob.map(split_glob_patterns).unwrap_or_default(),
             file_type: None,
             hidden: true,
             mode: GrepMode::Content {
@@ -146,7 +165,12 @@ impl WorldReadPorts for WorldPorts {
             GrepOutcome::Rejected { message } => return Err(message),
             other => return Err(format!("unexpected grep outcome {other:?}")),
         };
-        let entries = content_entries(files);
+        let entries: Vec<GrepEntry> = content_entries(files)
+            .into_iter()
+            .filter(|entry| {
+                relative_to(&self.root, &entry.path).is_some_and(|rel| !under_vcs_directory(&rel))
+            })
+            .collect();
         let truncated = entries.len() > head_limit;
         Ok(GrepHits {
             entries: entries.into_iter().take(head_limit).collect(),
@@ -413,4 +437,148 @@ impl ArtifactStorePort for StoreAdapter {
             ),
         })
     }
+}
+
+/// Node `createGlobMatcher` (`workflow-world-read` reads it through `searchFiles`): the pattern becomes an anchored
+/// regex over the relative path, and a pattern with no slash also tries the file's basename. `**/` spans directories,
+/// `*` and `?` stay inside one segment, `{a,b}` alternates.
+struct GlobMatcher {
+    whole: Regex,
+    basename: Option<Regex>,
+}
+
+impl GlobMatcher {
+    fn new(pattern: &str) -> Result<Self, String> {
+        let normalized = pattern.replace('\\', "/");
+        let normalized = normalized
+            .strip_prefix("./")
+            .unwrap_or(&normalized)
+            .to_owned();
+        let whole = glob_regex(&normalized)?;
+        let basename = (!normalized.contains('/')).then(|| whole.clone());
+        Ok(Self { whole, basename })
+    }
+
+    fn matches(&self, relative: &str) -> bool {
+        let name = relative.rsplit('/').next().unwrap_or(relative);
+        self.whole.is_match(relative) || self.basename.as_ref().is_some_and(|re| re.is_match(name))
+    }
+}
+
+/// Node `globPatternToRegExp`, token for token.
+fn glob_regex(pattern: &str) -> Result<Regex, String> {
+    let chars: Vec<char> = pattern.chars().collect();
+    let mut regex = String::from("^");
+    let mut index = 0;
+    while index < chars.len() {
+        let ch = chars[index];
+        let next = chars.get(index + 1).copied();
+        match ch {
+            '*' if next == Some('*') => {
+                if chars.get(index + 2) == Some(&'/') {
+                    regex.push_str("(?:.*/)?");
+                    index += 3;
+                } else {
+                    regex.push_str(".*");
+                    index += 2;
+                }
+                continue;
+            }
+            '*' => regex.push_str("[^/]*"),
+            '?' => regex.push_str("[^/]"),
+            '{' => {
+                let end = chars[index + 1..]
+                    .iter()
+                    .position(|c| *c == '}')
+                    .map(|at| at + index + 1);
+                if let Some(end) = end {
+                    let alternatives: Vec<String> = chars[index + 1..end]
+                        .split(|c| *c == ',')
+                        .map(|part| regex::escape(&part.iter().collect::<String>()))
+                        .collect();
+                    regex.push_str(&format!("(?:{})", alternatives.join("|")));
+                    index = end + 1;
+                    continue;
+                }
+                regex.push_str(&regex::escape("{"));
+            }
+            other => regex.push_str(&regex::escape(&other.to_string())),
+        }
+        index += 1;
+    }
+    regex.push('$');
+    Regex::new(&regex).map_err(|_| format!("Invalid glob pattern: {pattern}"))
+}
+
+/// Node `splitRipgrepGlobPatterns`: split on whitespace, then on commas, unless a token has braces; trim; drop empties.
+fn split_glob_patterns(glob: &str) -> Vec<String> {
+    let mut patterns = Vec::new();
+    for token in glob.split_whitespace() {
+        if token.contains('{') && token.contains('}') {
+            patterns.push(token.to_owned());
+        } else {
+            patterns.extend(token.split(',').map(str::to_owned));
+        }
+    }
+    patterns
+        .into_iter()
+        .map(|pattern| pattern.trim().to_owned())
+        .filter(|pattern| !pattern.is_empty())
+        .collect()
+}
+
+/// The path under `root`, with `/` separators (Node `toPosixRelative`). `None` for a path outside the root.
+fn relative_to(root: &Path, path: &str) -> Option<String> {
+    let rest = Path::new(path).strip_prefix(root).ok()?;
+    Some(rest.to_string_lossy().replace('\\', "/"))
+}
+
+/// True when a directory between the root and the file is a version-control directory (Node skips those subtrees).
+fn under_vcs_directory(relative: &str) -> bool {
+    let mut parts = relative.split('/');
+    parts.next_back();
+    parts.any(|part| VCS_DIRS.contains(&part))
+}
+
+/// Node `decodeTextBuffer` plus `normalizeLineEndings` for a `files.read` (no size guard). A UTF-8 or UTF-16LE byte order
+/// mark selects that encoding and is kept in the text, as Node's `Buffer#toString` keeps it. Otherwise binary content
+/// (a NUL, or more than 30% control bytes) and bytes that are not UTF-8 are refused with Node's message. Legacy Chinese
+/// encodings that Node decodes with iconv are refused here (divergence in spec 9.11). CRLF becomes LF.
+fn decode_node_text(bytes: &[u8], path: &str) -> Result<String, String> {
+    let refused = || format!("Unsupported or binary text encoding: {path}");
+    let text = if bytes.len() >= 3 && bytes[..3] == [0xEF, 0xBB, 0xBF] {
+        String::from_utf8_lossy(bytes).into_owned()
+    } else if bytes.len() >= 2 && bytes[..2] == [0xFF, 0xFE] {
+        let units: Vec<u16> = bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect();
+        char::decode_utf16(units)
+            .map(|unit| unit.unwrap_or(char::REPLACEMENT_CHARACTER))
+            .collect()
+    } else if looks_like_binary(bytes) {
+        return Err(refused());
+    } else {
+        std::str::from_utf8(bytes)
+            .map_err(|_| refused())?
+            .to_owned()
+    };
+    Ok(text.replace("\r\n", "\n"))
+}
+
+/// Node `looksLikeBinary`: any NUL, or more than 30% of the bytes are control characters other than tab, LF, VT, FF, CR.
+fn looks_like_binary(bytes: &[u8]) -> bool {
+    if bytes.is_empty() {
+        return false;
+    }
+    let mut controls = 0usize;
+    for &byte in bytes {
+        if byte == 0 {
+            return true;
+        }
+        if byte < 0x09 || (byte > 0x0d && byte < 0x20) {
+            controls += 1;
+        }
+    }
+    controls as f64 / bytes.len() as f64 > 0.3
 }

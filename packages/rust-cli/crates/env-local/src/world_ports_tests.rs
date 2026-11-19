@@ -492,3 +492,176 @@ async fn the_store_adapter_writes_through_the_kernel_store_and_returns_its_uri()
     assert_eq!(receipt.uri, "zcode-artifact://parent/tool-result-5");
     assert_eq!(kernel.refs.lock().unwrap()[0].0, "text/markdown");
 }
+
+// ---- Node parity (W7-4 review): glob matching, VCS directories, grep globs, read decoding, run truncation. ----
+
+#[tokio::test(flavor = "multi_thread")]
+async fn glob_matches_the_basename_of_a_pattern_without_a_slash_as_node_does() {
+    let fx = fixture();
+    std::fs::write(fx.root.join("a.txt"), "a").unwrap();
+    std::fs::write(fx.root.join("sub/b.txt"), "b").unwrap();
+    let ports = fx.ports.clone();
+    let any_depth = blocking(move || ports.glob("*.txt", 10)).await.unwrap();
+    assert_eq!(
+        any_depth.total, 2,
+        "a bare *.txt matches the name at any depth"
+    );
+    let ports = fx.ports.clone();
+    let scoped = blocking(move || ports.glob("sub/*.txt", 10)).await.unwrap();
+    assert_eq!(
+        scoped.total, 1,
+        "a pattern with a slash matches the relative path only"
+    );
+    assert!(scoped.files[0].ends_with("sub/b.txt"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn glob_trims_the_pattern_and_refuses_an_empty_one() {
+    let fx = fixture();
+    std::fs::write(fx.root.join("a.txt"), "a").unwrap();
+    let ports = fx.ports.clone();
+    let trimmed = blocking(move || ports.glob("  *.txt \t", 10))
+        .await
+        .unwrap();
+    assert_eq!(trimmed.total, 1);
+    let ports = fx.ports.clone();
+    let empty = blocking(move || ports.glob("   ", 10)).await;
+    assert_eq!(empty.unwrap_err(), "Glob pattern must not be empty");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn glob_keeps_hidden_files_and_skips_version_control_directories() {
+    let fx = fixture();
+    std::fs::create_dir_all(fx.root.join(".git")).unwrap();
+    std::fs::write(fx.root.join(".git/config"), "x").unwrap();
+    std::fs::write(fx.root.join(".hidden.txt"), "x").unwrap();
+    std::fs::write(fx.root.join("a.txt"), "x").unwrap();
+    let ports = fx.ports.clone();
+    let hits = blocking(move || ports.glob("**/*", 10)).await.unwrap();
+    assert_eq!(
+        hits.total, 2,
+        ".git contents are skipped; hidden files are kept"
+    );
+    assert!(hits.files.iter().all(|file| !file.contains("/.git/")));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn grep_skips_version_control_directories() {
+    let fx = fixture();
+    std::fs::create_dir_all(fx.root.join(".git")).unwrap();
+    std::fs::write(fx.root.join(".git/HEAD"), "needle\n").unwrap();
+    std::fs::write(fx.root.join("a.txt"), "needle\n").unwrap();
+    let ports = fx.ports.clone();
+    let hits = blocking(move || ports.grep("needle", None, 10))
+        .await
+        .unwrap();
+    assert_eq!(hits.entries.len(), 1);
+    assert!(hits.entries[0].path.ends_with("a.txt"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn grep_splits_the_glob_on_whitespace_and_commas_as_node_does() {
+    let fx = fixture();
+    std::fs::write(fx.root.join("a.txt"), "needle\n").unwrap();
+    std::fs::write(fx.root.join("b.md"), "needle\n").unwrap();
+    std::fs::write(fx.root.join("c.rs"), "needle\n").unwrap();
+    let ports = fx.ports.clone();
+    let hits = blocking(move || ports.grep("needle", Some("*.txt *.md"), 10))
+        .await
+        .unwrap();
+    assert_eq!(hits.entries.len(), 2);
+    let ports = fx.ports.clone();
+    let comma = blocking(move || ports.grep("needle", Some("*.rs,*.md"), 10))
+        .await
+        .unwrap();
+    assert_eq!(comma.entries.len(), 2);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn grep_line_text_has_no_line_ending() {
+    let fx = fixture();
+    std::fs::write(fx.root.join("crlf.txt"), "needle\r\nneedle").unwrap();
+    let ports = fx.ports.clone();
+    let hits = blocking(move || ports.grep("needle", None, 10))
+        .await
+        .unwrap();
+    let texts: Vec<_> = hits
+        .entries
+        .iter()
+        .map(|e| e.text.clone().unwrap())
+        .collect();
+    assert_eq!(texts, vec!["needle".to_owned(), "needle".to_owned()]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn read_normalizes_crlf_to_lf() {
+    let fx = fixture();
+    let file = fx.root.join("crlf.txt");
+    std::fs::write(&file, "a\r\nb\r\n").unwrap();
+    let ports = fx.ports.clone();
+    let text = blocking(move || ports.read_text(file.to_str().unwrap()))
+        .await
+        .unwrap();
+    assert_eq!(text, "a\nb\n");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn read_keeps_a_utf8_byte_order_mark_as_node_does() {
+    let fx = fixture();
+    let file = fx.root.join("bom.txt");
+    std::fs::write(&file, [0xEF, 0xBB, 0xBF, b'x']).unwrap();
+    let ports = fx.ports.clone();
+    let text = blocking(move || ports.read_text(file.to_str().unwrap()))
+        .await
+        .unwrap();
+    assert_eq!(text, "\u{feff}x");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn read_decodes_utf16le_with_a_byte_order_mark() {
+    let fx = fixture();
+    let file = fx.root.join("wide.txt");
+    std::fs::write(&file, [0xFF, 0xFE, b'h', 0, b'i', 0]).unwrap();
+    let ports = fx.ports.clone();
+    let text = blocking(move || ports.read_text(file.to_str().unwrap()))
+        .await
+        .unwrap();
+    assert_eq!(text, "\u{feff}hi");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn read_refuses_binary_and_invalid_utf8() {
+    let fx = fixture();
+    let binary = fx.root.join("bin.dat");
+    std::fs::write(&binary, [0x00, 0x01, 0x02]).unwrap();
+    let invalid = fx.root.join("bad.txt");
+    std::fs::write(&invalid, [0xC3, 0x28]).unwrap();
+    let ports = fx.ports.clone();
+    let bin_path = binary.to_str().unwrap().to_owned();
+    let refused = blocking(move || ports.read_text(&bin_path)).await;
+    assert!(
+        refused
+            .unwrap_err()
+            .starts_with("Unsupported or binary text encoding")
+    );
+    let ports = fx.ports.clone();
+    let bad_path = invalid.to_str().unwrap().to_owned();
+    let refused = blocking(move || ports.read_text(&bad_path)).await;
+    assert!(refused.is_err());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn discard_reports_truncated_only_when_output_was_dropped() {
+    let fx = fixture();
+    let ports = fx.ports.clone();
+    let mut quiet = run_request(&fx.root, "/bin/sh", &["-c", "true"]);
+    quiet.max_inline_bytes = 0;
+    let outcome = blocking(move || ports.run(&quiet)).await.unwrap();
+    assert!(!outcome.stdout.truncated, "no output, nothing dropped");
+    let ports = fx.ports.clone();
+    let mut noisy = run_request(&fx.root, "/bin/sh", &["-c", "printf x"]);
+    noisy.max_inline_bytes = 0;
+    let outcome = blocking(move || ports.run(&noisy)).await.unwrap();
+    assert!(outcome.stdout.truncated);
+    assert_eq!(outcome.stdout.bytes, 1);
+}

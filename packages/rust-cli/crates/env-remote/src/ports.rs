@@ -260,12 +260,7 @@ impl Commands for RemoteEnvironment {
         context: OperationContext,
         request: StartCommand,
     ) -> Result<CommandEvents, EnvError> {
-        // argv 模式（W7-4）的线上形状还没有：远端只收 shell 文本，宁可拒绝也不把参数当 shell 文本执行。
-        if request.argv.is_some() {
-            return Err(EnvError::Unsupported {
-                what: "argv commands on a remote machine".to_owned(),
-            });
-        }
+        refuse_argv(&request)?;
         // 线上仍是两步（wire 不随内部 API 变）：执行器拿着端口给的流，第一个 watch_command(op, 0) 接走它
         // （remote-exec.md §18.5，工作线 F119）。
         let operation = context.operation.clone();
@@ -509,5 +504,42 @@ impl Pdf for RemoteEnvironment {
             expect!(reply, "pdf.render_pdf_pages", Reply::RenderPdfPages(render) => render),
             &body,
         )
+    }
+}
+
+/// argv 模式（W7-4）的线上形状还没有：远端只收 shell 文本，宁可拒绝也不把参数当 shell 文本执行。
+fn refuse_argv(request: &StartCommand) -> Result<(), EnvError> {
+    if request.argv.is_some() {
+        return Err(EnvError::Unsupported {
+            what: "argv commands on a remote machine".to_owned(),
+        });
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod argv_refusal_tests {
+    use super::refuse_argv;
+    use rust_cli_kernel_api::env::{EnvError, EnvPath, StartCommand};
+    use rust_cli_kernel_api::ids::ShellTaskId;
+
+    #[test]
+    fn an_argv_command_is_refused_before_anything_is_sent() {
+        let task = ShellTaskId::new("t1");
+        let argv = StartCommand::argv(
+            "git",
+            vec!["status".to_owned()],
+            EnvPath::new("/w"),
+            task.clone(),
+        );
+        assert!(matches!(
+            refuse_argv(&argv),
+            Err(EnvError::Unsupported { .. })
+        ));
+        let shell = StartCommand::new("git status", EnvPath::new("/w"), task);
+        assert!(
+            refuse_argv(&shell).is_ok(),
+            "shell text still goes to the remote"
+        );
     }
 }

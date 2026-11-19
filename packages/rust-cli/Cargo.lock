@@ -2009,6 +2009,7 @@ dependencies = [
  "ignore",
  "libc",
  "notify",
+ "regex",
  "rust-cli-base",
  "rust-cli-fs",
  "rust-cli-kernel-api",
