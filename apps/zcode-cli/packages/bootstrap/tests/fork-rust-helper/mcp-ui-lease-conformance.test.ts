@@ -4,7 +4,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { McpUiInstances } from "../../src/zcode-protocol/mcp-ui/instances.js";
+import { McpUiInstances } from "../../src/zcode-protocol/mcp-ui/contract.js";
 
 const fixturePath = fileURLToPath(
   new URL(

@@ -156,3 +156,4 @@ export interface McpUiHandlers extends McpUiResourceHandlers<McpUiSessionAccess>
     options?: { signal?: AbortSignal },
   ): Promise<McpUiReadResourceForUiResult>;
 }
+export { McpUiInstances, mcpUiInstances } from "./instances.js";
