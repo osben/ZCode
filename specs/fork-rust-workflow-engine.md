@@ -4145,7 +4145,8 @@ The escalation, stall and blocked texts were already Node's (9.38) and are uncha
 631. No `workflowNotification` or `workflowBlocked` payload. The model-visible notices carry text only, so the GUI row falls back to the
      bare title for every run notice (351 stays open). The carrier is a follow-up: `AgentSignal::WorkflowNotice` gets a meta, the
      session lane keeps it, and the Node store writes it on the message's `originMeta`. The payloads themselves are rows.ts shapes.
-632. The hole's type comes from the run source the parent's reminders read. The read is synchronous and in memory, where Node awaits
+632. The hole's type and line are read payload-first, then from the run source the parent's reminders read (Node's order, review of
+     PR 606). The type falls back to `unknown` when neither has it. The read is synchronous and in memory, where Node awaits
      the run snapshot (358). If the projection has not yet applied the `hole-reached` event when the notice is built, the type is
      `unknown`, Node's own fallback, and the model must read the run to learn it. The order is not verified against a live run (364).
 633. The hole's line and draft path are absent. The projection keeps neither (487, 488), so the text uses Node's no-draft form

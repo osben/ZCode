@@ -274,7 +274,18 @@ impl WorkflowReminders {
     /// source is set, the read fails, or the run owes no such hole.
     pub fn open_hole(&self, session: &str, run_id: &str, site_id: &str) -> Option<OpenHole> {
         let source = self.source.get()?;
-        let decisions = source.open(session, run_id).ok()??;
+        let decisions = match source.open(session, run_id) {
+            Ok(decisions) => decisions?,
+            Err(error) => {
+                tracing::warn!(
+                    event = "dynamic_workflow.hole.snapshot_failed",
+                    run_id,
+                    error = error.as_str(),
+                    "Dynamic workflow hole notification: snapshot read failed, the type falls back"
+                );
+                return None;
+            }
+        };
         decisions
             .holes
             .into_iter()

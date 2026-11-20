@@ -351,3 +351,38 @@ fn a_hole_notice_takes_its_type_from_the_run_the_parent_reads() {
         posted[0].1
     );
 }
+
+/// Node `notifyHoleReached` reads each field payload-first (the payload wins when it carries one).
+#[test]
+fn a_payload_type_and_line_win_over_the_projection() {
+    let posted = Arc::new(Posted::default());
+    let notices: Arc<dyn WorkflowNotices> = posted.clone();
+    let reminders = Arc::new(WorkflowReminders::new(
+        Arc::new(NoGates),
+        Arc::new(NoTimers),
+        notices,
+    ));
+    assert!(reminders.set_runs(Arc::new(WaitingHole)));
+    let payload = event(
+        "hole-reached",
+        json!({
+            "instance": {"siteId": "scout", "ordinal": 2},
+            "name": "Plan",
+            "type": "Draft",
+            "line": 7
+        }),
+    );
+    WorkflowProgressHost::new(Arc::new(Quiet))
+        .with_notices(posted.clone())
+        .with_reminders(reminders)
+        .record("ses_parent", &payload, &[])
+        .expect("recorded");
+    let posted = posted.0.lock().expect("posted");
+    assert_eq!(posted.len(), 1);
+    assert!(
+        posted[0].1.contains("<type>Draft</type>"),
+        "{}",
+        posted[0].1
+    );
+    assert!(posted[0].1.contains("<line>7</line>"), "{}", posted[0].1);
+}

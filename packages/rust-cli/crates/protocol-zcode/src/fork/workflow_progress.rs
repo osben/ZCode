@@ -2,11 +2,12 @@
 //! the progress path, 9.38, W7-7c). Node's sink appends each run's progress to the parent session's in-memory event store
 //! and the Host hears it. Here the progress is not written anywhere: the durable record is the run's journal. The port
 //! hands the projection's deltas to the parent session's open stream, if one is open, and it posts the run notices the
-//! parent's model reads (an escalation, a stall). Rust's cold read does not yet replay the journal into progress events
+//! parent's model reads (an escalation, a stall, a hole). Rust's cold read does not yet replay the journal into progress events
 //! (9.34, 298).
 
 use std::sync::{Arc, Weak};
 
+use rust_cli_base::js::string::{utf16_len, utf16_prefix};
 use rust_cli_kernel_api::agents::AgentSignals;
 use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::workflow_run_progress::WorkflowRunProgressPort;
@@ -89,7 +90,7 @@ impl WorkflowProgressHost {
 
 impl WorkflowRunProgressPort for WorkflowProgressHost {
     /// Delivers the deltas to the parent's open stream, then gives the model its notices (Node's order: the reminder
-    /// clock, the escalation, the stall; the hole notice is not built, see 9.38).
+    /// clock, the escalation, the stall, the hole; see 9.38 and 9.49).
     fn record(
         &self,
         parent_session_id: &str,
@@ -173,12 +174,18 @@ fn hole_text(
     };
     let hole =
         reminders.and_then(|reminders| reminders.open_hole(parent_session_id, run_id, site_id));
-    let type_name = hole
-        .as_ref()
-        .map(|hole| hole.type_name.as_str())
-        .filter(|type_name| !type_name.is_empty())
-        .or_else(|| str_field(payload, "type"))
+    // Node `notifyHoleReached`: the payload wins for each field when it carries one, else the projection's hole, else the fallback.
+    let type_name = str_field(payload, "type")
+        .or_else(|| {
+            hole.as_ref()
+                .map(|hole| hole.type_name.as_str())
+                .filter(|type_name| !type_name.is_empty())
+        })
         .unwrap_or("unknown");
+    let line = payload
+        .get("line")
+        .and_then(Value::as_u64)
+        .or_else(|| hole.as_ref().and_then(|hole| hole.line));
     let prompt = str_field(payload, "prompt").map(bound_hole_prompt);
     Some(rust_cli_prompts::workflow_notice::hole(&Hole {
         run_label: run_id,
@@ -189,31 +196,20 @@ fn hole_text(
         prompt: prompt.as_deref(),
         // The draft path is not in the projection yet (divergence 488), and the payload does not name the phases (9.49).
         draft_path: None,
-        line: hole.as_ref().and_then(|hole| hole.line),
+        line,
         before: None,
         after: None,
     }))
 }
 
-/// Node `boundPrompt`: a prompt over the limit keeps its first 3999 UTF-16 units and ends in `…`. A cut never splits a
-/// character (a lone surrogate cannot be held by a Rust string; divergence 365).
+/// Node `boundPrompt`: a prompt over the limit keeps its first 3999 UTF-16 units and ends in `…`. The cut never splits a
+/// character (a lone surrogate cannot be held by a Rust string; divergence 365). Same rule as the engine's copy, on the
+/// shared UTF-16 helpers.
 fn bound_hole_prompt(prompt: &str) -> String {
-    let units: usize = prompt.chars().map(char::len_utf16).sum();
-    if units <= HOLE_PROMPT_MAX_UNITS {
+    if utf16_len(prompt) <= HOLE_PROMPT_MAX_UNITS {
         return prompt.to_owned();
     }
-    let mut kept = 0;
-    let mut out = String::new();
-    for character in prompt.chars() {
-        let width = character.len_utf16();
-        if kept + width > HOLE_PROMPT_MAX_UNITS - 1 {
-            break;
-        }
-        kept += width;
-        out.push(character);
-    }
-    out.push('…');
-    out
+    format!("{}…", utf16_prefix(prompt, HOLE_PROMPT_MAX_UNITS - 1))
 }
 
 /// `escalation-raised` → the parked question's notice. A payload without a question id or text is skipped, and never
