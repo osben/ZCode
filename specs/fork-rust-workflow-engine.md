@@ -2941,11 +2941,14 @@ by `StoreQuotaReads`, which reads any status, newest first, at most the limit gi
 332. Compile and child start are one step here. Node checks the script hash before it spawns anything. Here the helper
      compiles and starts the child, and a `script_mismatch` stops that child and keeps no run. The entry file the helper
      wrote for the stopped child stays in `.zcode/workflow-runs`. The journal is not written.
-333. The compile's tables are read as JSON objects: `askSpecs` as `{siteId: {typed, schema?}}`, `sitePhases` as
-     `{siteId: phase}`. Node's are JS `Map`s, and the helper's reply has no replacer for them, so they arrive as `{}`. The
-     resume refuses when both are empty, as a compile with no ask table (a wiring failure, the run stays stopped). A run
-     with no asks cannot be told apart from that case, and the refusal is the safe side. Follow-up: the helper emits the
-     two tables as objects. Until then no production resume can succeed.
+333. **Closed (helper fix, same PR).** The compile's tables are JS `Map`s in Node (`askSpecs`, `sitePhases`,
+     `actorSubmitProfiles`, `holeBodies`), and `JSON.stringify` wrote them as `{}`. The helper's compile reply now sends a
+     JSON-safe copy (`jsonShape` in `bootstrap/src/fork-rust-helper/workflow-compile.ts`: Maps to objects keyed by their
+     keys, Sets to arrays, at every depth). Node's own compile result is not changed. Red first: the helper test
+     `answers the compile's Map tables as JSON objects` saw `askSpecs` empty (`expected 0 to be greater than 0`). The
+     Rust side reads `askSpecs` as `{siteId: {typed, schema?}}` and `sitePhases` as `{siteId: phase}`, checked against a
+     recorded reply (`runtime/fixtures/compile-reply-ask.json`). The resume still refuses when both tables are empty, which
+     now means a script with no asks and no phases, so the refusal is safe, not a missing reply.
 334. `holes` are not read: `EngineConfig` has none (holes are refused until W7-8).
 335. The config is built from the row (`caps`, `args`, `name`, `parent`, `cwd`, `toolCallId`, `resumedFrom`, the script),
      with `launch` absent, so the owner reads the journaled `run-launched` (9.33). `record_parent_mode` is not called, as
@@ -2975,7 +2978,7 @@ by `StoreQuotaReads`, which reads any status, newest first, at most the limit gi
 344. The port resumes any run id it is given, as Node's run service does (one service per app, 9.30 item 215). The tools
      that call it are behind the gate (9.18).
 
-**Tests.** `workflow_run_resume_tests.rs` (13). Happy path: a stopped interrupted run is resumed over a real SQLite
+**Tests.** `workflow_run_resume_tests.rs` (15, two added for the recorded reply). Happy path: a stopped interrupted run is resumed over a real SQLite
 journal and the production owner, its child gets the row's script, args and cwd, the run settles as completed, and no
 `run-launched` is written. Refusals: `not_found`, `already_running` (a live run), `superseded`, `not_resumable`,
 `script_missing`, `compile_failed` (with the bounded text), `script_mismatch` (the child is stopped, nothing is kept), a
@@ -2988,7 +2991,7 @@ mutations were run after the green run, each restored: removing the hash check f
 `a_script_whose_hash_differs_from_the_row_is_refused_and_its_child_stopped`; ignoring the closed predicate failed
 `a_closed_parent_refuses_the_quota_resume_and_starts_no_child`.
 
-**Not done.** The helper's table objects (333). The gate predicate (342). The predecessor journal and the import cache
+**Not done.** The gate predicate (342). The predecessor journal and the import cache
 rebuild (337). The resumed run's progress facts (339). The CreateWorkflow path that would reach a resume (9.27, 9.18).
 
 ## 10. Open questions

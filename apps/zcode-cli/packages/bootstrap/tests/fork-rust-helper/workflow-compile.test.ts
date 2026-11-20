@@ -120,6 +120,26 @@ describe("fork: helper/workflow/compile and helper/workflow/format (W4)", () => 
     await helper.done;
   });
 
+  it("answers the compile's Map tables as JSON objects, so a script with an ask site carries them (9.37, 333)", async () => {
+    const helper = await startHelper();
+    // A phase declaration gives the site a phase, so the phase table is not empty.
+    const reply = await helper.request("helper/workflow/compile", {
+      scriptText: ['phase("Work");', VALID_SCRIPT].join("\n"),
+      runId: "run-w4-maps",
+    });
+    expect(reply.error).toBeUndefined();
+    const compiled = (reply.result as { compiled: Record<string, unknown> }).compiled;
+    // Node's askSpecs and sitePhases are JS Maps; JSON.stringify writes a Map as {}, so these must be plain objects.
+    const askSpecs = compiled.askSpecs as Record<string, { typed: unknown }>;
+    expect(Object.keys(askSpecs).length).toBeGreaterThan(0);
+    for (const spec of Object.values(askSpecs)) expect(typeof spec.typed).toBe("boolean");
+    const sitePhases = compiled.sitePhases as Record<string, unknown>;
+    expect(Object.keys(sitePhases).length).toBeGreaterThan(0);
+    for (const phase of Object.values(sitePhases)) expect(typeof phase).toBe("string");
+    helper.close();
+    await helper.done;
+  });
+
   it("passes resumedFrom into the run identity of the rendered entry", async () => {
     const helper = await startHelper();
     const reply = await helper.request("helper/workflow/compile", {

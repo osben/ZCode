@@ -71,7 +71,7 @@ type CompiledTables = (HashMap<String, AskSpec>, HashMap<String, String>);
 /// The helper sends these as JSON objects. Node's are JS `Map`s, which `JSON.stringify` writes as `{}`, so an object
 /// with both tables empty is refused as the compile's missing tables: a run with no asks cannot be told from that, and
 /// the refusal is the safe side (9.37, divergence 333).
-fn compiled_tables(compiled: &Value) -> Result<CompiledTables, String> {
+pub(crate) fn compiled_tables(compiled: &Value) -> Result<CompiledTables, String> {
     let asks = compiled.get("askSpecs").and_then(Value::as_object);
     let phases = compiled.get("sitePhases").and_then(Value::as_object);
     let (Some(asks), Some(phases)) = (asks, phases) else {

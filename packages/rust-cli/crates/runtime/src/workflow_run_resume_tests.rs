@@ -253,6 +253,33 @@ async fn a_stopped_interrupted_run_resumes_on_its_row_and_settles() {
     );
 }
 
+/// A reply the fixed helper sent for a script with a phase and one ask (9.37, 333), recorded as the helper answers it.
+const RECORDED_REPLY: &str = include_str!("../fixtures/compile-reply-ask.json");
+
+#[test]
+fn a_recorded_compile_reply_decodes_into_the_resume_tables() {
+    let reply: Value = serde_json::from_str(RECORDED_REPLY).expect("the recorded reply is JSON");
+    assert_eq!(reply["ok"], json!(true));
+    let (asks, phases) = crate::workflow_run::resume::compiled_tables(&reply["compiled"])
+        .expect("the tables decode");
+    let ask = asks.get("ask#1").expect("the ask site of the script");
+    assert!(!ask.typed);
+    assert!(ask.schema.is_none());
+    assert_eq!(phases.get("ask#1").map(String::as_str), Some("Work"));
+    assert_eq!(phases.get("actor#1").map(String::as_str), Some("Work"));
+}
+
+#[tokio::test]
+async fn a_run_resumes_on_the_tables_of_a_recorded_compile_reply() {
+    let reply: Value = serde_json::from_str(RECORDED_REPLY).expect("the recorded reply is JSON");
+    let fx = fixture(reply["compiled"].clone(), |conn| {
+        seed(conn, interrupted("dwfrun-recorded", "return 1\n"));
+    });
+    let answer = resume(&fx.service, "dwfrun-recorded").await;
+    assert_eq!(answer, json!({ "ok": true, "runId": "dwfrun-recorded" }));
+    fx.fake.finish(0, completed(json!("done")));
+}
+
 // ---- Refusals, in Node's order.
 
 #[tokio::test]

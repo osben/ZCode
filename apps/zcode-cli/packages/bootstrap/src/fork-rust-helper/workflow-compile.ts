@@ -81,7 +81,34 @@ export function compileWorkflowForRust(raw: unknown) {
     },
     { runId: params.runId },
   );
-  return { ok: true as const, scriptHash: rest.scriptHash, compiled: rest, entrySource };
+  // The reply is JSON: a Map or Set would serialize as {} or []. The copy below is for the reply only; Node's own
+  // compile result keeps its Maps (9.37, divergence 333).
+  return {
+    ok: true as const,
+    scriptHash: rest.scriptHash,
+    compiled: jsonShape(rest) as Record<string, unknown>,
+    entrySource,
+  };
+}
+
+/**
+ * A JSON-safe copy of a value: Maps become objects keyed by their keys (as text), Sets become arrays, and both are
+ * converted at every depth. Plain objects and arrays are copied, every other value is kept.
+ */
+export function jsonShape(value: unknown): unknown {
+  if (value instanceof Map) {
+    return Object.fromEntries(
+      [...value.entries()].map(([key, entry]) => [String(key), jsonShape(entry)]),
+    );
+  }
+  if (value instanceof Set) return [...value].map((entry) => jsonShape(entry));
+  if (Array.isArray(value)) return value.map((entry) => jsonShape(entry));
+  if (typeof value === "object" && value !== null) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [key, jsonShape(entry)]),
+    );
+  }
+  return value;
 }
 
 /**
