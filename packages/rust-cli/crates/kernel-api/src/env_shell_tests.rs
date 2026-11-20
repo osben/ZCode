@@ -51,6 +51,7 @@ fn start_command_round_trips_with_every_kind() {
                 deadline_ms: Some(600_000),
             }),
         },
+        argv: None,
     };
     round_trip(&start);
     for kind in [
@@ -410,4 +411,33 @@ fn monitor_payloads_round_trip_and_older_ones_still_parse() {
         source: crate::monitor::MonitorSource::Socket,
         output: crate::env::EnvPath::new("/t/b1.output"),
     });
+}
+
+#[test]
+fn an_argv_payload_round_trips_and_a_legacy_payload_has_no_argv() {
+    let argv = StartCommand::argv(
+        "git",
+        vec!["status".to_owned(), "a b".to_owned(), "it's".to_owned()],
+        path("/w"),
+        ShellTaskId::new("argv1"),
+    );
+    // The display text quotes only the words that need it, and is never run as shell.
+    assert_eq!(argv.command, "git status 'a b' 'it'\\''s'");
+    let json = serde_json::to_value(&argv).unwrap();
+    assert_eq!(json["argv"]["file"], "git");
+    let back: StartCommand = serde_json::from_value(json).unwrap();
+    assert_eq!(back, argv);
+
+    let legacy = serde_json::json!({
+        "command": "echo hi",
+        "cwd": "/w",
+        "timeout_ms": null,
+        "task": "legacy1",
+    });
+    let parsed: StartCommand = serde_json::from_value(legacy).unwrap();
+    assert!(
+        parsed.argv.is_none(),
+        "a payload without the field is shell text"
+    );
+    assert_eq!(parsed.command, "echo hi");
 }

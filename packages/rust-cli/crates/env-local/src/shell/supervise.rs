@@ -224,25 +224,32 @@ pub(crate) async fn spawn(
     }
     let cwd_file = matches!(request.cwd_scope, CwdScope::Session { .. }).then_some(&*plan.cwd_file);
     let hook = matches!(request.kind, CommandKind::Hook { .. });
-    let text = script(
-        &request.command,
-        cwd_file,
-        hook,
-        &plan.bash,
-        plan.prelude.as_deref(),
-    );
-    let tag = format!("ZCODE_SBX_{}", request.task);
-    let launch = sandbox::launch(
-        request.sandbox.as_ref(),
-        backend,
-        &plan.bash,
-        &text,
-        &plan.cwd,
-        &tag,
-    )?;
-    let mut command = rust_cli_proc::command(&launch.program);
+    // argv 模式（W7-4）不经 shell：没有脚本包装、没有 sandbox，进程直接以文件与参数启动（`start_with` 已经拒绝了别的组合）。
+    let (program, args, mounts) = match &request.argv {
+        Some(argv) => (PathBuf::from(&argv.file), argv.args.clone(), None),
+        None => {
+            let text = script(
+                &request.command,
+                cwd_file,
+                hook,
+                &plan.bash,
+                plan.prelude.as_deref(),
+            );
+            let tag = format!("ZCODE_SBX_{}", request.task);
+            let launch = sandbox::launch(
+                request.sandbox.as_ref(),
+                backend,
+                &plan.bash,
+                &text,
+                &plan.cwd,
+                &tag,
+            )?;
+            (launch.program, launch.args, launch.mounts)
+        }
+    };
+    let mut command = rust_cli_proc::command(&program);
     command
-        .args(&launch.args)
+        .args(&args)
         .current_dir(&plan.cwd)
         .env_clear()
         .envs(&plan.env)
@@ -257,8 +264,8 @@ pub(crate) async fn spawn(
         } else {
             Stdio::from(errors)
         });
-    let mounted = launch.mounts.is_some();
-    if let Some(created) = launch.mounts {
+    let mounted = mounts.is_some();
+    if let Some(created) = mounts {
         shared.state().mounts.enter(created);
     }
     let spawned = ledger

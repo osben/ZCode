@@ -54,6 +54,15 @@ fn entries<'a>(
         .flatten()
 }
 
+/// A version-control directory (kernel-api `VCS_DIRS`): the walk does not enter it.
+fn is_vcs_directory(entry: &DirEntry) -> bool {
+    entry.file_type().is_some_and(|kind| kind.is_dir())
+        && entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| VCS_DIRS.contains(&name))
+}
+
 fn is_file(entry: &DirEntry) -> bool {
     entry.file_type().is_some_and(|kind| kind.is_file())
 }
@@ -76,6 +85,8 @@ pub(crate) fn glob(request: &GlobFiles, stop: &CancellationToken) -> Result<Glob
         })?;
     let mut builder = walker(&root, request.hidden, request.respect_ignore);
     builder.overrides(built);
+    // Node's walkFiles does not enter a version-control directory at all (the same skip as `list_files`).
+    builder.filter_entry(|entry| !is_vcs_directory(entry));
     let mut found: Vec<(Option<SystemTime>, PathBuf)> = entries(&builder, stop)
         .filter(is_file)
         .map(|entry| (modified(&entry), entry.into_path()))
@@ -105,14 +116,7 @@ pub(crate) fn list_files(
 ) -> Result<FileList, EnvError> {
     let root = PathBuf::from(request.cwd.as_str());
     let mut builder = walker(&root, true, true);
-    builder.filter_entry(|entry| {
-        let vcs = entry.file_type().is_some_and(|kind| kind.is_dir())
-            && entry
-                .file_name()
-                .to_str()
-                .is_some_and(|name| VCS_DIRS.contains(&name));
-        !vcs
-    });
+    builder.filter_entry(|entry| !is_vcs_directory(entry));
     let files = entries(&builder, stop)
         .filter(is_file)
         .filter_map(|entry| {

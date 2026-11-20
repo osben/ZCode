@@ -35,9 +35,64 @@ pub struct StartCommand {
     pub sandbox: Option<SandboxPolicy>,
     #[serde(default)]
     pub kind: CommandKind,
+    /// 有值时不经 shell（argv 模式，W7-4；Node 执行端口的 `command.mode: "argv"`）：进程直接以 `file` 与 `args`
+    /// 启动，`args` 不被解释。此时 `command` 只是显示用的文字（写成 `file`）。只支持前台、目录固定、没有 sandbox 的命令；
+    /// 别的组合由执行环境拒绝。没有值时（缺省）按 shell 文本执行，线上格式不变。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub argv: Option<CommandArgv>,
+}
+
+/// argv 模式的进程：可执行文件（`PATH` 里查找）与它的参数，逐个原样传入。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommandArgv {
+    pub file: String,
+    pub args: Vec<String>,
+}
+
+impl CommandArgv {
+    /// The text that shows this command (the `command` field of an argv request). Node has no display text for argv
+    /// (its only argv join is the Windows cmd shim, `execution-command.ts`), so this is a POSIX shell quoting of
+    /// `file` and `args`: a word is left bare only when it has no shell metacharacter, and the text is never run.
+    pub fn display(&self) -> String {
+        std::iter::once(self.file.as_str())
+            .chain(self.args.iter().map(String::as_str))
+            .map(shell_word)
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+}
+
+fn shell_word(word: &str) -> String {
+    let bare = !word.is_empty()
+        && word
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "@%+=:,./-_".contains(c));
+    if bare {
+        word.to_owned()
+    } else {
+        format!("'{}'", word.replace('\'', r"'\''"))
+    }
 }
 
 impl StartCommand {
+    /// argv 模式的前台命令：`file` 带 `args` 直接启动（不经 shell），在 `cwd` 里，任务 ID 是 `task`，没有超时。
+    pub fn argv(
+        file: impl Into<String>,
+        args: Vec<String>,
+        cwd: EnvPath,
+        task: ShellTaskId,
+    ) -> Self {
+        let argv = CommandArgv {
+            file: file.into(),
+            args,
+        };
+        Self {
+            command: argv.display(),
+            argv: Some(argv),
+            ..Self::new(String::new(), cwd, task)
+        }
+    }
+
     /// 在 `cwd` 里跑 `command` 的前台命令（任务 ID 是 `task`）：没有超时，bash，目录固定，不在 sandbox 里，到了超时照旧
     /// 结束。别的字段用结构更新（`StartCommand { kind, ..StartCommand::new(..) }`，工作线 F137：以前每个调用方写全八个字段）。
     pub fn new(command: impl Into<String>, cwd: EnvPath, task: ShellTaskId) -> Self {
@@ -50,6 +105,7 @@ impl StartCommand {
             cwd_scope: CwdScope::default(),
             sandbox: None,
             kind: CommandKind::default(),
+            argv: None,
         }
     }
 }
