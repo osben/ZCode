@@ -4118,6 +4118,58 @@ a restart simulated as a new server over the same store (empty gate table, no op
      Not changed: `session/tree` delete (`session_tree.rs`) closes bridges without stopping the clock. It is a deletion path
      with no forget of its gate either (divergence 501 for deletes, not closed here).
 
+### 9.49 W8b: workflow notifications (as built, gate off)
+
+**Scope built.** The hole notice, which closes 353 and 518: a run that reaches a hole posts one `<workflow-hole>` notice to the
+parent's model, through the same progress path and signal channel as the escalation and the stall (9.38). The notice names the
+hole's site, its name and its prompt, and takes the hole's type and line from the run the parent reads (the projection, through
+`WorkflowReminders::open_hole`, which reads the run source the reminder clock already uses). The text is Node's
+`formatWorkflowHoleNotification` (`prompts/src/workflow_notice.rs`, `hole`), golden-tested against Node's template line by line.
+The escalation, stall and blocked texts were already Node's (9.38) and are unchanged.
+
+**Not built (W8b's brief, left open with reasons).**
+
+- The terminal notification. Node's `formatWorkflowTaskNotification` runs at the background tracker's settlement
+  (`background-tasks.ts`). Rust has no run-level background registry yet: the W8a agent builds it for `cancelBackgroundWork`. The
+  terminal text (`buildWorkflowTaskSummary`, the reports and artifacts sections) is not ported, and nothing posts it (630).
+- The `workflowNotification` and `workflowBlocked` payloads. The notice is text only, and the signal, the session lane and the
+  Node store's `origin_meta` derivation carry no structured meta. A payload builder with no caller fails the workspace clippy gate,
+  so none was written (631).
+- The reminder kind (`workflowBlocked`). It needs the reminder clock wired (9.38, divergence 357), which is still not done.
+
+**Node divergences (new in W8b, numbered from 630).**
+
+630. The terminal notification is not built. Node mints it at the background tracker's settlement with `<task-notification>`,
+     `buildWorkflowTaskSummary` and the reports and artifacts sections. Rust has no run-level tracker until the W8a registry lands; the
+     terminal path (CreateWorkflow and ResumeWorkflowRun) is the follow-up to that row.
+631. No `workflowNotification` or `workflowBlocked` payload. The model-visible notices carry text only, so the GUI row falls back to the
+     bare title for every run notice (351 stays open). The carrier is a follow-up: `AgentSignal::WorkflowNotice` gets a meta, the
+     session lane keeps it, and the Node store writes it on the message's `originMeta`. The payloads themselves are rows.ts shapes.
+632. The hole's type and line are read payload-first, then from the run source the parent's reminders read (Node's order, review of
+     PR 606). The type falls back to `unknown` when neither has it. The read is synchronous and in memory, where Node awaits
+     the run snapshot (358). If the projection has not yet applied the `hole-reached` event when the notice is built, the type is
+     `unknown`, Node's own fallback, and the model must read the run to learn it. The order is not verified against a live run (364).
+633. The hole's line and draft path are absent. The projection keeps neither (487, 488), so the text uses Node's no-draft form
+     (`Read the run's script with GetWorkflowRun for the context`) and omits `<line>` and `<draft>`.
+634. The phase clause is absent. Node's `before` and `after` are the phases on either side of the hole. The engine's payload carries only
+     the birth phase (`phaseName`), which is not the same fact, so the text names no phase.
+635. The run label is the run id (352), as in the escalation and stall texts.
+636. The text is Node's code, not the document. `docs/dynamic-workflow/transcript-and-notifications.md` describes the model text as a
+     `<task-notification>` block. Node's `workflow-notification-copy.ts` writes the escalation, hole, stall and blocked texts as a
+     banner plus `<workflow-…>` block, and only the terminal text uses `<task-notification>` (630). This port follows the code.
+637. No cold replay of hole notices (363 applies to them too). A session that reopens does not get a hole notice again; the blocked
+     reminder is the only path to it, and it is not wired (357).
+638. The hole notice is one per `hole-reached` event, and a repeated event posts twice (362 applies). `hole-filled` posts nothing, and a
+     `hole-reached` without an instance or a name posts nothing and logs a warn, as Node does.
+
+**Tests.** Red first: the hole formatter's golden tests did not compile before `hole` existed (a compile error, not a behaviour
+red); the progress-path hole tests were red for the three hole cases (no notice posted, the prompt not bounded, no type) before the
+implementation. Green after: prompts (66), protocol-zcode (1017, lib). `cargo fmt --all --check` and `cargo clippy --workspace
+--all-targets --locked -- -D warnings` are clean.
+
+**Not done.** The terminal notification (630); the payload carrier (631); the reminder wiring (357); the cold replay (637); a composed
+test through a real run that checks a hole notice reaches the parent's stream (364 applies); the gate.
+
 ### 9.50 W8c: run settings turn and W7 debts (as built, gate off)
 
 **Scope built.**
