@@ -2095,13 +2095,34 @@ The W7-5 brief covers more than one PR. The Node sources are about 160 KB (`dyna
 110. The output display is Node's output object (`name`, `scope`, `path`, `diagnostics`, `ok`, `overwritten` when a file was written). The model text is Node's `response` text. The desktop renderer for SaveWorkflow reads the same object; it has not been checked against a running desktop.
 111. `ListSavedWorkflows` lists the project root and the global root, with shadowing, like Node's undirected list. Node's `listSavedWorkflows` is called with a scope in the hub; that directed list (the global group that shows hidden copies) is not ported.
 112. EvalWorkflowSnippet is not in this PR (see the split above). Its divergences are numbered when it lands.
-113. A `script_path` must resolve inside the workspace (lexical normalization; symlinks are not resolved). Node accepts any path, absolute or escaping. A path outside is refused at the permission decision with "is outside the workspace".
+113. A `script_path` must resolve inside the workspace (lexical normalization, then the real paths: see 119). Node accepts any path, absolute or escaping. A path outside is refused at the permission decision with "is outside the workspace".
 114. The `script_path` advice names `script_path` (Node's text names `path`, which is the output field of this tool).
 115. The `script_path` read moved from input validation to the permission decision, so a refused draft is a permission refusal, not a 400 input refusal. Validation reads nothing from the disk.
 116. The store's IO runs on a blocking thread (`spawn_blocking`); Node's store is synchronous on the event loop.
 117. The fs store helpers are not atomic (as Node's `writeFileSync`). A non-UTF-8 file name is converted lossily and so lists as an unusable file.
 
 **Not done here.** The gate source is still set by no entry point (divergences 55 and 56 of 9.18), and nothing calls `workflow_tools`, so SaveWorkflow and ListSavedWorkflows reach no session. The skill-gate probe is unit-tested on a fixture history only. Divergence 103 must be closed before the gate opens. The move, resolve and argument validation of the saved store belong to W7-8a (CreateWorkflow's saved source).
+
+**Review round (post-merge, PR "fix(workflow): SaveWorkflow review follow-ups (rust)").** Each finding was checked first. Verdicts:
+
+1. Rejected. `parse(serialize(..))` of `a\u{2028}b` and `a\u{2029}b` returns the same text (yaml-rust2 0.13 does not fold them). They stay plain, as Node writes them (divergence 104).
+2. Partly fixed. NEL does not fold either (round trip is green), so there is no `\N`. NEL is no longer single-quoted (the red test showed `'a\u{85}"b'`); it stays raw in double quotes, as Node's golden does.
+3. Fixed. C1 controls other than NEL (U+0080 to U+009F) are not plain-safe and are written as `\xHH` in double quotes (red: raw U+0080). Not re-run against yaml 2.9.1 here; the character class is taken from the review finding.
+4. Fixed. `minLength` is checked in `validate.rs` the way Node's JSON-schema check does. An empty `description`, `whenToUse` or `script_path` is refused, and the message is the `too_small` issue as JSON, with Node's text `Too small: expected string to have >=1 characters`.
+5. Kept as Node has it, one bug fixed. Node's two predicates differ: an inline script is checked with `trimStart().startsWith` (a file with its first non-blank line equal to the marker). Both are kept. The inline check now skips U+FEFF, as JavaScript's `trimStart` does.
+6. Fixed: divergence 119.
+7. Fixed. The `script_path` read (in the decision and in the call) runs on `spawn_blocking`.
+8. Fixed. Every unknown key of an argument declaration is named, quoted and joined with `, ` (zod `strict()`).
+9. Fixed. The pending table evicts its oldest entry only (`PendingTable`).
+10. Fixed. A failing verdict is kept per tool-use id (`Pending::Failed`); the call returns it without a second check.
+11. Rejected. Node's `list-saved-workflows.ts` escapes only the `name` and `path` attributes (`escapeAttribute`). The description, `whenToUse`, argument text and `reason` are written raw there, and Rust matches. No divergence.
+12. Fixed: divergence 118.
+13. Fixed. The serde cause is in the contract message.
+14. Fixed. `workflow_child::Diagnostic` is now an alias of `workflow_analysis::WorkflowDiagnostic`.
+15. Fixed. `text_files` is private and re-exported at the fs crate root: `read_text`, `write_text`, `list_file_names`, `canonicalize_path`, `symlink_to` (unix), and `is_regular_file` (the sync `is_file`; the root `is_file` is the async one). The docs say `metadata` follows symlinks and any stat error is not-a-file. The non-UTF-8 listing test is gated off macOS, because APFS refuses such names (EILSEQ).
+
+16. Windows device names are not usable workflow names: the stem before the first dot, compared case-insensitively to `CON`, `PRN`, `AUX`, `NUL`, `COM1` to `COM9` and `LPT1` to `LPT9`, is refused with or without an extension. Node accepts them, and a file such as `con.dwf.ts` cannot be written on Windows.
+17. A `script_path` is also compared after symlinks are resolved (canonical paths of the file and of the workspace). A link inside the workspace to a file outside it is refused. This extends divergence 113, which was lexical only. Node has no such check.
 
 ### 9.26 Policy: always-ask through the permission chain (divergence 103 closed)
 

@@ -375,3 +375,53 @@ fn yaml_core_booleans_and_nulls_are_quoted_as_node_quotes_them() {
         );
     }
 }
+
+// Review round (post-merge): round-trip red tests for characters a YAML line reader may fold or reject.
+
+fn description_round_trips(text: &str) -> String {
+    let meta = Meta {
+        description: text.to_owned(),
+        when_to_use: None,
+        args: None,
+    };
+    let written = serialize(&meta, "");
+    let parsed =
+        parse(&written).unwrap_or_else(|e| panic!("{text:?} does not parse: {e:?}\n{written}"));
+    assert_eq!(parsed.meta.description, text, "{written}");
+    written
+}
+
+#[test]
+fn a_line_separator_or_paragraph_separator_round_trips_in_plain_and_quoted_forms() {
+    for text in ["a\u{2028}b", "a\u{2029}b", "a\u{2028}\"b", "a\u{2029}'\"b"] {
+        description_round_trips(text);
+    }
+}
+
+#[test]
+fn nel_with_a_double_quote_is_double_quoted_never_single_quoted() {
+    description_round_trips("a\u{85}b");
+    let written = description_round_trips("a\u{85}\"b");
+    assert_eq!(
+        written,
+        "/* zcode-workflow\ndescription: \"a\u{85}\\\"b\"\n*/\n"
+    );
+}
+
+#[test]
+fn c1_controls_round_trip_and_are_written_as_hex_escapes() {
+    for code in (0x80u32..=0x9f).filter(|c| *c != 0x85) {
+        let c = char::from_u32(code).unwrap();
+        let written = description_round_trips(&format!("a{c}b"));
+        assert!(
+            written.contains(&format!("\\x{code:02X}")),
+            "U+{code:04X} not escaped: {written:?}"
+        );
+        assert!(!written.contains(c), "raw U+{code:04X} in {written:?}");
+        let quoted = description_round_trips(&format!("a{c}\"b"));
+        assert!(
+            quoted.contains(&format!("\\x{code:02X}")),
+            "U+{code:04X} in quotes not escaped: {quoted:?}"
+        );
+    }
+}

@@ -3,7 +3,7 @@
 //! this crate is the local storage entry point; the store's rules live with the tools.
 
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Reads a file as UTF-8 text.
 pub fn read_text(path: &Path) -> io::Result<String> {
@@ -30,9 +30,21 @@ pub fn write_text(path: &Path, text: &str) -> io::Result<()> {
     std::fs::write(path, text)
 }
 
-/// Whether the path is an existing regular file (a missing path or a directory is not).
+/// Whether the path is an existing regular file. `metadata` follows symlinks, so a link to a regular file counts; any
+/// stat error (a missing path, a permission error, a broken link) counts as not-a-file.
 pub fn is_file(path: &Path) -> bool {
     std::fs::metadata(path).is_ok_and(|metadata| metadata.is_file())
+}
+
+/// The path with every symlink resolved. Fails when the path does not exist.
+pub fn canonicalize_path(path: &Path) -> io::Result<PathBuf> {
+    std::fs::canonicalize(path)
+}
+
+/// Makes `link` a symbolic link to `target` (Unix). Used by the storage tests to set up a link out of the workspace.
+#[cfg(unix)]
+pub fn symlink_to(target: &Path, link: &Path) -> io::Result<()> {
+    std::os::unix::fs::symlink(target, link)
 }
 
 #[cfg(test)]

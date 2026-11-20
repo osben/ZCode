@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use rust_cli_fs::text_files::{is_file as file_exists, list_file_names, read_text, write_text};
+use rust_cli_fs::{is_regular_file as file_exists, list_file_names, read_text, write_text};
 
 use serde_json::Value;
 #[cfg(test)]
@@ -39,8 +39,22 @@ pub fn is_valid_name(name: &str) -> bool {
         return false;
     }
     // `.` and `..` match the character rule but name directory entries.
-    name.chars().any(|c| c != '.')
+    if !name.chars().any(|c| c != '.') {
+        return false;
+    }
+    // Windows reserves these device names with or without an extension (`con.dwf.ts` is the `CON` device there).
+    // Divergence 118: Node accepts them.
+    let stem = name.split('.').next().unwrap_or(name);
+    !WINDOWS_RESERVED_STEMS
+        .iter()
+        .any(|reserved| stem.eq_ignore_ascii_case(reserved))
 }
+
+/// The Windows device names a file stem may not be (case-insensitive).
+const WINDOWS_RESERVED_STEMS: [&str; 22] = [
+    "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
+    "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+];
 
 /// Where a definition lives. A file's scope comes from its directory and is not stored in its metadata.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -82,3 +82,55 @@ fn required_fields_with_a_default_may_be_omitted() {
     );
     assert!(validate("ToolSearch", &schema, &json!({"max_results": 2})).is_some());
 }
+
+/// `minLength` is checked as Node's JSON-schema validator checks it: an empty string is `too_small`, printed as the
+/// JSON of the issues (Node `formatToolInputValidationError`, which prints issues as JSON when no other kind is present).
+#[test]
+fn an_empty_string_below_min_length_is_refused_as_node_prints_it() {
+    let schema = json!({
+        "type": "object",
+        "properties": {"description": {"type": "string", "minLength": 1}},
+        "required": ["description"]
+    });
+    assert_eq!(
+        validate("SaveWorkflow", &schema, &json!({"description": ""})).unwrap(),
+        "[\n  {\n    \"origin\": \"string\",\n    \"code\": \"too_small\",\n    \"minimum\": 1,\n    \"inclusive\": true,\n    \"path\": [\n      \"description\"\n    ],\n    \"message\": \"Too small: expected string to have >=1 characters\"\n  }\n]"
+    );
+    assert_eq!(
+        validate("SaveWorkflow", &schema, &json!({"description": "a"})),
+        None
+    );
+}
+
+#[test]
+fn a_min_length_issue_inside_nested_objects_and_arrays_uses_the_path_segments() {
+    let schema = json!({
+        "type": "object",
+        "properties": {"args": {"type": "array", "items": {
+            "type": "object", "properties": {"note": {"type": "string", "minLength": 2}}
+        }}}
+    });
+    let message = validate(
+        "Tool",
+        &schema,
+        &json!({"args": [{"note": "ok"}, {"note": "x"}]}),
+    )
+    .unwrap();
+    assert!(
+        message.contains("\"path\": [\n      \"args\",\n      1,\n      \"note\"\n    ]"),
+        "{message}"
+    );
+}
+
+#[test]
+fn a_missing_parameter_is_still_reported_in_the_text_form_without_the_min_length_issue() {
+    let schema = json!({
+        "type": "object",
+        "properties": {"a": {"type": "string", "minLength": 1}, "b": {"type": "string"}},
+        "required": ["b"]
+    });
+    assert_eq!(
+        validate("Tool", &schema, &json!({"a": ""})).unwrap(),
+        "Tool failed due to the following issue:\nThe required parameter `b` is missing"
+    );
+}

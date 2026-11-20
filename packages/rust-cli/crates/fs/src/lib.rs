@@ -31,8 +31,14 @@ pub use lock::{FILE_LOCK_TIMEOUT_CODE, FileLock, LockOptions, acquire_file_lock,
 pub use lock_pid::{PidLockOptions, with_pid_lock};
 pub use lock_single::{SingleLockOptions, with_single_file_lock};
 pub use stamp::{ChangeGate, FileStamp};
-// Fork: whole-file text IO for the saved-workflow store (W7-8b).
-pub mod text_files;
+// Fork: whole-file text IO for the saved-workflow store (W7-8b), re-exported like the items above. `is_file` is the
+// sync check, so it is exported as `is_regular_file`: the root `is_file` is the async one.
+mod text_files;
+#[cfg(unix)]
+pub use text_files::symlink_to;
+pub use text_files::{
+    canonicalize_path, is_file as is_regular_file, list_file_names, read_text, write_text,
+};
 
 /// 进程是否存活（Node `process.kill(pid, 0)` 的语义：能发信号或无权限都算存活）。锁文件里记的 PID 用它
 /// 判断（目录锁的回收、定时任务调度锁，tools-more.md §16.4）。
