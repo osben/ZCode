@@ -5,6 +5,113 @@ use serde_json::json;
 
 use super::*;
 
+/// A ready fill reply as the helper sends it (9.45).
+fn ready_fill() -> Value {
+    json!({
+        "ok": true,
+        "effectiveText": "return 'approved';\n",
+        "scriptHash": "hash-2",
+        "code": "return 'approved';",
+        "askSpecs": {},
+        "sitePhases": {},
+        "phaseNames": ["main"],
+        "phasesAdded": [],
+    })
+}
+
+#[test]
+fn a_ready_fill_reply_keeps_the_code_and_the_effective_script() {
+    assert_eq!(
+        parse_fill_prepare(&ready_fill()).expect("a ready reply"),
+        FillPrepareOutcome::Ready(ready_fill())
+    );
+}
+
+#[test]
+fn a_ready_fill_reply_without_its_code_is_malformed() {
+    let mut reply = ready_fill();
+    reply.as_object_mut().expect("object").remove("code");
+    assert!(parse_fill_prepare(&reply).is_err());
+}
+
+#[test]
+fn a_ready_fill_reply_with_a_non_text_phase_name_is_malformed() {
+    let mut reply = ready_fill();
+    reply["phaseNames"] = json!(["main", 3]);
+    assert!(parse_fill_prepare(&reply).is_err());
+}
+
+#[test]
+fn a_refused_fill_keeps_its_reason_message_and_diagnostics() {
+    let reply = json!({
+        "ok": false,
+        "reason": "compile_failed",
+        "message": "does not compile",
+        "diagnostics": [{"line": 3, "column": 5, "message": "bad", "code": 9001}],
+    });
+    assert!(matches!(
+        parse_fill_prepare(&reply),
+        Ok(FillPrepareOutcome::Refused { reason, message, diagnostics: Some(_) })
+            if reason == "compile_failed" && message == "does not compile"
+    ));
+}
+
+#[test]
+fn a_refused_fill_with_null_diagnostics_has_none() {
+    let reply =
+        json!({"ok": false, "reason": "hole_not_waiting", "message": "m", "diagnostics": null});
+    assert!(matches!(
+        parse_fill_prepare(&reply),
+        Ok(FillPrepareOutcome::Refused {
+            diagnostics: None,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn a_refused_fill_with_non_list_diagnostics_is_malformed() {
+    let reply =
+        json!({"ok": false, "reason": "compile_failed", "message": "m", "diagnostics": "oops"});
+    assert!(parse_fill_prepare(&reply).is_err());
+}
+
+#[test]
+fn a_refused_fill_without_a_reason_is_malformed() {
+    let reply = json!({"ok": false, "message": "m"});
+    assert!(parse_fill_prepare(&reply).is_err());
+}
+
+#[test]
+fn a_fill_reply_without_ok_is_malformed() {
+    assert!(parse_fill_prepare(&json!({"code": "x"})).is_err());
+}
+
+#[test]
+fn the_fill_params_send_bindings_only_when_they_are_a_record() {
+    let base = FillPrepareInput {
+        script_text: "s".to_owned(),
+        run_id: "r".to_owned(),
+        hole_id: "hole#1".to_owned(),
+        body: "b".to_owned(),
+        model_bindings: None,
+    };
+    assert!(fill_prepare_params(&base).get("modelBindings").is_none());
+    let null = FillPrepareInput {
+        model_bindings: Some(Value::Null),
+        ..base.clone()
+    };
+    assert!(fill_prepare_params(&null).get("modelBindings").is_none());
+    let bound = FillPrepareInput {
+        model_bindings: Some(json!({"fast": "model-x"})),
+        ..base
+    };
+    assert_eq!(
+        fill_prepare_params(&bound)["modelBindings"],
+        json!({"fast": "model-x"})
+    );
+}
+
 #[test]
 fn a_ready_compile_keeps_the_hash_the_compiled_facts_and_the_entry() {
     let reply = json!({

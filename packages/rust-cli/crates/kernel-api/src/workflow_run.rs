@@ -122,13 +122,13 @@ pub enum FillRefusalReason {
 }
 
 impl FillRefusalReason {
-    /// Node's wire literal.
-    pub fn code(self) -> &'static str {
-        match self {
-            Self::RunNotFound => "run_not_found",
-            Self::HoleNotWaiting => "hole_not_waiting",
-            Self::CompileFailed => "compile_failed",
-            Self::FillIdsUnstable => "fill_ids_unstable",
+    /// Node's wire literal for a refusal reason the helper sends. The one table of literals: `None` for any other text.
+    pub fn from_code(code: &str) -> Option<Self> {
+        match code {
+            "hole_not_waiting" => Some(Self::HoleNotWaiting),
+            "compile_failed" => Some(Self::CompileFailed),
+            "fill_ids_unstable" => Some(Self::FillIdsUnstable),
+            _ => None,
         }
     }
 }

@@ -66,6 +66,8 @@ pub mod workflow_runner;
 pub mod workflow_snippet;
 // Fork (W7-11, 9.44): on-demand activation of the workflow tools (Node dynamic-workflow-activation.ts).
 pub mod workflow_activation;
+#[cfg(test)]
+mod workflow_cold_open_tests;
 pub mod workflow_wire;
 pub use workspace_trust::{
     Admission, ReviewBundle, ReviewItem, ReviewLookup, ReviewSource, StoredTrust, ToggleError,

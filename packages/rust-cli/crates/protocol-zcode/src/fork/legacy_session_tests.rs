@@ -375,10 +375,6 @@ pub(crate) fn server() -> (TaskScope, Arc<Server>, Arc<TestKernel>) {
 
 /// The server before any model directory is known: the catalog is empty.
 fn server_without_directory() -> (TaskScope, Arc<Server>, Arc<TestKernel>) {
-    let scope = TaskScope::root("test", |_| {});
-    let (out, _reader) = tokio::io::duplex(1 << 16);
-    let (peer, _writer) = connection::start(out, &scope.spawner(), Options::default());
-    let context = Arc::new(Context::new(peer, Arc::new(FixedClock(5))));
     let kernel = Arc::new(TestKernel {
         store: Arc::new(MemoryStore::default()),
         handles: StdMutex::new(HashMap::new()),
@@ -389,9 +385,20 @@ fn server_without_directory() -> (TaskScope, Arc<Server>, Arc<TestKernel>) {
         sampling: StdMutex::new(None),
         sampling_started: tokio::sync::Notify::new(),
     });
+    let (scope, server) = server_over(kernel.clone());
+    (scope, server, kernel)
+}
+
+/// A server over the given kernel, with an empty model directory. A process restart builds its new server here, over the
+/// store the old one wrote.
+pub(crate) fn server_over(kernel: Arc<TestKernel>) -> (TaskScope, Arc<Server>) {
+    let scope = TaskScope::root("test", |_| {});
+    let (out, _reader) = tokio::io::duplex(1 << 16);
+    let (peer, _writer) = connection::start(out, &scope.spawner(), Options::default());
+    let context = Arc::new(Context::new(peer, Arc::new(FixedClock(5))));
     let server = Arc::new(Server::new(
         context,
-        kernel.clone(),
+        kernel,
         scope.spawner(),
         Defaults {
             selection: selection().into(),
@@ -399,7 +406,7 @@ fn server_without_directory() -> (TaskScope, Arc<Server>, Arc<TestKernel>) {
             environment: EnvironmentId::new("local"),
         },
     ));
-    (scope, server, kernel)
+    (scope, server)
 }
 
 const WORKSPACE: &str = "/w";
@@ -813,7 +820,7 @@ async fn a_thought_level_without_a_model_applies_to_the_default_model() {
 }
 
 /// The model directory of the tests: the default model offers `off`/`high`, `p/m2` `low`/`high`, `p/m3` only `low`.
-struct Levels;
+pub(crate) struct Levels;
 
 #[async_trait]
 impl rust_cli_kernel_api::provider::ModelDirectory for Levels {

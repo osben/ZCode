@@ -7,6 +7,7 @@
 //! The decisions are pure ([`restore_plan`], [`activation_plan`], [`is_workflow_command`], [`history_shows_workflow`]); the
 //! wrappers at the bottom read the record and the store, then do what the decisions say.
 
+use rust_cli_kernel_api::dynamic_workflow::resolve_gate;
 use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::message::{ContentBlock, Message};
 use rust_cli_kernel_api::store::FrontendRecord;
@@ -87,19 +88,20 @@ pub fn history_shows_workflow(messages: &[Message]) -> bool {
 
 /// Node `restoreDynamicWorkflowActivationOnResume`: the source of a cold restore, and whether the entry is written back.
 /// Only an on-demand session that is not active yet has anything to restore. The entry wins over the history; a history
-/// hit is written back once so the next restore need not scan.
-pub fn restore_plan(
+/// hit is written back once so the next restore need not scan. `history_shows` is the history's workflow fact (the cold
+/// open reads it from the view it loads; the legacy snapshot read passes its own).
+pub fn restore_plan_for(
     on_demand: bool,
     activated: bool,
     has_entry: bool,
-    messages: &[Message],
+    history_shows: bool,
 ) -> Option<(Source, bool)> {
     if !on_demand || activated {
         return None;
     }
     if has_entry {
         Some((Source::ResumeEntry, false))
-    } else if history_shows_workflow(messages) {
+    } else if history_shows {
         Some((Source::ResumeHistory, true))
     } else {
         None
@@ -136,6 +138,12 @@ pub(crate) async fn on_command(server: &Server, session: &SessionId) {
 /// Node `restoreDynamicWorkflowActivationOnResume`: a cold-loaded session activates from its entry, else from its history.
 /// Runs after the record is rebuilt, so the gate it reads is the session's.
 pub(crate) async fn on_resume(server: &Server, session: &SessionId) {
+    restore(server, session, None).await;
+}
+
+/// The restore behind both entry points. `history` is the history's workflow fact when the caller already loaded the
+/// history (the cold open does); `None` reads the session snapshot, and only when there is no entry to decide first.
+async fn restore(server: &Server, session: &SessionId, history: Option<bool>) {
     let on_demand = on_demand(server, session);
     let activated = server.dynamic_workflow_activated(session);
     if !on_demand || activated {
@@ -152,28 +160,42 @@ pub(crate) async fn on_resume(server: &Server, session: &SessionId) {
             false
         }
     };
-    let messages = if has_entry {
-        Vec::new()
-    } else {
-        match server.kernel.session_snapshot(session).await {
-            Ok(view) => view.messages,
+    let history_shows = match history {
+        Some(shows) => shows,
+        None if has_entry => false,
+        None => match server.kernel.session_snapshot(session).await {
+            Ok(view) => history_shows_workflow(&view.messages),
             Err(error) => {
                 tracing::warn!(
                     event = "dynamic_workflow.activation_history_read_failed",
                     error = %error,
                     "the session history could not be read; the activation cannot see a workflow in it"
                 );
-                Vec::new()
+                false
             }
-        }
+        },
     };
-    let Some((source, write)) = restore_plan(on_demand, activated, has_entry, &messages) else {
+    let Some((source, write)) = restore_plan_for(on_demand, activated, has_entry, history_shows)
+    else {
         return;
     };
     // A session forgotten while the restore read the store is not activated (no record), so no entry is written for it.
     if server.activate_dynamic_workflow(session) && write {
         write_entry(server, session, source).await;
     }
+}
+
+/// Fork (W7-14, 9.47, closes 496): every cold open of a session, on the v4 path as on the legacy resume. The gate record is
+/// rebuilt from the Host's cached fact when the process has none for the session (Node's cold recovery builds the runtime
+/// config from the preferences alone), then the on-demand activation is restored. A record the create or a resume wrote in
+/// this process is kept: a create's own open must keep the gate its params made. `history_shows` is the workflow fact of the
+/// history the open loaded, so the open reads no snapshot of its own.
+pub(crate) async fn on_cold_open(server: &Server, session: &SessionId, history_shows: bool) {
+    if server.dynamic_workflow_gate(session).is_none() {
+        let gate = resolve_gate(None, None, &server.dynamic_workflow_preferences());
+        server.record_dynamic_workflow_gate(session, gate);
+    }
+    restore(server, session, Some(history_shows)).await;
 }
 
 /// Whether the session's record is on-demand and open (the only sessions activation changes).

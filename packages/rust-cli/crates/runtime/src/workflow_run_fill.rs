@@ -13,6 +13,7 @@ use rust_cli_kernel_api::workflow_child::{FillPrepareInput, FillPrepareOutcome};
 use rust_cli_kernel_api::workflow_run::{
     DynamicWorkflowRunError, FillHoleOutcome, FillHoleRequest, FillRefusalReason,
 };
+use rust_cli_workflow::actor_mailbox::MailboxError;
 use rust_cli_workflow::engine_holes::{FillHoleResult, HoleFill};
 use rust_cli_workflow::model::RunRow;
 use serde_json::Value;
@@ -40,14 +41,11 @@ fn not_in_flight(run_id: &str, row: &RunRow) -> String {
 
 /// The helper's refusal reason, as the port's enum. An unknown reason is a wiring fault.
 fn reason_of(code: &str) -> Result<FillRefusalReason, DynamicWorkflowRunError> {
-    match code {
-        "hole_not_waiting" => Ok(FillRefusalReason::HoleNotWaiting),
-        "compile_failed" => Ok(FillRefusalReason::CompileFailed),
-        "fill_ids_unstable" => Ok(FillRefusalReason::FillIdsUnstable),
-        other => Err(DynamicWorkflowRunError::new(format!(
-            "the fill helper refused with an unknown reason ({other})"
-        ))),
-    }
+    FillRefusalReason::from_code(code).ok_or_else(|| {
+        DynamicWorkflowRunError::new(format!(
+            "the fill helper refused with an unknown reason ({code})"
+        ))
+    })
 }
 
 fn refused(reason: FillRefusalReason, message: String) -> FillHoleOutcome {
@@ -58,18 +56,40 @@ fn refused(reason: FillRefusalReason, message: String) -> FillHoleOutcome {
     }
 }
 
-/// A string list field of the helper's reply (absent or non-text items are skipped).
-fn strings_of(reply: &Value, key: &str) -> Vec<String> {
+/// A list field of the helper's reply that must be present and hold only text (`phaseNames`, `phasesAdded`). A
+/// non-conforming reply is a wiring fault, not an empty list.
+fn strings_of(reply: &Value, key: &str) -> Result<Vec<String>, DynamicWorkflowRunError> {
     reply
         .get(key)
         .and_then(Value::as_array)
-        .map(|items| {
+        .and_then(|items| {
             items
                 .iter()
-                .filter_map(|item| item.as_str().map(str::to_owned))
-                .collect()
+                .map(|item| item.as_str().map(str::to_owned))
+                .collect::<Option<Vec<String>>>()
         })
-        .unwrap_or_default()
+        .ok_or_else(|| {
+            DynamicWorkflowRunError::new(format!("the fill reply's {key} is not a list of text"))
+        })
+}
+
+/// The hole indexes the helper reports when phases are still open. Absent means none; a non-index item is a wiring fault.
+fn holes_of(reply: &Value) -> Result<Option<Vec<u64>>, DynamicWorkflowRunError> {
+    let Some(holes) = reply.get("holes") else {
+        return Ok(None);
+    };
+    holes
+        .as_array()
+        .and_then(|items| {
+            items
+                .iter()
+                .map(Value::as_u64)
+                .collect::<Option<Vec<u64>>>()
+        })
+        .map(Some)
+        .ok_or_else(|| {
+            DynamicWorkflowRunError::new("the fill reply's holes is not a list of indexes")
+        })
 }
 
 impl WorkflowRunService {
@@ -96,7 +116,7 @@ impl WorkflowRunService {
         let lookup_id = run_id.clone();
         let row = on_blocking_pool(move || lookup_store.get_run(&lookup_id).map_err(store_failure))
             .await?;
-        let row = match row {
+        let mut row = match row {
             Some(row) if row.parent_session_id.as_deref() == Some(parent) => row,
             _ => {
                 return Ok(refused(
@@ -125,7 +145,7 @@ impl WorkflowRunService {
         };
 
         // 2. The helper prepares the fill from the run's stored script (a fill writes it back, so the row is current).
-        let Some(script_text) = row.script_text.clone() else {
+        let Some(script_text) = row.script_text.take() else {
             return Ok(refused(
                 FillRefusalReason::HoleNotWaiting,
                 format!("Run {run_id} has no script, so nothing is waiting."),
@@ -170,7 +190,7 @@ impl WorkflowRunService {
                 .ok_or_else(|| DynamicWorkflowRunError::new(format!("the fill reply has no {key}")))
         };
         let script_text = field("effectiveText")?;
-        let phases_added = strings_of(&reply, "phasesAdded");
+        let phases_added = strings_of(&reply, "phasesAdded")?;
         let fill = HoleFill {
             site_id: request.hole_id.clone(),
             code: field("code")?,
@@ -178,11 +198,8 @@ impl WorkflowRunService {
             script_hash: field("scriptHash")?,
             ask_specs,
             site_phases,
-            phase_names: strings_of(&reply, "phaseNames"),
-            holes: reply
-                .get("holes")
-                .and_then(Value::as_array)
-                .map(|items| items.iter().filter_map(Value::as_u64).collect()),
+            phase_names: strings_of(&reply, "phaseNames")?,
+            holes: holes_of(&reply)?,
             filled_by: request
                 .parent_session_id
                 .as_ref()
@@ -190,10 +207,14 @@ impl WorkflowRunService {
             script_path: None,
         };
         let hole = request.hole_id.clone();
-        let applied = on_blocking_pool(move || {
-            handle.fill_hole(fill).map_err(|error| {
-                DynamicWorkflowRunError::new(format!("the owner refused the fill: {error}"))
-            })
+        let applied = on_blocking_pool(move || match handle.fill_hole(fill) {
+            Ok(result) => Ok(result),
+            // The owner settled the run after the live check and its mailbox is gone: the fill is not applied, which is
+            // the settled answer, not a fault.
+            Err(MailboxError::NotDelivered) => Ok(FillHoleResult::Settled),
+            Err(error) => Err(DynamicWorkflowRunError::new(format!(
+                "the owner refused the fill: {error}"
+            ))),
         })
         .await?;
         Ok(match applied {

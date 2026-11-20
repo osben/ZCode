@@ -51,6 +51,54 @@ fn a_mailbox_hole_is_answered_by_a_fill_through_the_handle() {
     );
 }
 
+/// The wall time an attached clock reports for the hole tests (ms since the epoch).
+const ATTACHED_NOW_MS: u64 = 1_700_000_000_123;
+
+/// A clock the owner is handed through `attach_redrive`. It never runs a job.
+struct AttachedClock;
+
+impl crate::model_failure::RedriveClock for AttachedClock {
+    fn after(&self, _delay_ms: u64, _job: Box<dyn FnOnce() + Send>) -> bool {
+        false
+    }
+
+    fn random(&self) -> f64 {
+        0.5
+    }
+
+    fn now_ms(&self) -> u64 {
+        ATTACHED_NOW_MS
+    }
+}
+
+/// The hole's timestamps come from the owner's attached clock, not the process's wall clock (the engine's injected
+/// `now`, as Node's `EngineConfig.now`): the fill journals the attached time.
+#[test]
+fn a_fill_journals_the_attached_clock_time_not_the_wall_clock() {
+    let (mut owner, sessions) = new_owner();
+    let (_mailbox, handle) = crate::actor_mailbox::ActorMailbox::new();
+    owner.attach_redrive(handle, std::sync::Arc::new(AttachedClock));
+    start_ask(&mut owner, &sessions);
+    owner.hole("hole#1", "decide", None).expect("reached");
+    owner
+        .fill_hole(fill_for("hole#1", "return 6;"))
+        .expect("the fill");
+    let payloads = owner
+        .events()
+        .expect("events")
+        .into_iter()
+        .map(|event| event.payload_json)
+        .collect::<Vec<_>>();
+    let filled = payloads
+        .iter()
+        .find(|payload| payload.contains("\"hole-filled\""))
+        .expect("the fill is journaled");
+    assert!(
+        filled.contains(&format!("\"filledAt\":{ATTACHED_NOW_MS}")),
+        "the fill is stamped with the attached clock: {filled}"
+    );
+}
+
 /// A reach with no body parks its branch, journals `hole-reached` with the prompt, and settles nothing yet.
 #[test]
 fn a_hole_parks_its_branch_and_journals_hole_reached() {
