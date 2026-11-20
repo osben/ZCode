@@ -220,13 +220,30 @@ impl WorkflowRunService {
     }
 
     /// Sets the journal's run store (set once, by the composition root that owns the session database).
-    pub fn set_store(&self, store: Arc<dyn RunStore>) {
-        let _ = self.inner.store.set(store);
+    /// Returns `false` (and keeps the first store) when one is already set: a second composition is a wiring fault,
+    /// logged here rather than swallowed.
+    pub fn set_store(&self, store: Arc<dyn RunStore>) -> bool {
+        let first = self.inner.store.set(store).is_ok();
+        if !first {
+            tracing::warn!(
+                event = "workflow.run.store_already_set",
+                "the run store was set twice; the first one stays"
+            );
+        }
+        first
     }
 
     /// Sets the clock a launch reads its start time from (set once, by the composition root).
-    pub fn set_clock(&self, clock: Arc<dyn rust_cli_kernel_api::clock::Clock>) {
-        let _ = self.inner.clock.set(clock);
+    /// Returns `false` (and keeps the first clock) when one is already set, logged as `set_store` is.
+    pub fn set_clock(&self, clock: Arc<dyn rust_cli_kernel_api::clock::Clock>) -> bool {
+        let first = self.inner.clock.set(clock).is_ok();
+        if !first {
+            tracing::warn!(
+                event = "workflow.run.clock_already_set",
+                "the run clock was set twice; the first one stays"
+            );
+        }
+        first
     }
 
     /// Starts a run: the child, then the owner, then the registrations, in one step after the compile (Node invariant 6).

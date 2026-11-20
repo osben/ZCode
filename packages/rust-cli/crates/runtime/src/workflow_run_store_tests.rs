@@ -503,7 +503,11 @@ async fn reconcile_without_a_store_is_skipped_with_a_reason() {
     let report = service.reconcile_session(PARENT);
     assert_eq!(
         report.skipped,
-        Some("journal_missing_list_non_terminal_runs")
+        Some(super::orphans::SkipReason::JournalMissing)
+    );
+    assert_eq!(
+        super::orphans::SkipReason::JournalMissing.code(),
+        "journal_missing_list_non_terminal_runs"
     );
     assert!(report.reconciled.is_empty());
 }
@@ -698,7 +702,7 @@ async fn a_launched_run_without_a_row_is_listed_as_pending_from_the_run_map() {
     assert_eq!(run["label"], "return 1");
     assert_eq!(run["labelSource"], "script");
     assert_eq!(run["ownedByThisSession"], true);
-    assert_eq!(run["spentTokens"], 0);
+    assert_eq!(run["spentTokens"].as_f64(), Some(0.0));
     assert_eq!(run["createdAt"], START_MS, "the start is the clock's");
     assert_eq!(run["updatedAt"], START_MS);
     assert!(run.get("possiblyInterrupted").is_none());
@@ -853,7 +857,7 @@ async fn a_closed_service_still_lists_its_rows_and_its_sweep_is_skipped() {
     });
     fx.service.close().await;
     let report = fx.service.reconcile_session(PARENT);
-    assert_eq!(report.skipped, Some("closed"));
+    assert_eq!(report.skipped, Some(super::orphans::SkipReason::Closed));
     assert!(report.reconciled.is_empty());
     assert_eq!(
         fx.store
@@ -936,7 +940,7 @@ impl RunStore for Probe {
         self.note_read();
         self.inner.non_terminal_runs(parent_session_id)
     }
-    fn interrupt_run(&self, run_id: &str) -> Result<()> {
+    fn interrupt_run(&self, run_id: &str) -> Result<bool> {
         if self.probe_during_interrupt {
             // A call into the service from another thread: it needs the run map's lock, which a settlement must not hold.
             let service = self.service.get().expect("the service is set").clone();
@@ -1058,6 +1062,150 @@ async fn gap_items_with_the_same_start_keep_their_submit_order() {
         .map(|run| run["runId"].as_str().unwrap().to_owned())
         .collect();
     assert_eq!(ids, names, "ties keep the order the runs were launched in");
+    fx.service.close().await;
+}
+
+// ---- Re-review round (ocr on #588, second pass).
+
+/// A store whose enumeration is followed by a settlement from another connection to the same database: the race
+/// between a run's own settlement and the orphan sweep.
+struct Racing {
+    inner: SqliteRunStore,
+    other: Mutex<rusqlite::Connection>,
+    settle: String,
+}
+
+impl RunStore for Racing {
+    fn non_terminal_runs(&self, parent_session_id: &str) -> Result<Vec<RunRow>> {
+        let rows = self.inner.non_terminal_runs(parent_session_id)?;
+        dwf::update_run_status(
+            &self.other.lock().expect("other connection"),
+            &self.settle,
+            DwfStatus::Completed,
+            None,
+            2,
+        )?;
+        Ok(rows)
+    }
+    fn interrupt_run(&self, run_id: &str) -> Result<bool> {
+        self.inner.interrupt_run(run_id)
+    }
+    fn runs_of_session(&self, parent_session_id: &str, limit: usize) -> Result<Vec<RunListRow>> {
+        self.inner.runs_of_session(parent_session_id, limit)
+    }
+    fn list_runs(&self, query: &RunListQuery) -> Result<Vec<RunListRow>> {
+        self.inner.list_runs(query)
+    }
+    fn get_run(&self, run_id: &str) -> Result<Option<RunRow>> {
+        self.inner.get_run(run_id)
+    }
+}
+
+fn open_on_disk(path: &Path) -> rusqlite::Connection {
+    rust_cli_node_store::open_session_database(path, Duration::from_secs(1), 0)
+        .expect("session database on disk")
+        .0
+}
+
+#[test]
+fn a_run_that_settles_after_it_was_listed_keeps_its_settlement() {
+    // The engine writes `completed` between the orphan query and the orphan write. The guarded write leaves it.
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("session.db");
+    let conn = open_on_disk(&path);
+    add_session(&conn, PARENT);
+    seed(
+        &conn,
+        Some(PARENT),
+        "dwfrun-raced",
+        DwfStatus::Running,
+        None,
+        "return 1",
+        1,
+    );
+    let racing = Arc::new(Racing {
+        inner: SqliteRunStore::new(conn, || 500),
+        other: Mutex::new(open_on_disk(&path)),
+        settle: "dwfrun-raced".to_owned(),
+    });
+    let service = WorkflowRunService::new(
+        Arc::new(SessionResidency::new()),
+        Arc::new(NoConcurrency),
+        Arc::new(FakeChildRunner::new()),
+        factory(),
+    );
+    service.set_store(racing.clone());
+
+    let report = service.reconcile_session(PARENT);
+
+    assert!(report.reconciled.is_empty(), "{report:?}");
+    assert_eq!(report.raced, ["dwfrun-raced"]);
+    let row = racing.get_run("dwfrun-raced").unwrap().expect("row");
+    assert_eq!(row.status.as_str_for_test(), "completed");
+    assert_eq!(row.stop_reason, None);
+    assert!(row.failure.is_none());
+}
+
+#[tokio::test]
+async fn the_orphan_sweep_runs_off_the_async_worker_on_request() {
+    let fx = fixture(|conn| {
+        seed(
+            conn,
+            Some(PARENT),
+            "dwfrun-off-thread",
+            DwfStatus::Running,
+            None,
+            "return 1",
+            1,
+        );
+    });
+    let report = fx.service.reconcile_session_off_thread(PARENT).await;
+    assert_eq!(report.reconciled.len(), 1, "{report:?}");
+}
+
+#[tokio::test]
+async fn a_second_store_or_clock_is_refused_and_the_first_one_stays() {
+    let fx = fixture(|_| {});
+    let other = Arc::new(SqliteRunStore::new(database(), || 9));
+    assert!(!fx.service.set_store(other), "the store is set once");
+    assert!(
+        !fx.service.set_clock(Arc::new(FixedClock)),
+        "the clock is set once"
+    );
+}
+
+#[tokio::test]
+async fn a_live_run_still_reports_the_successor_of_its_stopped_row() {
+    // Node supersededByOf reads the row for an active entry too: only the terminal entry overrides it.
+    let fx = fixture(|conn| {
+        let run = RunRecord {
+            run_id: "wf_live_succ".to_owned(),
+            parent_session_id: Some(PARENT.to_owned()),
+            cwd: Some("project".to_owned()),
+            script_text: Some("return 1".to_owned()),
+            status: DwfStatus::Stopped,
+            stop_reason: Some(DwfStop::Superseded),
+            superseded_by: Some("run_successor".to_owned()),
+            max_concurrency: 4,
+            ..RunRecord::default()
+        };
+        dwf::create_run(conn, &run, 1).expect("seed");
+    });
+    fx.service
+        .launch(input("wf_live_succ"), config("wf_live_succ"))
+        .await
+        .expect("launched");
+
+    let list = session_list(&fx.service).await;
+    let run = run_named(&list, "wf_live_succ");
+    assert_eq!(run["status"], "running");
+    assert_eq!(run["supersededBy"], "run_successor");
+    assert_eq!(run["resumable"], false);
+    let listed = list_cwd(&fx.service, PARENT, 10).await;
+    assert_eq!(
+        run_named(&listed, "wf_live_succ")["supersededBy"],
+        "run_successor"
+    );
     fx.service.close().await;
 }
 

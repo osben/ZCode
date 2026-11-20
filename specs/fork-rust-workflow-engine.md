@@ -2210,6 +2210,11 @@ Divergence 103 (recorded in 9.24, from PR #580) is closed here. Its numbering st
 198. (ocr review round, parity) The run reads consult the live entries of their own parent session only, as Node's per-session registry does. A sibling session's launch is neither a gap item here nor owned here.
 199. (ocr review round) The orphan sweep runs its journal query and each write without the run map's lock. The lock is taken for each orphan's liveness check, and the id is reserved in `starting` across the write, so a launch of that id is refused as a duplicate while it settles. The journal reads run on the blocking pool, not the async worker. Gap items with the same start time keep their launch order (Node's stable sort over its submit-ordered registry).
 
+200. (ocr re-review) The orphan settlement is guarded. Node's `updateRunStatus` is unconditional. Here the write happens only while the row is `pending` or `running`. A run that settled after the enumeration keeps its settlement and is reported as `raced`, not as an error. Without the guard the sweep would overwrite a completed row as resumable (double execution).
+201. (ocr re-review) `listRuns` breaks ties on `time_updated` by `id` descending. Node orders by `time_updated` only, and SQLite's order for equal keys is unspecified. One sweep stamps every orphan with the same time, so a stable page needs the tie-break.
+202. (ocr re-review, parity) `supersededBy` is read from a stopped row for an active entry too, as Node's `supersededByOf` does. Only a terminal entry overrides the row.
+203. (ocr re-review) `set_store` and `set_clock` return `false` and log a warning when already set, and keep the first. They no longer discard the second silently. The sweep's skip reason is the `SkipReason` enum with Node's codes. The sweep also has `reconcile_session_off_thread` for an async caller.
+
 **Not done.** The composition (`set_store`, `set_clock`, `set_dynamic_workflow_runs`, the `reconcile_session` call at session open). Progress fan-out and `QuotaAutoResume` (5b). The `ListWorkflowRuns` tool's wiring to `list_runs` (W7-7 and later). Nothing in the cli.
 
 ### 9.30 W7-5a-5: production owner assembly and run service composition (as built, part)

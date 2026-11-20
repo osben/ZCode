@@ -337,7 +337,8 @@ pub fn list_runs(conn: &Connection, query: &RunListQuery) -> Result<Vec<RunListR
         sql.push_str(" and ");
         sql.push_str(&status_predicate(statuses, &mut values));
     }
-    sql.push_str(" order by time_updated desc limit ?");
+    // Node orders by time_updated only (divergence 251: ties break by id, so a page is stable).
+    sql.push_str(" order by time_updated desc, id desc limit ?");
     values.push(Box::new(i64::try_from(query.limit).unwrap_or(i64::MAX)));
     let mut statement = conn.prepare(&sql)?;
     let rows = statement.query_map(
@@ -351,37 +352,40 @@ pub fn list_runs(conn: &Connection, query: &RunListQuery) -> Result<Vec<RunListR
 /// Node `encodeRunStatusPredicate`: a logical status is a physical one, and `stopped` and `errored` share the
 /// physical `cancelled` and `failed` with the failure code deciding. Pushes the bound values in order.
 fn status_predicate(statuses: &[RunStatus], values: &mut Vec<Box<dyn rusqlite::ToSql>>) -> String {
+    // The physical names come from `PhysicalStatus`, the one source of the column's vocabulary.
+    let cancelled = PhysicalStatus::Cancelled.as_str();
+    let failed = PhysicalStatus::Failed.as_str();
     let mut clauses = Vec::with_capacity(statuses.len());
     for status in statuses {
         clauses.push(match status {
+            // Logical stopped and errored have no physical value: they are predicates on the failure code.
             RunStatus::Stopped => {
                 values.push(Box::new(codecs::INTERRUPTED_CODE));
-                "(status = 'cancelled' or (status = 'failed' and json_extract(failure_json, '$.code') = ?))"
-                    .to_owned()
+                format!(
+                    "(status = '{cancelled}' or (status = '{failed}' and json_extract(failure_json, '$.code') = ?))"
+                )
             }
             RunStatus::Errored => {
                 values.push(Box::new(codecs::INTERRUPTED_CODE));
-                "(status = 'failed' and coalesce(json_extract(failure_json, '$.code'), '') <> ?)"
-                    .to_owned()
+                format!(
+                    "(status = '{failed}' and coalesce(json_extract(failure_json, '$.code'), '') <> ?)"
+                )
             }
-            other => {
-                values.push(Box::new(plain_status_name(*other)));
-                "status = ?".to_owned()
-            }
+            // The plain statuses are their own physical value.
+            RunStatus::Pending => physical_status_clause(PhysicalStatus::Pending, values),
+            RunStatus::Running => physical_status_clause(PhysicalStatus::Running, values),
+            RunStatus::Completed => physical_status_clause(PhysicalStatus::Completed, values),
         });
     }
     format!("({})", clauses.join(" or "))
 }
 
-/// The physical value of a status that has one (`pending`, `running`, `completed`).
-fn plain_status_name(status: RunStatus) -> &'static str {
-    match status {
-        RunStatus::Pending => "pending",
-        RunStatus::Running => "running",
-        RunStatus::Completed => "completed",
-        RunStatus::Errored => "failed",
-        RunStatus::Stopped => "cancelled",
-    }
+fn physical_status_clause(
+    physical: PhysicalStatus,
+    values: &mut Vec<Box<dyn rusqlite::ToSql>>,
+) -> String {
+    values.push(Box::new(physical.as_str()));
+    "status = ?".to_owned()
 }
 
 /// Node `createRun`: writes the run with its settlement (if the record already has one).
@@ -444,6 +448,50 @@ pub fn get_run(conn: &Connection, run_id: &str) -> Result<Option<RunRecord>> {
 
 /// Node `updateRunStatus`. A non-terminal status clears the settlement. A terminal one replaces
 /// `failure_json` whole and keeps an earlier `result_json` when the new settlement has none.
+/// The orphan settlement, guarded (divergence 250): stops the run as `Stopped` with `settlement`, but only while the
+/// row is still `pending` or `running`. Node's `updateRunStatus` is unconditional; a run that settled after it was
+/// enumerated keeps its settlement here. `Ok(false)` means the row had already settled; an unknown run is an error.
+pub fn interrupt_unsettled_run(
+    conn: &Connection,
+    run_id: &str,
+    settlement: &Settlement,
+    now: i64,
+) -> Result<bool> {
+    let encoded = encode_run_settlement(RunStatus::Stopped, settlement);
+    let changed = conn.execute(
+        &format!(
+            "update dwf_run set status = ?1, failure_json = ?2,
+                result_json = coalesce(?3, result_json), time_updated = ?4
+             where id = ?5 and status in ('{}', '{}')",
+            PhysicalStatus::Pending.as_str(),
+            PhysicalStatus::Running.as_str(),
+        ),
+        params![
+            encoded.status.as_str(),
+            encoded.failure_json,
+            encode_result_json(settlement.result.as_ref()),
+            now,
+            run_id,
+        ],
+    )?;
+    if changed == 1 {
+        return Ok(true);
+    }
+    let exists = conn
+        .query_row(
+            "select 1 from dwf_run where id = ?1",
+            params![run_id],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some();
+    if exists {
+        Ok(false)
+    } else {
+        assert_touched(changed, run_id).map(|()| false)
+    }
+}
+
 pub fn update_run_status(
     conn: &Connection,
     run_id: &str,

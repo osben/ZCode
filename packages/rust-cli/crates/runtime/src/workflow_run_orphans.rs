@@ -13,32 +13,54 @@ use rust_cli_workflow::model::RunStatus;
 use super::list::is_terminal;
 use super::{Reservation, WorkflowRunService};
 
+/// Why a sweep did not run. The codes are Node's reason strings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SkipReason {
+    /// The session store has no dwf journal, so there is nothing to sweep (Node's `journal_missing_list_non_terminal_runs`).
+    JournalMissing,
+    /// The service is closed: a closed service does not write.
+    Closed,
+}
+
+impl SkipReason {
+    /// Node's wire literal.
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::JournalMissing => "journal_missing_list_non_terminal_runs",
+            Self::Closed => "closed",
+        }
+    }
+}
+
 /// What a sweep did. A sweep that did not run says why; a failed query or write is reported and does not stop the
 /// others (Node logs and continues, and never fails the open).
 #[derive(Debug, Default, PartialEq)]
 pub struct ReconcileReport {
-    /// Why the sweep did not run, when it did not (Node's reason strings).
-    pub skipped: Option<&'static str>,
+    /// Why the sweep did not run, when it did not.
+    pub skipped: Option<SkipReason>,
     /// The query error, when the query failed.
     pub query_error: Option<String>,
     /// The runs settled as interrupted, with the status each had before.
     pub reconciled: Vec<(String, RunStatus)>,
+    /// Runs that settled after they were enumerated (their row is kept, divergence 250).
+    pub raced: Vec<String>,
     /// Per-run write failures, by run id.
     pub failures: Vec<(String, String)>,
 }
 
 impl WorkflowRunService {
-    /// Settles the session's orphaned runs. The journal query and each write run without the run map's lock: the
-    /// lock is taken only for an orphan's liveness check, and the orphan's id is reserved in `starting` across its
-    /// write, so a launch of that id is refused as a duplicate while it settles.
+    /// Settles the session's orphaned runs. This is synchronous SQLite work on the caller's thread: a caller on an
+    /// async runtime uses [`WorkflowRunService::reconcile_session_off_thread`]. The journal query and each write run
+    /// without the run map's lock: the lock is taken only for an orphan's liveness check, and the orphan's id is
+    /// reserved in `starting` across its write, so a launch of that id is refused as a duplicate while it settles.
     pub fn reconcile_session(&self, parent_session_id: &str) -> ReconcileReport {
         let mut report = ReconcileReport::default();
         let Some(store) = self.inner.store.get() else {
-            report.skipped = Some("journal_missing_list_non_terminal_runs");
+            report.skipped = Some(SkipReason::JournalMissing);
             return report;
         };
         if self.inner.state.lock_unpoisoned().closed {
-            report.skipped = Some("closed");
+            report.skipped = Some(SkipReason::Closed);
             return report;
         }
         let rows = match store.non_terminal_runs(parent_session_id) {
@@ -65,7 +87,7 @@ impl WorkflowRunService {
             let reservation = {
                 let mut state = self.inner.state.lock_unpoisoned();
                 if state.closed {
-                    report.skipped = Some("closed");
+                    report.skipped = Some(SkipReason::Closed);
                     break;
                 }
                 if state.runs.contains_key(&row.run_id)
@@ -78,10 +100,12 @@ impl WorkflowRunService {
                     run_id: row.run_id.clone(),
                 }
             };
+            // The write is guarded on the row still being unsettled, so a run that settled since the enumeration
+            // keeps its settlement (`Ok(false)`).
             let written = store.interrupt_run(&row.run_id);
             drop(reservation);
             match written {
-                Ok(()) => {
+                Ok(true) => {
                     tracing::warn!(
                         event = "workflow.run.reconciled_interrupted",
                         run = %row.run_id,
@@ -89,6 +113,14 @@ impl WorkflowRunService {
                         "a run left unsettled by a previous process was settled as interrupted"
                     );
                     report.reconciled.push((row.run_id, previous));
+                }
+                Ok(false) => {
+                    tracing::info!(
+                        event = "workflow.run.reconcile_raced",
+                        run = %row.run_id,
+                        "a run settled after it was listed; its settlement is kept"
+                    );
+                    report.raced.push(row.run_id);
                 }
                 Err(error) => {
                     let text = format!("{error:#}");
@@ -103,5 +135,19 @@ impl WorkflowRunService {
             }
         }
         report
+    }
+
+    /// [`WorkflowRunService::reconcile_session`] on the blocking pool, for a caller on an async runtime (the
+    /// composition's session open).
+    pub async fn reconcile_session_off_thread(&self, parent_session_id: &str) -> ReconcileReport {
+        let service = self.clone();
+        let parent = parent_session_id.to_owned();
+        match tokio::task::spawn_blocking(move || service.reconcile_session(&parent)).await {
+            Ok(report) => report,
+            Err(error) => ReconcileReport {
+                query_error: Some(format!("the orphan sweep did not finish: {error}")),
+                ..ReconcileReport::default()
+            },
+        }
     }
 }

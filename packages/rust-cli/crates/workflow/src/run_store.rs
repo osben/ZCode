@@ -11,8 +11,7 @@ use anyhow::Result;
 use rusqlite::Connection;
 use rust_cli_base::sync::LockUnpoisoned;
 use rust_cli_node_store::dwf::{
-    self, RunListQuery as DwfListQuery, RunStatus as DwfStatus, Settlement as DwfSettlement,
-    StopReason as DwfStop,
+    self, RunListQuery as DwfListQuery, Settlement as DwfSettlement, StopReason as DwfStop,
 };
 use serde_json::json;
 
@@ -50,9 +49,12 @@ pub struct RunListQuery {
 pub trait RunStore: Send + Sync {
     /// Node `listNonTerminalRuns(parentSessionId)`: the parent's runs that have not settled, by id.
     fn non_terminal_runs(&self, parent_session_id: &str) -> Result<Vec<RunRow>>;
-    /// Node `updateRunStatus(runId, "stopped", { stopReason: "interrupted", failure })`: the orphan
-    /// settlement. Writes no event.
-    fn interrupt_run(&self, run_id: &str) -> Result<()>;
+    /// Node `updateRunStatus(runId, "stopped", { stopReason: "interrupted", failure })`: the orphan settlement,
+    /// guarded (divergence 250). Precondition: the caller has no live engine for the run. The write happens only
+    /// while the row is still pending or running, so a run that settled after `non_terminal_runs` keeps its
+    /// settlement and this returns `Ok(false)`. `Ok(true)` means the run was settled here. An unknown run is an error.
+    /// Writes no event.
+    fn interrupt_run(&self, run_id: &str) -> Result<bool>;
     /// Node `listRunsByParentSession(parentSessionId, limit)`.
     fn runs_of_session(&self, parent_session_id: &str, limit: usize) -> Result<Vec<RunListRow>>;
     /// Node `listRuns(query)`.
@@ -100,7 +102,7 @@ impl RunStore for SqliteRunStore {
             .collect())
     }
 
-    fn interrupt_run(&self, run_id: &str) -> Result<()> {
+    fn interrupt_run(&self, run_id: &str) -> Result<bool> {
         let conn = self.conn.lock_unpoisoned();
         let settlement = DwfSettlement {
             stop_reason: Some(DwfStop::Interrupted),
@@ -111,13 +113,7 @@ impl RunStore for SqliteRunStore {
             })),
             result: None,
         };
-        dwf::update_run_status(
-            &conn,
-            run_id,
-            DwfStatus::Stopped,
-            Some(&settlement),
-            (self.clock)(),
-        )
+        dwf::interrupt_unsettled_run(&conn, run_id, &settlement, (self.clock)())
     }
 
     fn runs_of_session(&self, parent_session_id: &str, limit: usize) -> Result<Vec<RunListRow>> {

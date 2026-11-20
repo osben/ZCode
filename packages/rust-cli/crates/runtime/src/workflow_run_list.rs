@@ -22,7 +22,7 @@ use rust_cli_kernel_api::workflow_run::{
     ListQuery,
 };
 use rust_cli_workflow::engine::EngineConfig;
-use rust_cli_workflow::model::{RunRow, RunStatus, StopReason};
+use rust_cli_workflow::model::{RunRow, RunStatus, StopReason, js_number};
 use rust_cli_workflow::run_store::{RunListQuery, RunListRow};
 use serde_json::{Map, Value, json};
 
@@ -156,9 +156,10 @@ fn stop_reason_of(live: bool, run: &RunRow) -> Option<StopReason> {
     (run.status == RunStatus::Stopped).then(|| run.stop_reason.unwrap_or(StopReason::User))
 }
 
-/// Node `supersededByOf` for a run with no terminal entry: only a stopped row carries a successor.
-fn superseded_by_of(live: bool, run: &RunRow) -> Option<&str> {
-    if live || run.status != RunStatus::Stopped {
+/// Node `supersededByOf` (`dynamic-workflow-run-lineage.ts`): only a terminal entry overrides the row, and an active
+/// entry does not. So a live run whose row is stopped still reports the row's successor.
+fn superseded_by_of(run: &RunRow) -> Option<&str> {
+    if run.status != RunStatus::Stopped {
         return None;
     }
     run.superseded_by.as_deref()
@@ -169,11 +170,11 @@ fn resumable(status: RunStatus, reason: Option<StopReason>) -> bool {
     status == RunStatus::Stopped && reason != Some(StopReason::Superseded)
 }
 
-fn put_lineage(item: &mut Map<String, Value>, run: &RunRow, live: bool) {
+fn put_lineage(item: &mut Map<String, Value>, run: &RunRow) {
     if let Some(from) = &run.resumed_from {
         item.insert("resumedFrom".into(), json!(from));
     }
-    if let Some(by) = superseded_by_of(live, run) {
+    if let Some(by) = superseded_by_of(run) {
         item.insert("supersededBy".into(), json!(by));
     }
 }
@@ -194,14 +195,14 @@ fn list_item(row: &RunListRow, live: bool, owner: &str) -> Value {
     if let Some(reason) = stop_reason_of(live, run) {
         item.insert("stopReason".into(), json!(stop_reason_name(reason)));
     }
-    put_lineage(&mut item, run, live);
+    put_lineage(&mut item, run);
     item.insert("ownedByThisSession".into(), json!(owned));
     if !is_terminal(run.status) && !owned {
         item.insert("possiblyInterrupted".into(), json!(true));
     }
     item.insert("createdAt".into(), json!(row.time_created));
     item.insert("updatedAt".into(), json!(row.time_updated));
-    item.insert("spentTokens".into(), json!(run.spent_tokens as i64));
+    item.insert("spentTokens".into(), js_number(run.spent_tokens));
     Value::Object(item)
 }
 
@@ -218,7 +219,7 @@ fn gap_item(run_id: &str, meta: &RunMeta) -> Value {
     item.insert("ownedByThisSession".into(), json!(true));
     item.insert("createdAt".into(), json!(meta.started_at_ms));
     item.insert("updatedAt".into(), json!(meta.started_at_ms));
-    item.insert("spentTokens".into(), json!(meta.inherited_tokens as i64));
+    item.insert("spentTokens".into(), js_number(meta.inherited_tokens));
     Value::Object(item)
 }
 
@@ -239,7 +240,7 @@ fn session_item(row: &RunListRow, live: bool) -> Value {
     if let Some(reason) = reason {
         item.insert("stopReason".into(), json!(stop_reason_name(reason)));
     }
-    put_lineage(&mut item, run, live);
+    put_lineage(&mut item, run);
     if !live && let Some(failure) = &run.failure {
         if let Some(code) = failure.get("code").and_then(Value::as_str) {
             item.insert("failureCode".into(), json!(code));

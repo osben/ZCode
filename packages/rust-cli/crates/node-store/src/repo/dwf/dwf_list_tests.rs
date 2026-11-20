@@ -199,3 +199,73 @@ fn list_runs_filters_by_cwd_and_orders_by_time_updated() {
     .unwrap();
     assert_eq!(all[0].run.run_id, "run_b", "no cwd filter: newest first");
 }
+
+#[test]
+fn list_runs_breaks_ties_on_time_updated_by_id_desc() {
+    // Ties are realistic (one sweep stamps every orphan with the same clock). Node's listRuns has no tie-break
+    // (divergence 251); here the order is pinned so a page is stable.
+    let conn = database();
+    add_session(&conn, "ses_p");
+    create_run(
+        &conn,
+        &run_in("run_a", "ses_p", "/w", RunStatus::Running),
+        10,
+    )
+    .unwrap();
+    create_run(
+        &conn,
+        &run_in("run_b", "ses_p", "/w", RunStatus::Running),
+        10,
+    )
+    .unwrap();
+    let ids: Vec<String> = list_runs(
+        &conn,
+        &RunListQuery {
+            cwd: None,
+            limit: 5,
+            statuses: None,
+        },
+    )
+    .unwrap()
+    .into_iter()
+    .map(|row| row.run.run_id)
+    .collect();
+    assert_eq!(ids, ["run_b", "run_a"]);
+}
+
+#[test]
+fn a_guarded_interrupt_writes_only_while_the_row_is_unsettled() {
+    // A run that settled after it was enumerated keeps its settlement: the orphan write is conditional.
+    let conn = database();
+    add_session(&conn, "ses_p");
+    create_run(
+        &conn,
+        &run_in("run_open", "ses_p", "/w", RunStatus::Running),
+        1,
+    )
+    .unwrap();
+    create_run(
+        &conn,
+        &run_in("run_done", "ses_p", "/w", RunStatus::Running),
+        1,
+    )
+    .unwrap();
+    update_run_status(&conn, "run_done", RunStatus::Completed, None, 2).unwrap();
+    let settlement = Settlement {
+        stop_reason: Some(StopReason::Interrupted),
+        failure: Some(json!({"code": "Interrupted", "message": "gone"})),
+        ..Settlement::default()
+    };
+
+    assert!(interrupt_unsettled_run(&conn, "run_open", &settlement, 3).unwrap());
+    assert!(!interrupt_unsettled_run(&conn, "run_done", &settlement, 3).unwrap());
+
+    assert_eq!(
+        get_run(&conn, "run_open").unwrap().unwrap().status,
+        RunStatus::Stopped
+    );
+    let done = get_run(&conn, "run_done").unwrap().unwrap();
+    assert_eq!(done.status, RunStatus::Completed, "the settled run is kept");
+    assert_eq!(done.stop_reason, None);
+    assert!(interrupt_unsettled_run(&conn, "run_missing", &settlement, 3).is_err());
+}
