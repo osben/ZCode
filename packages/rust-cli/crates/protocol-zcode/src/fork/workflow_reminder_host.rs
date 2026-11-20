@@ -335,6 +335,12 @@ impl WorkflowReminders {
         reminders
     }
 
+    /// Whether the session has a clock in the map (a test reads it after a close, divergence 501).
+    #[cfg(test)]
+    pub(crate) fn has_session(&self, session: &str) -> bool {
+        self.lock_sessions().contains_key(session)
+    }
+
     fn lock_sessions(&self) -> MutexGuard<'_, HashMap<String, Arc<SessionReminders>>> {
         self.sessions.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -346,8 +352,9 @@ impl WorkflowReminders {
         }
     }
 
-    /// The session was deleted (Node: its reminders go with it): its clock stops, so a due reminder does not fire for a
-    /// dead session, and its entry is dropped, so the map does not grow with deleted sessions.
+    /// The session was deleted or closed (Node: its reminders go with it, and `beginShutdown` stops them on a close): its
+    /// clock stops, so a due reminder does not fire for a dead session, and its entry is dropped. A close (divergence 501)
+    /// makes a new clock on the session's next turn edge.
     pub fn forget(&self, session: &str) {
         let removed = self.lock_sessions().remove(session);
         if let Some(reminders) = removed {

@@ -90,6 +90,8 @@ pub(crate) async fn release(server: &Server, params: &Value) -> Result<Value, Rp
         // Same unload as `session/lifecycle/stop`: the bridge stops forwarding, the kernel actor ends, and the App
         // sees `unloaded`. The store is not touched.
         server.bridge.close(&session);
+        // Fork (W7-14, 9.47, divergence 501): an unload stops the session's reminder clock, as a close does.
+        server.stop_workflow_reminders(&session);
         open.handle.close(EndReason::Other).await;
         server.announce_lifecycle(&session, "unloaded").await;
         released.push(id);
