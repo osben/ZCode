@@ -213,12 +213,19 @@ impl RunStore for SqliteRunStore {
             let Some((created, updated)) = dwf::run_times(&tx, run_id)? else {
                 anyhow::bail!("the run {run_id} has a row without timestamps");
             };
-            let events = dwf::list_events(&tx, run_id)?;
-            let nodes: Vec<_> = dwf::list_nodes(&tx, run_id)?
-                .into_iter()
-                .filter(|node| node.kind != dwf::NodeKind::Report)
-                .collect();
-            let actors = dwf::list_actors(&tx, run_id)?;
+            // Divergence 564 (9.50): the event read is skipped without a configured default, as before the roster (the replay
+            // needs the default), and bounded like Node's cold read otherwise (report items past the projection's cap are
+            // removed). The roster's node and actor reads leave out the result and persona columns, as Node's do.
+            let events = match default_concurrency {
+                Some(_) => dwf::list_events_with_report_cap(
+                    &tx,
+                    run_id,
+                    rust_cli_node_store::WORKFLOW_RUN_LIMITS.max_reports,
+                )?,
+                None => Vec::new(),
+            };
+            let nodes = dwf::list_roster_nodes(&tx, run_id)?;
+            let actors = dwf::list_actors_without_persona(&tx, run_id)?;
             (record, created, updated, events, nodes, actors)
         };
         let state = default_concurrency.and_then(|default| {

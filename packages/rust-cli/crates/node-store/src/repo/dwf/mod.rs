@@ -851,6 +851,75 @@ pub fn list_events(conn: &Connection, run_id: &str) -> Result<Vec<StoredEvent>> 
         .map_err(Into::into)
 }
 
+/// Node `listEvents` with `types: "all"` and `reportItems: {limit: keep}` (9.50, divergence 564), the cold read of the run
+/// detail. The `item` of every report event after the run's `keep`th report is removed in SQL (`json_remove`), as Node's
+/// `listEventRows` does; the ranking is over the whole run. A cap of zero removes every item; a run with fewer than `keep`
+/// reports keeps them all. Sequence, time and the other fields are read as `list_events` reads them.
+pub fn list_events_with_report_cap(
+    conn: &Connection,
+    run_id: &str,
+    keep: usize,
+) -> Result<Vec<StoredEvent>> {
+    let cutoff: i64 = if keep == 0 {
+        -1
+    } else {
+        conn.query_row(
+            "select sequence from dwf_event where run_id = ?1 and type = 'report' order by sequence limit 1 offset ?2",
+            params![run_id, i64::try_from(keep - 1)?],
+            |row| row.get(0),
+        )
+        .optional()?
+        .unwrap_or(i64::MAX)
+    };
+    let mut statement = conn.prepare(
+        "select sequence,
+                case when type = 'report' and sequence > ?2 then json_remove(payload_json, '$.item') else payload_json end,
+                time_created
+         from dwf_event where run_id = ?1 order by sequence",
+    )?;
+    let rows = statement.query_map(params![run_id, cutoff], |row| {
+        let payload: String = row.get(1)?;
+        let event = serde_json::from_str(&payload).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                1,
+                rusqlite::types::Type::Text,
+                Box::new(error),
+            )
+        })?;
+        Ok(StoredEvent {
+            sequence: row.get(0)?,
+            event,
+            time_created: row.get(2)?,
+        })
+    })?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(Into::into)
+}
+
+/// Node `listNodes({kinds: NON_REPORT_NODE_KINDS, withResult: false})` (9.50, divergence 564): the run's non-report rows in
+/// insertion order, with `result_json` read as null. `input_json` is kept, as Node keeps it.
+pub fn list_roster_nodes(conn: &Connection, run_id: &str) -> Result<Vec<NodeRecord>> {
+    let columns = NODE_COLUMNS.replace("result_json", "null as result_json");
+    let mut statement = conn.prepare(&format!(
+        "select {columns} from dwf_node where run_id = ?1 and kind <> 'report' order by id"
+    ))?;
+    let rows = statement.query_map(params![run_id], node_from_row)?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(Into::into)
+}
+
+/// Node `listActors(runId, {withPersona: false})` (9.50, divergence 564): the run's actor rows in insertion order, with
+/// `persona_json` read as null (the full system prompt has no reader in the run detail).
+pub fn list_actors_without_persona(conn: &Connection, run_id: &str) -> Result<Vec<ActorRecord>> {
+    let columns = ACTOR_COLUMNS.replace("persona_json", "null as persona_json");
+    let mut statement = conn.prepare(&format!(
+        "select {columns} from dwf_actor where run_id = ?1 order by id"
+    ))?;
+    let rows = statement.query_map(params![run_id], actor_from_row)?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(Into::into)
+}
+
 /// Node `createSessionTaskLink` for an actor: an upsert on `child_session_id` that moves only status
 /// and time. The child session row must exist (foreign key).
 pub fn insert_workflow_actor_link(
