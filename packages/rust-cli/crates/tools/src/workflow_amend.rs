@@ -106,7 +106,7 @@ impl AmendInput {
         self.script.is_some() || self.path.is_some()
     }
 
-    /// The call changes only the parallelism of a run (the route Node answers in place, not built here).
+    /// The call changes only the parallelism of a run: Node's in-place route, answered by `retune` (9.52).
     fn is_concurrency_only(&self) -> bool {
         self.max_concurrency.is_some()
             && self.script.is_none()
@@ -551,16 +551,29 @@ fn unchanged_text(run_id: &str, current: f64, default: Option<usize>) -> String 
     )
 }
 
-/// Node `runSettledFailure` and `notRetunableFailure`: the run is not live, so nothing is retuned.
+/// The next step both refusals name (divergence 747). Node's retry is a plain AmendWorkflow call, which its route detection
+/// sends to an amendment once the run is not live. Here a call with only `max_concurrency` always takes the retune route,
+/// so the retry must carry `name`, which takes the revision route with the run's own script.
+const RETRY_ROUTE: &str = "call AmendWorkflow again with `name` set and this `max_concurrency` to start a new run of it under that limit (a call with only `max_concurrency` retunes a live run in place and cannot start one)";
+
+/// Node `runSettledFailure`: the run is not live, so nothing is retuned.
 fn settled_text(run_id: &str) -> String {
     format!(
-        "workflow_run_settled: run {run_id} settled before the new parallelism limit could take hold, so there is nothing running to retune. Nothing was stopped, created or changed — call AmendWorkflow again if you want a new run of it under that limit."
+        "workflow_run_settled: run {run_id} settled before the new parallelism limit could take hold, so there is nothing running to retune. Nothing was stopped, created or changed — {RETRY_ROUTE}."
     )
 }
 
+/// Node `notRetunableFailure`: another session's run, not executed by this one.
 fn not_retunable_text(run_id: &str) -> String {
     format!(
-        "workflow_run_not_retunable: run {run_id} is not being executed by this agent, so its parallelism cannot be changed in place. Nothing was stopped, created or changed — call AmendWorkflow again if you want a new run of it under that limit."
+        "workflow_run_not_retunable: run {run_id} is not being executed by this agent, so its parallelism cannot be changed in place. Nothing was stopped, created or changed — {RETRY_ROUTE}."
+    )
+}
+
+/// The detail of a run is not readable on this host: the retune cannot tell the run's state, so it is not applied.
+fn detail_unavailable_text(run_id: &str) -> String {
+    format!(
+        "workflow_retune_unavailable: this host cannot read run {run_id}'s state, so the run's parallelism is not changed. Nothing was stopped, created or changed."
     )
 }
 
@@ -628,10 +641,13 @@ impl AmendWorkflowTool {
         port: Arc<dyn DynamicWorkflowRunPort>,
     ) -> Result<ToolOutput, ToolError> {
         let run = rust_cli_kernel_api::ids::WorkflowRunId::new(input.run_id.clone());
-        let detail = port
-            .get_run_detail(&run)
-            .await
-            .map_err(|error| failed(error.message))?;
+        let detail = match port.get_run_detail(&run).await {
+            Ok(detail) => detail,
+            Err(error) if error.is_unsupported() => {
+                return Err(failed(detail_unavailable_text(&input.run_id)));
+            }
+            Err(error) => return Err(failed(error.message)),
+        };
         let Some(detail) = detail else {
             return Err(failed(refusal_text(
                 AmendRefusalReason::RunNotFound,

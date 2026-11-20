@@ -75,6 +75,8 @@ struct FakeRun {
     retunes: Mutex<Vec<RetuneRequest>>,
     /// The run's detail (`get_run_detail`); `None` is a run this session does not hold.
     detail: Option<Value>,
+    /// The detail read is an optional member this host does not answer (`unsupported`).
+    detail_unsupported: bool,
 }
 
 impl FakeRun {
@@ -88,6 +90,7 @@ impl FakeRun {
             retune: None,
             retunes: Mutex::new(Vec::new()),
             detail: None,
+            detail_unsupported: false,
         })
     }
 
@@ -101,6 +104,22 @@ impl FakeRun {
             retune: None,
             retunes: Mutex::new(Vec::new()),
             detail: None,
+            detail_unsupported: false,
+        })
+    }
+
+    /// A port whose retune is not live and whose detail read is unsupported on this host.
+    fn with_unsupported_detail(outcome: RetuneOutcome) -> Arc<Self> {
+        Arc::new(Self {
+            amends: Mutex::new(Vec::new()),
+            answer: Answer::Started { superseded: None },
+            stored: Some(CLEAN.to_owned()),
+            default_concurrency: Some(4),
+            read_fails: false,
+            retune: Some(outcome),
+            retunes: Mutex::new(Vec::new()),
+            detail: None,
+            detail_unsupported: true,
         })
     }
 
@@ -121,6 +140,7 @@ impl FakeRun {
             retune: Some(outcome),
             retunes: Mutex::new(Vec::new()),
             detail,
+            detail_unsupported: false,
         })
     }
 
@@ -175,6 +195,9 @@ impl DynamicWorkflowRunPort for FakeRun {
         &self,
         _run_id: &WorkflowRunId,
     ) -> Result<Option<Value>, DynamicWorkflowRunError> {
+        if self.detail_unsupported {
+            return Err(DynamicWorkflowRunError::unsupported("getRunDetail"));
+        }
         Ok(self.detail.clone())
     }
 }
@@ -643,6 +666,51 @@ async fn a_user_stopped_run_that_settled_in_the_race_is_not_amended_by_the_fallb
         panic!("a failure");
     };
     assert!(message.starts_with("workflow_run_settled:"), "{message}");
+    assert!(port.amends().is_empty());
+}
+
+/// The retry the refusal names is a call with `name` set: it takes the revision route with the run's own script (asks),
+/// not the retune route again, so the refusal is not a loop.
+#[tokio::test]
+async fn the_retry_a_refusal_names_takes_the_revision_route_not_the_retune() {
+    let settled = json!({"runId": "run-1", "ownedByThisSession": false, "status": "completed"});
+    let port = FakeRun::with_retune(
+        RetuneOutcome::Refused(RetuneRefusal::NotLive),
+        Some(settled),
+        Some(CLEAN),
+    );
+    let (tool, ctx, _guard) = harness(port.clone());
+    let error = run(&tool, json!({"run_id": "run-1", "max_concurrency": 5}), ctx)
+        .await
+        .expect_err("a settled run is refused");
+    let ToolError::Failed { message } = error else {
+        panic!("a failure");
+    };
+    assert!(message.contains("with `name` set"), "{message}");
+    let (tool, ctx, _guard) = harness(port.clone());
+    let retry = json!({"run_id": "run-1", "max_concurrency": 5, "name": "again"});
+    let decision = tool.check_permissions(&retry, &ctx).await;
+    assert!(
+        matches!(decision, PermissionDecision::Ask { .. }),
+        "a revision of the run's own script asks: {decision:?}"
+    );
+    assert_eq!(port.retunes().len(), 1, "the retry does not retune again");
+}
+
+#[tokio::test]
+async fn an_unreadable_run_detail_on_a_not_live_retune_says_so_and_changes_nothing() {
+    let port = FakeRun::with_unsupported_detail(RetuneOutcome::Refused(RetuneRefusal::NotLive));
+    let (tool, ctx, _guard) = harness(port.clone());
+    let error = run(&tool, json!({"run_id": "run-1", "max_concurrency": 5}), ctx)
+        .await
+        .expect_err("an unreadable detail is refused");
+    let ToolError::Failed { message } = error else {
+        panic!("a failure");
+    };
+    assert_eq!(
+        message,
+        "workflow_retune_unavailable: this host cannot read run run-1's state, so the run's parallelism is not changed. Nothing was stopped, created or changed."
+    );
     assert!(port.amends().is_empty());
 }
 

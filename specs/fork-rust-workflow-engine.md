@@ -4361,8 +4361,7 @@ at the session's next turn edge (9.47's note on 501). 682. The erase test checks
      run's launch metadata does not keep here.
 738. Only live runs are listed (pending or running here), in start order; a settled run leaves the list. Node's tracker drops a run at
      its settlement.
-739. The list refreshes on the same flush as the commands: a tool result, a turn end or a background notice. A run that settles with none
-     of these events stays listed until the next one. Node's tracker removes it at settlement.
+739. Closed (see 749). The list used to refresh only on the commands' flush; a run that settled with none of those events stayed listed.
 740. `cancellable` is true for every listed run. Node's `canCancelBackgroundTask` for the run's tool is not checked against a live
      Node session.
 741. The TUI `/tasks` list does not show runs (see Not built).
@@ -4374,6 +4373,26 @@ at the session's next turn edge (9.47's note on 501). 682. The erase test checks
      Node's TaskStop and `cancelBackgroundWork` see the runs of the whole session tree from the top session. Rust keeps the exact session
      (9.48). Not changed: tree membership needs a lookup in the run path that the run service does not hold, and it is a separate PR.
 746. Not verified against a live Node run. The checks are source reads and the Rust tests.
+747. The retry text changed. A refused retune (`workflow_run_settled`, `workflow_run_not_retunable`) told the model to call AmendWorkflow
+     again. Here a call with only `max_concurrency` always retunes, so that retry refused again, forever. The text now names `name`
+     as the route: a call with `name` set is a revision with the run's own script, which asks and then starts. Node's plain retry
+     works because its route detection reads a fresh snapshot.
+748. A run detail that this host does not read (`getRunDetail` unsupported) answers `workflow_retune_unavailable` with its own text,
+     not the port's internal wording.
+749. Closes 739. The run service counts every change of its live run set (a start, a settlement, the host closing) on a watch
+     channel (`DynamicWorkflowRunPort::background_changes`). Each session's watcher re-reads its background works on a tick, as the
+     subagent table watcher does, so a run that settles on its own leaves the list without a kernel event. Every session watcher
+     reads its own runs on any tick, which is cheap (in memory plus the ledger).
+750. `cancellable: true` stands. The review said the cancel routes cannot reach a run, because `StopTask` resolves only commands and
+     subagents. That is not the path: `Agents::stop_task` (the `cancelBackgroundWork` and `/tasks` route) calls TaskStop's `stop`, whose
+     `stop_run` runs before the kernel lookup and calls `port.cancel(run, User)` (9.48, with the user's `stop_task` test). A hub-started
+     run (W9a, its divergence 760) reaches the same command, so no new routing is needed for it either.
+751. The order of runs is launch order: start time, then the launch token. The run id is not ordered by launch, so an id sort
+     would list two runs launched in the same millisecond out of order. The sort matches `list_runs_of`'s tie-break.
+752. A failed run read leaves the published list as it was (no patch), as the ledger read beside it does. An empty answer would have
+     stripped every live run until the next good read. Not covered by a test: `Live` has no harness for a failing run port.
+753. The live-run label source is one shared constant (`LABEL_SOURCE_NAME`), used by the label and the background title.
+754. The review's reads of a session's runs run on the blocking pool, as the sibling reads do.
 
 **Tests.**
 
@@ -4387,6 +4406,9 @@ at the session's next turn edge (9.47's note on 501). 682. The erase test checks
   run. No behavioural red was captured for it.
 - `cargo fmt --all --check` and `cargo clippy --workspace --all-targets --locked -- -D warnings` clean. Lib tests green for runtime,
   workflow, kernel-api, protocol-zcode, node-store and tools (no failures). CLI bin filter `workflow` 20.
+- Review round (ocr on #609, eleven findings, 747 to 754). New tests: the retry takes the revision route (`name`), an unreadable
+  detail on a retune, the launch-order and name test with the change tick (`background_works_follow_launch_order_and_name_and_tick_on_change`).
+  The retry and detail tests were written with their fixes, so no behaviour red was captured for them.
 
 ## 10. Open questions
 

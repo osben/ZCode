@@ -346,6 +346,18 @@ impl Server {
                 crate::live::watch_subagents(live.handle.subagent_changes(), Arc::downgrade(&live)),
             );
             live.sink.watch_subagents(watcher);
+            // Fork (9.52): a workflow run that starts or settles on its own re-reads the session's background works.
+            if let Some(changes) = self
+                .context
+                .dynamic_workflow_runs()
+                .and_then(|sessions| sessions.for_session(session).background_changes())
+            {
+                let watcher = self.spawner.spawn(
+                    "background-run-watch",
+                    crate::live::watch_background_runs(changes, Arc::downgrade(&live)),
+                );
+                live.sink.watch_background_runs(watcher);
+            }
             // Fork: the telemetry facts of a subagent's run are read from its live feed (crate::telemetry).
             let (spawner, weak) = (self.spawner.clone(), Arc::downgrade(&live));
             live.sink

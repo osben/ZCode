@@ -406,6 +406,12 @@ pub trait DynamicWorkflowRunPort: Send + Sync {
         Ok(Vec::new())
     }
 
+    /// Fork (9.52): ticks whenever the host's live run set changes (a run started or settled on its own), so the session
+    /// re-reads its background works without a kernel event. `None` when the host keeps no run service.
+    fn background_changes(&self) -> Option<tokio::sync::watch::Receiver<u64>> {
+        None
+    }
+
     /// Node `retuneConcurrency` (9.50): changes a live run's limit in place, with no successor and no stop. A refusal is a
     /// result; the GUI settings route amends the run when the retune is refused as not live.
     async fn retune_concurrency(
