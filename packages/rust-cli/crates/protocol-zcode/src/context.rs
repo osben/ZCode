@@ -50,6 +50,10 @@ pub struct Context {
     /// Fork: starts the sandbox children of dynamic workflow runs (specs/fork-rust-workflow-engine.md, 4.1); set once by
     /// the composition root when the helper command is configured. Nothing starts a run yet (gate off).
     workflow_child: std::sync::OnceLock<Arc<dyn crate::fork::workflow_child::ChildLauncher>>,
+    /// Fork (specs/fork-rust-workflow-engine.md, 9.22 W7-5a-1): the child runner port the runtime reaches through
+    /// kernel-api; set once by the composition root beside the launcher. Nothing calls it yet (gate off).
+    workflow_runner:
+        std::sync::OnceLock<Arc<dyn rust_cli_kernel_api::workflow_child::WorkflowChildRunner>>,
     /// Fork: the entry's model port for workspace model calls (`fork::workspace_model`); without it those methods
     /// stay unported.
     model_port: std::sync::OnceLock<Arc<dyn ModelPort>>,
@@ -92,6 +96,21 @@ impl Context {
     /// Fork: the sandbox child launcher, when the helper command is configured.
     pub fn workflow_child(&self) -> Option<&Arc<dyn crate::fork::workflow_child::ChildLauncher>> {
         self.workflow_child.get()
+    }
+
+    /// Fork (W7-5a-1): the workflow child runner port (set once; without it no run can start).
+    pub fn set_workflow_runner(
+        &self,
+        runner: Arc<dyn rust_cli_kernel_api::workflow_child::WorkflowChildRunner>,
+    ) {
+        let _ = self.workflow_runner.set(runner);
+    }
+
+    /// Fork (W7-5a-1): the workflow child runner port, when the helper command is configured.
+    pub fn workflow_runner(
+        &self,
+    ) -> Option<&Arc<dyn rust_cli_kernel_api::workflow_child::WorkflowChildRunner>> {
+        self.workflow_runner.get()
     }
 
     /// Fork: the storage root (Node `context.deps.storageRoot`).
@@ -245,6 +264,7 @@ impl Context {
             attach: crate::attach::HostAttach::new(),
             node_helper: std::sync::OnceLock::new(),
             workflow_child: std::sync::OnceLock::new(),
+            workflow_runner: std::sync::OnceLock::new(),
             model_port: std::sync::OnceLock::new(),
             mcp_processes: std::sync::OnceLock::new(),
             language_servers: std::sync::OnceLock::new(),

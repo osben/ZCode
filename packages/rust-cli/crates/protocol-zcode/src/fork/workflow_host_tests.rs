@@ -4,10 +4,11 @@
 use std::sync::Mutex as StdMutex;
 use std::time::Duration;
 
+use futures_util::future::BoxFuture;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, DuplexStream, Lines, duplex};
 
-use super::super::workflow_wire::RequestType;
+use super::super::workflow_wire::{ChildEvent, ChildRequest, Completion, CreateActor, RequestType};
 use super::*;
 
 /// Records what the host hands the handler, and answers asks with their instructions.

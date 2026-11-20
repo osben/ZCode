@@ -74,6 +74,8 @@ pub use fork::workflow_entry::{EntryFile, EntryLocation, write_entry};
 pub use fork::workflow_host::{
     ChildHandler, ChildIo, Outcome, StopReason, run as run_workflow_child,
 };
+// Fork (W7-5a-1): the child runner port's implementation over the helper client, the entry writer and the host.
+pub use fork::workflow_runner::ProtocolChildRunner;
 pub use fork::workflow_wire::{ChildEvent, ChildRequest, Completion, CreateActor, WireError};
 pub use fork::{
     Admission, ReviewBundle, ReviewItem, ReviewLookup, ReviewSource, StoredTrust, ToggleError,

@@ -1,13 +1,14 @@
 //! The sandbox entry file (specs/fork-rust-workflow-engine.md, 4.1 and 5.2), mirroring
 //! `dynamic-workflow-runtime/src/child-entry-file.ts`.
 
+use std::io;
 use std::path::Path;
 
 use tempfile::TempDir;
 
 use super::*;
 
-fn no_warning(_: &str) {
+fn no_warning(_: io::ErrorKind) {
     panic!("no warning expected");
 }
 
@@ -96,25 +97,33 @@ async fn an_unwritable_project_falls_back_to_the_tmp_directory_with_one_warning(
     let fallback = TempDir::new().unwrap();
     // `.zcode` as a plain file makes the project directory unwritable for this run.
     put(&cwd.path().join(".zcode"), "not a directory").await;
-    let mut warnings = Vec::new();
+    let mut warnings: Vec<io::ErrorKind> = Vec::new();
     let entry = write_entry(
         cwd.path(),
         "run-2",
         "body",
         fallback.path(),
-        &mut |warning: &str| warnings.push(warning.to_owned()),
+        &mut |kind: io::ErrorKind| warnings.push(kind),
     )
     .await
     .unwrap();
     assert_eq!(entry.location, EntryLocation::Fallback);
     assert_eq!(entry.path, fallback.path().join("run-2.mjs"));
     assert_eq!(text(&entry.path).await, "body");
+    // One warning, carrying the kind of the failure: the paths stay out of it.
     assert_eq!(warnings.len(), 1);
-    assert!(
-        warnings[0].contains(".zcode"),
-        "the warning names the directory: {}",
-        warnings[0]
-    );
+    assert_ne!(warnings[0], io::ErrorKind::Other);
+}
+
+#[test]
+fn the_file_name_matches_the_one_the_fake_runner_derives() {
+    for run_id in ["run-1.a_b", "a/../b c", "x\\y:z", "ünï"] {
+        assert_eq!(
+            entry_file_name(run_id),
+            rust_cli_kernel_api::testing::entry_file_name(run_id),
+            "run id {run_id:?}"
+        );
+    }
 }
 
 #[test]
