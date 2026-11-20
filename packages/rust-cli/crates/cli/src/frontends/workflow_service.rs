@@ -54,6 +54,8 @@ pub(crate) fn build<A: ActorAgents + ActorSessionRelease>(
         version: env!("CARGO_PKG_VERSION").to_owned(),
         clock: now_ms,
     };
+    // A submit reads the parent's permission mode through the same port the actors read (9.39).
+    let submit_bindings = bindings.clone();
     // Each actor's turn runs on the agents under its parent's bindings (9.35, `bound_owner_factory`, 9.33).
     let factory = bound_owner_factory(
         stores,
@@ -69,10 +71,11 @@ pub(crate) fn build<A: ActorAgents + ActorSessionRelease>(
     // W7-5e (9.34): the run progress port, with the real default concurrency (Node's `resolveWorkflowDefaultConcurrency`).
     // Nothing is recorded until a run launches, so the gate stays off for the user.
     let parallelism = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
-    service.configure_progress(
-        progress,
-        f64::from(rust_cli_model::governor::default_concurrency(parallelism)),
-    );
+    let default_concurrency = f64::from(rust_cli_model::governor::default_concurrency(parallelism));
+    service.configure_progress(progress, default_concurrency);
+    // W7-8d (9.39): the caps default of a submit, and the port the submit reads the parent's mode through.
+    service.configure_concurrency(default_concurrency);
+    service.configure_bindings(submit_bindings);
     // The journal's run rows (reconcile, the run list and the quota scan) read through one store, opened on first use so
     // building the service still opens nothing (9.30).
     let store: Arc<dyn RunStore> = Arc::new(LazyRunStore::new(database.to_path_buf()));

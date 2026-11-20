@@ -34,6 +34,7 @@ use rust_cli_workflow::run_store::RunStore;
 use serde_json::{Map, Value};
 
 use crate::workflow_assembly::{RunRegistrations, attach_run};
+use crate::workflow_owner::ActorBindingsPort;
 use crate::workflow_quota::{QuotaRunReads, QuotaRunResumer, SessionQuotaPort};
 
 #[path = "workflow_run_list.rs"]
@@ -42,6 +43,8 @@ mod list;
 mod orphans;
 #[path = "workflow_run_resume.rs"]
 mod resume;
+#[path = "workflow_run_submit.rs"]
+mod submit;
 
 pub use orphans::ReconcileReport;
 
@@ -204,6 +207,11 @@ struct Inner {
     /// caller's check and the module's creation.
     #[cfg(test)]
     before_quota_module: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    /// The parent's permission mode port a submit reads before its launch (9.39). Set once by the composition; without it a
+    /// submit is refused (fail closed).
+    bindings: OnceLock<Arc<dyn ActorBindingsPort>>,
+    /// Node `defaultConcurrency()` (9.39): the caps default of a submit. Set once by the composition.
+    default_concurrency: OnceLock<f64>,
 }
 
 /// What the composition configures. Each hook is off until its setter runs, so a service without them behaves as 9.25.
@@ -476,8 +484,25 @@ impl WorkflowRunService {
                 sessions: Mutex::new(HashMap::new()),
                 #[cfg(test)]
                 before_quota_module: Mutex::new(None),
+                bindings: OnceLock::new(),
+                default_concurrency: OnceLock::new(),
             }),
         }
+    }
+
+    /// Node `defaultConcurrency()` (9.39): the caps default of a submit, and the port's `default_concurrency`. Set once by
+    /// the composition root (the governor's formula over the process's cores). Returns `false` when already set.
+    pub fn configure_concurrency(&self, default_concurrency: f64) -> bool {
+        self.inner
+            .default_concurrency
+            .set(default_concurrency)
+            .is_ok()
+    }
+
+    /// The parent's permission mode port a submit reads before its launch (9.39). Set once by the composition root; a
+    /// submit without it is refused, so no run starts with its mode unrecorded.
+    pub fn configure_bindings(&self, bindings: Arc<dyn ActorBindingsPort>) -> bool {
+        self.inner.bindings.set(bindings).is_ok()
     }
 
     /// Sets the journal's run store (set once, by the composition root that owns the session database).
@@ -1117,3 +1142,7 @@ mod store_tests;
 #[cfg(test)]
 #[path = "workflow_run_resume_tests.rs"]
 mod resume_tests;
+
+#[cfg(test)]
+#[path = "workflow_run_submit_tests.rs"]
+mod submit_tests;

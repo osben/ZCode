@@ -77,6 +77,19 @@ type CompiledTables = (HashMap<String, AskSpec>, HashMap<String, String>);
 /// with both tables empty is refused as the compile's missing tables: a run with no asks cannot be told from that, and
 /// the refusal is the safe side (9.37, divergence 333).
 pub(crate) fn compiled_tables(compiled: &Value) -> Result<CompiledTables, String> {
+    let tables = tables_of(compiled)?;
+    if tables.0.is_empty() && tables.1.is_empty() {
+        return Err(
+            "the compile reported no ask table (askSpecs and sitePhases are both empty), so the run cannot be resumed"
+                .to_owned(),
+        );
+    }
+    Ok(tables)
+}
+
+/// The compile's two tables as they are, empty or not: both must be present (Node reads both off the compile, 9.39). A
+/// submit takes an empty pair as the answer for a script with no asks and no phases; a resume refuses it (above).
+pub(crate) fn tables_of(compiled: &Value) -> Result<CompiledTables, String> {
     let asks = compiled.get("askSpecs").and_then(Value::as_object);
     let phases = compiled.get("sitePhases").and_then(Value::as_object);
     let (asks, phases) = match (asks, phases) {
@@ -98,12 +111,6 @@ pub(crate) fn compiled_tables(compiled: &Value) -> Result<CompiledTables, String
             );
         }
     };
-    if asks.is_empty() && phases.is_empty() {
-        return Err(
-            "the compile reported no ask table (askSpecs and sitePhases are both empty), so the run cannot be resumed"
-                .to_owned(),
-        );
-    }
     let mut specs = HashMap::new();
     for (site, spec) in asks {
         let typed = spec

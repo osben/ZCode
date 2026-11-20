@@ -1,0 +1,180 @@
+//! Fork: the run service's submit (specs/fork-rust-workflow-engine.md, 9.39, W7-8d; Node `submitDynamicWorkflowRun` and
+//! `startNewRun` in `dynamic-workflow-run-submit.ts`).
+//!
+//! A submit mints a new run id, takes the caps from the requested limit (Node `normalizeRunConcurrency`), records the
+//! parent's permission mode on the launch (9.35, `record_parent_mode`, read off the async workers), and starts the run
+//! through the same `start` as a resume. The child compiles the script; the check after the compile fills the engine's
+//! ask and phase tables and the script hash from that compile, so the owner's engine has what the run needs. Only a
+//! failure Node would throw is an error: a compile that rejects the script is one too, because Node's submit never sees
+//! one (CreateWorkflow checks the script before it asks, 9.27).
+
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use rust_cli_base::random;
+use rust_cli_kernel_api::ids::WorkflowRunId;
+use rust_cli_kernel_api::workflow_child::{LaunchError, LaunchInput, RunningChild};
+use rust_cli_kernel_api::workflow_run::{DynamicWorkflowRunError, SubmitRequest};
+use rust_cli_workflow::engine::EngineConfig;
+use rust_cli_workflow::event::LaunchFields;
+use rust_cli_workflow::model::Caps;
+use serde_json::Value;
+
+use super::resume::tables_of;
+use super::{CompileCheck, LaunchFailure, WorkflowRunService};
+use crate::workflow_owner::{ActorBindingsPort, record_parent_mode};
+
+/// Node `normalizeRunConcurrency`: omission is the default; a supplied value is floored to at least one, with no upper
+/// limit (`workflow-default-concurrency.ts`).
+pub(crate) fn normalized_limit(requested: Option<u64>, default: f64) -> f64 {
+    match requested {
+        None => default,
+        Some(value) => value.max(1) as f64,
+    }
+}
+
+/// Node `mintRunId`: `dwfrun-<uuid>`, with only `[A-Za-z0-9-]` (the id appears in session ids, URLs and file paths).
+fn mint_run_id() -> String {
+    format!("dwfrun-{}", uuid())
+}
+
+/// A random v4-shaped uuid from the process's random source (clippy forbids `uuid::Uuid::new_v4`, as in protocol-zcode).
+fn uuid() -> String {
+    let mut bytes = [0u8; 16];
+    bytes[..8].copy_from_slice(&random::u64().to_be_bytes());
+    bytes[8..].copy_from_slice(&random::u64().to_be_bytes());
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+    format!(
+        "{}-{}-{}-{}-{}",
+        &hex[0..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..32]
+    )
+}
+
+/// The text of a compile that rejected the script: its diagnostics in Node's `L{line}:C{column}` form.
+fn rejected_text(
+    diagnostics: &[rust_cli_kernel_api::workflow_analysis::WorkflowDiagnostic],
+    message: Option<&str>,
+) -> String {
+    if diagnostics.is_empty() {
+        return match message {
+            Some(message) => format!("the workflow script did not compile: {message}"),
+            None => "the workflow script did not compile".to_owned(),
+        };
+    }
+    let mut lines = vec!["The workflow script did not compile:".to_owned()];
+    lines.extend(diagnostics.iter().map(|diagnostic| {
+        format!(
+            "L{}:C{} {}",
+            diagnostic.line, diagnostic.column, diagnostic.message
+        )
+    }));
+    lines.join("\n")
+}
+
+/// Records the parent's permission mode on the config (9.35), on the blocking pool: the port blocks on the store. A read
+/// error refuses the submit, so nothing starts with its mode unrecorded (fail closed).
+async fn record_parent_mode_on_blocking_pool(
+    mut config: EngineConfig,
+    bindings: Arc<dyn ActorBindingsPort>,
+) -> Result<EngineConfig, DynamicWorkflowRunError> {
+    let (config, recorded) = tokio::task::spawn_blocking(move || {
+        let recorded = record_parent_mode(&mut config, bindings.as_ref());
+        (config, recorded)
+    })
+    .await
+    .map_err(|error| {
+        DynamicWorkflowRunError::new(format!("the run start did not finish: {error}"))
+    })?;
+    recorded.map(|()| config).map_err(|message| {
+        DynamicWorkflowRunError::new(format!(
+            "the parent's permission mode could not be read, so the run is not started: {message}"
+        ))
+    })
+}
+
+impl WorkflowRunService {
+    /// The default concurrency this service reports (Node `defaultConcurrency()`); `None` until the composition sets it.
+    pub(crate) fn default_concurrency_value(&self) -> Option<f64> {
+        self.inner.default_concurrency.get().copied()
+    }
+
+    /// Node `submitDynamicWorkflowRun`, for the parent session the port belongs to. Returns the new run id once the run
+    /// is registered and its owner is serving; the run settles in the background.
+    pub(crate) async fn submit_run(
+        &self,
+        parent: &str,
+        request: SubmitRequest,
+    ) -> Result<WorkflowRunId, DynamicWorkflowRunError> {
+        let Some(default) = self.default_concurrency_value() else {
+            return Err(DynamicWorkflowRunError::unsupported("submit"));
+        };
+        let Some(bindings) = self.inner.bindings.get().cloned() else {
+            return Err(DynamicWorkflowRunError::new(
+                "the run service cannot read the parent's permission mode, so the run is not started",
+            ));
+        };
+        let run_id = mint_run_id();
+        let input = LaunchInput {
+            script_text: request.script_text.clone(),
+            run_id: run_id.clone(),
+            args: request.args.clone(),
+            resumed_from: None,
+            cwd: PathBuf::from(&request.cwd),
+        };
+        let config = EngineConfig {
+            run_id: run_id.clone(),
+            caps: Caps {
+                max_concurrency: normalized_limit(request.max_concurrency, default),
+            },
+            script_text: Some(request.script_text),
+            name: request.name,
+            args: request.args.map(Value::Object),
+            parent_session_id: Some(parent.to_owned()),
+            cwd: Some(request.cwd),
+            tool_call_id: request.tool_call_id.clone(),
+            // Node's launch anchor: the inputId of the turn that launched the run. Until the tool passes its turn, a
+            // direct launch mints one (divergence 371). The script file is recorded on `run-launched` (Node).
+            launch: Some(LaunchFields {
+                input_id: uuid(),
+                script_path: request.script_path,
+                ..LaunchFields::default()
+            }),
+            ..EngineConfig::default()
+        };
+        let config = record_parent_mode_on_blocking_pool(config, bindings).await?;
+
+        let check: CompileCheck =
+            Box::new(move |running: &RunningChild, config: &mut EngineConfig| {
+                let (ask_specs, site_phases) =
+                    tables_of(&running.compiled).map_err(LaunchFailure::Attach)?;
+                config.script_hash = Some(running.script_hash.clone());
+                config.ask_specs = ask_specs;
+                config.site_phases = site_phases;
+                Ok(())
+            });
+        match self.start(input, config, Some(check)).await {
+            Ok(()) => Ok(WorkflowRunId::new(run_id)),
+            Err(LaunchFailure::Refused { reason, message }) => Err(DynamicWorkflowRunError::new(
+                message.unwrap_or_else(|| reason.to_owned()),
+            )),
+            Err(LaunchFailure::Child(error)) => Err(match *error {
+                LaunchError::Rejected {
+                    diagnostics,
+                    message,
+                } => DynamicWorkflowRunError::new(rejected_text(&diagnostics, message.as_deref())),
+                other => DynamicWorkflowRunError::new(format!(
+                    "the workflow run could not be started: {other}"
+                )),
+            }),
+            Err(other) => Err(DynamicWorkflowRunError::new(format!(
+                "the workflow run could not be started: {other}"
+            ))),
+        }
+    }
+}
