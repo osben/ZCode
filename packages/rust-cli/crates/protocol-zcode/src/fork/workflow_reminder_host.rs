@@ -7,15 +7,21 @@
 //! composition implements over the run service: an async read must be answered from memory or run off the owner thread by
 //! that implementation (not here). A read that fails is logged and the run is skipped for this reminder (Node `onReadError`).
 
-use std::sync::Arc;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::Duration;
 
 use rust_cli_kernel_api::clock::Clock;
+use rust_cli_kernel_api::dynamic_workflow::DynamicWorkflowGates;
+use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_prompts::workflow_notice::{Blocked, BlockedHole, BlockedQuestion, blocked};
+use serde_json::Value;
 
 use super::workflow_progress::WorkflowNotices;
-use super::workflow_reminder::{BlockedReminderClock, OpenDecisions, Reminder, ReminderHost};
+use super::workflow_reminder::{
+    BlockedReminderClock, OpenDecisions, OpenHole, OpenQuestion, Reminder, ReminderHost,
+};
 
 /// The clock's time and timers. Production: the tokio runtime ([`TokioTimers`]); tests: a fake clock.
 ///
@@ -200,6 +206,194 @@ impl SessionReminders {
         self.host.idle.store(true, Ordering::SeqCst);
         self.clock.session_idle();
     }
+}
+
+/// Fork (W7-11, 9.44): the run snapshots of every session, read from memory by the composition (the service's per-session
+/// projection). The session is named on each read, so one source serves every session's clock.
+pub trait RunDecisionsSource: Send + Sync {
+    /// The live runs of `session`.
+    fn live_run_ids(&self, session: &str) -> Vec<String>;
+    /// What one run of `session` still owes; `Ok(None)` when it owes nothing or is unknown.
+    fn open(&self, session: &str, run_id: &str) -> Result<Option<OpenDecisions>, String>;
+}
+
+/// One session's view of the shared source. Until the source is set it reports no live run, so no reminder is due.
+struct Routed {
+    source: Arc<OnceLock<Arc<dyn RunDecisionsSource>>>,
+    session: String,
+}
+
+impl RunDecisions for Routed {
+    fn live_run_ids(&self) -> Vec<String> {
+        match self.source.get() {
+            Some(source) => source.live_run_ids(&self.session),
+            None => Vec::new(),
+        }
+    }
+
+    fn open(&self, run_id: &str) -> Result<Option<OpenDecisions>, String> {
+        match self.source.get() {
+            Some(source) => source.open(&self.session, run_id),
+            None => Ok(None),
+        }
+    }
+}
+
+/// Fork (W7-11, 9.44, closes 412): one reminder clock per session, made on the session's first turn edge or open-set change.
+/// The composition builds it before the run service exists (the progress host takes it), so the run source is set later.
+/// A session whose gate is not open has no clock and its edges are ignored (no run can be live for it).
+pub struct WorkflowReminders {
+    gates: Arc<dyn DynamicWorkflowGates>,
+    timers: Arc<dyn ReminderTimers>,
+    notices: Arc<dyn WorkflowNotices>,
+    source: Arc<OnceLock<Arc<dyn RunDecisionsSource>>>,
+    sessions: Mutex<HashMap<String, Arc<SessionReminders>>>,
+}
+
+impl WorkflowReminders {
+    pub fn new(
+        gates: Arc<dyn DynamicWorkflowGates>,
+        timers: Arc<dyn ReminderTimers>,
+        notices: Arc<dyn WorkflowNotices>,
+    ) -> Self {
+        Self {
+            gates,
+            timers,
+            notices,
+            source: Arc::new(OnceLock::new()),
+            sessions: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Sets the run source. A second set is refused and keeps the first.
+    pub fn set_runs(&self, source: Arc<dyn RunDecisionsSource>) -> bool {
+        self.source.set(source).is_ok()
+    }
+
+    /// A turn started in `session`: the session is busy.
+    pub fn turn_started(&self, session: &str) {
+        if let Some(reminders) = self.session(session) {
+            reminders.turn_started();
+        }
+    }
+
+    /// The session's turn ended: the session is idle.
+    pub fn turn_finished(&self, session: &str) {
+        if let Some(reminders) = self.session(session) {
+            reminders.turn_finished();
+        }
+    }
+
+    /// A run of `session` changed what it owes (Node `noteWorkflowReminderRunEvent`).
+    pub fn open_set_changed(&self, session: &str, run_id: &str) {
+        if let Some(reminders) = self.session(session) {
+            reminders.clock().open_set_changed(run_id);
+        }
+    }
+
+    /// The session's clock, made if absent. `None` when the session's gate is not open. A new clock starts idle, so a clock
+    /// first seen at an open-set change (no turn edge in this process) is idle, and a turn edge moves it from there.
+    fn session(&self, session: &str) -> Option<Arc<SessionReminders>> {
+        if !self
+            .gates
+            .gate(&SessionId::new(session))
+            .is_some_and(|gate| gate.enabled)
+        {
+            return None;
+        }
+        let mut sessions = self.sessions.lock().unwrap_or_else(PoisonError::into_inner);
+        let reminders = sessions.entry(session.to_owned()).or_insert_with(|| {
+            let runs = Arc::new(Routed {
+                source: self.source.clone(),
+                session: session.to_owned(),
+            });
+            let reminders =
+                SessionReminders::new(session, runs, self.timers.clone(), self.notices.clone());
+            reminders.turn_finished();
+            reminders
+        });
+        Some(reminders.clone())
+    }
+}
+
+/// Fork (W7-11, 9.44): what a run owes, read from its run object in the projection (the reducer's shape): the pending
+/// questions, and the holes in state `waiting`. A question's subagent is its actor's name, else `siteId@ordinal` (Node
+/// `actorRefLabel`). The projection keeps no hole line and no draft path, so those are `None` (divergences 487 and 488).
+pub fn open_decisions_of(run: &Value) -> OpenDecisions {
+    let questions = run
+        .get("pendingQuestions")
+        .and_then(Value::as_array)
+        .map(|items| items.iter().filter_map(open_question_of).collect())
+        .unwrap_or_default();
+    let holes = run
+        .get("holes")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter(|hole| text_of(hole, "state") == Some("waiting"))
+                .filter_map(open_hole_of)
+                .collect()
+        })
+        .unwrap_or_default();
+    OpenDecisions {
+        questions,
+        holes,
+        draft_path: None,
+    }
+}
+
+fn open_question_of(item: &Value) -> Option<OpenQuestion> {
+    Some(OpenQuestion {
+        qid: text_of(item, "qid")?.to_owned(),
+        subagent: subagent_of(item),
+        question: text_of(item, "question")?.to_owned(),
+        context: text_of(item, "context").map(str::to_owned),
+        asked_at: epoch_of(item.get("askedAt")),
+    })
+}
+
+fn open_hole_of(item: &Value) -> Option<OpenHole> {
+    Some(OpenHole {
+        site_id: text_of(item, "siteId")?.to_owned(),
+        name: text_of(item, "name")?.to_owned(),
+        type_name: text_of(item, "type").unwrap_or_default().to_owned(),
+        line: None,
+        since: epoch_of(item.get("since")),
+    })
+}
+
+/// Node `actorRefLabel` for a pending question: its actor's name, else `siteId@ordinal`, else the fixed fallback.
+fn subagent_of(item: &Value) -> String {
+    if let Some(name) = text_of(item, "actorName") {
+        return name.to_owned();
+    }
+    match (
+        text_of(item, "actorSiteId"),
+        item.get("actorOrdinal").and_then(Value::as_u64),
+    ) {
+        (Some(site), Some(ordinal)) => format!("{site}@{ordinal}"),
+        _ => "unknown actor".to_owned(),
+    }
+}
+
+/// A non-empty string field.
+fn text_of<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .filter(|text| !text.is_empty())
+}
+
+/// An epoch in milliseconds, from a whole number or a finite, non-negative float.
+fn epoch_of(value: Option<&Value>) -> Option<u64> {
+    let value = value?;
+    value.as_u64().or_else(|| {
+        value
+            .as_f64()
+            .filter(|at| at.is_finite() && *at >= 0.0)
+            .map(|at| at.floor() as u64)
+    })
 }
 
 #[cfg(test)]

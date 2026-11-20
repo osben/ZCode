@@ -1176,6 +1176,15 @@ impl SessionSink for Live {
         }
         let deltas = state.projection.apply(&event, now);
         state.log.record(deltas);
+        // Fork (9.44, closes 412): the session's blocked-run reminder clock follows its turn edges (Node
+        // `noteWorkflowReminderTurn`). Only the edges this stream sees: a session with no open stream sends none.
+        if let Some(reminders) = self.context.workflow_reminders() {
+            match &event.event {
+                KernelEvent::TurnStarted { .. } => reminders.turn_started(self.session.as_str()),
+                KernelEvent::TurnFinished { .. } => reminders.turn_finished(self.session.as_str()),
+                _ => {}
+            }
+        }
         // Fork (slice 3 layer B): the off-peak run follows its own turn's start and end (Node `prepareOffPeakTurn`).
         let lifecycle = match &event.event {
             KernelEvent::TurnStarted { turn, command } => {

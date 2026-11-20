@@ -441,6 +441,18 @@ pub(crate) async fn decide(server: &Server, envelope: &Envelope) -> Ack {
             } else {
                 QueuedKind::Text
             };
+            // Fork (W7-11, 9.44): the `/workflow` command activates an on-demand session's workflow tools before its
+            // turn can reach the model (Node activates it in the turn; a refused input still activates here).
+            if kind == QueuedKind::Text
+                && let Ok(input) = payload::<Input>(envelope)
+                && input
+                    .text
+                    .as_deref()
+                    .is_some_and(crate::fork::workflow_activation::is_workflow_command)
+            {
+                crate::fork::workflow_activation::on_command(server, &SessionId::new(session))
+                    .await;
+            }
             // Node `forceStartNow`: every explicit `startNow` text takes the foreground lease, whatever the projected
             // phase (an idle projection may lag behind a promotion that holds the lease).
             let ack = if kind == QueuedKind::Text && requests_start_now(envelope) {
@@ -625,6 +637,13 @@ pub(crate) async fn create_session_with(
             payload.dynamic_workflow_enabled,
             payload.dynamic_workflow_mode,
         );
+        // Fork (W7-11, 9.44, divergence 494): a `/workflow` first input activates the prepared session's tools.
+        crate::fork::workflow_activation::on_first_input(
+            server,
+            &SessionId::new(prepared),
+            first.text.as_deref(),
+        )
+        .await;
         let request = crate::worktree::ActivationRequest {
             prepared,
             expected_attempt: payload.expected_attempt_id.as_deref(),
@@ -842,6 +861,8 @@ pub(crate) async fn create_session_with(
         payload.dynamic_workflow_enabled,
         payload.dynamic_workflow_mode,
     );
+    // Fork (W7-11, 9.44, divergence 494): a `/workflow` first input activates the new session's tools.
+    crate::fork::workflow_activation::on_first_input(server, &id, first.text.as_deref()).await;
     // B1.1: the creation fact is durable before the session opens on it, so the open below seeds the projection
     // with the marker like a cold restore does. Node persists its `worktree_creation` timeline part after the
     // first turn's session persistence and before TurnStarted (`turn.ts`); here the row's creation is that first

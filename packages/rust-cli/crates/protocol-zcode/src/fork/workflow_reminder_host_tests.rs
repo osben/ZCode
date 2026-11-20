@@ -333,3 +333,240 @@ async fn the_tokio_timers_fire_once_and_a_cancel_stops_the_timer() {
     let waited = tokio::time::timeout(std::time::Duration::from_millis(300), rx2).await;
     assert!(waited.is_err(), "a cancelled timer does not fire");
 }
+
+// ---- Fork (W7-11, 9.44): the per-session registry, the open decisions of a run object, and the routing. ----
+
+use super::{OpenHole, RunDecisionsSource, WorkflowReminders, open_decisions_of};
+use rust_cli_kernel_api::dynamic_workflow::{DynamicWorkflowGate, DynamicWorkflowGates};
+use rust_cli_kernel_api::ids::SessionId;
+use std::collections::HashSet;
+
+/// The run snapshots of several sessions, read the way the service reads them: per session, per run.
+#[derive(Default)]
+struct Sources {
+    live: Mutex<HashMap<String, Vec<String>>>,
+    open: Mutex<HashMap<(String, String), OpenDecisions>>,
+}
+
+impl Sources {
+    /// A live run of `session` that owes one question.
+    fn add(&self, session: &str, run: &str) {
+        lock(&self.live)
+            .entry(session.to_owned())
+            .or_default()
+            .push(run.to_owned());
+        lock(&self.open).insert(
+            (session.to_owned(), run.to_owned()),
+            OpenDecisions {
+                questions: vec![OpenQuestion {
+                    qid: "q1".to_owned(),
+                    subagent: "reviewer".to_owned(),
+                    question: "Which branch?".to_owned(),
+                    context: None,
+                    asked_at: Some(0),
+                }],
+                holes: Vec::new(),
+                draft_path: None,
+            },
+        );
+    }
+}
+
+impl RunDecisionsSource for Sources {
+    fn live_run_ids(&self, session: &str) -> Vec<String> {
+        lock(&self.live).get(session).cloned().unwrap_or_default()
+    }
+
+    fn open(&self, session: &str, run_id: &str) -> Result<Option<OpenDecisions>, String> {
+        Ok(lock(&self.open)
+            .get(&(session.to_owned(), run_id.to_owned()))
+            .cloned())
+    }
+}
+
+/// The sessions whose gate is open. A session not listed has no record (closed).
+struct Gates(HashSet<String>);
+
+impl DynamicWorkflowGates for Gates {
+    fn gate(&self, session: &SessionId) -> Option<DynamicWorkflowGate> {
+        self.0
+            .contains(session.as_str())
+            .then_some(DynamicWorkflowGate {
+                enabled: true,
+                tools_on_demand: false,
+            })
+    }
+}
+
+fn gates(sessions: &[&str]) -> Arc<dyn DynamicWorkflowGates> {
+    Arc::new(Gates(sessions.iter().map(|s| (*s).to_owned()).collect()))
+}
+
+fn escalation(run: &str) -> Value {
+    json!({
+        "eventType": "escalation-raised",
+        "runId": run,
+        "payload": {"qid": "q1", "question": "Which branch?", "actorName": "reviewer"}
+    })
+}
+
+#[test]
+fn a_run_object_yields_its_waiting_holes_and_pending_questions() {
+    let run = json!({
+        "runId": "run_1",
+        "status": "running",
+        "pendingQuestions": [{
+            "qid": "q1",
+            "actorName": "reviewer",
+            "question": "Which branch?",
+            "context": "the diff",
+            "askedAt": 1000
+        }],
+        "holes": [
+            {"siteId": "hole#1", "ordinal": 1, "name": "Verdict", "type": "Verdict", "state": "waiting", "since": 2000},
+            {"siteId": "hole#2", "ordinal": 2, "name": "Done", "state": "filled"}
+        ]
+    });
+    let open = open_decisions_of(&run);
+    assert_eq!(
+        open.questions,
+        [OpenQuestion {
+            qid: "q1".to_owned(),
+            subagent: "reviewer".to_owned(),
+            question: "Which branch?".to_owned(),
+            context: Some("the diff".to_owned()),
+            asked_at: Some(1000),
+        }]
+    );
+    assert_eq!(
+        open.holes,
+        [OpenHole {
+            site_id: "hole#1".to_owned(),
+            name: "Verdict".to_owned(),
+            type_name: "Verdict".to_owned(),
+            line: None,
+            since: Some(2000),
+        }],
+        "a filled hole owes nothing"
+    );
+}
+
+#[test]
+fn an_unnamed_actor_is_labelled_as_node_labels_it_and_a_run_without_fields_owes_nothing() {
+    let run = json!({
+        "runId": "run_1",
+        "pendingQuestions": [{"qid": "q1", "actorSiteId": "site", "actorOrdinal": 2, "question": "?"}]
+    });
+    assert_eq!(open_decisions_of(&run).questions[0].subagent, "site@2");
+    let empty = open_decisions_of(&json!({"runId": "run_2"}));
+    assert!(empty.questions.is_empty() && empty.holes.is_empty());
+}
+
+fn registry_over(
+    sessions: &[&str],
+    timers: &Arc<FakeTimers>,
+    notices: &Arc<Notices>,
+) -> Arc<WorkflowReminders> {
+    Arc::new(WorkflowReminders::new(
+        gates(sessions),
+        timers.clone(),
+        notices.clone(),
+    ))
+}
+
+#[test]
+fn an_open_set_change_restarts_only_the_clock_of_its_own_session() {
+    let timers = Arc::new(FakeTimers::default());
+    let notices = Arc::new(Notices::default());
+    let registry = registry_over(&["parent_a", "parent_b"], &timers, &notices);
+    let sources = Sources::default();
+    sources.add("parent_a", "run_a");
+    sources.add("parent_b", "run_b");
+    assert!(registry.set_runs(Arc::new(sources)));
+    registry.turn_finished("parent_a");
+    registry.turn_finished("parent_b");
+    timers.advance_to(minutes(10));
+    let progress = WorkflowProgressHost::new(Arc::new(Quiet)).with_reminders(registry);
+    progress
+        .record("parent_a", &escalation("run_a"), &[])
+        .expect("recorded");
+    // parent_b has been idle since 0, so its reminder is due at 15 minutes; parent_a restarted at 10, so its is due at 25.
+    timers.advance_to(minutes(15));
+    let posted = lock(&notices.posted).clone();
+    assert_eq!(posted.len(), 1, "{posted:?}");
+    assert_eq!(posted[0].0, "parent_b");
+    timers.advance_to(minutes(25));
+    let sessions: Vec<String> = lock(&notices.posted)
+        .iter()
+        .map(|(session, _)| session.clone())
+        .collect();
+    assert_eq!(sessions, ["parent_b", "parent_a"]);
+}
+
+#[test]
+fn a_session_whose_gate_is_closed_gets_no_reminder() {
+    let timers = Arc::new(FakeTimers::default());
+    let notices = Arc::new(Notices::default());
+    let registry = registry_over(&["parent_a"], &timers, &notices);
+    let sources = Sources::default();
+    sources.add("parent_b", "run_b");
+    assert!(registry.set_runs(Arc::new(sources)));
+    registry.turn_finished("parent_b");
+    let progress = WorkflowProgressHost::new(Arc::new(Quiet)).with_reminders(registry);
+    progress
+        .record("parent_b", &escalation("run_b"), &[])
+        .expect("recorded");
+    timers.advance_to(minutes(60));
+    assert!(lock(&notices.posted).is_empty(), "no record, no clock");
+}
+
+#[test]
+fn a_clock_first_seen_at_an_open_set_change_starts_idle() {
+    // No turn edge was seen for the session (a quota resume in an idle session): the change starts the idle clock.
+    let timers = Arc::new(FakeTimers::default());
+    let notices = Arc::new(Notices::default());
+    let registry = registry_over(&["parent_a"], &timers, &notices);
+    let sources = Sources::default();
+    sources.add("parent_a", "run_a");
+    assert!(registry.set_runs(Arc::new(sources)));
+    let progress = WorkflowProgressHost::new(Arc::new(Quiet)).with_reminders(registry);
+    progress
+        .record("parent_a", &escalation("run_a"), &[])
+        .expect("recorded");
+    timers.advance_to(minutes(15));
+    assert_eq!(lock(&notices.posted).len(), 1, "idle from the change");
+}
+
+#[test]
+fn a_clock_first_seen_at_a_turn_start_is_busy() {
+    let timers = Arc::new(FakeTimers::default());
+    let notices = Arc::new(Notices::default());
+    let registry = registry_over(&["parent_a"], &timers, &notices);
+    let sources = Sources::default();
+    sources.add("parent_a", "run_a");
+    assert!(registry.set_runs(Arc::new(sources)));
+    registry.turn_started("parent_a");
+    let progress = WorkflowProgressHost::new(Arc::new(Quiet)).with_reminders(registry);
+    progress
+        .record("parent_a", &escalation("run_a"), &[])
+        .expect("recorded");
+    timers.advance_to(minutes(60));
+    assert!(
+        lock(&notices.posted).is_empty(),
+        "a busy session is not reminded"
+    );
+}
+
+#[test]
+fn before_the_run_source_is_set_no_session_owes_a_reminder() {
+    let timers = Arc::new(FakeTimers::default());
+    let notices = Arc::new(Notices::default());
+    let registry = registry_over(&["parent_a"], &timers, &notices);
+    registry.turn_finished("parent_a");
+    let progress = WorkflowProgressHost::new(Arc::new(Quiet)).with_reminders(registry);
+    progress
+        .record("parent_a", &escalation("run_a"), &[])
+        .expect("recorded");
+    timers.advance_to(minutes(60));
+    assert!(lock(&notices.posted).is_empty(), "no run is live yet");
+}

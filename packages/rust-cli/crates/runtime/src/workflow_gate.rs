@@ -48,10 +48,12 @@ impl GatedRegistry {
         let Some(gate) = self.gates.gate(session).filter(|gate| gate.enabled) else {
             return Vec::new();
         };
+        // Fork (W7-11, 9.44): an on-demand session's tools are deferred until it activates them; activation only adds.
+        let deferred = gate.tools_on_demand && !self.gates.activated(session);
         self.workflow
             .iter()
             .map(|tool| -> Arc<dyn Tool> {
-                if gate.tools_on_demand {
+                if deferred {
                     Arc::new(OnDemand {
                         inner: tool.clone(),
                     })
@@ -118,19 +120,18 @@ impl ToolRegistry for GatedRegistry {
 }
 
 /// Fork (W7-7a, 9.36; W7-8d, 9.39; W7-9, 9.40): the workflow tools wired in this build, in Node's order: CreateWorkflow
-/// (with the analyzer and the run sessions), SaveWorkflow (with the analyzer), the run tools (ListWorkflowRuns,
-/// ResumeWorkflowRun, ResolveWorkflowQuestion) through `runs`, then ListSavedWorkflows. EvalWorkflowSnippet is not offered
-/// either: no snippet port is composed yet. Its reads are rooted per call at the session's directory (9.41, divergence 313,
-/// closed in the service), so the port is the only thing missing.
+/// (with the analyzer and the run sessions), SaveWorkflow (with the analyzer), EvalWorkflowSnippet (with `snippets`, 9.44),
+/// the run tools (ListWorkflowRuns, ResumeWorkflowRun, ResolveWorkflowQuestion) through `runs`, then ListSavedWorkflows.
 ///
 /// The run tools read and act through `runs`, the per-session run port of the calling session.
 pub fn wired_workflow_tools(
     analyzer: Option<Arc<dyn rust_cli_kernel_api::workflow_analysis::WorkflowAnalyzer>>,
     home: &std::path::Path,
     runs: Arc<dyn rust_cli_kernel_api::workflow_run::DynamicWorkflowRunSessions>,
+    snippets: Option<Arc<dyn rust_cli_kernel_api::workflow_snippet::WorkflowSnippetPort>>,
 ) -> Vec<Arc<dyn Tool>> {
     let mut tools: Vec<Arc<dyn Tool>> =
-        rust_cli_tools::workflow_tools(analyzer, home.to_path_buf(), Some(runs.clone()), None);
+        rust_cli_tools::workflow_tools(analyzer, home.to_path_buf(), Some(runs.clone()), snippets);
     let list_saved = tools
         .iter()
         .position(|tool| tool.name() == rust_cli_kernel_api::tool_names::LIST_SAVED_WORKFLOWS)
@@ -169,6 +170,10 @@ impl DynamicWorkflowGates for AutomationGated {
             return None;
         }
         self.inner.gate(session)
+    }
+
+    fn activated(&self, session: &SessionId) -> bool {
+        self.inner.activated(session)
     }
 }
 

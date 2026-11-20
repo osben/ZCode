@@ -14,6 +14,7 @@ use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::workflow_child::WorkflowChildRunner;
 use rust_cli_kernel_api::workflow_run_progress::WorkflowRunProgressPort;
 use rust_cli_node_store::{MIGRATION_LOCK_WAIT, open_session_database};
+use rust_cli_protocol_zcode::{OpenDecisions, RunDecisionsSource, open_decisions_of};
 use rust_cli_runtime::actor_turns::ActorAgents;
 use rust_cli_runtime::workflow_assembly::ActorSessionRelease;
 use rust_cli_runtime::workflow_owner::{ActorBindingsPort, OwnerStores, bound_owner_factory};
@@ -145,6 +146,24 @@ impl RunStore for LazyRunStore {
 
     fn get_run(&self, run_id: &str) -> Result<Option<RunRow>> {
         self.get()?.get_run(run_id)
+    }
+}
+
+/// Fork (W7-11, 9.44, closes 414): the reminder clocks' run source over the service. The live runs and each run's open
+/// decisions are read from the service's memory (its run table and its parent's projection), so the synchronous reminder
+/// never waits on the owner thread.
+pub(crate) struct ServiceRunDecisions(pub(crate) Arc<WorkflowRunService>);
+
+impl RunDecisionsSource for ServiceRunDecisions {
+    fn live_run_ids(&self, session: &str) -> Vec<String> {
+        self.0.live_run_ids_of(session)
+    }
+
+    fn open(&self, session: &str, run_id: &str) -> Result<Option<OpenDecisions>, String> {
+        Ok(self
+            .0
+            .run_snapshot_of(session, run_id)
+            .map(|run| open_decisions_of(&run)))
     }
 }
 

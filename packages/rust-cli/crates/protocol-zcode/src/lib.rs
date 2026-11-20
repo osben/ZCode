@@ -83,9 +83,12 @@ pub use fork::workflow_reminder::{
     ReminderHost,
 };
 pub use fork::workflow_reminder_host::{
-    ReminderTimers, RunDecisions, SessionReminders, TokioTimers,
+    ReminderTimers, RunDecisions, RunDecisionsSource, SessionReminders, TokioTimers,
+    WorkflowReminders, open_decisions_of,
 };
 pub use fork::workflow_runner::ProtocolChildRunner;
+// Fork (W7-11, 9.44): the snippet runner the composition builds the snippet service over.
+pub use fork::workflow_snippet::ProtocolSnippetRunner;
 pub use fork::workflow_wire::{ChildEvent, ChildRequest, Completion, CreateActor, WireError};
 pub use fork::{
     Admission, ReviewBundle, ReviewItem, ReviewLookup, ReviewSource, StoredTrust, ToggleError,

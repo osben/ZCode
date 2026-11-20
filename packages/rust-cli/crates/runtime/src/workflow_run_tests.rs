@@ -1325,3 +1325,40 @@ async fn resolve_question_is_refused_as_unknown_when_no_live_run_of_the_session_
     h.runner.finish(0, completed(json!("done")));
     wait_until("the run to settle", || h.residency.live_runs("ses_p") == 0).await;
 }
+
+#[tokio::test]
+async fn a_live_run_is_listed_under_its_own_parent_and_its_snapshot_reads_from_memory() {
+    // Fork (W7-11, 9.44): the reminder's reads. Only a parent's own live runs are listed, and a run's snapshot is its
+    // parent's projection entry, present once the progress port is configured.
+    let h = harness();
+    h.service
+        .configure_progress(Arc::new(RecordingProgress::default()), 4.0);
+    h.service
+        .launch(input("wf_live"), config("wf_live", Some("ses_p")))
+        .await
+        .expect("launched");
+    assert_eq!(h.service.live_run_ids_of("ses_p"), ["wf_live"]);
+    assert!(
+        h.service.live_run_ids_of("ses_other").is_empty(),
+        "another parent's runs are not listed"
+    );
+    // The projection entry is written by the progress path after the launch returns, so it is awaited, not read at once.
+    wait_until("the run to have a projection entry", || {
+        h.service.run_snapshot_of("ses_p", "wf_live").is_some()
+    })
+    .await;
+    let snapshot = h
+        .service
+        .run_snapshot_of("ses_p", "wf_live")
+        .expect("the run has a projection entry");
+    assert_eq!(snapshot["runId"], json!("wf_live"));
+    assert!(h.service.run_snapshot_of("ses_other", "wf_live").is_none());
+    assert!(h.service.run_snapshot_of("ses_p", "wf_missing").is_none());
+
+    h.runner.finish(0, completed(json!("done")));
+    wait_until("the run to settle", || h.service.run_count() == 0).await;
+    assert!(
+        h.service.live_run_ids_of("ses_p").is_empty(),
+        "a settled run is no longer live"
+    );
+}
