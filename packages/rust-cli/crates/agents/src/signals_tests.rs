@@ -35,6 +35,34 @@ async fn unacked_notices_are_delivered_again_to_a_new_subscriber() {
     ));
 }
 
+/// W7-7c: a workflow run's notice is handed to the session once, is not background work and is never acknowledged (Node's
+/// task-notification command with no envelope, which the stall and the subagent message share the channel's rules with).
+#[tokio::test]
+async fn a_workflow_notice_is_handed_over_once_and_is_never_acked() {
+    let hub = Hub::default();
+    let session = SessionId::new("sess_1");
+    let mut stream = hub.subscribe(&session);
+    hub.workflow_notice(
+        &session,
+        "[SYSTEM NOTIFICATION - NOT USER INPUT]\nescalated".to_owned(),
+    );
+    let Some(AgentSignal::WorkflowNotice { text }) = stream.next().await else {
+        panic!("expected a workflow notice");
+    };
+    assert_eq!(text, "[SYSTEM NOTIFICATION - NOT USER INPUT]\nescalated");
+    assert!(
+        hub.pending(&session).is_empty(),
+        "a workflow notice is not background work"
+    );
+    // Taken once: a new subscriber does not see it again, and the next signal is the task list.
+    let mut again = hub.subscribe(&session);
+    hub.tasks_changed(&session, json!([]));
+    assert!(matches!(
+        again.next().await,
+        Some(AgentSignal::TasksChanged { .. })
+    ));
+}
+
 /// F11（R1-18）：消费方慢时任务清单只留最新一份，通知一条不丢、按到达顺序交出。旧代码是无界通道，先交出最旧的
 /// 任务清单（并把一百个版本都堆在内存里）。
 #[tokio::test]

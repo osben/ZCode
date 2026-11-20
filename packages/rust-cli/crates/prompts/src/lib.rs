@@ -35,6 +35,7 @@ pub mod remote;
 pub mod texts;
 pub mod title;
 mod words;
+pub mod workflow_notice;
 
 pub use words::{SlugWords, slug_words};
 

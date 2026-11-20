@@ -465,6 +465,10 @@ impl AgentSignals for Signals {
         self.0.hub.subscribe(session)
     }
 
+    fn workflow_notice(&self, session: &SessionId, text: String) {
+        self.0.hub.workflow_notice(session, text);
+    }
+
     fn session_opened(&self, meta: &rust_cli_kernel_api::store::SessionMeta) {
         shell_notices::adopt(&self.0, meta);
     }
