@@ -6,12 +6,12 @@
 //! always-allow option, and the bytes the user was asked about are the bytes the call writes: the decision keeps them
 //! for the call that follows it.
 
-use std::collections::HashMap;
-use std::path::{Component, Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::collections::{HashMap, VecDeque};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use async_trait::async_trait;
-use rust_cli_fs::text_files::read_text;
+use rust_cli_fs::read_text;
 use rust_cli_kernel_api::ids::ToolUseId;
 use rust_cli_kernel_api::permission::PermissionDecision;
 use rust_cli_kernel_api::tool::{
@@ -26,12 +26,13 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
 use crate::saved_workflow::{
-    ArgDecl, ArgType, Meta, SENTINEL, Scope, Shadowing, Store, is_valid_name, parse,
+    ArgDecl, ArgType, Meta, SENTINEL, Scope, Shadowing, Store, is_valid_name, js_trim_start, parse,
     starts_with_sentinel,
 };
 use crate::workflow_tools::{
     Contract, DYNAMIC_WORKFLOW_SKILL, contract, skill_loaded, workspace_dir,
 };
+use crate::workspace_path::{Refusal, contain};
 
 /// The refusal code for a missing source or an unusable name (Node's `SAVE_WORKFLOW_FAILURE_CODE`).
 const FAILURE_CODE: i32 = 400;
@@ -39,8 +40,9 @@ const FAILURE_CODE: i32 = 400;
 const SKILL_NOT_LOADED_CODE: i32 = 428;
 /// Node `SAVE_WORKFLOW_MODEL_BYTES`.
 pub const SAVE_MODEL_BYTES: usize = 24_000;
-/// Approvals waiting for their call. A decision that is refused never reaches its call, so the table is bounded.
-const APPROVAL_CAP: usize = 256;
+/// Decisions waiting for their call. A decision that is refused never reaches its call, so the table is bounded: past
+/// this many, the oldest entry goes (one at a time), never the whole table.
+const PENDING_CAP: usize = 256;
 const SOURCE_ERROR: &str = "Provide exactly one script source: `script` for the body inline, or `script_path` for the file holding it (a draft, usually). Passing both, or neither, is ambiguous.";
 const SENTINEL_IN_SCRIPT_ERROR: &str = "The `script` must be the workflow body only — it already starts with a `/* zcode-workflow` metadata block. Pass the metadata through the `description` / `whenToUse` / `args` fields instead; the block is written for you.";
 const NOT_SAVED_NOTE: &str =
@@ -49,7 +51,7 @@ const NOT_SAVED_NOTE: &str =
 /// The input (Node `SaveWorkflowInputSchema`). The keys are the schema's own names. `path`, `overwrite` and `shadowing`
 /// are filled during resolution in Node; they are accepted for the schema and ignored, since the model's values never
 /// decide anything.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SaveInput {
     name: String,
@@ -73,18 +75,48 @@ struct SaveInput {
     _shadowing: Option<IgnoredAny>,
 }
 
-/// What the permission decision approved: the script bytes, and the checker's diagnostics for them (none, since an
-/// approved script checked clean).
+/// What the permission decision leaves for the call with the same tool-use id.
 #[derive(Debug, Clone)]
-struct Approval {
-    script: String,
+enum Pending {
+    /// The script the user approved (it checked clean); the call writes these bytes.
+    Approved(String),
+    /// The checker's diagnostics for a script that did not check; the call returns them without checking again.
+    Failed(Vec<WorkflowDiagnostic>),
+}
+
+/// The pending decisions in arrival order. Past the cap the oldest entry is evicted, so a decision that is still waiting
+/// is dropped only when it is the oldest one.
+#[derive(Default)]
+struct PendingTable {
+    entries: HashMap<ToolUseId, Pending>,
+    order: VecDeque<ToolUseId>,
+}
+
+impl PendingTable {
+    fn insert(&mut self, id: ToolUseId, pending: Pending) {
+        if self.entries.insert(id.clone(), pending).is_some() {
+            self.order.retain(|queued| queued != &id);
+        }
+        self.order.push_back(id);
+        while self.order.len() > PENDING_CAP {
+            if let Some(oldest) = self.order.pop_front() {
+                self.entries.remove(&oldest);
+            }
+        }
+    }
+
+    fn take(&mut self, id: &ToolUseId) -> Option<Pending> {
+        let pending = self.entries.remove(id)?;
+        self.order.retain(|queued| queued != id);
+        Some(pending)
+    }
 }
 
 pub struct SaveWorkflowTool {
     contract: &'static Contract,
     analyzer: Arc<dyn WorkflowAnalyzer>,
     home: PathBuf,
-    approvals: Mutex<HashMap<ToolUseId, Approval>>,
+    pending: Mutex<PendingTable>,
 }
 
 impl SaveWorkflowTool {
@@ -93,7 +125,7 @@ impl SaveWorkflowTool {
             contract: contract(tool_names::SAVE_WORKFLOW),
             analyzer,
             home,
-            approvals: Mutex::new(HashMap::new()),
+            pending: Mutex::new(PendingTable::default()),
         }
     }
 
@@ -101,30 +133,44 @@ impl SaveWorkflowTool {
         Store::new(cwd, &self.home)
     }
 
-    fn remember(&self, tool_use: ToolUseId, script: String) {
-        let mut approvals = self
-            .approvals
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if approvals.len() >= APPROVAL_CAP {
-            approvals.clear();
-        }
-        approvals.insert(tool_use, Approval { script });
+    fn pending(&self) -> MutexGuard<'_, PendingTable> {
+        self.pending.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn take_approval(&self, tool_use: &ToolUseId) -> Option<Approval> {
-        self.approvals
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .remove(tool_use)
+    /// The output of a script that does not check: its diagnostics, and where the file would have gone.
+    fn failing_output(
+        &self,
+        name: &str,
+        scope: Scope,
+        cwd: &Path,
+        diagnostics: &[WorkflowDiagnostic],
+    ) -> ToolOutput {
+        let path = self.store(cwd).path(scope, name);
+        let mut output = text(failing_response(diagnostics));
+        output.display = json!({
+            "name": name,
+            "scope": scope.as_str(),
+            "path": path.display().to_string(),
+            "diagnostics": diagnostics.iter().map(diagnostic_value).collect::<Vec<_>>(),
+            "ok": false,
+        });
+        output
     }
+}
 
-    fn forget(&self, tool_use: &ToolUseId) {
-        self.approvals
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .remove(tool_use);
-    }
+/// The source of a call, read on a blocking thread (the draft is a file).
+async fn resolve_source_blocking(input: &SaveInput, cwd: &Path) -> Result<String, String> {
+    let input = input.clone();
+    let cwd = cwd.to_path_buf();
+    tokio::task::spawn_blocking(move || resolve_source(&input, &cwd))
+        .await
+        .map_err(|error| join_message(&error))?
+}
+
+/// Whether an inline script opens with the metadata marker, as Node's `trimStart().startsWith` decides (a byte order
+/// mark is trimmed by JavaScript, so it is skipped here too).
+fn opens_with_block(script: &str) -> bool {
+    js_trim_start(script).starts_with(SENTINEL)
 }
 
 /// The refusals of the input's own shape, in Node's order (name, source, block). They read nothing from the disk.
@@ -142,7 +188,7 @@ fn check_fields(input: &SaveInput) -> Option<Validation> {
         return Some(invalid_with(FAILURE_CODE, SOURCE_ERROR.to_owned()));
     }
     if let Some(script) = &input.script
-        && script.trim_start().starts_with(SENTINEL)
+        && opens_with_block(script)
     {
         return Some(invalid_with(
             FAILURE_CODE,
@@ -159,48 +205,24 @@ fn invalid_with(code: i32, message: String) -> Validation {
     }
 }
 
-/// Lexical normalization of `.` and `..` (no disk access).
-pub(crate) fn normalize(path: &Path) -> PathBuf {
-    let mut out = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::ParentDir => {
-                out.pop();
-            }
-            Component::CurDir => {}
-            other => out.push(other.as_os_str()),
-        }
-    }
-    out
-}
-
-/// A `script_path` must resolve inside the workspace. Node accepts any path; a draft outside the repository is refused
-/// here (divergence 113), so a model cannot make the tool read files it has no business with.
-fn within_workspace(cwd: &Path, input_path: &str) -> Result<PathBuf, String> {
-    let joined = if Path::new(input_path).is_absolute() {
-        PathBuf::from(input_path)
-    } else {
-        cwd.join(input_path)
-    };
-    let resolved = normalize(&joined);
-    if resolved.starts_with(normalize(cwd)) {
-        Ok(resolved)
-    } else {
-        Err(format!(
-            "The workflow script file {input_path} is outside the workspace. Pass a `script_path` inside it, or submit the script inline."
-        ))
-    }
-}
-
-/// Node `readWorkflowScriptFile` for a save: read the file, and if it starts with a block, take its body only.
+/// A `script_path` must resolve inside the workspace (divergences 113 and 119, the shared check in `workspace_path`).
+/// The file is read at the real path that was checked, never at the named one. A file that cannot be resolved (missing,
+/// dangling link) is reported as an unreadable file, and a path outside the workspace is refused.
 fn read_script_path(cwd: &Path, input_path: &str) -> Result<String, String> {
-    let absolute = within_workspace(cwd, input_path)?;
-    let described = describe(&absolute, cwd);
-    let source = read_text(&absolute).map_err(|error| {
-        format!(
-            "The workflow script file {described} could not be read: {error}. Pass `script_path` for a file that exists, or submit the script inline."
-        )
-    })?;
+    let contained = match contain(cwd, input_path) {
+        Ok(contained) => contained,
+        Err(Refusal::Outside) => {
+            return Err(format!(
+                "The workflow script file {input_path} is outside the workspace. Pass a `script_path` inside it, or submit the script inline."
+            ));
+        }
+        Err(Refusal::Unresolved(error)) => {
+            let described = describe(&cwd.join(input_path), cwd);
+            return Err(unreadable(&described, &error));
+        }
+    };
+    let described = describe(&contained.named, cwd);
+    let source = read_text(&contained.real).map_err(|error| unreadable(&described, &error))?;
     if !starts_with_sentinel(&source) {
         return Ok(source);
     }
@@ -214,8 +236,15 @@ fn read_script_path(cwd: &Path, input_path: &str) -> Result<String, String> {
     }
 }
 
+/// The refusal for a file that cannot be read (the same text for a missing file and for an unresolvable link).
+fn unreadable(described: &str, error: &std::io::Error) -> String {
+    format!(
+        "The workflow script file {described} could not be read: {error}. Pass `script_path` for a file that exists, or submit the script inline."
+    )
+}
+
 /// Node `describeWorkflowScriptPath`: relative to the working directory when the file is inside it.
-fn describe(absolute: &Path, cwd: &Path) -> String {
+pub(crate) fn describe(absolute: &Path, cwd: &Path) -> String {
     match absolute.strip_prefix(cwd) {
         Ok(relative) if !relative.as_os_str().is_empty() => relative.display().to_string(),
         _ => absolute.display().to_string(),
@@ -254,13 +283,22 @@ fn args_from_json(value: &Value) -> Result<Vec<(String, ArgDecl)>, String> {
         let Some(fields) = decl.as_object() else {
             return Err(format!("{path}: Expected object"));
         };
-        if let Some(extra) = fields.keys().find(|key| {
-            !matches!(
-                key.as_str(),
-                "type" | "description" | "required" | "default"
-            )
-        }) {
-            return Err(format!("{path}: Unrecognized key(s) in object: '{extra}'"));
+        // zod's `strict()` lists every unknown key, quoted and joined with ", ".
+        let extras: Vec<String> = fields
+            .keys()
+            .filter(|key| {
+                !matches!(
+                    key.as_str(),
+                    "type" | "description" | "required" | "default"
+                )
+            })
+            .map(|key| format!("'{key}'"))
+            .collect();
+        if !extras.is_empty() {
+            return Err(format!(
+                "{path}: Unrecognized key(s) in object: {}",
+                extras.join(", ")
+            ));
         }
         let ty = match fields.get("type").and_then(Value::as_str) {
             Some("string") => ArgType::String,
@@ -319,7 +357,7 @@ fn confirmation_message(
     message
 }
 
-fn diagnostic_value(diagnostic: &WorkflowDiagnostic) -> Value {
+pub(crate) fn diagnostic_value(diagnostic: &WorkflowDiagnostic) -> Value {
     json!({
         "code": diagnostic.code,
         "column": diagnostic.column,
@@ -362,10 +400,12 @@ fn scope_of(input: &SaveInput) -> Option<Scope> {
     Scope::parse(&input.scope)
 }
 
+fn join_message(error: &tokio::task::JoinError) -> String {
+    format!("SaveWorkflow could not finish the file operation: {error}")
+}
+
 fn blocking_failure(error: tokio::task::JoinError) -> ToolError {
-    failed(format!(
-        "SaveWorkflow could not finish the file operation: {error}"
-    ))
+    failed(join_message(&error))
 }
 
 #[async_trait]
@@ -447,7 +487,7 @@ impl Tool for SaveWorkflowTool {
             return PermissionDecision::Passthrough;
         };
         let cwd = PathBuf::from(workspace_dir(context));
-        let script = match resolve_source(&input, &cwd) {
+        let script = match resolve_source_blocking(&input, &cwd).await {
             Ok(script) => script,
             Err(message) => return PermissionDecision::Deny { message },
         };
@@ -460,7 +500,11 @@ impl Tool for SaveWorkflowTool {
             }
         };
         if !analysis.ok {
-            self.forget(&context.tool_use);
+            // The call returns these diagnostics; it does not check the script a second time.
+            self.pending().insert(
+                context.tool_use.clone(),
+                Pending::Failed(analysis.diagnostics),
+            );
             return PermissionDecision::Allow {
                 updated_input: None,
             };
@@ -483,7 +527,8 @@ impl Tool for SaveWorkflowTool {
                 message: "SaveWorkflow could not read the saved workflows".to_owned(),
             };
         };
-        self.remember(context.tool_use.clone(), script);
+        self.pending()
+            .insert(context.tool_use.clone(), Pending::Approved(script));
         // Node `alwaysAsk` with `allowAlways: false`: asked in every mode, and no always-allow is offered.
         PermissionDecision::always_ask(
             confirmation_message(&input.name, &path, overwrite, shadowing),
@@ -511,10 +556,17 @@ impl Tool for SaveWorkflowTool {
         };
         let cwd = PathBuf::from(workspace_dir(&context));
         let meta = meta_of(&input).map_err(|message| ToolError::InvalidInput { message })?;
-        let script = match self.take_approval(&context.tool_use) {
-            Some(approval) => approval.script,
+        // The guard is a statement temporary: it is released before the next await.
+        let taken = self.pending().take(&context.tool_use);
+        let script = match taken {
+            Some(Pending::Approved(script)) => script,
+            Some(Pending::Failed(diagnostics)) => {
+                return Ok(self.failing_output(&input.name, scope, &cwd, &diagnostics));
+            }
             None => {
-                let script = resolve_source(&input, &cwd).map_err(failed)?;
+                let script = resolve_source_blocking(&input, &cwd)
+                    .await
+                    .map_err(failed)?;
                 let analysis = self
                     .analyzer
                     .analyze(&script)
@@ -525,16 +577,7 @@ impl Tool for SaveWorkflowTool {
                         "SaveWorkflow has no confirmation for this script, so nothing was written. Call it again.".to_owned(),
                     ));
                 }
-                let path = self.store(&cwd).path(scope, &input.name);
-                let mut output = text(failing_response(&analysis.diagnostics));
-                output.display = json!({
-                    "name": input.name,
-                    "scope": scope.as_str(),
-                    "path": path.display().to_string(),
-                    "diagnostics": analysis.diagnostics.iter().map(diagnostic_value).collect::<Vec<_>>(),
-                    "ok": false,
-                });
-                return Ok(output);
+                return Ok(self.failing_output(&input.name, scope, &cwd, &analysis.diagnostics));
             }
         };
         let store = self.store(&cwd);

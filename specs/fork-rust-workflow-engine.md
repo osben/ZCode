@@ -2095,13 +2095,55 @@ The W7-5 brief covers more than one PR. The Node sources are about 160 KB (`dyna
 110. The output display is Node's output object (`name`, `scope`, `path`, `diagnostics`, `ok`, `overwritten` when a file was written). The model text is Node's `response` text. The desktop renderer for SaveWorkflow reads the same object; it has not been checked against a running desktop.
 111. `ListSavedWorkflows` lists the project root and the global root, with shadowing, like Node's undirected list. Node's `listSavedWorkflows` is called with a scope in the hub; that directed list (the global group that shows hidden copies) is not ported.
 112. EvalWorkflowSnippet is not in this PR (see the split above). Its divergences are numbered when it lands.
-113. A `script_path` must resolve inside the workspace (lexical normalization; symlinks are not resolved). Node accepts any path, absolute or escaping. A path outside is refused at the permission decision with "is outside the workspace".
+113. A `script_path` must resolve inside the workspace (lexical normalization, then the real paths: see 119). Node accepts any path, absolute or escaping. A path outside is refused at the permission decision with "is outside the workspace".
 114. The `script_path` advice names `script_path` (Node's text names `path`, which is the output field of this tool).
 115. The `script_path` read moved from input validation to the permission decision, so a refused draft is a permission refusal, not a 400 input refusal. Validation reads nothing from the disk.
 116. The store's IO runs on a blocking thread (`spawn_blocking`); Node's store is synchronous on the event loop.
 117. The fs store helpers are not atomic (as Node's `writeFileSync`). A non-UTF-8 file name is converted lossily and so lists as an unusable file.
 
 **Not done here.** The gate source is still set by no entry point (divergences 55 and 56 of 9.18), and nothing calls `workflow_tools`, so SaveWorkflow and ListSavedWorkflows reach no session. The skill-gate probe is unit-tested on a fixture history only. Divergence 103 must be closed before the gate opens. The move, resolve and argument validation of the saved store belong to W7-8a (CreateWorkflow's saved source).
+
+**Review round (post-merge, PR "fix(workflow): SaveWorkflow review follow-ups (rust)").** Each finding was checked first. Verdicts:
+
+1. Rejected. `parse(serialize(..))` of `a\u{2028}b` and `a\u{2029}b` returns the same text (yaml-rust2 0.13 does not fold them). They stay plain, as Node writes them (divergence 104).
+2. Partly fixed. NEL does not fold either (round trip is green), so there is no `\N`. NEL is no longer single-quoted (the red test showed `'a\u{85}"b'`); it stays raw in double quotes, as Node's golden does.
+3. Fixed. C1 controls other than NEL (U+0080 to U+009F) are not plain-safe and are written as `\xHH` in double quotes (red: raw U+0080). Not re-run against yaml 2.9.1 here; the character class is taken from the review finding.
+4. Fixed. `minLength` is checked in `validate.rs` the way Node's JSON-schema check does. An empty `description`, `whenToUse` or `script_path` is refused, and the message is the `too_small` issue as JSON, with Node's text `Too small: expected string to have >=1 characters`.
+5. Kept as Node has it, one bug fixed. Node's two predicates differ: an inline script is checked with `trimStart().startsWith` (a file with its first non-blank line equal to the marker). Both are kept. The inline check now skips U+FEFF, as JavaScript's `trimStart` does.
+6. Fixed: divergence 119.
+7. Fixed. The `script_path` read (in the decision and in the call) runs on `spawn_blocking`.
+8. Fixed. Every unknown key of an argument declaration is named, quoted and joined with `, ` (zod `strict()`).
+9. Fixed. The pending table evicts its oldest entry only (`PendingTable`).
+10. Fixed. A failing verdict is kept per tool-use id (`Pending::Failed`); the call returns it without a second check.
+11. Rejected. Node's `list-saved-workflows.ts` escapes only the `name` and `path` attributes (`escapeAttribute`). The description, `whenToUse`, argument text and `reason` are written raw there, and Rust matches. No divergence.
+12. Fixed: divergence 118.
+13. Fixed. The serde cause is in the contract message.
+14. Fixed. `workflow_child::Diagnostic` is now an alias of `workflow_analysis::WorkflowDiagnostic`.
+15. Fixed. `text_files` is private and re-exported at the fs crate root: `read_text`, `write_text`, `list_file_names`, `canonicalize_path`, `symlink_to` (unix), and `is_regular_file` (the sync `is_file`; the root `is_file` is the async one). The docs say `metadata` follows symlinks and any stat error is not-a-file. The non-UTF-8 listing test is gated off macOS, because APFS refuses such names (EILSEQ).
+
+**Divergence 118.** Windows device names are not usable workflow names: the stem before the first dot, compared case-insensitively to `CON`, `PRN`, `AUX`, `NUL`, `COM1` to `COM9` and `LPT1` to `LPT9`, is refused with or without an extension. Node accepts them, and a file such as `con.dwf.ts` cannot be written on Windows.
+**Divergence 119.** A `script_path` is also compared after symlinks are resolved (canonical paths of the file and of the workspace). A link inside the workspace to a file outside it is refused. This extends divergence 113, which was lexical only. Node has no such check. The guarantee covers the named link: the file is read at the real path that was checked, so a link swapped in at the named path after the check cannot redirect the read. It does not cover a writer inside the workspace that replaces the real file, or one of its ancestor directories, with a link out of the workspace between the check and the read (path-based check then read, a residual TOCTOU window). Closing it needs a descriptor-pinned open (open, then verify the descriptor's canonical path). Not done; recorded here as the known residual.
+
+**Review round 2 (ocr on PR #585, head 80f93030c, seven findings; merged with origin/fork 89a0af22e, CreateWorkflow).** Verdicts:
+
+- H1. Fixed. The file is read at the real path that was checked (`Contained::real`); the named path is kept for messages only. A canonicalization failure refuses (`Refusal::Unresolved`) instead of falling back to the lexical path. The check is one shared helper, `workspace_path::contain`, used by SaveWorkflow's `script_path` and CreateWorkflow's `path`; each tool keeps its own refusal wording. Test: a dangling link out of the workspace is unresolved, not accepted. The swap between check and read is not reproduced by a test.
+- M2. Fixed. `js_trim` is ECMAScript WhiteSpace plus LineTerminator (`is_js_space`), not Rust's `is_whitespace`, which includes U+0085. Test: a NEL at the marker line's edge is not trimmed.
+- M3. Fixed. An enum violation is `invalid_value` (Node's `invalid_value` issue, with `values`, `path` and the `Invalid option: expected one of ...` text), and a missing required property whose schema has an enum is `invalid_value` too. All non-parameter issues serialize into one JSON array in schema order. Ported Node's "preserves schema property order across present constraints and missing enums" and "keeps normalized enum type mismatches on the invalid-value JSON fallback" cases.
+- L4. Fixed. The inline marker check uses the same `js_trim_start` as the codec. Test: a NEL before the marker is not a block.
+- L5. Fixed. The serialization has an `expect` with the invariant (`#[expect(clippy::expect_used)]`, as the crate does elsewhere).
+- L6. Fixed. One `MALFORMED_REPLY` constant feeds both messages.
+- L7. Fixed. The stem is `split_once('.')`, with no dead fallback.
+
+The `text_files` module stays private and re-exported at the fs root; the merge took origin's `create_new_text`, `ensure_dir` and `symlink`, and dropped the duplicate `canonicalize_path` and `symlink_to`.
+
+**Review round 3 (ocr on PR #585, head dbaf50529; six findings, verdicts per finding).**
+
+- Containment doc (medium). Fixed by qualifying the guarantee, not by a pinned open: the module doc and divergence 119 now state that a swap of `real` or of an ancestor directory between the check and the read is not covered. Pinned open is the follow-up if the residual matters.
+- Single-value enum (low). Fixed. Node's `createInvalidValueIssue` says `Invalid input: expected "x"` for one allowed value; the port said `Invalid option: expected one of "x"`. Tests `a_single_value_enum_says_expected_not_one_of` and `a_missing_single_value_enum_says_expected_not_one_of` were red on the old code.
+- Enum then `minLength` (low). Fixed. Node's `validateNode` continues after an enum failure: only a type mismatch returns, and the string constraints run when the type matches. The port returned after the enum, so `enum` plus `minLength` now reports `invalid_value` then `too_small`, as Node does. Test `an_enum_failure_still_reports_a_min_length_failure_on_the_same_string` was red on the old code. The enum-plus-type-mismatch case still reports only `invalid_value`.
+- Duplicate `normalize` (low). Fixed. The local copy is deleted; `contain` uses `rust_cli_base::path::normalize`. The contract for input is documented: absolute, or relative to `cwd` and joined before normalizing, so a leading `..` is accepted only when it lands back inside the workspace (test `a_leading_parent_segment_is_resolved_against_the_workspace_before_the_check`, green on the old code too).
+- Case-sensitive prefix on Windows (low). Fixed. The lexical prefix check folds ASCII case under `cfg!(windows)` (`lexically_within`). The canonical comparison already agrees on case on Windows, since canonical paths carry the on-disk case. Red: `the_lexical_prefix_check_can_fold_ascii_case` failed on the old stub. The Windows path itself is not run here (macOS only).
+- Coverage (low). Added the absolute-path-inside case, a workspace root that is a symlink, and a link inside the workspace to a file inside it (with `real` == the resolved target). All three pass on the old code, so they pin existing behaviour rather than fix it.
 
 ### 9.25 W7-5a-3: runtime workflow run service (as built, part)
 
@@ -2453,6 +2495,59 @@ rule. The tool sends the suggestion; the handling of it in the app is not checke
 8. Accepted. `path: ""` is refused by the schema, as the contract's `minLength: 1`.
 9. Accepted. `Origin::Saved` keeps the saved name; both messages print it, and the draft and run label keep the run label.
 10. Accepted as tests. `ensure_dir` and the missing-parent NotFound already behaved so; the tests pass at once.
+
+### 9.28 W7-8c EvalWorkflowSnippet (as built)
+
+**Decision (binding, from the user).** A snippet runs on the Rust workflow engine with an in-memory journal. The helper stays I/O-free: it compiles and renders the child entry, and runs nothing.
+
+**Compile path.** There was no helper method for a snippet (W7-2 shipped only `format`). The smallest correct path is a new stateless method, `helper/workflow/evalSnippet` `{scriptText, runId}` (`bootstrap/src/fork-rust-helper/workflow-compile.ts`, `evalSnippetForRust`). It compiles under the snippet facade (`SNIPPET_FACADE_DTS`, so no `agent()`), refuses a non-literal `world.run` command, lowers, and renders the child entry for `runId`. It answers `{ok: false, diagnostics}` or `{ok: true, worldRun, entrySource}`. Node's `dynamic-workflow-snippet-service.ts` does the same steps in process; the helper does them for Rust.
+
+**Run path (Rust).**
+
+- `kernel-api/src/workflow_snippet.rs`: `WorkflowSnippetPort` (what the tool reaches: `check`, `eval`) and `WorkflowSnippetRunner` (the compile and launch step, implemented by `protocol-zcode`).
+- `protocol-zcode/src/fork/workflow_snippet.rs`: `ProtocolSnippetRunner`. `check` is the helper call. `start` is the helper call, then the existing `launch_compiled` (the entry writer, the child launcher, the NDJSON host). A snippet has no script hash and no compiled facts; both are empty.
+- `runtime/src/workflow_snippet.rs`: `SnippetService`. Each eval builds a `WorkflowEngine` over `MemoryJournal` (`workflow/src/journal.rs`, the in-memory journal port that already exists) with a `SnippetDriver`. The child's `log` and `phase-entered` events go to the engine. A world read goes through the engine (`world_read`, then `world_read_settled`) and `execute_world_read` with the production read port. A `complete` or `fail` settles the engine; a host stop or the timeout settles it as `stop(interrupted)`. The result is read back from `engine.settlement()`, as Node's `runWorkflowScript` settles.
+- `tools/src/workflow_eval_snippet.rs`: `EvalWorkflowSnippetTool`. `validate_input` checks the shape, then one source, then the Skill gate. `check_permissions` reads and compiles the snippet and keeps its bytes for the call. `call` runs them and formats Node's model text.
+- `tools/src/workflow_tools.rs`: `workflow_tools` takes `snippets: Option<Arc<dyn WorkflowSnippetPort>>`, and registers EvalWorkflowSnippet between SaveWorkflow and ListSavedWorkflows (Node's order) only when a port is given. One entry, and one new parameter, for the CreateWorkflow PR to merge against.
+
+The gate stays off. Nothing calls `workflow_tools` with a port, and nothing constructs `ProtocolSnippetRunner` or `SnippetService` (W7-7 wires them). The tools are defined, not registered for any session.
+
+**Tests (red first, then green).**
+
+- Helper (`bootstrap/tests/fork-rust-helper/workflow-compile.test.ts`, 7 new cases in `evalSnippet (W7-8c)`): with the method absent, 7 failed, as `-32601` (method not found) or on the missing reply. Green after: the file is 22 of 22.
+- Protocol (`workflow_compile_tests.rs`, 4 new, and `workflow_snippet_tests.rs`, 3 new): red as a compile error (the functions did not exist). Green: the `workflow_` filter is 64 of 64.
+- Runtime (`workflow_snippet_tests.rs`, 15): red as a build error (the module did not exist). Green: 15 of 15.
+- Tools (`workflow_eval_snippet_tests.rs`, 22, and `workflow_tools_tests.rs`, 1 new): the test files were written before the module, but the first run came after the module existed, so no tools red run was observed. Green: the `workflow_` filter is 60 of 60 (the count includes the existing Save and List tests).
+- `cargo fmt --all --check` clean; `cargo clippy --workspace --all-targets --locked -- -D warnings` clean; lib tests of tools, workflow, kernel-api, protocol-zcode and runtime pass. The helper's `oxfmt --check` is clean for the touched TypeScript files (run from `apps/zcode-cli`, where the formatter's config resolves).
+
+**Node divergences (new in W7-8c, numbered 160 to 179).**
+
+160. The compile is a new helper method, `helper/workflow/evalSnippet`. Node compiles in process. The helper does the same steps and renders the entry, and runs nothing (see the decision above).
+161. A `path` source must resolve inside the workspace (lexical normalization, no symlink resolution), as SaveWorkflow's `script_path` does (divergence 113). Node reads any path. A path outside is refused at the permission decision with "is outside the workspace".
+162. Schema refusals carry Node's zod wording for the `min` and range rules (`code: String must contain at least 1 character(s)`, `timeoutMs: Number must be greater than or equal to 1000`). An unknown key is serde's message, not zod's. None of them has an error code (Node's schema refusal has none either).
+163. Node's tool-level timeout (660 s) and cancellation (`abort` kills the sandbox child) are not declared: the Rust tool trait has no per-tool timeout and no cancel hook, as for SaveWorkflow (divergence 109). The snippet's own `timeoutMs` is one deadline over the whole snippet: the start (compile, entry, spawn), the run, and a world read in flight. Node's timer starts after its synchronous compile and does not cover the read's own thread. At the deadline the child is stopped and the run settles `interrupted`, and a read still in flight does not delay that.
+164. The in-memory journal is a deliberate design divergence. A snippet's engine writes no `dwf_*` row and reads none; the run id is `dwfeval-<pid>-<n>` (process-unique, from a process counter), not a UUID, because it names the entry file and is never stored. Nothing persists in the journal after the call. The entry file `.zcode/workflow-runs/<run_id>.mjs` is kept, as Node keeps it (`child-entry-file.ts`: the directory is the record of what ran), so a snippet leaves one file there, as Node's does.
+165. World reads are started and settled under the engine's lock, but executed on a blocking thread with the lock released, so several reads can run at once and a slow one does not hold the engine. Node runs a `Promise.all` of reads concurrently. Each read's answer is its own; the order of side effects follows the order the reads start.
+166. The engine's `Caps` are `Caps::default()`, not Node's default concurrency. A snippet starts no ask, so no concurrency bound is observable.
+167. Log limits count Unicode scalar values (`chars()`), not the UTF-16 code units that Node's `length` and `slice` count. The item count (100) and the truncation flag are the same.
+168. `report` and `declare-artifact` events from the child are ignored. The snippet facade declares neither, so a well-formed child never sends them. Node forwards them to the engine. `log` and `phase-entered` reach the engine.
+169. The engine's `start_ask` is a no-op in the driver, and the handler refuses an ask to the child first (DriverError). Node's driver throws DriverError from `startAsk`. The refusal reaches the child in both; only the driver's unreachable member differs.
+170. The wire error's `name` is `WorkflowError`. Node's `error.name` for its workflow error class is not checked here. `violations` passes only an array, and `finalText` passes through.
+171. A child that never settles is bounded only by the timeout. Node's driver has the same bound (the inner timer), so this is not a new limit.
+172. The read-failure text names the file as Node does, but its cause is Rust's io error text (not Node's `ENOENT` text).
+173. A clean return with no value is recorded in the engine as `null` (the engine's completion takes a value). The tool's `It returned no value.` comes from the child's absent `value`, as in Node, so the two stay apart.
+174. A snippet has no script hash and no compiled facts (empty, since nothing resumes a snippet and nothing hashes it). Node's snippet service has none either.
+175. A `world.run` snippet asks with an ordinary permission ask (no always-allow is removed, no always-ask), as Node's `permission` block says (standard flow, `needsApproval` true). A snippet that proceeds is `Allow`, which skips the dialog as Node's `prepareApproval` `proceed` does. Whether Node's standard flow still applies its allow and deny rules to a proceeding snippet was not traced; the chain's deny rules run before the tool's decision here.
+176. The approved bytes are kept per tool-use id, in a first-in first-out table of 256 that evicts only its oldest entry; a repeated check for the same call replaces its entry, so one call holds one approval. Without an approval the call reads the source again and checks it; a snippet with a world.run command is refused with "Call it again" and not run (as CreateWorkflow's call refuses an unconfirmed save). Node resolves input once per call, and no hook rewrites Rust's input (divergence 101 of 9.24).
+177. The output is Node's model text (`response`). `display` carries the output object (`ok`, `diagnostics`, `logs`, `response`, `durationMs`). The desktop renderer for EvalWorkflowSnippet has not been checked.
+178. The result budget is 24,000 bytes, with Node's truncate strategy (the head is kept). The truncation itself is the tool layer's.
+179. `timeoutMs` is an `i64` in the tool and is range-checked before it is used, so the value passed to the service is always 1,000 to 600,000.
+180. A `path` that cannot be read, or lies outside the workspace, is denied at the permission decision with no error code. Node refuses it at `resolveInput` with errorCode 400 (`EVAL_WORKFLOW_SNIPPET_FAILURE_CODE`). The surface does not carry it: a permission `Deny` has no code field, and `validate_input` has no disk access, so the read cannot happen there. The message text is Node's.
+181. Explicit `null` for `code`, `path` or `timeoutMs` is refused by the schema, as zod's `.optional()` refuses it, and an integral float such as `5000.0` is accepted, as zod's `.int()` accepts it. The refusal text is serde's wording (`invalid type: null, ...`), not zod's. The schema refusal has no error code, as in Node.
+
+**Not done here.** The gate, the wiring of `ProtocolSnippetRunner` and `SnippetService` into the composition root, and the `ChildHandler` lifecycle for a live session (W7-7). The desktop check of the snippet's display. A real child run in a test (the tests use a fake runner and a fake child); the protocol runner is covered by its pure mapping functions, and its launch by `workflow_runner_tests`.
+
+**ocr review round 1 (PR #584, head 30bd58a68; fixed).** HIGH: `helper/workflow/evalSnippet` was not in `FORWARDED_METHODS`, so every eval was refused as unavailable; it is listed now, and the table test pins the count and the method. HIGH: a call with no approval ran a snippet that calls world.run; it now checks the snippet and refuses a world.run one (red: two tests). HIGH: a world read held the engine lock for its whole run, so the timeout waited on it; a read is now started and settled under the lock and executed outside it (red: the timeout test with a 1.5 s read). MEDIUM: the start (compile, entry, spawn) had no bound; it is now inside the snippet's deadline (red: a hanging start). MEDIUM: the entry file is kept, as Node keeps it (divergence 164). LOW: a world read without `op` is refused as a contract error (red), the test's wait for the child is bounded, and `diagnostic_value` is shared with SaveWorkflow. Containment of a `path` is now CreateWorkflow's (`path_in_workspace`, lexical and real path), with a unix symlink test (red first). SaveWorkflow still has its own lexical `within_workspace`; moving it onto the shared helper is left for a follow-up, since its refusal text and tests are SaveWorkflow's.
 
 ## 10. Open questions
 

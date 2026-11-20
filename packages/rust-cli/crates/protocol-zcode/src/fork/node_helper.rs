@@ -89,6 +89,7 @@ pub(crate) const FORWARDED_METHODS: &[&str] = &[
     // (specs/fork-rust-workflow-engine.md, 4.1).
     super::workflow_compile::COMPILE,
     super::workflow_compile::FORMAT,
+    super::workflow_compile::EVAL_SNIPPET,
 ];
 
 /// Helper notifications relayed to the Host verbatim. Any other notification from the helper is dropped.

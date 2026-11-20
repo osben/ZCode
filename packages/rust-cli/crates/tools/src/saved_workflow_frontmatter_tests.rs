@@ -375,3 +375,81 @@ fn yaml_core_booleans_and_nulls_are_quoted_as_node_quotes_them() {
         );
     }
 }
+
+// Review round (post-merge): round-trip red tests for characters a YAML line reader may fold or reject.
+
+fn description_round_trips(text: &str) -> String {
+    let meta = Meta {
+        description: text.to_owned(),
+        when_to_use: None,
+        args: None,
+    };
+    let written = serialize(&meta, "");
+    let parsed =
+        parse(&written).unwrap_or_else(|e| panic!("{text:?} does not parse: {e:?}\n{written}"));
+    assert_eq!(parsed.meta.description, text, "{written}");
+    written
+}
+
+#[test]
+fn a_line_separator_or_paragraph_separator_round_trips_in_plain_and_quoted_forms() {
+    for text in ["a\u{2028}b", "a\u{2029}b", "a\u{2028}\"b", "a\u{2029}'\"b"] {
+        description_round_trips(text);
+    }
+}
+
+#[test]
+fn nel_with_a_double_quote_is_double_quoted_never_single_quoted() {
+    description_round_trips("a\u{85}b");
+    let written = description_round_trips("a\u{85}\"b");
+    assert_eq!(
+        written,
+        "/* zcode-workflow\ndescription: \"a\u{85}\\\"b\"\n*/\n"
+    );
+}
+
+#[test]
+fn c1_controls_round_trip_and_are_written_as_hex_escapes() {
+    for code in (0x80u32..=0x9f).filter(|c| *c != 0x85) {
+        let c = char::from_u32(code).unwrap();
+        let written = description_round_trips(&format!("a{c}b"));
+        assert!(
+            written.contains(&format!("\\x{code:02X}")),
+            "U+{code:04X} not escaped: {written:?}"
+        );
+        assert!(!written.contains(c), "raw U+{code:04X} in {written:?}");
+        let quoted = description_round_trips(&format!("a{c}\"b"));
+        assert!(
+            quoted.contains(&format!("\\x{code:02X}")),
+            "U+{code:04X} in quotes not escaped: {quoted:?}"
+        );
+    }
+}
+
+/// Review round 2: JavaScript's trim does not remove U+0085, so a NEL-edged marker line is not the marker (Node reads
+/// it as missing), while Rust's `char::is_whitespace` would have removed it.
+#[test]
+fn a_nel_at_the_edge_of_the_marker_line_is_not_trimmed_as_node_trims() {
+    assert!(matches!(
+        parse("\u{85}/* zcode-workflow\ndescription: d\n*/\n"),
+        Err(ParseError::MissingFrontmatter)
+    ));
+    assert!(!starts_with_sentinel("\u{85}/* zcode-workflow\n"));
+    assert!(matches!(
+        parse("/* zcode-workflow\ndescription: d\n*/\u{85}\n"),
+        Err(ParseError::UnterminatedFrontmatter)
+    ));
+    assert!(matches!(
+        parse("/* zcode-workflow\ndescription: d\u{85}\n\u{85}*/\n"),
+        Err(ParseError::UnterminatedFrontmatter)
+    ));
+}
+
+/// Review round 2: ECMAScript WhiteSpace and LineTerminator are the trimmed set: the members Rust does not share (U+FEFF)
+/// are trimmed, and U+0085 is not.
+#[test]
+fn js_trim_removes_ecmascript_white_space_and_line_terminators_only() {
+    use super::frontmatter::js_trim;
+    assert_eq!(js_trim("\u{feff}\t \u{a0}\u{2028}x\u{3000}\n"), "x");
+    assert_eq!(js_trim("\u{85}x\u{85}"), "\u{85}x\u{85}");
+}

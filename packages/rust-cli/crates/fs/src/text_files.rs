@@ -1,9 +1,11 @@
 //! Fork: whole-file text IO for the saved-workflow store (specs/fork-rust-workflow-engine.md, W7-8b). Saved definitions are
 //! small local files that the agent process reads and writes synchronously, as Node does. The IO lives here because
 //! this crate is the local storage entry point; the store's rules live with the tools.
+//!
+//! Private module: the items are re-exported at the crate root (`rust_cli_fs::read_text` and so on).
 
-use std::io;
-use std::path::Path;
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
 
 /// Reads a file as UTF-8 text.
 pub fn read_text(path: &Path) -> io::Result<String> {
@@ -40,7 +42,6 @@ pub fn write_text(path: &Path, text: &str) -> io::Result<()> {
 /// Creates a new file with the text, failing with `AlreadyExists` when the path is taken (the claim is one operation, as
 /// Node's `wx` flag). The parent directory must exist.
 pub fn create_new_text(path: &Path, text: &str) -> io::Result<()> {
-    use std::io::Write;
     let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -49,8 +50,8 @@ pub fn create_new_text(path: &Path, text: &str) -> io::Result<()> {
 }
 
 /// The real path of an existing file or directory, with every symlink resolved. Used to check that a path stays inside a
-/// root: a lexical check alone lets a symlink inside the root lead out of it. Same name as the helper of PR #585.
-pub fn canonicalize_path(path: &Path) -> io::Result<std::path::PathBuf> {
+/// root: a lexical check alone lets a symlink inside the root lead out of it. Fails when the path does not exist.
+pub fn canonicalize_path(path: &Path) -> io::Result<PathBuf> {
     std::fs::canonicalize(path)
 }
 
@@ -59,7 +60,8 @@ pub fn ensure_dir(path: &Path) -> io::Result<()> {
     std::fs::create_dir_all(path)
 }
 
-/// Whether the path is an existing regular file (a missing path or a directory is not).
+/// Whether the path is an existing regular file. `metadata` follows symlinks, so a link to a regular file counts; any
+/// stat error (a missing path, a permission error, a broken link) counts as not-a-file.
 pub fn is_file(path: &Path) -> bool {
     std::fs::metadata(path).is_ok_and(|metadata| metadata.is_file())
 }

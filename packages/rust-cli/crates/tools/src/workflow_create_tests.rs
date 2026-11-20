@@ -37,15 +37,15 @@ mod fs {
     use std::path::Path;
 
     pub fn read_to_string(path: impl AsRef<Path>) -> io::Result<String> {
-        rust_cli_fs::text_files::read_text(path.as_ref())
+        rust_cli_fs::read_text(path.as_ref())
     }
 
     pub fn write(path: impl AsRef<Path>, text: &str) -> io::Result<()> {
-        rust_cli_fs::text_files::write_text(path.as_ref(), text)
+        rust_cli_fs::write_text(path.as_ref(), text)
     }
 
     pub fn exists(path: impl AsRef<Path>) -> bool {
-        rust_cli_fs::text_files::is_file(path.as_ref())
+        rust_cli_fs::is_regular_file(path.as_ref())
     }
 }
 
@@ -1071,7 +1071,7 @@ async fn a_symlink_that_leads_out_of_the_workspace_is_refused_before_it_is_read(
         .join("outside.ts");
     fs::write(&outside, CLEAN).expect("the file outside");
     fs::write(harness.cwd.join("inside.txt"), "x").expect("the workspace");
-    rust_cli_fs::text_files::symlink(&outside, &harness.cwd.join("link.ts")).expect("the symlink");
+    rust_cli_fs::symlink(&outside, &harness.cwd.join("link.ts")).expect("the symlink");
     let input = json!({"path": "link.ts"});
     assert!(
         matches!(

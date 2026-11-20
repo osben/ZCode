@@ -334,10 +334,12 @@ async fn forward_ok(helper: &NodeHelper, method: &str, params: Value) -> Value {
 
 #[test]
 fn forwarded_table_is_the_spec_list() {
-    assert_eq!(FORWARDED_METHODS.len(), 55);
+    assert_eq!(FORWARDED_METHODS.len(), 56);
     // W4: the workflow compile and format are forwarded (specs/fork-rust-workflow-engine.md, 4.1).
     assert!(FORWARDED_METHODS.contains(&super::super::workflow_compile::COMPILE));
     assert!(FORWARDED_METHODS.contains(&super::super::workflow_compile::FORMAT));
+    // W7-8c: the snippet compile is the third workflow helper method; the client sends it through the same link.
+    assert!(FORWARDED_METHODS.contains(&super::super::workflow_compile::EVAL_SNIPPET));
     // F3b(b): the app tool call and its cancel are sent by their own path, never forwarded from the Host.
     assert!(!FORWARDED_METHODS.contains(&"helper/appTools/call"));
     assert!(!FORWARDED_METHODS.contains(&"helper/appTools/cancel"));
