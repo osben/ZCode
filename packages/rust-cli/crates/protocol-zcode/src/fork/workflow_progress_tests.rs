@@ -1,12 +1,15 @@
-//! W7-5e: the production progress port appends Node's event to the parent session and hands the deltas to the Host.
+//! W7-5e: the progress port hands a run's live deltas to the parent session's open stream. It writes no session row: Node
+//! keeps the event in its in-memory store and cold reads replay the journal.
 
 use std::sync::{Arc, Mutex};
 
+use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::workflow_run_progress::WorkflowRunProgressPort;
-use rust_cli_node_store::{MIGRATION_LOCK_WAIT, open_session_database};
 use serde_json::{Value, json};
 
-use super::{ProgressDelivery, WorkflowProgressHost};
+use super::{BridgeDelivery, ProgressDelivery, WorkflowProgressHost};
+use crate::fork::workspace_trust::tests::{fixture_reading, settled};
+use crate::wire::Purpose;
 
 #[derive(Default)]
 struct Recording {
@@ -34,51 +37,14 @@ fn node_payload() -> Value {
     })
 }
 
-/// A session database with one parent session, and the port over it.
-fn port() -> (tempfile::TempDir, WorkflowProgressHost, Arc<Recording>) {
-    let dir = tempfile::tempdir().expect("temp dir");
-    let database = dir.path().join("s.db");
-    {
-        let (conn, _) =
-            open_session_database(&database, MIGRATION_LOCK_WAIT, 1).expect("session database");
-        conn.execute(
-            "insert into session (id, project_id, parent_id, slug, directory, title, version, time_created, time_updated)
-             values ('ses_parent', 'proj', null, 'p', '/work', 'title', '0.0.0', 1, 5)",
-            [],
-        )
-        .expect("parent session");
-    }
-    let recording = Arc::new(Recording::default());
-    let host = WorkflowProgressHost::new(database, recording.clone());
-    (dir, host, recording)
-}
-
-fn stored_rows(dir: &tempfile::TempDir) -> Vec<(String, String)> {
-    let (conn, _) = open_session_database(&dir.path().join("s.db"), MIGRATION_LOCK_WAIT, 2)
-        .expect("session database");
-    let mut query = conn
-        .prepare("select type, data from session_entry where session_id = 'ses_parent' order by id")
-        .expect("query");
-    query
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
-        .expect("rows")
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .expect("collected")
-}
-
 #[test]
-fn the_port_appends_nodes_event_to_the_parent_and_hands_the_deltas_to_the_host() {
-    let (dir, host, recording) = port();
+fn the_port_hands_the_deltas_to_the_parent() {
+    let recording = Arc::new(Recording::default());
+    let host = WorkflowProgressHost::new(recording.clone());
     let delta = json!({"workflowRuns": {"dwfrun-7": {"status": "running"}}});
 
     host.record("ses_parent", &node_payload(), std::slice::from_ref(&delta))
         .expect("recorded");
-
-    let rows = stored_rows(&dir);
-    assert_eq!(rows.len(), 1, "one progress row for the event");
-    assert_eq!(rows[0].0, "dynamic_workflow_run_progress");
-    let data: Value = serde_json::from_str(&rows[0].1).expect("the row's data is JSON");
-    assert_eq!(data, node_payload(), "the row is Node's payload, unchanged");
 
     let calls = recording.calls.lock().expect("calls");
     assert_eq!(calls.len(), 1, "the Host hears the deltas once");
@@ -87,17 +53,54 @@ fn the_port_appends_nodes_event_to_the_parent_and_hands_the_deltas_to_the_host()
 }
 
 #[test]
-fn a_refused_append_is_an_error_and_tells_the_host_nothing() {
-    let (_dir, host, recording) = port();
-    let refused = json!({"sequence": 1, "eventType": "log", "payload": {}});
+fn a_record_with_no_deltas_hands_the_host_nothing() {
+    let recording = Arc::new(Recording::default());
+    let host = WorkflowProgressHost::new(recording.clone());
+    host.record("ses_parent", &node_payload(), &[])
+        .expect("recorded");
+    assert!(recording.calls.lock().expect("calls").is_empty());
+}
 
-    assert!(
-        host.record("ses_parent", &refused, &[json!({"x": 1})])
-            .is_err(),
-        "a payload without a run id is refused"
-    );
-    assert!(
-        recording.calls.lock().expect("calls").is_empty(),
-        "no notification for an event that was not appended"
-    );
+/// The production delivery reaches an open stream: the delta is a frame on the session's subscription, the projection is
+/// unchanged, and a session with no open stream drops its delta without an error.
+#[tokio::test]
+async fn a_live_delta_reaches_the_open_stream_and_an_unopened_session_drops_it() {
+    use tokio::io::AsyncBufReadExt;
+
+    let (_scope, server, reader) = fixture_reading(None, false);
+    let mut lines = tokio::io::BufReader::new(reader).lines();
+    let live = server.live(&SessionId::new("s1")).await.unwrap();
+    live.sink.subscribe("sub-1", "conn-1");
+    live.sink.start("sub-1", Purpose::Online).await;
+    let before = live.sink.snapshot();
+
+    let delivery = BridgeDelivery::new(server.context.clone());
+    let delta = json!({"op": "workflowRuns.progress", "runId": "dwfrun-7"});
+    delivery.deliver("s1", vec![delta.clone()]);
+    delivery.deliver("not-open", vec![json!({"op": "workflowRuns.dropped"})]);
+    settled(&live).await;
+
+    assert_eq!(live.sink.snapshot(), before, "the projection is unchanged");
+    let frame = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let line = lines.next_line().await.unwrap().expect("a line");
+            if line.contains("workflowRuns.progress") {
+                return line;
+            }
+        }
+    })
+    .await
+    .expect("the delta frame is sent");
+    assert!(frame.contains("\"subscriptionId\":\"sub-1\""), "{frame}");
+    assert!(frame.contains("\"kind\":\"deltas\""), "{frame}");
+    let stray =
+        tokio::time::timeout(std::time::Duration::from_millis(200), lines.next_line()).await;
+    match stray {
+        Err(_) => {}
+        Ok(Ok(Some(line))) => assert!(
+            !line.contains("workflowRuns.dropped"),
+            "a session without a stream drops its delta: {line}"
+        ),
+        Ok(_) => {}
+    }
 }

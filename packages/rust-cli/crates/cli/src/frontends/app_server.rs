@@ -272,9 +272,8 @@ async fn serve(
         built.kernel.workflow_residency(),
         opened.paths.database().as_path(),
         opened.workspace.root.as_str(),
-        // Fork (9.34): the run progress goes to the parent session's entry and to its open stream.
+        // Fork (9.34): the run progress goes to the parent session's open stream; the journal is the record.
         Arc::new(rust_cli_protocol_zcode::WorkflowProgressHost::new(
-            opened.paths.database().as_path().to_path_buf(),
             Arc::new(rust_cli_protocol_zcode::BridgeDelivery::new(
                 context.clone(),
             )),

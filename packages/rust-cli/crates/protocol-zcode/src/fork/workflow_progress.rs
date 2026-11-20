@@ -1,12 +1,10 @@
-//! Fork: the production run progress port (specs/fork-rust-workflow-engine.md, 9.34, W7-5e). Node's sink appends each run's
-//! progress to the parent session and the Host hears it; this port does both: the payload becomes the parent's
-//! `dynamic_workflow_run_progress` entry (node-store `record_progress_entry`), and the projection's deltas go to the
-//! parent's open stream, if one is open (the live half of the `workflowRuns` read).
+//! Fork: the run progress port's live half (specs/fork-rust-workflow-engine.md, 9.34, W7-5e). Node's sink appends each
+//! run's progress to the parent session's in-memory event store and the Host hears it. Here the progress is not written
+//! anywhere: the durable record is the run's journal, and cold reads replay it (`v4-bridge` `replayDynamicWorkflowRunEvents`).
+//! The port hands the projection's deltas to the parent session's open stream, if one is open.
 
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use rust_cli_base::sync::LockUnpoisoned;
 use rust_cli_kernel_api::workflow_run_progress::WorkflowRunProgressPort;
 use serde_json::Value;
 
@@ -15,21 +13,14 @@ pub trait ProgressDelivery: Send + Sync {
     fn deliver(&self, parent_session_id: &str, deltas: Vec<Value>);
 }
 
-/// The run progress port over the session database. The connection opens on the first record (the run's owner thread
-/// is blocking), and then stays open for the process.
+/// The run progress port. Its delivery is the only effect: nothing is persisted.
 pub struct WorkflowProgressHost {
-    database: PathBuf,
     delivery: Arc<dyn ProgressDelivery>,
-    conn: Mutex<Option<rusqlite::Connection>>,
 }
 
 impl WorkflowProgressHost {
-    pub fn new(database: PathBuf, delivery: Arc<dyn ProgressDelivery>) -> Self {
-        Self {
-            database,
-            delivery,
-            conn: Mutex::new(None),
-        }
+    pub fn new(delivery: Arc<dyn ProgressDelivery>) -> Self {
+        Self { delivery }
     }
 }
 
@@ -40,37 +31,12 @@ impl WorkflowRunProgressPort for WorkflowProgressHost {
         progress: &Value,
         deltas: &[Value],
     ) -> Result<(), String> {
-        // The append comes first: a refused append tells the Host nothing (Node's sink notifies after its append).
-        {
-            let mut slot = self.conn.lock_unpoisoned();
-            if slot.is_none() {
-                let (conn, _) = rust_cli_node_store::open_session_database(
-                    &self.database,
-                    rust_cli_node_store::MIGRATION_LOCK_WAIT,
-                    now_ms_u64(),
-                )
-                .map_err(|error| format!("the session database did not open: {error}"))?;
-                *slot = Some(conn);
-            }
-            let conn = slot.as_ref().ok_or("the session database is not open")?;
-            rust_cli_node_store::record_progress_entry(
-                conn,
-                parent_session_id,
-                progress,
-                i64::try_from(now_ms_u64()).unwrap_or(i64::MAX),
-            )
-            .map_err(|error| error.to_string())?;
-        }
+        let _ = progress;
         if !deltas.is_empty() {
             self.delivery.deliver(parent_session_id, deltas.to_vec());
         }
         Ok(())
     }
-}
-
-/// The business clock's milliseconds, as the rows stamp them.
-fn now_ms_u64() -> u64 {
-    rust_cli_base::clock::SystemClock::utc().now_ms()
 }
 
 /// The production delivery: the parent session's open stream gets the deltas in its pump, as the helper's plugin UI

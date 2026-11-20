@@ -36,7 +36,6 @@ mod rewind;
 mod rust_entries;
 mod session_deletion;
 mod session_inputs;
-mod session_progress;
 mod session_tree;
 mod state;
 mod subagent_rows;
@@ -55,8 +54,6 @@ pub use workflow_runs::replay::{
 };
 // The live progress path (9.31): the same projection and envelope the replay folds, so a live run and a cold one agree.
 pub use workflow_runs::projection::LiveProjection;
-// The parent session's `dynamic_workflow_run_progress` entry (9.34): the payload Node's sink appends, as one row.
-pub use session_progress::{PROGRESS_ENTRY_TYPE, record_progress as record_progress_entry};
 pub use workflow_runs::{
     Envelope as WorkflowRunEnvelope, Limits as WorkflowRunLimits, PRODUCTION as WORKFLOW_RUN_LIMITS,
 };
