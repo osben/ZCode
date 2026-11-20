@@ -2095,13 +2095,55 @@ The W7-5 brief covers more than one PR. The Node sources are about 160 KB (`dyna
 110. The output display is Node's output object (`name`, `scope`, `path`, `diagnostics`, `ok`, `overwritten` when a file was written). The model text is Node's `response` text. The desktop renderer for SaveWorkflow reads the same object; it has not been checked against a running desktop.
 111. `ListSavedWorkflows` lists the project root and the global root, with shadowing, like Node's undirected list. Node's `listSavedWorkflows` is called with a scope in the hub; that directed list (the global group that shows hidden copies) is not ported.
 112. EvalWorkflowSnippet is not in this PR (see the split above). Its divergences are numbered when it lands.
-113. A `script_path` must resolve inside the workspace (lexical normalization; symlinks are not resolved). Node accepts any path, absolute or escaping. A path outside is refused at the permission decision with "is outside the workspace".
+113. A `script_path` must resolve inside the workspace (lexical normalization, then the real paths: see 119). Node accepts any path, absolute or escaping. A path outside is refused at the permission decision with "is outside the workspace".
 114. The `script_path` advice names `script_path` (Node's text names `path`, which is the output field of this tool).
 115. The `script_path` read moved from input validation to the permission decision, so a refused draft is a permission refusal, not a 400 input refusal. Validation reads nothing from the disk.
 116. The store's IO runs on a blocking thread (`spawn_blocking`); Node's store is synchronous on the event loop.
 117. The fs store helpers are not atomic (as Node's `writeFileSync`). A non-UTF-8 file name is converted lossily and so lists as an unusable file.
 
 **Not done here.** The gate source is still set by no entry point (divergences 55 and 56 of 9.18), and nothing calls `workflow_tools`, so SaveWorkflow and ListSavedWorkflows reach no session. The skill-gate probe is unit-tested on a fixture history only. Divergence 103 must be closed before the gate opens. The move, resolve and argument validation of the saved store belong to W7-8a (CreateWorkflow's saved source).
+
+**Review round (post-merge, PR "fix(workflow): SaveWorkflow review follow-ups (rust)").** Each finding was checked first. Verdicts:
+
+1. Rejected. `parse(serialize(..))` of `a\u{2028}b` and `a\u{2029}b` returns the same text (yaml-rust2 0.13 does not fold them). They stay plain, as Node writes them (divergence 104).
+2. Partly fixed. NEL does not fold either (round trip is green), so there is no `\N`. NEL is no longer single-quoted (the red test showed `'a\u{85}"b'`); it stays raw in double quotes, as Node's golden does.
+3. Fixed. C1 controls other than NEL (U+0080 to U+009F) are not plain-safe and are written as `\xHH` in double quotes (red: raw U+0080). Not re-run against yaml 2.9.1 here; the character class is taken from the review finding.
+4. Fixed. `minLength` is checked in `validate.rs` the way Node's JSON-schema check does. An empty `description`, `whenToUse` or `script_path` is refused, and the message is the `too_small` issue as JSON, with Node's text `Too small: expected string to have >=1 characters`.
+5. Kept as Node has it, one bug fixed. Node's two predicates differ: an inline script is checked with `trimStart().startsWith` (a file with its first non-blank line equal to the marker). Both are kept. The inline check now skips U+FEFF, as JavaScript's `trimStart` does.
+6. Fixed: divergence 119.
+7. Fixed. The `script_path` read (in the decision and in the call) runs on `spawn_blocking`.
+8. Fixed. Every unknown key of an argument declaration is named, quoted and joined with `, ` (zod `strict()`).
+9. Fixed. The pending table evicts its oldest entry only (`PendingTable`).
+10. Fixed. A failing verdict is kept per tool-use id (`Pending::Failed`); the call returns it without a second check.
+11. Rejected. Node's `list-saved-workflows.ts` escapes only the `name` and `path` attributes (`escapeAttribute`). The description, `whenToUse`, argument text and `reason` are written raw there, and Rust matches. No divergence.
+12. Fixed: divergence 118.
+13. Fixed. The serde cause is in the contract message.
+14. Fixed. `workflow_child::Diagnostic` is now an alias of `workflow_analysis::WorkflowDiagnostic`.
+15. Fixed. `text_files` is private and re-exported at the fs crate root: `read_text`, `write_text`, `list_file_names`, `canonicalize_path`, `symlink_to` (unix), and `is_regular_file` (the sync `is_file`; the root `is_file` is the async one). The docs say `metadata` follows symlinks and any stat error is not-a-file. The non-UTF-8 listing test is gated off macOS, because APFS refuses such names (EILSEQ).
+
+**Divergence 118.** Windows device names are not usable workflow names: the stem before the first dot, compared case-insensitively to `CON`, `PRN`, `AUX`, `NUL`, `COM1` to `COM9` and `LPT1` to `LPT9`, is refused with or without an extension. Node accepts them, and a file such as `con.dwf.ts` cannot be written on Windows.
+**Divergence 119.** A `script_path` is also compared after symlinks are resolved (canonical paths of the file and of the workspace). A link inside the workspace to a file outside it is refused. This extends divergence 113, which was lexical only. Node has no such check. The guarantee covers the named link: the file is read at the real path that was checked, so a link swapped in at the named path after the check cannot redirect the read. It does not cover a writer inside the workspace that replaces the real file, or one of its ancestor directories, with a link out of the workspace between the check and the read (path-based check then read, a residual TOCTOU window). Closing it needs a descriptor-pinned open (open, then verify the descriptor's canonical path). Not done; recorded here as the known residual.
+
+**Review round 2 (ocr on PR #585, head 80f93030c, seven findings; merged with origin/fork 89a0af22e, CreateWorkflow).** Verdicts:
+
+- H1. Fixed. The file is read at the real path that was checked (`Contained::real`); the named path is kept for messages only. A canonicalization failure refuses (`Refusal::Unresolved`) instead of falling back to the lexical path. The check is one shared helper, `workspace_path::contain`, used by SaveWorkflow's `script_path` and CreateWorkflow's `path`; each tool keeps its own refusal wording. Test: a dangling link out of the workspace is unresolved, not accepted. The swap between check and read is not reproduced by a test.
+- M2. Fixed. `js_trim` is ECMAScript WhiteSpace plus LineTerminator (`is_js_space`), not Rust's `is_whitespace`, which includes U+0085. Test: a NEL at the marker line's edge is not trimmed.
+- M3. Fixed. An enum violation is `invalid_value` (Node's `invalid_value` issue, with `values`, `path` and the `Invalid option: expected one of ...` text), and a missing required property whose schema has an enum is `invalid_value` too. All non-parameter issues serialize into one JSON array in schema order. Ported Node's "preserves schema property order across present constraints and missing enums" and "keeps normalized enum type mismatches on the invalid-value JSON fallback" cases.
+- L4. Fixed. The inline marker check uses the same `js_trim_start` as the codec. Test: a NEL before the marker is not a block.
+- L5. Fixed. The serialization has an `expect` with the invariant (`#[expect(clippy::expect_used)]`, as the crate does elsewhere).
+- L6. Fixed. One `MALFORMED_REPLY` constant feeds both messages.
+- L7. Fixed. The stem is `split_once('.')`, with no dead fallback.
+
+The `text_files` module stays private and re-exported at the fs root; the merge took origin's `create_new_text`, `ensure_dir` and `symlink`, and dropped the duplicate `canonicalize_path` and `symlink_to`.
+
+**Review round 3 (ocr on PR #585, head dbaf50529; six findings, verdicts per finding).**
+
+- Containment doc (medium). Fixed by qualifying the guarantee, not by a pinned open: the module doc and divergence 119 now state that a swap of `real` or of an ancestor directory between the check and the read is not covered. Pinned open is the follow-up if the residual matters.
+- Single-value enum (low). Fixed. Node's `createInvalidValueIssue` says `Invalid input: expected "x"` for one allowed value; the port said `Invalid option: expected one of "x"`. Tests `a_single_value_enum_says_expected_not_one_of` and `a_missing_single_value_enum_says_expected_not_one_of` were red on the old code.
+- Enum then `minLength` (low). Fixed. Node's `validateNode` continues after an enum failure: only a type mismatch returns, and the string constraints run when the type matches. The port returned after the enum, so `enum` plus `minLength` now reports `invalid_value` then `too_small`, as Node does. Test `an_enum_failure_still_reports_a_min_length_failure_on_the_same_string` was red on the old code. The enum-plus-type-mismatch case still reports only `invalid_value`.
+- Duplicate `normalize` (low). Fixed. The local copy is deleted; `contain` uses `rust_cli_base::path::normalize`. The contract for input is documented: absolute, or relative to `cwd` and joined before normalizing, so a leading `..` is accepted only when it lands back inside the workspace (test `a_leading_parent_segment_is_resolved_against_the_workspace_before_the_check`, green on the old code too).
+- Case-sensitive prefix on Windows (low). Fixed. The lexical prefix check folds ASCII case under `cfg!(windows)` (`lexically_within`). The canonical comparison already agrees on case on Windows, since canonical paths carry the on-disk case. Red: `the_lexical_prefix_check_can_fold_ascii_case` failed on the old stub. The Windows path itself is not run here (macOS only).
+- Coverage (low). Added the absolute-path-inside case, a workspace root that is a symlink, and a link inside the workspace to a file inside it (with `real` == the resolved target). All three pass on the old code, so they pin existing behaviour rather than fix it.
 
 ### 9.25 W7-5a-3: runtime workflow run service (as built, part)
 
