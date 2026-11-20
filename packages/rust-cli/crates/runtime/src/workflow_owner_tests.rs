@@ -5,11 +5,26 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use rust_cli_kernel_api::testing::FakeChildRunner;
-use rust_cli_kernel_api::workflow_child::{Completion, LaunchInput, Outcome};
+use async_trait::async_trait;
+use rust_cli_agents::actor_turn::{ActorRun, ActorTurnEnd, ActorTurnStats};
+use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
+use rust_cli_kernel_api::ids::{EnvironmentId, SessionId};
+use rust_cli_kernel_api::model::ModelSelection;
+use rust_cli_kernel_api::permission::PermissionMode;
+use rust_cli_kernel_api::testing::{FakeChildRunner, FixedClock};
+use rust_cli_kernel_api::workflow_child::{
+    ChildHandler, ChildRequest, Completion, CreateActor, LaunchInput, Outcome, WireError,
+};
 use rust_cli_node_store::dwf::{self, RunStatus};
 use rust_cli_workflow::engine::{AskSpec, EngineConfig};
+use rust_cli_workflow::event::LaunchFields;
 use rust_cli_workflow::residency::SessionResidency;
+use std::sync::Mutex;
+use tokio_util::sync::CancellationToken;
+
+use super::{ActorBindingsPort, ParentBindings, bound_owner_factory};
+use crate::actor_turns::ActorAgents;
+use crate::workflow_assembly::ActorSessionRelease;
 use rust_cli_workflow::run_concurrency::{ConcurrencyListener, RunConcurrency};
 use serde_json::{Map, json};
 
@@ -184,4 +199,254 @@ fn the_unwired_turn_side_refuses_its_turns_and_its_releases() {
         .release_actor_session(&rust_cli_kernel_api::ids::SessionId::new("ses_a"))
         .expect_err("a release is refused");
     assert!(error.contains("not wired"), "{error}");
+}
+
+// ---- W7-5d (9.33): a launched run's actor turns carry the parent's bindings ----
+
+/// What a scripted turn saw of its run: the bindings the turn side passed to the agents.
+#[derive(Debug, Clone, PartialEq)]
+struct SeenRun {
+    parent: String,
+    selection: ModelSelection,
+    mode: PermissionMode,
+    workspace_root: String,
+    persona: String,
+    admission_run: Option<String>,
+    description: String,
+}
+
+/// The agents a launched run's turns reach. It records each turn's bindings and answers with `reply`.
+struct RecordingAgents {
+    seen: Mutex<Vec<SeenRun>>,
+    reply: String,
+}
+
+impl RecordingAgents {
+    fn replying(reply: &str) -> Arc<Self> {
+        Arc::new(Self {
+            seen: Mutex::new(Vec::new()),
+            reply: reply.to_owned(),
+        })
+    }
+}
+
+#[async_trait]
+impl ActorAgents for RecordingAgents {
+    async fn run_actor_turn(
+        &self,
+        run: ActorRun,
+        _prompt: &str,
+        _cancel: CancellationToken,
+    ) -> ActorTurnEnd {
+        self.seen.lock().expect("seen").push(SeenRun {
+            parent: run.parent.as_str().to_owned(),
+            selection: run.selection.clone(),
+            mode: run.mode,
+            workspace_root: run.workspace.root.as_str().to_owned(),
+            persona: run.persona_prompt.clone(),
+            admission_run: run.admission_run.as_ref().map(|id| id.as_str().to_owned()),
+            description: run.interaction_description.clone(),
+        });
+        ActorTurnEnd::Text(self.reply.clone())
+    }
+
+    fn turn_messages(&self, _child: &SessionId) -> Option<u64> {
+        Some(0)
+    }
+
+    fn actor_turn_stats(&self, _child: &SessionId) -> Option<ActorTurnStats> {
+        None
+    }
+}
+
+impl ActorSessionRelease for RecordingAgents {
+    fn release_actor_session(&self, _child: &SessionId) -> std::result::Result<(), String> {
+        Ok(())
+    }
+}
+
+/// The parent session `ses_p` has this selection and the app's workspace; any other parent is unknown.
+struct ParentFixture {
+    selection: Option<ModelSelection>,
+}
+
+impl ActorBindingsPort for ParentFixture {
+    fn parent_bindings(&self, parent: &str) -> Option<ParentBindings> {
+        (parent == "ses_p").then(|| ParentBindings {
+            selection: self.selection.clone(),
+            workspace: WorkspaceRef {
+                environment: EnvironmentId::new("local"),
+                root: EnvPath::new("/work"),
+            },
+            interactions: None,
+        })
+    }
+}
+
+fn parent_selection() -> ModelSelection {
+    ModelSelection::new("account:bigmodel-team-coding-plan", "glm-5.3")
+}
+
+/// A run service over the bound factory: the parent's bindings come from `selection`, and the turns reach `agents`.
+fn bound_service(
+    path: std::path::PathBuf,
+    selection: Option<ModelSelection>,
+    agents: Arc<RecordingAgents>,
+) -> (
+    WorkflowRunService,
+    Arc<FakeChildRunner>,
+    Arc<SessionResidency>,
+) {
+    let runner = Arc::new(FakeChildRunner::new());
+    let residency = Arc::new(SessionResidency::new());
+    let factory = bound_owner_factory(
+        stores(path),
+        agents,
+        tokio::runtime::Handle::current(),
+        Arc::new(ParentFixture { selection }),
+        Arc::new(FixedClock(1_700_000_000_000)),
+    );
+    let service = WorkflowRunService::new(
+        residency.clone(),
+        Arc::new(NoGovernor),
+        runner.clone(),
+        factory,
+    );
+    (service, runner, residency)
+}
+
+/// The launch config of a run from `ses_p`, with the subagent permission mode the launch recorded.
+fn bound_config(run_id: &str) -> EngineConfig {
+    let mut config = config(run_id, Some("ses_p"));
+    config.launch = Some(LaunchFields {
+        subagent_permission_mode: Some("guarded".to_owned()),
+        ..Default::default()
+    });
+    config
+}
+
+/// The child's `create-actor`, then one `ask` on that actor, as the child sends them. Returns the ask's result.
+async fn child_asks_once(
+    handler: Arc<dyn ChildHandler>,
+) -> std::result::Result<serde_json::Value, WireError> {
+    let create: CreateActor = serde_json::from_value(json!({
+        "localId": "a1",
+        "siteId": "plain",
+        "name": "Ada",
+        "persona": {"name": "Ada", "system": "Be terse."},
+    }))
+    .expect("create-actor");
+    let engine_id = handler
+        .create_actor(&create)
+        .await
+        .expect("the actor is created");
+    let ask: ChildRequest = serde_json::from_value(json!({
+        "id": "r1",
+        "type": "ask",
+        "siteId": "plain",
+        "actor": "a1",
+        "prompt": "do it",
+    }))
+    .expect("ask");
+    handler.request(ask, Some(engine_id)).await
+}
+
+/// 9.33: a launched run's actor completes a turn under the parent's model and permission mode, with the parent's
+/// workspace, the persona's system prompt and the run's admission. The scripted agents see those bindings.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_launched_run_actor_turn_runs_under_the_parent_model_and_permission_mode() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = database(dir.path());
+    let agents = RecordingAgents::replying("done");
+    let (service, runner, residency) =
+        bound_service(path, Some(parent_selection()), agents.clone());
+
+    service
+        .launch(input("wf_1"), bound_config("wf_1"))
+        .await
+        .expect("launched");
+    let answer = child_asks_once(runner.launches()[0].handler.clone()).await;
+    assert!(answer.is_ok(), "the actor's turn completes: {answer:?}");
+
+    let seen = agents.seen.lock().expect("seen").clone();
+    assert_eq!(seen.len(), 1, "the turn reached the agents once");
+    let turn = &seen[0];
+    assert_eq!(turn.parent, "ses_p");
+    assert_eq!(turn.selection, parent_selection(), "the parent's model");
+    assert_eq!(
+        turn.mode,
+        PermissionMode::Guarded,
+        "the recorded permission mode"
+    );
+    assert_eq!(turn.workspace_root, "/work", "the parent's workspace");
+    assert_eq!(turn.persona, "Be terse.", "the persona's system prompt");
+    assert_eq!(
+        turn.admission_run.as_deref(),
+        Some("wf_1"),
+        "admitted under the run"
+    );
+    assert!(
+        turn.description.starts_with("Ada ("),
+        "{}",
+        turn.description
+    );
+
+    runner.finish(
+        0,
+        Outcome::Completed(Completion {
+            ok: true,
+            value: Some(json!("done")),
+            error: None,
+        }),
+    );
+    wait_until("the run to settle", || service.run_count() == 0).await;
+    assert_eq!(
+        residency.live_runs("ses_p"),
+        0,
+        "the settled run releases its parent"
+    );
+    let report = service.close().await;
+    assert!(report.stuck.is_empty());
+    assert!(
+        report.close_failures.is_empty(),
+        "{:?}",
+        report.close_failures
+    );
+}
+
+/// 9.33 refusal, as Node refuses it: a parent with no model selection gives its children none, so the actor's turn is
+/// refused at its ask, and the agents never see the turn. The run itself is not refused at launch.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_actor_whose_parent_has_no_model_selection_is_refused_at_its_ask() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = database(dir.path());
+    let agents = RecordingAgents::replying("done");
+    let (service, runner, _residency) = bound_service(path, None, agents.clone());
+
+    service
+        .launch(input("wf_2"), bound_config("wf_2"))
+        .await
+        .expect("launched");
+    let answer = child_asks_once(runner.launches()[0].handler.clone()).await;
+    let error = answer.expect_err("the ask is refused");
+    assert!(
+        error.message.contains("model selection"),
+        "the refusal names the missing selection: {}",
+        error.message
+    );
+    assert!(
+        agents.seen.lock().expect("seen").is_empty(),
+        "no turn reached the agents"
+    );
+
+    runner.finish(
+        0,
+        Outcome::Completed(Completion {
+            ok: true,
+            value: None,
+            error: None,
+        }),
+    );
+    wait_until("the run to settle", || service.run_count() == 0).await;
+    let _ = service.close().await;
 }

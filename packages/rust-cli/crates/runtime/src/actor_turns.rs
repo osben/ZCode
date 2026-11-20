@@ -17,8 +17,9 @@
 //! The workflow does not pass a persona per turn, so a runner serves one persona. Each actor gets its own child session.
 //! The interaction description (the origin of its asks) comes with each turn, as the workflow passes it.
 
-use std::sync::Arc;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -147,12 +148,36 @@ impl ActorRunBase {
     }
 }
 
+/// The persona system prompt of each child session of a run (9.33). The owner's session factory records it when the
+/// actor's session is created, and each turn of that session reads it. One map is shared by a run's sessions.
+#[derive(Clone, Default)]
+pub struct PersonaPrompts(Arc<Mutex<HashMap<String, String>>>);
+
+impl PersonaPrompts {
+    pub fn record(&self, session: &str, prompt: String) {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(session.to_owned(), prompt);
+    }
+
+    pub fn get(&self, session: &str) -> Option<String> {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(session)
+            .cloned()
+    }
+}
+
 /// The workflow's turn runner over the agents crate.
 pub struct AgentTurnRunner<A: ActorAgents> {
     agents: Arc<A>,
     handle: Handle,
     base: ActorRunBase,
     mailbox: ActorHandle,
+    /// The per-session persona prompts of a run (9.33). None: every turn takes `base.persona_prompt`.
+    personas: Option<PersonaPrompts>,
 }
 
 impl<A: ActorAgents> AgentTurnRunner<A> {
@@ -164,7 +189,15 @@ impl<A: ActorAgents> AgentTurnRunner<A> {
             handle,
             base,
             mailbox,
+            personas: None,
         }
+    }
+
+    /// Takes each turn's persona prompt from the session's record (9.33) instead of the base's. A session with no record
+    /// keeps the base's prompt.
+    pub fn with_personas(mut self, personas: PersonaPrompts) -> Self {
+        self.personas = Some(personas);
+        self
     }
 }
 
@@ -292,7 +325,11 @@ impl<A: ActorAgents> TurnRunner for AgentTurnRunner<A> {
             parent: self.base.parent.clone(),
             interaction_description: interaction.to_owned(),
             interactions: self.base.interactions.clone(),
-            persona_prompt: self.base.persona_prompt.clone(),
+            persona_prompt: self
+                .personas
+                .as_ref()
+                .and_then(|personas| personas.get(session))
+                .unwrap_or_else(|| self.base.persona_prompt.clone()),
             workspace: self.base.workspace.clone(),
             selection: self.base.selection.clone(),
             mode: self.base.mode,

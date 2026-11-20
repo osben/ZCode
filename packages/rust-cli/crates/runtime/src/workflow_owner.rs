@@ -17,13 +17,23 @@ use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_node_store::{MIGRATION_LOCK_WAIT, open_session_database};
 use rust_cli_workflow::actor_sessions::NodeActorSessions;
 use rust_cli_workflow::actor_turns::{TurnInput, TurnRunner};
-use rust_cli_workflow::driver_owner::ActorDriverOwner;
-use rust_cli_workflow::engine::EngineConfig;
+use rust_cli_workflow::driver_owner::{ActorDriverOwner, ActorSessionRequest, ActorSessions};
+use rust_cli_workflow::engine::{AskMessage, EngineConfig};
 use rust_cli_workflow::journal_dwf::DwfJournal;
+use rust_cli_workflow::model::Ref;
 use rust_cli_workflow::model_failure::TurnFailure;
+use serde_json::Value;
 
+use crate::actor_turns::{
+    ActorAgents, ActorRunBase, AgentTurnRunner, PersonaPrompts, actor_permission_mode,
+};
 use crate::workflow_assembly::{ActorSessionRelease, actor_turns};
 use crate::workflow_run::{Hosted, HostedOwner, OwnerFactory};
+use rust_cli_kernel_api::clock::Clock;
+use rust_cli_kernel_api::env::WorkspaceRef;
+use rust_cli_kernel_api::model::ModelSelection;
+use rust_cli_kernel_api::orchestration::Interactions;
+use rust_cli_kernel_api::permission::PermissionMode;
 
 /// The text of a refused turn or release. The owner reports it as the ask's failure, so a run says why it stopped.
 const NOT_WIRED: &str = "the workflow actor's agent bindings are not wired in this build (specs/fork-rust-workflow-engine.md, 9.30)";
@@ -89,6 +99,170 @@ pub fn production_owner_factory<R: ActorSessionRelease>(
             stores.clock,
             turns,
         );
+        let journal = DwfJournal::new(journal_conn, stores.clock);
+        let owner = ActorDriverOwner::new(config, journal, sessions)?;
+        Ok(Box::new(Hosted::new(owner, mailbox)) as Box<dyn HostedOwner>)
+    })
+}
+
+/// What a parent session gives the turns of the runs it launches (9.33, Node `createActorRuntime`'s bindings): the
+/// model selection the child inherits, the workspace, and the parent's interactions channel.
+pub struct ParentBindings {
+    /// The parent's current model selection. None when the parent has none: a child's turn is refused then (Node
+    /// `requireActorModelSelection`).
+    pub selection: Option<ModelSelection>,
+    pub workspace: WorkspaceRef,
+    pub interactions: Option<Arc<dyn Interactions>>,
+}
+
+/// Reads a parent session's bindings at launch. The composition implements it over the session store.
+pub trait ActorBindingsPort: Send + Sync + 'static {
+    /// The bindings of `parent`, or None when the session is not known (the launch is then refused).
+    fn parent_bindings(&self, parent: &str) -> Option<ParentBindings>;
+}
+
+/// The text of a turn refused because the parent has no model selection to inherit (Node `requireActorModelSelection`).
+const NO_SELECTION: &str =
+    "the actor's session has no model selection: the parent session has none for it to inherit";
+
+/// The turn side of a child whose parent has no model selection: every turn is refused, as Node's runtime factory
+/// refuses to build the actor's runtime. The run itself goes on.
+pub struct NoSelectionTurns;
+
+impl TurnRunner for NoSelectionTurns {
+    fn run_turn(
+        &self,
+        _session: &str,
+        _interaction: &str,
+        _turn: &TurnInput,
+        _cancel: &AtomicBool,
+    ) -> std::result::Result<String, TurnFailure> {
+        Err(TurnFailure::plain(NO_SELECTION))
+    }
+}
+
+/// Records each created session's persona system prompt, then forwards every call. The turn side reads the prompt
+/// per session, so a run with several personas gives each actor its own (9.33).
+struct PersonaRecording<S> {
+    inner: S,
+    personas: PersonaPrompts,
+}
+
+impl<S: ActorSessions> ActorSessions for PersonaRecording<S> {
+    fn create_session(&mut self, request: &ActorSessionRequest) -> Result<String> {
+        let session = self.inner.create_session(request)?;
+        let prompt = request
+            .persona
+            .get("system")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        self.personas.record(&session, prompt.to_owned());
+        Ok(session)
+    }
+
+    fn start_turn(
+        &mut self,
+        session: &str,
+        instance: &Ref,
+        message: &AskMessage,
+        input: &TurnInput,
+        interaction: &str,
+    ) -> Result<()> {
+        self.inner
+            .start_turn(session, instance, message, input, interaction)
+    }
+
+    fn cancel_turn(&mut self, session: &str, instance: &Ref) -> Result<()> {
+        self.inner.cancel_turn(session, instance)
+    }
+
+    fn reject_parked(&mut self, session: &str, qid: &str) -> Result<()> {
+        self.inner.reject_parked(session, qid)
+    }
+
+    fn deliver_answer(&mut self, session: &str, qid: &str, answer: &str) -> Result<()> {
+        self.inner.deliver_answer(session, qid, answer)
+    }
+
+    fn close_session(&mut self, session: &str) -> Result<()> {
+        self.inner.close_session(session)
+    }
+
+    fn take_close_failures(&mut self) -> Vec<(String, String)> {
+        self.inner.take_close_failures()
+    }
+}
+
+/// The permission mode a run's actors use: the mode the launch recorded (Node `subagentPermissionMode`), never the
+/// parent's current mode. A launch that recorded none is YOLO, as Node reads an absent value (`actor_permission_mode`).
+fn recorded_mode(config: &EngineConfig) -> PermissionMode {
+    let recorded = config
+        .launch
+        .as_ref()
+        .and_then(|launch| launch.subagent_permission_mode.clone())
+        .map(Value::String);
+    actor_permission_mode(recorded.as_ref())
+}
+
+/// The owner factory of a run whose actor turns run on the agents (9.33). Each launch reads its parent's bindings, then
+/// builds the turn side over them: the parent's model selection, workspace and interactions, the run's recorded
+/// permission mode, and the persona of each actor. The session release is the agents'.
+///
+/// A parent the bindings port does not know refuses the launch (its owner is not built). A parent with no model
+/// selection starts the run, and its actors' turns are refused at their asks (`NoSelectionTurns`).
+pub fn bound_owner_factory<A: ActorAgents + ActorSessionRelease>(
+    stores: OwnerStores,
+    agents: Arc<A>,
+    handle: tokio::runtime::Handle,
+    bindings: Arc<dyn ActorBindingsPort>,
+    clock: Arc<dyn Clock>,
+) -> OwnerFactory {
+    Arc::new(move |config: EngineConfig, mailbox, actor_handle| {
+        let parent = config
+            .parent_session_id
+            .clone()
+            .ok_or_else(|| anyhow!("a run without a parent session has no bindings"))?;
+        let found = bindings.parent_bindings(&parent).ok_or_else(|| {
+            anyhow!("the parent session {parent} is not known: its bindings are not read")
+        })?;
+        let personas = PersonaPrompts::default();
+        let turns: Arc<dyn TurnRunner> = match found.selection {
+            Some(selection) => {
+                let base = ActorRunBase {
+                    parent: SessionId::new(&parent),
+                    workspace: found.workspace,
+                    selection,
+                    mode: recorded_mode(&config),
+                    persona_prompt: String::new(),
+                    interactions: found.interactions,
+                    clock: clock.clone(),
+                    admission_run: None,
+                }
+                .for_run(&config.run_id);
+                Arc::new(
+                    AgentTurnRunner::new(
+                        agents.clone(),
+                        handle.clone(),
+                        base,
+                        actor_handle.clone(),
+                    )
+                    .with_personas(personas.clone()),
+                )
+            }
+            None => Arc::new(NoSelectionTurns),
+        };
+        let journal_conn = open(&stores)?;
+        let session_conn = open(&stores)?;
+        let sessions = PersonaRecording {
+            inner: NodeActorSessions::new(
+                session_conn,
+                &stores.directory,
+                &stores.version,
+                stores.clock,
+                actor_turns(turns, actor_handle, agents.clone()),
+            ),
+            personas,
+        };
         let journal = DwfJournal::new(journal_conn, stores.clock);
         let owner = ActorDriverOwner::new(config, journal, sessions)?;
         Ok(Box::new(Hosted::new(owner, mailbox)) as Box<dyn HostedOwner>)
