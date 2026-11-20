@@ -2281,6 +2281,27 @@ behind it (W7-5), and the gate (W9). `EvalWorkflowSnippet` is in the other agent
 **Not verified.** Whether the app stores the whole-tool suggestion (the "always allow in this session" option) as a session
 rule. The tool sends the suggestion; the handling of it in the app is not checked here.
 
+**Review round (ocr on PR #583, head 7784b3ca4).** Verdicts, one per finding:
+
+1. Accepted. `allow_session()` is true, so the pipeline offers "Always allow in this session" (`session_allow`), and the
+   session actor's grant then answers the next ask of the tool without a prompt (`turn_interact.rs`). The pipeline test
+   `a_create_workflow_ask_offers_the_session_option` checks the offer; `session_allow_tests.rs` checks the skip.
+2. Accepted. A `path` is checked after symlinks are resolved (`path_in_workspace`), and the file is read from the real
+   path that was checked. `rust_cli_fs::text_files::canonicalize_path` did not exist on origin/fork, so it is added here
+   (same name as #585) and `symlink` (Unix, tests) too. Reconcile with #585 at merge. SaveWorkflow's `script_path` has the
+   same lexical-only check; it is not changed here.
+3. Accepted. `resolve` runs on the blocking pool (`resolve_off_thread`), including the saved-list refusal.
+4. Rejected. Node's `describeValue` is `` `a ${typeof value}` `` (`saved-args.ts`), so an object is "a object". The
+   regression test `a_type_mismatch_names_an_object_as_node_does` keeps it.
+5. Accepted. The table evicts its oldest decision only (FIFO, `Approvals`), and a taken or refused decision leaves
+   the table at once (`forget` on a refused source or checker).
+6. Accepted. An unparsable `saved.scope` is refused by `resolve_saved` too, not read as "either scope".
+7. Rejected. The import is not unused: `PolicyGate::decide` is a trait method, and removing the import fails to
+   compile. Clippy `--all-targets` is clean with it.
+8. Accepted. `path: ""` is refused by the schema, as the contract's `minLength: 1`.
+9. Accepted. `Origin::Saved` keeps the saved name; both messages print it, and the draft and run label keep the run label.
+10. Accepted as tests. `ensure_dir` and the missing-parent NotFound already behaved so; the tests pass at once.
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.

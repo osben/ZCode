@@ -7,12 +7,12 @@
 //! asks when it checks. The bytes asked about are kept for the call, which writes the draft, and submits the run through
 //! the run port when one is wired. A script that does not check gets its diagnostics in file lines, with no run.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use rust_cli_fs::text_files::{create_new_text, ensure_dir, read_text};
+use rust_cli_fs::text_files::{canonicalize_path, create_new_text, ensure_dir, read_text};
 use rust_cli_kernel_api::ids::ToolUseId;
 use rust_cli_kernel_api::permission::{PermissionDecision, PermissionRule};
 use rust_cli_kernel_api::tool::{
@@ -65,7 +65,7 @@ const ARGS_WITHOUT_PATH: &str = "`args` belongs to the `path` source: it carries
 
 /// The input (Node `CreateWorkflowInputSchema`, as the model sends it). `saved.path` and the other resolved fields are
 /// filled in Node's `resolveInput`; they are not model input, so they are not accepted here.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CreateInput {
     #[serde(default)]
@@ -84,7 +84,7 @@ struct CreateInput {
     subagent_model: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SavedInput {
     name: String,
@@ -102,8 +102,12 @@ struct SavedInput {
 enum Origin {
     /// Inline text: a draft named after the run (or `workflow`).
     Inline,
-    /// A saved definition: a working copy of the file as read, named after the run.
-    Saved { file_text: String, path: PathBuf },
+    /// A saved definition: a working copy of the file as read. `name` is the saved name (the run label may differ).
+    Saved {
+        name: String,
+        file_text: String,
+        path: PathBuf,
+    },
     /// A file the model named: the file is the working copy.
     Path { absolute: PathBuf },
 }
@@ -130,12 +134,19 @@ struct Prepared {
     analysis: WorkflowAnalysis,
 }
 
+/// The kept decisions. A full table evicts its oldest entry (never the others), and a taken entry leaves at once.
+#[derive(Default)]
+struct Approvals {
+    by_id: HashMap<ToolUseId, Prepared>,
+    order: VecDeque<ToolUseId>,
+}
+
 pub struct CreateWorkflowTool {
     contract: &'static Contract,
     analyzer: Arc<dyn WorkflowAnalyzer>,
     run_port: Option<Arc<dyn DynamicWorkflowRunPort>>,
     home: PathBuf,
-    approvals: Mutex<HashMap<ToolUseId, Prepared>>,
+    approvals: Mutex<Approvals>,
 }
 
 impl CreateWorkflowTool {
@@ -149,83 +160,119 @@ impl CreateWorkflowTool {
             analyzer,
             run_port,
             home,
-            approvals: Mutex::new(HashMap::new()),
+            approvals: Mutex::new(Approvals::default()),
         }
     }
 
-    fn remember(&self, tool_use: ToolUseId, prepared: Prepared) {
-        let mut approvals = self
-            .approvals
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if approvals.len() >= APPROVAL_CAP {
-            approvals.clear();
-        }
-        approvals.insert(tool_use, prepared);
-    }
-
-    fn take_approval(&self, tool_use: &ToolUseId) -> Option<Prepared> {
+    fn approvals(&self) -> std::sync::MutexGuard<'_, Approvals> {
         self.approvals
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .remove(tool_use)
     }
 
-    /// Node `resolveInput`: the script the call runs, read once. A refusal is returned as its model-facing message.
-    fn resolve(&self, input: &CreateInput, cwd: &Path) -> Result<Resolved, String> {
-        if let Some(path) = &input.path {
-            return resolve_path(input, path, cwd);
+    fn remember(&self, tool_use: ToolUseId, prepared: Prepared) {
+        let mut approvals = self.approvals();
+        if approvals.by_id.insert(tool_use.clone(), prepared).is_none() {
+            approvals.order.push_back(tool_use);
         }
-        if let Some(saved) = &input.saved {
-            return self.resolve_saved(input, saved, cwd);
+        while approvals.order.len() > APPROVAL_CAP {
+            if let Some(oldest) = approvals.order.pop_front() {
+                approvals.by_id.remove(&oldest);
+            }
         }
-        Ok(Resolved {
-            script: input.script.clone().unwrap_or_default(),
-            name: input.name.clone(),
-            args: None,
-            origin: Origin::Inline,
-            body_offset: 0,
-        })
     }
 
-    fn resolve_saved(
+    fn take_approval(&self, tool_use: &ToolUseId) -> Option<Prepared> {
+        let mut approvals = self.approvals();
+        let taken = approvals.by_id.remove(tool_use)?;
+        approvals.order.retain(|id| id != tool_use);
+        Some(taken)
+    }
+
+    /// Drops a decision that will not reach its call (a refused source or checker).
+    fn forget(&self, tool_use: &ToolUseId) {
+        drop(self.take_approval(tool_use));
+    }
+
+    /// `resolve`, off the async executor: it reads the disk (a saved definition, a `path` file, the saved list).
+    async fn resolve_off_thread(
         &self,
         input: &CreateInput,
-        saved: &SavedInput,
         cwd: &Path,
     ) -> Result<Resolved, String> {
-        let store = Store::new(cwd, &self.home);
-        let scope = saved.scope.as_deref().and_then(Scope::parse);
-        let found = store
-            .resolve(&saved.name, scope)
-            .map_err(|refusal| describe_refusal(&saved.name, refusal, &store, scope))?;
-        let provided = args_object(saved.args.as_ref())?;
-        let declared = found.meta.args.as_deref().unwrap_or(&[]);
-        let args = validate_args(declared, &provided).map_err(|errors| {
-            let mut lines = vec![format!(
-                "The arguments for saved workflow '{}' are not valid:",
-                found.name
-            )];
-            lines.extend(errors.iter().map(|error| format!("- {error}")));
-            lines.push(String::new());
-            lines.push(describe_declaration(
-                &format!("'{}'", found.name),
-                found.meta.args.as_deref(),
-            ));
-            lines.join("\n")
-        })?;
-        Ok(Resolved {
-            script: found.script.clone(),
-            name: Some(input.name.clone().unwrap_or_else(|| found.name.clone())),
-            args: Some(args),
-            origin: Origin::Saved {
-                file_text: found.source.clone(),
-                path: found.path.clone(),
-            },
-            body_offset: found.body_line_offset,
-        })
+        let home = self.home.clone();
+        let input = input.clone();
+        let cwd = cwd.to_path_buf();
+        tokio::task::spawn_blocking(move || resolve(&home, &input, &cwd))
+            .await
+            .unwrap_or_else(|error| {
+                Err(format!("CreateWorkflow could not read its script: {error}"))
+            })
     }
+}
 
+/// Node `resolveInput`: the script the call runs, read once. A refusal is returned as its model-facing message.
+fn resolve(home: &Path, input: &CreateInput, cwd: &Path) -> Result<Resolved, String> {
+    if let Some(path) = &input.path {
+        return resolve_path(input, path, cwd);
+    }
+    if let Some(saved) = &input.saved {
+        return resolve_saved(home, input, saved, cwd);
+    }
+    Ok(Resolved {
+        script: input.script.clone().unwrap_or_default(),
+        name: input.name.clone(),
+        args: None,
+        origin: Origin::Inline,
+        body_offset: 0,
+    })
+}
+
+fn resolve_saved(
+    home: &Path,
+    input: &CreateInput,
+    saved: &SavedInput,
+    cwd: &Path,
+) -> Result<Resolved, String> {
+    let store = Store::new(cwd, home);
+    let scope = match saved.scope.as_deref() {
+        None => None,
+        Some(text) => Some(Scope::parse(text).ok_or_else(|| {
+            "saved.scope: Invalid enum value. Expected 'project' | 'global'".to_owned()
+        })?),
+    };
+    let found = store
+        .resolve(&saved.name, scope)
+        .map_err(|refusal| describe_refusal(&saved.name, refusal, &store, scope))?;
+    let provided = args_object(saved.args.as_ref())?;
+    let declared = found.meta.args.as_deref().unwrap_or(&[]);
+    let args = validate_args(declared, &provided).map_err(|errors| {
+        let mut lines = vec![format!(
+            "The arguments for saved workflow '{}' are not valid:",
+            found.name
+        )];
+        lines.extend(errors.iter().map(|error| format!("- {error}")));
+        lines.push(String::new());
+        lines.push(describe_declaration(
+            &format!("'{}'", found.name),
+            found.meta.args.as_deref(),
+        ));
+        lines.join("\n")
+    })?;
+    Ok(Resolved {
+        script: found.script.clone(),
+        name: Some(input.name.clone().unwrap_or_else(|| found.name.clone())),
+        args: Some(args),
+        origin: Origin::Saved {
+            name: found.name.clone(),
+            file_text: found.source.clone(),
+            path: found.path.clone(),
+        },
+        body_offset: found.body_line_offset,
+    })
+}
+
+impl CreateWorkflowTool {
     /// Node `writeWorkflowDraft`, best effort: the draft of this call is a new file (never an overwrite), and a write
     /// that fails leaves no draft, so the run starts without a script path.
     async fn write_draft(&self, resolved: &Resolved, cwd: &Path) -> Option<PathBuf> {
@@ -316,9 +363,9 @@ fn describe_refusal(
 /// The `path` source (Node `readWorkflowScriptFile` and `resolvePathSource`): the file is read once, its block is taken
 /// as the declaration of its arguments, and nothing is written.
 fn resolve_path(input: &CreateInput, path: &str, cwd: &Path) -> Result<Resolved, String> {
-    let absolute = path_in_workspace(cwd, path)?;
+    let (absolute, real) = path_in_workspace(cwd, path)?;
     let described = describe_script_path(&absolute, cwd);
-    let source = read_text(&absolute).map_err(|error| {
+    let source = read_text(&real).map_err(|error| {
         format!(
             "The workflow script file {described} could not be read: {error}. Pass `path` for a file that exists, or submit the script inline."
         )
@@ -368,20 +415,33 @@ fn resolve_path(input: &CreateInput, path: &str, cwd: &Path) -> Result<Resolved,
     })
 }
 
-/// A `path` must resolve inside the workspace (divergence from Node, as for SaveWorkflow's `script_path`).
-fn path_in_workspace(cwd: &Path, input_path: &str) -> Result<PathBuf, String> {
+/// A `path` must stay inside the workspace (divergence from Node, as for SaveWorkflow's `script_path`), both lexically and
+/// once symlinks are resolved, so a link inside the workspace cannot make the read reach outside it. Returns the path as
+/// named (for the model) and the real file that is read. A path with no real file keeps its lexical form, and the read
+/// reports why it cannot be read.
+fn path_in_workspace(cwd: &Path, input_path: &str) -> Result<(PathBuf, PathBuf), String> {
     let joined = if Path::new(input_path).is_absolute() {
         PathBuf::from(input_path)
     } else {
         cwd.join(input_path)
     };
     let resolved = normalize(&joined);
-    if resolved.starts_with(normalize(cwd)) {
-        Ok(resolved)
-    } else {
-        Err(format!(
+    let outside = || {
+        format!(
             "The workflow script file {input_path} is outside the workspace. Pass a `path` inside it, or submit the script inline."
-        ))
+        )
+    };
+    if !resolved.starts_with(normalize(cwd)) {
+        return Err(outside());
+    }
+    let Ok(real) = canonicalize_path(&resolved) else {
+        return Ok((resolved.clone(), resolved));
+    };
+    let root = canonicalize_path(cwd).unwrap_or_else(|_| normalize(cwd));
+    if real.starts_with(&root) {
+        Ok((resolved, real))
+    } else {
+        Err(outside())
     }
 }
 
@@ -609,8 +669,8 @@ fn diagnostics_note(resolved: &Resolved, location: Option<&Location>, cwd: &Path
             _ => DIAGNOSTICS_NOT_EXECUTED_NOTE.to_owned(),
         };
     };
-    if let Origin::Saved { path, .. } = &resolved.origin {
-        let saved_name = resolved.name.clone().unwrap_or_default();
+    if let Origin::Saved { name, path, .. } = &resolved.origin {
+        let saved_name = name.clone();
         return format!(
             "NOTE: The workflow was NOT executed. A working copy of the saved workflow '{}' ({}) was written to {}. Edit that copy in place and resubmit with `path: \"{}\"` (pass its `args` again); to change the saved definition itself, use SaveWorkflow.",
             saved_name,
@@ -659,6 +719,11 @@ impl Tool for CreateWorkflowTool {
     }
 
     /// Starts a run and writes drafts (Node `readOnly: false`), and may be run side by side (Node `concurrentSafe: true`).
+    /// Node `askOptions.allowAlways: "session"`: the ask offers "Always allow in this session" (the session actor grants it).
+    fn allow_session(&self) -> bool {
+        true
+    }
+
     fn is_read_only(&self, _input: &Value) -> bool {
         self.contract.read_only
     }
@@ -688,6 +753,9 @@ impl Tool for CreateWorkflowTool {
         };
         if input.name.as_deref() == Some("") {
             return invalid(None, "name: String must contain at least 1 character(s)");
+        }
+        if input.path.as_deref() == Some("") {
+            return invalid(None, "path: String must contain at least 1 character(s)");
         }
         if input.max_concurrency == Some(0) {
             return invalid(None, "max_concurrency: Number must be greater than 0");
@@ -761,8 +829,9 @@ impl Tool for CreateWorkflowTool {
             return PermissionDecision::Passthrough;
         };
         let cwd = PathBuf::from(workspace_dir(context));
-        let Ok(resolved) = self.resolve(&input, &cwd) else {
+        let Ok(resolved) = self.resolve_off_thread(&input, &cwd).await else {
             // The call refuses with the same message; nothing is asked about.
+            self.forget(&context.tool_use);
             return PermissionDecision::Allow {
                 updated_input: None,
             };
@@ -770,6 +839,7 @@ impl Tool for CreateWorkflowTool {
         let analysis = match self.analyzer.analyze(&resolved.script).await {
             Ok(analysis) => analysis,
             Err(error) => {
+                self.forget(&context.tool_use);
                 return PermissionDecision::Deny {
                     message: error.message,
                 };
@@ -809,7 +879,10 @@ impl Tool for CreateWorkflowTool {
         let prepared = match self.take_approval(&context.tool_use) {
             Some(prepared) => prepared,
             None => {
-                let resolved = self.resolve(&input, &cwd).map_err(failed)?;
+                let resolved = self
+                    .resolve_off_thread(&input, &cwd)
+                    .await
+                    .map_err(failed)?;
                 let analysis = self
                     .analyzer
                     .analyze(&resolved.script)
@@ -830,9 +903,9 @@ impl Tool for CreateWorkflowTool {
             let lines = diagnostic_lines(&analysis.diagnostics, location.as_ref());
             let mut body = Vec::new();
             body.push(match &resolved.origin {
-                Origin::Saved { path, .. } => format!(
+                Origin::Saved { name, path, .. } => format!(
                     "The saved workflow '{}' ({}) has errors:",
-                    resolved.name.clone().unwrap_or_default(),
+                    name,
                     path.display()
                 ),
                 _ => "The workflow script has errors:".to_owned(),

@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use rust_cli_kernel_api::ids::WorkflowRunId;
+use rust_cli_kernel_api::ids::{ToolUseId, WorkflowRunId};
 use rust_cli_kernel_api::message::Message;
 use rust_cli_kernel_api::orchestration::PermissionGate;
 use rust_cli_kernel_api::permission::{
@@ -936,4 +936,154 @@ async fn the_run_label_is_the_given_name_or_the_saved_name_and_absent_otherwise(
     let submits = submits_of(&harness);
     assert_eq!(submits[0].name.as_deref(), Some("nightly"));
     assert_eq!(submits[1].name, None);
+}
+
+/// Review: a full table evicts its oldest decision, and keeps the others.
+#[test]
+fn a_full_approval_table_evicts_its_oldest_decision_only() {
+    let harness = Harness::new(None);
+    let mut ids = Vec::new();
+    for index in 0..APPROVAL_CAP {
+        let id = ToolUseId::new(format!("tu{index}"));
+        harness.tool.remember(id.clone(), prepared("return 1;"));
+        ids.push(id);
+    }
+    harness
+        .tool
+        .remember(ToolUseId::new("tu-new"), prepared("return 2;"));
+    assert!(
+        harness.tool.take_approval(&ids[0]).is_none(),
+        "the oldest is evicted"
+    );
+    assert!(
+        harness.tool.take_approval(&ids[1]).is_some(),
+        "the next oldest is kept"
+    );
+    assert!(harness.tool.take_approval(&ids[APPROVAL_CAP - 1]).is_some());
+    assert!(
+        harness
+            .tool
+            .take_approval(&ToolUseId::new("tu-new"))
+            .is_some()
+    );
+}
+
+fn prepared(script: &str) -> Prepared {
+    Prepared {
+        resolved: Resolved {
+            script: script.to_owned(),
+            name: None,
+            args: None,
+            origin: Origin::Inline,
+            body_offset: 0,
+        },
+        analysis: WorkflowAnalysis {
+            ok: true,
+            diagnostics: Vec::new(),
+        },
+    }
+}
+
+/// Review: an unparsable `saved.scope` is refused by the call too, not read as "either scope".
+#[tokio::test]
+async fn a_saved_scope_that_is_neither_project_nor_global_is_refused_by_the_call() {
+    let harness = Harness::new(Some(FakeRun::new(None, false)));
+    harness
+        .store()
+        .save("nightly", &saved_meta(None), "return 1;", Scope::Project)
+        .expect("save");
+    let error = harness
+        .call_without_decision(json!({"saved": {"name": "nightly", "scope": "sideways"}}))
+        .await
+        .expect_err("a bad scope");
+    assert!(message_of(&error).contains("saved.scope"), "{error:?}");
+    assert!(submits_of(&harness).is_empty());
+}
+
+/// Review: `path` has minLength 1 in the contract, so an empty path is refused by the schema.
+#[tokio::test]
+async fn an_empty_path_is_refused_by_the_schema() {
+    let harness = Harness::new(None);
+    let validation = harness
+        .tool
+        .validate_input(&json!({"path": ""}), &harness.with_skill())
+        .await;
+    assert!(
+        matches!(validation, Validation::Invalid { .. }),
+        "{validation:?}"
+    );
+}
+
+/// Review: a saved copy's messages name the saved workflow, not the run label given for this run.
+#[tokio::test]
+async fn a_saved_copy_is_named_by_its_saved_name_not_the_run_label() {
+    let harness = Harness::new(Some(FakeRun::new(None, false)));
+    harness
+        .store()
+        .save("broken", &saved_meta(None), "BROKEN;", Scope::Project)
+        .expect("save");
+    let output = harness
+        .run(json!({"saved": {"name": "broken"}, "name": "My label"}))
+        .await
+        .expect("the call runs");
+    let text = output_text(&output);
+    assert!(text.starts_with("The saved workflow 'broken' ("), "{text}");
+    assert!(
+        text.contains("A working copy of the saved workflow 'broken' ("),
+        "{text}"
+    );
+    assert!(!text.contains("My label"), "{text}");
+}
+
+/// Review: a type mismatch names the value the way Node does (`typeof`, so an object is "a object").
+#[tokio::test]
+async fn a_type_mismatch_names_an_object_as_node_does() {
+    let harness = Harness::new(Some(FakeRun::new(None, false)));
+    let declared = vec![("mode".to_owned(), arg(ArgType::String, Some(true), None))];
+    harness
+        .store()
+        .save(
+            "nightly",
+            &saved_meta(Some(declared)),
+            "return 1;",
+            Scope::Project,
+        )
+        .expect("save");
+    let error = harness
+        .run(json!({"saved": {"name": "nightly", "args": {"mode": {}}}}))
+        .await
+        .expect_err("the type is wrong");
+    assert!(
+        message_of(&error).contains("argument 'mode': expected a string, got a object (value)"),
+        "{error:?}"
+    );
+}
+
+/// Review: a symlink inside the workspace that leads outside is refused before its bytes are read to ask about.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_symlink_that_leads_out_of_the_workspace_is_refused_before_it_is_read() {
+    let harness = Harness::new(None);
+    let outside = harness
+        .cwd
+        .parent()
+        .expect("the test root")
+        .join("outside.ts");
+    fs::write(&outside, CLEAN).expect("the file outside");
+    fs::write(harness.cwd.join("inside.txt"), "x").expect("the workspace");
+    rust_cli_fs::text_files::symlink(&outside, &harness.cwd.join("link.ts")).expect("the symlink");
+    let input = json!({"path": "link.ts"});
+    assert!(
+        matches!(
+            harness.decide(&input).await,
+            PermissionDecision::Allow { .. }
+        ),
+        "nothing outside the workspace is read to ask about"
+    );
+    let error = harness.run(input).await.expect_err("refused");
+    assert!(
+        message_of(&error).contains("is outside the workspace"),
+        "{error:?}"
+    );
+    assert!(submits_of(&harness).is_empty());
 }
