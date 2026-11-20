@@ -691,6 +691,12 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
         self.after_engine(result)
     }
 
+    /// The child's failed `complete` (W7-5a-3): the run fails with `error`, as Node's `failRun`. First settlement wins.
+    pub fn fail(&mut self, error: WorkflowError) -> Result<()> {
+        let result = self.engine.fail(error);
+        self.after_engine(result)
+    }
+
     /// The run's stop, as the residency ledger asks it (`LiveRun::stop_interrupted`, W6b part 6): the run settles as
     /// `stopped(interrupted)`, and the settlement releases the guard, the governor link and the clocks. Served on the
     /// owner's thread by the mailbox.
