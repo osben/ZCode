@@ -90,6 +90,8 @@ pub(crate) const FORWARDED_METHODS: &[&str] = &[
     super::workflow_compile::COMPILE,
     super::workflow_compile::FORMAT,
     super::workflow_compile::EVAL_SNIPPET,
+    // W7-12: one hole's fill, prepared (9.45).
+    super::workflow_compile::FILL_PREPARE,
 ];
 
 /// Helper notifications relayed to the Host verbatim. Any other notification from the helper is dropped.

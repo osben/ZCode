@@ -72,6 +72,8 @@ mod driver_feed_tests;
 #[cfg(test)]
 mod driver_golden_tests;
 #[cfg(test)]
+mod driver_hole_tests;
+#[cfg(test)]
 mod driver_model_failure_tests;
 #[cfg(test)]
 mod driver_node_parity_tests;

@@ -2178,7 +2178,7 @@ The `text_files` module stays private and re-exported at the fs root; the merge 
 121. Close is bounded. The residency close waits the default 60 seconds, and a run whose guard is not released in time is reported as stuck. Node's close awaits settlement with no timeout (`dynamic-workflow-run-service.ts` invariant 7; `dynamic-workflow-run-lifecycle.ts`, the close's doc comment).
 122. A stuck run's owner thread is not joined and is left to end on its own, and its entry is dropped. Node's close never returns in that case.
 123. A child's `declare-artifact` fails the run with `DriverError`, "declare-artifact is not wired yet". Node records the artifact. The mailbox has no such request yet (9.23 defers it to W7-5b), so the declaration is refused rather than dropped.
-124. A hole request is refused with a `DriverError` wire error until W7-8. Node fills the hole.
+124. A hole request is refused with a `DriverError` wire error until W7-8. Node fills the hole. Closed in 9.45 (W7-12): the hole parks, and FillWorkflowHole fills it.
 125. A script's error keeps its message as the run's error. Node also records the sandbox's stack as the run error's cause (`dynamic-workflow-runtime` `harness.ts`, the `complete` case). The stack is not kept.
 126. A host-side stop (the child's stream ended before `complete`) settles as `stop_interrupted`, which carries no error text. Node passes an `Interrupted` error with the cause (`harness.ts`, the sandbox-crash case), and journals it. Here the reason and cause are logged (`workflow.run.host_stopped`) and not journaled; the mailbox's stop takes no error. A stop the service asked for (close, or the run settling) is logged at debug only.
 127. A call after the run settled is refused by the owner's closed mailbox, with the mailbox's "owner is gone" text. Node answers with the run's own error (`Run already settled.`).
@@ -3878,6 +3878,77 @@ progress path wrote it (now awaited) and five redundant clones in the reminder h
      progress port, so a strong hold closed a cycle nothing broke. A gone service reports no live run and no open decision
      (the same answer as an unset source). Test: the empty weak reference.
 
+### 9.45 W7-12: workflow holes and FillWorkflowHole (as built, gate off)
+
+**Scope built.** A script's `hole(site, name, prompt)` with no body parks its branch and journals `hole-reached` (live, through the
+owner's `hole`); a fill through the run service (`fill_hole_run`, `runtime/src/workflow_run_fill.rs`) prepares the effective script on
+the helper, applies it on the owner in one step (`fill_hole`: the tables, the script written to the run row, `hole-filled`, the release
+of the parked branch), and returns `{code}` to the child. The tool FillWorkflowHole (`tools/src/workflow_fill_hole.rs`) is registered
+after AmendWorkflow and stays on the child denylist. The helper method is `helper/workflow/fillPrepare` (`bootstrap/src/fork-rust-helper/workflow-fill.ts`):
+steps 2 to 4 of Node's `fillOnce` (the splice, the analysis, the site stability check, the compile and `holeBodies`), with Node's texts.
+The owner's `hole` and `fill_hole` and the mailbox's `TicketedCall::Hole` and `ActorRequest::FillHole` are additive.
+
+**Tests.** `workflow` `driver_hole_tests` (6): a reach parks and journals `hole-reached`; a fill releases the branch with `{code}` and journals
+`hole-filled`; a second reach is answered from the fill; a fill for a site nobody waits on is `NotWaiting`; a fill after settlement is
+`Settled`; a hole call and its fill through the mailbox. The owner tests were written before the owner methods existed and were red
+(no method, compile error). `runtime` `workflow_run_amend_tests` (3 added): an unknown run, another session's run, and a stopped run (the
+resume hint). These three were written after the code and passed on the first run (no red observed). `protocol-zcode` `node_helper_tests`
+(FORWARDED_METHODS 57). `tools` and `cli` registry tests now name FillWorkflowHole. The TypeScript helper tests (three cases in
+`tests/fork-rust-helper/workflow-compile.test.ts`) were written but NOT run: the `apps/zcode-cli` workspace does not install in this
+worktree (`@zcode/model-option-map` is missing from the workspace, with `--frozen-lockfile` and without it), so the helper is unverified.
+
+**Not built, so the fill's Node behaviour differs (divergences 510 to 520).**
+
+510. Serialization. Node serializes fills per run. The run service holds one semaphore permit for every fill of the service, so fills of
+     different runs also queue. Correct, and stricter than Node.
+511. Drafts. The fill does not rewrite the run's draft file, and does not mint one for a run that has none. `scriptPath` is absent from
+     `hole-filled`, and the tool's result does not name a draft. The cold read surface cannot find a draft written by a fill.
+512. Model bindings. The run's binding table is not carried into the run service, so the helper gets none and a body that names a
+     model is refused as unbound. A run launched with named models cannot take a body that names one.
+513. Owner exemption. Node's `isFillWorkflowHoleOwnedRun` skips the ask for the session's own run. Every fill asks here
+     (`alwaysAsk`, `allowAlways: session`). The hole's facts (`owned_by_this_session`) are not read. The same reason as 454 for AmendWorkflow.
+514. Output. The success text is short, and has no display window, no causality graph and no `CreateWorkflowOutput` shape. A compile
+     refusal is a failure whose text lists `L{line}:C{column} message` lines, not Node's `ok: false` response with its fill block.
+515. Hole name. The tool names the hole by its site id only; the hole's name and type are not read (see 437).
+516. Parent check. The run service refuses a run of another session as `run_not_found`. Node's `fillHole` does not check the parent.
+     Consistent with amend (394).
+517. Approval preview. Node's `spliceHoleBodyPreview` (the confirmation window's graph) is not built; the ask has a plain message.
+518. Hole notice. The notice that tells the parent a hole waits (`notifyHoleReached`, 353) is not built, so the main agent is not
+     told a run waits at a hole. Until it is, a fill happens only when the model learns of the hole some other way (GetWorkflowRun's
+     holes, which report it once 435 reads them).
+519. Clock. `hole` and `fill_hole` are stamped with the clock the host attached (`attach_redrive`, as the redrives and quota resets use), and with the production clock (`engine_holes::wall_clock_ms`) when none is attached. Node reads
+     `Date.now()` through `EngineConfig.now`. The engine itself reads no clock, as before.
+520. Refusal text. The reasons and texts are Node's for `hole_not_waiting`, `compile_failed` (the text, with the mapped diagnostics) and
+     `fill_ids_unstable`, but `run_not_found` uses the amend-style sentence rather than Node's `workflowRunNotFoundFailure` text.
+
+**Review round 1 (ocr on #605, 16 findings).** Fixed, each with a test: the helper's ready and refused replies are validated at
+the codec (a missing code, a non-text phase name, a non-list diagnostics value, a refusal with no reason are malformed, and `null`
+diagnostics are none); `modelBindings: null` is sent as no key; the run service reads phase names and hole indexes strictly; a
+settled race (`NotDelivered` at the owner) answers as settled, not as a fault; the clock is the attached one (test
+`a_fill_journals_the_attached_clock_time_not_the_wall_clock`); the refusal's no-side-effect check reads the stored script; a
+success-path test covers the parked hole's release and the stored script. `FillRefusalReason` keeps one table of literals
+(`from_code`). Rejected: the helper copy of Node's fill steps (sharing it would edit Node's production fill path, a follow-up; the
+helper's copy has tests for the splice and the not-waiting refusal only, so a drift in the compile path is not caught here); the helper's throws reaching the run service as a tool error (Node
+throws the same way, and the hole stays waiting); the duplicated runtime fixture (test-only, the three builders read clearly).
+
+**Review round 2 (ocr on 7d4647acd, 17 findings).** Fixed: the helper's compile is guarded, and a throw is `compile_failed`
+(`message`, no diagnostics); the tool reads a `path` body off the async runtime; empty `script` and `path` are refused by name;
+the tool declares the sibling budget (`CREATE_MODEL_BYTES`); the fill's permit moves into the blocking owner call, so a dropped
+caller does not free the queue while the owner writes; a named parent that is not the port's is a wiring fault, checked before
+the queue (test `a_fill_that_names_another_parent_is_a_wiring_fault`); the codec validates hole indexes, the ask and site tables
+and diagnostic elements, and a non-record `modelBindings` is not sent; the retry test matches the reason; `wall_clock_ms` is
+crate-private; the RunNotFound asymmetry of `from_code` is documented. Tests added: `workflow_fill_hole_tests.rs` (input rules,
+the 428 gate, the no-port refusal, the phase and diagnostic texts, the budget). Rejected: the helper's typed-JSON refactors
+(`FillPrepareOutcome::Ready` carrying typed fields, `Refused` carrying `FillRefusalReason`, and the duplicate reads in the run
+service). The reply stays JSON at the kernel boundary, and the run service reads only the fields it applies, so a typed struct
+is a follow-up that does not change behavior. Rejected: the `LaunchError::Failed` default for an unwired runner (only the tests
+use the default; production always wires the helper). Not done: a test that drops the fill future mid-owner-call (it needs a
+blocking-call harness).
+
+Closed by this row: divergence 124 (the driver refuses holes). Still open: 437 (the journal has no hole type, so `hole-reached` carries
+no type), 224 (a live `hole-reached` has no `reachedAt`), 353 (the hole notice, 518 here), 463 (holes in amend, now a fill exists for a
+run that amend started; the amended run's holes are fillable through this path).
+
 ### 9.46 W7-13: GetWorkflowRun roster family, summary clauses and amendable block (as built, gate off)
 
 **Scope built.** The situation snapshot of a run, read from the journal in the same transaction as the row, and the text Node
@@ -3926,8 +3997,8 @@ merged). The step clause of 431 is written. Holes stay as 9.42 has them (435, 43
 558. `modelBindings` come from the `run-launched` event of the journal for every run. Node reads the owner's registry entry for
      a live run. The values are the same once the launch event is written; the gap form (554) has none.
 559. Holes. The hole block renders what the journal has (no hole `type`, 437 of 9.42). Its instruction names `FillWorkflowHole`
-     in Node's wording, and FillWorkflowHole is not registered yet (the other W7 row), so the instruction names a tool this
-     build cannot call. Until that row lands, a waiting hole has no way to be filled from this build.
+     in Node's wording. Closed by 9.45 (W7-12): FillWorkflowHole is registered after AmendWorkflow, so the instruction names a
+     tool this build can call.
 560. Artifact line. This build's `[id] kind: title (primary)` line, not Node's `formatPublishedArtifactLine` (437 of 9.42 unchanged).
 561. Provider stop. `formatWorkflowProviderStopError` is ported with its sentences per kind (auth, not configured, model
      unavailable, invalid request, quota with and without a reset, and the permanent default). The sentences and facts were
@@ -3970,6 +4041,7 @@ and the summary is built.
      read without results); both are shared-file edits, so they are the follow-up.
 565. Subagent and actor scans (review round). The asks are grouped once by actor and the parked and born maps are first-wins
      lookups, so the roster is linear in actors plus nodes. The index entries are updated in place. No behaviour change.
+     >
 
 ### 9.47 W7-14: session gate on cold open (as built, gate off)
 

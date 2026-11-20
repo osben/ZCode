@@ -23,6 +23,7 @@ use serde_json::Value;
 use crate::workflow_amend::AmendWorkflowTool;
 use crate::workflow_create::CreateWorkflowTool;
 use crate::workflow_eval_snippet::EvalWorkflowSnippetTool;
+use crate::workflow_fill_hole::FillWorkflowHoleTool;
 use crate::workflow_list::ListSavedWorkflowsTool;
 use crate::workflow_save::SaveWorkflowTool;
 
@@ -122,7 +123,12 @@ pub fn workflow_tools(
             home.clone(),
         )));
         // Node's order: CreateWorkflow, AmendWorkflow, SaveWorkflow (9.43).
-        tools.push(Arc::new(AmendWorkflowTool::new(analyzer.clone(), runs)));
+        tools.push(Arc::new(AmendWorkflowTool::new(
+            analyzer.clone(),
+            runs.clone(),
+        )));
+        // FillWorkflowHole sits next to AmendWorkflow (9.45); it stays on the child denylist.
+        tools.push(Arc::new(FillWorkflowHoleTool::new(runs)));
         tools.push(Arc::new(SaveWorkflowTool::new(analyzer, home.clone())));
     }
     if let Some(snippets) = snippets {

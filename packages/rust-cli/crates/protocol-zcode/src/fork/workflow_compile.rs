@@ -10,6 +10,7 @@ use async_trait::async_trait;
 use rust_cli_kernel_api::workflow_analysis::{
     WorkflowAnalysis, WorkflowAnalysisError, WorkflowAnalyzer, WorkflowDiagnostic,
 };
+use rust_cli_kernel_api::workflow_child::{FillPrepareInput, FillPrepareOutcome};
 use rust_cli_protocol_core::rpc::RpcError;
 use serde_json::{Map, Value, json};
 
@@ -288,6 +289,117 @@ pub enum SnippetCompiled {
     Rejected {
         diagnostics: Vec<WorkflowDiagnostic>,
     },
+}
+
+/// `helper/workflow/fillPrepare` (W7-12, 9.45): the fill of one hole, prepared on the helper. Nothing is written.
+pub const FILL_PREPARE: &str = "helper/workflow/fillPrepare";
+
+/// Prepares one hole's fill on the helper. A `ok: false` reply is a refusal (Node's reason, text and diagnostics); a
+/// reply with no `ok` flag is a wiring fault.
+pub async fn fill_prepare(
+    helper: &NodeHelper,
+    input: &FillPrepareInput,
+) -> Result<FillPrepareOutcome, RpcError> {
+    let reply = forward(helper, FILL_PREPARE, &fill_prepare_params(input)).await?;
+    parse_fill_prepare(&reply)
+}
+
+pub(crate) fn fill_prepare_params(input: &FillPrepareInput) -> Value {
+    let mut params = json!({
+        "scriptText": input.script_text,
+        "runId": input.run_id,
+        "holeId": input.hole_id,
+        "body": input.body,
+    });
+    // `null` is the same as no bindings: the helper's schema takes a record or no key at all.
+    if let (Some(bindings), Some(map)) = (
+        input
+            .model_bindings
+            .as_ref()
+            .filter(|value| value.is_object()),
+        params.as_object_mut(),
+    ) {
+        map.insert("modelBindings".to_owned(), bindings.clone());
+    }
+    params
+}
+
+/// A malformed fill reply: the helper broke its contract, which is a wiring fault, not a refusal.
+fn malformed_fill(detail: &str) -> RpcError {
+    RpcError::internal(format!("the fill helper's reply is malformed: {detail}"))
+}
+
+/// A string field the ready reply must carry.
+fn required_text(reply: &Value, key: &str) -> Result<(), RpcError> {
+    match reply.get(key).and_then(Value::as_str) {
+        Some(_) => Ok(()),
+        None => Err(malformed_fill(&format!("no text {key}"))),
+    }
+}
+
+/// A list of strings the ready reply must carry (`phaseNames`, `phasesAdded`).
+fn required_texts(reply: &Value, key: &str) -> Result<(), RpcError> {
+    match reply.get(key).and_then(Value::as_array) {
+        Some(items) if items.iter().all(Value::is_string) => Ok(()),
+        _ => Err(malformed_fill(&format!("{key} is not a list of text"))),
+    }
+}
+
+pub(crate) fn parse_fill_prepare(reply: &Value) -> Result<FillPrepareOutcome, RpcError> {
+    match reply.get("ok").and_then(Value::as_bool) {
+        Some(true) => {
+            for key in ["effectiveText", "scriptHash", "code"] {
+                required_text(reply, key)?;
+            }
+            for key in ["askSpecs", "sitePhases"] {
+                if !reply.get(key).is_some_and(Value::is_object) {
+                    return Err(malformed_fill(&format!("{key} is not an object")));
+                }
+            }
+            required_texts(reply, "phaseNames")?;
+            required_texts(reply, "phasesAdded")?;
+            if let Some(holes) = reply.get("holes")
+                && !holes
+                    .as_array()
+                    .is_some_and(|items| items.iter().all(|item| item.as_u64().is_some()))
+            {
+                return Err(malformed_fill("holes is not a list of indexes"));
+            }
+            Ok(FillPrepareOutcome::Ready(reply.clone()))
+        }
+        Some(false) => {
+            let reason = reply.get("reason").and_then(Value::as_str);
+            let message = reply.get("message").and_then(Value::as_str);
+            let (Some(reason), Some(message)) = (reason, message) else {
+                return Err(malformed_fill("a refusal has no reason or no message"));
+            };
+            // An absent or `null` diagnostics list is no diagnostics; anything else must be a list.
+            let diagnostics = match reply.get("diagnostics") {
+                None | Some(Value::Null) => None,
+                Some(list @ Value::Array(items))
+                    if items.iter().all(|item| {
+                        item.get("line").and_then(Value::as_u64).is_some()
+                            && item.get("column").and_then(Value::as_u64).is_some()
+                            && item.get("message").is_some_and(Value::is_string)
+                    }) =>
+                {
+                    Some(list.clone())
+                }
+                Some(Value::Array(_)) => {
+                    return Err(malformed_fill(
+                        "a diagnostic has no line, column or message",
+                    ));
+                }
+                Some(_) => return Err(malformed_fill("diagnostics is not a list")),
+            };
+            Ok(FillPrepareOutcome::Refused {
+                reason: reason.to_owned(),
+                message: message.to_owned(),
+                diagnostics,
+            })
+        }
+        None => Err(malformed_fill("no ok flag")),
+    }
 }
 
 /// Compiles a snippet on the helper. `run_id` is the identity the entry file carries.

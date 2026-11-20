@@ -233,7 +233,11 @@ impl AmendWorkflowTool {
 /// The file of a revision (Node `resolveAmendScript`, `path`): the containment and reads are CreateWorkflow's, and the
 /// metadata block is stripped with its declarations ignored. A revision carries no arguments (they are facts of the
 /// predecessor run), so a file that declares some is amended as it stands, not refused for missing ones.
-fn read_revision_file(cwd: &Path, path: &str, name: Option<String>) -> Result<Resolved, String> {
+pub(crate) fn read_revision_file(
+    cwd: &Path,
+    path: &str,
+    name: Option<String>,
+) -> Result<Resolved, String> {
     let contained = match contain(cwd, path) {
         Ok(contained) => contained,
         Err(Refusal::Outside) => {

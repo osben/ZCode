@@ -112,6 +112,53 @@ pub enum CancelInitiator {
     Superseded(WorkflowRunId),
 }
 
+/// Node `fillHole`'s refusal reasons (`DynamicWorkflowRunFillHoleRefusalReason`), as the tool reports them (W7-12, 9.45).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FillRefusalReason {
+    RunNotFound,
+    HoleNotWaiting,
+    CompileFailed,
+    FillIdsUnstable,
+}
+
+impl FillRefusalReason {
+    /// Node's wire literal for a refusal reason the compile helper sends. The one table of literals: `None` for any other
+    /// text. `RunNotFound` has no literal here on purpose: the helper never sends it, and the run service builds it from its
+    /// own journal lookup. A tool-level adapter that decodes Node's `run_not_found` result must map that text itself.
+    pub fn from_code(code: &str) -> Option<Self> {
+        match code {
+            "hole_not_waiting" => Some(Self::HoleNotWaiting),
+            "compile_failed" => Some(Self::CompileFailed),
+            "fill_ids_unstable" => Some(Self::FillIdsUnstable),
+            _ => None,
+        }
+    }
+}
+
+/// Node `DynamicWorkflowRunFillHoleRequest`: the waiting run, the hole's site id, and the body's statements.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FillHoleRequest {
+    pub run_id: WorkflowRunId,
+    pub hole_id: String,
+    pub body: String,
+    pub parent_session_id: Option<SessionId>,
+}
+
+/// Node `FillWorkflowHoleResult`, the port's part: a fill (with the phases it added and the effective script) or a
+/// refusal with its text and diagnostics. A refusal has no side effects.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FillHoleOutcome {
+    Filled {
+        phases_added: Vec<String>,
+        script_text: String,
+    },
+    Refused {
+        reason: FillRefusalReason,
+        message: String,
+        diagnostics: Option<Value>,
+    },
+}
+
 /// Node `DynamicWorkflowRunAmendRequest`. Model selections and script-named bindings stay JSON until W7-8a types them.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AmendRequest {
@@ -255,6 +302,15 @@ pub trait DynamicWorkflowRunPort: Send + Sync {
     async fn amend(&self, request: AmendRequest) -> Result<AmendResult, DynamicWorkflowRunError> {
         let _ = request;
         Err(DynamicWorkflowRunError::unsupported("amend"))
+    }
+
+    /// Node `fillHole` (W7-12, 9.45): fills one waiting hole of a run in flight. A refusal is a result, not an error.
+    async fn fill_hole(
+        &self,
+        request: FillHoleRequest,
+    ) -> Result<FillHoleOutcome, DynamicWorkflowRunError> {
+        let _ = request;
+        Err(DynamicWorkflowRunError::unsupported("fillHole"))
     }
 
     /// Node `submit`: starts a new run in the background and returns its run id (also its background task id). A

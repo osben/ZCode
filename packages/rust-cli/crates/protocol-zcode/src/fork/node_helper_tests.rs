@@ -334,7 +334,8 @@ async fn forward_ok(helper: &NodeHelper, method: &str, params: Value) -> Value {
 
 #[test]
 fn forwarded_table_is_the_spec_list() {
-    assert_eq!(FORWARDED_METHODS.len(), 56);
+    assert_eq!(FORWARDED_METHODS.len(), 57);
+    assert!(FORWARDED_METHODS.contains(&super::super::workflow_compile::FILL_PREPARE));
     // W4: the workflow compile and format are forwarded (specs/fork-rust-workflow-engine.md, 4.1).
     assert!(FORWARDED_METHODS.contains(&super::super::workflow_compile::COMPILE));
     assert!(FORWARDED_METHODS.contains(&super::super::workflow_compile::FORMAT));

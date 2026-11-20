@@ -161,6 +161,18 @@ pub(crate) enum ActorRequest {
         args: Vec<Value>,
         reply: Sender<Result<TicketSettlement>>,
     },
+    /// The child's hole (W7-12, 9.45). The reply waits for the fill, or is answered at once from a fill this lifetime has.
+    Hole {
+        site_id: String,
+        name: String,
+        prompt: Option<String>,
+        reply: Sender<Result<TicketSettlement>>,
+    },
+    /// The run service's fill of one hole (W7-12, 9.45). The reply is the engine's answer, not a ticket.
+    FillHole {
+        fill: crate::engine_holes::HoleFill,
+        reply: Sender<Result<crate::engine_holes::FillHoleResult>>,
+    },
     /// The child's `complete`: the script's end (W7-5a-2).
     Complete {
         artifact: Value,
@@ -209,6 +221,12 @@ pub enum TicketedCall {
         site_id: String,
         op: String,
         args: Vec<Value>,
+    },
+    /// A hole with no body (W7-12, 9.45).
+    Hole {
+        site_id: String,
+        name: String,
+        prompt: Option<String>,
     },
 }
 
@@ -303,6 +321,18 @@ fn dispatch_request<J: JournalPort, S: ActorSessions>(
         } => {
             let ticket = owner.publish_artifact(&site_id, &op, &args);
             answer_with_ticket(owner, ticket, reply);
+        }
+        ActorRequest::Hole {
+            site_id,
+            name,
+            prompt,
+            reply,
+        } => {
+            let ticket = owner.hole(&site_id, &name, prompt.as_deref());
+            answer_with_ticket(owner, ticket, reply);
+        }
+        ActorRequest::FillHole { fill, reply } => {
+            let _ = reply.send(owner.fill_hole(fill));
         }
         ActorRequest::Complete { artifact, reply } => {
             let _ = reply.send(owner.complete(artifact));
@@ -540,6 +570,14 @@ impl ActorHandle {
         })
     }
 
+    /// The run service's fill of one hole (W7-12, 9.45): the engine's answer, after the fill's own step on the owner.
+    pub fn fill_hole(
+        &self,
+        fill: crate::engine_holes::HoleFill,
+    ) -> Result<crate::engine_holes::FillHoleResult, MailboxError> {
+        self.call(|reply| ActorRequest::FillHole { fill, reply })
+    }
+
     /// The child's `create-actor` (W7-5a-2): the engine's id for the new actor.
     pub fn create_actor(
         &self,
@@ -647,6 +685,16 @@ impl ActorHandle {
                 site_id,
                 op,
                 args,
+                reply,
+            },
+            TicketedCall::Hole {
+                site_id,
+                name,
+                prompt,
+            } => ActorRequest::Hole {
+                site_id,
+                name,
+                prompt,
                 reply,
             },
         };

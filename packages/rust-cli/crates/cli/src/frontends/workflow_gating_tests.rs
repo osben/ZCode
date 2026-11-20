@@ -63,6 +63,7 @@ fn with_an_analyzer_create_amend_and_save_are_wired_before_the_run_tools_and_lis
         [
             "CreateWorkflow",
             "AmendWorkflow",
+            "FillWorkflowHole",
             "SaveWorkflow",
             "ListWorkflowRuns",
             "GetWorkflowRun",
@@ -146,7 +147,9 @@ impl WorkflowSnippetPort for NoSnippets {
 
 #[test]
 fn with_a_snippet_port_eval_is_wired_between_save_and_the_run_tools() {
-    // Node's index order: create, amend, save, eval, list runs, get run, resume, resolve, fill, list saved.
+    // Node's index order: create, amend, save, eval, list runs, get run, resume, resolve, fill, list saved. Rust registers
+    // FillWorkflowHole after AmendWorkflow, which is the deliberate divergence of spec 9.45, so the assertions below list
+    // it there.
     let analyzer: Arc<dyn WorkflowAnalyzer> = Arc::new(NoAnalyzer);
     let snippets: Arc<dyn WorkflowSnippetPort> = Arc::new(NoSnippets);
     let tools = wired_workflow_tools(
@@ -160,6 +163,7 @@ fn with_a_snippet_port_eval_is_wired_between_save_and_the_run_tools() {
         [
             "CreateWorkflow",
             "AmendWorkflow",
+            "FillWorkflowHole",
             "SaveWorkflow",
             "EvalWorkflowSnippet",
             "ListWorkflowRuns",

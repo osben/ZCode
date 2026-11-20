@@ -877,6 +877,34 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
         self.after_engine(result)
     }
 
+    /// The time a hole's reach or fill is stamped with: the clock the host attached (the same one the redrives and the
+    /// quota resets read), or the production clock when none is attached. Node reads `Date.now()` through `EngineConfig.now`.
+    fn hole_clock_ms(&self) -> f64 {
+        match &self.redrive {
+            Some(wiring) => wiring.clock.now_ms() as f64,
+            None => crate::engine_holes::wall_clock_ms(),
+        }
+    }
+
+    /// Node `hole` (W7-12, 9.45): the script reached a hole with no body. The branch parks until its fill, or is answered
+    /// at once from a fill this lifetime already has.
+    pub fn hole(&mut self, site_id: &str, name: &str, prompt: Option<&str>) -> Result<u64> {
+        let result = self
+            .engine
+            .hole(site_id, name, prompt, self.hole_clock_ms());
+        self.after_engine(result)
+    }
+
+    /// Node `fillHole` (W7-12, 9.45): the effective script, the tables and the code of one hole. The parked branch is
+    /// released with the code, and the outcome comes back through `take_outcomes`.
+    pub fn fill_hole(
+        &mut self,
+        fill: crate::engine_holes::HoleFill,
+    ) -> Result<crate::engine_holes::FillHoleResult> {
+        let result = self.engine.fill_hole(fill, self.hole_clock_ms());
+        self.after_engine(result)
+    }
+
     /// The worker's answer to a world read (Node's `.then`). Called by the mailbox dispatch.
     pub(crate) fn world_settled(
         &mut self,

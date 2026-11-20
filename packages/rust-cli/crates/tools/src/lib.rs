@@ -62,6 +62,8 @@ mod workspace_path;
 mod workflow_create;
 // Fork: AmendWorkflow (W7-10, specs/fork-rust-workflow-engine.md, 9.43).
 mod workflow_amend;
+// Fork: FillWorkflowHole (W7-12, specs/fork-rust-workflow-engine.md, 9.45).
+mod workflow_fill_hole;
 // Fork: EvalWorkflowSnippet (W7-8c, specs/fork-rust-workflow-engine.md, 9.28).
 mod workflow_eval_snippet;
 // Fork: ListWorkflowRuns, ResumeWorkflowRun and ResolveWorkflowQuestion (W7-9, specs/fork-rust-workflow-engine.md, 9.40).

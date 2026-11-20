@@ -11,10 +11,12 @@ use rust_cli_kernel_api::ids::{SessionId, WorkflowRunId};
 use rust_cli_kernel_api::permission::PermissionMode;
 use rust_cli_kernel_api::testing::FakeChildRunner;
 use rust_cli_kernel_api::workflow_child::{
-    ChildHandler, LaunchError, LaunchInput, RunningChild, WorkflowChildRunner,
+    ChildHandler, ChildRequest, FillPrepareInput, FillPrepareOutcome, LaunchError, LaunchInput,
+    RequestType, RunningChild, WorkflowChildRunner,
 };
 use rust_cli_kernel_api::workflow_run::{
-    AmendRefusalReason, AmendRequest, AmendResult, DynamicWorkflowRunSessions,
+    AmendRefusalReason, AmendRequest, AmendResult, DynamicWorkflowRunSessions, FillHoleOutcome,
+    FillHoleRequest, FillRefusalReason,
 };
 use rust_cli_node_store::dwf::{
     self, NodeKind, NodeRecord, NodeStatus, RunRecord, RunStatus as DwfStatus,
@@ -445,6 +447,279 @@ async fn phase_routing_and_inherited_arguments_are_refused_not_dropped() {
         assert!(error.message.contains("cannot"), "{}", error.message);
     }
     assert!(fx.fake.launches().is_empty());
+}
+
+/// A fill request for `run_id`'s hole `hole#1` (9.45).
+fn fill_request(run_id: &str) -> FillHoleRequest {
+    FillHoleRequest {
+        run_id: WorkflowRunId::new(run_id),
+        hole_id: "hole#1".to_owned(),
+        body: "return 1;".to_owned(),
+        parent_session_id: None,
+    }
+}
+
+async fn fill(service: &WorkflowRunService, request: FillHoleRequest) -> FillHoleOutcome {
+    service
+        .for_session(&SessionId::new(PARENT))
+        .fill_hole(request)
+        .await
+        .expect("the fill answers")
+}
+
+/// W7-12 (9.45): a fill of a run that is not in the journal is refused as `run_not_found`, and nothing starts.
+#[tokio::test]
+async fn a_fill_of_an_unknown_run_is_refused_as_run_not_found() {
+    let fx = fixture(|_| {});
+    let answer = fill(&fx.service, fill_request("dwfrun-none")).await;
+    assert!(matches!(
+        answer,
+        FillHoleOutcome::Refused {
+            reason: FillRefusalReason::RunNotFound,
+            ..
+        }
+    ));
+    assert!(fx.fake.launches().is_empty(), "no child is started");
+}
+
+/// W7-12 (9.45): a fill that names another parent session than the port's is a wiring fault, and it changes nothing.
+#[tokio::test]
+async fn a_fill_that_names_another_parent_is_a_wiring_fault() {
+    let fx = fixture(|conn| interrupted(conn, "dwfrun-named", PARENT, "return 1\n"));
+    let mut request = fill_request("dwfrun-named");
+    request.parent_session_id = Some(SessionId::new(OTHER));
+    let answer = fx
+        .service
+        .for_session(&SessionId::new(PARENT))
+        .fill_hole(request)
+        .await;
+    assert!(answer.is_err(), "the mismatch is an error: {answer:?}");
+}
+
+/// W7-12 (9.45): a run of another session is unknown to this session's fill, as it is to amend.
+#[tokio::test]
+async fn a_fill_of_another_sessions_run_is_refused_as_run_not_found() {
+    let fx = fixture(|conn| interrupted(conn, "dwfrun-other", OTHER, "return 1\n"));
+    let answer = fill(&fx.service, fill_request("dwfrun-other")).await;
+    assert!(matches!(
+        answer,
+        FillHoleOutcome::Refused {
+            reason: FillRefusalReason::RunNotFound,
+            ..
+        }
+    ));
+}
+
+/// A child runner whose helper answers every fill with `outcome` (9.45): a refusal, or the ready reply a fill applies.
+struct ScriptedFill {
+    fake: Arc<FakeChildRunner>,
+    outcome: FillPrepareOutcome,
+}
+
+#[async_trait]
+impl WorkflowChildRunner for ScriptedFill {
+    async fn start(
+        &self,
+        input: LaunchInput,
+        handler: Arc<dyn ChildHandler>,
+    ) -> Result<RunningChild, LaunchError> {
+        let mut running = self.fake.start(input, handler).await?;
+        running.compiled = compiled_facts();
+        Ok(running)
+    }
+
+    async fn prepare_fill(
+        &self,
+        _input: FillPrepareInput,
+    ) -> Result<FillPrepareOutcome, LaunchError> {
+        Ok(self.outcome.clone())
+    }
+}
+
+/// A `compile_failed` refusal with one diagnostic, as the helper sends it.
+fn compile_refusal() -> FillPrepareOutcome {
+    FillPrepareOutcome::Refused {
+        reason: "compile_failed".to_owned(),
+        message: "The effective script does not compile (1 diagnostic); nothing was spliced and the hole is still waiting."
+            .to_owned(),
+        diagnostics: Some(json!([{"line": 3, "column": 5, "message": "bad", "code": 9001}])),
+    }
+}
+
+/// A fixture whose helper answers every fill with `outcome` (the rest as `fixture`).
+fn fixture_scripted_fills(
+    seed: impl FnOnce(&rusqlite::Connection),
+    outcome: FillPrepareOutcome,
+) -> Fixture {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("session.db");
+    let conn = open(&path);
+    add_session(&conn, PARENT);
+    add_session(&conn, OTHER);
+    seed(&conn);
+    let store = Arc::new(SqliteRunStore::new(conn, || 500));
+    let fake = Arc::new(FakeChildRunner::new());
+    let runner: Arc<dyn WorkflowChildRunner> = Arc::new(ScriptedFill {
+        fake: fake.clone(),
+        outcome,
+    });
+    let factory = production_owner_factory(
+        OwnerStores {
+            database: path.clone(),
+            directory: "project".to_owned(),
+            version: "test".to_owned(),
+            clock: || 1,
+        },
+        Arc::new(UnwiredTurns),
+        Arc::new(UnwiredRelease),
+    );
+    let service = WorkflowRunService::new(
+        Arc::new(SessionResidency::new()),
+        Arc::new(NoConcurrency),
+        runner,
+        factory,
+    );
+    service.set_store(store);
+    service.configure_concurrency(DEFAULT as f64);
+    service.configure_bindings(Arc::new(Mode));
+    Fixture {
+        _dir: dir,
+        path,
+        service,
+        fake,
+    }
+}
+
+/// W7-12 (9.45): a fill the helper refuses as `compile_failed` on a live run is refused with the helper's text and its
+/// diagnostics, and the run keeps its hole waiting (no fill is applied).
+#[tokio::test]
+async fn a_fill_the_helper_refuses_as_compile_failed_keeps_the_hole_waiting() {
+    let fx = fixture_scripted_fills(
+        |conn| interrupted(conn, "dwfrun-refused", PARENT, "return 1\n"),
+        compile_refusal(),
+    );
+    fx.service
+        .for_session(&SessionId::new(PARENT))
+        .resume(&WorkflowRunId::new("dwfrun-refused"))
+        .await
+        .expect("the resume answers");
+    let answer = fill(&fx.service, fill_request("dwfrun-refused")).await;
+    assert!(
+        matches!(
+            &answer,
+            FillHoleOutcome::Refused {
+                reason: FillRefusalReason::CompileFailed,
+                diagnostics: Some(_),
+                ..
+            }
+        ),
+        "the helper's compile refusal is the answer: {answer:?}"
+    );
+    // Nothing is spliced: the stored script is the one the run had.
+    let stored = fx
+        .service
+        .for_session(&SessionId::new(PARENT))
+        .get_script(&WorkflowRunId::new("dwfrun-refused"))
+        .await
+        .expect("the script reads");
+    assert_eq!(stored.as_deref(), Some("return 1\n"));
+}
+
+/// W7-12 (9.45): a fill the helper prepares and the owner applies returns `Filled` with the phases it added and the
+/// effective script; the parked hole's request resolves with the code; the stored script becomes the effective one.
+#[tokio::test]
+async fn a_fill_applies_the_helper_reply_and_releases_the_parked_hole() {
+    let ready = FillPrepareOutcome::Ready(json!({
+        "ok": true,
+        "effectiveText": "return 'approved';\n",
+        "scriptHash": "hash-2",
+        "code": "return 'approved';",
+        "askSpecs": {},
+        "sitePhases": {},
+        "phaseNames": ["main"],
+        "phasesAdded": ["main"],
+    }));
+    let fx = fixture_scripted_fills(
+        |conn| interrupted(conn, "dwfrun-fill", PARENT, "return 1\n"),
+        ready,
+    );
+    fx.service
+        .for_session(&SessionId::new(PARENT))
+        .resume(&WorkflowRunId::new("dwfrun-fill"))
+        .await
+        .expect("the resume answers");
+    // The script parks a branch at the hole, as the child does: a `hole` request with no body.
+    let handler = fx.fake.launches()[0].handler.clone();
+    let parked = tokio::spawn(handler.request(
+        ChildRequest {
+            id: "req-hole".to_owned(),
+            request_type: RequestType::Hole,
+            site_id: "hole#1".to_owned(),
+            actor: None,
+            instructions: None,
+            name: Some("decide".to_owned()),
+            prompt: None,
+            op: None,
+            artifact_op: None,
+            args: None,
+        },
+        None,
+    ));
+    // The fill may come before the branch parks; the helper's refusal then says it is not waiting yet, so retry.
+    let mut answer = fill(&fx.service, fill_request("dwfrun-fill")).await;
+    for _ in 0..400 {
+        // Retry only while the hole is not waiting yet, matched by the reason, not the wording.
+        if !matches!(
+            &answer,
+            FillHoleOutcome::Refused {
+                reason: FillRefusalReason::HoleNotWaiting,
+                ..
+            }
+        ) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        answer = fill(&fx.service, fill_request("dwfrun-fill")).await;
+    }
+    assert_eq!(
+        answer,
+        FillHoleOutcome::Filled {
+            phases_added: vec!["main".to_owned()],
+            script_text: "return 'approved';\n".to_owned(),
+        }
+    );
+    let released = tokio::time::timeout(Duration::from_secs(5), parked)
+        .await
+        .expect("the parked hole is released")
+        .expect("the request task ends")
+        .expect("the parked hole answers");
+    assert_eq!(released, json!({"code": "return 'approved';"}));
+    let stored = fx
+        .service
+        .for_session(&SessionId::new(PARENT))
+        .get_script(&WorkflowRunId::new("dwfrun-fill"))
+        .await
+        .expect("the script reads");
+    assert_eq!(stored.as_deref(), Some("return 'approved';\n"));
+}
+
+/// W7-12 (9.45): a stopped run is not in flight, so its hole is not waiting; the text says to resume it first (Node's hint).
+#[tokio::test]
+async fn a_fill_of_a_stopped_run_is_refused_with_the_resume_hint() {
+    let fx = fixture(|conn| interrupted(conn, "dwfrun-stopped", PARENT, "return 1\n"));
+    let answer = fill(&fx.service, fill_request("dwfrun-stopped")).await;
+    assert!(
+        matches!(
+            &answer,
+            FillHoleOutcome::Refused {
+                reason: FillRefusalReason::HoleNotWaiting,
+                message,
+                ..
+            } if message.contains("ResumeWorkflowRun it first")
+        ),
+        "the stopped run's fill names the resume: {answer:?}"
+    );
+    assert!(fx.fake.launches().is_empty(), "no child is started");
 }
 
 #[tokio::test]
