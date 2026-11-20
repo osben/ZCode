@@ -57,10 +57,15 @@ use rust_cli_kernel_api::workflow_failure::{
 };
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
 /// Node `cancelAsk`'s rejection of a pending submit: the text the submit's caller reads.
 pub const CANCELLED_BY_ENGINE_MESSAGE: &str = "The ask was cancelled by the engine.";
+
+/// How a ticket (an ask, a world read, or an artifact publish) settled: its value, or the error it rejected with (Node's
+/// promise result).
+pub type TicketSettlement = Result<Value, WorkflowError>;
 
 /// What the turn side needs to create an actor's session (Node `createActorSession` and `persistActorSession`).
 #[derive(Debug, Clone, PartialEq)]
@@ -427,6 +432,24 @@ pub struct ActorDriverOwner<J: JournalPort, S: ActorSessions> {
     stall: Option<RunStallClock>,
     /// The run's residency guard on its parent session (W6b part 6). Held from the launch to the settlement.
     residency: Option<LiveRunGuard>,
+    /// Mailbox replies waiting for a ticket's settlement, by ticket (W7-5a-2). Each is answered by `route_outcomes`
+    /// when the ticket settles, or by a stop or the owner's shutdown with an error. Never dropped silently.
+    pending_tickets: HashMap<u64, Sender<Result<TicketSettlement>>>,
+    /// Settlements no pending reply claimed, for `take_outcomes`.
+    unclaimed: Vec<AskOutcome>,
+}
+
+impl<J: JournalPort, S: ActorSessions> Drop for ActorDriverOwner<J, S> {
+    /// The owner's shutdown: a settlement that already arrived is answered, and every other pending reply gets an error,
+    /// so no waiting turn is left with nothing.
+    fn drop(&mut self) {
+        self.route_outcomes();
+        let error = WorkflowError::new(
+            ErrorCode::DriverError,
+            "the workflow owner shut down before this request settled",
+        );
+        self.answer_pending_with(&error);
+    }
 }
 
 /// What the owner holds of the governor for its run: the port, and the subscription's end.
@@ -492,6 +515,8 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
             redrive: None,
             stall: None,
             residency: None,
+            pending_tickets: HashMap::new(),
+            unclaimed: Vec::new(),
         })
     }
 
@@ -717,8 +742,57 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
         }
     }
 
+    /// The settlements no mailbox reply claimed, in settlement order. A settlement a pending reply waits for goes to
+    /// that reply instead.
     pub fn take_outcomes(&mut self) -> Vec<AskOutcome> {
-        self.engine.take_outcomes()
+        self.route_outcomes();
+        std::mem::take(&mut self.unclaimed)
+    }
+
+    /// Registers the mailbox reply for `ticket` (W7-5a-2). The reply is answered when the ticket settles.
+    pub(crate) fn await_ticket(&mut self, ticket: u64, reply: Sender<Result<TicketSettlement>>) {
+        self.pending_tickets.insert(ticket, reply);
+    }
+
+    /// Hands every settlement to its pending reply, and keeps the rest for `take_outcomes`. Called after every mailbox
+    /// request. The engine settles a stopped run's live asks with `Run stopped.` (Node's `abortInFlight`). A world read or
+    /// publish is not live, so its reply waits for its worker, which then settles it with the run's error (Node's
+    /// `settleWorldRead` throws `runError()` once the run has settled).
+    pub(crate) fn route_outcomes(&mut self) {
+        for outcome in self.engine.take_outcomes() {
+            match self.pending_tickets.remove(&outcome.ticket) {
+                Some(reply) => {
+                    // A turn that has gone away is not an error for the owner: its reply has no receiver.
+                    let _ = reply.send(Ok(outcome.result));
+                }
+                None => self.unclaimed.push(outcome),
+            }
+        }
+    }
+
+    /// Answers every pending reply with `error`.
+    fn answer_pending_with(&mut self, error: &WorkflowError) {
+        for (_ticket, reply) in self.pending_tickets.drain() {
+            let _ = reply.send(Ok(Err(error.clone())));
+        }
+    }
+
+    /// The child's log event (W7-5a-2). Node `log`: nothing is written after settlement.
+    pub fn log(&mut self, message: &str) -> Result<()> {
+        let result = self.engine.log(message);
+        self.after_engine(result)
+    }
+
+    /// The child's phase-entered event (W7-5a-2). Node `enterPhase`.
+    pub fn enter_phase(&mut self, name: &str) -> Result<()> {
+        let result = self.engine.enter_phase(name);
+        self.after_engine(result)
+    }
+
+    /// The child's report event (W7-5a-2). Node `report`: one item at the next ordinal of `site_id`.
+    pub fn report(&mut self, site_id: &str, item: Value, artifact_id: Option<&str>) -> Result<()> {
+        let result = self.engine.report(site_id, item, artifact_id);
+        self.after_engine(result)
     }
 
     /// Attach the host's world wiring. Until it is attached, world reads fail with a driver fault.
