@@ -66,8 +66,9 @@ pub trait ChildLauncher: Send + Sync {
 /// keeps reading lines, so asks in flight do not hold up the child's next message.
 pub trait ChildHandler: Send + Sync {
     /// Creates the actor in the engine and returns its engine id. An `Err` refuses the actor and carries the reason,
-    /// which ends the run.
-    fn create_actor(&self, actor: &CreateActor) -> Result<String, String>;
+    /// which ends the run. The host awaits it before it reads the next line, so the child's later requests can name the
+    /// id; the wait is a future, so the runtime's threads are not held while the engine answers.
+    fn create_actor(&self, actor: &CreateActor) -> BoxFuture<'static, Result<String, String>>;
 
     /// Starts one request. `actor_id` is the engine id of the request's actor, resolved by the host.
     fn request(

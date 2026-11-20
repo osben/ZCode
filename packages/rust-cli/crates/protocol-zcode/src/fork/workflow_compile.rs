@@ -4,6 +4,12 @@
 //! helper's answer is the contract, and a reply that does not match it is an error. A helper that does not serve the
 //! method answers as unavailable, with [`NODE_HELPER_UNAVAILABLE`].
 
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use rust_cli_kernel_api::workflow_analysis::{
+    WorkflowAnalysis, WorkflowAnalysisError, WorkflowAnalyzer,
+};
 use rust_cli_protocol_core::rpc::RpcError;
 use serde_json::{Map, Value, json};
 
@@ -254,6 +260,42 @@ pub(crate) fn parse_analysis(reply: &Value) -> Result<Value, RpcError> {
         .filter(|value| value.is_object())
         .cloned()
         .ok_or_else(malformed)
+}
+
+/// SaveWorkflow's typecheck over the helper (`helper/workflow/format`, kind `analysis`), as the kernel-api port.
+pub struct HelperWorkflowAnalyzer {
+    helper: Arc<NodeHelper>,
+}
+
+impl HelperWorkflowAnalyzer {
+    pub fn new(helper: Arc<NodeHelper>) -> Self {
+        Self { helper }
+    }
+}
+
+#[async_trait]
+impl WorkflowAnalyzer for HelperWorkflowAnalyzer {
+    async fn analyze(&self, script: &str) -> Result<WorkflowAnalysis, WorkflowAnalysisError> {
+        analysis_verdict(analysis(&self.helper, script).await)
+    }
+}
+
+/// The port's verdict for one helper reply: a failed call and a reply that does not match its contract both mean the
+/// checker cannot answer.
+pub(crate) fn analysis_verdict(
+    reply: Result<Value, RpcError>,
+) -> Result<WorkflowAnalysis, WorkflowAnalysisError> {
+    let reply = reply.map_err(|error| WorkflowAnalysisError {
+        message: error.message,
+    })?;
+    analysis_from_value(&reply).map_err(|error| WorkflowAnalysisError {
+        message: error.message,
+    })
+}
+
+/// The helper's analysis object as the port's verdict. The window graph and the other fields are not needed here.
+pub(crate) fn analysis_from_value(value: &Value) -> Result<WorkflowAnalysis, RpcError> {
+    <WorkflowAnalysis as serde::Deserialize>::deserialize(value).map_err(|_| malformed())
 }
 
 fn malformed() -> RpcError {

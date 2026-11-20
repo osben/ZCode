@@ -4,7 +4,7 @@
 //! child's messages to the owner's mailbox, and closes its live runs. Admission, orphan reconciliation and the production
 //! owner assembly are not here (see 9.25 for what is deferred).
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -70,9 +70,22 @@ impl<J: JournalPort + Send + 'static, S: ActorSessions + Send + 'static> HostedO
     }
 }
 
-/// Builds a run's owner over its mailbox. Called once per launch, on the launching thread.
+/// Builds a run's owner over its mailbox. Called once per launch, outside the service's lock.
 pub type OwnerFactory =
     Arc<dyn Fn(EngineConfig, ActorMailbox) -> Result<Box<dyn HostedOwner>> + Send + Sync>;
+
+/// The most close failures the service keeps for the next close (L2). Later ones are logged and dropped.
+pub const FAILURE_BUFFER_LIMIT: usize = 64;
+
+/// Keeps the first failures up to [`FAILURE_BUFFER_LIMIT`]. The caller logs each one.
+fn buffer_failures(buffer: &mut Vec<(String, String)>, failures: Vec<(String, String)>) {
+    for failure in failures {
+        if buffer.len() >= FAILURE_BUFFER_LIMIT {
+            break;
+        }
+        buffer.push(failure);
+    }
+}
 
 /// Why a launch did not start a run. Nothing is left behind in any case.
 #[derive(Debug)]
@@ -81,7 +94,7 @@ pub enum LaunchFailure {
     Closed,
     /// The run has no parent session to keep it resident, so it is refused before anything starts.
     NoParentSession,
-    /// A live run already has this id.
+    /// A live run, or a launch in progress, already has this id.
     Duplicate(String),
     /// The owner or its residency registration failed; the child was not kept.
     Attach(String),
@@ -104,6 +117,8 @@ impl fmt::Display for LaunchFailure {
         }
     }
 }
+
+impl std::error::Error for LaunchFailure {}
 
 /// What close did: the runs it stopped, the runs whose residency did not close in time, and the close failures.
 #[derive(Debug, Default, PartialEq)]
@@ -130,15 +145,37 @@ struct Inner {
 #[derive(Default)]
 struct State {
     closed: bool,
+    /// Run ids whose launch is past the duplicate check and has not finished (L3).
+    starting: HashSet<String>,
     runs: HashMap<String, RunEntry>,
+    /// Close failures of runs that settled on their own, for the next close (bounded, L2).
     failures: Vec<(String, String)>,
+    /// Gives each launch a token, so a settled run removes only its own entry (a run id may be launched again).
+    next_token: u64,
 }
 
 struct RunEntry {
+    token: u64,
     parent: String,
     handle: ActorHandle,
     stop: ChildStop,
     serve: Option<JoinHandle<Vec<(String, String)>>>,
+}
+
+/// Frees a run id's reservation when its launch ends, however it ends.
+struct Reservation {
+    inner: Arc<Inner>,
+    run_id: String,
+}
+
+impl Drop for Reservation {
+    fn drop(&mut self) {
+        self.inner
+            .state
+            .lock_unpoisoned()
+            .starting
+            .remove(&self.run_id);
+    }
 }
 
 impl WorkflowRunService {
@@ -166,9 +203,6 @@ impl WorkflowRunService {
         config: EngineConfig,
     ) -> Result<(), LaunchFailure> {
         let inner = self.inner.clone();
-        if inner.state.lock_unpoisoned().closed {
-            return Err(LaunchFailure::Closed);
-        }
         let Some(parent) = config.parent_session_id.clone() else {
             return Err(LaunchFailure::NoParentSession);
         };
@@ -179,9 +213,20 @@ impl WorkflowRunService {
             )));
         }
         let run_id = input.run_id.clone();
-        if inner.state.lock_unpoisoned().runs.contains_key(&run_id) {
-            return Err(LaunchFailure::Duplicate(run_id));
+        // The id is reserved before the compile's await, so a second launch of it is refused before its child starts.
+        {
+            let mut state = inner.state.lock_unpoisoned();
+            if state.closed {
+                return Err(LaunchFailure::Closed);
+            }
+            if state.runs.contains_key(&run_id) || !state.starting.insert(run_id.clone()) {
+                return Err(LaunchFailure::Duplicate(run_id));
+            }
         }
+        let _reservation = Reservation {
+            inner: inner.clone(),
+            run_id: run_id.clone(),
+        };
 
         // The compile and the child's start come first, as Node's launch does: a rejected script creates no engine and
         // no run row. The mailbox is held here, so the child's early requests wait in it until the owner serves.
@@ -194,29 +239,22 @@ impl WorkflowRunService {
             .map_err(|error| LaunchFailure::Child(Box::new(error)))?;
         let RunningChild { stop, outcome, .. } = running;
 
-        // The synchronous step: the owner, its registrations, its thread and its entry, with no await in between.
+        // The owner is built outside the lock, since the factory may read the service (M1).
+        let mut hosted = match (inner.owners)(config, mailbox) {
+            Ok(hosted) => hosted,
+            Err(error) => {
+                stop.stop();
+                return Err(LaunchFailure::Attach(format!("{error:#}")));
+            }
+        };
+
+        // The critical section: the closed re-check, the registrations, the thread and the entry, with no await.
         let mut state = inner.state.lock_unpoisoned();
         if state.closed {
             drop(state);
             stop.stop();
             return Err(LaunchFailure::Closed);
         }
-        if state.runs.contains_key(&run_id) {
-            drop(state);
-            stop.stop();
-            return Err(LaunchFailure::Duplicate(run_id));
-        }
-        let refused = |text: String| {
-            stop.stop();
-            LaunchFailure::Attach(text)
-        };
-        let mut hosted = match (inner.owners)(config, mailbox) {
-            Ok(hosted) => hosted,
-            Err(error) => {
-                drop(state);
-                return Err(refused(format!("{error:#}")));
-            }
-        };
         let registrations = RunRegistrations {
             residency: &inner.residency,
             concurrency: inner.concurrency.clone(),
@@ -224,22 +262,33 @@ impl WorkflowRunService {
         };
         if let Err(error) = hosted.attach(registrations) {
             drop(state);
-            return Err(refused(format!("{error:#}")));
+            stop.stop();
+            return Err(LaunchFailure::Attach(format!("{error:#}")));
         }
-        let thread_name = format!("workflow-owner-{run_id}");
+        let token = state.next_token;
+        state.next_token += 1;
+        let settle_inner = inner.clone();
+        let settle_run_id = run_id.clone();
+        let settle_stop = stop.clone();
         let serve = match std::thread::Builder::new()
-            .name(thread_name)
-            .spawn(move || hosted.serve())
-        {
+            .name(format!("workflow-owner-{run_id}"))
+            .spawn(move || {
+                let failures = hosted.serve();
+                settle_run(&settle_inner, &settle_run_id, token, &settle_stop, failures)
+            }) {
             Ok(serve) => serve,
             Err(error) => {
                 drop(state);
-                return Err(refused(format!("the owner thread did not start: {error}")));
+                stop.stop();
+                return Err(LaunchFailure::Attach(format!(
+                    "the owner thread did not start: {error}"
+                )));
             }
         };
         state.runs.insert(
             run_id.clone(),
             RunEntry {
+                token,
                 parent,
                 handle: handle.clone(),
                 stop,
@@ -247,7 +296,7 @@ impl WorkflowRunService {
             },
         );
         drop(state);
-        tokio::spawn(drive_outcome(inner, run_id, handle, outcome));
+        tokio::spawn(drive_outcome(run_id, handle, outcome));
         Ok(())
     }
 
@@ -305,6 +354,44 @@ impl WorkflowRunService {
     }
 }
 
+/// Runs on the owner's thread once the owner has stopped serving: the run settled, or every handle was dropped. The
+/// child is stopped here, so its host ends with the run whatever settled it (H1). The run's entry is removed unless close
+/// took it; a taken entry's failures go back to close through the thread's return value, which close joins.
+fn settle_run(
+    inner: &Inner,
+    run_id: &str,
+    token: u64,
+    stop: &ChildStop,
+    failures: Vec<(String, String)>,
+) -> Vec<(String, String)> {
+    stop.stop();
+    log_failures(run_id, &failures);
+    let mut state = inner.state.lock_unpoisoned();
+    let owned = state
+        .runs
+        .get(run_id)
+        .is_some_and(|entry| entry.token == token);
+    if owned {
+        state.runs.remove(run_id);
+        buffer_failures(&mut state.failures, failures);
+        return Vec::new();
+    }
+    failures
+}
+
+/// Logs each close failure at the point it is collected, so a failure that is not returned to a caller is still recorded.
+fn log_failures(run_id: &str, failures: &[(String, String)]) {
+    for (session, message) in failures {
+        tracing::warn!(
+            event = "workflow.run.close_failed",
+            run = %run_id,
+            session = %session,
+            error = %message,
+            "a workflow run's session did not close"
+        );
+    }
+}
+
 /// The engine side of the child's messages for one run (9.25 item 1). Calls that wait for the owner run on the blocking
 /// pool, so an ask in flight never holds the child's host.
 pub struct WireBridge {
@@ -318,14 +405,22 @@ impl WireBridge {
 }
 
 impl ChildHandler for WireBridge {
-    fn create_actor(&self, actor: &CreateActor) -> Result<String, String> {
-        self.handle
-            .create_actor(
-                &actor.site_id,
-                actor.name.as_deref(),
-                actor.persona.as_ref(),
-            )
-            .map_err(|error| error.to_string())
+    fn create_actor(&self, actor: &CreateActor) -> BoxFuture<'static, Result<String, String>> {
+        let handle = self.handle.clone();
+        let site_id = actor.site_id.clone();
+        let name = actor.name.clone();
+        let persona = actor.persona.clone();
+        Box::pin(async move {
+            match tokio::task::spawn_blocking(move || {
+                handle.create_actor(&site_id, name.as_deref(), persona.as_ref())
+            })
+            .await
+            {
+                Ok(Ok(id)) => Ok(id),
+                Ok(Err(error)) => Err(error.to_string()),
+                Err(join) => Err(format!("the owner call did not finish: {join}")),
+            }
+        })
     }
 
     fn request(
@@ -365,11 +460,17 @@ impl ChildHandler for WireBridge {
                 let _ = self.handle.enter_phase(&name);
             }
             // The mailbox has no declare-artifact request yet (9.23 defers it), so the run fails rather than drop it.
+            // The call waits for the owner, so it runs on the blocking pool while the host keeps reading (M2).
             ChildEvent::DeclareArtifact { .. } => {
-                let _ = self.handle.fail(WorkflowError::new(
-                    ErrorCode::DriverError,
-                    "declare-artifact is not wired yet",
-                ));
+                let handle = self.handle.clone();
+                tokio::task::spawn_blocking(move || {
+                    if let Err(error) = handle.fail(WorkflowError::new(
+                        ErrorCode::DriverError,
+                        "declare-artifact is not wired yet",
+                    )) {
+                        tracing::warn!(%error, "the owner refused the run's failure");
+                    }
+                });
             }
         }
     }
@@ -380,8 +481,10 @@ impl ChildHandler for WireBridge {
 fn ticketed(handle: &ActorHandle, call: TicketedCall) -> Result<TicketSettlement, MailboxError> {
     let answer = handle.send_ticketed(call)?;
     // A drain refused by a run that settled on this very call still leaves the call's settlement in its reply, so the
-    // drain's error is not the answer.
-    let _ = handle.drain();
+    // drain's error is not the answer. It is logged, not returned (L5).
+    if let Err(error) = handle.drain() {
+        tracing::warn!(%error, "the owner refused a drain after a child call; the call's settlement is still awaited");
+    }
     ActorHandle::await_ticketed(answer)
 }
 
@@ -442,14 +545,9 @@ fn wire(name: &str, message: impl Into<String>) -> WireError {
     }
 }
 
-/// The child's outcome settles the run, then the run's entry is collected and its owner thread joined. A run that
-/// settled by close has no entry left, and close joins its thread itself.
-async fn drive_outcome(
-    inner: Arc<Inner>,
-    run_id: String,
-    handle: ActorHandle,
-    outcome: BoxFuture<'static, Outcome>,
-) {
+/// The child's outcome settles the run. A stream that stops before `complete` settles the run as interrupted, and its
+/// reason and cause are logged, since the stop carries no error text (L6).
+async fn drive_outcome(run_id: String, handle: ActorHandle, outcome: BoxFuture<'static, Outcome>) {
     let outcome = outcome.await;
     let _ = tokio::task::spawn_blocking(move || match outcome {
         Outcome::Completed(Completion {
@@ -465,16 +563,18 @@ async fn drive_outcome(
                 .unwrap_or_else(|| "The workflow script threw an error".to_owned());
             let _ = handle.fail(WorkflowError::new(ErrorCode::DriverError, message));
         }
-        Outcome::Stopped { .. } => {
+        Outcome::Stopped { reason, cause } => {
+            tracing::warn!(
+                event = "workflow.run.host_stopped",
+                run = %run_id,
+                reason = ?reason,
+                cause = %cause,
+                "the child's stream ended before it completed; the run is stopped as interrupted"
+            );
             let _ = handle.stop_interrupted();
         }
     })
     .await;
-    let entry = inner.state.lock_unpoisoned().runs.remove(&run_id);
-    if let Some(serve) = entry.and_then(|entry| entry.serve) {
-        let failures = join_owner(serve).await;
-        inner.state.lock_unpoisoned().failures.extend(failures);
-    }
 }
 
 /// Joins an owner thread on the blocking pool, and returns the close failures it recorded. A thread that panicked is

@@ -8,8 +8,8 @@ use anyhow::Result;
 use rust_cli_base::sync::LockUnpoisoned;
 use rust_cli_kernel_api::testing::FakeChildRunner;
 use rust_cli_kernel_api::workflow_child::{
-    ChildEvent, ChildRequest, Completion, CreateActor, LaunchError, LaunchInput, Outcome,
-    RequestType, WireError,
+    ChildEvent, ChildHandler, ChildRequest, Completion, CreateActor, LaunchError, LaunchInput,
+    Outcome, RequestType, WireError, WorkflowChildRunner,
 };
 use rust_cli_workflow::actor_mailbox::ActorMailbox;
 use rust_cli_workflow::actor_turns::TurnInput;
@@ -22,7 +22,8 @@ use rust_cli_workflow::run_concurrency::{ConcurrencyListener, RunConcurrency};
 use serde_json::{Map, json};
 
 use super::{
-    CloseReport, Hosted, HostedOwner, LaunchFailure, OwnerFactory, WireBridge, WorkflowRunService,
+    CloseReport, FAILURE_BUFFER_LIMIT, Hosted, HostedOwner, LaunchFailure, OwnerFactory,
+    WireBridge, WorkflowRunService, buffer_failures,
 };
 use crate::workflow_assembly::RunRegistrations;
 
@@ -418,21 +419,208 @@ async fn an_ask_for_an_unknown_actor_is_answered_with_the_engines_error() {
 }
 
 #[tokio::test]
-async fn create_actor_is_answered_with_the_engine_id_and_a_bridge_forwards_it() {
+async fn create_actor_refuses_an_actor_when_the_owner_is_gone() {
     let (mailbox, handle) = ActorMailbox::new();
     drop(mailbox);
     let bridge = WireBridge::new(handle);
-    let refused = rust_cli_kernel_api::workflow_child::ChildHandler::create_actor(
-        &bridge,
-        &CreateActor {
+    let refused = bridge
+        .create_actor(&CreateActor {
             local_id: "a".to_owned(),
             site_id: "plain".to_owned(),
             name: None,
             persona: None,
-        },
-    );
+        })
+        .await;
     assert!(
         refused.is_err(),
         "a bridge whose owner is gone refuses the actor: {refused:?}"
     );
+}
+
+#[tokio::test]
+async fn create_actor_through_a_launched_run_returns_the_engine_id() {
+    let h = harness();
+    h.service
+        .launch(input("wf_1"), config("wf_1", Some("ses_p")))
+        .await
+        .expect("launched");
+    let handler = h.runner.launches()[0].handler.clone();
+    let id = handler
+        .create_actor(&CreateActor {
+            local_id: "a".to_owned(),
+            site_id: "plain".to_owned(),
+            name: Some("worker".to_owned()),
+            persona: None,
+        })
+        .await
+        .expect("the engine creates the actor");
+    assert!(!id.is_empty(), "the engine returns the actor's id");
+}
+
+#[test]
+fn a_launch_failure_is_a_std_error_that_reads_as_its_text() {
+    let error: Box<dyn std::error::Error> = Box::new(LaunchFailure::Closed);
+    assert!(error.to_string().contains("closed"), "{error}");
+}
+
+/// Runs `f` on its own thread and waits up to five seconds. `None` means it did not finish in time (a deadlock or a
+/// blocked caller) or panicked. The body builds whatever runtime it needs.
+fn within_secs<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = sender.send(f());
+    });
+    receiver.recv_timeout(Duration::from_secs(5)).ok()
+}
+
+fn current_thread() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("a runtime")
+}
+
+#[tokio::test]
+async fn a_run_that_settles_engine_side_stops_its_child_and_frees_its_id() {
+    // A residency close stops the live run through its owner, so the run settles without the child's outcome.
+    let h = harness();
+    h.service
+        .launch(input("wf_1"), config("wf_1", Some("ses_p")))
+        .await
+        .expect("launched");
+    h.residency
+        .close("ses_p")
+        .expect("the run is stopped and its guard released");
+    wait_until("the child to be stopped", || h.runner.stop_requested(0)).await;
+    wait_until("the run's entry to be collected", || {
+        h.service.run_count() == 0
+    })
+    .await;
+    h.residency.reopen("ses_p");
+    h.service
+        .launch(input("wf_1"), config("wf_1", Some("ses_p")))
+        .await
+        .expect("the id is free again");
+    assert_eq!(h.runner.launches().len(), 2);
+}
+
+#[test]
+fn the_owner_factory_may_read_the_service_without_deadlock() {
+    let outcome = within_secs(|| {
+        let slot: Arc<Mutex<Option<WorkflowRunService>>> = Arc::new(Mutex::new(None));
+        let read = slot.clone();
+        let base = plain_factory();
+        let factory: OwnerFactory = Arc::new(move |config, mailbox| {
+            if let Some(service) = read.lock_unpoisoned().clone() {
+                let _ = service.run_count();
+            }
+            base(config, mailbox)
+        });
+        let runner = Arc::new(FakeChildRunner::new());
+        let service = WorkflowRunService::new(
+            Arc::new(SessionResidency::new()),
+            Arc::new(FakeConcurrency::default()),
+            runner,
+            factory,
+        );
+        *slot.lock_unpoisoned() = Some(service.clone());
+        current_thread().block_on(service.launch(input("wf_1"), config("wf_1", Some("ses_p"))))
+    });
+    let launched = outcome.expect("the launch returned: the factory did not deadlock");
+    assert!(launched.is_ok(), "{launched:?}");
+}
+
+#[test]
+fn a_declare_artifact_event_does_not_block_the_host_reader() {
+    let returned = within_secs(|| {
+        let runtime = current_thread();
+        runtime.block_on(async {
+            // The owner is never served here, so any blocking call the event makes would never return.
+            let (mailbox, handle) = ActorMailbox::new();
+            let bridge = WireBridge::new(handle);
+            bridge.event(ChildEvent::DeclareArtifact {
+                site_id: "plain".to_owned(),
+                op: "publish".to_owned(),
+                args: Vec::new(),
+            });
+            drop(mailbox);
+        });
+        true
+    });
+    assert_eq!(returned, Some(true), "the event returned to its caller");
+}
+
+#[test]
+fn create_actor_does_not_hold_the_runtime_while_the_owner_is_busy() {
+    let ticks = within_secs(|| {
+        let runtime = current_thread();
+        runtime.block_on(async {
+            // The owner is never served, so the create waits for it. Other tasks must still run meanwhile.
+            let (mailbox, handle) = ActorMailbox::new();
+            let bridge = WireBridge::new(handle);
+            let actor = CreateActor {
+                local_id: "a".to_owned(),
+                site_id: "plain".to_owned(),
+                name: None,
+                persona: None,
+            };
+            let pending = tokio::spawn(bridge.create_actor(&actor));
+            let mut ticks = 0;
+            for _ in 0..5 {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                ticks += 1;
+            }
+            let still_waiting = !pending.is_finished();
+            drop(mailbox);
+            let refused = pending.await.expect("the create task ends");
+            (ticks, still_waiting, refused.is_err())
+        })
+    });
+    assert_eq!(
+        ticks,
+        Some((5, true, true)),
+        "other tasks ran while the create waited, and the create was refused once its owner was gone"
+    );
+}
+
+#[tokio::test]
+async fn two_concurrent_launches_of_one_run_id_start_one_child() {
+    // The fake's start does not yield, so this wrapper makes the two launches interleave before either starts a child.
+    struct Yielding(Arc<FakeChildRunner>);
+    #[async_trait::async_trait]
+    impl WorkflowChildRunner for Yielding {
+        async fn start(
+            &self,
+            input: LaunchInput,
+            handler: Arc<dyn ChildHandler>,
+        ) -> Result<rust_cli_kernel_api::workflow_child::RunningChild, LaunchError> {
+            tokio::task::yield_now().await;
+            self.0.start(input, handler).await
+        }
+    }
+    let runner = Arc::new(FakeChildRunner::new());
+    let service = WorkflowRunService::new(
+        Arc::new(SessionResidency::new()),
+        Arc::new(FakeConcurrency::default()),
+        Arc::new(Yielding(runner.clone())),
+        plain_factory(),
+    );
+    let (first, second) = tokio::join!(
+        service.launch(input("wf_1"), config("wf_1", Some("ses_p"))),
+        service.launch(input("wf_1"), config("wf_1", Some("ses_p"))),
+    );
+    let outcomes = [first.is_ok(), second.is_ok()];
+    assert_eq!(outcomes.iter().filter(|ok| **ok).count(), 1, "{outcomes:?}");
+    assert_eq!(runner.launches().len(), 1, "only the winner starts a child");
+}
+
+#[test]
+fn the_failure_buffer_is_bounded_and_keeps_the_first_failures() {
+    let mut buffer = Vec::new();
+    let failures: Vec<(String, String)> = (0..100)
+        .map(|index| (format!("wf_{index}"), "close failed".to_owned()))
+        .collect();
+    buffer_failures(&mut buffer, failures);
+    assert_eq!(buffer.len(), FAILURE_BUFFER_LIMIT);
+    assert_eq!(buffer[0].0, "wf_0");
 }

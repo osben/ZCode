@@ -104,9 +104,13 @@ impl ChildLauncher for FakeLauncher {
 struct Seen(StdMutex<Vec<String>>);
 
 impl ChildHandler for Seen {
-    fn create_actor(&self, actor: &CreateActor) -> Result<String, String> {
+    fn create_actor(
+        &self,
+        actor: &CreateActor,
+    ) -> futures_util::future::BoxFuture<'static, Result<String, String>> {
         self.0.lock().unwrap().push(actor.local_id.clone());
-        Ok(format!("engine-{}", actor.local_id))
+        let id = format!("engine-{}", actor.local_id);
+        Box::pin(async move { Ok(id) })
     }
 
     fn request(

@@ -21,12 +21,14 @@ struct Recorder {
 }
 
 impl ChildHandler for Recorder {
-    fn create_actor(&self, actor: &CreateActor) -> Result<String, String> {
+    fn create_actor(&self, actor: &CreateActor) -> BoxFuture<'static, Result<String, String>> {
         if let Some(reason) = &self.refuse_actor {
-            return Err(reason.clone());
+            let reason = reason.clone();
+            return Box::pin(async move { Err(reason) });
         }
         self.created.lock().unwrap().push(actor.clone());
-        Ok(format!("engine-{}", actor.local_id))
+        let id = format!("engine-{}", actor.local_id);
+        Box::pin(async move { Ok(id) })
     }
 
     fn request(
