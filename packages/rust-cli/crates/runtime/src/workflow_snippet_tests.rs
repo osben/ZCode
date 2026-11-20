@@ -15,7 +15,9 @@ use rust_cli_kernel_api::workflow_snippet::{
     RunningSnippet, SnippetCheck, SnippetLaunch, SnippetOutcome, SnippetRequest, SnippetStart,
     WorkflowSnippetError, WorkflowSnippetPort, WorkflowSnippetRunner,
 };
-use rust_cli_workflow::world_read::{GlobHits, GrepHits, RunOutcome, RunRequest, WorldReadPorts};
+use rust_cli_workflow::world_read::{
+    GlobHits, GrepHits, RunOutcome, RunRequest, WorldReadPorts, WorldReadRoots,
+};
 use serde_json::{Value, json};
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
@@ -53,18 +55,43 @@ impl WorldReadPorts for Reads {
     }
 }
 
-fn reads() -> Arc<dyn WorldReadPorts> {
-    Arc::new(Reads {
-        read: Ok("hello".to_owned()),
-        delay: std::time::Duration::ZERO,
-    })
+/// The same ports for every root (the fake does not look at its root).
+struct Fixed(Arc<dyn WorldReadPorts>);
+
+impl WorldReadRoots for Fixed {
+    fn at(&self, _root: &std::path::Path) -> Arc<dyn WorldReadPorts> {
+        self.0.clone()
+    }
 }
 
-fn slow_reads(delay: std::time::Duration) -> Arc<dyn WorldReadPorts> {
-    Arc::new(Reads {
+fn reads() -> Arc<dyn WorldReadRoots> {
+    Arc::new(Fixed(Arc::new(Reads {
+        read: Ok("hello".to_owned()),
+        delay: std::time::Duration::ZERO,
+    })))
+}
+
+fn slow_reads(delay: std::time::Duration) -> Arc<dyn WorldReadRoots> {
+    Arc::new(Fixed(Arc::new(Reads {
         read: Ok("late".to_owned()),
         delay,
-    })
+    })))
+}
+
+/// Records the root each read is asked for (divergence 313 of 9.41).
+struct Recording {
+    asked: Mutex<Vec<PathBuf>>,
+    port: Arc<dyn WorldReadPorts>,
+}
+
+impl WorldReadRoots for Recording {
+    fn at(&self, root: &std::path::Path) -> Arc<dyn WorldReadPorts> {
+        self.asked
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(root.to_path_buf());
+        self.port.clone()
+    }
 }
 
 enum StartMode {
@@ -375,6 +402,87 @@ async fn a_world_read_is_answered_from_the_read_port_inside_the_workspace() {
         eval.await.unwrap().unwrap(),
         SnippetOutcome::Completed { .. }
     ));
+}
+
+/// Divergence 313 of 9.41: a snippet's world reads are the roots port's answer for the snippet's own cwd (the session's
+/// directory), never the process directory.
+#[tokio::test]
+async fn a_snippet_reads_under_its_own_cwd_not_the_process_cwd() {
+    let fake = Arc::new(FakeRunner::running());
+    let roots = Arc::new(Recording {
+        asked: Mutex::new(Vec::new()),
+        port: Arc::new(Reads {
+            read: Ok("hello".to_owned()),
+            delay: std::time::Duration::ZERO,
+        }),
+    });
+    let service = Arc::new(SnippetService::new(fake.clone(), roots.clone()));
+    let session_cwd = PathBuf::from("/session/project");
+    let running = {
+        let service = service.clone();
+        let request = SnippetRequest {
+            code: "return await files.read('a.txt');".to_owned(),
+            cwd: session_cwd.clone(),
+            timeout_ms: 5_000,
+        };
+        tokio::spawn(async move { service.eval(request).await })
+    };
+    let handler = fake.wait_for_handler().await;
+    let answer = handler
+        .request(world_read_request("r1", "read", vec![json!("a.txt")]), None)
+        .await;
+    assert_eq!(answer, Ok(json!("hello")));
+    fake.finish(completed(Some(json!("hello"))));
+    assert!(matches!(
+        running.await.unwrap().unwrap(),
+        SnippetOutcome::Completed { .. }
+    ));
+    let asked = roots
+        .asked
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    assert_eq!(asked, vec![session_cwd]);
+}
+
+/// ocr on #598 (medium): the reads are confined to the snippet's cwd. An empty cwd is an empty root, which contains every
+/// path, and a relative cwd roots the reads at the process directory. Both are refused before anything starts or reads.
+#[tokio::test]
+async fn a_snippet_without_an_absolute_cwd_is_refused_before_any_start_or_read() {
+    for cwd in ["", "rel/dir"] {
+        let fake = Arc::new(FakeRunner::running());
+        let roots = Arc::new(Recording {
+            asked: Mutex::new(Vec::new()),
+            port: Arc::new(Reads {
+                read: Ok("hello".to_owned()),
+                delay: std::time::Duration::ZERO,
+            }),
+        });
+        let service = SnippetService::new(fake.clone(), roots.clone());
+        let outcome = service
+            .eval(SnippetRequest {
+                code: "return await files.read('../../secret');".to_owned(),
+                cwd: PathBuf::from(cwd),
+                timeout_ms: 5_000,
+            })
+            .await;
+        assert!(outcome.is_err(), "a cwd of {cwd:?} is refused");
+        assert!(
+            fake.launch
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_none(),
+            "nothing started for a cwd of {cwd:?}"
+        );
+        assert!(
+            roots
+                .asked
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_empty(),
+            "no read port was resolved for a cwd of {cwd:?}"
+        );
+    }
 }
 
 #[tokio::test]

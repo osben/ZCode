@@ -3422,6 +3422,72 @@ passed first time. The cli `workflow_gating_tests` were updated for the new `wir
 Green: `cargo fmt --all --check`; `cargo clippy --workspace --all-targets --locked -- -D warnings`; lib tests of `rust-cli-kernel-api`
 (440), `rust-cli-runtime` (309, of which five are the answer-selection tests added for ocr finding 1), `rust-cli-tools` (598); the cli binary tests (559).
 
+### 9.41 W7-8e: per-call snippet root and the reminder host (as built, gate off)
+
+**Scope built.** Two of the three things 9.38 and 9.28 left open, in part.
+
+- **Snippet reads are rooted per call (313).** `WorldReadRoots` (workflow, `world_read.rs`) answers the read ports of one root:
+  `at(root)`. The production adapter `WorldRoots` (env-local, `world_ports.rs`) makes a `WorldPorts` rooted there, over the same
+  environment and runtime handle. `SnippetService` now holds a `WorldReadRoots` and asks it for each child read at the snippet's
+  own cwd, so a snippet's glob and grep see the session's directory, not the process's. The trait `WorldReadPorts` is unchanged.
+- **The reminder host (357 to 360, in part).** `protocol-zcode/src/fork/workflow_reminder_host.rs`: `TokioTimers` (the runtime's
+  sleep, the time from the injected kernel `Clock`, a cancel aborts the task), the `RunDecisions` seam (live run ids and a run's open
+  decisions, synchronous, a failed read is an `Err`), and `SessionReminders`, one session's clock with its host and its two turn
+  edges (`turn_started` is busy, `turn_finished` is idle). The host's `remind` builds the `blocked` formatter's input (each open
+  question with its wait from `asked_at`, each hole from `since`, the run label is the run id) and posts it through the same
+  `WorkflowNotices` sink as the escalation and stall notices.
+
+**Not done.** The snippet is not registered: `wired_workflow_tools` still offers no EvalWorkflowSnippet, because no snippet port is
+composed (divergence 411). The reminder clock is not composed into the app: no session turn edge calls `SessionReminders`, no
+`RunDecisions` adapter over the run service exists, and the composition does not call `with_reminder` (divergences 412 to 414).
+The hole notice (353) and the cold replay (363) are still open, as in 9.38.
+
+**Tests (red, then green).**
+
+- `env-local` `the_roots_port_globs_under_the_root_it_is_asked_for`: written with the port in one edit, so the first run was a
+  compile error (no `WorldRoots`), then green. The assertion is the behaviour: a glob at one root never sees another root's files.
+- `runtime` `a_snippet_reads_under_its_own_cwd_not_the_process_cwd` (the recording roots port): the roots port is asked for the
+  snippet's cwd only. The other 20 snippet tests were rewritten to the roots type (a `Fixed` adapter) and stayed green (21 of 21).
+- `protocol-zcode` `workflow_reminder_host_tests.rs` (7 cases): red first as unresolved imports, then green. The cases are a fake
+  clock that fires timers in order and drops cancelled ones: the first reminder at 15 idle minutes names the question with
+  `waited-ms`; a busy turn cancels; the second reminder is 30 minutes after the idle edge and then no third; an open-set change
+  through the composed `WorkflowProgressHost` restarts the idle clock; a failed run read sends nothing; the idle period counts from the
+  edge; and the tokio timers fire once and a cancel stops one (real time, 10 ms and 50 ms).
+- Clippy with `-D warnings` over the workspace, all targets: clean (one red run: `SystemTime::now` is a disallowed method, so the
+  host takes the injected clock instead).
+- `cargo fmt --all --check`: clean. Lib tests of runtime (171), workflow (440), kernel-api (304), protocol-zcode (970), node-store
+  (357), tools (579), env-local (434) and the cli bin tests (559) pass.
+
+**Node divergences (new in W7-8e, numbered from 410).**
+
+410. The per-call root is a port factory (`WorldReadRoots::at`), not a root argument on `WorldReadPorts`. Node passes the cwd
+     through its port call. The factory keeps the trait and its many test fakes unchanged.
+411. EvalWorkflowSnippet is not registered in production. A snippet port needs the helper link, the child launcher and the local
+     environment's roots, and the gate source is built before the composition has them (`app_server.rs`, `workflow_gating::gating`).
+     Node registers it in every entry point when the flag is on. Closing 313 for registration waits on that composition.
+412. The reminder clock is inert in the app. The host exists and is tested, but no session turn edge calls `SessionReminders`. The
+     natural source is `live.rs`, where `TurnStarted` and `TurnFinished` already reach the off-peak run.
+413. The idle edge is the turn's end (`TurnFinished`). Node's `session_idle` is the command queue draining, which also covers a
+     queued next turn. A queued turn ends idle for a moment in Rust, and the clock's arm is cancelled by the next start (not verified
+     against a live session).
+414. No `RunDecisions` adapter over the run service exists. Node awaits the run snapshot. A Rust adapter must answer from memory or run
+     its async read off the owner thread (divergence 358 in part: the host skips a failed read, the adapter is not built).
+415. A failed snapshot read is logged (`dynamic_workflow.reminder.read_failed`) and the run is skipped for that reminder. Node's
+     `onReadError` is not checked line by line.
+416. The timers' delay is a real sleep on the runtime. A cancel aborts the task, so a pending reminder does not keep the process
+     alive (359). Whether the production runtime shuts down with a timer pending is not tested.
+417. The reminder's run label is the run id (as 9.38 divergence 352). A question's wait is the send time minus `asked_at`, and a
+     question with no `asked_at` waits 0. Node's wait arithmetic was not compared line by line.
+418. The reminder text is the `blocked` formatter's (360 closed for the text). Its run label and `draft_path` come from the
+     open decisions, not from a run registry.
+419. The reminder is posted through `WorkflowNotices` (the signal channel), not Node's command queue (as 9.38 divergence 350).
+420. The tokio timer test uses real delays (10 ms and 50 ms), not paused time, so it can be slow on a loaded machine. It does not
+     assert timing beyond "fires" and "does not fire after a cancel".
+421. A snippet whose cwd is empty or relative is refused before any start or read (ocr on #598). Confinement is lexical against the
+     cwd, and an empty root contains every path. Node's snippet has no such refusal (its cwd is always a session's directory).
+422. The read ports for a snippet are resolved once per eval, for its cwd, and reused for every child read (ocr on #598). Node does not
+     cache them, but the cwd does not change within a snippet, so the result is the same.
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.
