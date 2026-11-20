@@ -2404,6 +2404,61 @@ over the process governor, the session store, the artifact store and the app's s
 **Tests seen red first.** `workflow_owner_tests.rs` ran against the stubs: 2 failed (a `todo!` in the factory and in the
 refusals). `workflow_service_tests.rs` ran against the stub `build`: 2 failed (`todo!`). Both then passed.
 
+### 9.32 W7-5c: run service composition, part A (as built, gate off)
+
+**Scope built (part A only).** The composition of the run service's ports in the cli root, the session-open hook, and the
+production quota reads. Part B (the actor turn bindings, 9.30 item 202) is not in this PR; see the "not done" list.
+
+- `WorkflowRunService::set_store` / `set_clock` / `configure_quota`, set in `cli/src/frontends/workflow_service.rs` `build`.
+  The store is a `LazyRunStore`: it opens the session database on its first call, so building still opens nothing
+  (the gate-off test holds).
+- `WorkflowRunHost::session_opened(parent)` (kernel-api, a default no-op). The runtime's implementation runs
+  `reconcile_session_off_thread` (the orphan sweep, 9.30 item 212), then `open_session` (the quota scan, 9.31, item 233) on the
+  blocking pool.
+- `protocol-zcode` `Server::open_session` spawns `session_opened` from the block that only the open which made the projection
+  enters (after `bridge.open`). A concurrent caller that found the session not yet open does not spawn it (ocr finding,
+  MEDIUM). This covers the plain open and the resumed open (207 and 233 of 9.31).
+- `StoreQuotaReads` (runtime `workflow_quota.rs`): the production `QuotaRunReads` over the same journal `RunStore`, so the
+  quota scan reads one session's rows (`runs_of_session`) and one row by id (closes 231 of 9.31).
+- `app_server.rs` installs the per-session run reads (`set_dynamic_workflow_runs`), so `workflowRuns` and the run list
+  answer from the service (9.29).
+
+**Tests seen red first.**
+
+- `a_session_open_settles_its_parents_orphans` (runtime `workflow_run_store_tests.rs`): against the default no-op
+  `session_opened`, the orphan stayed `running` (`left: "running", right: "stopped"`). Green after the implementation.
+- `the_quota_reads_list_one_sessions_runs_and_read_one_row` (runtime): against `todo!()` bodies, it panicked at
+  `workflow_quota.rs`. Green after.
+- `a_session_open_settles_the_parents_orphan_in_the_composed_service` (cli `workflow_service_tests.rs`): against the build
+  without a store, the orphan stayed `Running`. Green after.
+- `two_concurrent_cold_opens_run_the_session_open_hook_once` (protocol-zcode `server_close_tests.rs`, over the existing
+  `Server` harness with a counting `WorkflowRunHost`): against the early spawn, two concurrent cold opens of one session ran
+  the hook twice (`left: 2, right: 1`). Green after the move into the made block.
+
+**Node divergences (new in W7-5c, numbered from 260).**
+
+260. The sweep and the scan run in the background after a cold open, not at app start as Node's `create-app.ts` does. The
+     open does not wait on the journal. A failed sweep or scan is logged by the run service and is not raised to the open.
+261. Each cold open runs the sweep, which is a journal query, even with the gate off. With no `dwf_*` rows it changes nothing.
+     Node runs its sweep once per app start, not per session.
+262. The journal store is opened by its first call and kept, and not at build. A failed open is returned to that call and
+     retried by the next one. Node's store is the app's shared one (200 of 9.30).
+263. `workflowRuns` answers from the service once the composition installs it (9.29). With the gate off and no run, the answer
+     is still the empty list. A cold read now opens the journal, which Node's read also does.
+264. The `workflowRuns` snapshot is not served from the projection (9.31 item 234). Still the journal read (remains open).
+265. The progress port (9.31 item 220) has no production implementation. Node appends a `dynamic_workflow_run_progress` session
+     event and sends the Host notification. Rust has no writer for a custom session event: `Fact::Entry` writes a
+     `rust-cli/`-prefixed entry that Node does not read as that event. The event shape and its notification method need their
+     own change. Until then the progress is not recorded, as 220 said.
+266. EvalWorkflowSnippet (9.28 "not done"): the snippet runner and `SnippetService` are not in the composition. `workflow_tools`
+     has no production caller, and its gate source is not set (9.18), so a wired port would be unreachable. The world reads
+     have a production port (`env-local` `WorldPorts`), so the remaining gap is the registration path, not the reads.
+267. The actor turn bindings (9.30 item 202, 204) are not carried. The runtime already has `AgentTurnRunner` over `ActorAgents`
+     (`runtime/src/actor_turns.rs`), with an `ActorRunBase`, but the launch does not pass the parent's model selection,
+     workspace, permission mode, persona or ports into it. Part B.
+268. Closed after the ocr round: the hook call in `Server::open_session` has a test over the existing `Server` harness
+     (`two_concurrent_cold_opens_run_the_session_open_hook_once`), which covers the race as well as the single call.
+
 ### 9.27 W7-8a CreateWorkflow (as built)
 
 **Scope.** The CreateWorkflow tool: its input rules, the three sources (inline, `saved`, `path`), the draft file, the

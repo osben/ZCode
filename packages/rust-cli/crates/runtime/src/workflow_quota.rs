@@ -10,6 +10,39 @@ use std::sync::Arc;
 
 use rust_cli_workflow::model::RunRow;
 use rust_cli_workflow::quota_resume::{QuotaResumePort, Refusal, ResumeAnswer};
+use rust_cli_workflow::run_store::RunStore;
+
+/// The production run rows: the journal's `RunStore` (the same store the run service reads), answered per session
+/// (9.31, divergence 231 closed by W7-5c).
+pub struct StoreQuotaReads {
+    store: Arc<dyn RunStore>,
+}
+
+impl StoreQuotaReads {
+    pub fn new(store: Arc<dyn RunStore>) -> Self {
+        Self { store }
+    }
+}
+
+impl QuotaRunReads for StoreQuotaReads {
+    fn get_run(&self, run_id: &str) -> Result<Option<RunRow>, String> {
+        self.store
+            .get_run(run_id)
+            .map_err(|error| format!("{error:#}"))
+    }
+
+    fn list_session_runs(
+        &self,
+        parent_session_id: &str,
+        limit: usize,
+    ) -> Result<Vec<RunRow>, String> {
+        let rows = self
+            .store
+            .runs_of_session(parent_session_id, limit)
+            .map_err(|error| format!("{error:#}"))?;
+        Ok(rows.into_iter().map(|listed| listed.run).collect())
+    }
+}
 
 /// The run rows the quota module reads. A read that fails is logged by the module and ends the attempt.
 pub trait QuotaRunReads: Send + Sync {
