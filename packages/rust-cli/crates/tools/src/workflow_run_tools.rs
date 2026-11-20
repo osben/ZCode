@@ -1,8 +1,9 @@
-//! Fork: the run tools ListWorkflowRuns, ResumeWorkflowRun and ResolveWorkflowQuestion (Node `core/src/tool/handlers/
-//! {list-workflow-runs,resume-workflow-run,resolve-workflow-question}.ts`; specs/fork-rust-workflow-engine.md, 9.40).
-//! Each call asks the run sessions for the calling session's port (`for_session(context.session)`), so a session reads
-//! and resumes only through its own run service. The model text is formatted here, not by the helper (9.40, 390): the
-//! three formats are a few lines each, and a helper call per result would be a second process round trip.
+//! Fork: the run tools ListWorkflowRuns, GetWorkflowRun, ResumeWorkflowRun and ResolveWorkflowQuestion (Node
+//! `core/src/tool/handlers/{list-workflow-runs,get-workflow-run,resume-workflow-run,resolve-workflow-question}.ts`;
+//! specs/fork-rust-workflow-engine.md, 9.40 and 9.42). Each call asks the run sessions for the calling session's port
+//! (`for_session(context.session)`), so a session reads and resumes only through its own run service. The model text is
+//! formatted here, not by the helper (9.40, 390): the list and resume formats are a few lines each, and the detail's
+//! formatter is `workflow_run_detail.rs`.
 //!
 //! A missing capability (no run service, or a port without the member) is a business failure with Node's wording, never
 //! an empty list or a silent success.
@@ -11,6 +12,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use rust_cli_base::civil::civil_from_days;
+use rust_cli_base::clock::SystemClock;
 use rust_cli_kernel_api::ids::{QuestionId, WorkflowRunId};
 use rust_cli_kernel_api::permission::PermissionDecision;
 use rust_cli_kernel_api::tool::{
@@ -27,10 +29,14 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
+use crate::workflow_run_detail::format_detail;
 use crate::workflow_tools::{Contract, contract, workspace_dir};
 
 /// Node: the model text of each run tool is one short container, so 24 000 bytes is ample (ListWorkflowRuns allows 50 rows).
 const MODEL_BYTES: usize = 24_000;
+/// Node `GET_WORKFLOW_RUN_RESULT_BUDGET_BYTES`: a detail carries the run's whole result, so it has the larger budget.
+/// Node persists an overflow as an artifact; this build cuts it at the budget (divergence 438).
+const DETAIL_MODEL_BYTES: usize = 400_000;
 /// Node `ListWorkflowRunsInputSchema`: the default and the clamp of `limit`.
 const DEFAULT_LIMIT: i64 = 20;
 const MIN_LIMIT: i64 = 1;
@@ -48,6 +54,7 @@ const RESUMED_TEXT: &str = " has been resumed and is running in the background. 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Kind {
     List,
+    Get,
     Resume,
     Resolve,
 }
@@ -56,15 +63,16 @@ impl Kind {
     fn name(self) -> &'static str {
         match self {
             Self::List => tool_names::LIST_WORKFLOW_RUNS,
+            Self::Get => tool_names::GET_WORKFLOW_RUN,
             Self::Resume => tool_names::RESUME_WORKFLOW_RUN,
             Self::Resolve => tool_names::RESOLVE_WORKFLOW_QUESTION,
         }
     }
 }
 
-/// The three run tools, in Node's order (ListWorkflowRuns, ResumeWorkflowRun, ResolveWorkflowQuestion).
+/// The four run tools, in Node's order (ListWorkflowRuns, GetWorkflowRun, ResumeWorkflowRun, ResolveWorkflowQuestion).
 pub fn run_tools(runs: Arc<dyn DynamicWorkflowRunSessions>) -> Vec<Arc<dyn Tool>> {
-    [Kind::List, Kind::Resume, Kind::Resolve]
+    [Kind::List, Kind::Get, Kind::Resume, Kind::Resolve]
         .into_iter()
         .map(|kind| {
             Arc::new(RunTool {
@@ -93,7 +101,8 @@ struct ListInput {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ResumeInput {
+/// The input of the tools that name one run: GetWorkflowRun and ResumeWorkflowRun (both take `run_id`, and reject any other key).
+struct RunIdInput {
     run_id: String,
 }
 
@@ -107,6 +116,7 @@ struct ResolveInput {
 /// A checked input, one per tool.
 enum Parsed {
     List(ListQuery),
+    Get(String),
     Resume(String),
     Resolve { qid: String, answer: String },
 }
@@ -156,8 +166,13 @@ fn parse(kind: Kind, input: Value) -> Result<Parsed, String> {
                 statuses,
             }))
         }
+        Kind::Get => {
+            let parsed: RunIdInput = serde_json::from_value(input).map_err(|e| e.to_string())?;
+            non_empty("run_id", &parsed.run_id)?;
+            Ok(Parsed::Get(parsed.run_id))
+        }
         Kind::Resume => {
-            let parsed: ResumeInput = serde_json::from_value(input).map_err(|e| e.to_string())?;
+            let parsed: RunIdInput = serde_json::from_value(input).map_err(|e| e.to_string())?;
             non_empty("run_id", &parsed.run_id)?;
             Ok(Parsed::Resume(parsed.run_id))
         }
@@ -182,8 +197,15 @@ fn port_failure(error: DynamicWorkflowRunError, unavailable: &str, what: &str) -
     }
 }
 
+/// Node `run_not_found`: the failure of an unknown run id. ResumeWorkflowRun and GetWorkflowRun give this one text.
+pub(crate) fn run_not_found(run_id: &str) -> String {
+    format!(
+        "run_not_found: no workflow run with ID {run_id} exists for this project. Use ListWorkflowRuns to see the runs that do."
+    )
+}
+
 /// Node `formatWorkflowRunTimestamp`: ISO 8601 in UTC, from epoch milliseconds.
-fn iso_from_ms(ms: i64) -> String {
+pub(crate) fn iso_from_ms(ms: i64) -> String {
     let days = ms.div_euclid(MS_PER_DAY);
     let within = ms.rem_euclid(MS_PER_DAY);
     let (year, month, day) = civil_from_days(days);
@@ -195,13 +217,13 @@ fn iso_from_ms(ms: i64) -> String {
 }
 
 /// Node `workflowRunAttribute`: whitespace collapsed to single spaces, then the XML escape.
-fn attribute(name: &str, value: &str) -> String {
+pub(crate) fn attribute(name: &str, value: &str) -> String {
     let collapsed = value.split_whitespace().collect::<Vec<_>>().join(" ");
     format!("{name}=\"{}\"", escape_xml(&collapsed))
 }
 
 /// A JSON field as the text an attribute carries (integers without a fraction, as Node prints them).
-fn field_text(value: &Value) -> String {
+pub(crate) fn field_text(value: &Value) -> String {
     match value {
         Value::String(text) => text.clone(),
         Value::Bool(flag) => flag.to_string(),
@@ -278,9 +300,7 @@ fn format_list(page: &Value) -> String {
 /// Node `resumeFailureFor` and the not-found branch: the message the model reads for a refused resume.
 fn resume_refusal(reason: &str, run_id: &str, detail: Option<&str>) -> String {
     match reason {
-        "not_found" => format!(
-            "run_not_found: no workflow run with ID {run_id} exists for this project. Use ListWorkflowRuns to see the runs that do."
-        ),
+        "not_found" => run_not_found(run_id),
         "compile_failed" => {
             let base = format!(
                 "workflow_run_compile_failed: the stored script of run {run_id} no longer compiles against the current workflow facade, so it cannot be replayed as-is. Rewrite it for the current facade and submit it with AmendWorkflow, which keeps the finished work of this run."
@@ -340,7 +360,10 @@ impl Tool for RunTool {
     }
 
     fn result_budget_truncate_bytes(&self) -> Option<usize> {
-        Some(MODEL_BYTES)
+        Some(match self.kind {
+            Kind::Get => DETAIL_MODEL_BYTES,
+            Kind::List | Kind::Resume | Kind::Resolve => MODEL_BYTES,
+        })
     }
 
     async fn validate_input(&self, input: &Value, _context: &ToolUseContext) -> Validation {
@@ -353,7 +376,7 @@ impl Tool for RunTool {
         }
     }
 
-    /// Node `needsApproval: false` for all three: the listing reads, and resume and answer act on runs the user
+    /// Node `needsApproval: false` for all four: the listings and the detail read, and resume and answer act on runs the user
     /// already approved (the resume is pinned to the approved script).
     async fn check_permissions(
         &self,
@@ -383,6 +406,19 @@ impl Tool for RunTool {
                     .map_err(|error| port_failure(error, LIST_UNAVAILABLE, "ListWorkflowRuns"))?;
                 let mut output = text(format_list(&page));
                 output.display = page;
+                Ok(output)
+            }
+            Parsed::Get(run_id) => {
+                let detail = port
+                    .get_run_detail(&WorkflowRunId::new(run_id.clone()))
+                    .await
+                    .map_err(|error| port_failure(error, LIST_UNAVAILABLE, "GetWorkflowRun"))?;
+                let Some(detail) = detail else {
+                    return Err(failed(run_not_found(&run_id)));
+                };
+                let now = i64::try_from(SystemClock::utc().now_ms()).unwrap_or(i64::MAX);
+                let mut output = text(format_detail(&detail, now));
+                output.display = detail;
                 Ok(output)
             }
             Parsed::Resume(run_id) => {

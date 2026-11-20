@@ -62,43 +62,37 @@ pub trait DynamicWorkflowGates: Send + Sync {
 /// record, so activation never rewrites the gate the session was created with.
 #[derive(Debug, Default)]
 pub struct SessionGates {
-    records:
-        std::sync::Mutex<std::collections::HashMap<crate::ids::SessionId, DynamicWorkflowGate>>,
-    activated: std::sync::Mutex<std::collections::HashSet<crate::ids::SessionId>>,
+    /// One lock over the record and the activation, so a forget removes a session's both at once: an activation cannot
+    /// land between the two removals and outlive the session.
+    state: std::sync::Mutex<GateState>,
+}
+
+#[derive(Debug, Default)]
+struct GateState {
+    records: std::collections::HashMap<crate::ids::SessionId, DynamicWorkflowGate>,
+    activated: std::collections::HashSet<crate::ids::SessionId>,
 }
 
 impl SessionGates {
     /// Records the gate a session was created with, replacing any earlier record.
     pub fn record(&self, session: &crate::ids::SessionId, gate: DynamicWorkflowGate) {
-        self.records().insert(session.clone(), gate);
+        self.state().records.insert(session.clone(), gate);
     }
 
     /// Activates a session's workflow tools. `true` when this call activated it; a session already active is `false`.
     pub fn activate(&self, session: &crate::ids::SessionId) -> bool {
-        self.activations().insert(session.clone())
+        self.state().activated.insert(session.clone())
     }
 
-    /// Drops the record and the activation of a deleted session.
+    /// Drops the record and the activation of a deleted session, under one lock.
     pub fn forget(&self, session: &crate::ids::SessionId) {
-        self.records().remove(session);
-        self.activations().remove(session);
+        let mut state = self.state();
+        state.records.remove(session);
+        state.activated.remove(session);
     }
 
-    fn records(
-        &self,
-    ) -> std::sync::MutexGuard<
-        '_,
-        std::collections::HashMap<crate::ids::SessionId, DynamicWorkflowGate>,
-    > {
-        self.records
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
-    fn activations(
-        &self,
-    ) -> std::sync::MutexGuard<'_, std::collections::HashSet<crate::ids::SessionId>> {
-        self.activated
+    fn state(&self) -> std::sync::MutexGuard<'_, GateState> {
+        self.state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
@@ -106,11 +100,11 @@ impl SessionGates {
 
 impl DynamicWorkflowGates for SessionGates {
     fn gate(&self, session: &crate::ids::SessionId) -> Option<DynamicWorkflowGate> {
-        self.records().get(session).copied()
+        self.state().records.get(session).copied()
     }
 
     fn activated(&self, session: &crate::ids::SessionId) -> bool {
-        self.activations().contains(session)
+        self.state().activated.contains(session)
     }
 }
 

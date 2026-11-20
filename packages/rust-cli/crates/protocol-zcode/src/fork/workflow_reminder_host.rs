@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Duration;
 
 use rust_cli_kernel_api::clock::Clock;
@@ -301,18 +301,58 @@ impl WorkflowReminders {
         {
             return None;
         }
-        let mut sessions = self.sessions.lock().unwrap_or_else(PoisonError::into_inner);
-        let reminders = sessions.entry(session.to_owned()).or_insert_with(|| {
-            let runs = Arc::new(Routed {
-                source: self.source.clone(),
-                session: session.to_owned(),
-            });
-            let reminders =
-                SessionReminders::new(session, runs, self.timers.clone(), self.notices.clone());
-            reminders.turn_finished();
-            reminders
+        if let Some(existing) = self.lock_sessions().get(session) {
+            return Some(existing.clone());
+        }
+        // Made outside the lock: the first turn-finished arms the clock, which calls the run source and the timers, and
+        // those must not run under the map's lock (every session's edges wait on it).
+        let made = self.make(session);
+        let mut sessions = self.lock_sessions();
+        match sessions.get(session) {
+            Some(winner) => {
+                let winner = winner.clone();
+                drop(sessions);
+                // Another edge made the session's clock first; this one never joins the map, so its timers stop here.
+                made.clock().stop();
+                Some(winner)
+            }
+            None => {
+                sessions.insert(session.to_owned(), made.clone());
+                Some(made)
+            }
+        }
+    }
+
+    /// A new session clock, idle (its first turn-finished arms the idle clock).
+    fn make(&self, session: &str) -> Arc<SessionReminders> {
+        let runs = Arc::new(Routed {
+            source: self.source.clone(),
+            session: session.to_owned(),
         });
-        Some(reminders.clone())
+        let reminders =
+            SessionReminders::new(session, runs, self.timers.clone(), self.notices.clone());
+        reminders.turn_finished();
+        reminders
+    }
+
+    fn lock_sessions(&self) -> MutexGuard<'_, HashMap<String, Arc<SessionReminders>>> {
+        self.sessions.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The user wrote a prompt (Node `userSpoke`): every run of the session gets a fresh pair of reminders.
+    pub fn user_spoke(&self, session: &str) {
+        if let Some(reminders) = self.session(session) {
+            reminders.clock().user_spoke();
+        }
+    }
+
+    /// The session was deleted (Node: its reminders go with it): its clock stops, so a due reminder does not fire for a
+    /// dead session, and its entry is dropped, so the map does not grow with deleted sessions.
+    pub fn forget(&self, session: &str) {
+        let removed = self.lock_sessions().remove(session);
+        if let Some(reminders) = removed {
+            reminders.clock().stop();
+        }
     }
 }
 

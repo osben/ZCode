@@ -11,10 +11,11 @@ use super::{
     WorkflowSnippetPort,
 };
 
-struct Fixed;
+/// A port that names itself in its eval's logs, so a test can tell which port answered.
+struct Marked(&'static str);
 
 #[async_trait]
-impl WorkflowSnippetPort for Fixed {
+impl WorkflowSnippetPort for Marked {
     async fn check(&self, _code: &str) -> Result<SnippetCheck, WorkflowSnippetError> {
         Ok(SnippetCheck::Diagnostics(Vec::new()))
     }
@@ -22,7 +23,7 @@ impl WorkflowSnippetPort for Fixed {
     async fn eval(&self, _request: SnippetRequest) -> Result<SnippetOutcome, WorkflowSnippetError> {
         Ok(SnippetOutcome::Completed {
             value: None,
-            logs: vec!["from the port".to_owned()],
+            logs: vec![self.0.to_owned()],
             logs_truncated: false,
         })
     }
@@ -48,10 +49,17 @@ async fn an_unset_slot_fails_each_call_with_the_missing_port_named() {
 #[tokio::test]
 async fn a_set_slot_delegates_to_its_port_and_keeps_the_first() {
     let slot = LateSnippetPort::default();
-    assert!(slot.set(Arc::new(Fixed)));
-    assert!(!slot.set(Arc::new(Fixed)), "a second set is refused");
+    assert!(slot.set(Arc::new(Marked("first"))));
+    assert!(
+        !slot.set(Arc::new(Marked("second"))),
+        "a second set is refused"
+    );
+    // The refused second port must not answer: the first one's marker comes back.
     let outcome = slot.eval(request()).await.expect("delegated");
-    assert!(matches!(outcome, SnippetOutcome::Completed { .. }));
+    match outcome {
+        SnippetOutcome::Completed { logs, .. } => assert_eq!(logs, ["first"]),
+        other => panic!("expected the first port's completed outcome, got {other:?}"),
+    }
     assert!(matches!(
         slot.check("x").await,
         Ok(SnippetCheck::Diagnostics(_))

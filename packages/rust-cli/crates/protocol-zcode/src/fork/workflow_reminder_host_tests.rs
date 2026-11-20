@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
 use serde_json::{Value, json};
 
@@ -460,6 +460,99 @@ fn an_unnamed_actor_is_labelled_as_node_labels_it_and_a_run_without_fields_owes_
     assert_eq!(open_decisions_of(&run).questions[0].subagent, "site@2");
     let empty = open_decisions_of(&json!({"runId": "run_2"}));
     assert!(empty.questions.is_empty() && empty.holes.is_empty());
+}
+
+#[test]
+fn a_forgotten_session_posts_no_reminder_while_another_session_still_does() {
+    let timers = Arc::new(FakeTimers::default());
+    let notices = Arc::new(Notices::default());
+    let registry = registry_over(&["parent_a", "parent_b"], &timers, &notices);
+    let sources = Sources::default();
+    sources.add("parent_a", "run_a");
+    sources.add("parent_b", "run_b");
+    assert!(registry.set_runs(Arc::new(sources)));
+    registry.turn_finished("parent_a");
+    registry.turn_finished("parent_b");
+    registry.forget("parent_a");
+    timers.advance_to(minutes(20));
+    let texts = notices.texts();
+    assert_eq!(
+        texts.len(),
+        1,
+        "only the live session's reminder posts: {texts:?}"
+    );
+}
+
+#[test]
+fn user_spoke_gives_a_run_that_already_sent_its_pair_a_fresh_pair() {
+    let timers = Arc::new(FakeTimers::default());
+    let notices = Arc::new(Notices::default());
+    let registry = registry_over(&["parent_a"], &timers, &notices);
+    let sources = Sources::default();
+    sources.add("parent_a", "run_a");
+    assert!(registry.set_runs(Arc::new(sources)));
+    registry.turn_finished("parent_a");
+    timers.advance_to(minutes(16));
+    timers.advance_to(minutes(46));
+    timers.advance_to(minutes(200));
+    assert_eq!(notices.texts().len(), 2, "the pair is spent");
+    registry.turn_started("parent_a");
+    registry.user_spoke("parent_a");
+    registry.turn_finished("parent_a");
+    timers.advance_to(minutes(216));
+    assert_eq!(
+        notices.texts().len(),
+        3,
+        "a user prompt re-arms the spent run"
+    );
+}
+
+/// A run source that reads another session's clock while the first clock is being made: the re-entrant edge deadlocks if
+/// the registry builds the clock under its map's lock.
+struct Reentrant {
+    registry: Arc<OnceLock<std::sync::Weak<WorkflowReminders>>>,
+    /// The first read re-enters once; the re-entered clock's own read must not re-enter again (that would recurse).
+    entered: AtomicBool,
+}
+
+impl RunDecisionsSource for Reentrant {
+    fn live_run_ids(&self, _session: &str) -> Vec<String> {
+        if !self.entered.swap(true, Ordering::SeqCst)
+            && let Some(registry) = self.registry.get().and_then(std::sync::Weak::upgrade)
+        {
+            registry.turn_started("parent_b");
+        }
+        Vec::new()
+    }
+
+    fn open(&self, _session: &str, _run_id: &str) -> Result<Option<OpenDecisions>, String> {
+        Ok(None)
+    }
+}
+
+#[test]
+fn a_clock_made_while_a_run_source_reads_another_session_does_not_deadlock() {
+    let timers = Arc::new(FakeTimers::default());
+    let notices = Arc::new(Notices::default());
+    let registry = registry_over(&["parent_a", "parent_b"], &timers, &notices);
+    let slot = Arc::new(OnceLock::new());
+    assert!(registry.set_runs(Arc::new(Reentrant {
+        registry: slot.clone(),
+        entered: AtomicBool::new(false),
+    })));
+    let _ = slot.set(Arc::downgrade(&registry));
+    let (done, finished) = std::sync::mpsc::channel();
+    let worker = registry;
+    std::thread::spawn(move || {
+        worker.turn_finished("parent_a");
+        let _ = done.send(());
+    });
+    assert!(
+        finished
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .is_ok(),
+        "the edge returned: the map's lock was not held across the run source"
+    );
 }
 
 fn registry_over(

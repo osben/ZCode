@@ -45,15 +45,30 @@ pub fn entry_key(session: &SessionId) -> String {
     format!("{}:runtime-dynamic-workflow-activation", session.as_str())
 }
 
-/// Node `WORKFLOW_COMMAND_TEXT_PATTERN` (`/^\/workflow(?:\s|$)/i`) on the trimmed text: the word alone, or followed by a
-/// whitespace character.
+/// JavaScript's `\s` (the WhiteSpace and LineTerminator sets), which Node's text pattern and `String.prototype.trim` both
+/// use. Rust's `char::is_whitespace` differs: it misses U+FEFF and includes U+0085.
+fn is_js_space(c: char) -> bool {
+    matches!(
+        c,
+        '\t' | '\n' | '\u{0B}' | '\u{0C}' | '\r' | ' ' | '\u{A0}' | '\u{1680}' | '\u{2000}'
+            ..='\u{200A}'
+                | '\u{2028}'
+                | '\u{2029}'
+                | '\u{202F}'
+                | '\u{205F}'
+                | '\u{3000}'
+                | '\u{FEFF}'
+    )
+}
+
+/// Node `WORKFLOW_COMMAND_TEXT_PATTERN` (`/^\/workflow(?:\s|$)/i`) on the text trimmed as JavaScript trims it: the word
+/// alone, or followed by a JavaScript whitespace character.
 pub fn is_workflow_command(text: &str) -> bool {
-    let trimmed = text.trim();
+    let trimmed = text.trim_matches(is_js_space);
     let Some(head) = trimmed.get(..9) else {
         return false;
     };
-    head.eq_ignore_ascii_case("/workflow")
-        && trimmed[9..].chars().next().is_none_or(char::is_whitespace)
+    head.eq_ignore_ascii_case("/workflow") && trimmed[9..].chars().next().is_none_or(is_js_space)
 }
 
 /// Node `persistedMessagesShowDynamicWorkflow`: a user text that is the command, or an assistant call to one of the ten
@@ -142,7 +157,14 @@ pub(crate) async fn on_resume(server: &Server, session: &SessionId) {
     } else {
         match server.kernel.session_snapshot(session).await {
             Ok(view) => view.messages,
-            Err(_) => Vec::new(),
+            Err(error) => {
+                tracing::warn!(
+                    event = "dynamic_workflow.activation_history_read_failed",
+                    error = %error,
+                    "the session history could not be read; the activation cannot see a workflow in it"
+                );
+                Vec::new()
+            }
         }
     };
     let Some((source, write)) = restore_plan(on_demand, activated, has_entry, &messages) else {

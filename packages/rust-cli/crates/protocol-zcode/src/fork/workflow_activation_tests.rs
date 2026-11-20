@@ -7,9 +7,13 @@ use rust_cli_kernel_api::message::{
 };
 
 use super::{
-    Source, activation_plan, entry_key, history_shows_workflow, is_workflow_command, restore_plan,
+    KIND, Source, activation_plan, entry_key, history_shows_workflow, is_workflow_command,
+    on_command, on_resume, restore_plan,
 };
+use rust_cli_kernel_api::dynamic_workflow::DynamicWorkflowGate;
 use rust_cli_kernel_api::ids::SessionId;
+use rust_cli_kernel_api::store::FrontendRecord;
+use serde_json::json;
 
 #[test]
 fn the_workflow_command_is_the_word_alone_or_followed_by_space_case_insensitively() {
@@ -26,6 +30,142 @@ fn the_workflow_command_is_the_word_alone_or_followed_by_space_case_insensitivel
         "the command must lead the text"
     );
     assert!(!is_workflow_command("/work"));
+}
+
+#[test]
+fn the_command_splits_on_javascript_whitespace_not_rust_whitespace() {
+    // Node's `\s` and `trim` take U+FEFF (a BOM) and not U+0085; Rust's `is_whitespace` is the other way round.
+    assert!(
+        is_workflow_command("/workflow\u{FEFF}build"),
+        "a BOM after the word is whitespace to Node"
+    );
+    assert!(
+        is_workflow_command("\u{FEFF}/workflow build"),
+        "a leading BOM is trimmed by Node's trim"
+    );
+    assert!(
+        !is_workflow_command("/workflow\u{85}build"),
+        "U+0085 is not whitespace to Node's \\s"
+    );
+}
+
+/// A session the store holds (a row, so its records can be written: divergence 495). Made through the legacy create with
+/// immediate persistence, as the Host's create does.
+async fn stored_session(server: &crate::server::Server, id: &str) -> SessionId {
+    let mut params = crate::fork::legacy_session::tests::automation_create(id);
+    params["persistence"] = json!("immediate");
+    crate::fork::legacy_session::tests::call(server, "session/create", params)
+        .await
+        .expect("the session is created");
+    SessionId::new(id)
+}
+
+/// The activation entry rows the session holds.
+async fn entry_rows(server: &crate::server::Server, session: &SessionId) -> Vec<serde_json::Value> {
+    server
+        .kernel
+        .queries()
+        .records(session, KIND)
+        .await
+        .expect("the records read")
+        .into_iter()
+        .map(|record| record.data)
+        .collect()
+}
+
+#[tokio::test]
+async fn a_cold_resume_activates_from_its_entry_and_leaves_the_entry_alone() {
+    let (_scope, server, _kernel) = crate::fork::legacy_session::tests::server();
+    let session = stored_session(&server, "ses_entry").await;
+    server.record_dynamic_workflow_gate(
+        &session,
+        DynamicWorkflowGate {
+            enabled: true,
+            tools_on_demand: true,
+        },
+    );
+    let record = FrontendRecord {
+        kind: KIND.to_owned(),
+        key: entry_key(&session),
+        data: json!({"activated": true, "source": "command"}),
+    };
+    server
+        .kernel
+        .queries()
+        .put_record(&session, &record)
+        .await
+        .expect("stored");
+    on_resume(&server, &session).await;
+    assert!(server.dynamic_workflow_activated(&session));
+    assert_eq!(
+        entry_rows(&server, &session).await,
+        [json!({"activated": true, "source": "command"})],
+        "the entry is the source of the activation and is not rewritten"
+    );
+}
+
+#[tokio::test]
+async fn a_cold_resume_with_no_entry_and_no_workflow_in_the_history_does_not_activate() {
+    let (_scope, server, _kernel) = crate::fork::legacy_session::tests::server();
+    let session = stored_session(&server, "ses_plain").await;
+    server.record_dynamic_workflow_gate(
+        &session,
+        DynamicWorkflowGate {
+            enabled: true,
+            tools_on_demand: true,
+        },
+    );
+    on_resume(&server, &session).await;
+    assert!(!server.dynamic_workflow_activated(&session));
+    assert!(entry_rows(&server, &session).await.is_empty());
+}
+
+#[tokio::test]
+async fn a_closed_gate_never_activates_even_with_an_entry() {
+    let (_scope, server, _kernel) = crate::fork::legacy_session::tests::server();
+    let session = stored_session(&server, "ses_closed").await;
+    server.record_dynamic_workflow_gate(
+        &session,
+        DynamicWorkflowGate {
+            enabled: false,
+            tools_on_demand: true,
+        },
+    );
+    let record = FrontendRecord {
+        kind: KIND.to_owned(),
+        key: entry_key(&session),
+        data: json!({"activated": true, "source": "command"}),
+    };
+    server
+        .kernel
+        .queries()
+        .put_record(&session, &record)
+        .await
+        .expect("stored");
+    on_resume(&server, &session).await;
+    on_command(&server, &session).await;
+    assert!(!server.dynamic_workflow_activated(&session));
+}
+
+#[tokio::test]
+async fn the_command_activates_an_on_demand_session_and_writes_its_entry_once() {
+    let (_scope, server, _kernel) = crate::fork::legacy_session::tests::server();
+    let session = stored_session(&server, "ses_command").await;
+    server.record_dynamic_workflow_gate(
+        &session,
+        DynamicWorkflowGate {
+            enabled: true,
+            tools_on_demand: true,
+        },
+    );
+    on_command(&server, &session).await;
+    on_command(&server, &session).await;
+    assert!(server.dynamic_workflow_activated(&session));
+    assert_eq!(
+        entry_rows(&server, &session).await,
+        [json!({"activated": true, "source": "command"})],
+        "the second command finds the session active and writes nothing"
+    );
 }
 
 fn user_text(text: &str) -> Message {

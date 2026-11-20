@@ -176,11 +176,13 @@ async fn serve(
     // Fork (W7-9, 9.40; W7-8d, 9.39): the run tools and CreateWorkflow reach the run sessions the run service sets below,
     // once it is built. One late slot serves both.
     let run_sessions = Arc::new(rust_cli_kernel_api::workflow_run::LateRunSessions::default());
-    // Fork (W7-11, 9.44, closes 411): EvalWorkflowSnippet is offered when the helper exists; its port is set below, once the
-    // workspace environment is opened (the gate is built before that).
+    // Fork (W7-11, 9.44, closes 411): EvalWorkflowSnippet is offered when the helper and its child launcher exist (the same
+    // joint condition the port is set on below, so the tool is never advertised with a port that is never set). The port
+    // itself is set once the workspace environment is opened (the gate is built before that).
     let snippet_slot = Arc::new(LateSnippetPort::default());
     let snippets = node_helper
         .as_ref()
+        .filter(|_| context.workflow_child().is_some())
         .map(|_| snippet_slot.clone() as Arc<dyn WorkflowSnippetPort>);
     spec.dynamic_workflow = Some(workflow_gating::gating(
         context.dynamic_workflow_gates().clone(),
@@ -353,10 +355,15 @@ async fn serve(
     // One wrapper of the service, coerced to each trait object the composition holds (the run sessions and the host).
     let workflow_service = workflow_service.map(Arc::new);
     // Fork (9.44): the reminder clocks read each session's runs from the service's memory.
-    if let Some(service) = &workflow_service {
-        reminders.set_runs(Arc::new(workflow_service::ServiceRunDecisions(
+    if let Some(service) = &workflow_service
+        && !reminders.set_runs(Arc::new(workflow_service::ServiceRunDecisions(
             service.clone(),
-        )));
+        )))
+    {
+        tracing::warn!(
+            event = "workflow.reminder.runs_set_twice",
+            "the reminder run source was set twice; the first one stays"
+        );
     }
     if let Some(service) = &workflow_service {
         let sessions: Arc<dyn rust_cli_kernel_api::workflow_run::DynamicWorkflowRunSessions> =

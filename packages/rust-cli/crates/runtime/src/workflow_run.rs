@@ -876,13 +876,16 @@ impl WorkflowRunService {
             let sessions = self.inner.sessions.lock_unpoisoned();
             sessions.get(parent_session_id)?.projection.clone()?
         };
-        let snapshot = projection.lock_unpoisoned().snapshot();
-        snapshot
-            .get("runs")?
-            .as_array()?
+        // Only the one run is cloned, under the projection's lock (the progress fan-out takes the same lock).
+        let state = projection.lock_unpoisoned();
+        let found = state
+            .state()
+            .runs
             .iter()
             .find(|run| run.get("runId").and_then(Value::as_str) == Some(run_id))
-            .cloned()
+            .map(|run| Value::Object(run.clone()));
+        drop(state);
+        found
     }
 }
 
