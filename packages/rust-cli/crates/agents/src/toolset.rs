@@ -79,7 +79,7 @@ const ASYNC_ALLOWED: &[&str] = &[
 /// `core/src/runtime/helpers/tool-allowlist.ts`). The denial is structural, by task type, not by persona profile.
 // Staged: the workflow child runtimes read these when W7-5 lands; until then only the tests do.
 #[allow(dead_code)]
-pub const WORKFLOW_CHILD_DISALLOWED_TOOLS: [&str; 6] = [
+pub(crate) const WORKFLOW_CHILD_DISALLOWED_TOOLS: [&str; 6] = [
     tool_names::CREATE_WORKFLOW,
     tool_names::AMEND_WORKFLOW,
     tool_names::SAVE_WORKFLOW,
@@ -91,14 +91,29 @@ pub const WORKFLOW_CHILD_DISALLOWED_TOOLS: [&str; 6] = [
 /// Fork (W7-1): the run-introspection pair (Node `RUN_INTROSPECTION_TOOLS`). They read through the run port, which only
 /// the top-level runtime holds, so a child that holds none would only ever report `workflow_introspection_unavailable`.
 #[allow(dead_code)]
-pub const RUN_INTROSPECTION_TOOLS: [&str; 2] =
+pub(crate) const RUN_INTROSPECTION_TOOLS: [&str; 2] =
     [tool_names::LIST_WORKFLOW_RUNS, tool_names::GET_WORKFLOW_RUN];
+
+/// Fork (W7-1): everything a workflow child is denied: the six plus the introspection pair, in Node's order. A workflow
+/// child keeps ListSavedWorkflows (a read of the definition catalog) and EvalWorkflowSnippet (a transient read-only
+/// evaluation); neither needs a dialog or a run port.
+#[allow(dead_code)]
+pub(crate) const WORKFLOW_CHILD_ALL_DISALLOWED: [&str; 8] = [
+    tool_names::CREATE_WORKFLOW,
+    tool_names::AMEND_WORKFLOW,
+    tool_names::SAVE_WORKFLOW,
+    tool_names::RESUME_WORKFLOW_RUN,
+    tool_names::RESOLVE_WORKFLOW_QUESTION,
+    tool_names::FILL_WORKFLOW_HOLE,
+    tool_names::LIST_WORKFLOW_RUNS,
+    tool_names::GET_WORKFLOW_RUN,
+];
 
 /// Fork (W7-1): the child kinds whose structural workflow denial differs (Node `taskType`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
-pub enum WorkflowTaskType {
-    /// `workflow_child`: no workflow tool at all.
+pub(crate) enum WorkflowTaskType {
+    /// `workflow_child`: the six always-ask tools and the introspection pair (see [`WORKFLOW_CHILD_ALL_DISALLOWED`]).
     WorkflowChild,
     /// `subagent_child` and `nested_workflow_child`: hold no run port, so no run introspection.
     RunPortlessChild,
@@ -109,15 +124,11 @@ pub enum WorkflowTaskType {
 /// Fork (W7-1): the tools withheld from a runtime by its task type (Node `resolveRuntimeDisallowedTools`, the structural
 /// part; the turn's own `toolDisallowlist` is merged by the caller).
 #[allow(dead_code)]
-pub fn structural_workflow_disallowed(task: WorkflowTaskType) -> Vec<&'static str> {
+pub(crate) fn structural_workflow_disallowed(task: WorkflowTaskType) -> &'static [&'static str] {
     match task {
-        WorkflowTaskType::WorkflowChild => WORKFLOW_CHILD_DISALLOWED_TOOLS
-            .iter()
-            .chain(RUN_INTROSPECTION_TOOLS.iter())
-            .copied()
-            .collect(),
-        WorkflowTaskType::RunPortlessChild => RUN_INTROSPECTION_TOOLS.to_vec(),
-        WorkflowTaskType::Other => Vec::new(),
+        WorkflowTaskType::WorkflowChild => &WORKFLOW_CHILD_ALL_DISALLOWED,
+        WorkflowTaskType::RunPortlessChild => &RUN_INTROSPECTION_TOOLS,
+        WorkflowTaskType::Other => &[],
     }
 }
 

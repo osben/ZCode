@@ -34,9 +34,12 @@ pub struct Contract {
 }
 
 /// The ten contracts in Node's registration order (`core/src/tool/handlers/index.ts`).
-pub fn contracts() -> Vec<Contract> {
-    serde_json::from_str(CONTRACTS)
-        .unwrap_or_else(|error| unreachable!("the workflow tool contracts parse: {error}"))
+pub fn contracts() -> &'static [Contract] {
+    static PARSED: std::sync::OnceLock<Vec<Contract>> = std::sync::OnceLock::new();
+    PARSED.get_or_init(|| {
+        serde_json::from_str(CONTRACTS)
+            .unwrap_or_else(|error| unreachable!("the workflow tool contracts parse: {error}"))
+    })
 }
 
 /// The dynamic-workflow tools to register. Empty until the tools land (W7-7..10); the gate filter and the

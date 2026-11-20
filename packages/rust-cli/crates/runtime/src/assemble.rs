@@ -233,10 +233,10 @@ pub(crate) fn base_tools(
     // Fork (W7-1): the dynamic-workflow tools reach a session only through its recorded gate (`GatedRegistry`). With no
     // gate source none are registered, so the gate stays off by default.
     let registry: Arc<dyn ToolRegistry> = match &extensions.dynamic_workflow {
-        Some(gates) => Arc::new(crate::workflow_gate::GatedRegistry::new(
+        Some(gating) => Arc::new(crate::workflow_gate::GatedRegistry::new(
             registry,
-            gates.clone(),
-            rust_cli_tools::workflow_tools(),
+            gating.gates.clone(),
+            gating.tools.clone(),
         )),
         None => registry,
     };

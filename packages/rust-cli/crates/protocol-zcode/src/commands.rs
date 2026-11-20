@@ -586,15 +586,6 @@ pub(crate) async fn create_session_with(
     if let Some(request) = &payload.worktree_preparation {
         return prepare_worktree(server, envelope, &payload, request).await;
     }
-    // Fork (W7-1, spec 9.2): the activation of a prepared session records its gate from the same parameters.
-    if let Some(prepared) = payload.prepared_session_id.as_deref() {
-        record_workflow_gate(
-            server,
-            &SessionId::new(prepared),
-            payload.dynamic_workflow_enabled,
-            payload.dynamic_workflow_mode,
-        );
-    }
     if let (Some(prepared), Some(expected)) = (
         payload.prepared_session_id.as_deref(),
         payload.expected_submission_id.as_deref(),
@@ -627,6 +618,13 @@ pub(crate) async fn create_session_with(
             };
         // Node `runActivation`: SessionStart (Node runs it in the first turn) sees the draft's config, and the first
         // input follows the move into the worktree.
+        // Fork (W7-1, spec 9.2): past the attachment refusals above; the activation itself may still refuse.
+        record_workflow_gate(
+            server,
+            &SessionId::new(prepared),
+            payload.dynamic_workflow_enabled,
+            payload.dynamic_workflow_mode,
+        );
         let request = crate::worktree::ActivationRequest {
             prepared,
             expected_attempt: payload.expected_attempt_id.as_deref(),
@@ -872,11 +870,10 @@ pub(crate) async fn create_session_with(
     Ack::accepted(&envelope.command_id, 0, Some(result))
 }
 
-/// The content of a first input with attachments, resolved before any side effect of the command (the session's
-/// creation or activation): text material that cannot be written refuses the command. `None` without text or refs.
 /// Fork (W1, W7-1; specs/fork-rust-workflow-engine.md 9.2): records a session's dynamic-workflow gate from its create
 /// parameters, then the Host's cached fact (Node `resolveDynamicWorkflowRuntimeGate`). Every route that creates, activates,
-/// reserves or resumes a session calls it, so the record is rebuilt the way Node rebuilds it.
+/// reserves or resumes a session calls it, so the record is rebuilt the way Node rebuilds it. Each caller records only
+/// after its refusal points, so a refused command leaves the record as it was.
 pub(crate) fn record_workflow_gate(
     server: &Server,
     id: &SessionId,
@@ -887,6 +884,8 @@ pub(crate) fn record_workflow_gate(
     server.record_dynamic_workflow_gate(id, gate);
 }
 
+/// The content of a first input with attachments, resolved before any side effect of the command (the session's
+/// creation or activation): text material that cannot be written refuses the command. `None` without text or refs.
 async fn first_content(
     server: &Server,
     envelope: &Envelope,
@@ -1130,13 +1129,6 @@ async fn reserve_submission(
             }
         }
     }
-    // Fork (W7-1, spec 9.2): the reservation creates the session, so its record takes the gate from the same parameters.
-    record_workflow_gate(
-        server,
-        &id,
-        payload.dynamic_workflow_enabled,
-        payload.dynamic_workflow_mode,
-    );
     let workspace = payload.workspace_id.as_deref().unwrap_or_default();
     let created = if existing.is_some() {
         Ok(id.clone())
@@ -1166,6 +1158,13 @@ async fn reserve_submission(
             );
         }
     };
+    // Fork (W7-1, spec 9.2): recorded once the session exists, so a failed create leaves no record behind.
+    record_workflow_gate(
+        server,
+        &id,
+        payload.dynamic_workflow_enabled,
+        payload.dynamic_workflow_mode,
+    );
     let marker = crate::preparation::Marker::preparing(submission, server.context.now());
     // No error text: a storage error can name the storage path.
     if crate::preparation::save(server, &id, &marker)
@@ -1260,6 +1259,13 @@ async fn activate_submission(
             0,
         );
     }
+    // Fork (W7-1, spec 9.2): past every refusal above (the workspace, the reservation, the frozen profile).
+    record_workflow_gate(
+        server,
+        &id,
+        payload.dynamic_workflow_enabled,
+        payload.dynamic_workflow_mode,
+    );
     let admitted = match payload.expected_first_input_command_id.as_deref() {
         Some(first) => server
             .kernel

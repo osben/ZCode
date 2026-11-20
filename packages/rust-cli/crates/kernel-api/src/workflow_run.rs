@@ -9,7 +9,7 @@
 use async_trait::async_trait;
 use serde_json::Value;
 
-use crate::ids::SessionId;
+use crate::ids::{QuestionId, SessionId, WorkflowRunId};
 
 /// Node `DynamicWorkflowRunAmendRefusalReason`. The two cases need different next steps, so both are kept.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,7 +101,7 @@ impl StopReason {
 pub enum CancelInitiator {
     User,
     Model,
-    Superseded(String),
+    Superseded(WorkflowRunId),
 }
 
 /// Node `DynamicWorkflowRunAmendRequest`. Model selections and script-named bindings stay JSON until W7-8a types them.
@@ -110,7 +110,7 @@ pub struct AmendRequest {
     pub script_text: String,
     pub cwd: String,
     /// The run being amended, in any state.
-    pub predecessor_run_id: String,
+    pub predecessor_run_id: WorkflowRunId,
     pub name: Option<String>,
     pub parent_session_id: Option<SessionId>,
     pub tool_call_id: Option<String>,
@@ -128,9 +128,9 @@ pub struct AmendRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AmendResult {
     Started {
-        run_id: String,
+        run_id: WorkflowRunId,
         /// Present when this amendment stopped a running predecessor.
-        superseded_run_id: Option<String>,
+        superseded_run_id: Option<WorkflowRunId>,
     },
     Refused(AmendRefusalReason),
 }
@@ -148,7 +148,7 @@ pub struct ListQuery {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResolveQuestionResult {
     Resolved {
-        qid: String,
+        qid: QuestionId,
     },
     Refused {
         reason: ResolveQuestionRefusalReason,
@@ -193,7 +193,7 @@ pub trait DynamicWorkflowRunPort: Send + Sync {
     /// Node `cancel`: `false` for an unknown run id.
     async fn cancel(
         &self,
-        run_id: &str,
+        run_id: &WorkflowRunId,
         initiator: CancelInitiator,
     ) -> Result<bool, DynamicWorkflowRunError> {
         let _ = (run_id, initiator);
@@ -207,19 +207,25 @@ pub trait DynamicWorkflowRunPort: Send + Sync {
     }
 
     /// Node `getRunDetail`: `None` for an unknown run id.
-    async fn get_run_detail(&self, run_id: &str) -> Result<Option<Value>, DynamicWorkflowRunError> {
+    async fn get_run_detail(
+        &self,
+        run_id: &WorkflowRunId,
+    ) -> Result<Option<Value>, DynamicWorkflowRunError> {
         let _ = run_id;
         Err(DynamicWorkflowRunError::unsupported("getRunDetail"))
     }
 
     /// Node `getScript`: the exact saved bytes, `None` when the run has none.
-    async fn get_script(&self, run_id: &str) -> Result<Option<String>, DynamicWorkflowRunError> {
+    async fn get_script(
+        &self,
+        run_id: &WorkflowRunId,
+    ) -> Result<Option<String>, DynamicWorkflowRunError> {
         let _ = run_id;
         Err(DynamicWorkflowRunError::unsupported("getScript"))
     }
 
     /// Node `resume`: rerun a cancelled run, or one interrupted by process death, under the same run id.
-    async fn resume(&self, run_id: &str) -> Result<Value, DynamicWorkflowRunError> {
+    async fn resume(&self, run_id: &WorkflowRunId) -> Result<Value, DynamicWorkflowRunError> {
         let _ = run_id;
         Err(DynamicWorkflowRunError::unsupported("resume"))
     }
@@ -227,7 +233,7 @@ pub trait DynamicWorkflowRunPort: Send + Sync {
     /// Node `resolveQuestion`: answer an escalated question by its qid.
     async fn resolve_question(
         &self,
-        qid: &str,
+        qid: &QuestionId,
         answer: &str,
     ) -> Result<ResolveQuestionResult, DynamicWorkflowRunError> {
         let _ = (qid, answer);
