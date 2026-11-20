@@ -51,6 +51,7 @@ mod lsp_range;
 #[cfg(test)]
 #[path = "side_effect_tests.rs"]
 mod side_effect_tests;
+mod workflow_tools;
 // Fork: the `LSP` agent tool (specs/fork-rust-lsp.md "Tool (D2)").
 mod lsp_tool;
 mod mentions;
@@ -131,6 +132,10 @@ pub use tool_search::{ToolCatalog, ToolSearchTool};
 pub use user_input::UserInputTools;
 pub use web_fetch::{SideModel, WebFetchTool};
 pub use web_search::WebSearchTool;
+pub use workflow_tools::{
+    contracts as workflow_tool_contracts, is_amend_workflow_owned_predecessor,
+    is_fill_workflow_hole_owned_run, workflow_tools,
+};
 pub use worktree::{WorktreeBoard, worktree_tools};
 pub use write::WriteTool;
 

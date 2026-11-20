@@ -830,3 +830,83 @@ fn every_main_session_only_tool_is_withheld_from_a_subagent() {
         );
     }
 }
+
+// Fork (W7-1): the workflow denylists, ported from Node `runtime-tool-allowlist.test.ts` (resolveRuntimeDisallowedTools).
+mod workflow_denylists {
+    use rust_cli_kernel_api::tool_names;
+
+    use crate::actor_turn::WORKFLOW_ACTOR_DISALLOWED_TOOLS;
+    use crate::toolset::{WorkflowTaskType, structural_workflow_disallowed};
+
+    #[test]
+    fn a_workflow_child_loses_the_six_always_ask_tools_and_the_introspection_pair_in_node_s_order()
+    {
+        assert_eq!(
+            structural_workflow_disallowed(WorkflowTaskType::WorkflowChild),
+            [
+                tool_names::CREATE_WORKFLOW,
+                tool_names::AMEND_WORKFLOW,
+                tool_names::SAVE_WORKFLOW,
+                tool_names::RESUME_WORKFLOW_RUN,
+                tool_names::RESOLVE_WORKFLOW_QUESTION,
+                tool_names::FILL_WORKFLOW_HOLE,
+                tool_names::LIST_WORKFLOW_RUNS,
+                tool_names::GET_WORKFLOW_RUN,
+            ]
+        );
+    }
+
+    #[test]
+    fn a_run_portless_child_loses_only_the_introspection_pair() {
+        assert_eq!(
+            structural_workflow_disallowed(WorkflowTaskType::RunPortlessChild),
+            [tool_names::LIST_WORKFLOW_RUNS, tool_names::GET_WORKFLOW_RUN]
+        );
+    }
+
+    /// Derived from the canonical array: every denial is a workflow tool, and the residue a workflow child keeps is exactly
+    /// the two read-only tools (ListSavedWorkflows, EvalWorkflowSnippet).
+    #[test]
+    fn a_workflow_child_keeps_exactly_the_two_read_only_workflow_tools() {
+        let denied = structural_workflow_disallowed(WorkflowTaskType::WorkflowChild);
+        for name in denied {
+            assert!(
+                tool_names::DYNAMIC_WORKFLOW_TOOLS.contains(name),
+                "{name} is denied but is not a workflow tool"
+            );
+        }
+        let kept: Vec<&str> = tool_names::DYNAMIC_WORKFLOW_TOOLS
+            .iter()
+            .copied()
+            .filter(|name| !denied.contains(name))
+            .collect();
+        assert_eq!(
+            kept,
+            [
+                tool_names::LIST_SAVED_WORKFLOWS,
+                tool_names::EVAL_WORKFLOW_SNIPPET
+            ]
+        );
+    }
+
+    #[test]
+    fn the_main_runtime_withholds_nothing_structurally() {
+        assert!(structural_workflow_disallowed(WorkflowTaskType::Other).is_empty());
+    }
+
+    #[test]
+    fn the_actor_list_is_node_s_seven_actor_denials() {
+        assert_eq!(
+            WORKFLOW_ACTOR_DISALLOWED_TOOLS,
+            [
+                tool_names::ASK_USER_QUESTION,
+                tool_names::ENTER_PLAN_MODE,
+                tool_names::EXIT_PLAN_MODE,
+                tool_names::CREATE_WORKFLOW,
+                tool_names::AMEND_WORKFLOW,
+                tool_names::READ_TOPIC_RESOURCE,
+                tool_names::RESOLVE_WORKFLOW_QUESTION,
+            ]
+        );
+    }
+}
