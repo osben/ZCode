@@ -96,6 +96,10 @@ pub(super) async fn delete(
     server.followups.lock_unpoisoned().remove(&id);
     // Fork (W1): the dynamic-workflow gate is per record, so a deleted id takes its gate with it.
     server.context.dynamic_workflow_gates().forget(&id);
+    // Fork (W7-11, 9.44): the session's blocked-run reminder clock stops with it, and its entry goes.
+    if let Some(reminders) = server.context.workflow_reminders() {
+        reminders.forget(id.as_str());
+    }
     // Fork (slice 3): the off-peak run, its flag and its admitted inputs go with the session (their attempts end).
     crate::off_peak_control::forget_sessions(&server.context, &[id.as_str()]).await;
     tracing::info!(

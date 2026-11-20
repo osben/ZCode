@@ -45,34 +45,60 @@ pub struct DynamicWorkflowGate {
 /// `protocol-zcode`'s `Server` implements it; the runtime only sees this trait.
 pub trait DynamicWorkflowGates: Send + Sync {
     fn gate(&self, session: &crate::ids::SessionId) -> Option<DynamicWorkflowGate>;
+
+    /// Fork (W7-11, 9.44): whether an on-demand session has activated its workflow tools (Node
+    /// `dynamicWorkflowToolsActivated`). Only an on-demand session's activation changes what it sees; the default is no.
+    fn activated(&self, session: &crate::ids::SessionId) -> bool {
+        let _ = session;
+        false
+    }
 }
 
 /// Fork (W7-7a, specs/fork-rust-workflow-engine.md 9.36, divergence 56): the one table of the sessions' recorded gates.
 /// The protocol server records and forgets through it, and the entry point hands the same table to the kernel's
 /// extensions as the gate source, so both read one record per session.
+///
+/// Fork (W7-11, 9.44): the table also holds the sessions that activated their workflow tools. The set is separate from the
+/// record, so activation never rewrites the gate the session was created with.
 #[derive(Debug, Default)]
-pub struct SessionGates(
-    std::sync::Mutex<std::collections::HashMap<crate::ids::SessionId, DynamicWorkflowGate>>,
-);
+pub struct SessionGates {
+    /// One lock over the record and the activation, so a forget removes a session's both at once: an activation cannot
+    /// land between the two removals and outlive the session.
+    state: std::sync::Mutex<GateState>,
+}
+
+#[derive(Debug, Default)]
+struct GateState {
+    records: std::collections::HashMap<crate::ids::SessionId, DynamicWorkflowGate>,
+    activated: std::collections::HashSet<crate::ids::SessionId>,
+}
 
 impl SessionGates {
     /// Records the gate a session was created with, replacing any earlier record.
     pub fn record(&self, session: &crate::ids::SessionId, gate: DynamicWorkflowGate) {
-        self.map().insert(session.clone(), gate);
+        self.state().records.insert(session.clone(), gate);
     }
 
-    /// Drops the record of a deleted session.
+    /// Activates a session's workflow tools. `true` when this call activated it. A session already active is `false`, and so
+    /// is a session with no record (never recorded, or forgotten at delete): the record check and the insert are one step
+    /// under the lock, so a forget cannot land between them and leave an activation behind.
+    pub fn activate(&self, session: &crate::ids::SessionId) -> bool {
+        let mut state = self.state();
+        if !state.records.contains_key(session) {
+            return false;
+        }
+        state.activated.insert(session.clone())
+    }
+
+    /// Drops the record and the activation of a deleted session, under one lock.
     pub fn forget(&self, session: &crate::ids::SessionId) {
-        self.map().remove(session);
+        let mut state = self.state();
+        state.records.remove(session);
+        state.activated.remove(session);
     }
 
-    fn map(
-        &self,
-    ) -> std::sync::MutexGuard<
-        '_,
-        std::collections::HashMap<crate::ids::SessionId, DynamicWorkflowGate>,
-    > {
-        self.0
+    fn state(&self) -> std::sync::MutexGuard<'_, GateState> {
+        self.state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
@@ -80,7 +106,11 @@ impl SessionGates {
 
 impl DynamicWorkflowGates for SessionGates {
     fn gate(&self, session: &crate::ids::SessionId) -> Option<DynamicWorkflowGate> {
-        self.map().get(session).copied()
+        self.state().records.get(session).copied()
+    }
+
+    fn activated(&self, session: &crate::ids::SessionId) -> bool {
+        self.state().activated.contains(session)
     }
 }
 

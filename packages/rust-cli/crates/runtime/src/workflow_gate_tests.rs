@@ -106,6 +106,62 @@ const CLOSED: DynamicWorkflowGate = DynamicWorkflowGate {
     tools_on_demand: false,
 };
 
+/// The gate source with activations (9.44): the records of `Gates`, and the sessions that activated their tools.
+struct ActivatedGates {
+    gates: Gates,
+    activated: std::collections::HashSet<String>,
+}
+
+impl DynamicWorkflowGates for ActivatedGates {
+    fn gate(&self, session: &SessionId) -> Option<DynamicWorkflowGate> {
+        self.gates.gate(session)
+    }
+
+    fn activated(&self, session: &SessionId) -> bool {
+        self.activated.contains(session.as_str())
+    }
+}
+
+#[test]
+fn an_activated_on_demand_session_sees_the_workflow_tools_undeferred_and_another_still_defers_them()
+{
+    // Fork (W7-11, 9.44, closes 54): on-demand defers the tools until the session activates them. Activation changes
+    // only that session's view; the record it was created with is the same.
+    let gates = ActivatedGates {
+        gates: Gates(
+            [("s1", ON_DEMAND), ("s2", ON_DEMAND)]
+                .into_iter()
+                .map(|(session, gate)| (session.to_owned(), gate))
+                .collect(),
+        ),
+        activated: std::collections::HashSet::from(["s1".to_owned()]),
+    };
+    let base = Base {
+        tools: vec![Arc::new(Stub { name: "Read" }) as Arc<dyn Tool>],
+    };
+    let registry = GatedRegistry::new(Arc::new(base), Arc::new(gates), workflow_stubs());
+    let active = registry.snapshot(&SessionId::new("s1")).tools;
+    let inactive = registry.snapshot(&SessionId::new("s2")).tools;
+    for name in tool_names::DYNAMIC_WORKFLOW_TOOLS {
+        let in_active = active
+            .iter()
+            .find(|tool| tool.name() == name)
+            .unwrap_or_else(|| panic!("{name} is visible to the activated session"));
+        assert!(
+            !in_active.should_defer(),
+            "{name} is undeferred once activated"
+        );
+        let in_inactive = inactive
+            .iter()
+            .find(|tool| tool.name() == name)
+            .unwrap_or_else(|| panic!("{name} is visible to the on-demand session"));
+        assert!(
+            in_inactive.should_defer(),
+            "{name} is deferred before activation"
+        );
+    }
+}
+
 fn workflow_stubs() -> Vec<Arc<dyn Tool>> {
     tool_names::DYNAMIC_WORKFLOW_TOOLS
         .iter()

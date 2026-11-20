@@ -64,6 +64,8 @@ pub mod workflow_runner;
 // Fork: the snippet runner is built by the composition root with the gate (W7-7); nothing constructs it yet.
 #[allow(dead_code)]
 pub mod workflow_snippet;
+// Fork (W7-11, 9.44): on-demand activation of the workflow tools (Node dynamic-workflow-activation.ts).
+pub mod workflow_activation;
 pub mod workflow_wire;
 pub use workspace_trust::{
     Admission, ReviewBundle, ReviewItem, ReviewLookup, ReviewSource, StoredTrust, ToggleError,

@@ -114,3 +114,39 @@ pub trait WorkflowSnippetPort: Send + Sync {
     /// `request.cwd`, the workspace, as a run's would; nothing is written to the run tables.
     async fn eval(&self, request: SnippetRequest) -> Result<SnippetOutcome, WorkflowSnippetError>;
 }
+
+/// Fork (W7-11, 9.44, closes divergence 411): the snippet port the tools hold from the gate's wiring, before the composition
+/// has the snippet service (it needs the environment, which exists after the kernel is assembled). Set once; until then
+/// each call is a failure that names the missing port, so a tool that runs early reports it rather than panicking.
+#[derive(Default)]
+pub struct LateSnippetPort {
+    port: std::sync::OnceLock<Arc<dyn WorkflowSnippetPort>>,
+}
+
+impl LateSnippetPort {
+    /// Sets the port. A second set is refused and keeps the first.
+    pub fn set(&self, port: Arc<dyn WorkflowSnippetPort>) -> bool {
+        self.port.set(port).is_ok()
+    }
+
+    fn port(&self) -> Result<&Arc<dyn WorkflowSnippetPort>, WorkflowSnippetError> {
+        self.port.get().ok_or_else(|| WorkflowSnippetError {
+            message: "the workflow snippet port is not composed in this build".to_owned(),
+        })
+    }
+}
+
+#[async_trait]
+impl WorkflowSnippetPort for LateSnippetPort {
+    async fn check(&self, code: &str) -> Result<SnippetCheck, WorkflowSnippetError> {
+        self.port()?.check(code).await
+    }
+
+    async fn eval(&self, request: SnippetRequest) -> Result<SnippetOutcome, WorkflowSnippetError> {
+        self.port()?.eval(request).await
+    }
+}
+
+#[cfg(test)]
+#[path = "workflow_snippet_tests.rs"]
+mod tests;

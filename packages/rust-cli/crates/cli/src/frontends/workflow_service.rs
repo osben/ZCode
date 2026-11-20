@@ -4,7 +4,7 @@
 //! off), so building the service opens no database and starts no child.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 
 use anyhow::Result;
 use rust_cli_base::clock::SystemClock;
@@ -14,6 +14,7 @@ use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::workflow_child::WorkflowChildRunner;
 use rust_cli_kernel_api::workflow_run_progress::WorkflowRunProgressPort;
 use rust_cli_node_store::{MIGRATION_LOCK_WAIT, open_session_database};
+use rust_cli_protocol_zcode::{OpenDecisions, RunDecisionsSource, open_decisions_of};
 use rust_cli_runtime::actor_turns::ActorAgents;
 use rust_cli_runtime::workflow_assembly::ActorSessionRelease;
 use rust_cli_runtime::workflow_owner::{ActorBindingsPort, OwnerStores, bound_owner_factory};
@@ -162,6 +163,31 @@ impl RunStore for LazyRunStore {
         default_concurrency: Option<f64>,
     ) -> Result<Option<rust_cli_workflow::run_store::RunDetail>> {
         self.get()?.run_detail(run_id, default_concurrency)
+    }
+}
+
+/// Fork (W7-11, 9.44, closes 414): the reminder clocks' run source over the service. The live runs and each run's open
+/// decisions are read from the service's memory (its run table and its parent's projection), so the synchronous reminder
+/// never waits on the owner thread.
+///
+/// The service is held weakly. The service reaches the reminders through its progress port, so a strong hold here closes a
+/// cycle that nothing breaks. When the service is gone, no run is live (the same answer as an unset source).
+pub(crate) struct ServiceRunDecisions(pub(crate) Weak<WorkflowRunService>);
+
+impl RunDecisionsSource for ServiceRunDecisions {
+    fn live_run_ids(&self, session: &str) -> Vec<String> {
+        self.0
+            .upgrade()
+            .map(|service| service.live_run_ids_of(session))
+            .unwrap_or_default()
+    }
+
+    fn open(&self, session: &str, run_id: &str) -> Result<Option<OpenDecisions>, String> {
+        Ok(self
+            .0
+            .upgrade()
+            .and_then(|service| service.run_snapshot_of(session, run_id))
+            .map(|run| open_decisions_of(&run)))
     }
 }
 

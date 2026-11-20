@@ -18,6 +18,15 @@ use rust_cli_node_store::{MIGRATION_LOCK_WAIT, open_session_database};
 
 use super::build;
 
+#[test]
+fn a_run_source_whose_service_is_gone_reports_no_live_runs() {
+    // Fork (W7-11, 9.44, ocr round 2): the source holds the service weakly; once it is gone no run is live and none owes.
+    use rust_cli_protocol_zcode::RunDecisionsSource;
+    let gone = super::ServiceRunDecisions(std::sync::Weak::new());
+    assert!(gone.live_run_ids("ses_p").is_empty());
+    assert!(matches!(gone.open("ses_p", "wf_live"), Ok(None)));
+}
+
 use async_trait::async_trait;
 use rust_cli_agents::actor_turn::{ActorRun, ActorTurnEnd, ActorTurnStats};
 use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};

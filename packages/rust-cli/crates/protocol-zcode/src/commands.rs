@@ -441,6 +441,21 @@ pub(crate) async fn decide(server: &Server, envelope: &Envelope) -> Ack {
             } else {
                 QueuedKind::Text
             };
+            // Fork (W7-11, 9.44): a sent text is the user's own prompt (the internal inputs of Node's queue, the subagent and
+            // background ones, never arrive here). It resets the session's blocked-run reminders (Node `userSpoke`), and a
+            // `/workflow` text activates an on-demand session's workflow tools before its turn can reach the model (Node
+            // activates it in the turn; a refused input still activates here). Peeked from the raw payload, as the file's
+            // other pre-checks are, so the command path does not parse the whole input.
+            if kind == QueuedKind::Text {
+                if let Some(reminders) = server.context.workflow_reminders() {
+                    reminders.user_spoke(session);
+                }
+                let text = envelope.payload.get("text").and_then(Value::as_str);
+                if text.is_some_and(crate::fork::workflow_activation::is_workflow_command) {
+                    crate::fork::workflow_activation::on_command(server, &SessionId::new(session))
+                        .await;
+                }
+            }
             // Node `forceStartNow`: every explicit `startNow` text takes the foreground lease, whatever the projected
             // phase (an idle projection may lag behind a promotion that holds the lease).
             let ack = if kind == QueuedKind::Text && requests_start_now(envelope) {
@@ -625,6 +640,13 @@ pub(crate) async fn create_session_with(
             payload.dynamic_workflow_enabled,
             payload.dynamic_workflow_mode,
         );
+        // Fork (W7-11, 9.44, divergence 494): a `/workflow` first input activates the prepared session's tools.
+        crate::fork::workflow_activation::on_first_input(
+            server,
+            &SessionId::new(prepared),
+            first.text.as_deref(),
+        )
+        .await;
         let request = crate::worktree::ActivationRequest {
             prepared,
             expected_attempt: payload.expected_attempt_id.as_deref(),
@@ -842,6 +864,8 @@ pub(crate) async fn create_session_with(
         payload.dynamic_workflow_enabled,
         payload.dynamic_workflow_mode,
     );
+    // Fork (W7-11, 9.44, divergence 494): a `/workflow` first input activates the new session's tools.
+    crate::fork::workflow_activation::on_first_input(server, &id, first.text.as_deref()).await;
     // B1.1: the creation fact is durable before the session opens on it, so the open below seeds the projection
     // with the marker like a cold restore does. Node persists its `worktree_creation` timeline part after the
     // first turn's session persistence and before TurnStarted (`turn.ts`); here the row's creation is that first

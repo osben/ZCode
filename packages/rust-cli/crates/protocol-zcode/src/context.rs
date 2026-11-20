@@ -54,6 +54,10 @@ pub struct Context {
     /// kernel-api; set once by the composition root beside the launcher. Nothing calls it yet (gate off).
     workflow_runner:
         std::sync::OnceLock<Arc<dyn rust_cli_kernel_api::workflow_child::WorkflowChildRunner>>,
+    /// Fork (specs/fork-rust-workflow-engine.md, 9.44 W7-11): the sessions' blocked-run reminder clocks. The turn edges of
+    /// each session reach them from its live stream; set once by the composition root.
+    workflow_reminders:
+        std::sync::OnceLock<Arc<crate::fork::workflow_reminder_host::WorkflowReminders>>,
     /// Fork (specs/fork-rust-workflow-engine.md, 9.29 W7-5a-4): the run service's per-session run ports, set once by the
     /// composition root. Without it the run reads fall through to the helper or to the empty answer.
     dynamic_workflow_runs:
@@ -137,6 +141,21 @@ impl Context {
         runner: Arc<dyn rust_cli_kernel_api::workflow_child::WorkflowChildRunner>,
     ) {
         let _ = self.workflow_runner.set(runner);
+    }
+
+    /// Fork (9.44): the reminder clocks (set once by the composition root; without it no turn edge is forwarded).
+    pub fn set_workflow_reminders(
+        &self,
+        reminders: Arc<crate::fork::workflow_reminder_host::WorkflowReminders>,
+    ) {
+        let _ = self.workflow_reminders.set(reminders);
+    }
+
+    /// Fork (9.44): the reminder clocks, when the composition installed them.
+    pub fn workflow_reminders(
+        &self,
+    ) -> Option<&Arc<crate::fork::workflow_reminder_host::WorkflowReminders>> {
+        self.workflow_reminders.get()
     }
 
     /// Fork (W7-5a-1): the workflow child runner port, when the helper command is configured.
@@ -336,6 +355,7 @@ impl Context {
             node_helper: std::sync::OnceLock::new(),
             workflow_child: std::sync::OnceLock::new(),
             workflow_runner: std::sync::OnceLock::new(),
+            workflow_reminders: std::sync::OnceLock::new(),
             dynamic_workflow_runs: std::sync::OnceLock::new(),
             dynamic_workflow_gates: Arc::default(),
             live_bridge: std::sync::OnceLock::new(),

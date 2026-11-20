@@ -3760,6 +3760,124 @@ disk filled (ENOSPC) during the build and the run stopped. Not pushed; the PR is
 475. The `RunStore` amend methods are required, not defaulted. Production wraps the store (`LazyRunStore`); a missing forward fails every amend.
      The wrapper and both test doubles forward them.
 
+### 9.44 W7-11: EvalWorkflowSnippet registration, the reminder clock, on-demand activation (as built, gate off)
+
+**Status.** Built and verified. `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`
+and `cargo test --workspace --locked` pass on the final tree (all test binaries, bins included). An earlier round ran out of
+disk; that run was redone after the disk was freed. The round also fixed a test that read the run projection before the
+progress path wrote it (now awaited) and five redundant clones in the reminder host tests.
+
+**Scope built.**
+
+- **Snippet (closes 411).** `LateSnippetPort` (kernel-api, `workflow_snippet.rs`) is the port the gate hands to the tools. The
+  gate offers EvalWorkflowSnippet only when the helper exists. `app_server` sets the port once the workspace environment is
+  opened: a `SnippetService` over `ProtocolSnippetRunner` (the helper, the child launcher, the fallback dir
+  `temp/workflow-runs`) and `WorldRoots` over `opened.env`. `wired_workflow_tools` and `gating` take a trailing
+  `snippets` parameter. Node's index order is kept (create, save, eval, list runs, resume, resolve, list saved).
+- **Reminder clock (closes 412 and 414).** `WorkflowReminders` (protocol-zcode, `workflow_reminder_host.rs`) holds one
+  `SessionReminders` per session, made on the session's first turn edge or open-set change, and only for a session whose gate
+  is open. Its run source is set after the run service is built. `Live::event` forwards `TurnStarted` and `TurnFinished`
+  next to the off-peak edges. `WorkflowProgressHost::with_reminders` routes each open-set change to the run's parent session.
+  The run source (`ServiceRunDecisions`, `workflow_service.rs`) reads from memory: the live run ids from the service's run table
+  (filtered by parent), and a run's open decisions from its parent's projection (`pendingQuestions`, and the holes in state
+  `waiting`), through `open_decisions_of`. Two runtime accessors back it: `live_run_ids_of` and `run_snapshot_of`.
+- **On-demand activation (closes 54; 318 in part).** `SessionGates` keeps a set of activated sessions, apart from the records.
+  `GatedRegistry` defers the workflow tools of an on-demand session only until it activates. The gate record does not change.
+  The `/workflow` command (the trimmed text, case-insensitive, `^/workflow(\s|$)`) activates an on-demand session on send. A
+  cold resume (the legacy resume route) activates from the entry (`runtime/dynamic_workflow_activation`, id
+  `<session>:runtime-dynamic-workflow-activation`, written as a frontend record so Node reads the same row), else from the
+  display history (a user `/workflow` text, or an assistant call to one of the ten tools), and writes the entry back once.
+  An alwaysOn session never activates or writes an entry.
+
+**Tests.** Red first where the test was written before its code, and green on the run noted.
+
+- kernel-api `workflow_snippet::tests` (2): an unset slot fails each call naming the missing port; a set slot delegates and
+  keeps the first set. Green. No red run was captured (test and code went in together).
+- kernel-api `dynamic_workflow_tests::activation_is_add_only_per_session_and_leaves_the_record_alone`: red (no methods), then
+  implemented. Not re-run after the implementation.
+- runtime `workflow_run_tests::a_live_run_is_listed_under_its_own_parent_and_its_snapshot_reads_from_memory`: red (E0599 on the
+  two accessors), then implemented. Not re-run after the implementation.
+- runtime `workflow_gate_tests::an_activated_on_demand_session_sees_the_workflow_tools_undeferred_and_another_still_defers_them`:
+  red (the activated session still deferred), then the gate change. Not re-run after the change.
+- protocol-zcode `workflow_reminder_host::tests` (14 in the module, all green): the 7 existing cases, plus
+  `a_run_object_yields_its_waiting_holes_and_pending_questions`, `an_unnamed_actor_is_labelled_as_node_labels_it_and_a_run_without_fields_owes_nothing`,
+  `an_open_set_change_restarts_only_the_clock_of_its_own_session`, `a_session_whose_gate_is_closed_gets_no_reminder`,
+  `a_clock_first_seen_at_an_open_set_change_starts_idle`, `a_clock_first_seen_at_a_turn_start_is_busy` and
+  `before_the_run_source_is_set_no_session_owes_a_reminder`. The new cases were written with the code in one pass, so no red
+  run was captured for them.
+- protocol-zcode `workflow_activation::tests` (7): command pattern (matches and non-matches), history scan, the alwaysOn and
+  active no-op, the entry first and the single backfill, the command plan, and the entry key. Green.
+- cli `workflow_gating_tests` (6 in the bin, all green on the run before part 2): the Eval wiring order and the gate source with
+  a snippet port. The file was edited with the call-site changes in the same pass, so no red run was captured.
+
+**Node divergences (new in W7-11, numbered from 480).**
+
+480. EvalWorkflowSnippet is offered when the helper exists, and its port is set once the workspace environment is opened. Until
+     then, each call fails with "the workflow snippet port is not composed in this build". Node registers it at startup.
+481. The snippet's reads are rooted per call (9.41) over the opened environment's `WorldRoots`, and its runner is the helper's
+     child launcher, with the fallback dir `temp/workflow-runs` (the run runner's dir).
+482. No composed test through `app_server` with a real run service and a live session. The wiring is covered by the gating tests
+     and the late-slot tests (the same gap as 402).
+483. One reminder clock per session, made on its first turn edge or open-set change, and only for a session whose gate is open
+     (a closed gate has no run, so its edges are ignored). The run source is set after the service is built, and until then no
+     session owes a reminder.
+484. Turn edges come through `Live::event`, which the bridge's per-session pump feeds for every event of an open session
+     (`protocol-core/src/sessions.rs`), not per client stream. So a session's clock sees its turns while the session is open,
+     whether or not a client is subscribed. Not checked: a turn that runs in the kernel while the bridge has closed the
+     session. Node's `session_idle` is the command queue's drain (413); this round keeps `TurnFinished`.
+485. A clock first seen at an open-set change starts idle (no turn edge was seen in this process, as after a quota resume). A
+     clock first seen at a turn start starts busy.
+486. `RunDecisions` is answered from memory, not from the owner's snapshot: live runs from the service's table, open decisions
+     from the parent's projection. The content matches the reducer's shape, but it was not compared with Node's snapshot read
+     line by line, and a progress event that was not applied to the projection is not seen (414 is closed on this basis).
+487. The projection keeps no hole `line`, so a reminder's hole has no line (`OpenHole.line` is `None`).
+488. The projection keeps no draft path, so a reminder's `draft_path` is `None` and the reminder omits the draft line.
+489. A pending question's subagent label is its actor's name, else `siteId@ordinal`, else `unknown actor` (Node `actorRefLabel`).
+     The reminder code was not compared line by line.
+490. Closed in part. A sent text (`sendText`) calls `user_spoke` on the session's clock, so every run gets a fresh pair (Node
+     `userSpoke`). Node calls it when the prompt starts running; this calls it on admission, so a refused input also resets
+     (as 492). The internal inputs of Node's queue (subagent, background, goal continuation) never arrive over `sendText`, so
+     they do not reset here, as Node's `inputSource` check would leave them out.
+491. A cold session has no projection in this process, so it has no reminders until a run of it launches again (the orphan
+     reconcile marks such runs interrupted, so none is live).
+492. The `/workflow` command activates on send, before the input is admitted, so a refused input still activates. Node activates
+     in the turn.
+493. A queued `/workflow` (the session busy) activates at send, not when the turn runs it.
+494. Closed. A createSession `firstInput` that is the command activates the session, on both paths (a direct create and a
+     prepared activation), once the gate is recorded (`workflow_activation::on_first_input`). No composed test (482).
+495. The entry is written as a frontend record (Node's type and id). A session row that is not stored yet refuses the write, and
+     there is no backfill on first persistence (Node's `ensureSessionPersisted`). The history restore covers that case on resume.
+496. The cold restore runs on the legacy resume route only. A session opened by another route is not restored (the v4 open path
+     is not hooked). Gap, open, and not closed here: `server.live` opens a cold session without rebuilding its gate record
+     (only the legacy resume and the create and activation paths write it), so on the v4 open a restore would read no gate.
+     Closing it needs the gate rebuilt from the stored runtime config on every cold open (the W7-1 gap), which is a
+     separate change.
+497. The run-control source (a Resume or a saved workflow launched from the hub, Node `run_control`) is not ported.
+498. The activated set lives in the `SessionGates` table the kernel and the server share, not in runtime state. The gate
+     registry reads it per call (no tool re-registration, which Node does). The record is unchanged by activation.
+499. `SessionGates` is now a struct with two named fields (the records and the activations), not a tuple. `forget` drops both,
+     and `Server` forwards `activated`.
+500. (ocr on #602) `SessionGates` holds the record and the activation under one lock, so a forget removes both at once.
+     The race it closes is not deterministic enough for a red test; the sequential forget test covers the result.
+501. (ocr on #602) A deleted session's reminder clock is stopped and dropped with its gate (`session_delete`). A session that
+     is closed but not deleted keeps its clock until the process ends, as before.
+502. (ocr on #602) A session's reminder clock is built outside the registry's map lock. A clock that loses the race is
+     stopped, so its timers cannot post. The run source is called under no registry lock.
+503. (ocr on #602) The `EvalWorkflowSnippet` registration uses the same joint condition as the port fill (helper and child
+     launcher), so the tool is not advertised with a port that is never set.
+504. (ocr on #602) `run_snapshot_of` clones the one run it returns, under the projection's lock, not the whole projection.
+505. (ocr on #602) The `/workflow` command split follows JavaScript's `\s` and `trim` (the BOM and U+0085 cases), not Rust's
+     `char::is_whitespace`. Covered by a red test.
+506. (ocr on #602) Rejected: a cold resume of an on-demand session with no entry reads the session snapshot twice (once for the
+     history scan, once for `legacy::read`). It is one extra copy on a one-time cold restore of a gate-on session, and removing
+     it needs `legacy::read` to accept a view, a change to the read path outside this round.
+507. (ocr round 2 on #602) `SessionGates::activate` inserts only while the session has a record, under the same lock as the
+     record check, so a forget cannot land between them and leave an activation behind. Returns `false` for a session with no
+     record. Red test: activating after forget.
+508. (ocr round 2 on #602) `ServiceRunDecisions` holds the run service weakly. The service reaches the reminders through its
+     progress port, so a strong hold closed a cycle nothing broke. A gone service reports no live run and no open decision
+     (the same answer as an unset source). Test: the empty weak reference.
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.

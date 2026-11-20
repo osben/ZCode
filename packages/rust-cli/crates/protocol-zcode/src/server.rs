@@ -443,6 +443,16 @@ impl Server {
         self.context.dynamic_workflow_gates().record(session, gate);
     }
 
+    /// Fork (W7-11, 9.44): whether the session has activated its workflow tools (the on-demand activation).
+    pub(crate) fn dynamic_workflow_activated(&self, session: &SessionId) -> bool {
+        self.context.dynamic_workflow_gates().activated(session)
+    }
+
+    /// Fork (W7-11, 9.44): marks the session's workflow tools active; `true` when this call did.
+    pub(crate) fn activate_dynamic_workflow(&self, session: &SessionId) -> bool {
+        self.context.dynamic_workflow_gates().activate(session)
+    }
+
     async fn read_presentation(&self, params: &Value) -> Value {
         let workspace = params["workspace"].clone();
         let path = workspace["workspacePath"].as_str().unwrap_or_default();
@@ -627,6 +637,10 @@ pub struct Handler(pub Arc<Server>);
 impl DynamicWorkflowGates for Server {
     fn gate(&self, session: &SessionId) -> Option<DynamicWorkflowGate> {
         self.dynamic_workflow_gate(session)
+    }
+
+    fn activated(&self, session: &SessionId) -> bool {
+        self.dynamic_workflow_activated(session)
     }
 }
 

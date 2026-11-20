@@ -14,6 +14,7 @@ use rust_cli_prompts::workflow_notice::{Escalation, Stall};
 use serde_json::Value;
 
 use super::workflow_reminder::BlockedReminderClock;
+use super::workflow_reminder_host::WorkflowReminders;
 
 /// Where a run's live deltas go: the parent session's open stream.
 pub trait ProgressDelivery: Send + Sync {
@@ -51,6 +52,7 @@ pub struct WorkflowProgressHost {
     delivery: Arc<dyn ProgressDelivery>,
     notices: Option<Arc<dyn WorkflowNotices>>,
     reminder: Option<Arc<BlockedReminderClock>>,
+    reminders: Option<Arc<WorkflowReminders>>,
 }
 
 impl WorkflowProgressHost {
@@ -59,7 +61,15 @@ impl WorkflowProgressHost {
             delivery,
             notices: None,
             reminder: None,
+            reminders: None,
         }
+    }
+
+    /// The app's per-session reminder clocks (9.44). An open-set change is routed to the clock of the run's parent session.
+    #[must_use]
+    pub fn with_reminders(mut self, reminders: Arc<WorkflowReminders>) -> Self {
+        self.reminders = Some(reminders);
+        self
     }
 
     /// The parent's model inbox for the run notices. Without it no notice is posted.
@@ -96,6 +106,12 @@ impl WorkflowRunProgressPort for WorkflowProgressHost {
             && OPEN_SET_EVENT_TYPES.contains(&event_type)
         {
             reminder.open_set_changed(run_id);
+        }
+        if let (Some(reminders), Some(run_id), Some(event_type)) =
+            (&self.reminders, run_id, event_type)
+            && OPEN_SET_EVENT_TYPES.contains(&event_type)
+        {
+            reminders.open_set_changed(parent_session_id, run_id);
         }
         if let (Some(notices), Some(run_id)) = (&self.notices, run_id) {
             let payload = progress.get("payload").unwrap_or(&Value::Null);

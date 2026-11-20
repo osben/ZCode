@@ -856,6 +856,39 @@ impl WorkflowRunService {
     pub fn run_count(&self) -> usize {
         self.inner.state.lock_unpoisoned().runs.len()
     }
+
+    /// Fork (W7-11, 9.44): the ids of one parent session's live runs, the runs the service holds (a settled run is removed).
+    /// Sorted, so the reminder's order does not depend on the map.
+    pub fn live_run_ids_of(&self, parent_session_id: &str) -> Vec<String> {
+        let state = self.inner.state.lock_unpoisoned();
+        let mut ids: Vec<String> = state
+            .runs
+            .iter()
+            .filter(|(_, entry)| entry.parent == parent_session_id)
+            .map(|(run_id, _)| run_id.clone())
+            .collect();
+        ids.sort();
+        ids
+    }
+
+    /// Fork (W7-11, 9.44): one run's snapshot from its parent's projection (the reducer's run object, with
+    /// `pendingQuestions` and the holes), read from memory. `None` when the session has no projection or no such run.
+    pub fn run_snapshot_of(&self, parent_session_id: &str, run_id: &str) -> Option<Value> {
+        let projection = {
+            let sessions = self.inner.sessions.lock_unpoisoned();
+            sessions.get(parent_session_id)?.projection.clone()?
+        };
+        // Only the one run is cloned, under the projection's lock (the progress fan-out takes the same lock).
+        let state = projection.lock_unpoisoned();
+        let found = state
+            .state()
+            .runs
+            .iter()
+            .find(|run| run.get("runId").and_then(Value::as_str) == Some(run_id))
+            .map(|run| Value::Object(run.clone()));
+        drop(state);
+        found
+    }
 }
 
 impl WorkflowRunHost for WorkflowRunService {

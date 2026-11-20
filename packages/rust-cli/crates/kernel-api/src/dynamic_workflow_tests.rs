@@ -171,3 +171,48 @@ fn the_workflow_tool_set_is_exactly_the_ten_node_names() {
         ]
     );
 }
+
+#[test]
+fn activation_is_add_only_per_session_and_leaves_the_record_alone() {
+    // Fork (W7-11, 9.44): Node's activation is add-only and belongs to the runtime. The record copies the create gate and
+    // never changes; the activated set is separate, and a session forgotten at delete drops both.
+    let table = SessionGates::default();
+    let session = SessionId::new("ses_a");
+    let on_demand = DynamicWorkflowGate {
+        enabled: true,
+        tools_on_demand: true,
+    };
+    table.record(&session, on_demand);
+    assert!(
+        !table.activated(&session),
+        "a new on-demand session is not activated"
+    );
+    assert!(table.activate(&session), "the first activation is new");
+    assert!(!table.activate(&session), "a second activation is not new");
+    assert!(table.activated(&session));
+    assert_eq!(
+        table.gate(&session),
+        Some(on_demand),
+        "the record is unchanged"
+    );
+    assert!(
+        !table.activate(&SessionId::new("ses_unrecorded")),
+        "a session with no record cannot activate"
+    );
+    assert!(!table.activated(&SessionId::new("ses_unrecorded")));
+    table.forget(&session);
+    assert!(
+        !table.activate(&session),
+        "a forgotten session cannot activate, so no activation outlives it"
+    );
+    assert!(!table.activated(&session));
+    assert!(
+        !table.activated(&SessionId::new("ses_b")),
+        "another session is not activated"
+    );
+    table.forget(&session);
+    assert!(
+        !table.activated(&session),
+        "a forgotten session is not activated"
+    );
+}

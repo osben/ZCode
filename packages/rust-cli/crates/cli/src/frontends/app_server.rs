@@ -15,6 +15,7 @@ use rust_cli_base::TaskScope;
 use rust_cli_kernel_api::ids::EnvironmentId;
 use rust_cli_kernel_api::store::{SessionFilter, SessionStore};
 use rust_cli_kernel_api::workflow_run::WorkflowRunHost;
+use rust_cli_kernel_api::workflow_snippet::{LateSnippetPort, WorkflowSnippetPort};
 use rust_cli_node_store::LOCAL_ENVIRONMENT;
 use rust_cli_protocol_core::connection::{self, Options};
 use rust_cli_protocol_zcode::{
@@ -175,11 +176,20 @@ async fn serve(
     // Fork (W7-9, 9.40; W7-8d, 9.39): the run tools and CreateWorkflow reach the run sessions the run service sets below,
     // once it is built. One late slot serves both.
     let run_sessions = Arc::new(rust_cli_kernel_api::workflow_run::LateRunSessions::default());
+    // Fork (W7-11, 9.44, closes 411): EvalWorkflowSnippet is offered when the helper and its child launcher exist (the same
+    // joint condition the port is set on below, so the tool is never advertised with a port that is never set). The port
+    // itself is set once the workspace environment is opened (the gate is built before that).
+    let snippet_slot = Arc::new(LateSnippetPort::default());
+    let snippets = node_helper
+        .as_ref()
+        .filter(|_| context.workflow_child().is_some())
+        .map(|_| snippet_slot.clone() as Arc<dyn WorkflowSnippetPort>);
     spec.dynamic_workflow = Some(workflow_gating::gating(
         context.dynamic_workflow_gates().clone(),
         node_helper.as_ref(),
         &facts.process.home,
         run_sessions.clone(),
+        snippets,
     ));
     spec.node_helper = node_helper;
     // Fork: the Host's off-peak store (specs/fork-rust-automations.md, slice 3).
@@ -280,6 +290,19 @@ async fn serve(
     // Fork (9.30): the workflow run service, over the kernel's residency ledger and the helper's child runner. Nothing
     // starts a run yet (the gate is off), so building it opens no database and starts no child.
     let workflow_handle = tokio::runtime::Handle::current();
+    // Fork (9.44, closes 412): the sessions' blocked-run reminder clocks. Built before the run service, since the progress
+    // host takes them; their run source is set once the service exists (below).
+    let reminders = Arc::new(rust_cli_protocol_zcode::WorkflowReminders::new(
+        context.dynamic_workflow_gates().clone(),
+        Arc::new(rust_cli_protocol_zcode::TokioTimers::new(
+            workflow_handle.clone(),
+            clock.clone(),
+        )),
+        Arc::new(rust_cli_protocol_zcode::SignalNotices::new(
+            built.kernel.workflow_agents().signals(),
+        )),
+    ));
+    context.set_workflow_reminders(reminders.clone());
     let workflow_service = workflow_service::build(
         context.workflow_runner().cloned(),
         built.kernel.workflow_residency(),
@@ -296,14 +319,52 @@ async fn serve(
             ))
             .with_notices(Arc::new(rust_cli_protocol_zcode::SignalNotices::new(
                 built.kernel.workflow_agents().signals(),
-            ))),
+            )))
+            .with_reminders(reminders.clone()),
         ),
         // Fork (9.37): the quota resume reads each parent's recorded gate (9.36).
         context.dynamic_workflow_gates().clone(),
     );
+    // Fork (W7-11, 9.44, closes 411): the snippet service over the helper's runner and the workspace's environment. Each
+    // snippet reads under its own cwd (9.41), so the roots port is the environment's, not the process's.
+    if let (Some(helper), Some(launcher)) =
+        (spec.node_helper.clone(), context.workflow_child().cloned())
+    {
+        let runner = rust_cli_protocol_zcode::ProtocolSnippetRunner::new(
+            helper,
+            launcher,
+            spawner.clone(),
+            facts.process.temp.join("workflow-runs"),
+        );
+        let reads = rust_cli_env_local::world_ports::WorldRoots::new(
+            opened.env.clone(),
+            tokio::runtime::Handle::current(),
+        );
+        let service = rust_cli_runtime::workflow_snippet::SnippetService::new(
+            Arc::new(runner),
+            Arc::new(reads),
+        );
+        if !snippet_slot.set(Arc::new(service)) {
+            tracing::warn!(
+                event = "workflow.snippet.set_twice",
+                "the snippet port was set twice; the first one stays"
+            );
+        }
+    }
     // Fork (9.29, W7-5c): the per-session run reads (`workflowRuns`, the run list) answer from the service too.
     // One wrapper of the service, coerced to each trait object the composition holds (the run sessions and the host).
     let workflow_service = workflow_service.map(Arc::new);
+    // Fork (9.44): the reminder clocks read each session's runs from the service's memory.
+    if let Some(service) = &workflow_service
+        && !reminders.set_runs(Arc::new(workflow_service::ServiceRunDecisions(
+            Arc::downgrade(service),
+        )))
+    {
+        tracing::warn!(
+            event = "workflow.reminder.runs_set_twice",
+            "the reminder run source was set twice; the first one stays"
+        );
+    }
     if let Some(service) = &workflow_service {
         let sessions: Arc<dyn rust_cli_kernel_api::workflow_run::DynamicWorkflowRunSessions> =
             service.clone();
