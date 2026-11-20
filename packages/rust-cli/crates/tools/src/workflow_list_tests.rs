@@ -17,7 +17,7 @@ mod fs {
     use std::path::Path;
 
     pub fn write(path: impl AsRef<Path>, text: &str) -> io::Result<()> {
-        rust_cli_fs::text_files::write_text(path.as_ref(), text)
+        rust_cli_fs::write_text(path.as_ref(), text)
     }
 
     pub fn create_dir_all(_path: impl AsRef<Path>) -> io::Result<()> {

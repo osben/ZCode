@@ -295,11 +295,15 @@ pub(crate) fn analysis_verdict(
 
 /// The helper's analysis object as the port's verdict. The window graph and the other fields are not needed here.
 pub(crate) fn analysis_from_value(value: &Value) -> Result<WorkflowAnalysis, RpcError> {
-    <WorkflowAnalysis as serde::Deserialize>::deserialize(value).map_err(|_| malformed())
+    <WorkflowAnalysis as serde::Deserialize>::deserialize(value)
+        .map_err(|error| RpcError::internal(format!("{MALFORMED_REPLY}: {error}")))
 }
 
+/// The contract message, shared by every malformed-reply path (the serde cause is appended where there is one).
+const MALFORMED_REPLY: &str = "the helper's workflow reply does not match its contract";
+
 fn malformed() -> RpcError {
-    RpcError::internal("the helper's workflow reply does not match its contract")
+    RpcError::internal(MALFORMED_REPLY)
 }
 
 #[cfg(test)]
