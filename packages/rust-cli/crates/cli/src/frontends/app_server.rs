@@ -278,12 +278,13 @@ async fn serve(
         spawner,
     ));
     // 读到 Host 关掉输入或收到退出信号时结束（Host 回收整棵进程树）。
-    tokio::select! {
-        result = reader => {
-            result.map_err(|error| anyhow::anyhow!("reading the protocol input: {error}"))??;
-        }
-        () = stop.token.cancelled() => {}
-    }
+    // The outcome is kept, not `?`-ed: the drain below runs on every exit, including a failed reader.
+    let outcome: anyhow::Result<()> = tokio::select! {
+        result = reader => result
+            .map_err(|error| anyhow::anyhow!("reading the protocol input: {error}"))
+            .and_then(|read| read.map_err(anyhow::Error::from)),
+        () = stop.token.cancelled() => Ok(()),
+    };
     // Fork (W7-6): shutdown drains the sessions that still hold a live workflow run, with one bound. A session that does
     // not close is logged; the process exits either way.
     for message in
@@ -291,7 +292,7 @@ async fn serve(
     {
         tracing::error!(event = "app.shutdown.drain_failed", error = %message, "a session with a live run did not close at shutdown");
     }
-    Ok(())
+    outcome
 }
 
 /// Fork: the egress observer that feeds the Network panel capture.

@@ -1,0 +1,471 @@
+[
+  {
+    "name": "CreateWorkflow",
+    "description": "Create and run a dynamic workflow: a TypeScript script that orchestrates multiple model-driven subagents with plain control flow (loops, conditionals, fan-out) and typed intermediate results. The script is typechecked, the user is asked to confirm it, and the run starts in the background; you are notified with its final result when it settles. Compilation errors come back as diagnostics.\n\nWhen to use:\n- The user explicitly asks for a workflow — \"use a workflow\", \"with a workflow\", or the same request in any language that names a workflow as the means: this tool is mandatory. Do not substitute the Agent/Task subagent tools, do not do the work inline yourself, and do not judge the task too small for a workflow — the user chose the tool, and that choice is theirs. Size only decides how many subagents the script gets, never whether it is written.\n- Without such an explicit request, do not start a workflow: delegate with the Agent tool or do the work yourself, even for multi-step or multi-subagent tasks.\n\nBefore writing or revising a script, load the `dynamic-workflows` skill with the Skill tool: it carries the facade declarations the script is checked against, the authoring rules, and this tool's full contract. A call that submits a script is refused until that skill has been loaded in this session; running a saved workflow by name is exempt.\n\nPass exactly one source: `script` (a one-off script written inline; it is saved to a draft file the result names — revise that file and resubmit with `path`, never paste the script again), `saved` (a workflow saved in this project or globally, by name; check ListSavedWorkflows before writing one from scratch), or `path` (a script file on disk, normally the file a previous result named). To change a run that already exists — errored, completed, stopped or still running — call AmendWorkflow instead of starting over.",
+    "searchHint": null,
+    "readOnly": false,
+    "destructive": false,
+    "concurrentSafe": true,
+    "needsApproval": true,
+    "shouldDefer": true,
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Short run label in the user's language. Always pass it for an inline script; defaults to the saved workflow's name.",
+          "type": "string",
+          "minLength": 1
+        },
+        "script": {
+          "description": "The whole workflow script, inline. Exactly one of `script`, `saved` and `path`.",
+          "type": "string"
+        },
+        "saved": {
+          "description": "A saved workflow to run, by name. Exactly one of `script`, `saved` and `path`.",
+          "type": "object",
+          "properties": {
+            "name": {
+              "description": "Name of a saved workflow (see ListSavedWorkflows).",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "args": {
+              "description": "Values for the arguments the saved workflow declares.",
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {}
+            },
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "scope": {
+              "description": "Which archive to take it from; omit for the normal lookup order.",
+              "type": "string",
+              "enum": [
+                "project",
+                "global"
+              ]
+            }
+          },
+          "required": [
+            "name"
+          ],
+          "additionalProperties": false
+        },
+        "path": {
+          "description": "A script file on disk (relative or absolute), usually the file a previous result named. Exactly one of `script`, `saved` and `path`.",
+          "type": "string",
+          "minLength": 1
+        },
+        "args": {
+          "description": "Values for the arguments a `path` file declares. Only with `path`.",
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        },
+        "max_concurrency": {
+          "description": "Subagents working at once, above or below the default. Only when the user asks for more or less parallelism; never as a reaction to provider errors.",
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "subagent_model": {
+          "description": "Model for the subagents (`providerId/modelId` or a model id). Only when the user asks, and never a model under another provider the user did not name — ask them first if one would help; you stay on the session model.",
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "AmendWorkflow",
+    "description": "Amend an existing dynamic-workflow run with a revised script or revised settings. Starts a NEW run that supersedes the old one and imports its finished work as a cache, so only what you changed is paid for again. Works on ANY run of this project: completed, errored, stopped — or still running.\n\nWhen to use:\n- The run errored, or completed but needs one more stage: fix or extend the script and amend. Never rewrite the workflow from scratch with CreateWorkflow.\n- The run is STILL RUNNING and is visibly going wrong: amend it NOW, in one call. Do not TaskStop it first and do not wait for it to finish — this tool stops the running predecessor and starts the revision; the earlier you amend, the less is re-paid.\n- The user wants the same workflow with fewer subagents at once, its subagents on another model, or another name: amend with only that field and neither `path` nor `script`.\n- To continue a stopped run unchanged, use ResumeWorkflowRun instead.\n\nLoad the `dynamic-workflows` skill with the Skill tool before revising a script: it carries the cache rules, what each omitted field keeps, and the confirmation rule. A call that passes `path` or `script` is refused until that skill has been loaded in this session; a settings-only call is not. Pass `path` (the run's script file, edited in place — the usual form) or `script` (the whole revised script inline), never both.",
+    "searchHint": null,
+    "readOnly": false,
+    "destructive": false,
+    "concurrentSafe": true,
+    "needsApproval": true,
+    "shouldDefer": true,
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "description": "ID of the run to amend (from a result, a notification, GetWorkflowRun or ListWorkflowRuns).",
+          "type": "string",
+          "minLength": 1
+        },
+        "script": {
+          "description": "The whole revised script, inline. This OR `path`, never both; omit both to keep the predecessor's script.",
+          "type": "string",
+          "minLength": 1
+        },
+        "path": {
+          "description": "The revised script's file, usually the predecessor's own script file edited in place. This OR `script`, never both.",
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "description": "Display label for the new run; defaults to the predecessor's.",
+          "type": "string",
+          "minLength": 1
+        },
+        "max_concurrency": {
+          "description": "Omit to keep the predecessor's limit, null to return to the default, a number to set one above or below it (only when the user asks).",
+          "oneOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "subagent_model": {
+          "description": "Omit to keep the predecessor's choice, null for the session model, a model id to set one (only when the user asks, never a model under another provider the user did not name — ask them first if one would help).",
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "run_id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "SaveWorkflow",
+    "description": "Save a dynamic-workflow script with its metadata so it can be run again later by name (CreateWorkflow's `saved` source; ListSavedWorkflows lists them). The required `scope` decides whether it lives in this project or globally.\n\nNEVER call this tool unsolicited: saving writes a file into the user's repository, and that is their decision. When a workflow you just built looks reusable, suggest saving it in one sentence and wait; call SaveWorkflow only after the user agrees, or when the user asks directly.\n\nLoad the `dynamic-workflows` skill with the Skill tool first: it carries the file format, the argument declarations and the authoring rules. The call is refused until that skill has been loaded in this session. Pass `script` (the body only) or `script_path` (a draft file, saved without re-emitting it), never both.",
+    "searchHint": null,
+    "readOnly": false,
+    "destructive": false,
+    "concurrentSafe": false,
+    "needsApproval": true,
+    "shouldDefer": true,
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "File-safe identifier: letters, digits, dot, dash and underscore.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "description": {
+          "description": "One line saying what the workflow does.",
+          "type": "string",
+          "minLength": 1
+        },
+        "whenToUse": {
+          "description": "When this workflow is the right answer.",
+          "type": "string",
+          "minLength": 1
+        },
+        "args": {
+          "description": "Argument declarations the script reads off `args`.",
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "description": "Value type. \"json\" accepts any JSON value without further checking.",
+                "type": "string",
+                "enum": [
+                  "string",
+                  "number",
+                  "boolean",
+                  "json"
+                ]
+              },
+              "description": {
+                "description": "What this argument means, for whoever calls the workflow later.",
+                "type": "string"
+              },
+              "required": {
+                "description": "When true the workflow cannot run without this argument.",
+                "type": "boolean"
+              },
+              "default": {
+                "description": "Value used when the caller omits this argument."
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "script": {
+          "description": "The script body, inline, without a metadata block. This OR `script_path`, never both.",
+          "type": "string"
+        },
+        "script_path": {
+          "description": "A file holding the script body, usually a draft a result named. This OR `script`, never both.",
+          "type": "string",
+          "minLength": 1
+        },
+        "scope": {
+          "description": "\"project\" when the script depends on this repository; \"global\" when it depends on nothing in it. Required, no default.",
+          "type": "string",
+          "enum": [
+            "project",
+            "global"
+          ]
+        },
+        "run_id": {
+          "description": "Provenance only: the id of the run this workflow was distilled from, when saving a workflow that just ran. Pass it whenever you know it; it does not change what is saved.",
+          "type": "string",
+          "minLength": 1
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "overwrite": {
+          "type": "boolean"
+        },
+        "shadowing": {
+          "type": "string",
+          "enum": [
+            "hides_global",
+            "hidden_by_project"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "description",
+        "scope"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "EvalWorkflowSnippet",
+    "description": "Compile and run a small dynamic-workflow TypeScript snippet synchronously, against the same compiler, sandbox and world-read execution path a real run uses. It is the test bench for workflow authoring: check a parser against real command output, see what a glob actually returns, or exercise a gate predicate on real repository state before putting it in a CreateWorkflow script. No agent()/report(); nothing persists; the result comes back in this call.\n\nLoad the `dynamic-workflows` skill with the Skill tool first: it carries the snippet facade and the rules. The call is refused until that skill has been loaded in this session. Pass `code` (inline) or `path` (a file holding the snippet), never both.",
+    "searchHint": null,
+    "readOnly": false,
+    "destructive": false,
+    "concurrentSafe": true,
+    "needsApproval": true,
+    "shouldDefer": true,
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "code": {
+          "description": "The snippet, inline. This OR `path`, never both.",
+          "type": "string",
+          "minLength": 1
+        },
+        "path": {
+          "description": "A file holding the snippet, read whole. This OR `code`, never both.",
+          "type": "string",
+          "minLength": 1
+        },
+        "timeoutMs": {
+          "description": "Wall clock for the whole snippet, in ms. Default 60000, at most 600000.",
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 600000
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "ListWorkflowRuns",
+    "description": "Lists this project's dynamic-workflow runs (the session's working directory is the project key), most recently updated first. Includes runs started by other sessions — the run journal is per-project, not per-session.\n\nRuns this session starts settle on their own: you receive a completion notification carrying the final output. Do NOT poll this tool while waiting for one — continue with other work.\nReach for it when: (a) the user asks how a workflow is going, (b) you want to review this project's earlier runs, including ones other sessions started, (c) a completion notification was truncated and you need the run's full record by ID.\n\n- Each row gives the run ID, its label, lifecycle status, whether this session started it, tokens spent, and timestamps.\n- `possibly_interrupted=\"true\"` means this session cannot confirm the run is still alive: it may be a leftover from a process that exited, or a sibling session's run still in flight. It is an annotation, not a verdict — do not report it as a failure.\n- Pass a run ID to GetWorkflowRun for progress detail, the log tail, the final result, or the failure.\n- Three terminal states: `completed`; `errored` (the script itself failed); `stopped` with `stop_reason` — `user` (cancelled on purpose: resume only when the user asks), `model` (your own TaskStop), `provider` (a provider-side error stopped it: read GetWorkflowRun for the cause, resolve it with the user, then resume), `interrupted` (the owning process exited: continuing it is usually what the user wants), `superseded` (an AmendWorkflow replaced it; `superseded_by` names the live successor — never resume a superseded run).\n- Any stopped run other than a superseded one can be continued with ResumeWorkflowRun — no rebuild needed, same run ID, same script. An errored run cannot.\n- ANY run here — completed, stopped, errored, or still running — can instead be revised with AmendWorkflow: pass its run ID and the corrected script; the new run imports the old one's finished work as a warm cache (and stops it first if it is still running). A run whose script errored is the case to reach for it — fix the script instead of rewriting the workflow from scratch. `resumed_from` on a row names the run it was amended from.",
+    "searchHint": null,
+    "readOnly": true,
+    "destructive": false,
+    "concurrentSafe": true,
+    "needsApproval": false,
+    "shouldDefer": true,
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "limit": {
+          "description": "Maximum number of runs to return (1-50, default 20). Most recently updated runs come first.",
+          "default": 20,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50
+        },
+        "statuses": {
+          "description": "Optional status filter. Omit to see every run in this project. Pass [\"running\", \"pending\"] to see only what is still in flight.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "completed",
+              "errored",
+              "pending",
+              "running",
+              "stopped"
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "GetWorkflowRun",
+    "description": "Returns the current state of one dynamic-workflow run: progress, token usage and the tail of its log() narration while it runs; the final result once it completed; the structured failure if it errored or was stopped.\n\nRuns this session starts settle on their own: you receive a completion notification carrying the final output. Do NOT poll this tool while waiting for one — continue with other work.\nReach for it when: (a) the user asks how a workflow is going, (b) you want to review this project's earlier runs, including ones other sessions started, (c) a completion notification was truncated and you need the run's full record by ID.\n\n- Takes run_id — from CreateWorkflow's or AmendWorkflow's result, from a completion notification, or from ListWorkflowRuns.\n- This is an instant snapshot and never waits. To block until a run THIS session started finishes, use TaskOutput instead: that is the waiting tool. GetWorkflowRun is the right tool when you must not wait, or when the run belongs to another session (TaskOutput cannot see those).\n- The `artifacts` section lists what the run published for the user — files, documents and live dashboards that are ALREADY shown to them as cards. Refer to one by its title; do not paste its contents back. The one marked `primary` is the deliverable: point the user to it first.\n- Three terminal states: `completed`; `errored` (the script itself failed — not resumable, amend it); `stopped` with a stop reason — `user` (cancelled on purpose: resume only when the user asks), `model` (your own TaskStop), `provider` (a provider-side error such as an expired sign-in, a model missing from the plan or a quota cap — the `<error>` block names the cause and the fix; resolve it with the user, then resume), `interrupted` (the process that owned the run exited — continuing it is usually what the user wants), `superseded` (an AmendWorkflow replaced it; `<superseded_by>` names the successor — read that run instead, never resume this one).\n- A stopped run (other than a superseded one) can be continued with ResumeWorkflowRun — no rebuild needed, same run ID, same script.\n- ANY run — completed, stopped, errored, or still running — can instead be revised with AmendWorkflow: pass its run ID and the corrected script, and the finished work is imported as cache. When the script itself errored, that is the move — fix the script and keep the work that already succeeded, rather than rewriting from scratch.",
+    "searchHint": null,
+    "readOnly": true,
+    "destructive": false,
+    "concurrentSafe": true,
+    "needsApproval": false,
+    "shouldDefer": true,
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "description": "The workflow run ID to inspect (as returned by CreateWorkflow or ListWorkflowRuns)",
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "run_id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "ResumeWorkflowRun",
+    "description": "Resumes a dynamic-workflow run whose status is `stopped` — the user cancelled it, you stopped it with TaskStop, a provider-side error stopped it (expired sign-in, model not in the plan, quota cap), or the process that owned it exited (`interrupted`). The run continues under the same run ID: finished steps are replayed from the journal without spending tokens, unfinished steps are dispatched again. The one stopped run that is NOT resumable is a `superseded` one: an AmendWorkflow replaced it, and its successor is the live run.\n\n- Takes run_id — from CreateWorkflow's or AmendWorkflow's result, from a completion notification, or from GetWorkflowRun / ListWorkflowRuns.\n- The resumed run is backgrounded: you will be notified with the final output when it completes. Do not wait for it or poll it with TaskOutput; continue with other work unless the user asked you to wait.\n- An `errored` run (the script itself failed) is NOT resumable — replaying it would fail the same way. Fix the script and submit it with AmendWorkflow instead. A completed run is not resumable either; a `superseded` run is refused with the successor's ID.\n- Stop reason `user` means the user stopped it on purpose: resume it only when the user asks you to; never resume a run the user just cancelled on your own initiative. Reason `model` is your own TaskStop. Reason `provider` means a provider-side error stopped it: resolve the cause with the user first (the stop notification names it), then resume. The exception is a usage cap with a known reset time: ZCode resumes that run by itself after the reset, so do not resume it before then. Reason `interrupted` (the process died) is different: continuing it is usually what the user wants.",
+    "searchHint": null,
+    "readOnly": false,
+    "destructive": false,
+    "concurrentSafe": true,
+    "needsApproval": false,
+    "shouldDefer": true,
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "description": "The workflow run ID to resume — a cancelled run or one that failed with code `Interrupted`, as seen with GetWorkflowRun or ListWorkflowRuns",
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "run_id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "ResolveWorkflowQuestion",
+    "description": "Answers a blocking question that a subagent escalated from inside a RUNNING dynamic-workflow run.\n\n- Takes question_id — the ID from the escalation notification (it looks like `dwfq-...`). If that notification was lost, GetWorkflowRun lists the questions a run still owes an answer to.\n- The run keeps running the whole time: only the subagent that asked is parked on its call, while every other subagent and the script's control flow keep going. Your answer becomes that call's result verbatim and the subagent continues from there.\n- Answer directly and actionably. If you are not sure, look at the run first with GetWorkflowRun, or ask the user with AskUserQuestion, then come back and answer — nothing answers on your behalf, and the subagent waits indefinitely.\n- If the question reveals the SCRIPT is structurally broken (a broken gate, wrong control flow), a sentence cannot fix that: cancel the run and continue with a revised script via CreateWorkflow's `resume_from`.",
+    "searchHint": null,
+    "readOnly": false,
+    "destructive": false,
+    "concurrentSafe": true,
+    "needsApproval": false,
+    "shouldDefer": true,
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "question_id": {
+          "description": "The question ID from the escalation notification, or from GetWorkflowRun's pending questions (looks like `dwfq-...`)",
+          "type": "string",
+          "minLength": 1
+        },
+        "answer": {
+          "description": "The answer text, delivered verbatim to the subagent that asked",
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "question_id",
+        "answer"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "FillWorkflowHole",
+    "description": "Supplies the body of a hole that a RUNNING dynamic-workflow run has reached and is waiting at. Starts nothing: the run keeps its id, journal and subagents, and grows by the statements you write.\n\n- Takes run_id and hole_id — both from the hole notification (or from GetWorkflowRun's holes if that notification was lost). Only the branch parked at the hole waits; the rest of the run keeps going, and nothing times out.\n- Read the run's draft at the path the notification names for context: the body is compiled WHERE THE HOLE STANDS and sees every binding declared before it. Write only the statements of the hole's function — not the `hole(...)` call, not an arrow, not the script around it — and return a value of the hole's type, or end with a new tail hole named for the next step when the workflow's shape is not known yet (the skill's §15).\n- Rehearse fixed logic in EvalWorkflowSnippet first. A hole is filled once: a body under a loop runs on every iteration with that iteration's bindings.\n- On diagnostics the fill is saved to a fill file; edit that file in place and resubmit with `path` instead of pasting the body again. To change anything OUTSIDE the hole, use AmendWorkflow.\n\nLoad the `dynamic-workflows` skill with the Skill tool before writing a body: it carries the facade the body is checked against and the hole rules. A call is refused until that skill has been loaded in this session. Pass `script` (the statements inline) or `path` (a file holding them), never both.",
+    "searchHint": null,
+    "readOnly": false,
+    "destructive": false,
+    "concurrentSafe": true,
+    "needsApproval": true,
+    "shouldDefer": true,
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "description": "ID of the run that is waiting at the hole (from the hole notification).",
+          "type": "string",
+          "minLength": 1
+        },
+        "hole_id": {
+          "description": "The hole's site id from the notification or from GetWorkflowRun's holes, e.g. `hole#21b40fca`.",
+          "type": "string",
+          "minLength": 1
+        },
+        "script": {
+          "description": "The body: only the statements of the hole's function, inline. This OR `path`, never both. It is compiled where the hole stands and sees every binding declared before it; it must return the hole's type.",
+          "type": "string",
+          "minLength": 1
+        },
+        "path": {
+          "description": "A file holding those statements — usually the fill file named by a rejected attempt, edited in place. This OR `script`, never both.",
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "run_id",
+        "hole_id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "ListSavedWorkflows",
+    "description": "Lists the dynamic workflows saved in this project (`.zcode/workflows/`, keyed on the session's working directory) and the global archive (`~/.zcode/workflows`, available from every project). These are workflow DEFINITIONS you can run, not past runs — for the run history use ListWorkflowRuns instead.\n\n- Each row gives the name, what the workflow does, when to reach for it, and the arguments it takes.\n- Run one by passing its name to CreateWorkflow as `saved: { name, args }`. The user still confirms the run.\n- Check here before writing a workflow from scratch: if the project already saved one that fits, running it beats rebuilding it.\n- `invalid` lists saved files that could not be read (usually a hand-edited metadata block). They are named so they can be fixed, not silently skipped.",
+    "searchHint": null,
+    "readOnly": true,
+    "destructive": false,
+    "concurrentSafe": true,
+    "needsApproval": false,
+    "shouldDefer": true,
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    }
+  }
+]

@@ -223,6 +223,10 @@ async fn a_live_workflow_run_blocks_the_erase_of_its_tree() {
     assert_eq!(result["erasedSessionIds"], json!([]));
     assert_eq!(result["blockedRunningSessionIds"], json!([CHILD]));
     assert!(kernel.store.erased.lock().unwrap().is_empty());
+    assert!(
+        kernel.erased.lock().unwrap().is_empty(),
+        "the agents are not told"
+    );
 }
 
 /// Without a running subagent (a parked one is not running) the same tree is erased and the

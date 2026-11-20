@@ -325,6 +325,11 @@ async fn a_live_workflow_run_refuses_without_side_effects() {
         ack.reason_code.as_deref(),
         Some("fault.command.executionFailed")
     );
+    // Pins the live-run branch, not the running-turn one (the turn is idle in this test).
+    assert_eq!(
+        ack.message.as_deref(),
+        Some("a workflow run is live in this session")
+    );
     assert!(kernel.deleted.lock().unwrap().is_empty());
     assert!(handle.closes.lock().unwrap().is_empty());
     assert!(server.bridge.get(&SessionId::new("s1")).is_some());

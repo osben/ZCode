@@ -73,7 +73,7 @@ export const officialSeaPlugins = [
     requiresRuntime: true,
     requiredRuntimePaths: ["dist/mcp/server.js"],
     rootPath: join("packages", "android-emulator-plugin"),
-    version: "0.1.1",
+    version: "0.1.2",
   },
   {
     marketplace: "zcode-plugins-official",
@@ -89,7 +89,7 @@ export const officialSeaPlugins = [
     ],
     rootPath: join("packages", "documents-plugin"),
     // 修复原因：SEA manifest 必须与 package、plugin manifest 和官方 definition 同步，避免发布产物嵌入旧版本。
-    version: "0.2.2",
+    version: "0.2.9",
   },
   {
     marketplace: "zcode-plugins-official",
@@ -115,7 +115,7 @@ export const officialSeaPlugins = [
     ],
     rootPath: join("packages", "pdf-plugin"),
     // 修复原因：SEA manifest 必须与 package、plugin manifest 和官方 definition 同步，避免发布产物嵌入旧版本。
-    version: "0.2.3",
+    version: "0.2.10",
   },
   {
     marketplace: "zcode-plugins-official",
@@ -131,7 +131,7 @@ export const officialSeaPlugins = [
     ],
     rootPath: join("packages", "presentations-plugin"),
     // 修复原因：SEA manifest 必须与 package、plugin manifest 和官方 definition 同步，避免发布产物嵌入旧版本。
-    version: "0.2.2",
+    version: "0.2.9",
   },
   {
     marketplace: "zcode-plugins-official",
@@ -147,7 +147,7 @@ export const officialSeaPlugins = [
     ],
     rootPath: join("packages", "spreadsheets-plugin"),
     // 修复原因：SEA manifest 必须与 package、plugin manifest 和官方 definition 同步，避免发布产物嵌入旧版本。
-    version: "0.2.2",
+    version: "0.2.9",
   },
   {
     // browser-use 使用真实 node_repl MCP runtime，SEA 必须校验并嵌入 server.js。
@@ -161,7 +161,7 @@ export const officialSeaPlugins = [
     rootPath: join("packages", "browser-use-plugin"),
     // SEA 清单仍指向旧版时，runtime 会与官方 definition 精确匹配失败，
     // 导致发布产物不 seed browser-use，进而无法装配宿主 node_repl MCP。
-    version: "0.5.1",
+    version: "0.5.2",
   },
   {
     marketplace: "zcode-plugins-official",
@@ -228,13 +228,13 @@ export const officialSeaPlugins = [
     requiresRuntime: true,
     requiredRuntimePaths: ["dist/server.mjs", "dist/ui/panel.html"],
     requiredSeedPaths: [
-      "scripts/zcode-site.mjs",
-      "scripts/stage.mjs",
-      "scripts/errors.mjs",
+      "skills/site-deploy/scripts/zcode-site.mjs",
+      "skills/site-deploy/scripts/stage.mjs",
+      "skills/site-deploy/scripts/errors.mjs",
       "skills/site-deploy/SKILL.md",
     ],
     rootPath: join("packages", "zcode-site-plugin"),
-    version: "0.5.0",
+    version: "0.5.1",
   },
   {
     // design：纯内容型（技能 + 设计资源 + SessionStart hook），requiresRuntime:false。

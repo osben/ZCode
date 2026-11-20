@@ -40,6 +40,13 @@ pub struct DynamicWorkflowGate {
     pub tools_on_demand: bool,
 }
 
+/// The per-session gate the Host recorded at create (Node `runtimeConfig.dynamicWorkflowEnabled` and
+/// `dynamicWorkflowMode`), read by the tool registry. `None` means no record: the gate is closed (fail-closed).
+/// `protocol-zcode`'s `Server` implements it; the runtime only sees this trait.
+pub trait DynamicWorkflowGates: Send + Sync {
+    fn gate(&self, session: &crate::ids::SessionId) -> Option<DynamicWorkflowGate>;
+}
+
 /// Node `resolveDynamicWorkflowRuntimeGate`. `enabled` is an OR: a `true` parameter or an enabled preference opens the
 /// gate, and a `false` parameter does not close an enabled preference. The mode is read only while the gate is open:
 /// the parameter mode wins over the preference mode, and with neither it is `alwaysOn`. With no open source the gate

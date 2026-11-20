@@ -260,6 +260,7 @@ impl Commands for RemoteEnvironment {
         context: OperationContext,
         request: StartCommand,
     ) -> Result<CommandEvents, EnvError> {
+        refuse_argv(&request)?;
         // 线上仍是两步（wire 不随内部 API 变）：执行器拿着端口给的流，第一个 watch_command(op, 0) 接走它
         // （remote-exec.md §18.5，工作线 F119）。
         let operation = context.operation.clone();
@@ -267,7 +268,7 @@ impl Commands for RemoteEnvironment {
         let request = Request::StartCommand {
             workspace: workspace(ws),
             context: to::context(context),
-            request: Box::new(to::start_command(request, &mut body)),
+            request: Box::new(to::start_command(request, &mut body)?),
         };
         let (reply, _) = self.call(request, body).await?;
         expect!(reply, "commands.start_command", Reply::StartCommand => Ok(()))?;
@@ -503,5 +504,57 @@ impl Pdf for RemoteEnvironment {
             expect!(reply, "pdf.render_pdf_pages", Reply::RenderPdfPages(render) => render),
             &body,
         )
+    }
+}
+
+/// argv 模式（W7-4）的线上形状还没有：远端只收 shell 文本，宁可拒绝也不把参数当 shell 文本执行。
+fn refuse_argv(request: &StartCommand) -> Result<(), EnvError> {
+    if request.argv.is_some() {
+        return Err(EnvError::Unsupported {
+            what: "argv commands on a remote machine".to_owned(),
+        });
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod argv_refusal_tests {
+    use super::refuse_argv;
+    use rust_cli_kernel_api::env::{EnvError, EnvPath, StartCommand};
+    use rust_cli_kernel_api::ids::ShellTaskId;
+
+    fn argv_request(task: &str) -> StartCommand {
+        StartCommand::argv(
+            "git",
+            vec!["status".to_owned()],
+            EnvPath::new("/w"),
+            ShellTaskId::new(task),
+        )
+    }
+
+    #[test]
+    fn an_argv_command_is_refused_before_anything_is_sent() {
+        let argv = argv_request("t1");
+        assert!(matches!(
+            refuse_argv(&argv),
+            Err(EnvError::Unsupported { .. })
+        ));
+        let shell = StartCommand::new("git status", EnvPath::new("/w"), ShellTaskId::new("t1"));
+        assert!(
+            refuse_argv(&shell).is_ok(),
+            "shell text still goes to the remote"
+        );
+    }
+
+    #[test]
+    fn the_wire_converter_refuses_argv_too_so_it_is_never_dropped() {
+        // `refuse_argv` runs first in `start_command`; the converter must refuse on its own as well.
+        let mut body = rust_cli_exec_wire::BodyBuilder::new();
+        assert!(matches!(
+            crate::to_wire::start_command(argv_request("t2"), &mut body),
+            Err(EnvError::Unsupported { .. })
+        ));
+        let shell = StartCommand::new("git status", EnvPath::new("/w"), ShellTaskId::new("t2"));
+        assert!(crate::to_wire::start_command(shell, &mut body).is_ok());
     }
 }

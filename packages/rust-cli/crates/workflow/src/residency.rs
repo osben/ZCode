@@ -84,24 +84,88 @@ struct State {
     reopen_pending: HashSet<String>,
 }
 
-/// Holds a session's close count for the duration of one close. When the last close of a session ends, a reopen that was
-/// pending on it takes effect. The close itself never clears the retired mark.
-struct CloseScope {
+/// A close that has begun: the session is retired and counted as closing, both under one lock in
+/// [`SessionResidency::begin_close`]. [`CloseTicket::run`] does the close, and dropping the ticket ends it. The count is
+/// what a reopen waits on. When the last close of a session ends, a reopen that was pending on it takes effect, whatever
+/// the close's outcome. The close itself never clears the retired mark, so a job that runs late cannot re-retire a
+/// session that was reopened after the close began.
+pub struct CloseTicket {
     shared: Arc<Shared>,
+    close_wait: Duration,
     session: String,
 }
 
-impl CloseScope {
-    fn enter(shared: &Arc<Shared>, session: &str) -> Self {
-        *shared.lock().closing.entry(session.to_owned()).or_insert(0) += 1;
-        Self {
-            shared: shared.clone(),
-            session: session.to_owned(),
+impl CloseTicket {
+    /// Run the close with the ledger's bound: stop each live run that has not been stopped yet, then wait until the
+    /// session has no guard. See [`SessionResidency::close`].
+    pub fn run(self) -> Result<()> {
+        let deadline = Instant::now() + self.close_wait;
+        self.run_until(deadline)
+    }
+
+    /// The close with an absolute deadline (the drain shares one across its sessions).
+    fn run_until(self, deadline: Instant) -> Result<()> {
+        let session = self.session.as_str();
+        if STOPPING.with(Cell::get) {
+            bail!("session {session} cannot be closed from inside a run's stop");
         }
+        let started = Instant::now();
+        let to_stop: Vec<Arc<dyn LiveRun>> = {
+            let mut state = self.shared.lock();
+            let State { live, stopped, .. } = &mut *state;
+            let mut picked = Vec::new();
+            if let Some(runs) = live.get(session) {
+                for entry in runs {
+                    if stopped.insert(entry.id) {
+                        picked.push(entry.run.clone());
+                    }
+                }
+            }
+            picked
+        };
+        // Stopped outside the lock: a stop may settle its run at once, and a settlement takes the lock.
+        for run in &to_stop {
+            let _scope = StoppingScope::enter();
+            run.stop_interrupted();
+        }
+        let mut state = self.shared.lock();
+        loop {
+            let still_live: Vec<String> = state
+                .live
+                .get(session)
+                .map(|runs| runs.iter().map(|entry| entry.run_id.clone()).collect())
+                .unwrap_or_default();
+            if still_live.is_empty() {
+                break;
+            }
+            let now = Instant::now();
+            if now >= deadline {
+                // W7-6 review D: a session reached after the bound was spent did not wait at all, and the message says so.
+                if started >= deadline {
+                    bail!(
+                        "session {session} did not close: the drain's wait bound was spent before this close began; run(s) {} still live",
+                        still_live.join(", ")
+                    );
+                }
+                bail!(
+                    "session {session} did not close: run(s) {} still live after {:?}",
+                    still_live.join(", "),
+                    now.saturating_duration_since(started)
+                );
+            }
+            let (next, _timed_out) = self
+                .shared
+                .settled
+                .wait_timeout(state, deadline - now)
+                .unwrap_or_else(PoisonError::into_inner);
+            state = next;
+        }
+        state.live.remove(session);
+        Ok(())
     }
 }
 
-impl Drop for CloseScope {
+impl Drop for CloseTicket {
     fn drop(&mut self) {
         let mut state = self.shared.lock();
         let remaining = state.closing.get_mut(&self.session).map_or(0, |count| {
@@ -230,9 +294,9 @@ impl SessionResidency {
         true
     }
 
-    /// Resume a session in this process: it accepts guards again (divergence 63). Returns `true` when it took effect now.
-    /// When a close of the session is still in flight, the reopen does not wait for it: it is pending, and takes effect
-    /// when the last such close ends (the close never clears the mark itself). Returns `false` then. A close started
+    /// Resume a session in this process: it accepts guards again (divergence 62). Returns `true` when it took effect now.
+    /// When a close of the session is in flight (begun and not yet ended), the reopen does not wait for it: it is pending,
+    /// and takes effect when the last such close ends, whatever that close's outcome. Returns `false` then. A close begun
     /// after the reopen supersedes it.
     pub fn reopen(&self, session: &str) -> bool {
         let mut state = self.shared.lock();
@@ -244,10 +308,22 @@ impl SessionResidency {
         true
     }
 
-    /// Refuse new guards on `session` at once, without waiting. The close path calls this on the async thread, so a
-    /// launch that races a close is refused before the blocking close starts.
-    pub fn retire(&self, session: &str) {
-        self.shared.lock().retired.insert(session.to_owned());
+    /// Begin a close of `session` without running it: refuse new guards on it, supersede a pending reopen, and count the
+    /// close as in flight. All of that is one critical section, so a reopen either comes before the close (and is then
+    /// pending) or after it (and is pending until the ticket ends). The close path calls this on the async thread and runs
+    /// the ticket on the blocking pool.
+    pub fn begin_close(&self, session: &str) -> CloseTicket {
+        {
+            let mut state = self.shared.lock();
+            state.retired.insert(session.to_owned());
+            state.reopen_pending.remove(session);
+            *state.closing.entry(session.to_owned()).or_insert(0) += 1;
+        }
+        CloseTicket {
+            shared: self.shared.clone(),
+            close_wait: self.close_wait,
+            session: session.to_owned(),
+        }
     }
 
     /// The sessions that hold at least one live guard, in id order.
@@ -269,70 +345,17 @@ impl SessionResidency {
         let deadline = Instant::now() + self.close_wait;
         self.sessions_with_live_runs()
             .iter()
-            .filter_map(|session| self.close_until(session, deadline).err())
+            .filter_map(|session| self.begin_close(session).run_until(deadline).err())
             .collect()
     }
 
     /// Close the session: refuse new runs, stop each live run that has not been stopped yet, then wait until every
-    /// guard is dropped. Errors when the runs are still live after the wait bound, naming them; the session stays
-    /// refused, and a later close waits again without stopping a run twice.
+    /// guard is dropped. Errors when the runs are still live after the wait bound, naming them. The session stays
+    /// refused until the close ends, whatever its outcome. A reopen that arrives during the close applies when it ends,
+    /// even after a failure: the user's resume wins, and the stuck runs are reported by the returned error. A later
+    /// close waits again without stopping a run twice.
     pub fn close(&self, session: &str) -> Result<()> {
-        self.close_until(session, Instant::now() + self.close_wait)
-    }
-
-    fn close_until(&self, session: &str, deadline: Instant) -> Result<()> {
-        if STOPPING.with(Cell::get) {
-            bail!("session {session} cannot be closed from inside a run's stop");
-        }
-        let _scope = CloseScope::enter(&self.shared, session);
-        let to_stop: Vec<Arc<dyn LiveRun>> = {
-            let mut state = self.shared.lock();
-            state.retired.insert(session.to_owned());
-            // A close started after a reopen supersedes it: the session is closed again, so nothing is lifted at the end.
-            state.reopen_pending.remove(session);
-            let State { live, stopped, .. } = &mut *state;
-            let mut picked = Vec::new();
-            if let Some(runs) = live.get(session) {
-                for entry in runs {
-                    if stopped.insert(entry.id) {
-                        picked.push(entry.run.clone());
-                    }
-                }
-            }
-            picked
-        };
-        // Stopped outside the lock: a stop may settle its run at once, and a settlement takes the lock.
-        for run in &to_stop {
-            let _scope = StoppingScope::enter();
-            run.stop_interrupted();
-        }
-        let mut state = self.shared.lock();
-        loop {
-            let still_live: Vec<String> = state
-                .live
-                .get(session)
-                .map(|runs| runs.iter().map(|entry| entry.run_id.clone()).collect())
-                .unwrap_or_default();
-            if still_live.is_empty() {
-                break;
-            }
-            let now = Instant::now();
-            if now >= deadline {
-                bail!(
-                    "session {session} did not close: run(s) {} still live after {:?}",
-                    still_live.join(", "),
-                    self.close_wait
-                );
-            }
-            let (next, _timed_out) = self
-                .shared
-                .settled
-                .wait_timeout(state, deadline - now)
-                .unwrap_or_else(PoisonError::into_inner);
-            state = next;
-        }
-        state.live.remove(session);
-        Ok(())
+        self.begin_close(session).run()
     }
 
     /// The number of live runs the session holds.

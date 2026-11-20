@@ -204,8 +204,15 @@ import { OFFICIAL_PLUGIN_DEFINITIONS } from "../src/app/official-plugin-definiti
 import { resolveZCodePlugins } from "../src/plugins.js";
 
 const OFFICIAL_CACHE_ROOT = join("cache", "zcode-plugins-official");
-const BROWSER_CACHE_SUFFIX = join(OFFICIAL_CACHE_ROOT, "browser-use", "0.5.1");
-const ANDROID_CACHE_SUFFIX = join(OFFICIAL_CACHE_ROOT, "android-emulator", "0.1.1");
+// Derived from the definitions so a seed version bump cannot strand these suffixes.
+function officialVersion(name: string): string {
+  const definition = OFFICIAL_PLUGIN_DEFINITIONS.find((item) => item.name === name);
+  if (!definition) throw new Error(`${name} official plugin definition is missing`);
+  return definition.version;
+}
+const BROWSER_VERSION = officialVersion("browser-use");
+const BROWSER_CACHE_SUFFIX = join(OFFICIAL_CACHE_ROOT, "browser-use", BROWSER_VERSION);
+const ANDROID_CACHE_SUFFIX = join(OFFICIAL_CACHE_ROOT, "android-emulator", officialVersion("android-emulator"));
 const SKILL_CREATOR_CACHE_SUFFIX = join(OFFICIAL_CACHE_ROOT, "skill-creator", "0.1.0");
 const ANDROID_MANIFEST_SUFFIX = join(ANDROID_CACHE_SUFFIX, ".zcode-plugin", "plugin.json");
 const CUA_DEFINITION = OFFICIAL_PLUGIN_DEFINITIONS.find(({ name }) => name === "computer-use");
@@ -792,7 +799,10 @@ describe("bundled official plugin cache resilience", () => {
     const previousVersion = definition.version;
     const oldRoot = join(storageRoot, OFFICIAL_CACHE_ROOT, definition.name, previousVersion);
     try {
-      definition.version = "0.1.2";
+      // The simulated security update must be strictly newer than the shipped version, or the
+      // seed short-circuits as current and the failed-promotion path is never exercised.
+      const [major, minor, patch] = previousVersion.split(".").map(Number);
+      definition.version = `${major}.${minor}.${(patch ?? 0) + 1}`;
       faults.promoteTargetSuffix = join(OFFICIAL_CACHE_ROOT, definition.name, definition.version);
       const roots = await resolveOfficialPluginRoots({ storageRoot });
       expect(existsSync(oldRoot)).toBe(true);
@@ -816,7 +826,7 @@ describe("bundled official plugin cache resilience", () => {
     await mkdir(join(incompletePluginRoot, ".zcode-plugin"), { recursive: true });
     await writeFile(
       join(incompletePluginRoot, ".zcode-plugin", "plugin.json"),
-      JSON.stringify({ name: "browser-use", version: "0.5.1" }),
+      JSON.stringify({ name: "browser-use", version: BROWSER_VERSION }),
     );
     process.argv[1] = join(entrypointRoot, "zcode.cjs");
     const logger = createLogger();
@@ -861,7 +871,7 @@ describe("bundled official plugin cache resilience", () => {
     await mkdir(join(incompletePluginRoot, ".zcode-plugin"), { recursive: true });
     await writeFile(
       join(incompletePluginRoot, ".zcode-plugin", "plugin.json"),
-      JSON.stringify({ name: "browser-use", version: "0.5.1" }),
+      JSON.stringify({ name: "browser-use", version: BROWSER_VERSION }),
     );
     process.argv[1] = join(entrypointRoot, "zcode.cjs");
     const logger = createLogger();

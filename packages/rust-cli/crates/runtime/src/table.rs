@@ -20,7 +20,7 @@ use rust_cli_kernel_api::permission::ProjectRules;
 use rust_cli_kernel_api::store::{LoadedSession, RuntimePresence};
 use rust_cli_policy::PolicyGate;
 use rust_cli_session::{Opened, Session, SessionDeps, SessionState};
-use rust_cli_workflow::residency::SessionResidency;
+use rust_cli_workflow::residency::{CloseTicket, SessionResidency};
 use tokio_util::sync::CancellationToken;
 
 use crate::LocalKernel;
@@ -198,14 +198,15 @@ pub(crate) struct Closer {
 /// W7-6: `SessionResidency::close` on the blocking pool. Its wait is for the runs to settle, which takes their turns'
 /// cleanup, so it must not hold a tokio worker. Nothing waits for its result: a stuck close is logged here, since the
 /// close that started it has already returned. Without a tokio runtime (no caller in the tree) it runs on its own thread.
+/// The ticket was begun on the async thread (retire and in-flight count in one step), so the job only runs it: it never
+/// re-retires the session, and a reopen that came in between stays pending until the job ends.
 pub(crate) fn spawn_residency_close(
-    residency: &Arc<SessionResidency>,
+    ticket: CloseTicket,
     session: &SessionId,
 ) -> Option<tokio::task::JoinHandle<Result<(), String>>> {
-    let residency = residency.clone();
     let id = session.as_str().to_owned();
     let job = move || {
-        residency.close(&id).map_err(|error| {
+        ticket.run().map_err(|error| {
             let message = format!("{error:#}");
             tracing::error!(
                 event = "session.residency_close_failed",
@@ -232,8 +233,8 @@ impl rust_cli_session::Released for Closer {
         // (a notice no live agent owns is no longer acknowledged into its Hub). Not under the session table lock.
         self.scoped.agents.session_closing(session);
         // W7-6: refuse new runs on the session at once, then drain its live runs off the async thread.
-        self.residency.retire(session.as_str());
-        drop(spawn_residency_close(&self.residency, session));
+        let ticket = self.residency.begin_close(session.as_str());
+        drop(spawn_residency_close(ticket, session));
         let Some(sessions) = self.sessions.upgrade() else {
             return;
         };
@@ -395,7 +396,8 @@ mod residency_close_tests {
             .acquire("ses_close", "run_1", Arc::new(FakeRun { stopped }))
             .expect("guard");
         let session = SessionId::new("ses_close");
-        let close = spawn_residency_close(&residency, &session).expect("a runtime is running");
+        let ticket = residency.begin_close("ses_close");
+        let close = spawn_residency_close(ticket, &session).expect("a runtime is running");
         tokio::task::yield_now().await;
         stops
             .recv_timeout(Duration::from_secs(5))
@@ -416,7 +418,8 @@ mod residency_close_tests {
             .acquire("ses_stuck", "run_stuck", Arc::new(FakeRun { stopped }))
             .expect("guard");
         let session = SessionId::new("ses_stuck");
-        let close = spawn_residency_close(&residency, &session).expect("a runtime is running");
+        let ticket = residency.begin_close("ses_stuck");
+        let close = spawn_residency_close(ticket, &session).expect("a runtime is running");
         let error = close
             .await
             .expect("the close task ends")

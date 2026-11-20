@@ -79,6 +79,10 @@ string_id!(
     WorkflowRunId
 );
 string_id!(
+    /// 一个工作流升级问题的 qid（Node `dwfq-<runId fragment>-<seq>`）：全局唯一，`resolveQuestion` 只认它。
+    QuestionId
+);
+string_id!(
     /// 一次等待用户回答的交互（权限、提问、计划审批）。
     InteractionId
 );

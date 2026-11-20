@@ -7,8 +7,8 @@ import { test } from "node:test";
 
 import { createServer } from "node:http";
 
-import { createEndpointFetch, main, normalizePrefix } from "../scripts/zcode-site.mjs";
-import { packStage } from "../scripts/stage.mjs";
+import { createEndpointFetch, main, normalizePrefix } from "../skills/site-deploy/scripts/zcode-site.mjs";
+import { packStage } from "../skills/site-deploy/scripts/stage.mjs";
 
 // CLI 只认 agent 注入的官方命令端点（技术方案 5.8）；身份头和版本头由端点补，CLI 不带。
 const ENV = {
@@ -397,7 +397,7 @@ test("local and auth errors", async () => {
   const expired = await run(fake, cwd, "usage");
   assert.equal(expired.code, 2);
   assert.equal(expired.error.code, 3101);
-  assert.match(expired.error.hint, /sign in to ZCode again/);
+  assert.match(expired.error.hint, /sign in again/);
 
   const noEnv = await main(["usage"], {
     env: {},
@@ -771,4 +771,41 @@ test("help documents every command and option, and needs no endpoint", async () 
   for (const word of options) assert.ok(stdout.includes(word), word);
   for (const exit of ["0", "1", "2", "3", "4"])
     assert.match(stdout, new RegExp(`^  ${exit}  `, "m"));
+});
+
+test("createEndpointFetch joins paths onto an http base and does not follow redirects", async () => {
+  const seen = [];
+  const server = createServer((req, res) => {
+    const chunks = [];
+    req.on("data", (c) => chunks.push(c));
+    req.on("end", () => {
+      seen.push({ method: req.method, url: req.url, headers: req.headers, body: Buffer.concat(chunks) });
+      // A redirect would turn the PUT into a GET without a body, or drop Authorization across origins.
+      if (req.url.startsWith("/gw/moved")) return res.writeHead(302, { location: "/gw/elsewhere" }).end();
+      res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ code: 0 }));
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const { port } = server.address();
+    const fetchImpl = createEndpointFetch(`http://127.0.0.1:${port}/gw/`);
+    const res = await fetchImpl("http://zcode-official-endpoint/api/v1/sites/1/package?x=1", {
+      method: "PUT",
+      headers: { Authorization: "Bearer t", "Content-Type": "application/gzip" },
+      body: Buffer.from("tarball"),
+    });
+    assert.equal(res.status, 200);
+    assert.equal(seen[0].url, "/gw/api/v1/sites/1/package?x=1");
+    assert.equal(seen[0].method, "PUT");
+    assert.equal(seen[0].headers["content-length"], "7");
+    assert.equal(seen[0].headers["transfer-encoding"], undefined);
+    assert.equal(seen[0].body.toString(), "tarball");
+
+    await assert.rejects(
+      fetchImpl("http://zcode-official-endpoint/moved", { method: "PUT", body: Buffer.from("x") }),
+    );
+    assert.equal(seen.filter((r) => r.url === "/gw/elsewhere").length, 0);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
 });

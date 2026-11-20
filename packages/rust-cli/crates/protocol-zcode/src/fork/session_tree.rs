@@ -8,7 +8,6 @@ use std::path::Path;
 
 use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::session_api::EndReason;
-use rust_cli_kernel_api::session_deletion::live_run_busy_ids;
 use rust_cli_kernel_api::store::StoreError;
 use rust_cli_protocol_core::rpc::RpcError;
 use serde_json::{Value, json};
@@ -101,10 +100,9 @@ pub(crate) fn running_session_ids(server: &Server, tree_ids: &[String]) -> Vec<S
         running.insert(session.as_str().to_owned());
     }
     // Fork (W7-6): a session with a live workflow run is busy, as Node's residency `busy` makes it.
-    running.extend(live_run_busy_ids(
-        tree_ids,
-        &server.kernel.live_run_sessions(&tree),
-    ));
+    for session in server.kernel.live_run_sessions(&tree) {
+        running.insert(session.as_str().to_owned());
+    }
     tree_ids
         .iter()
         .filter(|id| running.contains(*id))

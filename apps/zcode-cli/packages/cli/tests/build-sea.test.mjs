@@ -600,10 +600,10 @@ test("includes the pinned Playwright runtime required by headless Browser Use", 
   }
 });
 
-test("keeps the Browser Use SEA release at 0.5.1 with complete runtime assets", async () => {
+test("keeps the Browser Use SEA release at 0.5.2 with complete runtime assets", async () => {
   const root = join(import.meta.dirname, "../../..");
   const browserUsePlugin = officialSeaPlugins.find((plugin) => plugin.name === "browser-use");
-  assert.equal(browserUsePlugin?.version, "0.5.1");
+  assert.equal(browserUsePlugin?.version, "0.5.2");
   assert.deepEqual(browserUsePlugin?.requiredRuntimePaths, [
     "scripts/browser-client.mjs",
     "docs/api.json",
@@ -627,9 +627,9 @@ test("keeps the Browser Use SEA release at 0.5.1 with complete runtime assets", 
       sea: browserUsePlugin.version,
     },
     {
-      manifest: "0.5.1",
-      package: "0.5.1",
-      sea: "0.5.1",
+      manifest: "0.5.2",
+      package: "0.5.2",
+      sea: "0.5.2",
     },
   );
   // Bug 原因：新增录屏能力时重写了整段插件描述，并把原生 WebM 误写成 MP4。
@@ -878,10 +878,10 @@ test("allows skill-only official plugins when SEA runtime assets are required", 
       "",
     );
     await writeTestFile(root, "packages/zcode-site-plugin/.zcode-plugin/plugin.json", "{}");
-    await writeTestFile(root, "packages/zcode-site-plugin/scripts/zcode-site.mjs", "");
+    await writeTestFile(root, "packages/zcode-site-plugin/skills/site-deploy/scripts/zcode-site.mjs", "");
     await writeTestFile(root, "packages/zcode-site-plugin/skills/site-deploy/SKILL.md", "");
-    await writeTestFile(root, "packages/zcode-site-plugin/scripts/stage.mjs", "");
-    await writeTestFile(root, "packages/zcode-site-plugin/scripts/errors.mjs", "");
+    await writeTestFile(root, "packages/zcode-site-plugin/skills/site-deploy/scripts/stage.mjs", "");
+    await writeTestFile(root, "packages/zcode-site-plugin/skills/site-deploy/scripts/errors.mjs", "");
     // 0.4.0 起带 Sites 面板：插件自己构建的 server 与面板页面是必需运行时产物。
     await writeTestFile(root, "packages/zcode-site-plugin/dist/server.mjs", "");
     await writeTestFile(root, "packages/zcode-site-plugin/dist/ui/panel.html", "");
