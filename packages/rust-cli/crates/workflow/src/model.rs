@@ -136,6 +136,11 @@ pub struct ConcurrencyChange {
 
 /// A JavaScript number as a JSON value. Non-finite numbers become `null`, as `JSON.stringify` does.
 pub fn js_number(value: f64) -> Value {
+    // An integral value inside the safe range prints without a fraction, as `JSON.stringify` prints `3` for `3`.
+    const SAFE: f64 = 9_007_199_254_740_992.0; // 2^53
+    if value.is_finite() && value.fract() == 0.0 && value.abs() < SAFE {
+        return Value::from(value as i64);
+    }
     serde_json::Number::from_f64(value).map_or(Value::Null, Value::Number)
 }
 
@@ -426,3 +431,7 @@ impl ActorRow {
         Value::Object(map)
     }
 }
+
+#[cfg(test)]
+#[path = "model_tests.rs"]
+mod tests;
