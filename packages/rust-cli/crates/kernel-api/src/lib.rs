@@ -151,6 +151,7 @@ pub mod turn_limits;
 pub mod unparsed_input;
 pub mod user_command;
 pub mod user_input;
+pub mod workflow_child;
 pub mod workflow_run;
 pub mod workspace_key;
 pub mod workspace_trust;

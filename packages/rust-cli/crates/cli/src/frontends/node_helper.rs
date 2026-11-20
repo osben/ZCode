@@ -13,7 +13,8 @@ use rust_cli_base::names::env::ZCODE_FORK_NODE_HELPER_COMMAND;
 use rust_cli_proc::ledger::{Containment, Isolation, Ledger, Purpose, Tracked};
 use rust_cli_proc::tree::Shutdown;
 use rust_cli_protocol_zcode::{
-    ChildCommand, Context, NodeHelper, NodeHelperLauncher, NodeHelperProcess, NodeHelperTiming,
+    ChildCommand, ChildLauncher, Context, NodeHelper, NodeHelperLauncher, NodeHelperProcess,
+    NodeHelperTiming, ProtocolChildRunner,
 };
 
 use super::workflow_child;
@@ -297,14 +298,16 @@ pub(crate) fn install(
     };
     let ledger = Ledger::open(rust_cli_proc::private::user_dir(temp));
     // W4: the sandbox children of workflow runs start from the same command (specs/fork-rust-workflow-engine.md, 4.1).
-    context.set_workflow_child(Arc::new(workflow_child::ProcessChildLauncher::new(
-        ChildCommand {
-            program: command.program.clone(),
-            env: command.env.clone(),
-        },
-        ledger.clone(),
-        spawner.clone(),
-    )));
+    let child_launcher: Arc<dyn ChildLauncher> =
+        Arc::new(workflow_child::ProcessChildLauncher::new(
+            ChildCommand {
+                program: command.program.clone(),
+                env: command.env.clone(),
+            },
+            ledger.clone(),
+            spawner.clone(),
+        ));
+    context.set_workflow_child(child_launcher.clone());
     let launcher = ProcessLauncher {
         command,
         ledger,
@@ -317,6 +320,14 @@ pub(crate) fn install(
         NodeHelperTiming::default(),
     );
     context.set_node_helper(helper.clone());
+    // W7-5a-1: the child runner port over the same helper and launcher, for the run service to reach through kernel-api.
+    // Nothing calls it yet (gate off).
+    context.set_workflow_runner(Arc::new(ProtocolChildRunner::new(
+        helper.clone(),
+        child_launcher,
+        spawner.clone(),
+        temp.join("workflow-runs"),
+    )));
     Some(helper)
 }
 

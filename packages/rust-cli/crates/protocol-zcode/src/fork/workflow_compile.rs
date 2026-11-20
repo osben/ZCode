@@ -23,14 +23,9 @@ pub struct CompileRequest<'a> {
     pub resumed_from: Option<&'a str>,
 }
 
-/// A typecheck or analysis diagnostic, positioned in the author's script (1-based).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Diagnostic {
-    pub code: i64,
-    pub line: i64,
-    pub column: i64,
-    pub message: String,
-}
+// A typecheck or analysis diagnostic, positioned in the author's script (1-based). It lives in kernel-api since W7-5a-1,
+// so the child runner port can carry a refused compile to the runtime.
+pub use rust_cli_kernel_api::workflow_child::Diagnostic;
 
 /// The outcome of a compile.
 #[derive(Debug, Clone, PartialEq)]
