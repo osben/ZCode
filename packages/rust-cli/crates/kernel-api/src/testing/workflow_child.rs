@@ -189,8 +189,9 @@ mod tests {
     struct Idle;
 
     impl ChildHandler for Idle {
-        fn create_actor(&self, actor: &CreateActor) -> Result<String, String> {
-            Ok(format!("engine-{}", actor.local_id))
+        fn create_actor(&self, actor: &CreateActor) -> BoxFuture<'static, Result<String, String>> {
+            let id = format!("engine-{}", actor.local_id);
+            Box::pin(async move { Ok(id) })
         }
 
         fn request(
@@ -232,6 +233,7 @@ mod tests {
                 name: None,
                 persona: None,
             })
+            .await
             .expect("the handler answers");
         assert_eq!(engine_id, "engine-a1");
     }

@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use rust_cli_kernel_api::ids::ToolUseId;
 use rust_cli_kernel_api::message::Message;
 use rust_cli_kernel_api::permission::PermissionDecision;
 use rust_cli_kernel_api::testing::OpsOverride;
@@ -556,4 +557,60 @@ fn the_tool_is_deferred_read_only_false_and_budgeted_to_24000_bytes() {
         tool.input_schema(),
         contract("EvalWorkflowSnippet").input_schema
     );
+}
+
+// ocr round 1 (PR #584): a snippet with world.run must not run without the confirmation of its own call.
+
+#[tokio::test]
+async fn a_world_run_snippet_without_its_confirmation_is_not_run_and_the_model_is_asked_to_call_again() {
+    let port = Arc::new(FakePort {
+        check: Ok(SnippetCheck::Ready { world_run: true }),
+        outcome: Ok(completed(None, &[])),
+        runs: Mutex::new(Vec::new()),
+    });
+    let harness = Harness::new(port);
+    let (tx, _rx) = mpsc::channel(4);
+    let error = harness
+        .tool
+        .call(json!({"code": WITH_WORLD_RUN}), harness.with_skill(), tx)
+        .await
+        .expect_err("no confirmation, no run");
+    match error {
+        ToolError::Failed { message } => {
+            assert!(message.contains("no confirmation"), "{message}");
+            assert!(message.contains("Call it again"), "{message}");
+        }
+        other => panic!("expected a failure, got {other:?}"),
+    }
+    assert!(harness.port.runs.lock().unwrap().is_empty(), "nothing ran");
+}
+
+#[tokio::test]
+async fn the_approval_table_evicts_only_the_oldest_approval() {
+    let port = Arc::new(FakePort {
+        check: Ok(SnippetCheck::Ready { world_run: true }),
+        outcome: Ok(completed(None, &[])),
+        runs: Mutex::new(Vec::new()),
+    });
+    let harness = Harness::new(port);
+    let input = json!({"code": WITH_WORLD_RUN});
+    for index in 0..=256 {
+        let mut ctx = harness.with_skill();
+        ctx.tool_use = ToolUseId::new(format!("toolu_{index}"));
+        let decision = harness.tool.check_permissions(&input, &ctx).await;
+        assert!(matches!(decision, PermissionDecision::Ask { .. }));
+    }
+    // The newest approval survives the cap; the oldest (toolu_0) was evicted.
+    let mut newest = harness.with_skill();
+    newest.tool_use = ToolUseId::new("toolu_256");
+    let (tx, _rx) = mpsc::channel(4);
+    harness
+        .tool
+        .call(input.clone(), newest, tx)
+        .await
+        .expect("the newest approval still runs");
+    let mut oldest = harness.with_skill();
+    oldest.tool_use = ToolUseId::new("toolu_0");
+    let (tx, _rx) = mpsc::channel(4);
+    assert!(harness.tool.call(input, oldest, tx).await.is_err());
 }

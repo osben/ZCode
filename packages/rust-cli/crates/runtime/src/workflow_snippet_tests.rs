@@ -24,6 +24,8 @@ use super::SnippetService;
 /// The fake world-read port: `read_text` answers "hello"; the other members are not used by these tests.
 struct Reads {
     read: Result<String, String>,
+    /// How long `read_text` blocks, as a slow world read does (a `run` can take minutes).
+    delay: std::time::Duration,
 }
 
 impl WorldReadPorts for Reads {
@@ -32,6 +34,7 @@ impl WorldReadPorts for Reads {
     }
 
     fn read_text(&self, _path: &str) -> Result<String, String> {
+        std::thread::sleep(self.delay);
         self.read.clone()
     }
 
@@ -52,11 +55,21 @@ impl WorldReadPorts for Reads {
 fn reads() -> Arc<dyn WorldReadPorts> {
     Arc::new(Reads {
         read: Ok("hello".to_owned()),
+        delay: std::time::Duration::ZERO,
+    })
+}
+
+fn slow_reads(delay: std::time::Duration) -> Arc<dyn WorldReadPorts> {
+    Arc::new(Reads {
+        read: Ok("late".to_owned()),
+        delay,
     })
 }
 
 enum StartMode {
     Run,
+    /// The start never returns (a compile or spawn that hangs).
+    Hang,
     Reject(Vec<WorkflowDiagnostic>),
     Fail(String),
 }
@@ -93,10 +106,15 @@ impl FakeRunner {
 
     /// The handler of the launch, once the service has started the child.
     async fn wait_for_handler(&self) -> Arc<dyn ChildHandler> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         loop {
             if let Some(launch) = self.launch.lock().unwrap().as_ref() {
                 return launch.handler.clone();
             }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the service did not start a child within 5s"
+            );
             tokio::task::yield_now().await;
         }
     }
@@ -136,6 +154,7 @@ impl WorkflowSnippetRunner for FakeRunner {
     ) -> Result<SnippetStart, WorkflowSnippetError> {
         match &self.mode {
             StartMode::Reject(diagnostics) => Ok(SnippetStart::Rejected(diagnostics.clone())),
+            StartMode::Hang => std::future::pending().await,
             StartMode::Fail(message) => Err(WorkflowSnippetError {
                 message: message.clone(),
             }),
@@ -527,4 +546,76 @@ async fn the_check_is_the_runners_check() {
         service.check("world.run('git', [])").await.unwrap(),
         SnippetCheck::Ready { world_run: true }
     );
+}
+
+// ocr round 1 (PR #584): the wall clock covers a world read in flight, the start, and the request shapes.
+
+#[tokio::test]
+async fn the_timeout_settles_the_run_while_a_world_read_is_in_flight() {
+    let fake = Arc::new(FakeRunner::running());
+    let service = Arc::new(SnippetService::new(
+        fake.clone(),
+        slow_reads(std::time::Duration::from_millis(1500)),
+    ));
+    let eval = spawn_eval(&service, "return await files.read('a.txt');", 50);
+    let handler = fake.wait_for_handler().await;
+    // The child's read is in flight for 1.5s; the request is not awaited to its answer.
+    let read = tokio::spawn(async move {
+        handler
+            .request(world_read_request("slow", "read", vec![json!("a.txt")]), None)
+            .await
+    });
+    let started = std::time::Instant::now();
+    let outcome = tokio::time::timeout(std::time::Duration::from_secs(1), eval)
+        .await
+        .expect("the eval settles at its timeout, not when the read returns")
+        .unwrap()
+        .unwrap();
+    assert!(started.elapsed() < std::time::Duration::from_secs(1));
+    assert!(matches!(
+        outcome,
+        SnippetOutcome::Failed { ref code, .. } if code == "Interrupted"
+    ));
+    read.abort();
+}
+
+#[tokio::test]
+async fn a_start_that_never_returns_is_bounded_by_the_timeout() {
+    let fake = Arc::new(FakeRunner::with_mode(StartMode::Hang));
+    let service = SnippetService::new(fake, reads());
+    let outcome = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        service.eval(request("return 1;", 50)),
+    )
+    .await
+    .expect("the eval settles at its timeout")
+    .unwrap();
+    assert_eq!(
+        outcome,
+        SnippetOutcome::Failed {
+            code: "Interrupted".to_owned(),
+            message: "The workflow sandbox process exceeded its wall-clock timeout of 50ms"
+                .to_owned(),
+            logs: Vec::new(),
+            logs_truncated: false,
+        }
+    );
+}
+
+#[tokio::test]
+async fn a_world_read_without_an_op_is_refused_as_a_contract_error() {
+    let fake = Arc::new(FakeRunner::running());
+    let service = Arc::new(SnippetService::new(fake.clone(), reads()));
+    let eval = spawn_eval(&service, "return 0;", 5_000);
+    let handler = fake.wait_for_handler().await;
+    let mut request = world_read_request("r3", "read", vec![json!("a.txt")]);
+    request.op = None;
+    let error = handler
+        .request(request, None)
+        .await
+        .expect_err("a read without an op is refused");
+    assert_eq!(error.code.as_deref(), Some("DriverError"));
+    assert!(error.message.contains("no op"), "{}", error.message);
+    fake.finish(completed(None));
+    let _ = eval.await;
 }

@@ -319,7 +319,7 @@ fn confirmation_message(
     message
 }
 
-fn diagnostic_value(diagnostic: &WorkflowDiagnostic) -> Value {
+pub(crate) fn diagnostic_value(diagnostic: &WorkflowDiagnostic) -> Value {
     json!({
         "code": diagnostic.code,
         "column": diagnostic.column,

@@ -6,7 +6,7 @@
 //! asks; any other snippet proceeds. The call runs the approved bytes on the snippet service and turns the outcome into
 //! Node's model text. Nothing persists: the snippet's run is transient.
 
-use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -28,7 +28,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
-use crate::workflow_save::{describe, normalize};
+use crate::workflow_save::{describe, diagnostic_value, normalize};
 use crate::workflow_tools::{
     Contract, DYNAMIC_WORKFLOW_SKILL, contract, skill_loaded, workspace_dir,
 };
@@ -80,7 +80,7 @@ struct Source {
 pub struct EvalWorkflowSnippetTool {
     contract: &'static Contract,
     port: Arc<dyn WorkflowSnippetPort>,
-    approvals: Mutex<HashMap<ToolUseId, Source>>,
+    approvals: Mutex<VecDeque<(ToolUseId, Source)>>,
 }
 
 impl EvalWorkflowSnippetTool {
@@ -88,7 +88,7 @@ impl EvalWorkflowSnippetTool {
         Self {
             contract: contract(tool_names::EVAL_WORKFLOW_SNIPPET),
             port,
-            approvals: Mutex::new(HashMap::new()),
+            approvals: Mutex::new(VecDeque::new()),
         }
     }
 
@@ -97,17 +97,20 @@ impl EvalWorkflowSnippetTool {
             .approvals
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // The oldest approval goes first, and only that one (the same rule as SaveWorkflow's table).
         if approvals.len() >= APPROVAL_CAP {
-            approvals.clear();
+            approvals.pop_front();
         }
-        approvals.insert(tool_use, source);
+        approvals.push_back((tool_use, source));
     }
 
     fn take_approval(&self, tool_use: &ToolUseId) -> Option<Source> {
-        self.approvals
+        let mut approvals = self
+            .approvals
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .remove(tool_use)
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let position = approvals.iter().position(|(id, _)| id == tool_use)?;
+        approvals.remove(position).map(|(_, source)| source)
     }
 }
 
@@ -174,15 +177,6 @@ fn resolve_source(input: &EvalInput, cwd: &Path) -> Result<Source, String> {
         (None, Some(path)) => read_path(cwd, path),
         (None, None) => Err(EVAL_SOURCE_MISSING_ERROR.to_owned()),
     }
-}
-
-fn diagnostic_value(diagnostic: &WorkflowDiagnostic) -> Value {
-    json!({
-        "code": diagnostic.code,
-        "column": diagnostic.column,
-        "line": diagnostic.line,
-        "message": diagnostic.message,
-    })
 }
 
 /// Node `formatWorkflowDiagnosticLines`: positioned in the file when the snippet came from one, else in the snippet.
@@ -394,7 +388,18 @@ impl Tool for EvalWorkflowSnippetTool {
         let cwd = PathBuf::from(workspace_dir(&context));
         let source = match self.take_approval(&context.tool_use) {
             Some(source) => source,
-            None => resolve_source(&input, &cwd).map_err(failed)?,
+            None => {
+                // No confirmation waits for this call. A snippet with world.run is not run on that account: the model
+                // calls again, and the permission decision asks (the same rule as SaveWorkflow's call).
+                let source = resolve_source(&input, &cwd).map_err(failed)?;
+                let check = self.port.check(&source.code).await.map_err(|error| failed(error.message))?;
+                if matches!(check, SnippetCheck::Ready { world_run: true }) {
+                    return Err(failed(
+                        "EvalWorkflowSnippet has no confirmation for this snippet, so nothing was run. Call it again.".to_owned(),
+                    ));
+                }
+                source
+            }
         };
         let timeout_ms = input
             .timeout_ms

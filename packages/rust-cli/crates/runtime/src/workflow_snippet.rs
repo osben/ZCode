@@ -10,26 +10,29 @@
 //! Settlement is the engine's. A script error is `fail`, a host failure or a timeout is `stop(interrupted)`, and a clean return
 //! is `complete`. The result is read back from the engine's settlement, as Node reads it from `runWorkflowScript`.
 //!
-//! Locking. The engine sits behind one mutex, and a world read runs inside the engine call that starts it (the driver
-//! executes the read on the calling thread). Requests therefore run one at a time, on a blocking thread. Node runs them
-//! concurrently; the answers are the same.
+//! Locking. The engine sits behind one mutex, and it is held only for engine calls. A world read is started under the lock
+//! (the engine records it and the driver queues its operation), then executed on a blocking thread with the lock released,
+//! and settled under the lock again. So a slow read (a `run` can take minutes) never holds the engine, and the timeout
+//! settles the run while it is in flight. The wall clock covers the start too.
 
 // WireError is the child handler's error type, fixed by the port (kernel-api); its Err path is cold.
 #![allow(clippy::result_large_err)]
 
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use anyhow::anyhow;
+use async_trait::async_trait;
 use futures_util::future::BoxFuture;
 use rust_cli_kernel_api::workflow_child::{
     ChildEvent, ChildHandler, ChildRequest, CreateActor, Outcome, RequestType, WireError,
 };
 use rust_cli_kernel_api::workflow_snippet::{
-    SnippetCheck, SnippetLaunch, SnippetOutcome, SnippetRequest, SnippetStart,
-    WorkflowSnippetError, WorkflowSnippetPort, WorkflowSnippetRunner,
+    SnippetCheck, SnippetLaunch, SnippetOutcome, SnippetRequest, SnippetStart, WorkflowSnippetError,
+    WorkflowSnippetPort, WorkflowSnippetRunner,
 };
 use rust_cli_workflow::engine::{
     AskMessage, AskOutcome, EngineConfig, RunSettlement, SubmitVerdict, WorkflowDriver,
@@ -42,7 +45,6 @@ use rust_cli_workflow::journal::MemoryJournal;
 use rust_cli_workflow::model::{Caps, Ref, StopReason};
 use rust_cli_workflow::world_read::{WorldReadPorts, execute_world_read};
 use serde_json::Value;
-use std::collections::VecDeque;
 
 /// Log limits (Node `MAX_LOGS` and `MAX_LOG_CHARS`): the first 100 items, each cut to 2048 characters, and a flag when any
 /// item was dropped or cut.
@@ -51,7 +53,7 @@ const MAX_LOG_CHARS: usize = 2_048;
 /// Node `MAX_ARTIFACT_BYTES`: the serialized return value's cap.
 const MAX_ARTIFACT_BYTES: usize = 256 * 1024;
 
-/// The snippet service: the runner port and the read port, and a counter for the run ids.
+/// The snippet service: the runner port and the read port.
 pub struct SnippetService {
     runner: Arc<dyn WorkflowSnippetRunner>,
     reads: Arc<dyn WorldReadPorts>,
@@ -61,31 +63,22 @@ impl SnippetService {
     pub fn new(runner: Arc<dyn WorkflowSnippetRunner>, reads: Arc<dyn WorldReadPorts>) -> Self {
         Self { runner, reads }
     }
-
-    /// Node `dwfeval-<uuid>`: unique per process. The id names the entry file, so it is never reused in the process.
-    fn next_run_id(&self) -> String {
-        static RUNS: AtomicU64 = AtomicU64::new(0);
-        format!(
-            "dwfeval-{}-{}",
-            std::process::id(),
-            RUNS.fetch_add(1, Ordering::Relaxed)
-        )
-    }
 }
 
-/// What the driver shares with the service: the captured logs and the world reads waiting for their settlement.
+/// A world read the engine started and the driver queued: its instance, its operation and its arguments.
+type QueuedRead = (Ref, String, Vec<Value>);
+
+/// What the driver shares with the service: the captured logs, and the world reads queued for execution.
 #[derive(Default)]
 struct Sink {
     logs: Vec<String>,
     logs_truncated: bool,
-    pending_reads: VecDeque<(Ref, Result<Value, WorkflowError>)>,
+    queued_reads: VecDeque<QueuedRead>,
 }
 
 /// The engine's driver for a snippet. Asks, submits and actors are unreachable (the scratch facade declares no agent()), so
 /// those members do nothing; the handler refuses an ask to the child before it could reach here.
 struct SnippetDriver {
-    reads: Arc<dyn WorldReadPorts>,
-    cwd: PathBuf,
     sink: Arc<Mutex<Sink>>,
 }
 
@@ -108,14 +101,12 @@ impl WorkflowDriver for SnippetDriver {
 
     fn cancel_ask(&mut self, _instance: &Ref) {}
 
-    /// The read runs here, on the calling thread, and its settlement waits in the sink until the caller hands it to the
-    /// engine (`world_read_settled`), in the same engine call.
+    /// The read is queued, not run: the service executes it with the engine lock released and settles it afterwards.
     fn start_world_read(&mut self, instance: &Ref, op: &str, args: &Value) {
-        let args = args.as_array().map_or(&[][..], Vec::as_slice);
-        let result = execute_world_read(&self.cwd, self.reads.as_ref(), op, args);
+        let args = args.as_array().cloned().unwrap_or_default();
         lock(&self.sink)
-            .pending_reads
-            .push_back((instance.clone(), result));
+            .queued_reads
+            .push_back((instance.clone(), op.to_owned(), args));
     }
 
     fn emit(&mut self, event: &RunEvent) {
@@ -128,8 +119,7 @@ impl WorkflowDriver for SnippetDriver {
             return;
         }
         if message.chars().count() > MAX_LOG_CHARS {
-            sink.logs
-                .push(message.chars().take(MAX_LOG_CHARS).collect());
+            sink.logs.push(message.chars().take(MAX_LOG_CHARS).collect());
             sink.logs_truncated = true;
         } else {
             sink.logs.push(message.clone());
@@ -144,18 +134,22 @@ struct Core {
     /// The value the child returned, when it completed ok. The engine keeps the same value; the child's own `value` is
     /// what distinguishes "returned nothing" (no value) from "returned null".
     returned: Option<Option<Value>>,
+    /// Settled world reads that no caller has collected yet, by ticket. Several requests may be in flight, and an engine
+    /// call hands every settlement out at once.
+    settled_tickets: HashMap<u64, Result<Value, WorkflowError>>,
 }
 
 impl Core {
-    /// Hands every world read the driver executed to the engine, and so settles its ticket.
-    fn settle_pending_reads(&mut self) -> anyhow::Result<()> {
-        loop {
-            let next = lock(&self.sink).pending_reads.pop_front();
-            let Some((instance, result)) = next else {
-                return Ok(());
-            };
-            self.engine.world_read_settled(&instance, result)?;
+    /// Moves every settlement the engine holds into `settled_tickets`, then takes the ticket's own, if it has settled.
+    fn collect(&mut self, ticket: u64) -> Option<Result<Value, WorkflowError>> {
+        for AskOutcome { ticket, result } in self.engine.take_outcomes() {
+            self.settled_tickets.insert(ticket, result);
         }
+        self.settled_tickets.remove(&ticket)
+    }
+
+    fn take_queued(&mut self) -> Vec<QueuedRead> {
+        lock(&self.sink).queued_reads.drain(..).collect()
     }
 }
 
@@ -163,14 +157,17 @@ impl Core {
 /// send).
 struct SnippetHandler {
     core: Arc<Mutex<Core>>,
+    reads: Arc<dyn WorldReadPorts>,
+    cwd: PathBuf,
 }
 
 impl ChildHandler for SnippetHandler {
-    fn create_actor(&self, actor: &CreateActor) -> Result<String, String> {
-        Err(format!(
+    fn create_actor(&self, actor: &CreateActor) -> BoxFuture<'static, Result<String, String>> {
+        let message = format!(
             "the scratch facade has no agent(), so no actor can be created at site {}: this is a wiring bug",
             actor.site_id
-        ))
+        );
+        Box::pin(std::future::ready(Err(message)))
     }
 
     fn request(
@@ -180,36 +177,35 @@ impl ChildHandler for SnippetHandler {
     ) -> BoxFuture<'static, Result<Value, WireError>> {
         match request.request_type {
             RequestType::WorldRead => {
-                let site = request.site_id;
-                let op = request.op.unwrap_or_else(|| "read".to_owned());
-                let args = request.args.unwrap_or_default();
-                let core = self.core.clone();
-                Box::pin(async move {
-                    match tokio::task::spawn_blocking(move || world_read(&core, &site, &op, args))
-                        .await
-                    {
-                        Ok(answer) => answer,
-                        Err(error) => Err(wire_error(WorkflowError::new(
-                            ErrorCode::DriverError,
-                            format!("the world read did not finish: {error}"),
-                        ))),
-                    }
-                })
+                let Some(op) = request.op else {
+                    return refused(
+                        ErrorCode::DriverError,
+                        "The world read request names no op: this is a wiring bug.".to_owned(),
+                    );
+                };
+                Box::pin(world_read(
+                    self.core.clone(),
+                    self.reads.clone(),
+                    self.cwd.clone(),
+                    request.site_id,
+                    op,
+                    request.args.unwrap_or_default(),
+                ))
             }
-            RequestType::Ask => Box::pin(std::future::ready(Err(wire_error(WorkflowError::new(
+            RequestType::Ask => refused(
                 ErrorCode::DriverError,
-                "Snippet driver received an ask, but the scratch facade has no agent(), so the ask path must be unreachable. This is a wiring bug.",
-            ))))),
-            RequestType::Hole => Box::pin(std::future::ready(Err(wire_error(WorkflowError::new(
+                "Snippet driver received an ask, but the scratch facade has no agent(), so the ask path must be unreachable. This is a wiring bug.".to_owned(),
+            ),
+            RequestType::Hole => refused(
                 ErrorCode::DriverError,
-                "Snippet driver received a hole, but the scratch facade declares none. This is a wiring bug.",
-            ))))),
+                "Snippet driver received a hole, but the scratch facade declares none. This is a wiring bug.".to_owned(),
+            ),
             RequestType::PublishArtifact => {
                 let op = request.artifact_op.unwrap_or_default();
-                Box::pin(std::future::ready(Err(wire_error(WorkflowError::new(
+                refused(
                     ErrorCode::ArtifactStoreUnavailable,
                     format!("artifact.{op}: this assembly has no artifact store."),
-                )))))
+                )
             }
         }
     }
@@ -230,33 +226,50 @@ impl ChildHandler for SnippetHandler {
     }
 }
 
-/// One world read, from the child's request: the engine runs it through the driver, and its settlement is read back by
-/// ticket.
-fn world_read(
-    core: &Mutex<Core>,
-    site: &str,
-    op: &str,
+fn refused(code: ErrorCode, message: String) -> BoxFuture<'static, Result<Value, WireError>> {
+    Box::pin(std::future::ready(Err(wire_error(WorkflowError::new(
+        code, message,
+    )))))
+}
+
+/// One world read, from the child's request. The engine starts it under the lock; the queued operation runs on a blocking
+/// thread with the lock released; its settlement is handed back to the engine under the lock. The answer is the ticket's.
+async fn world_read(
+    core: Arc<Mutex<Core>>,
+    reads: Arc<dyn WorldReadPorts>,
+    cwd: PathBuf,
+    site: String,
+    op: String,
     args: Vec<Value>,
 ) -> Result<Value, WireError> {
-    let mut core = lock(core);
-    let ticket = core
-        .engine
-        .world_read(site, op, args)
-        .map_err(|error| wire_error(engine_fault(&error)))?;
-    core.settle_pending_reads()
-        .map_err(|error| wire_error(engine_fault(&error)))?;
-    let outcome = core
-        .engine
-        .take_outcomes()
-        .into_iter()
-        .find(|outcome: &AskOutcome| outcome.ticket == ticket);
-    match outcome {
-        Some(AskOutcome {
-            result: Ok(value), ..
-        }) => Ok(value),
-        Some(AskOutcome {
-            result: Err(error), ..
-        }) => Err(wire_error(error)),
+    let (ticket, queued) = {
+        let mut core = lock(&core);
+        let ticket = core
+            .engine
+            .world_read(&site, &op, args)
+            .map_err(|error| wire_error(engine_fault(&error)))?;
+        (ticket, core.take_queued())
+    };
+    for (instance, op, args) in queued {
+        let (reads, cwd) = (reads.clone(), cwd.clone());
+        let result = tokio::task::spawn_blocking(move || {
+            execute_world_read(&cwd, reads.as_ref(), &op, &args)
+        })
+        .await
+        .unwrap_or_else(|error| {
+            Err(WorkflowError::new(
+                ErrorCode::DriverError,
+                format!("the world read did not finish: {error}"),
+            ))
+        });
+        lock(&core)
+            .engine
+            .world_read_settled(&instance, result)
+            .map_err(|error| wire_error(engine_fault(&error)))?;
+    }
+    match lock(&core).collect(ticket) {
+        Some(Ok(value)) => Ok(value),
+        Some(Err(error)) => Err(wire_error(error)),
         None => Err(wire_error(WorkflowError::new(
             ErrorCode::DriverError,
             "the world read did not settle",
@@ -319,15 +332,18 @@ fn settle_child(core: &mut Core, outcome: Outcome) -> anyhow::Result<()> {
     }
 }
 
-/// The wall-clock timeout (Node `timer` in `bridge`): the run stops as interrupted, with the timeout as its message.
+/// The wall-clock message of a timeout (Node `timer` in `bridge`).
+fn timeout_message(timeout_ms: u64) -> String {
+    format!("The workflow sandbox process exceeded its wall-clock timeout of {timeout_ms}ms")
+}
+
+/// The timeout settle: the run stops as interrupted, with the timeout as its message.
 fn settle_timeout(core: &mut Core, timeout_ms: u64) -> anyhow::Result<()> {
     core.engine.stop(
         StopReason::Interrupted,
         Some(WorkflowError::new(
             ErrorCode::Interrupted,
-            format!(
-                "The workflow sandbox process exceeded its wall-clock timeout of {timeout_ms}ms"
-            ),
+            timeout_message(timeout_ms),
         )),
         None,
     )
@@ -414,52 +430,76 @@ fn failure_of(error: &Value) -> (String, String) {
     (code, message)
 }
 
-#[async_trait::async_trait]
+/// A process-unique run id (Node `dwfeval-<uuid>`). It names the entry file, so it is never reused in the process.
+fn next_run_id() -> String {
+    static RUNS: AtomicU64 = AtomicU64::new(0);
+    format!(
+        "dwfeval-{}-{}",
+        std::process::id(),
+        RUNS.fetch_add(1, Ordering::Relaxed)
+    )
+}
+
+#[async_trait]
 impl WorkflowSnippetPort for SnippetService {
     async fn check(&self, code: &str) -> Result<SnippetCheck, WorkflowSnippetError> {
         self.runner.check(code).await
     }
 
     async fn eval(&self, request: SnippetRequest) -> Result<SnippetOutcome, WorkflowSnippetError> {
-        let run_id = self.next_run_id();
+        // One deadline for the whole snippet: the start (compile, entry, spawn), the run, and the child's world reads.
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(request.timeout_ms);
         let sink = Arc::new(Mutex::new(Sink::default()));
-        let driver = SnippetDriver {
-            reads: self.reads.clone(),
-            cwd: request.cwd.clone(),
-            sink: sink.clone(),
-        };
+        let driver = SnippetDriver { sink: sink.clone() };
         let config = EngineConfig {
-            run_id: run_id.clone(),
+            run_id: next_run_id(),
             caps: Caps::default(),
             cwd: Some(request.cwd.to_string_lossy().into_owned()),
             ..EngineConfig::default()
         };
+        let run_id = config.run_id.clone();
         let engine = WorkflowEngine::new(config, MemoryJournal::new(), driver)
             .map_err(|error| service_fault(&error))?;
         let core = Arc::new(Mutex::new(Core {
             engine,
             sink,
             returned: None,
+            settled_tickets: HashMap::new(),
         }));
-        let handler: Arc<dyn ChildHandler> = Arc::new(SnippetHandler { core: core.clone() });
+        let handler: Arc<dyn ChildHandler> = Arc::new(SnippetHandler {
+            core: core.clone(),
+            reads: self.reads.clone(),
+            cwd: request.cwd.clone(),
+        });
         let launch = SnippetLaunch {
             code: request.code,
             run_id,
             cwd: request.cwd,
         };
-        let running = match self.runner.start(launch, handler).await? {
+        let start = match tokio::time::timeout_at(deadline, self.runner.start(launch, handler)).await
+        {
+            Ok(start) => start?,
+            Err(_elapsed) => {
+                return Ok(SnippetOutcome::Failed {
+                    code: ErrorCode::Interrupted.as_str().to_owned(),
+                    message: timeout_message(request.timeout_ms),
+                    logs: Vec::new(),
+                    logs_truncated: false,
+                });
+            }
+        };
+        let running = match start {
             SnippetStart::Rejected(diagnostics) => {
                 return Ok(SnippetOutcome::Diagnostics(diagnostics));
             }
             SnippetStart::Started(running) => running,
         };
-        let waited =
-            tokio::time::timeout(Duration::from_millis(request.timeout_ms), running.outcome).await;
+        let waited = tokio::time::timeout_at(deadline, running.outcome).await;
         let mut core_guard = lock(&core);
         let settled = match waited {
             Ok(outcome) => settle_child(&mut core_guard, outcome),
             Err(_elapsed) => {
-                // The outcome future was dropped at the timeout, which ends the child's tree; the stop makes it explicit.
+                // The outcome future was dropped at the deadline, which ends the child's tree; the stop makes it explicit.
                 running.stop.stop();
                 settle_timeout(&mut core_guard, request.timeout_ms)
             }
