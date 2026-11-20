@@ -3878,6 +3878,70 @@ progress path wrote it (now awaited) and five redundant clones in the reminder h
      progress port, so a strong hold closed a cycle nothing broke. A gone service reports no live run and no open decision
      (the same answer as an unset source). Test: the empty weak reference.
 
+### 9.47 W7-14: session gate on cold open (as built, gate off)
+
+**Status.** Built with its composed tests. The gate stays off: no session records it open unless the Host's cached fact
+says so, and nothing user-visible changes. `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --locked -- -D
+warnings` pass. Lib suites: protocol-zcode 998, kernel-api 443, runtime 338, cli bin `workflow` filter 20 (all green).
+
+**Scope built.**
+
+- **Gate rebuilt on every cold open (closes 496).** `workflow_activation::on_cold_open`, called from `Server::open_session`
+  in the one open that makes the projection (`made`). When the process has no gate record for the session, the record is
+  `resolve_gate(None, None, preferences)`, the Host's cached fact alone, as Node's cold recovery builds its runtime config
+  with no create parameters. A record the create or a resume wrote in this process is kept, so a create's own open does not
+  replace the gate its params made. A prepared session that is not active yet takes no record on its open (9.36); its
+  activation records the gate.
+- **On-demand activation on the v4 open (the 9.44 gap).** `on_cold_open` then runs `on_resume`: the entry, else the history,
+  as the legacy resume does. The legacy resume keeps its own call (it finds the activation already restored, so it returns
+  without a read, unless the session has no entry and no workflow in its history).
+- **Reminder clock stops on a plain close (closes 501).** `Server::stop_workflow_reminders` runs on the plain close
+  (`session/close`, both the draft branch and the bridge branch) and on the lifecycle stop and restart. Node's
+  `beginShutdown` stops the clock on a close. The next turn edge makes a new clock.
+
+**Tests.** `protocol-zcode` `fork::workflow_cold_open_tests` (6), composed through `Server::live` and the create route, with
+a restart simulated as a new server over the same store (empty gate table, no open session).
+
+- Red first, then green: `a_cold_v4_open_rebuilds_the_gate_from_the_hosts_cached_fact`,
+  `a_cold_v4_open_with_the_gate_closed_records_a_closed_gate_and_never_activates`,
+  `a_cold_v4_open_of_an_on_demand_session_activates_from_its_entry_and_leaves_it_alone`,
+  `a_plain_close_stops_the_session_reminder_clock_as_node_does`. Each failed on the behaviour (no record, no activation,
+  clock kept) before the change.
+- Guards, green before and after (no red captured): `a_create_keeps_the_gate_its_own_params_recorded_through_its_open`
+  (the create's params survive its own cold open; it was red only while written on the legacy route, which does not carry the
+  Host's fields, so the final form uses `createSession`) and `a_create_whose_first_input_is_the_workflow_command_activates_an_on_demand_session`
+  (482: the first-input activation through the create route, one entry written).
+
+**Node divergences (new in W7-14, numbered from 580).**
+
+580. Closes 496. Every cold open of a session rebuilds its gate record from the Host's cached fact when the process has no
+     record for it. Node's cold recovery takes the preferences alone, so the same fact is the source.
+581. A close and reopen inside one process keeps the record the session already has, so a Host fact that changed in between
+     does not reach it. Node disposes the runtime on close and rebuilds `runtimeConfig` from the preferences on reopen.
+     Open: a rebuild on every reopen would also overwrite the create's params, so the record must remember whether its
+     source was the params (or the fact) before a reopen may replace it.
+582. A prepared session that is not active yet takes no gate record on its open (the 9.36 pin). Its activation records it.
+583. On-demand activation runs on every cold open of a session, not only one with history: `on_resume` reads the entry, and
+     reads the session snapshot only when there is no entry. A fresh on-demand create therefore reads its snapshot once. A
+     failed read is logged, and the history decides nothing.
+584. The legacy resume keeps its explicit `record` and `on_resume` after the open. A cold legacy resume of an on-demand session
+     without an entry and without a workflow in its history still reads the snapshot twice (divergence 506, not closed).
+585. Closes 501. A plain close (`session/close`, the draft branch and the bridge branch) and the lifecycle stop and restart stop
+     the session's reminder clock, as Node's `beginShutdown` does. The next turn edge makes a clock again.
+586. Closes 482 for the first input. A create whose first input is the `/workflow` command activates the session through the
+     create route, and writes its entry once (composed test, green on its first run: the path existed since 494).
+587. Not composed: the history-based restore on a cold v4 open. The test kernel's sessions have no messages, so only the
+     entry path is composed. The history rules are unit-tested (`workflow_activation_tests`), and the open calls the same
+     `on_resume`.
+588. Not composed: a cold v4 open of an incognito session with `AutomationGated` over the real kernel. The gate wrapper reads
+     the kernel's incognito profiles, which only a real kernel open fills (`runtime/src/kernel.rs`). The protocol test kernel
+     records none. The wrapper is covered by `runtime::workflow_gate_tests` with a profile recorded by hand. Open: needs a
+     LocalKernel composition test (runtime/tests harness, outside this round's edit scope).
+589. The legacy `session/create` carries no dynamic-workflow fields (its `CreateParams` has none), so the Host's create
+     parameters reach a record only through `createSession`. Not checked against Node's legacy create.
+590. `Server::stop_workflow_reminders` drops the session's clock and its entry in one step, as a deletion does. A reminder that
+     is due at the close does not fire, and a run of a closed session gets no reminder until the session's next turn edge.
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.

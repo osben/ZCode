@@ -274,6 +274,9 @@ impl Server {
         if restored.worktree.preparing.is_some() {
             self.kernel.open_prepared_session(session).await?;
         }
+        // Fork (W7-14, 9.47): a prepared session that is not active yet takes no gate record on its open; its activation
+        // records the gate before its first turn (9.36).
+        let preparing = restored.worktree.preparing.is_some();
         // Set by the one open that makes the projection: only it starts the session's watchers.
         let made = std::sync::atomic::AtomicBool::new(false);
         let made_here = &made;
@@ -302,6 +305,11 @@ impl Server {
             })
             .await?;
         if made.load(std::sync::atomic::Ordering::Relaxed) {
+            // Fork (W7-14, 9.47, closes 496): every cold open rebuilds the session's gate record and restores its on-demand
+            // activation, on the v4 path as on the legacy resume.
+            if !preparing {
+                crate::fork::workflow_activation::on_cold_open(self, session).await;
+            }
             // Fork (9.30 item 212, 9.31 divergence 233): only the open that made the projection runs the parent's run
             // sweep and quota scan, once per cold open. Background: the open does not wait on the journal, and a failure
             // there is logged by the run service, never raised here.
@@ -405,6 +413,7 @@ impl Server {
         if method != "session/lifecycle/ensureReady"
             && let Some(bridged) = self.bridge.close(&session)
         {
+            self.stop_workflow_reminders(&session);
             // End the kernel actor too (as session delete does): a bridge-only close keeps the old runtime, and the
             // kernel's next open waits for this close before it cold-loads the session again.
             bridged.handle.close(EndReason::Other).await;
@@ -453,6 +462,14 @@ impl Server {
         self.context.dynamic_workflow_gates().activate(session)
     }
 
+    /// Fork (W7-14, 9.47, divergence 501): a plain close stops the session's reminder clock, as Node's `beginShutdown`
+    /// does (`shuttingDown` stops it so no reminder wakes a turn for a closed session). The next turn edge makes a clock.
+    pub(crate) fn stop_workflow_reminders(&self, session: &SessionId) {
+        if let Some(reminders) = self.context.workflow_reminders() {
+            reminders.forget(session.as_str());
+        }
+    }
+
     async fn read_presentation(&self, params: &Value) -> Value {
         let workspace = params["workspace"].clone();
         let path = workspace["workspacePath"].as_str().unwrap_or_default();
@@ -488,6 +505,7 @@ impl Server {
                 if queries.discard_draft(&session).await.unwrap_or(false) {
                     let live = self.bridge.get(&session);
                     self.bridge.close(&session);
+                    self.stop_workflow_reminders(&session);
                     if let Some(live) = live {
                         // Node disposes the draft's runtime; the actor's late commits find no draft.
                         live.handle.close(EndReason::Other).await;
@@ -506,6 +524,7 @@ impl Server {
         }
         let open = self.bridge.get(&session).is_some();
         self.bridge.close(&session);
+        self.stop_workflow_reminders(&session);
         if open {
             self.announce_lifecycle(&session, "unloaded").await;
         }

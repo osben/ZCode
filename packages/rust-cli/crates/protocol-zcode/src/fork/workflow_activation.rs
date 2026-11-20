@@ -7,6 +7,7 @@
 //! The decisions are pure ([`restore_plan`], [`activation_plan`], [`is_workflow_command`], [`history_shows_workflow`]); the
 //! wrappers at the bottom read the record and the store, then do what the decisions say.
 
+use rust_cli_kernel_api::dynamic_workflow::resolve_gate;
 use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::message::{ContentBlock, Message};
 use rust_cli_kernel_api::store::FrontendRecord;
@@ -174,6 +175,18 @@ pub(crate) async fn on_resume(server: &Server, session: &SessionId) {
     if server.activate_dynamic_workflow(session) && write {
         write_entry(server, session, source).await;
     }
+}
+
+/// Fork (W7-14, 9.47, closes 496): every cold open of a session, on the v4 path as on the legacy resume. The gate record is
+/// rebuilt from the Host's cached fact when the process has none for the session (Node's cold recovery builds the runtime
+/// config from the preferences alone), then the on-demand activation is restored. A record the create or a resume wrote in
+/// this process is kept: a create's own open must keep the gate its params made.
+pub(crate) async fn on_cold_open(server: &Server, session: &SessionId) {
+    if server.dynamic_workflow_gate(session).is_none() {
+        let gate = resolve_gate(None, None, &server.dynamic_workflow_preferences());
+        server.record_dynamic_workflow_gate(session, gate);
+    }
+    on_resume(server, session).await;
 }
 
 /// Whether the session's record is on-demand and open (the only sessions activation changes).
