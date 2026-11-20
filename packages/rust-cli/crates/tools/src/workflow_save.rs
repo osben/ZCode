@@ -160,7 +160,7 @@ fn invalid_with(code: i32, message: String) -> Validation {
 }
 
 /// Lexical normalization of `.` and `..` (no disk access).
-fn normalize(path: &Path) -> PathBuf {
+pub(crate) fn normalize(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
     for component in path.components() {
         match component {
