@@ -9,7 +9,9 @@ use crate::event::LastTool;
 use crate::journal::MemoryJournal;
 use crate::model::{AskWait, Ref, StopReason};
 use crate::residency::LiveRun;
+use crate::residency::SessionResidency;
 use serde_json::json;
+use std::sync::Arc;
 
 type Owner = ActorDriverOwner<MemoryJournal, Recording>;
 
@@ -152,6 +154,42 @@ fn stop_interrupted_settles_the_run_as_interrupted() {
             ..
         })
     ));
+}
+
+/// A run's `LiveRun` that stops nothing by itself: only the owner's own stop settles the run here.
+struct QuietRun;
+
+impl LiveRun for QuietRun {
+    fn stop_interrupted(&self) {}
+}
+
+/// Review finding 8: a pump error at the stop does not keep the run from settling. The stop runs regardless, so the run
+/// settles and its guard is released, and a later close of the parent session returns at once.
+#[test]
+fn a_pump_error_at_the_stop_still_settles_the_run_and_releases_its_guard() {
+    let (mut owner, sessions) = new_owner();
+    let residency = SessionResidency::with_close_wait(std::time::Duration::from_millis(200));
+    owner
+        .attach_residency(&residency, Arc::new(QuietRun))
+        .expect("the run is made resident");
+    start_ask(&mut owner, &sessions);
+    // The next pump fails, as a deferred driver error makes it.
+    owner.fail_next_pump_for_test("the pump failed");
+    let stopped = owner.stop_interrupted();
+    assert!(stopped.is_err(), "the pump error is carried to the caller");
+    assert!(
+        matches!(
+            owner.settlement(),
+            Some(RunSettlement::Stopped {
+                reason: StopReason::Interrupted,
+                ..
+            })
+        ),
+        "the run settles as interrupted even though the pump failed"
+    );
+    residency
+        .close("ses_parent")
+        .expect("the settled run released its guard, so the close does not wait");
 }
 
 /// The residency's stop goes through the mailbox: the owner's thread serves it and settles the run.

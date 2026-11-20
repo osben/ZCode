@@ -157,7 +157,7 @@ mod tests {
     use rust_cli_workflow::actor_sessions::ActorTurns;
     use rust_cli_workflow::actor_turns::TurnInput;
     use rust_cli_workflow::driver_owner::ActorSessionRequest;
-    use rust_cli_workflow::engine::{AskMessage, EngineConfig};
+    use rust_cli_workflow::engine::{AskMessage, AskStats, EngineConfig};
     use rust_cli_workflow::journal::MemoryJournal;
     use rust_cli_workflow::model::Ref;
     use rust_cli_workflow::run_concurrency::ConcurrencyListener;
@@ -184,9 +184,11 @@ mod tests {
         }
     }
 
-    /// The owner's turn side, for sessions the owner never starts a turn on.
+    /// The owner's turn side. Every turn it is asked to start is recorded, and the turn itself is left running.
     #[derive(Default)]
-    struct FakeSessions;
+    struct FakeSessions {
+        started: Arc<Mutex<Vec<Ref>>>,
+    }
 
     impl ActorSessions for FakeSessions {
         fn create_session(&mut self, _request: &ActorSessionRequest) -> Result<String> {
@@ -195,11 +197,12 @@ mod tests {
         fn start_turn(
             &mut self,
             _session: &str,
-            _instance: &Ref,
+            instance: &Ref,
             _message: &AskMessage,
             _input: &TurnInput,
             _interaction: &str,
         ) -> Result<()> {
+            self.started.lock().expect("started").push(instance.clone());
             Ok(())
         }
         fn cancel_turn(&mut self, _session: &str, _instance: &Ref) -> Result<()> {
@@ -252,6 +255,13 @@ mod tests {
             ..Default::default()
         };
         config.caps.max_concurrency = 4.0;
+        config.ask_specs.insert(
+            "plain".into(),
+            rust_cli_workflow::engine::AskSpec {
+                typed: false,
+                schema: None,
+            },
+        );
         config
     }
 
@@ -303,7 +313,7 @@ mod tests {
         let mut owner = ActorDriverOwner::new(
             config(Some("ses_parent")),
             MemoryJournal::new(),
-            FakeSessions,
+            FakeSessions::default(),
         )
         .expect("owner");
         attach_run(
@@ -335,7 +345,8 @@ mod tests {
         let concurrency = Arc::new(FakeConcurrency::default());
         let (_mailbox, handle) = ActorMailbox::new();
         let mut owner =
-            ActorDriverOwner::new(config(None), MemoryJournal::new(), FakeSessions).expect("owner");
+            ActorDriverOwner::new(config(None), MemoryJournal::new(), FakeSessions::default())
+                .expect("owner");
         let error = attach_run(
             &mut owner,
             RunRegistrations {
@@ -351,15 +362,22 @@ mod tests {
 
     /// The observer posts the feed the owner routes: a retry notice reaches the owner as a feed, and the owner serves it.
     #[test]
-    fn the_observer_posts_what_the_owner_serves() {
+    fn the_observer_feeds_the_live_ask_in_the_order_it_reports() {
         let (mailbox, handle) = ActorMailbox::new();
-        let mut owner = ActorDriverOwner::new(
-            config(Some("ses_parent")),
-            MemoryJournal::new(),
-            FakeSessions,
-        )
-        .expect("owner");
-        let mut observer = AskObserver::new(handle, "sess_1");
+        let sessions = FakeSessions::default();
+        let started = sessions.started.clone();
+        let mut owner =
+            ActorDriverOwner::new(config(Some("ses_parent")), MemoryJournal::new(), sessions)
+                .expect("owner");
+        let actor = owner
+            .create_actor("plain", Some("worker"), None)
+            .expect("actor");
+        owner.ask("plain", &actor, "go").expect("ask");
+        owner.drain().expect("drain");
+        let session = owner.session_of(&actor).expect("the ask's session");
+        let instance = started.lock().expect("started")[0].clone();
+        let mut observer = AskObserver::new(handle, &session);
+        // One retry notice is two requests (its retry, then its wait); the tool start is a third.
         observer.notice(&ModelNotice::Retrying {
             attempt: 1,
             max_retries: 3,
@@ -369,7 +387,41 @@ mod tests {
             },
         });
         observer.tool_started("Read", Some("a.rs"));
-        mailbox.serve_next(&mut owner).expect("the retry feed");
-        mailbox.serve_next(&mut owner).expect("the tool feed");
+        for _ in 0..3 {
+            mailbox
+                .serve_next(&mut owner)
+                .expect("a queued feed is served");
+        }
+        owner
+            .ask_stats(
+                &instance,
+                AskStats {
+                    tokens: 1.0,
+                    tool_calls: 1.0,
+                    turns: 1.0,
+                    world_tool_calls: None,
+                },
+            )
+            .expect("stats");
+        let payloads: Vec<String> = owner
+            .events()
+            .expect("events")
+            .into_iter()
+            .map(|event| event.payload_json)
+            .collect();
+        let waiting = payloads
+            .iter()
+            .position(|payload| payload.contains("\"node-waiting\""))
+            .expect("the retry's wait is journaled");
+        let progress = payloads
+            .iter()
+            .position(|payload| payload.contains("\"node-progress\""))
+            .expect("the resolved turn is journaled");
+        assert!(waiting < progress, "the feed is served in order");
+        assert!(
+            payloads[progress].contains("Read"),
+            "the tool fed last is the progress's last tool: {}",
+            payloads[progress]
+        );
     }
 }

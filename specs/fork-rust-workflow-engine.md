@@ -1955,7 +1955,7 @@ passes it in.
   nothing (Node drops them before any handler).
 - A `Retrying` notice reports the retry's reason to the stall clock, then waits in backoff with `attempt` one more than
   the failed attempt, the delay, and the Retry-After of a rate limit. The reason is the policy table's
-  (`facts_of`).
+  (`facts_of`), except that an authentication rejection reads `auth_refresh` (divergence 80).
 - `Resumed` is executing. `Stalled` reports nothing.
 - `attach_run` runs in the order residency, governor, clock. A run with no parent session fails here, before anything is
   bound. The settlement releases the governor bound and the parent's guard. The redrive and stall clocks run on
@@ -1969,6 +1969,14 @@ claim of red first does not hold for this batch. The runtime assembly tests (5) 
 fixed after their first compile and run. Both fixes were test setup, not behaviour: the test config left the engine's cap
 unset (the bound read 1), and `SystemClock` needed `utc()`. The first compile also found `anyhow` missing from the
 runtime's production dependencies, which is the one production change of that kind.
+
+**Review round (ocr on 7cadfe2cf, eight findings, red first).** Each change has a test that was run before its fix.
+Two were red by a real failure: the zero Retry-After (finding 5) and the authentication retry (finding 7) were reported
+as waits, and the stop after a pump error did not settle the run (finding 8). The runtime feed (finding 2) was red
+with only two feeds served, since the tool feed was never served. Three were red by mutation, to show each test
+checks its rule: the governor adapter without delivery (finding 1), and the agents release without its refusal of a
+running session (finding 4). Findings 3 (the Cargo.toml order) and 6 (one constant) are not behaviour and have no
+test.
 
 **Node divergences (68 to 75; numbered after the numbers in use on open PRs).**
 
@@ -1989,6 +1997,13 @@ runtime's production dependencies, which is the one production change of that ki
     off-peak queue.
 75. `cli` gains a dependency on `rust-cli-workflow`, and `runtime` makes `anyhow` a production dependency. Both are
     needed by the port signatures and nothing else changes in either crate's graph.
+
+76. An authentication rejection reads `auth_refresh` in the feed. The transport retries every head-phase rejection
+    (`errors/dispose.rs`, `RETRY`), renewable or not, and Node retries only a renewal. The feed reads all of them as
+    Node's refresh, so none arms the stall clock. The retry of a non-renewable rejection is itself a divergence from
+    Node, and it is not changed here.
+77. A stop runs whatever the pump reports, and the pump's error is returned after the run has settled. Node has no
+    pump, so this is the rule that keeps the residency guard from outliving a failed stop.
 
 **Not done (left for W7-5).**
 

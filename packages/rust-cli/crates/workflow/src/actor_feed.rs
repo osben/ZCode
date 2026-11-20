@@ -13,9 +13,15 @@ use crate::model::{AskWait, WaitCause};
 use rust_cli_kernel_api::model::{ModelError, ModelNotice};
 use rust_cli_kernel_api::workflow_failure::facts_of;
 
+use crate::model_failure::retry_after_of;
+
 /// Node `NON_FAILURE_RETRY_REASONS`: retries that are not provider failures. They neither wait nor count for the stall
 /// clock.
-const NON_FAILURE_RETRY_REASONS: &[&str] = &["reasoning_signature_repair", "auth_refresh"];
+pub(crate) const NON_FAILURE_RETRY_REASONS: &[&str] =
+    &["reasoning_signature_repair", "auth_refresh"];
+
+/// The reason of a credential refresh: a rejected credential is renewed and the request retried (Node `auth_refresh`).
+const AUTH_REFRESH_REASON: &str = "auth_refresh";
 
 /// One observation of an actor's ask, as the owner takes it.
 #[derive(Debug, Clone, PartialEq)]
@@ -106,7 +112,13 @@ impl AskFeed {
                 error,
                 ..
             } => {
-                let reason = facts_of(error).reason.to_owned();
+                // The transport retries an authentication rejection after renewing the credential. Node reads that
+                // retry as `auth_refresh`, a non-failure, so the feed does too (the policy table would read it as
+                // , which would arm the stall clock for a routine refresh).
+                let reason = match error.peel() {
+                    ModelError::Authentication { .. } => AUTH_REFRESH_REASON.to_owned(),
+                    _ => facts_of(error).reason.to_owned(),
+                };
                 self.retry(
                     &reason,
                     u64::from(*attempt) + 1,
@@ -117,14 +129,5 @@ impl AskFeed {
             ModelNotice::Resumed => self.executing().into_iter().collect(),
             ModelNotice::Stalled { .. } => Vec::new(),
         }
-    }
-}
-
-/// The Retry-After a rate-limit error carries. Other errors carry none here (an overload's header is read by the
-/// governor, not by the observer).
-fn retry_after_of(error: &ModelError) -> Option<u64> {
-    match error.peel() {
-        ModelError::RateLimited { retry_after_ms, .. } => *retry_after_ms,
-        _ => None,
     }
 }

@@ -56,18 +56,38 @@ fn governor() -> Arc<Governor> {
 }
 
 #[test]
-fn the_port_binds_and_clears_the_run_and_ends_its_subscription() {
-    let port = GovernorRunConcurrency::new(governor());
-    port.set_run_bound("wf_1", 12);
-    let heard = Arc::new(Mutex::new(0usize));
-    let counter = heard.clone();
+fn a_subscribed_run_hears_a_retune_and_nothing_after_it_unsubscribes() {
+    let gov = governor();
+    let port = GovernorRunConcurrency::new(gov.clone());
+    // The run engages the key by admitting a request on it: the governor fans changes out to engaged runs only.
+    let _ticket = gov
+        .try_admit(
+            &rust_cli_model::admission::AdmissionScope::Run(RunId::new("wf_1")),
+            "openai/gpt-x",
+        )
+        .expect("the run is admitted");
+    let heard: Arc<Mutex<Vec<ConcurrencyChange>>> = Arc::default();
+    let sink = heard.clone();
     let end = port.subscribe(
         "wf_1",
-        Box::new(move |_change: &ConcurrencyChange| {
-            *counter.lock().expect("count") += 1;
+        Box::new(move |change: &ConcurrencyChange| {
+            sink.lock().expect("heard").push(change.clone());
         }),
     );
+    // Raising the run's bound seeds the engaged key's cap from 4 to 12, a change the run hears.
+    port.set_run_bound("wf_1", 12);
+    {
+        let changes = heard.lock().expect("heard");
+        assert_eq!(changes.len(), 1, "the retune is delivered: {changes:?}");
+        assert_eq!(changes[0].reason, "seeded");
+        assert_eq!(changes[0].key, "openai/gpt-x");
+        assert_eq!(changes[0].next, 12);
+    }
     end();
-    port.clear_run_bound("wf_1");
-    assert_eq!(*heard.lock().expect("count"), 0, "nothing changed");
+    port.set_run_bound("wf_1", 16);
+    assert_eq!(
+        heard.lock().expect("heard").len(),
+        1,
+        "no change is delivered after the unsubscribe"
+    );
 }

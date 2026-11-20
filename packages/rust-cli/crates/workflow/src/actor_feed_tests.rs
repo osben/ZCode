@@ -121,3 +121,41 @@ fn reset_forgets_the_previous_ask() {
     feed.reset();
     assert_eq!(feed.waiting(slot()), Some(FeedEvent::Waiting(slot())));
 }
+
+/// Review finding 5: a Retry-After of zero is no Retry-After, as the workflow's own rule reads it (`retry_after_of`).
+#[test]
+fn a_zero_retry_after_is_not_carried_into_the_wait() {
+    let mut feed = AskFeed::new();
+    let notice = ModelNotice::Retrying {
+        attempt: 1,
+        max_retries: 3,
+        delay_ms: 2_000,
+        error: ModelError::RateLimited {
+            message: "slow down".to_owned(),
+            retry_after_ms: Some(0),
+        },
+    };
+    let events = feed.notice(&notice);
+    assert_eq!(
+        events[1],
+        FeedEvent::Waiting(backoff("rate_limited", 2, None)),
+        "{events:?}"
+    );
+}
+
+/// Review finding 7: a credential refresh is Node's `auth_refresh`, a non-failure retry. The transport retries an
+/// authentication rejection with an `Authentication` error, so the feed reads that retry as a refresh and reports
+/// nothing: no wait, no stall-clock count.
+#[test]
+fn an_authentication_retry_is_a_credential_refresh_and_reports_nothing() {
+    let mut feed = AskFeed::new();
+    let notice = ModelNotice::Retrying {
+        attempt: 1,
+        max_retries: 3,
+        delay_ms: 0,
+        error: ModelError::Authentication {
+            message: "token expired".to_owned(),
+        },
+    };
+    assert!(feed.notice(&notice).is_empty());
+}

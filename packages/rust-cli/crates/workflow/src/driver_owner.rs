@@ -21,7 +21,7 @@
 //!   engine has already settled the ask, so a returned error would make the caller retry a settled call. A reply call
 //!   returns an error only when the engine call itself failed, since then no reply exists; the pump error is logged in
 //!   that case too.
-use crate::actor_feed::FeedEvent;
+use crate::actor_feed::{FeedEvent, NON_FAILURE_RETRY_REASONS};
 use crate::actor_mailbox::{ActorHandle, ActorRequest};
 use crate::actor_turns::TurnInput;
 use crate::driver_rules::{
@@ -58,10 +58,6 @@ use rust_cli_kernel_api::workflow_failure::{
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
-
-/// Node `NON_FAILURE_RETRY_REASONS` (`workflow-driver-concurrency.ts`): retries that are not failures and do not arm the
-/// stall clock.
-const NON_FAILURE_RETRY_REASONS: &[&str] = &["reasoning_signature_repair", "auth_refresh"];
 
 /// Node `cancelAsk`'s rejection of a pending submit: the text the submit's caller reads.
 pub const CANCELLED_BY_ENGINE_MESSAGE: &str = "The ask was cancelled by the engine.";
@@ -537,6 +533,15 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
         &mut self.engine.driver
     }
 
+    /// Test hook: the next pump reports `message` as its error, through the same channel a deferred driver error uses.
+    #[cfg(test)]
+    pub(crate) fn fail_next_pump_for_test(&mut self, message: &str) {
+        self.engine
+            .driver
+            .deferred_errors
+            .push(anyhow!(message.to_owned()));
+    }
+
     /// Node's launch registration (`setRunBound` with the run's cap, then `subscribe`): binds the run on the governor
     /// and hears its cap changes through the mailbox, as `concurrency-changed` events. A run that has already settled
     /// attaches nothing. The listener only posts to `handle`, since the governor calls it on its own thread.
@@ -665,9 +670,13 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
     /// `stopped(interrupted)`, and the settlement releases the guard, the governor link and the clocks. Served on the
     /// owner's thread by the mailbox.
     pub fn stop_interrupted(&mut self) -> Result<()> {
-        self.pump()?;
+        // The stop runs whatever the pump reports. A run that does not settle holds its guard, so every later close of
+        // its parent waits out the full bound. The pump's error is still returned, after the run has settled.
+        let pumped = self.pump();
         let result = self.engine.stop(StopReason::Interrupted, None, None);
-        self.after_engine(result)
+        let stopped = self.after_engine(result);
+        pumped?;
+        stopped
     }
 
     /// Routes one observation of an actor's ask to its engine call (W7-3). The ask is found by its session. An
