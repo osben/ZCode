@@ -114,6 +114,8 @@ windows-sys = { workspace = true, features = ["Win32_System_Registry"] }
 
 [dev-dependencies]
 futures-util.workspace = true
+# The composed run's fake agents: the turn's bindings are named by the agents' actor run (9.35).
+rust-cli-agents.workspace = true
 rusqlite.workspace = true
 rust-cli-context.workspace = true
 rust-cli-kernel-api = { workspace = true, features = ["testing"] }

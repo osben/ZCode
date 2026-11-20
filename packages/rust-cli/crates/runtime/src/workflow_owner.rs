@@ -18,11 +18,14 @@ use rust_cli_kernel_api::env::WorkspaceRef;
 use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::model::ModelSelection;
 use rust_cli_kernel_api::orchestration::Interactions;
+use rust_cli_kernel_api::permission::PermissionMode;
 use rust_cli_node_store::{MIGRATION_LOCK_WAIT, open_session_database};
 use rust_cli_workflow::actor_sessions::NodeActorSessions;
 use rust_cli_workflow::actor_turns::{TurnInput, TurnRunner};
 use rust_cli_workflow::driver_owner::{ActorDriverOwner, ActorSessionRequest, ActorSessions};
+use rust_cli_workflow::driver_rules::subagent_permission_mode_of;
 use rust_cli_workflow::engine::{AskMessage, EngineConfig};
+use rust_cli_workflow::event::LaunchFields;
 use rust_cli_workflow::journal::JournalPort;
 use rust_cli_workflow::journal_dwf::DwfJournal;
 use rust_cli_workflow::model::{Ref, StoredEvent};
@@ -119,8 +122,48 @@ pub struct ParentBindings {
 /// Reads a parent session's bindings. The composition implements it over the session store. It is read at the launch
 /// (the workspace and the interactions) and again when each actor's session is created (the selection).
 pub trait ActorBindingsPort: Send + Sync + 'static {
-    /// The bindings of `parent`, or None when the session is not known.
-    fn parent_bindings(&self, parent: &str) -> Option<ParentBindings>;
+    /// The bindings of `parent`: Ok(None) when the session is not known, Err when the read failed.
+    fn parent_bindings(&self, parent: &str) -> std::result::Result<Option<ParentBindings>, String>;
+
+    /// The parent's permission mode now, read once when a run is launched from it (9.35, Node `permissionMode()` at
+    /// submit). Ok(None) when the port has no mode to read (a port with no store): the launch then records no mode.
+    /// Err when the read failed or the session is not known: the launch is refused, never recorded as absent.
+    fn parent_permission_mode(
+        &self,
+        parent: &str,
+    ) -> std::result::Result<Option<PermissionMode>, String> {
+        let _ = parent;
+        Ok(None)
+    }
+}
+
+/// Fork (9.35, divergence 273): records the parent's permission mode on a launch, as Node's submit records the session's
+/// mode at the moment the run is created (`workflowSubagentPermissionModeField`). Resume never calls this. Every session
+/// mode has a recordable name (plan reads as build).
+///
+/// Fail closed: a port that cannot read the parent's mode returns Err, and this returns it, so the launch is refused and
+/// nothing is recorded. Only a port with no mode to read (Ok(None)) records nothing, and then the actors read YOLO.
+///
+/// The port blocks on the store (`Handle::block_on`), so the caller must be off the async workers: call this from a
+/// blocking thread (the launch path does its reads on the blocking pool), never from an async task.
+pub fn record_parent_mode(
+    config: &mut EngineConfig,
+    bindings: &dyn ActorBindingsPort,
+) -> std::result::Result<(), String> {
+    let Some(parent) = config.parent_session_id.as_deref() else {
+        return Ok(());
+    };
+    // Fail closed: a read error refuses the launch (Err), and nothing is recorded, so no actor reads YOLO by default.
+    let Some(mode) = bindings.parent_permission_mode(parent)? else {
+        return Ok(());
+    };
+    let recorded =
+        subagent_permission_mode_of(Some(mode.node_name())).map(|mode| mode.as_str().to_owned());
+    config
+        .launch
+        .get_or_insert_with(LaunchFields::default)
+        .subagent_permission_mode = recorded;
+    Ok(())
 }
 
 /// Node `parseModelPickerValue`: `provider/model`, with an optional `$reasoning` after the model.
@@ -257,6 +300,7 @@ impl<S: ActorSessions> SettingsRecording<S> {
         let current = self
             .bindings
             .parent_bindings(&self.parent)
+            .map_err(|error| anyhow!(error))?
             .ok_or_else(|| {
                 anyhow!(
                     "the parent session {} is not known: its bindings are not read",
@@ -368,9 +412,12 @@ pub fn bound_owner_factory<A: ActorAgents + ActorSessionRelease>(
             .parent_session_id
             .clone()
             .ok_or_else(|| anyhow!("a run without a parent session has no bindings"))?;
-        let found = bindings.parent_bindings(&parent).ok_or_else(|| {
-            anyhow!("the parent session {parent} is not known: its bindings are not read")
-        })?;
+        let found = bindings
+            .parent_bindings(&parent)
+            .map_err(|error| anyhow!(error))?
+            .ok_or_else(|| {
+                anyhow!("the parent session {parent} is not known: its bindings are not read")
+            })?;
         let run_id = config.run_id.clone();
         let journal = DwfJournal::new(open(&stores)?, stores.clock);
         let journaled = journal.list_events(&run_id)?;

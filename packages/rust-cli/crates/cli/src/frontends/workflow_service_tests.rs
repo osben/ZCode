@@ -18,6 +18,259 @@ use rust_cli_node_store::{MIGRATION_LOCK_WAIT, open_session_database};
 
 use super::build;
 
+use async_trait::async_trait;
+use rust_cli_agents::actor_turn::{ActorRun, ActorTurnEnd, ActorTurnStats};
+use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
+use rust_cli_kernel_api::ids::{EnvironmentId, SessionId};
+use rust_cli_kernel_api::model::ModelSelection;
+use rust_cli_kernel_api::permission::PermissionMode;
+use rust_cli_kernel_api::workflow_child::{ChildHandler, ChildRequest, CreateActor, WireError};
+use rust_cli_runtime::actor_turns::ActorAgents;
+use rust_cli_runtime::workflow_assembly::ActorSessionRelease;
+use rust_cli_runtime::workflow_owner::{ActorBindingsPort, ParentBindings, record_parent_mode};
+use rust_cli_workflow::engine::AskSpec;
+use tokio_util::sync::CancellationToken;
+
+/// The agents a composed run's turns reach. Each turn records the bindings it ran under and answers "done".
+#[derive(Default)]
+struct FakeAgents {
+    seen: Mutex<Vec<(String, ModelSelection, PermissionMode)>>,
+}
+
+#[async_trait]
+impl ActorAgents for FakeAgents {
+    async fn run_actor_turn(
+        &self,
+        run: ActorRun,
+        _prompt: &str,
+        _cancel: CancellationToken,
+    ) -> ActorTurnEnd {
+        self.seen.lock().expect("seen").push((
+            run.parent.as_str().to_owned(),
+            run.selection.clone(),
+            run.mode,
+        ));
+        ActorTurnEnd::Text("done".to_owned())
+    }
+
+    fn turn_messages(&self, _child: &SessionId) -> Option<u64> {
+        Some(0)
+    }
+
+    fn actor_turn_stats(&self, _child: &SessionId) -> Option<ActorTurnStats> {
+        None
+    }
+}
+
+impl ActorSessionRelease for FakeAgents {
+    fn release_actor_session(&self, _child: &SessionId) -> std::result::Result<(), String> {
+        Ok(())
+    }
+}
+
+/// The parent `ses_p` with a fixed selection and mode; any other session is unknown.
+struct FixedParent {
+    selection: Option<ModelSelection>,
+    mode: Option<PermissionMode>,
+}
+
+impl ActorBindingsPort for FixedParent {
+    fn parent_bindings(&self, parent: &str) -> Result<Option<ParentBindings>, String> {
+        Ok((parent == "ses_p").then(|| ParentBindings {
+            selection: self.selection.clone(),
+            workspace: WorkspaceRef {
+                environment: EnvironmentId::new("local"),
+                root: EnvPath::new("/work"),
+            },
+            interactions: None,
+        }))
+    }
+
+    fn parent_permission_mode(&self, parent: &str) -> Result<Option<PermissionMode>, String> {
+        Ok((parent == "ses_p").then_some(self.mode).flatten())
+    }
+}
+
+/// The session row the composed run's journal and actor rows point at.
+fn add_parent(path: &std::path::Path) {
+    let (conn, _) = rust_cli_node_store::open_session_database(
+        path,
+        rust_cli_node_store::MIGRATION_LOCK_WAIT,
+        1,
+    )
+    .expect("session database");
+    add_session(&conn, "ses_p");
+}
+
+/// A launch from `ses_p` with its one plain ask, the way the tools will start a run (the mode is recorded at launch).
+fn launch_config(run_id: &str, parent: &dyn ActorBindingsPort) -> EngineConfig {
+    let mut config = EngineConfig {
+        run_id: run_id.to_owned(),
+        parent_session_id: Some("ses_p".to_owned()),
+        ..Default::default()
+    };
+    config.caps.max_concurrency = 4.0;
+    config.ask_specs.insert(
+        "plain".into(),
+        AskSpec {
+            typed: false,
+            schema: None,
+        },
+    );
+    record_parent_mode(&mut config, parent).expect("the parent's mode is read");
+    config
+}
+
+fn launch_input(run_id: &str) -> LaunchInput {
+    LaunchInput {
+        script_text: "return 1".to_owned(),
+        run_id: run_id.to_owned(),
+        args: Some(Map::new()),
+        resumed_from: None,
+        cwd: std::path::PathBuf::from("/work"),
+    }
+}
+
+/// One actor created and asked once through the child's handler, as the child runtime does.
+async fn actor_asks(
+    handler: &Arc<dyn ChildHandler>,
+    prompt: &str,
+) -> std::result::Result<Value, WireError> {
+    let persona = json!({"name": "Ada", "system": "Be terse."});
+    let create: CreateActor = serde_json::from_value(json!({
+        "localId": "a1",
+        "siteId": "plain",
+        "name": "Ada",
+        "persona": persona,
+    }))
+    .expect("create-actor");
+    let engine_id = handler
+        .create_actor(&create)
+        .await
+        .expect("the actor is created");
+    let ask: ChildRequest = serde_json::from_value(json!({
+        "id": "r-a1",
+        "type": "ask",
+        "siteId": "plain",
+        "actor": "a1",
+        "prompt": prompt,
+        "instructions": prompt,
+    }))
+    .expect("ask");
+    handler.request(ask, Some(engine_id)).await
+}
+
+/// 9.35 (W7-5f): a run launched in the composed service runs its actor's turn under the parent's selection and the
+/// permission mode the launch recorded from the parent (Node's submit, divergence 273).
+#[tokio::test]
+async fn a_launched_run_actor_completes_its_turn_under_the_parents_selection_and_mode() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let database = dir.path().join("sessions.db");
+    add_parent(&database);
+    let agents = Arc::new(FakeAgents::default());
+    let parent = Arc::new(FixedParent {
+        selection: Some(ModelSelection::new("acct-a", "ma")),
+        mode: Some(PermissionMode::AcceptEdits),
+    });
+    let runner = Arc::new(FakeChildRunner::new());
+    let service = build(
+        Some(runner.clone()),
+        Arc::new(SessionResidency::new()),
+        &database,
+        "/work",
+        agents.clone(),
+        parent.clone(),
+        tokio::runtime::Handle::current(),
+        Arc::new(RecordingPort::default()),
+    )
+    .expect("the service is built over the runner");
+    service
+        .launch(launch_input("wf_1"), launch_config("wf_1", parent.as_ref()))
+        .await
+        .expect("the run is launched");
+
+    let answer = actor_asks(&runner.launches()[0].handler, "do it").await;
+
+    assert!(answer.is_ok(), "the actor's turn completes: {answer:?}");
+    let seen = agents.seen.lock().expect("seen").clone();
+    assert_eq!(seen.len(), 1, "the turn reached the agents once");
+    assert_eq!(seen[0].0, "ses_p", "the parent session");
+    assert_eq!(
+        seen[0].1,
+        ModelSelection::new("acct-a", "ma"),
+        "the parent's selection"
+    );
+    assert_eq!(
+        seen[0].2,
+        PermissionMode::AcceptEdits,
+        "the mode the launch recorded"
+    );
+
+    runner.finish(
+        0,
+        Outcome::Completed(Completion {
+            ok: true,
+            value: Some(json!("done")),
+            error: None,
+        }),
+    );
+    let lines = WorkflowRunHost::close(&service).await;
+    assert!(lines.is_empty(), "a clean close: {lines:?}");
+}
+
+/// 9.35 (W7-5f): a parent with no model selection gives its actor none, so the actor's turn is refused at its ask and the
+/// agents never see it. The launch itself starts.
+#[tokio::test]
+async fn a_parent_with_no_selection_refuses_its_actor_at_the_ask() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let database = dir.path().join("sessions.db");
+    add_parent(&database);
+    let agents = Arc::new(FakeAgents::default());
+    let runner = Arc::new(FakeChildRunner::new());
+    let parent = Arc::new(FixedParent {
+        selection: None,
+        mode: Some(PermissionMode::Default),
+    });
+    let service = build(
+        Some(runner.clone()),
+        Arc::new(SessionResidency::new()),
+        &database,
+        "/work",
+        agents.clone(),
+        parent.clone(),
+        tokio::runtime::Handle::current(),
+        Arc::new(RecordingPort::default()),
+    )
+    .expect("the service is built over the runner");
+    service
+        .launch(launch_input("wf_2"), launch_config("wf_2", parent.as_ref()))
+        .await
+        .expect("the run is launched");
+
+    let answer = actor_asks(&runner.launches()[0].handler, "do it").await;
+
+    let refusal = answer.expect_err("the actor's ask is refused");
+    assert!(
+        refusal.message.contains("no model selection"),
+        "the refusal names the missing selection: {}",
+        refusal.message
+    );
+    assert!(
+        agents.seen.lock().expect("seen").is_empty(),
+        "the agents never see the turn"
+    );
+    runner.finish(
+        0,
+        Outcome::Completed(Completion {
+            ok: true,
+            value: None,
+            error: None,
+        }),
+    );
+    let lines = WorkflowRunHost::close(&service).await;
+    assert!(lines.is_empty(), "a clean close: {lines:?}");
+}
+
 /// A session row the run's parent points at (the test database has no sessions otherwise).
 fn add_session(conn: &rusqlite::Connection, id: &str) {
     conn.execute(
@@ -75,6 +328,12 @@ async fn a_session_open_settles_the_parents_orphan_in_the_composed_service() {
         Arc::new(SessionResidency::new()),
         &database,
         "/work",
+        Arc::new(FakeAgents::default()),
+        Arc::new(FixedParent {
+            selection: None,
+            mode: None,
+        }),
+        tokio::runtime::Handle::current(),
         Arc::new(RecordingPort::default()),
     )
     .expect("the service is built over the runner");
@@ -90,12 +349,12 @@ async fn a_session_open_settles_the_parents_orphan_in_the_composed_service() {
 }
 
 /// Without a helper there is no child runner, so no run service is built: the families stay as they were.
-#[test]
+#[tokio::test]
 #[expect(
     clippy::disallowed_methods,
     reason = "the test checks that no database file was created, which is a file-system fact"
 )]
-fn without_a_child_runner_no_run_service_is_built() {
+async fn without_a_child_runner_no_run_service_is_built() {
     let dir = tempfile::tempdir().expect("temp dir");
     let database = dir.path().join("sessions.db");
     let service = build(
@@ -103,6 +362,12 @@ fn without_a_child_runner_no_run_service_is_built() {
         Arc::new(SessionResidency::new()),
         &database,
         "/work",
+        Arc::new(FakeAgents::default()),
+        Arc::new(FixedParent {
+            selection: None,
+            mode: None,
+        }),
+        tokio::runtime::Handle::current(),
         Arc::new(RecordingPort::default()),
     );
     assert!(service.is_none(), "no child runner, no run service");
@@ -125,6 +390,12 @@ async fn a_built_run_service_is_idle_and_opens_nothing_until_a_launch() {
         Arc::new(SessionResidency::new()),
         &database,
         "/work",
+        Arc::new(FakeAgents::default()),
+        Arc::new(FixedParent {
+            selection: None,
+            mode: None,
+        }),
+        tokio::runtime::Handle::current(),
         Arc::new(RecordingPort::default()),
     )
     .expect("the service is built over the runner");
@@ -152,7 +423,7 @@ async fn a_run_launched_in_the_composed_service_records_its_progress_to_its_pare
     {
         let (conn, _) =
             open_session_database(&database, MIGRATION_LOCK_WAIT, 1).expect("session database");
-        add_session(&conn, "ses_parent");
+        add_session(&conn, "ses_p");
     }
     let runner = Arc::new(FakeChildRunner::new());
     let port = Arc::new(RecordingPort::default());
@@ -161,13 +432,19 @@ async fn a_run_launched_in_the_composed_service_records_its_progress_to_its_pare
         Arc::new(SessionResidency::new()),
         &database,
         "/work",
+        Arc::new(FakeAgents::default()),
+        Arc::new(FixedParent {
+            selection: None,
+            mode: None,
+        }),
+        tokio::runtime::Handle::current(),
         port.clone(),
     )
     .expect("the service is built over the runner");
 
     let mut config = EngineConfig {
         run_id: "dwfrun-progress".to_owned(),
-        parent_session_id: Some("ses_parent".to_owned()),
+        parent_session_id: Some("ses_p".to_owned()),
         ..Default::default()
     };
     config.caps.max_concurrency = 4.0;
@@ -195,7 +472,7 @@ async fn a_run_launched_in_the_composed_service_records_its_progress_to_its_pare
     }
     {
         let calls = port.calls.lock().expect("calls");
-        assert!(calls.iter().all(|(parent, _)| parent == "ses_parent"));
+        assert!(calls.iter().all(|(parent, _)| parent == "ses_p"));
         assert_eq!(calls[0].1["eventType"], json!("run-started"));
         assert_eq!(calls[0].1["runId"], json!("dwfrun-progress"));
     }

@@ -1904,6 +1904,7 @@ dependencies = [
  "rcgen",
  "regex",
  "rusqlite",
+ "rust-cli-agents",
  "rust-cli-base",
  "rust-cli-context",
  "rust-cli-env-local",
