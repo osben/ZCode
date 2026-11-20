@@ -152,6 +152,7 @@ impl RunProgress for ProgressSink {
                     event = "dynamic_workflow.run_progress.append_failed",
                     run_id = %self.fields.run_id,
                     reason = "unreadable_payload",
+                    sequence = stored.sequence,
                     error = %error,
                     "Dynamic workflow run progress append failed"
                 );

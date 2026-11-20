@@ -134,6 +134,7 @@ enum Fire {
 
 /// A guard for one call of the module in flight. While it lives the module is not idle; when the last one ends and no
 /// timer is armed, the module's idle callback runs.
+#[must_use = "dropping the guard ends the call in flight; bind it for the call's duration"]
 pub struct InUse {
     inner: Arc<Inner>,
 }
@@ -192,6 +193,7 @@ impl QuotaAutoResume {
 
     /// Marks a call of the owner in flight: the module is not idle until the guard drops. The owner takes it under its
     /// own lock, before it hands the module out, so an eviction that follows sees the call.
+    #[must_use = "the module is not idle until the guard drops"]
     pub fn in_use(&self) -> InUse {
         busy(&self.inner)
     }

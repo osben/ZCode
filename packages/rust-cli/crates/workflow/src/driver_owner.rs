@@ -843,7 +843,7 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
             Err(error) => tracing::warn!(
                 event = "dynamic_workflow.run_progress.backlog_failed",
                 error = %error,
-                "the run's journaled events could not be read for progress; the sink is installed with an empty projection, so its deltas are diffs against nothing until the projection is reseeded (9.31)"
+                "the run's journaled events could not be read for progress; the sink starts at the next event, and this run's earlier rows are missing from the session projection (they are never re-applied) (9.31)"
             ),
         }
         self.engine.driver.progress = Some(progress);
