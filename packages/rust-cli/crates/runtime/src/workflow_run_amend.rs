@@ -17,6 +17,7 @@ use rust_cli_kernel_api::workflow_run::{
     AmendRefusalReason, AmendRequest, AmendResult, DynamicWorkflowRunError,
 };
 use rust_cli_platform::ids::uuid_v4;
+use rust_cli_workflow::actor_mailbox::ActorMailbox;
 use rust_cli_workflow::engine::EngineConfig;
 use rust_cli_workflow::event::LaunchFields;
 use rust_cli_workflow::import_build::{BuildOutcome, ImportRefusal};
@@ -27,7 +28,7 @@ use super::list::on_blocking_pool;
 use super::submit::{
     compile_check, mint_run_id, record_parent_mode_on_blocking_pool, start_failure,
 };
-use super::{WorkflowRunService, buffer_failures, join_owner};
+use super::{LaunchFailure, WireBridge, WorkflowRunService, buffer_failures, join_owner};
 use crate::workflow_owner::ActorBindingsPort;
 use std::sync::Arc;
 
@@ -130,8 +131,18 @@ impl WorkflowRunService {
             return Ok(AmendResult::Refused(AmendRefusalReason::RunNotFound));
         }
 
-        // 2. The successor's id, then 3. the stop of a live predecessor, awaited through its own settlement.
+        // 2. The successor's id. 2b. The successor's script compiles before anything is stopped (divergence 667, closed by
+        // 9.50): a script that does not compile refuses with the predecessor untouched, as Node compiles before its stop.
         let successor = mint_run_id();
+        self.precompile(LaunchInput {
+            script_text: request.script_text.clone(),
+            run_id: successor.clone(),
+            args: None,
+            resumed_from: Some(predecessor.clone()),
+            cwd: PathBuf::from(&request.cwd),
+        })
+        .await?;
+        // 3. The stop of a live predecessor, awaited through its own settlement.
         let stopped = self
             .stop_superseded_if_live(&predecessor, &successor)
             .await?;
@@ -219,6 +230,29 @@ impl WorkflowRunService {
             }),
             Err(error) => Err(stopped_before(&predecessor, superseded, error)),
         }
+    }
+
+    /// The compile of the successor's script, before the predecessor is stopped (9.50, divergence 667). The child starts
+    /// and the start's own compile check runs on it; the probe child is stopped again, and nothing is registered. The
+    /// script compiles a second time at the successor's start (divergence 683 records the cost).
+    async fn precompile(&self, input: LaunchInput) -> Result<(), DynamicWorkflowRunError> {
+        let run_id = input.run_id.clone();
+        // The mailbox stays alive for the probe: a compile sends no request, and a dropped mailbox would fail any that did.
+        let (_mailbox, handle) = ActorMailbox::new();
+        let bridge = Arc::new(WireBridge::new(handle));
+        let running = self
+            .inner
+            .runner
+            .start(input, bridge)
+            .await
+            .map_err(|error| start_failure(LaunchFailure::Child(Box::new(error))))?;
+        let mut probe = EngineConfig {
+            run_id,
+            ..EngineConfig::default()
+        };
+        let checked = compile_check()(&running, &mut probe);
+        running.stop.stop();
+        checked.map_err(start_failure)
     }
 
     /// The start of the successor: the parent's mode is recorded, then the child, the compile and the owner start.

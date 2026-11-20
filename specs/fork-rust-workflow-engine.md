@@ -4138,7 +4138,11 @@ a restart simulated as a new server over the same store (empty gate table, no op
 - Divergence 564, bounded run detail reads (node-store `repo/dwf`): `list_events_with_report_cap` (the `item` of every report
   after the run's `max_reports`-th is removed in SQL), `list_roster_nodes` (non-report rows, `result_json` read as null),
   `list_actors_without_persona`, and `run_launched_payload` for the settings route. `RunStore::run_detail` uses them. The
-  event read is skipped without a configured default (see 678).
+  events are read in every case; only the replayed state needs the configured default (678, closed).
+- Divergence 667, the compile before the stop (closed): `amend_run` starts a compile probe for the successor's script after
+  the successor id is minted and before any stop (`precompile`: the child starts, the start's compile check runs, the child is
+  stopped and nothing is registered). A script that does not compile refuses with the live predecessor still running. This
+  covers both the AmendWorkflow tool and the settings route, since both call `amend_run`. Node compiles before its stop too.
 - Divergence 593, the tree erase (`protocol-zcode/src/fork/session_tree.rs`): each session of the tree stops its reminder clock
   when its runtime closes, and each erased id's gate is forgotten after the rows are gone, as `session_delete` does.
 
@@ -4155,8 +4159,11 @@ call (`workflow_retune_unavailable`); that wiring is left out to keep this row t
   before the functions, so the first run was a compile error (the names did not exist); green after.
 - `workflow` `run_store_tests`: `run_detail_replays_the_same_state_as_a_full_read_over_more_than_the_report_cap` is a guard
   (green before and after the change: the reducer ignores a missing item past the cap, so the state does not move).
-  `run_detail_carries_the_roster_read_from_the_journal` failed once the event read was skipped without a default (`scriptPath`,
-  `modelBindings` absent). Its assertions were changed to pin that contract (divergence 678), with the default case kept.
+  `run_detail_carries_the_roster_read_from_the_journal` is unchanged from 9.46: the events are read without a default too, so
+  `scriptPath`, `modelBindings` and `logTail` are present in both cases. A first version of this row skipped the event read
+  without a default and the test failed on the absent keys; the skip was reverted on the coordinator's decision (678).
+- `runtime` `workflow_run_amend_tests::a_successor_script_that_does_not_compile_leaves_a_live_predecessor_running`: red observed
+  with the probe disabled (the live predecessor was superseded and a successor started), green with it (667).
 - `runtime` `workflow_run_amend_tests` (nine new, one renamed `phase_routing_is_refused_not_dropped`): written with the code, all
   green on the first run. No behavioural red was observed for the settings route, so it is not claimed as red-first.
 - `cargo test` green for the lib suites of `workflow`, `runtime`, `kernel-api`, `node-store`, `protocol-zcode` and `tools`, and
@@ -4178,39 +4185,42 @@ call (`workflow_retune_unavailable`); that wiring is left out to keep this row t
      saved table and amends. Detected by the `modelBindings` key of the run's first `run-launched` event.
 666. The successor has no script file: no kept file is referenced and no draft is written. Node keeps the predecessor's file when its
      bytes still match, and writes a draft otherwise. The successor's `scriptPath` is therefore absent in GetWorkflowRun.
-667. The compile happens inside the amend's start, after the predecessor is stopped. Node compiles first and refuses with no change.
-     This is the window of 450 (AmendWorkflow has it too) and is not closed here.
-668. The successor is not registered with the background tracker (Node `trackExternalBackgroundTask`), and the settings turn is not
+667. Closed. The successor's script compiles in a probe child before the predecessor is stopped (`amend_run`'s `precompile`). A script
+     that does not compile refuses with the predecessor untouched, as Node does. Closes 450 for both callers (the tool and the settings
+     route). The probe's child is stopped and registers nothing.
+668. The probe costs one extra compile per amend, and a refused amend may leave the probe's entry file for the successor's id in the
+     working directory's `.zcode/workflow-runs` (the child writes it when it starts). Node has no probe, so its compile and its file
+     write happen once. Accepted: the file is keyed by an id no run holds and is overwritten by a later start with the same id.
+669. The successor is not registered with the background tracker (Node `trackExternalBackgroundTask`), and the settings turn is not
      emitted by this host. Both belong to the sink (W9).
-669. The parent's side is the `RunSettingsSink` trait. No production implementation exists, and the v4 command is not registered
+670. The parent's side is the `RunSettingsSink` trait. No production implementation exists, and the v4 command is not registered
      (W9). Node's settings turn is a control-only turn with `workflowLaunch` metadata; this host has no such turn yet
      (`session/src/input.rs` has the `/goal` control turn only).
-670. Inherited arguments are carried by the amend when `inherit_args` is set (the settings route). Phase routing is still refused. The
+671. Inherited arguments are carried by the amend when `inherit_args` is set (the settings route). Phase routing is still refused. The
      AmendWorkflow tool sends `inherit_args: false`, so its behaviour is unchanged. Closes the args half of 471 for this route.
-671. `RunStore::launch_binds_models` defaults to `true` (refuse), so a store that cannot read the launch refuses rather than amends
+672. `RunStore::launch_binds_models` defaults to `true` (refuse), so a store that cannot read the launch refuses rather than amends
      without rebinding. `SqliteRunStore` reads the launch's `modelBindings`; the CLI's `LazyRunStore` forwards it.
-672. Port member `retune_concurrency` is added with the unsupported default and forwarded by the run port. 455 is closed at the port
+673. Port member `retune_concurrency` is added with the unsupported default and forwarded by the run port. 455 is closed at the port
      and the service. It stays open at the AmendWorkflow tool, which still refuses a concurrency-only call.
-673. Settings refusals use Node's reason vocabulary (`not_found`, `not_configurable`, `unchanged`, `script_missing`,
+674. Settings refusals use Node's reason vocabulary (`not_found`, `not_configurable`, `unchanged`, `script_missing`,
      `model_unavailable`, `missing_boundaries`, `start_failed`). W9 maps them to the shared schema, and `model_unavailable` carries
      the host's message where Node carries the resolver's.
-674. A failed amend in the settings route is `start_failed` with the amend's own message, as Node's `catch` gives. A refusal of the
+675. A failed amend in the settings route is `start_failed` with the amend's own message, as Node's `catch` gives. A refusal of the
      amend maps `RunNotFound` to `not_found` and `MissingBoundaries` to `missing_boundaries`.
-675. A failure after the amend's start is not rolled back and is not reported as a refusal, as Node does not roll it back.
-676. Closes 564. `list_events_with_report_cap` removes the `item` of each report event after the run's `max_reports`-th report, in SQL
+676. A failure after the amend's start is not rolled back and is not reported as a refusal, as Node does not roll it back.
+677. Closes 564. `list_events_with_report_cap` removes the `item` of each report event after the run's `max_reports`-th report, in SQL
      (`json_remove`), ranking over the whole run as Node's `listEventRows` does. The other fields are unchanged. The roster's node
      read has no `result_json`, and its actor read has no `persona_json`.
-677. `list_roster_nodes` keeps `input_json`, as Node's `nodeColumns` does. Only `result_json` is read as null. A future roster reader
+678. `list_roster_nodes` keeps `input_json`, as Node's `nodeColumns` does. Only `result_json` is read as null. A future roster reader
      that needs a result or a persona must use the full reads.
-678. Supersedes the part of 551 that read events without a default. The brief asked for the event read to be skipped without a
-     configured default, as before 9.46. Without one, `scriptPath`, `modelBindings` and `logTail` are now absent from the roster, and
-     the health timings come from the node rows alone. Node reads the events in every case. Open: a one-line change to read the
-     bounded events in every case, which restores those keys without a replay. Flagged for decision.
-679. The report-cap test compares the bounded replay with a full read (a guard, green before the change, as above).
-680. Closes 593. The erase stops each tree session's clock first, as a plain close does (`stop_workflow_reminders`), and forgets the gate
+679. Closed: the events are read in every case, bounded like Node's cold read, as 551 has them. Only the replayed state needs the
+     configured default. An earlier version of this row skipped the read without a default (as the brief first asked); the
+     coordinator reversed that for parity with Node, which always reads the events.
+680. The report-cap test compares the bounded replay with a full read (a guard, green before the change, as above).
+681. Closes 593. The erase stops each tree session's clock first, as a plain close does (`stop_workflow_reminders`), and forgets the gate
      of each erased id once the rows are gone. A refused erase keeps the gates. A clock stopped before a file-failure refusal restarts
      at the session's next turn edge (9.47's note on 501).
-681. The erase test checks the clock and the gate of both sessions of a tree (root and subagent), with the rules of `session_delete`.
+682. The erase test checks the clock and the gate of both sessions of a tree (root and subagent), with the rules of `session_delete`.
 
 ## 10. Open questions
 

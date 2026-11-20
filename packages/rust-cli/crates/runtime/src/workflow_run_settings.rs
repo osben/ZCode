@@ -12,8 +12,7 @@
 //!
 //! Not built here (divergences 663 to 668): a subagent-model change (refused as `model_unavailable`), a run whose launch
 //! names script models (refused the same way: the models are not rebound), the draft file for the kept script (the
-//! successor has none), the compile before the stop (the amend compiles inside its start, as the AmendWorkflow tool does),
-//! and the background tracking of the successor.
+//! successor has none), the background tracking of the successor.
 
 use rust_cli_kernel_api::ids::{SessionId, WorkflowRunId};
 use rust_cli_kernel_api::workflow_run::{

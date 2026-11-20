@@ -227,12 +227,17 @@ fn run_detail_carries_the_roster_read_from_the_journal() {
     .unwrap();
     let store = store(conn);
 
-    // Divergence 564 (9.50): without a configured default the events are not read, so the keys that come from them (the
-    // launch's script path and model bindings, the log tail) are absent. The actor rows are still read.
+    // Divergence 564 (9.50): the events are read with or without a configured default, so the keys that come from them
+    // (the launch's script path and model bindings, the log tail) are present in both cases (551's contract, kept). Only
+    // the replayed state needs the default.
     let detail = store.run_detail("run_1", None).unwrap().expect("held");
-    assert!(detail.roster.get("scriptPath").is_none());
-    assert!(detail.roster.get("modelBindings").is_none());
-    assert_eq!(detail.roster["logTail"], json!([]));
+    assert!(detail.state.is_none(), "no default, so no replay");
+    assert_eq!(detail.roster["scriptPath"], "/w/flow.js");
+    assert_eq!(
+        detail.roster["modelBindings"],
+        json!({"poet": "openai/gpt-x"})
+    );
+    assert_eq!(detail.roster["logTail"][0]["message"], "fetching");
     assert_eq!(
         detail.roster["actors"],
         json!([{"siteId": "agent", "ordinal": 1, "name": "poet"}])

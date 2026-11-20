@@ -315,10 +315,15 @@ async fn a_settled_predecessor_is_replaced_by_a_successor_that_resumes_from_it()
         "the predecessor had already settled"
     );
 
+    // The successor's script is compiled by a probe child (9.50, divergence 667) and then started: two launches, one run.
     let launches = fx.fake.launches();
-    assert_eq!(launches.len(), 1, "the successor's child started once");
     assert_eq!(
-        launches[0].input.script_text, "return 2\n",
+        launches.len(),
+        2,
+        "the compile probe, then the successor's child"
+    );
+    assert_eq!(
+        launches[1].input.script_text, "return 2\n",
         "the revised script runs"
     );
     assert_eq!(
@@ -796,10 +801,11 @@ async fn a_failed_amend_can_be_retried_from_the_stopped_predecessor() {
     let last = launches.last().expect("the retry launched a child");
     assert_eq!(last.input.run_id, run_id.as_str());
     assert_eq!(last.input.resumed_from.as_deref(), Some("dwfrun-retry"));
+    // The resume, then a compile probe and a start for each amend. The failed amend's probe was stopped and registers no run.
     assert_eq!(
         launches.len(),
-        2,
-        "the resume and the retry; the failed amend launched nothing"
+        4,
+        "the resume, the failed amend's probe, the retry's probe and its start"
     );
 }
 
@@ -1196,5 +1202,48 @@ fn the_settings_text_names_the_successor_or_the_in_place_run_as_node_does() {
         "Changed the settings of workflow run run_a from the GUI: the limit on subagents at once is back to the default. \
          Run run_a keeps running with no limit; nothing was stopped and no new run was started. \
          Progress and results arrive as background notifications; do not amend, resume or restart it."
+    );
+}
+
+/// 9.50, divergence 667 (closes 9.43's 450 for both callers): a successor script that does not compile refuses before the
+/// live predecessor is stopped. The predecessor keeps running and nothing is superseded; the failure is the compile's text.
+#[tokio::test]
+async fn a_successor_script_that_does_not_compile_leaves_a_live_predecessor_running() {
+    use rust_cli_kernel_api::workflow_child::LaunchError;
+    let fx = fixture(|conn| interrupted(conn, "dwfrun-broken", PARENT, "return 1\n"));
+    fx.service
+        .for_session(&SessionId::new(PARENT))
+        .resume(&WorkflowRunId::new("dwfrun-broken"))
+        .await
+        .expect("the resume answers");
+    assert_eq!(fx.service.run_count(), 1, "the predecessor is live");
+    fx.fake.refuse_next(LaunchError::Rejected {
+        diagnostics: Vec::new(),
+        message: Some("unexpected token".to_owned()),
+    });
+
+    let error = fx
+        .service
+        .for_session(&SessionId::new(PARENT))
+        .amend(amend_request("dwfrun-broken", "return (\n"))
+        .await
+        .expect_err("a script that does not compile is refused");
+    assert!(
+        error.message.contains("unexpected token"),
+        "{}",
+        error.message
+    );
+
+    let predecessor = row(&fx, "dwfrun-broken");
+    assert_eq!(
+        predecessor.stop_reason, None,
+        "the predecessor was not stopped"
+    );
+    assert_eq!(predecessor.superseded_by, None);
+    assert_eq!(fx.service.run_count(), 1, "the predecessor is still live");
+    assert_eq!(
+        fx.fake.launches().len(),
+        1,
+        "only the resume launched a child"
     );
 }
