@@ -91,7 +91,7 @@ impl rust_cli_workflow::driver_owner::ActorSessions for Sessions {
 }
 
 fn factory() -> OwnerFactory {
-    Arc::new(|config: EngineConfig, mailbox: ActorMailbox| {
+    Arc::new(|config: EngineConfig, mailbox: ActorMailbox, _handle| {
         let owner = ActorDriverOwner::new(config, MemoryJournal::new(), Sessions)?;
         Ok(Box::new(Hosted::new(owner, mailbox)) as Box<dyn HostedOwner>)
     })

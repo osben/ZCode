@@ -130,7 +130,7 @@ fn input(run_id: &str) -> LaunchInput {
 }
 
 fn plain_factory() -> OwnerFactory {
-    Arc::new(|config, mailbox: ActorMailbox| {
+    Arc::new(|config, mailbox: ActorMailbox, _handle| {
         let owner = ActorDriverOwner::new(config, MemoryJournal::new(), FakeSessions)?;
         Ok(Box::new(Hosted::new(owner, mailbox)) as Box<dyn HostedOwner>)
     })
@@ -325,8 +325,8 @@ async fn close_reports_a_run_whose_residency_does_not_close_in_time_as_stuck() {
     let (_hold, release) = std::sync::mpsc::channel::<()>();
     let slot = Arc::new(Mutex::new(Some(release)));
     let base = plain_factory();
-    let held: OwnerFactory = Arc::new(move |config, mailbox| {
-        let inner = base(config, mailbox)?;
+    let held: OwnerFactory = Arc::new(move |config, mailbox, handle| {
+        let inner = base(config, mailbox, handle)?;
         let release = slot.lock_unpoisoned().take().expect("one launch");
         Ok(Box::new(HeldOwner { inner, release }) as Box<dyn HostedOwner>)
     });
@@ -510,11 +510,11 @@ fn the_owner_factory_may_read_the_service_without_deadlock() {
         let slot: Arc<Mutex<Option<WorkflowRunService>>> = Arc::new(Mutex::new(None));
         let read = slot.clone();
         let base = plain_factory();
-        let factory: OwnerFactory = Arc::new(move |config, mailbox| {
+        let factory: OwnerFactory = Arc::new(move |config, mailbox, handle| {
             if let Some(service) = read.lock_unpoisoned().clone() {
                 let _ = service.run_count();
             }
-            base(config, mailbox)
+            base(config, mailbox, handle)
         });
         let runner = Arc::new(FakeChildRunner::new());
         let service = WorkflowRunService::new(
@@ -643,8 +643,8 @@ impl HostedOwner for PanickingOwner {
 async fn an_owner_that_panics_stops_its_child_frees_its_id_and_is_reported_at_close() {
     let panic_once = Arc::new(std::sync::atomic::AtomicBool::new(true));
     let base = plain_factory();
-    let factory: OwnerFactory = Arc::new(move |config, mailbox| {
-        let inner = base(config, mailbox)?;
+    let factory: OwnerFactory = Arc::new(move |config, mailbox, handle| {
+        let inner = base(config, mailbox, handle)?;
         if panic_once.swap(false, std::sync::atomic::Ordering::SeqCst) {
             Ok(Box::new(PanickingOwner { inner }) as Box<dyn HostedOwner>)
         } else {
@@ -716,4 +716,42 @@ async fn a_declare_artifact_fails_the_run_before_a_later_complete_can_settle_it(
             owner.settlement()
         );
     }
+}
+
+/// Review of #586 (ocr, finding 1): the owner factory runs on the blocking pool. A slow factory (a migration check that
+/// waits on a busy database) must not hold the executor: a task ticking on the same current-thread runtime keeps running
+/// while the factory blocks.
+#[tokio::test]
+async fn a_slow_owner_factory_does_not_stall_the_executor() {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    let ticks = Arc::new(AtomicU64::new(0));
+    let observed = Arc::new(AtomicU64::new(0));
+    let factory_ticks = ticks.clone();
+    let factory_observed = observed.clone();
+    let base = plain_factory();
+    let factory: OwnerFactory = Arc::new(move |config, mailbox, handle| {
+        let before = factory_ticks.load(Ordering::SeqCst);
+        std::thread::sleep(Duration::from_millis(300));
+        let after = factory_ticks.load(Ordering::SeqCst);
+        factory_observed.store(after - before, Ordering::SeqCst);
+        base(config, mailbox, handle)
+    });
+    let h = harness_with(factory, SessionResidency::new());
+    let ticker_ticks = ticks.clone();
+    let ticker = tokio::spawn(async move {
+        loop {
+            ticker_ticks.fetch_add(1, Ordering::SeqCst);
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    });
+    h.service
+        .launch(input("wf_slow"), config("wf_slow", Some("ses_p")))
+        .await
+        .expect("launched");
+    ticker.abort();
+    let during = observed.load(Ordering::SeqCst);
+    assert!(
+        during >= 5,
+        "the executor ticked {during} times while the factory blocked; it must keep running"
+    );
 }

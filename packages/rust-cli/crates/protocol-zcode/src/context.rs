@@ -58,6 +58,9 @@ pub struct Context {
     /// composition root. Without it the run reads fall through to the helper or to the empty answer.
     dynamic_workflow_runs:
         std::sync::OnceLock<Arc<dyn rust_cli_kernel_api::workflow_run::DynamicWorkflowRunSessions>>,
+    /// Fork (specs/fork-rust-workflow-engine.md, 9.30): the run service's lifecycle, set once by the composition root
+    /// when it builds the service; the shutdown closes the live runs through it.
+    workflow_runs: std::sync::OnceLock<Arc<dyn rust_cli_kernel_api::workflow_run::WorkflowRunHost>>,
     /// Fork: the entry's model port for workspace model calls (`fork::workspace_model`); without it those methods
     /// stay unported.
     model_port: std::sync::OnceLock<Arc<dyn ModelPort>>,
@@ -131,6 +134,21 @@ impl Context {
         &self,
     ) -> Option<&Arc<dyn rust_cli_kernel_api::workflow_child::WorkflowChildRunner>> {
         self.workflow_runner.get()
+    }
+
+    /// Fork (9.30): the run service's lifecycle (set once; without it no run service exists to close).
+    pub fn set_workflow_runs(
+        &self,
+        runs: Arc<dyn rust_cli_kernel_api::workflow_run::WorkflowRunHost>,
+    ) {
+        let _ = self.workflow_runs.set(runs);
+    }
+
+    /// Fork (9.30): the run service's lifecycle, when the composition root built one.
+    pub fn workflow_runs(
+        &self,
+    ) -> Option<&Arc<dyn rust_cli_kernel_api::workflow_run::WorkflowRunHost>> {
+        self.workflow_runs.get()
     }
 
     /// Fork: the storage root (Node `context.deps.storageRoot`).
@@ -286,6 +304,7 @@ impl Context {
             workflow_child: std::sync::OnceLock::new(),
             workflow_runner: std::sync::OnceLock::new(),
             dynamic_workflow_runs: std::sync::OnceLock::new(),
+            workflow_runs: std::sync::OnceLock::new(),
             model_port: std::sync::OnceLock::new(),
             mcp_processes: std::sync::OnceLock::new(),
             language_servers: std::sync::OnceLock::new(),

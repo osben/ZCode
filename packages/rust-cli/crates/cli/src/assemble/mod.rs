@@ -161,7 +161,7 @@ pub(crate) struct Controller {
     /// 组装时等不等缺省模型定下（工作线 F140，performance.md §12.3）：交互界面不等（第一帧不等模型目录），`-p` 与
     /// app-server 当场等。
     pub(crate) wait_model: bool,
-    /// Fork: [`ContextConfig::token_budget`]; the app-server leaves it off like the Node desktop agent.
+    /// Fork: [`ContextConfig::token_budget`]; the app-server keeps it on, as the Node desktop agent does.
     pub(crate) token_budget: bool,
     /// Fork: the Node desktop agent's semantics where they differ from this CLI's (plan mode boundary, queue
     /// drain); only the app-server turns it on ([`rust_cli_runtime::Extensions::node_desktop`]).
@@ -269,7 +269,7 @@ impl Controller {
             subagent_config: Some(subagent_config),
             root_bypass: RootBypass::Allow,
             wait_model: true,
-            token_budget: false,
+            token_budget: true,
             node_desktop: true,
             desktop_context,
             automation: Some(automation),
@@ -949,3 +949,7 @@ fn helper_catalog(
     }
     catalog
 }
+
+#[cfg(test)]
+#[path = "mod_tests.rs"]
+mod tests;

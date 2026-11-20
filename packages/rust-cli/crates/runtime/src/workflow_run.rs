@@ -16,6 +16,7 @@ use rust_cli_kernel_api::workflow_child::{
     ChildEvent, ChildHandler, ChildRequest, ChildStop, Completion, CreateActor, LaunchError,
     LaunchInput, Outcome, RequestType, RunningChild, WireError, WorkflowChildRunner,
 };
+use rust_cli_kernel_api::workflow_run::WorkflowRunHost;
 use rust_cli_workflow::actor_mailbox::{ActorHandle, ActorMailbox, MailboxError, TicketedCall};
 use rust_cli_workflow::driver_owner::{ActorDriverOwner, ActorSessions, TicketSettlement};
 use rust_cli_workflow::engine::EngineConfig;
@@ -78,9 +79,11 @@ impl<J: JournalPort + Send + 'static, S: ActorSessions + Send + 'static> HostedO
     }
 }
 
-/// Builds a run's owner over its mailbox. Called once per launch, outside the service's lock.
-pub type OwnerFactory =
-    Arc<dyn Fn(EngineConfig, ActorMailbox) -> Result<Box<dyn HostedOwner>> + Send + Sync>;
+/// Builds a run's owner over its mailbox. Called once per launch, outside the service's lock. The handle is the mailbox's
+/// own sender: the turn side posts its results through it (9.30).
+pub type OwnerFactory = Arc<
+    dyn Fn(EngineConfig, ActorMailbox, ActorHandle) -> Result<Box<dyn HostedOwner>> + Send + Sync,
+>;
 
 /// The most close failures the service keeps for the next close (L2). Later ones are logged and dropped.
 pub const FAILURE_BUFFER_LIMIT: usize = 64;
@@ -276,12 +279,24 @@ impl WorkflowRunService {
             .map_err(|error| LaunchFailure::Child(Box::new(error)))?;
         let RunningChild { stop, outcome, .. } = running;
 
-        // The owner is built outside the lock, since the factory may read the service (M1).
-        let mut hosted = match (inner.owners)(config, mailbox) {
-            Ok(hosted) => hosted,
-            Err(error) => {
+        // The owner is built outside the lock, since the factory may read the service (M1). It runs on the blocking pool:
+        // a factory may block on the database (a migration check waiting on a busy writer), and that must not hold the
+        // executor (9.30 review). The id stays reserved until this launch returns, so a failure releases it.
+        let owners = inner.owners.clone();
+        let factory_handle = handle.clone();
+        let built =
+            tokio::task::spawn_blocking(move || (owners)(config, mailbox, factory_handle)).await;
+        let mut hosted = match built {
+            Ok(Ok(hosted)) => hosted,
+            Ok(Err(error)) => {
                 stop.stop();
                 return Err(LaunchFailure::Attach(format!("{error:#}")));
+            }
+            Err(join) => {
+                stop.stop();
+                return Err(LaunchFailure::Attach(format!(
+                    "the owner factory did not finish: {join}"
+                )));
             }
         };
 
@@ -398,6 +413,31 @@ impl WorkflowRunService {
     /// The number of runs the service holds (live, or settled but not yet collected).
     pub fn run_count(&self) -> usize {
         self.inner.state.lock_unpoisoned().runs.len()
+    }
+}
+
+impl WorkflowRunHost for WorkflowRunService {
+    fn held_runs(&self) -> usize {
+        self.run_count()
+    }
+
+    fn close(&self) -> BoxFuture<'static, Vec<String>> {
+        let service = self.clone();
+        Box::pin(async move {
+            let report = WorkflowRunService::close(&service).await;
+            let mut lines: Vec<String> = report
+                .stuck
+                .iter()
+                .map(|run| format!("run {run}: its session did not close in time"))
+                .collect();
+            lines.extend(
+                report
+                    .close_failures
+                    .iter()
+                    .map(|(session, message)| format!("{session}: {message}")),
+            );
+            lines
+        })
     }
 }
 

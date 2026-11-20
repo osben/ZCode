@@ -2200,17 +2200,254 @@ Divergence 103 (recorded in 9.24, from PR #580) is closed here. Its numbering st
 188. `workflowRuns` is answered from the journal and the live map, not from the projection (decision 1). Node reads the journal too (`workflow-run-reads.ts`).
 189. The Rust session list is answered only when the composition installs the sessions port. Until then the helper answers (when configured), or `{"runs": []}`, as today.
 190. The `workspace` param is optional, and when present it is checked as Node's strict workspace reference (`zcodeWorkspaceRefSchema`: `workspacePath` and `workspaceKey` required, optional strings non-empty, no other key). Null, a string or an empty object are -32602. Every other key is checked as Node's strict schema checks it.
-191. (ocr review round, parity) The run reads consult the live entries of their own parent session only, as Node's per-session registry does. A sibling session's launch is neither a gap item here nor owned here.
-192. (ocr review round) The orphan sweep runs its journal query and each write without the run map's lock. The lock is taken for each orphan's liveness check, and the id is reserved in `starting` across the write, so a launch of that id is refused as a duplicate while it settles. The journal reads run on the blocking pool, not the async worker. Gap items with the same start time keep their launch order (Node's stable sort over its submit-ordered registry).
-193. `limit` accepts `2.0` as the integer 2, as a JS number does. Out-of-range values are -32602, as in Node.
-194. Divergence 128 is kept. A settled run's roster entry is dropped, and the list reads the journal row. Node's retained entry overrides a row only when the row was written outside the engine after settlement. There is one observable case: when the engine throws before `createRun`, Node lists an errored gap item for the run. Here the launch returns a `LaunchFailure` to the caller and no entry exists, so nothing is listed.
-195. Labels follow Node's rules with JS semantics: `trim` strips U+FEFF (Rust's does not), and the cut is at 80 UTF-16 units, dropping a character that straddles it. This is a port, recorded because Rust's `trim` would differ.
-196. The `ListWorkflowRuns` item and the session summary are built from the same rows and the same precedence (`synthesizeRunStatus`, `stopReasonOf`, `supersededByOf`), with the item's `ownedByThisSession` and `possiblyInterrupted` taken from the owning session.
-197. Not ported: the in-process `replayProgressForSession` and the roster's `pendingQuestions`, `holes` and `reports` on the list. The list items are the journal summary only, as Node's `listRuns` is.
-198. The sweep's test asserting one warning per run (Node) is replaced by the report's per-run `reconciled` list. The tracing events are not asserted, since the tracing dispatcher is single per process in tests.
-199. The `RunStore` port is synchronous and lives in `workflow`, not `runtime`, because its one implementation needs the SQLite connection. The runtime holds it as `Arc<dyn RunStore>`.
+191. `limit` accepts `2.0` as the integer 2, as a JS number does. Out-of-range values are -32602, as in Node.
+192. Divergence 128 is kept. A settled run's roster entry is dropped, and the list reads the journal row. Node's retained entry overrides a row only when the row was written outside the engine after settlement. There is one observable case: when the engine throws before `createRun`, Node lists an errored gap item for the run. Here the launch returns a `LaunchFailure` to the caller and no entry exists, so nothing is listed.
+193. Labels follow Node's rules with JS semantics: `trim` strips U+FEFF (Rust's does not), and the cut is at 80 UTF-16 units, dropping a character that straddles it. This is a port, recorded because Rust's `trim` would differ.
+194. The `ListWorkflowRuns` item and the session summary are built from the same rows and the same precedence (`synthesizeRunStatus`, `stopReasonOf`, `supersededByOf`), with the item's `ownedByThisSession` and `possiblyInterrupted` taken from the owning session.
+195. Not ported: the in-process `replayProgressForSession` and the roster's `pendingQuestions`, `holes` and `reports` on the list. The list items are the journal summary only, as Node's `listRuns` is.
+196. The sweep's test asserting one warning per run (Node) is replaced by the report's per-run `reconciled` list. The tracing events are not asserted, since the tracing dispatcher is single per process in tests.
+197. The `RunStore` port is synchronous and lives in `workflow`, not `runtime`, because its one implementation needs the SQLite connection. The runtime holds it as `Arc<dyn RunStore>`.
+198. (ocr review round, parity) The run reads consult the live entries of their own parent session only, as Node's per-session registry does. A sibling session's launch is neither a gap item here nor owned here.
+199. (ocr review round) The orphan sweep runs its journal query and each write without the run map's lock. The lock is taken for each orphan's liveness check, and the id is reserved in `starting` across the write, so a launch of that id is refused as a duplicate while it settles. The journal reads run on the blocking pool, not the async worker. Gap items with the same start time keep their launch order (Node's stable sort over its submit-ordered registry).
 
 **Not done.** The composition (`set_store`, `set_clock`, `set_dynamic_workflow_runs`, the `reconcile_session` call at session open). Progress fan-out and `QuotaAutoResume` (5b). The `ListWorkflowRuns` tool's wiring to `list_runs` (W7-7 and later). Nothing in the cli.
+
+### 9.30 W7-5a-5: production owner assembly and run service composition (as built, part)
+
+**Scope built.** The production owner assembly (`runtime/src/workflow_owner.rs`), the composition of the run service in the
+cli composition root (`cli/src/frontends/workflow_service.rs`), and its lifecycle on the protocol context and at shutdown.
+Tests: `workflow_owner_tests.rs` (2, one of them the integration test: a launch through the production assembly, a fake
+child, a real temp SQLite journal, and one completion read back from `dwf_run`), `workflow_service_tests.rs` (2, the gate-off
+proof). Not in this part: orphan reconciliation and the run list (another agent), progress fan-out and quota auto-resume
+(another agent), and the tools.
+
+**Where it lives.**
+
+- `workflow/src/journal_dwf.rs` `DwfJournal<C>` and `workflow/src/actor_sessions.rs` `NodeActorSessions<C, T>` take their
+  connection as `C: Borrow<Connection>`. A borrow (`&Connection`, as the tests use) and an owned `Connection` both work, so an
+  owner that lives on its own thread holds its own connection (item 200). No behaviour changes for the borrowed case.
+- `runtime/src/workflow_owner.rs`: `production_owner_factory(OwnerStores, Arc<dyn TurnRunner>, Arc<R: ActorSessionRelease>)`
+  builds the `OwnerFactory`. Each launch opens two connections to the session database (the journal's and the actor
+  sessions'), builds `actor_turns` (the production closer, 9.15 item 3), `NodeActorSessions` and `DwfJournal`, and returns a
+  `Hosted` owner over the run's mailbox. `UnwiredTurns` and `UnwiredRelease` are the turn side and the release until the
+  agents' bindings exist (item 202, 203).
+- `OwnerFactory` takes the mailbox's `ActorHandle` as a third argument: the turn side posts its results through the handle,
+  and a mailbox does not give its handle back.
+- `kernel-api/src/workflow_run.rs` `WorkflowRunHost`: the run service's lifecycle as the composition root holds it (held run
+  count, and the close as text lines). The tools keep to `DynamicWorkflowRunPort`. `protocol-zcode` `Context` holds it
+  (`set_workflow_runs` / `workflow_runs`), since `protocol-zcode` does not depend on `runtime`.
+- `runtime/src/lib.rs` `LocalKernel::workflow_residency()`: the process's one residency ledger, shared with the run service
+  (9.21), so a run keeps its parent resident and a session close waits for the run.
+- `cli/src/frontends/workflow_service.rs` `build(runner, residency, database, directory)`: returns the service when a child
+  runner is configured (the node helper's, 9.22), and none otherwise. The ports: `GovernorRunConcurrency` over the process
+  governor (`rust_cli_model::governor::process()`, the same singleton the model admission uses), the kernel's residency, the
+  child runner, and the production owner factory.
+- `cli/src/frontends/app_server.rs`: after the kernel is built, `build` runs and the service is set on the context. At
+  shutdown `WorkflowRunHost::close` runs after the reader ends and before `Kernel::drain_live_runs` (W7-6), and each line is
+  logged as `app.shutdown.run_close_failed`.
+
+**The gate.** Nothing calls `launch` yet, and no session's workflow tools are registered (9.18). Building the service is
+inert: it starts no thread, opens no database and starts no child (the owner factory opens the database only when a run is
+launched). The cli test proves it: a built service holds no run, the database file is not created, the child runner has no
+launch, and the close is clean. Without a child runner (no helper command) no service is built at all.
+
+**Not done (for the follow-ups).**
+
+- The agents' bindings for an actor's turn: the parent's model selection, the workspace, the permission mode, the persona and
+  the submit, escalation and browser ports. The launch does not carry them (9.22 "Session and model bindings are not in
+  it"), so the turn side refuses (item 202). This is the main gap between the assembly and a run that does real work.
+- The progress sink, the draft writer, the task-link store, the artifact store, the execution and file-system ports, and the
+  launch input-id resolver (Node's `createDynamicWorkflowRunService` deps). They are not in the service yet (item 213).
+- Orphan reconciliation at construction (5a-4), and the close of a session that is not the app's shutdown (item 215).
+
+**Node composition, and the differences (numbered from 200).** Node's `create-app.ts` builds the run service once per app,
+over the process governor, the session store, the artifact store and the app's session id, and it is the port the
+`CreateWorkflow` tool reaches. The Rust composition follows that shape where the ports exist.
+
+200. The journal and the actor sessions each hold an owned connection to the session database, opened per launch. Node shares
+     the app's one store. An owner runs on its own thread (9.25 item 130), so it cannot borrow the app's connection, and
+     SQLite serialises the writes of the two connections.
+201. Each launch opens its connections with `open_session_database` (the migration check and the lock wait). An open that
+     fails is the launch's failure: the child is stopped and no entry is kept, as an attach failure is (9.25 "Launch").
+202. The turn side refuses every turn: a child's ask fails with "not wired in this build". Node runs each actor's turn through
+     `createScriptWorkflowAgentRuntime` with its model, persona, tools, permission mode, submit, escalation and browser ports.
+     Refused until the agents' bindings exist (the "not done" list above).
+203. The actor session release refuses. Node closes the actor's browser session when the run is disposed
+     (`create-app.ts`, the comment on `browserControlPort`). A refused release is a close failure for the owner, not a silent
+     leak.
+204. The factory takes one `TurnRunner` for every run, not one per launch. Node builds a runtime per actor from the launch's
+     bindings. A per-run runner needs those bindings first (item 202).
+205. Node leaves the run port undefined when the session store does not carry the `dwf_*` tables (`resolveDynamicWorkflowJournalStore`,
+     "a visible degradation", `create-app.ts`). Rust has no such store: the app checks the session database at startup
+     (`app.storage.failed`), so the owner's connections always open the same database.
+206. Node's per-session `dynamicWorkflowEnabled` gate applies where the tools are registered (`GatedRegistry`, 9.18). The
+     Rust service is built when a child runner exists, which is when the Host configures the helper command, and it is
+     inert until a launch. The gate is not read at construction, so the gate-off path changes nothing at runtime.
+207. The governor is the process singleton `rust_cli_model::governor::process()`, as Node's `getWorkflowConcurrencyGovernor()`
+     is a process singleton. No difference in effect.
+208. The residency ledger is the kernel's one `SessionResidency` (9.21). Node's `registerResidencyBlockingWork` pins the parent
+     session through the runtime's blocking-work list; the Rust guard does the same job, so no difference in effect.
+209. The version written on the actor session rows is the crate's `CARGO_PKG_VERSION`. Node writes its own `appVersion`.
+     The row's version string differs; no code reads it for a decision.
+210. The actor session row's directory is the app's workspace root. Node's child runtime writes its own workspace directory
+     (`ensureSessionPersistedForExternalActivity`), which this part does not compare. Unverified for runs whose workspace is
+     not the app's root; check with the tools PR.
+211. The actor session's title is `workflow subagent <site>@<ordinal>`, and its link is a `workflow_actor` row with path
+     `dwf/<run>/<site>@<ordinal>` and status `running`, as Node's `persistActorSession` writes them (the session id, title and
+     link path are Node's, in `workflow/src/actor_sessions.rs`).
+212. Node reconciles the parent session's non-terminal runs when the service is constructed (`parentSessionId: sessionId` in
+     `create-app.ts`). Rust builds the service without reconciling. Deferred to 5a-4, which owns it.
+213. Node passes the progress sink (`onRunEvent`), the draft writer (`writeWorkflowDraft`), the permission mode getter
+     (`permissionMode`), the launch input-id resolver (`resolveLaunchInputId`), the task-link store, the artifact store and
+     the execution and file-system ports to the run service. The Rust service has none of them yet. The progress sink is
+     5b; the draft writer and the input-id resolver come with the tools; the permission mode with item 202.
+214. Node's close awaits every run's settlement with no timeout (9.25 item 121). Rust's shutdown close is bounded by the
+     residency's close wait (60 seconds, 9.25 item 121), then the drain (W7-6) runs on the sessions that remain. A stuck run
+     is logged, and the process exits.
+215. A session's close does not close the run service. Node has no per-session run service either: the run service serves the
+     app, and a session close is the residency's close (9.21). The run service closes once, at app shutdown.
+216. A close failure at shutdown is logged as `app.shutdown.run_close_failed` at error level. Node returns the failures to the
+     caller that closes the App (9.25 item 132); there is no caller to return them to here, so the log is the record.
+217. The shutdown's run close runs after the protocol reader ends, and before the session drain, so the runs settle before their
+     parent sessions are drained. The order of Node's own disposal was not compared in this part.
+218. The composition builds the run service and its governor adapter in the same process as the protocol server, and removes
+     the `dead_code` allowance of `workflow_governor.rs`, now that a constructor reaches the adapter.
+219. The integration test runs the real owner over a real SQLite journal with a fake child runner. It covers one launch and one
+     completion. The asks, the escalations, the redrive and the stall clocks through the real assembly are not covered; they
+     need the turn side (item 202).
+
+**Tests seen red first.** `workflow_owner_tests.rs` ran against the stubs: 2 failed (a `todo!` in the factory and in the
+refusals). `workflow_service_tests.rs` ran against the stub `build`: 2 failed (`todo!`). Both then passed.
+
+### 9.27 W7-8a CreateWorkflow (as built)
+
+**Scope.** The CreateWorkflow tool: its input rules, the three sources (inline, `saved`, `path`), the draft file, the
+permission ask, the diagnostics path and the backgrounded submit through a new `DynamicWorkflowRunPort::submit`. The
+gate stays off. `workflow_tools` now returns CreateWorkflow before SaveWorkflow when an analyzer is given, and nothing
+calls `workflow_tools` yet, so no session sees the tool. The run service (W7-5) is not in fork; the submit is tested
+with a fake port.
+
+**As built.**
+
+- `kernel-api/src/workflow_run.rs`: `SubmitRequest` (script text, cwd, name, args, parent session, tool call id,
+  `max_concurrency`, script path) and `submit`, which defaults to `DynamicWorkflowRunError::unsupported`. The trace, the
+  launch input, the phase table and the model selections are not in it; their owning PRs add them.
+- `tools/src/workflow_create.rs` (the tool):
+  - `validate_input`: schema shape (non-empty name, `max_concurrency` above 0, `saved` name and scope, `args` an object),
+    exactly one source, `args` only with `path`, the Skill gate (428, exempt for a saved run), then `subagent_model`
+    (refused, see 142).
+  - `check_permissions`: resolves the source once (saved definition, `path` file or inline text), typechecks it, keeps the
+    result under the tool-use id (cap 256). A clean script asks with `always_ask(…, independent: false)` and the whole-tool
+    rule as its suggestion (Node `alwaysAsk` with `allowAlways: "session"`, `create-workflow.ts:470,482`). A script that
+    does not check, or a source that cannot be resolved, is allowed so that the call reports it. A failed checker denies.
+  - `call`: uses the kept result (or checks again, and refuses to start a clean script, see 155), writes the draft,
+    then reports diagnostics (file lines, Node's notes) or submits through the port. Without a port the result says the
+    script was typechecked and not run (`EXECUTION_UNAVAILABLE_NOTE`). A refused submit fails the call.
+- Draft: `<cwd>/.zcode/workflow-drafts/<slug>.dwf.ts`, with a `.gitignore` of `*` written once. A taken name takes the
+  next `-N` suffix (exclusive create, no overwrite). A write that fails leaves no draft, and the run starts with no script
+  path. `draft_slug` follows Node's `workflowDraftSlug` (see 153).
+- `tools/src/saved_workflow.rs`: `Store::resolve(name, scope)` (Node `resolveSavedWorkflow`): project copy first, then
+  global, with an optional scope; refusals `InvalidName`, `Parse`, `Read`, `NotFound`.
+- `fs/src/text_files.rs`: `create_new_text` (exclusive create) and `ensure_dir`.
+- `tools/src/workflow_tools.rs`: one registration entry and a `run_port` parameter (the two call sites are updated).
+  `workflow_save.rs` makes `normalize` `pub(crate)`. Nothing else in the shared files changed.
+
+**Node parity checked against source.** Argument validation order and texts (`create-workflow-source.ts`
+`validateCreateWorkflowSource`, `resolveCreateWorkflowInput`); the saved and path argument messages and their declaration
+lines (`describeArgsDeclaration`, `resolvePathSource`); the diagnostics notes and location sentences
+(`workflow-script-notes.ts`); the response text, the concurrency sentence (`describeWorkflowConcurrencyLimit`) and the
+submit fields that the tool fills (`create-workflow.ts`); the draft directory and slug rules (`workflow-drafts.ts`); the
+skill gate exemption for a saved-only call (`workflow-skill-gate.ts`).
+
+**Red first (TDD).** The tests were written first, with a stub `workflow_create.rs` (validate Ok, check Passthrough, call
+returns empty text). The run was 26 of 27 failing on assertions; the one passing test checks only the name, the deferral,
+the read-only flag and the 24 000-byte budget. The three `Store::resolve` tests were red against a stub that returned
+`NotFound`. Not seen red: the `create_new_text` test (added after its code, and it passed at once) and the registration
+test (its expected list was changed together with the one-entry edit).
+
+**Tests.** `workflow_create_tests.rs` (27) covers: the input rules and the 428 and 400 refusals; the always-ask through
+`PolicyGate` in every mode, where only a session rule skips it and a deny rule denies; a clean inline draft, asked and
+started; the next free draft name; the slug; diagnostics in file lines with no run; a checker that cannot answer; a run
+without a port; a failed submit; the saved source (body, defaults, validated args, working copy); a path source (block
+stripped, args, no draft); the `path` outside the workspace; a diagnostic in a saved copy on its file line; the limit
+reaching the port and the default marker; no limit; approved bytes run after the file changes; no decision, no run; a
+draft that cannot be written; the run label. `saved_workflow_tests.rs` gains 3 resolve tests; `text_files_tests.rs` gains
+1; `workflow_tools_tests.rs` checks the order CreateWorkflow, SaveWorkflow, ListSavedWorkflows.
+
+**Node divergences (new in W7-8a, numbered 140 to 155).**
+
+140. No window display and no causality graph. Node's output carries `causalityGraph` and the confirmation draws it
+     (`create-workflow.ts`: `boundGraphOfAnalysis`, `displayOfAnalysis`). The analyzer port returns `ok` and the
+     diagnostics only, so the output has no `causalityGraph` and the ask has no display. Needs the helper's display (W7-2)
+     and the bounds.
+141. No window adjustments. Node's `applyInputAdjustments`, the `adjustable_settings` fill and the "the user adjusted the
+     settings" sentence are not built. The user cannot change the limit or the model in the window.
+142. No model catalog port. `subagent_model` is refused on every call with Node's no-catalog text
+     ("This host cannot choose a subagent model; omit subagent_model."). Node resolves the name when a catalog exists, so a
+     host with one accepts a model this host refuses.
+143. Script-named models are not bound. Node's `readScriptModelBindings`, the 9011 unbound-model diagnostics and
+     `withScriptModelBindingsResolved` are not run, and submit carries no `modelBindings`.
+144. No phase fallback for the draft name. Node names an unnamed draft after the script's first `phase("…")` literal
+     (`resolveWorkflowDraftName`), else `workflow`. Without the causality graph this tool uses `workflow`.
+145. Draft timing. Node writes the saved copy in `resolveInput`, before the confirmation, and keeps it when the user
+     refuses. This tool writes saved copies and inline drafts in `call`, after the approval. A refused saved call leaves no
+     copy, and the confirmation cannot name the draft path.
+146. No read state for drafts. Node's `recordAuthoredWorkflowDraft` tells the read tracker the draft's bytes, so an Edit
+     needs no prior Read. Nothing records the draft here; the model must Read it first.
+147. Call-time refusals carry no error code. Node's resolution failures (unknown saved name, invalid arguments, unreadable
+     file) are `failure()` results with code 400, and they come before the confirmation. Here they come from `call` as
+     `ToolError::Failed` text, after an allow (no prompt), and that error has no code. Input-shape refusals from
+     `validate_input` keep their 400 or 428.
+148. A failed checker denies the decision. Node's `analyzeScript` runs in-process (`workflow-script-analysis.ts` calls
+     `analyzeWorkflowScript`) and cannot fail. The Rust checker is the helper, so a failure denies with the helper's message
+     (as divergence 108 for SaveWorkflow).
+149. A `path` must resolve inside the workspace (lexical normalization; symlinks are not resolved). Node accepts any path.
+     Same rule as SaveWorkflow's `script_path` (divergence 113), with this tool's own wording.
+150. Fewer submit fields. Node's submit request includes `trace` (required), `launchInputId`, `phaseNames`,
+     `phaseAlongside`, `subagentModel` and `modelBindings`. `SubmitRequest` carries only what this tool fills; the rest
+     arrive with the run service (W7-5) and the model catalog.
+151. The confirmation is one line of English with no title and no preview (see 140). Node's dialog is localized, has a
+     title, and carries a diagnostic reason the UI filters.
+152. No timeout and no cancellation declared. Node declares a 15 s timeout with no per-call override and
+     `cancellation.supported: false`. The Rust tool trait has no timeout field (as divergence 109); the call is not
+     cancellable, as in Node. The result budget is Node's 24 000 bytes.
+153. The draft slug approximates Unicode classes. Node keeps `\p{L}` and `\p{N}`. Rust keeps `char::is_alphabetic` and
+     `char::is_numeric`. `is_alphabetic` also keeps Other_Alphabetic marks (some Mn and Mc marks in Indic scripts) that Node
+     drops, so such a name gets a different file stem. Digits and letters match.
+154. The "available" list omits shadowed copies. Node lists each scope without shadowing (`describeAvailableWorkflows`,
+     `create-workflow-source.ts`), so a global copy hidden by a project copy appears. Rust uses `Store::list`, which applies
+     shadowing.
+155. A clean script with no decision is refused. If `call` finds no kept decision, it checks the script again and refuses to
+     run a script that checks ("has no confirmation for this script, so nothing was started"). Node's handler runs only after
+     its permission step, so this is a safety net for an order the Rust executor does not produce.
+
+**Not done here.** The window display and causality graph (140), the window adjustments (141), the model catalog and
+script model bindings (142, 143), the phase draft name (144), the draft read state (146), the run service and the submit
+behind it (W7-5), and the gate (W9). `EvalWorkflowSnippet` is in the other agent's PR and is not touched here.
+
+**Not verified.** Whether the app stores the whole-tool suggestion (the "always allow in this session" option) as a session
+rule. The tool sends the suggestion; the handling of it in the app is not checked here.
+
+**Review round (ocr on PR #583, head 7784b3ca4).** Verdicts, one per finding:
+
+1. Accepted. `allow_session()` is true, so the pipeline offers "Always allow in this session" (`session_allow`), and the
+   session actor's grant then answers the next ask of the tool without a prompt (`turn_interact.rs`). The pipeline test
+   `a_create_workflow_ask_offers_the_session_option` checks the offer; `session_allow_tests.rs` checks the skip.
+2. Accepted. A `path` is checked after symlinks are resolved (`path_in_workspace`), and the file is read from the real
+   path that was checked. `rust_cli_fs::text_files::canonicalize_path` did not exist on origin/fork, so it is added here
+   (same name as #585) and `symlink` (Unix, tests) too. Reconcile with #585 at merge. SaveWorkflow's `script_path` has the
+   same lexical-only check; it is not changed here.
+3. Accepted. `resolve` runs on the blocking pool (`resolve_off_thread`), including the saved-list refusal.
+4. Rejected. Node's `describeValue` is `` `a ${typeof value}` `` (`saved-args.ts`), so an object is "a object". The
+   regression test `a_type_mismatch_names_an_object_as_node_does` keeps it.
+5. Accepted. The table evicts its oldest decision only (FIFO, `Approvals`), and a taken or refused decision leaves
+   the table at once (`forget` on a refused source or checker).
+6. Accepted. An unparsable `saved.scope` is refused by `resolve_saved` too, not read as "either scope".
+7. Rejected. The import is not unused: `PolicyGate::decide` is a trait method, and removing the import fails to
+   compile. Clippy `--all-targets` is clean with it.
+8. Accepted. `path: ""` is refused by the schema, as the contract's `minLength: 1`.
+9. Accepted. `Origin::Saved` keeps the saved name; both messages print it, and the draft and run label keep the run label.
+10. Accepted as tests. `ensure_dir` and the missing-parent NotFound already behaved so; the tests pass at once.
 
 ## 10. Open questions
 
