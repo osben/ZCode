@@ -215,7 +215,7 @@ export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = 
       "../../android-emulator-plugin",
       "../../../android-emulator-plugin",
     ],
-    version: "0.1.2",
+    version: "0.1.3",
   },
   {
     // The manifest declares only the browser-use skill; the host node_repl MCP is injected
