@@ -240,3 +240,15 @@ pub trait DynamicWorkflowRunPort: Send + Sync {
         Err(DynamicWorkflowRunError::unsupported("resolveQuestion"))
     }
 }
+
+/// The run service's lifecycle as the composition root holds it (specs/fork-rust-workflow-engine.md, 9.30). The
+/// composition root keeps it on the protocol context, so the shutdown can close the live runs before the sessions drain.
+/// The tools reach the run service through [`DynamicWorkflowRunPort`], not this trait.
+pub trait WorkflowRunHost: Send + Sync {
+    /// The runs the service holds: live, or settled and not yet collected.
+    fn held_runs(&self) -> usize;
+
+    /// Stops the live runs and waits for their parent sessions to close. Each returned line names a run or a session
+    /// that did not close cleanly; an empty result is a clean close.
+    fn close(&self) -> futures_util::future::BoxFuture<'static, Vec<String>>;
+}

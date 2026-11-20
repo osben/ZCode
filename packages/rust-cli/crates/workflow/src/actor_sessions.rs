@@ -14,6 +14,7 @@ use rust_cli_node_store::dwf::{
     insert_workflow_actor_link,
 };
 use rust_cli_node_store::mint_actor_session_id;
+use std::borrow::Borrow;
 
 /// The turn side of an actor's session: runs the turns of asks, and releases what an ask leaves behind.
 pub trait ActorTurns {
@@ -44,24 +45,19 @@ pub trait ActorTurns {
     }
 }
 
-/// Session creation on the shared session database, with the turn side injected.
-pub struct NodeActorSessions<'a, T: ActorTurns> {
-    conn: &'a rusqlite::Connection,
+/// Session creation on the shared session database, with the turn side injected. `C` is the connection: a borrow of the
+/// app's, or an owned one for an owner on its own thread (9.30).
+pub struct NodeActorSessions<C: Borrow<rusqlite::Connection>, T: ActorTurns> {
+    conn: C,
     directory: String,
     version: String,
     clock: fn() -> i64,
     turns: T,
 }
 
-impl<'a, T: ActorTurns> NodeActorSessions<'a, T> {
+impl<C: Borrow<rusqlite::Connection>, T: ActorTurns> NodeActorSessions<C, T> {
     /// `directory` is the run's workspace directory, `version` the writing build's version (both as Node writes them).
-    pub fn new(
-        conn: &'a rusqlite::Connection,
-        directory: &str,
-        version: &str,
-        clock: fn() -> i64,
-        turns: T,
-    ) -> Self {
+    pub fn new(conn: C, directory: &str, version: &str, clock: fn() -> i64, turns: T) -> Self {
         Self {
             conn,
             directory: directory.to_owned(),
@@ -77,7 +73,7 @@ impl<'a, T: ActorTurns> NodeActorSessions<'a, T> {
     }
 }
 
-impl<T: ActorTurns> ActorSessions for NodeActorSessions<'_, T> {
+impl<C: Borrow<rusqlite::Connection>, T: ActorTurns> ActorSessions for NodeActorSessions<C, T> {
     /// Node `createActorSession` then `persistActorSession`: the row, then the link. The parent is required, since
     /// the sessions list hides children by `parent_id` and an unparented actor would show up as a root.
     fn create_session(&mut self, request: &ActorSessionRequest) -> Result<String> {
@@ -91,7 +87,7 @@ impl<T: ActorTurns> ActorSessions for NodeActorSessions<'_, T> {
         );
         let now = (self.clock)();
         create_workflow_actor_session(
-            self.conn,
+            self.conn.borrow(),
             &WorkflowActorSession {
                 id: &id,
                 parent_session_id: parent,
@@ -104,7 +100,7 @@ impl<T: ActorTurns> ActorSessions for NodeActorSessions<'_, T> {
         )?;
         let link_id = format!("tasklink_{id}");
         insert_workflow_actor_link(
-            self.conn,
+            self.conn.borrow(),
             &WorkflowActorLink {
                 id: &link_id,
                 child_session_id: &id,

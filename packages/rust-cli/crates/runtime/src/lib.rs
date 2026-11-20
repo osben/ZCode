@@ -32,6 +32,7 @@ mod table;
 mod usage;
 pub mod workflow_assembly;
 mod workflow_gate;
+pub mod workflow_owner;
 pub mod workflow_run;
 mod workspace_sessions;
 
@@ -538,6 +539,12 @@ impl LocalKernel {
 
     pub fn ports(&self) -> &Ports {
         &self.ports
+    }
+
+    /// Fork (9.30): the process's one residency ledger, shared with the workflow run service, so a run keeps its parent
+    /// resident and a session close waits for the run.
+    pub fn workflow_residency(&self) -> Arc<rust_cli_workflow::residency::SessionResidency> {
+        self.residency.clone()
     }
 
     /// 会话的主 env（注册表的 `primary_machine()`）：会话、`/cd`、`/diff`、导出、项目清单、`@` 清单都在它上面。

@@ -14,6 +14,7 @@ use anyhow::Result;
 use rust_cli_base::TaskScope;
 use rust_cli_kernel_api::ids::EnvironmentId;
 use rust_cli_kernel_api::store::{SessionFilter, SessionStore};
+use rust_cli_kernel_api::workflow_run::WorkflowRunHost;
 use rust_cli_node_store::LOCAL_ENVIRONMENT;
 use rust_cli_protocol_core::connection::{self, Options};
 use rust_cli_protocol_zcode::{
@@ -24,6 +25,7 @@ use rust_cli_protocol_zcode::{
 use crate::assemble::{self, Controller};
 use crate::frontends::app_workspace::{AppWorkspace, ProcessConfig};
 use crate::frontends::node_helper;
+use crate::frontends::workflow_service;
 use crate::process::{ControllerRun, Start};
 
 /// 退出时等进程级任务收尾的上限（存活的上限，不用来同步状态）。
@@ -263,6 +265,18 @@ async fn serve(
     if let Some(configs) = built.kernel.external_agent_configs() {
         context.set_external_agent_configs(configs);
     }
+    // Fork (9.30): the workflow run service, over the kernel's residency ledger and the helper's child runner. Nothing
+    // starts a run yet (the gate is off), so building it opens no database and starts no child.
+    let workflow_runs = workflow_service::build(
+        context.workflow_runner().cloned(),
+        built.kernel.workflow_residency(),
+        opened.paths.database().as_path(),
+        opened.workspace.root.as_str(),
+    )
+    .map(|service| Arc::new(service) as Arc<dyn WorkflowRunHost>);
+    if let Some(runs) = &workflow_runs {
+        context.set_workflow_runs(runs.clone());
+    }
     state.ready().await;
     let defaults = Defaults {
         // App 模式组装时已等缺省模型定下（`Controller::app` 的 `wait_model`；performance.md §12.3 只改 TUI）。Shared, so
@@ -285,6 +299,13 @@ async fn serve(
             .and_then(|read| read.map_err(anyhow::Error::from)),
         () = stop.token.cancelled() => Ok(()),
     };
+    // Fork (9.30): the run service stops its live runs and closes their parent sessions first, so the drain below only
+    // finds sessions the runs did not release. Each failure is logged; the process exits either way.
+    if let Some(runs) = &workflow_runs {
+        for message in runs.close().await {
+            tracing::error!(event = "app.shutdown.run_close_failed", error = %message, "a workflow run did not close at shutdown");
+        }
+    }
     // Fork (W7-6): shutdown drains the sessions that still hold a live workflow run, with one bound. A session that does
     // not close is logged; the process exits either way.
     for message in
