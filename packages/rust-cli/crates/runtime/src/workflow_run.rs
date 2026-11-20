@@ -16,21 +16,33 @@ use rust_cli_kernel_api::workflow_child::{
     ChildEvent, ChildHandler, ChildRequest, ChildStop, Completion, CreateActor, LaunchError,
     LaunchInput, Outcome, RequestType, RunningChild, WireError, WorkflowChildRunner,
 };
+use rust_cli_kernel_api::workflow_run_progress::WorkflowRunProgressPort;
 use rust_cli_workflow::actor_mailbox::{ActorHandle, ActorMailbox, MailboxError, TicketedCall};
 use rust_cli_workflow::driver_owner::{ActorDriverOwner, ActorSessions, TicketSettlement};
 use rust_cli_workflow::engine::EngineConfig;
 use rust_cli_workflow::error::{ErrorCode, WorkflowError};
 use rust_cli_workflow::journal::JournalPort;
+use rust_cli_workflow::model_failure::RedriveClock;
+use rust_cli_workflow::quota_resume::QuotaAutoResume;
 use rust_cli_workflow::residency::SessionResidency;
 use rust_cli_workflow::run_concurrency::RunConcurrency;
+use rust_cli_workflow::run_progress::{
+    LaunchProgress, RunProgress, SharedProjection, shared_projection,
+};
 use serde_json::Value;
 
 use crate::workflow_assembly::{RunRegistrations, attach_run};
+use crate::workflow_quota::{QuotaRunReads, QuotaRunResumer, SessionQuotaPort};
 
 /// One run's owner as the service holds it: attached at launch, then served on its own thread until it settles.
 pub trait HostedOwner: Send {
     /// The launch's registrations (9.15 item 2, 9.12 item 3). Runs in the launch's synchronous step.
     fn attach(&mut self, registrations: RunRegistrations<'_>) -> Result<()>;
+
+    /// The run's progress sink (9.31), set before attach so the run's first event reaches it. Default: none.
+    fn set_progress(&mut self, progress: Box<dyn RunProgress>) {
+        let _ = progress;
+    }
 
     /// Serves the mailbox until the run settles or every handle is dropped. Returns the close failures the owner
     /// recorded, which the service reads at close.
@@ -54,6 +66,10 @@ impl<J: JournalPort + Send + 'static, S: ActorSessions + Send + 'static> HostedO
 {
     fn attach(&mut self, registrations: RunRegistrations<'_>) -> Result<()> {
         attach_run(&mut self.owner, registrations)
+    }
+
+    fn set_progress(&mut self, progress: Box<dyn RunProgress>) {
+        self.owner.set_progress(progress);
     }
 
     fn serve(self: Box<Self>) -> Vec<(String, String)> {
@@ -143,6 +159,34 @@ struct Inner {
     runner: Arc<dyn WorkflowChildRunner>,
     owners: OwnerFactory,
     state: Mutex<State>,
+    /// The optional hooks the composition sets (9.31). Read once per launch, never held across a call.
+    setup: Mutex<Setup>,
+    /// Per parent session: its progress projection and its quota module (created on demand, 9.31).
+    sessions: Mutex<HashMap<String, SessionHooks>>,
+}
+
+/// What the composition configures. Each hook is off until its setter runs, so a service without them behaves as 9.25.
+#[derive(Default)]
+struct Setup {
+    progress: Option<ProgressSetup>,
+    quota: Option<QuotaSetup>,
+}
+
+struct ProgressSetup {
+    port: Arc<dyn WorkflowRunProgressPort>,
+    default_concurrency: f64,
+}
+
+struct QuotaSetup {
+    reads: Arc<dyn QuotaRunReads>,
+    resumer: Arc<dyn QuotaRunResumer>,
+    clock: Arc<dyn RedriveClock>,
+}
+
+#[derive(Default)]
+struct SessionHooks {
+    projection: Option<SharedProjection>,
+    quota: Option<Arc<QuotaAutoResume>>,
 }
 
 #[derive(Default)]
@@ -181,6 +225,80 @@ impl Drop for Reservation {
     }
 }
 
+impl Inner {
+    /// The parent's quota module, created on first use when quota is configured.
+    fn quota_module(&self, parent: &str) -> Option<Arc<QuotaAutoResume>> {
+        let (reads, resumer, clock) = {
+            let setup = self.setup.lock_unpoisoned();
+            let quota = setup.quota.as_ref()?;
+            (
+                quota.reads.clone(),
+                quota.resumer.clone(),
+                quota.clock.clone(),
+            )
+        };
+        let mut sessions = self.sessions.lock_unpoisoned();
+        let hooks = sessions.entry(parent.to_owned()).or_default();
+        let module = hooks.quota.get_or_insert_with(|| {
+            let port = SessionQuotaPort::new(parent.to_owned(), reads, resumer);
+            Arc::new(QuotaAutoResume::new(Arc::new(port), clock))
+        });
+        Some(module.clone())
+    }
+
+    /// The parent's progress projection, created on first use.
+    fn projection(&self, parent: &str) -> SharedProjection {
+        let mut sessions = self.sessions.lock_unpoisoned();
+        let hooks = sessions.entry(parent.to_owned()).or_default();
+        hooks
+            .projection
+            .get_or_insert_with(shared_projection)
+            .clone()
+    }
+
+    /// The launch's hooks: the run's progress sink when progress is configured, and the parent's quota module.
+    fn launch_hooks(
+        &self,
+        parent: &str,
+        config: &EngineConfig,
+    ) -> (Option<Box<dyn RunProgress>>, Option<Arc<QuotaAutoResume>>) {
+        let progress = {
+            let setup = self.setup.lock_unpoisoned();
+            setup
+                .progress
+                .as_ref()
+                .map(|progress| (progress.port.clone(), progress.default_concurrency))
+        };
+        let sink = progress.map(|(port, default_concurrency)| {
+            let (subagent_model, model_bindings) = match &config.launch {
+                Some(launch) => (
+                    launch.subagent_model.clone(),
+                    launch
+                        .model_bindings
+                        .as_ref()
+                        .and_then(Value::as_object)
+                        .cloned(),
+                ),
+                None => (None, None),
+            };
+            LaunchProgress {
+                owned_session: parent.to_owned(),
+                parent_session_id: config.parent_session_id.clone(),
+                run_id: config.run_id.clone(),
+                tool_call_id: config.tool_call_id.clone(),
+                resumed_from: config.resumed_from.clone(),
+                subagent_model,
+                model_bindings,
+                default_concurrency,
+                projection: self.projection(parent),
+                port,
+            }
+            .into_sink()
+        });
+        (sink, self.quota_module(parent))
+    }
+}
+
 impl WorkflowRunService {
     pub fn new(
         residency: Arc<SessionResidency>,
@@ -195,7 +313,49 @@ impl WorkflowRunService {
                 runner,
                 owners,
                 state: Mutex::new(State::default()),
+                setup: Mutex::new(Setup::default()),
+                sessions: Mutex::new(HashMap::new()),
             }),
+        }
+    }
+
+    /// Turns on the progress fan-out (9.31): each run's journal events reach `port` for its parent session. Set before
+    /// the first launch; a run launched earlier has no sink.
+    pub fn configure_progress(
+        &self,
+        port: Arc<dyn WorkflowRunProgressPort>,
+        default_concurrency: f64,
+    ) {
+        self.inner.setup.lock_unpoisoned().progress = Some(ProgressSetup {
+            port,
+            default_concurrency,
+        });
+    }
+
+    /// Turns on quota auto-resume (9.31, spec 9.14): a settled quota stop is armed, and `open_session` scans a session.
+    /// `reads` answers the run rows, `resumer` the resume, and `clock` the timers (production: `ThreadClock`).
+    pub fn configure_quota(
+        &self,
+        reads: Arc<dyn QuotaRunReads>,
+        resumer: Arc<dyn QuotaRunResumer>,
+        clock: Arc<dyn RedriveClock>,
+    ) {
+        self.inner.setup.lock_unpoisoned().quota = Some(QuotaSetup {
+            reads,
+            resumer,
+            clock,
+        });
+    }
+
+    /// The session-open hook (9.31): builds the parent's quota module and scans its recent runs, so a run stopped by a
+    /// quota whose reset has passed resumes now and the others are armed. Reads the journal, so call it off the
+    /// runtime's workers. A no-op without `configure_quota`, and after close.
+    pub fn open_session(&self, parent_session_id: &str) {
+        if self.inner.state.lock_unpoisoned().closed {
+            return;
+        }
+        if let Some(module) = self.inner.quota_module(parent_session_id) {
+            module.scan();
         }
     }
 
@@ -242,6 +402,8 @@ impl WorkflowRunService {
             .map_err(|error| LaunchFailure::Child(Box::new(error)))?;
         let RunningChild { stop, outcome, .. } = running;
 
+        // The run's progress sink and quota module, read before the config moves into the factory (9.31).
+        let (progress, quota) = inner.launch_hooks(&parent, &config);
         // The owner is built outside the lock, since the factory may read the service (M1).
         let mut hosted = match (inner.owners)(config, mailbox) {
             Ok(hosted) => hosted,
@@ -250,6 +412,9 @@ impl WorkflowRunService {
                 return Err(LaunchFailure::Attach(format!("{error:#}")));
             }
         };
+        if let Some(progress) = progress {
+            hosted.set_progress(progress);
+        }
 
         // The critical section: the closed re-check, the registrations, the thread and the entry, with no await.
         let mut state = inner.state.lock_unpoisoned();
@@ -273,6 +438,7 @@ impl WorkflowRunService {
         let settle_inner = inner.clone();
         let settle_run_id = run_id.clone();
         let settle_stop = stop.clone();
+        let settle_quota = quota;
         let serve = match std::thread::Builder::new()
             .name(format!("workflow-owner-{run_id}"))
             .spawn(move || {
@@ -286,7 +452,13 @@ impl WorkflowRunService {
                             format!("the owner panicked: {}", panic_text(payload.as_ref())),
                         )],
                     };
-                settle_run(&settle_inner, &settle_run_id, token, &settle_stop, failures)
+                let failures =
+                    settle_run(&settle_inner, &settle_run_id, token, &settle_stop, failures);
+                // After the settlement, with no lock held: the quota module reads the run's row (9.31, spec 9.14).
+                if let Some(quota) = settle_quota {
+                    quota.on_run_settled(&settle_run_id);
+                }
+                failures
             }) {
             Ok(serve) => serve,
             Err(error) => {
@@ -321,6 +493,16 @@ impl WorkflowRunService {
             state.closed = true;
             std::mem::take(&mut state.runs)
         };
+        // The quota modules stop first, so no timer resumes a run while the service closes (9.31).
+        let modules: Vec<Arc<QuotaAutoResume>> = inner
+            .sessions
+            .lock_unpoisoned()
+            .values_mut()
+            .filter_map(|hooks| hooks.quota.take())
+            .collect();
+        for module in modules {
+            module.dispose();
+        }
         let stopped = runs.len();
         for entry in runs.values() {
             entry.stop.stop();
