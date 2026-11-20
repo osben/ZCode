@@ -296,4 +296,15 @@ pub trait WorkflowRunHost: Send + Sync {
     /// Stops the live runs and waits for their parent sessions to close. Each returned line names a run or a session
     /// that did not close cleanly; an empty result is a clean close.
     fn close(&self) -> futures_util::future::BoxFuture<'static, Vec<String>>;
+
+    /// A parent session opened (cold): settles its orphaned runs (Node's start-up sweep, 9.30 item 212) and then scans
+    /// its quota-stopped runs (9.31, divergence 233). The work reads the journal, so it runs off the async workers.
+    /// The default does nothing, which is what a composition without a run service gets.
+    fn session_opened(
+        &self,
+        parent_session_id: &str,
+    ) -> futures_util::future::BoxFuture<'static, ()> {
+        let _ = parent_session_id;
+        Box::pin(async {})
+    }
 }

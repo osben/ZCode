@@ -7,7 +7,59 @@ use rust_cli_kernel_api::testing::FakeChildRunner;
 use rust_cli_kernel_api::workflow_run::WorkflowRunHost;
 use rust_cli_workflow::residency::SessionResidency;
 
+use rust_cli_node_store::dwf::{self, RunRecord, RunStatus};
+use rust_cli_node_store::{MIGRATION_LOCK_WAIT, open_session_database};
+
 use super::build;
+
+/// A session row the run's parent points at (the test database has no sessions otherwise).
+fn add_session(conn: &rusqlite::Connection, id: &str) {
+    conn.execute(
+        "insert into session (id, project_id, parent_id, slug, directory, title, version, time_created, time_updated)
+         values (?, 'proj', null, ?, '/work', 'title', '0.0.0', 1, 1)",
+        rusqlite::params![id, id],
+    )
+    .expect("session row for the run's parent");
+}
+
+/// The composition's session open settles the parent's orphan through the production store, which opens the database
+/// on first use (W7-5c item 1): a run a previous process left running reads back as stopped once its session opens.
+#[tokio::test]
+async fn a_session_open_settles_the_parents_orphan_in_the_composed_service() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let database = dir.path().join("sessions.db");
+    {
+        let (conn, _) =
+            open_session_database(&database, MIGRATION_LOCK_WAIT, 1).expect("session database");
+        add_session(&conn, "ses_parent");
+        let run = RunRecord {
+            run_id: "dwfrun-orphan".to_owned(),
+            parent_session_id: Some("ses_parent".to_owned()),
+            cwd: Some("project".to_owned()),
+            script_text: Some("return 1".to_owned()),
+            max_concurrency: 4,
+            status: RunStatus::Running,
+            ..RunRecord::default()
+        };
+        dwf::create_run(&conn, &run, 1).expect("seed the orphan");
+    }
+    let service = build(
+        Some(Arc::new(FakeChildRunner::new())),
+        Arc::new(SessionResidency::new()),
+        &database,
+        "/work",
+    )
+    .expect("the service is built over the runner");
+
+    WorkflowRunHost::session_opened(&service, "ses_parent").await;
+
+    let (conn, _) =
+        open_session_database(&database, MIGRATION_LOCK_WAIT, 2).expect("session database");
+    let row = dwf::get_run(&conn, "dwfrun-orphan")
+        .expect("the row read")
+        .expect("the row exists");
+    assert_eq!(row.status, RunStatus::Stopped, "the orphan is settled");
+}
 
 /// Without a helper there is no child runner, so no run service is built: the families stay as they were.
 #[test]

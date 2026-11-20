@@ -234,6 +234,83 @@ async fn list_cwd(service: &WorkflowRunService, session: &str, limit: usize) -> 
 
 // ---- Orphan reconciliation (Node dynamic-workflow-run-reconcile.ts; service tests "构造时把本会话的非终态 run 收敛成 failed").
 
+/// The production quota reads (9.31, divergence 231): one session's rows, read from the journal, and one row by id. A
+/// sibling session's run is not in the session's list.
+#[test]
+fn the_quota_reads_list_one_sessions_runs_and_read_one_row() {
+    use crate::workflow_quota::{QuotaRunReads, StoreQuotaReads};
+    let fx = fixture(|conn| {
+        seed(
+            conn,
+            Some(PARENT),
+            "dwfrun-mine",
+            DwfStatus::Running,
+            None,
+            "return 1",
+            1,
+        );
+        seed(
+            conn,
+            Some("ses_other"),
+            "dwfrun-theirs",
+            DwfStatus::Running,
+            None,
+            "return 2",
+            1,
+        );
+    });
+    let reads = StoreQuotaReads::new(fx.store);
+
+    let mut ids: Vec<String> = reads
+        .list_session_runs(PARENT, 10)
+        .expect("the session's rows")
+        .into_iter()
+        .map(|row| row.run_id)
+        .collect();
+    ids.sort();
+    assert_eq!(ids, vec!["dwfrun-mine".to_owned()]);
+
+    let row = reads
+        .get_run("dwfrun-mine")
+        .expect("the row read")
+        .expect("the row exists");
+    assert_eq!(row.run_id, "dwfrun-mine");
+    assert!(reads.get_run("dwfrun-missing").expect("read").is_none());
+}
+
+/// A cold session open runs the start-up sweep of its parent before anything else (9.30 item 212): the orphan a previous
+/// process left running is settled as interrupted, and the other session's orphan is not touched.
+#[tokio::test]
+async fn a_session_open_settles_its_parents_orphans() {
+    let fx = fixture(|conn| {
+        seed(
+            conn,
+            Some(PARENT),
+            "dwfrun-orphan",
+            DwfStatus::Running,
+            None,
+            "return 1",
+            1,
+        );
+        seed(
+            conn,
+            Some("ses_other"),
+            "dwfrun-sibling",
+            DwfStatus::Running,
+            None,
+            "return 2",
+            1,
+        );
+    });
+
+    rust_cli_kernel_api::workflow_run::WorkflowRunHost::session_opened(&fx.service, PARENT).await;
+
+    let orphan = fx.store.get_run("dwfrun-orphan").unwrap().expect("row");
+    assert_eq!(orphan.status.as_str_for_test(), "stopped");
+    let sibling = fx.store.get_run("dwfrun-sibling").unwrap().expect("row");
+    assert_eq!(sibling.status.as_str_for_test(), "running");
+}
+
 #[tokio::test]
 async fn reconcile_settles_the_sessions_non_terminal_runs_as_interrupted() {
     let fx = fixture(|conn| {
