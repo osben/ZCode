@@ -12,6 +12,7 @@ fn asked_once() -> PermissionDecision {
         suggestions: Vec::new(),
         once: true,
         independent: false,
+        always_ask: false,
     }
 }
 

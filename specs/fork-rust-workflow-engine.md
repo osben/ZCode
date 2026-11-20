@@ -2063,6 +2063,28 @@ The W7-5 brief covers more than one PR. The Node sources are about 160 KB (`dyna
 90. Owner shutdown has no Node counterpart: the Node driver runs in the process and has no owner to drop. A pending reply gets `DriverError` with the text "the workflow owner shut down before this request settled".
 91. An owner error from one ticketed call (a pump error after the engine admitted the ticket) is returned to that call's caller in place of the ticket's settlement. The settlement stays for `take_outcomes`. Node's promise has no such split: it settles with the ask's own outcome. Only that one call loses its reply.
 
+### 9.25 Policy: always-ask through the permission chain (divergence 103 closed)
+
+Divergence 103 (recorded in 9.24, in PR #580) is closed here. It is recorded in this section because 9.24 is not on `fork` yet; when #580 merges, 103 in 9.24 reads "closed in 9.25".
+
+- `PermissionDecision::Ask` gains `always_ask` (kernel-api), set by `PermissionDecision::always_ask(message, suggestions, independent)`. `independent` keeps its meaning (no always-allow offered). An ordinary ask has `always_ask: false`, so no existing tool changes.
+- `policy/src/chain.rs`: `own()` turns an always-ask into `AskKind::Always { independent }`, after the built-in check. Only that check's deny stands (a content deny rule). `inner()` returns it before every allow branch (the tool-wide allow rules, `full_access` (bypass and yolo), guarded, and the plan gate). `plan_mcp` passes it through. `outer()` never auto-decides it: no classifier, and Node's plan mode asks it instead of denying.
+- Node rules matched (`apps/zcode-cli/packages/core/src/permission/service.ts`, `checkAlwaysAsk`, read at `origin/fork`, and called from `checkPermission` after `requiresUserInteraction` and the guarded user-approval rule, before yolo and the plan gate):
+  1. `mode === "auto"` (the base is auto too, with plan on): deny `mode.auto.unimplemented`. Rust: `always()` (auto) and the base-auto deny in `lib.rs`.
+  2. `disallowedTools` and project deny rules (whole tool and content): deny. Rust: the tool-wide deny rules in `inner()`, and the built-in check's deny in `own()`.
+  3. Session allow rules (`sessionRules`, "always allow in this session"): allow, no event, no dialog, in every mode (yolo, plan, build). Rust: `Rules::session_whole_tool_allow` (RuleSource::Session, whole tool).
+  4. Otherwise ask, with `alwaysAsk: true` on the decision. No mode, bypass, yolo, guarded, plan or project allow rule passes it.
+  5. A PreToolUse hook's allow does not remove it (`hook-flow.ts` `applyPreToolPermissionDecision`). Rust: `check_rules` returns the always-ask ask, and the pipeline asks again.
+  6. PermissionRequest hooks still run for it (it is not `once`), as for other asks.
+- Remaining differences from Node (narrowing, not closed):
+  - a. Session allow rules skip the always-ask only as whole-tool rules. Node's session rules also match `Tool(content)`. A content session rule does not skip an always-ask here. The gate is off and no always-ask tool that takes a content grant exists yet.
+  - b. The per-call `allowed` rules (skill `allowed-tools`) do not skip an always-ask. Node's equivalent for skills was not traced.
+  - c. Node's owner exemption (`isOwnedWorkflowAmend`, for AmendWorkflow and FillWorkflowHole) is not built. It arrives with those tools.
+  - d. Rust has a `dontAsk` mode (Node has none): an always-ask there is denied, as every ask is. `avoid_prompts` (no one to answer) denies it, as every ask.
+  - e. The non-always `independent` flag from a tool is still not carried by `own()` (no tool returns it today; plan MCP sets it in the chain). It stays so, since it changes no existing tool.
+- Tests: `policy/src/lib_tests_always_ask.rs`, through `PolicyGate::decide` and `check_rules`. Red before the chain change: an always-ask tool was an ordinary ask (Default) and an Allow under guarded, bypass, and a user, project, local or CLI allow rule. Green after.
+- SaveWorkflow (#580) is the first user: it returns `PermissionDecision::always_ask(…, independent: true)`. That wiring is a follow-up commit after #580 merges.
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.

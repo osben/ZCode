@@ -503,6 +503,7 @@ async fn ask_once_questions_skip_permission_request_hooks() {
             suggestions: Vec::new(),
             once: true,
             independent: false,
+            always_ask: false,
         },
         None,
     );
@@ -537,6 +538,7 @@ async fn an_independent_ask_runs_permission_request_hooks() {
             suggestions: Vec::new(),
             once: false,
             independent: true,
+            always_ask: false,
         },
         None,
     );
@@ -889,6 +891,7 @@ async fn under_hook_rows_the_execution_carries_its_dispatches() {
             suggestions: Vec::new(),
             once: false,
             independent: true,
+            always_ask: false,
         },
         None,
     );

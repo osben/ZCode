@@ -76,6 +76,17 @@ impl<'a> Rules<'a> {
             })
     }
 
+    /// 会话的整个工具允许规则（“本会话总是允许”，`RuleSource::Session` 的快照规则）。只有它跳过工具自报的“总是询问”
+    /// （Node `checkAlwaysAsk` 的 `sessionRules`）；这一次判决的允许规则（skill 的 `allowed-tools`）不算。
+    pub fn session_whole_tool_allow(&self, tool: &str) -> bool {
+        self.base.rules.iter().any(|sourced| {
+            sourced.source == RuleSource::Session
+                && sourced.behavior == RuleBehavior::Allow
+                && sourced.rule.content.is_none()
+                && tool_matches(&sourced.rule.tool, tool)
+        })
+    }
+
     /// 某个工具名下带 content 的规则。
     pub fn contents(&self, tool: &str, behavior: RuleBehavior) -> Vec<(&'a str, Found<'a>)> {
         self.all()
