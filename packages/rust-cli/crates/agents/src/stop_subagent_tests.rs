@@ -535,6 +535,7 @@ async fn a_parked_stop_reads_its_cleanup_targets_before_the_agent_can_restart() 
         machine: &machine,
         operation: &operation,
         by_user: true,
+        user: true,
     };
     // A stale execution reads nothing and ends nothing.
     assert!(!tool.stop_parked(&agent, 1, &caller).await);
@@ -618,6 +619,7 @@ async fn a_task_stop_that_ends_nothing_is_refused() {
         machine: &machine,
         operation: &operation,
         by_user: false,
+        user: false,
     };
     let Err(refused) = tool.stop("agent_u", &caller).await else {
         panic!("a stop that ended nothing reported success");
@@ -669,6 +671,7 @@ async fn a_desktop_stop_of_a_parked_agent_is_a_killed_notice_without_report() {
             machine: &machine,
             operation: &operation,
             by_user,
+            user: by_user,
         };
         assert!(tool.stop_parked(&agent, 0, &caller).await);
         assert!(matches!(
@@ -801,6 +804,7 @@ async fn a_task_stop_after_a_claimed_user_stop_is_refused_and_keeps_the_user() {
         machine: &machine,
         operation: &operation,
         by_user: false,
+        user: false,
     };
     let Err(refused) = tool.stop("agent_u", &caller).await else {
         panic!("a second stop was accepted");
@@ -844,6 +848,7 @@ async fn a_task_stop_returns_when_its_run_ends_though_a_late_message_resumes_the
         machine: &machine,
         operation: &operation,
         by_user: false,
+        user: false,
     };
     let resume = async {
         // The stop claims the run before this runs (`join` polls the stop first, and it claims synchronously).

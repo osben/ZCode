@@ -16,7 +16,7 @@
 //! - An owner error crosses unchanged as an `anyhow::Error` (`MailboxError::Owner`), so its context chain survives.
 use crate::actor_feed::FeedEvent;
 use crate::driver_owner::{
-    ActorDriverOwner, ActorSessions, SubmitReply, TicketSettlement, TurnEndReply,
+    ActorDriverOwner, ActorSessions, StopInitiator, SubmitReply, TicketSettlement, TurnEndReply,
 };
 use crate::error::WorkflowError;
 use crate::escalation::{AnswerOutcome, EscalateOutcome, EscalationRequest};
@@ -133,6 +133,9 @@ pub(crate) enum ActorRequest {
     /// The run's stop by an amendment (9.43): it settles as `stopped(superseded)` naming `successor_run_id`. No answer
     /// goes back; the caller waits for the settlement itself.
     StopSuperseded { successor_run_id: String },
+    /// The run's stop by a user or the model (W8a, 9.48: GUI cancel, TaskStop). It settles as `stopped(reason)`. No answer
+    /// goes back; the caller waits for the settlement itself.
+    StopRun { initiator: StopInitiator },
     /// The child's `create-actor` (W7-5a-2). The answer is the engine's actor id, which the child's later requests name.
     CreateActor {
         site_id: String,
@@ -450,6 +453,11 @@ fn dispatch_request<J: JournalPort, S: ActorSessions>(
                 tracing::warn!("the owner failed to settle a superseded run: {error:#}");
             }
         }
+        ActorRequest::StopRun { initiator } => {
+            if let Err(error) = owner.stop_run(initiator) {
+                tracing::warn!("the owner failed to settle a stopped run: {error:#}");
+            }
+        }
     }
 }
 
@@ -568,6 +576,11 @@ impl ActorHandle {
         self.post(ActorRequest::StopSuperseded {
             successor_run_id: successor_run_id.to_owned(),
         })
+    }
+
+    /// Asks the owner to settle its run as stopped by `reason` (W8a, 9.48). Posted without an answer.
+    pub fn stop_run(&self, initiator: StopInitiator) -> bool {
+        self.post(ActorRequest::StopRun { initiator })
     }
 
     /// The run service's fill of one hole (W7-12, 9.45): the engine's answer, after the fill's own step on the owner.

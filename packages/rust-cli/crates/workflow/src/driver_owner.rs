@@ -87,6 +87,24 @@ pub struct ActorSessionRequest {
     pub seed: Option<crate::imported_cache::ActorSessionSeed>,
 }
 
+/// Who stops a run from the background registry (W8a, 9.48): the user's cancel or the model's TaskStop. The run settles
+/// as `stopped(user)` or `stopped(model)`. A narrow type on purpose: the other stop reasons have their own owner entry
+/// points (`stop_interrupted`, `stop_superseded`), and a superseded stop without its successor would journal a bad row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StopInitiator {
+    User,
+    Model,
+}
+
+impl StopInitiator {
+    fn reason(self) -> StopReason {
+        match self {
+            Self::User => StopReason::User,
+            Self::Model => StopReason::Model,
+        }
+    }
+}
+
 /// The turn side. Implementations run turns and create sessions; they never call the engine. Each call that can
 /// fail says so, and the owner turns the failure into the engine's language (a failed ask, or a kept error).
 pub trait ActorSessions {
@@ -720,6 +738,12 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
     /// owner's thread by the mailbox.
     pub fn stop_interrupted(&mut self) -> Result<()> {
         self.stop_with(StopReason::Interrupted, None)
+    }
+
+    /// The run's stop by a user or the model (W8a, 9.48; Node `stop(initiator)` through the cancel path): the run settles as
+    /// `stopped(user | model)`, its in-flight asks are cancelled, and a parked question is withdrawn (row 69).
+    pub fn stop_run(&mut self, initiator: StopInitiator) -> Result<()> {
+        self.stop_with(initiator.reason(), None)
     }
 
     /// The run's stop by an amendment (9.43, Node `controller.abort({ superseded: newRunId })`): the run settles as

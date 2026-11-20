@@ -39,6 +39,8 @@ use crate::workflow_quota::{QuotaRunReads, QuotaRunResumer, SessionQuotaPort};
 
 #[path = "workflow_run_amend.rs"]
 mod amend;
+#[path = "workflow_run_cancel.rs"]
+mod cancel;
 #[path = "workflow_run_fill.rs"]
 mod fill;
 #[path = "workflow_run_list.rs"]
@@ -220,6 +222,9 @@ struct Inner {
     /// previous fill wrote. One permit, held across the helper's call and the owner's apply (a semaphore, since a tokio guard
     /// may not be held across an await).
     fills: Arc<tokio::sync::Semaphore>,
+    /// Serializes a question's answer with its retirement (W8a, 9.48): a resolve delivers and retires under this lock, so a
+    /// concurrent resolve of the same question reads the retired table after the delivery, not before it.
+    resolves: Mutex<()>,
 }
 
 /// What the composition configures. Each hook is off until its setter runs, so a service without them behaves as 9.25.
@@ -254,6 +259,8 @@ struct State {
     runs: HashMap<String, RunEntry>,
     /// Close failures of runs that settled on their own, for the next close (bounded, L2).
     failures: Vec<(String, String)>,
+    /// Questions that were answered or withdrawn, for a later resolve's refusal (W8a, 9.48; Node's retired table).
+    retired: cancel::RetiredQuestions,
     /// Gives each launch a token, so a settled run removes only its own entry (a run id may be launched again).
     next_token: u64,
 }
@@ -495,6 +502,7 @@ impl WorkflowRunService {
                 bindings: OnceLock::new(),
                 default_concurrency: OnceLock::new(),
                 fills: Arc::new(tokio::sync::Semaphore::new(1)),
+                resolves: Mutex::new(()),
             }),
         }
     }
