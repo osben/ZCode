@@ -58,6 +58,10 @@ pub struct Context {
     /// composition root. Without it the run reads fall through to the helper or to the empty answer.
     dynamic_workflow_runs:
         std::sync::OnceLock<Arc<dyn rust_cli_kernel_api::workflow_run::DynamicWorkflowRunSessions>>,
+    /// Fork (specs/fork-rust-workflow-engine.md, 9.2 and 9.36): the dynamic-workflow gate each session was created with.
+    /// Memory only, as Node's `runtimeConfig`. Owned here, so the composition root can hand the same table to the kernel's
+    /// gate source before the server exists (divergence 56).
+    dynamic_workflow_gates: Arc<rust_cli_kernel_api::dynamic_workflow::SessionGates>,
     /// Fork (specs/fork-rust-workflow-engine.md, 9.30): the run service's lifecycle, set once by the composition root
     /// when it builds the service; the shutdown closes the live runs through it.
     workflow_runs: std::sync::OnceLock<Arc<dyn rust_cli_kernel_api::workflow_run::WorkflowRunHost>>,
@@ -164,6 +168,13 @@ impl Context {
         runs: Arc<dyn rust_cli_kernel_api::workflow_run::WorkflowRunHost>,
     ) {
         let _ = self.workflow_runs.set(runs);
+    }
+
+    /// Fork (9.2, 9.36): the gate table every session's record is written to, and the kernel's gate source reads.
+    pub fn dynamic_workflow_gates(
+        &self,
+    ) -> &Arc<rust_cli_kernel_api::dynamic_workflow::SessionGates> {
+        &self.dynamic_workflow_gates
     }
 
     /// Fork (9.30): the run service's lifecycle, when the composition root built one.
@@ -326,6 +337,7 @@ impl Context {
             workflow_child: std::sync::OnceLock::new(),
             workflow_runner: std::sync::OnceLock::new(),
             dynamic_workflow_runs: std::sync::OnceLock::new(),
+            dynamic_workflow_gates: Arc::default(),
             live_bridge: std::sync::OnceLock::new(),
             workflow_runs: std::sync::OnceLock::new(),
             model_port: std::sync::OnceLock::new(),
