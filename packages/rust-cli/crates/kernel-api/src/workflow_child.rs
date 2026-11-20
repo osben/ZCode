@@ -206,14 +206,9 @@ pub fn response_line(id: &str, answer: &Result<Value, WireError>) -> String {
     format!("{line}\n")
 }
 
-/// A positioned compile diagnostic, in the author's script (1-based). The helper's compile answers them.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Diagnostic {
-    pub code: i64,
-    pub line: i64,
-    pub column: i64,
-    pub message: String,
-}
+/// A positioned compile diagnostic, in the author's script (1-based). The helper's compile answers them. It is the same
+/// type as the checker's diagnostic in `workflow_analysis` (one shape, one serde-capable definition).
+pub use crate::workflow_analysis::WorkflowDiagnostic as Diagnostic;
 
 /// What a launch needs from the run: the script and the run it starts, its frozen args and resume origin, and the
 /// directory the entry file goes into (the session's cwd). Nothing else reaches the compile, the entry file or the host.

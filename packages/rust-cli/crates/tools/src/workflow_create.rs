@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use rust_cli_fs::text_files::{canonicalize_path, create_new_text, ensure_dir, read_text};
+use rust_cli_fs::{create_new_text, ensure_dir, read_text};
 use rust_cli_kernel_api::ids::ToolUseId;
 use rust_cli_kernel_api::permission::{PermissionDecision, PermissionRule};
 use rust_cli_kernel_api::tool::{
@@ -33,10 +33,10 @@ use crate::saved_workflow::{
     ArgDecl, ArgType, FILE_EXTENSION, ResolveRefusal, Scope, Store, parse as parse_saved,
     starts_with_sentinel,
 };
-use crate::workflow_save::normalize;
 use crate::workflow_tools::{
     Contract, DYNAMIC_WORKFLOW_SKILL, contract, skill_loaded, workspace_dir,
 };
+use crate::workspace_path::{Refusal, contain};
 
 /// Node `CREATE_WORKFLOW_FAILURE_CODE`: a business refusal of the input.
 const FAILURE_CODE: i32 = 400;
@@ -363,9 +363,24 @@ fn describe_refusal(
 /// The `path` source (Node `readWorkflowScriptFile` and `resolvePathSource`): the file is read once, its block is taken
 /// as the declaration of its arguments, and nothing is written.
 fn resolve_path(input: &CreateInput, path: &str, cwd: &Path) -> Result<Resolved, String> {
-    let (absolute, real) = path_in_workspace(cwd, path)?;
+    let contained = match contain(cwd, path) {
+        Ok(contained) => contained,
+        Err(Refusal::Outside) => {
+            return Err(format!(
+                "The workflow script file {path} is outside the workspace. Pass a `path` inside it, or submit the script inline."
+            ));
+        }
+        Err(Refusal::Unresolved(error)) => {
+            let described = describe_script_path(&cwd.join(path), cwd);
+            return Err(format!(
+                "The workflow script file {described} could not be read: {error}. Pass `path` for a file that exists, or submit the script inline."
+            ));
+        }
+    };
+    let absolute = contained.named;
     let described = describe_script_path(&absolute, cwd);
-    let source = read_text(&real).map_err(|error| {
+    // The file is read at the real path that was checked (the shared containment check).
+    let source = read_text(&contained.real).map_err(|error| {
         format!(
             "The workflow script file {described} could not be read: {error}. Pass `path` for a file that exists, or submit the script inline."
         )
@@ -413,39 +428,6 @@ fn resolve_path(input: &CreateInput, path: &str, cwd: &Path) -> Result<Resolved,
         origin: Origin::Path { absolute },
         body_offset,
     })
-}
-
-/// A `path` must stay inside the workspace (divergence from Node, as for SaveWorkflow's `script_path`), both lexically and
-/// once symlinks are resolved, so a link inside the workspace cannot make the read reach outside it. Returns the path as
-/// named (for the model) and the real file that is read. A path with no real file keeps its lexical form, and the read
-/// reports why it cannot be read.
-pub(crate) fn path_in_workspace(
-    cwd: &Path,
-    input_path: &str,
-) -> Result<(PathBuf, PathBuf), String> {
-    let joined = if Path::new(input_path).is_absolute() {
-        PathBuf::from(input_path)
-    } else {
-        cwd.join(input_path)
-    };
-    let resolved = normalize(&joined);
-    let outside = || {
-        format!(
-            "The workflow script file {input_path} is outside the workspace. Pass a `path` inside it, or submit the script inline."
-        )
-    };
-    if !resolved.starts_with(normalize(cwd)) {
-        return Err(outside());
-    }
-    let Ok(real) = canonicalize_path(&resolved) else {
-        return Ok((resolved.clone(), resolved));
-    };
-    let root = canonicalize_path(cwd).unwrap_or_else(|_| normalize(cwd));
-    if real.starts_with(&root) {
-        Ok((resolved, real))
-    } else {
-        Err(outside())
-    }
 }
 
 /// Node `describeWorkflowScriptPath`: relative to the working directory when the file is inside it.

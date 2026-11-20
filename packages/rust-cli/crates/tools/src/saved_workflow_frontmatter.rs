@@ -109,14 +109,14 @@ pub fn parse(source: &str) -> Result<Parsed, ParseError> {
     let source = source.strip_prefix('\u{feff}').unwrap_or(source);
     let lines: Vec<&str> = source.split('\n').collect();
     let mut start = 0;
-    while start < lines.len() && lines[start].trim().is_empty() {
+    while start < lines.len() && js_trim(lines[start]).is_empty() {
         start += 1;
     }
-    if start >= lines.len() || lines[start].trim() != SENTINEL {
+    if start >= lines.len() || js_trim(lines[start]) != SENTINEL {
         return Err(ParseError::MissingFrontmatter);
     }
     let mut end = start + 1;
-    while end < lines.len() && lines[end].trim() != TERMINATOR {
+    while end < lines.len() && js_trim(lines[end]) != TERMINATOR {
         end += 1;
     }
     if end >= lines.len() {
@@ -138,8 +138,37 @@ pub fn starts_with_sentinel(source: &str) -> bool {
         .strip_prefix('\u{feff}')
         .unwrap_or(source)
         .split('\n')
-        .find(|line| !line.trim().is_empty())
-        .is_some_and(|line| line.trim() == SENTINEL)
+        .find(|line| !js_trim(line).is_empty())
+        .is_some_and(|line| js_trim(line) == SENTINEL)
+}
+
+/// ECMAScript's WhiteSpace and LineTerminator: what `String.prototype.trim` removes. Rust's `char::is_whitespace` is not
+/// the same set (it includes U+0085, which JavaScript keeps), so it is not used for Node's checks.
+pub(crate) fn is_js_space(c: char) -> bool {
+    matches!(
+        c,
+        '\u{9}'..='\u{d}'
+            | ' '
+            | '\u{a0}'
+            | '\u{1680}'
+            | '\u{2000}'..='\u{200a}'
+            | '\u{2028}'
+            | '\u{2029}'
+            | '\u{202f}'
+            | '\u{205f}'
+            | '\u{3000}'
+            | '\u{feff}'
+    )
+}
+
+/// JavaScript's `String.prototype.trim`. Node's line checks use it.
+pub(crate) fn js_trim(text: &str) -> &str {
+    text.trim_matches(is_js_space)
+}
+
+/// JavaScript's `String.prototype.trimStart`.
+pub(crate) fn js_trim_start(text: &str) -> &str {
+    text.trim_start_matches(is_js_space)
 }
 
 fn parse_metadata(body_text: &str) -> Result<Meta, ParseError> {
@@ -518,8 +547,8 @@ fn scalar(text: &str) -> String {
     if plain_is_safe(text) {
         return text.to_owned();
     }
-    let has_control = text.chars().any(|c| (c as u32) < 0x20 || c as u32 == 0x7f);
-    if text.contains('"') && !has_control {
+    // Single quotes take no escapes, so they are used only for text with no control and no NEL.
+    if text.contains('"') && !text.chars().any(|c| is_control(c) || c == NEL) {
         return format!("'{}'", text.replace('\'', "''"));
     }
     let mut quoted = String::from("\"");
@@ -530,7 +559,7 @@ fn scalar(text: &str) -> String {
             '\n' => quoted.push_str("\\n"),
             '\t' => quoted.push_str("\\t"),
             '\r' => quoted.push_str("\\r"),
-            c if (c as u32) < 0x20 || c as u32 == 0x7f => {
+            c if is_control(c) => {
                 quoted.push_str(&format!("\\x{:02X}", c as u32));
             }
             c => quoted.push(c),
@@ -540,17 +569,26 @@ fn scalar(text: &str) -> String {
     quoted
 }
 
+/// NEL. Node's yaml writes it raw inside double quotes (golden, divergence 104), so it is not hex-escaped.
+const NEL: char = '\u{85}';
+
+/// C0 controls, DEL and the C1 controls other than NEL: not c-printable, so written as `\xHH` (as Node's yaml does).
+fn is_control(c: char) -> bool {
+    let code = c as u32;
+    code < 0x20 || ((0x7f..=0x9f).contains(&code) && c != NEL)
+}
+
 fn plain_is_safe(text: &str) -> bool {
     let Some(first) = text.chars().next() else {
         return false;
     };
-    if text.contains('\u{85}') {
+    if text.contains(NEL) {
         return false;
     }
     if text.trim() != text
         || text
             .chars()
-            .any(|c| c == '\n' || c == '\r' || (c as u32) < 0x20 || c as u32 == 0x7f)
+            .any(|c| c == '\n' || c == '\r' || is_control(c))
     {
         return false;
     }

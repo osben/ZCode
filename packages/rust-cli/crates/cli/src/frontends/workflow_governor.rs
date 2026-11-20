@@ -4,11 +4,6 @@
 //! The workflow crate names the governor through its port and does not depend on the model crate. This adapter is the
 //! one place that joins them: a run's bound is the model governor's bound for the run's `RunId`, and a cap change is
 //! handed to the run as the workflow's `ConcurrencyChange`, with the reason as Node writes it.
-#![allow(
-    dead_code,
-    reason = "W7-5's run service constructs this adapter; until it does, only the tests use it"
-)]
-
 use std::sync::Arc;
 
 use rust_cli_model::admission::RunId;

@@ -211,6 +211,16 @@ fn a_format_analysis_maps_to_the_checker_verdict_and_ignores_the_graph() {
 }
 
 #[test]
+fn a_malformed_analysis_reply_carries_the_serde_cause() {
+    let error = analysis_from_value(&json!({"diagnostics": []})).unwrap_err();
+    assert!(
+        error.message.contains("missing field `ok`"),
+        "the cause is missing: {}",
+        error.message
+    );
+}
+
+#[test]
 fn a_failed_helper_call_and_a_malformed_reply_both_mean_the_checker_cannot_answer() {
     use rust_cli_protocol_core::rpc::RpcError;
     let down = analysis_verdict(Err(RpcError::internal("the helper is not running")))

@@ -2095,13 +2095,55 @@ The W7-5 brief covers more than one PR. The Node sources are about 160 KB (`dyna
 110. The output display is Node's output object (`name`, `scope`, `path`, `diagnostics`, `ok`, `overwritten` when a file was written). The model text is Node's `response` text. The desktop renderer for SaveWorkflow reads the same object; it has not been checked against a running desktop.
 111. `ListSavedWorkflows` lists the project root and the global root, with shadowing, like Node's undirected list. Node's `listSavedWorkflows` is called with a scope in the hub; that directed list (the global group that shows hidden copies) is not ported.
 112. EvalWorkflowSnippet is not in this PR (see the split above). Its divergences are numbered when it lands.
-113. A `script_path` must resolve inside the workspace (lexical normalization; symlinks are not resolved). Node accepts any path, absolute or escaping. A path outside is refused at the permission decision with "is outside the workspace".
+113. A `script_path` must resolve inside the workspace (lexical normalization, then the real paths: see 119). Node accepts any path, absolute or escaping. A path outside is refused at the permission decision with "is outside the workspace".
 114. The `script_path` advice names `script_path` (Node's text names `path`, which is the output field of this tool).
 115. The `script_path` read moved from input validation to the permission decision, so a refused draft is a permission refusal, not a 400 input refusal. Validation reads nothing from the disk.
 116. The store's IO runs on a blocking thread (`spawn_blocking`); Node's store is synchronous on the event loop.
 117. The fs store helpers are not atomic (as Node's `writeFileSync`). A non-UTF-8 file name is converted lossily and so lists as an unusable file.
 
 **Not done here.** The gate source is still set by no entry point (divergences 55 and 56 of 9.18), and nothing calls `workflow_tools`, so SaveWorkflow and ListSavedWorkflows reach no session. The skill-gate probe is unit-tested on a fixture history only. Divergence 103 must be closed before the gate opens. The move, resolve and argument validation of the saved store belong to W7-8a (CreateWorkflow's saved source).
+
+**Review round (post-merge, PR "fix(workflow): SaveWorkflow review follow-ups (rust)").** Each finding was checked first. Verdicts:
+
+1. Rejected. `parse(serialize(..))` of `a\u{2028}b` and `a\u{2029}b` returns the same text (yaml-rust2 0.13 does not fold them). They stay plain, as Node writes them (divergence 104).
+2. Partly fixed. NEL does not fold either (round trip is green), so there is no `\N`. NEL is no longer single-quoted (the red test showed `'a\u{85}"b'`); it stays raw in double quotes, as Node's golden does.
+3. Fixed. C1 controls other than NEL (U+0080 to U+009F) are not plain-safe and are written as `\xHH` in double quotes (red: raw U+0080). Not re-run against yaml 2.9.1 here; the character class is taken from the review finding.
+4. Fixed. `minLength` is checked in `validate.rs` the way Node's JSON-schema check does. An empty `description`, `whenToUse` or `script_path` is refused, and the message is the `too_small` issue as JSON, with Node's text `Too small: expected string to have >=1 characters`.
+5. Kept as Node has it, one bug fixed. Node's two predicates differ: an inline script is checked with `trimStart().startsWith` (a file with its first non-blank line equal to the marker). Both are kept. The inline check now skips U+FEFF, as JavaScript's `trimStart` does.
+6. Fixed: divergence 119.
+7. Fixed. The `script_path` read (in the decision and in the call) runs on `spawn_blocking`.
+8. Fixed. Every unknown key of an argument declaration is named, quoted and joined with `, ` (zod `strict()`).
+9. Fixed. The pending table evicts its oldest entry only (`PendingTable`).
+10. Fixed. A failing verdict is kept per tool-use id (`Pending::Failed`); the call returns it without a second check.
+11. Rejected. Node's `list-saved-workflows.ts` escapes only the `name` and `path` attributes (`escapeAttribute`). The description, `whenToUse`, argument text and `reason` are written raw there, and Rust matches. No divergence.
+12. Fixed: divergence 118.
+13. Fixed. The serde cause is in the contract message.
+14. Fixed. `workflow_child::Diagnostic` is now an alias of `workflow_analysis::WorkflowDiagnostic`.
+15. Fixed. `text_files` is private and re-exported at the fs crate root: `read_text`, `write_text`, `list_file_names`, `canonicalize_path`, `symlink_to` (unix), and `is_regular_file` (the sync `is_file`; the root `is_file` is the async one). The docs say `metadata` follows symlinks and any stat error is not-a-file. The non-UTF-8 listing test is gated off macOS, because APFS refuses such names (EILSEQ).
+
+**Divergence 118.** Windows device names are not usable workflow names: the stem before the first dot, compared case-insensitively to `CON`, `PRN`, `AUX`, `NUL`, `COM1` to `COM9` and `LPT1` to `LPT9`, is refused with or without an extension. Node accepts them, and a file such as `con.dwf.ts` cannot be written on Windows.
+**Divergence 119.** A `script_path` is also compared after symlinks are resolved (canonical paths of the file and of the workspace). A link inside the workspace to a file outside it is refused. This extends divergence 113, which was lexical only. Node has no such check. The guarantee covers the named link: the file is read at the real path that was checked, so a link swapped in at the named path after the check cannot redirect the read. It does not cover a writer inside the workspace that replaces the real file, or one of its ancestor directories, with a link out of the workspace between the check and the read (path-based check then read, a residual TOCTOU window). Closing it needs a descriptor-pinned open (open, then verify the descriptor's canonical path). Not done; recorded here as the known residual.
+
+**Review round 2 (ocr on PR #585, head 80f93030c, seven findings; merged with origin/fork 89a0af22e, CreateWorkflow).** Verdicts:
+
+- H1. Fixed. The file is read at the real path that was checked (`Contained::real`); the named path is kept for messages only. A canonicalization failure refuses (`Refusal::Unresolved`) instead of falling back to the lexical path. The check is one shared helper, `workspace_path::contain`, used by SaveWorkflow's `script_path` and CreateWorkflow's `path`; each tool keeps its own refusal wording. Test: a dangling link out of the workspace is unresolved, not accepted. The swap between check and read is not reproduced by a test.
+- M2. Fixed. `js_trim` is ECMAScript WhiteSpace plus LineTerminator (`is_js_space`), not Rust's `is_whitespace`, which includes U+0085. Test: a NEL at the marker line's edge is not trimmed.
+- M3. Fixed. An enum violation is `invalid_value` (Node's `invalid_value` issue, with `values`, `path` and the `Invalid option: expected one of ...` text), and a missing required property whose schema has an enum is `invalid_value` too. All non-parameter issues serialize into one JSON array in schema order. Ported Node's "preserves schema property order across present constraints and missing enums" and "keeps normalized enum type mismatches on the invalid-value JSON fallback" cases.
+- L4. Fixed. The inline marker check uses the same `js_trim_start` as the codec. Test: a NEL before the marker is not a block.
+- L5. Fixed. The serialization has an `expect` with the invariant (`#[expect(clippy::expect_used)]`, as the crate does elsewhere).
+- L6. Fixed. One `MALFORMED_REPLY` constant feeds both messages.
+- L7. Fixed. The stem is `split_once('.')`, with no dead fallback.
+
+The `text_files` module stays private and re-exported at the fs root; the merge took origin's `create_new_text`, `ensure_dir` and `symlink`, and dropped the duplicate `canonicalize_path` and `symlink_to`.
+
+**Review round 3 (ocr on PR #585, head dbaf50529; six findings, verdicts per finding).**
+
+- Containment doc (medium). Fixed by qualifying the guarantee, not by a pinned open: the module doc and divergence 119 now state that a swap of `real` or of an ancestor directory between the check and the read is not covered. Pinned open is the follow-up if the residual matters.
+- Single-value enum (low). Fixed. Node's `createInvalidValueIssue` says `Invalid input: expected "x"` for one allowed value; the port said `Invalid option: expected one of "x"`. Tests `a_single_value_enum_says_expected_not_one_of` and `a_missing_single_value_enum_says_expected_not_one_of` were red on the old code.
+- Enum then `minLength` (low). Fixed. Node's `validateNode` continues after an enum failure: only a type mismatch returns, and the string constraints run when the type matches. The port returned after the enum, so `enum` plus `minLength` now reports `invalid_value` then `too_small`, as Node does. Test `an_enum_failure_still_reports_a_min_length_failure_on_the_same_string` was red on the old code. The enum-plus-type-mismatch case still reports only `invalid_value`.
+- Duplicate `normalize` (low). Fixed. The local copy is deleted; `contain` uses `rust_cli_base::path::normalize`. The contract for input is documented: absolute, or relative to `cwd` and joined before normalizing, so a leading `..` is accepted only when it lands back inside the workspace (test `a_leading_parent_segment_is_resolved_against_the_workspace_before_the_check`, green on the old code too).
+- Case-sensitive prefix on Windows (low). Fixed. The lexical prefix check folds ASCII case under `cfg!(windows)` (`lexically_within`). The canonical comparison already agrees on case on Windows, since canonical paths carry the on-disk case. Red: `the_lexical_prefix_check_can_fold_ascii_case` failed on the old stub. The Windows path itself is not run here (macOS only).
+- Coverage (low). Added the absolute-path-inside case, a workspace root that is a symlink, and a link inside the workspace to a file inside it (with `real` == the resolved target). All three pass on the old code, so they pin existing behaviour rather than fix it.
 
 ### 9.25 W7-5a-3: runtime workflow run service (as built, part)
 
@@ -2171,6 +2213,113 @@ Divergence 103 (recorded in 9.24, from PR #580) is closed here. Its numbering st
   - e. `Check::Ask.independent` is true only for an always-ask. An ordinary ask from a tool's own check stays `independent: false`, as before (plan MCP sets its independent ask in the chain). Carrying it for ordinary asks would change no existing tool, and none asks that way today.
 - Tests: `policy/src/lib_tests_always_ask.rs`, through `PolicyGate::decide` and `check_rules`. Red before the chain change: an always-ask tool was an ordinary ask (Default) and an Allow under guarded, bypass, and a user, project, local or CLI allow rule. Green after.
 - SaveWorkflow (#580, merged as 49687cfd8) is the first user: its `check_permissions` returns `PermissionDecision::always_ask(…, independent: true)` (`tools/src/workflow_save.rs`, the `always_ask(..., true)` call). This is the Node check: `apps/zcode-cli/packages/core/src/tool/handlers/save-workflow.ts:289,292` sets `alwaysAsk` true and `allowAlways` false, so the prompt is asked in every mode with no always-allow offered. Its test `save_workflow_asks_through_the_policy_chain_and_only_a_session_rule_skips_it` (`tools/src/workflow_save_tests.rs`) runs through `PolicyGate::decide`. A PreToolUse allow is covered by `a_hook_allow_does_not_skip_an_always_ask_in_the_pipeline` (`tools/src/pipeline_hook_tests.rs`), which runs the real policy gate and asks again.
+
+### 9.30 W7-5a-5: production owner assembly and run service composition (as built, part)
+
+**Scope built.** The production owner assembly (`runtime/src/workflow_owner.rs`), the composition of the run service in the
+cli composition root (`cli/src/frontends/workflow_service.rs`), and its lifecycle on the protocol context and at shutdown.
+Tests: `workflow_owner_tests.rs` (2, one of them the integration test: a launch through the production assembly, a fake
+child, a real temp SQLite journal, and one completion read back from `dwf_run`), `workflow_service_tests.rs` (2, the gate-off
+proof). Not in this part: orphan reconciliation and the run list (another agent), progress fan-out and quota auto-resume
+(another agent), and the tools.
+
+**Where it lives.**
+
+- `workflow/src/journal_dwf.rs` `DwfJournal<C>` and `workflow/src/actor_sessions.rs` `NodeActorSessions<C, T>` take their
+  connection as `C: Borrow<Connection>`. A borrow (`&Connection`, as the tests use) and an owned `Connection` both work, so an
+  owner that lives on its own thread holds its own connection (item 200). No behaviour changes for the borrowed case.
+- `runtime/src/workflow_owner.rs`: `production_owner_factory(OwnerStores, Arc<dyn TurnRunner>, Arc<R: ActorSessionRelease>)`
+  builds the `OwnerFactory`. Each launch opens two connections to the session database (the journal's and the actor
+  sessions'), builds `actor_turns` (the production closer, 9.15 item 3), `NodeActorSessions` and `DwfJournal`, and returns a
+  `Hosted` owner over the run's mailbox. `UnwiredTurns` and `UnwiredRelease` are the turn side and the release until the
+  agents' bindings exist (item 202, 203).
+- `OwnerFactory` takes the mailbox's `ActorHandle` as a third argument: the turn side posts its results through the handle,
+  and a mailbox does not give its handle back.
+- `kernel-api/src/workflow_run.rs` `WorkflowRunHost`: the run service's lifecycle as the composition root holds it (held run
+  count, and the close as text lines). The tools keep to `DynamicWorkflowRunPort`. `protocol-zcode` `Context` holds it
+  (`set_workflow_runs` / `workflow_runs`), since `protocol-zcode` does not depend on `runtime`.
+- `runtime/src/lib.rs` `LocalKernel::workflow_residency()`: the process's one residency ledger, shared with the run service
+  (9.21), so a run keeps its parent resident and a session close waits for the run.
+- `cli/src/frontends/workflow_service.rs` `build(runner, residency, database, directory)`: returns the service when a child
+  runner is configured (the node helper's, 9.22), and none otherwise. The ports: `GovernorRunConcurrency` over the process
+  governor (`rust_cli_model::governor::process()`, the same singleton the model admission uses), the kernel's residency, the
+  child runner, and the production owner factory.
+- `cli/src/frontends/app_server.rs`: after the kernel is built, `build` runs and the service is set on the context. At
+  shutdown `WorkflowRunHost::close` runs after the reader ends and before `Kernel::drain_live_runs` (W7-6), and each line is
+  logged as `app.shutdown.run_close_failed`.
+
+**The gate.** Nothing calls `launch` yet, and no session's workflow tools are registered (9.18). Building the service is
+inert: it starts no thread, opens no database and starts no child (the owner factory opens the database only when a run is
+launched). The cli test proves it: a built service holds no run, the database file is not created, the child runner has no
+launch, and the close is clean. Without a child runner (no helper command) no service is built at all.
+
+**Not done (for the follow-ups).**
+
+- The agents' bindings for an actor's turn: the parent's model selection, the workspace, the permission mode, the persona and
+  the submit, escalation and browser ports. The launch does not carry them (9.22 "Session and model bindings are not in
+  it"), so the turn side refuses (item 202). This is the main gap between the assembly and a run that does real work.
+- The progress sink, the draft writer, the task-link store, the artifact store, the execution and file-system ports, and the
+  launch input-id resolver (Node's `createDynamicWorkflowRunService` deps). They are not in the service yet (item 213).
+- Orphan reconciliation at construction (5a-4), and the close of a session that is not the app's shutdown (item 215).
+
+**Node composition, and the differences (numbered from 200).** Node's `create-app.ts` builds the run service once per app,
+over the process governor, the session store, the artifact store and the app's session id, and it is the port the
+`CreateWorkflow` tool reaches. The Rust composition follows that shape where the ports exist.
+
+200. The journal and the actor sessions each hold an owned connection to the session database, opened per launch. Node shares
+     the app's one store. An owner runs on its own thread (9.25 item 130), so it cannot borrow the app's connection, and
+     SQLite serialises the writes of the two connections.
+201. Each launch opens its connections with `open_session_database` (the migration check and the lock wait). An open that
+     fails is the launch's failure: the child is stopped and no entry is kept, as an attach failure is (9.25 "Launch").
+202. The turn side refuses every turn: a child's ask fails with "not wired in this build". Node runs each actor's turn through
+     `createScriptWorkflowAgentRuntime` with its model, persona, tools, permission mode, submit, escalation and browser ports.
+     Refused until the agents' bindings exist (the "not done" list above).
+203. The actor session release refuses. Node closes the actor's browser session when the run is disposed
+     (`create-app.ts`, the comment on `browserControlPort`). A refused release is a close failure for the owner, not a silent
+     leak.
+204. The factory takes one `TurnRunner` for every run, not one per launch. Node builds a runtime per actor from the launch's
+     bindings. A per-run runner needs those bindings first (item 202).
+205. Node leaves the run port undefined when the session store does not carry the `dwf_*` tables (`resolveDynamicWorkflowJournalStore`,
+     "a visible degradation", `create-app.ts`). Rust has no such store: the app checks the session database at startup
+     (`app.storage.failed`), so the owner's connections always open the same database.
+206. Node's per-session `dynamicWorkflowEnabled` gate applies where the tools are registered (`GatedRegistry`, 9.18). The
+     Rust service is built when a child runner exists, which is when the Host configures the helper command, and it is
+     inert until a launch. The gate is not read at construction, so the gate-off path changes nothing at runtime.
+207. The governor is the process singleton `rust_cli_model::governor::process()`, as Node's `getWorkflowConcurrencyGovernor()`
+     is a process singleton. No difference in effect.
+208. The residency ledger is the kernel's one `SessionResidency` (9.21). Node's `registerResidencyBlockingWork` pins the parent
+     session through the runtime's blocking-work list; the Rust guard does the same job, so no difference in effect.
+209. The version written on the actor session rows is the crate's `CARGO_PKG_VERSION`. Node writes its own `appVersion`.
+     The row's version string differs; no code reads it for a decision.
+210. The actor session row's directory is the app's workspace root. Node's child runtime writes its own workspace directory
+     (`ensureSessionPersistedForExternalActivity`), which this part does not compare. Unverified for runs whose workspace is
+     not the app's root; check with the tools PR.
+211. The actor session's title is `workflow subagent <site>@<ordinal>`, and its link is a `workflow_actor` row with path
+     `dwf/<run>/<site>@<ordinal>` and status `running`, as Node's `persistActorSession` writes them (the session id, title and
+     link path are Node's, in `workflow/src/actor_sessions.rs`).
+212. Node reconciles the parent session's non-terminal runs when the service is constructed (`parentSessionId: sessionId` in
+     `create-app.ts`). Rust builds the service without reconciling. Deferred to 5a-4, which owns it.
+213. Node passes the progress sink (`onRunEvent`), the draft writer (`writeWorkflowDraft`), the permission mode getter
+     (`permissionMode`), the launch input-id resolver (`resolveLaunchInputId`), the task-link store, the artifact store and
+     the execution and file-system ports to the run service. The Rust service has none of them yet. The progress sink is
+     5b; the draft writer and the input-id resolver come with the tools; the permission mode with item 202.
+214. Node's close awaits every run's settlement with no timeout (9.25 item 121). Rust's shutdown close is bounded by the
+     residency's close wait (60 seconds, 9.25 item 121), then the drain (W7-6) runs on the sessions that remain. A stuck run
+     is logged, and the process exits.
+215. A session's close does not close the run service. Node has no per-session run service either: the run service serves the
+     app, and a session close is the residency's close (9.21). The run service closes once, at app shutdown.
+216. A close failure at shutdown is logged as `app.shutdown.run_close_failed` at error level. Node returns the failures to the
+     caller that closes the App (9.25 item 132); there is no caller to return them to here, so the log is the record.
+217. The shutdown's run close runs after the protocol reader ends, and before the session drain, so the runs settle before their
+     parent sessions are drained. The order of Node's own disposal was not compared in this part.
+218. The composition builds the run service and its governor adapter in the same process as the protocol server, and removes
+     the `dead_code` allowance of `workflow_governor.rs`, now that a constructor reaches the adapter.
+219. The integration test runs the real owner over a real SQLite journal with a fake child runner. It covers one launch and one
+     completion. The asks, the escalations, the redrive and the stall clocks through the real assembly are not covered; they
+     need the turn side (item 202).
+
+**Tests seen red first.** `workflow_owner_tests.rs` ran against the stubs: 2 failed (a `todo!` in the factory and in the
+refusals). `workflow_service_tests.rs` ran against the stub `build`: 2 failed (`todo!`). Both then passed.
 
 ### 9.27 W7-8a CreateWorkflow (as built)
 

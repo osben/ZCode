@@ -30,11 +30,11 @@ mod fs {
     use std::path::Path;
 
     pub fn read_to_string(path: impl AsRef<Path>) -> io::Result<String> {
-        rust_cli_fs::text_files::read_text(path.as_ref())
+        rust_cli_fs::read_text(path.as_ref())
     }
 
     pub fn write(path: impl AsRef<Path>, text: &str) -> io::Result<()> {
-        rust_cli_fs::text_files::write_text(path.as_ref(), text)
+        rust_cli_fs::write_text(path.as_ref(), text)
     }
 }
 
@@ -396,7 +396,7 @@ async fn a_broken_script_returns_its_diagnostics_without_asking_or_writing() {
         output_text(&output),
         "The workflow script has errors:\nL1:C7 Type 'string' is not assignable to type 'number'.\n\nNOTE: Nothing was saved — fix the errors above and call the tool again."
     );
-    assert!(!rust_cli_fs::text_files::is_file(
+    assert!(!rust_cli_fs::is_regular_file(
         &harness.dirs.cwd.join(".zcode/workflows/broken.dwf.ts")
     ));
 }
@@ -412,7 +412,7 @@ async fn a_checker_that_cannot_answer_denies_the_ask_and_the_call_fails() {
     ));
     let error = harness.call(input).await.expect_err("the call fails");
     assert!(matches!(error, ToolError::Failed { .. }), "{error:?}");
-    assert!(!rust_cli_fs::text_files::is_file(
+    assert!(!rust_cli_fs::is_regular_file(
         &harness.dirs.cwd.join(".zcode/workflows/down.dwf.ts")
     ));
 }
@@ -437,7 +437,7 @@ async fn an_unusable_name_is_refused_before_the_skill_gate_and_before_the_disk_i
         message,
         "'../evil' is not a usable workflow name: names may only contain letters, digits, '.', '-' and '_', and must be 1-64 characters."
     );
-    assert!(!rust_cli_fs::text_files::is_file(
+    assert!(!rust_cli_fs::is_regular_file(
         &harness.dirs.cwd.join(".zcode")
     ));
 }
@@ -612,7 +612,7 @@ async fn a_global_save_writes_under_the_home_directory() {
         .await
         .expect("saved");
     let path = harness.dirs.home.join(".zcode/workflows/research.dwf.ts");
-    assert!(rust_cli_fs::text_files::is_file(&path));
+    assert!(rust_cli_fs::is_regular_file(&path));
     assert_eq!(output.display["scope"], json!("global"));
     assert_eq!(
         output_text(&output),
@@ -714,14 +714,14 @@ async fn a_script_path_outside_the_workspace_is_refused() {
 async fn the_bytes_the_user_approved_are_the_bytes_written_even_if_the_draft_changes() {
     let harness = Harness::new("approved-bytes");
     let draft = harness.dirs.cwd.join("draft.ts");
-    rust_cli_fs::text_files::write_text(&draft, CLEAN).expect("draft");
+    rust_cli_fs::write_text(&draft, CLEAN).expect("draft");
     let input = json!({"name": "approved", "description": "d", "script_path": "draft.ts", "scope": "project"});
     let ctx = harness.with_skill();
     assert!(matches!(
         harness.tool.check_permissions(&input, &ctx).await,
         PermissionDecision::Ask { .. }
     ));
-    rust_cli_fs::text_files::write_text(&draft, "return 2;").expect("edit");
+    rust_cli_fs::write_text(&draft, "return 2;").expect("edit");
     let (tx, _rx) = mpsc::channel(4);
     harness.tool.call(input, ctx, tx).await.expect("saved");
     let text =
@@ -739,7 +739,130 @@ async fn a_compiling_script_is_never_written_without_its_confirmation() {
         .await
         .expect_err("no confirmation, no write");
     assert!(matches!(error, ToolError::Failed { .. }), "{error:?}");
-    assert!(!rust_cli_fs::text_files::is_file(
+    assert!(!rust_cli_fs::is_regular_file(
         &harness.dirs.cwd.join(".zcode/workflows/unasked.dwf.ts")
     ));
+}
+
+// Review round (post-merge): red tests for the SaveWorkflow findings.
+
+/// Item 4: the schema refuses an empty description, `whenToUse` and `script_path`, as zod's `min(1)` does, before the
+/// tool runs. The pipeline validates with the tool's own schema, so the test does the same.
+#[test]
+fn an_empty_description_when_to_use_or_script_path_fails_the_schema() {
+    let harness = Harness::new("min-length");
+    let schema = harness.tool.input_schema();
+    for input in [
+        json!({"name": "x", "description": "", "script": CLEAN, "scope": "project"}),
+        json!({"name": "x", "description": "d", "whenToUse": "", "script": CLEAN, "scope": "project"}),
+        json!({"name": "x", "description": "d", "script_path": "", "scope": "project"}),
+    ] {
+        assert!(
+            crate::validate::validate("SaveWorkflow", &schema, &input).is_some(),
+            "{input}"
+        );
+    }
+}
+
+/// Item 5: a byte order mark before the marker is trimmed by JavaScript's `trimStart`, so an inline script that starts
+/// with one is refused like one that starts with the marker.
+#[tokio::test]
+async fn an_inline_script_that_opens_with_a_byte_order_mark_and_the_marker_is_refused() {
+    let harness = Harness::new("bom");
+    let script = format!("\u{feff}/* zcode-workflow\ndescription: d\n*/\n{CLEAN}");
+    let input = json!({"name": "x", "description": "d", "script": script, "scope": "project"});
+    let outcome = harness
+        .tool
+        .validate_input(&input, &harness.with_skill())
+        .await;
+    assert!(matches!(outcome, Validation::Invalid { .. }), "{outcome:?}");
+}
+
+/// Item 6: a `script_path` that is a symlink inside the workspace to a file outside it is refused.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_script_path_that_is_a_symlink_out_of_the_workspace_is_refused() {
+    let harness = Harness::new("symlink-out");
+    let outside = harness.dirs.home.join("outside.ts");
+    fs::write(&outside, CLEAN).unwrap();
+    // The write creates the workspace directory on the way.
+    fs::write(harness.dirs.cwd.join(".keep"), "").unwrap();
+    let link = harness.dirs.cwd.join("draft-link.ts");
+    rust_cli_fs::symlink(&outside, &link).expect("symlink");
+    let input = json!({"name": "x", "description": "d", "script_path": "draft-link.ts", "scope": "project"});
+    let PermissionDecision::Deny { message } = harness
+        .tool
+        .check_permissions(&input, &harness.with_skill())
+        .await
+    else {
+        panic!("the symlink escapes the workspace");
+    };
+    assert!(message.contains("outside the workspace"), "{message}");
+}
+
+/// Item 8: every unknown key of an argument declaration is named, as zod's `strict()` names them.
+#[tokio::test]
+async fn every_unknown_key_of_an_argument_declaration_is_named() {
+    let harness = Harness::new("keys");
+    let input = json!({"name": "x", "description": "d", "script": CLEAN, "scope": "project",
+        "args": {"q": {"type": "string", "alpha": 1, "beta": 2}}});
+    let Validation::Invalid { message, .. } = harness
+        .tool
+        .validate_input(&input, &harness.with_skill())
+        .await
+    else {
+        panic!("unknown keys are refused");
+    };
+    assert!(message.contains("'alpha', 'beta'"), "{message}");
+}
+
+/// Item 10: a script that does not check is checked once: the decision remembers the diagnostics for the call.
+#[tokio::test]
+async fn a_failing_script_is_checked_once_across_the_decision_and_the_call() {
+    let harness = Harness::new("once");
+    let input = source_input("broken", "BROKEN;");
+    let decision = harness
+        .tool
+        .check_permissions(&input, &harness.with_skill())
+        .await;
+    assert!(
+        matches!(decision, PermissionDecision::Allow { .. }),
+        "{decision:?}"
+    );
+    let ctx = harness.with_skill();
+    let (tx, _rx) = mpsc::channel(4);
+    let output = harness
+        .tool
+        .call(input, ctx, tx)
+        .await
+        .expect("diagnostics");
+    assert_eq!(output.display["ok"], json!(false));
+    assert_eq!(harness.checker.scripts.lock().unwrap().len(), 1);
+}
+
+/// Item 9: past the cap the oldest waiting decision goes, one at a time; the newest ones stay.
+#[test]
+fn the_pending_table_evicts_the_oldest_decision_only() {
+    let id = |n: usize| ToolUseId::new(format!("toolu_{n}"));
+    let mut table = PendingTable::default();
+    for n in 0..=PENDING_CAP {
+        table.insert(id(n), Pending::Approved(n.to_string()));
+    }
+    assert!(table.take(&id(0)).is_none(), "the oldest is evicted");
+    assert!(table.take(&id(1)).is_some(), "the second oldest stays");
+    assert!(table.take(&id(PENDING_CAP)).is_some(), "the newest stays");
+}
+
+/// Review round 2, item 4: a NEL before the marker is not whitespace to JavaScript's trim, so the script is not refused
+/// as one that opens with a block (the same rule as the frontmatter codec).
+#[tokio::test]
+async fn an_inline_script_with_a_nel_before_the_marker_is_not_refused_as_a_block() {
+    let harness = Harness::new("nel-marker");
+    let script = format!("\u{85}/* zcode-workflow\ndescription: d\n*/\n{CLEAN}");
+    let input = json!({"name": "x", "description": "d", "script": script, "scope": "project"});
+    let outcome = harness
+        .tool
+        .validate_input(&input, &harness.with_skill())
+        .await;
+    assert!(matches!(outcome, Validation::Ok), "{outcome:?}");
 }

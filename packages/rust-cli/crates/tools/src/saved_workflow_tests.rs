@@ -11,11 +11,11 @@ mod fs {
     use std::path::Path;
 
     pub fn read_to_string(path: impl AsRef<Path>) -> io::Result<String> {
-        rust_cli_fs::text_files::read_text(path.as_ref())
+        rust_cli_fs::read_text(path.as_ref())
     }
 
     pub fn write(path: impl AsRef<Path>, text: &str) -> io::Result<()> {
-        rust_cli_fs::text_files::write_text(path.as_ref(), text)
+        rust_cli_fs::write_text(path.as_ref(), text)
     }
 }
 
@@ -65,6 +65,21 @@ fn a_name_is_valid_only_within_the_file_safe_shape() {
     }
     for bad in ["", ".", "..", "a/b", "../evil", "a b", "é", &"x".repeat(65)] {
         assert!(!is_valid_name(bad), "{bad:?} is not valid");
+    }
+}
+
+/// Divergence 118: Windows device names are refused whatever their case or extension, and only as the stem.
+#[test]
+fn a_windows_device_name_is_refused_in_any_case_and_with_an_extension() {
+    for bad in [
+        "con", "CON", "Prn", "aux", "nul", "com1", "COM9", "lpt1", "Lpt9", "con.dwf", "NUL.x.y",
+    ] {
+        assert!(!is_valid_name(bad), "{bad:?} is a device name");
+    }
+    for ok in [
+        "con1", "com", "com10", "lpt0", "console", "a.con", ".con", "nul-x",
+    ] {
+        assert!(is_valid_name(ok), "{ok:?} is not a device name");
     }
 }
 
@@ -248,9 +263,7 @@ fn a_save_refuses_a_name_the_rules_do_not_allow_before_it_touches_the_disk() {
         matches!(error, SaveError::InvalidName(ref name) if name == "../evil"),
         "{error:?}"
     );
-    assert!(!rust_cli_fs::text_files::is_file(
-        &dirs.cwd.join("evil.dwf.ts")
-    ));
+    assert!(!rust_cli_fs::is_regular_file(&dirs.cwd.join("evil.dwf.ts")));
 }
 
 #[test]

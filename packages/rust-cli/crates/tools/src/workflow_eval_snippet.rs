@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use async_trait::async_trait;
-use rust_cli_fs::text_files::read_text;
+use rust_cli_fs::read_text;
 use rust_cli_kernel_api::ids::ToolUseId;
 use rust_cli_kernel_api::permission::PermissionDecision;
 use rust_cli_kernel_api::tool::{
@@ -28,11 +28,11 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
-use crate::workflow_create::path_in_workspace;
 use crate::workflow_save::{describe, diagnostic_value};
 use crate::workflow_tools::{
     Contract, DYNAMIC_WORKFLOW_SKILL, contract, skill_loaded, workspace_dir,
 };
+use crate::workspace_path::{Refusal, contain};
 
 /// The refusal code for a bad source or a bad timeout (Node `EVAL_WORKFLOW_SNIPPET_FAILURE_CODE`).
 const FAILURE_CODE: i32 = 400;
@@ -137,10 +137,24 @@ fn schema_failure(input: &EvalInput) -> Option<String> {
 
 /// Node `readWorkflowScriptFile` with `parseFrontmatter: false`: the whole file is the snippet.
 fn read_path(cwd: &Path, input_path: &str) -> Result<Source, String> {
-    // Containment is the one CreateWorkflow uses: the lexical path and the real path (symlinks resolved) both stay inside.
-    let (resolved, real) = path_in_workspace(cwd, input_path)?;
-    let described = describe(&resolved, cwd);
-    let code = read_text(&real).map_err(|error| {
+    // The shared containment check: the lexical path and the real path (symlinks resolved) both stay inside, and the read
+    // goes to the real path that was checked.
+    let contained = match contain(cwd, input_path) {
+        Ok(contained) => contained,
+        Err(Refusal::Outside) => {
+            return Err(format!(
+                "The workflow script file {input_path} is outside the workspace. Pass a `path` inside it, or submit the script inline."
+            ));
+        }
+        Err(Refusal::Unresolved(error)) => {
+            let described = describe(&cwd.join(input_path), cwd);
+            return Err(format!(
+                "The workflow script file {described} could not be read: {error}. Pass `path` for a file that exists, or submit the script inline."
+            ));
+        }
+    };
+    let described = describe(&contained.named, cwd);
+    let code = read_text(&contained.real).map_err(|error| {
         format!(
             "The workflow script file {described} could not be read: {error}. Pass `path` for a file that exists, or submit the script inline."
         )

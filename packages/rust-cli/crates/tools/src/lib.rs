@@ -56,6 +56,8 @@ mod workflow_tools;
 mod saved_workflow;
 mod workflow_list;
 mod workflow_save;
+// Fork: the containment check for a path the model names (SaveWorkflow and CreateWorkflow).
+mod workspace_path;
 // Fork: CreateWorkflow (W7-8a).
 mod workflow_create;
 // Fork: EvalWorkflowSnippet (W7-8c, specs/fork-rust-workflow-engine.md, 9.28).

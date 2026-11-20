@@ -124,7 +124,7 @@ impl Harness {
     }
 
     fn write(&self, name: &str, text: &str) {
-        rust_cli_fs::text_files::write_text(&self.cwd.join(name), text)
+        rust_cli_fs::write_text(&self.cwd.join(name), text)
             .expect("write the snippet file");
     }
 }
@@ -567,8 +567,8 @@ async fn a_symlink_inside_the_workspace_that_leads_out_is_denied() {
     let harness = Harness::new(FakePort::answering(completed(None, &[])));
     harness.write("keep.ts", "return 0;");
     let outside = harness.cwd.parent().expect("a parent").join("outside.ts");
-    rust_cli_fs::text_files::write_text(&outside, "return 1;").expect("the outside file");
-    rust_cli_fs::text_files::symlink(&outside, &harness.cwd.join("link.ts")).expect("the symlink");
+    rust_cli_fs::write_text(&outside, "return 1;").expect("the outside file");
+    rust_cli_fs::symlink(&outside, &harness.cwd.join("link.ts")).expect("the symlink");
     let decision = harness
         .tool
         .check_permissions(&json!({"path": "link.ts"}), &harness.with_skill())
