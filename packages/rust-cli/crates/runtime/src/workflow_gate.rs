@@ -120,8 +120,8 @@ impl ToolRegistry for GatedRegistry {
 /// Fork (W7-7a, 9.36): the workflow tools wired to a port in this build, in Node's order. SaveWorkflow needs the analyzer
 /// (the helper's check), and ListSavedWorkflows reads the home's saved store. CreateWorkflow is dropped even with an
 /// analyzer: `workflow_tools` offers it without a run port, and that form (it typechecks and says it did not run) must
-/// not reach a session. EvalWorkflowSnippet is not offered either: its reads are rooted at the process workspace, not at
-/// the session's directory (9.36, divergence 313).
+/// not reach a session. EvalWorkflowSnippet is not offered either: no snippet port is composed yet. Its reads are rooted per
+/// call at the session's directory (9.41, divergence 313, closed in the service), so the port is the only thing missing.
 ///
 /// Fork (W7-9, 9.40): the run tools (ListWorkflowRuns, ResumeWorkflowRun, ResolveWorkflowQuestion) read and act through
 /// `runs`, the per-session run port of the calling session. They sit before ListSavedWorkflows, in Node's order.
