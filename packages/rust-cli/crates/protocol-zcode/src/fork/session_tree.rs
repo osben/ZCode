@@ -260,7 +260,10 @@ pub(crate) async fn erase_tree(server: &Server, params: &Value) -> Result<Value,
     // Fork (9.50, divergence 593): the gate record is per session, so an erased id takes its gate with it, as a delete does
     // (session_delete.rs). A late child is erased too, so every erased id is forgotten.
     for id in &erased.erased_ids {
-        server.context.dynamic_workflow_gates().forget(&SessionId::new(id));
+        server
+            .context
+            .dynamic_workflow_gates()
+            .forget(&SessionId::new(id));
     }
     // Fork (slice 3): the erased sessions' off-peak runs, flags and admitted inputs go with them.
     let erased_ids: Vec<&str> = erased.erased_ids.iter().map(String::as_str).collect();

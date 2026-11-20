@@ -21,6 +21,7 @@ use rust_cli_workflow::engine::EngineConfig;
 use rust_cli_workflow::event::LaunchFields;
 use rust_cli_workflow::import_build::{BuildOutcome, ImportRefusal};
 use rust_cli_workflow::model::Caps;
+use serde_json::Value;
 
 use super::list::on_blocking_pool;
 use super::submit::{
@@ -77,12 +78,10 @@ impl WorkflowRunService {
                 "this host cannot amend a run's subagent model or script-named models yet, so the run is not amended",
             ));
         }
-        if request.phase_names.is_some()
-            || request.phase_alongside.is_some()
-            || request.inherit_args
-        {
+        // Inherited arguments (9.50, the GUI settings route) are carried from the settled row below; phase routing is not.
+        if request.phase_names.is_some() || request.phase_alongside.is_some() {
             return Err(DynamicWorkflowRunError::new(
-                "this host cannot amend a run with phase routing or inherited arguments yet, so the run is not amended",
+                "this host cannot amend a run with phase routing yet, so the run is not amended",
             ));
         }
         if let Some(limit) = request.max_concurrency
@@ -182,11 +181,14 @@ impl WorkflowRunService {
             .max_concurrency
             .map_or(settled.caps.max_concurrency, |value| value.floor().max(1.0));
 
+        // Inherited arguments: the settled row's stored arguments, as resume reads them (`workflow_run_resume.rs`).
+        let inherited_args = request.inherit_args.then(|| settled.args.clone()).flatten();
+
         // 6. The launch, as a submit does, with the predecessor as `resumedFrom`.
         let input = LaunchInput {
             script_text: request.script_text.clone(),
             run_id: successor.clone(),
-            args: None,
+            args: inherited_args.as_ref().and_then(Value::as_object).cloned(),
             resumed_from: Some(predecessor.clone()),
             cwd: PathBuf::from(&request.cwd),
         };
@@ -195,7 +197,7 @@ impl WorkflowRunService {
             caps: Caps { max_concurrency },
             script_text: Some(request.script_text),
             name: request.name.or(settled.name),
-            args: None,
+            args: inherited_args,
             parent_session_id: Some(parent.to_owned()),
             cwd: Some(request.cwd),
             tool_call_id: request.tool_call_id,

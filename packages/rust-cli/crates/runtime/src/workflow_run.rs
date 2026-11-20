@@ -47,6 +47,10 @@ mod list;
 mod orphans;
 #[path = "workflow_run_resume.rs"]
 mod resume;
+#[path = "workflow_run_retune.rs"]
+mod retune;
+#[path = "workflow_run_settings.rs"]
+mod settings;
 #[path = "workflow_run_submit.rs"]
 mod submit;
 

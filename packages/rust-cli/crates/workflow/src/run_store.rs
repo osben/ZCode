@@ -71,6 +71,13 @@ pub trait RunStore: Send + Sync {
     /// Node `buildImportedCache` over this store's journal (9.43), without a transcript count: completed asks import,
     /// and an in-flight continuation is not built (the transcript surface is not composed yet).
     fn amend_import(&self, predecessor_run_id: &str) -> Result<BuildOutcome>;
+    /// Whether the run's launch recorded script-named model bindings (9.50, the settings route). The settings route refuses
+    /// such a run, since it does not rebind them yet. Required in spirit: the default answers `true` (refuse), so a store that
+    /// does not read the launch cannot amend a settings change by accident.
+    fn launch_binds_models(&self, run_id: &str) -> Result<bool> {
+        let _ = run_id;
+        Ok(true)
+    }
     /// One run's detail read (9.42): the row with its timestamps, and the run's entry of the journal's replay (the
     /// run-panel fields: pending questions, holes, artifacts, phases, node entries, the launch settings).
     ///
@@ -193,6 +200,12 @@ impl RunStore for SqliteRunStore {
         let conn = self.conn.lock_unpoisoned();
         let journal = DwfJournal::new(&*conn, self.clock);
         build_imported_cache(&journal, predecessor_run_id, BuildOptions::default())
+    }
+
+    fn launch_binds_models(&self, run_id: &str) -> Result<bool> {
+        let conn = self.conn.lock_unpoisoned();
+        Ok(dwf::run_launched_payload(&conn, run_id)?
+            .is_some_and(|launch| launch.get("modelBindings").is_some()))
     }
 
     fn run_detail(

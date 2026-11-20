@@ -431,13 +431,12 @@ async fn a_non_finite_limit_is_refused_before_anything_is_stopped() {
 }
 
 #[tokio::test]
-async fn phase_routing_and_inherited_arguments_are_refused_not_dropped() {
+async fn phase_routing_is_refused_not_dropped() {
     let fx = fixture(|conn| interrupted(conn, "dwfrun-phase", PARENT, "return 1\n"));
     let mut phases = amend_request("dwfrun-phase", "return 2\n");
     phases.phase_names = Some(vec!["main".to_owned()]);
-    let mut args = amend_request("dwfrun-phase", "return 2\n");
-    args.inherit_args = true;
-    for request in [phases, args] {
+    // Inherited arguments are carried since 9.50 (the settings route); see `workflow_run_settings_tests`.
+    for request in [phases] {
         let error = fx
             .service
             .for_session(&SessionId::new(PARENT))
@@ -827,5 +826,375 @@ async fn the_successor_inherits_the_predecessor_limit_unless_one_is_given() {
         row(&fx, run_id.as_str()).max_concurrency,
         2,
         "the limit the call gave"
+    );
+}
+
+// ---- 9.50 (W8c): the in-place retune, the GUI settings change and the settings turn's text.
+
+use rust_cli_kernel_api::workflow_run::{RetuneOutcome, RetuneRefusal, RetuneRequest};
+use std::sync::Mutex as TestMutex;
+
+use super::settings::{
+    Change, RunSettingsSink, SettingsAmend, SettingsOutcome, SettingsRefusal, SettingsRequest,
+    SettingsTurn, settings_message_text,
+};
+
+/// The parent's side as a test sees it: the activations and the settings turns, in order.
+#[derive(Default)]
+struct Recorder {
+    activations: TestMutex<usize>,
+    turns: TestMutex<Vec<SettingsTurn>>,
+}
+
+impl RunSettingsSink for Recorder {
+    fn activate(&self, _parent: &SessionId) {
+        *self.activations.lock().unwrap() += 1;
+    }
+
+    fn settings_turn(&self, _parent: &SessionId, turn: SettingsTurn) {
+        self.turns.lock().unwrap().push(turn);
+    }
+}
+
+/// A stopped run with its stored arguments, as an earlier process interrupted it.
+fn interrupted_with_args(conn: &rusqlite::Connection, id: &str, parent: &str, args: Value) {
+    let run = RunRecord {
+        run_id: id.to_owned(),
+        parent_session_id: Some(parent.to_owned()),
+        cwd: Some("project".to_owned()),
+        script_text: Some("return 1\n".to_owned()),
+        args: Some(args),
+        max_concurrency: 4,
+        status: DwfStatus::Stopped,
+        stop_reason: Some(DwfStop::Interrupted),
+        failure: Some(json!({ "code": "Interrupted", "message": "the run was interrupted" })),
+        ..RunRecord::default()
+    };
+    dwf::create_run(conn, &run, 1).expect("seed run row");
+}
+
+fn settings(run: &str, max: Option<Option<f64>>) -> SettingsRequest {
+    SettingsRequest {
+        run_id: WorkflowRunId::new(run),
+        subagent_model: None,
+        max_concurrency: max,
+    }
+}
+
+/// A live run of the parent: resumed from its stopped row, so its owner keeps running in the fake child.
+async fn live_run(fx: &Fixture, id: &str) {
+    let resumed = fx
+        .service
+        .for_session(&SessionId::new(PARENT))
+        .resume(&WorkflowRunId::new(id))
+        .await
+        .expect("the resume answers");
+    assert_eq!(resumed, json!({ "ok": true, "runId": id }));
+}
+
+#[tokio::test]
+async fn a_concurrency_change_on_a_live_run_is_applied_in_place_with_one_settings_turn() {
+    let fx = fixture(|conn| interrupted(conn, "dwfrun-live-cfg", PARENT, "return 1\n"));
+    live_run(&fx, "dwfrun-live-cfg").await;
+    let sink = Recorder::default();
+
+    let answer = fx
+        .service
+        .amend_settings(PARENT, settings("dwfrun-live-cfg", Some(Some(2.0))), &sink)
+        .await
+        .expect("the change answers");
+    let SettingsOutcome::Retuned {
+        run_id,
+        tool_call_id,
+    } = answer
+    else {
+        panic!("a live run is retuned in place: {answer:?}");
+    };
+    assert_eq!(
+        run_id,
+        WorkflowRunId::new("dwfrun-live-cfg"),
+        "the same run"
+    );
+    assert!(tool_call_id.starts_with("settings-"));
+    assert_eq!(
+        row(&fx, "dwfrun-live-cfg").max_concurrency,
+        2,
+        "the cap is written to the row"
+    );
+    assert_eq!(fx.fake.launches().len(), 1, "no successor was started");
+    assert_eq!(*sink.activations.lock().unwrap(), 1);
+    let turns = sink.turns.lock().unwrap();
+    assert_eq!(turns.len(), 1);
+    assert_eq!(turns[0].run_id, WorkflowRunId::new("dwfrun-live-cfg"));
+    assert_eq!(
+        turns[0].text,
+        "Changed the settings of workflow run dwfrun-live-cfg from the GUI: at most 2 of its subagents run at once. \
+         Run dwfrun-live-cfg keeps running under the new limit; nothing was stopped and no new run was started. \
+         Progress and results arrive as background notifications; do not amend, resume or restart it."
+    );
+    assert_eq!(turns[0].amend.predecessor_run_id, None);
+    assert_eq!(
+        turns[0].amend.max_concurrency,
+        Some(Change {
+            from: Some(4.0),
+            to: Some(2.0)
+        })
+    );
+    assert_eq!(
+        turns[0].title_input, "dwfrun-live-cfg",
+        "an unnamed run seeds its title with its id"
+    );
+}
+
+#[tokio::test]
+async fn returning_a_live_run_to_the_default_keeps_it_with_no_limit() {
+    let fx = fixture(|conn| interrupted(conn, "dwfrun-live-default", PARENT, "return 1\n"));
+    live_run(&fx, "dwfrun-live-default").await;
+    let sink = Recorder::default();
+
+    let answer = fx
+        .service
+        .amend_settings(PARENT, settings("dwfrun-live-default", Some(None)), &sink)
+        .await
+        .expect("the change answers");
+    assert!(
+        matches!(answer, SettingsOutcome::Retuned { .. }),
+        "{answer:?}"
+    );
+    assert_eq!(
+        row(&fx, "dwfrun-live-default").max_concurrency,
+        DEFAULT as i64
+    );
+    let turns = sink.turns.lock().unwrap();
+    assert_eq!(
+        turns[0].text,
+        "Changed the settings of workflow run dwfrun-live-default from the GUI: the limit on subagents at once is back to the default. \
+         Run dwfrun-live-default keeps running with no limit; nothing was stopped and no new run was started. \
+         Progress and results arrive as background notifications; do not amend, resume or restart it."
+    );
+}
+
+#[tokio::test]
+async fn a_change_to_a_settled_run_amends_it_and_the_successor_inherits_the_arguments() {
+    let fx = fixture(|conn| {
+        interrupted_with_args(conn, "dwfrun-settled-cfg", PARENT, json!({ "topic": "x" }))
+    });
+    let sink = Recorder::default();
+
+    let answer = fx
+        .service
+        .amend_settings(
+            PARENT,
+            settings("dwfrun-settled-cfg", Some(Some(2.0))),
+            &sink,
+        )
+        .await
+        .expect("the change answers");
+    let SettingsOutcome::Amended {
+        run_id,
+        superseded_run_id,
+        ..
+    } = answer
+    else {
+        panic!("a settled run is amended: {answer:?}");
+    };
+    assert_eq!(
+        superseded_run_id, None,
+        "a settled predecessor is not superseded"
+    );
+    let successor = row(&fx, run_id.as_str());
+    assert_eq!(
+        successor.resumed_from.as_deref(),
+        Some("dwfrun-settled-cfg")
+    );
+    assert_eq!(
+        successor.args,
+        Some(json!({ "topic": "x" })),
+        "the arguments are inherited"
+    );
+    assert_eq!(successor.max_concurrency, 2);
+    assert_eq!(*sink.activations.lock().unwrap(), 1);
+    let turns = sink.turns.lock().unwrap();
+    assert_eq!(turns[0].run_id, run_id);
+    assert_eq!(
+        turns[0].amend.predecessor_run_id.as_deref(),
+        Some("dwfrun-settled-cfg")
+    );
+    assert_eq!(
+        turns[0].text,
+        format!(
+            "Changed the settings of workflow run dwfrun-settled-cfg from the GUI: at most 2 of them run at once. \
+             The same script continues as run {run_id}, which takes over from run dwfrun-settled-cfg and imports everything run dwfrun-settled-cfg finished as cache. \
+             Progress and results arrive as background notifications; do not amend, resume or restart it."
+        )
+    );
+}
+
+#[tokio::test]
+async fn an_unchanged_limit_changes_nothing_and_says_so() {
+    let fx = fixture(|conn| interrupted(conn, "dwfrun-same", PARENT, "return 1\n"));
+    let sink = Recorder::default();
+    for max in [None, Some(Some(4.0))] {
+        let answer = fx
+            .service
+            .amend_settings(PARENT, settings("dwfrun-same", max), &sink)
+            .await
+            .expect("the change answers");
+        assert_eq!(answer, SettingsOutcome::Refused(SettingsRefusal::Unchanged));
+    }
+    assert!(fx.fake.launches().is_empty());
+    assert!(sink.turns.lock().unwrap().is_empty());
+    assert_eq!(row(&fx, "dwfrun-same").status, DwfStatus::Stopped);
+}
+
+#[tokio::test]
+async fn a_completed_run_is_not_configurable_and_another_sessions_run_is_not_found() {
+    let fx = fixture(|conn| {
+        interrupted(conn, "dwfrun-other", OTHER, "return 1\n");
+        let done = RunRecord {
+            run_id: "dwfrun-done".to_owned(),
+            parent_session_id: Some(PARENT.to_owned()),
+            cwd: Some("project".to_owned()),
+            script_text: Some("return 1\n".to_owned()),
+            max_concurrency: 4,
+            status: DwfStatus::Completed,
+            ..RunRecord::default()
+        };
+        dwf::create_run(conn, &done, 1).expect("seed completed run");
+    });
+    let sink = Recorder::default();
+    let done = fx
+        .service
+        .amend_settings(PARENT, settings("dwfrun-done", Some(Some(2.0))), &sink)
+        .await
+        .expect("answers");
+    assert_eq!(
+        done,
+        SettingsOutcome::Refused(SettingsRefusal::NotConfigurable)
+    );
+    let other = fx
+        .service
+        .amend_settings(PARENT, settings("dwfrun-other", Some(Some(2.0))), &sink)
+        .await
+        .expect("answers");
+    assert_eq!(other, SettingsOutcome::Refused(SettingsRefusal::NotFound));
+    let unknown = fx
+        .service
+        .amend_settings(PARENT, settings("dwfrun-missing", Some(Some(2.0))), &sink)
+        .await
+        .expect("answers");
+    assert_eq!(unknown, SettingsOutcome::Refused(SettingsRefusal::NotFound));
+    assert!(fx.fake.launches().is_empty());
+    assert!(sink.turns.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_subagent_model_change_is_refused_before_anything_changes() {
+    let fx = fixture(|conn| interrupted(conn, "dwfrun-model", PARENT, "return 1\n"));
+    let sink = Recorder::default();
+    let mut request = settings("dwfrun-model", Some(Some(2.0)));
+    request.subagent_model = Some(Some("provider/model".to_owned()));
+    let answer = fx
+        .service
+        .amend_settings(PARENT, request, &sink)
+        .await
+        .expect("answers");
+    assert!(
+        matches!(
+            answer,
+            SettingsOutcome::Refused(SettingsRefusal::ModelUnavailable { .. })
+        ),
+        "{answer:?}"
+    );
+    assert!(fx.fake.launches().is_empty());
+    assert_eq!(row(&fx, "dwfrun-model").status, DwfStatus::Stopped);
+    assert!(sink.turns.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_run_whose_launch_names_models_is_refused_before_the_predecessor_is_stopped() {
+    let fx = fixture(|conn| {
+        interrupted(conn, "dwfrun-named", PARENT, "return 1\n");
+        dwf::append_event(
+            conn,
+            "dwfrun-named",
+            &json!({ "type": "run-launched", "modelBindings": { "poet": "openai/gpt-x" } }),
+            2,
+        )
+        .expect("seed the launch event");
+    });
+    let sink = Recorder::default();
+    let answer = fx
+        .service
+        .amend_settings(PARENT, settings("dwfrun-named", Some(Some(2.0))), &sink)
+        .await
+        .expect("answers");
+    assert!(
+        matches!(
+            answer,
+            SettingsOutcome::Refused(SettingsRefusal::ModelUnavailable { .. })
+        ),
+        "{answer:?}"
+    );
+    let predecessor = row(&fx, "dwfrun-named");
+    assert_eq!(predecessor.superseded_by, None);
+    assert!(fx.fake.launches().is_empty());
+    assert!(sink.turns.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn the_port_retune_answers_not_live_for_a_settled_or_unknown_run() {
+    let fx = fixture(|conn| interrupted(conn, "dwfrun-stopped", PARENT, "return 1\n"));
+    let port = fx.service.for_session(&SessionId::new(PARENT));
+    for id in ["dwfrun-stopped", "dwfrun-unknown"] {
+        let answer = port
+            .retune_concurrency(RetuneRequest {
+                run_id: WorkflowRunId::new(id),
+                max_concurrency: Some(2.0),
+            })
+            .await
+            .expect("a refusal is an answer");
+        assert_eq!(
+            answer,
+            RetuneOutcome::Refused(RetuneRefusal::NotLive),
+            "{id}"
+        );
+    }
+    assert_eq!(
+        row(&fx, "dwfrun-stopped").max_concurrency,
+        4,
+        "nothing changed"
+    );
+}
+
+#[test]
+fn the_settings_text_names_the_successor_or_the_in_place_run_as_node_does() {
+    let amendment = SettingsAmend {
+        predecessor_run_id: Some("run_a".to_owned()),
+        max_concurrency: Some(Change {
+            from: Some(4.0),
+            to: Some(2.0),
+        }),
+        default_concurrency: 6.0,
+    };
+    assert_eq!(
+        settings_message_text(Some("Nightly"), "run_a", "run_b", true, &amendment),
+        "Changed the settings of workflow run run_a (\"Nightly\") from the GUI: at most 2 of them run at once. \
+         The same script continues as run run_b, which supersedes run run_a and imports everything run run_a finished as cache. \
+         Progress and results arrive as background notifications; do not amend, resume or restart it."
+    );
+    let in_place = SettingsAmend {
+        predecessor_run_id: None,
+        max_concurrency: Some(Change {
+            from: Some(2.0),
+            to: None,
+        }),
+        default_concurrency: 6.0,
+    };
+    assert_eq!(
+        settings_message_text(None, "run_a", "run_a", false, &in_place),
+        "Changed the settings of workflow run run_a from the GUI: the limit on subagents at once is back to the default. \
+         Run run_a keeps running with no limit; nothing was stopped and no new run was started. \
+         Progress and results arrive as background notifications; do not amend, resume or restart it."
     );
 }

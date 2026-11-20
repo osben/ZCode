@@ -624,6 +624,26 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
         self.after_engine(result)
     }
 
+    /// The GUI settings retune on the owner (9.50, divergence 455). The owner reads the cap, so "unchanged" and "not live"
+    /// are decided on the engine's own state, not on a copy held by the run service. A settled run answers `NotLive`.
+    pub fn retune(&mut self, max_concurrency: f64) -> Result<RetuneAnswer> {
+        if self.engine.is_settled() || !max_concurrency.is_finite() {
+            return Ok(RetuneAnswer::NotLive);
+        }
+        let previous = self.engine.caps().max_concurrency;
+        let target = max_concurrency.floor().max(1.0);
+        if target == previous {
+            return Ok(RetuneAnswer::Unchanged { current: previous });
+        }
+        if !self.set_max_concurrency(target)? {
+            return Ok(RetuneAnswer::NotLive);
+        }
+        Ok(RetuneAnswer::Retuned {
+            previous,
+            current: self.engine.caps().max_concurrency,
+        })
+    }
+
     /// Node `concurrencyChanged`: a cap change the governor fanned out to this run. Reached through the mailbox.
     pub fn concurrency_changed(&mut self, change: &ConcurrencyChange) -> Result<()> {
         if let Some(stall) = &self.stall {
@@ -1662,4 +1682,16 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
             None => Ok(()),
         }
     }
+}
+
+/// What the owner says about a retune (9.50, divergence 455). The owner reads the limit it holds, so the run service
+/// only maps this to its own answer.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum RetuneAnswer {
+    /// The engine is settled, or refused the change: the run is not live for an in-place change.
+    NotLive,
+    /// The limit is already the one asked for.
+    Unchanged { current: f64 },
+    /// The limit changed from `previous` to `current`.
+    Retuned { previous: f64, current: f64 },
 }

@@ -765,7 +765,13 @@ fn report_items_after_the_keepth_report_are_removed_and_nothing_else_changes() {
     create_run(&conn, &run("run_1", RunStatus::Running), 10).unwrap();
     append_event(&conn, "run_1", &json!({"type": "log", "message": "a"}), 1).unwrap();
     for ordinal in 0..4 {
-        append_event(&conn, "run_1", &report_event(ordinal, &format!("item {ordinal}")), 2).unwrap();
+        append_event(
+            &conn,
+            "run_1",
+            &report_event(ordinal, &format!("item {ordinal}")),
+            2,
+        )
+        .unwrap();
     }
     append_event(&conn, "run_1", &json!({"type": "log", "message": "b"}), 3).unwrap();
     let full = list_events(&conn, "run_1").unwrap();
@@ -783,7 +789,10 @@ fn report_items_after_the_keepth_report_are_removed_and_nothing_else_changes() {
         "the first two reports keep their items, the later two lose them"
     );
     for (bounded, whole) in capped.iter().zip(&full) {
-        assert_eq!((bounded.sequence, bounded.time_created), (whole.sequence, whole.time_created));
+        assert_eq!(
+            (bounded.sequence, bounded.time_created),
+            (whole.sequence, whole.time_created)
+        );
         if whole.event["type"] != "report" {
             assert_eq!(bounded.event, whole.event, "non-report events are verbatim");
         } else {
@@ -843,9 +852,17 @@ fn roster_nodes_are_the_non_report_rows_without_results_and_keep_their_input() {
     assert_eq!(rows.len(), 1, "the report row is not a roster row");
     assert_eq!(rows[0].kind, NodeKind::Ask);
     assert_eq!(rows[0].result, None, "result_json is not read");
-    assert_eq!(rows[0].input, Some(json!({ "prompt": "p" })), "input_json stays, as Node keeps it");
+    assert_eq!(
+        rows[0].input,
+        Some(json!({ "prompt": "p" })),
+        "input_json stays, as Node keeps it"
+    );
     assert_eq!(rows[0].stats, ask.stats);
-    assert_eq!(list_nodes(&conn, "run_1").unwrap()[0].result, ask.result, "the full read still has it");
+    assert_eq!(
+        list_nodes(&conn, "run_1").unwrap()[0].result,
+        ask.result,
+        "the full read still has it"
+    );
 }
 
 #[test]
@@ -868,5 +885,8 @@ fn actors_read_without_their_persona() {
     assert_eq!(rows[0].persona, None);
     assert_eq!(rows[0].name.as_deref(), Some("scout"));
     assert_eq!(rows[0].resolved_model.as_deref(), Some("m"));
-    assert_eq!(list_actors(&conn, "run_1").unwrap()[0].persona, actor.persona);
+    assert_eq!(
+        list_actors(&conn, "run_1").unwrap()[0].persona,
+        actor.persona
+    );
 }

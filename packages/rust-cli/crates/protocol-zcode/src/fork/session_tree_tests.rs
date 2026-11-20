@@ -260,7 +260,7 @@ async fn an_erased_tree_stops_its_reminder_clocks_and_forgets_its_gates() {
         tools_on_demand: true,
     };
     for id in [ROOT, CHILD] {
-        server.record_dynamic_workflow_gate(&SessionId::new(id), gate.clone());
+        server.record_dynamic_workflow_gate(&SessionId::new(id), gate);
     }
     let reminders = Arc::new(WorkflowReminders::new(
         server.context.dynamic_workflow_gates().clone(),
@@ -270,7 +270,10 @@ async fn an_erased_tree_stops_its_reminder_clocks_and_forgets_its_gates() {
     server.context.set_workflow_reminders(reminders.clone());
     for id in [ROOT, CHILD] {
         reminders.turn_finished(id);
-        assert!(reminders.has_session(id), "a turn edge makes the clock of {id}");
+        assert!(
+            reminders.has_session(id),
+            "a turn edge makes the clock of {id}"
+        );
     }
     let result = erase_tree(&server, &json!({"sessionIds": [ROOT]}))
         .await

@@ -920,6 +920,23 @@ pub fn list_actors_without_persona(conn: &Connection, run_id: &str) -> Result<Ve
         .map_err(Into::into)
 }
 
+/// The payload of the run's first `run-launched` event, if it has one (9.50, the settings route): the launch carries the
+/// script's model bindings and path, which the row does not hold. A single indexed row, not the whole journal.
+pub fn run_launched_payload(conn: &Connection, run_id: &str) -> Result<Option<Value>> {
+    let payload: Option<String> = conn
+        .query_row(
+            "select payload_json from dwf_event where run_id = ?1 and type = 'run-launched' order by sequence limit 1",
+            params![run_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    payload
+        .map(|text| {
+            serde_json::from_str(&text).context("dwf journal: a run-launched payload is not JSON")
+        })
+        .transpose()
+}
+
 /// Node `createSessionTaskLink` for an actor: an upsert on `child_session_id` that moves only status
 /// and time. The child session row must exist (foreign key).
 pub fn insert_workflow_actor_link(
