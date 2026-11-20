@@ -2063,6 +2063,47 @@ The W7-5 brief covers more than one PR. The Node sources are about 160 KB (`dyna
 90. Owner shutdown has no Node counterpart: the Node driver runs in the process and has no owner to drop. A pending reply gets `DriverError` with the text "the workflow owner shut down before this request settled".
 91. An owner error from one ticketed call (a pump error after the engine admitted the ticket) is returned to that call's caller in place of the ticket's settlement. The settlement stays for `take_outcomes`. Node's promise has no such split: it settles with the ask's own outcome. Only that one call loses its reply.
 
+### 9.25 W7-5a-3: runtime workflow run service (as built, part)
+
+**Scope built.** `runtime/src/workflow_run.rs` (service, bridge, owner host) and `workflow_run_tests.rs` (13 tests). Launch, the child bridge, the run map and close are in. Not built: the production owner assembly, the cli composition (the gate stays off), admission beyond the governor bound, and orphan reconciliation (5a-4). See "Not done" below.
+
+**Where it lives.**
+
+- `WorkflowRunService` holds one run map and a `SessionResidency`, a `RunConcurrency` and a `WorkflowChildRunner` (all ports). `OwnerFactory` builds a run's owner over its mailbox on the launching thread. `HostedOwner` (`Hosted<J, S>` in production shape) attaches the run (`attach_run`, 9.12 and 9.15) and serves the owner's mailbox on a thread.
+- `WireBridge` implements `ChildHandler`. Create-actor and events are direct mailbox calls. Ask, world read and publish are sent with `ActorHandle::send_ticketed`, drained, and awaited (`ticketed`). Errors map to the wire as Node's `toWireError` does (`name` and `code` are the error code; `violations` and `finalText` are kept).
+- `workflow/src/actor_mailbox.rs` and `driver_owner.rs` gain two small pieces the bridge needs: `ActorRequest::Fail` (`ActorHandle::fail`, `ActorDriverOwner::fail`, the engine's `fail`) for a child's failed `complete`, and `send_ticketed` / `await_ticketed` (a ticketed call sent without waiting).
+
+**Launch (one synchronous step after the compile).** Order: a closed service and a run without a parent are refused first; then the child is started (compile, entry write, spawn), which creates no engine and no run row for a rejected script; then, under the run map's lock with no await, the owner is built, attached (residency guard, governor bound, redrive and stall clocks), its thread is started, and the entry is inserted. A failed attach or thread start stops the child and keeps no entry. A close that ran during the compile refuses the launch and stops the child.
+
+**Close.** `close` marks the service closed (later launches are refused), takes the run map, stops each child and posts `stop_interrupted`, then calls `SessionResidency::close` once per parent session on the blocking pool. A session that does not close in time marks its runs stuck. The other owner threads are joined, and their `take_close_failures` are returned in `CloseReport`.
+
+**Settlement.** The child's outcome drives the owner: `complete` (ok), `fail` (a script error), or `stop_interrupted` (the stream stopped). The run's entry is removed and its owner thread joined. The owner thread ends once its run settles (the guard is released there).
+
+**Tests (red first).** The module was written with `todo!` bodies, and the 13 tests were run first: 12 failed on the stubs (the thirteenth is an existing test). Then the bodies were implemented. Two of the first green-run failures were test faults, fixed in the test: the wait helper blocked the single-threaded test runtime (it now yields), and a ticket reply was dropped when the owner settled on the same call (the bridge now keeps the reply). Test names: a launched run holds its guard and bound until its child completes; a rejected script starts no child; a run without a parent is refused before anything starts; a residency refusal stops the child and keeps no entry; a closed service refuses a launch; a duplicate live id is refused; close stops a live run as interrupted and waits for its guard; close reports a non-closing residency as stuck; a child's log and phase do not wedge the owner; a child's error fails the run and releases it; an ask for an unknown actor is answered with the engine's error; create-actor on a dead owner is refused.
+
+**Admission (finding, not built).** Node's launch has no run-level slot wait: the run's cap is a governor bound (`setRunBound`), and slot waits happen per model request in the driver's admission port (`workflow-concurrency-governor.ts`). The Rust equivalent is already in place (9.10, 9.20: the bound through `attach_run`, the wait through `AskObserver::waiting_for_slot`). So the run service adds only the bound, which it does.
+
+**Not done (for the follow-ups).**
+
+- The production owner assembly: `NodeActorSessions<'a, T>` borrows a `rusqlite::Connection`, so an owner moved to a thread needs an owned journal and session set. The `OwnerFactory` seam is where that goes. No production `TurnRunner` is passed in yet.
+- The cli composition (`node_helper::install`) does not install the service yet; the gate stays off, and nothing user-visible changes.
+- Orphan reconciliation and the run list (5a-4); progress fan-out, `workflowRuns`, quota auto-resume (5b).
+- The mailbox has no `declare-artifact` or hole request (9.23 defers them); see divergences 123 and 124.
+
+**Node divergences (new in W7-5a-3, numbered from 120).**
+
+120. The drain follows each ticketed call, not each slice of calls. The handler trait has no slice boundary, so each ask, world read or publish is sent, drained, and awaited. A drain with nothing queued is a no-op, so only the timing of starts within one slice can differ.
+121. Close is bounded. The residency close waits the default 60 seconds, and a run whose guard is not released in time is reported as stuck. Node's close awaits settlement with no timeout (`dynamic-workflow-run-service.ts` invariant 7; `dynamic-workflow-run-lifecycle.ts`, the close's doc comment).
+122. A stuck run's owner thread is not joined and is left to end on its own, and its entry is dropped. Node's close never returns in that case.
+123. A child's `declare-artifact` fails the run with `DriverError`, "declare-artifact is not wired yet". Node records the artifact. The mailbox has no such request yet (9.23 defers it to W7-5b), so the declaration is refused rather than dropped.
+124. A hole request is refused with a `DriverError` wire error until W7-8. Node fills the hole.
+125. A script's error keeps its message as the run's error. Node also records the sandbox's stack as the run error's cause (`dynamic-workflow-runtime` `harness.ts`, the `complete` case). The stack is not kept.
+126. A host-side stop (the child's stream ended before `complete`) settles as `stop_interrupted`, which carries no error text. Node passes an `Interrupted` error with the cause (`harness.ts`, the sandbox-crash case). The cause is not journaled.
+127. A call after the run settled is refused by the owner's closed mailbox, with the mailbox's "owner is gone" text. Node answers with the run's own error (`Run already settled.`).
+128. A settled run's entry is removed when its child completes. Node keeps up to 32 terminal entries for observation (`TERMINAL_REGISTRY_LIMIT`, `dynamic-workflow-run-lifecycle.ts`). Retention belongs with the run list (5a-4 and 5b).
+129. An attach refused by the residency after the child started stops that child, and its outcome is dropped. Node's residency refusal throws before the engine starts (the close gate). The child was briefly started here.
+130. Each live run has one owner thread. Node's owner runs on the process event loop. The owner must stay single-threaded, so the thread is per run, and the closes wait on it.
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.

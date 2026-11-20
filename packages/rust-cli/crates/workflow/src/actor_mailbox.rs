@@ -18,6 +18,7 @@ use crate::actor_feed::FeedEvent;
 use crate::driver_owner::{
     ActorDriverOwner, ActorSessions, SubmitReply, TicketSettlement, TurnEndReply,
 };
+use crate::error::WorkflowError;
 use crate::escalation::{AnswerOutcome, EscalateOutcome, EscalationRequest};
 use crate::journal::JournalPort;
 use crate::model::{ConcurrencyChange, Ref};
@@ -162,6 +163,11 @@ pub(crate) enum ActorRequest {
         artifact: Value,
         reply: Sender<Result<()>>,
     },
+    /// The child's `complete` with an error (W7-5a-3): the script threw, and the run fails with the error (Node `failRun`).
+    Fail {
+        error: WorkflowError,
+        reply: Sender<Result<()>>,
+    },
     /// The host's drain after a slice of child calls (W7-5a-2). Starts the turns the calls queued.
     Drain { reply: Sender<Result<()>> },
     /// The child's `log` event (W7-5a-2). No answer goes back.
@@ -181,6 +187,26 @@ impl ActorHandle {
     pub(crate) fn post(&self, request: ActorRequest) -> bool {
         self.tx.send(request).is_ok()
     }
+}
+
+/// A child's ticketed call, for [`ActorHandle::send_ticketed`] (W7-5a-3).
+#[derive(Debug, Clone, PartialEq)]
+pub enum TicketedCall {
+    Ask {
+        site_id: String,
+        actor: String,
+        instructions: String,
+    },
+    WorldRead {
+        site_id: String,
+        op: String,
+        args: Vec<Value>,
+    },
+    PublishArtifact {
+        site_id: String,
+        op: String,
+        args: Vec<Value>,
+    },
 }
 
 /// The owner's side of the channel. Only the owner thread receives from it.
@@ -277,6 +303,9 @@ fn dispatch_request<J: JournalPort, S: ActorSessions>(
         }
         ActorRequest::Complete { artifact, reply } => {
             let _ = reply.send(owner.complete(artifact));
+        }
+        ActorRequest::Fail { error, reply } => {
+            let _ = reply.send(owner.fail(error));
         }
         ActorRequest::Drain { reply } => {
             let _ = reply.send(owner.drain());
@@ -560,6 +589,59 @@ impl ActorHandle {
     /// The child's `complete` (W7-5a-2): the script's end.
     pub fn complete(&self, artifact: Value) -> Result<(), MailboxError> {
         self.call(|reply| ActorRequest::Complete { artifact, reply })
+    }
+
+    /// The child's failed `complete` (W7-5a-3): the run fails with `error`.
+    pub fn fail(&self, error: WorkflowError) -> Result<(), MailboxError> {
+        self.call(|reply| ActorRequest::Fail { error, reply })
+    }
+
+    /// Sends one ticketed child call without waiting for its settlement (W7-5a-3). The caller drains the owner after
+    /// the send, which starts the turns the call queued, and then waits on the returned receiver with
+    /// [`ActorHandle::await_ticketed`]. The send is ordered before any later request from this handle.
+    pub fn send_ticketed(
+        &self,
+        call: TicketedCall,
+    ) -> Result<Receiver<Result<TicketSettlement>>, MailboxError> {
+        let (reply, answer) = channel();
+        let request = match call {
+            TicketedCall::Ask {
+                site_id,
+                actor,
+                instructions,
+            } => ActorRequest::Ask {
+                site_id,
+                actor,
+                instructions,
+                reply,
+            },
+            TicketedCall::WorldRead { site_id, op, args } => ActorRequest::WorldRead {
+                site_id,
+                op,
+                args,
+                reply,
+            },
+            TicketedCall::PublishArtifact { site_id, op, args } => ActorRequest::PublishArtifact {
+                site_id,
+                op,
+                args,
+                reply,
+            },
+        };
+        self.tx
+            .send(request)
+            .map_err(|_| MailboxError::NotDelivered)?;
+        Ok(answer)
+    }
+
+    /// Waits for a ticketed call's settlement (W7-5a-3). `Ok` carries the settlement, whose `Err` is the call's own error.
+    pub fn await_ticketed(
+        answer: Receiver<Result<TicketSettlement>>,
+    ) -> Result<TicketSettlement, MailboxError> {
+        match answer.recv() {
+            Ok(result) => result.map_err(MailboxError::Owner),
+            Err(_) => Err(MailboxError::NoAnswer),
+        }
     }
 
     /// The host's drain after a slice of child calls (W7-5a-2): starts the turns the calls queued.

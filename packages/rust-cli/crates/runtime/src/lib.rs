@@ -32,6 +32,7 @@ mod table;
 mod usage;
 pub mod workflow_assembly;
 mod workflow_gate;
+pub mod workflow_run;
 mod workspace_sessions;
 
 use std::sync::Arc;
