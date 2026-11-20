@@ -15,7 +15,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use rust_cli_base::js::string::{trim, utf16_len, utf16_prefix};
 use rust_cli_base::sync::LockUnpoisoned;
-use rust_cli_kernel_api::ids::SessionId;
+use rust_cli_kernel_api::ids::{SessionId, WorkflowRunId};
 use rust_cli_kernel_api::workflow_child::LaunchInput;
 use rust_cli_kernel_api::workflow_run::{
     DynamicWorkflowRunError, DynamicWorkflowRunPort, DynamicWorkflowRunSessions, LifecycleStatus,
@@ -294,6 +294,11 @@ impl DynamicWorkflowRunPort for SessionRuns {
         let service = self.service.clone();
         let parent = self.parent.clone();
         on_blocking_pool(move || service.session_runs_of(&parent, limit)).await
+    }
+
+    /// Node `resume` (9.37): the refusals are answers, and the run is resumed on this service.
+    async fn resume(&self, run_id: &WorkflowRunId) -> Result<Value, DynamicWorkflowRunError> {
+        self.service.resume_port(run_id.as_str()).await
     }
 }
 

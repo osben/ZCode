@@ -15,7 +15,7 @@ use rust_cli_node_store::{MIGRATION_LOCK_WAIT, open_session_database};
 use rust_cli_runtime::actor_turns::ActorAgents;
 use rust_cli_runtime::workflow_assembly::ActorSessionRelease;
 use rust_cli_runtime::workflow_owner::{ActorBindingsPort, OwnerStores, bound_owner_factory};
-use rust_cli_runtime::workflow_quota::{StoreQuotaReads, UnwiredResume};
+use rust_cli_runtime::workflow_quota::StoreQuotaReads;
 use rust_cli_runtime::workflow_run::WorkflowRunService;
 use rust_cli_workflow::model::RunRow;
 use rust_cli_workflow::model_failure::ThreadClock;
@@ -44,6 +44,7 @@ pub(crate) fn build<A: ActorAgents + ActorSessionRelease>(
     progress: Arc<dyn WorkflowRunProgressPort>,
 ) -> Option<WorkflowRunService> {
     let runner = runner?;
+    let resume_handle = handle.clone();
     let stores = OwnerStores {
         database: database.to_path_buf(),
         directory: directory.to_owned(),
@@ -74,9 +75,12 @@ pub(crate) fn build<A: ActorAgents + ActorSessionRelease>(
     let store: Arc<dyn RunStore> = Arc::new(LazyRunStore::new(database.to_path_buf()));
     service.set_store(store.clone());
     service.set_clock(Arc::new(SystemClock::utc()));
+    // Quota auto-resume resumes through this service (9.37). The gate that allows a parent's quota runs to resume is
+    // A's gate table, which is not on fork, so every parent is refused: a due run is logged once and nothing starts.
+    let quota_resumer = service.quota_resumer(resume_handle, Arc::new(|_: &str| false));
     service.configure_quota(
         Arc::new(StoreQuotaReads::new(store)),
-        Arc::new(UnwiredResume),
+        quota_resumer,
         Arc::new(ThreadClock),
     );
     Some(service)

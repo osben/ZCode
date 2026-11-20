@@ -2904,6 +2904,93 @@ attach failure (9.33, item 276).
 the models below the parent's selection beyond the run and persona models of 9.33 (already done there); a live-mode read
 (300).
 
+### 9.37 W7-7b: run-level resume and the quota resumer (as built, gate off)
+
+**Scope built.** The kernel-api `DynamicWorkflowRunPort::resume` on the run service, Node's refusals as answers, and the
+quota auto-resume's real resumer (closes 232 of 9.31 as a mechanism; the production predicate stays closed, 342). Code: `runtime/src/workflow_run_resume.rs` (the resume, the
+compiled tables, the quota resumer), `runtime/src/workflow_run.rs` (the launch split: `launch` is `start` with no check;
+`start` takes an optional `CompileCheck` run after the child compiled and before the owner is built; `LaunchFailure::Refused`),
+`runtime/src/workflow_run_list.rs` (the port's `resume`), `cli/src/frontends/workflow_service.rs` (the composition: the
+resumer replaces `UnwiredResume`, behind a closed parent predicate). Divergence 231 (the by-parent read) was closed in 9.32
+by `StoreQuotaReads`, which reads any status, newest first, at most the limit given (the scan asks for 64); not changed here.
+
+**Decisions.**
+
+1. The port's answer is Node's result union as JSON: a refusal is `{ok: false, reason, message?}`, success is
+   `{ok: true, runId, toolCallId?}`. Errors are only what Node throws (330).
+2. A resume reads the row, then takes the engine's resume branch by launching the owner over the same journal. The
+   engine finds the row and does not call `createRun` (9.5). No `run-launched` is written (the test asserts it).
+3. The child compiles the row's script (the helper's compile, as for a launch). A check after the compile fills
+   `ask_specs` and `site_phases` from the compiled facts and sets `script_hash` from the compile, not the row, so the
+   engine's own hash check compares the compile with the journal (333, 335).
+4. Quota resume: the module's timer and the session scan call the resumer on a thread that is not a runtime worker. The
+   resumer spawns the async resume on the runtime and waits for its answer. The resumer holds a weak handle to the service.
+5. Production gate: the composition passes a predicate that refuses every parent (`|_| false`), so a due quota stop is
+   logged once as `resume_not_wired` and nothing starts. A quota resume is therefore not reachable in production until the
+   gate table exists (A's gate row, not on fork). Node resumes a quota stop whenever the scan finds one.
+
+**Node divergences (new in W7-7b, numbered from 330).**
+
+330. Refusals are answers in the port's JSON, as Node's result union, and errors are only what Node throws (the service
+     closed, the store unavailable, a failed compile with no diagnostics, a compile with no ask table, a failed launch).
+     `kernel-api` `resume` returns `Value`, so the reason names are Node's strings.
+331. The refusal order is Node's: `not_found`, `already_running` (live in the map or still starting; a launch that loses
+     the reservation race is mapped to the same reason), `superseded`, `not_resumable` (any status other than stopped),
+     `script_missing`, `compile_failed`, `script_mismatch`. Tested: one per reason, and two concurrent resumes start one
+     child.
+332. Compile and child start are one step here. Node checks the script hash before it spawns anything. Here the helper
+     compiles and starts the child, and a `script_mismatch` stops that child and keeps no run. The entry file the helper
+     wrote for the stopped child stays in `.zcode/workflow-runs`. The journal is not written.
+333. The compile's tables are read as JSON objects: `askSpecs` as `{siteId: {typed, schema?}}`, `sitePhases` as
+     `{siteId: phase}`. Node's are JS `Map`s, and the helper's reply has no replacer for them, so they arrive as `{}`. The
+     resume refuses when both are empty, as a compile with no ask table (a wiring failure, the run stays stopped). A run
+     with no asks cannot be told apart from that case, and the refusal is the safe side. Follow-up: the helper emits the
+     two tables as objects. Until then no production resume can succeed.
+334. `holes` are not read: `EngineConfig` has none (holes are refused until W7-8).
+335. The config is built from the row (`caps`, `args`, `name`, `parent`, `cwd`, `toolCallId`, `resumedFrom`, the script),
+     with `launch` absent, so the owner reads the journaled `run-launched` (9.33). `record_parent_mode` is not called, as
+     Node's resume does not read the session's mode.
+336. Node's resumed launch passes no `resumedFrom` to the compile. The `LaunchInput` mirrors that; the config keeps the
+     row's `resumedFrom`, which the progress facts read.
+337. An amended run (`resumedFrom` set) resumes without its import cache. Node rebuilds it with
+     `rebuildImportedCacheForResume`, and a rebuild failure never blocks a resume. Here the service holds no journal port
+     over the predecessor, so the rebuild is not called. Unconsumed imports of that run rerun live. Follow-up: a
+     predecessor journal port in the owner factory, and the transcript count (9.5 "Out of this row").
+338. The working directory is the row's `cwd`. Node falls back to `process.cwd()` when it is absent. Every submitted run
+     carries its cwd, and this crate does not read the process cwd (workspace rule), so a row without one is a data failure
+     with its run id in the text.
+339. The progress facts of a resumed run (`subagentModel`, `modelBindings`) are absent: the sink reads `config.launch`,
+     which is `None` on resume. Node keeps them from the journal. The owner's actors are unaffected (they read the
+     journal, 9.33). Follow-up with 9.34 divergences 297 and 298.
+340. The compile gate is the helper's compile, which also runs the analysis gate. Node's resume runs the compile only. A
+     refusal's diagnostics are the helper's list (the same `L{line}:C{col} message` lines), bounded to 2000 UTF-16 units
+     with `…`, as Node's `boundedResumeDiagnostics`. A compile failure with no diagnostics is a failure, as Node throws.
+341. The quota resumer blocks the module's thread, not a runtime worker, while the async resume runs on the runtime. A
+     refusal is an answer; an error is `Err`, which the module retries (Node: a thrown resume retries, 9.14).
+342. Closed predicate (the gate). The composition refuses every quota resume with `resume_not_wired`, a non-transient
+     reason, so the module logs it once and arms no retry. Node resumes a due quota stop. Follow-up: A's gate table
+     replaces the predicate. The predicate is per parent, so the gate can allow one session.
+343. A quota resume of a run whose row does not exist, or has no parent, is refused as `not_found`. A failed read is an
+     error, which the module retries (Node's module reads the row again and stops when it is not a quota stop).
+344. The port resumes any run id it is given, as Node's run service does (one service per app, 9.30 item 215). The tools
+     that call it are behind the gate (9.18).
+
+**Tests.** `workflow_run_resume_tests.rs` (13). Happy path: a stopped interrupted run is resumed over a real SQLite
+journal and the production owner, its child gets the row's script, args and cwd, the run settles as completed, and no
+`run-launched` is written. Refusals: `not_found`, `already_running` (a live run), `superseded`, `not_resumable`,
+`script_missing`, `compile_failed` (with the bounded text), `script_mismatch` (the child is stopped, nothing is kept), a
+compile with no ask table (an error, the child stopped). Two concurrent resumes start one child. Quota: a due stop resumed
+by the timer through `StoreQuotaReads`; a closed parent starts no child; a second resume of a live run is transient
+(`AlreadyRunning`).
+
+**Red first.** Not captured. The implementation was written before the tests, so no run failed against a stub. Two
+mutations were run after the green run, each restored: removing the hash check failed
+`a_script_whose_hash_differs_from_the_row_is_refused_and_its_child_stopped`; ignoring the closed predicate failed
+`a_closed_parent_refuses_the_quota_resume_and_starts_no_child`.
+
+**Not done.** The helper's table objects (333). The gate predicate (342). The predecessor journal and the import cache
+rebuild (337). The resumed run's progress facts (339). The CreateWorkflow path that would reach a resume (9.27, 9.18).
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.
