@@ -61,10 +61,11 @@ pub struct Context {
     /// Fork (specs/fork-rust-workflow-engine.md, 9.30): the run service's lifecycle, set once by the composition root
     /// when it builds the service; the shutdown closes the live runs through it.
     workflow_runs: std::sync::OnceLock<Arc<dyn rust_cli_kernel_api::workflow_run::WorkflowRunHost>>,
-    /// Fork (specs/fork-rust-workflow-engine.md, 9.34): the open sessions, set once by the server that owns them. The run
-    /// progress port delivers a run's live deltas through it to the parent session's stream.
+    /// Fork (specs/fork-rust-workflow-engine.md, 9.34): the open sessions, set once by the server that owns them. Held
+    /// weakly: the server owns the bridge, and the bridge's close listener holds this context, so a strong reference here
+    /// would be a cycle that keeps the sessions alive past their server.
     live_bridge: std::sync::OnceLock<
-        Arc<rust_cli_protocol_core::sessions::SessionBridge<crate::live::Live>>,
+        std::sync::Weak<rust_cli_protocol_core::sessions::SessionBridge<crate::live::Live>>,
     >,
     /// Fork: the entry's model port for workspace model calls (`fork::workspace_model`); without it those methods
     /// stay unported.
@@ -146,14 +147,15 @@ impl Context {
         &self,
         bridge: Arc<rust_cli_protocol_core::sessions::SessionBridge<crate::live::Live>>,
     ) {
-        let _ = self.live_bridge.set(bridge);
+        let _ = self.live_bridge.set(Arc::downgrade(&bridge));
     }
 
-    /// Fork (9.34): the open sessions, when the server installed them.
+    /// Fork (9.34): the open sessions, while the server that owns them is alive; `None` when no server installed them or
+    /// the server is gone (no open stream).
     pub fn live_bridge(
         &self,
-    ) -> Option<&Arc<rust_cli_protocol_core::sessions::SessionBridge<crate::live::Live>>> {
-        self.live_bridge.get()
+    ) -> Option<Arc<rust_cli_protocol_core::sessions::SessionBridge<crate::live::Live>>> {
+        self.live_bridge.get().and_then(std::sync::Weak::upgrade)
     }
 
     /// Fork (9.30): the run service's lifecycle (set once; without it no run service exists to close).

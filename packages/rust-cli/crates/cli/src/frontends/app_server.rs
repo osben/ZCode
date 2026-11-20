@@ -275,7 +275,7 @@ async fn serve(
         // Fork (9.34): the run progress goes to the parent session's open stream; the journal is the record.
         Arc::new(rust_cli_protocol_zcode::WorkflowProgressHost::new(
             Arc::new(rust_cli_protocol_zcode::BridgeDelivery::new(
-                context.clone(),
+                Arc::downgrade(&context),
             )),
         )),
     );
