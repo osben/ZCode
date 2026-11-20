@@ -252,6 +252,18 @@ async fn serve(
     // Fork: workspace model calls (Git commit message, connectivity probe) go through the entry's model port.
     context.set_model_port(ported.ports.model.clone());
     let built = assemble::kernel(&spec, facts, ported, clock).await?;
+    // Fork (W8a, 9.48): a TaskStop or the user's stop of a workflow run reaches the run sessions the service sets below.
+    // The agents hold the same late slot the run tools hold, so one run path serves the stop.
+    if !built
+        .kernel
+        .workflow_agents()
+        .set_run_sessions(run_sessions.clone())
+    {
+        tracing::warn!(
+            event = "workflow.run.stop_sessions_set_twice",
+            "the run stop sessions were set twice; the first one stays"
+        );
+    }
     // Fork (specs/fork-rust-node-helper.md, F7 PR 1): the panels of the servers Rust runs read their connections
     // through the kernel's extension layer, the one that owns the connections the model calls use.
     context.set_mcp_app_host(built.kernel.mcp_app_host());

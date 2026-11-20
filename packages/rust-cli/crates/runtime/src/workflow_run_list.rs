@@ -12,6 +12,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use super::cancel::Retired;
 use async_trait::async_trait;
 use rust_cli_base::js::string::{trim, utf16_len, utf16_prefix};
 use rust_cli_base::sync::LockUnpoisoned;
@@ -19,7 +20,7 @@ use rust_cli_kernel_api::ids::QuestionId;
 use rust_cli_kernel_api::ids::{SessionId, WorkflowRunId};
 use rust_cli_kernel_api::workflow_child::LaunchInput;
 use rust_cli_kernel_api::workflow_run::{
-    AmendRequest, AmendResult, DynamicWorkflowRunError, DynamicWorkflowRunPort,
+    AmendRequest, AmendResult, CancelInitiator, DynamicWorkflowRunError, DynamicWorkflowRunPort,
     DynamicWorkflowRunSessions, FillHoleOutcome, FillHoleRequest, LifecycleStatus, ListQuery,
     ResolveQuestionRefusalReason, ResolveQuestionResult, RetuneOutcome, RetuneRequest,
     SubmitRequest,
@@ -112,6 +113,20 @@ pub(crate) fn first_answer<T>(
 fn unknown_question_message(qid: &str) -> String {
     format!(
         "Unknown question id {qid}. It may be misspelled, or it may come from a process that is gone: parked questions are not persisted, so they vanish on restart (a resume makes the subagent ask again under a new id). Use GetWorkflowRun to read the run's pendingQuestions for the ids that are actually awaiting an answer."
+    )
+}
+
+/// Node's `already_resolved` message (`workflow-escalation-registry.ts`).
+fn already_resolved_message(qid: &str) -> String {
+    format!(
+        "Question {qid} was already answered and the subagent has moved on with that answer. No need to answer again; if you have more to add, wait for its next escalation."
+    )
+}
+
+/// Node's `run_not_in_flight` message for a question withdrawn with its ask (`workflow-escalation-registry.ts`).
+fn run_not_in_flight_message(qid: &str) -> String {
+    format!(
+        "The ask that raised question {qid} is no longer in flight (the run was cancelled, or that ask already failed), so nobody is waiting for this answer. Use GetWorkflowRun to see the run's current state before deciding what to do next."
     )
 }
 
@@ -441,9 +456,9 @@ impl DynamicWorkflowRunPort for SessionRuns {
         on_blocking_pool(move || service.session_runs_of(&parent, limit)).await
     }
 
-    /// Node `resolveQuestion` (9.40): the answer goes to the live run that parks the question, and it is refused as
-    /// `unknown_question` when no live run of this session holds it. Node's `already_resolved` and `run_not_in_flight`
-    /// need a retired-question table this port does not keep (divergence 391).
+    /// Node `resolveQuestion` (9.40): the answer goes to the live run that parks the question. A question no live run holds
+    /// is refused by how it left the registry: `already_resolved` or `run_not_in_flight` from the retired table (9.48,
+    /// divergence 391 closed for the stop path), else `unknown_question`.
     async fn resolve_question(
         &self,
         qid: &QuestionId,
@@ -510,6 +525,19 @@ impl DynamicWorkflowRunPort for SessionRuns {
         request: RetuneRequest,
     ) -> Result<RetuneOutcome, DynamicWorkflowRunError> {
         self.service.retune_run(&self.parent, request).await
+    }
+
+    /// Node `cancel` (W8a, 9.48): stops a live run of this session, as the user's or the model's stop.
+    async fn cancel(
+        &self,
+        run_id: &WorkflowRunId,
+        initiator: CancelInitiator,
+    ) -> Result<bool, DynamicWorkflowRunError> {
+        // The service's state and projection locks are taken here, and a snapshot is cloned: off the async workers.
+        let service = self.service.clone();
+        let parent = self.parent.clone();
+        let run_id = run_id.as_str().to_owned();
+        on_blocking_pool(move || service.cancel_run_of(&parent, &run_id, &initiator)).await
     }
 
     /// Node `submit` (9.39): a new run under this session, the parent Node names (`parentSessionId`).
@@ -619,16 +647,32 @@ impl WorkflowRunService {
         qid: &QuestionId,
         answer: &str,
     ) -> Result<ResolveQuestionResult, DynamicWorkflowRunError> {
+        // The delivery and the retired-table read/write are one step for a resolve (W8a, 9.48): a concurrent resolve of the
+        // same question waits here and then reads its retirement, so the refusal class is race-free.
+        let _resolving = self.inner.resolves.lock_unpoisoned();
         let mut live = self.live_runs_of(parent);
         live.sort_by_key(|run| run.token);
         let outcomes = live
             .iter()
             .map(|run| run.handle.answer(qid.as_str(), answer));
         match first_answer(outcomes) {
-            Ok(Some(_)) => Ok(ResolveQuestionResult::Resolved { qid: qid.clone() }),
-            Ok(None) => Ok(ResolveQuestionResult::Refused {
-                reason: ResolveQuestionRefusalReason::UnknownQuestion,
-                message: unknown_question_message(qid.as_str()),
+            Ok(Some(_)) => {
+                self.retire_questions(&[qid.as_str().to_owned()], Retired::Resolved);
+                Ok(ResolveQuestionResult::Resolved { qid: qid.clone() })
+            }
+            Ok(None) => Ok(match self.retired_reason(qid.as_str()) {
+                Some(Retired::Resolved) => ResolveQuestionResult::Refused {
+                    reason: ResolveQuestionRefusalReason::AlreadyResolved,
+                    message: already_resolved_message(qid.as_str()),
+                },
+                Some(Retired::Withdrawn) => ResolveQuestionResult::Refused {
+                    reason: ResolveQuestionRefusalReason::RunNotInFlight,
+                    message: run_not_in_flight_message(qid.as_str()),
+                },
+                None => ResolveQuestionResult::Refused {
+                    reason: ResolveQuestionRefusalReason::UnknownQuestion,
+                    message: unknown_question_message(qid.as_str()),
+                },
             }),
             Err(error) => Err(DynamicWorkflowRunError::new(format!(
                 "the answer to question {qid} did not reach its run: {error}"

@@ -196,6 +196,10 @@ pub(crate) struct Core {
     pub(crate) node_desktop: bool,
     /// Fork (rule 18): see [`AgentsConfig::agent_memory_root`].
     pub(crate) agent_memory_root: Option<std::path::PathBuf>,
+    /// Fork (W8a, 9.48): the workflow runs of the sessions. A TaskStop or the user's stop of a run reaches its port; the
+    /// composition sets it once the run service exists, so until then no id is a run.
+    pub(crate) run_sessions:
+        std::sync::OnceLock<Arc<dyn rust_cli_kernel_api::workflow_run::DynamicWorkflowRunSessions>>,
     /// 主线程的完整注册表（基础工具 + 本 crate 的工具）；子代理从它过滤。弱引用：注册表里的工具持有 Core，
     /// 两者在 [`Agents::new`] 里用 `Arc::new_cyclic` 一次建好，没有“先建后接”的空档。
     registry: Weak<AgentRegistry>,
@@ -322,6 +326,7 @@ impl Agents {
                 fork: config.fork,
                 node_desktop: config.node_desktop,
                 agent_memory_root: config.agent_memory_root.clone(),
+                run_sessions: std::sync::OnceLock::new(),
                 registry: registry.clone(),
             });
             let mut own: Vec<Arc<dyn Tool>> = vec![Arc::new(AgentTool { core: core.clone() })];
@@ -363,6 +368,15 @@ impl Agents {
     /// 交给会话 actor 的信号来源。
     pub fn signals(&self) -> Arc<dyn AgentSignals> {
         Arc::new(Signals(self.core.clone()))
+    }
+
+    /// Fork (W8a, 9.48): the composition sets the workflow runs' sessions once, so a TaskStop or a user's stop of a run
+    /// reaches the run port. A second set is refused and keeps the first.
+    pub fn set_run_sessions(
+        &self,
+        sessions: Arc<dyn rust_cli_kernel_api::workflow_run::DynamicWorkflowRunSessions>,
+    ) -> bool {
+        self.core.run_sessions.set(sessions).is_ok()
     }
 
     /// 任务提醒读的任务清单（agents.md §7.4）：子会话读顶层会话的清单。
@@ -572,6 +586,7 @@ impl AgentSignals for Signals {
             machine: &machine,
             operation: &operation,
             by_user: self.0.node_desktop,
+            user: true,
         };
         tool.stop(task, &caller)
             .await
@@ -604,6 +619,7 @@ impl AgentSignals for Signals {
                     machine: &machine,
                     operation: &operation,
                     by_user: true,
+                    user: true,
                 };
                 tool.stop_parked(agent, execution, &caller)
                     .await
