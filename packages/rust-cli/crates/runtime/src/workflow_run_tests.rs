@@ -1281,3 +1281,47 @@ async fn a_slow_owner_factory_does_not_stall_the_executor() {
         "the executor ticked {during} times while the factory blocked; it must keep running"
     );
 }
+
+/// 9.40: an answer for a question that no live run of the session holds is refused as `unknown_question`. The live run
+/// of the session is asked (its owner answers `None`); another session has no live run to ask.
+#[tokio::test]
+async fn resolve_question_is_refused_as_unknown_when_no_live_run_of_the_session_holds_it() {
+    use rust_cli_kernel_api::ids::{QuestionId, SessionId};
+    use rust_cli_kernel_api::workflow_run::{
+        DynamicWorkflowRunSessions, ResolveQuestionRefusalReason, ResolveQuestionResult,
+    };
+    let h = harness();
+    h.service
+        .launch(input("wf_1"), config("wf_1", Some("ses_p")))
+        .await
+        .expect("launched");
+    let qid = QuestionId::new("dwfq-wf_1-0");
+    let own = h
+        .service
+        .for_session(&SessionId::new("ses_p"))
+        .resolve_question(&qid, "use staging")
+        .await
+        .expect("answered");
+    assert!(
+        matches!(
+            own,
+            ResolveQuestionResult::Refused {
+                reason: ResolveQuestionRefusalReason::UnknownQuestion,
+                ..
+            }
+        ),
+        "{own:?}"
+    );
+    let other = h
+        .service
+        .for_session(&SessionId::new("ses_q"))
+        .resolve_question(&qid, "use staging")
+        .await
+        .expect("answered");
+    assert!(
+        matches!(other, ResolveQuestionResult::Refused { .. }),
+        "{other:?}"
+    );
+    h.runner.finish(0, completed(json!("done")));
+    wait_until("the run to settle", || h.residency.live_runs("ses_p") == 0).await;
+}

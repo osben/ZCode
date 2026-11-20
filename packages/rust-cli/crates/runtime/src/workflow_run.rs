@@ -1107,6 +1107,10 @@ async fn join_owner(serve: JoinHandle<Vec<(String, String)>>) -> Vec<(String, St
 }
 
 #[cfg(test)]
+#[path = "workflow_run_list_tests.rs"]
+mod list_tests;
+
+#[cfg(test)]
 #[path = "workflow_run_tests.rs"]
 mod tests;
 

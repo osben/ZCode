@@ -15,12 +15,14 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use rust_cli_base::js::string::{trim, utf16_len, utf16_prefix};
 use rust_cli_base::sync::LockUnpoisoned;
+use rust_cli_kernel_api::ids::QuestionId;
 use rust_cli_kernel_api::ids::{SessionId, WorkflowRunId};
 use rust_cli_kernel_api::workflow_child::LaunchInput;
 use rust_cli_kernel_api::workflow_run::{
     DynamicWorkflowRunError, DynamicWorkflowRunPort, DynamicWorkflowRunSessions, LifecycleStatus,
-    ListQuery,
+    ListQuery, ResolveQuestionRefusalReason, ResolveQuestionResult,
 };
+use rust_cli_workflow::actor_mailbox::{ActorHandle, MailboxError};
 use rust_cli_workflow::engine::EngineConfig;
 use rust_cli_workflow::model::{RunRow, RunStatus, StopReason, js_number};
 use rust_cli_workflow::run_store::{RunListQuery, RunListRow};
@@ -72,11 +74,43 @@ impl RunMeta {
     }
 }
 
-/// A live run of one parent session, as the reads see it: its id, its launch token (submit order), and its meta.
+/// A live run of one parent session, as the reads see it: its id, its launch token (submit order), its meta, and the
+/// handle its owner answers on (the answer to a parked question, 9.40).
 pub(crate) struct LiveRun {
     pub run_id: String,
     pub token: u64,
     pub meta: Arc<RunMeta>,
+    pub handle: ActorHandle,
+}
+
+/// Picks the answer among the live runs' outcomes, in launch order. The first accepted answer wins. A run whose owner is
+/// gone (`NotDelivered`: it settled after the snapshot) is skipped. An error is returned only when no run accepted and
+/// some run failed for another reason.
+///
+pub(crate) fn first_answer<T>(
+    outcomes: impl IntoIterator<Item = Result<Option<T>, MailboxError>>,
+) -> Result<Option<T>, MailboxError> {
+    let mut failure = None;
+    for outcome in outcomes {
+        match outcome {
+            Ok(Some(answer)) => return Ok(Some(answer)),
+            Ok(None) | Err(MailboxError::NotDelivered) => {}
+            Err(error) => {
+                failure.get_or_insert(error);
+            }
+        }
+    }
+    match failure {
+        Some(error) => Err(error),
+        None => Ok(None),
+    }
+}
+
+/// Node `unknown_question`: the text the service gives a qid no live run of the session holds.
+fn unknown_question_message(qid: &str) -> String {
+    format!(
+        "Unknown question id {qid}. It may be misspelled, or it may come from a process that is gone: parked questions are not persisted, so they vanish on restart (a resume makes the subagent ask again under a new id). Use GetWorkflowRun to read the run's pendingQuestions for the ids that are actually awaiting an answer."
+    )
 }
 
 /// Node `resolveDynamicWorkflowRunLabel`: the name when it is not blank, else the first non-blank script line,
@@ -296,6 +330,21 @@ impl DynamicWorkflowRunPort for SessionRuns {
         on_blocking_pool(move || service.session_runs_of(&parent, limit)).await
     }
 
+    /// Node `resolveQuestion` (9.40): the answer goes to the live run that parks the question, and it is refused as
+    /// `unknown_question` when no live run of this session holds it. Node's `already_resolved` and `run_not_in_flight`
+    /// need a retired-question table this port does not keep (divergence 391).
+    async fn resolve_question(
+        &self,
+        qid: &QuestionId,
+        answer: &str,
+    ) -> Result<ResolveQuestionResult, DynamicWorkflowRunError> {
+        let service = self.service.clone();
+        let parent = self.parent.clone();
+        let qid = qid.clone();
+        let answer = answer.to_owned();
+        on_blocking_pool(move || service.resolve_question_of(&parent, &qid, &answer)).await
+    }
+
     /// Node `resume` (9.37): the refusals are answers, and the run is resumed on this service.
     async fn resume(&self, run_id: &WorkflowRunId) -> Result<Value, DynamicWorkflowRunError> {
         self.service.resume_port(run_id.as_str()).await
@@ -323,6 +372,7 @@ impl WorkflowRunService {
                 run_id: run_id.clone(),
                 token: entry.token,
                 meta: entry.meta.clone(),
+                handle: entry.handle.clone(),
             })
             .collect()
     }
@@ -389,6 +439,31 @@ impl WorkflowRunService {
             page["truncated"] = json!(true);
         }
         Ok(page)
+    }
+
+    /// Node `resolveQuestion` for one parent session (9.40). The live runs are asked in launch order; the first that holds
+    /// the question answers it. The owner's answer is a mailbox call, so this runs on the blocking pool.
+    pub(crate) fn resolve_question_of(
+        &self,
+        parent: &str,
+        qid: &QuestionId,
+        answer: &str,
+    ) -> Result<ResolveQuestionResult, DynamicWorkflowRunError> {
+        let mut live = self.live_runs_of(parent);
+        live.sort_by_key(|run| run.token);
+        let outcomes = live
+            .iter()
+            .map(|run| run.handle.answer(qid.as_str(), answer));
+        match first_answer(outcomes) {
+            Ok(Some(_)) => Ok(ResolveQuestionResult::Resolved { qid: qid.clone() }),
+            Ok(None) => Ok(ResolveQuestionResult::Refused {
+                reason: ResolveQuestionRefusalReason::UnknownQuestion,
+                message: unknown_question_message(qid.as_str()),
+            }),
+            Err(error) => Err(DynamicWorkflowRunError::new(format!(
+                "the answer to question {qid} did not reach its run: {error}"
+            ))),
+        }
     }
 
     /// Node `listRunsForSession`: the session's newest rows, each summarized with the session's live precedence.

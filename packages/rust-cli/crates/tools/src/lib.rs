@@ -62,6 +62,8 @@ mod workspace_path;
 mod workflow_create;
 // Fork: EvalWorkflowSnippet (W7-8c, specs/fork-rust-workflow-engine.md, 9.28).
 mod workflow_eval_snippet;
+// Fork: ListWorkflowRuns, ResumeWorkflowRun and ResolveWorkflowQuestion (W7-9, specs/fork-rust-workflow-engine.md, 9.40).
+mod workflow_run_tools;
 // Fork: the `LSP` agent tool (specs/fork-rust-lsp.md "Tool (D2)").
 mod lsp_tool;
 mod mentions;
@@ -142,6 +144,7 @@ pub use tool_search::{ToolCatalog, ToolSearchTool};
 pub use user_input::UserInputTools;
 pub use web_fetch::{SideModel, WebFetchTool};
 pub use web_search::WebSearchTool;
+pub use workflow_run_tools::run_tools as workflow_run_tools;
 pub use workflow_tools::{
     contracts as workflow_tool_contracts, is_amend_workflow_owned_predecessor,
     is_fill_workflow_hole_owned_run, workflow_tools,
