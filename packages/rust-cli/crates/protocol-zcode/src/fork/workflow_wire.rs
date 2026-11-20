@@ -5,3 +5,6 @@
 pub use rust_cli_kernel_api::workflow_child::{
     ChildEvent, ChildMessage, ChildRequest, Completion, CreateActor, WireError, response_line,
 };
+// The transport passes a child request on without reading its kind; only the transport's tests name the kind.
+#[cfg(test)]
+pub use rust_cli_kernel_api::workflow_child::RequestType;

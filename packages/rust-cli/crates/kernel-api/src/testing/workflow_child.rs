@@ -6,7 +6,6 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
 
-use futures_util::future::{Either, select};
 use rust_cli_base::sync::LockUnpoisoned;
 use serde_json::json;
 use std::sync::Mutex;
@@ -17,6 +16,26 @@ use crate::workflow_child::{
     ChildHandler, ChildStop, LaunchError, LaunchInput, Outcome, RunningChild, StopReason,
     WorkflowChildRunner,
 };
+
+/// The entry file name for a run, as the real runner writes it (`protocol-zcode`'s `workflow_entry::entry_file_name`).
+/// Kept in step with that function: a test there compares the two.
+pub fn entry_file_name(run_id: &str) -> String {
+    let safe: String = run_id
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    format!("{safe}.mjs")
+}
+
+fn panic_no_launch(index: usize, count: usize) -> ! {
+    panic!("no launch {index}: the fake runner has {count} launch(es)")
+}
 
 /// One launch the fake accepted, as the test sees it.
 #[derive(Clone)]
@@ -69,25 +88,35 @@ impl FakeChildRunner {
     }
 
     /// Settles the outcome of launch `index`. A second call for the same launch is ignored.
+    ///
+    /// Panics when no launch has that index: a test that finishes a launch it never started is wrong.
     pub fn finish(&self, index: usize, outcome: Outcome) {
-        if let Some(sender) = self
-            .state
-            .lock_unpoisoned()
-            .launches
-            .get_mut(index)
-            .and_then(|launch| launch.finish.take())
-        {
+        let sender = {
+            let mut state = self.state.lock_unpoisoned();
+            let count = state.launches.len();
+            match state.launches.get_mut(index) {
+                Some(launch) => launch.finish.take(),
+                None => panic_no_launch(index, count),
+            }
+        };
+        if let Some(sender) = sender {
             let _ = sender.send(outcome);
         }
     }
 
     /// Whether `stop` was called on launch `index`.
+    ///
+    /// Panics when no launch has that index.
     pub fn stop_requested(&self, index: usize) -> bool {
-        self.state
-            .lock_unpoisoned()
-            .launches
-            .get(index)
-            .is_some_and(|launch| launch.stop.is_cancelled())
+        let state = self.state.lock_unpoisoned();
+        match state.launches.get(index) {
+            Some(launch) => launch.stop.is_cancelled(),
+            None => {
+                let count = state.launches.len();
+                drop(state);
+                panic_no_launch(index, count)
+            }
+        }
     }
 }
 
@@ -109,7 +138,7 @@ impl WorkflowChildRunner for FakeChildRunner {
             .cwd
             .join(".zcode")
             .join("workflow-runs")
-            .join(format!("{}.mjs", input.run_id));
+            .join(entry_file_name(&input.run_id));
         state.launches.push(Launch {
             input,
             handler,
@@ -119,16 +148,20 @@ impl WorkflowChildRunner for FakeChildRunner {
         drop(state);
 
         let stopped = stop.clone();
+        // Biased like the real runner's `select`: a stop that is already requested wins over a finish that is ready.
         let outcome = Box::pin(async move {
-            match select(Box::pin(stopped.cancelled()), receiver).await {
-                Either::Left(_) => Outcome::Stopped {
+            tokio::select! {
+                biased;
+                _ = stopped.cancelled() => Outcome::Stopped {
                     reason: StopReason::Interrupted,
                     cause: "the fake child was stopped".to_owned(),
                 },
-                Either::Right((Ok(outcome), _)) => outcome,
-                Either::Right((Err(_), _)) => Outcome::Stopped {
-                    reason: StopReason::Interrupted,
-                    cause: "the fake child was dropped before it finished".to_owned(),
+                settled = receiver => match settled {
+                    Ok(outcome) => outcome,
+                    Err(_) => Outcome::Stopped {
+                        reason: StopReason::Interrupted,
+                        cause: "the fake child was dropped before it finished".to_owned(),
+                    },
                 },
             }
         });
@@ -238,6 +271,73 @@ mod tests {
             },
         );
         assert_eq!((running.outcome).await, done);
+    }
+
+    #[tokio::test]
+    #[should_panic(expected = "no launch 1: the fake runner has 1 launch(es)")]
+    async fn finishing_a_launch_that_does_not_exist_panics_with_the_index_and_count() {
+        let runner = FakeChildRunner::new();
+        let _running = runner
+            .start(input("run-1"), Arc::new(Idle))
+            .await
+            .expect("accepted");
+        runner.finish(
+            1,
+            Outcome::Completed(Completion {
+                ok: true,
+                value: None,
+                error: None,
+            }),
+        );
+    }
+
+    #[tokio::test]
+    #[should_panic(expected = "no launch 3: the fake runner has 0 launch(es)")]
+    async fn asking_about_a_stop_of_a_launch_that_does_not_exist_panics() {
+        let runner = FakeChildRunner::new();
+        runner.stop_requested(3);
+    }
+
+    #[tokio::test]
+    async fn the_entry_file_name_is_sanitised_like_the_real_runner() {
+        let runner = FakeChildRunner::new();
+        let running = runner
+            .start(input("a/../b c"), Arc::new(Idle))
+            .await
+            .expect("accepted");
+        assert_eq!(
+            running.entry_path,
+            PathBuf::from("/work/project/.zcode/workflow-runs/a_.._b_c.mjs")
+        );
+        assert_eq!(entry_file_name("a/../b c"), "a_.._b_c.mjs");
+        assert_eq!(entry_file_name("run-1.a_b"), "run-1.a_b.mjs");
+    }
+
+    #[tokio::test]
+    async fn a_stop_wins_over_a_finish_that_is_already_ready() {
+        for _ in 0..50 {
+            let runner = FakeChildRunner::new();
+            let running = runner
+                .start(input("run-1"), Arc::new(Idle))
+                .await
+                .expect("accepted");
+            runner.finish(
+                0,
+                Outcome::Completed(Completion {
+                    ok: true,
+                    value: None,
+                    error: None,
+                }),
+            );
+            running.stop.stop();
+            assert!(matches!(
+                (running.outcome).await,
+                Outcome::Stopped {
+                    reason: StopReason::Interrupted,
+                    ..
+                }
+            ));
+        }
     }
 
     #[tokio::test]

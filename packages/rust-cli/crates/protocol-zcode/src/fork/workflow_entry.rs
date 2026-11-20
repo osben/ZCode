@@ -50,13 +50,14 @@ pub fn entry_file_name(run_id: &str) -> String {
     format!("{safe}.mjs")
 }
 
-/// Writes `source` as the run's entry. `warn` receives the reason when the project directory is not usable.
+/// Writes `source` as the run's entry. `warn` receives the kind of the error when the project directory is not usable.
+/// The kind alone goes to the callback: the error text and the paths stay with the caller's own choice of what to log.
 pub async fn write_entry(
     cwd: &Path,
     run_id: &str,
     source: &str,
     fallback_dir: &Path,
-    warn: &mut (dyn FnMut(&str) + Send),
+    warn: &mut (dyn FnMut(io::ErrorKind) + Send),
 ) -> io::Result<EntryFile> {
     let project = project_dir(cwd);
     let file_name = entry_file_name(run_id);
@@ -66,11 +67,7 @@ pub async fn write_entry(
             location: EntryLocation::Project,
         }),
         Err(error) => {
-            warn(&format!(
-                "{} is not writable ({error}); the run's entry falls back to {}",
-                project.display(),
-                fallback_dir.display()
-            ));
+            warn(error.kind());
             let path = write_into(fallback_dir, &file_name, source).await?;
             Ok(EntryFile {
                 path,

@@ -221,14 +221,16 @@ pub struct LaunchInput {
 }
 
 /// Why a launch did not start a child. Nothing was spawned in either case.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum LaunchError {
     /// The script did not compile. `message` is set when the compile threw after its diagnostics passed.
+    #[error("the workflow script did not compile")]
     Rejected {
         diagnostics: Vec<Diagnostic>,
         message: Option<String>,
     },
     /// The compile helper, the entry file or the process failed. The text names the step and the reason.
+    #[error("{0}")]
     Failed(String),
 }
 
@@ -280,4 +282,36 @@ pub trait WorkflowChildRunner: Send + Sync {
         input: LaunchInput,
         handler: Arc<dyn ChildHandler>,
     ) -> Result<RunningChild, LaunchError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use std::error::Error as _;
+
+    use super::*;
+
+    #[test]
+    fn a_failed_launch_reads_as_its_text() {
+        let error = LaunchError::Failed("the compile helper failed: the helper is down".to_owned());
+        assert_eq!(
+            error.to_string(),
+            "the compile helper failed: the helper is down"
+        );
+        assert!(error.source().is_none());
+    }
+
+    #[test]
+    fn a_rejected_launch_reads_as_a_compile_failure() {
+        let error = LaunchError::Rejected {
+            diagnostics: Vec::new(),
+            message: None,
+        };
+        assert_eq!(error.to_string(), "the workflow script did not compile");
+    }
+
+    #[test]
+    fn launch_errors_compare_for_equality() {
+        fn assert_eq_impl<T: Eq>() {}
+        assert_eq_impl::<LaunchError>();
+    }
 }

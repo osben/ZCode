@@ -106,10 +106,11 @@ pub(crate) async fn launch_compiled(
             });
         }
     };
-    // The fallback is logged without its paths: the project directory can hold the user's name.
-    let mut warn = |_: &str| {
+    // The fallback is logged with the error kind only, never the paths: the project directory can hold the user's name.
+    let mut warn = |kind: std::io::ErrorKind| {
         tracing::warn!(
             event = "workflow.entry_fallback",
+            kind = ?kind,
             "the project's workflow-runs directory is not writable; the entry file falls back to the temp directory"
         );
     };

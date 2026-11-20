@@ -37,7 +37,7 @@ pub use scripted_model::ScriptedModel;
 pub use session::{NoSession, OpsOverride};
 pub use store::{MemoryArtifacts, MemoryStore};
 pub use store_proxy::{StoreCall, StoreHooks, StoreProxy};
-pub use workflow_child::{FakeChildRunner, FakeLaunch};
+pub use workflow_child::{FakeChildRunner, FakeLaunch, entry_file_name};
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
