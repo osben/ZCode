@@ -191,6 +191,56 @@ fn run_detail_carries_the_row_timestamps_and_replays_only_with_a_default_and_an_
     );
 }
 
+/// 9.46: the detail carries the roster, read from the journal in the same snapshot: the log tail, the actors, and the launch's
+/// script path and model bindings. Without a configured default the projected state is absent, so the pending questions
+/// are unknown and no subagent is parked.
+#[test]
+fn run_detail_carries_the_roster_read_from_the_journal() {
+    let conn = database();
+    add_session(&conn, "ses_p");
+    dwf::create_run(&conn, &run("run_1", "ses_p", "/w", DwfStatus::Running), 7).unwrap();
+    dwf::append_event(
+        &conn,
+        "run_1",
+        &json!({"type": "run-launched", "scriptPath": "/w/flow.js", "modelBindings": {"poet": "openai/gpt-x"}}),
+        8,
+    )
+    .unwrap();
+    dwf::append_event(
+        &conn,
+        "run_1",
+        &json!({"type": "log", "message": "fetching"}),
+        9,
+    )
+    .unwrap();
+    dwf::put_actor(
+        &conn,
+        &dwf::ActorRecord {
+            run_id: "run_1".into(),
+            site_id: "agent".into(),
+            ordinal: 1,
+            name: Some("poet".into()),
+            ..Default::default()
+        },
+        10,
+    )
+    .unwrap();
+    let store = store(conn);
+
+    let detail = store.run_detail("run_1", None).unwrap().expect("held");
+    assert_eq!(detail.roster["scriptPath"], "/w/flow.js");
+    assert_eq!(
+        detail.roster["modelBindings"],
+        json!({"poet": "openai/gpt-x"})
+    );
+    assert_eq!(detail.roster["logTail"][0]["message"], "fetching");
+    assert_eq!(
+        detail.roster["actors"],
+        json!([{"siteId": "agent", "ordinal": 1, "name": "poet"}])
+    );
+    assert_eq!(detail.roster["health"]["pendingQuestionsKnown"], false);
+}
+
 #[test]
 fn list_runs_applies_cwd_and_the_logical_status_filter() {
     let conn = database();

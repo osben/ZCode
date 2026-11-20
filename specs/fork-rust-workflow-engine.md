@@ -3878,6 +3878,89 @@ progress path wrote it (now awaited) and five redundant clones in the reminder h
      progress port, so a strong hold closed a cycle nothing broke. A gone service reports no live run and no open decision
      (the same answer as an unset source). Test: the empty weak reference.
 
+### 9.46 W7-13: GetWorkflowRun roster family, summary clauses and amendable block (as built, gate off)
+
+**Scope built.** The situation snapshot of a run, read from the journal in the same transaction as the row, and the text Node
+writes for it. The snapshot is `workflow/src/run_roster.rs` (`build_roster`, a pure function of the run's events, its non-report
+node rows, its actor rows and its projected state; Node's `dynamic-workflow-run-roster*.ts`, with the event index, the phase
+table, the subagent roster and the health surface). `RunStore::run_detail` reads the events, the node and actor rows with the
+row, and returns the snapshot as `RunDetail.roster`. `runtime` `run_detail_of` merges the snapshot's keys into the detail:
+`phases`, `subagents`, `subagentsTruncated`, `health`, `logTail`, `actors`, and the launch's `modelBindings` and `scriptPath`
+(the `run-launched` event, which is what the journal carries). `tools` `workflow_run_detail.rs` writes Node's blocks in Node's
+order: the summary (status and phase, the step clause, failure, questions, holes, progress and stall, deliverable, ownership,
+the 400-character budget), identity (with `<script_models>`), pending questions (with the unknown text), holes, `<health>`,
+`<phases>`, `<subagents>` (with `task:` rows and the truncation line), `<log_tail>`, usage, outcome (result, error with the
+provider-stop text, artifacts), and routing (`<superseded>`; else `<resumable>` for a stopped run; then `<amendable>` for
+every other run). The `GetWorkflowRun` tool describes `scriptPath` relative to the workspace, as Node does. The 400 000-byte
+budget and the escaping of every interpolated value are as before.
+
+This supersedes 433 (the roster is built), 436 (the launch's model bindings and script path are written where the journal
+carries them), 438 (the provider-stop text is Node's), and 439 (the `<amendable>` block is written now that AmendWorkflow is
+merged). The step clause of 431 is written. Holes stay as 9.42 has them (435, 437), with FillWorkflowHole not built.
+
+**Node divergences (new in 9.46, numbered from 550).**
+
+550. Source and read path. The events, node rows and actor rows are read in one read transaction with the row (the cold read
+     path of Node's `getRunDetail`). Node also reads the owner's live state; the owner's in-memory parking table is not read
+     (as 9.42 round 2 decided for the questions).
+551. No default concurrency, no replay. The projected state needs the configured default, so without one the phases, the
+     phase names, the concurrency field, the holes, the artifacts and the subagents' task rows and phase names are absent, and
+     `pendingQuestionsKnown` is false (no subagent is `parked`). The actor rows and the events still give the subagent states
+     that they can, the health timings, the log tail and the actors.
+552. Parked subagents from the journal's projection, not the owner's parking table (9.42 round 2). A question the journal has
+     raised and no resolution has closed counts as pending; one withdrawn without an event stays pending until it is answered.
+553. Log messages are bounded at 2048 UTF-16 units by a local helper with the port's rule (no split character). Node's
+     `boundDynamicWorkflowRunEventPayload` is not exported by `node-store`, so it is not shared.
+554. Gap form. A run this session launched whose row is not written yet has no situation snapshot: no `<health>`, `<phases>`,
+     `<subagents>` or `<log_tail>` block is written, and its parked questions are written as unknown. Node's registry gap copy
+     carries the owner's roster; this build does not have it. Zero is never shown for a fact the read does not have.
+555. Clock. The builder reads no clock. Node clamps each event time to the read's `now`. Here the formatter's ages are
+     `now - at` clamped at zero, which gives the same ages and the same ordering (the clamp is monotone). Not tested with a
+     future-dated event.
+556. Summary step clause. Written only when the read carries the node counts (the projected state). Without them the clause is
+     omitted rather than written as zeros (432 of 9.42 applies to the usage line too).
+557. `scriptPath` is the `run-launched` event's path, described relative to the workspace with `describe_script_path`
+     (CreateWorkflow's rule for a file inside the working directory). Node's `describeWorkflowScriptPath` was not compared line
+     by line.
+558. `modelBindings` come from the `run-launched` event of the journal for every run. Node reads the owner's registry entry for
+     a live run. The values are the same once the launch event is written; the gap form (554) has none.
+559. Holes. The hole block renders what the journal has (no hole `type`, 437 of 9.42). Its instruction names `FillWorkflowHole`
+     in Node's wording, and FillWorkflowHole is not registered yet (the other W7 row), so the instruction names a tool this
+     build cannot call. Until that row lands, a waiting hole has no way to be filled from this build.
+560. Artifact line. This build's `[id] kind: title (primary)` line, not Node's `formatPublishedArtifactLine` (437 of 9.42 unchanged).
+561. Provider stop. `formatWorkflowProviderStopError` is ported with its sentences per kind (auth, not configured, model
+     unavailable, invalid request, quota with and without a reset, and the permanent default). The sentences and facts were
+     compared with the source file, not with Node's tests. The `<error>` body is written verbatim, as Node writes it.
+562. Golden tests compare against the wording of the formatter, the summary and the roster sources
+     (`get-workflow-run-format*.ts`, `get-workflow-run-summary.ts`, `dynamic-workflow-run-roster*.ts`). Node's own handler tests
+     (`core/tests/get-workflow-run-tool.test.ts`, 1768 lines, and `get-workflow-run-summary.test.ts`) were not ported in this
+     row. They are the next check.
+563. Concurrency field. The projected `concurrency` is the same reducer's output that Node's `reduceRunState` folds, and the
+     configured default is the same value, so the field agrees with Node when the default is configured (551 otherwise).
+
+**Tests.** Red then green where observed:
+
+- `workflow` `run_roster_tests` (14): written with the builder in one pass. The first build failed to compile (a `&Map` passed as
+  `&Value`); after that fix every test passed on its first run, so no behavioural red was observed for the builder.
+- `workflow` `run_store_tests::run_detail_carries_the_roster_read_from_the_journal`: red first (no `roster` field, a compile
+  error), green after the store change.
+- `tools` `workflow_run_detail_tests`: of the 26 goldens in the file at the first run, 19 failed (the 9.46 blocks were missing,
+  and three 9.42 summary expectations changed because the step clause now leads the optional clauses); the 7 that passed were
+  9.42 goldens unchanged. The `running()` fixture gained the `health` object the runtime always sends, before that first run.
+  One more golden (the gap form, 554) was added later and passed on its first run.
+- `tools` `workflow_run_tools_tests`: two fake-port fixtures gained `health` (the formatter now writes unknown questions without
+  it); both green after that.
+- `runtime` `get_run_detail_reads_the_journal_row_for_the_owner_and_another_session`: the double builds the roster from its events,
+  and asserts that the snapshot reaches the detail (`health.pendingQuestionsKnown`, `logTail`). Green.
+
+**Verification.** `cargo fmt --all --check` clean. `cargo clippy --workspace --all-targets --locked -- -D warnings` clean.
+Lib tests: `rust-cli-workflow` 452, `rust-cli-runtime` 338, `rust-cli-tools` 650; `rust-cli-kernel-api` and
+`rust-cli-node-store` 443 and 357 (one ignored, as before). The cli bin tests: 564.
+
+**Not done in this row.** FillWorkflowHole and the hole fill (559). The Node handler and summary test files (562). The
+artifact line (560). The owner's live parking table (550, 552). The gap-form roster (554). Everything else in the roster family
+and the summary is built.
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.

@@ -1454,6 +1454,28 @@ impl rust_cli_workflow::run_store::RunStore for DetailStore {
             .into_iter()
             .find(|run| run.get("runId").and_then(serde_json::Value::as_str) == Some(run_id))
         });
+        // The situation snapshot (9.46) of the same events: no node or actor rows, and no clock on the events.
+        let stored: Vec<rust_cli_node_store::dwf::StoredEvent> = self
+            .events
+            .iter()
+            .filter(|(id, _)| id == run_id)
+            .flat_map(|(_, events)| events.iter().cloned())
+            .enumerate()
+            .map(|(index, event)| rust_cli_node_store::dwf::StoredEvent {
+                sequence: i64::try_from(index + 1).unwrap_or(i64::MAX),
+                event,
+                time_created: 0,
+            })
+            .collect();
+        let roster = rust_cli_workflow::run_roster::build_roster(
+            &rust_cli_workflow::run_roster::RosterFacts {
+                state: state.as_ref(),
+                events: &stored,
+                nodes: &[],
+                actors: &[],
+                terminal: false,
+            },
+        );
         Ok(Some(rust_cli_workflow::run_store::RunDetail {
             run: rust_cli_workflow::run_store::RunListRow {
                 run: row.clone(),
@@ -1461,6 +1483,7 @@ impl rust_cli_workflow::run_store::RunStore for DetailStore {
                 time_updated: *updated,
             },
             state,
+            roster,
         }))
     }
 }
@@ -1563,6 +1586,10 @@ async fn get_run_detail_reads_the_journal_row_for_the_owner_and_another_session(
     assert_eq!(detail["usage"]["nodesRunning"], 1);
     assert_eq!(detail["usage"]["nodesCompleted"], 1);
     assert_eq!(detail["usage"]["nodesFailed"], 1);
+    // 9.46: the situation snapshot reaches the detail: the parked questions are known (the replay ran), and the log tail
+    // of this journal is empty.
+    assert_eq!(detail["health"]["pendingQuestionsKnown"], true);
+    assert_eq!(detail["logTail"], json!([]));
     // The replay keeps the subagent model on the progress path, not in the run entry, so the detail does not show it yet
     // (divergence 436).
     assert!(detail.get("subagentModel").is_none());

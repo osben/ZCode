@@ -29,6 +29,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
+use crate::workflow_create::describe_script_path;
 use crate::workflow_run_detail::format_detail;
 use crate::workflow_tools::{Contract, contract, workspace_dir};
 
@@ -413,9 +414,19 @@ impl Tool for RunTool {
                     .get_run_detail(&WorkflowRunId::new(run_id.clone()))
                     .await
                     .map_err(|error| port_failure(error, LIST_UNAVAILABLE, "GetWorkflowRun"))?;
-                let Some(detail) = detail else {
+                let Some(mut detail) = detail else {
                     return Err(failed(run_not_found(&run_id)));
                 };
+                // Node: the script file is named relative to the working directory, since the model will edit that file.
+                if let Some(path) = detail
+                    .get("scriptPath")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+                {
+                    let cwd = std::path::PathBuf::from(workspace_dir(&context));
+                    detail["scriptPath"] =
+                        json!(describe_script_path(std::path::Path::new(&path), &cwd));
+                }
                 let now = i64::try_from(SystemClock::utc().now_ms()).unwrap_or(i64::MAX);
                 let mut output = text(format_detail(&detail, now));
                 output.display = detail;
