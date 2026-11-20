@@ -279,3 +279,99 @@ fn an_empty_description_is_rejected() {
     let error = parse("/* zcode-workflow\ndescription: \"\"\n*/\n").unwrap_err();
     assert_eq!(error.reason(), "invalid_metadata");
 }
+
+// Goldens below were taken from Node's `yaml` 2.9.1 `stringify` (see the review round of W7-8b).
+
+#[test]
+fn nested_sequences_are_written_compact_as_node_writes_them() {
+    let mut j = arg(ArgType::Json);
+    j.default = Some(json!({"a": [[1, 2], [3], []]}));
+    let meta = meta_with_args(vec![("j", j)]);
+    assert_eq!(
+        serialize(&meta, ""),
+        "/* zcode-workflow\ndescription: d\nargs:\n  j:\n    type: json\n    default:\n      a:\n        - - 1\n          - 2\n        - - 3\n        - []\n*/\n"
+    );
+}
+
+#[test]
+fn numbers_are_written_with_javascript_string_conversion() {
+    let mut j = arg(ArgType::Json);
+    j.default = Some(json!([
+        1e21,
+        1e-7,
+        1.5e-7,
+        0.000001,
+        -2.5e-9,
+        1.2345678901234568e20
+    ]));
+    let meta = meta_with_args(vec![("j", j)]);
+    let text = serialize(&meta, "");
+    assert!(text.contains("      - 1e+21\n      - 1e-7\n      - 1.5e-7\n      - 0.000001\n      - -2.5e-9\n      - 123456789012345680000\n"), "{text}");
+}
+
+#[test]
+fn u0085_is_double_quoted_and_the_other_line_separators_stay_plain_as_node_writes_them() {
+    let meta = |text: &str| Meta {
+        description: text.to_owned(),
+        when_to_use: None,
+        args: None,
+    };
+    assert_eq!(
+        serialize(&meta("a\u{85}b"), ""),
+        "/* zcode-workflow\ndescription: \"a\u{85}b\"\n*/\n"
+    );
+    assert_eq!(
+        serialize(&meta("a\u{2028}b"), ""),
+        "/* zcode-workflow\ndescription: a\u{2028}b\n*/\n"
+    );
+    assert_eq!(
+        serialize(&meta("a\u{2029}b"), ""),
+        "/* zcode-workflow\ndescription: a\u{2029}b\n*/\n"
+    );
+}
+
+#[test]
+fn an_argument_description_may_be_empty_but_a_block_description_may_not() {
+    let mut q = arg(ArgType::String);
+    q.description = Some(String::new());
+    let meta = meta_with_args(vec![("q", q)]);
+    let parsed = parse(&serialize(&meta, "")).expect("an empty argument description parses");
+    assert_eq!(parsed.meta, meta);
+    let error = parse("/* zcode-workflow\ndescription: \"\"\n*/\n").unwrap_err();
+    assert_eq!(error.reason(), "invalid_metadata");
+}
+
+#[test]
+fn a_byte_order_mark_before_the_block_is_ignored() {
+    let parsed = parse("\u{feff}/* zcode-workflow\ndescription: x\n*/\nbody").expect("parses");
+    assert_eq!(parsed.script, "body");
+    assert_eq!(parsed.body_line_offset, 3);
+}
+
+#[test]
+fn a_second_yaml_document_is_named_with_its_line_as_node_names_it() {
+    let error = parse("/* zcode-workflow\ndescription: x\n---\ndescription: y\n*/\n").unwrap_err();
+    assert_eq!(error.reason(), "invalid_yaml");
+    assert_eq!(
+        error.detail(),
+        "Source contains multiple documents; please use YAML.parseAllDocuments() at line 2, column 1:\n\ndescription: x\n---\n^\n"
+    );
+}
+
+#[test]
+fn yaml_core_booleans_and_nulls_are_quoted_as_node_quotes_them() {
+    for word in [
+        "True", "TRUE", "False", "FALSE", "Null", "NULL", "true", "null", "~",
+    ] {
+        let meta = Meta {
+            description: word.to_owned(),
+            when_to_use: None,
+            args: None,
+        };
+        assert_eq!(
+            serialize(&meta, ""),
+            format!("/* zcode-workflow\ndescription: \"{word}\"\n*/\n"),
+            "{word}"
+        );
+    }
+}

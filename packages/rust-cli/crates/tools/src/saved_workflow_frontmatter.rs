@@ -106,6 +106,7 @@ fn decl_value(decl: &ArgDecl) -> Value {
 
 /// File text to metadata and script. Lines are split on `\n` and compared trimmed, as Node does.
 pub fn parse(source: &str) -> Result<Parsed, ParseError> {
+    let source = source.strip_prefix('\u{feff}').unwrap_or(source);
     let lines: Vec<&str> = source.split('\n').collect();
     let mut start = 0;
     while start < lines.len() && lines[start].trim().is_empty() {
@@ -134,6 +135,8 @@ pub fn parse(source: &str) -> Result<Parsed, ParseError> {
 /// Whether a saved file starts with the block marker: the first non-blank line is `/* zcode-workflow`.
 pub fn starts_with_sentinel(source: &str) -> bool {
     source
+        .strip_prefix('\u{feff}')
+        .unwrap_or(source)
         .split('\n')
         .find(|line| !line.trim().is_empty())
         .is_some_and(|line| line.trim() == SENTINEL)
@@ -143,13 +146,11 @@ fn parse_metadata(body_text: &str) -> Result<Meta, ParseError> {
     let documents = YamlLoader::load_from_str(body_text)
         .map_err(|error| ParseError::InvalidYaml(error.to_string()))?;
     if documents.len() > 1 {
-        return Err(ParseError::InvalidYaml(
-            "Source contains multiple documents; please use YAML.loadAll() instead".to_owned(),
-        ));
+        return Err(ParseError::InvalidYaml(multiple_documents_text(body_text)));
     }
     let root = documents.into_iter().next().unwrap_or(Yaml::Null);
-    let issues = Issues::new();
-    let meta = meta_from(&root, &issues);
+    let mut issues = Issues::new();
+    let meta = meta_from(&root, &mut issues);
     match (meta, issues.into_detail()) {
         (Some(meta), None) => Ok(meta),
         (_, Some(detail)) => Err(ParseError::InvalidMetadata(detail)),
@@ -160,24 +161,39 @@ fn parse_metadata(body_text: &str) -> Result<Meta, ParseError> {
 }
 
 /// Collected validation messages, `path: message`, joined with `; ` as Node's zod failure does.
-struct Issues(std::cell::RefCell<Vec<String>>);
+struct Issues(Vec<String>);
 
 impl Issues {
     fn new() -> Self {
-        Self(std::cell::RefCell::new(Vec::new()))
+        Self(Vec::new())
     }
 
-    fn add(&self, path: &str, message: &str) {
-        self.0.borrow_mut().push(format!("{path}: {message}"));
+    fn add(&mut self, path: &str, message: &str) {
+        self.0.push(format!("{path}: {message}"));
     }
 
     fn into_detail(self) -> Option<String> {
-        let issues = self.0.into_inner();
-        (!issues.is_empty()).then(|| issues.join("; "))
+        (!self.0.is_empty()).then(|| self.0.join("; "))
     }
 }
 
-fn meta_from(root: &Yaml, issues: &Issues) -> Option<Meta> {
+/// yaml 2.9's text for a second document: the line of its `---` marker, then the text up to that line.
+fn multiple_documents_text(body_text: &str) -> String {
+    let lines: Vec<&str> = body_text.split('\n').collect();
+    let marker = lines
+        .iter()
+        .enumerate()
+        .skip(1)
+        .find(|(_, line)| line.starts_with("---"))
+        .map_or(lines.len().saturating_sub(1), |(index, _)| index);
+    format!(
+        "Source contains multiple documents; please use YAML.parseAllDocuments() at line {}, column 1:\n\n{}\n^\n",
+        marker + 1,
+        lines[..=marker].join("\n")
+    )
+}
+
+fn meta_from(root: &Yaml, issues: &mut Issues) -> Option<Meta> {
     let Yaml::Hash(entries) = root else {
         issues.add(
             "(root)",
@@ -212,7 +228,7 @@ fn meta_from(root: &Yaml, issues: &Issues) -> Option<Meta> {
     })
 }
 
-fn args_from(value: &Yaml, issues: &Issues) -> Option<Vec<(String, ArgDecl)>> {
+fn args_from(value: &Yaml, issues: &mut Issues) -> Option<Vec<(String, ArgDecl)>> {
     let Yaml::Hash(entries) = value else {
         issues.add(
             "args",
@@ -231,7 +247,7 @@ fn args_from(value: &Yaml, issues: &Issues) -> Option<Vec<(String, ArgDecl)>> {
     Some(declared)
 }
 
-fn arg_from(path: &str, value: &Yaml, issues: &Issues) -> Option<ArgDecl> {
+fn arg_from(path: &str, value: &Yaml, issues: &mut Issues) -> Option<ArgDecl> {
     let Yaml::Hash(entries) = value else {
         issues.add(
             path,
@@ -272,7 +288,7 @@ fn arg_from(path: &str, value: &Yaml, issues: &Issues) -> Option<ArgDecl> {
     };
     let description = entries
         .get(&key("description"))
-        .and_then(|value| optional_string(&format!("{path}.description"), value, issues));
+        .and_then(|value| plain_string(&format!("{path}.description"), value, issues));
     let required = match entries.get(&key("required")) {
         None => None,
         Some(Yaml::Boolean(flag)) => Some(*flag),
@@ -297,7 +313,7 @@ fn unknown_keys<'a>(
     path: &str,
     keys: impl Iterator<Item = &'a Yaml>,
     known: &[&str],
-    issues: &Issues,
+    issues: &mut Issues,
 ) {
     let unknown: Vec<String> = keys
         .filter_map(scalar_text)
@@ -312,7 +328,7 @@ fn unknown_keys<'a>(
     }
 }
 
-fn non_empty_string(path: &str, value: &Yaml, issues: &Issues) -> Option<String> {
+fn non_empty_string(path: &str, value: &Yaml, issues: &mut Issues) -> Option<String> {
     match value {
         Yaml::String(text) if text.is_empty() => {
             issues.add(path, "String must contain at least 1 character(s)");
@@ -329,8 +345,18 @@ fn non_empty_string(path: &str, value: &Yaml, issues: &Issues) -> Option<String>
     }
 }
 
-fn optional_string(path: &str, value: &Yaml, issues: &Issues) -> Option<String> {
-    non_empty_string(path, value, issues)
+/// A string that may be empty (an argument's description is `z.string().optional()`, with no minimum length).
+fn plain_string(path: &str, value: &Yaml, issues: &mut Issues) -> Option<String> {
+    match value {
+        Yaml::String(text) => Some(text.clone()),
+        other => {
+            issues.add(
+                path,
+                &format!("Expected string, received {}", describe(other)),
+            );
+            None
+        }
+    }
 }
 
 fn key(name: &str) -> Yaml {
@@ -445,8 +471,9 @@ fn render_sequence(indent: usize, items: &[Value]) -> Vec<String> {
                 lines.extend(block);
             }
             Value::Array(inner) if !inner.is_empty() => {
-                lines.push(format!("{pad}-"));
-                lines.extend(render_sequence(indent + 2, inner));
+                let mut block = render_sequence(indent + 2, inner);
+                block[0] = format!("{pad}- {}", block[0].trim_start());
+                lines.extend(block);
             }
             other => lines.push(format!("{pad}- {}", scalar_value_text(other))),
         }
@@ -469,10 +496,20 @@ fn number_text(number: &serde_json::Number) -> String {
     if let Some(integer) = number.as_i64() {
         return integer.to_string();
     }
-    match number.as_f64() {
-        Some(float) if float.fract() == 0.0 && float.abs() < 1e15 => format!("{}", float as i64),
-        Some(float) => format!("{float}"),
-        None => "null".to_owned(),
+    let Some(float) = number.as_f64() else {
+        return "null".to_owned();
+    };
+    let magnitude = float.abs();
+    if (1e-6..1e21).contains(&magnitude) {
+        return format!("{float}");
+    }
+    // Rust writes the exponent without a sign for positive exponents; JavaScript writes `e+`.
+    let exponent_form = format!("{float:e}");
+    match exponent_form.split_once('e') {
+        Some((mantissa, exponent)) if !exponent.starts_with('-') => {
+            format!("{mantissa}e+{exponent}")
+        }
+        _ => exponent_form,
     }
 }
 
@@ -507,6 +544,9 @@ fn plain_is_safe(text: &str) -> bool {
     let Some(first) = text.chars().next() else {
         return false;
     };
+    if text.contains('\u{85}') {
+        return false;
+    }
     if text.trim() != text
         || text
             .chars()

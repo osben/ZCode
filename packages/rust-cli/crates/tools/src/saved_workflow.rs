@@ -16,7 +16,7 @@ use serde_json::json;
 #[path = "saved_workflow_frontmatter.rs"]
 mod frontmatter;
 
-pub use frontmatter::{SENTINEL, parse, serialize, starts_with_sentinel};
+pub use frontmatter::{ParseError, SENTINEL, parse, serialize, starts_with_sentinel};
 
 /// Saved-definition file extension. `.dwf.ts` keeps the file valid TypeScript (the metadata is a block comment).
 pub const FILE_EXTENSION: &str = ".dwf.ts";
@@ -129,6 +129,24 @@ pub struct Listing {
     pub invalid: Vec<InvalidEntry>,
 }
 
+/// Why a save did not happen.
+#[derive(Debug)]
+pub enum SaveError {
+    /// The name is not one the rules allow (it would not be a file name inside the root).
+    InvalidName(String),
+    /// The file could not be written.
+    Io(io::Error),
+}
+
+impl std::fmt::Display for SaveError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidName(name) => write!(formatter, "'{name}' is not a usable workflow name"),
+            Self::Io(error) => write!(formatter, "{error}"),
+        }
+    }
+}
+
 /// The outcome of a write.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Saved {
@@ -206,7 +224,7 @@ impl Store {
                     continue;
                 }
             };
-            for file_name in names {
+            for file_name in order_entries(names) {
                 let Some(name) = file_name.strip_suffix(FILE_EXTENSION) else {
                     continue;
                 };
@@ -246,7 +264,7 @@ impl Store {
                     }
                     Err(error) => listing.invalid.push(InvalidEntry {
                         path: path_text,
-                        reason: format!("{}: {}", error.reason(), error.detail()),
+                        reason: parse_failure(&error),
                     }),
                 }
             }
@@ -254,17 +272,39 @@ impl Store {
         listing
     }
 
-    /// Writes the definition: the metadata block, then the script byte for byte. The caller has checked the name.
-    pub fn save(&self, name: &str, meta: &Meta, script: &str, scope: Scope) -> io::Result<Saved> {
+    /// Writes the definition: the metadata block, then the script byte for byte. A name the rules do not allow is
+    /// refused before anything is written.
+    pub fn save(
+        &self,
+        name: &str,
+        meta: &Meta,
+        script: &str,
+        scope: Scope,
+    ) -> Result<Saved, SaveError> {
+        if !is_valid_name(name) {
+            return Err(SaveError::InvalidName(name.to_owned()));
+        }
         let path = self.path(scope, name);
         let overwritten = file_exists(&path);
-        write_text(&path, &serialize(meta, script))?;
+        write_text(&path, &serialize(meta, script)).map_err(SaveError::Io)?;
         Ok(Saved {
             path,
             scope,
             overwritten,
         })
     }
+}
+
+/// The order the list reads files in: Node sorts the file names with their suffix (`sort()` on the names), so the
+/// catalog is the same on every machine whatever order the directory returns them in.
+pub fn order_entries(mut names: Vec<String>) -> Vec<String> {
+    names.sort();
+    names
+}
+
+/// The reason a file is listed as invalid: the parse failure's reason and detail.
+fn parse_failure(error: &ParseError) -> String {
+    format!("{}: {}", error.reason(), error.detail())
 }
 
 /// A missing directory (or a path component that is a file) is absent, not an error.

@@ -1,12 +1,13 @@
 //! Fork: the ListSavedWorkflows tool (Node `core/src/tool/handlers/list-saved-workflows.ts`, specs/fork-rust-workflow-engine.md
 //! W7-8b). A read of the catalog: no confirmation, no write. The project root is always the session's working directory.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use async_trait::async_trait;
 use rust_cli_kernel_api::permission::PermissionDecision;
 use rust_cli_kernel_api::tool::{
-    PromptContext, Tool, ToolError, ToolOutput, ToolProgress, ToolUseContext, Validation, text,
+    PromptContext, Tool, ToolError, ToolOutput, ToolProgress, ToolUseContext, Validation, failed,
+    text,
 };
 use rust_cli_kernel_api::tool_names;
 use serde::Deserialize;
@@ -112,8 +113,11 @@ fn escape_attribute(value: &str) -> String {
 /// The model's text: one container with one block per definition. The name, the description, the usage and the argument
 /// table are what the model needs to choose, so each definition gets several lines.
 fn format_model_text(display: &Value) -> String {
-    let workflows = display["workflows"].as_array().cloned().unwrap_or_default();
-    let invalid = display.get("invalid").and_then(Value::as_array).cloned();
+    let workflows: &[Value] = display["workflows"].as_array().map_or(&[], Vec::as_slice);
+    let invalid: Option<&[Value]> = display
+        .get("invalid")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice);
     if workflows.is_empty() && invalid.is_none() {
         return [
             "<saved_workflows count=\"0\">".to_owned(),
@@ -123,7 +127,7 @@ fn format_model_text(display: &Value) -> String {
         .join("\n");
     }
     let mut lines = vec![format!("<saved_workflows count=\"{}\">", workflows.len())];
-    for workflow in &workflows {
+    for workflow in workflows {
         lines.push(format!(
             "<workflow name=\"{}\" scope=\"{}\">",
             escape_attribute(workflow["name"].as_str().unwrap_or_default()),
@@ -233,8 +237,15 @@ impl Tool for ListSavedWorkflowsTool {
         serde_json::from_value::<ListInput>(input).map_err(|error| ToolError::InvalidInput {
             message: error.to_string(),
         })?;
-        let cwd = Path::new(&workspace_dir(&context)).to_path_buf();
-        let listing = Store::new(&cwd, &self.home).list();
+        let cwd = PathBuf::from(workspace_dir(&context));
+        let home = self.home.clone();
+        let listing = tokio::task::spawn_blocking(move || Store::new(&cwd, &home).list())
+            .await
+            .map_err(|error| {
+                failed(format!(
+                    "ListSavedWorkflows could not read the catalog: {error}"
+                ))
+            })?;
         let display = display_of(&listing);
         let mut output = text(format_model_text(&display));
         output.display = display;

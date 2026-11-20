@@ -209,3 +209,19 @@ fn a_format_analysis_maps_to_the_checker_verdict_and_ignores_the_graph() {
     assert!(analysis_from_value(&json!({"ok": "yes", "diagnostics": []})).is_err());
     assert!(analysis_from_value(&json!({"diagnostics": []})).is_err());
 }
+
+#[test]
+fn a_failed_helper_call_and_a_malformed_reply_both_mean_the_checker_cannot_answer() {
+    use rust_cli_protocol_core::rpc::RpcError;
+    let down = analysis_verdict(Err(RpcError::internal("the helper is not running")))
+        .expect_err("a failed call");
+    assert_eq!(down.message, "the helper is not running");
+    let malformed = analysis_verdict(Ok(json!({"diagnostics": []}))).expect_err("no ok flag");
+    assert!(
+        malformed.message.contains("does not match its contract"),
+        "{}",
+        malformed.message
+    );
+    let clean = analysis_verdict(Ok(json!({"ok": true, "diagnostics": []}))).expect("a verdict");
+    assert!(clean.ok);
+}

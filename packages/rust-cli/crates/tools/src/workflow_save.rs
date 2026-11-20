@@ -1,13 +1,18 @@
 //! Fork: the SaveWorkflow tool (Node `core/src/tool/handlers/save-workflow.ts`, specs/fork-rust-workflow-engine.md W7-8b).
 //!
-//! The order is Node's: the input is checked (name, one source, no block in an inline script), then the Skill gate, then
-//! a `script_path` is read. A script that does not check gets its diagnostics back without a confirmation or a write. A
-//! script that checks asks (never with an always-allow option), and only then is it written.
+//! The order is Node's: the input is checked (name, one source, no block in an inline script), then the Skill gate.
+//! The permission decision reads the script (a `script_path` is bounded to the workspace) and typechecks it. A script
+//! that does not check gets its diagnostics back without a confirmation or a write. A script that checks asks, with no
+//! always-allow option, and the bytes the user was asked about are the bytes the call writes: the decision keeps them
+//! for the call that follows it.
 
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::path::{Component, Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use rust_cli_fs::text_files::read_text;
+use rust_cli_kernel_api::ids::ToolUseId;
 use rust_cli_kernel_api::permission::PermissionDecision;
 use rust_cli_kernel_api::tool::{
     PromptContext, Tool, ToolError, ToolOutput, ToolProgress, ToolUseContext, Validation, failed,
@@ -32,13 +37,18 @@ use crate::workflow_tools::{
 const FAILURE_CODE: i32 = 400;
 /// The refusal code for a missing Skill read (Node `WORKFLOW_SKILL_NOT_LOADED_CODE`).
 const SKILL_NOT_LOADED_CODE: i32 = 428;
+/// Node `SAVE_WORKFLOW_MODEL_BYTES`.
+pub const SAVE_MODEL_BYTES: usize = 24_000;
+/// Approvals waiting for their call. A decision that is refused never reaches its call, so the table is bounded.
+const APPROVAL_CAP: usize = 256;
 const SOURCE_ERROR: &str = "Provide exactly one script source: `script` for the body inline, or `script_path` for the file holding it (a draft, usually). Passing both, or neither, is ambiguous.";
 const SENTINEL_IN_SCRIPT_ERROR: &str = "The `script` must be the workflow body only — it already starts with a `/* zcode-workflow` metadata block. Pass the metadata through the `description` / `whenToUse` / `args` fields instead; the block is written for you.";
 const NOT_SAVED_NOTE: &str =
     "NOTE: Nothing was saved — fix the errors above and call the tool again.";
 
-/// The input (Node `SaveWorkflowInputSchema`). `path`, `overwrite` and `shadowing` are filled during resolution in Node;
-/// they are accepted here for the schema and ignored, since the model's values never decide anything.
+/// The input (Node `SaveWorkflowInputSchema`). The keys are the schema's own names. `path`, `overwrite` and `shadowing`
+/// are filled during resolution in Node; they are accepted for the schema and ignored, since the model's values never
+/// decide anything.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SaveInput {
@@ -53,18 +63,20 @@ struct SaveInput {
     #[serde(default)]
     script_path: Option<String>,
     scope: String,
-    #[serde(default)]
+    #[serde(default, rename = "run_id")]
     _run_id: Option<IgnoredAny>,
-    #[serde(default)]
+    #[serde(default, rename = "path")]
     _path: Option<IgnoredAny>,
-    #[serde(default)]
+    #[serde(default, rename = "overwrite")]
     _overwrite: Option<IgnoredAny>,
-    #[serde(default)]
+    #[serde(default, rename = "shadowing")]
     _shadowing: Option<IgnoredAny>,
 }
 
-/// The body after the source is resolved: the script bytes the check and the write both see.
-struct Source {
+/// What the permission decision approved: the script bytes, and the checker's diagnostics for them (none, since an
+/// approved script checked clean).
+#[derive(Debug, Clone)]
+struct Approval {
     script: String,
 }
 
@@ -72,6 +84,7 @@ pub struct SaveWorkflowTool {
     contract: &'static Contract,
     analyzer: Arc<dyn WorkflowAnalyzer>,
     home: PathBuf,
+    approvals: Mutex<HashMap<ToolUseId, Approval>>,
 }
 
 impl SaveWorkflowTool {
@@ -80,15 +93,41 @@ impl SaveWorkflowTool {
             contract: contract(tool_names::SAVE_WORKFLOW),
             analyzer,
             home,
+            approvals: Mutex::new(HashMap::new()),
         }
     }
 
-    fn store(&self, context: &ToolUseContext) -> Store {
-        Store::new(Path::new(&workspace_dir(context)), &self.home)
+    fn store(&self, cwd: &Path) -> Store {
+        Store::new(cwd, &self.home)
+    }
+
+    fn remember(&self, tool_use: ToolUseId, script: String) {
+        let mut approvals = self
+            .approvals
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if approvals.len() >= APPROVAL_CAP {
+            approvals.clear();
+        }
+        approvals.insert(tool_use, Approval { script });
+    }
+
+    fn take_approval(&self, tool_use: &ToolUseId) -> Option<Approval> {
+        self.approvals
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(tool_use)
+    }
+
+    fn forget(&self, tool_use: &ToolUseId) {
+        self.approvals
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(tool_use);
     }
 }
 
-/// The refusals of the input, in Node's order (name, source, block), before the Skill gate.
+/// The refusals of the input's own shape, in Node's order (name, source, block). They read nothing from the disk.
 fn check_fields(input: &SaveInput) -> Option<Validation> {
     if !is_valid_name(&input.name) {
         return Some(invalid_with(
@@ -120,17 +159,46 @@ fn invalid_with(code: i32, message: String) -> Validation {
     }
 }
 
-/// Node `readWorkflowScriptFile` for a save: read the file, and if it starts with a block, take its body only.
-fn read_script_path(cwd: &Path, input_path: &str) -> Result<String, String> {
-    let absolute = if Path::new(input_path).is_absolute() {
+/// Lexical normalization of `.` and `..` (no disk access).
+fn normalize(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::ParentDir => {
+                out.pop();
+            }
+            Component::CurDir => {}
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+/// A `script_path` must resolve inside the workspace. Node accepts any path; a draft outside the repository is refused
+/// here (divergence 113), so a model cannot make the tool read files it has no business with.
+fn within_workspace(cwd: &Path, input_path: &str) -> Result<PathBuf, String> {
+    let joined = if Path::new(input_path).is_absolute() {
         PathBuf::from(input_path)
     } else {
         cwd.join(input_path)
     };
+    let resolved = normalize(&joined);
+    if resolved.starts_with(normalize(cwd)) {
+        Ok(resolved)
+    } else {
+        Err(format!(
+            "The workflow script file {input_path} is outside the workspace. Pass a `script_path` inside it, or submit the script inline."
+        ))
+    }
+}
+
+/// Node `readWorkflowScriptFile` for a save: read the file, and if it starts with a block, take its body only.
+fn read_script_path(cwd: &Path, input_path: &str) -> Result<String, String> {
+    let absolute = within_workspace(cwd, input_path)?;
     let described = describe(&absolute, cwd);
-    let source = rust_cli_fs::text_files::read_text(&absolute).map_err(|error| {
+    let source = read_text(&absolute).map_err(|error| {
         format!(
-            "The workflow script file {described} could not be read: {error}. Pass `path` for a file that exists, or submit the script inline."
+            "The workflow script file {described} could not be read: {error}. Pass `script_path` for a file that exists, or submit the script inline."
         )
     })?;
     if !starts_with_sentinel(&source) {
@@ -155,14 +223,11 @@ fn describe(absolute: &Path, cwd: &Path) -> String {
 }
 
 /// The source of a call: the inline script, or the draft file's body.
-fn resolve_source(input: &SaveInput, cwd: &Path) -> Result<Source, String> {
+fn resolve_source(input: &SaveInput, cwd: &Path) -> Result<String, String> {
     if let Some(script) = &input.script {
-        return Ok(Source {
-            script: script.clone(),
-        });
+        return Ok(script.clone());
     }
-    let path = input.script_path.as_deref().unwrap_or_default();
-    read_script_path(cwd, path).map(|script| Source { script })
+    read_script_path(cwd, input.script_path.as_deref().unwrap_or_default())
 }
 
 fn meta_of(input: &SaveInput) -> Result<Meta, String> {
@@ -177,7 +242,8 @@ fn meta_of(input: &SaveInput) -> Result<Meta, String> {
     })
 }
 
-/// The declared arguments, checked against the input schema's rules (type enum, known keys only).
+/// The declared arguments, checked against the input schema's rules (type enum, known keys only). The description may be
+/// empty (Node: `z.string().optional()`).
 fn args_from_json(value: &Value) -> Result<Vec<(String, ArgDecl)>, String> {
     let Some(entries) = value.as_object() else {
         return Err("args: Expected object".to_owned());
@@ -296,6 +362,12 @@ fn scope_of(input: &SaveInput) -> Option<Scope> {
     Scope::parse(&input.scope)
 }
 
+fn blocking_failure(error: tokio::task::JoinError) -> ToolError {
+    failed(format!(
+        "SaveWorkflow could not finish the file operation: {error}"
+    ))
+}
+
 #[async_trait]
 impl Tool for SaveWorkflowTool {
     fn name(&self) -> &str {
@@ -335,6 +407,7 @@ impl Tool for SaveWorkflowTool {
         Some(SAVE_MODEL_BYTES)
     }
 
+    /// The input's shape, the Skill gate, and the args. No disk access: a `script_path` is read by the permission decision.
     async fn validate_input(&self, input: &Value, context: &ToolUseContext) -> Validation {
         let input: SaveInput = match serde_json::from_value(input.clone()) {
             Ok(input) => input,
@@ -356,14 +429,15 @@ impl Tool for SaveWorkflowTool {
                 ),
             );
         }
-        match resolve_source(&input, Path::new(&workspace_dir(context))) {
+        match meta_of(&input) {
             Ok(_) => Validation::Ok,
             Err(message) => invalid_with(FAILURE_CODE, message),
         }
     }
 
-    /// Node `prepareSaveWorkflowApproval`: a script that checks asks, with `independent` (no always-allow). A script that
-    /// does not check proceeds to the handler, which returns its diagnostics without writing.
+    /// Node `prepareSaveWorkflowApproval`: the source is read here and checked. A script that checks asks, with
+    /// `independent` (no always-allow), and the bytes asked about are kept for the call. A script that does not check
+    /// proceeds to the call, which returns its diagnostics without writing.
     async fn check_permissions(
         &self,
         input: &Value,
@@ -373,11 +447,11 @@ impl Tool for SaveWorkflowTool {
             return PermissionDecision::Passthrough;
         };
         let cwd = PathBuf::from(workspace_dir(context));
-        let source = match resolve_source(&input, &cwd) {
-            Ok(source) => source,
+        let script = match resolve_source(&input, &cwd) {
+            Ok(script) => script,
             Err(message) => return PermissionDecision::Deny { message },
         };
-        let analysis = match self.analyzer.analyze(&source.script).await {
+        let analysis = match self.analyzer.analyze(&script).await {
             Ok(analysis) => analysis,
             Err(error) => {
                 return PermissionDecision::Deny {
@@ -386,6 +460,7 @@ impl Tool for SaveWorkflowTool {
             }
         };
         if !analysis.ok {
+            self.forget(&context.tool_use);
             return PermissionDecision::Allow {
                 updated_input: None,
             };
@@ -393,22 +468,32 @@ impl Tool for SaveWorkflowTool {
         let Some(scope) = scope_of(&input) else {
             return PermissionDecision::Passthrough;
         };
-        let store = self.store(context);
-        let path = store.path(scope, &input.name);
-        let message = confirmation_message(
-            &input.name,
-            &path,
-            store.exists(&input.name, scope),
-            store.shadowing(&input.name, scope),
-        );
+        let store = self.store(&cwd);
+        let name = input.name.clone();
+        let facts = tokio::task::spawn_blocking(move || {
+            (
+                store.path(scope, &name),
+                store.exists(&name, scope),
+                store.shadowing(&name, scope),
+            )
+        })
+        .await;
+        let Ok((path, overwrite, shadowing)) = facts else {
+            return PermissionDecision::Deny {
+                message: "SaveWorkflow could not read the saved workflows".to_owned(),
+            };
+        };
+        self.remember(context.tool_use.clone(), script);
         PermissionDecision::Ask {
-            message,
+            message: confirmation_message(&input.name, &path, overwrite, shadowing),
             suggestions: Vec::new(),
             once: false,
             independent: true,
         }
     }
 
+    /// Writes the approved bytes. Without an approval for this call, a script that checks clean is not written: the
+    /// call reports that it was not confirmed, and a script that does not check gets its diagnostics.
     async fn call(
         &self,
         input: Value,
@@ -425,51 +510,56 @@ impl Tool for SaveWorkflowTool {
             });
         };
         let cwd = PathBuf::from(workspace_dir(&context));
-        let source = resolve_source(&input, &cwd).map_err(failed)?;
-        let analysis = self
-            .analyzer
-            .analyze(&source.script)
-            .await
-            .map_err(|error| failed(error.message))?;
-        let store = self.store(&context);
-        if !analysis.ok {
-            let path = store.path(scope, &input.name);
-            let display = json!({
-                "name": input.name,
-                "scope": scope.as_str(),
-                "path": path.display().to_string(),
-                "diagnostics": analysis.diagnostics.iter().map(diagnostic_value).collect::<Vec<_>>(),
-                "ok": false,
-            });
-            let mut output = text(failing_response(&analysis.diagnostics));
-            output.display = display;
-            return Ok(output);
-        }
         let meta = meta_of(&input).map_err(|message| ToolError::InvalidInput { message })?;
-        let saved = store
-            .save(&input.name, &meta, &source.script, scope)
+        let script = match self.take_approval(&context.tool_use) {
+            Some(approval) => approval.script,
+            None => {
+                let script = resolve_source(&input, &cwd).map_err(failed)?;
+                let analysis = self
+                    .analyzer
+                    .analyze(&script)
+                    .await
+                    .map_err(|error| failed(error.message))?;
+                if analysis.ok {
+                    return Err(failed(
+                        "SaveWorkflow has no confirmation for this script, so nothing was written. Call it again.".to_owned(),
+                    ));
+                }
+                let path = self.store(&cwd).path(scope, &input.name);
+                let mut output = text(failing_response(&analysis.diagnostics));
+                output.display = json!({
+                    "name": input.name,
+                    "scope": scope.as_str(),
+                    "path": path.display().to_string(),
+                    "diagnostics": analysis.diagnostics.iter().map(diagnostic_value).collect::<Vec<_>>(),
+                    "ok": false,
+                });
+                return Ok(output);
+            }
+        };
+        let store = self.store(&cwd);
+        let name = input.name.clone();
+        let saved = tokio::task::spawn_blocking(move || store.save(&name, &meta, &script, scope))
+            .await
+            .map_err(blocking_failure)?
             .map_err(|error| failed(format!("SaveWorkflow could not write the file: {error}")))?;
-        let display = json!({
-            "name": input.name,
-            "scope": saved.scope.as_str(),
-            "path": saved.path.display().to_string(),
-            "diagnostics": analysis.diagnostics.iter().map(diagnostic_value).collect::<Vec<_>>(),
-            "ok": true,
-            "overwritten": saved.overwritten,
-        });
         let mut output = text(saved_response(
             &input.name,
             saved.scope,
             &saved.path,
             saved.overwritten,
         ));
-        output.display = display;
+        output.display = json!({
+            "name": input.name,
+            "scope": saved.scope.as_str(),
+            "path": saved.path.display().to_string(),
+            "diagnostics": [],
+            "ok": true,
+            "overwritten": saved.overwritten,
+        });
         Ok(output)
     }
 }
-
-/// Node `SAVE_WORKFLOW_MODEL_BYTES`.
-pub const SAVE_MODEL_BYTES: usize = 24_000;
 
 #[cfg(test)]
 #[path = "workflow_save_tests.rs"]

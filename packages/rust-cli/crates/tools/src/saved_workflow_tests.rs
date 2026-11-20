@@ -17,10 +17,6 @@ mod fs {
     pub fn write(path: impl AsRef<Path>, text: &str) -> io::Result<()> {
         rust_cli_fs::text_files::write_text(path.as_ref(), text)
     }
-
-    pub fn create_dir_all(_path: impl AsRef<Path>) -> io::Result<()> {
-        Ok(())
-    }
 }
 
 /// A fresh cwd and home under the system temp dir, removed on drop.
@@ -36,8 +32,6 @@ impl Dirs {
         let root = guard.path().to_path_buf();
         let cwd = root.join("project");
         let home = root.join("home");
-        fs::create_dir_all(&cwd).expect("cwd");
-        fs::create_dir_all(&home).expect("home");
         Self {
             _guard: guard,
             cwd,
@@ -50,7 +44,6 @@ impl Dirs {
     }
 
     fn write(&self, dir: &Path, file: &str, text: &str) {
-        fs::create_dir_all(dir).expect("dir");
         fs::write(dir.join(file), text).expect("write");
     }
 }
@@ -235,4 +228,50 @@ fn exists_answers_per_scope() {
     assert!(store.exists("p", Scope::Project));
     assert!(!store.exists("p", Scope::Global));
     assert!(!store.exists("../p", Scope::Project));
+}
+
+#[test]
+fn file_names_are_ordered_as_node_sorts_them_by_full_file_name() {
+    // Node sorts the file names (with their suffix), so "a-b.dwf.ts" comes before "a.dwf.ts".
+    let ordered = order_entries(vec!["a.dwf.ts".to_owned(), "a-b.dwf.ts".to_owned()]);
+    assert_eq!(ordered, ["a-b.dwf.ts", "a.dwf.ts"]);
+}
+
+#[test]
+fn a_save_refuses_a_name_the_rules_do_not_allow_before_it_touches_the_disk() {
+    let dirs = Dirs::new("typed");
+    let error = dirs
+        .store()
+        .save("../evil", &meta("d"), "return 1;", Scope::Project)
+        .expect_err("refused");
+    assert!(
+        matches!(error, SaveError::InvalidName(ref name) if name == "../evil"),
+        "{error:?}"
+    );
+    assert!(!rust_cli_fs::text_files::is_file(
+        &dirs.cwd.join("evil.dwf.ts")
+    ));
+}
+
+#[test]
+fn an_empty_argument_description_survives_a_save_and_a_list() {
+    let dirs = Dirs::new("empty-desc");
+    let mut decl = ArgDecl {
+        ty: ArgType::String,
+        description: Some(String::new()),
+        required: None,
+        default: None,
+    };
+    decl.description = Some(String::new());
+    let saved = Meta {
+        description: "d".to_owned(),
+        when_to_use: None,
+        args: Some(vec![("q".to_owned(), decl.clone())]),
+    };
+    dirs.store()
+        .save("empty-arg", &saved, "return 1;", Scope::Project)
+        .expect("save");
+    let listing = dirs.store().list();
+    assert!(listing.invalid.is_empty(), "{:?}", listing.invalid);
+    assert_eq!(listing.entries[0].args, Some(vec![("q".to_owned(), decl)]));
 }

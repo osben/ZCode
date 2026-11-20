@@ -276,21 +276,26 @@ impl HelperWorkflowAnalyzer {
 #[async_trait]
 impl WorkflowAnalyzer for HelperWorkflowAnalyzer {
     async fn analyze(&self, script: &str) -> Result<WorkflowAnalysis, WorkflowAnalysisError> {
-        let reply =
-            analysis(&self.helper, script)
-                .await
-                .map_err(|error| WorkflowAnalysisError {
-                    message: error.message,
-                })?;
-        analysis_from_value(&reply).map_err(|error| WorkflowAnalysisError {
-            message: error.message,
-        })
+        analysis_verdict(analysis(&self.helper, script).await)
     }
+}
+
+/// The port's verdict for one helper reply: a failed call and a reply that does not match its contract both mean the
+/// checker cannot answer.
+pub(crate) fn analysis_verdict(
+    reply: Result<Value, RpcError>,
+) -> Result<WorkflowAnalysis, WorkflowAnalysisError> {
+    let reply = reply.map_err(|error| WorkflowAnalysisError {
+        message: error.message,
+    })?;
+    analysis_from_value(&reply).map_err(|error| WorkflowAnalysisError {
+        message: error.message,
+    })
 }
 
 /// The helper's analysis object as the port's verdict. The window graph and the other fields are not needed here.
 pub(crate) fn analysis_from_value(value: &Value) -> Result<WorkflowAnalysis, RpcError> {
-    serde_json::from_value(value.clone()).map_err(|_| malformed())
+    <WorkflowAnalysis as serde::Deserialize>::deserialize(value).map_err(|_| malformed())
 }
 
 fn malformed() -> RpcError {

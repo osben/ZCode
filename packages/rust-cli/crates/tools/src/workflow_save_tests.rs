@@ -31,10 +31,6 @@ mod fs {
     pub fn write(path: impl AsRef<Path>, text: &str) -> io::Result<()> {
         rust_cli_fs::text_files::write_text(path.as_ref(), text)
     }
-
-    pub fn create_dir_all(_path: impl AsRef<Path>) -> io::Result<()> {
-        Ok(())
-    }
 }
 
 /// The checker: a script containing `BROKEN` has one error on line 1 column 1; `FAIL` makes the check itself fail.
@@ -119,8 +115,6 @@ impl Harness {
         let root = guard.path().to_path_buf();
         let cwd = root.join("project");
         let home = root.join("home");
-        fs::create_dir_all(&cwd).expect("cwd");
-        fs::create_dir_all(&home).expect("home");
         let checker = Arc::new(Checker::default());
         let tool = SaveWorkflowTool::new(checker.clone(), home.clone());
         Self {
@@ -145,9 +139,16 @@ impl Harness {
         self.context(loaded_skill())
     }
 
+    /// The executor's order: the permission decision first, then the call (a refused decision never reaches it).
     async fn call(&self, input: Value) -> Result<rust_cli_kernel_api::tool::ToolOutput, ToolError> {
+        let ctx = self.with_skill();
+        if let PermissionDecision::Deny { message } =
+            self.tool.check_permissions(&input, &ctx).await
+        {
+            return Err(ToolError::Failed { message });
+        }
         let (tx, _rx) = mpsc::channel(4);
-        self.tool.call(input, self.with_skill(), tx).await
+        self.tool.call(input, ctx, tx).await
     }
 }
 
@@ -453,7 +454,6 @@ async fn a_skill_call_that_failed_does_not_count_as_loaded() {
 async fn script_path_reads_the_draft_and_drops_its_metadata_block() {
     let harness = Harness::new("draft");
     let draft = harness.dirs.cwd.join(".zcode/workflow-drafts/draft.ts");
-    fs::create_dir_all(draft.parent().unwrap()).unwrap();
     fs::write(
         &draft,
         &format!("/* zcode-workflow\ndescription: old\n*/\n{CLEAN}"),
@@ -472,29 +472,32 @@ async fn script_path_reads_the_draft_and_drops_its_metadata_block() {
 }
 
 #[tokio::test]
-async fn a_draft_that_cannot_be_read_is_named_in_the_refusal() {
+async fn a_draft_that_cannot_be_read_is_refused_at_the_permission_decision_not_in_validation() {
     let harness = Harness::new("missing-draft");
-    let validation = harness
+    let input =
+        json!({"name": "x", "description": "d", "script_path": "nope.ts", "scope": "project"});
+    // Validation only checks the input's own shape; it does not read the disk.
+    assert_eq!(
+        harness
+            .tool
+            .validate_input(&input, &harness.with_skill())
+            .await,
+        Validation::Ok
+    );
+    let PermissionDecision::Deny { message } = harness
         .tool
-        .validate_input(
-            &json!({"name": "x", "description": "d", "script_path": "nope.ts", "scope": "project"}),
-            &harness.with_skill(),
-        )
-        .await;
-    let Validation::Invalid {
-        message,
-        error_code,
-    } = validation
+        .check_permissions(&input, &harness.with_skill())
+        .await
     else {
-        panic!("refused");
+        panic!("the unreadable draft is refused");
     };
-    assert_eq!(error_code, Some(400));
     assert!(
         message.starts_with("The workflow script file nope.ts could not be read: "),
         "{message}"
     );
     assert!(
-        message.ends_with("Pass `path` for a file that exists, or submit the script inline."),
+        message
+            .ends_with("Pass `script_path` for a file that exists, or submit the script inline."),
         "{message}"
     );
 }
@@ -561,4 +564,80 @@ async fn an_invalid_check_is_not_asked_even_when_a_copy_exists() {
         PermissionDecision::Allow { .. }
     ));
     assert_eq!(harness.checker.scripts.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn the_schema_declared_keys_are_accepted_including_run_id() {
+    let harness = Harness::new("schema-keys");
+    let input = json!({
+        "name": "provenance",
+        "description": "d",
+        "script": CLEAN,
+        "scope": "project",
+        "run_id": "run_123",
+        "path": "/ignored/by/the/tool.dwf.ts",
+        "overwrite": false,
+        "shadowing": "hides_global"
+    });
+    assert_eq!(
+        harness
+            .tool
+            .validate_input(&input, &harness.with_skill())
+            .await,
+        Validation::Ok
+    );
+}
+
+#[tokio::test]
+async fn a_script_path_outside_the_workspace_is_refused() {
+    let harness = Harness::new("escape");
+    for path in ["../outside.ts", "/etc/hosts", ".zcode/../../outside.ts"] {
+        let input =
+            json!({"name": "x", "description": "d", "script_path": path, "scope": "project"});
+        let PermissionDecision::Deny { message } = harness
+            .tool
+            .check_permissions(&input, &harness.with_skill())
+            .await
+        else {
+            panic!("{path} is refused");
+        };
+        assert!(
+            message.contains("outside the workspace"),
+            "{path}: {message}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn the_bytes_the_user_approved_are_the_bytes_written_even_if_the_draft_changes() {
+    let harness = Harness::new("approved-bytes");
+    let draft = harness.dirs.cwd.join("draft.ts");
+    rust_cli_fs::text_files::write_text(&draft, CLEAN).expect("draft");
+    let input = json!({"name": "approved", "description": "d", "script_path": "draft.ts", "scope": "project"});
+    let ctx = harness.with_skill();
+    assert!(matches!(
+        harness.tool.check_permissions(&input, &ctx).await,
+        PermissionDecision::Ask { .. }
+    ));
+    rust_cli_fs::text_files::write_text(&draft, "return 2;").expect("edit");
+    let (tx, _rx) = mpsc::channel(4);
+    harness.tool.call(input, ctx, tx).await.expect("saved");
+    let text =
+        fs::read_to_string(harness.dirs.cwd.join(".zcode/workflows/approved.dwf.ts")).unwrap();
+    assert!(text.ends_with(CLEAN), "{text}");
+}
+
+#[tokio::test]
+async fn a_compiling_script_is_never_written_without_its_confirmation() {
+    let harness = Harness::new("no-approval");
+    let (tx, _rx) = mpsc::channel(4);
+    let error = harness
+        .tool
+        .call(source_input("unasked", CLEAN), harness.with_skill(), tx)
+        .await
+        .expect_err("no confirmation, no write");
+    assert!(matches!(error, ToolError::Failed { .. }), "{error:?}");
+    assert!(!rust_cli_fs::text_files::is_file(
+        &harness.dirs.cwd.join(".zcode/workflows/unasked.dwf.ts")
+    ));
 }
