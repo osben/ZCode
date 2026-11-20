@@ -3008,11 +3008,11 @@ end-to-end test (326).
 ### 9.37 W7-7b: run-level resume and the quota resumer (as built, gate off)
 
 **Scope built.** The kernel-api `DynamicWorkflowRunPort::resume` on the run service, Node's refusals as answers, and the
-quota auto-resume's real resumer (closes 232 of 9.31 as a mechanism; the production predicate stays closed, 342). Code: `runtime/src/workflow_run_resume.rs` (the resume, the
+quota auto-resume's real resumer (closes 232 of 9.31; the parent predicate is the session gate, 342). Code: `runtime/src/workflow_run_resume.rs` (the resume, the
 compiled tables, the quota resumer), `runtime/src/workflow_run.rs` (the launch split: `launch` is `start` with no check;
 `start` takes an optional `CompileCheck` run after the child compiled and before the owner is built; `LaunchFailure::Refused`),
 `runtime/src/workflow_run_list.rs` (the port's `resume`), `cli/src/frontends/workflow_service.rs` (the composition: the
-resumer replaces `UnwiredResume`, behind a closed parent predicate). Divergence 231 (the by-parent read) was closed in 9.32
+resumer replaces `UnwiredResume`, behind the session gate of 9.36). Divergence 231 (the by-parent read) was closed in 9.32
 by `StoreQuotaReads`, which reads any status, newest first, at most the limit given (the scan asks for 64); not changed here.
 
 **Decisions.**
@@ -3026,9 +3026,10 @@ by `StoreQuotaReads`, which reads any status, newest first, at most the limit gi
    engine's own hash check compares the compile with the journal (333, 335).
 4. Quota resume: the module's timer and the session scan call the resumer on a thread that is not a runtime worker. The
    resumer spawns the async resume on the runtime and waits for its answer. The resumer holds a weak handle to the service.
-5. Production gate: the composition passes a predicate that refuses every parent (`|_| false`), so a due quota stop is
-   logged once as `resume_not_wired` and nothing starts. A quota resume is therefore not reachable in production until the
-   gate table exists (A's gate row, not on fork). Node resumes a quota stop whenever the scan finds one.
+5. Production gate: the composition allows a parent's quota resume only when its recorded gate is open (9.36,
+   `DynamicWorkflowGates::gate(parent).enabled`). A parent with the gate closed, or with no record, has its due quota stop
+   refused as `resume_not_wired`: logged once, nothing starts. Node resumes a quota stop whenever the scan finds one; the
+   closed gate is the difference, and it is deliberate (342).
 
 **Node divergences (new in W7-7b, numbered from 330).**
 
@@ -3071,15 +3072,17 @@ by `StoreQuotaReads`, which reads any status, newest first, at most the limit gi
      with `…`, as Node's `boundedResumeDiagnostics`. A compile failure with no diagnostics is a failure, as Node throws.
 341. The quota resumer blocks the module's thread, not a runtime worker, while the async resume runs on the runtime. A
      refusal is an answer; an error is `Err`, which the module retries (Node: a thrown resume retries, 9.14).
-342. Closed predicate (the gate). The composition refuses every quota resume with `resume_not_wired`, a non-transient
-     reason, so the module logs it once and arms no retry. Node resumes a due quota stop. Follow-up: A's gate table
-     replaces the predicate. The predicate is per parent, so the gate can allow one session.
+342. Parent predicate. The composition allows a quota resume for a parent whose recorded gate is open
+     (`DynamicWorkflowGates::gate(parent)`, enabled), and refuses the others with `resume_not_wired`, a non-transient reason,
+     so the module logs it once and arms no retry. This replaces the closed predicate of the first version (review round
+     on #595, with the merge of 9.36). A parent with its gate closed does not spend turns on a quota resume.
 343. A quota resume of a run whose row does not exist, or has no parent, is refused as `not_found`. A failed read is an
      error, which the module retries (Node's module reads the row again and stops when it is not a quota stop).
 344. The port resumes any run id it is given, as Node's run service does (one service per app, 9.30 item 215). The tools
      that call it are behind the gate (9.18).
 
-**Tests.** `workflow_run_resume_tests.rs` (15, two added for the recorded reply). Happy path: a stopped interrupted run is resumed over a real SQLite
+**Tests.** `workflow_run_resume_tests.rs` (19: 15 earlier, the review round adds 4; the shape tests are in
+`bootstrap/tests/fork-rust-helper/workflow-compile-shape.test.ts`, 2). Happy path: a stopped interrupted run is resumed over a real SQLite
 journal and the production owner, its child gets the row's script, args and cwd, the run settles as completed, and no
 `run-launched` is written. Refusals: `not_found`, `already_running` (a live run), `superseded`, `not_resumable`,
 `script_missing`, `compile_failed` (with the bounded text), `script_mismatch` (the child is stopped, nothing is kept), a
@@ -3087,12 +3090,30 @@ compile with no ask table (an error, the child stopped). Two concurrent resumes 
 by the timer through `StoreQuotaReads`; a closed parent starts no child; a second resume of a live run is transient
 (`AlreadyRunning`).
 
-**Red first.** Not captured. The implementation was written before the tests, so no run failed against a stub. Two
+**Red first.** The first version's tests were not captured red: the implementation was written before them. The review
+round's tests were red first: the Date and Map-key tests failed on the old `jsonShape`; the missing-table message, the
+thrown message and the bounded wait failed on the old code (the wait failed at 1.5 s). Two
 mutations were run after the green run, each restored: removing the hash check failed
 `a_script_whose_hash_differs_from_the_row_is_refused_and_its_child_stopped`; ignoring the closed predicate failed
 `a_closed_parent_refuses_the_quota_resume_and_starts_no_child`.
 
-**Not done.** The gate predicate (342). The predecessor journal and the import cache
+**Review round (ocr on #595, head a1b7d7248), verdicts.**
+
+- Accepted, fixed test-first. `jsonShape` recursed into every object, so a Date became `{}` (test: a Date is left to
+  `JSON.stringify`). Only plain objects (prototype `Object.prototype` or null) are copied now.
+- Accepted, fixed test-first. Two Map keys with one text (`1` and `"1"`) overwrote each other. The conversion now throws
+  "two Map keys have the same key text" (test).
+- Accepted, fixed test-first. The quota resumer waited without a bound on the timer thread. The wait is
+  `RESUME_ANSWER_TIMEOUT` (120 s); a timeout is an `Err`, which the module retries (test: a busy runtime answers in
+  100 ms as an error).
+- Accepted, fixed test-first. The error named "no ask table" whichever table was missing. It now names the missing table
+  (`sitePhases` or `askSpecs`); both missing, or both empty, keeps the ask-table wording (test).
+- Accepted, fixed test-first. A compile that threw (empty diagnostics, a `message`) lost the message; the resume now
+  fails with the message, as Node propagates it (test: "boom").
+- Rejected as not reproduced. `Handle::spawn` on a shut-down runtime does not panic here: the task is dropped, the
+  channel closes, and the resumer answers `Err`. A test pins that (`a_quota_resume_on_a_shut_down_runtime_answers_an_error`).
+
+**Not done.** The predecessor journal and the import cache
 rebuild (337). The resumed run's progress facts (339). The CreateWorkflow path that would reach a resume (9.27, 9.18).
 
 ## 10. Open questions

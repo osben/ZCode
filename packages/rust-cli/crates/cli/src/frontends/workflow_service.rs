@@ -9,6 +9,8 @@ use std::sync::{Arc, Mutex};
 use anyhow::Result;
 use rust_cli_base::clock::SystemClock;
 use rust_cli_base::sync::LockUnpoisoned;
+use rust_cli_kernel_api::dynamic_workflow::DynamicWorkflowGates;
+use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::workflow_child::WorkflowChildRunner;
 use rust_cli_kernel_api::workflow_run_progress::WorkflowRunProgressPort;
 use rust_cli_node_store::{MIGRATION_LOCK_WAIT, open_session_database};
@@ -42,6 +44,7 @@ pub(crate) fn build<A: ActorAgents + ActorSessionRelease>(
     bindings: Arc<dyn ActorBindingsPort>,
     handle: tokio::runtime::Handle,
     progress: Arc<dyn WorkflowRunProgressPort>,
+    gates: Arc<dyn DynamicWorkflowGates>,
 ) -> Option<WorkflowRunService> {
     let runner = runner?;
     let resume_handle = handle.clone();
@@ -75,9 +78,14 @@ pub(crate) fn build<A: ActorAgents + ActorSessionRelease>(
     let store: Arc<dyn RunStore> = Arc::new(LazyRunStore::new(database.to_path_buf()));
     service.set_store(store.clone());
     service.set_clock(Arc::new(SystemClock::utc()));
-    // Quota auto-resume resumes through this service (9.37). The gate that allows a parent's quota runs to resume is
-    // A's gate table, which is not on fork, so every parent is refused: a due run is logged once and nothing starts.
-    let quota_resumer = service.quota_resumer(resume_handle, Arc::new(|_: &str| false));
+    // Quota auto-resume resumes through this service (9.37), for a parent whose recorded gate is open (9.36). A parent with
+    // the gate closed, or with no record, has its due quota runs refused, so nothing spends turns the user turned off.
+    let allowed = Arc::new(move |parent: &str| {
+        gates
+            .gate(&SessionId::new(parent))
+            .is_some_and(|gate| gate.enabled)
+    });
+    let quota_resumer = service.quota_resumer(resume_handle, allowed);
     service.configure_quota(
         Arc::new(StoreQuotaReads::new(store)),
         quota_resumer,

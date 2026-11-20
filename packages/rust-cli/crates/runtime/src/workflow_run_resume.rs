@@ -8,6 +8,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Weak};
+use std::time::Duration;
 
 use rust_cli_base::js::string::{utf16_len, utf16_prefix};
 use rust_cli_base::sync::LockUnpoisoned;
@@ -22,6 +23,10 @@ use serde_json::{Value, json};
 
 use super::{CompileCheck, Inner, LaunchFailure, WorkflowRunService};
 use crate::workflow_quota::{QuotaRunResumer, RESUME_NOT_WIRED};
+
+/// How long a quota timer waits for its resume to answer (review finding 3). A resume starts a child, so the bound is
+/// generous; past it the timer gets an error, which the module retries.
+pub(crate) const RESUME_ANSWER_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Node's `boundedResumeDiagnostics` cap, in UTF-16 units (`RESUME_DIAGNOSTICS_MAX_CHARS`).
 const RESUME_DIAGNOSTICS_MAX_UNITS: usize = 2000;
@@ -74,11 +79,30 @@ type CompiledTables = (HashMap<String, AskSpec>, HashMap<String, String>);
 pub(crate) fn compiled_tables(compiled: &Value) -> Result<CompiledTables, String> {
     let asks = compiled.get("askSpecs").and_then(Value::as_object);
     let phases = compiled.get("sitePhases").and_then(Value::as_object);
-    let (Some(asks), Some(phases)) = (asks, phases) else {
-        return Err("the compile reported no ask table, so the run cannot be resumed".to_owned());
+    let (asks, phases) = match (asks, phases) {
+        (Some(asks), Some(phases)) => (asks, phases),
+        (None, None) => {
+            return Err(
+                "the compile reported no askSpecs or sitePhases table, so the run cannot be resumed"
+                    .to_owned(),
+            );
+        }
+        (None, Some(_)) => {
+            return Err(
+                "the compile reported no askSpecs table, so the run cannot be resumed".to_owned(),
+            );
+        }
+        (Some(_), None) => {
+            return Err(
+                "the compile reported no sitePhases table, so the run cannot be resumed".to_owned(),
+            );
+        }
     };
     if asks.is_empty() && phases.is_empty() {
-        return Err("the compile reported no ask table, so the run cannot be resumed".to_owned());
+        return Err(
+            "the compile reported no ask table (askSpecs and sitePhases are both empty), so the run cannot be resumed"
+                .to_owned(),
+        );
     }
     let mut specs = HashMap::new();
     for (site, spec) in asks {
@@ -207,6 +231,13 @@ impl WorkflowRunService {
                             message: Some(bounded_resume_diagnostics(run_id, diagnostics)),
                         })
                     }
+                    // A compile that threw has a message and no diagnostics: Node propagates the thrown message.
+                    LaunchError::Rejected {
+                        message: Some(message),
+                        ..
+                    } => Err(DynamicWorkflowRunError::new(format!(
+                        "the run could not be resumed: {message}"
+                    ))),
                     other => Err(DynamicWorkflowRunError::new(format!(
                         "the run could not be resumed: {other}"
                     ))),
@@ -286,10 +317,21 @@ impl WorkflowRunService {
         handle: tokio::runtime::Handle,
         allowed: Arc<dyn Fn(&str) -> bool + Send + Sync>,
     ) -> Arc<dyn QuotaRunResumer> {
+        self.quota_resumer_with_timeout(handle, allowed, RESUME_ANSWER_TIMEOUT)
+    }
+
+    /// The resumer with its wait bound (review finding 3). The composition uses [`Self::quota_resumer`].
+    pub(crate) fn quota_resumer_with_timeout(
+        &self,
+        handle: tokio::runtime::Handle,
+        allowed: Arc<dyn Fn(&str) -> bool + Send + Sync>,
+        timeout: Duration,
+    ) -> Arc<dyn QuotaRunResumer> {
         Arc::new(ServiceResumer {
             inner: Arc::downgrade(&self.inner),
             handle,
             allowed,
+            timeout,
         })
     }
 }
@@ -300,6 +342,8 @@ struct ServiceResumer {
     inner: Weak<Inner>,
     handle: tokio::runtime::Handle,
     allowed: Arc<dyn Fn(&str) -> bool + Send + Sync>,
+    /// The longest the timer waits for an answer (review finding 3). A late answer is dropped with the channel.
+    timeout: Duration,
 }
 
 impl QuotaRunResumer for ServiceResumer {
@@ -315,8 +359,17 @@ impl QuotaRunResumer for ServiceResumer {
             let answer = service.quota_answer(&run, allowed.as_ref()).await;
             let _ = sender.send(answer);
         });
-        receiver
-            .recv()
-            .map_err(|_| "the resume did not answer".to_owned())?
+        // Bounded: a timer thread must not wait forever on a runtime that is busy or gone (review finding 3). The module
+        // treats an error as a transient failure and retries it.
+        match receiver.recv_timeout(self.timeout) {
+            Ok(answer) => answer,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(format!(
+                "the resume did not answer within {:?}",
+                self.timeout
+            )),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                Err("the resume did not answer".to_owned())
+            }
+        }
     }
 }

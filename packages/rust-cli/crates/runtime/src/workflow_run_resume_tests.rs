@@ -280,6 +280,97 @@ async fn a_run_resumes_on_the_tables_of_a_recorded_compile_reply() {
     fx.fake.finish(0, completed(json!("done")));
 }
 
+// ---- Review (ocr on #595): the messages, the throw path, and the quota resumer's bounded wait.
+
+#[tokio::test]
+async fn a_compile_missing_only_its_phase_table_names_that_table() {
+    let fx = fixture(
+        json!({ "askSpecs": { "plain": { "typed": false } } }),
+        |conn| {
+            seed(conn, interrupted("dwfrun-no-phases", "return 1\n"));
+        },
+    );
+    let error = fx
+        .service
+        .for_session(&SessionId::new(PARENT))
+        .resume(&WorkflowRunId::new("dwfrun-no-phases"))
+        .await
+        .expect_err("a resume without the phase table is a wiring failure");
+    assert!(error.message.contains("sitePhases"), "{}", error.message);
+    assert!(!error.message.contains("askSpecs"), "{}", error.message);
+    assert!(fx.fake.stop_requested(0));
+}
+
+#[tokio::test]
+async fn a_script_that_throws_while_compiling_fails_the_resume_with_its_message() {
+    let fx = fixture(compiled_facts(), |conn| {
+        seed(conn, interrupted("dwfrun-throws", "return 1\n"));
+    });
+    fx.fake.refuse_next(LaunchError::Rejected {
+        diagnostics: vec![],
+        message: Some("the compile threw: boom".to_owned()),
+    });
+    let error = fx
+        .service
+        .for_session(&SessionId::new(PARENT))
+        .resume(&WorkflowRunId::new("dwfrun-throws"))
+        .await
+        .expect_err("a compile that throws is a failure, as Node throws");
+    assert!(error.message.contains("boom"), "{}", error.message);
+}
+
+#[test]
+fn a_quota_resume_that_does_not_answer_in_time_is_an_error_not_a_wait() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+    let handle = runtime.handle().clone();
+    let fx = fixture(compiled_facts(), |conn| {
+        seed(conn, interrupted("dwfrun-slow", "return 1\n"));
+    });
+    let resumer = fx.service.quota_resumer_with_timeout(
+        handle,
+        Arc::new(|_: &str| true),
+        Duration::from_millis(100),
+    );
+    // The runtime's only thread is busy, so the resume cannot start inside the timeout.
+    let busy = std::thread::spawn(move || {
+        runtime.block_on(async {
+            std::thread::sleep(Duration::from_millis(1500));
+        });
+    });
+    let started = Instant::now();
+    let answer = resumer.resume("dwfrun-slow");
+    assert!(answer.is_err(), "the wait is bounded: {answer:?}");
+    assert!(
+        started.elapsed() < Duration::from_millis(1000),
+        "waited {:?}",
+        started.elapsed()
+    );
+    busy.join().expect("the busy thread");
+}
+
+#[test]
+fn a_quota_resume_on_a_shut_down_runtime_answers_an_error() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+    let handle = runtime.handle().clone();
+    drop(runtime);
+    let fx = fixture(compiled_facts(), |conn| {
+        seed(conn, interrupted("dwfrun-gone", "return 1\n"));
+    });
+    let resumer = fx.service.quota_resumer(handle, Arc::new(|_: &str| true));
+    let answer = resumer.resume("dwfrun-gone");
+    assert!(
+        answer.is_err(),
+        "a resume with no runtime is a failure: {answer:?}"
+    );
+    assert!(fx.fake.launches().is_empty());
+}
+
 // ---- Refusals, in Node's order.
 
 #[tokio::test]

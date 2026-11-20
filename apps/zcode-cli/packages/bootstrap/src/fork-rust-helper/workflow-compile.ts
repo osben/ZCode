@@ -97,15 +97,25 @@ export function compileWorkflowForRust(raw: unknown) {
  */
 export function jsonShape(value: unknown): unknown {
   if (value instanceof Map) {
-    return Object.fromEntries(
-      [...value.entries()].map(([key, entry]) => [String(key), jsonShape(entry)]),
-    );
+    const out: Record<string, unknown> = {};
+    for (const [key, entry] of value.entries()) {
+      const text = String(key);
+      // Distinct keys can share a text (1 and "1"); the reply must not drop one of them silently.
+      if (Object.prototype.hasOwnProperty.call(out, text)) {
+        throw new Error(`two Map keys have the same key text "${text}"; the reply cannot carry both`);
+      }
+      out[text] = jsonShape(entry);
+    }
+    return out;
   }
   if (value instanceof Set) return [...value].map((entry) => jsonShape(entry));
   if (Array.isArray(value)) return value.map((entry) => jsonShape(entry));
-  if (typeof value === "object" && value !== null) {
+  // Only plain objects are copied entry by entry. Dates, RegExps, URLs and the rest keep their own JSON form
+  // (JSON.stringify calls their toJSON), so they are not turned into {}.
+  const proto = typeof value === "object" && value !== null ? Object.getPrototypeOf(value) : undefined;
+  if (proto === Object.prototype || proto === null) {
     return Object.fromEntries(
-      Object.entries(value).map(([key, entry]) => [key, jsonShape(entry)]),
+      Object.entries(value as Record<string, unknown>).map(([key, entry]) => [key, jsonShape(entry)]),
     );
   }
   return value;

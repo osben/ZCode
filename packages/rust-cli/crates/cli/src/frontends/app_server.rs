@@ -290,6 +290,8 @@ async fn serve(
                 Arc::downgrade(&context),
             )),
         )),
+        // Fork (9.37): the quota resume reads each parent's recorded gate (9.36).
+        context.dynamic_workflow_gates().clone(),
     );
     // Fork (9.29, W7-5c): the per-session run reads (`workflowRuns`, the run list) answer from the service too.
     if let Some(service) = &workflow_service {
