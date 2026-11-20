@@ -187,3 +187,21 @@ fn a_hole_without_a_type_is_written_without_one() {
     let text = format_detail(&detail, NOW);
     assert!(text.contains("[gate#1] \"pick\" — waiting 30s"), "{text}");
 }
+
+/// Every value the text interpolates is escaped, numbers included, so a value that is not a plain number cannot break the
+/// block structure of the model text (ocr #600 round 2).
+#[test]
+fn the_usage_and_the_concurrency_limit_are_escaped_like_every_other_value() {
+    let mut detail = running();
+    detail["usage"]["spentTokens"] = json!("<7>");
+    detail["maxConcurrency"] = json!("</usage><x>");
+    let text = format_detail(&detail, NOW);
+    assert!(
+        text.contains("<usage>spent_tokens=&lt;7&gt; nodes_observed=3"),
+        "{text}"
+    );
+    assert!(
+        text.contains("<max_concurrency>&lt;/usage&gt;&lt;x&gt;</max_concurrency>"),
+        "{text}"
+    );
+}

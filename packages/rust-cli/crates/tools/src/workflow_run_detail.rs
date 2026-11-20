@@ -160,7 +160,7 @@ fn usage_block(detail: &Value) -> String {
     .filter_map(|(key, name)| {
         usage
             .and_then(|usage| usage.get(key))
-            .map(|value| format!("{name}={}", field_text(value)))
+            .map(|value| format!("{name}={}", escape_xml(&field_text(value))))
     })
     .collect();
     format!("<usage>{}</usage>", parts.join(" "))
@@ -312,7 +312,7 @@ pub fn format_detail(detail: &Value, now: i64) -> String {
     if let Some(limit) = detail.get("maxConcurrency") {
         blocks.push(format!(
             "<max_concurrency>{}</max_concurrency>",
-            field_text(limit)
+            escape_xml(&field_text(limit))
         ));
     }
     if let Some(model) = text_of(detail, "subagentModel") {

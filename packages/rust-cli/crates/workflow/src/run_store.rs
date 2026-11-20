@@ -175,17 +175,23 @@ impl RunStore for SqliteRunStore {
         run_id: &str,
         default_concurrency: Option<f64>,
     ) -> Result<Option<RunDetail>> {
-        // The row, its timestamps and its events are read under one lock hold, so they are one snapshot. The replay
-        // folds the events after the lock is released.
+        // The row, its timestamps and its events are read in one read transaction, so they share one WAL snapshot: the
+        // engine writes the journal through its own connection, and an autocommit read per query could see a settlement
+        // land between two of them. The events are read only when a replay will use them. The replay folds the events
+        // after the lock is released.
         let (record, time_created, time_updated, events) = {
             let conn = self.conn.lock_unpoisoned();
-            let Some(record) = dwf::get_run(&conn, run_id)? else {
+            let tx = conn.unchecked_transaction()?;
+            let Some(record) = dwf::get_run(&tx, run_id)? else {
                 return Ok(None);
             };
-            let Some((created, updated)) = dwf::run_times(&conn, run_id)? else {
+            let Some((created, updated)) = dwf::run_times(&tx, run_id)? else {
                 anyhow::bail!("the run {run_id} has a row without timestamps");
             };
-            let events = dwf::list_events(&conn, run_id)?;
+            let events = match default_concurrency {
+                Some(_) => dwf::list_events(&tx, run_id)?,
+                None => Vec::new(),
+            };
             (record, created, updated, events)
         };
         let state = default_concurrency.and_then(|default| {

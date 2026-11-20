@@ -3652,6 +3652,22 @@ The hole notice (353) and the cold replay (363) are still open, as in 9.38.
 first on the real reducer). `tools`: `get_has_the_detail_budget_and_the_list_keeps_its_own`, the three identity and hole tests, the
 summary plural test, and the formatter goldens above.
 
+#### 9.42, second review round (ocr on #600 at 2aa38561b, five findings)
+
+- **One snapshot (medium), fixed.** The row, its timestamps and its events are read in one read transaction
+  (`Connection::unchecked_transaction`). The engine writes the journal through its own connection, so separate autocommit reads
+  could see a settlement between them. No red test: the tear needs a concurrent writer between two reads, and this harness has no
+  hook for that.
+- **`<resumable>` for `interrupted` (medium), rejected.** Node's `formatResumableHint` (`get-workflow-run-format.ts`) writes a
+  reason sentence for `user`, `model` and `provider` only; `interrupted` gets the generic sentence, as here. The guidance the
+  finding quotes is the tool description in `node_workflow_tools.json`, which this build uses as Node does. The doc comment is
+  correct as written.
+- **Escaping of `usage` and `maxConcurrency` (low), fixed.** Every interpolated value is escaped, numbers included. Red test:
+  `the_usage_and_the_concurrency_limit_are_escaped_like_every_other_value`.
+- **Events read only with a default (low), fixed.** `run_detail` reads the events only when a default concurrency is given, since
+  the replay is the only user. No red test: the observable result is unchanged (`state` is `None` either way), so the change is
+  efficiency only.
+
 **Gates.** `cargo fmt --all --check` clean; `cargo clippy --workspace --all-targets --locked -- -D warnings` clean;
 `cargo test --workspace --locked --no-fail-fast --lib --bins` passes. One flake in `rust-cli-fs` (`exclusive::tests::only_one_holder_at_a_time`)
 failed once under the full run and passed alone and on the next run; it is not in this change.
