@@ -575,6 +575,7 @@ pub(crate) fn check(
                 UNCHECKED
             };
             return Some(Check::Ask {
+                independent: false,
                 message: message.to_owned(),
                 kind: AskKind::Immune,
                 suggestions: Vec::new(),

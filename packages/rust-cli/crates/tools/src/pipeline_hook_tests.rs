@@ -10,6 +10,7 @@ use rust_cli_kernel_api::hooks::{HookEvent, HookOutcome};
 use rust_cli_kernel_api::ids::{
     EnvironmentId, Generation, MessageId, OperationId, RunId, SessionId,
 };
+use rust_cli_kernel_api::interaction::PermissionAnswer;
 use rust_cli_kernel_api::message::{AttachmentMessage, Message};
 use rust_cli_kernel_api::orchestration::{InteractionRequest, no_tool_start};
 use rust_cli_kernel_api::permission::PermissionMode;
@@ -991,4 +992,101 @@ async fn a_hook_refused_call_never_signals_its_start() {
         .await;
     assert_eq!(text(&execution.output), "frozen");
     assert_eq!(starts.0.load(std::sync::atomic::Ordering::SeqCst), 0);
+}
+
+/// A tool whose own check always asks (`PermissionDecision::always_ask`); counts the calls that ran.
+struct AlwaysAskTool {
+    ran: Arc<Mutex<u32>>,
+}
+
+#[async_trait]
+impl Tool for AlwaysAskTool {
+    fn name(&self) -> &str {
+        "AlwaysAskTool"
+    }
+    fn input_schema(&self) -> Value {
+        json!({"type": "object", "properties": {}})
+    }
+    fn description(&self, _context: &PromptContext) -> String {
+        String::new()
+    }
+    async fn check_permissions(
+        &self,
+        _input: &Value,
+        _context: &ToolUseContext,
+    ) -> PermissionDecision {
+        PermissionDecision::always_ask("Confirm the always-ask tool", Vec::new(), false)
+    }
+    async fn call(
+        &self,
+        _input: Value,
+        _context: ToolUseContext,
+        _progress: mpsc::Sender<ToolProgress>,
+    ) -> Result<ToolOutput, ToolError> {
+        *self.ran.lock().unwrap() += 1;
+        Ok(ToolOutput {
+            content: vec![ToolResultContent::Text {
+                text: "ran".to_owned(),
+            }],
+            is_error: false,
+            display: Value::Null,
+        })
+    }
+}
+
+/// Runs [`AlwaysAskTool`] through the real `rust_cli_policy::PolicyGate` in bypassPermissions, with a PreToolUse allow
+/// hook, answering the permission prompt with `answer`. Returns the execution, the prompts asked and the calls that ran.
+async fn run_always_ask(answer: PermissionAnswer) -> (ToolExecution, Vec<String>, u32) {
+    let ran = Arc::new(Mutex::new(0));
+    let hooks = Arc::new(Hooks {
+        outcomes: [pre(
+            Some(PermissionDecision::Allow {
+                updated_input: None,
+            }),
+            None,
+        )]
+        .into_iter()
+        .collect(),
+        ..Hooks::default()
+    });
+    let asked = Arc::new(ScriptedInteractions::always(answer));
+    let mut ctx = context(asked.clone());
+    ctx.mode = PermissionMode::BypassPermissions;
+    ctx.base_mode = PermissionMode::BypassPermissions;
+    let pipeline = Pipeline::new(Arc::new(rust_cli_policy::PolicyGate::default()), hooks);
+    let (progress, _updates) = mpsc::channel(4);
+    let execution = pipeline
+        .execute(
+            Arc::new(AlwaysAskTool { ran: ran.clone() }),
+            json!({}),
+            ctx,
+            progress,
+            no_tool_start(),
+        )
+        .await;
+    let prompts = asked
+        .asked()
+        .into_iter()
+        .filter_map(|request| match request {
+            InteractionRequest::Permission { message, .. } => Some(message),
+            _ => None,
+        })
+        .collect();
+    let ran = *ran.lock().unwrap();
+    (execution, prompts, ran)
+}
+
+#[tokio::test]
+async fn a_hook_allow_does_not_skip_an_always_ask_in_the_pipeline() {
+    let (execution, prompts, ran) = run_always_ask(PermissionAnswer::Allow {
+        remember: Vec::new(),
+    })
+    .await;
+    assert_eq!(prompts, ["Confirm the always-ask tool"]);
+    assert_eq!((ran, text(&execution.output)), (1, "ran".to_owned()));
+    // Refused at the prompt: the tool does not run at all.
+    let (execution, prompts, ran) = run_always_ask(PermissionAnswer::Deny { feedback: None }).await;
+    assert_eq!(prompts, ["Confirm the always-ask tool"]);
+    assert_eq!(ran, 0);
+    assert!(execution.output.is_error);
 }

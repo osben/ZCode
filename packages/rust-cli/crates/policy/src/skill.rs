@@ -58,6 +58,7 @@ pub(crate) fn check(raw: &str, inputs: &Inputs<'_>) -> Check {
         content: Some(content),
     };
     Check::Ask {
+        independent: false,
         message: format!("Execute skill: {name}"),
         kind: AskKind::Other,
         suggestions: vec![rule(name.clone()), rule(format!("{name}:*"))],

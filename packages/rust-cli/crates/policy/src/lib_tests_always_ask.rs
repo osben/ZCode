@@ -12,13 +12,7 @@ const TOOL: &str = "AlwaysAskTool";
 fn always_ask_tool(independent: bool) -> Named {
     Named(
         TOOL,
-        PermissionDecision::Ask {
-            message: "Confirm the always-ask tool".to_owned(),
-            suggestions: Vec::new(),
-            once: false,
-            independent,
-            always_ask: true,
-        },
+        PermissionDecision::always_ask("Confirm the always-ask tool", Vec::new(), independent),
     )
 }
 
@@ -70,15 +64,21 @@ const MODES: [PermissionMode; 6] = [
 
 #[tokio::test]
 async fn always_ask_asks_in_every_mode_with_no_rule() {
+    // Under don't-ask the ask is turned into a denial by the outer layer (Node `dontAsk`), so only that mode differs.
     let gate = PolicyGate::default();
     let mut wrong = Vec::new();
     for mode in MODES {
         let decision = decide_in(&gate, &always_ask_tool(false), mode).await;
-        if !is_always_ask(&decision) && mode != PermissionMode::DontAsk {
+        let expected = if mode == PermissionMode::DontAsk {
+            matches!(decision, PermissionDecision::Deny { .. })
+        } else {
+            is_always_ask(&decision)
+        };
+        if !expected {
             wrong.push(format!("{mode:?}: {decision:?}"));
         }
     }
-    assert!(wrong.is_empty(), "not always-ask: {wrong:#?}");
+    assert!(wrong.is_empty(), "{wrong:#?}");
 }
 
 #[tokio::test]
@@ -92,11 +92,13 @@ async fn always_ask_asks_under_allow_rules_from_every_persistent_source() {
         let gate = PolicyGate::new(one_rule(source, RuleBehavior::Allow, TOOL));
         let mut wrong = Vec::new();
         for mode in MODES {
-            if mode == PermissionMode::DontAsk {
-                continue;
-            }
             let decision = decide_in(&gate, &always_ask_tool(false), mode).await;
-            if !is_always_ask(&decision) {
+            let expected = if mode == PermissionMode::DontAsk {
+                matches!(decision, PermissionDecision::Deny { .. })
+            } else {
+                is_always_ask(&decision)
+            };
+            if !expected {
                 wrong.push(format!("{source:?} {mode:?}: {decision:?}"));
             }
         }
@@ -133,6 +135,17 @@ async fn a_deny_rule_still_denies_an_always_ask_tool() {
 #[tokio::test]
 async fn auto_mode_denies_an_always_ask_tool_as_node_does() {
     let gate = PolicyGate::default();
+    let decision = decide_in(&gate, &always_ask_tool(false), PermissionMode::Auto).await;
+    assert!(
+        matches!(decision, PermissionDecision::Deny { .. }),
+        "{decision:?}"
+    );
+}
+
+#[tokio::test]
+async fn auto_mode_denies_an_always_ask_even_with_a_session_allow_rule() {
+    // Node `checkAlwaysAsk`: auto mode is denied before the session allow is consulted.
+    let gate = PolicyGate::new(one_rule(RuleSource::Session, RuleBehavior::Allow, TOOL));
     let decision = decide_in(&gate, &always_ask_tool(false), PermissionMode::Auto).await;
     assert!(
         matches!(decision, PermissionDecision::Deny { .. }),
@@ -196,7 +209,7 @@ async fn a_content_deny_rule_still_denies_an_always_ask_tool() {
 }
 
 #[tokio::test]
-async fn a_hook_allow_does_not_remove_an_always_ask() {
+async fn check_rules_keeps_the_always_ask_and_only_a_session_allow_clears_it() {
     // A PreToolUse allow is checked with `check_rules`: an always-ask comes back as an ask, and a session allow as
     // nothing to ask about.
     let tool = always_ask_tool(false);
@@ -225,7 +238,7 @@ async fn a_hook_allow_does_not_remove_an_always_ask() {
 }
 
 #[tokio::test]
-async fn an_ordinary_ask_is_unchanged_by_the_modes_and_allow_rules() {
+async fn an_ordinary_ask_still_yields_to_allow_rules_and_bypass() {
     let gate = PolicyGate::default();
     let decision = decide_in(&gate, &ordinary_tool(), PermissionMode::Default).await;
     assert!(

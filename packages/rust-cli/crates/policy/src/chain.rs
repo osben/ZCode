@@ -73,6 +73,7 @@ fn web_fetch(url: &str, inputs: &Inputs<'_>) -> Check {
             message: texts::request_message(WEB_FETCH, None),
             kind: AskKind::Rule,
             suggestions: Vec::new(),
+            independent: false,
         };
     }
     if hit(RuleBehavior::Allow) {
@@ -153,8 +154,9 @@ pub fn own(
             _ => (
                 Check::Ask {
                     message,
-                    kind: AskKind::Always { independent },
+                    kind: AskKind::Always,
                     suggestions,
+                    independent,
                 },
                 None,
             ),
@@ -170,6 +172,7 @@ pub fn own(
                 message,
                 kind: AskKind::Other,
                 suggestions,
+                independent: false,
             },
             None,
         ),
@@ -187,8 +190,9 @@ pub fn inner(tool: &str, check: Check, updated_input: Option<Value>, inputs: &In
     let check = match check {
         Check::Ask {
             message,
-            kind: AskKind::Always { independent },
+            kind: AskKind::Always,
             suggestions,
+            independent,
         } => return always(tool, message, suggestions, independent, inputs),
         other => other,
     };
@@ -231,6 +235,7 @@ pub fn inner(tool: &str, check: Check, updated_input: Option<Value>, inputs: &In
             message,
             kind: kind @ (AskKind::Rule | AskKind::Safety | AskKind::Immune),
             suggestions,
+            ..
         } => {
             return Inner::Ask {
                 message,
@@ -244,6 +249,7 @@ pub fn inner(tool: &str, check: Check, updated_input: Option<Value>, inputs: &In
             message,
             kind,
             suggestions,
+            ..
         } => (Some(message), None, kind, suggestions),
         Check::Passthrough {
             reason,
@@ -284,7 +290,7 @@ fn always(
     }
     Inner::Ask {
         message,
-        kind: AskKind::Always { independent },
+        kind: AskKind::Always,
         suggestions,
         once: false,
         independent,
@@ -319,7 +325,7 @@ pub fn plan_mcp(tool: &str, mcp: PlanMcp, base_bypass: bool, result: Inner) -> I
     match result {
         Inner::Deny { .. }
         | Inner::Ask {
-            kind: AskKind::Rule | AskKind::Always { .. },
+            kind: AskKind::Rule | AskKind::Always,
             ..
         } => result,
         _ if mcp.destructive => Inner::Deny {

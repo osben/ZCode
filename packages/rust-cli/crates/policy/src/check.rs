@@ -22,7 +22,7 @@ pub enum AskKind {
     Immune,
     /// 工具自报的“总是询问”（Node `alwaysAsk`，`checkAlwaysAsk`）：每个模式都询问，整个工具的允许规则、bypass、guarded、
     /// plan 的放行与自动模式的分类器都盖不过它；只有会话的允许规则跳过它。`independent` 来自工具的声明：不提供“总是允许”。
-    Always { independent: bool },
+    Always,
     /// 其他理由。
     Other,
 }
@@ -50,6 +50,9 @@ pub enum Check {
         message: String,
         kind: AskKind,
         suggestions: Vec<PermissionRule>,
+        /// 独立的询问（Node `optionsPolicy: "no-always-allow"`）：只有工具自报的“总是询问”为真（[`AskKind::Always`]）；
+        /// 其他询问为假，行为不变。
+        independent: bool,
     },
     /// 没有意见：交给通用判决链，最后转成询问（`reason` 决定询问的文本）。
     Passthrough {
@@ -64,6 +67,7 @@ impl Check {
             message: message.into(),
             kind: AskKind::Other,
             suggestions: Vec::new(),
+            independent: false,
         }
     }
 
