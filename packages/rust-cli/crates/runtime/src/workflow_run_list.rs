@@ -629,8 +629,8 @@ impl WorkflowRunService {
 
     /// Node `getRunDetail` for one parent session (9.42). The row's fields are the list item's, plus the usage, the result
     /// and the error, all from one read of the journal (`RunStore::run_detail`). The projected state adds the pending
-    /// questions, holes, artifacts, node counts and launch settings (`merge_run_state`). The roster, phases, log tail and
-    /// actors are not read (divergence 433).
+    /// questions, holes, artifacts, node counts and launch settings (`merge_run_state`). The situation snapshot (phases,
+    /// subagents, health, log tail, actors, script path and model bindings) is built by the workflow crate (9.46).
     pub(crate) fn run_detail_of(
         &self,
         parent: &str,
@@ -683,6 +683,11 @@ impl WorkflowRunService {
         // The journal's projected state (9.42): pending questions, holes, node counts, the launch settings.
         if let Some(state) = detail.state {
             merge_run_state(&mut item, &state, max_concurrency, default);
+        }
+        // The situation snapshot (9.46): phases, subagents, health, log tail, actors, and the launch's script path and
+        // model bindings, as the workflow crate builds them from the same read.
+        for (key, value) in detail.roster {
+            item[key] = value;
         }
         Ok(Some(item))
     }
